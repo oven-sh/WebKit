@@ -58,7 +58,8 @@ public:
     using AddResult = typename HashTableType::AddResult;
 
     static constexpr ptrdiff_t offsetOfTable() { return OBJECT_OFFSETOF(HashSet, m_impl) + HashTableType::offsetOfTable(); }
-    static constexpr ptrdiff_t offsetOfTableSizeMask() { return HashTableType::offsetOfTableSizeMask(); }
+    static constexpr ptrdiff_t offsetOfTableSize() { return HashTableType::offsetOfTableSize(); }
+    static constexpr ptrdiff_t offsetOfHashShift() { return HashTableType::offsetOfHashShift(); }
 
     HashSet() = default;
 

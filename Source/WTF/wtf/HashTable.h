@@ -603,9 +603,10 @@ static_assert(std::is_trivial_v<StatusBytes>);
         size_t byteSize() const { return m_table ? allocationSize(tableSize()) : 0; }
         bool isEmpty() const { return !keyCount(); }
 
-        // For generated code. The mask is found from the first bucket.
+        // For generated code. The size and the hash shift are found from the first bucket, and the status bytes stand behind the last one.
         static constexpr ptrdiff_t offsetOfTable() { return OBJECT_OFFSETOF(HashTable, m_table); }
-        static constexpr ptrdiff_t offsetOfTableSizeMask() { return tableSizeMaskOffset * static_cast<ptrdiff_t>(sizeof(unsigned)); }
+        static constexpr ptrdiff_t offsetOfTableSize() { return tableSizeOffset * static_cast<ptrdiff_t>(sizeof(unsigned)); }
+        static constexpr ptrdiff_t offsetOfHashShift() { return hashShiftOffset * static_cast<ptrdiff_t>(sizeof(unsigned)); }
 
         // Grow now, once, if holding `keyCount` keys in total would otherwise rehash along the way.
         void reserveCapacity(unsigned keyCount)
@@ -685,11 +686,15 @@ static_assert(std::is_trivial_v<StatusBytes>);
         template<typename HashTranslator, ShouldValidateKey, typename T> ValueType* inlineLookup(const T&);
 
         ALWAYS_INLINE bool isNullStorage() const { return !m_table; }
-        // Starts the cache miss a lookup/add of a key with this hash will take on its first probe.
+        // Starts the cache misses a lookup/add of a key with this hash will take on its first probe: the status byte, then the bucket.
         ALWAYS_INLINE void prefetchForHash(unsigned hash) const
         {
-            if (ValueType* table = m_table)
-                __builtin_prefetch(table + (hash & tableSizeMask()));
+            if (ValueType* table = m_table) {
+                unsigned tableSize = tableSizeForTable(table);
+                unsigned index = hash & (tableSize - 1);
+                __builtin_prefetch(statusBytesForTable(table, tableSize).data() + index);
+                __builtin_prefetch(table + index);
+            }
         }
 
 #if ASSERT_ENABLED
@@ -1301,16 +1306,12 @@ static_assert(std::is_trivial_v<StatusBytes>);
     template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename Malloc>
     auto HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Malloc>::tryAllocateTable(unsigned size) -> ValueType*
     {
-        size_t sizeInBytes = metadataSize + size * sizeof(ValueType);
-        char* memory = static_cast<char*>(Traits::emptyValueIsZero ? Malloc::tryZeroedMalloc(sizeInBytes) : Malloc::tryMalloc(sizeInBytes));
+        void* memory = Malloc::tryMalloc(allocationSize(size));
         if (!memory)
             return nullptr;
-        ValueType* result = reinterpret_cast_ptr<ValueType*>(memory + metadataSize);
-        if constexpr (!Traits::emptyValueIsZero) {
-            for (unsigned i = 0; i < size; i++)
-                initializeBucket(result[i]);
-        }
-        return result;
+        ValueType* table = reinterpret_cast_ptr<ValueType*>(static_cast<uint8_t*>(memory) + metadataSize);
+        statusBytesForTable(table, size).clear();
+        return table;
     }
 
     template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename Malloc>
@@ -1364,12 +1365,15 @@ static_assert(std::is_trivial_v<StatusBytes>);
         if (!newTable.m_table)
             return false;
         newTable.setTableSize(newSize);
-        newTable.setTableSizeMask(newSize - 1);
+        newTable.setHashShift(hashShiftForSize(newSize));
         newTable.setDeletedCount(0);
         newTable.setKeyCount(keyCount());
-        for (unsigned i = 0; i != oldSize; ++i) {
-            if (!isEmptyOrDeletedBucket(m_table[i]))
-                newTable.reinsert(WTF::move(m_table[i]));
+        if (m_table) {
+            // The old table keeps its status bytes, so its destructor destroys what was moved from.
+            auto target = makeReinsertTable(newTable.m_table, newSize);
+            statusBytes().forEachFullSlot(m_table, [&](ValueType& oldEntry) ALWAYS_INLINE_LAMBDA {
+                newTable.reinsert(target, WTF::move(oldEntry));
+            });
         }
         swap(newTable);
         return true;

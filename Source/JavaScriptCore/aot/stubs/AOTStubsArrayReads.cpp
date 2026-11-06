@@ -41,13 +41,24 @@ static void callOperationAndReturn(StubAssembler& jit, ElementQuestion question)
     jit.callOperationAndReturn(operation, { .returns = OperationCall::Returns::Value, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
-// The search of WTF::HashTable::inlineLookup().
+// The search of WTF::HashTable::inlineLookup(). Each bucket has a status byte behind the last bucket: empty, deleted, or seven bits of the hash of the key that
+// the bucket holds. A bucket that is not full holds nothing that can be read.
 void emitFindSparseElement(StubAssembler& jit, const SparseElementSearch& search, JumpList& isAbsent)
 {
     const auto [owner, index, entry, probe, table] = search;
-    constexpr unsigned entrySizeShift = 4;
-    static_assert(sizeof(SparseArrayEntry) == 1 << entrySizeShift);
-    const Address attributes(entry, SparseArrayEntry::offsetOfAttributes());
+    const GPRReg bucket = entry;
+    // The number of probes in the low half, the status byte of the hash above it.
+    const GPRReg probeAndHashByte = probe;
+    const GPRReg mask = table;
+    const GPRReg scratch = jit.scratchRegister();
+    // A bucket is two words: the addresses below are made in two steps of eight times a number.
+    static_assert(sizeof(SparseArrayEntry) == 16);
+    static_assert(sizeof(WTF::StatusByte) == 1 && !WTF::StatusByte::empty && WTF::StatusByte::isFullBit == 0x80);
+    auto loadTable = [&](GPRReg result) {
+        jit.loadPtr(Address(owner, JSObject::butterflyOffset()), result);
+        jit.loadPtr(Address(result, ArrayStorage::sparseMapOffset()), result);
+        jit.loadPtr(Address(result, SparseArrayValueMap::offsetOfTable()), result);
+    };
 
     emitHashOfBits(jit, index, entry, probe, table);
     jit.loadPtr(Address(owner, JSObject::butterflyOffset()), table);
@@ -55,21 +66,42 @@ void emitFindSparseElement(StubAssembler& jit, const SparseElementSearch& search
     isAbsent.append(jit.branchTestPtr(CCallHelpers::Zero, table));
     jit.loadPtr(Address(table, SparseArrayValueMap::offsetOfTable()), table);
     isAbsent.append(jit.branchTestPtr(CCallHelpers::Zero, table));
-    jit.move(TrustedImm32(0), probe);
+    // StatusByte::forHash().
+    jit.load32(Address(table, SparseArrayValueMap::offsetOfHashShift()), scratch);
+    jit.move(entry, probeAndHashByte);
+    jit.urshift32(scratch, probeAndHashByte);
+    jit.or32(TrustedImm32(WTF::StatusByte::isFullBit), probeAndHashByte);
+    jit.and32(TrustedImm32(0xff), probeAndHashByte);
+    jit.lshift64(TrustedImm32(32), probeAndHashByte);
+    // The size is a power of two. The table is read again from the owner where it is needed: the registers do not hold it and the mask.
+    jit.load32(Address(table, SparseArrayValueMap::offsetOfTableSize()), mask);
+    jit.sub32(TrustedImm32(1), mask);
+    jit.and32(mask, bucket);
 
     Label hasBucketNumber = jit.label();
-    jit.and32(Address(table, SparseArrayValueMap::offsetOfTableSizeMask()), entry);
-    jit.lshift64(TrustedImm32(entrySizeShift), entry);
-    jit.add64(table, entry);
-    isAbsent.append(jit.branchTest32(CCallHelpers::NonZero, attributes, TrustedImm32(static_cast<int32_t>(SparseArrayEntry::isEmptyBucketFlag))));
-    Jump hasOtherIndex = jit.branch32(CCallHelpers::NotEqual, Address(entry, SparseArrayEntry::offsetOfIndex()), index);
-    Jump isFound = jit.branchTest32(CCallHelpers::Zero, attributes, TrustedImm32(SparseArrayEntry::isDeletedBucketFlag));
+    loadTable(scratch);
+    jit.add64(bucket, scratch);
+    jit.getEffectiveAddress(BaseIndex(scratch, mask, CCallHelpers::TimesEight, 8), scratch);
+    jit.getEffectiveAddress(BaseIndex(scratch, mask, CCallHelpers::TimesEight, 8), scratch);
+    jit.load8(Address(scratch), scratch);
+    isAbsent.append(jit.branchTest32(CCallHelpers::Zero, scratch));
+    jit.lshift64(TrustedImm32(32), scratch);
+    jit.xor64(probeAndHashByte, scratch);
+    jit.urshift64(TrustedImm32(32), scratch);
+    Jump hasOtherHash = jit.branchTest32(CCallHelpers::NonZero, scratch);
+    loadTable(scratch);
+    jit.getEffectiveAddress(BaseIndex(scratch, bucket, CCallHelpers::TimesEight), scratch);
+    jit.getEffectiveAddress(BaseIndex(scratch, bucket, CCallHelpers::TimesEight), scratch);
+    Jump hasOtherIndex = jit.branch32(CCallHelpers::NotEqual, Address(scratch, SparseArrayEntry::offsetOfIndex()), index);
+    jit.move(scratch, entry);
+    Jump isFound = jit.jump();
 
+    hasOtherHash.link(&jit);
     hasOtherIndex.link(&jit);
-    jit.sub64(table, entry);
-    jit.urshift64(TrustedImm32(entrySizeShift), entry);
-    jit.add32(TrustedImm32(1), probe);
-    jit.add32(probe, entry);
+    // The count stays below the size of the table, which is below 2^32, so it does not reach the status byte.
+    jit.add64(TrustedImm32(1), probeAndHashByte);
+    jit.add32(probeAndHashByte, bucket);
+    jit.and32(mask, bucket);
     jit.jump().linkTo(hasBucketNumber, &jit);
 
     isFound.link(&jit);
