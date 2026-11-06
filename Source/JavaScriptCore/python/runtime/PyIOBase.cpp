@@ -723,6 +723,46 @@ static bool ioSaysItIsClosed(JSGlobalObject* globalObject, JSValue stream, bool 
     return result;
 }
 
+// What wrapped `stream` has been closed or finalized for good, and that may have left `stream` open: its close() has raised, or the host has
+// ended a __del__ of the program's, which is not called again. Then it is on its own again. An exception may be pending. Empty: there is none.
+static void ioWrapperIsDone(JSGlobalObject* globalObject, JSValue stream)
+{
+    // Only one that would then be looked after is asked anything.
+    if (!stream || !PyRecord::is(stream) || ioHasOwnFinalizer(typeOf(globalObject, stream)))
+        return;
+    // It is not asked while the host is ending what runs here: the answer may be code of the program.
+    if (!getVM(globalObject).hasPendingTermination()) [[likely]] {
+        ExceptionSetAside suspended(globalObject);
+        if (ioSaysItIsClosed(globalObject, stream, false))
+            return;
+    }
+    ioDidUnwrap(globalObject, stream);
+}
+
+static void ioWrapperIsDoneWithAll(JSGlobalObject* globalObject, PyRecord* wrapper)
+{
+    std::pair<JSValue, JSValue> wrapped;
+    PyType* type = wrapper->type();
+    if (type->isSubtypeOf(ioType(globalObject, IOType::TextIOWrapper)))
+        wrapped.first = textIOWrappedStream(wrapper);
+    else if (type->isSubtypeOf(ioType(globalObject, IOType::BufferedReader)) || type->isSubtypeOf(ioType(globalObject, IOType::BufferedWriter)) || type->isSubtypeOf(ioType(globalObject, IOType::BufferedRandom)))
+        wrapped.first = bufferedWrappedStream(wrapper);
+    else if (type->isSubtypeOf(ioType(globalObject, IOType::BufferedRWPair)))
+        wrapped = bufferedRWPairWrappedStreams(wrapper);
+    ioWrapperIsDone(globalObject, wrapped.first);
+    ioWrapperIsDone(globalObject, wrapped.second);
+}
+
+bool ioDidCloseWrapped(JSGlobalObject* globalObject, PyRecord* wrapper, bool hasRaised)
+{
+    if (getVM(globalObject).hasPendingTerminationException()) [[unlikely]]
+        return false;
+    ioDidClose(globalObject, wrapper);
+    if (hasRaised) [[unlikely]]
+        ioWrapperIsDoneWithAll(globalObject, wrapper);
+    return true;
+}
+
 static JSValue ioBaseDel(JSGlobalObject* globalObject, JSValue self)
 {
     Runtime& rt = runtime(globalObject);
@@ -739,21 +779,14 @@ static JSValue ioBaseDel(JSGlobalObject* globalObject, JSValue self)
             ioReportWhileFinalizing(globalObject, self);
     }
 
-    // If that has left what the stream wraps open, it is on its own again. (The host may have ended it, which waits.)
-    if (auto* record = PyRecord::tryFrom(self)) {
-        ExceptionSetAside suspended(globalObject);
-        std::pair<JSValue, JSValue> wrapped;
-        PyType* type = record->type();
-        if (type->isSubtypeOf(ioType(globalObject, IOType::TextIOWrapper)))
-            wrapped.first = textIOWrappedStream(record);
-        else if (type->isSubtypeOf(ioType(globalObject, IOType::BufferedReader)) || type->isSubtypeOf(ioType(globalObject, IOType::BufferedWriter)) || type->isSubtypeOf(ioType(globalObject, IOType::BufferedRandom)))
-            wrapped.first = bufferedWrappedStream(record);
-        else if (type->isSubtypeOf(ioType(globalObject, IOType::BufferedRWPair)))
-            wrapped = bufferedRWPairWrappedStreams(record);
-        for (JSValue stream : { wrapped.first, wrapped.second }) {
-            if (stream && !ioSaysItIsClosed(globalObject, stream, false))
-                ioDidUnwrap(globalObject, stream);
-        }
+    auto* record = PyRecord::tryFrom(self);
+    // The host has ended it, so it is still to be done: the collector finds the stream again, if the program goes on. Not if this was
+    // called by a __del__ of the program's, which is called once: then what it wraps is on its own.
+    if (record) {
+        if (vm.hasPendingTermination() && !ioHasOwnFinalizer(record->type())) [[unlikely]]
+            rt.registerFinalizable(record);
+        else
+            ioWrapperIsDoneWithAll(globalObject, record);
     }
     return scope.exception() ? JSValue() : jsUndefined();
 }
@@ -779,7 +812,7 @@ void ioFinalizeNow(JSGlobalObject* globalObject, PyRecord* stream)
         return;
     ExceptionSetAside suspended(globalObject);
     ioBaseDel(globalObject, stream);
-    if (vm.hasPendingTerminationException()) [[unlikely]]
+    if (vm.hasPendingTermination()) [[unlikely]]
         return;
     runtime(globalObject).unregisterFinalizable(stream);
 }

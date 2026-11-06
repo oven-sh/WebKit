@@ -823,8 +823,10 @@ static JSValue bufferedDeallocWarn(JSGlobalObject* globalObject, JSValue self, J
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     BufferedStream stream(globalObject, self);
     if (stream.s.isInitialized && stream.raw()) {
-        if (failed(scope, callMethod(globalObject, stream.raw(), ioName(globalObject, IOName::deallocWarn), source)))
+        if (failed(scope, callMethod(globalObject, stream.raw(), ioName(globalObject, IOName::deallocWarn), source))) {
             takePendingException(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
     }
     return jsUndefined();
 }
@@ -886,8 +888,10 @@ static JSValue bufferedClose(JSGlobalObject* globalObject, JSValue self)
     if (closed)
         return jsUndefined();
 
-    if (stream.s.finalizing)
+    if (stream.s.finalizing) {
         bufferedDeallocWarn(globalObject, self, self);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 
     // flush() takes the lock itself.
     lock.release();
@@ -905,8 +909,9 @@ static JSValue bufferedClose(JSGlobalObject* globalObject, JSValue self)
     else
         stream.checkInitialized();
     EXCEPTION_ASSERT(!!scope.exception() == !result);
+    if (!ioDidCloseWrapped(globalObject, stream.record, !result)) [[unlikely]]
+        return { };
     stream.record->set(stream.vm, BufferedBufferField, JSValue());
-    ioDidClose(globalObject, stream.record);
     scope.release();
     if (flushError) {
         ioChainExceptions(globalObject, flushError);
@@ -1523,7 +1528,8 @@ static JSValue bufferedRWPairClose(JSGlobalObject* globalObject, JSValue self)
     }
     JSValue result = bufferedRWPairForward(globalObject, self, BufferedRWPairReaderField, close, { });
     EXCEPTION_ASSERT(!!scope.exception() == !result);
-    ioDidClose(globalObject, PyRecord::from(self));
+    if (!ioDidCloseWrapped(globalObject, PyRecord::from(self), !result || writerError)) [[unlikely]]
+        return { };
     scope.release();
     if (writerError) {
         ioChainExceptions(globalObject, writerError);

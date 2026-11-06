@@ -1972,8 +1972,10 @@ static JSValue textIOClose(JSGlobalObject* globalObject, JSValue self)
         return jsUndefined();
 
     if (stream.s.finalizing) {
-        if (failed(scope, stream.callBuffer(stream.name(IOName::deallocWarn), self)))
+        if (failed(scope, stream.callBuffer(stream.name(IOName::deallocWarn), self))) {
             takePendingException(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
     }
     JSValue flushError;
     if (failed(scope, ioFlush(globalObject, self))) {
@@ -1982,7 +1984,8 @@ static JSValue textIOClose(JSGlobalObject* globalObject, JSValue self)
     }
     JSValue result = stream.callBuffer(runtime(globalObject).names.close());
     EXCEPTION_ASSERT(!!scope.exception() == !result);
-    ioDidClose(globalObject, stream.record);
+    if (!ioDidCloseWrapped(globalObject, stream.record, !result)) [[unlikely]]
+        return { };
     scope.release();
     if (flushError) {
         ioChainExceptions(globalObject, flushError);

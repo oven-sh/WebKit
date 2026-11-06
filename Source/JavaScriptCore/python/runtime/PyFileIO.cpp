@@ -7,6 +7,7 @@
 #include "PyIO.h"
 #include "PyPosix.h"
 
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "PyCodecs.h"
 #include "PyEventWait.h"
@@ -146,8 +147,12 @@ static int64_t fileIOSystemSeek(JSGlobalObject* globalObject, FileIOState& state
 }
 
 // False: an exception.
+// A termination may be pending, which has ended what the caller did before. Nothing is raised on top of it.
 static bool fileIOSystemClose(JSGlobalObject* globalObject, FileIOState& state)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    bool wasEnded = !!scope.exception();
+    scope.release();
     writeOutPendingOutput(globalObject);
     int fd = std::exchange(state.fd, -1);
     state.hasStat = false;
@@ -160,7 +165,8 @@ static bool fileIOSystemClose(JSGlobalObject* globalObject, FileIOState& state)
     }
     if (!result)
         return true;
-    fileIORaiseErrno(globalObject, errno);
+    if (!wasEnded) [[likely]]
+        fileIORaiseErrno(globalObject, errno);
     return false;
 }
 
@@ -367,15 +373,20 @@ static JSValue fileIOInit(JSGlobalObject* globalObject, JSValue self, const Call
             }
             if (isNone(opener)) {
                 state.fd = fileIOSystemOpen(globalObject, reinterpret_cast<const char*>(encodedName->data()), flags);
+                int error = errno;
+                // Before anything can go wrong: the host may end this at the next look.
+                fdIsOwn = state.fd >= 0;
                 RETURN_IF_EXCEPTION(scope, false);
                 if (state.fd < 0) {
-                    fileIORaiseErrno(globalObject, errno, nameObject);
+                    fileIORaiseErrno(globalObject, error, nameObject);
                     return false;
                 }
-                fdIsOwn = true;
             } else {
                 JSValue result = call(globalObject, opener, nameObject, jsNumber(flags));
-                RETURN_IF_EXCEPTION(scope, false);
+                // From here on the host does not end this before what the opener has opened is the file's. (It may have done so in the call, after
+                // the opener had returned: that looks once more. Then nobody has the descriptor.)
+                RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, false);
+                DeferTerminationForAWhile deferred(vm);
                 if (!isInt(result)) {
                     raiseTypeError(globalObject, scope, "expected integer from opener"_s);
                     return false;
@@ -468,15 +479,16 @@ static JSValue fileIOClose(JSGlobalObject* globalObject, JSValue self)
         scope.release();
         return result;
     }
+    // The descriptor is closed whatever has come of that, also if the host has ended it: by now _IOBase may say that the file is closed.
     JSValue error = baseFailed ? takePendingException(globalObject) : JSValue();
-    RETURN_IF_EXCEPTION(scope, { });
-    if (state.finalizing)
+    if (state.finalizing && !scope.exception())
         fileIODeallocWarn(globalObject, self, self);
-    bool closed = !failed(scope, fileIOSystemClose(globalObject, state));
+    fileIOSystemClose(globalObject, state);
+    bool hasFailed = !!scope.exception();
     ioDidClose(globalObject, file);
     ioChainExceptions(globalObject, error);
     scope.release();
-    return closed ? result : JSValue();
+    return hasFailed ? JSValue() : result;
 }
 
 // ---- What it can do ----

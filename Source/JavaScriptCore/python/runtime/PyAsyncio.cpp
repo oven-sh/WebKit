@@ -323,7 +323,7 @@ static ALWAYS_INLINE void finalizerHasSomethingToDo(JSGlobalObject* globalObject
     runtime(globalObject).registerFinalizable(future);
 }
 
-// loop.call_exception_handler(context). Never raises.
+// loop.call_exception_handler(context). What that raises is reported. Only a termination is left pending.
 static void callExceptionHandler(JSGlobalObject* globalObject, PyRecord* state, PyRecord* future, PyDict* context)
 {
     VM& vm = getVM(globalObject);
@@ -347,12 +347,21 @@ static JSValue futureDel(JSGlobalObject* globalObject, JSValue self)
         return jsUndefined();
     setFlag(future, FlagLogTraceback, false);
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* state = stateOf(future);
     PyDict* context = PyDict::create(globalObject);
     context->set(vm, nameIn(state, StateNameMessage), makeStr(vm, makeString(future->type()->name(), " exception was never retrieved"_s)));
     context->set(vm, nameIn(state, StateNameException), future->get(FutureException));
     context->set(vm, nameIn(state, StateNameFuture), future);
     callExceptionHandler(globalObject, state, future, context);
+    if (scope.exception()) [[unlikely]] {
+        // The host has ended it, so it is still to be said: the collector finds the future again, if the program goes on.
+        if (hasFinalizerOfModule(state, future)) {
+            setFlag(future, FlagLogTraceback, true);
+            finalizerHasSomethingToDo(globalObject, future);
+        }
+        return { };
+    }
     return jsUndefined();
 }
 
@@ -360,6 +369,7 @@ static JSValue taskDel(JSGlobalObject* globalObject, JSValue self)
 {
     PyRecord* task = recordOf(self);
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* state = stateOf(task);
     // What the handler is given may keep the task, which is then still scheduled.
     if (futureState(task) == StatePending && hasFlag(task, FlagLogDestroyPending) && isAlive(task)) {
@@ -367,8 +377,14 @@ static JSValue taskDel(JSGlobalObject* globalObject, JSValue self)
         context->set(vm, nameIn(state, StateNameMessage), makeStr(vm, "Task was destroyed but it is pending!"_s));
         context->set(vm, nameIn(state, StateNameTask), task);
         callExceptionHandler(globalObject, state, task, context);
+        if (scope.exception()) [[unlikely]] {
+            // As in futureDel().
+            if (hasFinalizerOfModule(state, task))
+                finalizerHasSomethingToDo(globalObject, task);
+            return { };
+        }
     }
-    return futureDel(globalObject, self);
+    RELEASE_AND_RETURN(scope, futureDel(globalObject, self));
 }
 
 // ---- Futures ----

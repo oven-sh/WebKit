@@ -199,6 +199,10 @@ void ioDidClose(JSGlobalObject*, PyRecord*);
 // `stream`, which may be any object, is or is no longer what another stream reads from and writes to.
 void ioDidWrap(JSGlobalObject*, JSValue stream);
 void ioDidUnwrap(JSGlobalObject*, JSValue stream);
+// For close() of a stream that wraps others, once it has called theirs, with what came of that still pending. False: the host has ended it. Then
+// the stream is still to be closed, and gives nothing up. Otherwise it is closed (ioDidClose()), and if theirs `hasRaised`, those that
+// are still open are on their own again.
+bool ioDidCloseWrapped(JSGlobalObject*, PyRecord* wrapper, bool hasRaised);
 // The stream that a BufferedReader and the like, or a TextIOWrapper, wraps. Empty: none.
 JSValue bufferedWrappedStream(PyRecord*);
 JSValue textIOWrappedStream(PyRecord*);

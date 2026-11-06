@@ -2062,9 +2062,13 @@ that run the tests on a debug build have the option on. What that takes:
   - Code of the program that is called where terminations are deferred (by the unwinder, while the interpreter starts):
     `TerminationNotDeferred`, or it cannot be ended.
   - A stream or a generator that nothing refers to any more is closed at once where the runtime can tell. Not while the host is
-    ending what runs here (`vm.hasPendingTermination()`): the collector finds it, if the program goes on.
+    ending what runs here (`vm.hasPendingTermination()`): the collector finds it, if the program goes on. So it does a stream whose
+    finalizer the host has ended, which is registered again (a file, a buffered or a text stream; an instance of a class that the
+    program derives from `io.RawIOBase` and the like is finalized once, as any instance is). A `close()` that the host ends in the
+    `close()` of what the stream wraps gives nothing up, so that it is whole when it is closed again.
   - What the runtime has taken apart for as long as it calls code of the program goes back together whatever ends the call (the items
     of a list that is being sorted): `ExceptionSetAside`, then `DeferTerminationForAWhile`.
+  - What has to be given back (a descriptor) belongs to its object before the next `RETURN_IF_EXCEPTION`, not after it.
   - No code of a frame that a termination leaves runs any more, not even the compiler's own. What that would have put back, the unwinder
     does: the exception that was being handled (`Runtime::handlersAreLeftByTermination()`).
 
