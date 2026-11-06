@@ -1921,12 +1921,14 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
         return takeBranch(globalObject, callFrame, pc, *monitor, *point);
     case CodeMonitor::Point::ShortWay::SayItIsAJump:
         m_comesFromSameLine = { };
+        m_jumpGoesOn = { };
         m_arrivesByJump = { callFrame, point->target };
         return { pc, point->opcode };
     case CodeMonitor::Point::ShortWay::ArriveByJump:
         if (m_arrivesByJump.callFrame != callFrame || m_arrivesByJump.offset != offset)
             break;
         m_comesFromSameLine = { };
+        m_jumpGoesOn = { };
         m_arrivesByJump = { };
         return { pc, point->opcode };
     }
@@ -1938,6 +1940,8 @@ Monitoring::Outcome Monitoring::takeBranch(JSGlobalObject* globalObject, CallFra
 {
     auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
     m_comesFromSameLine = { };
+    m_jumpGoesOn = { };
+    m_arrivesByJump = { };
     // What the branch calls may change what there is to know about the places in the code.
     unsigned offset = point.offset;
     unsigned next = point.next;
