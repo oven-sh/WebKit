@@ -2738,53 +2738,10 @@ static JSC_DECLARE_HOST_FUNCTION(importByKeyBehindFactories);
 
 static JSC_DECLARE_HOST_FUNCTION(continueImportWithModuleItself);
 
-static JSC_DECLARE_HOST_FUNCTION(goOnWithImportOfMockedModule);
-
-JSC_DEFINE_HOST_FUNCTION(goOnWithImportOfMockedModule, (JSGlobalObject* realm, CallFrame* callFrame))
-{
-    modulesOf(realm)->goOnWithImportOfMockedModule(asArray(callFrame->argument(1)));
-    return JSValue::encode(jsUndefined());
-}
-
-void Modules::goOnWithImportOfMockedModule(JSArray* heldCall)
-{
-    VM& vm = *m_instance.vm;
-    JSGlobalObject* realm = m_instance.globalObject;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t jobsLeft = heldCall->getIndexQuickly(0).asUInt32();
-    if (jobsLeft) {
-        heldCall->setIndexQuickly(vm, 0, jsNumber(jobsLeft - 1));
-        JSPromise* fulfilled = JSPromise::create(vm, realm->promiseStructure());
-        fulfilled->fulfill(vm, jsUndefined());
-        JSFunction* goOn = JSFunction::create(vm, realm, 2, String(), JSC::AOT::goOnWithImportOfMockedModule, ImplementationVisibility::Private);
-        fulfilled->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), jsUndefined(), heldCall);
-        return;
-    }
-    m_importOfMockedModuleHasComeToItsJob = true;
-    JSValue referrer = heldCall->getIndexQuickly(2);
-    JSPromise* loaded = import(ModuleID(heldCall->getIndexQuickly(1).asUInt32()), referrer.isUndefined() ? ModuleID() : ModuleID(referrer.asUInt32()));
-    RETURN_IF_EXCEPTION(scope, void());
-    uncheckedDowncast<JSPromise>(heldCall->getIndexQuickly(3))->pipeFrom(vm, loaded);
-}
-
 JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-
-    if (!std::exchange(m_importOfMockedModuleHasComeToItsJob, false) && (m_modulesWithMockToRun.get(module.index()) || m_modulesWithMockToRun.get(fileOf(module).index())) && !m_modulesWithMockThatAsksAgain.get(module.index()) && !m_modulesWithMockThatAsksAgain.get(fileOf(module).index()) && options.isUndefined() && !m_instance.vm->synchronousModuleQueue()) [[unlikely]] {
-        JSPromise* promise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
-        MarkedArgumentBuffer call;
-        call.append(jsNumber(3));
-        call.append(jsNumber(module.index()));
-        call.append(referrer ? jsNumber(referrer.index()) : jsUndefined());
-        call.append(promise);
-        JSArray* heldCall = constructArray(realm, static_cast<JSC::ArrayAllocationProfile*>(nullptr), call);
-        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-        scope.release();
-        goOnWithImportOfMockedModule(heldCall);
-        return promise;
-    }
 
     bool isMadeByOwnFactory = isAskedForByOwnFactory(module);
     if (m_mocks) [[unlikely]]

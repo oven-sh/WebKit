@@ -717,8 +717,6 @@ public:
     JSValue resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSpecifierForm);
 
     JSPromise* import(ModuleID, ModuleID referrer, JSValue options = jsUndefined());
-    void goOnWithImportOfMockedModule(JSArray* heldCall);
-    bool m_importOfMockedModuleHasComeToItsJob { false };
     enum class ImportCaller : bool { CompiledCode, Host };
     enum class TextOfImport : bool { MayComeLater, HasCome };
     JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode, TextOfImport = TextOfImport::MayComeLater, JSPromise* promiseOfCaller = nullptr, JSValue stateOfWait = JSValue(), std::optional<bool> answerOfWalkAlreadyMade = std::nullopt);
