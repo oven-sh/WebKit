@@ -1508,8 +1508,12 @@ JSValue Monitoring::callWhileTracing(JSGlobalObject* globalObject, CallFrame* ca
     JSValue result = call(globalObject, function, arguments);
     EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !result);
     --m_runtime.tracingDepth;
-    if (PyFrame* frame = frameObjectIfThereIsOne(callFrame))
+    if (PyFrame* frame = frameObjectIfThereIsOne(callFrame)) {
         frame->shownLine = frame->shownOffset = -1;
+        // It has said where the frame is to go on (frame.f_lineno = n) and then raised: the exception is raised where the frame is.
+        if (!result)
+            frame->jumpTarget = std::nullopt;
+    }
     if (monitor) {
         m_codeLeftAlone = nullptr;
         if (!monitor->isAwake())
@@ -1985,6 +1989,10 @@ Monitoring::Outcome Monitoring::takeBranch(JSGlobalObject* globalObject, CallFra
     if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::BranchRight, tools, jsNumber(shownOffset(shownTarget)))))
         return { nullptr, 0 };
     // As in handle().
+    if (PyFrame* frame = frameObjectIfThereIsOne(callFrame); frame && frame->jumpTarget) {
+        frame->jumpedTo = std::exchange(frame->jumpTarget, std::nullopt);
+        return { reinterpret_cast<const JSInstruction*>(monitor.instructions() + *frame->jumpedTo), goOn };
+    }
     if (auto* other = shownTarget != target ? monitor.pointAt(target) : nullptr; other && other->isPatched && isJump(static_cast<OpcodeID>(other->opcode)))
         m_jumpGoesOn = { callFrame, target };
     return { whereItJumps, goOn };
@@ -1996,6 +2004,9 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     // A tool is shown the first argument of a call, and can assign to the variables of the frame.
     m_runtime.forgetOwnedTemporaries();
+    // (Assigned where nobody looks at it: lineOfSendIsToldOfAgain().)
+    if (PyFrame* frame = frameObjectIfThereIsOne(callFrame))
+        frame->jumpTarget = std::nullopt;
     CodeBlock* codeBlock = callFrame->codeBlock();
     unsigned offset = point->offset;
     auto at = [&](unsigned where) { return reinterpret_cast<const JSInstruction*>(monitor.instructions() + where); };
@@ -2029,7 +2040,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
     auto wantedWhenCallEnds = [&](uint8_t told) -> uint8_t {
         return monitor.hadEventWithSeveralTools() ? wanted(Event::Call) : told & monitor.tools(Event::Call);
     };
-    // frame.f_lineno = line, in a trace function
+    // frame.f_lineno = line, in a trace function. It is looked at behind every event at which that can be assigned to, or the frame would go there at some later event, from
+    // another place than the one it was allowed from.
     auto jumped = [&](Outcome& outcome) {
         PyFrame* frame = frameObjectIfThereIsOne(callFrame);
         if (!frame || !frame->jumpTarget)
@@ -2059,6 +2071,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         if (failed(scope, fire(globalObject, callFrame, monitor, source, event, monitor.tools(event) & ~branch->disabledTools[event], jsNumber(shownOffset(shownDestination)))))
             return threw;
         setCurrentOffset(offset);
+        if (jumped(elsewhere))
+            return elsewhere;
         // This is a jump, then, which is not told of: CPython's compiler has the branch go where it goes.
         if (shownDestination != offset)
             jumpIsToldOfAlready = true;
@@ -2306,6 +2320,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         unsigned event = kinds & bit(Event::BranchLeft) ? Event::BranchLeft : Event::BranchRight;
         if (failed(scope, fire(globalObject, callFrame, monitor, offset, event, wanted(event), jsNumber(shownOffset(shownTarget)), { }, event == Event::BranchRight ? source : offset)))
             return threw;
+        if (jumped(elsewhere))
+            return elsewhere;
         return runIt;
     }
 
@@ -2410,6 +2426,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             shownDestination = whereItGoesOnInItself(shownDestination);
         if (failed(scope, fire(globalObject, callFrame, monitor, offset, event, wantedHere(event), jsNumber(shownOffset(shownDestination)))))
             return threw;
+        if (jumped(elsewhere))
+            return elsewhere;
         if (event == Event::BranchRight) {
             if (!tellOfLineAt(target, elsewhere))
                 return elsewhere;
@@ -2774,7 +2792,8 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
 
     // Where the frame is: at the mark for the line it is being told of, or else past all those of the instruction. A jump tells of the line that begins where it
     // leads: then the frame is there, as far as anybody can tell, and has left what the jump leaves.
-    unsigned offset = callFrame->bytecodeIndex().offset();
+    // (Or where it has just been sent, by the same callback.)
+    unsigned offset = frame->jumpTarget ? *frame->jumpTarget : callFrame->bytecodeIndex().offset();
     if (m_runtime.tracedEvent == Event::Line && m_runtime.tracedOffset >= 0) {
         unsigned lines = 0;
         unsigned last = std::numeric_limits<unsigned>::max();
