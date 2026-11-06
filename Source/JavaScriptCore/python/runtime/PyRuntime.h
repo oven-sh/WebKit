@@ -693,7 +693,7 @@ public:
     // Nobody asked for those calls, and the frame is of the code that happened to run when their time came. It has not called them,
     // and what they do is not laid at its door (PyWarnings.cpp).
     bool wasInterruptedByPendingCalls(CallFrame* callFrame) const { return m_stackWhereUnaskedCallsBegan && static_cast<void*>(callFrame) > m_stackWhereUnaskedCallsBegan; }
-    // gc.collect() in one of those calls: there is a collection when all that are queued have been made.
+    // gc.collect() in one of those calls, unless that is one of gc.callbacks (see below): there is a collection when all that are queued have been made.
     void collectAfterPendingCalls() { m_shouldCollectAfterPendingCalls = true; }
     // This thread is telling gc.callbacks of a collection of the engine's own, and is in one of them. (A callback may let go of the GIL: this goes with the thread, like isRunningPendingCalls().)
     bool isCallingCollectionCallbacks() const { return m_isCallingCollectionCallbacks; }
