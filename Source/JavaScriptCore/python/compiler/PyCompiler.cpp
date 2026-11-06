@@ -1791,7 +1791,12 @@ void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& su
 
 void Unit::statements(Seq<Stmt*> body, unsigned first, const Last& isLast)
 {
-    StatementsAfter after { body, first, isLast, static_cast<unsigned>(m_blocks.size()), m_statementsAfter, std::exchange(m_statementsEndWhereStatementEnds, false) };
+    // (The arms of a chain of `elif` are statements in statements, and all end where the first `if` does.)
+    const StatementsAfter* enclosing = m_statementsAfter;
+    bool endWhereStatementEnds = std::exchange(m_statementsEndWhereStatementEnds, false);
+    while (endWhereStatementEnds && enclosing && enclosing->isWhereEnclosingEnds())
+        enclosing = enclosing->enclosing;
+    StatementsAfter after { body, first, isLast, static_cast<unsigned>(m_blocks.size()), enclosing, endWhereStatementEnds };
     SetForScope statementsAfter(m_statementsAfter, &after);
     const Last notLast;
     for (unsigned i = first; i < body.size(); ++i) {

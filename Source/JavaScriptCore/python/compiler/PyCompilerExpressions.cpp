@@ -1065,9 +1065,23 @@ unsigned Unit::instructionsOnTheWayOut(bool withValue, unsigned firstBlock, unsi
 }
 
 // From there on, to where the function ends.
-unsigned Unit::instructionsUntilFunctionEnds(const StatementsAfter& after, ComesFirst comesFirst)
+bool Unit::StatementsAfter::isWhereEnclosingEnds() const
 {
-    auto& [body, first, isLast, blockCount, enclosing, endsWhereEnclosingEnds, instructionsBefore] = after;
+    if (instructionsBefore || isLast || !enclosing || !endsWhereEnclosingEnds)
+        return false;
+    for (unsigned i = first; i < body.size(); ++i) {
+        if (body[i]->kind != StmtKind::Global && body[i]->kind != StmtKind::Nonlocal)
+            return false;
+    }
+    return true;
+}
+
+unsigned Unit::instructionsUntilFunctionEnds(const StatementsAfter& given, ComesFirst comesFirst)
+{
+    const StatementsAfter* after = &given;
+    while (comesFirst == ComesFirst::Nothing && after->isWhereEnclosingEnds())
+        after = after->enclosing;
+    auto& [body, first, isLast, blockCount, enclosing, endsWhereEnclosingEnds, instructionsBefore] = *after;
     unsigned count = instructionsBefore;
     for (unsigned i = first; i < body.size() && count < tooManyToCopy; ++i) {
         Stmt* node = body[i];
@@ -1115,9 +1129,6 @@ unsigned Unit::instructionsUntilFunctionEnds(const StatementsAfter& after, Comes
             return tooManyToCopy;
         }
     }
-    // It is where the statement ends that these are part of.
-    if (comesFirst == ComesFirst::Nothing && !count && !isLast && enclosing && endsWhereEnclosingEnds)
-        return instructionsUntilFunctionEnds(*enclosing, comesFirst);
     // (The body of a class ends in more than a `return`.)
     if (count >= tooManyToCopy || isLast.kind != Last::OfFunction || isLast.exception || m_kind == UnitKind::Class)
         return tooManyToCopy;

@@ -556,6 +556,8 @@ private:
         // Where the last of them ends, the other statement ends: the statements of an `if` without `else`, those of an `else`.
         bool endsWhereEnclosingEnds { false };
         unsigned instructionsBefore { 0 }; // What CPython's compiler has in front of them: see endOfProtectedStatements().
+        // There are none: it is where the statement ends that they would be part of, and what comes after that comes next.
+        bool isWhereEnclosingEnds() const;
     };
     enum class ComesFirst : bool { PartOfStatement, Nothing };
     unsigned instructionsUntilFunctionEnds(const StatementsAfter&, ComesFirst);
