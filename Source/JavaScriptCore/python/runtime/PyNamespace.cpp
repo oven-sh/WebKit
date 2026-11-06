@@ -173,16 +173,6 @@ static JSValue namespaceNew(JSGlobalObject* globalObject, JSValue cls, const Cal
     return namespaceCreate(globalObject, PyType::from(cls));
 }
 
-// The keyword arguments of the call become attributes.
-static bool namespaceAddKeywords(JSGlobalObject* globalObject, PyDict* dict, const CallArgs& args)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    addKeywordsTo(globalObject, dict, args);
-    RETURN_IF_EXCEPTION(scope, false);
-    return true;
-}
-
 // SimpleNamespace(mapping_or_iterable=(), /, **kwargs)
 static JSValue namespaceInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
@@ -290,8 +280,8 @@ static JSValue namespaceReplace(JSGlobalObject* globalObject, JSValue self, cons
     PyDict* dict = namespaceDict(globalObject, result);
     dictUpdate(globalObject, dict, namespaceDict(globalObject, self));
     RETURN_IF_EXCEPTION(scope, { });
-    if (failed(scope, namespaceAddKeywords(globalObject, dict, args)))
-        return { };
+    addKeywordsTo(globalObject, dict, args);
+    RETURN_IF_EXCEPTION(scope, { });
     return result;
 }
 

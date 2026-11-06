@@ -149,8 +149,6 @@ public:
     PyDict* ensureDict(JSGlobalObject*);
     // obj.__dict__ = dict
     void setDict(JSGlobalObject*, PyDict*);
-    // For an object whose attributes are in a dict already. Null: for now it has none.
-    void replaceDict(VM&, PyDict*);
 
     // The name is not a rope. These look no further than the object.
     JSValue getAttribute(VM&, JSString* name); // Empty: it has none of that name.

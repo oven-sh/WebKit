@@ -286,11 +286,6 @@ void PyInstance::setDict(JSGlobalObject* globalObject, PyDict* dict)
     m_dict.set(getVM(globalObject), this, dict);
 }
 
-void PyInstance::replaceDict(VM& vm, PyDict* dict)
-{
-    m_dict.setMayBeNull(vm, this, dict);
-}
-
 template<typename Visitor>
 void PyInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
