@@ -873,6 +873,7 @@ JSArray* Object::tryCreateKeysArrayWithExtraProperties(JSGlobalObject* globalObj
     auto values = list->butterfly()->contiguous();
     for (unsigned index = 0; index < length; ++index)
         values.at(list, index).setWithoutWriteBarrier(keys->get(index));
+    vm.mutatorFence();
     return list;
 }
 

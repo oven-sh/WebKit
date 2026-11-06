@@ -110,6 +110,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTOpenIteration, JSCell*, (Instance* instance
     storeWordOfStraightState(state, WordOfStraightIteration::Iterator, iterator);
     storeWordOfStraightState(state, WordOfStraightIteration::Next, next);
     storeWordOfStraightState(state, WordOfStraightIteration::IsDone, jsBoolean(false));
+    vm.mutatorFence();
     OPERATION_RETURN(scope, state);
 }
 
@@ -163,6 +164,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTOpenEnumeration, JSCell*, (Instance* instan
     SavedFrame* state = SavedFrame::createHeapFrame(vm, *instance, numberOfWordsOfStraightEnumeration, nullptr);
     storeWordOfStraightState(state, WordOfStraightEnumeration::Enumerator, enumerator);
     storeWordOfStraightState(state, WordOfStraightEnumeration::Position, jsNumber(0));
+    vm.mutatorFence();
     OPERATION_RETURN(scope, state);
 }
 

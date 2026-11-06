@@ -178,6 +178,7 @@ SavedFrame* SavedFrame::createHeapFrame(VM& vm, Instance& instance, size_t numbe
     std::ranges::fill(std::span { saved->words(), numberOfWords }, 0);
     saved->m_resumeAddress = resumeAddress;
     saved->m_flags = isHeapFrameFlag;
+    vm.mutatorFence();
     return saved;
 }
 

@@ -121,6 +121,7 @@ static ClonedArguments* tryCreateArgumentsFast(Instance* instance, const Argumen
         for (uint32_t i = 0; i < restLength; ++i)
             elements.atUnsafe(source.numberInFrame + i).setWithoutWriteBarrier(rest[i].get());
     }
+    vm.mutatorFence();
     return result;
 }
 

@@ -840,6 +840,7 @@ void Object::setExtraProperties(VM& vm, JSObject* extra, CompiledStructure* with
 {
     ASSERT(!hasExtraProperties() && withExtraProperties->hasExtraProperties());
     ASSERT(layout().extraPropertiesSlot() || withExtraProperties->heldExtraProperties() == extra);
+    vm.mutatorFence();
     writeExtraPropertiesWord(*this, extra);
     vm.mutatorFence();
     at<uint32_t>(offsetOfOrderWord) |= orderWordHasExtraProperties;

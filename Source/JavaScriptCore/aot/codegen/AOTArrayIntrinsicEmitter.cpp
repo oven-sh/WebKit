@@ -225,9 +225,13 @@ void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArraySt
     ValueID stored = value->valueOperand();
     Operand rawElement = generator().getIn(stored, form.element);
     ArrayElements storage = elements().elementsOf(value, array);
-    elements().storeRawElement(form, storage, positionThatLibraryVouchesFor(value, storage, form, AccessVouchedFor::Writes), rawElement);
-    if (form.holdsCells)
-        barrierAfterStore(value, array, typeOf(stored));
+    Integer position = positionThatLibraryVouchesFor(value, storage, form, AccessVouchedFor::Writes);
+    if (!form.holdsCells) {
+        elements().storeRawElement(form, storage, position, rawElement);
+        return;
+    }
+    m_out.store64(rawElement.as<Boxed>().value(), elements().elementOfUnknownForm(storage, position));
+    barrierAfterStore(value, array, typeOf(stored));
 }
 
 const ArrayStorageForm& ArrayIntrinsicEmitter::formToConstruct(const ValueContext& value) const

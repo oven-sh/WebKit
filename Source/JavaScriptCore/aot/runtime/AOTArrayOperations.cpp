@@ -264,6 +264,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uin
         if (JSArray* array = vectorLength <= maxHoleArrayCapacity ? tryCreateArrayWithStorage(vm, structure, count, vectorLength) : nullptr) {
             for (uint32_t i = 0; i < count; ++i)
                 array->butterfly()->contiguous().atUnsafe(i).setWithoutWriteBarrier(valueAt(i));
+            vm.mutatorFence();
             instance->findMissingShortArrayAllocator(vectorLength);
             OPERATION_RETURN(scope, array);
         }
@@ -431,6 +432,7 @@ static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* arra
     if (!result)
         return nullptr;
     std::copy_n(array->butterfly()->indexingPayload<uint64_t>() + from, count, result->butterfly()->indexingPayload<uint64_t>());
+    vm.mutatorFence();
     ensureStillAliveHere(array);
     return result;
 }

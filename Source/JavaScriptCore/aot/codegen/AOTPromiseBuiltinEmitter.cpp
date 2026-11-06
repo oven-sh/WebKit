@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBarrierEmitter.h"
 #include "AOTGuardEmitter.h"
 #include "AOTPromiseIntrinsicEmitter.h"
 #include "AOTTypeArena.h"
@@ -24,9 +25,12 @@ void PromiseBuiltinEmitter::generatePromiseResolve(const InlineCall& call)
 {
     PromiseIntrinsicEmitter& promises = emitter<PromiseIntrinsicEmitter>();
     Boxed resolution = argumentOrUndefined(call, 0);
+    ValueID fulfillment = call.argumentOrNull(0);
     auto newFulfilledPromise = [&] {
         CellPointer promise = promises.newPromise(call.context());
         promises.fulfillWithoutBarrier(promise, resolution);
+        if (fulfillment && typeOf(fulfillment).hasCells())
+            emitter<BarrierEmitter>().fenceAfterInitialization();
         return promise;
     };
     if (!call.canMiss()) {
