@@ -1688,7 +1688,8 @@ The collector is told the size of the side tables, which are several times the s
   (`ExitStack.push(f)` takes a function without one for a callback). So `hasattr(o, "__enter__")` is false, and `ExitStack.enter_context(o)`, which looks in
   the class, does not take it: `stack.callback(o[js.Symbol.dispose].bind(o))`. (A decision that can still be changed.)
   `vars(object)` and `object.__dict__` are the object itself, so `functools.wraps(f)` takes a function of JS for the wrapper. Where its items are not its
-  properties (what JS iterates over, a `WeakMap`, a `WeakSet`: `itemsAreProperties`) they are the mapping of its own properties, `_js.JSProperties`, see below.
+  properties (what JS iterates over, a `WeakMap`, a `WeakSet`: `itemsAreProperties`) they are the mapping of its own properties, `_js.JSProperties`, see below. So they are where
+  it would take a getter for `Symbol.iterator` to tell: to read `__dict__` runs none and raises nothing. (A `Proxy` is asked, as every read of an attribute of one runs its traps.)
 - A function that is read off an object is bound to it, so `f = o.method; f()` works as it does in Python. It is one bound function for
   each object and function, remembered weakly (`bindIfFunction`): `o.method is o.method`, and `emitter.off(name, o.method)` finds what
   `on()` was given. It is bound as `Function.prototype.bind()` binds it, so it has the `name` and `length` that gives (`bindToObject`): they are asked for at once of what

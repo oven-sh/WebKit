@@ -85,8 +85,10 @@ static Inquiry inquireOwnProperty(JSGlobalObject* globalObject, JSObject* object
     if (!isStored && structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(name))
         return Inquiry::NeedsCode;
     auto lookUp = object->methodTable()->getOwnPropertySlot;
-    // A typed array has a way of its own for its elements alone.
+    // A typed array has a way of its own for its elements alone, and the prototype that a class of Python's is to JS for names alone.
     if (isTypedArrayType(object->type()) && (name.isSymbol() || !isCanonicalNumericIndexString(name.uid())))
+        lookUp = JSObject::getOwnPropertySlot;
+    if (name.isSymbol() && object->classInfo() == PyPrototypeView::info())
         lookUp = JSObject::getOwnPropertySlot;
     bool isNamespace = lookUp == JSModuleNamespaceObject::getOwnPropertySlot;
     if (lookUp == JSFunction::info()->methodTable.getOwnPropertySlot) {
@@ -642,20 +644,88 @@ static JSValue raiseNotIterable(JSGlobalObject* globalObject, ThrowScope& scope,
     return raiseTypeError(globalObject, scope, '\'', typeName(globalObject, object), "' object is not iterable"_s);
 }
 
-// Whether iterating over the object gives the names of its properties, and object[name] their values.
+// What the object has under the name, if that can be told without running code of the program's. As inquireProperty(), but that on the main
+// thread what the host makes when it is first asked for is made, and that what the classes of Python's have is looked at as it is in them.
+// (What goes wrong in the host is thrown.)
+static Inquiry inquirePropertyOfHost(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue& value)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    bool isMainThread = rt.threads().isMainThread();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Most objects show all there is to who only looks.
+    if (isMainThread) [[likely]] {
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool found = object->getPropertySlot(globalObject, name, slot);
+        scope.assertNoException();
+        if (!slot.isTaintedByOpaqueObject()) [[likely]] {
+            if (!found)
+                return Inquiry::Absent;
+            if (!slot.isValue())
+                return Inquiry::NeedsCode;
+            value = slot.getValue(globalObject, name);
+            scope.assertNoException();
+            return Inquiry::Value;
+        }
+    }
+    for (JSObject* holder = object;;) {
+        if (auto* proxy = dynamicDowncast<JSGlobalProxy>(holder))
+            holder = proxy->target();
+        if (auto* view = holder->classInfo() == PyPrototypeView::info() ? uncheckedDowncast<PyPrototypeView>(holder) : nullptr; view && !name.isSymbol()) {
+            // A function is a method, whoever wrote it, and so is what staticmethod() and classmethod() have. Anything else may be a descriptor,
+            // which would have to be asked.
+            if (JSValue found = lookupBeforeClassOfJS(view->type(), internString(vm, String(name.uid())))) {
+                value = found;
+                PyType* type = rt.typeOf(found);
+                bool isMethod = PyFunction::is(found) || PyNativeFunction::is(found) || type == rt.jsFunctionType() || type == jsMethodType(rt) || type == rt.staticmethodType() || type == rt.classmethodType();
+                return isMethod ? Inquiry::Value : Inquiry::NeedsCode;
+            }
+            while (holder->classInfo() == PyPrototypeView::info() && holder->getPrototypeDirect().isObject())
+                holder = asObject(holder->getPrototypeDirect());
+        }
+        // (What is Python's answers with its attributes.)
+        if (holder->type() == ProxyObjectType || holder->structure()->typeInfo().overridesGetPrototype() || (propertiesArePythons(holder) && !name.isSymbol()))
+            return Inquiry::NeedsCode;
+        if (!isMainThread) [[unlikely]] {
+            if (Inquiry result = inquireOwnProperty(globalObject, holder, name, value); result != Inquiry::Absent)
+                return result;
+        } else {
+            PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool found = holder->methodTable()->getOwnPropertySlot(holder, globalObject, name, slot);
+            RETURN_IF_EXCEPTION(scope, Inquiry::NeedsCode);
+            if (found) {
+                if (!slot.isValue())
+                    return Inquiry::NeedsCode;
+                value = slot.getValue(globalObject, name);
+                scope.assertNoException();
+                return Inquiry::Value;
+            }
+        }
+        JSValue prototype = holder->getPrototypeDirect();
+        if (!prototype.isObject())
+            return Inquiry::Absent;
+        holder = asObject(prototype);
+    }
+}
+
+// Whether iterating over the object gives the names of its properties, and object[name] their values. For who reads object.__dict__, which is
+// to run nothing that the read of an attribute does not run: where it would take a getter to tell, no. (A proxy is asked: every read of
+// an attribute of one runs its traps.)
 static bool itemsAreProperties(JSGlobalObject* globalObject, JSObject* object)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSType type = object->type(); type == JSMapType || type == JSSetType || isWeakCollection(object) || isTypedArrayType(type))
         return false;
-    if (runtime(globalObject).threads().isMainThread()) [[likely]]
-        RELEASE_AND_RETURN(scope, !hasIteratorMethod(globalObject, object));
     JSValue method;
-    Inquiry result = inquireProperty(globalObject, object, vm.propertyNames->iteratorSymbol, method);
-    if (result == Inquiry::NeedsCode)
-        RELEASE_AND_RETURN(scope, ensureMainThreadForJS(globalObject));
-    return result == Inquiry::Absent || method.isUndefinedOrNull();
+    Inquiry result = inquirePropertyOfHost(globalObject, object, vm.propertyNames->iteratorSymbol, method);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (result == Inquiry::NeedsCode && object->type() == ProxyObjectType && runtime(globalObject).threads().isMainThread()) {
+        method = object->get(globalObject, vm.propertyNames->iteratorSymbol);
+        RETURN_IF_EXCEPTION(scope, false);
+        result = Inquiry::Value;
+    }
+    return result == Inquiry::Absent || (result == Inquiry::Value && method.isUndefinedOrNull());
 }
 
 // Whether object[key] goes by its methods: a mapping by its methods, or a WeakMap, which is one that cannot be iterated over.
