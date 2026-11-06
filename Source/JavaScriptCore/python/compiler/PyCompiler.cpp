@@ -26,6 +26,7 @@ namespace Python {
 using namespace AST;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CodeInfo);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Unit);
 
 // ---- Compiler ----
 
@@ -349,28 +350,29 @@ UnlinkedFunctionExecutable* Compiler::compileCodeAnew(Unit* parent, const CodeSp
 
     if (!scope->isGenerator && !scope->isCoroutine) {
         return generate(parentSource, source, SourceParseMode::MethodMode, info.copyRef(), parameterCount, false, [&](BytecodeGenerator& generator) {
-            Unit unit(*this, parent, spec, generator, info.get(), source, Unit::Part::Whole);
-            unit.emitPrologue();
-            emitBody(unit);
-            unit.finishConstants();
-            unit.finishVariables();
+            // (Not on the stack: functions are compiled in functions.)
+            auto unit = makeUnique<Unit>(*this, parent, spec, generator, info.get(), source, Unit::Part::Whole);
+            unit->emitPrologue();
+            emitBody(*unit);
+            unit->finishConstants();
+            unit->finishVariables();
         });
     }
 
     return generate(parentSource, source, SourceParseMode::MethodMode, info.copyRef(), parameterCount, false, [&](BytecodeGenerator& generator) {
-        Unit binder(*this, parent, spec, generator, info.get(), source, Unit::Part::GeneratorBinder);
-        binder.emitPrologue();
+        auto binder = makeUnique<Unit>(*this, parent, spec, generator, info.get(), source, Unit::Part::GeneratorBinder);
+        binder->emitPrologue();
         unsigned slotCount = 0;
         auto* body = generate(source, source, SourceParseMode::GeneratorBodyMode, info.copyRef(), static_cast<unsigned>(JSGenerator::Argument::Frame), true, [&](BytecodeGenerator& bodyGenerator) {
-            Unit unit(*this, parent, spec, bodyGenerator, info.get(), source, Unit::Part::GeneratorBody);
-            unit.emitPrologue();
-            emitBody(unit);
-            unit.finishConstants();
-            unit.finishVariables();
+            auto unit = makeUnique<Unit>(*this, parent, spec, bodyGenerator, info.get(), source, Unit::Part::GeneratorBody);
+            unit->emitPrologue();
+            emitBody(*unit);
+            unit->finishConstants();
+            unit->finishVariables();
         }, &slotCount);
         unsigned index = generator.addPythonFunction(body);
         ASSERT_UNUSED(index, index == CodeInfo::generatorBodyIndex);
-        binder.emitMakeGenerator(slotCount);
+        binder->emitMakeGenerator(slotCount);
     });
 }
 

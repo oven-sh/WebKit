@@ -80,6 +80,7 @@ inline constexpr Last notLast { };
 // An error does not stop it there and then: the first is kept, the code that comes out is thrown away, and what is emitted after one
 // only has to be well formed. No more statements are compiled.
 class Unit {
+    WTF_MAKE_TZONE_ALLOCATED(Unit);
     WTF_MAKE_NONCOPYABLE(Unit);
 public:
     using Reg = RefPtr<RegisterID>;
