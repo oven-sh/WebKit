@@ -114,8 +114,8 @@ public:
     void compileModule(AST::Mod*);
     void compileFunctionBody(Seq<Stmt*>);
     void compileClassBody(AST::ClassDef*, int firstLineNumber);
-    void statements(Seq<Stmt*>, unsigned first = 0, Last = { });
-    void statement(Stmt*);
+    void statements(Seq<Stmt*>, unsigned first = 0, const Last& = { });
+    void statement(Stmt*, const Last&);
 
     // ---- Expressions ----
 
@@ -283,24 +283,24 @@ private:
         size_t position = g.instructions().size();
         return m_whereBranchOfConstantLeads == position || (m_targetOfJumpOfConstant && !m_targetOfJumpOfConstant->isForward() && m_targetOfJumpOfConstant->location() == position);
     }
-    void leaveStatement(Label& end, Last, JumpIs);
-    void endOfStatement(Label& end, Last = { }, int lineOfBranch = 0);
+    void leaveStatement(Label& end, const Last&, JumpIs);
+    void endOfStatement(Label& end, const Last& = { }, int lineOfBranch = 0);
     bool cannotGetHere();
-    void emitImplicitReturn(Last, const Range& = { });
+    void emitImplicitReturn(const Last&, const Range& = { });
     void emitImplicitContinue(unsigned loop, const Range& = { });
     void emitImplicitJump(Last, const Range& = { });
-    void leave(Last, const Range& = { });
-    Last lastBeforeJump(Label&, Last, JumpIs, unsigned instructions = 1);
+    void leave(const Last&, const Range& = { });
+    Last lastBeforeJump(Label&, const Last&, JumpIs, unsigned instructions = 1);
     bool isReplacedByCopy(const Last&, unsigned* jumpItStaysInFrontOf = nullptr);
     // Jumps that lead to a jump and stay what they are: isReplacedByCopy() has found one that they stay in front of. Where they are; or, of one that goes further
     // here than it does in CPython, where the jump leads that it stays in front of there.
     Vector<unsigned, 4> m_jumpsThatStay;
     Vector<Label*, 4> m_targetsOfJumpsStillJumpedTo;
-    Label* targetReplacedByCopy(Label& end, Last);
+    Label* targetReplacedByCopy(Label& end, const Last&);
     Label* m_targetReplacedByCopy { nullptr };
-    bool canBranchTo(Last);
-    void jumpIfOrLeave(Expr* test, Label& target, Last, ReturnsByLine&, bool condition = false);
-    void emitReturnsByLine(ReturnsByLine&, Last);
+    bool canBranchTo(const Last&);
+    void jumpIfOrLeave(Expr* test, Label& target, const Last&, ReturnsByLine&, bool condition = false);
+    void emitReturnsByLine(ReturnsByLine&, const Last&);
     Label& labelForLine(ReturnsByLine&, int lineno, const Range& place = { });
     ReturnsByLine* m_endsOfClassBody { nullptr };
     Label& endOfClassBodyForLine(int lineno);
@@ -317,7 +317,7 @@ private:
     BranchTarget m_branchTarget;
     Last m_leavingAs { }; // Blocks are being left by a `return` or a `continue`, or as if by one. OfFunction:
     RegisterID* m_valueToReturn { nullptr }; // with this. Null: None.
-    void lineOfImplicitReturn(int lineno, Last);
+    void lineOfImplicitReturn(int lineno, const Last&);
     // What is emitted meanwhile goes with the line before it, whatever loc() and line() are given.
     class SameLine {
         WTF_MAKE_NONCOPYABLE(SameLine);
@@ -475,24 +475,24 @@ private:
     void augmentedAssign(AST::AugAssign*);
     void annotatedAssign(AST::AnnAssign*);
     void checkAnnotationTarget(Expr*);
-    void ifStatement(AST::If*, Last);
-    void whileLoop(AST::While*, Last);
-    void forLoop(AST::For*, Last);
-    void asyncForLoop(AST::For*, Last);
+    void ifStatement(AST::If*, const Last&);
+    void whileLoop(AST::While*, const Last&);
+    void forLoop(AST::For*, const Last&);
+    void asyncForLoop(AST::For*, const Last&);
     // The loop is left before its end. `exception`: by that, or null.
     void leaveAsyncFor(RegisterID* iterator, RegisterID* exception);
     void returnStatement(AST::Return*);
     void breakOrContinue(Stmt*, bool isBreak);
     void raiseStatement(AST::Raise*);
-    void tryStatement(AST::Try*, Last);
-    void tryFinally(AST::Try*, Last);
-    void tryExcept(AST::Try*, Last);
-    void tryStarExcept(AST::Try*, Last);
-    void withStatement(AST::With*, unsigned index, Last);
-    void assertStatement(AST::Assert*, Last);
+    void tryStatement(AST::Try*, const Last&);
+    void tryFinally(AST::Try*, const Last&);
+    void tryExcept(AST::Try*, const Last&);
+    void tryStarExcept(AST::Try*, const Last&);
+    void withStatement(AST::With*, unsigned index, const Last&);
+    void assertStatement(AST::Assert*, const Last&);
     void importStatement(AST::Import*);
     void importFrom(AST::ImportFrom*);
-    void matchStatement(AST::Match*, Last);
+    void matchStatement(AST::Match*, const Last&);
     ImportMode importMode(bool isLazy, bool isStar);
 
     // ---- Blocks ----
@@ -547,7 +547,7 @@ private:
     struct StatementsAfter {
         Seq<Stmt*> body;
         unsigned first { 0 };
-        Last isLast;
+        const Last& isLast;
         unsigned blockCount { 0 }; // The blocks that they are in.
         // The statements are part of another statement, which these come after.
         const StatementsAfter* enclosing { nullptr };
@@ -687,7 +687,6 @@ private:
     unsigned m_sameLineDepth { 0 };
     bool m_cannotBeReached { false }; // See deadStatements().
     size_t m_statementStart { std::numeric_limits<size_t>::max() }; // Where in the instructions the last statement begins.
-    Last m_statementIsLast { }; // For statement().
     unsigned m_blockCount { 0 };
 
     Vector<Block, 8> m_blocks;

@@ -451,7 +451,7 @@ void Unit::pattern(Pattern* node, RegisterID* subject, PatternContext& context)
     }
 }
 
-void Unit::matchStatement(Match* node, Last isLast)
+void Unit::matchStatement(Match* node, const Last& isLast)
 {
     Reg subject = newTemporary();
     line(node->subject->range);
