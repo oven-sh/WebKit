@@ -617,6 +617,20 @@ static JSValue raiseLoaderError(JSGlobalObject* globalObject, ASCIILiteral fallb
     return raise(globalObject, scope, runtime(globalObject).OSError(), message ? decodeFilesystem(byteCast<uint8_t>(unsafeSpan(message))) : String(fallback));
 }
 
+// What a library does as it is loaded, and as it goes, may call the C API, and raise. `who` is the repr() of the function that has run it. False: an exception.
+static bool lookAtWhatLibraryRaised(JSGlobalObject* globalObject, bool hasSucceeded, ASCIILiteral who)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!CApi::isSetUpFor(runtime(globalObject)))
+        return !scope.exception();
+    if (scope.exception() || !hasSucceeded) [[unlikely]] {
+        CApi::forgetWhatCRaised();
+        return !scope.exception();
+    }
+    RELEASE_AND_RETURN(scope, CApi::throwWhatCRaisedBesideResult(globalObject, who));
+}
+
 static JSValue moduleDlopen(JSGlobalObject* globalObject, JSValue name, JSValue modeValue)
 {
     VM& vm = getVM(globalObject);
@@ -632,19 +646,16 @@ static JSValue moduleDlopen(JSGlobalObject* globalObject, JSValue name, JSValue 
         return { };
     audit(globalObject, "ctypes.dlopen"_s, name);
     RETURN_IF_EXCEPTION(scope, { });
+    CApi::tryEnsure(globalObject);
     void* handle;
     {
-        CApi::LibraryBeingLoaded loading(globalObject);
+        CApi::CRunsFor running(runtime(globalObject));
         handle = dlopen(isNone(name) ? nullptr : path.characters(), mode);
     }
-    // What the library did as it was loaded may have called the C API.
-    if (scope.exception() || !handle) [[unlikely]]
-        CApi::forgetWhatCRaised();
-    RETURN_IF_EXCEPTION(scope, { });
+    if (failed(scope, lookAtWhatLibraryRaised(globalObject, handle, "<built-in function dlopen>"_s)))
+        return { };
     if (!handle)
         RELEASE_AND_RETURN(scope, raiseLoaderError(globalObject, "dlopen() error"_s));
-    if (failed(scope, CApi::throwWhatCRaisedBesideResult(globalObject, "<built-in function dlopen>"_s)))
-        return { };
     return intFromPointer(globalObject, handle);
 }
 
@@ -655,7 +666,14 @@ static JSValue moduleDlclose(JSGlobalObject* globalObject, JSValue handleValue)
     void* handle;
     if (failed(scope, addressArgument(globalObject, handleValue, handle)))
         return { };
-    if (dlclose(handle))
+    bool hasSucceeded;
+    {
+        CApi::CRunsFor running(runtime(globalObject));
+        hasSucceeded = !dlclose(handle);
+    }
+    if (failed(scope, lookAtWhatLibraryRaised(globalObject, hasSucceeded, "<built-in function dlclose>"_s)))
+        return { };
+    if (!hasSucceeded)
         RELEASE_AND_RETURN(scope, raiseLoaderError(globalObject, "dlclose() error"_s));
     return none();
 }

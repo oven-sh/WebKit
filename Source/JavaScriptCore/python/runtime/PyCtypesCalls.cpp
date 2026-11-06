@@ -577,12 +577,16 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
         returnsReference = returnsObject && (isCallback ? callbackGivesReference : CApi::tryEnsure(globalObject));
         // With more arguments than argtypes, the rest are those of a variadic function.
         unsigned fixedCount = converterCount && count > converterCount ? converterCount : count;
-        callForeignFunction(globalObject, function, values.span(), fixedCount, result, flags);
-        // However the call ends, neither the reference nor what C raised outlives it.
+        {
+            CApi::CRunsFor running(rt);
+            callForeignFunction(globalObject, function, values.span(), fixedCount, result, flags);
+        }
+        // However the call ends, neither the reference nor what C raised outlives it. (For an interpreter that the API does not serve, C can raise nothing.)
         bool isEnded = scope.exception(); // The host is ending what runs here, or no such call can be made.
-        if (isEnded)
+        bool isServed = CApi::isSetUpFor(rt);
+        if (isEnded && isServed)
             CApi::forgetWhatCRaised();
-        if (isEnded || (CApi::isSetUpFor(rt) && failed(scope, CApi::throwWhatCRaised(globalObject)))) [[unlikely]] {
+        if (isEnded || (isServed && failed(scope, CApi::throwWhatCRaised(globalObject)))) [[unlikely]] {
             if (returnsReference)
                 takeOverReferenceIn(resultMemory);
             return { };

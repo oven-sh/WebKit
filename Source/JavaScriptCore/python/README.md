@@ -1443,17 +1443,21 @@ not even for an object that C has just made: code that changes in place what it 
   count stays as it was, with a line on stderr the first time. What was to be given back is then held for ever. What was to be taken is a reference that C believes in and
   has not got, and nobody can tell which `Py_DECREF` will give it back: so from then on no count falls, and all that C owns or comes to own is held for ever. A leak, and
   nothing that C rightly owns dies under it. The line says so.
-- A thread that runs C for another interpreter (a Worker's `ctypes` call, a library that a Worker loads) is refused as well, with a line of its own, and that is all: it costs the
-  interpreter that has the API nothing. Such a thread is known by what it is in the middle of (`Ctypes::vmOfForeignCallInProgress()`, `LibraryBeingLoaded`), which is looked at only
-  once it has been refused. No function hands it an object of this interpreter. What it can name are the exceptions, which the runtime keeps alive whatever the count says, and what a
-  library that both interpreters have loaded keeps in a variable of its own: to share an object between two interpreters in that way is an error in CPython too, and here
-  it is not defended against.
+- A thread that runs C for another interpreter (`CRunsFor`: its `ctypes` call, a library that it loads or lets go of) is refused as well, with a line of its own, and that is all: it costs
+  the interpreter that has the API nothing. What `ctypes` hands to C there are that interpreter's own objects, and that C takes a reference to one of them says nothing about the
+  objects of this one. No function hands such a thread an object of this interpreter. What it can name is what a library that both have loaded keeps in a variable of its own: to share an
+  object between two interpreters in that way is an error in CPython too, and here it is not defended against.
+- A thread of another VM that gets into C in another way (a Worker's JS by `bun:ffi` or N-API, a destructor of a key of pthreads as the Worker's thread ends) is a thread without
+  the GIL like any that C has started, and is treated so. It has no objects of its own, so a cell to which it takes a reference can only be one of this interpreter's, got by a variable:
+  that is the case which "no count falls" is for. The types, the exceptions, None and the numbers are not counted, whoever asks.
 
 **The error indicator is not the VM's pending exception.** C goes on calling the API while an exception is set, and the functions of the runtime expect none to be pending
 when they are entered. So the indicator is a reference of its own, one for each thread, counted like C's other references and kept alive by that (for ever, if a thread ends
 with an exception set). A function
 of the API that finds the runtime to have raised moves the exception there (`Entry::failed()`); whoever has called C throws what is there (`throwWhatCRaised()`), or drops it if the
-call ends otherwise: it does not outlive the call that set it. What ends the
+call ends otherwise: it does not outlive the call that set it. It is the thread's, not the interpreter's, and two interpreters may run on one thread; so nothing gets into it, or out of it,
+but by a caller who may come in (`PyErr_SetRaisedException()`, `PyErr_GetRaisedException()` and `PyErr_Clear()` ask too), and only the interpreter that has the API looks at it after C
+has run. What ends the
 program (a termination) is never put in the indicator: it stays pending, and while it does every function of the API fails at once.
 
 **One interpreter of a process has the API: the first that there is** (`CApi::runtimeIsBeginning()`, in `Runtime`'s constructor). The functions are not told for whom they are called,
@@ -1467,12 +1471,19 @@ it does anywhere; not for the prototypes that `ctypes` makes of its own function
 has a `dlopen()` in it.
 
 **Who may come in.** Every function that looks at an object, at the table or at the interpreter asks first whether the calling thread holds the GIL of the interpreter that has
-the API (`mayEnter()`). If not (a thread that C made and that has not attached itself, a thread between `Py_BEGIN_ALLOW_THREADS` and `Py_END_ALLOW_THREADS`, a thread of another
+the API, and does not run C for another (`interpreterToEnter()`). If not (a thread that C made and that has not attached itself, a thread between `Py_BEGIN_ALLOW_THREADS` and
+`Py_END_ALLOW_THREADS`, a thread of another
 interpreter, any thread before the API is set up or after its interpreter has ended) the function fails: it returns what it returns when it fails and sets no exception, with a
 line on stderr the first time if there is an interpreter. In CPython all of that is undefined. The question is `JSLock::isHeldBy()` with the thread's own `Thread`, which each thread
 keeps at hand, with a reference, from its first call to its end. What the question reads stays when the interpreter goes: the object that `s_interpreter` points to is never freed,
 and it holds a reference to the lock. `Py_None` and the other constants that are no cells, `Py_Is*()` and `Py_IsInitialized()` ask nothing and look at nothing that could go away:
 the symbols of None and the bools say what they stand for from the time the executable is loaded. `Py_IsInitialized()` says whether the interpreter that the API serves is there.
+
+The lock is the VM's, and a VM may have several interpreters, on one thread: each realm (`ShadowRealm`) that imports Python has its own. So **whoever runs C says for whom** (`CRunsFor`, around
+a foreign call, `dlopen()` and `dlclose()`): that is the thread's, and the innermost counts, so C that one interpreter calls, that calls back, and so gets to C that the other calls, is
+told apart at every level. It costs who is let in nothing: while a thread runs C for an interpreter that the API is not for, it does not have its `Thread` at hand, so the
+question above fails and the long way finds out why. C that JS runs (`bun:ffi`, N-API) runs for nobody in particular: on a thread that holds the GIL of the interpreter that has the
+API it is served, from whichever realm it was called, unless that is inside C which runs for another.
 
 **Quiet and noisy.** Every function that C calls says in its first line whether it can run code of the program or put a reference where the program finds
 it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); all three ask who calls, once, and have the answer at hand (`current`). `CAPI_QUIET_AND_ASKS_NOBODY()` is for the quiet ones that have nothing to ask for.
@@ -1480,8 +1491,8 @@ it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); all three ask who c
 counts the noisy calls yet: that is for the order in which instances of extension types are destroyed.
 
 **`ctypes`.** A `py_object` is a `PyObject*`: the same bits. A function of a `PyDLL` is called with the GIL; what C raised is thrown when it returns, whatever it returned (also for a
-function of a `CDLL` that got in because no other thread wanted the GIL: CPython crashes there). What a library raised as it was loaded is the cause of a `SystemError` from `dlopen()`, as in
-CPython. Code that
+function of a `CDLL` that got in because no other thread wanted the GIL: CPython crashes there). What a library raised as it was loaded, or as it went, is the cause of a `SystemError` from
+`dlopen()` or `dlclose()`, as in CPython. Code that
 returns a `py_object` returns a reference with it: a function of C's does, and the reference is given up once the object is in hand, or when the call ends in another way; a callback
 does, and C owns what it gets (a prototype over a Python callable that is called from Python does both). Whether a reference goes with it depends on whose the code is, the
 caller's interpreter for C's and the callback's own for a callback, and on nothing that changes with time.

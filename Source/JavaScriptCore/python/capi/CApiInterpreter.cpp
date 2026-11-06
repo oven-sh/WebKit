@@ -244,43 +244,53 @@ pthread_key_t Interpreter::makeKeyOfReferenceToThread()
     return key;
 }
 
+// Compared, never followed.
+static constinit thread_local const Runtime* t_cRunsFor = nullptr;
+
+static ALWAYS_INLINE void setWhomCRunsFor(const Runtime* runtime)
+{
+    t_cRunsFor = runtime;
+    // See t_thisThread. (If the API is set up later, that is by code further in, which comes by here on its way out.)
+    if (runtime && !isSetUpFor(*runtime))
+        t_thisThread = nullptr;
+}
+
+CRunsFor::CRunsFor(const Runtime& runtime)
+    : m_previous(t_cRunsFor)
+{
+    setWhomCRunsFor(&runtime);
+}
+
+CRunsFor::~CRunsFor()
+{
+    setWhomCRunsFor(m_previous);
+}
+
+static bool runsCForAnotherInterpreter(Interpreter& current)
+{
+    return t_cRunsFor && t_cRunsFor != &current.runtime;
+}
+
 // The first time in a thread, and whenever the answer is no: nothing is refused on the word of what a thread has kept.
 bool hasGILSlow(Interpreter& current)
 {
+    if (runsCForAnotherInterpreter(current))
+        return false;
     // What else is destroyed with the thread comes here too, and may come later. Nothing is kept for it.
     if (t_thisThreadIsEnding)
         return current.lock->currentThreadIsHoldingLock();
     if (!t_thisThread) {
-        Thread& thread = Thread::currentSingleton();
-        // (No room for the value: then nothing is kept.)
-        if (pthread_setspecific(current.keyOfReferenceToThread, &thread))
-            return current.lock->isHeldBy(thread);
-        thread.ref();
-        t_thisThread = &thread;
+        t_thisThread = static_cast<Thread*>(pthread_getspecific(current.keyOfReferenceToThread));
+        if (!t_thisThread) {
+            Thread& thread = Thread::currentSingleton();
+            // (No room for the value: then nothing is kept.)
+            if (pthread_setspecific(current.keyOfReferenceToThread, &thread))
+                return current.lock->isHeldBy(thread);
+            thread.ref();
+            t_thisThread = &thread;
+        }
     }
     return current.lock->isHeldBy(*t_thisThread);
-}
-
-static constinit thread_local JSGlobalObject* t_loadsLibraryFor = nullptr;
-
-LibraryBeingLoaded::LibraryBeingLoaded(JSGlobalObject* globalObject)
-    : m_previous(std::exchange(t_loadsLibraryFor, globalObject))
-{
-    tryEnsure(globalObject);
-}
-
-LibraryBeingLoaded::~LibraryBeingLoaded()
-{
-    t_loadsLibraryFor = m_previous;
-}
-
-// Whether what the thread is doing is C that another interpreter has called or is loading.
-static bool runsCForAnotherInterpreter(Interpreter& current)
-{
-    if (t_loadsLibraryFor)
-        return t_loadsLibraryFor != current.globalObject;
-    VM* vm = Ctypes::vmOfForeignCallInProgress();
-    return vm && vm != &current.vm;
 }
 
 static void tellOnce(std::atomic<bool>& hasTold, const char* what)

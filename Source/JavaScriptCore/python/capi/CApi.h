@@ -141,6 +141,8 @@ ALWAYS_INLINE Interpreter& interpreter()
 // Who holds the GIL is for JSLock to say. What costs in asking is to find out which thread is asking (on Linux, a call of pthread_getspecific()), so each thread keeps
 // that: null until it has asked once, and again when it is about to end. While this points to a Thread, a reference to it is held: it is there, and no other thread's
 // lies at its address. (The reference is the value of a key of pthreads. Its destructor clears this first.)
+// It is null as well while the thread runs C for an interpreter that the API is not for (CRunsFor): that may be one of the same VM, which has the same lock. So who is to be
+// refused on that ground takes the long way, and who is let in pays nothing for the question.
 extern constinit thread_local Thread* t_thisThread;
 bool hasGILSlow(Interpreter&);
 ALWAYS_INLINE bool hasGIL(Interpreter* current)
@@ -175,9 +177,10 @@ ALWAYS_INLINE Interpreter* interpreterToEnter()
 //  - A reference that was to be given back is held for ever.
 //  - A reference that was to be taken is one that C believes in and has not got, and nobody can tell which Py_DECREF will be the one that gives it back.
 //    So FROM THEN ON NO COUNT FALLS: all that C owns, or comes to own, is held for ever, and nothing that C rightly owns dies under it.
-// A thread that runs C for ANOTHER interpreter (a Worker's, that calls a function with ctypes or loads a library) is refused too, and that is all: it costs the interpreter that has the
-// API nothing. No function gives such a thread an object of this interpreter. What it can name are the exceptions (PyExc_ValueError), which the runtime keeps alive whatever
-// the count says, and what a library that both have loaded keeps in a variable of its own: to share that between two interpreters is an error in CPython as well.
+// A thread that runs C for ANOTHER interpreter (CRunsFor: it calls a function with ctypes, loads a library or lets go of one) is refused too, and that is all: it costs the interpreter
+// that has the API nothing. What ctypes hands to C there are that interpreter's own objects, and that C takes a reference to one says nothing about this one's. No function gives
+// such a thread an object of this interpreter. What it can name is what a library that both have loaded keeps in a variable of its own: to share that between two interpreters
+// is an error in CPython as well.
 // (When the interpreter has ended there is nothing left to count: what an extension gives back as the process goes is ignored.)
 void refuseToChangeCount(bool isToFall);
 // s_interpreter, until a reference that was to be taken has been refused.

@@ -43,22 +43,24 @@ PY_CAPI Handle PyErr_Occurred()
     return toC(current->runtime.typeOf(toJS(exception)));
 }
 
+// The indicator is the thread's own, and still these three ask: what is in it is thrown by whoever called C, so nothing gets in but by a thread that runs C for the interpreter whose
+// object it is, and nothing is left in it for another.
 PY_CAPI void PyErr_Clear()
 {
-    CAPI_QUIET_AND_ASKS_NOBODY();
+    CAPI_QUIET();
     setErrorIndicator(nullptr);
 }
 
 PY_CAPI Handle PyErr_GetRaisedException()
 {
-    CAPI_QUIET_AND_ASKS_NOBODY();
+    CAPI_QUIET(nullptr);
     return std::exchange(errorIndicator(), nullptr);
 }
 
 // Steals the reference.
 PY_CAPI void PyErr_SetRaisedException(Handle exception)
 {
-    CAPI_QUIET_AND_ASKS_NOBODY();
+    CAPI_QUIET();
     setErrorIndicator(exception);
 }
 

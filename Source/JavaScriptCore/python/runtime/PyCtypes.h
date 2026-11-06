@@ -554,8 +554,6 @@ bool allocateCallbackCode(JSGlobalObject*, PyCThunk*);
 void releaseCallbackCode(PyCThunk*);
 // Whether the address is one that allocateCallbackCode() gives out. Then `givesReference` is that of the thunk that it was last given to, in whatever interpreter.
 bool isCallbackCode(void*, bool& givesReference);
-// The VM for which this thread is in callForeignFunction(), innermost. Null: it is not.
-VM* vmOfForeignCallInProgress();
 // With the GIL. `arguments[i]` is where argument i is; the result, if any, is stored where `result` says. It raises nothing.
 void runCallback(PyCThunk*, void** arguments, void* result);
 

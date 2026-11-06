@@ -57,16 +57,18 @@ extern std::atomic<const Runtime*> s_runtimeItIsSetUpFor;
 ALWAYS_INLINE bool isFor(const Runtime& runtime) { return s_runtimeItIsFor.load(std::memory_order_relaxed) == &runtime; }
 ALWAYS_INLINE bool isSetUpFor(const Runtime& runtime) { return s_runtimeItIsSetUpFor.load(std::memory_order_relaxed) == &runtime; }
 
-// Around dlopen(). What a library does as it is loaded (a constructor, the initializer of a static variable in C++) is done on this thread.
-class LibraryBeingLoaded {
-    WTF_MAKE_NONCOPYABLE(LibraryBeingLoaded);
+// Around code of C's that an interpreter runs on this thread: a foreign call; dlopen() and dlclose(), for what a library does as it is loaded and as it goes (a constructor or a
+// destructor, those of a static variable in C++). Whoever calls the API meanwhile calls it for that interpreter, until code of Python's that C calls back does the same again.
+// (C that JS runs, by bun:ffi or N-API, runs for nobody in particular: it is served if its thread holds the GIL of the interpreter that has the API.)
+class CRunsFor {
+    WTF_MAKE_NONCOPYABLE(CRunsFor);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    explicit LibraryBeingLoaded(JSGlobalObject*);
-    ~LibraryBeingLoaded();
+    explicit CRunsFor(const Runtime&);
+    ~CRunsFor();
 
 private:
-    JSGlobalObject* m_previous;
+    const Runtime* m_previous;
 };
 
 // ---- For every interpreter ----
@@ -100,10 +102,10 @@ inline void didMakeTypes(Runtime&) { }
 inline void runtimeIsEnding(Runtime&) { }
 inline bool isFor(const Runtime&) { return false; }
 inline bool isSetUpFor(const Runtime&) { return false; }
-class LibraryBeingLoaded {
+class CRunsFor {
 public:
-    explicit LibraryBeingLoaded(JSGlobalObject*) { }
-    ~LibraryBeingLoaded() { }
+    explicit CRunsFor(const Runtime&) { }
+    ~CRunsFor() { }
 };
 inline JSValue objectOfSymbol(JSGlobalObject*, uint64_t) { return { }; }
 inline void didFinishMarking(JSC::Heap&) { }
