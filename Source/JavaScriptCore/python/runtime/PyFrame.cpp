@@ -10,6 +10,7 @@
 #include "BytecodeStructs.h"
 #include "BytecodeUseDef.h"
 #include "CodeBlock.h"
+#include "DeferTermination.h"
 #include "FunctionCodeBlock.h"
 #include "JSCInlines.h"
 #include "MaxFrameExtentForSlowPathCall.h"
@@ -1678,8 +1679,9 @@ void PyTraceback::makeFrameOfJS()
     // (Not that of the code, which may be of a realm that has no Python.)
     JSGlobalObject* globalObject = realm();
     VM& vm = getVM(globalObject);
-    // An exception may be on its way.
-    SuspendExceptionScope suspended(vm);
+    // An exception may be on its way. Nothing of the program's runs here: if the host ends what runs here, that waits.
+    ExceptionSetAside suspended(globalObject);
+    DeferTerminationForAWhile deferred(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PositionInJS position = positionInJS(vm, codeBlock, m_index);
     PyCode* code = PyCode::tryFrom(compileSource(globalObject, { }, position.filename, "exec"_s, 0, -1));

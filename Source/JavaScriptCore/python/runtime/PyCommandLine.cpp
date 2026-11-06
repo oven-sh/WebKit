@@ -945,6 +945,9 @@ void startMainInterpreter(JSGlobalObject* globalObject)
     registerInteropTypes(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
 
+    // From here on code of the user's may run: a category that -W names is imported, site runs sitecustomize and lines in .pth files.
+    TerminationNotDeferred canBeEnded(globalObject);
+
     // It reads sys.warnoptions when it is imported.
     if (!configuration.warnOptions.isEmpty()) {
         importModule(globalObject, "warnings"_s);

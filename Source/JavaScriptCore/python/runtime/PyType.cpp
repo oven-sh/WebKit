@@ -6,7 +6,7 @@
 #include "config.h"
 #include "PyType.h"
 
-#include "FrameTracers.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyDescriptors.h"
@@ -124,9 +124,10 @@ void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def,
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    // Nothing here raises: nothing of the program's runs, and what is allocated is small. The type may be wanted for the first time
-    // while an exception propagates, which is set aside.
-    SuspendExceptionScope suspended(vm);
+    // Nothing here raises: nothing of the program's runs, and what is allocated is small. If the host ends what runs here, that
+    // waits. The type may be wanted for the first time while an exception propagates, which is set aside.
+    ExceptionSetAside suspended(globalObject);
+    DeferTerminationForAWhile deferred(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     String fullName = def.name;

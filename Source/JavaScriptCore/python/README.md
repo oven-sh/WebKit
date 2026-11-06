@@ -1819,8 +1819,23 @@ that run the tests on a debug build have the option on. What that takes:
 - To put an exception aside and raise it again later: `takePendingException()`, `throwPythonException()`. It leaves what ends the program
   (a termination) where it is and returns empty: `RETURN_IF_EXCEPTION` after it. To raise again in a function with a
   `TopExceptionScope`: an inner block with a `ThrowScope`, then `EXCEPTION_ASSERT_UNUSED(scope, scope.exception() == pending)`.
-- Code that runs while an exception is on its way (trace functions, `__del__` during unwinding): `SuspendExceptionScope`, which also
-  sets aside that somebody has yet to look. What the unwinder itself calls has no `ThrowScope`.
+- Code that runs while an exception is on its way (trace functions, `__del__` during unwinding): `ExceptionSetAside` (`PyErrors.h`),
+  which also sets aside that somebody has yet to look, and drops what is pending when it goes. `SuspendExceptionScope` itself puts
+  back what it saved over whatever is pending by then: only where nothing of the program's runs meanwhile. What the unwinder
+  itself calls has no `ThrowScope`.
+- **Terminations.** The host ends what runs here (`worker.terminate()`, a timeout or SIGINT of `node:vm`) with an exception that
+  nothing catches. Any `RETURN_IF_EXCEPTION` can throw it, because it handles traps, and it is not for the runtime to call off.
+  - Where an exception is dropped because it is of no consequence what went wrong: `dropPendingException()`, not
+    `clearException()`. It asks for a termination again, and the next safe point throws it. Where a caller can stop instead, the
+    termination is left pending: `tryClearException()`.
+  - `reportUnraisable()`, `writeToStderr()` and `printException()` leave a termination pending. Whoever calls them in a loop stops
+    there, and leaves what it has not done to be done another time: the host may withdraw the termination, and then the program goes on.
+  - What cannot fail, and says so, and runs nothing of the program's: `DeferTerminationForAWhile`. After the exception has been set
+    aside, not before.
+  - Code of the program that is called where terminations are deferred (by the unwinder, while the interpreter starts):
+    `TerminationNotDeferred`, or it cannot be ended.
+  - A stream or a generator that nothing refers to any more is closed at once where the runtime can tell. Not while the host is
+    ending what runs here (`vm.hasPendingTermination()`): the collector finds it, if the program goes on.
 
 To find what is missing without dying at the first: `BUN_JSC_uncheckedExceptionsLog=FILE` with the option above writes each missing
 check to the file, once, with both stacks, and goes on; `Tools/Scripts/unchecked-exceptions FILE` puts them in order by the function

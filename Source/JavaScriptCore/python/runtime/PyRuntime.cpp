@@ -7,6 +7,7 @@
 #include "PyRuntime.h"
 
 #include "ArrayPrototype.h"
+#include "DeferTermination.h"
 #include "FunctionPrototype.h"
 #include "JSAsyncFunctionGenerator.h"
 #include "JSAsyncGenerator.h"
@@ -157,6 +158,9 @@ template void Runtime::visit(SlotVisitor&);
 void Runtime::initialize()
 {
     VM& vm = getVM(m_globalObject);
+    // Much of this cannot fail, and says so. And half an interpreter is of no use to what runs once a termination has been withdrawn.
+    // (JSGlobalObject::init() does the same.)
+    DeferTerminationForAWhile deferred(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
     optimizationLevel = configuration().optimizationLevel;
     maxStrDigits = configuration().intMaxStrDigits;

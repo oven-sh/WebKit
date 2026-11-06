@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyExec.h"
 
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyCodecs.h"
@@ -729,8 +730,10 @@ JSValue importModuleFromJS(JSGlobalObject* globalObject, const String& name)
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isFirstUse = !globalObject->pythonRuntime();
     Runtime& rt = Runtime::ensure(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
     if (isFirstUse) {
+        // This belongs to the start, and there is no second time for it: see Runtime::initialize().
+        DeferTerminationForAWhile deferred(vm);
         JSArray* arguments = newList(globalObject, std::initializer_list<JSValue> { rt.names.empty() });
         RETURN_IF_EXCEPTION(scope, { });
         rt.sysDict()->set(vm, internString(vm, "argv"_s), arguments);
@@ -821,8 +824,10 @@ JSValue importFileFromJS(JSGlobalObject* globalObject, const String& givenPath, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isFirstUse = !globalObject->pythonRuntime();
     Runtime& rt = Runtime::ensure(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
     if (isFirstUse) {
+        // This belongs to the start, and there is no second time for it: see Runtime::initialize().
+        DeferTerminationForAWhile deferred(vm);
         JSArray* arguments = newList(globalObject, std::initializer_list<JSValue> { rt.names.empty() });
         RETURN_IF_EXCEPTION(scope, { });
         rt.sysDict()->set(vm, internString(vm, "argv"_s), arguments);
@@ -948,20 +953,24 @@ std::optional<int> runMainModule(JSGlobalObject* globalObject, const String& giv
         return handleUncaughtException(globalObject);
     String path = absolutePath(givenPath);
 
-    MarkedArgumentBuffer argv;
-    argv.append(makeStr(vm, givenPath));
-    for (auto& argument : arguments)
-        argv.append(makeStr(vm, argument));
-    rt.sysDict()->set(vm, internString(vm, "argv"_s), newList(globalObject, spanOf(argv)));
-    if (configuration().originalArguments.isEmpty())
-        rt.sysDict()->set(vm, internString(vm, "orig_argv"_s), newList(globalObject, spanOf(argv)));
+    {
+        // This belongs to the start: see Runtime::initialize().
+        DeferTerminationForAWhile deferred(vm);
+        MarkedArgumentBuffer argv;
+        argv.append(makeStr(vm, givenPath));
+        for (auto& argument : arguments)
+            argv.append(makeStr(vm, argument));
+        rt.sysDict()->set(vm, internString(vm, "argv"_s), newList(globalObject, spanOf(argv)));
+        if (configuration().originalArguments.isEmpty())
+            rt.sysDict()->set(vm, internString(vm, "orig_argv"_s), newList(globalObject, spanOf(argv)));
 
-    // The directory of the script comes first on sys.path.
-    if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path())); searchPath && !configuration().safePath) {
-        String real = realPath(path);
-        configuration().firstSearchPath = FileSystem::parentPath(real.isEmpty() ? path : real);
-        listInsert(globalObject, searchPath, 0, makeStr(vm, configuration().firstSearchPath));
-        scope.assertNoException();
+        // The directory of the script comes first on sys.path.
+        if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path())); searchPath && !configuration().safePath) {
+            String real = realPath(path);
+            configuration().firstSearchPath = FileSystem::parentPath(real.isEmpty() ? path : real);
+            listInsert(globalObject, searchPath, 0, makeStr(vm, configuration().firstSearchPath));
+            scope.assertNoException();
+        }
     }
 
     std::optional<int> status;

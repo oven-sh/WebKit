@@ -420,8 +420,13 @@ void startImportSystem(JSGlobalObject* globalObject)
         importModule(globalObject, s_importSystemModule);
     if (!scope.exception() && isInstalled)
         startMainInterpreter(globalObject);
-    if (scope.exception()) [[unlikely]]
-        printException(globalObject, takePendingException(globalObject));
+    if (scope.exception()) [[unlikely]] {
+        if (JSValue exception = takePendingException(globalObject)) {
+            // It may be of a class of the user's, and sys.stderr may be theirs by now.
+            TerminationNotDeferred canBeEnded(globalObject);
+            printException(globalObject, exception);
+        }
+    }
 }
 
 // An exception that leaves the import system does not show its frames: all of them if it is an ImportError, else those
