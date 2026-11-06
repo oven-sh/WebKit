@@ -264,7 +264,7 @@ static ALWAYS_INLINE PyType* typeOfPossibleDescriptor(Runtime& rt, JSValue descr
         // A class is an instance of its metaclass.
         return PyType::is(cell) ? uncheckedDowncast<PyType>(cell)->type() : nullptr;
     default:
-        return rt.typeOf(descriptor);
+        return isPyObjectType(cell->type()) ? uncheckedDowncast<PyObject>(cell)->type() : rt.typeOf(descriptor);
     }
 }
 
@@ -813,7 +813,7 @@ static UniquedStringImpl* propertyKeyOfAttribute(JSString* name)
     return parseIndex(*key) ? nullptr : key;
 }
 
-static bool isDataDescriptor(Runtime& rt, JSValue descriptor)
+static ALWAYS_INLINE bool isDataDescriptor(Runtime& rt, JSValue descriptor)
 {
     PyType* type = descriptor ? typeOfPossibleDescriptor(rt, descriptor) : nullptr;
     return type && (type->lookup(Special::Set) || type->lookup(Special::Delete));
@@ -944,7 +944,8 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
     }
 
     type = typeOfObject;
-    bool hasHook = !!type->lookup(Special::GetAttr);
+    // (It is asked about what a descriptor gives: getAttrOfAbsent() looks for itself.)
+    bool hasHook = descriptor && type->lookup(Special::GetAttr);
     // Where the class has a __getattr__ a method is bound before the arguments are evaluated: getMethod(). One of a built-in type may
     // refuse that, and goes by another name once it is bound.
     if (forCall && hasHook && PyNativeFunction::is(descriptor))
@@ -995,15 +996,15 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
     if (jsType == PyInstanceType) {
         dict = uncheckedDowncast<PyInstance>(cell)->dict();
         if (!dict) {
-            UniquedStringImpl* key = propertyKeyOfAttribute(name);
-            if (!key)
+            StringImpl* key = name->tryGetValueImpl();
+            if (!key->isAtom())
                 return None;
-            cache.offset = structure->get(vm, PropertyName(key));
+            // (An index is the key of no property: PyInstance::setAttribute().)
+            cache.offset = structure->get(vm, PropertyName(static_cast<UniquedStringImpl*>(key)));
             // No other object of the Structure has a dict either: PyInstance::ensureDict().
+            ASSERT(!isValidOffset(structure->get(vm, rt.instanceHasDictKey())));
             if (isValidOffset(cache.offset))
                 return description;
-            if (isValidOffset(structure->get(vm, rt.instanceHasDictKey())))
-                description = OfThisObjectNow;
         }
     } else if (type->has(TypeFlag::HasDict)) {
         bool isWrapper = cell->inherits<PyWrapperObject>();
@@ -1156,8 +1157,9 @@ SetAttributeDescription describeSetAttribute(JSGlobalObject* globalObject, JSVal
             return { .kind = Kind::InDict, .dict = dict };
         }
         // The attributes are properties, so that the Structure tells which there are.
+        ASSERT(!isValidOffset(structure->get(vm, rt.instanceHasDictKey())));
         key = propertyKeyOfAttribute(name);
-        if (!key || isValidOffset(structure->get(vm, rt.instanceHasDictKey())))
+        if (!key)
             return { };
     }
     PropertyOffset offset = structure->get(vm, PropertyName(key));
