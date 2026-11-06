@@ -2923,8 +2923,8 @@ void Unit::comprehensionElement(ComprehensionKind kind, Expr* element, Expr* val
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// `firstIterator`: for the first clause, the iterator of its iterable.
-void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> generators, unsigned index, Expr* element, Expr* value, RegisterID* result, RegisterID* firstIterator, bool ownsFirstIterator, const Range& range)
+// `firstIterator`: for the first clause, the iterator of its iterable. `loopAround`: for the others, where the innermost loop around the clause goes on.
+void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> generators, unsigned index, Expr* element, Expr* value, RegisterID* result, RegisterID* firstIterator, bool ownsFirstIterator, const Range& range, Label* loopAround)
 {
     if (!isSafeToRecurse())
         return;
@@ -2946,11 +2946,11 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
             jumpIf(condition, next.get(), false);
         }
         if (index + 1 < generators.size()) {
-            comprehensionGenerator(kind, generators, index + 1, element, value, result, nullptr, false, range);
+            comprehensionGenerator(kind, generators, index + 1, element, value, result, nullptr, false, range, loop);
             // So nothing jumps to where the inner loop goes on when it has ended.
             if (!generator->ifs.isEmpty()) {
                 line(placeOfElement);
-                jump(start.get());
+                jump(*loop);
             }
         } else
             comprehensionElement(kind, element, value, result);
@@ -2997,7 +2997,7 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
     }
 
     if (!firstIterator) {
-        // `for y in [f(x)]` is an assignment.
+        // `for y in [f(x)]` is an assignment. There is no loop: where a condition fails, the loop around it goes on.
         Seq<Expr*> single;
         if (auto* list = generator->iter->tryAs<List>())
             single = list->elts;
@@ -3007,7 +3007,8 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
             Reg item = expr(single[0]);
             store(generator->target, item.get());
             item = nullptr;
-            loop = nullptr;
+            ASSERT(loopAround);
+            loop = loopAround;
             emitInner();
             g.emitLabel(next.get());
             return;

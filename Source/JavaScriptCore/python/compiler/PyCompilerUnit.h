@@ -656,7 +656,7 @@ private:
     void unpack(Seq<Expr*> targets, RegisterID* value, const Range&);
 
     RegisterID* comprehension(Expr*, ComprehensionKind, Seq<AST::Comprehension*>, Expr* element, Expr* value, RegisterID* dst);
-    void comprehensionGenerator(ComprehensionKind, Seq<AST::Comprehension*>, unsigned index, Expr* element, Expr* value, RegisterID* result, RegisterID* firstIterator, bool ownsFirstIterator, const Range&);
+    void comprehensionGenerator(ComprehensionKind, Seq<AST::Comprehension*>, unsigned index, Expr* element, Expr* value, RegisterID* result, RegisterID* firstIterator, bool ownsFirstIterator, const Range&, Label* loopAround = nullptr);
     void comprehensionElement(ComprehensionKind, Expr* element, Expr* value, RegisterID* result);
 
     // ---- Patterns ----
