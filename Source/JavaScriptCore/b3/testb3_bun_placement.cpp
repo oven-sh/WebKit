@@ -357,7 +357,8 @@ static void testSinkValuesReadsStackSlotWhereWaysMeet()
         BasicBlock* belowLeft = proc.addBlock();
         BasicBlock* right = proc.addBlock();
         BasicBlock* join = proc.addBlock();
-        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t*>(proc, root);
+        // Each use of a lazy argument puts a value at the end of the root block, and two forms use one behind the branch.
+        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t*>(proc, root).eager();
         Air::StackSlot* slot = proc.addStackSlot(2 * sizeof(int64_t));
         Air::StackSlot* otherSlot = proc.addStackSlot(2 * sizeof(int64_t));
         auto address = [&](BasicBlock* block, Air::StackSlot* stackSlot) -> Value* {
