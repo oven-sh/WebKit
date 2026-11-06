@@ -20,7 +20,7 @@ CAPI_FILE(Numbers)
 
 PY_CAPI Handle PyLong_FromLong(long value)
 {
-    CAPI_NOISY();
+    CAPI_NOISY(nullptr);
     if (fitsSmallInt(static_cast<int64_t>(value))) [[likely]]
         return toC(smallInt(static_cast<int64_t>(value)));
     CAPI_ENTER(nullptr);
@@ -30,7 +30,7 @@ PY_CAPI Handle PyLong_FromLong(long value)
 // -1 and an exception: it is no int and has no __index__, or does not fit.
 PY_CAPI long PyLong_AsLong(Handle object)
 {
-    CAPI_NOISY();
+    CAPI_NOISY(-1);
     JSValue value = toJS(object);
     if (value.isInt32()) [[likely]]
         return value.asInt32();
@@ -53,7 +53,7 @@ PY_CAPI Handle PyFloat_FromDouble(double value)
 // -1.0 and an exception: it is no float and has neither __float__ nor __index__.
 PY_CAPI double PyFloat_AsDouble(Handle object)
 {
-    CAPI_NOISY();
+    CAPI_NOISY(-1.0);
     JSValue value = toJS(object);
     if (value && isFloat(value)) [[likely]]
         return floatValue(value);

@@ -64,7 +64,7 @@ PY_CAPI Handle Py_XNewRef(Handle object)
 PY_CAPI ssize_t Py_REFCNT(Handle object)
 {
     CAPI_QUIET();
-    if (JSCell* cell = countedCell(object))
+    if (JSCell* cell = countedCell(object); cell && mayEnter())
         return static_cast<ssize_t>(interpreter().counts.get(cell)) + 1;
     return static_cast<ssize_t>(3) << 30;
 }
@@ -72,20 +72,25 @@ PY_CAPI ssize_t Py_REFCNT(Handle object)
 PY_CAPI Handle Py_TYPE(Handle object)
 {
     CAPI_QUIET();
-    return toC(interpreter().runtime.typeOf(toJS(object)));
+    return mayEnter() ? toC(interpreter().runtime.typeOf(toJS(object))) : nullptr;
 }
 
 PY_CAPI int Py_IS_TYPE(Handle object, Handle type)
 {
     CAPI_QUIET();
-    return JSValue(interpreter().runtime.typeOf(toJS(object))) == toJS(type);
+    return mayEnter() && JSValue(interpreter().runtime.typeOf(toJS(object))) == toJS(type);
 }
 
 // One object may be spelled in two ways: see toC().
 PY_CAPI int Py_Is(Handle a, Handle b)
 {
     CAPI_QUIET();
-    return toC(toJS(a)) == toC(toJS(b));
+    // Nothing is looked into: any thread may ask, at any time.
+    auto plain = [](Handle handle) {
+        JSValue value = toJS(handle);
+        return value.isNull() ? jsUndefined() : value;
+    };
+    return plain(a) == plain(b);
 }
 
 PY_CAPI int Py_IsNone(Handle object)
@@ -106,10 +111,9 @@ PY_CAPI int Py_IsFalse(Handle object)
     return toJS(object).isFalse();
 }
 
-// All of them live as long as the runtime.
-static JSValue constant(unsigned id)
+// Those that are no cells. A library may ask for them as it is loaded (Py_None is such a call), before there is an interpreter to ask.
+static JSValue constantThatIsNoCell(unsigned id)
 {
-    Interpreter& current = interpreter();
     switch (id) {
     case 0:
         return jsUndefined();
@@ -117,14 +121,24 @@ static JSValue constant(unsigned id)
         return jsBoolean(false);
     case 2:
         return jsBoolean(true);
-    case 3:
-        return current.runtime.ellipsis();
-    case 4:
-        return current.runtime.notImplemented();
     case 5:
         return jsNumber(0);
     case 6:
         return jsNumber(1);
+    default:
+        return { };
+    }
+}
+
+// All of them live as long as the runtime.
+static JSValue constant(unsigned id)
+{
+    Interpreter& current = interpreter();
+    switch (id) {
+    case 3:
+        return current.runtime.ellipsis();
+    case 4:
+        return current.runtime.notImplemented();
     case 7:
         return jsEmptyString(current.vm);
     case 8:
@@ -138,7 +152,11 @@ static JSValue constant(unsigned id)
 
 PY_CAPI Handle Py_GetConstantBorrowed(unsigned id)
 {
-    CAPI_NOISY();
+    CAPI_QUIET();
+    if (JSValue value = constantThatIsNoCell(id))
+        return toC(value);
+    if (!mayEnter())
+        return nullptr;
     if (JSValue value = constant(id)) [[likely]]
         return toC(value);
     CAPI_ENTER(nullptr);
@@ -148,7 +166,7 @@ PY_CAPI Handle Py_GetConstantBorrowed(unsigned id)
 
 PY_CAPI Handle Py_GetConstant(unsigned id)
 {
-    CAPI_NOISY();
+    CAPI_QUIET();
     Handle result = Py_GetConstantBorrowed(id);
     if (result)
         retain(result);
@@ -158,7 +176,7 @@ PY_CAPI Handle Py_GetConstant(unsigned id)
 PY_CAPI int Py_IsInitialized()
 {
     CAPI_QUIET();
-    return !!s_interpreter;
+    return !!s_interpreter.load(std::memory_order_relaxed);
 }
 
 } // namespace CApi

@@ -66,7 +66,7 @@ DEFINE_VISIT_CHILDREN(State);
 
 // ---- The one interpreter ----
 
-Interpreter* s_interpreter;
+std::atomic<Interpreter*> s_interpreter;
 std::atomic<const Runtime*> s_runtime;
 // Once and for all.
 static std::atomic<bool> s_isTaken;
@@ -135,7 +135,7 @@ bool ensure(JSGlobalObject* globalObject)
     state->typeExtensionStructure.set(vm, state, TypeExtension::createStructure(vm, globalObject));
     auto* interpreter = new Interpreter(globalObject, state);
     setSymbols(interpreter);
-    s_interpreter = interpreter;
+    s_interpreter.store(interpreter, std::memory_order_release);
     s_interpreterWhoseCountsFall.store(interpreter, std::memory_order_relaxed);
     s_runtime.store(&interpreter->runtime, std::memory_order_release);
     // It stays with the heap, which may outlive the runtime.
@@ -149,7 +149,9 @@ void runtimeIsEnding(Runtime& runtime)
         return;
     s_runtime.store(nullptr, std::memory_order_relaxed);
     s_interpreterWhoseCountsFall.store(nullptr, std::memory_order_relaxed);
-    delete std::exchange(s_interpreter, nullptr);
+    // Not freed: see Interpreter::lock.
+    Interpreter* interpreter = s_interpreter.exchange(nullptr, std::memory_order_relaxed);
+    interpreter->counts.clear();
     clearSymbols();
 }
 
@@ -160,10 +162,11 @@ void runtimeIsEnding(Runtime& runtime)
 template<typename Visitor>
 static void markWhatCHolds(Visitor& visitor)
 {
-    if (!s_interpreter)
+    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
+    if (!current)
         return;
     SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
-    s_interpreter->counts.forEachCell([&](JSCell* cell) {
+    current->counts.forEachCell([&](JSCell* cell) {
         visitor.appendUnbarriered(cell);
     });
 }
@@ -190,11 +193,57 @@ void didFinishMarking(JSC::Heap& heap)
 
 // ---- References ----
 
+constinit thread_local Thread* t_thisThread = nullptr;
+static constinit thread_local bool t_thisThreadIsEnding = false;
+
+// The reference that goes with t_thisThread is the value of a key of pthreads, whose destructor gives it back. Not a thread_local with a destructor: Bun is compiled with
+// -fno-c++-static-destructors, which leaves those out; and to register one takes the loader's lock in glibc, which a thread that is in dlopen() holds.
+static void thisThreadIsEnding(void* thread)
+{
+    t_thisThread = nullptr;
+    t_thisThreadIsEnding = true;
+    static_cast<Thread*>(thread)->deref();
+}
+
+pthread_key_t Interpreter::makeKeyOfReferenceToThread()
+{
+    pthread_key_t key;
+    RELEASE_ASSERT(!pthread_key_create(&key, thisThreadIsEnding));
+    return key;
+}
+
+// The first time in a thread, and whenever the answer is no: nothing is refused on the word of what a thread has kept.
+bool hasGILSlow(Interpreter& current)
+{
+    // What else is destroyed with the thread comes here too, and may come later. Nothing is kept for it.
+    if (t_thisThreadIsEnding)
+        return current.lock->currentThreadIsHoldingLock();
+    if (!t_thisThread) {
+        Thread& thread = Thread::currentSingleton();
+        // (No room for the value: then nothing is kept.)
+        if (pthread_setspecific(current.keyOfReferenceToThread, &thread))
+            return current.lock->isHeldBy(thread);
+        thread.ref();
+        t_thisThread = &thread;
+    }
+    return current.lock->isHeldBy(*t_thisThread);
+}
+
+void refuseToEnter(Interpreter* current)
+{
+    // What a library does as it is loaded, or as the process goes, is nobody's mistake.
+    if (!current)
+        return;
+    static std::atomic<bool> hasTold;
+    if (!hasTold.exchange(true))
+        fputs("Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n", stderr);
+}
+
 std::atomic<Interpreter*> s_interpreterWhoseCountsFall;
 
 void refuseToChangeCount(bool isToFall)
 {
-    if (!s_interpreter)
+    if (!s_interpreter.load(std::memory_order_relaxed))
         return;
     if (!isToFall)
         s_interpreterWhoseCountsFall.store(nullptr, std::memory_order_relaxed);

@@ -21,8 +21,8 @@ namespace CApi {
 
 struct Interpreter;
 
-// Null until a program needs the API, and again when its interpreter has ended.
-extern Interpreter* s_interpreter;
+// Null until a program needs the API, and again when its interpreter has ended. Any thread may read it, at any time: see Interpreter::lock.
+extern std::atomic<Interpreter*> s_interpreter;
 
 // Before anything of C's that may call the API is called. False, with an ImportError: the API is another interpreter's.
 bool ensure(JSGlobalObject*);

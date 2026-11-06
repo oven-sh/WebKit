@@ -196,7 +196,7 @@ JSValue capsuleForMemory(JSGlobalObject* globalObject, PyByteStorage* storage)
 
 uint64_t bitsOfObject(JSValue value)
 {
-    if (CApi::s_interpreter) [[unlikely]]
+    if (CApi::s_interpreter.load(std::memory_order_relaxed)) [[unlikely]]
         return CApi::bitsForC(value);
     return static_cast<uint64_t>(JSValue::encode(value));
 }

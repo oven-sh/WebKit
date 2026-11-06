@@ -1433,7 +1433,18 @@ of the API that finds the runtime to have raised moves the exception there (`Ent
 program (a termination) is never put in the indicator: it stays pending, and while it does every function of the API fails at once.
 
 **One interpreter of a process has the API**: the first `Runtime` that asks (`CApi::ensure()`). The functions are not told for whom they are called, and a symbol stands for one
-cell. In any other, what needs the API is an `ImportError`; and when that one has ended nobody has the API any more, for what was loaded has pointers into its heap.
+cell. In any other, what needs the API is an `ImportError`; and when that one has ended nobody has the API any more, for what was loaded has pointers into its heap. Since it is
+taken for good, it is taken only for what cannot be done without it: before a function of C's in a `PyDLL` is called (before its arguments are converted; not for the prototypes
+that `ctypes` makes of its own functions or of a Python callable, which have the same flag), when C is about to be handed what only the API can account for (a reference, by
+`_ctypes.Py_INCREF()`; a type that C knows by a symbol, wherever it is written as a `py_object`, since C may read that memory later), and when a library calls the API while
+`dlopen()` loads it. These last take it if it is to be had, and do without if not.
+
+**Who may come in.** Every function that looks at an object, at the table or at the interpreter asks first whether the calling thread holds the GIL of the interpreter that has
+the API (`mayEnter()`). If not (a thread that C made and that has not attached itself, a thread between `Py_BEGIN_ALLOW_THREADS` and `Py_END_ALLOW_THREADS`, a thread of another
+interpreter, any thread before there is an API or after its interpreter has ended) the function fails: it returns what it returns when it fails and sets no exception, with a
+line on stderr the first time if there is an interpreter. In CPython all of that is undefined. The question is `JSLock::isHeldBy()` with the thread's own `Thread`, which each thread
+keeps at hand, with a reference, from its first call to its end. What the question reads stays when the interpreter goes: the object that `s_interpreter` points to is never freed,
+and it holds a reference to the lock. `Py_None` and the other constants that are no cells, `Py_Is*()` and `Py_IsInitialized()` ask nothing.
 
 **Quiet and noisy.** Every function that C calls says in its first line whether it can run code of the program or put a reference where the program finds
 it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); `tools/check_capi.py` looks. A function is noisy unless it is known to be quiet. Nothing counts the noisy

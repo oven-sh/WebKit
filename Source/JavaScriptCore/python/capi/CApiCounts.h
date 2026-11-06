@@ -47,6 +47,7 @@ public:
             m_counts.remove(entry);
     }
 
+    void clear() { m_counts.clear(); }
     uint32_t get(JSCell* cell) const { return m_counts.get(cell); }
     unsigned size() const { return m_counts.size(); }
 

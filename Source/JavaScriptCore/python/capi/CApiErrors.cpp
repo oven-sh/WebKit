@@ -38,7 +38,7 @@ PY_CAPI Handle PyErr_Occurred()
     Handle exception = errorIndicator();
     if (!exception) [[likely]]
         return nullptr;
-    return toC(interpreter().runtime.typeOf(toJS(exception)));
+    return mayEnter() ? toC(interpreter().runtime.typeOf(toJS(exception))) : nullptr;
 }
 
 PY_CAPI void PyErr_Clear()
@@ -132,7 +132,7 @@ static bool matches(Runtime& rt, JSValue given, JSValue expected)
 
 PY_CAPI int PyErr_GivenExceptionMatches(Handle given, Handle expected)
 {
-    CAPI_NOISY();
+    CAPI_NOISY(0);
     if (!given || !expected)
         return 0;
     return matches(interpreter().runtime, toJS(given), toJS(expected));
@@ -140,7 +140,7 @@ PY_CAPI int PyErr_GivenExceptionMatches(Handle given, Handle expected)
 
 PY_CAPI int PyErr_ExceptionMatches(Handle expected)
 {
-    CAPI_NOISY();
+    CAPI_NOISY(0);
     return PyErr_GivenExceptionMatches(errorIndicator(), expected);
 }
 

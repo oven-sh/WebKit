@@ -9,6 +9,7 @@
 #include "CApiHooks.h"
 #include "PyErrors.h"
 #include "PyType.h"
+#include <pthread.h>
 
 // CPython's C API, for extension modules built for abi3t (PEP 803): the ABI in which C sees the layout of no object. See "The C API"
 // in ../README.md. This header is for the files of this directory. What ../runtime calls is in CApiHooks.h.
@@ -162,13 +163,21 @@ struct Interpreter {
         , vm(getVM(globalObject))
         , runtime(Python::runtime(globalObject))
         , state(state)
+        , lock(vm.apiLock())
+        , keyOfReferenceToThread(makeKeyOfReferenceToThread())
     {
     }
 
+    // A thread that has nothing to do with the interpreter may call the API while the interpreter ends (a thread of C's that gives back a reference). It reads
+    // s_interpreter, and then asks who holds the lock, before it looks at anything else. So this object is never freed, and the lock outlives the VM.
     JSGlobalObject* const globalObject;
     VM& vm;
     Runtime& runtime;
     State* const state;
+    const Ref<JSLock> lock;
+    // See t_thisThread.
+    const pthread_key_t keyOfReferenceToThread;
+    static pthread_key_t makeKeyOfReferenceToThread();
     CountTable counts;
 
     // See CAPI_QUIET().
@@ -179,12 +188,45 @@ struct Interpreter {
     }
     unsigned finalizersOfCBeingServed { 0 };
     uint32_t noise { 0 };
+    // Nobody sets the first yet, and nobody reads the second: they are for the order in which instances of extension types are destroyed.
 };
 
+// For who has asked mayEnter(), or is the collector of the interpreter's VM.
 ALWAYS_INLINE Interpreter& interpreter()
 {
-    ASSERT(s_interpreter);
-    return *s_interpreter;
+    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
+    ASSERT(current);
+    return *current;
+}
+
+// ---- Who may come in ----
+
+// Who holds the GIL is for JSLock to say. What costs in asking is to find out which thread is asking (on Linux, a call of pthread_getspecific()), so each thread keeps
+// that: null until it has asked once, and again when it is about to end. While this points to a Thread, a reference to it is held: it is there, and no other thread's
+// lies at its address. (The reference is the value of a key of pthreads. Its destructor clears this first.)
+extern constinit thread_local Thread* t_thisThread;
+bool hasGILSlow(Interpreter&);
+ALWAYS_INLINE bool hasGIL(Interpreter* current)
+{
+    if (!current) [[unlikely]]
+        return false;
+    Thread* thread = t_thisThread;
+    if (thread && current->lock->isHeldBy(*thread)) [[likely]]
+        return true;
+    return hasGILSlow(*current);
+}
+
+// EVERY FUNCTION THAT LOOKS AT AN OBJECT, AT THE TABLE OF COUNTS OR AT THE INTERPRETER ASKS THIS FIRST. A thread without the GIL would read what another thread is changing, and when
+// the interpreter has ended, or before there is one, there is nothing to look at. In CPython all of that is undefined. Here the function fails: it returns what it returns
+// when it fails, and sets no exception. A thread without the GIL is told of, once, on stderr.
+void refuseToEnter(Interpreter*);
+ALWAYS_INLINE bool mayEnter()
+{
+    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
+    if (hasGIL(current)) [[likely]]
+        return true;
+    refuseToEnter(current);
+    return false;
 }
 
 // ---- References ----
@@ -199,14 +241,13 @@ ALWAYS_INLINE Interpreter& interpreter()
 void refuseToChangeCount(bool isToFall);
 // s_interpreter, until a reference that was to be taken has been refused.
 extern std::atomic<Interpreter*> s_interpreterWhoseCountsFall;
-ALWAYS_INLINE bool hasGIL(Interpreter* current) { return current && current->vm.currentThreadIsHoldingAPILock(); }
 
 ALWAYS_INLINE void retain(Handle handle)
 {
     JSCell* cell = countedCell(handle);
     if (!cell)
         return;
-    Interpreter* current = s_interpreter;
+    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
     if (hasGIL(current)) [[likely]]
         current->counts.add(cell);
     else
@@ -272,12 +313,12 @@ void setErrorIndicator(Handle);
 //         return entry.newReference(reprObject(entry.globalObject, toJS(object)));
 //     }
 //
-// The argument is what the function returns when it fails. The thread has the GIL: the API demands it.
+// The argument is what the function returns when it fails. The thread has the GIL: the API demands it, and these ask (mayEnter()).
 //
 // Every function that C calls says in its first line which of two kinds it is:
 //  - CAPI_QUIET(): it can neither run code of the program nor put a reference where the program finds it. There are few of these, and they are what
 //    a tp_dealloc consists of: counts, the type and the data of an object, memory, the error indicator put aside and back.
-//  - CAPI_ENTER(failure), or CAPI_NOISY() where there is nothing to enter the runtime for: all others. They are counted, as they begin, while a finalizer
+//  - CAPI_ENTER(failure), or CAPI_NOISY(failure) where there is nothing to enter the runtime for: all others. They are counted, as they begin, while a finalizer
 //    of C's is being served.
 // What is done with the count: see "The C API" in ../README.md. A function is noisy unless it is known to be quiet; to take a quiet one for
 // noisy costs time, the other way round is an error. ../tools/check_capi.py looks for the first lines.
@@ -330,9 +371,14 @@ private:
 };
 
 #define CAPI_QUIET() do { } while (false)
-#define CAPI_NOISY() JSC::Python::CApi::interpreter().noteNoisyCall()
+#define CAPI_NOISY(failure) \
+    if (!JSC::Python::CApi::mayEnter()) [[unlikely]] \
+        return failure; \
+    JSC::Python::CApi::interpreter().noteNoisyCall()
 // Nothing but a termination can be pending here.
 #define CAPI_ENTER(failure) \
+    if (!JSC::Python::CApi::mayEnter()) [[unlikely]] \
+        return failure; \
     JSC::Python::CApi::Entry entry(DECLARE_TOP_EXCEPTION_SCOPE(JSC::Python::CApi::interpreter().vm)); \
     if (entry.scope.exception()) [[unlikely]] \
         return failure

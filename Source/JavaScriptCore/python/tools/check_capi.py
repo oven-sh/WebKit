@@ -9,7 +9,7 @@ for path in sorted(glob.glob(f"{here}/../capi/*.cpp")):
     for name, first in re.findall(r"^PY_CAPI [^\n;(]*?\b(\w+)\([^\n;]*\)\n\{\n\s*([^\n]*)\n", open(path).read(), re.M):
         if first.startswith("CAPI_QUIET()"):
             quiet.append(name)
-        elif not first.startswith(("CAPI_ENTER(", "CAPI_NOISY()")) and not re.match(r"TakenOver \w+\(\w+\);", first):
+        elif not first.startswith(("CAPI_ENTER(", "CAPI_NOISY(")) and not re.match(r"TakenOver \w+\(\w+\);", first):
             silent.append(f"{os.path.basename(path)}: {name}")
 print(f"{len(quiet)} quiet:", " ".join(sorted(quiet)))
 if silent:
