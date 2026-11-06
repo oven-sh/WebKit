@@ -613,7 +613,10 @@ void Unit::endOfStatement(Label& end, const Last& isLast, int lineOfBranch)
     g.emitLabel(end);
     if (branchIsOnlyWay) {
         m_whereLineOfBranchIsMarked = g.instructions().size();
-        return isLast.kind == Last::BeforeJump ? silentLine(lineOfBranch) : line(lineOfBranch);
+        if (isLast.kind != Last::BeforeJump)
+            return line(lineOfBranch);
+        // `if 0:` is still a branch, and this a place where two ways meet, when CPython's compiler works out the lines of what is not the end of the function.
+        return jumpOfConstantLeadsHere() ? noLine() : silentLine(lineOfBranch);
     }
     // (Not if a statement has begun here. What is marked may be the line of a branch that was the only way to the end of a statement in this one.)
     if (!m_sameLineDepth && m_markedLine != -1 && (m_markedPosition != g.instructions().size() || m_whereLineOfBranchIsMarked == g.instructions().size()))
