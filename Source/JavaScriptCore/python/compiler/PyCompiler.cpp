@@ -2577,8 +2577,15 @@ void Unit::returnStatement(Return* node)
 
     // A `finally` clause that never comes to its end does not read the value. Then nothing would at those jumps, where no block holds it yet, and a collection there would
     // empty the register. So it is read here, into the register it waits in.
-    if (waysMeet && value->isTemporary() && m_blocks.containsIf([](auto& block) { return block.kind == BlockKind::FinallyTry; }))
+    if (waysMeet && value->isTemporary() && m_blocks.containsIf([](auto& block) { return block.kind == BlockKind::FinallyTry; })) {
+        // The line begins at this instruction now, and what a trace function raises when it is told of the line is raised here. In CPython something that does nothing is there for
+        // the line. If a `try` is left first, that is what is left of the end of the `try`, and no handler is for it, not even one further out.
+        Vector<TryContext> suspended;
+        if (auto* first = innermostBlock(m_blocks.size()); first->kind == BlockKind::TryExcept || first->kind == BlockKind::FinallyTry)
+            suspendTry(0, suspended);
         value = g.move(g.newTemporary(), value.get());
+        resumeTry(WTF::move(suspended));
+    }
 
     SetForScope leavingAs(m_leavingAs, Last { Last::OfFunction });
     SetForScope leftByStatement(m_leftByStatement, 0);
