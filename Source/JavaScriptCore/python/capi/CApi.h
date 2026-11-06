@@ -87,7 +87,7 @@ ALWAYS_INLINE JSValue toJS(Handle handle)
     return JSValue::decode(static_cast<EncodedJSValue>(bits));
 }
 
-// For who only asks what it is. A body stays a body. NOT TO BE STORED OR PASSED ON.
+// For who only asks what it is, and can do without a face (which toJS() may have to make: that takes the GIL, and a thread that may allocate). A body stays a body. NOT TO BE STORED OR PASSED ON.
 ALWAYS_INLINE JSValue toLookAt(Handle handle)
 {
     if (isStatic(handle)) [[unlikely]]
@@ -173,16 +173,6 @@ struct Interpreter {
     static pthread_key_t makeKeyOfReferenceToThread();
     CountTable counts;
 
-    // See CAPI_QUIET.
-    ALWAYS_INLINE void noteNoisyCall()
-    {
-        if (finalizersOfCBeingServed) [[unlikely]]
-            ++noise;
-    }
-    // Nobody sets the first yet, and nobody reads the second: they are for the order in which instances of extension types are destroyed.
-    unsigned finalizersOfCBeingServed { 0 };
-    uint32_t noise { 0 };
-
     // The bodies whose types have a tp_traverse, or something to do when an instance dies: those made since the last collection, and the others.
     // THEY HOLD AN ADDRESS ONLY WHILE THE CELL LIVES.
     //  - On: when the instance is made (tryMake() in CApiLife.cpp), by the thread that makes it, with the GIL.
@@ -194,6 +184,13 @@ struct Interpreter {
     Vector<Body*> oldBodies;
     // For the constraint, within a collection: Heap::phaseVersion() when the bodies were last asked, all of them.
     std::optional<uint64_t> versionWhenCounted;
+
+    // Those that this collection has let go of, and those of them that it has taken back: from then on they are marked, so they live. Empty when the marking has ended. See CApiEnd.cpp.
+    Vector<Body*> letGo;
+    Vector<Body*> takenBack;
+    // How many wait for their tp_clear (Body::Life::ToBeCleared). And: somebody has been seen to take one of those, or one that was let go of, so none of them is cleared.
+    size_t numberToBeCleared { 0 };
+    bool clearingIsOff { false };
 };
 
 void addMarkingConstraint(VM&);
@@ -284,19 +281,36 @@ void refuseToChangeCount(bool isToFall);
 void releaseSlow(JSCell*, Interpreter* thatLetsGo);
 // s_interpreter, until a reference that was to be taken has been refused.
 extern std::atomic<Interpreter*> s_interpreterThatLetsGo;
+// See CountTable, and CApiEnd.cpp.
+void didTakeWatchedReference(JSCell*);
+void didGiveBackLastReferenceToBodyWithoutFace(Body*);
 
 // THE QUESTION IS FOR C. Who has asked and been let in does not ask again, and the runtime does not ask at all where it keeps the books of a call that it has made itself (the hooks of
 // ctypes in CApiHooks.h): for whom C runs further out on the stack has nothing to do with whose reference the result of this call came with.
+ALWAYS_INLINE void retainCell(Interpreter& current, JSCell* cell)
+{
+    if (current.counts.add(cell)) [[unlikely]]
+        didTakeWatchedReference(cell);
+}
+
+ALWAYS_INLINE void releaseCell(Interpreter& current, JSCell* cell, bool letsGo)
+{
+    if (current.counts.remove(cell, letsGo)) [[unlikely]] {
+        if (Body* body = uncheckedDowncast<Body>(cell); !body->face()) [[unlikely]]
+            didGiveBackLastReferenceToBodyWithoutFace(body);
+    }
+}
+
 ALWAYS_INLINE void retain(Interpreter& current, Handle handle)
 {
     if (JSCell* cell = countedCell(handle))
-        current.counts.add(cell);
+        retainCell(current, cell);
 }
 
 ALWAYS_INLINE void release(Interpreter& current, Handle handle)
 {
     if (JSCell* cell = countedCell(handle))
-        current.counts.remove(cell, s_interpreterThatLetsGo.load(std::memory_order_relaxed));
+        releaseCell(current, cell, s_interpreterThatLetsGo.load(std::memory_order_relaxed));
 }
 
 // Py_INCREF(), Py_DECREF().
@@ -307,7 +321,7 @@ ALWAYS_INLINE void retain(Handle handle)
         return;
     Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
     if (hasGIL(current)) [[likely]]
-        current->counts.add(cell);
+        retainCell(*current, cell);
     else
         refuseToChangeCount(false);
 }
@@ -319,7 +333,7 @@ ALWAYS_INLINE void release(Handle handle)
         return;
     Interpreter* current = s_interpreterThatLetsGo.load(std::memory_order_relaxed);
     if (hasGIL(current)) [[likely]]
-        current->counts.remove(cell, true);
+        releaseCell(*current, cell, true);
     else
         releaseSlow(cell, current);
 }
@@ -384,15 +398,14 @@ void setErrorIndicator(Interpreter&, Handle);
 // The argument is what the function returns when it fails. The thread has the GIL: the API demands it, and these ask (interpreterToEnter()). What they are told is `current`.
 //
 // Every function that C calls says in its first line which of two kinds it is:
-//  - CAPI_QUIET(failure): it can neither run code of the program nor put a reference where the program finds it. There are few of these, and they are what
-//    a tp_dealloc consists of: counts, the type and the data of an object, memory, the error indicator put aside and back.
+//  - CAPI_QUIET(failure): it does not enter the runtime. There are few of these, and they are what a tp_dealloc consists of: counts, the type and the data of an object, memory,
+//    the error indicator put aside and back. They work while a termination is pending.
 //    CAPI_QUIET_AND_ASKS_NOBODY(), for those of them that look at nothing but the bits of their arguments and what is the thread's own: any thread may call them, at any time.
 //    (retain() and release() ask for themselves.)
 //    CAPI_QUIET_AND_ONLY_READS(failure), for those that a tp_traverse may call: see interpreterToLookAt().
-//  - CAPI_ENTER(failure), or CAPI_NOISY(failure) where there is nothing to enter the runtime for: all others. They are counted, as they begin, while a finalizer
-//    of C's is being served. (CAPI_ENTER_AFTER_ALL(failure): further down in a function that has asked, on the way that does enter the runtime. Whoever enters is counted: Entry does it.)
-// What is done with the count: see "The C API" in ../README.md. A function is noisy unless it is known to be quiet; to take a quiet one for
-// noisy costs time, the other way round is an error. ../tools/check_capi.py looks for the first lines, and that what asks nobody does not name the interpreter.
+//  - CAPI_ENTER(failure), or CAPI_NOISY(failure) where there is nothing to enter the runtime for: all others. (CAPI_ENTER_AFTER_ALL(failure): further down in a function that has
+//    asked, on the way that does enter the runtime.)
+// ../tools/check_capi.py looks for the first lines, and that what asks nobody names neither the interpreter nor the error indicator.
 class Entry {
     WTF_MAKE_NONCOPYABLE(Entry);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -405,7 +418,6 @@ public:
         , m_interpreter(current)
     {
         ASSERT(vm.currentThreadIsHoldingAPILock());
-        current.noteNoisyCall();
     }
 
     Runtime& runtime() const { return m_interpreter.runtime; }
@@ -455,8 +467,7 @@ private:
     if (!current) [[unlikely]] \
         return failure
 #define CAPI_NOISY(failure) \
-    CAPI_QUIET(failure); \
-    current->noteNoisyCall()
+    CAPI_QUIET(failure)
 // Nothing but a termination can be pending here.
 #define CAPI_ENTER_AFTER_ALL(failure) \
     auto scopeOfEntry = DECLARE_TOP_EXCEPTION_SCOPE(current->vm); \
@@ -472,6 +483,7 @@ private:
 // A linker takes a member of an archive if something refers to it, and nothing in bun refers to a function that only C calls. So each file has
 // CAPI_FILE(Name) in it, and ensure() refers to them all.
 #define FOR_EACH_CAPI_FILE(v) \
+    v(End) \
     v(Errors) \
     v(Life) \
     v(Numbers) \

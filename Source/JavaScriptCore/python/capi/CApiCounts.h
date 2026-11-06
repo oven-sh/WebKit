@@ -32,28 +32,39 @@ public:
     struct Counts {
         uint32_t owned { 0 };
         // For the collector, while it evaluates: how many of them tp_traverse has accounted for. See markWhatCHolds().
-        uint32_t accountedFor { 0 };
+        uint32_t accountedFor : 31 { 0 };
+        // Whoever takes a reference says so.
+        uint32_t isWatched : 1 { 0 };
     };
 
-    ALWAYS_INLINE void add(JSCell* cell)
+    // True: the count is watched.
+    ALWAYS_INLINE bool add(JSCell* cell)
     {
-        Counts& counts = m_counts.add(cell, Counts { }).iterator->value;
+        auto result = m_counts.add(cell, Counts { });
+        Counts& counts = result.iterator->value;
         if (counts.owned != forEver) [[likely]]
             ++counts.owned;
+        return counts.isWatched || (result.isNewEntry && watchesNewKeys);
     }
 
     // `letsGo`: the entry goes with the last reference. If not, it stays, with a count of 0: a key is what the collector marks, so the object is held, and the number is still what C owns.
-    ALWAYS_INLINE void remove(JSCell* cell, bool letsGo)
+    // True: that was the last reference to the body of an instance, and it is let go of.
+    ALWAYS_INLINE bool remove(JSCell* cell, bool letsGo)
     {
         auto entry = m_counts.find(cell);
         // More references were given back than taken. In CPython the object would have been freed under its owners. Here nothing hangs on it.
         if (entry == m_counts.end() || !entry->value.owned) [[unlikely]]
-            return;
+            return false;
         if (entry->value.owned == forEver) [[unlikely]]
-            return;
-        if (!--entry->value.owned && letsGo) [[likely]]
-            m_counts.remove(entry);
+            return false;
+        if (--entry->value.owned || !letsGo)
+            return false;
+        m_counts.remove(entry);
+        return cell->type() == CellType;
     }
+
+    // The first reference that C takes to a cell counts as watched.
+    bool watchesNewKeys { false };
 
     void clear() { m_counts.clear(); }
     void forget(JSCell* cell) { m_counts.remove(cell); }

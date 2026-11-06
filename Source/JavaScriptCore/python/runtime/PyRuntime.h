@@ -712,6 +712,11 @@ public:
     void didMarkAll(SlotVisitor&);
     // For a weak reference whose referent has just died.
     void queueWeakRefCallback(PyWeakRef*);
+    // For the C API. The first: when a collection ends, or with the GIL. The others: from keepUnreachableObjectsToFinalize().
+    enum class TellsThread : bool { Now, WhenCollectionEnds };
+    void queueToFinalize(JSCell*, uint32_t thread, TellsThread);
+    void letWeakRefsDie(SlotVisitor&, std::span<JSCell* const> referents);
+    bool leavesCyclicGarbageForLater() const { return m_leavesCyclicGarbageForLater; }
     // Since the last collection, of whatever kind. With the GIL.
     bool hasRegisteredFinalizableSinceCollection() const { return !m_youngFinalizable.isEmpty(); }
 

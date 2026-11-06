@@ -892,7 +892,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   have freed is finalized: in CPython it would have been long ago. (Only if an object is registered whose finalizer is code of the
   program.) After the callbacks, if there is anything left to finalize, `sys.modules` is emptied as CPython empties it, and
   collections find and order what only the modules held. What is then still held (by JS, which has imported a module, by a frame on the stack) is finalized in
-  the order it was made, a holder before what only it holds. A program that leaves nothing to finalize exits without a collection; a generator that has not begun is
+  the order it was made, a holder before what only it holds. A program that leaves nothing to finalize exits without a collection (an instance of the type of an extension that has something to do at its end is something to finalize, dead or alive); a generator that has not begun is
   nothing to finalize.
   - A function makes the namespace of its module a cycle, so nearly all that a program still holds when it ends hangs off a cycle. In the order of making, the raw file of
     `f = io.BufferedWriter(Raw())` was closed before the writer was asked to write what it held, which was lost, and of 10,000 objects held in all sorts of ways 78 % of those with one holder went before it. So what dies
@@ -1688,13 +1688,13 @@ told apart at every level. It costs who is let in nothing: while a thread runs C
 question above fails and the long way finds out why. C that JS runs (`bun:ffi`, N-API) runs for nobody in particular: on a thread that holds the GIL of the interpreter that has the
 API it is served, from whichever realm it was called, unless that is inside C which runs for another.
 The question is for C, and only C is asked. What the runtime does for itself (it throws what C raised, gives up the reference that came with a result, hands C one with the result of a callback;
-`_ctypes.Py_INCREF()`) goes by whose call it is: code of the interpreter that is served may run deep inside C that another one runs, and its calls come with references and exceptions like any. A
+`_ctypes.Py_INCREF()`; the reference of an instance to its type, where `object.__new__` takes it and an assignment to `__class__` moves it) goes by whose call it is: code of the interpreter that is served may run deep inside C that another one runs, and its calls come with references and exceptions like any. A
 function that has asked does not ask again for the references that it takes and gives (`retain()` and `release()` with `current`).
 
-**Quiet and noisy.** Every function that C calls says in its first line whether it can run code of the program or put a reference where the program finds
-it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); all three ask who calls, once, and have the answer at hand (`current`). `CAPI_QUIET_AND_ASKS_NOBODY()` is for the quiet ones that have nothing to ask for.
-`tools/check_capi.py` looks for the first lines, and that a function which asks nobody does not name the interpreter. A function is noisy unless it is known to be quiet. Nothing
-counts the noisy calls yet: that is for the order in which instances of extension types are destroyed.
+**Quiet and noisy.** Every function that C calls says in its first line whether it enters the runtime (`CAPI_ENTER()`; `CAPI_NOISY()` where there is nothing to enter it for) or
+not (`CAPI_QUIET()`); all three ask who calls, once, and have the answer at hand (`current`). The quiet ones are what a `tp_dealloc` consists of (counts, the type and the data of an object, memory, the indicator put aside and
+back), and they work while a termination is pending. `CAPI_QUIET_AND_ASKS_NOBODY()` is for those of them that have nothing to ask for, `CAPI_QUIET_AND_ONLY_READS()` for those that a
+`tp_traverse` may call. `tools/check_capi.py` looks for the first lines, and that a function which asks nobody names neither the interpreter nor the error indicator.
 
 **A type that an extension makes** (`PyType_FromSpec()` and its kin, `capi/CApiType.cpp`) is made by the runtime's own `type.__new__`, which knows the rules for bases, the MRO
 and layouts, except that nobody is told of it (`__init_subclass__`, `__set_name__`), as in CPython. Who makes its instances is what it has taken from its base, like any class ("Who makes an
@@ -1710,8 +1710,8 @@ instance", above): `object.__new__`, as long as there is no slot for another; ho
 - **The body** is what C sees: 32 bytes of head, then the data, in the cell's own memory, 16-byte aligned and zero at first. Cells do not move. Its address is the `PyObject*` for the whole
   life of the instance, `tp_dealloc` included, and the instance's `id()`. **No code of Python's or JS's is ever given a body**: `toJS()` gives the face, and is the only way from a
   handle to a value; `toC()` of a face gives the body. (A body is told by one byte: it is of `CellType`, which no object of Python's is.)
-- The face refers to the body, and **the body to the face**: an instance that only C holds, or that another instance holds in its data, keeps its attributes, its identity and its
-  weak references. So the two are one strongly connected piece, and are found dead together.
+- The face refers to the body, always. **The body refers to the face whenever it is marked for any reason but its own end**: an instance that only C holds, or that another instance
+  holds in its data, keeps its attributes, its identity and its weak references. So the two are one strongly connected piece, and are found dead together.
 
 Why two: `tp_dealloc` is the end of what C keeps, and nobody may have the object then, or get it later. But whether somebody can still get at a cell that is *kept alive for a call to
 come* is more than anybody can tell. JSC and Bun hold addresses in many ways without marking them (`JSC::Weak` with its owners, `WeakRef`, tables that are gone through when a
@@ -1739,11 +1739,68 @@ What `tp_traverse` says decides only *which instances are taken for dead*. One t
 early, as under CPython. Neither can make a key of the table dangle: a key that nothing has marked when all is done is marked then. And what it names is looked at only if it
 is a key: of anything else nobody knows whether it is still the address of a cell.
 
-- **The list of the bodies holds an address only while the cell lives.** A body gets on it when it is made (if its type has a `tp_traverse`) and
+- **The list of the bodies holds an address only while the cell lives.** A body gets on it when it is made (if its type has a `tp_traverse`, or something to do when an instance dies) and
   off it when the marking of a collection ends without having marked it, before anything is swept. The collector walks it, with the world stopped, and `gc.get_referrers()`, with the GIL.
 - The other visitors (the graph of what has died in `runtime/PyFinalizationOrder.cpp`, `gc.get_referents()`, JSC's verifier) run with the world stopped or with the GIL. They ask what an
-  *object* refers to: to them the two cells are one, the face, whose `visitChildren()` calls `tp_traverse` itself and names faces where C holds bodies. So the order of finalization knows C's edges, and no walk comes to a body. (A heap snapshot listens to the marker: there, what an instance holds
+  *object* refers to: to them the two cells are one, the face, whose `visitChildren()` calls `tp_traverse` itself and names faces where C holds bodies. So the order of finalization knows C's edges, and no walk comes to a body that has a face. (A heap snapshot listens to the marker: there, what an instance holds
   shows as a root.)
+
+**The end of an instance** (`capi/CApiEnd.cpp`). To destroy is not to finalize. A finalizer that is called for an object which another finalizer has just brought back is a wrong
+answer; a `tp_dealloc` is the end of what C keeps in the object.
+
+- *F. The finalizer* (`tp_finalize`, or the `__del__` of a class that derives from the type, which comes in its place) goes through the runtime's queue like any `__del__`, once: the face
+  is registered, found dead, kept with all that it leads to (the body, what C holds there), and handed to the finalizer. If that brings it back, it is back.
+- *L. Letting go.* `Runtime::keepUnreachableObjectsToFinalize()` is called whenever the marker has come to rest, and has a place that it reaches only when it finds nothing more to keep. All
+  that is reachable is marked then, and all that is kept for whatever reason (finalizers to run, what `gc.DEBUG_SAVEALL` shows), with all that *that* leads to by the marker's own
+  ways: children, ephemerons, opaque roots. A body that is still not marked is dead, and so is its face. The body is marked now, for its end, and the marker does not go on to the face.
+  What the body holds is marked as for any marked body: C will give it back. What reference counts would not have freed (it is in a cycle or hangs off one: `finalizationOrder()`) is what
+  CPython's collector would have found, and the first thing that does is done here and now, with the world stopped: Python's weak references to it die; the callbacks of those that are
+  not garbage themselves are owed. (A collection that a waiting thread has asked for, or the one before `atexit`, leaves cyclic garbage for later, as the runtime does with its own: such a body is
+  kept as it is, face and all, and comes up again.)
+- *B. Taking back.* The marker has come to rest again. A face that is marked now is led to by what a body holds (body -> list -> face); or, if the collection goes on beside the program,
+  somebody has taken it by a weak reference. Nobody can tell which. Its body is alive again, **and so is every body that it holds, with its face, and so on**: an instance that lives
+  keeps what it holds whole. That marks faces, so the marker goes on and comes here again.
+- *E. When that collection ends* the face of a body that is still let go of is not marked: it is dead as any cell is dead. Whoever knew its address has been told, or is told when its
+  block is swept, in whatever way JSC and Bun tell him of any cell. From now on the body has no face. What has been taken back stays as it was. If it is cyclic garbage, it is asked once to
+  let go of what it holds (`tp_clear`), and a later collection finds the face dead. If reference counts would have freed it (parent -> list -> child), nothing is called: CPython never clears
+  such an object, whose `tp_dealloc` may need what it holds. It waits for its holder to go.
+- *D.* **A body without a face is destroyed when C owns no reference to it.** Python and JS get at a body by its face only, and there is none; a new one is made in one place
+  (`faceOfSlow()`), and then there is one. C gets at it by a reference that it owns, and there is none; or by a pointer that it does not own, which in CPython would point to freed memory by now.
+  The two questions are asked when the turn has come. Nothing is revoked: a body to which C has taken a reference meanwhile (a table of the objects that are alive, which `tp_dealloc`
+  takes them out of), or which C has handed to Python, simply lives on; in the second case with a new face, without the attributes and the weak references of the old.
+- **Among bodies without faces there is nothing but C's references, and the counts are exact**: no object of Python's refers to a body, and a body that is alive would have kept the face of whatever
+  it holds. So `tp_dealloc` gives back what it held, and a body whose count falls to 0 by that comes next: parents before children, however long the chain, in the same turn and without recursion,
+  as in CPython. What is left with a count is in a cycle of bodies or hangs off one: `tp_clear`, then the counts again.
+- **What hangs on more than the two questions is only whether `tp_clear` is called**, and that is a matter of answers, not of memory: what has been cleared is still a valid object, by CPython's
+  contract. The decision is L's, with the world stopped, as it is the collector's in CPython. From then until the call the program may run. If somebody is *seen* to take one of those
+  that wait, nothing is cleared of all that waits: it may be reachable from that one. It comes up again in the next collection. (At least one `tp_clear` is called in each, so that ends.)
+  `tp_clear` is called once, unless somebody is seen to take the instance afterwards: then it may get into another cycle. (So one that lets go of nothing does not keep `gc.collect()` going.)
+  Seen (`didSeeSomebodyTake()`) are:
+  - C takes a reference to the body (`retain()`), by a pointer that it does not own;
+  - C hands the body to Python or JS (`toJS()`: an argument, a result, an item of a list);
+  - somebody hands the face to C (`toC()`, which is `identityBits()`, as is what `ctypes` writes for an argument);
+  - somebody asks for its `id()` or its default `hash()`, which are the body's address.
+
+  Not seen: a holder that the runtime knows nothing of (a `WeakRef` of JS's, a weak reference of napi's, one of Bun's own) hands out a face, and the program only keeps it. Then it has an
+  object that is cleared in its hands, never one that is destroyed. (To clear only if the world has stood still since L does not do: what L marks takes the marker longer than the
+  collector's turn lasts as soon as it is a few thousand cells, and then nothing was ever cleared, not even by `gc.collect()`, whose collection changes phases like any other.)
+- **C is never entered with a destroyed instance as `self`, and never handed the data of one.** The state is in the body: alive, let go, to be cleared, cleared, being destroyed, destroyed.
+  `PyObject_GetTypeData()` gives NULL and a `SystemError` for a destroyed one, and `tp_traverse` is not called from the moment `tp_dealloc` is entered (what it still holds
+  counts as held from elsewhere until it has been given back). A `tp_dealloc` that hands `self` to the program hands it a face made for the occasion, which leads to a destroyed body if it is kept.
+- While the collection that has let go of a body goes on beside the program, C may come by it (`didSeeSomebodyTake()`). Then the body is alive again, with a write barrier, so that the marker comes
+  again and goes on to the face. That is what `WeakRef.prototype.deref()` does. What the body holds follows at B.
+- No turn begins while a termination is pending (the runtime's queue sees to that), and no `tp_dealloc` of those that go with another.
+- At exit an instance that has something to destroy counts as something to do, like an object with a finalizer: what reference counts would have freed goes before `atexit`, the rest when the
+  modules have gone, in up to 64 collections each. In the end all that is registered is queued, reachable or not: that is the faces with finalizers. Only a collection lets go of a
+  body: what is still reachable then (C holds it in a static variable, JS holds it) gets its finalizer at most.
+- `tp_free` in a `tp_dealloc` does nothing: the memory is the collector's. Anywhere else (a constructor that gives up) it is the end of the instance: the reference that C got with it is gone, and no
+  `tp_dealloc` is called. An instance whose type has a `tp_dealloc` owns a reference to its type, which `tp_dealloc` gives back, as in CPython; `__class__` assignment moves it.
+- **Memory.** Most of what C allocates hangs on an object whose `tp_dealloc` frees it, and that waits for a collection. So the heap is told of blocks of more than 256 bytes from `PyMem_*` and
+  `PyObject_*` (not `PyMem_Raw*`, which may be called without the GIL), as an embedder tells it of memory of which it cannot say on which cell it hangs. It does not collect there and then.
+- **Where `tp_traverse` may be called:** where the collector can stop the thread, which is where C calls a function of the API that makes an object or runs code. Not in the functions that are
+  quiet and make nothing: counts, `PyMem_*`, the type and the data of an object. (In CPython 3.12 and later: where code of Python's runs.)
+
+The price is time, not safety: see DEFERRED.md. Garbage without a cycle that hangs together *through objects of Python's* goes one level with each full collection.
 
 **`ctypes`.** A `py_object` is a `PyObject*`: the same bits. A function of a `PyDLL` is called with the GIL; what C raised is thrown when it returns, whatever it returned (also for a
 function of a `CDLL` that got in because no other thread wanted the GIL: CPython crashes there). What a library raised as it was loaded, or as it went, is the cause of a `SystemError` from

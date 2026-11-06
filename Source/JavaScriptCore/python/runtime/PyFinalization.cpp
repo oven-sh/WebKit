@@ -49,7 +49,7 @@ static FinalizerState* finalizerStateOf(JSCell* cell)
         return &uncheckedDowncast<PyRecord>(cell)->finalizerState();
     if (info == PyManagedBuffer::info())
         return &uncheckedDowncast<PyManagedBuffer>(cell)->finalizerState();
-    return nullptr;
+    return CApi::finalizerStateOf(cell);
 }
 
 // These are registered once, by whoever makes them.
@@ -633,6 +633,8 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
 {
     Locker locker { m_finalizationLock };
     if (step == StepOfKeeping::WhatObserversKeep) {
+        // It goes through what has died too, and the global object may be among that: see visitPendingCalls().
+        SetForScope isPuttingInOrder(m_isPuttingFinalizersInOrder, true);
         if (CApi::isSetUpFor(*this) && CApi::markWhatIsLeft(visitor))
             return true;
         return m_markingObserver && m_markingObserver->didFinishMarking(visitor);
@@ -850,20 +852,16 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
     return !candidates.isEmpty() || !toKeep.isEmpty();
 }
 
-// Dead or alive.
-Vector<PyWeakRef*> Runtime::weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor& visitor)
+template<typename Function>
+static void forEachWeakRefDeadOrAlive(VM& vm, const Function& function)
 {
-    Vector<PyWeakRef*> result;
-    auto* space = m_vm.heap.pyWeakRefSpace<SubspaceAccess::Concurrently>();
+    auto* space = vm.heap.pyWeakRefSpace<SubspaceAccess::Concurrently>();
     if (!space)
-        return result;
+        return;
     auto look = [&](HeapCell* cell) {
         auto* weakRef = static_cast<PyWeakRef*>(cell);
-        if (!weakRef->structureID() || weakRef->isInternal() || !weakRef->callback())
-            return;
-        JSCell* referent = weakRef->referent();
-        if (referent && !visitor.isMarked(referent) && weakRef->structure()->realm() == m_globalObject)
-            result.append(weakRef);
+        if (weakRef->structureID())
+            function(weakRef);
     };
     space->forEachMarkedBlock([&](MarkedBlock::Handle* handle) {
         handle->forEachLiveCell([&](size_t, HeapCell* cell, HeapCell::Kind) {
@@ -875,6 +873,18 @@ Vector<PyWeakRef*> Runtime::weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor& 
     space->forEachPreciseAllocation([&](PreciseAllocation* allocation) {
         if (allocation->isLive())
             look(allocation->cell());
+    });
+}
+
+Vector<PyWeakRef*> Runtime::weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor& visitor)
+{
+    Vector<PyWeakRef*> result;
+    forEachWeakRefDeadOrAlive(m_vm, [&](PyWeakRef* weakRef) {
+        if (weakRef->isInternal() || !weakRef->callback())
+            return;
+        JSCell* referent = weakRef->referent();
+        if (referent && !visitor.isMarked(referent) && weakRef->structure()->realm() == m_globalObject)
+            result.append(weakRef);
     });
     return result;
 }
@@ -1009,14 +1019,14 @@ void Runtime::reconcileWeakReferencesAtGCEnd()
     scheduledTasks.removeUnmarked(m_vm.heap);
     unpinMemoryOfDeadViews();
     m_typeLookupCache->removeUnmarked(m_vm.heap);
-    if (CApi::isSetUpFor(*this))
-        CApi::didFinishMarking(m_vm.heap);
+    bool hasQueuedFinalizers = CApi::isSetUpFor(*this) && CApi::didFinishMarking(m_vm.heap);
     Locker locker { m_finalizationLock };
     // Each thread is told once of all that there is for it: to tell may be a system call.
     for (auto& owed : m_callsOwed) {
-        if (owed->callbacksOfThisCollection.isEmpty())
+        if (!owed->callbacksOfThisCollection.isEmpty())
+            queueCallbacks(*owed, owed->callbacksOfThisCollection);
+        else if (!hasQueuedFinalizers || !owed->hasCallsThatNobodyHasBegun())
             continue;
-        queueCallbacks(*owed, owed->callbacksOfThisCollection);
         didQueueCallsIn(*owed);
     }
 }
@@ -1060,6 +1070,44 @@ void Runtime::queueWeakRefCallback(PyWeakRef* weakRef)
 {
     Locker locker { m_finalizationLock };
     noteCallback(callsOwedBy(threadToMakeCallsOf(weakRef->thread())), weakRef);
+}
+
+// For what is not registered. The queue keeps it. A single call: what goes with it goes within that call.
+// (Nobody has noted when it was made, so its era is that in which it falls due: the main thread, as it ends, takes what lies in a queue when it comes; what is found from then on is its maker's.)
+void Runtime::queueToFinalize(JSCell* cell, uint32_t thread, TellsThread tellsThread)
+{
+    Locker locker { m_finalizationLock };
+    CallsOwed& owed = callsOwedBy(threadToMakeCallsOf(thread));
+    queueCall(halfFor(owed, cell, m_era, false), cell, m_era);
+    if (tellsThread == TellsThread::Now)
+        didQueueCallsIn(owed);
+}
+
+// These are cyclic garbage that is about to be marked all the same. As above, for all the weak references to them.
+// (Not quite as above: a callback is for the thread that made the weak reference, and what is then done to the instance for the thread that made the instance. Where those are two, and nobody has asked
+// for the collection, the callback need not come first. The runtime's own cyclic garbage goes to one thread, piece by piece.)
+void Runtime::letWeakRefsDie(SlotVisitor& visitor, std::span<JSCell* const> referents)
+{
+    assertIsHeld(m_finalizationLock);
+    UncheckedKeyHashSet<JSCell*> set;
+    set.addAll(referents);
+    forEachWeakRefDeadOrAlive(m_vm, [&](PyWeakRef* weakRef) {
+        // (Those of another realm are that runtime's: they die when the referent does.)
+        if (!weakRef->referent() || !set.contains(weakRef->referent()) || weakRef->structure()->realm() != m_globalObject)
+            return;
+        weakRef->setReferent(nullptr);
+        if (!weakRef->callback() || weakRef->isInternal())
+            return;
+        if (visitor.isMarked(weakRef))
+            noteCallback(callsOwedBy(threadToMakeCallsOf(weakRef->thread())), weakRef);
+        else
+            weakRef->clearCallback();
+    });
+    // (Now, not when the collection ends, as in keepUnreachableObjectsToFinalize(): the program may run before that.)
+    for (auto& owed : m_callsOwed) {
+        if (!owed->callbacksOfThisCollection.isEmpty())
+            queueCallbacks(*owed, owed->callbacksOfThisCollection);
+    }
 }
 
 template<typename Visitor>
@@ -1234,6 +1282,9 @@ static void finalizeObject(JSGlobalObject* globalObject, JSCell* cell)
         return finalizeGenerator(globalObject, generator);
     if (auto* awaitable = PyAsyncGenAwaitable::tryFrom(cell))
         return finalizeAwaitable(globalObject, awaitable);
+    CApi::TurnInQueue turn(globalObject, cell);
+    if (turn.isOver())
+        return;
     JSValue method = rt.typeOf(cell)->lookup(Special::Del);
     if (!method)
         return;
@@ -1565,7 +1616,7 @@ void Runtime::finalizeAllAtExit()
         }
     }
     auto isDone = [&] {
-        bool hasSomethingToFinalize = hasPendingFinalizers();
+        bool hasSomethingToFinalize = hasPendingFinalizers() || CApi::hasInstancesToDestroy(*this);
         forEachFinalizable([&](JSCell* cell) {
             hasSomethingToFinalize |= !hasNothingToFinalize(cell);
         });
@@ -1696,7 +1747,7 @@ void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
     for (unsigned round = 0; round < 64; ++round) {
         if (round)
             serves.willCollectAgain();
-        bool hasSomethingToDo = hasPendingFinalizers(CallsOf::OfEarlierEras);
+        bool hasSomethingToDo = hasPendingFinalizers(CallsOf::OfEarlierEras) || CApi::hasInstancesToDestroy(*this);
         forEachFinalizable([&](JSCell* cell) {
             hasSomethingToDo |= hasFinalizerOfProgram(*this, cell) && !hasNothingToFinalize(cell);
         });
@@ -1722,6 +1773,8 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
     Runtime::ServesOtherThreads serves(rt, callsOf);
     // An object with a finalizer takes two rounds: one finds it, the next frees it, which may clear weak references in turn
     // and finds what only it referred to. The limit is for finalizers that make new garbage with finalizers for ever.
+    // (Instances of the types of extensions that hang together through objects of Python's go one level a round. That ends by itself: a round after which there are fewer than ever does not count.)
+    size_t fewestInstances = CApi::numberOfInstances(rt);
     for (unsigned round = 0; round < 64; ++round) {
         if (round)
             serves.willCollectAgain();
@@ -1751,6 +1804,10 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
         rt.runPendingCalls(false, callsOf);
         if (!mayFindMore || collectionScope == CollectionScope::Eden || vm.exceptionForInspection())
             break;
+        if (size_t instances = CApi::numberOfInstances(rt); instances < fewestInstances) [[unlikely]] {
+            fewestInstances = instances;
+            --round;
+        }
     }
 }
 

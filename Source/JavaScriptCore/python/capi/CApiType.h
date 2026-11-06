@@ -81,6 +81,9 @@ public:
     Function slot(Slot which) const { return reinterpret_cast<Function>(slots[which]); }
     std::array<void*, numberOfSlots> slots { };
 
+    // Something is to be done when an instance dies.
+    bool hasSomethingToDestroy() const { return slots[tp_dealloc] || slots[tp_clear]; }
+
 private:
     MadeByExtension(VM& vm, Structure* structure)
         : Base(vm, structure)
@@ -96,7 +99,13 @@ PY_CAPI void PyObject_Free(void*);
 // Of the type, or of the nearest of those it derives from, along the bases that decide how instances are laid out. Null: its instances have nothing of C's.
 MadeByExtension* madeByExtension(PyType*);
 
-// Calls the function for each cell that tp_traverse names and to which C owns a reference, with its entry in the table. With the
+// Whether an instance owns a reference to its type: a tp_dealloc ends with Py_DECREF(Py_TYPE(self)).
+ALWAYS_INLINE bool ownsReferenceToType(MadeByExtension* extension) { return extension->slots[tp_dealloc]; }
+
+// The instance has been made: the runtime is told if it has a finalizer.
+void didMake(JSGlobalObject*, Face*, MadeByExtension*);
+
+// Calls the function for each cell that tp_traverse names and to which C owns a reference, with its entry in the table. For any instance, in any state; with the
 // world stopped or with the GIL. (What an instance holds it owns. Of anything else that a tp_traverse may name, nobody knows whether it is still the address of a cell.)
 using TraverseVisitor = ScopedLambda<void(JSCell*, CountTable::Counts&)>;
 void traverse(Body*, const TraverseVisitor&);

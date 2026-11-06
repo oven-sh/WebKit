@@ -452,7 +452,10 @@ static bool isOfUntrackedType(PyType* type)
 
 // gc.is_tracked(). It allocates no cell, and the object may be one that the collector has just found dead.
 // `isYoung`: it has not come through a collection of CPython's.
-static bool isTracked(Runtime& rt, JSValue value, bool isYoung = false)
+static bool isTracked(Runtime& rt, JSValue value, bool isYoung = false);
+bool isTrackedByCollector(Runtime& rt, JSValue value) { return isTracked(rt, value); }
+
+static bool isTracked(Runtime& rt, JSValue value, bool isYoung)
 {
     if (!value.isCell() || !value.asCell()->isObject())
         return false;

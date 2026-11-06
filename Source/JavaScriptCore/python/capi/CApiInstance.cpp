@@ -57,11 +57,11 @@ Body* Body::tryCreate(VM& vm, Structure* structure, PyType* type, size_t dataSiz
 // What marks, SlotVisitor, runs beside the program and on several threads: it sees the cells' own fields and nothing of C's (that is for markWhatCHolds()).
 //
 // Every other visitor asks what an OBJECT refers to, with the world stopped or on the thread that has the GIL: the graph of what has died (PyFinalizationOrder.cpp),
-// gc.get_referents(), JSC's verifier. To them the two cells are one, which refers to what tp_traverse names, and they do not come to a body.
+// gc.get_referents(), JSC's verifier. To them the two cells are one, which refers to what tp_traverse names, and they come to a body only if it has no face.
 static JSCell* objectOf(JSCell* cell)
 {
     Body* body = Body::tryFromCellOfHandle(cell);
-    return body ? body->face() : cell;
+    return body && body->face() && body->life() != Body::Life::LetGo ? body->face() : cell;
 }
 
 template<typename Visitor>
@@ -93,7 +93,9 @@ void Body::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_type);
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
         // THE FACE LIVES AS LONG AS THE BODY DOES, whoever it is that keeps the body (C, or another instance in its data): with the face go the attributes, the identity and the weak references.
-        visitor.append(thisObject->m_face);
+        // But for the one time when the body is kept for its end.
+        if (thisObject->life() != Life::LetGo)
+            visitor.append(thisObject->m_face);
     } else
         appendWhatCHolds(thisObject, visitor);
 }
@@ -117,14 +119,14 @@ static int callVisitor(Handle object, void* pointer)
 
 void traverse(Body* body, const TraverseVisitor& visit)
 {
-    // It may be one that C is still filling in.
-    if (!body->isTracked)
+    // It may be any instance: one that C is still filling in, one in the middle of its tp_dealloc, one whose data is gone.
+    if (!body->isTracked || body->life() >= Body::Life::BeingDestroyed)
         return;
     SetForScope isInTraverse(t_isInTraverse, true);
     SetForScope hasNoGIL(t_thisThread, nullptr);
     MadeByExtension* extension = madeByExtension(body->type());
-    // A tp_traverse names Py_TYPE(self), as it has to in CPython, where every instance owns a reference to its type. Here none does.
-    TraverseArgument argument { visit, body->type() };
+    // A tp_traverse names Py_TYPE(self), as it has to in CPython, where every instance owns a reference to its type. Here those do that have a tp_dealloc to give it back.
+    TraverseArgument argument { visit, ownsReferenceToType(extension) ? nullptr : body->type() };
     extension->slot<TraverseFunction>(tp_traverse)(toC(body), callVisitor, &argument);
 }
 

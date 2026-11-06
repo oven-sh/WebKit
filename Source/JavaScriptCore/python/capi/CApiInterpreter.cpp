@@ -354,7 +354,7 @@ void releaseSlow(JSCell* cell, Interpreter* thatLetsGo)
 {
     Interpreter* current = thatLetsGo ? nullptr : s_interpreter.load(std::memory_order_relaxed);
     if (hasGIL(current))
-        current->counts.remove(cell, false);
+        releaseCell(*current, cell, false);
     else
         refuseToChangeCount(true);
 }
@@ -479,7 +479,7 @@ void takeOverReference(uint64_t bits, bool programGetsObject)
 // identityBits(), for the face of an instance. Whoever asks has it in hand. With the GIL.
 uint64_t bitsOfInstance(JSCell* cell)
 {
-    return std::bit_cast<uintptr_t>(uncheckedDowncast<Face>(cell)->body());
+    return std::bit_cast<uintptr_t>(bodyOfFaceInHand(uncheckedDowncast<Face>(cell)));
 }
 
 // ---- The symbols, for every interpreter ----

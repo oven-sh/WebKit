@@ -144,11 +144,16 @@ static bool isCell(VM& vm, void* memory)
     return vm.heap.objectSpace().blocks().set().contains(MarkedBlock::blockFor(memory));
 }
 
-// The memory of an object is the collector's to free. What goes are the references that C thought it had to it (a constructor that gives up).
+// The memory of an object is the collector's to free. In a tp_dealloc there is nothing to do. Elsewhere (a constructor that gives up) this is the end of the object without a tp_dealloc, and
+// with it go the references that C thought it had to it.
 static void freeObject(JSCell* cell)
 {
-    if (Body* body = Body::tryFromCellOfHandle(cell))
-        interpreter().counts.forget(body);
+    Body* body = Body::tryFromCellOfHandle(cell);
+    if (!body || body->life() >= Body::Life::BeingDestroyed)
+        return;
+    didSeeSomebodyTake(body);
+    body->setLife(Body::Life::Destroyed);
+    interpreter().counts.forget(body);
 }
 
 // tp_free
@@ -173,7 +178,7 @@ PY_CAPI void PyObject_Free(void* memory)
 
 // ---- Birth ----
 
-static Face* tryMake(PyType* type, MadeByExtension* extension)
+static Face* tryMake(JSGlobalObject* globalObject, PyType* type, MadeByExtension* extension)
 {
     Interpreter& current = interpreter();
     Body* body = Body::tryCreate(current.vm, current.state->bodyStructure.get(), type, extension->dataEnd);
@@ -181,9 +186,13 @@ static Face* tryMake(PyType* type, MadeByExtension* extension)
         return nullptr;
     Face* face = Face::create(current.vm, current.state->faceStructure.get(), type, body);
     body->setFace(current.vm, face);
+    body->thread = current.runtime.currentThread();
     body->isTracked = extension->flags & HaveGC;
-    if (body->isTracked)
+    if (body->isTracked || extension->hasSomethingToDestroy())
         current.youngBodies.append(body);
+    if (ownsReferenceToType(extension))
+        retain(current, toC(type));
+    didMake(globalObject, face, extension);
     return face;
 }
 
@@ -195,9 +204,24 @@ JSValue allocateInstance(JSGlobalObject* globalObject, PyType* type)
     auto scope = DECLARE_THROW_SCOPE(vm);
     MadeByExtension* extension = madeByExtension(type);
     ASSERT(extension);
-    if (Face* face = tryMake(type, extension))
+    if (Face* face = tryMake(globalObject, type, extension))
         return face;
     return raiseMemoryError(globalObject, scope, String());
+}
+
+Face* faceOfSlow(Body* body)
+{
+    Interpreter& current = interpreter();
+    ASSERT(current.vm.currentThreadIsHoldingAPILock() && !t_isInTraverse);
+    // Whoever is given it may keep it.
+    didSeeSomebodyTake(body);
+    if (Face* face = body->face())
+        return face;
+    // It has died: the instance was garbage, and C has come by it all the same (a pointer that it does not own), or hands it on in the middle of its end. What went with the
+    // face is gone: the attributes, the weak references.
+    Face* face = Face::create(current.vm, current.state->faceStructure.get(), body->type(), body);
+    body->setFace(current.vm, face);
+    return face;
 }
 
 JSValue objectOfBody(Runtime& runtime, JSCell* cell)
@@ -208,12 +232,17 @@ JSValue objectOfBody(Runtime& runtime, JSCell* cell)
     return body ? faceOf(body) : JSValue();
 }
 
-void didChangeClass(JSCell* cell, PyType*, PyType* newType)
+void didChangeClass(JSCell* cell, PyType* oldType, PyType* newType)
 {
     Face* face = Face::tryFromCell(cell);
     if (!face)
         return;
     face->body()->setType(interpreter().vm, newType);
+    // tp_dealloc gives back a reference to the type that the instance has then.
+    if (ownsReferenceToType(madeByExtension(newType))) {
+        retain(interpreter(), toC(newType));
+        release(interpreter(), toC(oldType));
+    }
 }
 
 static Handle allocate(Entry& entry, Handle typeHandle)
@@ -224,7 +253,7 @@ static Handle allocate(Entry& entry, Handle typeHandle)
         entry.raise(entry.runtime().SystemError(), makeString("the C API cannot allocate an instance of '"_s, type->name(), '\''));
         return nullptr;
     }
-    Face* face = tryMake(type, extension);
+    Face* face = tryMake(entry.globalObject, type, extension);
     if (!face) {
         entry.raise(entry.runtime().MemoryError(), String());
         return nullptr;
@@ -261,7 +290,7 @@ PY_CAPI Handle _PyObject_GC_New(Handle type)
 static ALWAYS_INLINE void* typeData(Handle object, Handle typeHandle)
 {
     Body* body = bodyOrNull(object);
-    if (!body) [[unlikely]]
+    if (!body || !body->hasData()) [[unlikely]]
         return nullptr;
     PyType* type = PyType::tryFrom(toLookAt(typeHandle));
     auto* made = type ? MadeByExtension::of(type) : nullptr;
@@ -274,10 +303,14 @@ static ALWAYS_INLINE void* typeData(Handle object, Handle typeHandle)
 }
 
 // (Who may read may not therefore raise: a tp_traverse.)
-static void* raiseThatThereIsNoData()
+static void* raiseThatThereIsNoData(Handle object)
 {
     CAPI_ENTER(nullptr);
-    entry.raise(entry.runtime().TypeError(), "PyObject_GetTypeData: the object has no data of that type"_s);
+    Body* body = bodyOrNull(object);
+    if (body && !body->hasData())
+        entry.raise(entry.runtime().SystemError(), makeString("the object of type '"_s, body->type()->name(), "' has been destroyed"_s));
+    else
+        entry.raise(entry.runtime().TypeError(), "PyObject_GetTypeData: the object has no data of that type"_s);
     return nullptr;
 }
 
@@ -286,7 +319,7 @@ PY_CAPI void* PyObject_GetTypeData(Handle object, Handle type)
     CAPI_QUIET_AND_ONLY_READS(nullptr);
     if (void* data = typeData(object, type)) [[likely]]
         return data;
-    return raiseThatThereIsNoData();
+    return raiseThatThereIsNoData(object);
 }
 
 // For tp_traverse: no exception.

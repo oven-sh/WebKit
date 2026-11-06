@@ -126,7 +126,10 @@ void addMarkingConstraint(VM& vm)
 bool markWhatIsLeft(SlotVisitor& visitor)
 {
     Interpreter& current = interpreter();
-    // A key that is still not marked is held only by instances that are dead: the references will never be given back. But no key is to be the address of a freed cell: it stays.
+    if (takeBackWhatTheLivingHold(visitor) || letGoOfWhatIsDead(visitor))
+        return true;
+    // A key that is still not marked is held only by instances that are dead and that nobody keeps, so the references will never be given back. That does not happen while every instance that has
+    // something to give back is kept. But no key is to be the address of a freed cell, whatever happens: it stays.
     bool markedSomething = false;
     current.counts.forEach([&](JSCell* cell, CountTable::Counts&) {
         if (visitor.isMarked(cell))
@@ -137,7 +140,7 @@ bool markWhatIsLeft(SlotVisitor& visitor)
     return markedSomething;
 }
 
-void didFinishMarking(JSC::Heap& heap)
+bool didFinishMarking(JSC::Heap& heap)
 {
     Interpreter& current = interpreter();
 #if ASSERT_ENABLED
@@ -154,9 +157,28 @@ void didFinishMarking(JSC::Heap& heap)
     current.oldBodies.appendVector(std::exchange(current.youngBodies, { }));
 
     current.versionWhenCounted = std::nullopt;
+    return didSeeWhichFacesDied(heap);
 }
 
 // ---- The module gc ----
+
+size_t numberOfInstancesSlow()
+{
+    Interpreter& current = interpreter();
+    return current.oldBodies.size() + current.youngBodies.size();
+}
+
+bool hasInstancesToDestroySlow()
+{
+    Interpreter& current = interpreter();
+    for (auto* list : { &current.oldBodies, &current.youngBodies }) {
+        for (Body* body : *list) {
+            if (body->life() < Body::Life::BeingDestroyed && madeByExtension(body->type())->hasSomethingToDestroy())
+                return true;
+        }
+    }
+    return false;
+}
 
 bool isTracked(Body* body)
 {
@@ -176,6 +198,8 @@ void forEachInstanceThatRefersTo(std::span<const JSValue> values, const ScopedLa
     // Nothing here lets a collection go on: tp_traverse calls only what may be called with the world stopped.
     for (auto* list : { &current.oldBodies, &current.youngBodies }) {
         for (Body* body : *list) {
+            if (!body->face())
+                continue;
             bool refers = false;
             traverse(body, [&](JSCell* target, CountTable::Counts&) {
                 Body* held = Body::tryFromCellOfHandle(target);

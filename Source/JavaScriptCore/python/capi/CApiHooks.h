@@ -30,6 +30,7 @@ namespace Python {
 
 class PyType;
 class Runtime;
+struct FinalizerState;
 
 namespace CApi {
 
@@ -64,6 +65,7 @@ extern std::atomic<const Runtime*> s_runtimeItIsFor;
 extern std::atomic<const Runtime*> s_runtimeItIsSetUpFor;
 ALWAYS_INLINE bool isFor(const Runtime& runtime) { return s_runtimeItIsFor.load(std::memory_order_relaxed) == &runtime; }
 ALWAYS_INLINE bool isSetUpFor(const Runtime& runtime) { return s_runtimeItIsSetUpFor.load(std::memory_order_relaxed) == &runtime; }
+ALWAYS_INLINE bool isSomebodys() { return s_runtimeItIsSetUpFor.load(std::memory_order_relaxed); }
 
 // Around code of C's that an interpreter runs on this thread: a foreign call; dlopen() and dlclose(), for what a library does as it is loaded and as it goes (a constructor or a
 // destructor, those of a static variable in C++). Whoever calls the API meanwhile calls it for that interpreter, until code of Python's that C calls back does the same again.
@@ -88,8 +90,8 @@ JSValue objectOfSymbol(JSGlobalObject*, uint64_t bits);
 
 // ---- For the interpreter that the API has been set up for (isSetUpFor()) ----
 
-// For the collector, with the world stopped, when marking is over and nothing has been freed yet.
-void didFinishMarking(JSC::Heap&);
+// For the collector, with the world stopped, when marking is over and nothing has been freed yet. True: it has queued something (Runtime::queueToFinalize()), of which the threads are to be told.
+bool didFinishMarking(JSC::Heap&);
 
 // ---- Instances of the types of extensions (TypeFlag::InstancesHaveDataOfC) ----
 
@@ -97,6 +99,10 @@ void didFinishMarking(JSC::Heap&);
 JSValue allocateInstance(JSGlobalObject*, PyType*);
 // Whether an instance of one type can become an instance of the other. One of them at least has the flag.
 bool instancesAreAlike(PyType*, PyType*);
+
+// What Runtime::registerFinalizable() keeps in the object. Null: the cell is no instance.
+FinalizerState* finalizerStateOfSlow(JSCell*);
+ALWAYS_INLINE FinalizerState* finalizerStateOf(JSCell* cell) { return isSomebodys() ? finalizerStateOfSlow(cell) : nullptr; }
 
 // For the collector, with the world stopped, when all that is reachable and all that is kept for finalizers has been marked. True: it has marked more.
 bool markWhatIsLeft(SlotVisitor&);
@@ -107,10 +113,36 @@ JSValue objectOfBody(Runtime&, JSCell*);
 // __class__ has been assigned to.
 void didChangeClass(JSCell*, PyType* oldType, PyType* newType);
 
+// Of those that have something to do when they die: how many there are, dead or alive. With the GIL.
+size_t numberOfInstancesSlow();
+ALWAYS_INLINE size_t numberOfInstances(Runtime& runtime) { return isSetUpFor(runtime) ? numberOfInstancesSlow() : 0; }
+// Whether one of them is still to be destroyed, if it dies. With the GIL.
+bool hasInstancesToDestroySlow();
+ALWAYS_INLINE bool hasInstancesToDestroy(Runtime& runtime) { return isSetUpFor(runtime) && hasInstancesToDestroySlow(); }
+
 // gc.is_tracked(), for an instance.
 bool isTracked(JSCell*);
 // gc.get_referrers(): what refers to one of the values by a reference that C holds in it. With the GIL, right after a full collection.
 void forEachInstanceThatRefersTo(std::span<const JSValue>, const ScopedLambda<void(JSCell*)>&);
+
+// The turn of a cell, whatever it is, in the queue of finalizers: around all that is done for it.
+class TurnInQueue {
+    WTF_MAKE_NONCOPYABLE(TurnInQueue);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    TurnInQueue(JSGlobalObject* globalObject, JSCell* cell)
+    {
+        if (isSomebodys()) [[unlikely]]
+            begin(globalObject, cell);
+    }
+    // There is nothing left for the runtime to do.
+    bool isOver() const { return m_isOver; }
+
+private:
+    void begin(JSGlobalObject*, JSCell*);
+
+    bool m_isOver { false };
+};
 
 // ---- ctypes ----
 
@@ -144,12 +176,21 @@ public:
     ~CRunsFor() { }
 };
 inline JSValue objectOfSymbol(JSGlobalObject*, uint64_t) { return { }; }
-inline void didFinishMarking(JSC::Heap&) { }
+inline bool didFinishMarking(JSC::Heap&) { return false; }
 inline JSValue allocateInstance(JSGlobalObject*, PyType*) { return { }; }
 inline bool instancesAreAlike(PyType*, PyType*) { return false; }
 inline bool markWhatIsLeft(SlotVisitor&) { return false; }
 inline JSValue objectOfBody(Runtime&, JSCell*) { return { }; }
 inline void didChangeClass(JSCell*, PyType*, PyType*) { }
+inline size_t numberOfInstances(Runtime&) { return 0; }
+inline bool hasInstancesToDestroy(Runtime&) { return false; }
+inline FinalizerState* finalizerStateOf(JSCell*) { return nullptr; }
+class TurnInQueue {
+public:
+    TurnInQueue(JSGlobalObject*, JSCell*) { }
+    ~TurnInQueue() { }
+    bool isOver() const { return false; }
+};
 inline bool isTracked(JSCell*) { return false; }
 inline void forEachInstanceThatRefersTo(std::span<const JSValue>, const ScopedLambda<void(JSCell*)>&) { }
 inline bool throwWhatCRaised(JSGlobalObject*) { return true; }

@@ -798,6 +798,8 @@ void forEachValueInFramesOfParkedThreads(VM&, const ScopedLambda<void(JSValue)>&
 // When the interpreter exits: the threads that are still there never run again, and what they kept in instances of threading.local
 // goes, as it does when a thread ends.
 void forgetThreadLocalsOfOtherThreads(JSGlobalObject*);
+// gc.is_tracked(). It allocates no cell.
+bool isTrackedByCollector(Runtime&, JSValue);
 // The cells that those given lead to, themselves included, by way of cells of which `isEntered` says so. No cell is allocated.
 UncheckedKeyHashSet<JSCell*> cellsReachedFrom(VM&, std::span<JSCell* const>, const ScopedLambda<bool(JSCell*)>& isEntered);
 
