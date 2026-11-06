@@ -211,12 +211,6 @@ void memberDescriptorSet(JSGlobalObject* globalObject, PyMemberDescriptor* descr
     JSObject::deleteProperty(holder, globalObject, key, slot);
 }
 
-// A class may have, as an attribute of its own, what belongs to a type it has nothing to do with: class C: __len__ = list.__len__
-static ALWAYS_INLINE bool appliesToInstancesOf(PyType* owner, PyType* type)
-{
-    return type == owner || type->isSubtypeOf(owner);
-}
-
 static ALWAYS_INLINE bool nativeMethodAppliesTo(Runtime& rt, PyNativeFunction* method, JSValue object)
 {
     return appliesToInstancesOf(method->ownerType(), rt.typeOf(object));
@@ -2568,7 +2562,8 @@ bool isInstanceWithoutHook(JSGlobalObject* globalObject, JSValue object, JSValue
         PyType* objectType = rt.typeOf(object);
         if (objectType->isSubtypeOf(type))
             return true;
-        // An object may claim another class.
+        if (!instancesMayClaimAnotherClass(rt, objectType)) [[likely]]
+            return false;
         JSValue claimed = getAttrIfPresent(globalObject, object, rt.names.dClass());
         RETURN_IF_EXCEPTION(scope, false);
         if (PyType* claimedType = PyType::tryFrom(claimed); claimedType && claimedType != objectType)

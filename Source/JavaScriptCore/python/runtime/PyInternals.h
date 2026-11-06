@@ -42,6 +42,13 @@ JSValue objectHash(JSGlobalObject*, JSValue self);
 int64_t identityHash(JSGlobalObject*, JSValue self); // The same, not yet an int.
 JSValue objectEq(JSGlobalObject*, JSValue self, JSValue other);
 JSValue typeGetAttribute(JSGlobalObject*, JSValue self, JSValue name);
+// Whether `__class__` of an instance of the type can be anything but the type.
+bool instancesMayClaimAnotherClass(Runtime&, PyType*);
+// A class may have, as an attribute of its own, what belongs to a type it has nothing to do with: class C: __len__ = list.__len__
+ALWAYS_INLINE bool appliesToInstancesOf(PyType* owner, PyType* type)
+{
+    return type == owner || type->isSubtypeOf(owner);
+}
 // For pickle and copy (PyReduce.cpp).
 JSValue objectReduce(JSGlobalObject*, JSValue self);
 JSValue objectReduceEx(JSGlobalObject*, JSValue self, JSValue protocol);

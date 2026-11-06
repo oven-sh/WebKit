@@ -409,15 +409,26 @@ static JSValue keysAsList(JSGlobalObject* globalObject, PyDict* dict)
 
 static JSValue instanceGetDict(JSGlobalObject*, JSValue self);
 
+// Whether to read the attribute of an instance of the type is to call this getter of a built-in type, and nothing else. (It is a data
+// descriptor: nothing that the object has comes before it.)
+static bool readsThroughGetter(PyType* type, JSString* name, JSValue (*getter)(JSGlobalObject*, JSValue))
+{
+    if (!isNative(type->lookup(Special::GetAttribute), objectGetAttribute))
+        return false;
+    auto* descriptor = PyGetSetDescriptor::tryFrom(type->lookup(name));
+    if (!descriptor || descriptor->def().getter != getter)
+        return false;
+    // It applies to the instances. (object, whose getters these mostly are, is the last in line unless the mro() of a metaclass has left it out.)
+    PyType* owner = descriptor->owner();
+    PyTuple* mro = type->mro();
+    return (mro && mro->length() && mro->at(mro->length() - 1).asCell() == owner) || appliesToInstancesOf(owner, type);
+}
+
 // Whether instance.__dict__ would move the attributes to a dict now (PyInstance::ensureDict()), after which no instruction remembers
 // where they are. Who only reads them has forEachAttribute().
 static bool dictWouldBeMadeOfAttributes(Runtime& rt, PyInstance* instance)
 {
-    PyType* type = instance->type();
-    if (instance->dict() || !isNative(type->lookup(Special::GetAttribute), objectGetAttribute))
-        return false;
-    auto* descriptor = PyGetSetDescriptor::tryFrom(type->lookup(rt.names.dDict()));
-    return descriptor && descriptor->def().getter == instanceGetDict;
+    return !instance->dict() && readsThroughGetter(instance->type(), rt.names.dDict(), instanceGetDict);
 }
 
 static JSValue objectDir(JSGlobalObject* globalObject, JSValue self)
@@ -452,6 +463,11 @@ static JSValue objectDir(JSGlobalObject* globalObject, JSValue self)
 static JSValue objectGetClass(JSGlobalObject* globalObject, JSValue self)
 {
     return typeOf(globalObject, self);
+}
+
+bool instancesMayClaimAnotherClass(Runtime& rt, PyType* type)
+{
+    return !readsThroughGetter(type, rt.names.dClass(), objectGetClass);
 }
 
 // Objects register for finalization when they are made, if their class has a __del__ then. This is for a class that gets one
