@@ -2176,8 +2176,14 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             return threw;
         JSValue attribute = getAttr(globalObject, made, asString(operand(3).jsValue()));
         RETURN_IF_EXCEPTION(scope, threw);
-        if (function == RuntimeFunction::LoadSuperMethod || function == RuntimeFunction::LoadZeroSuperMethod)
-            operand(2) = JSValue();
+        if (function == RuntimeFunction::LoadSuperMethod || function == RuntimeFunction::LoadZeroSuperMethod) {
+            // The function and its first argument, as without a tool. There is a call for that and one for anything else, and a tool
+            // that has answered DISABLE to one of the two is not to be told of the other when it is no longer told of this.
+            auto* method = PyMethod::tryFrom(attribute);
+            operand(2) = method ? method->self() : JSValue();
+            if (method)
+                attribute = method->function();
+        }
         callFrame->uncheckedR(bytecode.m_dst) = attribute;
         return { next(), goOn };
     }
