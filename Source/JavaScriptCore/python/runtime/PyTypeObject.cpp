@@ -784,7 +784,7 @@ static void typeSetAttrImpl(JSGlobalObject* globalObject, PyType* type, JSString
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!type->isHeapType() && !type->has(TypeFlag::Mutable)) {
+    if (type->isImmutable()) {
         raiseTypeError(globalObject, scope, "cannot set "_s, strRepr(stringOf(name)), " attribute of immutable type '"_s, type->nameInMessages(), '\'');
         return;
     }
@@ -1635,7 +1635,7 @@ static bool checkMutable(JSGlobalObject* globalObject, PyType* type, JSValue val
         raiseTypeError(globalObject, scope, "cannot delete '"_s, name, "' attribute of type '"_s, type->nameInMessages(), '\'');
         return false;
     }
-    if (!type->isHeapType() && !type->has(TypeFlag::Mutable)) {
+    if (type->isImmutable()) {
         raiseTypeError(globalObject, scope, "cannot set '"_s, name, "' attribute of immutable type '"_s, type->nameInMessages(), '\'');
         return false;
     }
@@ -1949,7 +1949,7 @@ static void typeSetAnnotate(JSGlobalObject* globalObject, JSValue self, JSValue 
         raiseTypeError(globalObject, scope, "cannot delete __annotate__ attribute"_s);
         return;
     }
-    if (!type->isHeapType()) {
+    if (!type->isHeapType() || type->has(TypeFlag::Immutable)) {
         raiseTypeError(globalObject, scope, "cannot set '__annotate__' attribute of immutable type '"_s, type->nameInMessages(), '\'');
         return;
     }
@@ -1998,7 +1998,7 @@ static void typeSetAnnotations(JSGlobalObject* globalObject, JSValue self, JSVal
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(self);
-    if (!type->isHeapType()) {
+    if (!type->isHeapType() || type->has(TypeFlag::Immutable)) {
         raiseTypeError(globalObject, scope, "cannot set '__annotations__' attribute of immutable type '"_s, type->nameInMessages(), '\'');
         return;
     }
@@ -2184,9 +2184,9 @@ static JSValue typeGetFlags(JSGlobalObject* globalObject, JSValue self)
         if (type->has(flag))
             flags |= static_cast<uint64_t>(1) << bit;
     }
+    if (type->isImmutable())
+        flags |= 1 << 8;
     if (!type->isHeapType()) {
-        if (!type->has(TypeFlag::Mutable))
-            flags |= 1 << 8; // Immutable.
         if (isMadeAtRunTimeInCPython(type))
             flags |= 1 << 9;
     }

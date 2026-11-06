@@ -193,6 +193,8 @@ public:
     void add(TypeFlag flag) { m_flags.add(flag); }
     void remove(TypeFlag flag) { m_flags.remove(flag); }
     bool isHeapType() const { return has(TypeFlag::Heap); }
+    // A built-in type, or a class that the runtime has made for itself.
+    bool isImmutable() const { return has(TypeFlag::Immutable) || (!isHeapType() && !has(TypeFlag::Mutable)); }
 
     bool isSubtypeOf(const PyType* other) const;
 
