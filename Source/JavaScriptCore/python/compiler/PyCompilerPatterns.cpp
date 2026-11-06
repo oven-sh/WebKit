@@ -541,12 +541,7 @@ void Unit::matchStatement(Match* node, const Last& isLast)
             // What is left of the jump where a copy of the end of the function has taken its place is of the line of the only way there.
             OpNop::emit(&g);
         }
-        for (auto& [lineno, label, place] : failsByLine) {
-            g.emitLabel(label.get());
-            if (isLast.kind != Last::BeforeJump || isLast.jumpIs >= JumpIs::ToldOf)
-                line(lineno);
-            leave(isLast);
-        }
+        emitReturnsByLine(failsByLine, isLast);
         // (A pattern that always matches.)
         if (!next->isBound() && !nextWithMoreToDrop->isBound())
             continue;
