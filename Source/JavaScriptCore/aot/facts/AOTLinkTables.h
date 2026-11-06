@@ -404,6 +404,7 @@ struct LinkTables {
     BitVector appendedFieldsThatSomeWrittenTypeRequires;
     BitVector appendedFieldsThatTypeOfThisRequires;
     BitVector appendedFieldsLaidLate;
+    BitVector recordsThatSpreadsFill;
     BitVector keysAppendedByHeldAloneLaidLate;
     BitVector appendedFieldsThatTakeWordLeftInCell;
     BitVector appendedFieldsThatFollowersOfMakersStore;

@@ -2444,6 +2444,12 @@ void WriterOfLinkLayouts::lookAtChanges(FunctionID id, const ThinSummary& summar
                 });
             }
         }
+        if (change.kind == SummaryChange::Kind::CopiesInto && change.definesWhatItCopies && (subject.objects == LinkType::Objects::Layout || subject.objects == LinkType::Objects::Set)) {
+            m_flow.forEachLayoutOf(subject, [&](LayoutID filled) {
+                if (m_program.at(filled).kind == LayoutKind::Record)
+                    m_tables.recordsThatSpreadsFill.set(filled.index());
+            });
+        }
         bool waitsForOther = change.kind == SummaryChange::Kind::CopiesInto && change.other != noSummaryNode && typeAt(id, change.other).isNothing();
         if (subject.isNothing() || waitsForOther)
             continue;

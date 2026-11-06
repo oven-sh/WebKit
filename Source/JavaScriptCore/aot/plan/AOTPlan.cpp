@@ -825,7 +825,8 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, S
         for (FieldIndex field = 0; field < program.layouts[index].fields.size(); ++field) {
             uint32_t declaration = declarationOfField({ id, field });
             bool isOfBirth = held.field({ id, field }).isOfBirth || (program.layouts[index].fields[field].flags.contains(FieldFlags::IsInherited) && held.fields[declaration].isOfBirth);
-            if (!isOfBirth || !slotMayBeOfBirthInPlan(slots.layouts[index], field) || standsInRowOfClasses.quickGet(declaredLayoutOf(program, id).index()))
+            bool gainsNamesBySpread = held.recordsThatSpreadsFill.get(index) && held.layout(id).possibleChanges.contains(LayoutChange::GainsProperty);
+            if (!isOfBirth || gainsNamesBySpread || !slotMayBeOfBirthInPlan(slots.layouts[index], field) || standsInRowOfClasses.quickGet(declaredLayoutOf(program, id).index()))
                 isLeftOutBySomeLayout.quickSet(declaration);
             else if (!isReadWithoutLook || !linked.field({ id, field }).isFilled)
                 isLookedAtInSomeLayout.quickSet(declaration);

@@ -7,7 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTFacts.h"
+#include "AOTFamilies.h"
 #include "AOTGrowthOfWork.h"
 #include "AOTIRParser.h"
 #include "AOTLinkFlow.h"
@@ -186,12 +188,37 @@ static void testCalleesOfCallStayAsListedInRecordAndBeyondIt()
     }
 }
 
+static void testTellingNameOfFunctionAgainDoesNothing()
+{
+    runOnBuildThread([&] {
+        BuildContext build(makeOptionsOfTestedProgram());
+        String text = makeString(
+            "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s,
+            "function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Undefined\n    Return v0\n}\n"_s,
+            "function f1 name=\"plain\" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Undefined\n    Return v0\n}\n"_s);
+        std::unique_ptr<Program> program = parseProgram(withStandInLibrary(text), build);
+        AOT_TEST_CHECK(program);
+        const ParallelLoops& loops = build.parallelLoops();
+        ThinSummaries summaries = scanBodies(*program, build.diagnostics(), loops);
+        Families families(*program, Families::ClassesAlone, loops);
+        BodyIndexTable bodies(static_cast<uint32_t>(program->functions.size()), loops.width());
+        OwnedLooksAtBodies looks = makeEmptyLooksAtBodies(bodies);
+        LinkFlow flow(*program, summaries, families, *looks, allMechanisms, build);
+        for (uint32_t function : { 0u, 1u }) {
+            AOT_TEST_CHECK(!isLibraryCode(*program, program->at(FunctionID(function))));
+            flow.tellNameThatBecomesText(FunctionID(function));
+            flow.tellNameThatBecomesText(FunctionID(function));
+        }
+    });
+}
+
 std::span<const NativeTest> linkGrowthTests()
 {
     static constexpr NativeTest tests[] {
         { "link-growth/link-grows-as-the-layouts-of-a-family-that-is-copied-do"_s, testLinkGrowsAsLayoutsOfCopiedFamilyDo },
         { "link-growth/callees-of-a-call-stay-as-listed-in-the-record-and-beyond-it"_s, testCalleesOfCallStayAsListedInRecordAndBeyondIt },
         { "link-growth/the-rehearsal-of-regexp-texts-opens-as-many-regions-as-a-number-says"_s, testRehearsalOpensAsManyRegionsAsNumberSays },
+        { "link-growth/telling-the-name-of-a-function-again-does-nothing"_s, testTellingNameOfFunctionAgainDoesNothing },
     };
     return tests;
 }
