@@ -1678,7 +1678,7 @@ The collector is told the size of the side tables, which are several times the s
   over by its keys, as every mapping of Python's is, not by pairs as in JS: `for k, v in m.items()`, or `m.entries()`. It has a type of its own, `_js.JSMap`, which
   like that of a plain object adds nothing to `JSObject` but what it says to others: it is registered as a `MutableMapping`, and a mapping pattern of `match` takes it. (`typeOf()`
   tells by the type of the cell. `class Cache(js.Map)` derives from it.) Where a method is `Map`'s own there is no need to call it (`mapWithItsOwnMethods` looks the
-  method up and sees what function it is); a class derived from `Map` with a `get()` of its own is asked. `json.dumps()` writes it as it writes a dict,
+  method up and sees what function it is); a class derived from `Map` with a `get()` of its own is asked. `json.dumps()` writes it as it writes a dict (`json.dump()` and `iterencode()`: as for a plain object, only with `default=dict`),
   under the rule for the keys of one: a `str`, or an `int`, `float`, `bool` or `None`, which are written as strings; any other is a `TypeError`, or left out with `skipkeys`.
   A `Set` is as it was: iteration over its members, `in`, `len()`. A `WeakMap` is a mapping that cannot be iterated over: `w[o]`, `w[o] = v`, `del w[o]` and `o in w` go by
   its `get()`, `set()`, `delete()` and `has()`, as those of a `Map`; there is no `len()`. `o in w` is `has(o)` for a `WeakSet`, which like a `Set` has none of the methods of a mapping. (A decision that can still be changed.)
