@@ -294,13 +294,13 @@ static ALWAYS_INLINE bool isDunderDict(Runtime& rt, JSString* name)
     return impl == dunderDict || (impl && !impl->isAtom() && WTF::equal(impl, dunderDict));
 }
 
-// A proxy has an answer to every read, and for what it inherits too. Whether there is such a property is another question. `value`: the
-// answer. Empty: there is none, or an exception.
-static NEVER_INLINE JSValue valueIfProxyHasProperty(JSGlobalObject* globalObject, JSObject* holder, const Identifier& key, bool isOwn, JSValue value)
+// A proxy has an answer to every read. Whether there is such a property is another question. `value`: the answer. Empty: there is none, or
+// an exception.
+static NEVER_INLINE JSValue valueIfProxyHasProperty(JSGlobalObject* globalObject, JSObject* holder, const Identifier& key, JSValue value)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    bool hasIt = isOwn ? holder->hasOwnProperty(globalObject, key) : holder->hasProperty(globalObject, key);
+    bool hasIt = holder->hasProperty(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
     return hasIt ? value : JSValue();
 }
@@ -323,16 +323,28 @@ static ALWAYS_INLINE JSValue readProperty(JSGlobalObject* globalObject, JSObject
         }
         return result == Inquiry::Value ? value : JSValue();
     }
+    // Whether it has the property itself is [[GetOwnProperty]]. To a read, [[Get]], an object may answer with what it inherits too: a proxy
+    // does, and the global object of a context of node:vm.
+    if constexpr (isOwn) {
+        PropertySlot slot(receiver, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool found = holder->methodTable()->getOwnPropertySlot(holder, globalObject, key, slot);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!found)
+            return { };
+        // (What it is, is for the `get` of a proxy to say.)
+        if (!slot.isTaintedByOpaqueObject()) [[likely]]
+            RELEASE_AND_RETURN(scope, slot.getValue(globalObject, key));
+    }
     PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
     bool found = isOwn ? holder->methodTable()->getOwnPropertySlot(holder, globalObject, key, slot) : holder->getPropertySlot(globalObject, key, slot);
     RETURN_IF_EXCEPTION(scope, { });
     if (!found)
         return { };
     // (The value is in the slot: the trap has run.)
-    if (slot.isTaintedByOpaqueObject() && slot.slotBase()->type() == ProxyObjectType) [[unlikely]] {
+    if (!isOwn && slot.isTaintedByOpaqueObject() && slot.slotBase()->type() == ProxyObjectType) [[unlikely]] {
         JSValue value = slot.getValue(globalObject, key);
-        if (isOwn || value.isUndefined())
-            RELEASE_AND_RETURN(scope, valueIfProxyHasProperty(globalObject, holder, key, isOwn, value));
+        if (value.isUndefined())
+            RELEASE_AND_RETURN(scope, valueIfProxyHasProperty(globalObject, holder, key, value));
         return value;
     }
     RELEASE_AND_RETURN(scope, slot.getValue(globalObject, key));
