@@ -2455,6 +2455,7 @@ void Unit::asyncForLoop(For* node, const Last& isLast)
     statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
     if (!cannotGetHere())
         jump(start.get());
+    bool hasBreak = m_blocks.last().hasBreak;
     popBlock();
 
     Reg thrown = beginHandler(guard, nullptr, true);
@@ -2465,6 +2466,8 @@ void Unit::asyncForLoop(For* node, const Last& isLast)
     callRuntimeForEffect(RuntimeFunction::EndAsyncFor, { thrown.get(), iterator.get() });
     thrown = nullptr;
     endTry(whole);
+    m_statementsEndWhereStatementEnds = true;
+    m_statementsGoOnBehindStatement = !hasBreak;
     statements(node->orelse, 0, isLast);
     leaveStatement(end.get(), isLast, JumpIs::Hidden);
 
