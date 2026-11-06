@@ -594,6 +594,7 @@ public:
         unsigned buffersThatKeepGIL { 0 };
         void* stackWhereUnaskedCallsBegan { nullptr };
         uintptr_t isRunningPendingCalls { false };
+        uintptr_t isCallingCollectionCallbacks { false };
         NewGenerators newGenerators;
         unsigned ownershipEpoch { 0 }; // When they were put here.
         uint32_t thread { 0 };
@@ -694,6 +695,8 @@ public:
     bool wasInterruptedByPendingCalls(CallFrame* callFrame) const { return m_stackWhereUnaskedCallsBegan && static_cast<void*>(callFrame) > m_stackWhereUnaskedCallsBegan; }
     // gc.collect() in one of those calls: there is a collection when all that are queued have been made.
     void collectAfterPendingCalls() { m_shouldCollectAfterPendingCalls = true; }
+    // This thread is telling gc.callbacks of a collection of the engine's own, and is in one of them. (A callback may let go of the GIL: this goes with the thread, like isRunningPendingCalls().)
+    bool isCallingCollectionCallbacks() const { return m_isCallingCollectionCallbacks; }
 
     // See writeOutPendingOutput().
     ALWAYS_INLINE bool mayHavePendingOutput() const { return m_mayHavePendingOutput; }
@@ -1195,6 +1198,7 @@ private:
     uint32_t m_threadWhereSignalHandlerRaised { noThread }; // In one of the calls it owed, which has not returned yet.
     bool m_hasKeptWhatSignalHandlerRaised { false };
     bool m_shouldCollectAfterPendingCalls { false };
+    bool m_isCallingCollectionCallbacks { false };
     bool m_mayHavePendingOutput { false };
     MarkingObserver* m_markingObserver { nullptr };
     bool m_collectionIsWaitedFor { false }; // See WaitForCollection, for these three.

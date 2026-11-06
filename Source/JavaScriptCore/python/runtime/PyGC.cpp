@@ -503,6 +503,7 @@ void Runtime::tellOfCollection(int generation, double duration, bool isOver)
     CollectionStats stats;
     if (isOver)
         stats.duration = duration;
+    SetForScope isCallingCollectionCallbacks(m_isCallingCollectionCallbacks, true);
     callCollectionCallbacks(m_globalObject, isOver ? "stop"_s : "start"_s, generation, stats);
 }
 
@@ -528,7 +529,10 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     // call returns, and a hundred finalizers that do this would make for a hundred collections, or, if it is a call of this
     // function that runs them, as many times the rounds below. (In CPython a collection within a collection does nothing.)
     if (rt.isRunningPendingCalls()) {
-        rt.collectAfterPendingCalls();
+        // Not from one of gc.callbacks that is being told of a collection of the engine's own, in the same loop: the collection that was put off would be told of in its turn, to a callback that
+        // asks again. (In CPython a callback runs within the collection.)
+        if (!rt.isCallingCollectionCallbacks())
+            rt.collectAfterPendingCalls();
         return jsNumber(0);
     }
     // From one of gc.callbacks, or from another thread that got its turn meanwhile.

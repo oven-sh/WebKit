@@ -785,6 +785,7 @@ void Runtime::takeThreadLocalState(ThreadLocalState& state)
     state.frameDepth = std::exchange(frameDepth, 0);
     state.buffersThatKeepGIL = std::exchange(buffersThatKeepGIL, 0);
     state.isRunningPendingCalls = std::exchange(m_isRunningPendingCalls, false);
+    state.isCallingCollectionCallbacks = std::exchange(m_isCallingCollectionCallbacks, false);
     state.stackWhereUnaskedCallsBegan = std::exchange(m_stackWhereUnaskedCallsBegan, nullptr);
     state.thread = std::exchange(m_currentThread, noThread);
     if (hasNewGenerator()) [[unlikely]] {
@@ -831,6 +832,7 @@ void Runtime::putThreadLocalState(ThreadLocalState& state)
     frameDepth = state.frameDepth;
     buffersThatKeepGIL = state.buffersThatKeepGIL;
     m_isRunningPendingCalls = state.isRunningPendingCalls;
+    m_isCallingCollectionCallbacks = state.isCallingCollectionCallbacks;
     m_stackWhereUnaskedCallsBegan = state.stackWhereUnaskedCallsBegan;
     m_currentThread = state.thread;
     // Another thread may have been handed the generators meanwhile: temporariesMayHaveEscaped().
