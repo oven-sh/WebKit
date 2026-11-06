@@ -10,6 +10,7 @@
 #include "BooleanConstructor.h"
 #include "BuiltinNames.h"
 #include "FunctionPrototype.h"
+#include "GetterSetter.h"
 #include "IteratorOperations.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
@@ -166,7 +167,8 @@ static bool propertyKeyForAttribute(JSGlobalObject* globalObject, JSObject* obje
 }
 
 // Whether the object is the `prototype` of a constructor. What is read off one is JS's spelling of an unbound method:
-// String.prototype.toUpperCase.call("abc"). `asksGetter`: for who runs code of the object's anyway.
+// String.prototype.toUpperCase.call("abc"). `asksGetter`: for who runs code of the object's anyway. A getter of the program's is not asked even so:
+// it is not what makes a prototype, and nobody expects len() to call it.
 static bool isPrototypeOfConstructor(JSGlobalObject* globalObject, JSObject* object, bool asksGetter = false)
 {
     VM& vm = getVM(globalObject);
@@ -175,7 +177,11 @@ static bool isPrototypeOfConstructor(JSGlobalObject* globalObject, JSObject* obj
     if (!constructor) [[likely]]
         return false;
     // In many classes of the host it is a getter written in C++ (Headers.prototype). In Iterator.prototype it is a getter, by the standard.
-    if (constructor.isCell() && (constructor.asCell()->type() == CustomGetterSetterType || (asksGetter && constructor.asCell()->type() == GetterSetterType))) [[unlikely]] {
+    auto isGetterOfEngine = [&] {
+        auto* getter = dynamicDowncast<JSFunction>(uncheckedDowncast<GetterSetter>(constructor.asCell())->getter());
+        return getter && getter->isHostFunction() && !getter->isCompiledClosure() && !getter->inherits<JSBoundFunction>();
+    };
+    if (constructor.isCell() && (constructor.asCell()->type() == CustomGetterSetterType || (asksGetter && constructor.asCell()->type() == GetterSetterType && isGetterOfEngine()))) [[unlikely]] {
         if (failed(scope, ensureMainThreadForJS(globalObject)))
             return false;
         constructor = object->get(globalObject, vm.propertyNames->constructor);
@@ -640,6 +646,9 @@ static JSValue methodOfIteration(JSGlobalObject* globalObject, JSObject* object)
     RETURN_IF_EXCEPTION(scope, { });
     if (!method.isCallable())
         return { };
+    // (What is a Set by its cell is one, and the methods work on it: F.prototype = new Set([1]).)
+    if (object->type() == JSSetType)
+        return method;
     bool isPrototype = isPrototypeOfConstructor(globalObject, object, true);
     RETURN_IF_EXCEPTION(scope, { });
     return isPrototype ? JSValue() : method;
@@ -1050,7 +1059,8 @@ static ALWAYS_INLINE JSValue objectOfPythonBehindProxy(JSGlobalObject* globalObj
             return { };
         object = proxy->target();
     } while (object->type() == ProxyObjectType);
-    if (!isPyObject(object) && !PyListObject::is(object))
+    // (Of a class it is the metaclass that says: len(Color), `member in Color`.)
+    if (!isPyObject(object) && !PyListObject::is(object) && !PyType::is(object))
         return { };
     PyType* type = typeOf(globalObject, object);
     for (Special method : methods) {
@@ -1059,6 +1069,8 @@ static ALWAYS_INLINE JSValue objectOfPythonBehindProxy(JSGlobalObject* globalObj
     }
     return { };
 }
+
+static JSValue jsObjectIter(JSGlobalObject*, JSValue);
 
 static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
@@ -1079,6 +1091,13 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
         iterates = methodOfIteration(globalObject, object);
         RETURN_IF_EXCEPTION(scope, { });
     }
+    // A class of Python's that derives from one of JS's may have an __iter__() of its own. What that gives is what is in an instance then, as for
+    // a class without a __contains__(), unless the object says itself what is in it.
+    bool iteratesInPython = false;
+    if (typeByPrototype(object)) [[unlikely]] {
+        auto* native = PyNativeFunction::tryFrom(typeOf(globalObject, self)->lookup(Special::Iter));
+        iteratesInPython = !native || native->def().pointer.f1 != jsObjectIter;
+    }
     if (mustHaveMethod || iterates) {
         // A mapping by its methods has a has(), and what is like a Set says itself what is in it too. Of anything else that JS iterates over it
         // is what iteration gives, as of an iterable of Python's.
@@ -1089,31 +1108,45 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
             RETURN_IF_EXCEPTION(scope, { });
             return jsBoolean(isIn);
         }
-        // (A symbol is no item there: `js.Symbol.iterator in o` is the `in` of JS, as o[js.Symbol.iterator] is its read.)
-        if (!key.isSymbol()) {
-            IterationRecord iteration = iteratorForIterable(globalObject, object, iterates);
+    }
+    if (iteratesInPython) [[unlikely]] {
+        JSValue iterator = getIter(globalObject, self);
+        RETURN_IF_EXCEPTION(scope, { });
+        while (true) {
+            JSValue item = iterNext(globalObject, iterator);
             RETURN_IF_EXCEPTION(scope, { });
-            while (true) {
-                JSValue result = iteratorStep(globalObject, iteration);
-                RETURN_IF_EXCEPTION(scope, { });
-                if (result.isFalse())
-                    return jsBoolean(false);
-                JSValue item = iteratorValue(globalObject, result);
-                RETURN_IF_EXCEPTION(scope, { });
-                bool found = isEqual(globalObject, item, key);
-                bool hasRaised = scope.exception();
-                // (The iterable may have no end, and code of JS's does not look for the signals of Python's.)
-                if (!found && !hasRaised && vm.traps().needHandling(VMTraps::NeedPythonCalls)) [[unlikely]]
-                    hasRaised = failed(scope, checkOnlySignals(globalObject));
-                if (!found && !hasRaised) [[likely]]
-                    continue;
-                // As `for...of` that is left early: the iterator that was made here is told, since nobody else can. One that the program has (a
-                // generator) is the program's to go on with.
-                if (iteration.iterator != JSValue(object))
-                    iteratorClose(globalObject, iteration.iterator);
-                RETURN_IF_EXCEPTION(scope, { });
+            if (!item)
+                return jsBoolean(false);
+            bool found = isEqual(globalObject, item, key);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (found)
                 return jsBoolean(true);
-            }
+        }
+    }
+    // (A symbol is no item there: `js.Symbol.iterator in o` is the `in` of JS, as o[js.Symbol.iterator] is its read.)
+    if (iterates && !key.isSymbol()) {
+        IterationRecord iteration = iteratorForIterable(globalObject, object, iterates);
+        RETURN_IF_EXCEPTION(scope, { });
+        while (true) {
+            JSValue result = iteratorStep(globalObject, iteration);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (result.isFalse())
+                return jsBoolean(false);
+            JSValue item = iteratorValue(globalObject, result);
+            RETURN_IF_EXCEPTION(scope, { });
+            bool found = isEqual(globalObject, item, key);
+            bool hasRaised = scope.exception();
+            // (The iterable may have no end, and code of JS's does not look for the signals of Python's.)
+            if (!found && !hasRaised && vm.traps().needHandling(VMTraps::NeedPythonCalls)) [[unlikely]]
+                hasRaised = failed(scope, checkOnlySignals(globalObject));
+            if (!found && !hasRaised) [[likely]]
+                continue;
+            // As `for...of` that is left early: the iterator that was made here is told, since nobody else can. One that the program has (a
+            // generator) is the program's to go on with.
+            if (iteration.iterator != JSValue(object))
+                iteratorClose(globalObject, iteration.iterator);
+            RETURN_IF_EXCEPTION(scope, { });
+            return jsBoolean(true);
         }
     }
     Identifier name;
