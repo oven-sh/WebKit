@@ -50,7 +50,7 @@ PyTuple* ioMakeState(JSGlobalObject* globalObject)
     // object.__new__ makes the instances of the abstract classes.
     auto addAbstract = [&](IOType id, const TypeDef& def, PyType* base) {
         PyType* type = add(id, def, base);
-        type->remove(TypeFlag::DisallowInstantiation);
+        type->takeMakerOfBase(rt.vm());
         return type;
     };
     PyType* ioBase = addAbstract(IOType::IOBase, ioIOBaseTypeDef, nullptr);
@@ -842,7 +842,7 @@ static constexpr NativeGetSet ioBaseGetSets[] = {
     { "closed"_s, ioBaseGetClosed },
 };
 
-constexpr TypeDef ioIOBaseTypeDef { "_io._IOBase"_s, { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::HasWeakref }, ioBaseMethods, ioBaseGetSets,
+constexpr TypeDef ioIOBaseTypeDef { "_io._IOBase"_s, { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::HasWeakref, TypeFlag::NothingOfItsOwn }, ioBaseMethods, ioBaseGetSets,
     "The abstract base class of all streams.\n\n"
     "It provides the methods that make sense for any of them, and versions of the others that say the operation is not\n"
     "supported. A stream is a context manager, which closes it, and an iterator over its lines."_s };
@@ -918,7 +918,7 @@ static constexpr NativeDef rawIOBaseMethods[] = {
     PY_METHOD("write", rawIOBaseNotImplemented, "($self, /, *args)"),
 };
 
-constexpr TypeDef ioRawIOBaseTypeDef { "_io._RawIOBase"_s, { TypeFlag::Base }, rawIOBaseMethods, { }, "Base class for raw binary I/O."_s };
+constexpr TypeDef ioRawIOBaseTypeDef { "_io._RawIOBase"_s, { TypeFlag::Base, TypeFlag::NothingOfItsOwn }, rawIOBaseMethods, { }, "Base class for raw binary I/O."_s };
 
 // ---- _BufferedIOBase ----
 
@@ -972,7 +972,7 @@ static constexpr NativeDef bufferedIOBaseMethods[] = {
     PY_METHOD("write", ioBaseUnsupportedWrite, "($self, b, /)"),
 };
 
-constexpr TypeDef ioBufferedIOBaseTypeDef { "_io._BufferedIOBase"_s, { TypeFlag::Base }, bufferedIOBaseMethods, { },
+constexpr TypeDef ioBufferedIOBaseTypeDef { "_io._BufferedIOBase"_s, { TypeFlag::Base, TypeFlag::NothingOfItsOwn }, bufferedIOBaseMethods, { },
     "Base class for buffered IO objects.\n\n"
     "Unlike a raw stream, read(), readinto() and write() do not stop short of what was asked for unless the end of the\n"
     "stream is reached, and never return None: a stream that would block raises BlockingIOError."_s };
@@ -1003,7 +1003,7 @@ static constexpr NativeGetSet textIOBaseGetSets[] = {
     { "errors"_s, textIOBaseNone },
 };
 
-constexpr TypeDef ioTextIOBaseTypeDef { "_io._TextIOBase"_s, { TypeFlag::Base }, textIOBaseMethods, textIOBaseGetSets,
+constexpr TypeDef ioTextIOBaseTypeDef { "_io._TextIOBase"_s, { TypeFlag::Base, TypeFlag::NothingOfItsOwn }, textIOBaseMethods, textIOBaseGetSets,
     "Base class for text I/O.\n\n"
     "A stream of characters and lines. There is no readinto(), as a str cannot be written into."_s };
 

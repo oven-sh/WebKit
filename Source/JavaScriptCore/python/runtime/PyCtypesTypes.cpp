@@ -948,15 +948,17 @@ static JSValue simpleMetaInit(JSGlobalObject* globalObject, JSValue self, const 
         StrView name(globalObject, strValue(args[0]));
         RETURN_IF_EXCEPTION(scope, { });
         MarkedArgumentBuffer swappedArguments;
-        swappedArguments.append(type->type());
         swappedArguments.append(makeStr(globalObject, makeString(name.string(), "_be"_s)));
         for (unsigned i = 1; i < args.totalCount(); ++i)
             swappedArguments.append(args.values()[i]);
         Vector<JSValue, 8> values;
         for (unsigned i = 0; i < swappedArguments.size(); ++i)
             values.append(swappedArguments.at(i));
-        JSValue swapped = call(globalObject, rt.typeType()->lookup(Special::New), CallArgs(values.span().data(), args.size() + 1, args.keywordNames()));
+        JSValue swapped = PyNativeFunction::makeInstance(globalObject, rt.typeType(), type->type(), CallArgs(values.span().data(), args.size(), args.keywordNames()));
         RETURN_IF_EXCEPTION(scope, { });
+        // (A base may have been given another metaclass since this class was made, and that has the last word.)
+        if (!PyType::is(swapped))
+            return raiseTypeError(globalObject, scope, "type.__new__() should have returned a class, not '"_s, typeName(globalObject, swapped), '\'');
         PyCTypeInfo* swappedInfo = createInfo(globalObject, PyType::from(swapped));
         RETURN_IF_EXCEPTION(scope, { });
         fillSimpleInfo(vm, swappedInfo, *description, proto, true);

@@ -91,7 +91,7 @@ static JSValue baseExceptionInit(JSGlobalObject*, JSValue object, const CallArgs
 static ALWAYS_INLINE bool isNative(JSValue method, JSValue (*function)(JSGlobalObject*, JSValue, const CallArgs&))
 {
     auto* native = PyNativeFunction::tryFrom(method);
-    return native && native->def().signature.isVariadic && native->def().signature.hasSelf && native->def().pointer.variadicWithSelf == function;
+    return native && native->isVariadicWithSelf(function);
 }
 
 PyException* newException(JSGlobalObject* globalObject, PyType* type, std::span<const JSValue> args)
@@ -100,7 +100,7 @@ PyException* newException(JSGlobalObject* globalObject, PyType* type, std::span<
     // nothing of the program's would be run. (One of them is RecursionError, which is made where the stack is as good as used up: a call would
     // find that out in its turn, and raise another.)
     Runtime& rt = runtime(globalObject);
-    if (type->type() == rt.typeType() && isNative(type->lookup(Special::New), baseExceptionNew) && isNative(type->lookup(Special::Init), baseExceptionInit)) [[likely]] {
+    if (type->type() == rt.typeType() && type->isMadeBy(baseExceptionNew) && isNative(type->lookup(Special::Init), baseExceptionInit)) [[likely]] {
         PyException* exception = PyException::create(rt.vm(), rt.structure<PyException>(), type);
         exception->setArgs(rt.vm(), PyTuple::create(globalObject, args));
         return exception;
@@ -976,7 +976,7 @@ bool isMadeWithoutCodeOfTheProgram(JSGlobalObject* globalObject, PyType* type)
 {
     if (!type->has(TypeFlag::Heap) && !type->has(TypeFlag::Mutable)) [[likely]]
         return true;
-    return type->type() == runtime(globalObject).typeType() && PyNativeFunction::is(type->lookup(Special::New)) && PyNativeFunction::is(type->lookup(Special::Init)) && !type->lookup(Special::Del);
+    return type->type() == runtime(globalObject).typeType() && type->maker() && PyNativeFunction::is(type->lookup(Special::Init)) && !type->lookup(Special::Del);
 }
 
 void raiseStatement(JSGlobalObject* globalObject, JSValue exception, JSValue cause, JSValue callee)
@@ -1597,8 +1597,8 @@ static bool osErrorInitialize(JSGlobalObject* globalObject, PyException* excepti
 // A subclass that has an __init__ of its own, and not a __new__, gets to see the arguments first.
 static bool osErrorUsesInit(JSGlobalObject* globalObject, PyType* type)
 {
-    Runtime& rt = runtime(globalObject);
-    return type->lookup(Special::Init) != rt.OSError()->lookup(Special::Init) && type->lookup(Special::New) == rt.OSError()->lookup(Special::New);
+    PyType* base = runtime(globalObject).OSError();
+    return type != base && type->lookup(Special::Init) != base->lookup(Special::Init) && type->isMadeAs(base);
 }
 
 static JSValue osErrorNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)

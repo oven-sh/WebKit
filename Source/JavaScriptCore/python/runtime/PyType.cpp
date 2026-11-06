@@ -98,6 +98,7 @@ void PyType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_subclasses);
     visitor.append(thisObject->m_instanceStructure);
     visitor.append(thisObject->m_jsPrototype);
+    visitor.append(thisObject->m_maker);
     visitor.appendValues(thisObject->m_specials.data(), numberOfSpecials);
 }
 
@@ -184,12 +185,68 @@ void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def,
         }
     }
 
-    // Nothing makes an instance of a built-in type that has not said how.
-    bool hasNew = false;
-    for (auto& method : def.methods)
-        hasNew |= method.kind == NativeKind::New;
-    if (!hasNew && base && (base == rt.objectType() || base->has(TypeFlag::DisallowInstantiation)))
+    // Nothing makes an instance of a built-in type that has not said how. (addMethods() has seen to one that has.)
+    if (!m_maker && base && (base == rt.objectType() || base->has(TypeFlag::DisallowInstantiation)))
         m_flags.add(TypeFlag::DisallowInstantiation);
+    if (has(TypeFlag::DisallowInstantiation))
+        m_maker.clear();
+    else if (!m_maker) {
+        m_maker.setMayBeNull(vm, this, base->maker());
+        m_looksUpNew = base->looksUpNew();
+    }
+    // The __new__ of object makes no cells but its own.
+    RELEASE_ASSERT(!has(TypeFlag::OwnLayout) || !isMadeBy(objectNew));
+}
+
+void PyType::takeMakerOfBase(VM& vm)
+{
+    m_flags.remove(TypeFlag::DisallowInstantiation);
+    m_maker.setMayBeNull(vm, this, m_base->maker());
+    m_looksUpNew = m_base->looksUpNew();
+    m_construction = Construction::Unknown;
+}
+
+void PyType::updateMaker()
+{
+    m_construction = Construction::Unknown;
+    // In a new class nothing has been looked up yet, and this may never be asked for again: lookup() would remember it, at a price. So the dicts are
+    // asked as they come. (Not what __base__ remembers: a class made after something was written into a dict behind the back of its base sees that.)
+    PyTuple* mro = this->mro();
+    JSString* name = runtime(realm()).name(Special::New);
+    JSValue found;
+    bool asksNoKeys = true;
+    for (unsigned i = 0; mro && i < mro->length() && !found && asksNoKeys; ++i) {
+        PyDict* dict = uncheckedDowncast<PyType>(mro->at(i).asCell())->dict();
+        asksNoKeys = dict->hasOnlyStringKeys();
+        if (asksNoKeys)
+            found = dict->get(name);
+    }
+    if (!asksNoKeys)
+        found = lookup(Special::New);
+    if (!found) {
+        m_maker.clear();
+        m_looksUpNew = false;
+        return;
+    }
+    // The __new__ of a built-in type, whichever, stands for "as it was".
+    if (auto* native = PyNativeFunction::tryFrom(found); native && native->kind() == NativeKind::New)
+        return;
+    m_maker.clear();
+    m_looksUpNew = true;
+}
+
+void PyType::updateMakers()
+{
+    updateMaker();
+    // (Not those that only have this one in an MRO of their own making.)
+    MarkedArgumentBuffer subclasses;
+    appendSubclassesTo(subclasses);
+    JSString* name = runtime(realm()).name(Special::New);
+    for (unsigned i = 0; i < subclasses.size(); ++i) {
+        PyType* subclass = PyType::from(subclasses.at(i));
+        if (!subclass->dict()->get(name))
+            subclass->updateMakers();
+    }
 }
 
 void PyType::addMethods(JSGlobalObject* globalObject, std::span<const NativeDef> methods)
@@ -206,9 +263,12 @@ void PyType::addMethods(JSGlobalObject* globalObject, std::span<const NativeDef>
         case NativeKind::Function:
             value = PyNativeFunction::create(globalObject, def, def.kind, { }, this, name);
             break;
-        case NativeKind::New:
-            value = PyNativeFunction::create(globalObject, def, NativeKind::New, this, this, name);
+        case NativeKind::New: {
+            auto* function = PyNativeFunction::create(globalObject, def, NativeKind::New, this, this, name);
+            m_maker.set(vm, this, function);
+            value = function;
             break;
+        }
         case NativeKind::StaticMethod: {
             auto* wrapper = PyWrapperObject::create(globalObject, rt.staticmethodType(), PyNativeFunction::create(globalObject, def, NativeKind::Function, { }, this, name));
             wrapper->setCopiesAttributesLater(true);

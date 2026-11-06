@@ -268,9 +268,18 @@ which says what each type has in its namespace: the docstrings; a wrapper of the
 have there, where their instances find it as well. `TypeFlag::Mutable` is for the few of those whose attributes can be set: the exceptions of
 modules (`struct.error`), struct sequences outside `sys`, `ast.AST`.
 
-**Which `__new__` makes an instance.** As in CPython: if what the MRO finds is the `__new__` of a built-in type, it stands for "what
-the class inherits", which is that of `__base__`, the base that decides the layout. So `class C(tzinfo, dict)` is made by
-`dict.__new__`, and `tzinfo.__new__(C)` is refused as not safe (`typeCall`, `PyNativeFunction::invokeNew`).
+**Who makes an instance.** As in CPython (`tp_new`) that is state of the type, with a history, and not worked out from the dicts:
+`PyType::maker()`, the `__new__` of a built-in type, or `looksUpNew()`, or neither ("cannot create"). A built-in type has its own
+`__new__` or that of its base; one derived from `object` that has none has no maker. A class takes what `__base__` has, the base that
+decides the layout. Then, and whenever `__new__` is set or deleted through `type.__setattr__` (in the class, and down the classes derived from it
+as far as they have none of their own) or `__bases__` is assigned to, `__new__` is looked up: the `__new__` of a built-in type, whichever, means "as it
+was"; anything else, "look it up at each call", which stays so whatever is found later; nothing at all (an `mro()` without `object`), "cannot create". So `class C(tzinfo, dict)` is made by `dict.__new__`, and so is
+`class C(dict): __new__ = object.__new__`; after `C.__new__ = f; del C.__new__`, `C(1)` is refused by `object.__new__`; what is written into the
+dict of a class behind its back is not seen, unless the class looks `__new__` up. `T.__new__(S, ...)`, `Reflect.construct(T, args, S)` and `super(...)` in a class of JS are one function,
+`PyNativeFunction::makeInstance`, which has CPython's test for what is "not safe": `Reflect.construct(object, [], D)` is refused for a class D of JS derived from `int`, as `object.__new__(D)` is. (For the two from JS, as where a class is made, the `__new__` of a built-in type
+that is found stands for what has come along `__base__`: to T, or after `super(...)` to the class of the instance, where nothing is left to test: the classes on the way that look `__new__` up and find a
+constructor of JS are passed over. If one of them finds anything else, the one that was found is asked as Python would ask it.) Nobody else hands the C++ function of a type a class. So it
+gets the classes that it came to along `__base__`, and no others, whatever the dicts say. `__init__` has no such state: it is looked up.
 The `mro()` of a metaclass may name any class: that is why a type written in C++ whose instances have anything of their own needs `TypeFlag::OwnLayout`: without it, its methods can be
 handed an instance of a class that merely names it.
 

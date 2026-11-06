@@ -58,13 +58,7 @@ static bool reduceHasNativeState(PyType* type)
 {
     while (type->isHeapType())
         type = type->base();
-    // A type written in C++ that leaves it to object.__new__() to make its instances, as _io._IOBase, adds nothing to them.
-    if (auto* native = PyNativeFunction::tryFrom(type->lookup(Special::New)); native && !type->has(TypeFlag::DisallowInstantiation)) {
-        auto& def = native->def();
-        if (def.signature.isVariadic && def.signature.hasSelf && def.pointer.variadicWithSelf == objectNew)
-            return false;
-    }
-    return !type->has(TypeFlag::NothingOfItsOwn);
+    return type->base() && !type->has(TypeFlag::NothingOfItsOwn);
 }
 
 // `required`: the state is all there will be to make the copy from, so what it cannot hold is an error.
@@ -205,7 +199,7 @@ static JSValue reduceNewObject(JSGlobalObject* globalObject, JSValue object)
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = rt.typeOf(object);
-    if (type->has(TypeFlag::DisallowInstantiation))
+    if (!type->hasMaker())
         return raiseTypeError(globalObject, scope, "cannot pickle '"_s, type->nameInMessages(), "' object"_s);
 
     PyTuple* args;

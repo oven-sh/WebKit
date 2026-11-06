@@ -329,7 +329,7 @@ static JSValue structNew(JSGlobalObject* globalObject, JSValue cls, const CallAr
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
     JSValue format;
-    if (type->lookup(Special::New) != structType(globalObject)->lookup(Special::New)) {
+    if (!type->isMadeAs(structType(globalObject))) {
         // Called by the __new__() of a class derived from Struct.
         if (failed(scope, structParseFormatArgument(globalObject, args, format)))
             return { };

@@ -815,6 +815,11 @@ State* createState(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSValue signalDict = call(globalObject, rt.typeType(), makeStr(vm, "SignalDict"_s), PyTuple::create(globalObject, { mixin, mutableMapping }), PyDict::create(globalObject));
     RETURN_IF_EXCEPTION(scope, nullptr);
+    // (abc.ABCMeta has made it, a class written in Python.)
+    if (!PyType::is(signalDict)) {
+        raiseTypeError(globalObject, scope, "type is expected for SignalDict"_s);
+        return nullptr;
+    }
     state->signalDictType.set(vm, state, PyType::from(signalDict));
 
     auto newException = [&](ASCIILiteral name, std::initializer_list<JSValue> bases) -> PyType* {

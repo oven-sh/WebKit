@@ -3155,7 +3155,7 @@ private:
             return false;
         if (!PyType::is(cls))
             RELEASE_AND_RETURN(scope, fail(opcode, " class argument must be a type, not "_s, typeName(m_globalObject, cls)));
-        if (PyType::from(cls)->has(TypeFlag::DisallowInstantiation))
+        if (!PyType::from(cls)->hasMaker())
             RELEASE_AND_RETURN(scope, fail(opcode, " class argument '"_s, typeName(m_globalObject, cls), "' doesn't have __new__"_s));
         auto* tuple = PyTuple::tryFrom(args);
         if (!tuple)

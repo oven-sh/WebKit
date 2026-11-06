@@ -1098,8 +1098,8 @@ void initializeTypingTypes(JSGlobalObject* globalObject)
     define(rt.typeAliasTypeType(), "typing.TypeAliasType"_s, { }, typeAliasMethods, typeAliasGetSets);
 
     // Its instances are made as those of object are.
-    define(rt.genericType(), "typing.Generic"_s, { TypeFlag::Base, TypeFlag::Mutable }, typingGenericMethods, { });
-    rt.genericType()->remove(TypeFlag::DisallowInstantiation);
+    define(rt.genericType(), "typing.Generic"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::NothingOfItsOwn }, typingGenericMethods, { });
+    rt.genericType()->takeMakerOfBase(vm);
 }
 
 static JSValue typingIdFunc(JSGlobalObject*, JSValue, JSValue x) { return x; }

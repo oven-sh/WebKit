@@ -676,7 +676,13 @@ static JSValue jsClassInit(JSGlobalObject*, JSValue, const CallArgs&) { return j
 static bool isInitOfConstructor(JSValue init)
 {
     auto* native = PyNativeFunction::tryFrom(init);
-    return native && native->def().pointer.variadicWithSelf == jsClassInit;
+    return native && native->isVariadicWithSelf(jsClassInit);
+}
+
+bool isNewOfConstructor(JSValue value)
+{
+    auto* native = PyNativeFunction::tryFrom(value);
+    return native && native->isVariadicWithSelf(jsClassNew);
 }
 
 bool hasInitOfItsOwn(PyType* type) { return !isInitOfConstructor(type->lookup(Special::Init)); }

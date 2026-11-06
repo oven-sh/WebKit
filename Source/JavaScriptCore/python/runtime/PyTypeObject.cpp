@@ -71,7 +71,7 @@ bool rejectKeywordsInInit(JSGlobalObject* globalObject, ASCIILiteral function, J
     if (!args.hasKeywords()) [[likely]]
         return true;
     PyType* type = typeOf(globalObject, self);
-    if (type != base && type->lookup(Special::New) != base->lookup(Special::New))
+    if (type != base && !type->isMadeAs(base))
         return true;
     return rejectKeywords(globalObject, function, args);
 }
@@ -135,7 +135,7 @@ String typeNameForMessage(JSGlobalObject* globalObject, PyType* type)
 static bool isNativeNew(JSValue method, NativeDef::VariadicWithSelf function)
 {
     auto* native = PyNativeFunction::tryFrom(method);
-    return native && native->def().signature.isVariadic && native->def().signature.hasSelf && native->def().pointer.variadicWithSelf == function;
+    return native && native->isVariadicWithSelf(function);
 }
 
 // __itemsize__: not 0 for a type whose instances are of variable size in CPython, on which some rules for classes depend.
@@ -192,7 +192,7 @@ JSValue objectNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& arg
     PyType* type = PyType::from(cls);
 
     if (hasExcessArguments(args)) {
-        if (!isNativeNew(type->lookup(Special::New), objectNew))
+        if (!type->isMadeBy(objectNew))
             return raiseTypeError(globalObject, scope, "object.__new__() takes exactly one argument (the type to instantiate)"_s);
         if (isNativeNew(type->lookup(Special::Init), objectInit))
             return raiseTypeError(globalObject, scope, type->nameInMessages(), "() takes no arguments"_s);
@@ -212,9 +212,6 @@ JSValue objectNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& arg
         RETURN_IF_EXCEPTION(scope, { });
         return raiseTypeError(globalObject, scope, "Can't instantiate abstract class "_s, type->name(), " without an implementation for abstract method"_s, listLength(sorted) > 1 ? "s"_s : ""_s, " '"_s, text, '\'');
     }
-    // A class derived from a built-in type that has no __new__ because there is no making its instances from Python.
-    if (layoutBase(type) != rt.objectType()) [[unlikely]]
-        return raiseTypeError(globalObject, scope, "cannot create '"_s, type->nameInMessages(), "' instances"_s);
     RELEASE_AND_RETURN(scope, allocateInstance(globalObject, type));
 }
 
@@ -227,8 +224,7 @@ JSValue objectInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& a
     PyType* type = typeOf(globalObject, self);
     if (!isNativeNew(type->lookup(Special::Init), objectInit))
         return raiseTypeError(globalObject, scope, "object.__init__() takes exactly one argument (the instance to initialize)"_s);
-    // A built-in type whose instances cannot be made from Python has no __new__ at all in CPython, not that of object.
-    if (isNativeNew(type->lookup(Special::New), objectNew) && !type->has(TypeFlag::DisallowInstantiation))
+    if (type->isMadeBy(objectNew))
         return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__init__() takes exactly one argument (the instance to initialize)"_s);
     return jsUndefined();
 }
@@ -828,6 +824,8 @@ static void typeSetAttrImpl(JSGlobalObject* globalObject, PyType* type, JSString
     StringImpl* impl = name->tryGetValueImpl();
     bool isHook = impl == rt.name(Special::GetAttr)->tryGetValueImpl() || impl == rt.name(Special::GetAttribute)->tryGetValueImpl();
     type->didChange(vm, isHook ? PyType::Change::HowAttributesAreRead : PyType::Change::Any);
+    if (impl == rt.name(Special::New)->tryGetValueImpl()) [[unlikely]]
+        type->updateMakers();
     if (getsFinalizer) [[unlikely]]
         registerInstancesForFinalization(globalObject, type);
 }
@@ -856,22 +854,76 @@ static JSValue typeDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue n
 
 // ---- type: calling one ----
 
+// found(cls, ...), for the __new__ that was found in `type` or behind it.
+static ALWAYS_INLINE JSValue callNew(JSGlobalObject* globalObject, JSValue found, PyType* type, PyType* cls, const CallArgs& args)
+{
+    Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    JSValue function;
+    if (auto* wrapper = dynamicDowncast<PyWrapperObject>(found); wrapper && wrapper->type() == rt.staticmethodType())
+        function = wrapper->wrapped();
+    else {
+        function = bindDescriptor(globalObject, found, { }, type);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    RELEASE_AND_RETURN(scope, withFirstArgument(cls, args, [&](const CallArgs& all) {
+        return call(globalObject, function, all);
+    }));
+}
+
+// Whether getattr(cls, '__new__') is what is found in cls, for the classes of this metaclass that have one.
+static ALWAYS_INLINE bool givesNewOfClassAsFound(Runtime& rt, PyType* metatype)
+{
+    if (metatype == rt.typeType()) [[likely]]
+        return true;
+    if (!isNative(metatype->lookup(Special::GetAttribute), typeGetAttribute) || metatype->lookup(Special::GetAttr))
+        return false;
+    // The __new__ of the metaclass itself comes first if it is a data descriptor.
+    JSValue ofMetatype = metatype->lookup(Special::New);
+    if (!ofMetatype)
+        return true;
+    PyType* kind = rt.typeOf(ofMetatype);
+    return !kind->lookup(Special::Set) && !kind->lookup(Special::Delete);
+}
+
+// The first half: tp_new(type, ...) in CPython.
+static ALWAYS_INLINE JSValue makeInstanceOf(JSGlobalObject* globalObject, PyType* type, const CallArgs& args)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (PyNativeFunction* maker = type->maker()) {
+        JSValue object = maker->invokeWithSelf(globalObject, type, args);
+        RETURN_IF_EXCEPTION(scope, { });
+        didMakeObject(globalObject, type, object);
+        return object;
+    }
+    if (!type->looksUpNew())
+        return raiseTypeError(globalObject, scope, "cannot create '"_s, type->nameInMessages(), "' instances"_s);
+    // type.__new__, as an attribute of the class.
+    JSValue found = givesNewOfClassAsFound(rt, type->type()) ? type->lookup(Special::New) : JSValue();
+    if (found) [[likely]]
+        RELEASE_AND_RETURN(scope, callNew(globalObject, found, type, type, args));
+    JSValue function = getAttr(globalObject, type, rt.name(Special::New));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, withFirstArgument(type, args, [&](const CallArgs& all) {
+        return call(globalObject, function, all);
+    }));
+}
+
 static NEVER_INLINE PyType::Construction findConstruction(Runtime& rt, PyType* type)
 {
-    auto takesAllArguments = [&](JSValue method, NativeKind kind) {
-        auto* native = PyNativeFunction::tryFrom(method);
-        // (The C++ function is called as it is, so it must at least be one of the type's own or inherited.)
-        return native && native->kind() == kind && type->isSubtypeOf(native->ownerType()) && native->def().signature.isVariadic && native->def().signature.hasSelf && !native->def().signature.isMadeAtRunTime && !(native->def().flags & (OnWipedStack | MayWait));
+    auto takesAllArguments = [&](PyNativeFunction* native, NativeKind kind) {
+        return native && native->kind() == kind && native->def().signature.isVariadic && native->def().signature.hasSelf && !native->def().signature.isMadeAtRunTime && !(native->def().flags & (OnWipedStack | MayWait));
     };
     auto construction = PyType::Construction::General;
-    JSValue newMethod = type->lookup(Special::New);
-    JSValue init = type->lookup(Special::Init);
-    if (!type->isHeapType() && !type->has(TypeFlag::DisallowInstantiation) && type != rt.typeType() && !type->lookup(Special::Del)
-        && takesAllArguments(newMethod, NativeKind::New) && !isNativeNew(newMethod, objectNew)) {
+    auto* init = PyNativeFunction::tryFrom(type->lookup(Special::Init));
+    if (!type->isHeapType() && type != rt.typeType() && !type->lookup(Special::Del) && takesAllArguments(type->maker(), NativeKind::New) && !type->isMadeBy(objectNew)) {
         // object.__init__ has nothing to say about the arguments of a type with a __new__ of its own.
-        if (isNativeNew(init, objectInit))
+        if (init && init->isVariadicWithSelf(objectInit))
             construction = PyType::Construction::NativeNew;
-        else if (takesAllArguments(init, NativeKind::SlotWrapper))
+        // (The C++ function is called as it is, so it must be the type's own or inherited.)
+        else if (takesAllArguments(init, NativeKind::SlotWrapper) && type->isSubtypeOf(init->ownerType()))
             construction = PyType::Construction::NativeNewAndInit;
     }
     type->setConstruction(construction);
@@ -958,78 +1010,53 @@ static JSValue typeCallWithoutNotes(JSGlobalObject* globalObject, PyType* type, 
 
     if (auto construction = type->construction() == PyType::Construction::Unknown ? findConstruction(rt, type) : type->construction();
         construction != PyType::Construction::General && !derived && vm.isSafeToRecurseSoft()) {
-        auto function = [&](Special special) { return uncheckedDowncast<PyNativeFunction>(type->lookup(special).asCell())->def().pointer.variadicWithSelf; };
-        JSValue object = function(Special::New)(globalObject, type, args);
+        JSValue object = type->maker()->def().pointer.variadicWithSelf(globalObject, type, args);
         RETURN_IF_EXCEPTION(scope, { });
         // What OSError(2, "") makes is of a class derived from it.
         if (rt.typeOf(object) != type) [[unlikely]]
             RELEASE_AND_RETURN(scope, initialize(object));
         if (construction == PyType::Construction::NativeNewAndInit) {
-            function(Special::Init)(globalObject, object, args);
+            uncheckedDowncast<PyNativeFunction>(type->lookup(Special::Init).asCell())->def().pointer.variadicWithSelf(globalObject, object, args);
             RETURN_IF_EXCEPTION(scope, { });
         }
         return object;
     }
 
-    JSValue newMethod = lookup(Special::New);
-    if (!newMethod || (type->has(TypeFlag::DisallowInstantiation) && !afterType))
-        return raiseTypeError(globalObject, scope, "cannot create '"_s, type->nameInMessages(), "' instances"_s);
-
-    JSValue object;
-    auto nativeNew = [](JSValue method) {
-        auto* native = PyNativeFunction::tryFrom(method);
-        return native && native->kind() == NativeKind::New ? native : nullptr;
-    };
-    PyNativeFunction* native = nativeNew(newMethod);
-    bool isChecked = false;
-    // object.__new__ and object.__init__ tell by the class of the instance whether the arguments are meant for the other of the two.
-    // Here that is for the type to say, whose methods these are.
-    if (derived && isNativeNew(newMethod, objectNew)) {
-        if (hasExcessArguments(args) && isNativeNew(lookup(Special::Init), objectInit) && !hasInitOfItsOwn(derived))
-            return raiseTypeError(globalObject, scope, derived->nameInMessages(), "() takes no arguments"_s);
-        args = CallArgs();
-    }
-    // In CPython the __new__ of a built-in type, found in a class or in the classes it derives from, stands for "what the class
-    // inherits", whichever type it is of: that of __base__, which decides the layout. So class C(tzinfo, dict) is made by dict's,
-    // and so is class C(dict): __new__ = object.__new__.
-    // The built-in type that has been asked for its __new__, if any.
-    PyType* asked = cls->isHeapType() ? nullptr : cls;
-    if (native && cls->isHeapType() && (native->ownerType()->solidBase() != layoutBase(cls) || !cls->isSubtypeOf(native->ownerType()))) [[unlikely]] {
-        PyNativeFunction* inherited = native;
-        for (PyType* base = cls->base(); base; base = base->base()) {
-            inherited = nativeNew(base->lookup(Special::New));
-            if (!base->isHeapType())
-                asked = base;
-            if (!inherited || asked)
-                break;
-        }
-        // What it inherits may be "look __new__ up", from a class with one written in Python. That finds the same again.
-        if (inherited)
-            native = inherited;
-        else
-            isChecked = true;
-    }
-    // Written into a built-in type that can be written to. It is called as the program would call it, and refuses.
-    if (native && !isChecked && asked && !asked->isSubtypeOf(native->ownerType())) [[unlikely]] {
-        newMethod = native;
-        isChecked = true;
-    }
-    if (native && !isChecked) {
-        object = native->invokeWithSelf(globalObject, cls, args);
+    if (!derived) {
+        JSValue object = makeInstanceOf(globalObject, type, args);
         RETURN_IF_EXCEPTION(scope, { });
-        didMakeObject(globalObject, cls, object);
-    } else {
-        JSValue function;
-        if (auto* wrapper = dynamicDowncast<PyWrapperObject>(newMethod); wrapper && wrapper->type() == rt.staticmethodType())
-            function = wrapper->wrapped();
-        else {
-            function = bindDescriptor(globalObject, newMethod, { }, type);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
-        object = withFirstArgument(cls, args, [&](const CallArgs& all) {
-            return call(globalObject, function, all);
-        });
+        RELEASE_AND_RETURN(scope, initialize(object));
     }
+
+    // The constructor of a class of JS has called super(...): what the type, or what follows it, has for a __new__ makes an instance of that class.
+    JSValue found = lookup(Special::New);
+    if (!found || (type->has(TypeFlag::DisallowInstantiation) && !afterType))
+        return raiseTypeError(globalObject, scope, "cannot create '"_s, type->nameInMessages(), "' instances"_s);
+    JSValue object;
+    if (auto* native = PyNativeFunction::tryFrom(found); native && native->kind() == NativeKind::New) {
+        // As where a class is made, the __new__ of a built-in type, whichever, stands for what has come along __base__: class V(ValueError, OSError) finds
+        // ValueError's and is made by OSError's. After super(...) that is what has come to the class of the instance: that may be class P(Mixin, dict),
+        // where Mixin is the class of JS. The classes that look __new__ up and find a constructor of JS are passed over: they are made as if it had
+        // none. Not so one that finds anything else: "look it up" is then what has come to the class.
+        PyType* inherited = afterType ? derived : nullptr;
+        while (inherited && inherited->looksUpNew())
+            inherited = isNewOfConstructor(inherited->lookup(Special::New)) ? inherited->base() : nullptr;
+        bool isInherited = inherited;
+        if (!isInherited) {
+            // If the type looks it up, here it is. (The other case in which it is the owner is for the message.)
+            PyType* owner = native->ownerType();
+            inherited = !type->maker() || (type->isSubtypeOf(owner) && type->isMadeAs(owner)) ? owner : type;
+        }
+        // object.__new__ and object.__init__ tell by the class of the instance whether the arguments are meant for the other of the two.
+        // Here that is for the type to say, whose methods these are.
+        if (inherited->isMadeBy(objectNew)) {
+            if (hasExcessArguments(args) && isNativeNew(lookup(Special::Init), objectInit) && !hasInitOfItsOwn(derived))
+                return raiseTypeError(globalObject, scope, derived->nameInMessages(), "() takes no arguments"_s);
+            args = CallArgs();
+        }
+        object = PyNativeFunction::makeInstance(globalObject, isInherited ? nullptr : inherited, derived, args);
+    } else
+        object = callNew(globalObject, found, type, derived, args);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, initialize(object));
 }
@@ -1047,10 +1074,10 @@ static JSValue typeCallMethod(JSGlobalObject* globalObject, JSValue self, const 
 JSValue prepareConstruct(JSGlobalObject* globalObject, JSValue callee, JSValue& self)
 {
     PyType* type = PyType::tryFrom(callee);
-    if (!type || type->has(TypeFlag::Abstract) || type->has(TypeFlag::DisallowInstantiation))
+    if (!type || type->has(TypeFlag::Abstract))
         return { };
     JSValue init = type->lookup(Special::Init);
-    if (!PyFunction::is(init) || !isNativeNew(type->lookup(Special::New), objectNew) || !isNativeNew(type->type()->lookup(Special::Call), typeCallMethod) || layoutBase(type) != runtime(globalObject).objectType())
+    if (!PyFunction::is(init) || !type->isMadeBy(objectNew) || !isNativeNew(type->type()->lookup(Special::Call), typeCallMethod))
         return { };
     self = allocateInstance(globalObject, type);
     didMakeObject(globalObject, type, self);
@@ -1301,16 +1328,8 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
         PyType* winner = calculateMetaclass(globalObject, metatype, bases);
         RETURN_IF_EXCEPTION(scope, { });
         if (winner != metatype) {
-            JSValue winnerNew = winner->lookup(Special::New);
-            if (!isNativeNew(winnerNew, typeNew)) {
-                JSValue function = bindDescriptor(globalObject, winnerNew, { }, winner);
-                RETURN_IF_EXCEPTION(scope, { });
-                if (auto* native = PyNativeFunction::tryFrom(function); native && native->kind() == NativeKind::New)
-                    RELEASE_AND_RETURN(scope, native->invokeWithSelf(globalObject, winner, args));
-                RELEASE_AND_RETURN(scope, withFirstArgument(winner, args, [&](const CallArgs& all) {
-                    return call(globalObject, function, all);
-                }));
-            }
+            if (!winner->isMadeBy(typeNew))
+                RELEASE_AND_RETURN(scope, makeInstanceOf(globalObject, winner, args));
             metatype = winner;
         }
         base = findBestBase(globalObject, bases);
@@ -1490,6 +1509,8 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
 
     resolveMRO(globalObject, type);
     RETURN_IF_EXCEPTION(scope, { });
+    type->takeMakerOfBase(vm);
+    type->updateMaker();
 
     // Nor can what has inherited no way to hash: the mro() of a metaclass has left out object, and every class that has object in its own.
     if (PyTuple* mro = type->mro(); (!mro->length() || mro->at(mro->length() - 1) != JSValue(rt.objectType())) && !type->lookup(Special::Hash) && !dict->get(rt.name(Special::Hash))) [[unlikely]] {
@@ -1862,6 +1883,7 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
         RETURN_IF_EXCEPTION(scope, void());
     }
     type->didChange(vm, PyType::Change::HowAttributesAreRead);
+    type->updateMakers();
     if (!hadFinalizer && type->lookup(Special::Del)) [[unlikely]]
         registerInstancesForFinalization(globalObject, type);
 }

@@ -347,6 +347,11 @@ PyCTypeInfo* createInfo(JSGlobalObject* globalObject, PyType* type)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // The hidden field is theirs in the classes of these metaclasses. Other types have other things there.
+    if (!type->type()->isSubtypeOf(stateOf(globalObject).metaType.get())) {
+        raiseSystemError(globalObject, scope, '\'', type->nameInMessages(), "' is not a ctypes class."_s);
+        return nullptr;
+    }
     if (infoOf(globalObject, type)) {
         String text = reprForMessage(globalObject, type);
         RETURN_IF_EXCEPTION(scope, nullptr);

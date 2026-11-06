@@ -160,6 +160,8 @@ bool isFunctionOfJS(Runtime&, JSValue);
 // Whether a class derived from one written in JS, or written in JS itself, has an __init__ other than the one that those are given,
 // which does nothing.
 bool hasInitOfItsOwn(PyType*);
+// Whether this is the __new__ that a class written in JS is given, which calls its constructor.
+bool isNewOfConstructor(JSValue);
 // Whether the class itself, which is written in JS, has the __init__ that does nothing: its constructor sees to those of its bases.
 bool constructorInitializes(PyType*);
 

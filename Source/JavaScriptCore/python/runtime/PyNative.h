@@ -489,15 +489,25 @@ public:
     JSCell* cellOfDefinition() const { return m_cellOfDefinition.get(); }
     PyType* ownerType() const;
     bool isDescriptor() const { return m_kind == NativeKind::Method || m_kind == NativeKind::SlotWrapper || m_kind == NativeKind::ClassMethod; }
+    bool isVariadicWithSelf(NativeDef::VariadicWithSelf function) const { return m_def->signature.isVariadic && m_def->signature.hasSelf && m_def->pointer.variadicWithSelf == function; }
+    // The types that share a function of C++, as most exceptions share a __new__, each have a PyNativeFunction for it.
+    bool isSameFunctionAs(const PyNativeFunction* other) const
+    {
+        return m_def == other->m_def || (!m_def->signature.isMadeAtRunTime && !other->m_def->signature.isMadeAtRunTime && !memcmp(&m_def->pointer, &other->m_def->pointer, sizeof(m_def->pointer)));
+    }
 
     JSValue invoke(JSGlobalObject*, const CallArgs&);
     // For a Method or a SlotWrapper, when `self` is known to be an instance of the owner.
     JSValue invokeWithSelf(JSGlobalObject*, JSValue self, const CallArgs&);
+    // T.__new__(S, ...): the one place where the C++ function of a type is handed a class that somebody else has picked.
+    // Without a T: whichever has come to S along __base__.
+    static JSValue makeInstance(JSGlobalObject*, PyType* type, PyType* subtype, const CallArgs&);
 
 private:
     PyNativeFunction(VM&, Structure*, const NativeDef&, NativeKind, JSValue owner);
 
     JSValue invokeNew(JSGlobalObject*, const CallArgs&);
+    template<bool hasType> static JSValue makeInstanceInline(JSGlobalObject*, PyType* type, PyType* subtype, const CallArgs&);
 
     const NativeDef* m_def;
     Entry m_entry;

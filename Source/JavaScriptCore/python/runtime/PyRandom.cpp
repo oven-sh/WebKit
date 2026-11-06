@@ -272,7 +272,7 @@ static JSValue randomInit(JSGlobalObject* globalObject, JSValue self, const Call
     auto scope = DECLARE_THROW_SCOPE(vm);
     // A subclass with a __new__ of its own may have keyword arguments for it.
     PyType* baseType = runtime(globalObject).typeFor(randomTypeDef);
-    if (typeOf(globalObject, self)->lookup(Special::New) == baseType->lookup(Special::New) && failed(scope, rejectKeywords(globalObject, "Random"_s, args)))
+    if (typeOf(globalObject, self)->isMadeAs(baseType) && failed(scope, rejectKeywords(globalObject, "Random"_s, args)))
         return { };
     if (failed(scope, checkPositional(globalObject, "Random"_s, args, 0, 1)))
         return { };

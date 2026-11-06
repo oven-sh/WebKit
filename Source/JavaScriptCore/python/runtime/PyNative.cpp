@@ -651,6 +651,36 @@ JSValue PyNativeFunction::invokeWithSelf(JSGlobalObject* globalObject, JSValue s
     return invokeNativeImpl(globalObject, *m_def, this, self, args);
 }
 
+template<bool hasType>
+ALWAYS_INLINE JSValue PyNativeFunction::makeInstanceInline(JSGlobalObject* globalObject, PyType* type, PyType* subtype, const CallArgs& args)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (hasType && !subtype->isSubtypeOf(type))
+        return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__new__("_s, subtype->nameInMessages(), "): "_s, subtype->nameInMessages(), " is not a subtype of "_s, type->nameInMessages());
+    // object.__new__(dict) would make a dict that dict.__new__ had no say in. The first whose __new__ is not for the program to pick has the one to use.
+    PyType* staticBase = subtype;
+    while (staticBase->looksUpNew()) {
+        // A built-in type with cells of its own, whose __new__ the program has replaced: ast.AST.__new__ = f, and f calls object.__new__. No other
+        // type's makes such cells. (In CPython the size of the instances is all that whoever makes them has to know.)
+        if (!staticBase->isHeapType() && staticBase->has(TypeFlag::OwnLayout)) [[unlikely]]
+            return raiseTypeError(globalObject, scope, "cannot create '"_s, subtype->nameInMessages(), "' instances"_s);
+        staticBase = staticBase->base();
+    }
+    // (Nor are there any of a class that is still being made: this is the mro() of its metaclass.)
+    if (!staticBase->maker())
+        return raiseTypeError(globalObject, scope, "cannot create '"_s, subtype->nameInMessages(), "' instances"_s);
+    if (hasType && !staticBase->isMadeAs(type))
+        return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__new__("_s, subtype->nameInMessages(), ") is not safe, use "_s, staticBase->nameInMessages(), ".__new__()"_s);
+    PyNativeFunction* maker = (hasType ? type : staticBase)->maker();
+    JSValue object = invokeNativeImpl(globalObject, *maker->m_def, maker, subtype, args);
+    RETURN_IF_EXCEPTION(scope, { });
+    // typeCall() sees to this for what is made by calling the class. copy and pickle make objects this way.
+    if (subtype->isHeapType())
+        didMakeObject(globalObject, subtype, object);
+    return object;
+}
+
 // T.__new__(S, ...)
 JSValue PyNativeFunction::invokeNew(JSGlobalObject* globalObject, const CallArgs& args)
 {
@@ -662,35 +692,12 @@ JSValue PyNativeFunction::invokeNew(JSGlobalObject* globalObject, const CallArgs
     PyType* subtype = PyType::tryFrom(args[0]);
     if (!subtype)
         return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__new__(X): X is not a type object ("_s, typeName(globalObject, args[0]), ')');
-    if (!subtype->isSubtypeOf(type))
-        return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__new__("_s, subtype->nameInMessages(), "): "_s, subtype->nameInMessages(), " is not a subtype of "_s, type->nameInMessages());
-    // The class is still being made: this is the mro() of its metaclass. Nothing can be looked up in it yet.
-    if (!subtype->mro()) [[unlikely]]
-        return raiseTypeError(globalObject, scope, "cannot create '"_s, subtype->nameInMessages(), "' instances"_s);
-    // object.__new__(dict) would make a dict that dict.__new__ had no say in.
-    PyType* staticBase = subtype;
-    while (staticBase && staticBase->isHeapType())
-        staticBase = staticBase->base();
-    if (staticBase && staticBase->has(TypeFlag::DisallowInstantiation))
-        return raiseTypeError(globalObject, scope, "cannot create '"_s, subtype->nameInMessages(), "' instances"_s);
-    // The types that share a function, as the exceptions do, may stand in for each other.
-    auto isSameFunction = [&](JSValue other) {
-        auto* native = PyNativeFunction::tryFrom(other);
-        return native && !memcmp(&native->def().pointer, &m_def->pointer, sizeof(m_def->pointer));
-    };
-    if (staticBase && !isSameFunction(staticBase->lookup(Special::New))) {
-        // The first whose __new__ is not written in Python has the one to use.
-        PyType* user = subtype;
-        while (user != staticBase && !PyNativeFunction::tryFrom(user->lookup(Special::New)))
-            user = user->base();
-        return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__new__("_s, subtype->nameInMessages(), ") is not safe, use "_s, user->nameInMessages(), ".__new__()"_s);
-    }
-    JSValue object = invokeNativeImpl(globalObject, *m_def, this, subtype, args.withoutFirst());
-    RETURN_IF_EXCEPTION(scope, { });
-    // typeCall() sees to this for what is made by calling the class. copy and pickle make objects this way.
-    if (subtype->isHeapType())
-        didMakeObject(globalObject, subtype, object);
-    return object;
+    RELEASE_AND_RETURN(scope, makeInstanceInline<true>(globalObject, type, subtype, args.withoutFirst()));
+}
+
+JSValue PyNativeFunction::makeInstance(JSGlobalObject* globalObject, PyType* type, PyType* subtype, const CallArgs& args)
+{
+    return type ? makeInstanceInline<true>(globalObject, type, subtype, args) : makeInstanceInline<false>(globalObject, nullptr, subtype, args);
 }
 
 JSValue PyNativeFunction::invoke(JSGlobalObject* globalObject, const CallArgs& args)

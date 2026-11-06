@@ -248,6 +248,30 @@ public:
     Construction construction() const { return m_construction; }
     void setConstruction(Construction construction) { m_construction = construction; }
 
+    // Who makes the instances: tp_new in CPython. Like that it is not worked out from the dicts but has a history. A type takes that of its
+    // base() when it is made. Then, and whenever __new__ is set or deleted in it or in a class it derives from, or its __bases__ are
+    // assigned to, updateMaker() says what becomes of it. Nothing else writes it, so the C++ function of a built-in type comes to a class
+    // along base() only, which is what decides how the instances are laid out, whatever is written into whichever dict.
+    PyNativeFunction* maker() const { return m_maker.get(); } // The __new__ of a built-in type. Null: looksUpNew(), or there is no making any.
+    // __new__ is looked up at each call, and called as the program would call it.
+    bool looksUpNew() const { return m_looksUpNew; }
+    bool hasMaker() const { return m_maker || m_looksUpNew; }
+    bool isMadeBy(NativeDef::VariadicWithSelf function) const { return m_maker && m_maker->isVariadicWithSelf(function); }
+    // tp_new == other->tp_new
+    bool isMadeAs(const PyType* other) const
+    {
+        if (!m_maker || !other->m_maker)
+            return !m_maker && !other->m_maker && m_looksUpNew == other->m_looksUpNew;
+        return m_maker->isSameFunctionAs(other->m_maker.get());
+    }
+    // For a class that is being made. A built-in type without a __new__ of its own has it so too, but one derived from object has to ask: of most
+    // such types no instances are made from Python.
+    void takeMakerOfBase(VM&);
+    // Of this type alone.
+    void updateMaker();
+    // __new__ has been set or deleted here, and didChange() called: of this type, and of those derived from it as far as they get to see that.
+    void updateMakers();
+
     // An instance of this very class is an attribute of it, or of a class derived from it, and something is remembered about that.
     bool hasInstancesAmongAttributes() const { return m_hasInstancesAmongAttributes; }
     void setHasInstancesAmongAttributes() { m_hasInstancesAmongAttributes = true; }
@@ -335,6 +359,7 @@ private:
     WriteBarrier<Unknown> m_subclasses; // A list, or empty: of built-in types, of weak references to classes, and of tuples of one such for dependents.
     WriteBarrier<Structure> m_instanceStructure;
     WriteBarrier<JSObject> m_jsPrototype;
+    WriteBarrier<PyNativeFunction> m_maker;
     const void* m_symbolForC { nullptr };
     TypeLookupCache* m_lookupCache { nullptr }; // The runtime's.
     // Another after every change, like the version. But that is of 32 bits, for the instructions that remember it, so there are not enough for
@@ -351,6 +376,7 @@ private:
     bool m_hasGivenUpGetAttr { false };
     // What is remembered of the type may be what a key that is no str has said. For good: it only costs AsksKeys::No a walk.
     bool m_hasAskedKeys { false };
+    bool m_looksUpNew { false };
     Construction m_construction { Construction::Unknown };
     enum class SpecialState : uint8_t { Unknown, Known, Function, NativeTakingNone, NativeTakingOne, NativeTakingTwo };
     static_assert(static_cast<uint8_t>(SpecialState::Known) == specialIsOfNoParticularKind && static_cast<uint8_t>(SpecialState::Function) == specialIsFunction);
