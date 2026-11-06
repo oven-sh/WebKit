@@ -479,28 +479,30 @@ LLINT_SLOW_PATH_DECL(entry_osr)
     return entryOSR(callFrame->codeBlock(), "entry_osr", Prologue);
 }
 
+// The code that is being entered, whose counter it is: the prologue has it from the frame too. (What the callee runs now may be something else, or
+// nothing yet: see PyFunction::setCode().)
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_call)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call", Prologue);
+    return entryOSR(callFrame->codeBlock(), "entry_osr_function_for_call", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_construct)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct", Prologue);
+    return entryOSR(callFrame->codeBlock(), "entry_osr_function_for_construct", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_call_arityCheck)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call_arityCheck", ArityCheck);
+    return entryOSR(callFrame->codeBlock(), "entry_osr_function_for_call_arityCheck", ArityCheck);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_construct_arityCheck)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct_arityCheck", ArityCheck);
+    return entryOSR(callFrame->codeBlock(), "entry_osr_function_for_construct_arityCheck", ArityCheck);
 }
 
 LLINT_SLOW_PATH_DECL(loop_osr)

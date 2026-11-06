@@ -260,8 +260,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_bind_args)
     if (auto* call = rt.runtimeCall; call && !call->entryFrame)
         call->entryFrame = vm.topEntryFrame;
     PyFunction* callee = calleeOf(callFrame);
-    // (Nothing has run since the call began: the function still has the code.)
-    if (!callee->codeInfo().takesNamespace) {
+    // By the code that has been entered. It need not be the function's any more: see PyFunction::setCode().
+    if (!codeInfoOf(callFrame).takesNamespace) {
         bindArguments(globalObject, callFrame, callee);
         CHECK_EXCEPTION();
     } else if (!callFrame->argumentCount()) [[unlikely]] {

@@ -530,7 +530,8 @@ called. The executables of the functions that Python code defines do not go with
 constants of the code, and the functions made after have the same code object as those made before.
 `f.__code__ = code` gives the function another executable (`PyFunction::setCode()`), also while it runs: libraries compile a function when it is first called, from inside it. A call goes on in the code it
 began in, so what is about a call (where its variables are, its lines, its monitor, `f_code`) is asked of its `CodeBlock` (`codeInfoOf(callFrame)`, `PyFrame::codeInfo()`), never of the function in the frame; the
-generators there are keep the body they were made with.
+generators there are keep the body they were made with, and a generator is made with the body of the code that the call is in (`PyFunction::generatorBody()`). A builtin of JS's that calls the function again and again runs the new code from its next call on if it is linked to the code as a call site is
+(`CachedCall`: `sort()`, `replace()`, `new Set(iterable)`), and goes on in the old code until it returns if it has asked once what the function runs (`CallData`: `JSON.stringify(o, f)`, `JSON.parse(text, f)`, `map.set` under `new Map(iterable)`). Either way the arguments are bound by the code that has been entered.
 
 **Exceptions** are JSC exceptions whose value is a `PyException`. The unwinder tells the runtime about each Python frame it
 passes (`addTracebackEntry`), which is how tracebacks are built. A frame that has not got as far as the program's own code

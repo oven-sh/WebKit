@@ -121,9 +121,14 @@ void CachedCall::relink()
     VM& vm = m_vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(m_functionExecutable);
-    auto* codeBlock = m_vm.interpreter.prepareForCachedCall(*this, this->function());
+    JSFunction* function = this->function();
+    // What the function runs now. A function of JavaScript's keeps the executable it was made with; one of Python's is given another by
+    // `f.__code__ = code`, which unlinks who is linked to the old one.
+    m_functionExecutable = function->jsExecutable();
+    auto* codeBlock = m_vm.interpreter.prepareForCachedCall(*this, function);
     RETURN_IF_EXCEPTION(scope, void());
-    m_protoCallFrame.setCodeBlock(codeBlock);
+    m_numParameters = codeBlock->numParameters();
+    m_protoCallFrame.init(codeBlock, m_protoCallFrame.globalObject, function, m_protoCallFrame.thisValue(), m_protoCallFrame.context, m_protoCallFrame.argumentCountIncludingThis(), m_protoCallFrame.args);
 }
 
 } // namespace JSC

@@ -272,6 +272,11 @@ DEFINE_VISIT_CHILDREN(PyFunction);
 // - call sites that are linked to the function jump to its code without looking: they are unlinked;
 // - code from the optimizing compilers that has the function for a constant may call the executable it had then: it is thrown away.
 //   (They never look into code written in Python, so that is all they can know about it.)
+// - a CachedCall is linked as a call site is, and takes what the function runs when it links itself again: CachedCall::relink();
+// - a CallData says what the function ran when it was asked for, and a loop of the engine's may ask once for all its calls
+//   (JSON.stringify(o, f), `new Map(iterable)` for map.set). Such a loop goes on in the old code, as a call in progress does.
+// So what is about a call is asked of the code that has been entered, from its first instruction on, and before: the interpreter's prologue counts the
+// entrances of the CodeBlock in the frame (entry_osr_function_for_call).
 // A call in progress goes on in the old code, which its frame keeps: see executableOf(). So do the generators there are.
 void PyFunction::setCode(VM& vm, PyCode* code)
 {
@@ -311,7 +316,9 @@ void PyFunction::setCode(VM& vm, PyCode* code)
 
 PyFunction* PyFunction::generatorBody(JSGlobalObject* globalObject, CodeBlock* ownCodeBlock)
 {
-    if (PyFunction* body = m_generatorBody.get())
+    // The body that is kept goes with the code that the function has. The call may be in code that it had.
+    bool isInCodeOfFunction = ownCodeBlock->ownerExecutable() == functionExecutable();
+    if (PyFunction* body = m_generatorBody.get(); body && isInCodeOfFunction) [[likely]]
         return body;
     VM& vm = getVM(globalObject);
     // (This may be what makes it.)
@@ -326,7 +333,7 @@ PyFunction* PyFunction::generatorBody(JSGlobalObject* globalObject, CodeBlock* o
     body->m_hasUnusualNamespaces = m_hasUnusualNamespaces;
     body->setClosure(vm, closure());
     body->m_generatorOwner.set(vm, body, this);
-    if (ownCodeBlock->ownerExecutable() == functionExecutable()) [[likely]]
+    if (isInCodeOfFunction) [[likely]]
         m_generatorBody.set(vm, this, body);
     else
         body->m_code.set(vm, body, PyCode::of(globalObject, uncheckedDowncast<FunctionExecutable>(ownCodeBlock->ownerExecutable())));
@@ -744,7 +751,8 @@ static NEVER_INLINE bool bindPositional(JSGlobalObject* globalObject, CallFrame*
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(rt.vm());
-    const CodeInfo& info = function->codeInfo();
+    // (Not the function's: see slow_path_py_bind_args.)
+    const CodeInfo& info = codeInfoOf(callFrame);
     const unsigned argCount = info.argCount;
     const unsigned namedCount = argCount + info.kwOnlyCount;
     JSValue* slots = reinterpret_cast<JSValue*>(callFrame->addressOfArgumentsStart());
