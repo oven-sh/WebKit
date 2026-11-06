@@ -592,11 +592,21 @@ void Runtime::forEachUnmarkedObjectWithFinalizer(SlotVisitor& visitor, const Sco
                 function(cell, true);
         }
     }
+    // What is in a list for nothing stays there until the next collection has looked, and may be in a queue as well (Runtime::releaseUnreachableBuffers()).
     for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
         for (auto& entry : *list) {
-            if (JSCell* cell = entry.cell(); cell && !visitor.isMarked(cell))
+            if (JSCell* cell = entry.cell(); cell && !visitor.isMarked(cell) && !isNoLongerWanted(cell) && !hasNothingToFinalize(cell))
                 function(cell, false);
         }
+    }
+}
+
+void Runtime::forEachObjectToBeFinalized(const ScopedLambda<void(JSCell*)>& function)
+{
+    Locker locker { m_finalizationLock };
+    for (auto& owed : m_callsOwed) {
+        for (JSCell* cell : owed->finalizers)
+            function(cell);
     }
 }
 
@@ -612,8 +622,8 @@ void Runtime::queueWeakRefCallback(PyWeakRef* weakRef)
 template<typename Visitor>
 void Runtime::visitPendingCalls(Visitor& visitor)
 {
-    // The collector has the lock already where it comes here by itself: a realm has been dropped, and it looks at what the dead global object refers to in order to tell in which order the
-    // realm's objects are to be finalized. The world is stopped then, so nobody else reads the flag.
+    // A realm has been dropped, and the collector looks at what the dead global object refers to in order to tell in which order the realm's objects are to be finalized: then it has the lock already
+    // (keepUnreachableObjectsToFinalize()). The world is stopped then, so nobody else reads the flag. Where it looks on behalf of an observer (didMarkAllThatIsReachable()) nobody has the lock.
     std::optional<Locker<Lock>> locker;
     if (!m_isPuttingFinalizersInOrder)
         locker.emplace(m_finalizationLock);

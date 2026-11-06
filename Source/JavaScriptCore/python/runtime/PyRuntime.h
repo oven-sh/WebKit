@@ -751,10 +751,11 @@ public:
     class MarkingObserver {
     public:
         virtual ~MarkingObserver() = default;
-        // With the world stopped, when all that is reachable is marked, and nothing has been kept for the sake of a finalizer yet. Once in a collection.
+        // With the world stopped, when all that is reachable is marked, and nothing has been kept for the sake of a finalizer yet. Once in a collection. Nobody has m_finalizationLock: it may ask
+        // the runtime what takes that (forEachUnmarkedObjectWithFinalizer()).
         virtual void didMarkAllThatIsReachable(SlotVisitor&) { }
         // With the world stopped, when a collection has marked all that it will: no runtime of the heap has anything left to keep.
-        // True: it has marked something itself, so there is more to mark. It is told again when that is done.
+        // True: it has marked something itself, so there is more to mark. It is told again when that is done. The collector HAS m_finalizationLock of this runtime: nothing that takes it may be asked.
         virtual bool didFinishMarking(SlotVisitor&) { return false; }
         // In a collection that was asked for, with the world stopped, before any object is kept for its finalizer: whether it
         // wants to be told what has died that reference counts would not have freed, and is told. It adds what is to be kept.
@@ -800,6 +801,8 @@ public:
     // For MarkingObserver::didMarkAllThatIsReachable(): function(cell, isInQueue) for the objects that an earlier collection has found dead and whose finalizer has not been called yet, and for
     // those that this collection is about to find dead.
     void forEachUnmarkedObjectWithFinalizer(SlotVisitor&, const ScopedLambda<void(JSCell*, bool)>&);
+    // All that is in a queue, whatever else holds it.
+    void forEachObjectToBeFinalized(const ScopedLambda<void(JSCell*)>&);
 
     // ---- Cells that can be found again and are not kept alive by that ----
 

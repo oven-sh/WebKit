@@ -189,7 +189,7 @@ public:
         return false;
     }
 
-    // The rest of them are about to be swept.
+    // The rest of them are gone.
     void didCollect() final { m_freed.clear(); }
 
 private:
@@ -212,6 +212,9 @@ public:
             if (!isSlotOfPublicObject(static_cast<Runtime::Slot>(i)))
                 addPart(m_runtime.slot(static_cast<Runtime::Slot>(i)), nullptr, true);
         }
+        m_runtime.forEachObjectToBeFinalized([&](JSCell* cell) {
+            m_toBeFinalized.add(cell);
+        });
         bool hasWhatIsOutOfReach = false;
         HeapIterationScope iterationScope(vm.heap);
         vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
@@ -241,7 +244,9 @@ public:
     // All the objects of Python there are, parts included.
     const Vector<JSCell*>& objects() const { return m_objects; }
 
-    bool mayBeGiven(JSCell* cell) const { return !m_owners.contains(cell) && !m_gone.contains(cell) && !m_outOfReach.contains(cell) && isObjectOfPython(cell, m_globalObject) && isWhole(cell); }
+    // What is in a queue is going to be finalized in whoever's hands it is, so it is not given, be it that something holds it: a weak reference has given it back to the program, an earlier finalizer
+    // has, a word on a stack looks like it.
+    bool mayBeGiven(JSCell* cell) const { return !m_owners.contains(cell) && !m_toBeFinalized.contains(cell) && !m_gone.contains(cell) && !m_outOfReach.contains(cell) && isObjectOfPython(cell, m_globalObject) && isWhole(cell); }
 
     // The cell, or what it is a part of. Null: nothing that may be given.
     JSCell* objectOf(JSCell* cell) const
@@ -389,6 +394,7 @@ private:
     Runtime& m_runtime;
     Vector<JSCell*> m_objects;
     UncheckedKeyHashMap<JSCell*, JSCell*> m_owners;
+    UncheckedKeyHashSet<JSCell*> m_toBeFinalized;
     const WhatIsGoneInCPython& m_gone;
     UncheckedKeyHashSet<JSCell*> m_outOfReach;
     UncheckedKeyHashMap<Structure*, HiddenOffsets> m_hiddenOffsets;
@@ -637,6 +643,26 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     if (isTold)
         callCollectionCallbacks(globalObject, "start"_s, generation, stats);
     RETURN_IF_EXCEPTION(scope, { });
+    // Whoever has heard "start" hears "stop", and a collection that there has been is counted, on whatever way this is left, unless the host is ending what runs here. What is being raised goes on to the
+    // caller behind that: what the handler of a signal has raised between two finalizers, say.
+    bool hasCollected = false;
+    auto countAndTell = [&] {
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
+        std::optional<ExceptionSetAside> aside;
+        if (vm.exceptionForInspection()) [[unlikely]]
+            aside.emplace(globalObject);
+        if (hasCollected) {
+            auto& total = rt.gc.stats[generation];
+            ++total.collections;
+            total.collected += stats.collected;
+            total.candidates += stats.candidates;
+            total.duration += stats.duration;
+        }
+        if (isTold)
+            callCollectionCallbacks(globalObject, "stop"_s, generation, stats);
+    };
+    auto onTheWayOut = makeScopeExit(countAndTell);
     int debug = rt.gc.debugFlags;
     if (debug & debugStats)
         writeToStderr(globalObject, makeString("gc: collecting generation "_s, generation, "...\ngc: objects in each generation: 0 0 0\ngc: objects in permanent generation: 0\n"_s));
@@ -649,23 +675,8 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     stats.collected = census.found;
     stats.candidates = census.candidates;
     stats.duration = (MonotonicTime::now() - start).seconds();
-    auto count = [&] {
-        auto& total = rt.gc.stats[generation];
-        ++total.collections;
-        total.collected += stats.collected;
-        total.candidates += stats.candidates;
-        total.duration += stats.duration;
-    };
-    if (scope.exception()) [[unlikely]] {
-        // What the handler of a signal has raised between two finalizers goes on to the caller. There has been a collection all the same, and whoever has heard "start" hears "stop".
-        if (!vm.hasPendingTerminationException()) {
-            ExceptionSetAside aside(globalObject);
-            count();
-            if (isTold)
-                callCollectionCallbacks(globalObject, "stop"_s, generation, stats);
-        }
-        return { };
-    }
+    hasCollected = true;
+    RETURN_IF_EXCEPTION(scope, { });
     for (const String& description : census.descriptions)
         writeToStderr(globalObject, makeString("gc: collectable "_s, description, '\n'));
     RETURN_IF_EXCEPTION(scope, { });
@@ -680,9 +691,8 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
         writeToStderr(globalObject, makeString("gc: done, "_s, stats.collected, " unreachable, 0 uncollectable, "_s, FormattedNumber::fixedWidth(stats.duration, 4), "s elapsed\n"_s));
     RETURN_IF_EXCEPTION(scope, { });
 
-    count();
-    if (isTold)
-        callCollectionCallbacks(globalObject, "stop"_s, generation, stats);
+    onTheWayOut.release();
+    countAndTell();
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<uint64_t>(stats.collected)));
 }
