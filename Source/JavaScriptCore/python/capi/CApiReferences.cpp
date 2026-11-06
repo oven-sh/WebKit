@@ -59,13 +59,13 @@ PY_CAPI Handle Py_XNewRef(Handle object)
     return object;
 }
 
-// What C owns, and one for whatever else refers to the object, which nobody has counted. So it is never 1, which would tell C that nobody
-// else can see the object. For what is not counted: what CPython says of an object that lives for ever.
+// What C owns, and two more: for whoever lent C the reference it asks with, and for whatever else refers to the object, which nobody has counted. So it is never 1, which
+// would tell C that nobody else can see the object, and that it may change it in place. For what is not counted: what CPython says of an object that lives for ever.
 PY_CAPI ssize_t Py_REFCNT(Handle object)
 {
     CAPI_QUIET();
     if (JSCell* cell = countedCell(object); cell && mayEnter())
-        return static_cast<ssize_t>(interpreter().counts.get(cell)) + 1;
+        return static_cast<ssize_t>(interpreter().counts.get(cell)) + 2;
     return static_cast<ssize_t>(3) << 30;
 }
 

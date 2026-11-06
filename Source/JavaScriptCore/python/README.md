@@ -1410,10 +1410,17 @@ executable was linked: these symbols lie in one section, a pointer that comes in
 symbol (`PyType::extension()`). And `null`, which only JS makes and which is None too, goes out as `undefined`, which is what C compares with.
 `PyExc_*` are variables and hold the addresses of the cells.
 
+So a value that is its own 64 bits is one object however often it is made, where CPython makes a new object each time. `PyLong_FromLong(x) == PyLong_FromLong(x)` holds for every
+int that is no cell (below 2**53 in size; CPython: from -5 to 256), and `PyFloat_FromDouble(x) == PyFloat_FromDouble(x)` for every float that is no cell (1.5, 1e308; a float with a
+whole value, 0.0 and nan are cells, and differ as there). These are the rules of `is` in a program here. For C it means that an address used as a key finds an equal number, not
+"the same allocation": harmless, since the objects are immutable, and nothing may be concluded from two addresses being equal but that the values are. There is no cell to count on:
+`Py_INCREF` and `Py_DECREF` of such a value do nothing, and its `Py_REFCNT()` never changes.
+
 **References are counted in a table**, cell -> how many C owns (`capi/CApiCounts.h`). A function that returns a new reference adds one, `Py_DECREF` and a function that
 steals one take one away, and with the last the entry goes. Nothing else happens then: an object dies when a collection finds that nothing refers to it, as everywhere here.
-What is not a cell is not counted, nor are the types with symbols. `Py_REFCNT()` is the count and one more, for whatever else refers to the object: never 1,
-which would tell C that nobody else can see it.
+What is not a cell is not counted, nor are the types with symbols. `Py_REFCNT()` is the count and two more, for whoever lent C the reference it asks with and for whatever else
+refers to the object: nobody knows how many do. It rises and falls by one as C takes and gives back, and it is never 1, which would tell C that nobody else can see the object,
+not even for an object that C has just made: code that changes in place what it alone owns takes its other way.
 
 - **When a collection has marked all it will, every key of the table is marked.** No key is ever the address of a freed cell, whatever an extension does or
   fails to do. That is asserted when marking ends.
