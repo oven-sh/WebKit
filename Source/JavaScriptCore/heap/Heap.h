@@ -759,6 +759,8 @@ public:
     void allowCollection();
     
     uint64_t mutatorExecutionVersion() const { return m_mutatorExecutionVersion; }
+    // Rises whenever the collector goes from one phase to another. While it stays the same, a world that is stopped has stayed stopped.
+    uint64_t phaseVersion() const;
 
     
     JS_EXPORT_PRIVATE void addMarkingConstraint(std::unique_ptr<MarkingConstraint>);

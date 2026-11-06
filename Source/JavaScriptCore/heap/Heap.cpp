@@ -2089,6 +2089,11 @@ void Heap::checkConn(GCConductor conn)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+uint64_t Heap::phaseVersion() const
+{
+    return m_collector->m_phaseVersion;
+}
+
 void Heap::stopThePeriphery()
 {
     RELEASE_ASSERT(!m_worldIsStopped);
