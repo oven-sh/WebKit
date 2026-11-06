@@ -666,6 +666,7 @@ private:
     // where a branch goes on that comes right before, and a jump that comes next is not one with a jump that leads here.
     void dropWhatPatternLookedAt(const Range&);
     size_t m_whereSomethingIsDropped { notFound };
+    void endOfForLoopWhereJumpsLed(const Last&);
     void emitFailLabels(const Range&, Label& failWithMoreToDrop, Label& fail);
     void patternValue(AST::MatchValue*, RegisterID* subject, PatternContext&);
     void patternSingleton(AST::MatchSingleton*, RegisterID* subject, PatternContext&);

@@ -531,8 +531,10 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         bool endsWhereStatementEnds = isDefault && !next->isBound();
         m_statementsEndWhereStatementEnds = endsWhereStatementEnds;
         statements(matchCase->body, 0, isDefault ? isLast : lastBeforeJump(end.get(), isLast, JumpIs::ToldOf));
-        if (endsWhereStatementEnds)
+        if (endsWhereStatementEnds) {
+            endOfForLoopWhereJumpsLed(isLast);
             continue;
+        }
         if (isLast || !isLastCase || nextWithMoreToDrop->isBound())
             leaveStatement(end.get(), isLast, JumpIs::ToldOf);
         else if (m_whereLineOfBranchIsMarked == g.instructions().size()) {

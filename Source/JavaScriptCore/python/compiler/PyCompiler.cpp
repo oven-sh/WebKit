@@ -2165,7 +2165,19 @@ void Unit::ifStatement(If* node, const Last& isLast)
         g.emitLabel(orelse.get());
     m_statementsEndWhereStatementEnds = true;
     statements(node->orelse, 0, isLast);
+    endOfForLoopWhereJumpsLed(isLast);
     endOfStatement(end.get());
+}
+
+// A `for` loop has just ended, at the end of a statement to which CPython's code generator has the other ways through the statement jump, be it from where nothing gets. A copy of the
+// end of the function comes next, in place of a jump. What is left of that jump is the first of its block there, so it stays, on the line of the loop.
+void Unit::endOfForLoopWhereJumpsLed(const Last& isLast)
+{
+    if (m_endOfForLoop.position != g.instructions().size() || isLast.kind != Last::BeforeJump || !isReplacedByCopy(isLast))
+        return;
+    // (Nothing else comes here: the test of an `elif` that fails does.)
+    if (g.branchesToLastPythonLabel().count + g.jumpsToLastPythonLabel().count == 1)
+        OpNop::emit(&g);
 }
 
 void Unit::whileLoop(While* node, const Last& isLast)
