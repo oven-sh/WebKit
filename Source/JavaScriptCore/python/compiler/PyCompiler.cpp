@@ -234,6 +234,10 @@ UnlinkedFunctionExecutable* Compiler::generate(const SourceCode& parentSource, c
     ParserArena arena;
     PythonCodeNode node(arena, source, parameterCount, isGeneratorBody, [&](BytecodeGenerator& generator) {
         emitter(generator);
+        if (!failed() && generator.hasPythonJumpToLabelNotEmitted()) [[unlikely]] {
+            ASSERT_NOT_REACHED();
+            failWithoutLocation(SyntaxErrorInfo::Type::SystemError, "the compiler has left a jump without a target"_s);
+        }
         if (failed())
             generator.abandonPythonCode();
     });

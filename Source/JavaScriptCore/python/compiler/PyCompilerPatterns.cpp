@@ -528,7 +528,7 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         // In CPython's code a jump to the end comes behind every body but that of a `case _:` that is the last of several. After the last case it has
         // nothing to jump over but what drops something where the pattern has failed.
         bool isDefault = isLastCase && count > 1 && isWildcard(matchCase->pattern);
-        bool endsWhereStatementEnds = isDefault && !next->isBound();
+        bool endsWhereStatementEnds = isDefault && !next->isBound() && failsByLine.isEmpty();
         m_statementsEndWhereStatementEnds = endsWhereStatementEnds;
         statements(matchCase->body, 0, isDefault ? isLast : lastBeforeJump(end.get(), isLast, JumpIs::ToldOf));
         if (endsWhereStatementEnds) {

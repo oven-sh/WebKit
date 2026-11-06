@@ -1242,6 +1242,7 @@ BoundLabel BytecodeGenerator::bindLabel(Label& label)
     if (m_codeBlock->isPython()) {
         ASSERT(label.isForward()); // All that goes back is op_py_jmp_back: see emitJump().
         notePathToLabel(label);
+        ++m_pythonJumpsToLabelsNotEmitted;
     }
     return label.bind(m_writer);
 }
@@ -1252,6 +1253,7 @@ void BytecodeGenerator::didEmitLabel(Label& label, bool hasJumps)
         m_jumpsToLastPythonLabel = { };
         m_branchesToLastPythonLabel = { };
     }
+    m_pythonJumpsToLabelsNotEmitted -= label.unresolvedJumps().size();
     for (int offset : label.unresolvedJumps()) {
         auto& ways = instructions().at(offset)->opcodeID() == op_jmp ? m_jumpsToLastPythonLabel : m_branchesToLastPythonLabel;
         if (!ways.count++)

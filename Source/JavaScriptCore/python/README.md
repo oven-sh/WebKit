@@ -279,6 +279,10 @@ The compiler emits ordinary JSC bytecode where the semantics agree (moves, jumps
 lookup, iteration, unpacking, argument binding). `op_py_runtime` calls one of a table of runtime functions for everything rare.
 Python code runs in the LLInt only; it never tiers up (`shouldJIT`).
 
+A forward jump is written with a distance of 0 and gets its distance when its label is emitted. If the label never were, the jump would lead to itself: a loop that polls nothing and that
+Ctrl-C cannot end. So the generator counts the jumps of Python code whose label has not been emitted (`bindLabel()`, `didEmitLabel()`), and a unit at whose end there are any is not run: the
+debug build asserts, the release build raises `SystemError` from `compile()`.
+
 **The second page of opcodes.** An opcode is a byte in the instruction stream, and JS and Python together had used 251 of the 254 there are. So there is a prefix, `op_page2`, in the manner of
 `op_wide16` and `op_wide32` (and behind them where there is one: `[wide16][page2][number] operands`): the byte that follows it numbers one of up to 256 more opcodes. Their ids in C++ come behind
 all the others (`firstPage2OpcodeID`), so the interpreter's three tables serve them too: the handler of `op_page2` is `nextInstruction()` one byte further on, into the same table further down.
