@@ -472,13 +472,13 @@ void takeOverReference(uint64_t bits, bool programGetsObject)
     Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
     if (!current || !current->lock->currentThreadIsHoldingLock()) [[unlikely]]
         return;
-    // Where the call has ended otherwise than with a result, nobody has looked at the bits. What is in the table is a cell, and lives. (By the key: when nothing is let go of any more, the
-    // count may be 0, and the program gets the object all the same.)
-    if (current->counts.contains(cell)) [[likely]] {
-        if (programGetsObject) [[likely]]
-            didGetHolder(cell, Holder::Program);
+    // What the program gets has been looked at: it is an object. That it has got it is noted whatever the table says: C may have given back what it owned before it returned (in CPython, a use
+    // after free), or nothing is let go of any more and the count is 0.
+    if (programGetsObject) [[likely]]
+        didGetHolder(cell, Holder::Program);
+    // Where the call has ended otherwise, nobody has looked at the bits. What is in the table is a cell, and lives.
+    if (current->counts.contains(cell)) [[likely]]
         release(*current, handle);
-    }
 }
 
 PyType* typeOfWhatIsNoObjectOfPythons(JSValue value)
