@@ -2532,13 +2532,16 @@ void Unit::returnStatement(Return* node)
         return;
     }
     Reg value;
+    bool waysMeet = false; // `return a if b else c`: each way through the expression has set the register and jumped to where the way out begins.
     // CPython's compiler loads a constant when all that is on the way out is done, which tells in the order of co_consts.
     auto* literal = node->value ? node->value->tryAs<Constant>() : nullptr;
     if (literal) {
         line(literal->range);
         value = constant(constantValue(literal->value));
     } else if (node->value) {
+        unsigned begin = g.instructions().size();
         value = expr(node->value);
+        waysMeet = g.instructions().size() > begin && g.positionOfLastPythonLabel() == g.instructions().size();
         // What runs on the way out may assign to the variable: a `finally` clause, the end of `except ... as variable`; an __exit__, or a
         // generator that the loop closes, that has got hold of the frame.
         bool mayBeAssignedTo = m_blocks.containsIf([](auto& block) {
@@ -2560,6 +2563,11 @@ void Unit::returnStatement(Return* node)
         if (valueWaits)
             popBlock();
     }
+
+    // A `finally` clause that never comes to its end does not read the value. Then nothing would at those jumps, where no block holds it yet, and a collection there would
+    // empty the register. So it is read here, into the register it waits in.
+    if (waysMeet && value->isTemporary() && m_blocks.containsIf([](auto& block) { return block.kind == BlockKind::FinallyTry; }))
+        value = g.move(g.newTemporary(), value.get());
 
     SetForScope leavingAs(m_leavingAs, Last { Last::OfFunction });
     SetForScope leftByStatement(m_leftByStatement, 0);
