@@ -752,7 +752,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     once whether `y` has come back, has `y y1 x x1`. A structure more than a few levels deep is finalized in one round, from the top
     down and depth first, instead of a collection per level.
   - What is in a cycle or hangs off one comes after the rest and is finalized in one go, in the order in which the objects were
-    made, whatever refers to what: that is what CPython's collector does with it.
+    made, whatever refers to what: that is what CPython's collector does with what no collection has seen alive. (See "At exit" for what one has.)
   - A collection that the program waits for (`gc.collect()`, the exit, a thread that is idle: `Runtime::collectAsAskedFor`) looks at
     all that died in it, about 120 ns for a dead cell, if there is something to tell by it: `gc.collect()` wants the count, or two of
     the finalizers are code of the program (what those of built-in types do, closing a file, looks the same in any order). Any
@@ -814,6 +814,11 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   collections find and order what only the modules held. What is then still held (by JS, by a frame on the stack) is finalized in
   the order it was made. A program that leaves nothing to finalize exits without a collection; a generator that has not begun is
   nothing to finalize.
+  - A function makes the namespace of its module a cycle, so nearly all that a program still holds when it ends hangs off a cycle. In the order of making, the raw file of
+    `f = io.BufferedWriter(Raw())` was closed before the writer was asked to write what it held, which was lost, and of 10,000 objects held in all sorts of ways 78 % of those with one holder went before it. So what dies
+    when the modules go and that reference counts would not have freed is finalized in the order in which the objects were made, but an object that is reached from the namespaces of the modules only
+    through others goes after those (`DeadGraph::candidatesWithHoldersFirst`). That is what CPython's exit does in every version, however it is started and whatever the size of the program; the rest of its
+    order depends on where the generations of its collector happen to be cut, and differs between two installations of one version in 35 to 48 % of all pairs.
   - Daemon threads are still running during the first of these steps, and in CPython they finalize what they drop themselves. So the step begins
     an era (`Runtime::m_era`, which each object with a finalizer is registered with; weak references have serial numbers): the main thread
     takes over what the others owe by then, and while the step lasts every collection, its own or the engine's, gives it what is of an

@@ -34,8 +34,9 @@ namespace Python {
 //  - the order in which the objects with finalizers (the candidates) would have died;
 //  - their ranks: how many other candidates come before on the way to them. Those wait (see order());
 //  - what is left in the end: the cycles and what hangs off them. CPython's collector finalizes that in the order in which the
-//    objects were made, whatever refers to what, after it has cleared some of the weak references
-//    (see Runtime::keepUnreachableObjectsToFinalize()), and that is what gc.collect() counts.
+//    objects were made, whatever refers to what, unless an earlier collection has seen them alive (candidatesWithHoldersFirst()),
+//    after it has cleared some of the weak references (see Runtime::keepUnreachableObjectsToFinalize()), and that is what
+//    gc.collect() counts.
 //
 // A collection that the program has asked for looks at all that has died in it. That costs time for each dead cell, which is
 // what a tracing collector is there to avoid, so one of the engine's own looks only at what the candidates reach. It does
@@ -82,7 +83,7 @@ public:
 
 private:
     static constexpr unsigned none = std::numeric_limits<unsigned>::max();
-    // The graph takes some 60 bytes for a cell, while the world is stopped. If more than this has died, only what the candidates
+    // The graph takes some 60 bytes for a cell, while the world is stopped, and some 20 more when the modules have gone (candidatesWithHoldersFirst()). If more than this has died, only what the candidates
     // reach is looked at, and beyond as many cells of that, what is reached is not looked into: it is taken to refer to nothing.
     static constexpr unsigned maxCells = 4'000'000;
 
@@ -214,6 +215,7 @@ private:
     void putAttributesInOrder(PyInstance*, std::span<unsigned> edges);
     void walk();
     Vector<unsigned> rootsInOrder();
+    Vector<unsigned> candidatesWithHoldersFirst();
     void flagAllReachedFrom(Vector<unsigned>&& worklist, Flag);
 
     JSC::Heap& m_heap;
@@ -474,6 +476,153 @@ Vector<unsigned> DeadGraph::rootsInOrder()
     return roots;
 }
 
+// The candidates that reference counts would not have freed, in the order in which they were made, but one that the namespaces of the modules lead to only through others not before those: the oldest of
+// those that are free to go comes next. So what was made for its holder, as the raw file in Writer(Raw()), comes right behind it.
+//
+// This is for what dies when the modules go at exit. CPython's collector calls the finalizers in the order of its lists, where an object is put at the end when it is made. But a collection that
+// sees an object alive, and comes to it before it has come to anything that refers to it, puts it at the end again, behind what refers to it; and CPython collects before it lets go of the modules. So there
+// an object that is reached only through others goes after those, in every version, however the program is started and whatever its size. The rest of its order depends on where the generations of
+// its collector happen to be cut.
+// - A function refers to the namespace of its module, which refers to the function: so nearly all that a program holds at its end hangs off a cycle and, by way of its class and the methods of that,
+//   leads to everything else. As far as this order goes, nothing holds a namespace (the globals or the builtins of a function; so a dict that exec() was given, if a function was defined in it).
+// - Free to go from the beginning: what nothing holds, what something held that reference counts would have freed, and what those lead to by way of what has no finalizer: what has a name in a
+//   namespace, or is in a list that has one. Nothing holds that either: of `child = T(); parent = T(child)` the child goes first, in CPython too, whose collector comes from the namespace to both.
+// - What holds one another even so is entered from outside, as CPython's collector enters it: a search goes out from what is free from the beginning, the oldest first, and a reference back to what the
+//   search has come through does not count as holding. Of `raw.owner = f`, where the program has `f`, the writer goes first, whatever else holds the raw file. (What is left then: from the oldest.)
+// - Everything else is free to go when all that holds it has gone. (Where two objects hold a cycle at different places, what lies behind the first does not wait for the second, which leads there
+//   only by the way back.)
+Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
+{
+    unsigned count = m_cells.size();
+    FastBitVector nothingHolds;
+    nothingHolds.resize(count);
+    for (unsigned node = 0; node < count; ++node) {
+        auto* function = m_cells[node]->type() == JSFunctionType ? PyFunction::tryFrom(m_cells[node]) : nullptr;
+        if (!function)
+            continue;
+        for (PyDict* dict : { function->globals(), function->builtins() }) {
+            if (unsigned* slot = dict ? slotFor(dict, false) : nullptr; slot && *slot != none)
+                nothingHolds[*slot] = true;
+        }
+    }
+    auto isLeft = [&](unsigned node) {
+        return !(m_flags[node] & Released);
+    };
+    auto leadsTo = [&](unsigned target) {
+        return isLeft(target) && !nothingHolds[target];
+    };
+    Vector<unsigned> holders; // How many references to it that count, from what has not gone yet.
+    auto countHolders = [&](auto&& counts) {
+        holders.fill(0, count);
+        for (unsigned node = 0; node < count; ++node) {
+            if (!isLeft(node))
+                continue;
+            for (unsigned target : successors(node))
+                holders[target] += counts(node, target);
+        }
+    };
+
+    {
+        countHolders([&](unsigned, unsigned target) {
+            return leadsTo(target);
+        });
+        for (unsigned node = 0; node < count; ++node) {
+            if (isLeft(node))
+                continue;
+            for (unsigned target : successors(node))
+                holders[target] = 0;
+        }
+        Vector<unsigned> worklist;
+        for (unsigned node = 0; node < count; ++node) {
+            if (!isLeft(node) || holders[node])
+                continue;
+            nothingHolds[node] = true;
+            if (!isCandidate(node))
+                worklist.append(node);
+        }
+        while (!worklist.isEmpty()) {
+            for (unsigned target : successors(worklist.takeLast())) {
+                if (!leadsTo(target))
+                    continue;
+                nothingHolds[target] = true;
+                if (!isCandidate(target))
+                    worklist.append(target);
+            }
+        }
+    }
+
+    Vector<unsigned> entered;
+    entered.fill(none, count);
+    Vector<unsigned> wasLeft;
+    wasLeft.fill(none, count);
+    {
+        struct Frame {
+            unsigned node;
+            unsigned next;
+        };
+        Vector<Frame> frames;
+        unsigned clock = 0;
+        auto search = [&](unsigned first) {
+            entered[first] = clock++;
+            frames.append({ first, m_firstEdge[first] });
+            while (!frames.isEmpty()) {
+                unsigned node = frames.last().node;
+                if (frames.last().next == m_firstEdge[node + 1]) {
+                    wasLeft[node] = clock++;
+                    frames.removeLast();
+                    continue;
+                }
+                unsigned target = m_edges[frames.last().next++];
+                if (!leadsTo(target) || entered[target] != none)
+                    continue;
+                entered[target] = clock++;
+                frames.append({ target, m_firstEdge[target] });
+            }
+        };
+        for (bool onlyWhatNothingHolds : { true, false }) {
+            for (unsigned node = 0; node < count; ++node) {
+                if (isLeft(node) && entered[node] == none && (!onlyWhatNothingHolds || nothingHolds[node]))
+                    search(node);
+            }
+        }
+    }
+    auto holds = [&](unsigned node, unsigned target) {
+        return leadsTo(target) && !(entered[target] <= entered[node] && wasLeft[target] >= wasLeft[node]);
+    };
+    countHolders(holds);
+
+    Vector<unsigned> withoutFinalizer;
+    Vector<unsigned> withFinalizer; // A heap: the oldest first.
+    auto isFreeToGo = [&](unsigned node) {
+        if (!isCandidate(node)) {
+            withoutFinalizer.append(node);
+            return;
+        }
+        withFinalizer.append(node);
+        std::push_heap(withFinalizer.begin(), withFinalizer.end(), std::greater<unsigned>());
+    };
+    for (unsigned node = 0; node < count; ++node) {
+        if (isLeft(node) && !holders[node])
+            isFreeToGo(node);
+    }
+    Vector<unsigned> result;
+    while (!withoutFinalizer.isEmpty() || !withFinalizer.isEmpty()) {
+        unsigned node;
+        if (!withoutFinalizer.isEmpty())
+            node = withoutFinalizer.takeLast();
+        else {
+            std::pop_heap(withFinalizer.begin(), withFinalizer.end(), std::greater<unsigned>());
+            node = withFinalizer.takeLast();
+            result.append(node);
+        }
+        for (unsigned target : successors(node)) {
+            if (holds(node, target) && !--holders[target])
+                isFreeToGo(target);
+        }
+    }
+    return result;
+}
+
 // What is in the worklist has the flag already.
 void DeadGraph::flagAllReachedFrom(Vector<unsigned>&& worklist, Flag flag)
 {
@@ -581,13 +730,20 @@ FinalizationOrder DeadGraph::order()
         }
         flagAllReachedFrom(WTF::move(worklist), Waits);
     }
-    for (unsigned i = 0; i < m_candidateCount; ++i) {
-        if (m_flags[i] & Released)
-            continue;
-        if (m_flags[i] & Waits)
-            result.later.append(i);
+    auto take = [&](unsigned candidate) {
+        if (m_flags[candidate] & Released)
+            return;
+        if (m_flags[candidate] & Waits)
+            result.later.append(candidate);
         else
-            result.now.append(i);
+            result.now.append(candidate);
+    };
+    if (m_questions.holdersComeFirst) {
+        for (unsigned candidate : candidatesWithHoldersFirst())
+            take(candidate);
+    } else {
+        for (unsigned i = 0; i < m_candidateCount; ++i)
+            take(i);
     }
 
     // What is left falls into pieces that have nothing to do with one another.

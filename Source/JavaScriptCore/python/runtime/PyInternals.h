@@ -716,6 +716,7 @@ struct FinalizationQuestions {
     bool wantsGarbage { false };
     bool wantsToKnowWhatReferenceCountsWouldFree { false };
     bool wantsPieces { false }; // See oldestOfPiece.
+    bool holdersComeFirst { false }; // Among what reference counts would not have freed, too. See DeadGraph::candidatesWithHoldersFirst().
     // Nothing but allFreedByReferenceCounts is wanted. So many of the first candidates are in a queue: an earlier collection has found them dead.
     bool wantsAllThatReferenceCountsWouldFree { false };
     unsigned candidatesInQueues { 0 };

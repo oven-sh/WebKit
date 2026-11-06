@@ -319,6 +319,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
         .wantsGarbage = wantsGarbage,
         .wantsToKnowWhatReferenceCountsWouldFree = m_leavesCyclicGarbageForLater,
         .wantsPieces = areOfSeveralThreads,
+        .holdersComeFirst = m_hasLetGoOfModules,
     });
     m_isPuttingFinalizersInOrder = false;
 
@@ -1117,6 +1118,7 @@ void Runtime::finalizeAllAtExit()
         sysDict()->set(m_vm, internString(m_vm, name), jsUndefined()); // None, not gone: importlib then says that the interpreter is shutting down.
     builtins()->remove(m_vm, internString(m_vm, "_"_s));
     modules()->clear(m_vm);
+    m_hasLetGoOfModules = true;
     wipeStackBelow(m_globalObject);
     collect();
     if (m_vm.hasPendingTerminationException()) [[unlikely]]
