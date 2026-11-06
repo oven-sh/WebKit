@@ -53,10 +53,9 @@ public:
     void setCachedHash(int64_t hash) { m_hash = hash; }
 
     // For PyTuple_SetItem() of the C API, the one thing that writes to a tuple after it has been made: see there.
-    // PyTuple_New() has made it.
-    bool isMadeByC() const { return m_isMadeByC; }
-    void setIsMadeByC() { m_isMadeByC = true; }
-    // The references to it that C has handed on, or has seen somebody take: none, one, or more. Nobody counts the program's: once it has the tuple, they are more.
+    // The references to it that are not C's own, as far as the API has seen: none, one, or more. Nobody counts the program's: once it has the tuple, they are more; and so they are from the
+    // start, unless PyTuple_New() has made it.
+    void setIsMadeByC() { m_holdersThatCKnowsOf = 0; }
     unsigned holdersThatCKnowsOf() const { return m_holdersThatCKnowsOf; }
     void addHolderThatCKnowsOf(bool isProgram)
     {
@@ -79,8 +78,7 @@ protected:
     const WriteBarrier<Unknown>* items() const { return storageBehind<const WriteBarrier<Unknown>>(this); }
 
     unsigned m_length;
-    bool m_isMadeByC { false };
-    uint8_t m_holdersThatCKnowsOf { 0 };
+    uint8_t m_holdersThatCKnowsOf { 2 };
     int64_t m_hash { -1 };
 };
 

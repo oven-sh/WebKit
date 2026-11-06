@@ -237,7 +237,7 @@ ALWAYS_INLINE void release(Handle handle)
 enum class Holder : bool { Container, Program };
 ALWAYS_INLINE void didGetHolder(JSValue value, Holder holder)
 {
-    if (auto* tuple = PyTuple::tryFrom(value); tuple && tuple->isMadeByC()) [[unlikely]]
+    if (auto* tuple = PyTuple::tryFrom(value)) [[unlikely]]
         tuple->addHolderThatCKnowsOf(holder == Holder::Program);
 }
 

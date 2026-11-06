@@ -1514,8 +1514,10 @@ the tuple, and there is no more than one reference to it among those that are kn
 takes one over, or takes one of its own; the program gets one with a result, or with what C raised, and nobody counts what it does with it, so that is the end). The tuple keeps that: none, one, or
 more. So the one reference may be a container's: "put it in,
 then fill it" (`PyList_SetItem(list, i, pair)`, then `PyTuple_SetItem(pair, ...)` by the pointer that C still has) is how extensions keep their error paths short. Into any other tuple it is a
-`SystemError`, as there. Nobody sees what the program does. What passes here and not there is a tuple that somebody has got hold of without a reference changing hands under the eyes of the API,
-and kept: out of the container, or as the argument of a callback. What passes there and not here is a tuple whose other holder has let go of it again. The hash that the tuple has kept is
+`SystemError`. Nobody sees what the program does. What passes here and not there is a tuple that somebody has got hold of without a reference changing hands under the eyes of the API,
+and kept: out of the container, or as the argument of a callback. What passes there and not here: a tuple whose other holder has let go of it again, for holders are only ever counted up (the container
+has died, the program has dropped the result; also where it is the API that puts something else in the tuple's place, `PyList_SetItem()` or `PyTuple_SetItem()`); and a tuple that the program has made
+and of which C has the only reference (a callback has made it and returned it). The hash that the tuple has kept is
 forgotten (CPython 3.15 goes on answering with it).
 
 ## decimal

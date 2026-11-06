@@ -70,7 +70,7 @@ PY_CAPI Handle PyTuple_GetItem(Handle object, ssize_t index)
 
 // For a tuple that nobody else has seen yet. CPython goes by the count of references, and refuses if there is more than one. Nobody counts the program's here. What is known is
 // asked: that PyTuple_New() has made the tuple, so what the program has made (a constant of its code) is as it was made; and that there is no more than one reference among those that
-// are known of: C's own, and those that C has handed on or seen taken (didGetHolder()). So it may be C's, or that of a container into which C has put the tuple, to fill it by the pointer
+// are known of: C's own, and those that C has handed on or seen taken (didGetHolder(); of a tuple that PyTuple_New() has not made they count as more from the start). So it may be C's, or that of a container into which C has put the tuple, to fill it by the pointer
 // that it still has ("put it in, then fill it": from then on one Py_DECREF of the container frees all). Once the program has been handed the tuple, that is the end of it.
 // Takes over the reference to the item, whatever comes of the call.
 PY_CAPI int PyTuple_SetItem(Handle object, ssize_t index, Handle item)
@@ -78,7 +78,7 @@ PY_CAPI int PyTuple_SetItem(Handle object, ssize_t index, Handle item)
     CAPI_NOISY((release(item), -1));
     TakenOver takenOver(*current, item);
     PyTuple* tuple = PyTuple::tryFrom(toJS(object));
-    bool isBeingFilled = tuple && tuple->isMadeByC() && current->counts.get(tuple) + tuple->holdersThatCKnowsOf() <= 1;
+    bool isBeingFilled = tuple && static_cast<uint64_t>(current->counts.get(tuple)) + tuple->holdersThatCKnowsOf() <= 1;
     if (isBeingFilled && static_cast<size_t>(index) < tuple->length()) [[likely]] {
         tuple->initializeAt(current->vm, static_cast<unsigned>(index), item ? toJS(item) : jsUndefined());
         didGetHolder(toJS(item), Holder::Container);
@@ -155,8 +155,10 @@ PY_CAPI int PyList_SetItem(Handle object, ssize_t index, Handle item)
         return -1;
     }
     listSet(entry.globalObject, list, static_cast<unsigned>(index), item ? toJS(item) : jsUndefined());
+    if (entry.failed())
+        return -1;
     didGetHolder(toJS(item), Holder::Container);
-    return entry.status();
+    return 0;
 }
 
 PY_CAPI int PyList_Append(Handle object, Handle item)
@@ -168,8 +170,10 @@ PY_CAPI int PyList_Append(Handle object, Handle item)
         return -1;
     }
     listAppend(entry.globalObject, list, toJS(item));
+    if (entry.failed())
+        return -1;
     didGetHolder(toJS(item), Holder::Container);
-    return entry.status();
+    return 0;
 }
 
 } // namespace CApi
