@@ -222,6 +222,24 @@ static ALWAYS_INLINE void copyItems(WriteBarrier<Unknown>* to, JSArray* list, un
     gcSafeMemcpy(to, list->butterfly()->contiguous().data() + start, count * sizeof(JSValue));
 }
 
+void listCopyTo(JSValue* to, JSArray* list)
+{
+    unsigned length = list->length();
+    if (auto values = listValues(list); values.data()) {
+        for (unsigned i = 0; i < length; ++i)
+            to[i] = values[i] ? values[i] : jsUndefined();
+        return;
+    }
+    if (hasDouble(list->indexingType())) {
+        const double* from = list->butterfly()->contiguousDouble().data();
+        for (unsigned i = 0; i < length; ++i)
+            to[i] = from[i] == from[i] ? JSValue(JSValue::EncodeAsDouble, from[i]) : jsUndefined();
+        return;
+    }
+    for (unsigned i = 0; i < length; ++i)
+        to[i] = listGet(list, i);
+}
+
 static NEVER_INLINE void raiseListTooLong(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);

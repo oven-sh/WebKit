@@ -1424,8 +1424,8 @@ JSValue fillSpreadCall(CallFrame* callFrame, const OpPyCallSpread& bytecode, JSV
                 *arguments++ = item;
         } else {
             JSArray* list = asList(positional);
-            for (unsigned i = 0, length = listLength(list); i < length; ++i)
-                *arguments++ = listGet(list, i);
+            listCopyTo(arguments, list);
+            arguments += listLength(list);
         }
     }
     if (JSValue keywords = callFrame->r(bytecode.m_keywords).jsValue(); keywords && !isKeywordNames(keywords)) {

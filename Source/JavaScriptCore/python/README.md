@@ -73,7 +73,7 @@ for an index, *every* array of the realm, also the next one that Python makes, h
 value to that accessor where the array has nothing of its own at the index. The items of a list are nobody else's: there they are
 defined (`listSetSlow()`, `listPush()`), and a hole is read as `None` without asking. So nothing outside `PyList.cpp`
 touches a butterfly. There, what changes a list asks `ListStorage` whether the items are values in a row, which makes them so if they are
-numbers in a row. What only reads asks `listValues()`, or `hasItemsInARow()` and then `copyItems()`. If they are not, each item goes
+numbers in a row. What only reads asks `listValues()`, or `hasItemsInARow()` and then `copyItems()`; from outside, `listCopyTo()`. If they are not, each item goes
 through what works for any array. What is done to a whole list asks once, works on the row and has one barrier. A hole, which reads
 as `None`, stays a hole where the row is copied in one piece (`a[:]`, `+`, `*`, `extend`, `copy`, `list(a)`) and becomes `undefined` where
 items are taken one by one (`a[::-1]`, `b[1:1] = a`): to Python that is the same, JS sees `1 in result` false or true. C++ elsewhere
