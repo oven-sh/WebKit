@@ -551,9 +551,13 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
         return jsNumber(0);
     SetForScope isCollecting(rt.gc.isCollecting, true);
     SetForScope collectingThread(rt.gc.collectingThread, rt.currentThread());
+    // Another thread may be between "start" and "stop" of a collection of the engine's own, in a callback or a finalizer that has let go of the GIL. In CPython nothing is collected between the two: there this
+    // call does nothing while another thread collects. Here it collects, and goes untold, like a collection of the engine's own that comes in between: whoever listens hears "start" and "stop" in turn.
+    bool isTold = !rt.isTellingOfCollection();
 
     Runtime::CollectionStats stats;
-    callCollectionCallbacks(globalObject, "start"_s, generation, stats);
+    if (isTold)
+        callCollectionCallbacks(globalObject, "start"_s, generation, stats);
     RETURN_IF_EXCEPTION(scope, { });
     int debug = rt.gc.debugFlags;
     if (debug & debugStats)
@@ -588,7 +592,8 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     total.collected += stats.collected;
     total.candidates += stats.candidates;
     total.duration += stats.duration;
-    callCollectionCallbacks(globalObject, "stop"_s, generation, stats);
+    if (isTold)
+        callCollectionCallbacks(globalObject, "stop"_s, generation, stats);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<uint64_t>(stats.collected)));
 }

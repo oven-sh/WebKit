@@ -883,7 +883,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   only thing that frees memory. A collection of the engine's own is told to `gc.callbacks` and counted in `get_stats()` at the next
   safe point: "start", then what it found (callbacks of weak references, finalizers), then "stop"; a collection of the young
   generation as generation 0, a full one as generation 2. Not while the collector is "disabled". Nor is the program told of one that comes between "start" and "stop", in whichever thread: it is
-  counted, and what it finds is called before "stop" with the rest. In CPython nothing is collected in between, and a callback that brings about a collection whenever it is called would never
+  counted, and what it finds is called before "stop" with the rest. That goes for `gc.collect()` in another thread too, which does nothing there in CPython: here it collects, untold. In CPython nothing is collected in between, and a callback that brings about a collection whenever it is called would never
   let the program go on. `gc.collect()` does nothing when one of `gc.callbacks` calls it, as in CPython, where a callback runs within the collection. Not so in a finalizer that is called between
   "start" and "stop": in CPython most of these run outside any collection, so there the call is put off until the calls that are owed have been made, as at any other time. Where the runtime collects as a means to an end and CPython collects nothing (`get_objects()`, `get_referrers()`, buffers that nothing can reach any more), that is
   neither told nor counted (`gc.collectsForItself`).

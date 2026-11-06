@@ -527,6 +527,14 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
     }
 }
 
+bool Runtime::isTellingOfCollection()
+{
+    Locker locker { m_finalizationLock };
+    return std::ranges::any_of(m_callsOwed, [](auto& owed) {
+        return !!owed->collectionBeingToldOf;
+    });
+}
+
 void Runtime::WeakCellTable::removeUnmarked(JSC::Heap& heap)
 {
     for (unsigned i = 0; i < m_cells.size(); ++i) {

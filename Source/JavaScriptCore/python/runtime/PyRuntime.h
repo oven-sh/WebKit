@@ -818,6 +818,8 @@ public:
         std::array<CollectionStats, 3> stats;
     } gc;
     bool hasCollectionCallbacks() const;
+    // Some thread is between "start" and "stop" of a collection of the engine's own. What is collected meanwhile goes untold.
+    bool isTellingOfCollection();
     // Calls gc.callbacks for a collection of the engine's own, which is over by then.
     void tellOfCollection(int generation, double duration, bool isOver);
     // For the collector, when it first looks at the stack.
