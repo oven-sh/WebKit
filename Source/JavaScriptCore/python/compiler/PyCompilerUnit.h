@@ -72,6 +72,13 @@ struct Last {
         ++result.jumpsBefore;
         return result;
     }
+    // The same jump, with more or less in front of it.
+    void setInstructionsOfJumpBehind(unsigned instructions)
+    {
+        ASSERT(jumpsBefore);
+        if (jumpsBefore <= maxJumps)
+            instructionsOfJumps[jumpsBefore - 1] = instructions;
+    }
 };
 inline constexpr Last notLast { };
 

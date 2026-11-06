@@ -2584,11 +2584,6 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
     // What comes next is a jump over the handlers. CPython's compiler puts the handlers behind everything else, so there it is a jump to what follows, and is dropped.
     // So it is behind each handler, where the jump comes with more.
     Last isLastOfPart = lastBeforeJump(end.get(), isLast, JumpIs::ToldOfForwards, node->orelse.isEmpty() ? 2 : 1);
-    auto isLastOfHandler = [&](unsigned instructions) -> const Last& {
-        if (isLastOfPart.jumpsBefore <= Last::maxJumps)
-            isLastOfPart.instructionsOfJumps[isLastOfPart.jumpsBefore - 1] = instructions;
-        return isLastOfPart;
-    };
     Try body = bodyOfTry(node, end.get(), isLastOfPart);
     if (cannotGetHere())
         deadStatements(node->orelse);
@@ -2638,7 +2633,8 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
             g.addPythonMark(PythonMark::BlockEnd, matching, bitsOfMatching);
             Try nameCleanup = beginTry();
             pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .name = handler->name, .range = handler->range, .isMarked = false });
-            statements(handler->body, 0, isLastOfHandler(7));
+            isLastOfPart.setInstructionsOfJumpBehind(7);
+            statements(handler->body, 0, isLastOfPart);
             popBlock();
             endTry(nameCleanup);
             outsideTry(cleanup.depthBefore, [&] {
@@ -2663,7 +2659,8 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
         } else {
             g.addPythonMark(PythonMark::BlockEnd, matching, bitsOfMatching);
             pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .range = handler->range, .isMarked = false });
-            statements(handler->body, 0, isLastOfHandler(3));
+            isLastOfPart.setInstructionsOfJumpBehind(3);
+            statements(handler->body, 0, isLastOfPart);
             popBlock();
             outsideTry(cleanup.depthBefore, [&] {
                 if (cannotGetHere())
