@@ -811,8 +811,8 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
 - **At exit**, when the threads are joined and before `atexit`'s callbacks, what is unreachable by then and reference counts would
   have freed is finalized: in CPython it would have been long ago. (Only if an object is registered whose finalizer is code of the
   program.) After the callbacks, if there is anything left to finalize, `sys.modules` is emptied as CPython empties it, and
-  collections find and order what only the modules held. What is then still held (by JS, by a frame on the stack) is finalized in
-  the order it was made. A program that leaves nothing to finalize exits without a collection; a generator that has not begun is
+  collections find and order what only the modules held. What is then still held (by JS, which has imported a module, by a frame on the stack) is finalized in
+  the order it was made, a holder before what only it holds. A program that leaves nothing to finalize exits without a collection; a generator that has not begun is
   nothing to finalize.
   - A function makes the namespace of its module a cycle, so nearly all that a program still holds when it ends hangs off a cycle. In the order of making, the raw file of
     `f = io.BufferedWriter(Raw())` was closed before the writer was asked to write what it held, which was lost, and of 10,000 objects held in all sorts of ways 78 % of those with one holder went before it. So what dies

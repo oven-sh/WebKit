@@ -50,7 +50,7 @@ public:
     DeadGraph(JSC::Heap& heap, SlotVisitor& marker, std::span<JSCell* const> candidates, const FinalizationQuestions& questions)
         : AbstractSlotVisitor(marker.collector(), "PythonFinalizationOrder"_s, m_opaqueRootStorage)
         , m_heap(heap)
-        , m_marker(marker)
+        , m_marker(&marker)
         , m_questions(questions)
         , m_candidateCount(candidates.size())
         , m_hasAllThatDied(questions.looksAtAllThatDied)
@@ -61,15 +61,28 @@ public:
             addAllThatDied(candidates);
     }
 
+    // Outside a collection, of cells that are alive: the graph is what the candidates lead to by way of cells of the program. No cell is allocated while there is one.
+    DeadGraph(JSC::Heap& heap, std::span<JSCell* const> candidates, const FinalizationQuestions& questions)
+        : AbstractSlotVisitor(heap.collector(), "PythonFinalizationOrder"_s, m_opaqueRootStorage)
+        , m_heap(heap)
+        , m_questions(questions)
+        , m_candidateCount(candidates.size())
+        , m_hasAllThatDied(false)
+    {
+        for (JSCell* cell : candidates)
+            add(cell);
+    }
+
     FinalizationOrder order();
+    Vector<unsigned> orderOfTheLiving();
 
     void append(const ConservativeRoots&) final { }
     void appendUnbarriered(JSCell* cell) final { reach(cell); }
     void appendHiddenUnbarriered(JSCell* cell) final { reach(cell); }
     bool isFirstVisit() const final { return false; }
-    bool isMarked(const void* cell) const final { return m_marker.isMarked(cell); }
-    bool isMarked(MarkedBlock& block, HeapCell* cell) const final { return m_marker.isMarked(block, cell); }
-    bool isMarked(PreciseAllocation& allocation, HeapCell* cell) const final { return m_marker.isMarked(allocation, cell); }
+    bool isMarked(const void* cell) const final { return !m_marker || m_marker->isMarked(cell); }
+    bool isMarked(MarkedBlock& block, HeapCell* cell) const final { return !m_marker || m_marker->isMarked(block, cell); }
+    bool isMarked(PreciseAllocation& allocation, HeapCell* cell) const final { return !m_marker || m_marker->isMarked(allocation, cell); }
     void markAuxiliary(const void*) final { }
     void reportExtraMemoryVisited(size_t) final { }
 #if ENABLE(RESOURCE_USAGE)
@@ -163,6 +176,9 @@ private:
         return &m_numbers[m_tableOfLastBlock.first + (block.atomNumber(cell) - m_tableOfLastBlock.startAtom) / m_tableOfLastBlock.atomsPerCell];
     }
 
+    // Not of the graph.
+    bool isOutside(JSCell* cell) const { return m_marker ? m_marker->isMarked(cell) : !isCellOfTheProgram(cell); }
+
     void add(JSCell* cell)
     {
         unsigned* slot = slotFor(cell, true);
@@ -175,7 +191,7 @@ private:
 
     void reach(JSCell* cell)
     {
-        if (!cell || cell == m_wholeOfCurrentCell || m_marker.isMarked(cell))
+        if (!cell || cell == m_wholeOfCurrentCell || isOutside(cell))
             return;
 #if ASSERT_ENABLED
         // What a cell that was alive until now refers to was alive until now.
@@ -201,7 +217,7 @@ private:
     // Whether reach() has made an edge of it, for a value that the cell that has just been visited holds.
     bool hasEdgeTo(JSValue value)
     {
-        if (!value || !value.isCell() || value.asCell() == m_wholeOfCurrentCell || m_marker.isMarked(value.asCell()))
+        if (!value || !value.isCell() || value.asCell() == m_wholeOfCurrentCell || isOutside(value.asCell()))
             return false;
         unsigned* slot = slotFor(value.asCell(), false);
         return slot && *slot != none;
@@ -219,7 +235,7 @@ private:
     void flagAllReachedFrom(Vector<unsigned>&& worklist, Flag);
 
     JSC::Heap& m_heap;
-    SlotVisitor& m_marker;
+    SlotVisitor* m_marker { nullptr };
     const FinalizationQuestions& m_questions;
     unsigned m_candidateCount;
     bool m_hasAllThatDied;
@@ -637,6 +653,13 @@ void DeadGraph::flagAllReachedFrom(Vector<unsigned>&& worklist, Flag flag)
     }
 }
 
+Vector<unsigned> DeadGraph::orderOfTheLiving()
+{
+    walk();
+    m_flags.fill(0, m_cells.size());
+    return candidatesWithHoldersFirst();
+}
+
 FinalizationOrder DeadGraph::order()
 {
     walk();
@@ -859,6 +882,11 @@ FinalizationOrder finalizationOrder(JSC::Heap& heap, SlotVisitor& marker, std::s
         return result;
     }
     return DeadGraph(heap, marker, candidates, questions).order();
+}
+
+Vector<unsigned> orderWithHoldersFirst(JSC::Heap& heap, std::span<JSCell* const> candidates)
+{
+    return DeadGraph(heap, candidates, { }).orderOfTheLiving();
 }
 
 } // namespace Python

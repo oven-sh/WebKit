@@ -749,6 +749,9 @@ struct FinalizationOrder {
     Vector<JSCell*> garbage;
 };
 FinalizationOrder finalizationOrder(JSC::Heap&, SlotVisitor&, std::span<JSCell* const> candidates, const FinalizationQuestions&);
+// Outside a collection, for objects that are alive and are finalized all the same, given in the order in which they were made: that order, but what only other objects among them lead to not before
+// those. See DeadGraph::candidatesWithHoldersFirst(). No cell is allocated.
+Vector<unsigned> orderWithHoldersFirst(JSC::Heap&, std::span<JSCell* const> candidates);
 
 // function(generator, value) for what is in the variables of the generators, coroutines and async generators that are running, in
 // whatever thread: while one runs they are in the frame of its body, not in the generator.

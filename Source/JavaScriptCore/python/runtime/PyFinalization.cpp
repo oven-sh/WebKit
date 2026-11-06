@@ -1123,9 +1123,11 @@ void Runtime::finalizeAllAtExit()
     collect();
     if (m_vm.hasPendingTerminationException()) [[unlikely]]
         return;
-    // Then what something else holds on to: JS, a frame of this thread that is still on the stack. In the order it was made.
+    // Then what something else holds on to: JS, which has imported a module, a frame of this thread that is still on the stack. In the order it was made, a holder before what only it holds, like the rest.
     {
         forgetThreadLocalsOfOtherThreads(m_globalObject);
+        // A collection that the finalizers have set off may be under way. It ends here, before the lists are read: it takes off them what it finds dead. Nothing from here on allocates.
+        PreventCollectionScope preventCollection(m_vm.heap);
         auto heldByOtherThreads = whatOtherThreadsHold();
         Vector<JSCell*> rest;
         Vector<JSCell*> callbacksOfForeignCode; // Which the finalizers of the others may call.
@@ -1134,6 +1136,11 @@ void Runtime::finalizeAllAtExit()
             if (cell->type() != PyGeneratorType && !heldByOtherThreads.contains(cell))
                 (cell->classInfo() == Ctypes::PyCThunk::info() ? callbacksOfForeignCode : rest).append(cell);
         });
+        if (rest.size() > 1) {
+            rest = orderWithHoldersFirst(m_vm.heap, rest.span()).map([&](unsigned index) {
+                return rest[index];
+            });
+        }
         rest.appendVector(callbacksOfForeignCode);
         for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
             for (auto& entry : *list)
