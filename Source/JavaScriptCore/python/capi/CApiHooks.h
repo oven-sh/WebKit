@@ -6,6 +6,7 @@
 #pragma once
 
 #include "JSCJSValue.h"
+#include <wtf/ScopedLambda.h>
 
 // What the runtime calls of the C API (CApi.h).
 
@@ -22,6 +23,7 @@
 namespace JSC {
 
 class Heap;
+class SlotVisitor;
 class VM;
 
 namespace Python {
@@ -96,11 +98,19 @@ JSValue allocateInstance(JSGlobalObject*, PyType*);
 // Whether an instance of one type can become an instance of the other. One of them at least has the flag.
 bool instancesAreAlike(PyType*, PyType*);
 
+// For the collector, with the world stopped, when all that is reachable and all that is kept for finalizers has been marked. True: it has marked more.
+bool markWhatIsLeft(SlotVisitor&);
+
 // The object whose PyObject* is the address of this cell, if the cell is not an object itself. Empty: it is nothing of the kind. With the GIL.
 JSValue objectOfBody(Runtime&, JSCell*);
 
 // __class__ has been assigned to.
 void didChangeClass(JSCell*, PyType* oldType, PyType* newType);
+
+// gc.is_tracked(), for an instance.
+bool isTracked(JSCell*);
+// gc.get_referrers(): what refers to one of the values by a reference that C holds in it. With the GIL, right after a full collection.
+void forEachInstanceThatRefersTo(std::span<const JSValue>, const ScopedLambda<void(JSCell*)>&);
 
 // ---- ctypes ----
 
@@ -137,8 +147,11 @@ inline JSValue objectOfSymbol(JSGlobalObject*, uint64_t) { return { }; }
 inline void didFinishMarking(JSC::Heap&) { }
 inline JSValue allocateInstance(JSGlobalObject*, PyType*) { return { }; }
 inline bool instancesAreAlike(PyType*, PyType*) { return false; }
+inline bool markWhatIsLeft(SlotVisitor&) { return false; }
 inline JSValue objectOfBody(Runtime&, JSCell*) { return { }; }
 inline void didChangeClass(JSCell*, PyType*, PyType*) { }
+inline bool isTracked(JSCell*) { return false; }
+inline void forEachInstanceThatRefersTo(std::span<const JSValue>, const ScopedLambda<void(JSCell*)>&) { }
 inline bool throwWhatCRaised(JSGlobalObject*) { return true; }
 inline bool throwWhatCRaisedBesideResult(JSGlobalObject*, const String&) { return true; }
 inline void forgetWhatCRaised() { }

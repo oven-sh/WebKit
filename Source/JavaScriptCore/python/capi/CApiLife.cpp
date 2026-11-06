@@ -182,6 +182,8 @@ static Face* tryMake(PyType* type, MadeByExtension* extension)
     Face* face = Face::create(current.vm, current.state->faceStructure.get(), type, body);
     body->setFace(current.vm, face);
     body->isTracked = extension->flags & HaveGC;
+    if (body->isTracked)
+        current.youngBodies.append(body);
     return face;
 }
 
@@ -281,7 +283,7 @@ static void* raiseThatThereIsNoData()
 
 PY_CAPI void* PyObject_GetTypeData(Handle object, Handle type)
 {
-    CAPI_QUIET(nullptr);
+    CAPI_QUIET_AND_ONLY_READS(nullptr);
     if (void* data = typeData(object, type)) [[likely]]
         return data;
     return raiseThatThereIsNoData();
@@ -290,7 +292,7 @@ PY_CAPI void* PyObject_GetTypeData(Handle object, Handle type)
 // For tp_traverse: no exception.
 PY_CAPI void* PyObject_GetTypeData_DuringGC(Handle object, Handle type)
 {
-    CAPI_QUIET(nullptr);
+    CAPI_QUIET_AND_ONLY_READS(nullptr);
     return typeData(object, type);
 }
 

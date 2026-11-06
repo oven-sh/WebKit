@@ -1631,7 +1631,7 @@ not even for an object that C has just made: code that changes in place what it 
 - **When a collection has marked all it will, every key of the table is marked.** No key is ever the address of a freed cell, whatever an extension does or
   fails to do. That is asserted when marking ends.
 - What C holds is reachable as what a global variable holds is, and the collector learns of it as of an embedder's other roots: by a marking constraint
-  (`Heap::addMarkingConstraint()`, which Bun uses for its own). JSC evaluates constraints with the world stopped.
+  (`Heap::addMarkingConstraint()`, which Bun uses for its own; `capi/CApiCollector.cpp`). JSC evaluates constraints with the world stopped.
 - The program changes the table with the GIL, and the collector reads it only in the constraint. The thread that runs the program is never stopped from outside: it stops
   where it allocates in the heap or gives up its access to it, and no operation on the table does either. So there is no lock, and no barrier. A thread
   without the GIL counts as stopped, so `Py_INCREF` and `Py_DECREF` look who calls: in CPython such a call spoils a count, here it would spoil the table. It is refused: the
@@ -1678,6 +1678,18 @@ line on stderr the first time if there is an interpreter. In CPython all of that
 keeps at hand, with a reference, from its first call to its end. What the question reads stays when the interpreter goes: the object that `s_interpreter` points to is never freed,
 and it holds a reference to the lock. `Py_None` and the other constants that are no cells, `Py_Is*()` and `Py_IsInitialized()` ask nothing and look at nothing that could go away:
 the symbols of None and the bools say what they stand for from the time the executable is loaded. `Py_IsInitialized()` says whether the interpreter that the API serves is there.
+While a `tp_traverse` is being asked, its thread counts as one without the GIL, whether it has it or not (the collector asks on whichever thread conducts the collection): no object
+can be made, no code be run and no count be changed in the middle of a collection, so all of that fails, as above. What only reads is let in (`interpreterToLookAt()`): `Py_TYPE()`, `Py_IS_TYPE()`,
+`Py_REFCNT()`, `PyType_IsSubtype()`, `PyObject_GetTypeData()` and the functions named `_DuringGC`. It costs nothing elsewhere: `traverse()` takes away what the thread keeps at hand.
+
+The lock is the VM's, and a VM may have several interpreters, on one thread: each realm (`ShadowRealm`) that imports Python has its own. So **whoever runs C says for whom** (`CRunsFor`, around
+a foreign call, `dlopen()` and `dlclose()`): that is the thread's, and the innermost counts, so C that one interpreter calls, that calls back, and so gets to C that the other calls, is
+told apart at every level. It costs who is let in nothing: while a thread runs C for an interpreter that the API is not for, it does not have its `Thread` at hand, so the
+question above fails and the long way finds out why. C that JS runs (`bun:ffi`, N-API) runs for nobody in particular: on a thread that holds the GIL of the interpreter that has the
+API it is served, from whichever realm it was called, unless that is inside C which runs for another.
+The question is for C, and only C is asked. What the runtime does for itself (it throws what C raised, gives up the reference that came with a result, hands C one with the result of a callback;
+`_ctypes.Py_INCREF()`) goes by whose call it is: code of the interpreter that is served may run deep inside C that another one runs, and its calls come with references and exceptions like any. A
+function that has asked does not ask again for the references that it takes and gives (`retain()` and `release()` with `current`).
 
 **Quiet and noisy.** Every function that C calls says in its first line whether it can run code of the program or put a reference where the program finds
 it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); all three ask who calls, once, and have the answer at hand (`current`). `CAPI_QUIET_AND_ASKS_NOBODY()` is for the quiet ones that have nothing to ask for.
@@ -1707,8 +1719,31 @@ collection ends, the frames of an `Error`, bare pointers in native code that go 
 with the next commit. A face is not kept: when it has died each of them has been told, as of any cell that dies. What is kept for `tp_dealloc` is the body, of which none of them has
 ever heard. (It is how WebKit keeps a native object with a lifetime of its own behind a wrapper that is collected.)
 
-The collector does not look into the data: C stores there without telling anybody, and only C knows what is a reference. But a reference that lies there is one
+The collector does not look into the data while it marks: C stores there without telling anybody, and only C knows what is a reference. But a reference that lies there is one
 that C owns, so it is in the table. For an instance the key is the body.
+
+**What `tp_traverse` is for.** If all that C owns were a root, a cycle through an instance would never die. So a full collection finds out, as CPython's collector does, which of C's
+references are held *in instances*: the constraint asks all the instances that have a `tp_traverse`, marked or not, and counts for each cell how many of
+C's references to it they account for. A cell of which C owns more than that is held from elsewhere (a static variable, C's stack, an instance that does not tell): a root. What
+an instance names is marked if the instance is: an edge like any other. JSC evaluates the constraint again until no new mark comes of it. An evaluation begins from nothing if the
+world has run since the last, by the collector's own count of its phases (`Heap::phaseVersion()`, which the conservative scan goes by too; `Heap::mutatorExecutionVersion()` misses a thread
+that comes back from a wait while the collector works beside the program). If it has not, what was counted holds, and only the instances that have been marked since are asked: the
+list is gone over for them. The marker leaves no word: it runs on several threads, and in a collection that goes on beside the program its word would be thrown away each time.
+What an instance holds is marked there and then, and if that is an instance it is asked in its turn: a list of instances each of which holds the next
+takes one evaluation. Where an object of Python lies between one instance and the next, the marker has to go that bit of the way, and each such bit takes another evaluation, as each
+link of a chain of `WeakMap`s does in JSC. An Eden collection asks nobody, and takes all that C owns for roots. So does every
+collection once nothing is let go of any more (a thread without the GIL has taken a reference): C has a reference that is not in the books, so what the instances account for says
+nothing. `tp_traverse` is called with the world stopped, on whichever
+thread conducts the collection, and may call only what CPython allows there (`Py_TYPE()`, the functions named `_DuringGC`).
+What `tp_traverse` says decides only *which instances are taken for dead*. One that tells too little leaks. One that names a reference it does not own gets its object destroyed
+early, as under CPython. Neither can make a key of the table dangle: a key that nothing has marked when all is done is marked then. And what it names is looked at only if it
+is a key: of anything else nobody knows whether it is still the address of a cell.
+
+- **The list of the bodies holds an address only while the cell lives.** A body gets on it when it is made (if its type has a `tp_traverse`) and
+  off it when the marking of a collection ends without having marked it, before anything is swept. The collector walks it, with the world stopped, and `gc.get_referrers()`, with the GIL.
+- The other visitors (the graph of what has died in `runtime/PyFinalizationOrder.cpp`, `gc.get_referents()`, JSC's verifier) run with the world stopped or with the GIL. They ask what an
+  *object* refers to: to them the two cells are one, the face, whose `visitChildren()` calls `tp_traverse` itself and names faces where C holds bodies. So the order of finalization knows C's edges, and no walk comes to a body. (A heap snapshot listens to the marker: there, what an instance holds
+  shows as a root.)
 
 **`ctypes`.** A `py_object` is a `PyObject*`: the same bits. A function of a `PyDLL` is called with the GIL; what C raised is thrown when it returns, whatever it returned (also for a
 function of a `CDLL` that got in because no other thread wanted the GIL: CPython crashes there). What a library raised as it was loaded, or as it went, is the cause of a `SystemError` from

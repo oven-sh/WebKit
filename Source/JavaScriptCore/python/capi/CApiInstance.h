@@ -54,8 +54,8 @@ private:
 // What C keeps lies behind the cell, in the cell's own memory: each type of the chain says how much it adds to its base, and gets at its part with PyObject_GetTypeData(). Cells do
 // not move, so the address is good for the life of the object. The memory is zero at first.
 //
-// The collector does not look into the data: C stores there without telling anybody, and only C knows what is a reference. A reference that lies there is one that C owns,
-// so it is in the table.
+// The collector does not look into the data while it marks: C stores there without telling anybody, and only C knows what is a reference. It
+// asks tp_traverse, with the world stopped: see "The C API" in ../README.md.
 class Body final : public JSCell {
 public:
     using Base = JSCell;
@@ -100,8 +100,12 @@ public:
     void* data() { return std::bit_cast<void*>(roundUpToMultipleOf<dataAlignment>(std::bit_cast<uintptr_t>(this + 1))); }
     static constexpr size_t dataAlignment = 16;
 
+    // All of this is read and written with the GIL, or by the collector with the world stopped.
+
     // PyObject_GC_Track(), PyObject_GC_UnTrack(): whether tp_traverse may be called.
     bool isTracked : 1 { false };
+    // For the collector, within a collection: it has been asked what it holds since it was marked, and since the program last ran.
+    bool wasAsked : 1 { false };
 
 private:
     Body(VM&, Structure*, PyType*);
@@ -112,6 +116,9 @@ private:
 
 static_assert(sizeof(Face) == 32);
 static_assert(sizeof(Body) == 32 && !(sizeof(Body) % Body::dataAlignment));
+
+// gc.is_tracked()
+bool isTracked(Body*);
 
 ALWAYS_INLINE Face* faceOf(Body* body) { return body->face(); }
 

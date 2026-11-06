@@ -18,7 +18,7 @@ if sys.argv[1:] == ["--self-test"]:
 quiet, asking_nobody, silent, looking = [], [], [], []
 for path in sorted(glob.glob(f"{here}/../capi/*.cpp")):
     for name, first, body in re.findall(r"^PY_CAPI [^\n;(]*?\b(\w+)\([^\n;]*\)\n\{\n\s*([^\n]*)\n(.*?)^\}", open(path).read(), re.M | re.S):
-        if first.startswith("CAPI_QUIET("):
+        if first.startswith(("CAPI_QUIET(", "CAPI_QUIET_AND_ONLY_READS(")):
             quiet.append(name)
         elif first.startswith("CAPI_QUIET_AND_ASKS_NOBODY()"):
             asking_nobody.append(name)

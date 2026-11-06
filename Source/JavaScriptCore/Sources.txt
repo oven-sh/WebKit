@@ -805,6 +805,7 @@ profiler/ProfilerOriginStack.cpp
 profiler/ProfilerProfiledBytecodes.cpp
 profiler/ProfilerTZoneImpls.cpp
 
+python/capi/CApiCollector.cpp
 python/capi/CApiErrors.cpp
 python/capi/CApiInstance.cpp
 python/capi/CApiInterpreter.cpp

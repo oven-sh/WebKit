@@ -8,6 +8,7 @@
 
 #include "AbstractSlotVisitorInlines.h"
 #include "BlockDirectoryInlines.h"
+#include "CApiHooks.h"
 #include "HeapAnalyzer.h"
 #include "HeapIterationScope.h"
 #include "HeapProfiler.h"
@@ -460,6 +461,8 @@ static bool isTracked(Runtime& rt, JSValue value, bool isYoung = false)
     if (auto* type = PyType::tryFrom(cell))
         return isAllocatedInCPython(type);
     PyType* type = rt.typeOf(cell);
+    if (type->has(TypeFlag::InstancesHaveDataOfC)) [[unlikely]]
+        return CApi::isTracked(cell);
     if (type->isHeapType())
         return true;
     // A tuple is kept track of if any of its items is of a type whose instances may be, until a collection finds that none is.
@@ -891,11 +894,18 @@ static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args
         WhatIsGoneInCPython gone(vm);
         listener.listen(runtime(globalObject), gone);
         UncheckedKeyHashSet<JSCell*> seen;
-        if (!listener.found().isEmpty()) {
+        Vector<JSCell*> found = listener.found();
+        // To the marker no cell says so of these.
+        if (CApi::isSetUpFor(runtime(globalObject))) {
+            CApi::forEachInstanceThatRefersTo(args.positional(), [&](JSCell* instance) {
+                found.append(instance);
+            });
+        }
+        if (!found.isEmpty()) {
             HeapView view(globalObject, gone);
             if (forHooks)
                 seen.add(forHooks);
-            for (JSCell* cell : listener.found()) {
+            for (JSCell* cell : found) {
                 cell = view.objectOf(cell);
                 if (cell && seen.add(cell).isNewEntry) {
                     assertIsComplete(cell);

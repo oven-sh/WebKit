@@ -54,12 +54,33 @@ Body* Body::tryCreate(VM& vm, Structure* structure, PyType* type, size_t dataSiz
     return body;
 }
 
+// What marks, SlotVisitor, runs beside the program and on several threads: it sees the cells' own fields and nothing of C's (that is for markWhatCHolds()).
+//
+// Every other visitor asks what an OBJECT refers to, with the world stopped or on the thread that has the GIL: the graph of what has died (PyFinalizationOrder.cpp),
+// gc.get_referents(), JSC's verifier. To them the two cells are one, which refers to what tp_traverse names, and they do not come to a body.
+static JSCell* objectOf(JSCell* cell)
+{
+    Body* body = Body::tryFromCellOfHandle(cell);
+    return body ? body->face() : cell;
+}
+
+template<typename Visitor>
+static void appendWhatCHolds(Body* body, Visitor& visitor)
+{
+    traverse(body, [&](JSCell* target, CountTable::Counts&) {
+        visitor.appendUnbarriered(objectOf(target));
+    });
+}
+
 template<typename Visitor>
 void Face::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<Face>(cell);
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_body);
+    if constexpr (std::is_same_v<Visitor, SlotVisitor>)
+        visitor.append(thisObject->m_body);
+    else
+        appendWhatCHolds(thisObject->body(), visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Face);
@@ -70,11 +91,42 @@ void Body::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<Body>(cell);
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_type);
-    // THE FACE LIVES AS LONG AS THE BODY DOES, whoever it is that keeps the body (C, or another instance in its data): with the face go the attributes, the identity and the weak references.
-    visitor.append(thisObject->m_face);
+    if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
+        // THE FACE LIVES AS LONG AS THE BODY DOES, whoever it is that keeps the body (C, or another instance in its data): with the face go the attributes, the identity and the weak references.
+        visitor.append(thisObject->m_face);
+    } else
+        appendWhatCHolds(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Body);
+
+struct TraverseArgument {
+    const TraverseVisitor& visit;
+    JSCell* namedButNotOwned;
+};
+
+static int callVisitor(Handle object, void* pointer)
+{
+    auto& argument = *static_cast<TraverseArgument*>(pointer);
+    if (JSCell* cell = countedCell(object); cell && cell != argument.namedButNotOwned) {
+        if (auto* counts = interpreter().counts.find(cell))
+            argument.visit(cell, *counts);
+    }
+    return 0;
+}
+
+void traverse(Body* body, const TraverseVisitor& visit)
+{
+    // It may be one that C is still filling in.
+    if (!body->isTracked)
+        return;
+    SetForScope isInTraverse(t_isInTraverse, true);
+    SetForScope hasNoGIL(t_thisThread, nullptr);
+    MadeByExtension* extension = madeByExtension(body->type());
+    // A tp_traverse names Py_TYPE(self), as it has to in CPython, where every instance owns a reference to its type. Here none does.
+    TraverseArgument argument { visit, body->type() };
+    extension->slot<TraverseFunction>(tp_traverse)(toC(body), callVisitor, &argument);
+}
 
 } // namespace CApi
 } // namespace Python

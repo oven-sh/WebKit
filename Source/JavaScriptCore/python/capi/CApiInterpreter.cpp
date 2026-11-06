@@ -11,8 +11,6 @@
 #include "CApiType.h"
 #include "JSCInlines.h"
 #include "PyException.h"
-#include "SimpleMarkingConstraint.h"
-#include "SlotVisitorInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 #if PYTHON_HAS_CAPI
@@ -141,8 +139,6 @@ static void clearSymbols()
     });
 }
 
-static void addMarkingConstraint(VM&);
-
 #define DECLARE_FILE(name) void keep##name();
 FOR_EACH_CAPI_FILE(DECLARE_FILE)
 #undef DECLARE_FILE
@@ -221,48 +217,20 @@ void runtimeIsEnding(Runtime& runtime)
     Interpreter* interpreter = s_interpreter.exchange(nullptr, std::memory_order_relaxed);
     s_interpreterThatLetsGo.store(nullptr, std::memory_order_relaxed);
     interpreter->counts.clear();
+    interpreter->youngBodies.clear();
+    interpreter->oldBodies.clear();
     clearSymbols();
-}
-
-// ---- The collector ----
-
-// What C holds is reachable, as what a global variable of the program holds is. The collector learns of it as it learns of an embedder's other
-// roots: by a marking constraint, which it evaluates, with the world stopped, until nothing new comes of it.
-template<typename Visitor>
-static void markWhatCHolds(Visitor& visitor)
-{
-    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
-    if (!current)
-        return;
-    SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
-    current->counts.forEachCell([&](JSCell* cell) {
-        visitor.appendUnbarriered(cell);
-    });
-}
-
-static void addMarkingConstraint(VM& vm)
-{
-    vm.heap.addMarkingConstraint(makeUnique<SimpleMarkingConstraint>("Pyc"_s, "Python C API"_s,
-        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([](auto& visitor) {
-            markWhatCHolds(visitor);
-        })),
-        ConstraintVolatility::GreyedByExecution, ConstraintConcurrency::Sequential));
-}
-
-void didFinishMarking(JSC::Heap& heap)
-{
-#if ASSERT_ENABLED
-    interpreter().counts.forEachCell([&](JSCell* cell) {
-        ASSERT(heap.isMarked(cell));
-    });
-#else
-    UNUSED_PARAM(heap);
-#endif
 }
 
 // ---- References ----
 
 constinit thread_local Thread* t_thisThread = nullptr;
+constinit thread_local bool t_isInTraverse = false;
+
+static const char* whoMayNot()
+{
+    return t_isInTraverse ? "by a tp_traverse" : "by a thread that does not hold the GIL";
+}
 static constinit thread_local bool t_thisThreadIsEnding = false;
 
 // The reference that goes with t_thisThread is the value of a key of pthreads, whose destructor gives it back. Not a thread_local with a destructor: Bun is compiled with
@@ -311,7 +279,7 @@ static bool runsCForAnotherInterpreter(Interpreter& current)
 // The first time in a thread, and whenever the answer is no: nothing is refused on the word of what a thread has kept.
 bool hasGILSlow(Interpreter& current)
 {
-    if (runsCForAnotherInterpreter(current))
+    if (t_isInTraverse || runsCForAnotherInterpreter(current))
         return false;
     // What else is destroyed with the thread comes here too, and may come later. Nothing is kept for it.
     if (t_thisThreadIsEnding)
@@ -330,11 +298,13 @@ bool hasGILSlow(Interpreter& current)
     return current.lock->isHeldBy(*t_thisThread);
 }
 
-static void tellOnce(std::atomic<bool>& hasTold, const char* what)
+static void tellOnce(std::atomic<bool>& hasTold, const char* what, const char* whoCalled, const char* consequence)
 {
     if (!hasTold.exchange(true))
-        fputs(what, stderr);
+        fprintf(stderr, "Python: %s was called %s; %s\n", what, whoCalled, consequence);
 }
+
+static constexpr const char* forAnotherInterpreter = "for an interpreter that the C API does not serve (it serves the first of the process)";
 
 void didRefuseToEnter(Interpreter* current)
 {
@@ -343,10 +313,18 @@ void didRefuseToEnter(Interpreter* current)
         return;
     static std::atomic<bool> hasToldOfOther;
     static std::atomic<bool> hasTold;
-    if (runsCForAnotherInterpreter(*current))
-        tellOnce(hasToldOfOther, "Python: a function of the C API was called for an interpreter that the C API does not serve (it serves the first of the process); it fails\n");
+    if (!t_isInTraverse && runsCForAnotherInterpreter(*current))
+        tellOnce(hasToldOfOther, "a function of the C API", forAnotherInterpreter, "it fails");
     else
-        tellOnce(hasTold, "Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n");
+        tellOnce(hasTold, "a function of the C API", whoMayNot(), "it fails");
+}
+
+bool mayLookSlow(Interpreter* current)
+{
+    if (t_isInTraverse || (current && hasGILSlow(*current)))
+        return true;
+    didRefuseToEnter(current);
+    return false;
 }
 
 std::atomic<Interpreter*> s_interpreterThatLetsGo;
@@ -359,16 +337,16 @@ void refuseToChangeCount(bool isToFall)
     static std::atomic<bool> hasToldOfOther;
     static std::atomic<bool> hasToldOfTaken;
     static std::atomic<bool> hasToldOfGivenBack;
-    if (runsCForAnotherInterpreter(*current)) {
-        tellOnce(hasToldOfOther, "Python: Py_INCREF or Py_DECREF was called for an interpreter that the C API does not serve (it serves the first of the process); the count stays as it was\n");
+    if (!t_isInTraverse && runsCForAnotherInterpreter(*current)) {
+        tellOnce(hasToldOfOther, "Py_INCREF or Py_DECREF", forAnotherInterpreter, "the count stays as it was");
         return;
     }
     if (!isToFall) {
         s_interpreterThatLetsGo.store(nullptr, std::memory_order_relaxed);
-        tellOnce(hasToldOfTaken, "Python: Py_INCREF was called by a thread that does not hold the GIL; the count stays as it was, and from now on whatever C owns is held for ever\n");
+        tellOnce(hasToldOfTaken, "Py_INCREF", whoMayNot(), "the count stays as it was, and from now on whatever C owns is held for ever");
         return;
     }
-    tellOnce(hasToldOfGivenBack, "Python: Py_DECREF was called by a thread that does not hold the GIL; the count stays as it was: the object is held for ever\n");
+    tellOnce(hasToldOfGivenBack, "Py_DECREF", whoMayNot(), "the count stays as it was: the object is held for ever");
 }
 
 // Not the way of a thread that has the GIL while all is well. `thatLetsGo`: what the caller has read. If there is one, it has found that the thread has not got the GIL.
@@ -497,8 +475,6 @@ void takeOverReference(uint64_t bits, bool programGetsObject)
         release(*current, handle);
     }
 }
-
-// ---- The symbols, for every interpreter ----
 
 // identityBits(), for the face of an instance. Whoever asks has it in hand. With the GIL.
 uint64_t bitsOfInstance(JSCell* cell)

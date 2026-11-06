@@ -67,7 +67,7 @@ static constexpr ssize_t countOfWhatLivesForEver = static_cast<ssize_t>(3) << 30
 
 PY_CAPI ssize_t Py_REFCNT(Handle object)
 {
-    CAPI_QUIET(countOfWhatLivesForEver);
+    CAPI_QUIET_AND_ONLY_READS(countOfWhatLivesForEver);
     if (JSCell* cell = countedCell(object))
         return static_cast<ssize_t>(current->counts.get(cell)) + 2;
     return countOfWhatLivesForEver;
@@ -75,13 +75,13 @@ PY_CAPI ssize_t Py_REFCNT(Handle object)
 
 PY_CAPI Handle Py_TYPE(Handle object)
 {
-    CAPI_QUIET(nullptr);
+    CAPI_QUIET_AND_ONLY_READS(nullptr);
     return toC(typeOf(object));
 }
 
 PY_CAPI int Py_IS_TYPE(Handle object, Handle type)
 {
-    CAPI_QUIET(0);
+    CAPI_QUIET_AND_ONLY_READS(0);
     return JSValue(typeOf(object)) == toLookAt(type);
 }
 

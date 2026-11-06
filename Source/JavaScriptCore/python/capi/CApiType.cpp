@@ -240,7 +240,7 @@ PY_CAPI Handle PyType_FromSpec(TypeSpec* spec)
 
 PY_CAPI int PyType_IsSubtype(Handle derived, Handle base)
 {
-    CAPI_QUIET(0);
+    CAPI_QUIET_AND_ONLY_READS(0);
     return PyType::from(toJS(derived))->isSubtypeOf(PyType::from(toJS(base)));
 }
 

@@ -96,6 +96,11 @@ PY_CAPI void PyObject_Free(void*);
 // Of the type, or of the nearest of those it derives from, along the bases that decide how instances are laid out. Null: its instances have nothing of C's.
 MadeByExtension* madeByExtension(PyType*);
 
+// Calls the function for each cell that tp_traverse names and to which C owns a reference, with its entry in the table. With the
+// world stopped or with the GIL. (What an instance holds it owns. Of anything else that a tp_traverse may name, nobody knows whether it is still the address of a cell.)
+using TraverseVisitor = ScopedLambda<void(JSCell*, CountTable::Counts&)>;
+void traverse(Body*, const TraverseVisitor&);
+
 } // namespace CApi
 } // namespace Python
 } // namespace JSC

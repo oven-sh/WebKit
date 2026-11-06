@@ -182,7 +182,21 @@ struct Interpreter {
     // Nobody sets the first yet, and nobody reads the second: they are for the order in which instances of extension types are destroyed.
     unsigned finalizersOfCBeingServed { 0 };
     uint32_t noise { 0 };
+
+    // The bodies whose types have a tp_traverse, or something to do when an instance dies: those made since the last collection, and the others.
+    // THEY HOLD AN ADDRESS ONLY WHILE THE CELL LIVES.
+    //  - On: when the instance is made (tryMake() in CApiLife.cpp), by the thread that makes it, with the GIL.
+    //  - Off: when the marking of a collection ends and has not marked it (didFinishMarking()): before anything is swept. An Eden collection looks at the
+    //    young, a full one at all. What has been looked at and stays is old.
+    //  - Walked: by the collector, with the world stopped, in the constraint, in markWhatIsLeft() and in didFinishMarking(); and by gc.get_referrers(), with the GIL, which does
+    //    nothing on the way that lets a collection go on.
+    Vector<Body*> youngBodies;
+    Vector<Body*> oldBodies;
+    // For the constraint, within a collection: Heap::phaseVersion() when the bodies were last asked, all of them.
+    std::optional<uint64_t> versionWhenCounted;
 };
+
+void addMarkingConstraint(VM&);
 
 // Null until the API is set up, and again when its interpreter has ended. Any thread may read it, at any time: see Interpreter::lock. Whoever follows the pointer without the GIL
 // has to see what the constructor wrote: it is stored with release, here and in s_interpreterThatLetsGo, and what is read is read through the pointer (an address dependency, which
@@ -235,6 +249,20 @@ ALWAYS_INLINE Interpreter* interpreterToEnter()
         return current;
     didRefuseToEnter(current);
     return nullptr;
+}
+
+// For what only reads, and may be called by a tp_traverse: Py_TYPE(), the functions named _DuringGC. The collector calls a tp_traverse with the world stopped, on whichever thread
+// conducts the collection, and that one need not hold the GIL. If it is the thread that runs the program it does hold it, and counts as one that does not for as long as C is
+// being asked (traverse() takes t_thisThread away, so it costs nothing elsewhere): no object can be made, no code be run and no count be changed in the middle of a collection.
+extern constinit thread_local bool t_isInTraverse;
+bool mayLookSlow(Interpreter*);
+ALWAYS_INLINE Interpreter* interpreterToLookAt()
+{
+    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
+    Thread* thread = t_thisThread;
+    if (current && thread && current->lock->isHeldBy(*thread)) [[likely]]
+        return current;
+    return mayLookSlow(current) ? current : nullptr;
 }
 
 // ---- References ----
@@ -360,6 +388,7 @@ void setErrorIndicator(Interpreter&, Handle);
 //    a tp_dealloc consists of: counts, the type and the data of an object, memory, the error indicator put aside and back.
 //    CAPI_QUIET_AND_ASKS_NOBODY(), for those of them that look at nothing but the bits of their arguments and what is the thread's own: any thread may call them, at any time.
 //    (retain() and release() ask for themselves.)
+//    CAPI_QUIET_AND_ONLY_READS(failure), for those that a tp_traverse may call: see interpreterToLookAt().
 //  - CAPI_ENTER(failure), or CAPI_NOISY(failure) where there is nothing to enter the runtime for: all others. They are counted, as they begin, while a finalizer
 //    of C's is being served. (CAPI_ENTER_AFTER_ALL(failure): further down in a function that has asked, on the way that does enter the runtime. Whoever enters is counted: Entry does it.)
 // What is done with the count: see "The C API" in ../README.md. A function is noisy unless it is known to be quiet; to take a quiet one for
@@ -419,6 +448,10 @@ private:
 #define CAPI_QUIET_AND_ASKS_NOBODY() do { } while (false)
 #define CAPI_QUIET(failure) \
     [[maybe_unused]] JSC::Python::CApi::Interpreter* const current = JSC::Python::CApi::interpreterToEnter(); \
+    if (!current) [[unlikely]] \
+        return failure
+#define CAPI_QUIET_AND_ONLY_READS(failure) \
+    [[maybe_unused]] JSC::Python::CApi::Interpreter* const current = JSC::Python::CApi::interpreterToLookAt(); \
     if (!current) [[unlikely]] \
         return failure
 #define CAPI_NOISY(failure) \

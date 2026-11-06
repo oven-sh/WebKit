@@ -29,11 +29,17 @@ class CountTable {
 public:
     CountTable() = default;
 
+    struct Counts {
+        uint32_t owned { 0 };
+        // For the collector, while it evaluates: how many of them tp_traverse has accounted for. See markWhatCHolds().
+        uint32_t accountedFor { 0 };
+    };
+
     ALWAYS_INLINE void add(JSCell* cell)
     {
-        uint32_t& owned = m_counts.add(cell, 0).iterator->value;
-        if (owned != forEver) [[likely]]
-            ++owned;
+        Counts& counts = m_counts.add(cell, Counts { }).iterator->value;
+        if (counts.owned != forEver) [[likely]]
+            ++counts.owned;
     }
 
     // `letsGo`: the entry goes with the last reference. If not, it stays, with a count of 0: a key is what the collector marks, so the object is held, and the number is still what C owns.
@@ -41,33 +47,42 @@ public:
     {
         auto entry = m_counts.find(cell);
         // More references were given back than taken. In CPython the object would have been freed under its owners. Here nothing hangs on it.
-        if (entry == m_counts.end() || !entry->value) [[unlikely]]
+        if (entry == m_counts.end() || !entry->value.owned) [[unlikely]]
             return;
-        if (entry->value == forEver) [[unlikely]]
+        if (entry->value.owned == forEver) [[unlikely]]
             return;
-        if (!--entry->value && letsGo) [[likely]]
+        if (!--entry->value.owned && letsGo) [[likely]]
             m_counts.remove(entry);
     }
 
     void clear() { m_counts.clear(); }
     void forget(JSCell* cell) { m_counts.remove(cell); }
-    uint32_t get(JSCell* cell) const { return m_counts.get(cell); }
+    uint32_t get(JSCell* cell) const { return m_counts.get(cell).owned; }
     // Whether it is a key: then it is a cell, and lives. (The count may be 0: see remove().)
     bool contains(JSCell* cell) const { return m_counts.contains(cell); }
     unsigned size() const { return m_counts.size(); }
+    // Null: C owns no reference to it.
+    Counts* find(JSCell* cell)
+    {
+        auto entry = m_counts.find(cell);
+        return entry == m_counts.end() ? nullptr : &entry->value;
+    }
 
     template<typename Function>
-    void forEachCell(const Function& function) const
+    void forEach(const Function& function)
     {
-        for (JSCell* cell : m_counts.keys())
-            function(cell);
+        for (auto& entry : m_counts)
+            function(entry.key, entry.value);
     }
 
 private:
     // A count that has got this far is no longer kept.
     static constexpr uint32_t forEver = std::numeric_limits<uint32_t>::max();
 
-    UncheckedKeyHashMap<JSCell*, uint32_t> m_counts;
+    struct CountsTraits : WTF::GenericHashTraits<Counts> {
+        static constexpr bool emptyValueIsZero = true;
+    };
+    UncheckedKeyHashMap<JSCell*, Counts, DefaultHash<JSCell*>, HashTraits<JSCell*>, CountsTraits> m_counts;
 };
 
 } // namespace CApi
