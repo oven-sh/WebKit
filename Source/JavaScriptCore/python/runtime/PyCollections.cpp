@@ -92,8 +92,22 @@ static void dequeReallocate(JSGlobalObject* globalObject, PyRecord* deque, unsig
     PyTuple* buffer = PyTuple::create(globalObject, capacity);
     for (unsigned i = 0; i < size; ++i)
         buffer->initializeAt(vm, i, dequeAt(deque, i));
+    PyTuple* old = dequeBuffer(deque);
     deque->set(vm, DequeBuffer, buffer);
     dequeSetHead(vm, deque, 0);
+    // To the collector the old one is a tuple that the program has dropped, and what it holds would be let go of when its turn comes: see PyFinalizationOrder.cpp.
+    for (unsigned i = 0; i < old->length(); ++i)
+        old->initializeAt(vm, i, jsUndefined());
+}
+
+PyTuple* ringOfDeque(PyRecord* record, unsigned& head)
+{
+    Runtime* rt = record->structure()->realm()->pythonRuntime();
+    PyType* type = rt ? rt->typeIfMadeFor(dequeTypeDef) : nullptr;
+    if (!type || !PyRecord::tryFrom(record, type))
+        return nullptr;
+    head = dequeHead(record);
+    return dequeBuffer(record);
 }
 
 // False: a MemoryError.

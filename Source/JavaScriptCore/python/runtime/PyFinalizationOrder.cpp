@@ -12,6 +12,7 @@
 #include "PyException.h"
 #include "PyFunction.h"
 #include "PyGenerator.h"
+#include "PySet.h"
 #include "PyTuple.h"
 #include "SlotVisitorInlines.h"
 #include <wtf/HashMap.h>
@@ -115,6 +116,12 @@ private:
         }
     }
 
+    // The memory of a dict or a set.
+    static bool isTableOfContainer(JSCell* cell)
+    {
+        return cell->type() == CellType && (cell->classInfo() == PyDictStorage::info() || cell->classInfo() == PySetStorage::info());
+    }
+
     // Where the number of a cell is kept: there is a table for each block that has any, with room for as many cells as the block has.
     struct Table {
         unsigned first { 0 }; // In m_numbers.
@@ -186,11 +193,21 @@ private:
         ++m_references[*slot];
     }
 
+    // Whether reach() has made an edge of it, for a value that the cell that has just been visited holds.
+    bool hasEdgeTo(JSValue value)
+    {
+        if (!value || !value.isCell() || value.asCell() == m_wholeOfCurrentCell || m_marker.isMarked(value.asCell()))
+            return false;
+        unsigned* slot = slotFor(value.asCell(), false);
+        return slot && *slot != none;
+    }
+
     std::span<const unsigned> successors(unsigned node) const { return m_edges.span().subspan(m_firstEdge[node], m_firstEdge[node + 1] - m_firstEdge[node]); }
     bool isCandidate(unsigned node) const { return node < m_candidateCount; }
 
     template<typename Function> void forEachCellThatDied(MarkedSpace&, MarkedBlock::Handle*, const Function&);
     void addAllThatDied(std::span<JSCell* const> candidates);
+    void putAttributesInOrder(PyInstance*, std::span<unsigned> edges);
     void walk();
     Vector<unsigned> rootsInOrder();
     void flagAllReachedFrom(Vector<unsigned>&& worklist, Flag);
@@ -308,9 +325,33 @@ void DeadGraph::addAllThatDied(std::span<JSCell* const> candidates)
         add(cell);
 }
 
+// An instance lets go of its attributes in the order in which they were set. It says what it refers to as every object of the engine does: first what has no room in the cell itself, from last to
+// first, then what is in the cell. This puts them in the order of their places, which is the order in which they were set unless one has been deleted: the engine gives its place to the next that
+// is set. (The order of setting is in the property table, which a collection drops, and to make it anew allocates.)
+void DeadGraph::putAttributesInOrder(PyInstance* instance, std::span<unsigned> edges)
+{
+    Structure* structure = instance->structure();
+    size_t outside = 0;
+    for (unsigned i = 0; i < structure->outOfLineSize(); ++i)
+        outside += hasEdgeTo(instance->getDirect(firstOutOfLineOffset + i));
+    if (!outside)
+        return;
+    size_t before = hasEdgeTo(structure);
+    if (before + outside > edges.size())
+        return;
+    edges = edges.subspan(before);
+    std::ranges::reverse(edges.first(outside));
+    std::ranges::rotate(edges, edges.begin() + outside);
+}
+
 void DeadGraph::walk()
 {
     UncheckedKeyHashSet<unsigned, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> memoryOfOthers; // A deque lets go from the left.
+    struct Ring {
+        unsigned node;
+        unsigned head;
+    };
+    Vector<Ring> rings;
     for (unsigned i = 0; i < m_cells.size(); ++i) {
         m_firstEdge.append(m_edges.size());
         JSCell* cell = m_cells[i];
@@ -326,15 +367,39 @@ void DeadGraph::walk()
         }
 #endif
         cell->methodTable()->visitChildren(cell, *this);
-        if (cell->type() == PyObjectType && uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::OwnsContainers)) {
+        if (cell->type() == PyInstanceType)
+            putAttributesInOrder(uncheckedDowncast<PyInstance>(cell), m_edges.mutableSpan().subspan(m_firstEdge[i]));
+        else if (cell->type() == PyObjectType && uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::OwnsContainers)) {
             for (unsigned part : m_edges.span().subspan(m_firstEdge[i]))
                 memoryOfOthers.add(part);
+            unsigned head = 0;
+            if (PyTuple* ring = ringOfDeque(uncheckedDowncast<PyRecord>(cell), head); ring && head && hasEdgeTo(ring))
+                rings.append({ *slotFor(ring, false), head });
         }
     }
     m_firstEdge.append(m_edges.size());
     for (unsigned i = 0; i < m_cells.size(); ++i) {
         if (letsGoFromTheEnd(m_cells[i]) && !memoryOfOthers.contains(i))
             std::ranges::reverse(m_edges.mutableSpan().subspan(m_firstEdge[i], m_firstEdge[i + 1] - m_firstEdge[i]));
+    }
+    // The leftmost item of a deque is somewhere in the middle of its memory.
+    m_wholeOfCurrentCell = nullptr;
+    for (auto [node, head] : rings) {
+        auto countEdges = [&](std::span<const JSValue> items) {
+            size_t count = 0;
+            for (JSValue item : items)
+                count += hasEdgeTo(item);
+            return count;
+        };
+        auto items = uncheckedDowncast<PyTuple>(m_cells[node])->span();
+        size_t wrapped = countEdges(items.first(head));
+        size_t all = wrapped + countEdges(items.subspan(head));
+        auto edges = m_edges.mutableSpan().subspan(m_firstEdge[node], m_firstEdge[node + 1] - m_firstEdge[node]);
+        // The items come last. (In front of them: its Structure and its type, if these have died with it.)
+        if (all <= edges.size()) {
+            edges = edges.last(all);
+            std::ranges::rotate(edges, edges.begin() + wrapped);
+        }
     }
 }
 
@@ -396,6 +461,11 @@ Vector<unsigned> DeadGraph::rootsInOrder()
         }
         std::ranges::stable_sort(roots, [&](unsigned a, unsigned b) {
             return firstCandidateReached[a] < firstCandidateReached[b];
+        });
+        // A table that nothing refers to: its dict or set has left it behind for a larger one, and it still holds what it held then. With reference counts it was freed there and then and let go of
+        // nothing. So these go first: what they let go of is still held by the table that came after, and goes when that does. (Or the container has been emptied: then this is how it let go.)
+        std::ranges::stable_partition(roots, [&](unsigned node) {
+            return isTableOfContainer(m_cells[node]);
         });
     }
     for (unsigned node = 0; node < count; ++node) {

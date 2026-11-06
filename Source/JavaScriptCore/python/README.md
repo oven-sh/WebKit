@@ -727,6 +727,13 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   of as reference counts would have let go of them (`PyFinalizationOrder.cpp`): first those that nothing dead refers to, each of
   which lets go of what it refers to in CPython's order, depth first. That gives the order of the objects with finalizers,
   and leaves over what reference counts would not have freed: the cycles and what hangs off them.
+  - A cell says what it refers to as that lies in memory. Where CPython's object lets go in another order, the edges are put in
+    that order: a list, a tuple and a frame go from the end; the attributes of an instance in the order of their places, which is
+    the order in which they were set unless one has been deleted, though those beyond the sixth lie outside the cell; a deque from
+    its left end, which is somewhere in the middle of its memory.
+    The table that a dict or a set has left behind for a larger one is dead, still holds what it held, and nothing refers to it:
+    such tables let go first, so that nothing goes by them. (What only such a table holds goes first with it: what was removed from
+    the dict since, or cleared out of it.) A deque empties the memory that it leaves.
   - Only those are queued that no other object with a finalizer reaches. The rest wait for the collection that finds those gone, so
     a finalizer that resurrects its object also keeps what the object refers to from being finalized. So it goes level by level, each
     level in the order of reference counts: of `[N('x', N('x1')), N('y', N('y1'))]`, dropped, `y x y1 x1`, where CPython, which knows at

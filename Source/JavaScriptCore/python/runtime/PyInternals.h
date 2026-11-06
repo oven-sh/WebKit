@@ -669,6 +669,8 @@ ALWAYS_INLINE bool isInternalObject(JSCell* cell) { return cell->type() == PyObj
 // Some objects are made of several cells here, which refer to one another. Those are no cycles: in CPython there is one object,
 // or the part does not hold on to the whole. This is the whole that the cell, a part, refers back to. Null: there is none.
 JSCell* wholeThatPartRefersTo(JSCell*);
+// The memory of a collections.deque, and where in it the leftmost item is. Null: the record is no deque.
+PyTuple* ringOfDeque(PyRecord*, unsigned& head);
 // For the collector, when all that is reachable is marked, about the candidates: the objects with finalizers that are not marked.
 // See PyFinalizationOrder.cpp.
 struct FinalizationQuestions {

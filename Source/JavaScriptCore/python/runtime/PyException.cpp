@@ -60,11 +60,12 @@ void PyException::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<PyException>(cell);
     Base::visitChildren(thisObject, visitor);
+    // In the order in which CPython's lets go of them. See DeadGraph.
+    visitor.append(thisObject->m_dict);
     visitor.append(thisObject->m_args);
     visitor.append(thisObject->m_traceback);
     visitor.append(thisObject->m_cause);
     visitor.append(thisObject->m_context);
-    visitor.append(thisObject->m_dict);
     visitor.appendValues(thisObject->m_fields.data(), numberOfFields);
 }
 
