@@ -322,10 +322,8 @@ private:
         for (size_t i = 0; i < codeBlock->numberOfExceptionHandlers(); ++i) {
             UnlinkedHandlerInfo& handler = codeBlock->exceptionHandler(i);
             unsigned firstLocal = std::numeric_limits<unsigned>::max();
-            for (auto [offset, first] : calls) {
-                if (offset >= handler.start && offset < handler.end)
-                    firstLocal = std::min(firstLocal, first);
-            }
+            for (auto it = std::ranges::lower_bound(calls, handler.start, { }, [](auto& call) { return call.first; }); it != calls.end() && it->first < handler.end; ++it)
+                firstLocal = std::min(firstLocal, it->second);
             if (firstLocal == std::numeric_limits<unsigned>::max())
                 continue;
             auto target = instructions.at(handler.target);
