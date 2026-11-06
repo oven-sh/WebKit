@@ -2589,7 +2589,12 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
     endOfProtectedStatements();
     popBlock();
     endTry(body);
-    leaveStatement(orelse.get(), isLast.onlyIf(node->orelse.isEmpty()), JumpIs::ToldOfForwards);
+    if (node->orelse.isEmpty())
+        leaveStatement(orelse.get(), isLast, JumpIs::ToldOfForwards);
+    else {
+        StatementsAfter clause { node->orelse, 0, isLast, static_cast<unsigned>(m_blocks.size()), m_statementsAfter };
+        jump(orelse.get(), instructionsUntilFunctionEnds(clause, ComesFirst::Nothing) < tooManyToCopy ? JumpIs::Hidden : JumpIs::ToldOfForwards);
+    }
 
     Reg previous;
     Reg original = beginExceptionHandler(body, previous);
@@ -2605,6 +2610,7 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
 
     for (ExceptHandler* handler : node->handlers) {
         Ref<Label> next = g.newLabel();
+        Ref<Label> noMatch = g.newLabel();
         Reg match = newTemporary();
         m_statementStart = g.instructions().size();
         line(handler->range);
@@ -2613,7 +2619,7 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
             loc(handler->range);
             callRuntime(match.get(), RuntimeFunction::MatchExceptionGroup, { rest.get(), type.get() });
             callRuntime(rest.get(), RuntimeFunction::TakeExceptionGroupRest);
-            g.emitPyJumpIfNone(match.get(), next.get());
+            g.emitPyJumpIfNone(match.get(), noMatch.get());
         } else
             g.move(match.get(), rest.get());
 
@@ -2633,7 +2639,10 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
             storeName(handler->name, constant(jsUndefined()), handler->range);
             deleteName(handler->name, handler->range);
         }
-        jump(next.get());
+        if (!cannotGetHere()) {
+            callRuntimeForEffect(RuntimeFunction::SetHandledException, { original.get() });
+            jump(next.get());
+        }
 
         Reg thrown = beginHandler(clause);
         callRuntime(thrown.get(), RuntimeFunction::CatchException, { thrown.get() });
@@ -2643,9 +2652,17 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
             deleteName(handler->name, handler->range);
         }
         g.emitPyListAppend(raised.get(), thrown.get());
-
-        g.emitLabel(next.get());
         callRuntimeForEffect(RuntimeFunction::SetHandledException, { original.get() });
+        jump(next.get());
+
+        // Where CPython drops the None that stands for no match, on the line of the clause.
+        if (noMatch->isBound()) {
+            g.emitLabel(noMatch.get());
+            silentLine(handler->range);
+            OpNop::emit(&g);
+        }
+        g.emitLabel(next.get());
+        noLine();
     }
     popBlock();
 
@@ -2655,7 +2672,11 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
     endTry(cleanup);
 
     restoreHandledException(previous.get());
-    g.emitPyJumpIfNone(toRaise.get(), end.get());
+    // As in CPython: the branch is to what raises, and what goes on is left.
+    Ref<Label> raisesAgain = g.newLabel();
+    g.emitPyJumpIfNone(toRaise.get(), raisesAgain.get(), false);
+    leaveStatement(end.get(), isLast, JumpIs::ToldOfForwards);
+    g.emitLabel(raisesAgain.get());
     callRuntimeForEffect(RuntimeFunction::ReraiseGroup, { toRaise.get() });
 
     Reg thrown = beginHandler(cleanup);
