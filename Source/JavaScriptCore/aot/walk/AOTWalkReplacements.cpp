@@ -56,6 +56,16 @@ public:
     Walker& walker() { return m_walker; }
     bool hasStopped() const { return m_hasStopped; }
 
+    bool goesOnBehindArmThatLeft()
+    {
+        if (!m_hasStopped || m_walker.hasFailed() || !m_walker.isUnreachable())
+            return false;
+        m_hasStopped = false;
+        return true;
+    }
+
+    void stopWhereNothingArrives() { m_hasStopped |= m_walker.isUnreachable(); }
+
     Draft draft(Opcode opcode) const { return Draft(opcode, m_origin); }
 
     Reference build(Draft&& operation)
@@ -227,13 +237,21 @@ public:
             m_builder.walker().continueIn(m_secondArm);
     }
 
-    void endSecondArm(std::initializer_list<Reference> values) { jumpToJoin(values); }
+    void endSecondArm(std::initializer_list<Reference> values)
+    {
+        jumpToJoin(values);
+        m_builder.stopWhereNothingArrives();
+    }
 
     Reference result(uint32_t index = 0) const { return m_builder.hasStopped() ? Reference() : m_results[index]; }
 
 private:
     void jumpToJoin(std::initializer_list<Reference> values)
     {
+        if (m_join && m_builder.goesOnBehindArmThatLeft()) {
+            m_builder.walker().jumpTo(m_join, { });
+            return;
+        }
         if (m_builder.hasStopped())
             return;
         RELEASE_ASSERT(values.size() == m_results.size());

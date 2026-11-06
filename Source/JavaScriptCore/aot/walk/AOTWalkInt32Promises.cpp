@@ -77,12 +77,52 @@ struct TypeAsWritten {
     bool standsBehindBrokenPromise { false };
     bool isBeingAsked { false };
     bool restsOnCastAlone { false };
+    bool countsInItsAskingAlone { false };
+    uint32_t asking { 0 };
 };
 
 struct ValueAtPlace {
     ValueID value;
     BlockID place;
 };
+
+} // anonymous namespace
+
+struct Walker::KeptForInt32Promises {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(KeptForInt32Promises);
+
+    struct WithBody {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(WithBody);
+
+        UncheckedKeyHashMap<uint64_t, TypeAsWritten, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> known;
+        Vector<BlockID> placesBehindLastRelation;
+    };
+
+    WithBody& with(const BodyIndex& index)
+    {
+        std::unique_ptr<WithBody>& kept = withBodies.add(&index, nullptr).iterator->value;
+        if (!kept)
+            kept = makeUnique<WithBody>();
+        return *kept;
+    }
+
+    UncheckedKeyHashMap<const BodyIndex*, std::unique_ptr<WithBody>> withBodies;
+    uint32_t numberOfAskings { 0 };
+};
+
+void Walker::DeleterOfKeptForInt32Promises::operator()(KeptForInt32Promises* kept) const
+{
+    delete kept;
+}
+
+Walker::KeptForInt32Promises& Walker::keptForInt32Promises()
+{
+    if (!m_keptForInt32Promises)
+        m_keptForInt32Promises.reset(new KeptForInt32Promises);
+    return *m_keptForInt32Promises;
+}
+
+namespace {
 
 class TypesAsWritten {
     WTF_MAKE_NONCOPYABLE(TypesAsWritten);
@@ -91,6 +131,8 @@ public:
         : m_walker(walker)
         , m_input(walker.currentBodyIndex())
         , m_place(place)
+        , m_kept(walker.keptForInt32Promises().with(m_input))
+        , m_asking(++walker.keptForInt32Promises().numberOfAskings)
     {
     }
 
@@ -101,7 +143,10 @@ public:
 private:
     using Parts = Vector<ValueAtPlace, 4>;
 
-    static uint64_t keyOf(ValueAtPlace asked) { return static_cast<uint64_t>(asked.place.index()) << 32 | asked.value.index(); }
+    BlockID placeBehindLastRelation(BlockID) const;
+    uint64_t keyOf(ValueAtPlace) const;
+    bool counts(const TypeAsWritten& kept) const { return !kept.countsInItsAskingAlone || kept.asking == m_asking; }
+    bool isInTable(ValueAtPlace) const;
     TypeAsWritten known(ValueAtPlace) const;
     TypeAsWritten asWalkHasIt(ValueID) const;
     TypeAsWritten typeWrittenOf(ValueID) const;
@@ -122,32 +167,51 @@ private:
     TypeAsWritten typeAtHeadOfLoop(BodyValue parameter, const Parts& entering) const;
     TypeAsWritten typeBehindTest(ValueID parameter, const BodyEdgeResult&, const Parts& operandsOfTest) const;
     TypeAsWritten typeBehindConvert(BodyValue, BlockID place) const;
+    TypeAsWritten typeBehindConvertOf(BodyValue, TypeAsWritten entering) const;
     TypeAsWritten compute(ValueAtPlace) const;
 
     Walker& m_walker;
     const BodyIndex& m_input;
     BlockID m_place;
-    UncheckedKeyHashMap<uint64_t, TypeAsWritten, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_known;
+    Walker::KeptForInt32Promises::WithBody& m_kept;
+    uint32_t m_asking;
 };
 
 } // anonymous namespace
 
+uint64_t TypesAsWritten::keyOf(ValueAtPlace asked) const
+{
+    BlockID place = placeBehindLastRelation(asked.place);
+    if (BlockID made = m_input.blockOf(asked.value); m_input.dominatorNumber(made) > m_input.dominatorNumber(place))
+        place = made;
+    return static_cast<uint64_t>(place.index()) << 32 | asked.value.index();
+}
+
+bool TypesAsWritten::isInTable(ValueAtPlace asked) const
+{
+    auto found = m_kept.known.find(keyOf(asked));
+    return found != m_kept.known.end() && counts(found->value);
+}
+
 TypeAsWritten TypesAsWritten::known(ValueAtPlace asked) const
 {
-    auto found = m_known.find(keyOf(asked));
-    if (found == m_known.end())
-        return { };
-    if (!found->value.isBeingAsked)
+    auto found = m_kept.known.find(keyOf(asked));
+    if (found != m_kept.known.end() && counts(found->value) && !found->value.isBeingAsked)
         return found->value;
-    if (m_input.isParameter(asked.value) && m_input.isLoopHead(m_input.blockOf(asked.value)))
-        return typeOfParameter(m_input.value(asked.value));
-    return { };
+    TypeAsWritten held;
+    if (found != m_kept.known.end() && counts(found->value) && m_input.isParameter(asked.value) && m_input.isLoopHead(m_input.blockOf(asked.value)))
+        held = typeOfParameter(m_input.value(asked.value));
+    held.countsInItsAskingAlone = true;
+    return held;
 }
 
 TypeAsWritten TypesAsWritten::asWalkHasIt(ValueID value) const
 {
     Reference name = m_walker.referenceOf(value);
-    return { name ? m_walker.typeOf(name) : TypeID() };
+    TypeAsWritten walked;
+    walked.type = name ? m_walker.typeOf(name) : TypeID();
+    walked.countsInItsAskingAlone = true;
+    return walked;
 }
 
 TypeAsWritten TypesAsWritten::typeWrittenOf(ValueID value) const
@@ -158,7 +222,7 @@ TypeAsWritten TypesAsWritten::typeWrittenOf(ValueID value) const
         return { typeOfConstant(typingForInt32Promises(m_walker), m_input.value(value)) };
     ExpectationOfValue expectation = findExpectation(m_walker, value);
     if (expectation.type && expectation.isDeclared)
-        return { .type = expectation.type, .restsOnWrittenType = true, .restsOnCastAlone = true };
+        return { .type = expectation.type, .restsOnWrittenType = true, .restsOnCastAlone = true, .countsInItsAskingAlone = true };
     return asWalkHasIt(value);
 }
 
@@ -192,6 +256,27 @@ TypeID TypesAsWritten::typeStatedByCastsOf(ValueID value) const
         value = convert.operand(0);
     }
     return { };
+}
+
+BlockID TypesAsWritten::placeBehindLastRelation(BlockID place) const
+{
+    Vector<BlockID>& places = m_kept.placesBehindLastRelation;
+    if (places.isEmpty())
+        places.fill(BlockID(), m_input.numberOfBlocks());
+    Vector<BlockID, 16> climbed;
+    BlockID found;
+    for (BlockID block = place; !found; block = m_input.immediateDominator(block)) {
+        found = places[block.index()];
+        if (found)
+            break;
+        climbed.append(block);
+        std::optional<BodyIncomingEdge> edge = m_input.onlyIncomingEdge(block);
+        if (!m_input.immediateDominator(block) || (edge && (boundsProvenOnEdge(m_input, m_input.terminator(edge->from), edge->targetIndex) || sidesOfEqualityOnEdgeForInt32Promises(m_input, m_input.terminator(edge->from), edge->targetIndex))))
+            found = block;
+    }
+    for (BlockID block : climbed)
+        places[block.index()] = found;
+    return found;
 }
 
 void TypesAsWritten::forEachRelationInFront(ValueAtPlace asked, const BodyIncomingEdge* comesRoundOn, const Invocable<void(const BodyEdgeResult&, BlockID)> auto& functor) const
@@ -236,11 +321,13 @@ TypeAsWritten TypesAsWritten::cutByRelationsInFront(ValueAtPlace asked, TypeAsWr
         ValueID otherSide = relation.operand(1 - bound.operandIndex);
         bool hasFailed = !bound.isOnTakenEdge;
         TypeAsWritten judged = known({ otherSide, block });
+        written.countsInItsAskingAlone |= judged.countsInItsAskingAlone;
         TypeID other = judged.restsOnWrittenType && !(hasFailed && judged.restsOnCastAlone) ? judged.type : TypeID();
         if (!other && !hasFailed)
             other = typeStatedByCastsOf(otherSide);
         if (ValueID made = m_input.valueBehindCasts(otherSide); !other && made) {
             TypeAsWritten ofOtherSide = typeWrittenOf(made);
+            written.countsInItsAskingAlone |= ofOtherSide.countsInItsAskingAlone;
             bool isConstant = !m_input.isParameter(made) && primitiveConstants.contains(m_input.opcodeOf(made));
             if ((!comesRoundOn || ofOtherSide.restsOnWrittenType || isConstant) && !(hasFailed && ofOtherSide.restsOnCastAlone))
                 other = ofOtherSide.type;
@@ -448,6 +535,7 @@ TypeAsWritten TypesAsWritten::typeWhereWaysMeet(ValueID parameter, const Parts& 
             return asWalkHasIt(parameter);
         met.type = met.type ? m_walker.types().unionOf(met.type, typeOfPart.type) : typeOfPart.type;
         met.restsOnWrittenType |= typeOfPart.restsOnWrittenType;
+        met.countsInItsAskingAlone |= typeOfPart.countsInItsAskingAlone;
         met.leavesOutWhoCalls |= typeOfPart.leavesOutWhoCalls;
         met.standsBehindBrokenPromise |= typeOfPart.standsBehindBrokenPromise;
         met.restsOnCastAlone |= typeOfPart.restsOnCastAlone;
@@ -471,6 +559,8 @@ TypeAsWritten TypesAsWritten::typeAtHeadOfLoop(BodyValue parameter, const Parts&
         ValueID made = m_input.valueBehindCasts(part.value);
         TypeAsWritten typeOfPart = isConstant(made) ? TypeAsWritten { typeOfConstant(typing, m_input.value(made)), true } : known(part);
         TypeID both = typeOfPart.type && typeOfPart.restsOnWrittenType ? types.intersectionOf(typeOfPart.type, held.type) : TypeID();
+        held.countsInItsAskingAlone |= typeOfPart.countsInItsAskingAlone;
+        met.countsInItsAskingAlone |= typeOfPart.countsInItsAskingAlone;
         if (!both || isNeverType(both))
             return held;
         met.type = met.type ? types.unionOf(met.type, both) : both;
@@ -484,7 +574,10 @@ TypeAsWritten TypesAsWritten::typeAtHeadOfLoop(BodyValue parameter, const Parts&
             continue;
         std::span<const ValueID> arguments = edge.target.arguments();
         ValueID comesRound = index < arguments.size() ? m_input.valueBehindCasts(arguments[index]) : ValueID();
-        TypeID round = comesRound ? cutByRelationsInFront({ comesRound, edge.from }, held, &edge).type : held.type;
+        TypeAsWritten cut = comesRound ? cutByRelationsInFront({ comesRound, edge.from }, held, &edge) : held;
+        TypeID round = cut.type;
+        held.countsInItsAskingAlone |= cut.countsInItsAskingAlone;
+        met.countsInItsAskingAlone |= cut.countsInItsAskingAlone;
         if (round == held.type)
             return held;
         met.type = met.type ? types.unionOf(met.type, round) : round;
@@ -495,9 +588,13 @@ TypeAsWritten TypesAsWritten::typeAtHeadOfLoop(BodyValue parameter, const Parts&
 TypeAsWritten TypesAsWritten::typeBehindTest(ValueID parameter, const BodyEdgeResult& filled, const Parts& operandsOfTest) const
 {
     Vector<TypeID, 2> types;
-    for (ValueAtPlace operand : operandsOfTest)
+    bool countsInItsAskingAlone = false;
+    for (ValueAtPlace operand : operandsOfTest) {
         types.append(known(operand).type);
+        countsInItsAskingAlone |= known(operand).countsInItsAskingAlone;
+    }
     TypeAsWritten tested = filled.operandIndex < operandsOfTest.size() ? known(operandsOfTest[filled.operandIndex]) : TypeAsWritten();
+    tested.countsInItsAskingAlone |= countsInItsAskingAlone;
     if (!tested.restsOnWrittenType || types.contains(TypeID()))
         return asWalkHasIt(parameter);
     tested.type = typeOfEdgeResult(typingForInt32Promises(m_walker), m_input.value(filled.test), OperandTypes { types.span() }, filled.operandIndex, filled.isOnTakenEdge ? EdgeSide::Taken : EdgeSide::NotTaken);
@@ -506,8 +603,14 @@ TypeAsWritten TypesAsWritten::typeBehindTest(ValueID parameter, const BodyEdgeRe
 
 TypeAsWritten TypesAsWritten::typeBehindConvert(BodyValue convert, BlockID place) const
 {
+    TypeAsWritten behind = typeBehindConvertOf(convert, known({ convert.operand(0), place }));
+    behind.countsInItsAskingAlone |= known({ convert.operand(0), place }).countsInItsAskingAlone;
+    return behind;
+}
+
+TypeAsWritten TypesAsWritten::typeBehindConvertOf(BodyValue convert, TypeAsWritten entering) const
+{
     DeclaredType declared = convert.as<Opcode::Convert>().declared();
-    TypeAsWritten entering = known({ convert.operand(0), place });
     TypeID stated = targetOfConvert(typingForInt32Promises(m_walker), declared);
     bool statesNothing = !stated || declared.has(PositionFlags::IsInt32Promise) || declared.isExpected();
     if (!statesNothing && writtenTypeKeepsInt32Promise(m_walker, stated)) {
@@ -560,6 +663,7 @@ TypeAsWritten TypesAsWritten::compute(ValueAtPlace asked) const
         if (!typeOfPart.type)
             return asWalkHasIt(written.id());
         made.restsOnWrittenType |= typeOfPart.restsOnWrittenType;
+        made.countsInItsAskingAlone |= typeOfPart.countsInItsAskingAlone;
         made.leavesOutWhoCalls |= typeOfPart.leavesOutWhoCalls;
         made.standsBehindBrokenPromise |= typeOfPart.standsBehindBrokenPromise;
         made.restsOnCastAlone |= typeOfPart.restsOnCastAlone;
@@ -587,25 +691,30 @@ TypeAsWritten TypesAsWritten::of(ValueID root)
     Vector<ValueAtPlace, 16> pending { { root, m_place } };
     while (!pending.isEmpty()) {
         ValueAtPlace asked = pending.last();
-        auto entry = m_known.add(keyOf(asked), TypeAsWritten { .isBeingAsked = true });
-        if (!entry.isNewEntry && !entry.iterator->value.isBeingAsked) {
+        uint64_t key = keyOf(asked);
+        auto entry = m_kept.known.add(key, TypeAsWritten());
+        bool isFirstVisit = entry.isNewEntry || !counts(entry.iterator->value);
+        if (!isFirstVisit && !entry.iterator->value.isBeingAsked) {
             pending.removeLast();
             continue;
         }
-        if (entry.isNewEntry) {
+        if (isFirstVisit) {
+            entry.iterator->value = { .isBeingAsked = true, .countsInItsAskingAlone = true, .asking = m_asking };
             size_t numberPending = pending.size();
             for (ValueAtPlace part : partsOf(asked)) {
-                if (!m_known.contains(keyOf(part)))
+                if (!isInTable(part))
                     pending.append(part);
             }
             for (ValueAtPlace otherSide : otherSidesOfRelationsInFront(asked)) {
-                if (!m_known.contains(keyOf(otherSide)))
+                if (!isInTable(otherSide))
                     pending.append(otherSide);
             }
             if (pending.size() != numberPending)
                 continue;
         }
-        m_known.set(keyOf(asked), compute(asked));
+        TypeAsWritten computed = compute(asked);
+        computed.asking = m_asking;
+        m_kept.known.set(key, computed);
         pending.removeLast();
     }
     return known({ root, m_place });

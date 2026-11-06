@@ -882,6 +882,8 @@ public:
     void keepRound(RoundKeptByWalker, LayoutSetID, uint32_t second, uint32_t answer);
     uint32_t numberOfListOfNames(std::span<const PropertyKeyID>);
     std::span<const BodyIncomingEdge> incomingEdgesOf(const BodyIndex&, BlockID);
+    struct KeptForInt32Promises;
+    KeptForInt32Promises& keptForInt32Promises();
     uint32_t numberOfGuessesOpened() const { return m_numberOfGuessesOpened; }
     uint32_t numberOfLoopsBuiltTwice() const { return m_numberOfLoopsBuiltTwice; }
     uint32_t numberOfWalksOfLoops() const { return m_numberOfWalksOfLoops; }
@@ -2414,6 +2416,10 @@ private:
     uint32_t m_numberOfValuesWalkedAndKept { 0 };
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>& m_roundsKept;
     HashMap<uint32_t, KindHeldUnderName, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>& m_kindsHeldUnderNames;
+    struct DeleterOfKeptForInt32Promises {
+        void operator()(KeptForInt32Promises*) const;
+    };
+    std::unique_ptr<KeptForInt32Promises, DeleterOfKeptForInt32Promises> m_keptForInt32Promises;
     Vector<Vector<PropertyKeyID>>& m_listsOfNames;
     HashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>& m_numbersOfListsOfNames;
     std::array<uint32_t, numberOfEnumerators<ProofSource>> m_numbersOfProofsChecked { };
