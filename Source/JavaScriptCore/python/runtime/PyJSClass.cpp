@@ -604,9 +604,14 @@ JSC_DEFINE_HOST_FUNCTION(constructSuperConstructor, (JSGlobalObject* globalObjec
     PyType* derived = PyType::tryFrom(callFrame->newTarget());
     if (!derived || !derived->isSubtypeOf(type))
         return throwVMTypeError(globalObject, scope, "super(...) is for the constructor of a class"_s);
-    RELEASE_AND_RETURN(scope, JSValue::encode(valueForJS(withArgumentsFromJS(globalObject, callFrame, [&](const CallArgs& args) {
+    JSValue result = valueForJS(withArgumentsFromJS(globalObject, callFrame, [&](const CallArgs& args) {
         return typeCall(globalObject, type, args, derived, true);
-    }))));
+    }));
+    RETURN_IF_EXCEPTION(scope, { });
+    // It is `this` from here on, which the constructor takes for an object without asking: the fields of the class are defined on it.
+    if (!result.isObject())
+        return throwVMTypeError(globalObject, scope, "The constructor did not return an object"_s);
+    return JSValue::encode(result);
 }
 
 PySuperConstructor::PySuperConstructor(VM& vm, Structure* structure)
