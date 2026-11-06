@@ -128,7 +128,7 @@ JS_EXPORT_PRIVATE CallData callDataUnknownToJS(JSValue callee);
 JS_EXPORT_PRIVATE JSFunction* beginCallWithSelf(JSGlobalObject*, JSValue callee);
 
 // op_py_call_spread: callee(leading..., *positional, **keywords).
-static constexpr unsigned maxLengthSpreadByInterpreter = 1024; // A longer tuple is for the slow path, which knows how many arguments there may be.
+static constexpr unsigned maxLengthSpreadByInterpreter = 1024; // A longer tuple or list is for the slow path, which knows how many arguments there may be.
 enum SpreadCallFlag : unsigned {
     KeywordsAreOfProgram = 1, // `keywords` is what the program wrote after the only **, which may be anything. Otherwise a dict that the compiled code has made.
     PositionalExtendsList = 2, // There are leading arguments. CPython has them in a list, and extends that with what is after the * before it comes to the **.

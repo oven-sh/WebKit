@@ -3282,7 +3282,7 @@ end)
 
 
 llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatch, metadata, return)
-    # After the * a tuple or nothing, after the ** nothing or a dict that is empty.
+    # After the * a tuple, a list or nothing, after the ** nothing or a dict that is empty.
     loadPythonRuntime(t3)
     get(m_keywords, t0)
     loadq [cfr, t0, 8], t1
@@ -3296,9 +3296,20 @@ llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatc
     move 0, t2
     btqz t1, .haveLength
     btqnz t1, notCellMask, .slow
+    bbeq JSCell::m_type[t1], ArrayType, .list
     pyBranchIfCellIsNotExactly(t1, PyTupleType, (constexpr (Python::Runtime::offsetOfType(Python::TypeID::tupleType))), t3, t2, .slow)
     loadi (constexpr (Python::PyTuple::offsetOfLength()))[t1], t2
     addp (constexpr (Python::PyTuple::offsetOfItems())), t1
+    jmp .haveItems
+.list:
+    loadb JSCell::m_indexingTypeAndMisc[t1], t2
+    andi IndexingShapeMask, t2
+    bieq t2, ContiguousShape, .listOfValues
+    bineq t2, Int32Shape, .slow
+.listOfValues:
+    loadp JSObjectWithButterfly::m_butterfly[t1], t1
+    loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t2
+.haveItems:
     bia t2, constexpr Python::maxLengthSpreadByInterpreter, .slow
 .haveLength:
     # The frame of the callee, as calleeFrameForVarargs() has it.
@@ -3336,6 +3347,9 @@ llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatc
     btiz t2, .itemsAreThere
 .copyItem:
     loadq [t1], t6
+    btqnz t6, .isNoHole
+    move ValueUndefined, t6
+.isNoHole:
     storeq t6, [t5]
     addp SlotSize, t1
     addp SlotSize, t5
