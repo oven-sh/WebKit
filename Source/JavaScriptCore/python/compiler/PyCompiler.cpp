@@ -2591,6 +2591,7 @@ void Unit::returnStatement(Return* node)
     // As in CPython: what leaves a `with` is of the line of the `with`, and nothing comes before it, unless the value begins on another line than the `return`.
     auto* innermost = innermostBlock(m_blocks.size());
     bool leavesWithFirst = innermost && (innermost->kind == BlockKind::With || innermost->kind == BlockKind::AsyncWith);
+    bool valueEndsOnAnotherLine = m_markedLine != node->range.lineno;
     if (!leavesWithFirst || !node->value || node->value->range.lineno != node->range.lineno) {
         // A frame that is told of the line once more has the value: it can be sent to where one waits, and back (`frame.f_lineno = n`).
         bool valueWaits = value->isTemporary() && !isMarkedAlready(node->range.lineno);
@@ -2604,9 +2605,12 @@ void Unit::returnStatement(Return* node)
     // A `finally` clause that never comes to its end does not read the value. Then nothing would at those jumps, where no block holds it yet, and a collection there would
     // empty the register. So it is read here, into the register it waits in.
     if (waysMeet && value->isTemporary() && m_blocks.containsIf([](auto& block) { return block.kind == BlockKind::FinallyTry; })) {
-        // The line begins at this instruction now, and what a trace function raises when it is told of the line is raised here.
+        // If the line begins, it begins at this instruction now, and what a trace function raises when it is told of the line is raised here. On the line of the value, what CPython
+        // has for the line stays only where ways meet there too: not behind a call, where ours do.
+        auto* compare = node->value->tryAs<Compare>();
         Vector<TryContext> suspended;
-        suspendTry(tryDepthWhereWayOutBegins(), suspended);
+        if (valueEndsOnAnotherLine || node->value->is<IfExp>() || node->value->is<BoolOp>() || (compare && compare->ops.size() > 1))
+            suspendTry(tryDepthWhereWayOutBegins(), suspended);
         value = g.move(g.newTemporary(), value.get());
         resumeTry(WTF::move(suspended));
     }
