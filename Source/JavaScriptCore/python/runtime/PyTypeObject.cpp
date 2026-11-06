@@ -657,6 +657,11 @@ static void setDictOfInstance(JSGlobalObject* globalObject, JSValue self, JSValu
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // class Both(Plain, js.Map) has this from Plain. As for any object of JS's: no other mapping can take the place of the properties.
+    if (typeOf(globalObject, self)->has(TypeFlag::AttributesAreProperties)) [[unlikely]] {
+        raiseAttributeError(globalObject, scope, self, runtime(globalObject).names.dDict(), makeString("attribute '__dict__' of '"_s, typeName(globalObject, self), "' objects is not writable"_s));
+        return;
+    }
     if (value && !isDict(value)) {
         raiseTypeError(globalObject, scope, "__dict__ must be set to a dictionary, not a '"_s, typeName(globalObject, value), '\'');
         return;
