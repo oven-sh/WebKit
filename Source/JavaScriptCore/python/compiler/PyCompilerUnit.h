@@ -76,8 +76,8 @@ struct Last {
 
 // The compilation of one code object.
 //
-// An error does not stop it: the first is kept, the code that comes out is thrown away, and what is emitted after one only
-// has to be well formed.
+// An error does not stop it there and then: the first is kept, the code that comes out is thrown away, and what is emitted after one
+// only has to be well formed. No more statements are compiled.
 class Unit {
     WTF_MAKE_NONCOPYABLE(Unit);
 public:
@@ -197,13 +197,14 @@ private:
         RegisterID* saved { nullptr }; // Handlers: the exception that was being handled before. With: __exit__. ForLoop: the iterator.
         RegisterID* savedSelf { nullptr }; // With: what to pass __exit__ first, or the empty value. The register after `saved`.
         Name name { nullptr }; // HandlerCleanup: what follows `as`.
-        Range range { }; // With
+        Range range { }; // Where there are said to be too many, if it is the one too many. With: of what is entered. HandlerCleanup: of the handler.
         Scope* comprehension { nullptr }; // InlinedComprehension
         unsigned number { 0 }; // For PythonMark.
         Last isLast { }; // A loop: what comes after it.
         RegisterID* valueToReturn { nullptr }; // A loop: m_valueToReturn where it stands. (It may stand in a `finally` that a `return` is running.)
         bool ownsIterator { false }; // ForLoop: it goes through the value of a call. See beginTemporary().
         bool isMarked { true }; // There is a PythonMark where it begins and where it ends.
+        bool isOnlyHere { false }; // CPython's compiler has no such block.
         unsigned instructionsAfterLoop { tooManyToCopy }; // Last::instructionsAfterJump, for a `break`.
         bool hasBreak { false }; // A loop.
     };

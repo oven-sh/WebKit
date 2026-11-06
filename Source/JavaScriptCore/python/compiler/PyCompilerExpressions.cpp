@@ -2960,6 +2960,8 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
         }
         g.settlePythonLineMark();
         Try whole = beginTry(HandlerType::SynthesizedCatch);
+        // Nothing leaves it but an exception: it is here to be counted.
+        pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = whole.depthBefore, .range = range, .isMarked = false });
         g.emitLabel(start.get());
         line(range);
         Try guard = beginTry();
@@ -2974,6 +2976,7 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
         g.emitLabel(next.get());
         line(placeOfElement);
         jump(start.get());
+        popBlock();
 
         Reg thrown = beginHandler(guard);
         silentLine(range);
@@ -3018,7 +3021,7 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
     }
     g.settlePythonLineMark();
     if (ownsIterator)
-        pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .saved = iterator.get(), .ownsIterator = true });
+        pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .saved = iterator.get(), .ownsIterator = true, .isOnlyHere = true });
     g.emitLabel(start.get());
     line(generator->iter->range);
     loc(generator->iter->range);
@@ -3119,7 +3122,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         }
         iterable = nullptr;
         m_overlays.append(scope);
-        pushBlock({ .kind = BlockKind::InlinedComprehension, .tryDepth = guard ? guard->depthBefore : g.tryDepth(), .comprehension = scope });
+        pushBlock({ .kind = BlockKind::InlinedComprehension, .tryDepth = guard ? guard->depthBefore : g.tryDepth(), .range = range, .comprehension = scope });
         emitContainer(*this, result.get());
         comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), !!temporaryOfIterable, range);
         line(range);

@@ -1666,6 +1666,13 @@ bool Unit::inExceptionHandler() const
 
 void Unit::pushBlock(Block&& block)
 {
+    // So many have room in CPython's compiler. What turns a StopIteration that leaves a generator or a coroutine into a RuntimeError is one.
+    constexpr unsigned mostBlocksOfCPython = 21;
+    unsigned blocksOfCPython = isGeneratorLike();
+    for (auto& other : m_blocks)
+        blocksOfCPython += !other.isOnlyHere;
+    if (!block.isOnlyHere && blocksOfCPython >= mostBlocksOfCPython)
+        fail(block.range, "too many statically nested blocks"_s);
     block.number = ++m_blockCount;
     m_info.hasLoopThatOwnsItsIterator |= block.ownsIterator;
     if (block.breakTarget && m_statementsAfter)
@@ -1789,7 +1796,9 @@ void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& su
     // Behind a `finally` clause that never comes to its end, all there is to do is to look at what else is in the way.
     if (!cannotGetHere())
         unwindBlock(top, suspended);
-    unwindBlocks(range, count, suspended);
+    // As in CPython, where what comes after a clause or an __exit__ that runs on the way out is of no place.
+    bool hasRunSomething = top.kind == BlockKind::FinallyTry || top.kind == BlockKind::With || top.kind == BlockKind::AsyncWith;
+    unwindBlocks(hasRunSomething ? Range { -1, -1, -1, -1 } : range, count, suspended);
     markBlock(top, true);
     m_blocks.append(top);
 }
@@ -1806,7 +1815,7 @@ void Unit::statements(Seq<Stmt*> body, unsigned first, const Last& isLast)
     StatementsAfter after { body, first, isLast, static_cast<unsigned>(m_blocks.size()), enclosing, endWhereStatementEnds };
     SetForScope statementsAfter(m_statementsAfter, &after);
     const Last notLast;
-    for (unsigned i = first; i < body.size(); ++i) {
+    for (unsigned i = first; i < body.size() && !c.failed(); ++i) {
         // After a `return`, say, or at the very beginning: what `if a and 0:` is in front of.
         if (!m_sameLineDepth && cannotGetHere())
             return deadStatements(body, i);
@@ -2167,7 +2176,7 @@ void Unit::whileLoop(While* node, const Last& isLast)
     g.settlePythonLineMark();
     g.emitLabel(loop.get());
     m_statementStart = g.instructions().size();
-    pushBlock({ .kind = BlockKind::WhileLoop, .tryDepth = g.tryDepth(), .continueTarget = loop.ptr(), .breakTarget = end.ptr(), .isLast = isLast, .valueToReturn = m_valueToReturn });
+    pushBlock({ .kind = BlockKind::WhileLoop, .tryDepth = g.tryDepth(), .continueTarget = loop.ptr(), .breakTarget = end.ptr(), .range = node->range, .isLast = isLast, .valueToReturn = m_valueToReturn });
     ReturnsByLine returns;
     {
         SetForScope replacedByCopy(m_targetReplacedByCopy, node->orelse.isEmpty() ? targetReplacedByCopy(anchor.get(), isLast) : nullptr);
@@ -2212,7 +2221,7 @@ void Unit::forLoop(For* node, const Last& isLast)
         g.emitPyGetIter(iterator.get(), iterable.get());
     }
 
-    pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast, .valueToReturn = m_valueToReturn, .ownsIterator = !!temporary });
+    pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .range = node->range, .isLast = isLast, .valueToReturn = m_valueToReturn, .ownsIterator = !!temporary });
     g.emitLabel(start.get());
     line(node->iter->range);
     loc(node->iter->range);
@@ -2262,7 +2271,7 @@ void Unit::asyncForLoop(For* node, const Last& isLast)
     Try whole = beginTry(HandlerType::SynthesizedCatch);
     g.emitLabel(start.get());
     line(node->iter->range);
-    pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = whole.depthBefore, .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast, .valueToReturn = m_valueToReturn });
+    pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = whole.depthBefore, .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .range = node->range, .isLast = isLast, .valueToReturn = m_valueToReturn });
 
     // StopAsyncIteration from __anext__ ends the loop.
     Try guard = beginTry();
@@ -2446,7 +2455,7 @@ void Unit::tryFinally(AST::Try* node, const Last& isLast)
     // What comes after the statements is the clause.
     const Last notLast;
     StatementsAfter clause { node->finalbody, 0, notLast, static_cast<unsigned>(m_blocks.size()), m_statementsAfter, false, 1 };
-    pushBlock({ .kind = BlockKind::FinallyTry, .tryDepth = body.depthBefore, .finalBody = node->finalbody });
+    pushBlock({ .kind = BlockKind::FinallyTry, .tryDepth = body.depthBefore, .finalBody = node->finalbody, .range = node->range });
     {
         SetForScope statementsAfter(m_statementsAfter, &clause);
         m_statementsEndWhereStatementEnds = node->handlers.isEmpty();
@@ -2495,7 +2504,7 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
     Last isLastOfHandler = lastBeforeJump(end.get(), isLast, JumpIs::ToldOfForwards, 3);
     Last isLastOfHandlerWithName = lastBeforeJump(end.get(), isLast, JumpIs::ToldOfForwards, 7);
     Try body = beginTry();
-    pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore });
+    pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore, .range = node->range });
     statements(node->body, 0, isLastOfBody.onlyIf(node->orelse.isEmpty()));
     endOfProtectedStatements(node->orelse.isEmpty() ? JumpsHere::AreTakenIn : JumpsHere::Count, end.ptr());
     popBlock();
@@ -2568,7 +2577,7 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
             });
         } else {
             g.addPythonMark(PythonMark::BlockEnd, matching, bitsOfMatching);
-            pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .isMarked = false });
+            pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .range = handler->range, .isMarked = false });
             statements(handler->body, 0, isLastOfHandler);
             popBlock();
             outsideTry(cleanup.depthBefore, [&] {
@@ -2606,7 +2615,7 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
     Ref<Label> end = g.newLabel();
 
     Try body = beginTry();
-    pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore });
+    pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore, .range = node->range });
     statements(node->body, 0, isLast.onlyIf(node->orelse.isEmpty()));
     endOfProtectedStatements();
     popBlock();
@@ -2745,7 +2754,7 @@ void Unit::withStatement(With* node, unsigned index, const Last& isLast)
     value = nullptr;
     if (index + 1 == node->items.size())
         statements(node->body);
-    else
+    else if (!c.failed())
         withStatement(node, index + 1, { });
     endOfProtectedStatements();
     popBlock();
