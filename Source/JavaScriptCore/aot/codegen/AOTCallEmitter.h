@@ -135,7 +135,8 @@ private:
     Machine::PatchOperation* emitCall(const OperationContext&, const CallTarget&, const PlacedArguments&, std::span<const ArgumentLocation> results, const CallOptions&, const AnswersOfCalledStub* = nullptr);
     void defineResultOfCallByValue(const ValueContext&, Boxed result, const Type& callee);
     void defineResultsOfCall(const ValueContext&, std::span<const ArgumentLocation> results, Machine::PatchOperation*);
-    void callThroughMethodTable(const ValueContext&, uint32_t placeOfSelector, std::span<const ValueID> receiverAndArguments);
+    enum class ReceiverOfTableCall : bool { IsShown, IsAsked };
+    void callThroughMethodTable(const ValueContext&, uint32_t placeOfSelector, std::span<const ValueID> receiverAndArguments, ReceiverOfTableCall);
     Operand resultOfCall(const ArgumentLocation&, LValue);
     void chooseStubThatCallsValue(ConventionCall&, LValue& countOperand, bool calleeIsCell);
 

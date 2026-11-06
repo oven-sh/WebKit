@@ -288,7 +288,7 @@ static void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    if (!goesOnKeyByKey && target->structure()->isCompiledStructure()) {
+    if (target->structure()->isCompiledStructure() && !goesOnKeyByKey) {
         // As for an ordinary target that takes properties directly.
         if (source->hasNonReifiedStaticProperties() && AOT::PropertyWalk::testIntegrity(target, AOT::PropertyWalk::Integrity::NonExtensible) == AOT::PropertyWalk::Presence::Absent) {
             source->reifyAllStaticProperties(globalObject);

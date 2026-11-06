@@ -351,7 +351,10 @@ static bool settleAllocationOfObjectInChoices(Walker& walker, Draft& draft, Refe
         return true;
 
     Origin origin = draft.origin();
-    built = walker.build(Draft(draft));
+    Draft cut(draft);
+    cut.restIsDefinedBehind = true;
+    bool owesItsRest = cut.opcode == Opcode::NewObject && walker.makerLacksWhatIsHeldFilled(cut);
+    built = walker.build(WTF::move(cut));
     if (!built)
         return false;
     Vector<FieldIndex, 2> fieldsDefinedBehind;
@@ -364,6 +367,8 @@ static bool settleAllocationOfObjectInChoices(Walker& walker, Draft& draft, Refe
         defineBehindAllocationInChoices(walker, origin, built, misfit.key, misfit.value);
     for (size_t index = 0; index < keysDefinedBehind.size(); ++index)
         defineBehindAllocationInChoices(walker, origin, built, keysDefinedBehind[index], values[numberListed + index]);
+    if (owesItsRest && !walker.isUnreachable() && !walker.hasFailed())
+        walker.showThatObjectHoldsWhatIsHeldFilled(built, layout);
     becomeFinishedObjectInChoices(draft, built);
     return true;
 }

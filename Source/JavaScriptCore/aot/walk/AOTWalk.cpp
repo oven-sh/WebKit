@@ -3476,7 +3476,7 @@ Reference Walker::askVariableInFrontOfTypedCopy(const Draft& draft, uint32_t out
         chooseConservativeFields(read);
         read.setGivesWordAsItLies(true);
         found = build(WTF::move(read));
-        if (!found || !found.isValue() || isUnreachable())
+        if (!found || !found.isValue() || isUnreachable() || !m_types.at(m_types.withoutPrimitives(typeOf(found), wordThatVariableIsBornWithInWalk(program(), draft.variable()))).isJavaScriptValue())
             return { };
         Draft test(Opcode::TypeTest, draft.origin());
         test.setValueOperand(found);
@@ -3569,7 +3569,7 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         if (isUnreachable())
             return { };
     }
-    if (draft.opcode == Opcode::NewObject && !allocationHoldsWhatIsHeldFilled(draft)) [[unlikely]] {
+    if (draft.opcode == Opcode::NewObject && !draft.restIsDefinedBehind && !allocationHoldsWhatIsHeldFilled(draft)) [[unlikely]] {
         stopAtMaker(draft.origin());
         return { };
     }

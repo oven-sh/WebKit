@@ -836,7 +836,7 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, S
             TypeID written = origin.declared.written();
             LinkedCell cell = held.field({ id, field });
             if (!traitsOf(slot.representation).hasUndefined || !slot.type || !written || program.types.at(written).isAnything() || program.types.at(written).mayBeUndefinedOrNull()
-                    || cell.isOnlyGivenUndefinedByMakers || cell.isLeftUndefinedByMakers || cell.isGivenByNoMaker || cell.isGivenUndefinedOrNullInSight || held.recordsThatSpreadsFill.get(index)
+                || cell.isOnlyGivenUndefinedByMakers || cell.isLeftUndefinedByMakers || cell.isGivenByNoMaker || cell.isGivenUndefinedOrNullInSight || held.recordsThatSpreadsFill.get(index)
                 || (slot.provenType && program.types.at(slot.provenType).mayBeUndefinedOrNull()))
                 mayHoldMarkInSomeLayout.quickSet(declaration);
         }

@@ -960,7 +960,10 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
 
             auto replacement = asString(slot)->value(globalObject);
             // A later call of the function may have used this answer as a key, and a key takes the characters of the name, whatever their width.
-            StringView { replacement }.getCharacters(buffer.subspan(bufferPos));
+            if (StringView view { replacement }; view.is8Bit()) [[likely]]
+                view.getCharacters8(buffer.subspan(bufferPos));
+            else
+                view.getCharacters(buffer.subspan(bufferPos));
             bufferPos += replacement->length();
 
             ++index;

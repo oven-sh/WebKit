@@ -1730,6 +1730,8 @@ void AccessInLinkAccesses::resolveOnClasses(const LinkType& instances)
         giveWhatIsHeldAt(elements);
         storeInto(elements);
     });
+    if (!isRead() && !hasElements)
+        storeInto(m_flow.contentsOf(instances, SlotOfContents::underUnknownNames()));
     if (!isRead() && (isNamed() ? m_nameClass != NameClass::Index : !m_access.keyIsSurelyIndex))
         m_flow.arrive(m_flow.contentsOf(instances, SlotOfContents::noLongerAsMade()), m_flow.fromTypeID(TypeTable::undefined));
     BuiltinID prototype = isOneClass && isElement && hasElements ? prototypeOfInstancesOf(builtinClass) : BuiltinID();

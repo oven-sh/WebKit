@@ -13,6 +13,7 @@
 #include "AOTConvention.h"
 #include "AOTIRProgram.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTThrowEmitter.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsCallAdapters.h"
 #include "AOTVector.h"
@@ -167,7 +168,7 @@ void CallEmitter::generateCallTable(const ValueContext& value)
         fail(value, InternalErrorKind::UnexpectedOperand);
         return;
     }
-    callThroughMethodTable(value, value->selector(), value->operands());
+    callThroughMethodTable(value, value->selector(), value->operands(), ReceiverOfTableCall::IsShown);
 }
 
 bool CallEmitter::tryCallThroughMethodTable(const ValueContext& call, PropertyKeyID key)
@@ -175,7 +176,7 @@ bool CallEmitter::tryCallThroughMethodTable(const ValueContext& call, PropertyKe
     if (isTableRole(generator().unit().role))
         return false;
     const Type& receiver = typeOf(call->thisValueOperand());
-    if (!receiver.isObject() || !receiver.layouts || !receiver.hasOnlyLayouts() || emitter<ShapeTestEmitter>().mayBeOtherThanCompiledObject(receiver))
+    if (!receiver.isObject() || !receiver.layouts || !receiver.hasOnlyLayouts() || receiver.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow) || emitter<ShapeTestEmitter>().mayBeOtherThanCompiledObject(receiver))
         return false;
     std::optional<uint32_t> selector = conventions().findMethodSelector(key, static_cast<unsigned>(call->argumentsOperands().size()));
     if (!selector)
@@ -188,11 +189,11 @@ bool CallEmitter::tryCallThroughMethodTable(const ValueContext& call, PropertyKe
     Vector<ValueID, 8> operands;
     operands.append(call->thisValueOperand());
     operands.append(call->argumentsOperands());
-    callThroughMethodTable(call, *selector, operands.span());
+    callThroughMethodTable(call, *selector, operands.span(), ReceiverOfTableCall::IsAsked);
     return true;
 }
 
-void CallEmitter::callThroughMethodTable(const ValueContext& value, uint32_t placeOfSelector, std::span<const ValueID> receiverAndArguments)
+void CallEmitter::callThroughMethodTable(const ValueContext& value, uint32_t placeOfSelector, std::span<const ValueID> receiverAndArguments, ReceiverOfTableCall receiverOfCall)
 {
     static_assert(AOT::shapeWordOf(1) == static_cast<uint32_t>(-1));
 
@@ -203,8 +204,15 @@ void CallEmitter::callThroughMethodTable(const ValueContext& value, uint32_t pla
     ArgumentLocations locations = conventions().locationsOf(m_program, takesAndReturnsAlike);
     Vector<Operand, 8> arguments = operandsOf(receiverAndArguments, locations);
 
+    CellPointer receiver = arguments[0].as<CellPointer>();
+    if (receiverOfCall == ReceiverOfTableCall::IsAsked) {
+        ThrowEmitter& throws = emitter<ThrowEmitter>();
+        throws.requireOrStopAtFalseProof(value, logicalAnd(isCell(boxCell(receiver)), isNotEmpty(boxCell(receiver))), boxCell(receiver), ProofSource::Test);
+        throws.requireOrStopAtFalseProof(value, shapes.hasShapeIn(receiver, typeOf(receiverAndArguments[0]).layouts, types().at(TypeTable::anything)), boxCell(receiver), ProofSource::Test);
+    }
+
     m_out.clearDeclaredAccesses();
-    ShapeTestEmitter::IndexByShape row = shapes.indexByShapeOf(arguments[0].as<CellPointer>());
+    ShapeTestEmitter::IndexByShape row = shapes.indexByShapeOf(receiver);
     TypedPointer wordOfSelector = instanceWord(m_heaps.AOTInstance_classGuards, m_mentions.add(NumberSpace::MethodSelector, placeOfSelector));
     Word32 codeOffset(m_out.load32(m_out.baseIndex(*wordOfSelector.heap(), wordOfSelector.base(), row.index.value(), ScaleFour, wordOfSelector.offset() + row.offset)));
     Pointer entry = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(image.code)), zeroExtended(codeOffset), WTF::fastLog2(static_cast<unsigned>(codeOffsetUnit)));

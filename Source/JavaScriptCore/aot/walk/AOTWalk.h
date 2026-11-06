@@ -958,6 +958,7 @@ public:
     void stopAtMaker(Origin);
     bool constantEndsWhereItLeaves(ValueID written, DataID) const;
     void showThatObjectHoldsWhatIsHeldFilled(Reference object, LayoutID);
+    bool makerLacksWhatIsHeldFilled(const Draft& allocation) { return !allocationHoldsWhatIsHeldFilled(allocation); }
     Vector<FieldIndex, 8> fieldsHeldFilledThatAreNotShown(Reference object, LayoutID);
     struct SurveyOfConstant {
         bool tableOfImageHoldsIt { true };

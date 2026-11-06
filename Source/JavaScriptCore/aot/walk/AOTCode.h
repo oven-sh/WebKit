@@ -837,6 +837,7 @@ struct Draft : DraftWords {
     Opcode opcode { Opcode::Undefined };
     ExpectedType expected;
     bool resultIsReturnedAtOnce { false };
+    bool restIsDefinedBehind { false };
     bool standsForNoValueOfInput { false };
     ValueID inputValueGiven;
     std::optional<PassedTest> testsPassed;
@@ -854,6 +855,7 @@ struct Draft : DraftWords {
         representation = Representation::Unchosen;
         expected = { };
         resultIsReturnedAtOnce = false;
+        restIsDefinedBehind = false;
         standsForNoValueOfInput = false;
         inputValueGiven = { };
         testsPassed = std::nullopt;
