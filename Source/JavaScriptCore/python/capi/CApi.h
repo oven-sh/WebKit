@@ -31,7 +31,7 @@ namespace CApi {
 // Two kinds of value are spelled otherwise for C than in the heap:
 //  - A built-in type that C names by a symbol (&PyLong_Type). The address is fixed when bun is linked, and the cell is made when the
 //    program runs. All these symbols lie in one section (StaticObject). What comes in is tested for that range; a type that goes
-//    out is asked for its symbol (TypeExtension::symbol).
+//    out is asked for its symbol (TypeExtension::symbol). The program sees the same number: it is the type's id() (bitsForC()).
 //  - null, which only JS makes and which is None as undefined is. C compares with Py_None: it gets undefined.
 struct Opaque;
 using Handle = Opaque*;

@@ -203,10 +203,8 @@ JSValue objectFromBits(JSGlobalObject* globalObject, uint64_t bits, JSValue hint
 {
     if (hint && bitsOfObject(globalObject, hint) == bits) [[likely]]
         return hint;
-    if (CApi::isSetUpFor(runtime(globalObject))) {
-        if (JSValue object = CApi::objectOfSymbol(bits))
-            return object;
-    }
+    if (JSValue object = CApi::objectOfSymbol(globalObject, bits))
+        return object;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(static_cast<EncodedJSValue>(bits));

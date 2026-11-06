@@ -1371,8 +1371,7 @@ checked and cannot be: `from_address`, `in_dll`, `string_at` and the like, an in
 elsewhere (a union, `memmove`, `from_buffer_copy`, a foreign function), and foreign calls themselves. These can crash the process, as in CPython. So
 can changing `_objects`, whose docstring says not to.
 
-**`py_object`.** The eight bytes are a `PyObject*` as the C API has it (see there): the bits of the `JSValue`, which for most objects is what `id()`
-returns, and 0 is NULL. The object is kept alive by `_objects`. Bits read from memory are handed out as an object if they are those of
+**`py_object`.** The eight bytes are a `PyObject*` as the C API has it (see there): what `id()` returns, for every object but a str, and 0 is NULL. The object is kept alive by `_objects`. Bits read from memory are handed out as an object if they are those of
 what `_objects` holds for that place; otherwise only after the heap has confirmed that they are those of a live cell of a kind that programs
 see (`objectFromBits()`). `Py_INCREF` and `Py_DECREF` keep a table of objects that are to stay alive. `ctypes.pythonapi` would be the
 program itself, which has little of the C API yet. Bun takes the name away when `ctypes` is imported, as it is absent on PyPy: that is how programs find out.
@@ -1409,6 +1408,11 @@ Two kinds of value are spelled otherwise for C than in the heap. A built-in type
 executable was linked: these symbols lie in one section, a pointer that comes in is tested for that range, and a type that goes out is asked for its
 symbol (`PyType::extension()`). And `null`, which only JS makes and which is None too, goes out as `undefined`, which is what C compares with.
 `PyExc_*` are variables and hold the addresses of the cells.
+
+**The address of the symbol is the type's `id()`**, as it is in CPython: in every interpreter, from the start, whether it has the API or not (`CApi::bitsForC()`, which `identityOf()` asks
+for what is a type). So the eight bytes of a `py_object` are the `id()` of what they stand for whoever reads them, and to write a type into memory takes no API. The way
+back (`objectOfSymbol()`) gives each interpreter its own type. Nothing is kept for either: the 58 types are compared one after the other, after a test that sends every class of
+the program away. No cell can have such an `id()`: the section is part of the executable. `hash()` of a type does not follow its `id()` (nor does it in CPython 3.15).
 
 So a value that is its own 64 bits is one object however often it is made, where CPython makes a new object each time. `PyLong_FromLong(x) == PyLong_FromLong(x)` holds for every
 int that is no cell (below 2**53 in size; CPython: from -5 to 256), and `PyFloat_FromDouble(x) == PyFloat_FromDouble(x)` for every float that is no cell (1.5, 1e308; a float with a

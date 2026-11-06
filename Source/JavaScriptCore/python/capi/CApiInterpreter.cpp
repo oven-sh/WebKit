@@ -353,28 +353,59 @@ void giveReference(uint64_t bits)
         retain(std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
 }
 
-static bool hasSymbol(Runtime& rt, PyType* type)
+// ---- The symbols, for every interpreter ----
+
+// Not by TypeExtension::symbol, which only the types of one interpreter have, and only once the API is set up. Nothing is kept for this: it is asked for a type that is
+// written into memory as an object, and by id().
+static StaticObject* symbolOf(Runtime& rt, PyType* type)
 {
-#define IS_STATIC_TYPE(symbol, id) || type == rt.id##Type()
-    return false FOR_EACH_CAPI_STATIC_TYPE(IS_STATIC_TYPE);
-#undef IS_STATIC_TYPE
+    if (type->isHeapType())
+        return nullptr;
+#define RETURN_IF_STATIC_TYPE(symbol, id) \
+    if (type == rt.id##Type()) \
+        return &symbol;
+    FOR_EACH_CAPI_STATIC_TYPE(RETURN_IF_STATIC_TYPE)
+#undef RETURN_IF_STATIC_TYPE
+    return nullptr;
 }
 
 uint64_t bitsForC(JSGlobalObject* globalObject, JSValue value)
 {
-    Runtime& rt = runtime(globalObject);
-    if (isSetUpFor(rt)) [[unlikely]]
-        return bitsOf(toC(value));
-    // What is written now may be read by C when there is an API, and C compares with the address of the symbol.
-    if (PyType* type = PyType::tryFrom(value); type && hasSymbol(rt, type) && tryEnsure(globalObject)) [[unlikely]]
-        return bitsOf(toC(value));
+    if (value.isNull())
+        value = jsUndefined();
+    else if (value && value.isCell() && value.asCell()->type() == InternalFunctionType) {
+        if (PyType* type = PyType::tryFrom(value.asCell())) {
+            if (StaticObject* symbol = symbolOf(runtime(globalObject), type))
+                return std::bit_cast<uintptr_t>(symbol);
+        }
+    }
     return static_cast<uint64_t>(JSValue::encode(value));
 }
 
-JSValue objectOfSymbol(uint64_t bits)
+JSValue objectOfSymbol(JSGlobalObject* globalObject, uint64_t bits)
 {
     Handle handle = std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
-    return isStatic(handle) ? toJS(handle) : JSValue();
+    if (!isStatic(handle)) [[likely]]
+        return { };
+    auto* given = std::bit_cast<StaticObject*>(handle);
+    Runtime& rt = runtime(globalObject);
+#define RETURN_IF_STATIC_TYPE(symbol, id) \
+    if (given == &symbol) \
+        return rt.id##Type();
+    FOR_EACH_CAPI_STATIC_TYPE(RETURN_IF_STATIC_TYPE)
+#undef RETURN_IF_STATIC_TYPE
+    if (given == &_Py_NoneStruct)
+        return jsUndefined();
+    if (given == &_Py_FalseStruct)
+        return jsBoolean(false);
+    if (given == &_Py_TrueStruct)
+        return jsBoolean(true);
+    if (given == &_Py_EllipsisObject)
+        return rt.ellipsis();
+    if (given == &_Py_NotImplementedStruct)
+        return rt.notImplemented();
+    // An address in the middle of one.
+    return { };
 }
 
 } // namespace CApi

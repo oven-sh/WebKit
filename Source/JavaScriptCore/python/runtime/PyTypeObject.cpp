@@ -7,6 +7,7 @@
 #include "PyInternals.h"
 #include "PyJSClass.h"
 
+#include "CApiHooks.h"
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
 #include "MarkedSpaceInlines.h"
@@ -95,8 +96,12 @@ JSValue identityOf(JSGlobalObject* globalObject, JSValue value)
         if (const StringImpl* impl = asString(value)->tryGetValueImpl())
             return makeInt(globalObject, static_cast<uint64_t>(std::bit_cast<uintptr_t>(impl)));
     }
-    if (value.isCell())
+    if (value.isCell()) {
+        // A built-in type that C names by a symbol is where the symbol is, as in CPython.
+        if (value.asCell()->type() == InternalFunctionType) [[unlikely]]
+            return makeInt(globalObject, CApi::bitsForC(globalObject, value));
         return makeInt(globalObject, static_cast<uint64_t>(std::bit_cast<uintptr_t>(value.asCell())));
+    }
     if (value.isNumber())
         value = jsNumber(numberValue(value));
     else if (value.isNull())

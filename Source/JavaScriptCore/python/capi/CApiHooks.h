@@ -67,10 +67,15 @@ private:
     JSGlobalObject* m_previous;
 };
 
-// The bits of the PyObject* for the object, for memory that C may read, now or later.
-uint64_t bitsForC(JSGlobalObject*, JSValue);
+// ---- For every interpreter ----
 
-// The rest is for the interpreter that the API has been set up for.
+// The bits of the PyObject* for the object. They are what id() says, for whatever is a cell but a str: a built-in type that C names by a symbol (&PyLong_Type) has the
+// address of the symbol, in every interpreter and from the start, and any other cell its own. To say so takes no API.
+uint64_t bitsForC(JSGlobalObject*, JSValue);
+// The way back: this interpreter's object, if the bits are the address of one of the symbols that stand for objects. Empty: they are not.
+JSValue objectOfSymbol(JSGlobalObject*, uint64_t bits);
+
+// ---- For the interpreter that the API has been set up for ----
 
 // For the collector, with the world stopped, when marking is over and nothing has been freed yet.
 void didFinishMarking(JSC::Heap&);
@@ -81,8 +86,6 @@ bool throwWhatCRaised(JSGlobalObject*);
 void takeOverReference(uint64_t bits);
 // And the other way round.
 void giveReference(uint64_t bits);
-// The object, if the bits are the address of one of the symbols that stand for objects (&PyLong_Type). Empty: they are not.
-JSValue objectOfSymbol(uint64_t bits);
 
 #else // !PYTHON_HAS_CAPI
 
@@ -96,12 +99,12 @@ public:
     explicit LibraryBeingLoaded(JSGlobalObject*) { }
     ~LibraryBeingLoaded() { }
 };
-inline uint64_t bitsForC(JSGlobalObject*, JSValue value) { return static_cast<uint64_t>(JSValue::encode(value)); }
+inline uint64_t bitsForC(JSGlobalObject*, JSValue value) { return static_cast<uint64_t>(JSValue::encode(value.isNull() ? jsUndefined() : value)); }
+inline JSValue objectOfSymbol(JSGlobalObject*, uint64_t) { return { }; }
 inline void didFinishMarking(JSC::Heap&) { }
 inline bool throwWhatCRaised(JSGlobalObject*) { return true; }
 inline void takeOverReference(uint64_t) { }
 inline void giveReference(uint64_t) { }
-inline JSValue objectOfSymbol(uint64_t) { return { }; }
 
 #endif // PYTHON_HAS_CAPI
 
