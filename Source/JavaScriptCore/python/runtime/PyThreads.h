@@ -113,6 +113,7 @@ private:
 };
 
 // There may be several runtimes in a VM (one for each global object that runs Python), but hardly ever more than one.
+PY_BEGIN_WITHOUT_PADDING
 struct SavedStates {
     static constexpr unsigned capacity = 4;
     struct Entry {
@@ -121,6 +122,7 @@ struct SavedStates {
     };
     std::array<Entry, capacity> entries;
 };
+PY_END_WITHOUT_PADDING
 
 // A lock among the threads of Python for the use of the runtime, held across points where the GIL may change hands. The thread
 // that holds it may take it again. It must stay where it is in memory. All of this is for whoever holds the GIL.

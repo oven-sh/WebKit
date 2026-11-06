@@ -544,6 +544,16 @@ public:
     };
     RuntimeCall* runtimeCall { nullptr };
 
+    // For what lies on the stack of a thread without the GIL (ThreadLocalState): the compiler says so if a field is added that brings padding.
+#if COMPILER(CLANG)
+#define PY_BEGIN_WITHOUT_PADDING _Pragma("clang diagnostic push") _Pragma("clang diagnostic error \"-Wpadded\"")
+#define PY_END_WITHOUT_PADDING _Pragma("clang diagnostic pop")
+#else
+#define PY_BEGIN_WITHOUT_PADDING
+#define PY_END_WITHOUT_PADDING
+#endif
+
+    PY_BEGIN_WITHOUT_PADDING
     // See "Generators" in PyTemporaries.cpp.
     struct NewGenerator {
         PyGenerator* generator { nullptr };
@@ -588,6 +598,8 @@ public:
         unsigned ownershipEpoch { 0 }; // When they were put here.
         uint32_t thread { 0 };
     };
+    PY_END_WITHOUT_PADDING
+    static_assert(sizeof(decltype(ThreadLocalState::reprStack)) == 2 * sizeof(void*) && sizeof(NotedEntries) == 2 * sizeof(void*), "A vector with room of its own has room that nobody writes while it is empty.");
     // Leaves the runtime as a thread that has just started finds it.
     void takeThreadLocalState(ThreadLocalState&);
     void putThreadLocalState(ThreadLocalState&);
