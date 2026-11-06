@@ -1753,8 +1753,12 @@ RegisterID* Unit::slice(Slice* node, RegisterID* dst)
     for (unsigned i = 0; i < 3; ++i) {
         if (expressions[i])
             expr(expressions[i], arguments[i]);
-        else
+        else {
+            // (CPython's code loads None for a bound that is left out, and nothing for the step.)
+            if (i < 2)
+                noteConstant(jsUndefined());
             load(arguments[i], jsUndefined());
+        }
     }
     loc(node->range);
     return callRuntime(result.get(), RuntimeFunction::BuildSlice, arguments);
