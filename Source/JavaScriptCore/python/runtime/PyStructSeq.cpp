@@ -265,6 +265,9 @@ PyType* makeStructSeqType(JSGlobalObject* globalObject, const StructSeqDef& def)
     if (!def.isImmutable)
         flags.add(TypeFlag::Mutable);
     type->initializeBuiltin(globalObject, { def.name, flags, structSeqMethods, std::span<const NativeGetSet> { getsets, named }, { } }, rt.typeType(), rt.tupleType());
+    // As in CPython, where one with fields that are no items is larger than a tuple.
+    if (def.fields.size() == def.sequenceFieldCount)
+        type->shareLayoutOfBase(vm);
     if (def.canBeInstantiated)
         type->addMethods(globalObject, structSeqConstructor);
 

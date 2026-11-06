@@ -1171,7 +1171,8 @@ static MROResult resolveMRO(JSGlobalObject* globalObject, PyType* type)
                 raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".mro() returned a non-class ('"_s, typeNameForMessage(globalObject, rt.typeOf(mro->at(i))), "')"_s);
                 return MROResult::Raised;
             }
-            if (!solid->isSubtypeOf(base->solidBase())) {
+            // (A built-in type may have a __dict__ for its instances and nothing else of its own.)
+            if (!solid->isSubtypeOf(base->solidBase()) || (!base->isHeapType() && ((base->has(TypeFlag::HasDict) && !type->has(TypeFlag::HasDict)) || (base->has(TypeFlag::HasWeakref) && !type->has(TypeFlag::HasWeakref))))) {
                 raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".mro() returned base with unsuitable layout ('"_s, typeNameForMessage(globalObject, base), "')"_s);
                 return MROResult::Raised;
             }
@@ -1766,7 +1767,7 @@ static bool updateMROs(JSGlobalObject* globalObject, PyType* type, MarkedArgumen
 // After the base of the type has changed: which class decides the layout, for it and for all that derive from it.
 static void updateSolidBases(VM& vm, PyType* type)
 {
-    if (!type->slots())
+    if (!type->slots() && !type->has(TypeFlag::OwnLayout))
         type->setSolidBase(vm, type->base()->solidBase());
     MarkedArgumentBuffer subclasses;
     type->appendSubclassesTo(subclasses);

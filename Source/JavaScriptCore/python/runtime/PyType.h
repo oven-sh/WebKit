@@ -29,7 +29,10 @@ enum class TypeFlag : uint32_t {
     Sequence = 1 << 7, // A sequence pattern matches the instances.
     Mapping = 1 << 8, // A mapping pattern does.
     MatchSelf = 1 << 9, // In `case int(x)`, x is the subject itself.
-    OwnLayout = 1 << 10, // The instances are laid out differently from those of the base, so no class can derive from this and from another such.
+    // The instances are laid out differently from those of the base, so no class can derive from this and from another such, nor can the mro() of a
+    // metaclass put it among the bases of a class that does not derive from it: its methods take the instances for what they are. A built-in
+    // type that cannot be derived from has the flag without asking. (In CPython: the size of the instances says so.)
+    OwnLayout = 1 << 10,
     Mutable = 1 << 11, // A built-in type whose attributes can be set all the same.
     // The instances are the runtime's own: each is a part of the one object that refers to it (it may refer back), and no program
     // gets to see it, or the type. See isObjectOfPython() in PyGC.cpp and PyFinalizationOrder.cpp.
@@ -300,6 +303,12 @@ public:
     void setMRO(VM& vm, PyTuple* mro) { m_mro.setMayBeNull(vm, this, mro); }
     void setDict(VM& vm, PyDict* dict) { m_dict.set(vm, this, dict); }
     void setSolidBase(VM& vm, PyType* solidBase) { m_solidBase.set(vm, this, solidBase); }
+    // For a built-in type that cannot be derived from, whose instances are those of its base in all but the type.
+    void shareLayoutOfBase(VM& vm)
+    {
+        m_flags.remove(TypeFlag::OwnLayout);
+        setSolidBase(vm, base()->solidBase());
+    }
     void setFlags(OptionSet<TypeFlag> flags) { m_flags = flags; }
 
 private:

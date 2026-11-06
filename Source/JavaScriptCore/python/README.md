@@ -271,6 +271,8 @@ modules (`struct.error`), struct sequences outside `sys`, `ast.AST`.
 **Which `__new__` makes an instance.** As in CPython: if what the MRO finds is the `__new__` of a built-in type, it stands for "what
 the class inherits", which is that of `__base__`, the base that decides the layout. So `class C(tzinfo, dict)` is made by
 `dict.__new__`, and `tzinfo.__new__(C)` is refused as not safe (`typeCall`, `PyNativeFunction::invokeNew`).
+The `mro()` of a metaclass may name any class: that is why a type written in C++ whose instances have anything of their own needs `TypeFlag::OwnLayout`: without it, its methods can be
+handed an instance of a class that merely names it.
 
 ## Code
 
