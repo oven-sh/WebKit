@@ -1568,6 +1568,10 @@ static JSValue builtinFunctionToProfile(JSGlobalObject* globalObject, JSValue ca
         return { };
     switch (native->kind()) {
     case NativeKind::Function:
+        // (Not a method-wrapper, `[].__len__`.)
+        if (native->def().kind == NativeKind::SlotWrapper)
+            return { };
+        return callable;
     case NativeKind::StaticMethod:
     case NativeKind::New:
         return callable;
