@@ -103,7 +103,13 @@ ThreadState::ThreadState()
 {
 }
 
+// The state of this thread, and whose it is. A Threads goes with the last runtime of its VM, and the states of its threads with it, while the thread that ran Python there lives on and may start Python
+// again: in a new runtime, with a new Threads. So the pointer is good only for the Threads that set it, which is known by a number that is never used again. (Whoever destroys a Threads
+// cannot clear this: that may be another thread, the collector's.)
 static thread_local ThreadState* t_currentThread;
+static thread_local uint64_t t_threadsOfCurrentThread;
+static thread_local bool t_isOnStartedThread;
+static std::atomic<uint64_t> s_lastNumberOfThreads;
 static std::atomic<Sleeper*> s_sleeperOfMainThreadOfProcess;
 
 Ref<Threads> Threads::sharedFor(VM& vm)
@@ -115,6 +121,7 @@ Ref<Threads> Threads::sharedFor(VM& vm)
 
 Threads::Threads(VM& vm)
     : m_vm(vm)
+    , m_number(++s_lastNumberOfThreads)
     , m_mainThreadIdent(currentThreadIdent())
 {
 }
@@ -151,7 +158,7 @@ void Threads::wakeMainThreadOfProcess()
 
 bool Threads::isOnStartedThread()
 {
-    return t_currentThread && !t_currentThread->isMain;
+    return t_isOnStartedThread;
 }
 
 bool Threads::hasThread(uint64_t ident) const
@@ -165,14 +172,23 @@ bool Threads::hasThread(uint64_t ident) const
 
 ThreadState& Threads::current()
 {
-    if (t_currentThread) [[likely]]
+    if (t_threadsOfCurrentThread == m_number) [[likely]]
         return *t_currentThread;
+    ASSERT(m_vm.currentThreadIsHoldingAPILock());
+    t_threadsOfCurrentThread = m_number;
+    uint64_t ident = currentThreadIdent();
+    // It may have been here before, and in another VM since.
+    for (auto& thread : m_threads) {
+        if (thread->ident == ident) {
+            t_currentThread = thread.ptr();
+            return *t_currentThread;
+        }
+    }
     // Every other thread has had one since before it ran.
     ASSERT(!m_isEnabled);
-    ASSERT(m_vm.currentThreadIsHoldingAPILock());
     Ref thread = ThreadState::create();
-    thread->ident = currentThreadIdent();
-    thread->isMain = thread->ident == m_mainThreadIdent;
+    thread->ident = ident;
+    thread->isMain = ident == m_mainThreadIdent;
     t_currentThread = thread.ptr();
     if (thread->isMain && isMainThreadOfProcess())
         s_sleeperOfMainThreadOfProcess.store(&thread->sleeper);
@@ -599,6 +615,8 @@ void* Threads::threadEntry(void* argument)
 void Threads::runThread(ThreadState& thread, Function<void()>&& body)
 {
     t_currentThread = &thread;
+    t_threadsOfCurrentThread = m_number;
+    t_isOnStartedThread = true;
 #if !OS(WINDOWS)
     // Whoever started this thread may have it blocked.
     sigset_t interrupting;
@@ -649,6 +667,8 @@ void Threads::runThread(ThreadState& thread, Function<void()>&& body)
             wakeMainThread();
     }
     t_currentThread = nullptr;
+    t_threadsOfCurrentThread = 0;
+    t_isOnStartedThread = false;
     dropGIL(thread, false);
 }
 

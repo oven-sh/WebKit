@@ -313,6 +313,7 @@ private:
     friend void mainThreadHasTrapsToHandle(VM&);
 
     VM& m_vm; // Not to be touched without the GIL, except for its traps.
+    const uint64_t m_number; // Never used again. Not 0.
     bool m_isEnabled { false };
     uint64_t m_mainThreadIdent { 0 };
     unsigned m_runningCount { 0 };
