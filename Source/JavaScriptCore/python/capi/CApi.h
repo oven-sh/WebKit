@@ -305,10 +305,11 @@ class Entry {
     WTF_MAKE_NONCOPYABLE(Entry);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    Entry(Interpreter& current, TopExceptionScope&& scope)
+    // The scope is a variable of the function's own (CAPI_ENTER_AFTER_ALL()), made where it stands. In a build that verifies them a scope puts its own address into the VM, so it is not to be moved.
+    Entry(Interpreter& current, TopExceptionScope& scope)
         : globalObject(current.globalObject)
         , vm(current.vm)
-        , scope(WTF::move(scope))
+        , scope(scope)
         , m_interpreter(current)
     {
         ASSERT(vm.currentThreadIsHoldingAPILock());
@@ -344,7 +345,7 @@ public:
 
     JSGlobalObject* const globalObject;
     VM& vm;
-    TopExceptionScope scope;
+    TopExceptionScope& scope;
 
 private:
     void moveExceptionToIndicator();
@@ -362,7 +363,8 @@ private:
     current->noteNoisyCall()
 // Nothing but a termination can be pending here.
 #define CAPI_ENTER_AFTER_ALL(failure) \
-    JSC::Python::CApi::Entry entry(*current, DECLARE_TOP_EXCEPTION_SCOPE(current->vm)); \
+    auto scopeOfEntry = DECLARE_TOP_EXCEPTION_SCOPE(current->vm); \
+    JSC::Python::CApi::Entry entry(*current, scopeOfEntry); \
     if (entry.scope.exception()) [[unlikely]] \
         return failure
 #define CAPI_ENTER(failure) \
