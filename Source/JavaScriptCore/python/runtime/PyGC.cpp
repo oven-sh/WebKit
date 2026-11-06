@@ -15,6 +15,7 @@
 #include "MarkedSpaceInlines.h"
 #include "PreventCollectionScope.h"
 #include "PyAbstract.h"
+#include "PyDescriptors.h"
 #include "PyErrors.h"
 #include "PyException.h"
 #include "PyGenerator.h"
@@ -43,7 +44,8 @@ namespace Python {
 //
 // get_objects(), get_referrers() and get_referents() find objects by looking at the heap, and the heap is full of what is not for
 // a program to see. The rule is the same for the three, but for its third point. A cell is handed out if
-//  - it is an object of Python, of this global object, of a kind that programs get to see (isObjectOfPython(), TypeFlag::Internal);
+//  - it is an object of Python, of this global object, of a kind that programs get to see (isObjectOfPython(), TypeFlag::Internal). Of a type that programs do not get to see, nothing is given that
+//    leads to it: not its instances, not the methods and descriptors of its namespace (__objclass__), not the tuples of its bases and its MRO;
 //  - it is whole: a tuple has all its items, a frame object knows its caller (isWhole());
 //  - it is not, and does not lead to, what is left of an exception that nobody has seen (HeapView::findWhatIsOutOfReach(): get_objects() and get_referrers(), which find what nothing of the
 //    program's refers to; get_referents() begins at what the program has);
@@ -73,8 +75,15 @@ static bool isObjectOfPython(JSCell* cell, JSGlobalObject* globalObject)
             return false;
         if (auto* weakRef = PyWeakRef::tryFrom(cell); weakRef && weakRef->isInternal())
             return false;
+        if (auto* descriptor = PyGetSetDescriptor::tryFrom(cell); descriptor && descriptor->owner()->has(TypeFlag::Internal))
+            return false;
+        if (auto* descriptor = PyMemberDescriptor::tryFrom(cell); descriptor && descriptor->owner()->has(TypeFlag::Internal))
+            return false;
     } else if (type == InternalFunctionType) {
-        if (auto* pythonType = PyType::tryFrom(cell); pythonType && pythonType->has(TypeFlag::Internal))
+        auto* pythonType = PyType::tryFrom(cell);
+        if (!pythonType)
+            pythonType = uncheckedDowncast<PyNativeFunction>(cell)->ownerType();
+        if (pythonType && pythonType->has(TypeFlag::Internal))
             return false;
     }
     return true;
@@ -117,6 +126,11 @@ static void forEachPartInFields(JSCell* cell, const Function& function)
         function(type->dict(), false);
         if (JSValue subclasses = type->subclasses())
             function(subclasses.asCell(), false);
+        // Of any other type these are what __bases__ and __mro__ give.
+        if (type->has(TypeFlag::Internal)) {
+            function(type->bases(), false);
+            function(type->mro(), false);
+        }
     } else if (auto* frame = PyFrame::tryFrom(cell)) {
         function(frame->values(), false);
         function(frame->extraLocals(), false);
@@ -209,6 +223,9 @@ public:
             forEachPartInFields(cell, [&](JSCell* part, bool hasPartsInIt) {
                 addPart(part, cell, hasPartsInIt);
             });
+            // In CPython a class refers weakly to the classes that derive from it. So what the list refers to, the class does not.
+            if (auto* type = PyType::tryFrom(cell); type && type->subclasses())
+                m_owners.set(type->subclasses().asCell(), nullptr);
             addHiddenFields(asObject(cell));
             if (isObjectOfPython(cell, globalObject)) {
                 m_objects.append(cell);
