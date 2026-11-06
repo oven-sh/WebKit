@@ -514,22 +514,24 @@ void Unit::jump(Label& target, JumpIs jumpIs, bool takesInMore)
 {
     if (cannotGetHere())
         return;
+    // A jump that came of a constant is still a branch when CPython's compiler takes in what jumps lead to and first works out the lines. Later it goes where
+    // this one goes, if this is still nothing but a jump, and the lines are worked out again; by then the jumps that lead nowhere have been dropped.
+    bool isLedToByConstant = jumpOfConstantLeadsHere();
+    auto lineno = m_targetsOfJumpsStillJumpedTo.contains(&target) || (isLedToByConstant && (takesInMore || jumpIs == JumpIs::Hidden)) ? std::nullopt : lineOfOnlyWayHere(JumpsHere::AreTakenIn);
+    if (lineno) {
+        silentLine(*lineno);
+        if (!isLedToByConstant)
+            g.addPythonMark(PythonMark::NoLine, jumpHasLineToItselfMark);
+    }
     if (jumpIs == JumpIs::Hidden) {
-        // It stands for a copy of what it leads to, which has its lines. Where ways meet it is of the line of one of them, so that the line it leads to begins there.
-        if (m_markedLine == -1 && !m_sameLineDepth && g.positionOfLastPythonLabel() == g.instructions().size()) {
+        // It stands for a copy of what it leads to, which has its lines, behind what is left of the jump. Where ways meet it is of the line of one of them, so
+        // that the line it leads to begins there.
+        if (!lineno && m_markedLine == -1 && !m_sameLineDepth && g.positionOfLastPythonLabel() == g.instructions().size()) {
             auto& ways = g.branchesToLastPythonLabel().count ? g.branchesToLastPythonLabel() : g.jumpsToLastPythonLabel();
             if (ways.count)
                 silentLine(g.pythonLineAt(ways.first));
         }
         return hiddenJump(target);
-    }
-    // A jump that came of a constant is still a branch when CPython's compiler takes in what jumps lead to and first works out the lines. Later it goes where
-    // this one goes, if this is still nothing but a jump, and the lines are worked out again; by then the jumps that lead nowhere have been dropped.
-    bool isLedToByConstant = jumpOfConstantLeadsHere();
-    if (auto lineno = m_targetsOfJumpsStillJumpedTo.contains(&target) || (isLedToByConstant && takesInMore) ? std::nullopt : lineOfOnlyWayHere(JumpsHere::AreTakenIn)) {
-        silentLine(*lineno);
-        if (!isLedToByConstant)
-            g.addPythonMark(PythonMark::NoLine, jumpHasLineToItselfMark);
     }
     if (jumpIs != JumpIs::OfTheProgram)
         g.addPythonMark(PythonMark::NoLine, jumpIs == JumpIs::ToldOf ? jumpAsLaidOutMark : jumpForwardsAsLaidOutMark);
