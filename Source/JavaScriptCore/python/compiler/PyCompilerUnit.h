@@ -531,7 +531,6 @@ private:
 
     // ---- Expressions ----
 
-    RegisterID* boolOp(AST::BoolOp*, RegisterID* dst, bool* jumpThatFollowsIsOfNoLine = nullptr);
     void boolOperand(Expr*, RegisterID* result, Label* ifTrue, Label* ifFalse, const Range& rangeOfTest, const Range& rangeOfOperation, Label& whenConstantSettles, Label* endOfNested);
     RegisterID* chain(AST::Expr*, RegisterID* dst);
     static bool takeFormatApart(AST::BinOp*, Vector<PartOfFormat, 8>&);
@@ -542,7 +541,11 @@ private:
         bool isReachedFromNoLine { false };
         bool jumpThereIsOfNoLine { false }; // The one that comes after the expression that is given this.
         bool isCopied { false }; // isCopiedWhatComesAfter()
+        // The value is not where it is wanted there: it is moved before the jump.
+        RegisterID* moveTo { nullptr };
+        RegisterID* moveFrom { nullptr };
     };
+    RegisterID* boolOp(AST::BoolOp*, RegisterID* dst, bool* jumpThatFollowsIsOfNoLine = nullptr, EndOfIfExp* whereJumpThatFollowsGoes = nullptr);
     bool isCopiedWhatComesAfter(Expr*);
     bool isCopiedWhatComesAfterStatement();
     // What comes after a statement.

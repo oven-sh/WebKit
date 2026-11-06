@@ -577,7 +577,7 @@ RegisterID* Unit::expr(Expr* node, RegisterID* dst)
 
 // ---- Operators ----
 
-RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst, bool* jumpThatFollowsIsOfNoLine)
+RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst, bool* jumpThatFollowsIsOfNoLine, EndOfIfExp* whereJumpThatFollowsGoes)
 {
     // Not in `dst` until the end: the operands may read the variable it is, and may throw.
     Reg result = g.tempDestination(dst);
@@ -589,7 +589,14 @@ RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst, bool* jumpThatFollowsIsO
     // (`b` in `0 and b`.)
     if (!m_cannotBeReached && cannotGetHere())
         deadExpr(node->values[last]);
-    else
+    else if (whereJumpThatFollowsGoes && node->values[last]->is<IfExp>() && isSafeToRecurse()) {
+        // Its own jump goes where that one goes, past what puts the value where it is wanted.
+        SetForScope moveTo(whereJumpThatFollowsGoes->moveTo, result.get() == dst ? whereJumpThatFollowsGoes->moveTo : dst);
+        SetForScope moveFrom(whereJumpThatFollowsGoes->moveFrom, result.get() == dst ? whereJumpThatFollowsGoes->moveFrom : result.get());
+        ifExp(node->values[last]->as<IfExp>(), result.get(), whereJumpThatFollowsGoes);
+        if (std::exchange(whereJumpThatFollowsGoes->jumpThereIsOfNoLine, false) && jumpThatFollowsIsOfNoLine)
+            *jumpThatFollowsIsOfNoLine = true;
+    } else
         expr(node->values[last], result.get());
     if (end->isBound()) {
         // See ifExp().
@@ -1224,7 +1231,7 @@ RegisterID* Unit::ifExp(IfExp* node, RegisterID* dst, EndOfIfExp* enclosing)
     else if (!orelse->isBound())
         expr(node->body, result.get());
     else if (node->body->is<BoolOp>() && isSafeToRecurse())
-        boolOp(node->body->as<BoolOp>(), result.get(), whereToGo.isCopied ? nullptr : &jumpIsOfNoLine);
+        boolOp(node->body->as<BoolOp>(), result.get(), whereToGo.isCopied ? nullptr : &jumpIsOfNoLine, &whereToGo);
     else if (node->body->is<IfExp>() && isSafeToRecurse()) {
         ifExp(node->body->as<IfExp>(), result.get(), &whereToGo);
         jumpIsOfNoLine = std::exchange(whereToGo.jumpThereIsOfNoLine, false);
@@ -1234,11 +1241,15 @@ RegisterID* Unit::ifExp(IfExp* node, RegisterID* dst, EndOfIfExp* enclosing)
         // (There is no other value in CPython's code, and here it is not run.)
         if (!orelse->isBound())
             hiddenJump(end.get());
-        else if (whereToGo.isCopied)
-            hiddenJump(whereToGo.label);
         else {
-            whereToGo.isReachedFromNoLine |= jumpIsOfNoLine;
-            jump(whereToGo.label);
+            if (whereToGo.moveTo)
+                g.move(whereToGo.moveTo, whereToGo.moveFrom);
+            if (whereToGo.isCopied)
+                hiddenJump(whereToGo.label);
+            else {
+                whereToGo.isReachedFromNoLine |= jumpIsOfNoLine;
+                jump(whereToGo.label);
+            }
         }
     }
     if (!orelse->isBound())
@@ -1246,7 +1257,7 @@ RegisterID* Unit::ifExp(IfExp* node, RegisterID* dst, EndOfIfExp* enclosing)
     else {
         g.emitLabel(orelse.get());
         if (enclosing && node->orelse->is<BoolOp>() && isSafeToRecurse())
-            boolOp(node->orelse->as<BoolOp>(), result.get(), enclosing->isCopied ? nullptr : &enclosing->jumpThereIsOfNoLine);
+            boolOp(node->orelse->as<BoolOp>(), result.get(), enclosing->isCopied ? nullptr : &enclosing->jumpThereIsOfNoLine, enclosing);
         else if (enclosing && node->orelse->is<IfExp>() && isSafeToRecurse())
             ifExp(node->orelse->as<IfExp>(), result.get(), enclosing);
         else
