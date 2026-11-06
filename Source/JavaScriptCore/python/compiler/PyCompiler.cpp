@@ -1959,6 +1959,8 @@ void Unit::statement(Stmt* node, const Last& isLast)
             callRuntimeForEffect(RuntimeFunction::PrintExpression, { result.get() });
             return;
         }
+        if (isLast.kind == Last::OfFunction && !m_sameLineDepth)
+            return exprStatementAtEndOfFunction(value, isLast);
         exprForEffect(value);
         return;
     }
@@ -1967,6 +1969,91 @@ void Unit::statement(Stmt* node, const Last& isLast)
     case StmtKind::Continue:
         return breakOrContinue(node, false);
     }
+}
+
+// CPython's code generator has a label behind the statements that are being compiled: the end of the statement they are the last part of.
+bool Unit::labelComesBehindStatements() const
+{
+    for (auto* after = m_statementsAfter; after; after = after->enclosing) {
+        if (!after->endsWhereEnclosingEnds)
+            return false;
+        if (!after->goOnBehindEnclosing)
+            return true;
+    }
+    return false;
+}
+
+// In CPython what drops the value is of no line, and neither is the end of the function. Where nothing but a jump is in between, they are copied for each way that
+// leads there, and each copy is of the line of its way. A label in between keeps them apart: then what drops the value is not copied, is of no line if a jump
+// or a branch leads to it, and so is the end of the function behind it: `if a:` over `b and c()` returns on no line.
+void Unit::exprStatementAtEndOfFunction(Expr* value, const Last& isLast)
+{
+    auto* compare = value->tryAs<Compare>();
+    if (!value->is<IfExp>() && !value->is<BoolOp>() && !(compare && compare->ops.size() > 1))
+        return exprForEffect(value);
+    if (labelComesBehindStatements()) {
+        bool endIsJumpedTo = false;
+        exprForEffect(value, &endIsJumpedTo);
+        if (!endIsJumpedTo)
+            return;
+        // (`a if True else b`: what drops the value has an instruction, or what comes next would be taken to be of the line of the only way here.)
+        bool isOnlyWay = !!lineOfOnlyWayHere(JumpsHere::Count);
+        noLine();
+        if (isOnlyWay)
+            OpNop::emit(&g);
+        return;
+    }
+    if (value->range.lineno == value->range.endLineno)
+        return exprForEffect(value);
+    exprForEffectWhoseWaysLeave(value, isLast);
+}
+
+// But for the last of them, which goes straight on.
+void Unit::exprForEffectWhoseWaysLeave(Expr* node, const Last& isLast)
+{
+    if (!isSafeToRecurse())
+        return;
+    if (auto* ifExp = node->tryAs<IfExp>()) {
+        Ref<Label> orelse = g.newLabel();
+        jumpIf(ifExp->test, orelse.get(), false);
+        if (!orelse->isBound()) {
+            exprForEffectWhoseWaysLeave(ifExp->body, isLast);
+            Ref<Label> end = g.newLabel();
+            hiddenJump(end.get());
+            deadExpr(ifExp->orelse);
+            g.emitLabel(end.get());
+            return;
+        }
+        if (cannotGetHere())
+            deadExpr(ifExp->body);
+        else {
+            exprForEffectWhoseWaysLeave(ifExp->body, isLast);
+            leave(isLast);
+        }
+        g.emitLabel(orelse.get());
+        return exprForEffectWhoseWaysLeave(ifExp->orelse, isLast);
+    }
+    if (auto* boolOp = node->tryAs<BoolOp>()) {
+        Reg result = newTemporary();
+        Ref<Label> end = g.newLabel();
+        unsigned last = boolOp->values.size() - 1;
+        bool isAnd = boolOp->op == BoolOperator::And;
+        for (unsigned i = 0; i < last; ++i)
+            boolOperand(boolOp->values[i], result.get(), isAnd ? nullptr : end.ptr(), isAnd ? end.ptr() : nullptr, node->range, node->range, end.get(), nullptr);
+        if (cannotGetHere())
+            deadExpr(boolOp->values[last]);
+        else
+            exprForEffectWhoseWaysLeave(boolOp->values[last], isLast);
+        if (end->isBound()) {
+            if (!cannotGetHere())
+                leave(isLast);
+            g.emitLabel(end.get());
+            silentLine(node->range);
+        }
+        return;
+    }
+    // (A part of an expression: if it is a constant, it is one of the code.)
+    Reg ignored = expr(node);
 }
 
 void Unit::assign(Assign* node)

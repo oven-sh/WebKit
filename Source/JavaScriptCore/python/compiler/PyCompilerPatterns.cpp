@@ -529,7 +529,7 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         // nothing to jump over but what drops something where the pattern has failed.
         bool isDefault = isLastCase && count > 1 && isWildcard(matchCase->pattern);
         bool endsWhereStatementEnds = isDefault && !next->isBound() && failsByLine.isEmpty();
-        m_statementsEndWhereStatementEnds = endsWhereStatementEnds;
+        m_statementsEndWhereStatementEnds = isDefault;
         statements(matchCase->body, 0, isDefault ? isLast : lastBeforeJump(end.get(), isLast, JumpIs::ToldOf));
         if (endsWhereStatementEnds) {
             endOfForLoopWhereJumpsLed(isLast);

@@ -463,7 +463,8 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Operator op, JSValue value, JSValue 
 
 // ---- Dispatch ----
 
-void Unit::exprForEffect(Expr* node)
+// `endIsJumpedTo`: set if something jumps or branches to where the expression ends.
+void Unit::exprForEffect(Expr* node, bool* endIsJumpedTo)
 {
     if (auto* name = node->tryAs<NameExpr>(); node->is<Constant>() || (name && name->id->impl() == names().debug->impl()))
         return line(node->range);
@@ -472,10 +473,29 @@ void Unit::exprForEffect(Expr* node)
         return;
     }
     size_t made = m_foldedConstants.size();
-    Reg ignored = expr(node);
+    Reg ignored = endIsJumpedTo ? exprWhoseEndMayBeJumpedTo(node, nullptr, *endIsJumpedTo) : expr(node);
     // What CPython's compiler has worked out and then drops is no constant of the code.
     if (m_foldedConstants.size() == made + 1 && m_foldedConstants.last().reg == ignored->virtualRegister())
         m_foldedConstants.removeLast();
+}
+
+RegisterID* Unit::exprWhoseEndMayBeJumpedTo(Expr* node, RegisterID* dst, bool& endIsJumpedTo)
+{
+    if (!isSafeToRecurse())
+        return g.finalDestination(dst);
+    if (auto* ifExpression = node->tryAs<IfExp>())
+        return ifExp(ifExpression, dst, nullptr, &endIsJumpedTo);
+    if (auto* boolOperation = node->tryAs<BoolOp>())
+        return boolOp(boolOperation, dst, nullptr, nullptr, &endIsJumpedTo);
+    auto* comparison = node->tryAs<Compare>();
+    if (!comparison || comparison->ops.size() == 1)
+        return expr(node, dst);
+    // A comparison before the last that fails branches to what drops an operand, which is of the line of the comparison.
+    endIsJumpedTo = true;
+    RegisterID* result = expr(node, dst);
+    line(node->range);
+    OpNop::emit(&g);
+    return result;
 }
 
 RegisterID* Unit::expr(Expr* node, RegisterID* dst)
@@ -577,7 +597,7 @@ RegisterID* Unit::expr(Expr* node, RegisterID* dst)
 
 // ---- Operators ----
 
-RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst, bool* jumpThatFollowsIsOfNoLine, EndOfIfExp* whereJumpThatFollowsGoes)
+RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst, bool* jumpThatFollowsIsOfNoLine, EndOfIfExp* whereJumpThatFollowsGoes, bool* endIsJumpedTo)
 {
     // Not in `dst` until the end: the operands may read the variable it is, and may throw.
     Reg result = g.tempDestination(dst);
@@ -596,9 +616,13 @@ RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst, bool* jumpThatFollowsIsO
         ifExp(node->values[last]->as<IfExp>(), result.get(), whereJumpThatFollowsGoes);
         if (std::exchange(whereJumpThatFollowsGoes->jumpThereIsOfNoLine, false) && jumpThatFollowsIsOfNoLine)
             *jumpThatFollowsIsOfNoLine = true;
-    } else
+    } else if (endIsJumpedTo)
+        exprWhoseEndMayBeJumpedTo(node->values[last], result.get(), *endIsJumpedTo);
+    else
         expr(node->values[last], result.get());
     if (end->isBound()) {
+        if (endIsJumpedTo)
+            *endIsJumpedTo = true;
         // See ifExp().
         bool branchLeadsToJump = jumpThatFollowsIsOfNoLine && std::ranges::any_of(end->unresolvedJumps(), [&](int offset) {
             return g.instructions().at(offset)->opcodeID() != op_jmp;
@@ -1221,7 +1245,7 @@ bool Unit::isCopiedWhatComesAfterStatement()
 // CPython's compiler gives the jump over the other value the line of what comes before it, if that is all that leads to it. A branch
 // leads to it too if the value is `a or b`. Then the jump is of no line, and what comes after the expression is a line that begins, be
 // it the line the frame has been on all the time: `x = (a or b) if c else d` is told of twice.
-RegisterID* Unit::ifExp(IfExp* node, RegisterID* dst, EndOfIfExp* enclosing)
+RegisterID* Unit::ifExp(IfExp* node, RegisterID* dst, EndOfIfExp* enclosing, bool* endIsJumpedTo)
 {
     Reg result = g.finalDestination(dst);
     Ref<Label> orelse = g.newLabel();
@@ -1266,11 +1290,16 @@ RegisterID* Unit::ifExp(IfExp* node, RegisterID* dst, EndOfIfExp* enclosing)
             boolOp(node->orelse->as<BoolOp>(), result.get(), enclosing->isCopied ? nullptr : &enclosing->jumpThereIsOfNoLine, enclosing);
         else if (enclosing && node->orelse->is<IfExp>() && isSafeToRecurse())
             ifExp(node->orelse->as<IfExp>(), result.get(), enclosing);
+        else if (endIsJumpedTo)
+            exprWhoseEndMayBeJumpedTo(node->orelse, result.get(), *endIsJumpedTo);
         else
             expr(node->orelse, result.get());
     }
-    if (end->isBound())
+    if (end->isBound()) {
         g.emitLabel(end.get());
+        if (endIsJumpedTo)
+            *endIsJumpedTo = true;
+    }
     if (own.isReachedFromNoLine)
         m_whereLineBegins = g.instructions().size();
     return result.get();

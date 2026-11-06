@@ -133,7 +133,11 @@ public:
     // The register the value is in: `dst` if there is one. Unless the caller holds a reference to it, the register is only
     // good until the next is allocated.
     RegisterID* expr(Expr*, RegisterID* dst = nullptr);
-    void exprForEffect(Expr*);
+    void exprForEffect(Expr*, bool* endIsJumpedTo = nullptr);
+    RegisterID* exprWhoseEndMayBeJumpedTo(Expr*, RegisterID* dst, bool& endIsJumpedTo);
+    void exprStatementAtEndOfFunction(Expr*, const Last&);
+    void exprForEffectWhoseWaysLeave(Expr*, const Last&);
+    bool labelComesBehindStatements() const;
     void jumpIf(Expr*, Label& target, bool condition);
     void jumpIfTo(Expr*, Label& target, bool condition, bool isTurnedRound = false);
     void store(Expr* target, RegisterID* value);
@@ -566,7 +570,7 @@ private:
         RegisterID* moveTo { nullptr };
         RegisterID* moveFrom { nullptr };
     };
-    RegisterID* boolOp(AST::BoolOp*, RegisterID* dst, bool* jumpThatFollowsIsOfNoLine = nullptr, EndOfIfExp* whereJumpThatFollowsGoes = nullptr);
+    RegisterID* boolOp(AST::BoolOp*, RegisterID* dst, bool* jumpThatFollowsIsOfNoLine = nullptr, EndOfIfExp* whereJumpThatFollowsGoes = nullptr, bool* endIsJumpedTo = nullptr);
     bool isCopiedWhatComesAfter(Expr*);
     bool isCopiedWhatComesAfterStatement();
     // What comes after a statement.
@@ -603,7 +607,7 @@ private:
     bool m_statementsEndWhereStatementEnds { false }; // For the next call of statements().
     bool m_statementsGoOnBehindStatement { false }; // The same.
     Expr* m_returnedExpression { nullptr }; // The body of a lambda.
-    RegisterID* ifExp(AST::IfExp*, RegisterID* dst, EndOfIfExp* enclosing = nullptr);
+    RegisterID* ifExp(AST::IfExp*, RegisterID* dst, EndOfIfExp* enclosing = nullptr, bool* endIsJumpedTo = nullptr);
     RegisterID* compare(AST::Compare*, RegisterID* dst);
     RegisterID* emitCompare(RegisterID* dst, RegisterID* left, RegisterID* right, AST::CompareKind, Expr* rightExpr);
     void checkCompare(AST::Compare*);
