@@ -33,6 +33,7 @@
 #include "PyVirtualFiles.h"
 #include "TopExceptionScope.h"
 #include <wtf/FileSystem.h>
+#include <wtf/SetForScope.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -1979,6 +1980,58 @@ void Runtime::handlerIsLeft(CallFrame* callFrame, JSValue previous)
     entry.exception->setHasNotedEntry(false);
     Locker locker { m_notedEntriesLock };
     m_notedEntries.removeLast();
+}
+
+// If the instruction is one that leaves a handler: the register with what was being handled before.
+static VirtualRegister whatLeavingHandlerPutsBack(CodeBlock* codeBlock, unsigned offset, bool byRaisingToo)
+{
+    auto instruction = codeBlock->instructions().at(offset);
+    if (instruction->opcodeID() != op_py_runtime)
+        return { };
+    auto bytecode = instruction->as<OpPyRuntime>();
+    switch (static_cast<RuntimeFunction>(bytecode.m_function)) {
+    case RuntimeFunction::LeaveHandler:
+        return bytecode.m_argv;
+    case RuntimeFunction::ReraiseUnseen:
+    case RuntimeFunction::ReraiseOutOfHandler:
+        // The second argument.
+        return byRaisingToo ? VirtualRegister(bytecode.m_argv.offset() - 1) : VirtualRegister();
+    default:
+        return { };
+    }
+}
+
+// Nothing of the frame runs any more, not even what the compiler puts around a handler for an exception that leaves it: that begins by
+// putting back what was being handled before (Unit::handlerIsLeftByException()). The host may yet let the program go on (node:vm ends a
+// script, no more), which would find the exception of a handler that is long gone in sys.exception(), and as the context of whatever it
+// raises. So it is put back here. The table of handlers says which handlers the frame is in, as it does for any other exception.
+void Runtime::handlersAreLeftByTermination(CallFrame* callFrame)
+{
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    unsigned offset = callFrame->bytecodeIndex().offset();
+    // The instruction that leaves a handler is not covered by the handler's cleanup, and it may not have been carried out yet: a trace function
+    // is told of an instruction, or of the line that begins with it, beforehand.
+    VirtualRegister previous = whatLeavingHandlerPutsBack(codeBlock, offset, true);
+    // The innermost comes first. What counts is what was there before the outermost.
+    for (size_t i = 0; i < codeBlock->numberOfExceptionHandlers(); ++i) {
+        const HandlerInfo& handler = codeBlock->exceptionHandler(i);
+        if (offset < handler.start || offset >= handler.end)
+            continue;
+        // (A clause of the program's may begin in the same way: `except: pass`. That covers the `try`, where nothing is being handled yet.)
+        if (static_cast<CatchMode>(codeBlock->instructions().at(handler.target)->as<OpPyCatch>().m_mode) != CatchMode::Thrown)
+            continue;
+        if (VirtualRegister ofThis = whatLeavingHandlerPutsBack(codeBlock, whereHandlerBegins(codeBlock, handler.target), false); ofThis.isValid())
+            previous = ofThis;
+    }
+    if (!previous.isValid())
+        return;
+    // What a `catch` of JS further in has put in the slot comes out first, as it does when a handler is left in any other way. Those frames
+    // are still there, below this one.
+    if (!m_catchesInJS.isEmpty() && threads().isMainThread()) {
+        SetForScope topCallFrame(m_vm.topCallFrame, callFrame);
+        dropCatchesInJSThatAreOver(nullptr, 0);
+    }
+    setHandledExceptionInSlotOf(m_runningGenerator, callFrame->r(previous).jsValue());
 }
 
 // Whether the handler keeps to itself what it catches: see OpPyCatch.

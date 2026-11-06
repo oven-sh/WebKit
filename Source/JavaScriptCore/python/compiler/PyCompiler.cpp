@@ -1627,6 +1627,17 @@ void Unit::restoreHandledException(RegisterID* previous)
     callRuntimeForEffect(RuntimeFunction::LeaveHandler, { previous });
 }
 
+// What an exception comes to that is raised while another is being handled: `cleanup` covers all the code between the instruction that made
+// that one the exception being handled and the one that puts back what was before. It is put back, and the exception goes on.
+// For a frame that is left because the thread is to end, no code runs, and the unwinder does the first half. It knows these handlers by how
+// they begin: they catch what was thrown as it is (CatchMode::Thrown), and then comes LeaveHandler. See Runtime::handlersAreLeftByTermination().
+void Unit::handlerIsLeftByException(Try& cleanup, RegisterID* previous)
+{
+    Reg thrown = beginHandler(cleanup);
+    restoreHandledException(previous);
+    reraise(thrown.get());
+}
+
 void Unit::reraise(RegisterID* exception)
 {
     callRuntimeForEffect(RuntimeFunction::Reraise, { exception });
@@ -1634,15 +1645,14 @@ void Unit::reraise(RegisterID* exception)
 
 // What the compiler itself does at the end of a handler when the exception is to go on. It stands outside the range of the handler's
 // cleanup, which would do no more than this: catch it, put back what was being handled, and raise it a third time.
-void Unit::reraiseOutOfHandler(RegisterID* exception, RegisterID* previous)
+// It is a single instruction, of which the unwinder knows (Runtime::handlersAreLeftByTermination()): instructions that put the two in place
+// would stand outside the range too, and a tool may be told of each. So it is given the registers that beginExceptionHandler() made, one
+// after the other.
+void Unit::reraiseOutOfHandler(RegisterID* exception, RegisterID* previous, RuntimeFunction function)
 {
-    // beginExceptionHandler() made them one after the other.
-    if (previous->index() == exception->index() - 1) {
-        Reg ignored = newTemporary();
-        g.emitPyRuntime(ignored.get(), RuntimeFunction::ReraiseOutOfHandler, exception, 2);
-        return;
-    }
-    callRuntimeForEffect(RuntimeFunction::ReraiseOutOfHandler, { exception, previous });
+    RELEASE_ASSERT(previous->index() == exception->index() - 1);
+    Reg ignored = newTemporary();
+    g.emitPyRuntime(ignored.get(), function, exception, 2);
 }
 
 void Unit::suspendTry(size_t depth, Vector<TryContext>& suspended)
@@ -2354,11 +2364,9 @@ void Unit::asyncForHandler(Try& whole, RegisterID* iterator)
     endTry(cleanup);
     // It goes on as if from where it was raised.
     noLine();
-    callRuntimeForEffect(RuntimeFunction::ReraiseUnseen, { exception.get(), previous.get() });
+    reraiseOutOfHandler(exception.get(), previous.get(), RuntimeFunction::ReraiseUnseen);
 
-    Reg thrown = beginHandler(cleanup);
-    restoreHandledException(previous.get());
-    reraise(thrown.get());
+    handlerIsLeftByException(cleanup, previous.get());
 }
 
 void Unit::returnStatement(Return* node)
@@ -2516,9 +2524,7 @@ void Unit::tryFinally(AST::Try* node, const Last& isLast)
         reraiseOutOfHandler(exception.get(), previous.get());
 
     // An exception in the clause itself.
-    Reg thrown = beginHandler(cleanup);
-    restoreHandledException(previous.get());
-    reraise(thrown.get());
+    handlerIsLeftByException(cleanup, previous.get());
 
     endOfStatement(exit.get());
 }
@@ -2614,8 +2620,9 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
             SameLine sameLine(*this);
             storeName(handler->name, constant(jsUndefined()), handler->range);
             deleteName(handler->name, handler->range);
+            g.move(exception.get(), thrown.get());
             outsideTry(cleanup.depthBefore, [&] {
-                reraiseOutOfHandler(thrown.get(), previous.get());
+                reraiseOutOfHandler(exception.get(), previous.get());
             });
         } else {
             g.addPythonMark(PythonMark::BlockEnd, matching, bitsOfMatching);
@@ -2644,9 +2651,7 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
     reraiseOutOfHandler(exception.get(), previous.get());
 
     // An exception in a clause.
-    Reg thrown = beginHandler(cleanup);
-    restoreHandledException(previous.get());
-    reraise(thrown.get());
+    handlerIsLeftByException(cleanup, previous.get());
 
     endOfStatement(end.get());
 }
@@ -2756,9 +2761,7 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
     g.emitLabel(raisesAgain.get());
     callRuntimeForEffect(RuntimeFunction::ReraiseGroup, { toRaise.get() });
 
-    Reg thrown = beginHandler(cleanup);
-    restoreHandledException(previous.get());
-    reraise(thrown.get());
+    handlerIsLeftByException(cleanup, previous.get());
 
     bool bodyComesToItsEnd = orelse->isBound();
     g.emitLabel(orelse.get());
@@ -2846,9 +2849,7 @@ void Unit::withStatement(With* node, unsigned index, const Last& isLast)
     restoreHandledException(previous.get());
     leaveStatement(end.get(), isLast, JumpIs::ToldOfForwards);
 
-    Reg thrown = beginHandler(cleanup);
-    restoreHandledException(previous.get());
-    reraise(thrown.get());
+    handlerIsLeftByException(cleanup, previous.get());
 
     endOfStatement(end.get());
 }

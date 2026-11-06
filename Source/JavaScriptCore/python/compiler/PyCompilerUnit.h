@@ -536,8 +536,9 @@ private:
     // The same, as a Python exception that is now the one being handled. `previous`: the one that was.
     Reg beginExceptionHandler(Try&, Reg& previous, bool isOfLine = false);
     void restoreHandledException(RegisterID* previous);
+    void handlerIsLeftByException(Try& cleanup, RegisterID* previous);
     void reraise(RegisterID* exception);
-    void reraiseOutOfHandler(RegisterID* exception, RegisterID* previous);
+    void reraiseOutOfHandler(RegisterID* exception, RegisterID* previous, RuntimeFunction = RuntimeFunction::ReraiseOutOfHandler);
 
     // ---- Expressions ----
 

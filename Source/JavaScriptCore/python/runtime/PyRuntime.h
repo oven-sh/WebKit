@@ -471,6 +471,8 @@ public:
     JSValue setHandledExceptionInTopSlot(JSValue); // Returns what was there.
     // A handler of the frame is left, otherwise than by an exception that goes on: what was being handled before is so again.
     void handlerIsLeft(CallFrame*, JSValue previous);
+    // For the unwinder: the frame is left because the thread is to end, with all the handlers that it is in.
+    void handlersAreLeftByTermination(CallFrame*);
 
     // ---- Entries of tracebacks that are only noted ----
     //
@@ -513,6 +515,8 @@ public:
     {
         if (!m_notedEntries.isEmpty()) [[unlikely]]
             takeOutNotedEntriesOf(callFrame, thrown);
+        if (!thrown) [[unlikely]]
+            handlersAreLeftByTermination(callFrame);
     }
     template<typename Visitor> static void visitNotedEntries(Visitor&, const NotedEntries&);
 #if ASSERT_ENABLED

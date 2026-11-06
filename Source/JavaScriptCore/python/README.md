@@ -2065,6 +2065,8 @@ that run the tests on a debug build have the option on. What that takes:
     ending what runs here (`vm.hasPendingTermination()`): the collector finds it, if the program goes on.
   - What the runtime has taken apart for as long as it calls code of the program goes back together whatever ends the call (the items
     of a list that is being sorted): `ExceptionSetAside`, then `DeferTerminationForAWhile`.
+  - No code of a frame that a termination leaves runs any more, not even the compiler's own. What that would have put back, the unwinder
+    does: the exception that was being handled (`Runtime::handlersAreLeftByTermination()`).
 
 To find what is missing without dying at the first: `BUN_JSC_uncheckedExceptionsLog=FILE` with the option above writes each missing
 check to the file, once, with both stacks, and goes on; `Tools/Scripts/unchecked-exceptions FILE` puts them in order by the function
