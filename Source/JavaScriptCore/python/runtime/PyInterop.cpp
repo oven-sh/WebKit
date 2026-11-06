@@ -842,7 +842,9 @@ static ALWAYS_INLINE bool hasKeyByMethod(JSGlobalObject* globalObject, JSObject*
     return has.toBoolean(globalObject);
 }
 
-// The items of an object are its properties. Those of what is a mapping by its methods are what the methods say.
+// The items of an object are its own properties, as iteration, keys() and dict() have it: what it inherits is for attributes. (A symbol is no
+// item. object[symbol] is the one way there is to write that read, so it is the read of JS.) Those of what is a mapping by its methods are
+// what the methods say.
 // `isAbsent`: there is none, which is no exception yet. `refusesOtherKeys`: what can name no property is a TypeError, as opposed to not there.
 static JSValue itemOfObjectOfJS(JSGlobalObject* globalObject, JSValue self, JSValue key, bool& isAbsent, bool refusesOtherKeys)
 {
@@ -878,7 +880,7 @@ static JSValue itemOfObjectOfJS(JSGlobalObject* globalObject, JSValue self, JSVa
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name)))
         return { };
-    JSValue value = readProperty<false>(globalObject, object, object, name);
+    JSValue value = key.isSymbol() ? readProperty<false>(globalObject, object, object, name) : readProperty<true>(globalObject, object, object, name);
     RETURN_IF_EXCEPTION(scope, { });
     isAbsent = !value;
     return value;
@@ -955,7 +957,7 @@ static JSValue jsObjectDelItem(JSGlobalObject* globalObject, JSValue self, JSVal
     if (failed(scope, propertyKeyForItem(globalObject, key, name)))
         return { };
     JSObject* object = asObject(self);
-    bool had = object->hasProperty(globalObject, name);
+    bool had = key.isSymbol() ? object->hasProperty(globalObject, name) : object->hasOwnProperty(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
     if (!had)
         return raiseKeyError(globalObject, scope, key);
@@ -982,7 +984,7 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
         takePendingException(globalObject);
         return jsBoolean(false);
     }
-    bool has = asObject(self)->hasProperty(globalObject, name);
+    bool has = key.isSymbol() ? asObject(self)->hasProperty(globalObject, name) : asObject(self)->hasOwnProperty(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
     return jsBoolean(has);
 }
@@ -1424,8 +1426,8 @@ static JSValue jsObjectPop(JSGlobalObject* globalObject, JSValue self, JSValue k
 // ---- object.__dict__, for an instance of a class of Python's that derives from one of JS's, and for what has other items than its properties ----
 
 // The mapping of the object's own properties that have a str for a name: they are what another instance has in its __dict__. The object
-// itself will not do: object[key] finds what it inherits too, the attributes of its class among that (so functools.cached_property
-// would find itself), and a Map is the mapping of its entries. The elements of a typed array are no attributes of it.
+// itself will not do: object[key] = value is the assignment of JS, which asks what the object inherits, the attributes of its class among
+// that, and a Map is the mapping of its entries. The elements of a typed array are no attributes of it.
 enum JSPropertiesField : unsigned { JSPropertiesObject, JSPropertiesFieldCount };
 
 static JSObject* objectOfProperties(JSValue self) { return asObject(uncheckedDowncast<PyRecord>(self.asCell())->get(JSPropertiesObject)); }

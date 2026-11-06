@@ -1707,6 +1707,26 @@ The collector is told the size of the side tables, which are several times the s
 - An object that JS does not iterate over is a mapping of its own enumerable properties: `keys()`, `values()`, `items()`, `get()`, `pop()`,
   `popitem()`, `setdefault()`, `update()`, `clear()` (those of `collections.abc.MutableMapping`), unless it has properties of these
   names; so `dict(object)`. What JS iterates over has none of them, unless it is a mapping by its methods: `dict(map.entries())` takes the pairs.
+- **The items of an object are its own properties.** `k in o`, `o[k]`, `o.get(k)`, `o.pop(k)`, `o.setdefault(k)` and `del o[k]` see what the object has itself, as iteration, `keys()` and
+  `dict(o)` do: what it inherits is for attributes, which follow the chain as ever. So `"toString" in o` and `"constructor" in o` are false for `{}`, as they are for a dict, and what is read of data
+  with such a key is not a method (`itemOfObjectOfJS`, `jsObjectContains`, `jsObjectDelItem`). That is not the `in` and `[]` of JS:
+
+  | | JS | Python |
+  |---|---|---|
+  | an own enumerable property | `"a" in o`, `o["a"]` | the same |
+  | an own property that is not enumerable (`f["name"]`) | there, and not listed | the same: `"name" in f`, `f["name"]`, and not in `list(f)` |
+  | what is inherited (`"toString"`, a method or a getter of the class) | `"toString" in o` is `true`, `o["toString"]` the function | `"toString" in o` is `False`, `o["toString"]` a `KeyError`, `o.get("toString")` `None`; `o.toString` is the method |
+  | `delete` of what is inherited | `true`, and nothing happens | `del o["toString"]` is a `KeyError` |
+  | a name that is not there | `o["x"]` is `undefined` | a `KeyError` |
+  | `o[k] = v` | the assignment | the same. So a setter that the object inherits takes it, or the `set` of a `Proxy`, and what is inherited and read-only refuses it: after it `k in o` may still be false |
+  | `"__proto__"` | `o["__proto__"]` is the prototype, and `o["__proto__"] = x` sets it | `o["__proto__"] = x` sets the prototype, as in JS, or does nothing if `x` is no object. `o["__proto__"]` reads the own property: a `KeyError`, unless `JSON.parse()` has made one |
+  | a `Symbol` | follows the chain | the same, also for `del`: a symbol is no item, and `o[js.Symbol.iterator]` is the one way to write that read |
+  | an `int` | `1 in o` is `"1" in o` | the same |
+  | a `Proxy` | `has`, `get` | `getOwnPropertyDescriptor` says whether there is an item, and then `get` what it is |
+  | a binding of a module that is not initialized yet (a cycle of imports) | `"x" in namespace` is `true`, `Object.hasOwn(namespace, "x")` throws | `"x" in namespace` raises the `ReferenceError`, as the read does |
+
+  It holds for every object whose `[]` goes by its properties, also one that JS iterates over and that is no mapping by its methods (`typedArray["length"]` is a `KeyError`). `dict(o)` of an object with a `keys()` of its own
+  asks `o[k]` for each of those: a `KeyError` where one names what the object inherits. (A decision that can still be changed.)
 - **A plain object**, one whose prototype is `Object.prototype` or `null`, has a type of its own, `_js.JSPlainObject`, which derives from `JSObject` and adds
   nothing to it but what it says to others: it is registered as a `collections.abc.MutableMapping` (when the interpreter starts, `registerInteropTypes`: the
   type has instances before any module is imported that could do it), a mapping pattern of `match` takes it, unless JS iterates over it (`TypeFlag::Mapping`, `plainObjectIsMapping`; of an object of JS's
@@ -1752,8 +1772,8 @@ The collector is told the size of the side tables, which are several times the s
   `on()` was given. It is bound as `Function.prototype.bind()` binds it, so it has the `name` and `length` that gives (`bindToObject`): they are asked for at once of what
   may say something else later, a callable `Proxy` or a function that was given another name, and what a trap or a getter throws comes out of the read. (The `get()` of a mapping by its methods: see there.) Not bound: classes, what a module exports (read off its namespace), and what is read off the `prototype` of a
   constructor, which is how JS spells an unbound method (`js.String.prototype.toUpperCase.call("abc")`).
-- A `Proxy` has an answer to every read. Where that is `undefined` it is asked whether it has the property (`has`), for an attribute as for an item: if not, `p.name` goes on to what every
-  object of Python's has, or is an `AttributeError`, and `p[key]` a `KeyError` (`readProperty`).
+- A `Proxy` has an answer to every read. Where that is `undefined` it is asked whether it has the property (`has`): if not, `p.name` goes on to what every
+  object of Python's has, or is an `AttributeError` (`readProperty`). For an item it is first asked whether it has the property itself (`getOwnPropertyDescriptor`): if not, `p[key]` is a `KeyError`.
 - `weakref.ref()`, `proxy()`, `finalize()` and the weak containers take objects and functions of JS.
 - A function written in JS has a signature for `inspect.signature()`, made of the text of its parameters (`__text_signature__`):
   `(a, b=None, /, *rest)`. They go by position; a default is `None`, since to pass `undefined` gives the default; a pattern has no name
@@ -1780,8 +1800,8 @@ The collector is told the size of the side tables, which are several times the s
   what is inherited is an `AttributeError`. `object.__getattribute__()`, `__setattr__()` and `__delattr__()` do the same, for any object
   of JS's, so a `__setattr__` of the class's own may hand on to `object`'s, and `@dataclass(frozen=True)` works.
   `instance.__dict__` and `vars(instance)` are the mapping of its own properties (`_js.JSProperties`, a `MutableMapping` and no dict,
-  with the `copy()`, `|`, `reversed(mapping)` and `popitem()` from the end of a dict; the order is that of the properties, in which names that are array indices, `'2'`, `'10'`, come first and by value): not the object itself, whose `[key]` finds what it inherits too
-  (`functools.cached_property` would find itself) and which may be a `Map`. The elements of a typed array are not in it. To store there
+  with the `copy()`, `|`, `reversed(mapping)` and `popitem()` from the end of a dict; the order is that of the properties, in which names that are array indices, `'2'`, `'10'`, come first and by value): not the object itself, which may be a `Map`, and whose
+  `[key] = value` is the assignment of JS, which asks what the object inherits. The elements of a typed array are not in it. To store there
   defines the property, past whatever the class has for the name. It comes from the `__getattribute__` that the class inherits from
   `Base`; `object.__getattribute__(instance, '__dict__')` is an `AttributeError`, because who asks that way expects a dict
   (`inspect.getattr_static()`, and so `isinstance()` with a protocol). `__dict__` cannot be assigned or deleted, of any object of JS's: no
