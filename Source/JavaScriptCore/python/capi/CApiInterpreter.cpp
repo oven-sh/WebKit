@@ -8,6 +8,7 @@
 
 #include "CApiSymbols.h"
 #include "JSCInlines.h"
+#include "PyCtypes.h"
 #include "PyException.h"
 #include "SimpleMarkingConstraint.h"
 #include "SlotVisitorInlines.h"
@@ -153,8 +154,8 @@ bool tryEnsure(JSGlobalObject* globalObject)
     auto* interpreter = new Interpreter(globalObject, state);
     setSymbols(interpreter);
     s_interpreter.store(interpreter, std::memory_order_release);
-    s_interpreterWhoseCountsFall.store(interpreter, std::memory_order_relaxed);
-    s_runtimeItIsSetUpFor.store(&interpreter->runtime, std::memory_order_release);
+    s_interpreterWhoseCountsFall.store(interpreter, std::memory_order_release);
+    s_runtimeItIsSetUpFor.store(&interpreter->runtime, std::memory_order_relaxed);
     // It stays with the heap, which may outlive the runtime.
     addMarkingConstraint(vm);
     return true;
@@ -262,14 +263,32 @@ LibraryBeingLoaded::~LibraryBeingLoaded()
     t_loadsLibraryFor = m_previous;
 }
 
+// Whether what the thread is doing is C that another interpreter has called or is loading.
+static bool runsCForAnotherInterpreter(Interpreter& current)
+{
+    if (t_loadsLibraryFor)
+        return t_loadsLibraryFor != current.globalObject;
+    VM* vm = Ctypes::vmOfForeignCallInProgress();
+    return vm && vm != &current.vm;
+}
+
+static void tellOnce(std::atomic<bool>& hasTold, const char* what)
+{
+    if (!hasTold.exchange(true))
+        fputs(what, stderr);
+}
+
 bool mayEnterSlow(Interpreter* current)
 {
     // What a library does when the interpreter has ended, as the process goes, is nobody's mistake. Nor is it one to ask before there is anything to ask about.
     if (!current)
         return false;
+    static std::atomic<bool> hasToldOfOther;
     static std::atomic<bool> hasTold;
-    if (!hasTold.exchange(true))
-        fputs("Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n", stderr);
+    if (runsCForAnotherInterpreter(*current))
+        tellOnce(hasToldOfOther, "Python: a function of the C API was called for an interpreter that the C API does not serve (it serves the first of the process); it fails, and nothing changes for the interpreter that it serves\n");
+    else
+        tellOnce(hasTold, "Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n");
     return false;
 }
 
@@ -277,15 +296,24 @@ std::atomic<Interpreter*> s_interpreterWhoseCountsFall;
 
 void refuseToChangeCount(bool isToFall)
 {
-    if (!s_interpreter.load(std::memory_order_relaxed))
+    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
+    if (!current)
         return;
-    if (!isToFall)
+    static std::atomic<bool> hasToldOfOther;
+    static std::atomic<bool> hasToldOfTaken;
+    static std::atomic<bool> hasToldOfGivenBack;
+    if (runsCForAnotherInterpreter(*current)) {
+        tellOnce(hasToldOfOther, "Python: Py_INCREF or Py_DECREF was called for an interpreter that the C API does not serve (it serves the first of the process); the count stays as it was, and nothing changes for the interpreter that it serves\n");
+        return;
+    }
+    if (!isToFall) {
         s_interpreterWhoseCountsFall.store(nullptr, std::memory_order_relaxed);
-    else if (!s_interpreterWhoseCountsFall.load(std::memory_order_relaxed))
+        tellOnce(hasToldOfTaken, "Python: Py_INCREF was called by a thread that does not hold the GIL; the count stays as it was, and from now on no count falls: whatever C owns is held for ever\n");
         return;
-    static std::atomic<bool> hasTold;
-    if (!hasTold.exchange(true))
-        fputs("Python: Py_INCREF or Py_DECREF was called by a thread that does not hold the GIL; the count stays as it was\n", stderr);
+    }
+    // With the GIL: this is what that line has told of.
+    if (s_interpreterWhoseCountsFall.load(std::memory_order_relaxed))
+        tellOnce(hasToldOfGivenBack, "Python: Py_DECREF was called by a thread that does not hold the GIL; the count stays as it was: the object is held for ever\n");
 }
 
 // ---- The error indicator ----

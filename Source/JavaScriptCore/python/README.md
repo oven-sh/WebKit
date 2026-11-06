@@ -1435,7 +1435,12 @@ not even for an object that C has just made: code that changes in place what it 
   without the GIL counts as stopped, so `Py_INCREF` and `Py_DECREF` look who calls: in CPython such a call spoils a count, here it would spoil the table. It is refused: the
   count stays as it was, with a line on stderr the first time. What was to be given back is then held for ever. What was to be taken is a reference that C believes in and
   has not got, and nobody can tell which `Py_DECREF` will give it back: so from then on no count falls, and all that C owns or comes to own is held for ever. A leak, and
-  nothing that C rightly owns dies under it.
+  nothing that C rightly owns dies under it. The line says so.
+- A thread that runs C for another interpreter (a Worker's `ctypes` call, a library that a Worker loads) is refused as well, with a line of its own, and that is all: it costs the
+  interpreter that has the API nothing. Such a thread is known by what it is in the middle of (`Ctypes::vmOfForeignCallInProgress()`, `LibraryBeingLoaded`), which is looked at only
+  once it has been refused. No function hands it an object of this interpreter. What it can name are the exceptions, which the runtime keeps alive whatever the count says, and what a
+  library that both interpreters have loaded keeps in a variable of its own: to share an object between two interpreters in that way is an error in CPython too, and here
+  it is not defended against.
 
 **The error indicator is not the VM's pending exception.** C goes on calling the API while an exception is set, and the functions of the runtime expect none to be pending
 when they are entered. So the indicator is a reference of its own, one for each thread, counted like C's other references and kept alive by that (for ever, if a thread ends

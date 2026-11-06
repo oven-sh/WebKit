@@ -450,6 +450,11 @@ struct ActiveCall {
 };
 static thread_local ActiveCall* activeCall;
 
+VM* vmOfForeignCallInProgress()
+{
+    return activeCall ? activeCall->vm : nullptr;
+}
+
 bool callForeignFunction(JSGlobalObject* globalObject, void* function, std::span<const ForeignValue> arguments, unsigned fixedCount, const ForeignValue& result, unsigned flags)
 {
     VM& vm = getVM(globalObject);
@@ -831,6 +836,11 @@ bool allocateCallbackCode(JSGlobalObject* globalObject, PyCThunk*)
 bool isCallbackCode(void*, bool&)
 {
     return false;
+}
+
+VM* vmOfForeignCallInProgress()
+{
+    return nullptr;
 }
 
 void releaseCallbackCode(PyCThunk*)

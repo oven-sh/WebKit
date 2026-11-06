@@ -193,7 +193,9 @@ struct Interpreter {
     uint32_t noise { 0 };
 };
 
-// Null until the API is set up, and again when its interpreter has ended. Any thread may read it, at any time: see Interpreter::lock.
+// Null until the API is set up, and again when its interpreter has ended. Any thread may read it, at any time: see Interpreter::lock. Whoever follows the pointer without the GIL
+// has to see what the constructor wrote: it is stored with release, here and in s_interpreterWhoseCountsFall, and what is read is read through the pointer (an address dependency, which
+// orders the two loads on every processor that JSC runs on).
 extern std::atomic<Interpreter*> s_interpreter;
 
 // For who has asked mayEnter(), or is the collector of the interpreter's VM.
@@ -223,7 +225,7 @@ ALWAYS_INLINE bool hasGIL(Interpreter* current)
 
 // EVERY FUNCTION THAT LOOKS AT AN OBJECT, AT THE TABLE OF COUNTS OR AT THE INTERPRETER ASKS THIS FIRST. A thread without the GIL would read what another thread is changing, and when
 // the interpreter has ended, or before there is one, there is nothing to look at. In CPython all of that is undefined. Here the function fails: it returns what it returns
-// when it fails, and sets no exception. A thread without the GIL is told of, once, on stderr.
+// when it fails, and sets no exception. A thread without the GIL is told of, once, on stderr, and so is one that runs C for an interpreter that the API is not for.
 bool mayEnterSlow(Interpreter*);
 ALWAYS_INLINE bool mayEnter()
 {
@@ -241,6 +243,9 @@ ALWAYS_INLINE bool mayEnter()
 //  - A reference that was to be given back is held for ever.
 //  - A reference that was to be taken is one that C believes in and has not got, and nobody can tell which Py_DECREF will be the one that gives it back.
 //    So FROM THEN ON NO COUNT FALLS: all that C owns, or comes to own, is held for ever, and nothing that C rightly owns dies under it.
+// A thread that runs C for ANOTHER interpreter (a Worker's, that calls a function with ctypes or loads a library) is refused too, and that is all: it costs the interpreter that has the
+// API nothing. No function gives such a thread an object of this interpreter. What it can name are the exceptions (PyExc_ValueError), which the runtime keeps alive whatever
+// the count says, and what a library that both have loaded keeps in a variable of its own: to share that between two interpreters is an error in CPython as well.
 // (When the interpreter has ended there is nothing left to count: what an extension gives back as the process goes is ignored.)
 void refuseToChangeCount(bool isToFall);
 // s_interpreter, until a reference that was to be taken has been refused.
