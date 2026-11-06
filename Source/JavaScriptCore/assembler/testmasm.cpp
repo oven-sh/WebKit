@@ -10662,6 +10662,7 @@ void checkFeatureQueries(CPUFeatureSet features)
     CHECK_EQ(MacroAssembler::supportsAVX2(features), features.contains(CPUFeature::AVX2));
     CHECK_EQ(ProtectedFeatureQueries::supportsLZCNT(features), features.contains(CPUFeature::LZCNT));
     CHECK_EQ(ProtectedFeatureQueries::supportsBMI1(features), features.contains(CPUFeature::BMI1));
+    CHECK_EQ(MacroAssembler::supportsFloat16(features), features.contains(CPUFeature::F16C));
 #else
     CHECK_EQ(MacroAssembler::supportsLSE(features), features.contains(CPUFeature::LSE));
     CHECK_EQ(MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(features), features.contains(CPUFeature::JSCVT));
