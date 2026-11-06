@@ -1800,7 +1800,7 @@ The collector is told the size of the side tables, which are several times the s
   | `"__proto__"` | `o["__proto__"]` is the prototype, and `o["__proto__"] = x` sets it | `o["__proto__"] = x` sets the prototype, as in JS, or does nothing if `x` is no object. `o["__proto__"]` reads the own property: a `KeyError`, unless `JSON.parse()` has made one |
   | a `Symbol` | follows the chain | the same, also for `del`: a symbol is no item, and `o[js.Symbol.iterator]` is the one way to write that read |
   | an `int` | `1 in o` is `"1" in o` | the same |
-  | a `Proxy` | `has`, `get` | `getOwnPropertyDescriptor` says whether there is an item, and then `get` what it is |
+  | a `Proxy` | `has`, `get` | `getOwnPropertyDescriptor` says whether there is an item, and then `get` what it is. So one that makes up its properties with `get` and `has` alone has no items, as it has none to iterate over (`ownKeys`): that is meant. Its attributes are what `get` says (`p.a`, `getattr(p, "x-y")`) |
   | a binding of a module that is not initialized yet (a cycle of imports) | `"x" in namespace` is `true`, `Object.hasOwn(namespace, "x")` throws | `"x" in namespace` raises the `ReferenceError`, as the read does |
 
   But for `in`, which asks about the items, it holds for every object whose `[]` goes by its properties, also one that JS iterates over and that is no mapping by its methods: `typedArray["length"]` is a `KeyError`, `arguments[0]` is the first, and `0 in arguments` asks whether one of them is 0. `dict(o)` of an object with a `keys()` of its own
