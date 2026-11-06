@@ -178,6 +178,10 @@ public:
     void removeLocalTool(unsigned event, unsigned tool);
     // The tools that want to be told of the event in this code.
     uint8_t tools(unsigned event) const;
+    // Whether an event at a place in the code has ever had more than one while the code was what the tools wanted it to be. From then
+    // on CPython keeps the tools of each instruction of the code object, and until then only those of the code object. A program can
+    // see which: a tool that answers DISABLE to a CALL is told how that call ends only until then, and no more when the other tool has gone.
+    bool hadEventWithSeveralTools() const { return m_hadEventWithSeveralTools; }
 
     // What the tools want has changed. If they want anything here, the code says so when it is next entered.
     void sleep();
@@ -243,6 +247,7 @@ private:
     bool m_hasLocalTools { false };
     bool m_localToolsWantPlaces { false };
     bool m_localToolsWantExceptions { false };
+    bool m_hadEventWithSeveralTools { false };
     bool m_hasSomethingDisabled { false };
     bool m_hasToForget { false }; // See forget().
     bool m_hasPoints { false };

@@ -1435,6 +1435,8 @@ coverage tools are CPython's own code on top. It is all in `runtime/PyMonitoring
   collector's threads ask too), and the monitor knows the opcode.
 - `DISABLE` puts the opcode back, if no other tool wants the place. It holds until `restart_events()`, or until the code is entered, or found running, at a time when the tool
   does not want the event: that is when CPython, which changes code as it is entered, forgets. So code with something disabled has its entrances replaced once more after a change.
+  A tool that answers `DISABLE` to a `CALL` is still told how that call ends, as in CPython, which knows only the tools of the code object, and not those of each instruction, until
+  an event at a place in the code has two tools while the code is changed (`CodeMonitor::hadEventWithSeveralTools()`). From then on it is not told.
 - Some instructions have to be carried out by the runtime to be told of: a branch (which way it went is known afterwards), a call of
   something that is not a Python function (`C_RETURN`, `C_RAISE`), the end of a `yield from` (`STOP_ITERATION`). `Name(...)` is an ordinary call while calls are told of.
 - A branch told of like that is carried out by the runtime for as long as one of its ways is still wanted, and the way out of a loop is wanted until the loop ends. Under a tool that

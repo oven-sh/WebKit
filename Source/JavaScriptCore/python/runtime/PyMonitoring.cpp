@@ -1066,6 +1066,10 @@ void CodeMonitor::update()
         setEntrancesAreReplaced(isWanted() || m_hasToForget);
         return;
     }
+    for (unsigned event = 0; event < Event::instrumentedCount; ++event) {
+        if (tools(event) & (tools(event) - 1))
+            m_hadEventWithSeveralTools = true;
+    }
     bool everyInstruction = tools(Event::Instruction);
     if (!m_hasPoints || (everyInstruction && !m_hasEveryInstruction))
         findPoints(everyInstruction);
@@ -2011,6 +2015,11 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         auto* point = currentPoint();
         return point ? monitor.tools(event) & ~point->disabledTools[event] : 0;
     };
+    // Who is told how a call ends that `told` were told of. As in CPython, a tool that answered DISABLE is among them, unless
+    // the tools of each instruction are kept there.
+    auto wantedWhenCallEnds = [&](uint8_t told) -> uint8_t {
+        return monitor.hadEventWithSeveralTools() ? wanted(Event::Call) : told & monitor.tools(Event::Call);
+    };
     // frame.f_lineno = line, in a trace function
     auto jumped = [&](Outcome& outcome) {
         PyFrame* frame = frameObjectIfThereIsOne(callFrame);
@@ -2155,7 +2164,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::Call, tools, callable, first)))
             return threw;
         JSValue made = call(globalObject, callable, CallArgs(arguments, isWrittenWithoutArguments ? 0 : 2));
-        tools = wanted(Event::Call);
+        tools = wantedWhenCallEnds(tools);
         if (failed(scope, made)) {
             Exception* exception = scope.exception();
             TRY_CLEAR_EXCEPTION(scope, threw);
@@ -2240,7 +2249,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         // What is not a function written in Python is also told of when it is over. So it is called from here.
         if (PyFunction::is(callable) || PyMethod::is(callable))
             return runIt;
-        tools = wanted(Event::Call);
+        tools = wantedWhenCallEnds(tools);
         uint8_t listening = tools & 1 << profileTool;
         for (unsigned tool = 0; tool < numberOfFreeMonitoringTools; ++tool) {
             if (tools >> tool & 1 && (callback(tool, Event::CReturn) || callback(tool, Event::CRaise)))
@@ -2260,7 +2269,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         JSValue result = call(globalObject, callee, CallArgs(arguments, count - (keywordNames ? keywordNames->length() : 0), keywordNames));
         m_runtime.didCallWithGeneratorArgument();
         // It may have been sys.monitoring.set_events().
-        listening &= wanted(Event::Call);
+        listening &= wantedWhenCallEnds(listening);
         if (failed(scope, result)) {
             Exception* exception = scope.exception();
             TRY_CLEAR_EXCEPTION(scope, threw);
