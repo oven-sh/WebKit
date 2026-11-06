@@ -2754,6 +2754,8 @@ RegisterID* Unit::callOnGeneratorExpression(Call* node, RegisterID* callee, JSVa
         markTemporaryUsed(made, TemporaryUse::Loop, nullptr, true);
         Reg item = newTemporary();
         g.settlePythonLineMark();
+        // (For `frame.f_lineno = n`: it is no loop of the program, and a frame cannot go from here into one.)
+        pushBlock({ .kind = BlockKind::InlinedComprehension, .tryDepth = g.tryDepth(), .isOnlyHere = true });
         pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .saved = generator.get(), .ownsIterator = !!made, .isOnlyHere = true });
         g.emitLabel(loop.get());
         line(range);
@@ -2778,6 +2780,7 @@ RegisterID* Unit::callOnGeneratorExpression(Call* node, RegisterID* callee, JSVa
         }
         if (collects)
             jump(loop.get());
+        popBlock();
         popBlock();
         g.emitLabel(exhausted.get());
         silentLine(range);
