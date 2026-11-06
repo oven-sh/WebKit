@@ -205,10 +205,7 @@ private:
             addPart(item, owner, false);
     }
 
-    // An exception that nobody has seen (PyException::isUnseen()) is in the heap like any other: another thread is raising it, or has caught it and is about to drop it, or has dropped it and
-    // still has a word on its stack that leads to some of it. The runtime counts on it that nothing of the program's has such an exception, the entries of its traceback or the frame objects that were
-    // made for those, the last of which lacks its caller (PyFrame::backIs()). So none of that is given: the exception with its entries and their frame objects, and, whatever is left of the
-    // exception, all that leads to a frame object that lacks its caller: the frame objects of the calls it made, the entries of those, the exception.
+    // What findWhatIsOutOfReach() goes through, sorted out in the pass that gathers the objects.
     struct PartsOfExceptions {
         void addIfIsOne(JSCell* cell)
         {
@@ -231,6 +228,10 @@ private:
         bool hasFrameThatLacksCaller { false };
     };
 
+    // An exception that nobody has seen (PyException::isUnseen()) is in the heap like any other: another thread is raising it, or has caught it and is about to drop it, or has dropped it and
+    // still has a word on its stack that leads to some of it. The runtime counts on it that nothing of the program's has such an exception, the entries of its traceback or the frame objects that were
+    // made for those, the last of which lacks its caller (PyFrame::backIs()). So none of that is given: the exception with its entries and their frame objects, and, whatever is left of the
+    // exception, all that leads to a frame object that lacks its caller: the frame objects of the calls it made, the entries of those, the exception.
     void findWhatIsOutOfReach(const PartsOfExceptions& parts)
     {
         // As a rule there is neither, however many tracebacks the program keeps.
