@@ -739,7 +739,8 @@ static Inquiry inquirePropertyOfHost(JSGlobalObject* globalObject, JSObject* obj
     if (isMainThread) [[likely]] {
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool found = object->getPropertySlot(globalObject, name, slot);
-        scope.assertNoException();
+        // (A function looks what is asked of the VM: a termination.)
+        RETURN_IF_EXCEPTION(scope, Inquiry::NeedsCode);
         if (!slot.isTaintedByOpaqueObject()) [[likely]] {
             if (!found)
                 return Inquiry::Absent;
