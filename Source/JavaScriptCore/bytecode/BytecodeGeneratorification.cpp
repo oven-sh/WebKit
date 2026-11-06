@@ -328,7 +328,11 @@ private:
                 continue;
             auto target = instructions.at(handler.target);
             auto bytecode = target->as<OpPyCatch>();
-            resetLiveRegisters(target.next().offset(), false, firstLocal, { bytecode.m_exception, bytecode.m_previous });
+            // Where the handler goes on, which only the jump behind op_py_catch leads to. Nothing comes between these two:
+            // Python::whereHandlerBegins().
+            extractStoredJumpTargetsForInstruction(codeBlock, target.next(), [&](int32_t relativeOffset) {
+                resetLiveRegisters(target.next().offset() + relativeOffset, true, firstLocal, { bytecode.m_exception, bytecode.m_previous });
+            });
         }
     }
 

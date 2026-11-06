@@ -1601,6 +1601,7 @@ void Unit::endTry(Try& tryRange)
 Unit::Reg Unit::beginHandler(Try& tryRange, Reg* previous, bool isOfLine)
 {
     g.settlePythonLineMark();
+    ASSERT(cannotGetHere()); // BytecodeGeneratorification counts on it.
     g.emitLabel(tryRange.handler.get());
     noLine();
     if (m_cannotBeReached)

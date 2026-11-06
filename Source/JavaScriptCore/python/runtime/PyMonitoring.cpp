@@ -614,6 +614,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
             if (items[i].opcode != op_py_catch)
                 continue;
             // BytecodeGenerator::emitOutOfLinePyCatchHandler(): a jump to where the handler goes on comes next.
+            ASSERT(items[i + 1].opcode == op_jmp);
             if (auto it = indexOfOffset.find(targetOfJump(code, items[i + 1].offset)); it == indexOfOffset.end() || !items[it->value].isDeadHandler)
                 visit(i);
         }
