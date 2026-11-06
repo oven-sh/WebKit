@@ -630,10 +630,14 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncJoin(VM& vm, JSGlobalObject*
             RELEASE_AND_RETURN(scope, JSValue::encode(value.toString(globalObject)));
         }
 
+        // Bun: joinIntegerTypedArray() reads the elements twice, to size the string and then to write it. In Bun a view that is not shared can change
+        // in between as well: another thread reads a file into a pinned buffer, Bun.mmap() maps a shared file, native code owns the memory.
+#if !USE(BUN_JSC_ADDITIONS)
         if constexpr (std::is_integral_v<typename ViewClass::ElementType>) {
             if (!thisObject->isShared())
                 RELEASE_AND_RETURN(scope, JSValue::encode(joinIntegerTypedArray(globalObject, elements, length, separator)));
         }
+#endif
 
         RELEASE_AND_RETURN(scope, JSValue::encode(joinTypedArray(globalObject, elements, length, separator)));
     };
