@@ -374,6 +374,8 @@ void Modules::willMock(ModuleID mocked)
         return;
     goModuleByModuleFromNowOn();
     m_importersAskedAboutOriginal.clear();
+    if (hasRunBesideMockAlone(mocked)) [[unlikely]]
+        m_modulesThatRanBesideMock.set(mocked.index());
     m_modulesThatHadRunWhenMocked.set(mocked.index(), status(mocked) == ModuleStatus::Evaluated);
     momentOfFirstMockInTestFile(mocked);
     BitVector modules = m_mocks ? m_mocks->modules : BitVector(m_table.size());

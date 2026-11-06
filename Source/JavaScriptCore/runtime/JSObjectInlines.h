@@ -283,6 +283,21 @@ ALWAYS_INLINE bool JSObject::getPropertySlot(JSGlobalObject* globalObject, uint6
     return getPropertySlot(globalObject, Identifier::from(globalObject->vm(), propertyName), slot);
 }
 
+// getPropertySlot() goes up by the prototypes that the Structures name, whoever overrides getPrototype(), and comes to getNonIndexPropertySlot() at the first object that answers for its own properties itself.
+// A compiled object stands for a plain one: behind it the search goes on as it came.
+inline bool searchCameByStructures(JSObject* first, JSObject* last)
+{
+    if (first->type() != CompiledObjectType)
+        return false;
+    for (JSObject* object = first; object; object = object->getPrototypeDirect().getObject()) {
+        if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && object->type() != CompiledObjectType)
+            return false;
+        if (object == last)
+            return true;
+    }
+    return false;
+}
+
 ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     // This method only supports non-index PropertyNames.
@@ -291,16 +306,12 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = this;
-    // getPropertySlot() goes up by the prototypes that the Structures name, whoever overrides getPrototype(), and comes here at the first object that answers for its own properties itself.
-    // A compiled object stands for a plain one: behind it the search goes on as it came.
-    bool goesByStructures = type() == CompiledObjectType;
     while (true) {
         Structure* structure = object->structureID().decode();
         if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
             if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
                 return true;
         } else {
-            goesByStructures &= object->type() == CompiledObjectType;
             bool hasSlot = structure->classInfoForCells()->methodTable.getOwnPropertySlot(object, globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);
             if (hasSlot)
@@ -313,7 +324,9 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
                 return false;
         }
         JSValue prototype;
-        if (!structure->typeInfo().overridesGetPrototype() || goesByStructures || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) [[likely]]
+        if (!structure->typeInfo().overridesGetPrototype() || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) [[likely]]
+            prototype = object->getPrototypeDirect();
+        else if (searchCameByStructures(this, object))
             prototype = object->getPrototypeDirect();
         else {
             prototype = object->getPrototype(globalObject);
@@ -664,7 +677,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             } else {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
 #if ENABLE(AOT)
-                if (mayBePrototype() && vm.hasCompiledCode()) [[unlikely]]
+                if (vm.hasCompiledCode() && mayBePrototype()) [[unlikely]]
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
                 else
 #endif
@@ -727,7 +740,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         } else {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
 #if ENABLE(AOT)
-            if (mayBePrototype() && vm.hasCompiledCode()) [[unlikely]]
+            if (vm.hasCompiledCode() && mayBePrototype()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
             else
 #endif

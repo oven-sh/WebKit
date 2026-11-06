@@ -1001,12 +1001,12 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
 #if ENABLE(AOT)
 // The cache of a site holds one Structure. llint_aot_op_get_by_id counts the objects of other Structures that come by, in GetByIdModeMetadataDefault::padding1, from below up to zero. There what comes by takes the cache over.
 // Each wait is twice as long as the one in front of it (GetByIdModeMetadata::padding4 counts them), so a site that two kinds of objects share is filled anew some twenty times in all.
-// Both words lie where a cache in the mode ProtoLoad has its pointer: whatever that leaves there is a wait like any other.
-static void startWaitForOtherStructure(GetByIdModeMetadata& metadata)
+// Both words lie where a cache in the mode ProtoLoad has its pointer, so they say something only from one Structure in the cache to the next: a cache that held none begins with the shortest wait.
+static void startWaitForOtherStructure(GetByIdModeMetadata& metadata, bool heldStructure)
 {
     constexpr uint32_t shortestWait = 16;
     constexpr uint16_t mostDoublings = 20;
-    uint16_t doublings = std::min(metadata.padding4, mostDoublings);
+    uint16_t doublings = heldStructure ? std::min(metadata.padding4, mostDoublings) : 0;
     metadata.defaultMode.padding1 = 0u - (shortestWait << doublings);
     metadata.padding4 = doublings + 1;
 }
@@ -1069,6 +1069,9 @@ static ALWAYS_INLINE JSValue performLLIntGetByIDImpl(BytecodeIndex bytecodeIndex
         if (slot.isValue() && slot.slotBase() == baseValue) {
             ConcurrentJSLocker locker(codeBlock->m_lock);
             // Start out by clearing out the old cache.
+#if ENABLE(AOT)
+            bool heldStructure = hasCompiledCode && metadata.mode == GetByIdMode::Default && metadata.defaultMode.structureID;
+#endif
             metadata.clearToDefaultModeWithoutCache();
 
             // Prevent the prototype cache from ever happening.
@@ -1079,7 +1082,7 @@ static ALWAYS_INLINE JSValue performLLIntGetByIDImpl(BytecodeIndex bytecodeIndex
                 metadata.defaultMode.cachedOffset = slot.cachedOffset();
 #if ENABLE(AOT)
                 if constexpr (hasCompiledCode)
-                    startWaitForOtherStructure(metadata);
+                    startWaitForOtherStructure(metadata, heldStructure);
 #endif
                 vm.writeBarrier(codeBlock);
             }
@@ -1125,7 +1128,7 @@ static void cacheFieldOfCompiledObject(VM& vm, CodeBlock* codeBlock, JSGlobalObj
     if (!offset || *offset == invalidOffset) {
         // What the cache holds goes on serving those that it was made for.
         if (holdsOtherStructure)
-            startWaitForOtherStructure(metadata);
+            startWaitForOtherStructure(metadata, true);
         else if (offset)
             metadata.mode = GetByIdMode::Unset;
         return;
@@ -1133,7 +1136,7 @@ static void cacheFieldOfCompiledObject(VM& vm, CodeBlock* codeBlock, JSGlobalObj
     metadata.hitCountForLLIntCaching = 0;
     metadata.defaultMode.structureID = structure->id();
     metadata.defaultMode.cachedOffset = *offset;
-    startWaitForOtherStructure(metadata);
+    startWaitForOtherStructure(metadata, holdsOtherStructure);
     vm.writeBarrier(codeBlock);
 }
 #endif
@@ -1159,7 +1162,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
 #if ENABLE(AOT)
     // The wait has run out on something that the cache cannot hold.
     if (GetByIdModeMetadata& cache = metadata.m_modeMetadata; vm.hasCompiledCode() && cache.mode == GetByIdMode::Default && cache.defaultMode.structureID && !cache.defaultMode.padding1) [[unlikely]]
-        startWaitForOtherStructure(cache);
+        startWaitForOtherStructure(cache, true);
 #endif
     LLINT_RETURN_PROFILED(result);
 }

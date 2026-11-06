@@ -551,6 +551,7 @@ export const builtinMarks = [
   "IsKeyReadOnlyByRowsThatNameIt",
   "LaysOperandAbovePrototype",
   "HandsOutNoOtherHostObject",
+  "IsDeletedWhenModuleOfLibraryLoads",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 

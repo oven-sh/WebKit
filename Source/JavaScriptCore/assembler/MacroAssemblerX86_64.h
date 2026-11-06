@@ -9199,6 +9199,9 @@ public:
             2147483647.0f,
             2147483647.0f,
         };
+        if (!makesConstantsInRegisters())
+            move(TrustedImmPtr(masks), scratchGPR);                         // scratchGPR = f[0x80000000]x4
+
         m_assembler.vmovaps_rr(dest, scratchFPR2);
         if (makesConstantsInRegisters()) {
             move(TrustedImm32(std::bit_cast<int32_t>(masks[0])), scratchGPR);
@@ -9206,7 +9209,6 @@ public:
             m_assembler.vsubps_rrr(scratchFPR1, scratchFPR2, scratchFPR2);
             m_assembler.vcmpps_rrr(X86Assembler::PackedCompareCondition::GreaterThanOrEqualAndOrdered, scratchFPR1, scratchFPR2, scratchFPR1);
         } else {
-            move(TrustedImmPtr(masks), scratchGPR);                             // scratchGPR = f[0x80000000]x4
             m_assembler.vsubps_mrr(0, scratchGPR, scratchFPR2, scratchFPR2);    // scratchFPR2 = f[lane - 0x80000000]x4
             m_assembler.vcmpnltps_mrr(0, scratchGPR, scratchFPR2, scratchFPR1); // scratchFPR1 = mask for [lane >= 0xFFFFFFFF]x4
         }
@@ -9259,6 +9261,9 @@ public:
             0x1.0p+52,
             0x1.0p+52,
         };
+        if (!makesConstantsInRegisters())
+            move(TrustedImmPtr(masks), scratchGPR);
+
         m_assembler.vxorpd_rrr(scratchFPR, scratchFPR, scratchFPR);
         m_assembler.vmaxpd_rrr(scratchFPR, src, dest);
         if (makesConstantsInRegisters()) {
@@ -9271,7 +9276,6 @@ public:
             vectorSplatInt64(scratchGPR, fpTempRegister);
             m_assembler.vaddpd_rrr(fpTempRegister, dest, dest);
         } else {
-            move(TrustedImmPtr(masks), scratchGPR);
             m_assembler.vminpd_mrr(0, scratchGPR, dest, dest);
             m_assembler.vroundpd_rr(dest, dest, RoundingType::TowardZero);
             m_assembler.vaddpd_mrr(sizeof(double) * 2, scratchGPR, dest, dest);

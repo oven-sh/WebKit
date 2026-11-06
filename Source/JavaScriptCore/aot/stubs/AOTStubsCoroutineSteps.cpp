@@ -25,9 +25,10 @@ namespace JSC { namespace AOT {
 
 using AsyncGeneratorField = JSAsyncGenerator::Field;
 
-static constexpr int32_t consumerMayContinue = 1;
+static constexpr int32_t bodyMayContinue = 1;
+static constexpr int32_t consumerMayContinue = 64;
 static constexpr int32_t consumerIsAsyncGenerator = 2;
-static_assert(consumerMayContinue == SavedFrame::isEnteredByJobLoopFlag);
+static_assert(bodyMayContinue == SavedFrame::isEnteredByJobLoopFlag);
 
 struct StepFrame {
     static constexpr int32_t offsetOfProducer = asyncGeneratorSlotInStubFrame * static_cast<int32_t>(sizeof(void*));
@@ -88,13 +89,13 @@ void generateStepAsyncGenerator(StubAssembler& jit)
     JumpList mayNotContinue;
     jit.move(TrustedImm32((consumerKind == StepConsumer::AsyncGenerator ? consumerIsAsyncGenerator : 0) | (awaitsCall ? consumerOfStepAwaitsCall : 0)), consumer);
     emitBranchUnlessFrameMayContinue(jit, { InvalidGPRReg, InvalidGPRReg, word, other }, mayNotContinue);
-    jit.or32(TrustedImm32(consumerMayContinue), consumer);
+    jit.or32(TrustedImm32(bodyMayContinue | consumerMayContinue), consumer);
     mayNotContinue.link(&jit);
 
     JumpList stepsInEngine;
     if (awaitsCall) {
         Jump keepsNoAsyncContext = emitBranchIfTracksNoAsyncContext(jit, word);
-        jit.and32(TrustedImm32(~consumerMayContinue), consumer);
+        jit.and32(TrustedImm32(~bodyMayContinue), consumer);
         keepsNoAsyncContext.link(&jit);
     }
     std::optional<AssemblyHelpers::FreeListRefill> refill;
@@ -220,7 +221,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     RELEASE_ASSERT(noOverlap(firstOperand, secondOperand, sent, saved, consumer, siteWord, word, other, instanceGPR));
     RELEASE_ASSERT(noOverlap(result, generator, sent, saved, consumer, siteWord, word, other) && status == siteWord);
 
-    jit.and32(TrustedImm32(consumerMayContinue), consumer, word);
+    jit.and32(TrustedImm32(bodyMayContinue), consumer, word);
     jit.or32(TrustedImm32(SavedFrame::isSuspendedAtYieldFlag), word);
     jit.store8(word, Address(saved, SavedFrame::offsetOfFlags()));
     emitPushStepFrame(jit, firstOperand, consumer, siteWord, secondOperand);

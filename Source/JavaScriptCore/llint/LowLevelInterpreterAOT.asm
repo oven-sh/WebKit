@@ -984,6 +984,21 @@ aotOp(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size, get, dispatch
     end)
 end)
 
+# Whoever gives a property of a prototype another value tells those who have looked it up from below: the slow path does, and the store by offset of the ordinary handler tells nobody.
+aotOp(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size, get, dispatch, metadata, return)
+    get(m_base, t1)
+    loadConstantOrVariableCell(size, t1, t0, .ordinary)
+    loadi JSCell::m_structureID[t0], t2
+    structureIDToStructureWithScratch(t2, t3)
+    btinz Structure::m_bitField[t2], (constexpr Structure::s_mayBePrototypeBits), .slow
+.ordinary:
+    jumpToOrdinaryHandler(size, op_enumerator_put_by_val)
+
+.slow:
+    callSlowPath(_slow_path_enumerator_put_by_val)
+    dispatch()
+end)
+
 # Heap::writeBarrier(). While the collector marks beside this thread, the threshold sends every cell to the slow path, which has the fence.
 macro writeBarrierOnCell(cell, scratch)
     loadp CodeBlock[cfr], scratch
@@ -2444,6 +2459,7 @@ entry(llint_aot, macro ()
     setEntryAddresses(OpCreateLexicalEnvironment, op_create_lexical_environment)
     setEntryAddresses(OpEnumeratorGetByVal, op_enumerator_get_by_val)
     setEntryAddresses(OpEnumeratorNext, op_enumerator_next)
+    setEntryAddresses(OpEnumeratorPutByVal, op_enumerator_put_by_val)
     setEntryAddresses(OpGetById, op_get_by_id)
     setEntryAddresses(OpGetByVal, op_get_by_val)
     setEntryAddresses(OpGetLength, op_get_length)

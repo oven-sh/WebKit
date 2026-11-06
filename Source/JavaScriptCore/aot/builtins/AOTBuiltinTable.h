@@ -749,6 +749,7 @@ enum class BuiltinMark : uint8_t {
     IsKeyReadOnlyByRowsThatNameIt,
     LaysOperandAbovePrototype,
     HandsOutNoOtherHostObject,
+    IsDeletedWhenModuleOfLibraryLoads,
 };
 
 struct BuiltinMarkedEntry {

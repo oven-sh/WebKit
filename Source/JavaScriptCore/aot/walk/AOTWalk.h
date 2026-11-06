@@ -760,6 +760,7 @@ public:
         bool mayGoByProtocol { false };
         bool isOpenAtEveryStepAndClose { false };
         Reference wayToStep;
+        Reference goesByDriver;
         bool goesByProtocolAlone { false };
         bool isAsync { false };
         std::optional<JSC::IterationKind> kindOfListAskedForBehind;
@@ -784,7 +785,7 @@ public:
         bool isDeadBehindLoop { false };
         void forEachValueHeld(NOESCAPE const Invocable<void(Reference)> auto& functor) const
         {
-            for (Reference value : { list, position, table, state, iterator, next, wayToStep, valueBesideKey, subject, count, foundAt, keyForAccesses })
+            for (Reference value : { list, position, table, state, iterator, next, wayToStep, goesByDriver, valueBesideKey, subject, count, foundAt, keyForAccesses })
                 functor(value);
             for (Reference value : takenAtOpen)
                 functor(value);

@@ -1423,6 +1423,13 @@ private:
     mutable UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersAskedAboutOriginal;
     mutable UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersThatGotOriginal;
     BitVector m_modulesThatRanBesideMock;
+    BitVector m_modulesThatRanBesideMockAlone;
+    bool hasRunBesideMockAlone(ModuleID module) const { return m_modulesThatRanBesideMockAlone.get(module.index()) && !wasLoadedWithGraph(module); }
+    void noteCallThatComesToModuleItself(ModuleID module)
+    {
+        if (!isMocked(module))
+            m_modulesThatRanBesideMockAlone.clear(module.index());
+    }
     BitVector m_modulesOwedBesideMock;
     BitVector m_modulesThatOwnFactoryMayLoad;
     BitVector m_filesWhoseOriginalRuns;

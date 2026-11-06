@@ -2750,6 +2750,8 @@ ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpen(Builtin
     BuiltinID canonical = m_builtins.canonicalID(member);
     if (m_source.isUnlocked(member) || m_source.isUnlocked(canonical))
         return ReasonBuiltinStaysOpen::IsLeftOpenForTests;
+    if (!m_refused.codeOutsideImage && m_builtins.has(BuiltinMark::IsDeletedWhenModuleOfLibraryLoads, member))
+        return ReasonBuiltinStaysOpen::IsWrittenUnderItsName;
     if (m_isWritten.quickGet(member.index()) || m_isWritten.quickGet(canonical.index()) || m_lookups.membersWritten.get(member.index()))
         return ReasonBuiltinStaysOpen::IsWrittenUnderItsName;
     return reasonToLeaveOpenUnder(m_builtins.canonicalID(m_builtins.at(member).holder), m_source.keyOf(m_builtins.at(member).name), m_source.isLockLeftToProgram(member), lost);

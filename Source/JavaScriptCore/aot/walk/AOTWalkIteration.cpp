@@ -642,6 +642,7 @@ constexpr uint32_t numberOfWordsOfIteration = 3;
 struct OpenedIteration {
     Reference iterator;
     Reference next;
+    Reference goesByDriver { };
 };
 
 struct JoinOfIteration {
@@ -679,14 +680,14 @@ public:
     {
         OpenedIteration opened = open(iterable);
         Draft allocation = draft(Opcode::NewHeapWords);
-        bool laysVerdict = laysVerdictOnNext(iterable);
+        bool laysVerdict = m_kind == IteratorKind::Async || laysVerdictOnNext(iterable);
         allocation.setNumberOfWords(numberOfWordsOfIteration + laysVerdict);
         m_state = build(WTF::move(allocation));
         storeWord(WordOfIteration::Iterator, opened.iterator);
         storeWord(WordOfIteration::Next, opened.next);
         storeWord(WordOfIteration::IsDone, boolean(false));
         if (laysVerdict)
-            storeWord(WordOfIteration::StepsInLibrary, testType(opened.next, methodsSteppedInLibrary()));
+            storeWord(WordOfIteration::StepsInLibrary, m_kind == IteratorKind::Async ? opened.goesByDriver : testType(opened.next, methodsSteppedInLibrary()));
         return m_state;
     }
 
@@ -865,6 +866,7 @@ public:
         OpenedIteration opened = open(iterable);
         iteration.iterator = opened.iterator;
         iteration.next = opened.next;
+        iteration.goesByDriver = opened.goesByDriver;
         if (asksWay)
             iteration.wayToStep = callHelper(findHelper(IterationHelper::WayToStepIterator), { opened.iterator, opened.next });
         return iteration;
@@ -2097,6 +2099,7 @@ private:
         if (iteration.isOpenAtEveryStepAndClose) {
             stepWhereNextIsAsExpected(iteration, after);
             m_isSteppedByCallsAlone = iteration.isSteppedByCallsAlone;
+            m_goesByDriver = iteration.goesByDriver;
             step(iteration.iterator, iteration.next, { }, false, stepped);
             endStepByProtocolOnTwoWays(iteration, after, stepped.results[0], [&] { return stepped.results[1]; });
             return;
@@ -2324,7 +2327,10 @@ private:
         Reference method = read(iterable, WellKnownSymbol::AsyncIterator);
         BlockID absent = addBlock();
         BlockID present = addBlock();
-        JoinOfIteration join = openJoin();
+        BlockID opened = addBlock();
+        std::array<Reference, 3> results;
+        for (Reference& result : results)
+            result = m_walker.addParameter(opened, TypeTable::anything, Representation::JSValue);
         branch(testType(method, TypeTable::nullish), absent, present);
 
         continueIn(absent);
@@ -2333,12 +2339,18 @@ private:
         wrapper.setIteratorOperand(sync.iterator);
         wrapper.setNextOperand(sync.next);
         OpenedIteration wrapped = withNextMethod(build(WTF::move(wrapper)));
-        jumpTo(join, wrapped.iterator, wrapped.next);
+        jumpTo(opened, { wrapped.iterator, wrapped.next, boolean(true) });
 
         continueIn(present);
-        OpenedIteration opened = withNextMethod(requireObject(call(method, iterable), RuntimeErrorKind::IteratorIsNotAnObject));
-        jumpTo(join, opened.iterator, opened.next);
-        return { join.results[0], join.results[1] };
+        OpenedIteration given = withNextMethod(requireObject(call(method, iterable), RuntimeErrorKind::IteratorIsNotAnObject));
+        BlockID isAnother = addBlock();
+        TypeArena& types = m_walker.types();
+        goOnWhereTypeTestPasses(method, types.forBuiltin(m_walker.program().builtins().canonicalID(Builtins::AsyncIteratorPrototypeSymbolAsyncIterator)), isAnother);
+        goOnWhereTypeTestPasses(iterable, types.builtinClass(BuiltinClasses::AsyncGenerator), isAnother);
+        jumpTo(opened, { given.iterator, given.next, boolean(true) });
+        continueIn(isAnother);
+        jumpTo(opened, { given.iterator, given.next, boolean(false) });
+        return { results[0], results[1], results[2] };
     }
 
     void readStepResult(Reference result, bool readsValueWhenDone, const JoinOfIteration& join) { readAwaitedStepResult(await(result), readsValueWhenDone, join); }
@@ -2501,16 +2513,28 @@ private:
 
         if (isAsync) {
             Reference generator = goOnWhereTypeTestPasses(iterator, types.unionOf(types.builtinClass(BuiltinClasses::AsyncGenerator), types.builtinClass(BuiltinClasses::AsyncFromSyncIterator)), byCall);
-            Reference stepped = m_walker.isUnreachable() ? Reference() : buildStepOfAsyncGenerator(m_walker, generator, sent ? sent : constant(draft(Opcode::Absent)), m_held, { }, m_origin);
-            Reference value = resultOfGeneratorStep(stepped, StepGeneratorResult::Value);
-            Reference status = resultOfGeneratorStep(stepped, StepGeneratorResult::Status);
-            BlockID isAnsweredByObject = addBlock(BlockFrequency::Rare);
-            BlockID isAnswered = addBlock();
-            branch(hasStatus(status, AsyncGeneratorStepStatus::Result), isAnsweredByObject, isAnswered);
-            continueIn(isAnsweredByObject);
-            readAwaitedStepResult(value, readsValueWhenDone, join);
-            continueIn(isAnswered);
-            endStepWithoutResultObject(hasStatus(status, AsyncGeneratorStepStatus::Completed), value, readsValueWhenDone, join);
+            auto stepAwaiting = [&](BuiltinID awaitedCallee) {
+                Reference stepped = m_walker.isUnreachable() ? Reference() : buildStepOfAsyncGenerator(m_walker, generator, sent ? sent : constant(draft(Opcode::Absent)), m_held, awaitedCallee, m_origin);
+                Reference value = resultOfGeneratorStep(stepped, StepGeneratorResult::Value);
+                Reference status = resultOfGeneratorStep(stepped, StepGeneratorResult::Status);
+                BlockID isAnsweredByObject = addBlock(BlockFrequency::Rare);
+                BlockID isAnswered = addBlock();
+                branch(hasStatus(status, AsyncGeneratorStepStatus::Result), isAnsweredByObject, isAnswered);
+                continueIn(isAnsweredByObject);
+                readAwaitedStepResult(value, readsValueWhenDone, join);
+                continueIn(isAnswered);
+                endStepWithoutResultObject(hasStatus(status, AsyncGeneratorStepStatus::Completed), value, readsValueWhenDone, join);
+            };
+            bool alwaysGoesByDriver = !m_goesByDriver || types.isSubset(m_walker.typeOf(m_goesByDriver), TypeArena::fromPrimitives(Primitive::True));
+            BlockID byDriver = alwaysGoesByDriver ? BlockID() : addBlock();
+            if (byDriver) {
+                BlockID inOwnContext = addBlock();
+                branch(truthOf(m_goesByDriver), byDriver, inOwnContext);
+                continueIn(inOwnContext);
+                stepAwaiting(table.canonicalID(Builtins::AsyncGeneratorPrototypeNext));
+                continueIn(byDriver);
+            }
+            stepAwaiting({ });
         } else {
             Draft step = draft(Opcode::StepGenerator);
             step.setGeneratorOperand(iterator);
@@ -2543,6 +2567,8 @@ private:
         storeWord(WordOfIteration::IsDone, boolean(true));
         Reference iterator = readWord(WordOfIteration::Iterator);
         Reference next = readWord(WordOfIteration::Next);
+        if (m_kind == IteratorKind::Async)
+            m_goesByDriver = readWord(WordOfIteration::StepsInLibrary);
         step(iterator, next, sent, readsValueWhenDone, join);
     }
 
@@ -2634,6 +2660,7 @@ private:
     bool m_stateIsList { false };
     bool m_listOfStateHoldsVerdictOnNext { false };
     bool m_isSteppedByCallsAlone { false };
+    Reference m_goesByDriver;
     BlockID m_handler;
     bool m_isInLoopOfSpread { false };
     bool m_mayStepGenerator { true };

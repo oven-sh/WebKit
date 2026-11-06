@@ -23,6 +23,7 @@
 #include <array>
 #include <bit>
 #include <limits>
+#include <wtf/FastMalloc.h>
 #include <wtf/Lock.h>
 #include <wtf/StdLibExtras.h>
 
@@ -886,12 +887,14 @@ std::optional<SourcePosition> decodePosition(const Image& image, uint32_t functi
 }
 
 static Lock rememberedPositionsLock;
-static constinit std::array<RememberedPosition, 1024> rememberedPositions WTF_GUARDED_BY_LOCK(rememberedPositionsLock) { };
+static constexpr size_t numberOfRememberedPositions = 1024;
+static RememberedPosition* rememberedPositions WTF_GUARDED_BY_LOCK(rememberedPositionsLock);
 
 void forgetRememberedPositions()
 {
     Locker locker { rememberedPositionsLock };
-    rememberedPositions.fill({ });
+    if (rememberedPositions)
+        std::fill_n(rememberedPositions, numberOfRememberedPositions, RememberedPosition { });
 }
 
 static std::optional<SourcePosition> findPosition(const Image& image, uint32_t function, CallSiteIndex site)
@@ -911,9 +914,12 @@ static std::optional<SourcePosition> findPosition(const Image& image, uint32_t f
 
 std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex site) const
 {
-    RememberedPosition& remembered = rememberedPositions[(function * 31 + site.bits()) % rememberedPositions.size()];
+    size_t place = (function * 31 + site.bits()) % numberOfRememberedPositions;
     {
         Locker locker { rememberedPositionsLock };
+        if (!rememberedPositions)
+            rememberedPositions = static_cast<RememberedPosition*>(fastZeroedMalloc(numberOfRememberedPositions * sizeof(RememberedPosition)));
+        const RememberedPosition& remembered = rememberedPositions[place];
         if (remembered.image == this && remembered.function == function && remembered.site == site.bits())
             return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID(), remembered.constructionStart, remembered.startIsForCallers, remembered.startIsWhereWritten };
     }
@@ -923,7 +929,7 @@ std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex
         position = SourcePosition { { position->lineColumn.line, position->lineColumn.column - firstReadColumnDelta }, position->source };
     if (position) {
         Locker locker { rememberedPositionsLock };
-        remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers, position->startIsWhereWritten };
+        rememberedPositions[place] = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers, position->startIsWhereWritten };
     }
     return position;
 }

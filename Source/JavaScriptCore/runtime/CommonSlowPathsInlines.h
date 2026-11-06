@@ -269,7 +269,7 @@ inline void opEnumeratorPutByVal(JSGlobalObject* globalObject, JSValue baseValue
             auto* baseCell = baseValue.asCell();
             auto* structure = baseCell->structure();
             // Whoever gives a property of a prototype another value tells those who have looked it up from below, and a store by offset tells nobody.
-            if (structure->id() == enumerator->cachedStructureID() && !structure->mayHaveImmutableProperties() && !structure->isWatchingReplacement() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() && !structure->mayBePrototype()) {
+            if (structure->id() == enumerator->cachedStructureID() && !structure->mayHaveImmutableProperties() && !structure->isWatchingReplacement() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() && !(structure->mayBePrototype() && vm.hasCompiledCode())) {
                 // We'll only match the structure ID if the base is an object.
                 ASSERT(index < enumerator->endStructurePropertyIndex());
                 scope.release();

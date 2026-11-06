@@ -343,7 +343,7 @@ static void bindStepForReplacement(BuilderOfReplacements& builder, const BodyVal
     builder.walker().bind(step.id(), built);
 }
 
-static Reference buildLengthOfIteratedObjectForReplacement(BuilderOfReplacements& builder, Reference iterated)
+static Reference buildTestOfPositionInIteratedObjectForReplacement(BuilderOfReplacements& builder, Reference iterated, Reference position)
 {
     Draft test = builder.draft(Opcode::HasJSType);
     test.setValueOperand(iterated);
@@ -353,13 +353,19 @@ static Reference buildLengthOfIteratedObjectForReplacement(BuilderOfReplacements
 
     ArmsOfReplacements arms(builder, isView, 1);
     {
+        Draft length = builder.draft(Opcode::GetTypedArrayLength);
+        length.setViewOperand(builder.proveOrTrap(iterated, TypeTable::object));
+        length.setTypedArrayType(NotTypedArray);
+        ArmsOfReplacements byLengthInLine(builder, builder.applyOperator(Opcode::Less, position, builder.build(WTF::move(length))), 1);
+        byLengthInLine.endFirstArm({ builder.boolean(true) });
         Draft function = builder.draft(Opcode::Builtin);
         function.setBuiltin(Builtins::LinkTimeConstantTypedArrayLength);
         function.setIsNotReadFromHolder(true);
         Draft call = builder.draft(Opcode::Call);
         call.setCalleeOperand(builder.build(WTF::move(function)));
         call.setArgumentsOperands(std::array { iterated });
-        arms.endFirstArm({ builder.build(WTF::move(call)) });
+        byLengthInLine.endSecondArm({ builder.applyOperator(Opcode::Less, position, builder.build(WTF::move(call))) });
+        arms.endFirstArm({ byLengthInLine.result() });
     }
     {
         Draft read = builder.draft(Opcode::PropGet);
@@ -367,7 +373,7 @@ static Reference buildLengthOfIteratedObjectForReplacement(BuilderOfReplacements
         read.setKey(builder.walker().program().keyOf(BuiltinNames::length));
         Draft length = builder.draft(Opcode::ToLength);
         length.setValueOperand(builder.build(WTF::move(read)));
-        arms.endSecondArm({ builder.build(WTF::move(length)) });
+        arms.endSecondArm({ builder.applyOperator(Opcode::Less, position, builder.build(WTF::move(length))) });
     }
     return arms.result();
 }
@@ -400,8 +406,7 @@ static void buildStepOfArrayIteratorAsReplacement(Walker& walker, const BodyValu
     byFinished.endFirstArm({ builder.boolean(true), builder.undefined() });
 
     Reference iterated = builder.getInternalField(iterator, JSArrayIterator::Field::IteratedObject);
-    Reference length = buildLengthOfIteratedObjectForReplacement(builder, iterated);
-    ArmsOfReplacements byRange(builder, builder.applyOperator(Opcode::Less, index, length), 2);
+    ArmsOfReplacements byRange(builder, buildTestOfPositionInIteratedObjectForReplacement(builder, iterated, index), 2);
     builder.putInternalField(iterator, JSArrayIterator::Field::Index, builder.applyOperator(Opcode::Add, index, builder.integer(1)));
     byRange.endFirstArm({ builder.boolean(false), buildValueAtPositionOfArrayIteratorForReplacement(builder, iterator, iterated, index) });
     builder.putInternalField(iterator, JSArrayIterator::Field::Index, builder.integer(JSArrayIterator::doneIndex));

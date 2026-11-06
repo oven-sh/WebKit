@@ -1306,6 +1306,7 @@ void RuntimeCallEmitter::markRowsExercised(uint32_t rows, std::span<const PartOf
         if (rows >> 16 != noRowInEffectsNet)
             bytes[numberOfBytes++] = byteInEffectsNet(rows >> 16, part);
     }
+    m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTStopAtFalseEffects));
     mark->setGenerator([bytes, numberOfBytes](CCallHelpers& jit, const Machine::PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg table = params[0].gpr();

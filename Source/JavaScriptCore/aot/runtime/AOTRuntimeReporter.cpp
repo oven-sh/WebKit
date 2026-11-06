@@ -24,12 +24,14 @@
 #include "LineColumn.h"
 #include "Options.h"
 #include "StackVisitor.h"
+#include <atomic>
 #include <cstdlib>
 #include <mutex>
 #include <optional>
 #include <ranges>
 #include <span>
 #include <utility>
+#include <wtf/FastMalloc.h>
 #include <wtf/FilePrintStream.h>
 #include <wtf/HexNumber.h>
 #include <wtf/Lock.h>
@@ -111,10 +113,26 @@ bool noteFalseRowOfEffects(const String& said)
     return true;
 }
 
-std::span<uint8_t> effectsNetExercised()
+static constexpr size_t sizeOfEffectsNetExercised = Typed::numberOfRowsInEffectsNet * Typed::bytesOfRowInEffectsNet;
+static std::atomic<uint8_t*> s_effectsNetExercised;
+
+std::span<uint8_t> makeEffectsNetExercised()
 {
-    static uint8_t bytes[Typed::numberOfRowsInEffectsNet * Typed::bytesOfRowInEffectsNet];
-    return bytes;
+    uint8_t* bytes = s_effectsNetExercised.load(std::memory_order_acquire);
+    if (!bytes) {
+        uint8_t* made = static_cast<uint8_t*>(fastZeroedMalloc(sizeOfEffectsNetExercised));
+        if (s_effectsNetExercised.compare_exchange_strong(bytes, made, std::memory_order_acq_rel))
+            bytes = made;
+        else
+            fastFree(made);
+    }
+    return { bytes, sizeOfEffectsNetExercised };
+}
+
+std::span<const uint8_t> effectsNetExercised()
+{
+    const uint8_t* bytes = s_effectsNetExercised.load(std::memory_order_acquire);
+    return { bytes, bytes ? sizeOfEffectsNetExercised : 0 };
 }
 
 static Lock s_countsLock;

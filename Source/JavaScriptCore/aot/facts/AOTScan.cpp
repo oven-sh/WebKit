@@ -5167,7 +5167,7 @@ const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uin
     if (kind == TerminatorKind::SwitchString) {
         m_summary.weightOfOperations += terminator.numberOfTargets() * 2;
         for (StringID written : terminator.as<TerminatorKind::SwitchString>().strings())
-            noteNameThatMayBecomeText(m_program.strings.builtinName(written));
+            noteTextThatMayNameEvent(written);
     } else if (kind == TerminatorKind::Switch)
         m_summary.weightOfOperations += terminator.numberOfTargets() / 2;
     bool mayThrow = false;

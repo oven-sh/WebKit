@@ -60,7 +60,8 @@ private:
     Vector<uint64_t> m_calls;
 };
 
-std::span<uint8_t> effectsNetExercised();
+std::span<uint8_t> makeEffectsNetExercised();
+std::span<const uint8_t> effectsNetExercised();
 bool noteFalseRowOfEffects(const String&);
 void printRowOfEffectsNet(PrintStream&, unsigned row);
 

@@ -1161,7 +1161,7 @@ bool Modules::tryReplaceExportBehindStars(ModuleID module, UniquedStringImpl* na
 
 bool Modules::hasBegunToLoad(ModuleID module) const
 {
-    if (hasMockThatEnded(module)) [[unlikely]]
+    if (hasMockThatEnded(module) || hasRunBesideMockAlone(module)) [[unlikely]]
         return false;
     ModuleStatus current = status(module);
     if (data(module).kind == ModuleKind::CommonJs)
@@ -1734,6 +1734,8 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
         if (ranBesideMock) [[unlikely]] {
             if (status(each) < ModuleStatus::Evaluating)
                 setStatus(each, ModuleStatus::Evaluated);
+            m_modulesThatRanBesideMockAlone.set(each.index());
+            m_modulesLoadedBesideGroups.clear(each.index());
             continue;
         }
         if (status(each) == ModuleStatus::Evaluated && (!original || each != fileOrModule))
@@ -3297,6 +3299,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     bool isBuiltinModule = !isFile && isBuiltinModuleOfLoader(module);
     noteRequestByLoader(module);
     noteLoadOfGraph(module);
+    noteCallThatComesToModuleItself(module);
     if (isFile || isBuiltinModule) {
         VM& vm = *m_instance.vm;
         bool isBuiltinModuleThatLoaderHas = isBuiltinModule && !isBuiltinModuleNewToLoader(module);

@@ -491,7 +491,9 @@ Instance* Instance::create(JSGlobalObject* realm)
     initializeCollectorWords(vm, *instance);
     initializeStubWords(*instance);
     initializeIterationWords(*instance);
-    instance->effectsNet.exercised = effectsNetExercised().data();
+    constexpr unsigned entryOfEffectsNet = static_cast<unsigned>(Entry::operationAOTStopAtFalseEffects);
+    if (vm.aotState().image->header().entriesUsed[entryOfEffectsNet / 32] >> entryOfEffectsNet % 32 & 1) [[unlikely]]
+        instance->effectsNet.exercised = makeEffectsNetExercised().data();
 
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("chains above lists without names"_s, asMutableByteSpan(instance->arrays.chainsAboveListsWithoutNames));

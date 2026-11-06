@@ -3320,6 +3320,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     }
 
     willRequireESModule(target);
+    noteCallThatComesToModuleItself(target);
     LoadedModule& loaded = ensureLoaded(target);
     if (loaded.isBeingRequired) {
         if (!loaded.exportsWhileRequired)
