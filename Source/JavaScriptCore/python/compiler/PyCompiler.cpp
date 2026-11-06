@@ -778,13 +778,15 @@ bool Unit::isReplacedByCopy(const Last& isLast, unsigned* jumpItStaysInFrontOf)
     return false;
 }
 
-// Nothing is to be run on the way there.
 bool Unit::canBranchTo(const Last& isLast)
 {
-    ASSERT(isLast.kind == Last::BeforeJump);
     // CPython's compiler has a branch to a jump go where the jump goes only if the jump is of that kind, and not because of the jump it leads to.
-    if (isLast.firstJumpIs < JumpIs::ToldOf)
-        return false;
+    return isLast.firstJumpIs >= JumpIs::ToldOf && nothingRunsBeforeJump(isLast);
+}
+
+bool Unit::nothingRunsBeforeJump(const Last& isLast)
+{
+    ASSERT(isLast.kind == Last::BeforeJump);
     for (size_t i = isLast.blockCount; i < m_blocks.size(); ++i) {
         switch (m_blocks[i].kind) {
         case BlockKind::WhileLoop:
@@ -848,18 +850,23 @@ Label& Unit::labelForLine(ReturnsByLine& labels, int lineno, const Range& place)
 
 void Unit::emitReturnsByLine(ReturnsByLine& returns, const Last& isLast)
 {
-    auto emit = [&](auto& entry) {
+    auto emit = [&](auto& entry, bool comesInPlaceOfJump = false) {
         g.emitLabel(entry.label.get());
         if (isLast.kind != Last::BeforeJump || isLast.jumpIs >= JumpIs::ToldOf)
             line(entry.lineno);
+        else if (comesInPlaceOfJump && nothingRunsBeforeJump(isLast) && !g.branchesToLastPythonLabel().count)
+            silentLine(entry.lineno); // A jump to a jump: in CPython it goes where that goes, and is of its own line still. (Not if something is run first, or a branch leads here too.)
         if (entry.place.lineno)
             place(entry.place);
         leave(isLast);
+        // (The copies that follow are of no line.)
+        if (comesInPlaceOfJump && isLast.kind == Last::BeforeJump && isLast.jumpIs < JumpIs::ToldOf)
+            noLine();
     };
     // `if a and 0:`: nothing that can be reached is left between the jump that came of the constant and what it leads to. In CPython such a jump is dropped.
     auto* next = std::ranges::find(returns, m_targetOfJumpOfConstant.get(), [](auto& entry) { return entry.label.ptr(); });
     if (next != returns.end())
-        emit(*next);
+        emit(*next, true);
     for (auto& entry : returns) {
         if (&entry != next)
             emit(entry);

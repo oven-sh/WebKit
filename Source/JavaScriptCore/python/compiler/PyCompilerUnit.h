@@ -320,6 +320,7 @@ private:
     Label* targetReplacedByCopy(Label& end, const Last&);
     Label* m_targetReplacedByCopy { nullptr };
     bool canBranchTo(const Last&);
+    bool nothingRunsBeforeJump(const Last&);
     void unbindNameOfHandler(Name, const Range&, bool isInCPythonsCode = true);
     RegisterID* exprWhoseEndMayBeJumpedTo(Expr*, RegisterID* dst, bool& endIsJumpedTo);
     void exprStatementAtEndOfFunction(Expr*, const Last&);
