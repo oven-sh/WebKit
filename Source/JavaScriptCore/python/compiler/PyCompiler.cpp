@@ -1772,7 +1772,8 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
         return;
     }
     case BlockKind::HandlerCleanup:
-        restoreHandledException(block.saved);
+        if (block.saved)
+            restoreHandledException(block.saved);
         if (block.name) {
             SameLine sameLine(*this);
             storeName(block.name, constant(jsUndefined()), block.range);
@@ -2510,6 +2511,18 @@ void Unit::tryFinally(AST::Try* node, const Last& isLast)
     endOfStatement(exit.get());
 }
 
+// The statements of a `try` with handlers.
+Unit::Try Unit::bodyOfTry(AST::Try* node, Label& end, const Last& isLastOfPart)
+{
+    Try body = beginTry();
+    pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore, .range = node->range });
+    statements(node->body, 0, node->orelse.isEmpty() ? isLastOfPart : notLast);
+    endOfProtectedStatements(node->orelse.isEmpty() ? JumpsHere::AreTakenIn : JumpsHere::Count, &end);
+    popBlock();
+    endTry(body);
+    return body;
+}
+
 void Unit::tryExcept(AST::Try* node, const Last& isLast)
 {
     Ref<Label> end = g.newLabel();
@@ -2522,12 +2535,7 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
             isLastOfPart.instructionsOfJumps[isLastOfPart.jumpsBefore - 1] = instructions;
         return isLastOfPart;
     };
-    Try body = beginTry();
-    pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore, .range = node->range });
-    statements(node->body, 0, node->orelse.isEmpty() ? isLastOfPart : notLast);
-    endOfProtectedStatements(node->orelse.isEmpty() ? JumpsHere::AreTakenIn : JumpsHere::Count, end.ptr());
-    popBlock();
-    endTry(body);
+    Try body = bodyOfTry(node, end.get(), isLastOfPart);
     if (cannotGetHere())
         deadStatements(node->orelse);
     else
@@ -2636,12 +2644,8 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
     Ref<Label> orelse = g.newLabel();
     Ref<Label> end = g.newLabel();
 
-    Try body = beginTry();
-    pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore, .range = node->range });
-    statements(node->body, 0, isLast.onlyIf(node->orelse.isEmpty()));
-    endOfProtectedStatements();
-    popBlock();
-    endTry(body);
+    // The `else` comes behind the handlers, as in CPython's code: where the handlers stay in their place, in a handler, there is a jump over them in front of it and none behind it.
+    Try body = bodyOfTry(node, orelse.get(), lastBeforeJump(orelse.get(), isLast, JumpIs::ToldOfForwards, 2));
     if (node->orelse.isEmpty())
         leaveStatement(orelse.get(), isLast, JumpIs::ToldOfForwards);
     else {
@@ -2685,17 +2689,26 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
             storeName(handler->name, match.get(), handler->range);
         match = nullptr;
 
+        // What comes behind the statements of a clause is a jump to the next clause, and not the end of anything. What was being handled before stays where it is until the last.
+        Last isLastOfClause;
+        {
+            SetForScope nothingEndsThere(m_statementsAfter, nullptr);
+            isLastOfClause = lastBeforeJump(next.get(), notLast, JumpIs::ToldOfForwards, handler->name ? 5 : 2);
+        }
         Try clause = beginTry();
-        pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .name = handler->name, .range = handler->range });
-        statements(handler->body);
+        pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = clause.depthBefore, .name = handler->name, .range = handler->range, .isMarked = false });
+        statements(handler->body, 0, isLastOfClause);
         popBlock();
         endTry(clause);
-        if (handler->name) {
-            SameLine sameLine(*this);
-            storeName(handler->name, constant(jsUndefined()), handler->range);
-            deleteName(handler->name, handler->range);
+        if (!cannotGetHere()) {
+            endOfProtectedStatements(JumpsHere::Count, next.ptr(), ComesNext::Instruction);
+            if (handler->name) {
+                SameLine sameLine(*this);
+                storeName(handler->name, constant(jsUndefined()), handler->range);
+                deleteName(handler->name, handler->range);
+            }
+            jump(next.get());
         }
-        jump(next.get());
 
         Reg thrown = beginHandler(clause);
         callRuntime(thrown.get(), RuntimeFunction::CatchException, { thrown.get() });
@@ -2740,6 +2753,7 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
     if (!bodyComesToItsEnd)
         deadStatements(node->orelse);
     else {
+        m_statementsEndWhereStatementEnds = true;
         statements(node->orelse, 0, isLast);
         if (isLast.kind == Last::OfFunction && !cannotGetHere())
             emitImplicitReturn(isLast);

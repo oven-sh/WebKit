@@ -527,6 +527,7 @@ private:
     };
     // SynthesizedCatch: CPython's code has no such handler, and tools are not told that it catches.
     Try beginTry(HandlerType = HandlerType::Catch);
+    Try bodyOfTry(AST::Try*, Label& end, const Last& isLastOfPart);
     void endTry(Try&);
     // Starts the handler. Returns what was thrown.
     Reg beginHandler(Try&, Reg* previous = nullptr, bool isOfLine = false);
