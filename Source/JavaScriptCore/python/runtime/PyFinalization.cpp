@@ -816,13 +816,20 @@ void makeCallsOwed(VM& vm)
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Another thread has waited long enough for its turn.
     Threads& threads = vm.heap.pythonRuntimes().first()->threads();
-    if (threads.dropIsRequested()) [[unlikely]]
+    if (threads.dropIsRequested()) [[unlikely]] {
         threads.yield();
+        // That may have been the last thread of the last runtime, whose realm had been dropped, and a collection has come since.
+        if (vm.heap.pythonRuntimes().isEmpty()) [[unlikely]]
+            return;
+    }
     if (threads.throwIfStopping()) [[unlikely]]
         return;
     // What other threads had to leave to the main one.
-    if (vm.heap.hasPostponedEmbedderFinalizers() && vm.heap.mayRunEmbedderFinalizers()) [[unlikely]]
+    if (vm.heap.hasPostponedEmbedderFinalizers() && vm.heap.mayRunEmbedderFinalizers()) [[unlikely]] {
         vm.heap.runPostponedEmbedderFinalizers();
+        if (vm.heap.pythonRuntimes().isEmpty()) [[unlikely]]
+            return;
+    }
     // The frames of C++ from here down to a finalizer or a handler stay while that runs, and it may ask for a collection.
     wipeStackBelow(vm.heap.pythonRuntimes().first()->globalObject(), stackBytesWipedForCallsOwed);
     bool hasFinalized = makeCallsOwedToProgram(vm);

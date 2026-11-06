@@ -154,6 +154,8 @@ public:
 
     // A second thread has been started. It stays so.
     ALWAYS_INLINE bool isEnabled() const { return m_isEnabled; }
+    // One of the runtimes has ended, be it in the collector's thread. See prepareSignals().
+    void runtimeDidEnd() { m_hasPreparedSignals = false; }
     // The thread that the first runtime of the VM was made on. Signal handlers run there, and JS.
     ALWAYS_INLINE bool isMainThread() const { return !m_isEnabled || isMainThreadSlow(); }
     uint64_t mainThreadIdent() const { return m_mainThreadIdent; }
@@ -286,6 +288,7 @@ private:
     JS_EXPORT_PRIVATE bool isMainThreadSlow() const;
     void forgetRuntimesThatHaveGone();
     void enable();
+    void prepareSignals();
     struct Start;
     static void* threadEntry(void*);
     void runThread(ThreadState&, Function<void()>&& body);
@@ -316,6 +319,7 @@ private:
     VM& m_vm; // Not to be touched without the GIL, except for its traps.
     const uint64_t m_number; // Never used again. Not 0.
     bool m_isEnabled { false };
+    bool m_hasPreparedSignals { false };
     uint64_t m_mainThreadIdent { 0 };
     unsigned m_runningCount { 0 };
     Vector<Ref<ThreadState>> m_threads;

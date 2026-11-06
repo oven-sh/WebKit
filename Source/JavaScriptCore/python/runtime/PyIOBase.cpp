@@ -1278,8 +1278,9 @@ void flushStandardStreamsIfPending(JSGlobalObject* globalObject)
 
 void flushStandardStreams(VM& vm)
 {
+    // To write is to run code, and a collection may find one of the others gone.
     for (Runtime* runtime : Vector<Runtime*, 1>(vm.heap.pythonRuntimes())) {
-        if (runtime->threads().isMainThread()) {
+        if (vm.heap.pythonRuntimes().contains(runtime) && runtime->threads().isMainThread()) {
             flushStandardStreamsIfPending(runtime->globalObject());
             writeOutPendingOutput(runtime->globalObject());
         }

@@ -140,8 +140,12 @@ void Threads::forgetRuntimesThatHaveGone()
     m_lastIdleCollectionFoundSomething = false;
     m_nextIdleCollectionMayFindMore = false;
     m_threadThatWaitsOwesCalls = false;
-    for (auto& thread : m_threads)
+    for (auto& thread : m_threads) {
         thread->waits = { };
+        // _imp.acquire_lock() without its release_lock().
+        importLock.holderEnds(*this, thread.get());
+        warningsLock.holderEnds(*this, thread.get());
+    }
 }
 
 Threads::Threads(VM& vm)
@@ -252,6 +256,13 @@ void Threads::enable()
     m_gilIsHeld = true;
     m_lastHolder = &thread;
     m_isEnabled = true;
+}
+
+// The signals that get a thread out of a system call. A runtime that ends puts the actions of the signals back as it found them, if they were its own to set (detachSignals()), while this
+// lives on with the other runtimes of the VM and with those to come. So it is done again when the next thread is started.
+void Threads::prepareSignals()
+{
+    m_hasPreparedSignals = true;
 #if !OS(WINDOWS)
     makeSignalInterrupt();
 #endif
@@ -611,12 +622,15 @@ void stopThreads(VM& vm)
 
 bool callWithoutGIL(VM& vm, void (*function)(void*), void* argument)
 {
-    if (vm.heap.pythonRuntimes().isEmpty())
+    // The host may have given up access to the heap for its wait. Then the collector's thread may be at work, and it takes a runtime whose global object has died out of the heap's list.
+    Threads* threads = vm.heap.pythonThreads();
+    if (!threads || !threads->runningCount())
         return false;
-    Runtime& rt = *vm.heap.pythonRuntimes().first();
-    if (!rt.threads().isEnabled())
+    if (!vm.heap.hasAccess())
+        vm.heap.acquireAccess();
+    if (vm.heap.pythonRuntimes().isEmpty()) [[unlikely]]
         return false;
-    AllowThreads allow(rt.globalObject());
+    AllowThreads allow(vm.heap.pythonRuntimes().first()->globalObject());
     function(argument);
     return true;
 }
@@ -707,6 +721,8 @@ int Threads::start(size_t stackSize, Function<void()>&& body, uint64_t& ident)
 #else
     if (!m_isEnabled)
         enable();
+    if (!m_hasPreparedSignals)
+        prepareSignals();
 
     Ref thread = ThreadState::create();
     auto* start = new Start { *this, thread.copyRef(), WTF::move(body) };
