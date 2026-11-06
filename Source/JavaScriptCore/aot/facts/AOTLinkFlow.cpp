@@ -4886,10 +4886,7 @@ bool LinkFlow::tieStore(FlowNodeID aggregate, LayoutID layout, PropertyKeyID key
     }
 
     std::span<const MemberOfClass> members = membersFoundUnder(layout, ClassSide::Prototype, key);
-    bool mayBeFieldThatNoLayoutLists = !listed && program.at(key).kind == PropertyKeyKind::WellKnownSymbol;
     for (const MemberOfClass& found : members) {
-        if (mayBeFieldThatNoLayoutLists && found.kind != MethodKind::Method)
-            deferEscape(layout);
         switch (found.kind) {
         case MethodKind::Method:
             if (!listed)

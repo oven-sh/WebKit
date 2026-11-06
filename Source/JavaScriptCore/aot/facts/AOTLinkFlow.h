@@ -460,6 +460,7 @@ public:
     };
     FoundMembers findMembers(LayoutID, ClassSide, PropertyKeyID) const;
     bool namesMayBeIncomplete(LayoutID, ClassSide) const;
+    bool someClassDeclaresMemberUnder(ClassSide side, PropertyKeyID key) const { return m_keysOfMembers[static_cast<size_t>(side)].get(key.index()); }
     bool findsPrototypeLinkOfSubject(LayoutID layout, ClassSide side, PropertyKeyID key, bool hasOtherReceiver) const { return !hasOtherReceiver && !findMembers(layout, side, key).mayAnswer(); }
     bool classesAnswerReadsUnderNumbers(LayoutID layout) const { return m_layoutsBelowMembersUnderNumbers.get(layout.index()) || namesMayBeIncomplete(layout, ClassSide::Prototype); }
     bool isAbsentAboveClasses(PropertyKeyID) const;

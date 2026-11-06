@@ -219,6 +219,7 @@ private:
     bool wasNamedBefore(LayoutID) const;
     void resolveOnSet(const LinkType& subject);
     void resolveOnFamily(FamilyID);
+    bool definitionHidesAccessorAbove(LayoutID) const;
     void resolveOnLostObjects(LayoutID member);
     void resolveOnPrototype(LayoutID);
     void resolveOnPrototypes(FamilyID);
@@ -977,6 +978,15 @@ void AccessInLinkAccesses::resolveOnSet(const LinkType& subject)
     }
 }
 
+bool AccessInLinkAccesses::definitionHidesAccessorAbove(LayoutID id) const
+{
+    if (findField(m_program, id, m_access.key))
+        return false;
+    return std::ranges::any_of(m_flow.findMembers(id, ClassSide::Prototype, m_access.key), [](const LinkFlow::FoundMember& found) {
+        return found.kind != MethodKind::Method;
+    });
+}
+
 void AccessInLinkAccesses::resolveOnFamily(FamilyID family)
 {
     mayThrow();
@@ -991,8 +1001,12 @@ void AccessInLinkAccesses::resolveOnFamily(FamilyID family)
         }
         if (isRead())
             giveWhatIsHeldAt(m_flow.fieldReadThrough(family, m_access.key));
-        else
+        else {
+            bool mayHideAccessor = m_access.kind == Kind::Define && m_flow.someClassDeclaresMemberUnder(ClassSide::Prototype, m_access.key);
+            if (mayHideAccessor && std::ranges::any_of(m_flow.layoutsOfFamily(family), [&](LayoutID member) { return definitionHidesAccessorAbove(member); }))
+                m_flow.escapeAllOf(familyForLinkAccesses(family));
             storeInto(m_flow.fieldStoredThrough(family, m_access.key, m_flow.isPartOfConstructionOfAllOf(family, m_function, m_access)));
+        }
         return;
     }
     if (isRead()) {
@@ -1016,8 +1030,15 @@ void AccessInLinkAccesses::resolveOnLostObjects(LayoutID member)
             givePrimitives(Primitive::Undefined);
         if (isRead())
             giveWhatIsHeldAt(m_flow.fieldReadThroughLost(member, m_access.key));
-        else
+        else {
+            if (m_access.kind == Kind::Define && m_flow.someClassDeclaresMemberUnder(ClassSide::Prototype, m_access.key)) {
+                LinkType lost;
+                lost.objects = LinkType::Objects::Lost;
+                lost.layout = member;
+                m_flow.escapeAllOf(lost);
+            }
             storeInto(m_flow.fieldStoredThroughLost(member, m_access.key));
+        }
     } else if (isRead())
         giveWhatIsHeldAt(m_flow.anyFieldReadThrough(LinkType::Objects::Lost, member, FamilyID(), namesOnlyElements()));
     else if (m_keyIsSymbolAsFarAsIsSeen) {
