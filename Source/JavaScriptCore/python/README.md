@@ -322,7 +322,10 @@ unpacking, cells, the binding of arguments when they are simply the parameters, 
   (`findBehindDict()`), which compares the two, sees that the dict has nothing but strs for keys (otherwise a key might run code: the long way) and
   looks the name up: 276 instructions for `obj.v` where the long way takes 425 and CPython 230. Such an object takes the one entry of the site
   like any other: where such objects of two classes come by in turn each costs about 80 more than the long way did, and objects without a dict that
-  alternate with them miss too (0 to 0.16 % of all reads in six programs, against 2 to 13 % that are cheaper). What only reads the attributes
+  alternate with them miss too (0 to 0.16 % of all reads in six programs, against 2 to 13 % that are cheaper). Only those two answers of the class are
+  remembered. Where it says something else, the read goes the long way, which is 30 to 56 longer for such an object than it was, the part about the class being
+  behind a call: a method that is read and not called 691 -> 733, a staticmethod called 762 -> 818, a classmethod 834 -> 889, a value in the dict under a
+  name where the class has a descriptor without `__set__` (`functools.cached_property` after the first read) 545 -> 594, an attribute of an exception 497 -> 527. What only reads the attributes
   still does not ask for the dict (`dir()`, `PyInstance::forEachAttribute`).
   One object is remembered. Where objects of two classes come by in turn, or of one class with their attributes set in
   another order, each is looked up anew, and once: `describeAttribute()` finds the attribute and says where it is in the terms of
