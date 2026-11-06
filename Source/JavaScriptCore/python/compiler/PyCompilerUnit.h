@@ -580,6 +580,7 @@ private:
     RegisterID* call(AST::Call*, RegisterID* dst, RegisterID* callee = nullptr);
     enum class GoesThrough : uint8_t { All, Any, Tuple, List, Set };
     RegisterID* callOnGeneratorExpression(AST::Call*, RegisterID* callee, JSValue builtin, GoesThrough, RegisterID* dst, unsigned temporary);
+    bool runsNoCodeBeforeCall(Seq<AST::Keyword*>, const Range&);
     // callee(pushed..., *args, **keywords). `injected`: a variable to pass after the positional arguments.
     RegisterID* emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<AST::Keyword*> keywords, Name injected, const Range&, unsigned temporary = 0);
 

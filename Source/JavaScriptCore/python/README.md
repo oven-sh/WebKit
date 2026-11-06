@@ -423,7 +423,7 @@ call link info. All that allocates, raises or runs code is done by the first of 
 the frame the stack pointer is at that frame, and C++ runs in what the collector takes for registers of the caller (`clearDeadTemporaries()`). The interpreter does by itself what most such calls are, a function that passes on what it was given: after the `*` a tuple, a list whose items lie in a row as values (either of up to 1,024 items) or nothing, after the `**` nothing or
 a dict that is empty, none an instance of a derived class. Everything else is `Python::prepareSpreadCall()`, in CPython's order: `k` is read, then `a` is gone through. If an
 argument stands before the `*` it is the other way round, CPython having made a list of `x` and `a` by then (`PositionalExtendsList`), and if keyword arguments follow, `op_py_spread_now` goes through `a` before they are
-evaluated: it makes a list of whatever is no tuple. A dict of the program's with
+evaluated. That makes a list of whatever is no tuple, a copy if it is a list: unless nothing of the program can run before the call, the keyword arguments being constants and variables of the function, all on one line. A dict of the program's with
 nothing but strs for keys is only read, not copied, if no code of the program can run before it has been. The instruction empties its registers when the arguments are in place, so the caller holds neither them nor what they came in.
 Arguments before a `*` that is not the last argument, and more than 30 of them, go into a list first, as all do in CPython.
 In instructions, with CPython's beside them: `f(*t)` 334 (446), `f(*l)` 332 (604), `f(x, *t)` 344 (1,119), `f(*t, **{})` 361 (686), `f(*t, **d)` 1,301 (1,350), `f(*t, k=x)` 1,953 (1,220: the dict is made

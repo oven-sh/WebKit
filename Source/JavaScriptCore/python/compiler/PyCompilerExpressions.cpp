@@ -2340,6 +2340,28 @@ static bool isSimpleCall(Seq<Expr*> args, Seq<Keyword*> keywords, unsigned extra
     return true;
 }
 
+// To get the keyword arguments of a call ready runs no code of the program, up to what the instruction that calls does itself: they are constants
+// and variables of the function. (On one line: whoever traces the program is told of a new line.)
+bool Unit::runsNoCodeBeforeCall(Seq<Keyword*> keywords, const Range& range)
+{
+    if (range.lineno != range.endLineno)
+        return false;
+    for (Keyword* keyword : keywords) {
+        // (What is after one of several ** is read at once.)
+        if (!keyword->arg && keywords.size() > 1)
+            return false;
+        if (keyword->value->is<Constant>())
+            continue;
+        auto* name = keyword->value->tryAs<NameExpr>();
+        if (!name)
+            return false;
+        Access access = resolve(mangle(name->id));
+        if (access.kind != Access::Kind::Fast)
+            return false;
+    }
+    return true;
+}
+
 RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<Keyword*> keywords, Name injected, const Range& range, unsigned temporary)
 {
     validateKeywords(keywords);
@@ -2436,8 +2458,10 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
                 if (keywords.isEmpty())
                     line(range);
                 else {
-                    g.emitPySpreadNow(positional.get());
-                    flags |= ListIsNobodyElses;
+                    bool leavesLists = runsNoCodeBeforeCall(keywords, range);
+                    g.emitPySpreadNow(positional.get(), leavesLists);
+                    if (!leavesLists)
+                        flags |= ListIsNobodyElses;
                 }
             }
         }

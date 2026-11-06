@@ -1586,9 +1586,9 @@ RegisterID* BytecodeGenerator::emitPyCallSpread(RegisterID* dst, RegisterID* fun
     return dst;
 }
 
-void BytecodeGenerator::emitPySpreadNow(RegisterID* srcDst)
+void BytecodeGenerator::emitPySpreadNow(RegisterID* srcDst, bool leavesLists)
 {
-    OpPySpreadNow::emit(this, srcDst);
+    OpPySpreadNow::emit(this, srcDst, leavesLists);
 }
 
 void BytecodeGenerator::emitPythonYieldPoint(RegisterID* argument)

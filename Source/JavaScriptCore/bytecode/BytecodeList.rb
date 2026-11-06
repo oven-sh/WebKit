@@ -1551,9 +1551,11 @@ op :py_catch,
     }
 
 # What is after a * that stands behind other arguments is gone through before what follows it is evaluated: unless it is a tuple, a list is made of it.
+# `leavesLists`: a list may stay as it is, since nothing that follows can change it.
 op :py_spread_now,
     args: {
         srcDst: VirtualRegister,
+        leavesLists: bool,
     }
 
 # Everything else. `function`: Python::RuntimeFunction. Its arguments are in `argc` registers from `argv` down.

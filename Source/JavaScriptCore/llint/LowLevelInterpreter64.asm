@@ -3271,8 +3271,14 @@ llintOp(op_py_spread_now, OpPySpreadNow, macro (size, get, dispatch)
     get(m_srcDst, t0)
     loadq [cfr, t0, 8], t1
     btqnz t1, notCellMask, .slow
+    bbeq JSCell::m_type[t1], ArrayType, .list
     loadPythonRuntime(t3)
     pyBranchIfCellIsNotExactly(t1, PyTupleType, (constexpr (Python::Runtime::offsetOfType(Python::TypeID::tupleType))), t3, t2, .slow)
+    dispatch()
+
+.list:
+    getu(size, OpPySpreadNow, m_leavesLists, t0)
+    btiz t0, .slow
     dispatch()
 
 .slow:
