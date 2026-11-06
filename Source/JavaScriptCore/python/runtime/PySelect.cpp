@@ -258,11 +258,20 @@ static bool readWaitsAsPollDoes(int fd)
 
 bool waitUntilReadable(JSGlobalObject* globalObject, int fd)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     struct pollfd descriptor { fd, POLLIN, 0 };
+    int result = poll(&descriptor, 1, 0);
+    // A signal interrupts even this. Its handler is not to wait behind a read.
+    if (result < 0 && errno == EINTR) {
+        if (failed(scope, checkSignals(globalObject)))
+            return false;
+        result = 0;
+    }
     // Most of the time there is something to read. What is wrong with the descriptor, the read will say.
-    if (poll(&descriptor, 1, 0) || !readWaitsAsPollDoes(fd))
+    if (result || !readWaitsAsPollDoes(fd))
         return true;
-    return waitUntilReady(globalObject, fd);
+    RELEASE_AND_RETURN(scope, waitUntilReady(globalObject, fd));
 }
 
 bool timeoutFromObject(JSGlobalObject* globalObject, JSValue value, int64_t unit, int64_t& nanoseconds, bool namesTimeout)
