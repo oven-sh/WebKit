@@ -1820,9 +1820,12 @@ void Unit::statements(Seq<Stmt*> body, unsigned first, const Last& isLast)
     // (The arms of a chain of `elif` are statements in statements, and all end where the first `if` does.)
     const StatementsAfter* enclosing = m_statementsAfter;
     bool endWhereStatementEnds = std::exchange(m_statementsEndWhereStatementEnds, false);
-    while (endWhereStatementEnds && enclosing && enclosing->isWhereEnclosingEnds())
+    bool goOnBehindStatement = std::exchange(m_statementsGoOnBehindStatement, false);
+    while (endWhereStatementEnds && enclosing && enclosing->isWhereEnclosingEnds()) {
+        goOnBehindStatement &= enclosing->goOnBehindEnclosing;
         enclosing = enclosing->enclosing;
-    StatementsAfter after { body, first, isLast, static_cast<unsigned>(m_blocks.size()), enclosing, endWhereStatementEnds };
+    }
+    StatementsAfter after { body, first, isLast, static_cast<unsigned>(m_blocks.size()), enclosing, endWhereStatementEnds, 0, goOnBehindStatement };
     SetForScope statementsAfter(m_statementsAfter, &after);
     for (unsigned i = first; i < body.size() && !c.failed(); ++i) {
         // After a `return`, say, or at the very beginning: what `if a and 0:` is in front of.
@@ -2206,6 +2209,7 @@ void Unit::whileLoop(While* node, const Last& isLast)
     int lineOfBranch = m_markedLine;
     statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
     jump(loop.get());
+    bool hasBreak = m_blocks.last().hasBreak;
     popBlock();
     emitReturnsByLine(returns, isLast);
 
@@ -2221,6 +2225,7 @@ void Unit::whileLoop(While* node, const Last& isLast)
             lineOfImplicitReturn(isLast.kind == Last::OfFunction ? node->test->range.endLineno : lineOfBranch, isLast.onlyIf(node->orelse.isEmpty() && (isLast.kind == Last::OfFunction || isOnlyWay)));
     }
     m_statementsEndWhereStatementEnds = true;
+    m_statementsGoOnBehindStatement = !hasBreak;
     statements(node->orelse, 0, isLast);
     endOfStatement(end.get());
     // `while True:` has a branch to here, until CPython's compiler finds out.
@@ -2275,6 +2280,7 @@ void Unit::forLoop(For* node, const Last& isLast)
     if (node->orelse.isEmpty())
         m_endOfForLoop = { g.instructions().size(), node->iter->range.lineno, hasBreak && !end->isBound() };
     m_statementsEndWhereStatementEnds = true;
+    m_statementsGoOnBehindStatement = !hasBreak;
     statements(node->orelse, 0, isLast);
     endOfStatement(end.get());
 }

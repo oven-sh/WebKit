@@ -569,6 +569,8 @@ private:
         // Where the last of them ends, the other statement ends: the statements of an `if` without `else`, those of an `else`.
         bool endsWhereEnclosingEnds { false };
         unsigned instructionsBefore { 0 }; // What CPython's compiler has in front of them: see endOfProtectedStatements().
+        // Nothing else leads to where the other statement ends: the `else` of a loop without a `break`. They are one run of instructions with what comes after it.
+        bool goOnBehindEnclosing { false };
         // There are none: it is where the statement ends that they would be part of, and what comes after that comes next.
         bool isWhereEnclosingEnds() const;
     };
@@ -588,6 +590,7 @@ private:
     Stmt* m_statement { nullptr };
     const StatementsAfter* m_statementsAfter { nullptr };
     bool m_statementsEndWhereStatementEnds { false }; // For the next call of statements().
+    bool m_statementsGoOnBehindStatement { false }; // The same.
     Expr* m_returnedExpression { nullptr }; // The body of a lambda.
     RegisterID* ifExp(AST::IfExp*, RegisterID* dst, EndOfIfExp* enclosing = nullptr);
     RegisterID* compare(AST::Compare*, RegisterID* dst);

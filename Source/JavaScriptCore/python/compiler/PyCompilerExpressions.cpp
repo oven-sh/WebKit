@@ -1088,7 +1088,7 @@ unsigned Unit::instructionsUntilFunctionEnds(const StatementsAfter& given, Comes
     const StatementsAfter* after = &given;
     while (comesFirst == ComesFirst::Nothing && after->isWhereEnclosingEnds())
         after = after->enclosing;
-    auto& [body, first, isLast, blockCount, enclosing, endsWhereEnclosingEnds, instructionsBefore] = *after;
+    auto& [body, first, isLast, blockCount, enclosing, endsWhereEnclosingEnds, instructionsBefore, goOnBehindEnclosing] = *after;
     unsigned count = instructionsBefore;
     for (unsigned i = first; i < body.size() && count < tooManyToCopy; ++i) {
         Stmt* node = body[i];
@@ -1136,6 +1136,8 @@ unsigned Unit::instructionsUntilFunctionEnds(const StatementsAfter& given, Comes
             return tooManyToCopy;
         }
     }
+    if (goOnBehindEnclosing && enclosing)
+        return sumToCopy(count, instructionsUntilFunctionEnds(*enclosing, ComesFirst::PartOfStatement));
     // (The body of a class ends in more than a `return`.)
     if (count >= tooManyToCopy || isLast.kind != Last::OfFunction || isLast.exception || m_kind == UnitKind::Class)
         return tooManyToCopy;
