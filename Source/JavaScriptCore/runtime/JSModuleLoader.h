@@ -170,7 +170,7 @@ public:
     // payload is opaque to callers and is either a ModuleGraphLoadingState* (graph load) or a ModuleLoaderPayload* (top-level dynamic import).
     void finishLoadingImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, ModuleCompletion result, RefPtr<ScriptFetcher>);
 
-    JSPromise* hostLoadImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, bool useImportMap);
+    JSPromise* hostLoadImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, bool useImportMap, JSPromise* deferredPromise = nullptr);
     JSPromise* loadModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>);
     void continueModuleLoading(JSGlobalObject*, ModuleGraphLoadingState*, ModuleCompletion result);
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
@@ -243,6 +243,9 @@ public:
         m_resolutionFailures.clear();
     }
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
+#if ENABLE(AOT)
+    bool isMakingRecordInline(const Identifier& key) const { return m_moduleWhoseRecordIsMadeInline && m_moduleWhoseRecordIsMadeInline == key.impl(); }
+#endif
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
 
     // Options::usePrelinkedModuleInfo(): the embedder's pre-resolved graph for this realm and the record it registered
@@ -313,6 +316,8 @@ private:
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
 #if ENABLE(AOT)
     bool m_realmLoadedModuleUnderAnotherKey { false };
+    UniquedStringImpl* m_rootThatTakesOwnLoadSteps { nullptr };
+    UniquedStringImpl* m_moduleWhoseRecordIsMadeInline { nullptr };
 #endif
 
     WriteBarrier<JSScope> m_moduleScope;

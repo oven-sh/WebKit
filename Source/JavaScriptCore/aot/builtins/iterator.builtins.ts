@@ -123,6 +123,9 @@ const disposalCallback = (...args: readonly b.PlaceLike[]) => [
 ];
 
 export default b.declarations(
+  // An iterator helper steps and closes the iterator below it without operands.
+  b.namedMemberCall("next", []),
+  b.namedMemberCall("return", []),
   b.class("Iterator", {
     isNeverPristine: true,
     lockedMembers: ["prototype"],
@@ -177,15 +180,12 @@ export default b.declarations(
       some: testingMethod("some", b.bool),
       every: testingMethod("every", b.bool),
       find: testingMethod("find", b.union(item, b.undefined)),
-      forEach: {
-        ...consumingMethod(
-          b.hostCall,
-          b.undefined,
-          { procedure: b.any },
-          { procedure: itemCallback("PerElement", "Ignored") },
-        ),
-        model: b.functionIn("models/Iterators", "forEach"),
-      },
+      forEach: consumingMethod(
+        b.compiled("prelude/iterator-consumers", "forEach"),
+        b.undefined,
+        { procedure: b.any },
+        { procedure: itemCallback("PerElement", "Ignored") },
+      ),
       reduce: consumingMethod(
         b.compiled("JSIteratorPrototype", "reduce"),
         accumulator,
@@ -198,10 +198,10 @@ export default b.declarations(
           initialValue: b.inspected,
         },
       ),
-      toArray: {
-        ...consumingMethod(b.hostCall, b.instance("Array").holding({ element: item }).fresh),
-        model: b.functionIn("models/Iterators", "toArray"),
-      },
+      toArray: consumingMethod(
+        b.compiled("prelude/iterator-consumers", "toArray"),
+        b.instance("Array").holding({ element: item }).fresh,
+      ),
       includes: consumingMethod(
         b.hostCall,
         b.bool,

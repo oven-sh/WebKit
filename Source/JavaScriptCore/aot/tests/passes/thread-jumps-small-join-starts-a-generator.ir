@@ -1,0 +1,51 @@
+# What each edge passes decides the test of a merge point, and the block is small enough to copy. It holds the first suspension of the generator, which appears once in a body, so the block stays as it is. The same block in an async function is copied
+# FORM: Prepared optimizing
+# RUN: pass ThreadJumps
+# RUN(SPLIT): pass ThreadJumps SplitCoroutines
+# SPLIT-NOT: InitialYield
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="startsBesideTheTest" flags=[IsGenerator, TakesCallee] parameters=[{type=i32}, {type=string}, {type=boolean}] results=[{type=Generator}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v2)
+  b3(v4):
+    InitialYield
+    v6 = TypeTest v4 testedType=i32
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    Return v7
+  b5():
+    Return v2
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK: InitialYield
+# CHECK-NOT: InitialYield
+}
+
+function f1 name="awaitsBesideTheTest" flags=[IsAsync] parameters=[{type=i32}, {type=string}, {type=boolean}] results=[{type=Promise}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Await v1
+    v5 = TypeTest v3 testedType=i32
+    Branch v5 -> taken b4(| 0), notTaken b5()
+  b4(v6):
+    Return v6
+  b5():
+    Return v4
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next [[copy]](v0)
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK: [[copy]](
+# CHECK-NEXT: = Await v1
+}

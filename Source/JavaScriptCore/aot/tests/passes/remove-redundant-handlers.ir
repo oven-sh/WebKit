@@ -1,7 +1,7 @@
-# A block that cannot throw loses its handler, and a cleanup that only throws on what it caught is skipped. A `catch` that throws the value again stays: that is another throw. It is skipped where a `catch` of the function takes that throw
+# A block that cannot throw loses its handler, a block that calls a function keeps it, and a cleanup that only throws on what it caught is skipped. A `catch` that throws the value again stays: that is another throw. It is skipped where a `catch` of the function takes that throw
 # FORM: Prepared
 # RUN: pass RemoveRedundantHandlers
-# STATISTIC: RemoveRedundantHandlersChanges = 14
+# STATISTIC: RemoveRedundantHandlersChanges = 13
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
@@ -32,17 +32,16 @@ function f1 name="unknownCall" parameters=[{type=anything}] results=[{type=anyth
 # CHECK: = CatchValue
 }
 
-function f2 name="slotStore" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything) handler=b2():
-    v1 = NewObject -, v0 layout=L0 fields=[0]
-    PutSlot v1, v1, v0 key="x" receivers=[L0] level=Proven
+function f2 name="slotStore" parameters=[{type=anything}, {type=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: L0) handler=b2():
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
     Jump -> next b1()
   b1():
     Return v0
   b2() role=CatchHandler:
     v3 = CatchValue
     Return v3
-# CHECK: b0(v0: anything):
+# CHECK: b0(v0: anything, v1: L0):
 # CHECK: PutSlot
 # CHECK-NOT: CatchValue
 }
@@ -60,7 +59,7 @@ function f3 name="storeByName" parameters=[{type=anything}, {type=object}] resul
 # CHECK: = CatchValue
 }
 
-function f4 name="calleeCannotThrow" parameters=[{type=number}] results=[{type=anything}] {
+function f4 name="calleeThrowsNothingByRule" parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: number) handler=b2():
     v1 = CallDirect v0 function=f21
     Jump -> next b1()
@@ -69,9 +68,9 @@ function f4 name="calleeCannotThrow" parameters=[{type=number}] results=[{type=a
   b2() role=CatchHandler:
     v2 = CatchValue
     Return v2
-# CHECK: b0(v0: number):
+# CHECK: b0(v0: number) handler=b2():
 # CHECK-NEXT: = CallDirect
-# CHECK-NOT: CatchValue
+# CHECK: = CatchValue
 }
 
 function f5 name="calleeMayThrow" parameters=[{type=anything}] results=[{type=anything}] {

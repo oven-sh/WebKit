@@ -12,6 +12,7 @@
 #include <array>
 #include <optional>
 #include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC { namespace B3 {
 
@@ -19,17 +20,22 @@ enum class FailureKind : uint8_t {
     AbsoluteAddress,
     RelocationNotLowered,
     VariableReadBeforeSet,
+    SpillSlotLacksItsValue,
+    RegisterLacksItsValue,
 };
 
 struct Failure {
     FailureKind kind;
     Origin origin;
+    String detail { };
 };
 
 enum class RemarkKind : uint8_t {
     LoopVersioned,
     LoopNotVersioned,
     LoopRotated,
+    LoopVectorized,
+    LoopUnrolled,
     RangeChecksRemoved,
     LoopBoundNotClamped,
 };
@@ -44,14 +50,20 @@ struct Remark {
 enum class Counter : uint8_t {
     LoopsVersioned,
     LoopsRotated,
+    LoopsVectorized,
+    LoopsUnrolled,
     RangeChecksRemoved,
     LoopBoundsClamped,
+    LoopPollsRemoved,
+    SumsKeptAsIntegers,
     KnownInductionsUsed,
     TrapsFoldedIntoAccesses,
+    ColdUsesKeptThroughSecondSplit,
+    ColdUsesKeptThroughSecondSplitBetweenDefs,
 };
 
-static constexpr unsigned numberOfCounters = 6;
-static_assert(static_cast<unsigned>(Counter::TrapsFoldedIntoAccesses) + 1 == numberOfCounters);
+static constexpr unsigned numberOfCounters = 12;
+static_assert(static_cast<unsigned>(Counter::ColdUsesKeptThroughSecondSplitBetweenDefs) + 1 == numberOfCounters);
 
 struct LimitHit {
     uint32_t count { 0 };
@@ -76,6 +88,10 @@ constexpr std::optional<Counter> counterOf(RemarkKind kind)
         return Counter::LoopsVersioned;
     case RemarkKind::LoopRotated:
         return Counter::LoopsRotated;
+    case RemarkKind::LoopVectorized:
+        return Counter::LoopsVectorized;
+    case RemarkKind::LoopUnrolled:
+        return Counter::LoopsUnrolled;
     case RemarkKind::RangeChecksRemoved:
         return Counter::RangeChecksRemoved;
     case RemarkKind::LoopNotVersioned:

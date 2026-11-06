@@ -26,6 +26,7 @@
 #include "config.h"
 #include "IntlSegments.h"
 
+#include "AOTRemovableFeature.h"
 #include "IntlObjectInlines.h"
 #include "IntlSegmentDataObject.h"
 #include "IntlSegmentIterator.h"
@@ -36,6 +37,12 @@
 namespace JSC {
 
 const ClassInfo IntlSegments::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlSegments) };
+
+NEVER_INLINE void IntlSegments::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(IntlSegmenter, &IntlSegments::destroy);
+    static_cast<IntlSegments*>(cell)->IntlSegments::~IntlSegments();
+}
 
 IntlSegments* IntlSegments::create(VM& vm, Structure* structure, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&& segmenter, Box<Vector<char16_t>>&& buffer, JSString* string, IntlSegmenter::Granularity granularity)
 {

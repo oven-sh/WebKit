@@ -95,7 +95,7 @@ void EnvironmentPacker::setInlineLimit()
 
 void EnvironmentPacker::packWidestFirst()
 {
-    AOT::stableSort(m_order, [&](unsigned a, unsigned b) {
+    AOT::stableSortInLine(m_order, [&](unsigned a, unsigned b) {
         return sizeOfField(a) > sizeOfField(b);
     });
     uint32_t offset = offsetOfFirstEnvironmentVariable;

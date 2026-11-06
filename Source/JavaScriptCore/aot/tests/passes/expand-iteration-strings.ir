@@ -141,5 +141,5 @@ function f3 name="unknownIsTestedForStringLast" parameters=[{type=anything}] res
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

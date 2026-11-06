@@ -1,0 +1,40 @@
+# The generic copy behind a failed test comes back where the tested code knows nothing better. Under testing=ShuffleExpectedTypes it stays apart in every other function, drawn from the seed.
+# FORM: Prepared optimizing
+# OPTIONS: testing=ShuffleExpectedTypes layout-seed=1
+# RUN: pass ResolveAccesses PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="first" parameters=[{type=Float64Array}, {type=i32}] results=[{type=number}] {
+    v2 = ElemGet v0, v1
+    v3 = Negate v2
+    Return v3
+}
+# CHECK-LABEL: function f0 name="first"
+# CHECK: v2: number = GetTypedArrayElement v0, v1, {{*}}[keyIsIntegral, isInsideView]
+# CHECK: v3: number = Negate v2
+# CHECK: [[generic0]]: undefined|number = GetTypedArrayElement v0, v1 typedArrayType=10 level=Proven [keyIsIntegral]
+# CHECK: = Negate [[generic0]]
+
+function f1 name="second" parameters=[{type=Float64Array}, {type=i32}] results=[{type=number}] {
+    v2 = ElemGet v0, v1
+    v3 = Negate v2
+    Return v3
+}
+# CHECK-LABEL: function f1 name="second"
+# CHECK: v2: number = GetTypedArrayElement v0, v1, {{*}}[keyIsIntegral, isInsideView]
+# CHECK: v3: number = Negate v2
+# CHECK: [[generic1]]: undefined|number = GetTypedArrayElement v0, v1 typedArrayType=10 level=Proven [keyIsIntegral]
+# CHECK: = Negate [[generic1]]
+
+function f2 name="third" parameters=[{type=Float64Array}, {type=i32}] results=[{type=number}] {
+    v2 = ElemGet v0, v1
+    v3 = Negate v2
+    Return v3
+}
+# CHECK-LABEL: function f2 name="third"
+# CHECK: v2: number = GetTypedArrayElement v0, v1, {{*}}[keyIsIntegral, isInsideView]
+# CHECK-NEXT: Jump -> next [[join]](v2)
+# CHECK: [[join]]([[either]]: undefined|number ~ number):
+# CHECK-NEXT: v3: number = Negate [[either]]
+# CHECK-NOT: = Negate

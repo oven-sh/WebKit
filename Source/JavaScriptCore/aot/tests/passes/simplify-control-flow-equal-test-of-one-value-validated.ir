@@ -23,5 +23,6 @@ function f0 name="behindTheTestThatPassed" parameters=[{type=anything}, {type=fu
   b4():
     Return v1
 # CHECK: ValidateType v4 validatedType=string
-# CHECK-NEXT: = AssumeType v4 provenType=string
+# CHECK-NEXT: [[here26]]: fact = Specified
+# CHECK-NEXT: = AssumeType v4, [[here26]] provenType=string
 }

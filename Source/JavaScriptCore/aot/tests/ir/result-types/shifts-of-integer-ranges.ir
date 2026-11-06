@@ -1,0 +1,112 @@
+# A shift of an integer range by a range of counts computes a range: one value by one count is one value, a negative operand of >>> is read as unsigned, a count goes by its low five bits, and << keeps its range where no product leaves 32 bits
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v9: 2
+# CHECK: v10: int[1, 2]
+# CHECK: v11: int[0, 2147483647]
+# CHECK: v12: int[2147483645, 2147483647]
+# CHECK: v13: int[1, 2]
+# CHECK: v14: 1
+# CHECK: v15: int[0, 2147483647]
+# CHECK: v16: int[0, 2147483647]
+# CHECK: v17: int[1, 2]
+# CHECK: v18: int[-2, 2]
+# CHECK: v19: int[-3, -1]
+# CHECK: v20: int[-1073741824, 1073741823]
+# CHECK: v21: int[-1073741824, 1073741823]
+# CHECK: v22: int[4, 10]
+# CHECK: v23: int[-6, 8]
+# CHECK: v24: int[-10, -4]
+# CHECK: v25: 8
+# CHECK: v26: i32
+# CHECK: v27: i32
+# CHECK-LABEL: function f1
+# CHECK: v9: int[32, 255]
+# CHECK: v10: int[536870911, 2147483647]
+# CHECK: v11: int[0, 511]
+# CHECK: v12: int[32, 511]
+# CHECK: v13: int[0, 511]
+# CHECK: v14: int[0, 511]
+# CHECK: v15: int[1, 4294967294]
+# CHECK: v16: int[32, 255]
+# CHECK: v17: int[-2, 2]
+# CHECK: v18: int[-3, -1]
+# CHECK: v19: int[0, 511]
+# CHECK: v20: int[-5, -1]
+# CHECK: v21: int[4, 40]
+# CHECK: v22: int[-24, 32]
+# CHECK: v23: int[-40, -4]
+# CHECK: v24: i32
+# CHECK: v25: int[2, 40]
+# CHECK-LABEL: function f2
+# CHECK: v9: 0
+# CHECK: v10: 1073741824
+# CHECK: v11: i32
+# CHECK: v12: -2147483648
+# CHECK: v13: i32
+# CHECK: v14: 4294967295
+# CHECK: v15: 2147483648
+# CHECK: v16: int[0, 4294967295]
+# CHECK: v17: int[0, 4294967295]
+# CHECK: v18: -1
+# CHECK: v19: 0
+# CHECK: v20: -1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="byOneCount" parameters=[{type=int[2, 5]}, {type=int[-3, 4]}, {type=int[-5, -2]}, {type=int[4, 4]}, {type=int[1, 1]}, {type=int[33, 33]}, {type=int[-1, -1]}, {type=number}, {type=int[0, 4294967295]}] results=[{type=undefined}] {
+    v9 = URShift v3, v4
+    v10 = URShift v0, v4
+    v11 = URShift v1, v4
+    v12 = URShift v2, v4
+    v13 = URShift v0, v5
+    v14 = URShift v2, v6
+    v15 = URShift v7, v4
+    v16 = URShift v8, v4
+    v17 = RShift v0, v4
+    v18 = RShift v1, v4
+    v19 = RShift v2, v4
+    v20 = RShift v7, v4
+    v21 = RShift v8, v4
+    v22 = LShift v0, v4
+    v23 = LShift v1, v4
+    v24 = LShift v2, v4
+    v25 = LShift v3, v4
+    v26 = LShift v0, v6
+    v27 = LShift v7, v4
+    Return
+}
+function f1 name="byCountsWithinBounds" parameters=[{type=int[2, 5]}, {type=int[-3, 4]}, {type=int[-5, -2]}, {type=int[1, 3]}, {type=int[31, 34]}, {type=int[32, 35]}, {type=int[0, 40]}, {type=number}, {type=int[256, 511]}] results=[{type=undefined}] {
+    v9 = URShift v8, v3
+    v10 = URShift v2, v3
+    v11 = URShift v8, v4
+    v12 = URShift v8, v5
+    v13 = URShift v8, v6
+    v14 = URShift v8, v7
+    v15 = URShift v2, v7
+    v16 = RShift v8, v3
+    v17 = RShift v1, v3
+    v18 = RShift v2, v3
+    v19 = RShift v8, v7
+    v20 = RShift v2, v7
+    v21 = LShift v0, v3
+    v22 = LShift v1, v3
+    v23 = LShift v2, v3
+    v24 = LShift v0, v7
+    v25 = LShift v0, v5
+    Return
+}
+function f2 name="atTheEdges" parameters=[{type=int[0, 0]}, {type=number}, {type=int[1, 1]}, {type=int[30, 30]}, {type=int[31, 31]}, {type=int[-1, -1]}, {type=int[-2147483648, -2147483648]}, {type=int[-4294967296, -1]}, {type=int[-4294967297, -1]}] results=[{type=undefined}] {
+    v9 = LShift v0, v1
+    v10 = LShift v2, v3
+    v11 = LShift v2, v4
+    v12 = LShift v5, v4
+    v13 = LShift v6, v2
+    v14 = URShift v5, v0
+    v15 = URShift v6, v0
+    v16 = URShift v7, v0
+    v17 = URShift v8, v0
+    v18 = RShift v6, v4
+    v19 = URShift v0, v1
+    v20 = RShift v5, v1
+    Return
+}

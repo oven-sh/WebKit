@@ -1,0 +1,100 @@
+# Nothing tests a tally, so no edge narrows it. It goes up by at most a constant in each turn, and an integer counter takes each value of its range at most once: the tally is an integer within the bounds that follow.
+# FORM: Prepared
+# RUN: pass ConvertCountersToIntegers
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="goesUpUnderACondition" parameters=[{type=int[0, 1000]}, {type=boolean}] results=[{type=number}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4(v3)
+  b3():
+    v7 = Increment v3
+    Jump -> next b4(v7)
+  b4(v8):
+    v9 = Increment v4
+    Jump -> next b1(v8, v9)
+  b5():
+    Return v3
+# CHECK: b1(v3: int[0, 1000], v4: int[0, 1000]):
+# CHECK: : int[1, 1001] = Increment v3
+# CHECK: [[turnEnds]]: fact = Specified
+# CHECK-NEXT: [[tally]]: int[0, 1000] = AssumeType v8, [[turnEnds]] provenType=int[0, 1000]
+# CHECK-NEXT: Jump -> next b1([[tally]],
+# CHECK: Return v3
+}
+
+function f1 name="goesDownByThreeOrUpByTwo" parameters=[{type=int[0, 10]}, {type=boolean}] results=[{type=number}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=5
+    Jump -> next b1(v3, v2)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Integer integer=2
+    v9 = Add v4, v8
+    Jump -> next b5(v9)
+  b4():
+    v10 = Integer integer=3
+    v11 = Sub v4, v10
+    Jump -> next b5(v11)
+  b5(v12):
+    v13 = Increment v5
+    Jump -> next b1(v12, v13)
+  b6():
+    Return v4
+# CHECK: b1(v4: int[-25, 25],
+# CHECK: = AssumeType v12, {{*}} provenType=int[-25, 25]
+}
+
+function f2 name="doublesInEachTurn" parameters=[{type=int[0, 1000]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v2, v1)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Add v3, v3
+    v8 = Increment v4
+    Jump -> next b1(v7, v8)
+  b3():
+    Return v3
+# CHECK-NOT: AssumeType
+# CHECK: Return v3
+}
+
+function f3 name="goesUpInAnInnerLoop" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=number}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(v3), notTaken b5()
+  b2(v7):
+    LoopHint
+    v9 = Call v1, -
+    v10 = ToBoolean v9
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    v11 = Increment v7
+    Jump -> next b2(v11)
+  b4():
+    v12 = Increment v4
+    Jump -> next b1(v7, v12)
+  b5():
+    Return v3
+# CHECK-NOT: AssumeType
+# CHECK: Return v3
+}

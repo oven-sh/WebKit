@@ -1,0 +1,23 @@
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Described" fields=[{key="resolve" declared={type=anything} flags=[IsRequired]}] flow={allocation=NeverAllocated baseState=None}
+layout L1 name="View" fields=[{key="rank" declared={type=anything}}] flags=[IsNeverAllocated] flow={allocation=NeverAllocated baseState=None}
+layout L2 name="Made" fields=[{key="rank" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="flowSawNoneMade" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+    v1: anything ~ L0 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="rank"
+    Return v2
+# CHECK: = TypeTest {{*}} testedType=L2
+# CHECK: = GetSlot {{*}} key="rank" receivers=[L2] level=Expected
+}
+
+function f1 name="markedAsNeverMade" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+    v1: anything ~ L1 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="rank"
+    Return v2
+# CHECK: = TypeTest {{*}} testedType=L2
+# CHECK: = GetSlot {{*}} key="rank" receivers=[L2] level=Expected
+}

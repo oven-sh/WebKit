@@ -24,10 +24,18 @@ public:
     Boxed normalizedKey(const OperationContext&, ValueID);
     Word32 hashOfBits(Boxed normalizedKey);
     Integer sizeOf(CellPointer table, HashTableOwner);
+    CellPointer moveTableToHeap(const OperationContext&, CellPointer owner);
 
 private:
     Boxed normalizedNumber(const OperationContext&, Number);
+    Word32 hashOfBitsByOneMultiplication(Boxed normalizedKey);
+    LValue tagsNearTag(LValue eightTags, LValue tag, uint8_t distance);
     void lookUp(const InlineCall&, HashTableOwner, bool returnsValue);
+    bool hasReceiverThatLeavesLoop(const InlineCall&);
+    bool looksAmongTags(const InlineCall&);
+    bool looksIntoHomeSlot(const InlineCall&, KeyComparison);
+    Boxed lookUpInHomeSlot(const InlineCall&, CellPointer owner, Boxed key, KeyComparison, HashTableOwner, bool returnsValue);
+    Boxed lookUpAmongTags(const InlineCall&, CellPointer owner, CellPointer key, StubKey, bool returnsValue);
     void insert(const InlineCall&, HashTableOwner);
     void generateSize(const InlineCall&, HashTableOwner);
 };

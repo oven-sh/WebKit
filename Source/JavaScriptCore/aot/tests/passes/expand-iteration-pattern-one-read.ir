@@ -235,9 +235,9 @@ function f7 name="callInDefault" parameters=[{type=object}, {type=anything}] res
 # CHECK: [[firstStep7]]() frequency=Unlikely handler=[[landing7]]([[notDone7]]):
 # CHECK-NEXT: [[duringFirst7]]: true = Boolean boolean=true
 # CHECK: frequency=Unlikely handler=[[landing7]]([[duringSecond7]]):
-# CHECK-NEXT: = Call [[next7]], [[iterator7]]
+# CHECK-NEXT: = CallDirect [[iterator7]], [[next7]] function={{*}} [isNeverInlined]
 # CHECK: frequency=Unlikely handler=[[landing7]]([[duringFirst7]]):
-# CHECK-NEXT: = Call [[next7]], [[iterator7]]
+# CHECK-NEXT: = CallDirect [[iterator7]], [[next7]] function={{*}} [isNeverInlined]
 # ABSENT-LABEL: function f7 name="callInDefault"
 # ABSENT-NOT: DestructureIterable
 # ABSENT-NOT: ) handler=
@@ -426,5 +426,5 @@ function f14 name="byForm" parameters=[{type=anything}] results=[{type=anything}
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

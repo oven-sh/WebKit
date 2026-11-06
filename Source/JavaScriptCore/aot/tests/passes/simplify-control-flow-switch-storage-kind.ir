@@ -3,13 +3,13 @@
 # RUN: pass SimplifyControlFlow
 
 module m0 path="main.js" displayPath="main.js"
-runtimefunction id=0 function=f0
-runtimefunction id=1 function=f1
-runtimefunction id=2 function=f2
-runtimefunction id=3 function=f3
-runtimefunction id=4 function=f4
+runtimefunction id=PromiseConstructorPromise function=f0
+runtimefunction id=DisposableStackPrototypeAddDisposableResource function=f1
+runtimefunction id=AsyncDisposableStackPrototypeAdopt function=f2
+runtimefunction id=DisposableStackPrototypeAdopt function=f3
+runtimefunction id=FunctionPrototypeApply function=f4
 
-function f0 name="provenStrings" role=Library enclosingRuntimeFunction=0 parameters=[{type=Array<string, proven>}] results=[{type=anything}] {
+function f0 name="provenStrings" role=Library enclosingRuntimeFunction=PromiseConstructorPromise parameters=[{type=Array<string, proven>}] results=[{type=anything}] {
     v1 = ArrayStorageKind v0
     Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
   b1():
@@ -25,7 +25,7 @@ function f0 name="provenStrings" role=Library enclosingRuntimeFunction=0 paramet
 # CHECK-NOT: integer=10
 }
 
-function f1 name="provenNumbers" role=Library enclosingRuntimeFunction=1 parameters=[{type=Array<number, proven>}] results=[{type=anything}] {
+function f1 name="provenNumbers" role=Library enclosingRuntimeFunction=DisposableStackPrototypeAddDisposableResource parameters=[{type=Array<number, proven>}] results=[{type=anything}] {
     v1 = ArrayStorageKind v0
     Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
   b1():
@@ -40,7 +40,7 @@ function f1 name="provenNumbers" role=Library enclosingRuntimeFunction=1 paramet
 # CHECK: Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
 }
 
-function f2 name="stringsWithoutProof" role=Library enclosingRuntimeFunction=2 parameters=[{type=Array<string>}] results=[{type=anything}] {
+function f2 name="stringsWithoutProof" role=Library enclosingRuntimeFunction=AsyncDisposableStackPrototypeAdopt parameters=[{type=Array<string>}] results=[{type=anything}] {
     v1 = ArrayStorageKind v0
     Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
   b1():
@@ -55,7 +55,7 @@ function f2 name="stringsWithoutProof" role=Library enclosingRuntimeFunction=2 p
 # CHECK: Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
 }
 
-function f3 name="otherIntegerOfTheSameRange" role=Library enclosingRuntimeFunction=3 parameters=[{type=Array<string, proven>}, {type=int[0, 3]}] results=[{type=anything}] {
+function f3 name="otherIntegerOfTheSameRange" role=Library enclosingRuntimeFunction=DisposableStackPrototypeAdopt parameters=[{type=Array<string, proven>}, {type=int[0, 3]}] results=[{type=anything}] {
     Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
   b1():
     v2 = Integer integer=10
@@ -69,7 +69,7 @@ function f3 name="otherIntegerOfTheSameRange" role=Library enclosingRuntimeFunct
 # CHECK: Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
 }
 
-function f4 name="comparisons" role=Library enclosingRuntimeFunction=4 parameters=[{type=Array<string, proven>}] results=[{type=anything}] {
+function f4 name="comparisons" role=Library enclosingRuntimeFunction=FunctionPrototypeApply parameters=[{type=Array<string, proven>}] results=[{type=anything}] {
     v1 = ArrayStorageKind v0
     v2 = Integer integer=2
     v3 = StrictEq v1, v2

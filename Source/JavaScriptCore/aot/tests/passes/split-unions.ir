@@ -115,7 +115,7 @@ function f8 name="class-without-an-instance-test-beside-another-object" paramete
 # CHECK-NOT: testedType=ArrayIterator
 # CHECK: = TypeTest v0 testedType=string
 # CHECK-NOT: testedType=ArrayIterator
-# CHECK: ([[untested]]: {{*}}ArrayIterator) frequency=Unlikely:
+# CHECK: ([[untested]]: ArrayIterator):
 # CHECK-NEXT: = PropGet [[untested]] key="toString"
 # CHECK-NOT: testedType=ArrayIterator
 }

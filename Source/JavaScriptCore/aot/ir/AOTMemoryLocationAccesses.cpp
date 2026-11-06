@@ -128,7 +128,7 @@ MemoryAccess memoryAccessOf(const Function&, const Value& value)
             return { };
     }
 
-    return { isRead ? MemoryAccess::Kind::Read : MemoryAccess::Kind::Write, location, base, stored };
+    return { isRead ? MemoryAccess::Kind::Read : MemoryAccess::Kind::Write, location, base, stored, storedOperand.value_or(0) };
 }
 
 static LocationStability stabilityOfFlow(const LocationFlow& flow, CreationStore creationStore)
@@ -176,24 +176,67 @@ static LocationStability stabilityOfObjectField(const Program& program, const Va
     if (!Value::opcodesWithReceivers.contains(access.opcode) || !access.receivers())
         return LocationStability::Unknown;
 
-    const LayoutSet& receivers = program.at(access.receivers());
-    if (!receivers.isComplete || receivers.members.isEmpty())
+    auto receivers = program.at(access.receivers()).all();
+    if (!receivers || receivers->value().empty())
         return LocationStability::Unknown;
 
     const FamilyMember& member = program.familyTables().memberOf(access.receivers(), key);
-    if (member.withoutField && !program.at(member.withoutField).members.isEmpty())
+    if (member.withoutField && !program.at(member.withoutField).completeMembers().value().empty())
         return LocationStability::Unknown;
     if (member.hasOneDeclaration)
         return stabilityOfField(program, member.declaration);
 
     LocationStability stability = LocationStability::UnchangedDuringActivation;
-    for (LayoutID receiver : receivers.members) {
+    for (LayoutID receiver : *receivers) {
         std::optional<uint32_t> field = program.at(receiver).findField(key);
         stability = weakerOf(stability, field ? stabilityOfField(program, { receiver, *field }) : LocationStability::Unknown);
         if (stability == LocationStability::Unknown)
             break;
     }
     return stability;
+}
+
+bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow& flow)
+{
+    return flow.initialization == InitializationState::StoredBeforeEveryRead && !flow.isUnchangedDuringActivation;
+}
+
+bool holdsDeclaredTypeOnlyBehindEntryOfCopy(const LocationFlow& flow)
+{
+    return flow.initialization == InitializationState::StoredBeforeEveryRead;
+}
+
+bool liesInCopyOfPredictedCallee(const Function& function, uint32_t inlineFrame)
+{
+    for (uint32_t frame = inlineFrame; frame; frame = function.inlineFrames[frame].parent) {
+        if (function.inlineFrames[frame].calleeIsPredicted)
+            return true;
+    }
+    return false;
+}
+
+const LocationFlow* flowOfVariableReadBy(const Program& program, const Value& value)
+{
+    if (value.opcode == Opcode::GetModuleVariable)
+        return &program.at(value.variable()).flow;
+    if (value.opcode != Opcode::GetEnvironmentField || value.field() >= program.at(value.layout()).fields.size())
+        return nullptr;
+    // No cast takes an environment or a word of the engine's own, so a field that holds one is read as it is declared.
+    if (!program.at(program.at(value.layout()).fields[value.field()].declared.written()).isJavaScriptValue())
+        return nullptr;
+    return &flowOf(program, { value.layout(), value.field() }).location;
+}
+
+bool holdsDeclaredTypeOnlyBehindEntry(const Program& program, const Function& function, const Value& read)
+{
+    const LocationFlow* flow = flowOfVariableReadBy(program, read);
+    UNUSED_PARAM(function);
+    return flow && (read.inlineFrame ? holdsDeclaredTypeOnlyBehindEntryOfCopy(*flow) : holdsDeclaredTypeOnlyBehindEntry(*flow));
+}
+
+bool namesFactOrGivesWordThatMayBeAnything(const Value& read)
+{
+    return read.mayPrecedeItsStore() || (read.opcode == Opcode::GetModuleVariable && read.factOperand());
 }
 
 LocationStability stabilityOf(const Program& program, const Value& access, const MemoryAccess& memoryAccess)
@@ -235,6 +278,7 @@ LocationStability stabilityOf(const Program& program, const Value& access, const
     case AbstractHeap::AllocatorState:
     case AbstractHeap::RuntimeState:
     case AbstractHeap::ValidationState:
+    case AbstractHeap::CalleesInFrames:
         return LocationStability::Unknown;
     }
     RELEASE_ASSERT_NOT_REACHED();

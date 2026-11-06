@@ -28,6 +28,8 @@ const escapesToOperandCode = [b.retained, b.runs("ToPrimitive")];
 const storesLastIndex = b.storedByKey(b.keysNamed("lastIndex"), b.length);
 const restoresLastIndex = b.storedByKey(b.keysNamed("lastIndex"), b.any);
 const runsMembers = (...protocols: readonly b.ProtocolSpec[]) => b.runsTransitively("ToPrimitive", ...protocols);
+// The member that is called has the pattern for `this`. A built-in function there, such as Object.prototype.valueOf, may hand it back as the result.
+const isCalledAsPattern = (...protocols: readonly b.ProtocolSpec[]) => [b.retained, runsMembers(...protocols)];
 
 const flagNames = ["hasIndices", "global", "ignoreCase", "multiline", "dotAll", "unicode", "unicodeSets", "sticky"];
 const namesReadByConstruct = ["@@match", "source", "flags"];
@@ -166,14 +168,19 @@ const invokeSymbolMethod = (...membersOfRegExp: readonly b.ProtocolSpec[]) =>
     capability: "js",
     throws: true,
     runsOnlyOperandCode: true,
-    uses: { this: escapesToOperandCode, regexp: [runsMembers(...membersOfRegExp)] },
+    uses: { this: escapesToOperandCode, regexp: isCalledAsPattern(...membersOfRegExp) },
     reads: [state],
     writes: [state],
     overloadUsesFeature: ["RegExpFromString", "RegExp", "RegExpUnicodeProperties"],
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-const replace = (inlineBuiltin: string, times: b.CallbackTimes, ...membersOfSearchValue: readonly b.ProtocolSpec[]) =>
+const replace = (
+  inlineBuiltin: string,
+  times: b.CallbackTimes,
+  columns: b.EntryColumns,
+  ...membersOfSearchValue: readonly b.ProtocolSpec[]
+) =>
   [
     {
       this: stringReceiver,
@@ -202,6 +209,7 @@ const replace = (inlineBuiltin: string, times: b.CallbackTimes, ...membersOfSear
       implementation: b.inline(inlineBuiltin, { parameters: ["RegExp"], otherwise: b.hostCall }),
     },
     {
+      ...columns,
       this: stringReceiver,
       args: { searchValue: b.string, replaceValue: b.string },
       returns: b.string,
@@ -235,7 +243,7 @@ const replace = (inlineBuiltin: string, times: b.CallbackTimes, ...membersOfSear
       runsOnlyOperandCode: true,
       uses: {
         this: escapesToOperandCode,
-        searchValue: [runsMembers(...membersOfSearchValue)],
+        searchValue: isCalledAsPattern(...membersOfSearchValue),
         replaceValue: [
           ...escapesToOperandCode,
           b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [b.string], spreadArgs: b.any, result: "Escapes" }),
@@ -432,6 +440,8 @@ export default b.declarations(
           uses: { this: usesLastIndex },
           usesFeature: "RegExp",
           nativeSymbols: ["regExpProtoFuncTest"],
+          length: 1,
+          boxedCallStub: "RegExpTest",
           implementation: b.inline("RegExpTest"),
         },
         {
@@ -463,7 +473,7 @@ export default b.declarations(
         args: { string: b.string.loose },
         returns: b.union(b.object, b.strictNull),
         runsOnlyOperandCode: true,
-        uses: { this: [runsMembers(b.named("flags", "lastIndex"), b.calls("exec"), "OwnValues"), storesLastIndex] },
+        uses: { this: [runsMembers(b.named("flags", "lastIndex"), b.calls("exec"), "OwnValues"), storesLastIndex, b.returned] },
         usesFeature: "RegExp",
       }),
       "@@matchAll": symbolMethod("regExpProtoFuncMatchAll", {
@@ -548,10 +558,24 @@ export default b.declarations(
     },
     invokeSymbolMethod(b.named("@@match", "flags"), b.calls("@@matchAll")),
   ]),
-  b.method("String.prototype.replace", replace("StringReplace", "Once", b.calls("@@replace"))),
+  b.method(
+    "String.prototype.replace",
+    replace(
+      "StringReplace",
+      "Once",
+      { length: 2, boxedCallStub: "StringReplace", nativeSymbols: ["stringProtoFuncReplace"] },
+      b.calls("@@replace"),
+    ),
+  ),
   b.method(
     "String.prototype.replaceAll",
-    replace("StringReplaceAll", "Repeatedly", b.named("@@match", "flags"), b.calls("@@replace")),
+    replace(
+      "StringReplaceAll",
+      "Repeatedly",
+      { length: 2, boxedCallStub: "StringReplaceAll", nativeSymbols: ["stringProtoFuncReplaceAll"] },
+      b.named("@@match", "flags"),
+      b.calls("@@replace"),
+    ),
   ),
   b.method("String.prototype.search", [
     {
@@ -571,7 +595,14 @@ export default b.declarations(
     invokeSymbolMethod(b.calls("@@search")),
   ]),
   b.method("String.prototype.split", [
-    { ...splitAtString(b.notPassed), substringOf: "this", prefixForm: "StringSplitPrefix" },
+    {
+      ...splitAtString(b.notPassed),
+      substringOf: "this",
+      prefixForm: "StringSplitPrefix",
+      length: 2,
+      boxedCallStub: "StringSplit",
+      nativeSymbols: ["stringProtoFuncSplit"],
+    },
     splitAtString(nonNegativeInt32),
     splitAtRegExp(b.notPassed),
     splitAtRegExp(nonNegativeInt32),
@@ -591,7 +622,7 @@ export default b.declarations(
       capability: "js",
       throws: true,
       runsOnlyOperandCode: true,
-      uses: { this: escapesToOperandCode, separator: [runsMembers(b.calls("@@split"))], limit: escapesToOperandCode },
+      uses: { this: escapesToOperandCode, separator: isCalledAsPattern(b.calls("@@split")), limit: escapesToOperandCode },
       reads: [state],
       writes: [state],
       overloadUsesFeature: ["RegExp", "RegExpFromString", "RegExpUnicodeProperties"],

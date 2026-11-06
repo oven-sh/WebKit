@@ -1,0 +1,43 @@
+# The list of keys and values one behind the other, which stands for Object.entries where nobody sees a pair, is written out like the others: the key text and the slot read of each enumerable string field, in one array
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=string}}] flow={constructorOrders=[{fields=[1, 0]}]}
+
+function f0 name="expected" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
+    Return v1
+# CHECK: b0(v0: object ~ L0):
+# CHECK-NEXT: = ShapeTest v0 layouts=[L0]
+# CHECK: [[done0]](v1: Array):
+# CHECK-NEXT: Return v1
+# CHECK: frequency=Rare:
+# CHECK-NEXT: [[call0]]: Array = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
+# CHECK-NEXT: Jump -> next [[done0]]([[call0]])
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[1, 0]
+# CHECK: = HasNoExtraProperties v0,
+# CHECK: [[all0]]: guard = AllGuards
+# CHECK-NEXT: [[yKey]]: "y" = String string="y"
+# CHECK-NEXT: [[y]]: string = GetSlot v0, [[all0]] key="y" receivers=[L0] level=Expected
+# CHECK-NEXT: [[xKey]]: "x" = String string="x"
+# CHECK-NEXT: [[x]]: undefined|null|number ~ number = GetSlot v0, [[all0]] key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: [[list]]: {{*}} = NewArray [[yKey]], [[y]], [[xKey]], [[x]] contents=anything arrayStorage=Contiguous
+# CHECK-NEXT: Jump -> next [[done0]]([[list]])
+}
+
+function f1 name="unchangedAllocation" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = CallBuiltin -, v2 overload=CompilerHelpersOwnEntriesFlat/0
+    Return v3
+# CHECK: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: [[xKey1]]: "x" = String string="x"
+# CHECK-NEXT: [[x1]]: undefined|null|number ~ number = GetSlot v2, v2 key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: [[yKey1]]: "y" = String string="y"
+# CHECK-NEXT: [[y1]]: string = GetSlot v2, v2 key="y" receivers=[L0] level=Expected
+# CHECK-NEXT: = NewArray [[xKey1]], [[x1]], [[yKey1]], [[y1]] contents=anything arrayStorage=Contiguous
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}

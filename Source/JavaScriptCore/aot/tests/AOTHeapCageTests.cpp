@@ -8,8 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCheckedFrameCells.h"
 #include "AOTChildProcess.h"
 #include "AOTRuntimeTable.h"
+#include "AOTState.h"
 #include "AOTVector.h"
 #include "CagedAlignedMemoryAllocator.h"
 #include "Completion.h"
@@ -27,18 +29,44 @@
 #include "MarkedBlockCage.h"
 #include "MarkedSpaceInlines.h"
 #include "ObjectConstructor.h"
+#include "OwedOutOfMemoryError.h"
 #include "PreciseAllocation.h"
 #include "ReservedRangeHeap.h"
 #include "SourceCode.h"
+#include "StructureAlignedMemoryAllocator.h"
+#include "TopExceptionScope.h"
 #include "VM.h"
 #include "VMTrapsInlines.h"
 #include <array>
 #include <cstring>
 #include <optional>
 #include <wtf/DataLog.h>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/PageBlock.h>
+#include <wtf/Threading.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
+#include <wtf/text/StringToIntegerConversion.h>
+
+#if USE(MIMALLOC)
+#include <bmalloc/bmalloc.h>
+#include <bmalloc/mimalloc.h>
+#endif
+
+#if OS(LINUX)
+#include <cxxabi.h>
+#include <fcntl.h>
+#include <link.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <ucontext.h>
+#include <unistd.h>
+
+extern "C" char __executable_start;
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -154,7 +182,7 @@ static void testAnySize()
     Vector<std::pair<void*, size_t>> allocations;
     for (size_t size : { size_t { 16 }, 100 * KB, 40 * MB }) {
         void* memory = range.tryAllocate(size);
-        AOT_TEST_CHECK(memory && isInside(range, memory, size));
+        AOT_TEST_CHECK(memory && isInside(range, memory, size) && range.sizeOf(memory) >= size && isInside(range, memory, range.sizeOf(memory)));
         fill(memory, size, static_cast<uint8_t>(allocations.size()));
         allocations.append({ memory, size });
     }
@@ -288,6 +316,197 @@ static void testRangeGrowsBySegments()
     AOT_TEST_CHECK(count < size / MB && range->reservedSize() <= size);
 }
 
+#if OS(LINUX) && USE(MIMALLOC)
+static bool canRead(uintptr_t address)
+{
+    int ends[2];
+    AOT_TEST_CHECK(!pipe(ends));
+    bool result = write(ends[1], std::bit_cast<const void*>(address), 1) == 1;
+    close(ends[0]);
+    close(ends[1]);
+    return result;
+}
+
+static void testRangeReservedWholeHasAccessInItsSegmentsOnly()
+{
+    if (!bmalloc::api::isEnabled())
+        return;
+    constexpr size_t size = GB;
+    ReservedRangeHeap* range = ReservedRangeHeap::tryCreate({
+        .name = "Range reserved whole"_s,
+        .size = size,
+        .minSize = size,
+        .alignment = GB,
+        .unusedPrefixSize = blockSize,
+        .placement = ReservedRangeHeap::Placement::RandomWindow,
+        .initialAccess = ReservedRangeHeap::InitialAccess::None,
+    });
+    AOT_TEST_CHECK(range && range->size() == size && range->reservedSize() == size && range->initialSegmentSize() == size);
+    AOT_TEST_CHECK(!canRead(range->start()) && canRead(range->start() + blockSize) && !canRead(range->start() + size / 2) && !canRead(range->start() + size - blockSize));
+
+    // Larger than the first segment.
+    void* large = range->tryAllocate(200 * MB);
+    AOT_TEST_CHECK(large && isInside(*range, large, 200 * MB));
+    fill(large, 64, 7);
+    AOT_TEST_CHECK(isFilled(large, 64, 7));
+    range->free(large);
+
+    Vector<void*> blocks;
+    while (blocks.size() * blockSize < size / 8) {
+        void* block = range->tryAllocateAligned(blockSize, blockSize);
+        AOT_TEST_CHECK(block && isInside(*range, block, blockSize) && !(std::bit_cast<uintptr_t>(block) % blockSize));
+        fill(block, 64, static_cast<uint8_t>(blocks.size()));
+        blocks.append(block);
+    }
+    AOT_TEST_CHECK(!canRead(range->start()) && range->reservedSize() == size);
+    for (size_t index = 0; index < blocks.size(); ++index)
+        AOT_TEST_CHECK(isFilled(blocks[index], 64, static_cast<uint8_t>(index)));
+
+    // The last segment ends where the range ends.
+    while (range->tryAllocateAligned(blockSize, blockSize)) { }
+    AOT_TEST_CHECK(canRead(range->start() + size - blockSize));
+}
+
+static void testRangeThatCommitsOnDemandHasAccessToWhatIsUsed()
+{
+    if (!bmalloc::api::isEnabled())
+        return;
+    constexpr size_t size = GB;
+    ReservedRangeHeap::setCommitsOnDemand(true);
+    ReservedRangeHeap* range = ReservedRangeHeap::tryCreate({
+        .name = "Range that commits on demand"_s,
+        .size = size,
+        .minSize = size,
+        .alignment = GB,
+        .unusedPrefixSize = blockSize,
+        .placement = ReservedRangeHeap::Placement::RandomWindow,
+        .initialAccess = ReservedRangeHeap::InitialAccess::None,
+    });
+    AOT_TEST_CHECK(range && range->size() == size && range->reservedSize() == size);
+    // Well inside what would be the first segment.
+    AOT_TEST_CHECK(!canRead(range->start() + 32 * MB) && !canRead(range->start() + size - blockSize));
+
+    void* block = range->tryAllocateAligned(blockSize, blockSize);
+    AOT_TEST_CHECK(block && isInside(*range, block, blockSize));
+    fill(block, blockSize, 7);
+    AOT_TEST_CHECK(isFilled(block, blockSize, 7) && !canRead(range->start() + 32 * MB));
+
+    // One piece of memory for malloc: larger than any segment but the last would be.
+    void* large = range->tryAllocate(600 * MB);
+    AOT_TEST_CHECK(large && isInside(*range, large, 600 * MB));
+    range->free(large);
+    range->free(block);
+    ReservedRangeHeap::setCommitsOnDemand(false);
+}
+
+// A range returns its free memory at malloc's pace and touches nothing that another range has freed, so threads that end together do not wait for one another.
+static void testReleasingFreeMemoryPurgesNoOtherRange()
+{
+    if (!bmalloc::api::isEnabled())
+        return;
+    auto isResident = [](void* page) {
+        unsigned char state = 0;
+        AOT_TEST_CHECK(!mincore(page, pageSize(), &state));
+        return !!(state & 1);
+    };
+    long delay = mi_option_get(mi_option_purge_delay);
+    mi_option_set(mi_option_purge_delay, 600 * 1000);
+
+    ReservedRangeHeap& first = createRange(blockSize);
+    ReservedRangeHeap& second = createRange(blockSize);
+    void* memory = first.tryAllocate(4 * MB);
+    AOT_TEST_CHECK(memory);
+    fill(memory, 4 * MB, 3);
+    // malloc may start a large block anywhere in a page.
+    void* page = std::bit_cast<void*>(roundDownToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(memory) + 2 * MB));
+    AOT_TEST_CHECK(isResident(page));
+    first.free(memory);
+    first.releaseFreeMemory();
+    bool isResidentAfterOwnRangeRelease = isResident(page);
+    second.releaseFreeMemory();
+    bool isResidentAfterOtherRangeRelease = isResident(page);
+
+    mi_option_set(mi_option_purge_delay, delay);
+    AOT_TEST_CHECK(isResidentAfterOwnRangeRelease && isResidentAfterOtherRangeRelease);
+}
+#endif
+
+#if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
+static bool isMapped(void* page)
+{
+    unsigned char state = 0;
+    return !mincore(page, pageSize(), &state);
+}
+
+static bool isZero(const uint8_t* bytes, size_t size)
+{
+    return std::all_of(bytes, bytes + size, [](uint8_t byte) {
+        return !byte;
+    });
+}
+
+static void testPiecesOfOneMappingGoTogether()
+{
+    constexpr size_t pieceSize = 64 * KB;
+    uint8_t* first;
+    uint8_t* second;
+    {
+        PagesOfVM pages(MB);
+        first = static_cast<uint8_t*>(pages.allocate(pieceSize));
+        second = static_cast<uint8_t*>(pages.allocate(pieceSize - 1));
+        auto* third = static_cast<uint8_t*>(pages.allocate(1));
+        AOT_TEST_CHECK(second == first + pieceSize && third == second + pieceSize);
+        AOT_TEST_CHECK(isZero(first, pieceSize) && isZero(second, pieceSize));
+        fill(second, pieceSize, 7);
+
+        auto* large = static_cast<uint8_t*>(pages.allocate(2 * MB));
+        AOT_TEST_CHECK(large && (large + 2 * MB <= first || large >= first + MB) && isZero(large, 2 * MB));
+        pages.release(large, 2 * MB);
+        AOT_TEST_CHECK(!isMapped(large));
+
+        pages.willReleaseEverything();
+        pages.release(first, pieceSize);
+        pages.release(third, 1);
+        AOT_TEST_CHECK(isMapped(first) && isMapped(third) && isFilled(second, pieceSize, 7));
+    }
+    AOT_TEST_CHECK(!isMapped(first) && !isMapped(second) && !isMapped(first + MB - pageSize()));
+}
+
+// Something else may be mapped where a piece was released, so nothing there is touched again.
+static void testEarlyReleasedPieceLeavesNeighbors()
+{
+    constexpr size_t pieceSize = 64 * KB;
+    uint8_t* pieces[4];
+    void* stranger;
+    {
+        PagesOfVM pages(MB);
+        for (auto& piece : pieces) {
+            piece = static_cast<uint8_t*>(pages.allocate(pieceSize));
+            fill(piece, pieceSize, 5);
+        }
+        pages.release(pieces[1], pieceSize);
+        AOT_TEST_CHECK(!isMapped(pieces[1]) && isFilled(pieces[0], pieceSize, 5) && isFilled(pieces[2], pieceSize, 5));
+        stranger = mmap(pieces[1], pieceSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+        AOT_TEST_CHECK(stranger == pieces[1]);
+        fill(stranger, pieceSize, 9);
+
+        void* moved = mremap(pieces[3], pieceSize, 4 * MB, MREMAP_MAYMOVE);
+        AOT_TEST_CHECK(moved != MAP_FAILED && moved != pieces[3]);
+        pages.didMoveAway(pieces[3], pieceSize);
+        AOT_TEST_CHECK(isFilled(moved, pieceSize, 5));
+        pages.release(moved, 4 * MB);
+        AOT_TEST_CHECK(!isMapped(moved));
+
+        pages.willReleaseEverything();
+        pages.release(pieces[0], pieceSize);
+        AOT_TEST_CHECK(!isMapped(pieces[0]) && isFilled(pieces[2], pieceSize, 5));
+    }
+    AOT_TEST_CHECK(!isMapped(pieces[0]) && !isMapped(pieces[2]) && !isMapped(pieces[3]) && !isMapped(pieces[0] + MB - pageSize()));
+    AOT_TEST_CHECK(isFilled(stranger, pieceSize, 9));
+    munmap(stranger, pieceSize);
+}
+#endif
+
 static void testRandomWindowsLieFarApart()
 {
     constexpr size_t size = 64 * MB;
@@ -301,6 +520,24 @@ static void testRandomWindowsLieFarApart()
         highest = std::max(highest, range->start());
     }
     AOT_TEST_CHECK(highest - lowest > 4 * 1024 * GB);
+}
+
+// Under the address sanitizer one window of 3,966 held the range, and a program built with `validate` whose heap drew it took its first object for a cell of a frame.
+static void testRandomWindowsLeaveOutCheckedFrameCells()
+{
+    constexpr size_t size = 64 * KB;
+    constexpr uintptr_t endOfRange = CheckedFrameCells::startOfRange + (uintptr_t(1) << CheckedFrameCells::bitsOfOffsetInRange);
+    unsigned numberOfWindows = 0;
+    for (unsigned index = 0; index < 40000; ++index) {
+        void* window = ReservedRangeHeap::tryReserveRandomWindow(size, MarkedBlockCage::maxSize, OSAllocator::UnknownUsage, false);
+        if (!window)
+            continue;
+        ++numberOfWindows;
+        uintptr_t start = std::bit_cast<uintptr_t>(window);
+        OSAllocator::releaseDecommitted(window, size, 0);
+        AOT_TEST_CHECK(start + MarkedBlockCage::maxSize <= CheckedFrameCells::startOfRange || start >= endOfRange);
+    }
+    AOT_TEST_CHECK(numberOfWindows > 30000);
 }
 
 static void testEncodeDecodeRoundTrip()
@@ -372,10 +609,11 @@ static void runInProcessWithCage()
     }
 }
 
-#if OS(LINUX) && !ASAN_ENABLED
+// libpas maps a gigabyte at its first allocation, so a process that uses it ends in main() under the limits on address space of these tests.
+#if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
 static constexpr ASCIILiteral markStackTest = "heap-cage/cage/mark-stack-that-cannot-grow-says-why"_s;
 
-// A collection at the end of what a limit on address space leaves finds no memory for its mark stack. It cannot go on, and the process says what it ran out of.
+// A collection at the end of what a limit on address space leaves finds no memory for its mark stack. It cannot go on, and the process says what it ran out of and exits.
 static void testMarkStackThatCannotGrowSaysWhy()
 {
     if (MarkedBlockCage::isEnabled()) {
@@ -395,12 +633,323 @@ static void testMarkStackThatCannotGrowSaysWhy()
     ChildProcessLauncher launcher("/bin/sh"_s, { });
     Vector<String> arguments { "-c"_s, "ulimit -c 0 && ulimit -v 2097152 && exec \"$0\" \"$@\""_s, String(programPath()), String(nativeSubcommandName), String(singleProcessFlag), String(markStackTest), "--useAOT=true"_s };
     ChildProcessResult result = launcher.run(arguments.span());
-    if (result.outcome != ChildProcessOutcome::Crashed || !result.output.contains("FATAL: out of memory. The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s)) {
+    if (!result.exitedWith(EXIT_FAILURE) || !result.output.contains("FATAL: out of memory. The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s)) {
         dataLogLn(result.output);
         dataLogLn("The process under a limit on address space ", result.description());
         failNativeTest(__FILE__, __LINE__, markStackTest.characters());
     }
 }
+#endif
+
+#if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
+static constexpr ASCIILiteral frameLinePrefix = "frame 0x"_s;
+
+// Addresses alone: there may be no memory to name them with.
+static void printFramesAndEnd(int signalNumber, siginfo_t* info, void* context)
+{
+    auto print = [](ASCIILiteral prefix, uintptr_t value) {
+        char line[64];
+        int length = snprintf(line, sizeof(line), "%s%lx\n", prefix.characters(), static_cast<unsigned long>(value));
+        if (write(STDERR_FILENO, line, length) < 0) { }
+    };
+    auto& machine = static_cast<ucontext_t*>(context)->uc_mcontext;
+#if CPU(X86_64)
+    uintptr_t pc = machine.gregs[REG_RIP];
+    uintptr_t frame = machine.gregs[REG_RBP];
+#else
+    uintptr_t pc = machine.pc;
+    uintptr_t frame = machine.regs[29];
+#endif
+    print("signal at address 0x"_s, std::bit_cast<uintptr_t>(info->si_addr));
+    for (unsigned depth = 0; depth < 32; ++depth) {
+        print(frameLinePrefix, pc);
+        if (!frame || frame % sizeof(uintptr_t))
+            break;
+        auto* words = std::bit_cast<uintptr_t*>(frame);
+        if (words[0] <= frame)
+            break;
+        pc = words[1];
+        frame = words[0];
+    }
+    signal(signalNumber, SIG_DFL);
+    raise(signalNumber);
+}
+
+static void printFramesAtSignals()
+{
+    struct sigaction action { };
+    action.sa_sigaction = printFramesAndEnd;
+    action.sa_flags = SA_SIGINFO | SA_RESETHAND | SA_NODEFER;
+    for (int signalNumber : { SIGSEGV, SIGBUS, SIGILL, SIGTRAP, SIGABRT })
+        AOT_TEST_CHECK(!sigaction(signalNumber, &action, nullptr));
+}
+
+// The process ran this executable, so its addresses are named by the symbols of this one.
+static String withNamedFrames(const String& output)
+{
+    int file = open("/proc/self/exe", O_RDONLY);
+    struct stat status;
+    if (file < 0 || fstat(file, &status))
+        return output;
+    auto* bytes = static_cast<const uint8_t*>(mmap(nullptr, status.st_size, PROT_READ, MAP_PRIVATE, file, 0));
+    close(file);
+    if (bytes == MAP_FAILED)
+        return output;
+    auto* header = reinterpret_cast<const ElfW(Ehdr)*>(bytes);
+    auto sections = unsafeMakeSpan(reinterpret_cast<const ElfW(Shdr)*>(bytes + header->e_shoff), header->e_shnum);
+    std::span<const ElfW(Sym)> symbols;
+    const char* names = nullptr;
+    for (auto& section : sections) {
+        if (section.sh_type != SHT_SYMTAB)
+            continue;
+        symbols = unsafeMakeSpan(reinterpret_cast<const ElfW(Sym)*>(bytes + section.sh_offset), section.sh_size / sizeof(ElfW(Sym)));
+        names = reinterpret_cast<const char*>(bytes + sections[section.sh_link].sh_offset);
+    }
+    uintptr_t slide = header->e_type == ET_DYN ? std::bit_cast<uintptr_t>(&__executable_start) : 0;
+
+    StringBuilder result;
+    for (auto line : StringView(output).split('\n')) {
+        result.append(line);
+        if (line.startsWith(frameLinePrefix)) {
+            uintptr_t address = parseInteger<uint64_t>(line.substring(frameLinePrefix.length()), 16).value_or(0) - slide;
+            for (auto& symbol : symbols) {
+                if (ELF64_ST_TYPE(symbol.st_info) != STT_FUNC || address - symbol.st_value >= symbol.st_size)
+                    continue;
+                int status = -1;
+                char* demangled = abi::__cxa_demangle(names + symbol.st_name, nullptr, nullptr, &status);
+                result.append(' ', String::fromUTF8(status ? names + symbol.st_name : demangled));
+                free(demangled);
+                break;
+            }
+        }
+        result.append('\n');
+    }
+    munmap(const_cast<uint8_t*>(bytes), status.st_size);
+    return result.toString();
+}
+
+// Within a limit on address space every cage of the process takes from one range.
+template<void (*body)()>
+static void runInProcessWithSharedRange()
+{
+    ASCIILiteral name;
+    for (const NativeTest& test : heapCageTests()) {
+        if (test.run == &runInProcessWithSharedRange<body>)
+            name = test.name;
+    }
+    AOT_TEST_CHECK(!name.isNull());
+
+    if (MarkedBlockCage::isEnabled()) {
+        AOT_TEST_CHECK(MarkedBlockCage::require().has_value() && MarkedBlockCage::isRequired());
+        printFramesAtSignals();
+        body();
+        return;
+    }
+
+    ChildProcessLauncher launcher("/bin/sh"_s, { });
+    Vector<String> arguments { "-c"_s, "ulimit -c 0 && ulimit -v 1048576 && exec \"$0\" \"$@\""_s, String(programPath()), String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s };
+    ChildProcessResult result = launcher.run(arguments.span());
+    if (!result.exitedWith(0)) {
+        dataLogLn(withNamedFrames(result.output));
+        dataLogLn("The process under a limit on address space ", result.description());
+        failNativeTest(__FILE__, __LINE__, name.characters());
+    }
+}
+
+static constexpr size_t sizeOfCellLargerThanBlock = 2 * blockSize;
+
+static void takeAllRoom(MarkedBlockCage& cage)
+{
+    for (size_t size = MB; size >= blockSize; size /= 2) {
+        while (cage.tryAllocate(size)) { }
+    }
+    while (cage.tryAllocate(sizeOfCellLargerThanBlock)) { }
+    while (cage.tryAllocateAligned(blockSize, blockSize)) { }
+}
+
+static Vector<void*, 128> takeBlocksOfSharedReserve(MarkedBlockCage& cage)
+{
+    Vector<void*, 128> blocks;
+    AOT_TEST_CHECK(!cage.tryAllocateAligned(blockSize, blockSize) && !cage.tryAllocateAlignedFromSharedReserve(blockSize, blockSize));
+    AOT_TEST_CHECK(cage.releaseLastReserve() && !cage.releaseLastReserve());
+    while (void* block = cage.tryAllocateAlignedFromSharedReserve(blockSize, blockSize)) {
+        AOT_TEST_CHECK(cage.contains(block) && !(std::bit_cast<uintptr_t>(block) % blockSize));
+        blocks.append(block);
+    }
+    return blocks;
+}
+
+// A cage takes every block of the reserve that the cages of a range share, an out-of-memory error is thrown, and the cage goes away. A cage that was there all along finds as many.
+static void checkSharedReserveIsWholeAgainBehindCageThatThrew()
+{
+    MarkedBlockCage first;
+    MarkedBlockCage waiting;
+    AOT_TEST_CHECK(first.base() && waiting.base() == first.base());
+    takeAllRoom(first);
+
+    size_t whole;
+    {
+        MarkedBlockCage cage;
+        auto blocks = takeBlocksOfSharedReserve(cage);
+        whole = blocks.size();
+        AOT_TEST_CHECK(whole == MB / blockSize);
+        cage.didThrowOutOfMemoryError();
+        for (void* block : blocks)
+            cage.free(block);
+    }
+    AOT_TEST_CHECK(takeBlocksOfSharedReserve(waiting).size() == whole);
+}
+
+// The same where the cage stays: it gives a block back for each block that it takes from the range.
+static void checkSharedReserveIsWholeAgainBehindCageThatStays()
+{
+    MarkedBlockCage first;
+    MarkedBlockCage waiting;
+    MarkedBlockCage cage;
+    // Room for what the cage keeps for itself.
+    std::array<void*, 8> spare;
+    for (void*& block : spare)
+        block = first.tryAllocateAligned(blockSize, blockSize);
+    takeAllRoom(first);
+
+    auto blocks = takeBlocksOfSharedReserve(cage);
+    size_t whole = blocks.size();
+    cage.didThrowOutOfMemoryError();
+    for (void* block : blocks)
+        cage.free(block);
+    for (void* block : spare)
+        first.free(block);
+    for (size_t count = 0; count < whole; ++count)
+        cage.keepReserveOnceHalfFull();
+    takeAllRoom(first);
+    AOT_TEST_CHECK(takeBlocksOfSharedReserve(waiting).size() == whole);
+}
+
+// Four cages at once get a cell that is larger than a block, and what they free is there for the next.
+static void checkSharedReserveHoldsLargeCellsOfSeveralCages()
+{
+    MarkedBlockCage first;
+    std::array<MarkedBlockCage, 4> cages;
+    std::array<void*, 4> cells;
+    for (MarkedBlockCage& cage : cages) {
+        cage.keepReserveOnceHalfFull();
+        AOT_TEST_CHECK(cage.reserveSize() == blockSize);
+    }
+    takeAllRoom(first);
+
+    // What a cage kept for itself goes back to the range. Whether that is room for such a cell is up to the range, so another cage takes it.
+    for (MarkedBlockCage& cage : cages) {
+        AOT_TEST_CHECK(!cage.tryAllocate(sizeOfCellLargerThanBlock) && cage.releaseLastReserve());
+        takeAllRoom(first);
+    }
+
+    for (unsigned round = 0; round < 3; ++round) {
+        for (unsigned index = 0; index < cages.size(); ++index) {
+            MarkedBlockCage& cage = cages[index];
+            cells[index] = cage.tryAllocate(sizeOfCellLargerThanBlock);
+            AOT_TEST_CHECK(cells[index] && cage.contains(cells[index]));
+            fill(cells[index], sizeOfCellLargerThanBlock, index);
+        }
+        cells[0] = cages[0].tryReallocate(cells[0], 2 * sizeOfCellLargerThanBlock);
+        AOT_TEST_CHECK(cells[0]);
+        for (unsigned index = 0; index < cages.size(); ++index) {
+            AOT_TEST_CHECK(isFilled(cells[index], sizeOfCellLargerThanBlock, index));
+            cages[index].free(cells[index]);
+        }
+    }
+    void* largest = cages[0].tryAllocate(MB);
+    AOT_TEST_CHECK(largest && !cages[1].tryAllocate(sizeOfCellLargerThanBlock));
+    cages[0].free(largest);
+}
+
+static void checkCellInFullRangeGrowsIntoSharedReserve()
+{
+    MarkedBlockCage first;
+    MarkedBlockCage cage;
+    void* cell = cage.tryAllocate(sizeOfCellLargerThanBlock);
+    AOT_TEST_CHECK(cell);
+    fill(cell, sizeOfCellLargerThanBlock, 1);
+    takeAllRoom(first);
+
+    AOT_TEST_CHECK(!cage.tryReallocate(cell, 2 * sizeOfCellLargerThanBlock) && isFilled(cell, sizeOfCellLargerThanBlock, 1));
+    AOT_TEST_CHECK(cage.releaseLastReserve());
+    void* grown = cage.tryReallocate(cell, 2 * sizeOfCellLargerThanBlock);
+    AOT_TEST_CHECK(grown && grown != cell && cage.contains(grown) && isFilled(grown, sizeOfCellLargerThanBlock, 1));
+    cage.free(grown);
+    void* largest = cage.tryAllocate(MB);
+    AOT_TEST_CHECK(largest);
+    cage.free(largest);
+}
+
+struct MallocFailingOnRequest : FastMalloc {
+    static void* tryMalloc(size_t size) { return s_refuses ? nullptr : FastMalloc::tryMalloc(size); }
+    static void* tryZeroedMalloc(size_t size) { return s_refuses ? nullptr : FastMalloc::tryZeroedMalloc(size); }
+    static inline bool s_refuses { false };
+};
+
+// A table that reserved room for one more key does not grow when the key is added. If the allocation fails, it reports that and keeps its contents.
+static void checkTableIsUnchangedWhenGrowthFails()
+{
+    using Map = HashMap<unsigned, unsigned, DefaultHash<unsigned>, HashTraits<unsigned>, HashTraits<unsigned>, WTF::HashTableTraits, WTF::ShouldValidateKey::Yes, MallocFailingOnRequest>;
+    Map map;
+    auto holdsKeysUpTo = [&](unsigned last) {
+        if (map.size() != last)
+            return false;
+        for (unsigned key = 1; key <= last; ++key) {
+            if (map.get(key) != key + 1)
+                return false;
+        }
+        return !map.contains(last + 1);
+    };
+
+    unsigned key = 0;
+    while (key < 5000) {
+        AOT_TEST_CHECK(map.tryReserveCapacityForAdd());
+        unsigned capacity = map.capacity();
+        ++key;
+        map.add(key, key + 1);
+        AOT_TEST_CHECK(map.capacity() == capacity);
+    }
+    AOT_TEST_CHECK(holdsKeysUpTo(key));
+
+    MallocFailingOnRequest::s_refuses = true;
+    unsigned capacity = map.capacity();
+    while (map.tryReserveCapacityForAdd()) {
+        ++key;
+        map.add(key, key + 1);
+        AOT_TEST_CHECK(map.capacity() == capacity);
+    }
+    AOT_TEST_CHECK(key > 5000 && key < capacity);
+    AOT_TEST_CHECK(map.capacity() == capacity);
+    AOT_TEST_CHECK(holdsKeysUpTo(key));
+
+    // Removed keys leave deleted buckets, which a rehash at the same size drops. That also needs memory.
+    for (unsigned removed = key; removed > key - 100; --removed)
+        map.remove(removed);
+    key -= 100;
+    AOT_TEST_CHECK(!map.tryReserveCapacityForAdd());
+    AOT_TEST_CHECK(holdsKeysUpTo(key));
+
+    MallocFailingOnRequest::s_refuses = false;
+    AOT_TEST_CHECK(map.tryReserveCapacityForAdd());
+    AOT_TEST_CHECK(map.capacity() == 2 * capacity);
+    AOT_TEST_CHECK(holdsKeysUpTo(key));
+
+    Map empty;
+    MallocFailingOnRequest::s_refuses = true;
+    AOT_TEST_CHECK(!empty.tryReserveCapacityForAdd());
+    AOT_TEST_CHECK(!empty.capacity());
+    MallocFailingOnRequest::s_refuses = false;
+    AOT_TEST_CHECK(empty.tryReserveCapacityForAdd());
+    AOT_TEST_CHECK(empty.capacity());
+
+    AOT_TEST_CHECK(empty.tryReserveCapacityForAdd(3000));
+    capacity = empty.capacity();
+    for (key = 1; key <= 3000; ++key)
+        empty.add(key, key);
+    AOT_TEST_CHECK(empty.capacity() == capacity);
+}
+
 #endif
 
 static bool covers(MarkedBlockCage::Indices indices, uintptr_t base, const void* pointer, size_t size)
@@ -427,7 +976,7 @@ static void checkUsedIndicesCoverAllocations()
     AOT_TEST_CHECK(memory && moved);
     MarkedBlockCage::Indices indices = cage.usedIndices();
     AOT_TEST_CHECK(covers(indices, cage.base(), block, blockSize) && covers(indices, cage.base(), memory, 100 * KB) && covers(indices, cage.base(), moved, 3 * MB));
-    AOT_TEST_CHECK(static_cast<uint64_t>(indices.first) + indices.count <= cage.size() >> MarkedBlockCage::shift);
+    AOT_TEST_CHECK(static_cast<uint64_t>(indices.first) + indices.count <= (cage.start() - cage.base() + cage.size()) >> MarkedBlockCage::shift);
 
     cage.free(block);
     cage.free(memory);
@@ -453,6 +1002,22 @@ static void checkEveryCellIsInside()
     });
     AOT_TEST_CHECK(numberOfStructures > 100 && numberOfCells > 2 * numberOfStructures);
 }
+
+#if OS(LINUX)
+extern "C" char _end;
+
+static void checkNoAddressInImageNamesCell()
+{
+    uintptr_t endOfImage = std::bit_cast<uintptr_t>(&_end);
+    if (endOfImage > std::numeric_limits<uint32_t>::max())
+        return;
+    TestVM test;
+    test.createRealm();
+    MarkedBlockCage::Indices indices = test.cage().usedIndices();
+    AOT_TEST_CHECK(indices.count && indices.first >= endOfImage);
+    AOT_TEST_CHECK(test.cage().start() - test.cage().base() == MarkedBlockCage::distanceOfStartFromBase());
+}
+#endif
 
 static void checkPreciseCellIsInside()
 {
@@ -508,7 +1073,7 @@ static void checkReserveIsKeptOnceHalfFull()
     AOT_TEST_CHECK(!cage.reserveSize() && !cage.releaseReserve());
 
     Vector<void*> blocks;
-    uintptr_t middle = cage.base() + cage.size() / 2;
+    uintptr_t middle = cage.start() + cage.size() / 2;
     do {
         blocks.append(cage.tryAllocateAligned(blockSize, blockSize));
         AOT_TEST_CHECK(blocks.last() && blocks.size() <= cage.size() / blockSize);
@@ -666,6 +1231,27 @@ static void checkErrorIsOwedOnceCollectionsBuyNextToNothing()
     traps.setNeedsOutOfMemoryError(false);
 }
 
+// A request for storage that fails gives the program an error of its own. Cells in a range of a fixed size have nothing to do with it. Cells in a range that grows lack the same room.
+template<bool isSettled>
+static void checkErrorOfAnotherRequestAndErrorOwedForCells()
+{
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    VM& vm = test.vm();
+    auto findNoRoomAfterAllocating = [&](size_t bytes) {
+        vm.heap.didAllocate(bytes);
+        test.cage().didFindNoRoom(vm, MarkedBlockCage::ExhaustedHeap::Cells);
+    };
+    // Much has been allocated since the last time, which starts the count anew.
+    findNoRoomAfterAllocating(vm.heap.objectSpace().capacity() / 64);
+    for (unsigned times = 0; times < 4; ++times)
+        findNoRoomAfterAllocating(1);
+    AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError());
+    AOT_TEST_CHECK(createOutOfMemoryError(realm));
+    AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() == !isSettled);
+    vm.traps().setNeedsOutOfMemoryError(false);
+}
+
 // The error that barren collections owe is offered to a poll first: one more full collection runs there. If little can be allocated behind that one too, the error is owed again and is anybody's to throw.
 static void checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce()
 {
@@ -700,6 +1286,52 @@ static void checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce()
     findNoRoomAfterAllocating(1);
     AOT_TEST_CHECK(traps.needsOutOfMemoryError() && !cage.errorWaitsForPoll());
     traps.setNeedsOutOfMemoryError(false);
+}
+
+static void runOutOfStructures(VM& vm)
+{
+    // A whole reserve, as the allocator keeps once a quarter of its heap is in use.
+    StructureAlignedMemoryAllocator::releaseReserve();
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
+
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::releaseReserve());
+    vm.heap.cage().addExhaustedHeap(MarkedBlockCage::ExhaustedHeap::Structures);
+    vm.traps().setNeedsOutOfMemoryError(true);
+}
+
+static bool throwErrorIfOwed(VM& vm, JSGlobalObject* realm)
+{
+    auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    bool hasThrown = [&] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwOutOfMemoryErrorIfOwed(vm, realm, scope);
+    }();
+    AOT_TEST_CHECK(hasThrown == !!topScope.exception());
+    topScope.clearException();
+    return hasThrown;
+}
+
+// The allocator of Structures has given out its reserve, and keeps one again once it hears that the error was thrown. The next poll fills it.
+static void checkErrorOwedForStructuresIsHeardOfByTheirAllocator()
+{
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    VM& vm = test.vm();
+
+    runOutOfStructures(vm);
+    AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && test.cage().describeExhaustedLimit().contains("Structures"_s));
+
+    AOT_TEST_CHECK(throwErrorIfOwed(vm, realm));
+    AOT_TEST_CHECK(!throwErrorIfOwed(vm, realm) && !test.cage().describeExhaustedLimit().contains("Structures"_s));
+    // Only an allocator that still waits for the error takes back what it gave out.
+    AOT_TEST_CHECK(!StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
+
+    // No error is owed, and the polls are still on.
+    AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && test.cage().errorWaitsForPoll());
+    AOT_TEST_CHECK(test.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm));
+    AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError() && !test.cage().errorWaitsForPoll());
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::releaseReserve());
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
 }
 
 static void checkRangeIsReused()
@@ -883,15 +1515,35 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/reserved-range/takes-what-the-budget-leaves"_s, testRangeTakesWhatBudgetLeaves },
         { "heap-cage/reserved-range/exhaustion-returns-null"_s, testExhaustionReturnsNull },
         { "heap-cage/reserved-range/grows-by-segments"_s, testRangeGrowsBySegments },
+#if OS(LINUX) && USE(MIMALLOC)
+        { "heap-cage/reserved-range/reserved-whole-has-access-in-its-segments-only"_s, testRangeReservedWholeHasAccessInItsSegmentsOnly },
+        { "heap-cage/reserved-range/commits-on-demand-has-access-to-what-is-used"_s, testRangeThatCommitsOnDemandHasAccessToWhatIsUsed },
+        { "heap-cage/reserved-range/releasing-free-memory-purges-no-other-range"_s, testReleasingFreeMemoryPurgesNoOtherRange },
+#endif
         { "heap-cage/reserved-range/random-windows-lie-far-apart"_s, testRandomWindowsLieFarApart },
+        { "heap-cage/reserved-range/random-windows-leave-out-checked-frame-cells"_s, testRandomWindowsLeaveOutCheckedFrameCells },
+#if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
+        { "heap-cage/pages-of-a-vm/pieces-of-one-mapping-go-together"_s, testPiecesOfOneMappingGoTogether },
+        { "heap-cage/pages-of-a-vm/a-piece-that-goes-early-leaves-its-neighbors"_s, testEarlyReleasedPieceLeavesNeighbors },
+#endif
         { "heap-cage/cage/encode-decode-round-trip"_s, testEncodeDecodeRoundTrip },
         { "heap-cage/cage/base-of-any-cell"_s, testBaseOfAnyCell },
         { "heap-cage/cage/off-without-compiled-code"_s, testCageIsOffWithoutCompiledCode },
-#if OS(LINUX) && !ASAN_ENABLED
+#if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
         { markStackTest, testMarkStackThatCannotGrowSaysWhy },
+        { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-threw"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatThrew> },
+        { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-stays"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatStays> },
+        { "heap-cage/cage/shared-reserve-holds-large-cells-of-several-cages"_s, runInProcessWithSharedRange<checkSharedReserveHoldsLargeCellsOfSeveralCages> },
+        { "heap-cage/cage/cell-in-a-full-range-grows-into-the-shared-reserve"_s, runInProcessWithSharedRange<checkCellInFullRangeGrowsIntoSharedReserve> },
+        { "heap-cage/cage/no-address-in-the-image-names-a-cell-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkNoAddressInImageNamesCell> },
+        { "heap-cage/cage/error-of-another-request-settles-cells-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkErrorOfAnotherRequestAndErrorOwedForCells<true>> },
+        { "heap-cage/tables/a-table-that-finds-no-memory-to-grow-stays-as-it-was"_s, checkTableIsUnchangedWhenGrowthFails },
 #endif
         { "heap-cage/cage/used-indices-cover-allocations"_s, withCage<checkUsedIndicesCoverAllocations> },
         { "heap-cage/cage/every-cell-is-inside"_s, withCage<checkEveryCellIsInside> },
+#if OS(LINUX)
+        { "heap-cage/cage/no-address-in-the-image-names-a-cell"_s, withCage<checkNoAddressInImageNamesCell> },
+#endif
         { "heap-cage/cage/precise-cell-is-inside"_s, withCage<checkPreciseCellIsInside> },
         { "heap-cage/cage/lower-tier-cell-is-inside"_s, withCage<checkLowerTierCellIsInside> },
         { "heap-cage/cage/butterfly-is-outside"_s, withCage<checkButterflyIsOutside> },
@@ -903,6 +1555,8 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/error-waits-at-function-entries-alone"_s, withCage<checkErrorWaitsAtFunctionEntriesAlone> },
         { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },
         { "heap-cage/cage/error-owed-by-barren-collections-is-offered-to-a-poll-once"_s, withCage<checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce> },
+        { "heap-cage/cage/error-owed-for-structures-is-heard-of-by-their-allocator"_s, withCage<checkErrorOwedForStructuresIsHeardOfByTheirAllocator> },
+        { "heap-cage/cage/error-of-another-request-leaves-what-is-owed-for-cells"_s, withCage<checkErrorOfAnotherRequestAndErrorOwedForCells<false>> },
         { "heap-cage/cage/blocks-to-fill-are-fresh-blocks-of-the-cage"_s, withCage<checkBlocksToFillAreFreshBlocksOfTheCage> },
 #if !ENABLE(MALLOC_HEAP_BREAKDOWN)
         { "heap-cage/cage/other-allocator-warms-up-with-the-cage"_s, withCage<checkOtherAllocatorWarmsUpWithTheCage> },

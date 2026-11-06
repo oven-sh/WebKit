@@ -23,6 +23,7 @@
 #include "config.h"
 #include "JSCell.h"
 
+#include "AOTCheckedFrameCells.h"
 #include "IntegrityInlines.h"
 #include "IsoSubspaceInlines.h"
 #include "JSBigInt.h"
@@ -177,7 +178,8 @@ bool JSCell::isObjectSlow() const
 bool JSCell::validateIsNotSweeping() const
 {
 #if ENABLE(AOT) && ASSERT_ENABLED
-    if (Thread::currentSingleton().stack().contains(const_cast<JSCell*>(this)))
+    // A cell that compiled code keeps in a frame lies in no block.
+    if (Thread::currentSingleton().stack().contains(const_cast<JSCell*>(this)) || AOT::CheckedFrameCells::isInRange(this))
         return true;
 #endif
     ASSERT_IMPLIES(vm().currentThreadIsHoldingAPILock(), vm().heap.mutatorState() != MutatorState::Sweeping);

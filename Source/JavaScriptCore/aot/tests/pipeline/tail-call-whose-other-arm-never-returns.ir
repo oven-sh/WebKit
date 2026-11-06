@@ -1,0 +1,25 @@
+# function leaves(g) { return g(); }  leaves(() => 1); leaves(1)
+# One function and a number reach the tail call. The call is split: one arm calls the function, the other calls what cannot be called and never returns.
+# That arm stays in tail position: a stack trace lists its frame as one at a failed tail call.
+# RUN: pipeline ResolveCalls
+# CHECK: function f1 name="leaves"
+# CHECK: never = Call {{*}}@10 tail
+# CHECK-NEXT: Unreachable
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = CallDirect v0 function=f1
+    v2 = Integer integer=1
+    v3 = CallDirect v2 function=f1
+    Return
+}
+function f1 name="leaves" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0 @10
+    ReturnCall v1 @10
+}
+function f2 name="one" module=m0 kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}

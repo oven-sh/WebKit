@@ -54,7 +54,7 @@ private:
     };
 
     const RegisterSet m_clobberedRegisters;
-    UncheckedKeyHashMap<unsigned, Vector<CheckedThrowSite, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_checkedThrowSites;
+    UncheckedKeyHashMap<uint64_t, Vector<CheckedThrowSite, 1>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_checkedThrowSites;
 };
 
 Vector<uint32_t, 3> throwSiteWords(const ThrowSite&, Representation, unsigned registerNumber);

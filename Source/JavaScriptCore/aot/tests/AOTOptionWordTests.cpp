@@ -74,7 +74,7 @@ static constexpr unsigned bitsPerSwitchWord = 64;
 static constexpr uint64_t lastSwitchBit = 1ull << (bitsPerSwitchWord - 1);
 static constexpr uint32_t sampleLayoutSeed = 7;
 static constexpr uint32_t nullID = UINT32_MAX;
-static constexpr ASCIILiteral cannotBeLoweredMark = " (cannot be lowered)"_s;
+static constexpr ASCIILiteral notLoweredByAllMark = " (not lowered by All)"_s;
 static constexpr ASCIILiteral frontEndHeading = "front end only:"_s;
 static constexpr Architecture otherArchitecture = hostArchitecture() == Architecture::ARM64 ? Architecture::X86_64 : Architecture::ARM64;
 
@@ -83,7 +83,7 @@ static_assert(defaultLimitValue(LimitID::MaxLayoutsInType, hostArchitecture()) =
 static_assert(canBeLowered(LimitID::MaxLayoutsInType));
 static_assert(canBeLowered(LimitID::MaxLiteralsInType));
 static_assert(canBeLowered(LimitID::MinSwitchCases));
-static_assert(failsBuild(LimitID::MaxDataNodes) && !canBeLowered(LimitID::MaxDataNodes));
+static_assert(failsBuild(LimitID::MaxDataNodes) && canBeLowered(LimitID::MaxDataNodes) && !isLoweredByAll(LimitID::MaxDataNodes));
 static_assert(numberOfEnumerators<Wire::FlowResultKind> < bitsPerSwitchWord);
 static_assert(numberOfEnumerators<Wire::SelectionRuleID> < bitsPerSwitchWord);
 static_assert(B3::numberOfSwitches < bitsPerSwitchWord);
@@ -108,6 +108,7 @@ static bool isSame(const CompileOptions& first, const CompileOptions& second)
         && first.validatesBackEnd == second.validatesBackEnd
         && first.validatesReferences == second.validatesReferences
         && first.validatesReferenceGuards == second.validatesReferenceGuards
+        && first.widensFlow == second.widensFlow
         && first.reports == second.reports
         && first.excludedCode == second.excludedCode
         && first.output == second.output;
@@ -268,6 +269,8 @@ static constexpr OptionWordCase optionWordCases[] = {
     } },
     { "heat=EverythingIsCold"_s, [](WireOptions& options) { options.heatOverride = Wire::HeatOverride::EverythingIsCold; } },
     { "heat=everything-is-cold"_s, [](WireOptions& options) { options.heatOverride = Wire::HeatOverride::EverythingIsCold; } },
+    { "flow=Widened"_s, [](WireOptions& options) { options.flowOverride = Wire::FlowOverride::Widened; } },
+    { "flow=widened"_s, [](WireOptions& options) { options.flowOverride = Wire::FlowOverride::Widened; } },
     { "testing=ignore-branch-hints"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::IgnoreBranchHints; } },
     { "testing=IgnoreExpectedTypes"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::IgnoreExpectedTypes; } },
     { "testing=FailPredictions"_s, [](WireOptions& options) {
@@ -281,6 +284,11 @@ static constexpr OptionWordCase optionWordCases[] = {
     { "testing=FailPredictions:100:3"_s, [](WireOptions& options) {
         options.testing = Wire::TestingSwitch::FailPredictions;
         options.bisection.predictionFailure = { .period = 100, .seed = 3 };
+    } },
+    { "testing=DelayFlowRules"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::DelayFlowRules; } },
+    { "testing=delay-flow-rules:17"_s, [](WireOptions& options) {
+        options.testing = Wire::TestingSwitch::DelayFlowRules;
+        options.bisection.flowSchedule.number = 17;
     } },
     { "sabotage=NoCallCollects"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::NoCallCollects; } },
     { "sabotage=fields-never-change"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::FieldsNeverChange; } },
@@ -302,6 +310,7 @@ static constexpr OptionWordCase optionWordCases[] = {
     { "admit=inspector"_s, [](WireOptions& options) { options.admittedCode = Wire::AdmittedCode::Inspector; } },
     { "exclude=EvaluatedText"_s, [](WireOptions& options) { options.excludedCode = Wire::ExcludedCode::EvaluatedText; } },
     { "exclude=evaluated-text,FunctionSource"_s, [](WireOptions& options) { options.excludedCode = flagSet({ Wire::ExcludedCode::EvaluatedText, Wire::ExcludedCode::FunctionSource }); } },
+    { "exclude=HostEvaluatedText,foreign-calls"_s, [](WireOptions& options) { options.excludedCode = flagSet({ Wire::ExcludedCode::HostEvaluatedText, Wire::ExcludedCode::ForeignCalls }); } },
     { "obfuscate"_s, [](WireOptions& options) { options.output = Wire::OutputOptions::Obfuscate; } },
 };
 
@@ -330,8 +339,8 @@ static constexpr ASCIILiteral rejectedWords[] = {
     "limit=Nothing:1"_s,
     "limit=MaxLayoutsInType:1025"_s,
     "limit=MaxLayoutsInType"_s,
-    "limit=MaxDataNodes:1"_s,
     "heat=Warm"_s,
+    "flow=Narrowed"_s,
     "testing=DropGuard"_s,
     "testing=IgnorePredictions"_s,
     "sabotage=Everything"_s,
@@ -419,8 +428,6 @@ static ListedWords collectListedWords()
             continue;
         }
         AOT_TEST_CHECK(!isFrontEndPart);
-        if (line.endsWith(cannotBeLoweredMark))
-            continue;
         StringView name = firstPartOf(line, ' ');
         words.engineWords.append(key == "limit"_s ? makeString(key, '=', name, ":0"_s) : makeString(key, '=', name));
     }
@@ -442,6 +449,7 @@ static void testOptionWordsListedNamesAccepted()
         "limit=MaxLayoutsInType:0"_s,
         "limit=MinSwitchCases:0"_s,
         "heat=None"_s,
+        "flow=None"_s,
         "testing=IgnoreBranchHints"_s,
         "testing=IgnoreExpectedTypes"_s,
         "sabotage=None"_s,
@@ -453,6 +461,9 @@ static void testOptionWordsListedNamesAccepted()
         "admit=Inspector"_s,
         "exclude=EvaluatedText"_s,
         "exclude=FunctionSource"_s,
+        "exclude=HostEvaluatedText"_s,
+        "exclude=ForeignCalls"_s,
+        "exclude=ForeignCallsOfUnseenCode"_s,
         "obfuscate"_s,
     };
     static constexpr ASCIILiteral unlistedWords[] = {
@@ -464,7 +475,6 @@ static void testOptionWordsListedNamesAccepted()
         "only-passes=VerifyProgram"_s,
         "testing=DropGuard"_s,
         "limit=None:0"_s,
-        "limit=MaxDataNodes:0"_s,
     };
 
     ListedWords words = collectListedWords();
@@ -548,12 +558,11 @@ static void testOnlyPassesRejectedWords()
 static String listedLineOf(LimitID limit)
 {
     return makeString("  "_s, nameOf(limit), ' ', defaultLimitValue(limit, hostArchitecture()), ' ', nameOf(stageOf(limit)), ' ', nameOf(protectsOf(limit)), ' ', nameOf(degradesToOf(limit)),
-        canBeLowered(limit) ? ""_s : cannotBeLoweredMark, '\n');
+        isLoweredByAll(limit) ? ""_s : notLoweredByAllMark, '\n');
 }
 
 static void testLimitWordFollowsCanBeLowered()
 {
-    AOT_TEST_CHECK(rejectionOf("limit=MaxDataNodes:1"_s) == "the limit MaxDataNodes fails the build and cannot be lowered"_s);
     AOT_TEST_CHECK(rejectionOf("limit=MaxLayoutsInType"_s) == "limit takes <LimitID>:<n>"_s);
 
     String listing = listOptions();
@@ -562,7 +571,7 @@ static void testLimitWordFollowsCanBeLowered()
         WireOptions options = makeDefaultCompileOptions();
         bool isAccepted = !applyOptionWord(options, makeString("limit="_s, nameOf(limit), ":0"_s));
         AOT_TEST_CHECK(isAccepted == canBeLowered(limit));
-        AOT_TEST_CHECK(canBeLowered(limit) == (limit != LimitID::None && degradesToOf(limit) != Wire::DegradesTo::BuildError));
+        AOT_TEST_CHECK(isLoweredByAll(limit) == (limit != LimitID::None && degradesToOf(limit) != Wire::DegradesTo::BuildError));
         AOT_TEST_CHECK(listing.contains(listedLineOf(limit)) == (limit != LimitID::None));
     }
 }
@@ -609,8 +618,8 @@ static constexpr InvalidMemberCase invalidMemberCases[] = {
     { offsetof(WireOptions, action), [](WireOptions& wire) { wire.action = firstInvalidEnumerator<Wire::CompileAction>; } },
     { offsetof(WireOptions, mismatchPolicy), [](WireOptions& wire) { wire.mismatchPolicy = firstInvalidEnumerator<Wire::MismatchPolicy>; } },
     { offsetof(WireOptions, heatOverride), [](WireOptions& wire) { wire.heatOverride = firstInvalidEnumerator<Wire::HeatOverride>; } },
+    { offsetof(WireOptions, flowOverride), [](WireOptions& wire) { wire.flowOverride = firstInvalidEnumerator<Wire::FlowOverride>; } },
     { offsetof(WireOptions, loweredLimit), [](WireOptions& wire) { wire.loweredLimit = firstInvalidEnumerator<LimitID>; } },
-    { offsetof(WireOptions, loweredLimit), [](WireOptions& wire) { wire.loweredLimit = LimitID::MaxDataNodes; } },
     { offsetof(WireOptions, loweredLimit), [](WireOptions& wire) { wire.loweredLimitValue = 5; } },
     { offsetof(WireOptions, loweredLimit), [](WireOptions& wire) {
         wire.loweredLimit = LimitID::MaxLayoutsInType;
@@ -640,6 +649,12 @@ static constexpr InvalidMemberCase invalidMemberCases[] = {
         wire.testing = Wire::TestingSwitch::FailPredictions;
         wire.bisection.predictionFailure = { .period = 1, .seed = UINT16_MAX + 1 };
     } },
+    { offsetof(WireOptions, bisection.flowSchedule.number), [](WireOptions& wire) { wire.bisection.flowSchedule.number = 1; } },
+    { offsetof(WireOptions, bisection.flowSchedule.reserved), [](WireOptions& wire) { wire.bisection.flowSchedule.reserved = 1; } },
+    { offsetof(WireOptions, bisection.flowSchedule.number), [](WireOptions& wire) {
+        wire.testing = Wire::TestingSwitch::DelayFlowRules;
+        wire.bisection.flowSchedule.number = UINT8_MAX + 1;
+    }, [](CompileOptions& options) { options.recorded.testing = static_cast<uint16_t>(Wire::TestingSwitch::DelayFlowRules); } },
     { offsetof(WireOptions, threadCount), [](WireOptions& wire) { wire.threadCount = 0; }, [](CompileOptions& options) { options.threadCount = 1; } },
     { offsetof(WireOptions, target.architecture), [](WireOptions& wire) { wire.target.architecture = otherArchitecture; }, [](CompileOptions& options) {
         options.recorded.architecture = static_cast<uint8_t>(otherArchitecture);
@@ -724,14 +739,9 @@ static void testWireOptionsFollowCanBeLowered()
         wire.loweredLimitValue = 0;
 
         auto [options, errors] = readOptions(wire);
-        if (canBeLowered(limit)) {
-            AOT_TEST_CHECK(errors.isEmpty());
-            AOT_TEST_CHECK(options.recorded.loweredLimit == limit);
-            AOT_TEST_CHECK(!options.limits[limit]);
-            continue;
-        }
-        AOT_TEST_CHECK(reportsOnly(errors, offsetof(WireOptions, loweredLimit)));
-        AOT_TEST_CHECK(isSame(options, createDefaultOptions(0)));
+        AOT_TEST_CHECK(errors.isEmpty());
+        AOT_TEST_CHECK(options.recorded.loweredLimit == limit);
+        AOT_TEST_CHECK(!options.limits[limit]);
     }
 
     WireOptions all = makeDefaultCompileOptions();
@@ -740,15 +750,15 @@ static void testWireOptionsFollowCanBeLowered()
     CompileOptions together = readValidOptions(all);
     for (LimitID limit : allMembersOf<LimitID>) {
         uint64_t usual = defaultLimitValue(limit, hostArchitecture());
-        AOT_TEST_CHECK(together.limits[limit] == (canBeLowered(limit) ? std::min(usual, std::max<uint64_t>(2, smallestOf(limit))) : usual));
+        AOT_TEST_CHECK(together.limits[limit] == (isLoweredByAll(limit) ? std::min(usual, std::max<uint64_t>(2, smallestOf(limit))) : usual));
     }
 
     WireOptions wire = makeDefaultCompileOptions();
     wire.loweredLimit = LimitID::MaxDataNodes;
     wire.loweredLimitValue = 1;
     BuildContext build(wire);
-    AOT_TEST_CHECK(build.diagnostics().hasErrors());
-    AOT_TEST_CHECK(build.limit(LimitID::MaxDataNodes) == defaultLimitValue(LimitID::MaxDataNodes, hostArchitecture()));
+    AOT_TEST_CHECK(!build.diagnostics().hasErrors());
+    AOT_TEST_CHECK(build.limit(LimitID::MaxDataNodes) == 1);
 }
 
 static void checkSwitchRange(uint32_t firstID, uint32_t idCount, std::initializer_list<uint32_t> disabledIDs, std::initializer_list<uint32_t> enabledIDs)
@@ -829,6 +839,9 @@ static void testExcludedFunctionSourceIsRecorded()
     CompileOptions withoutSource = readWords({ "exclude=FunctionSource"_s });
     AOT_TEST_CHECK(withoutSource.recorded.omitsFunctionSource && !withoutSource.excludesEvaluatedText() && withoutSource.excludesCodeOutsideImage() == runsOnlyCodeOfImage);
     AOT_TEST_CHECK(readWords({ }).excludesCodeOutsideImage() == runsOnlyCodeOfImage && readWords({ "exclude=CodeOutsideImage"_s }).excludesCodeOutsideImage());
+    AOT_TEST_CHECK(!readWords({ "exclude=EvaluatedText"_s }).excludesHostEvaluatedText() && !readWords({ "exclude=HostEvaluatedText"_s }).excludesEvaluatedText() && readWords({ "exclude=HostEvaluatedText"_s }).excludesHostEvaluatedText());
+    AOT_TEST_CHECK(!readWords({ }).excludesForeignCalls() && readWords({ "exclude=ForeignCalls"_s }).excludesForeignCalls());
+    AOT_TEST_CHECK(!readWords({ "exclude=ForeignCalls"_s }).excludesForeignCallsOfUnseenCode() && !readWords({ "exclude=ForeignCallsOfUnseenCode"_s }).excludesForeignCalls() && readWords({ "exclude=ForeignCallsOfUnseenCode"_s }).excludesForeignCallsOfUnseenCode());
 }
 
 static void testInstrumentationAndTestingSwitchesAreRecorded()
@@ -850,6 +863,7 @@ static void testInstrumentationAndTestingSwitchesAreRecorded()
     AOT_TEST_CHECK(!readWords({ }).recorded.has(Wire::TestingSwitch::FailPredictions) && !readWords({ }).recorded.predictionFailurePeriod && !readWords({ }).recorded.predictionFailureSeed);
     RecordedOptions failing = readWords({ "testing=FailPredictions:7:3"_s }).recorded;
     AOT_TEST_CHECK(failing.has(Wire::TestingSwitch::FailPredictions) && failing.predictionFailurePeriod == 7 && failing.predictionFailureSeed == 3);
+    AOT_TEST_CHECK(!readWords({ "testing=DelayFlowRules"_s }).recorded.numberOfFlowSchedule && readWords({ "testing=DelayFlowRules:200"_s }).recorded.numberOfFlowSchedule == 200);
 }
 
 std::span<const NativeTest> optionWordTests()

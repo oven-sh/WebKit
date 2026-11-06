@@ -30,6 +30,7 @@
 #include "config.h"
 #include "InspectorDebuggerAgent.h"
 
+#include "AOTRemovableFeature.h"
 #include "AsyncStackTrace.h"
 #include "Debugger.h"
 #include "DebuggerScope.h"
@@ -253,6 +254,7 @@ Ref<JSC::Breakpoint> InspectorDebuggerAgent::ProtocolBreakpoint::createDebuggerB
 
 bool InspectorDebuggerAgent::ProtocolBreakpoint::matchesScriptURL(const String& scriptURL) const
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &InspectorDebuggerAgent::ProtocolBreakpoint::matchesScriptURL);
     ASSERT(m_sourceID == JSC::noSourceID);
 
     if (m_isRegex) {

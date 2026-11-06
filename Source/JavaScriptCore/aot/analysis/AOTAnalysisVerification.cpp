@@ -548,9 +548,8 @@ static bool checkLiveness(Comparison& comparison, const Function& function, cons
     return true;
 }
 
-static bool checkEffectFacts(Comparison& comparison, ValueID value, Opcode opcode, const Effects& fresh)
+static bool checkEffectFacts(Comparison& comparison, ValueID value, const OpcodeEffectFacts& facts, Opcode opcode, const Effects& fresh)
 {
-    const OpcodeEffectFacts& facts = effectFactsOf(opcode);
     return comparison.holds(EffectTraits(fresh).containsAll(facts.traits.atLeast) && facts.traits.atMost.containsAll(EffectTraits(fresh)), "the effects of {}, {}, lie outside the bounds on traits that are kept for its operation"_s, value, fresh)
         && comparison.holds(!facts.staysWithinDeclaredBound || fresh.isSubsetOf(declaredBoundOf(opcode)), "the effects of {}, {}, exceed the bound declared for its operation, which is said to stay within it"_s, value, fresh)
         && comparison.holds(!facts.mayExitSideways || fresh.mayExitSideways(), "the operation of {} is said to leave sideways wherever it stands, and by its effects, {}, this one does not"_s, value, fresh)
@@ -567,8 +566,9 @@ static bool checkEffects(Comparison& comparison, const EffectContext& context, c
         const Value& value = function.at(id);
         EffectsOnEdges fresh = effectsOf(context, function, value);
         return comparison.isSame(*kept, fresh, "the effects of {}"_s, id)
-            && checkEffectFacts(comparison, id, value.opcode, fresh.onAnyEdge())
-            && checkEffectFacts(comparison, id, value.opcode, fresh.normal);
+            && checkEffectFacts(comparison, id, effectFactsOf(value), value.opcode, fresh.onAnyEdge())
+            && checkEffectFacts(comparison, id, effectFactsOf(value), value.opcode, fresh.normal)
+            && checkEffectFacts(comparison, id, effectFactsOf(value.opcode), value.opcode, fresh.onAnyEdge());
     };
 
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
@@ -610,8 +610,13 @@ static bool checkEscapeAnalysis(Comparison& comparison, const Function& function
             && (!comparison.isSame(cached.liveInstancesOf(object), fresh.liveInstancesOf(object), "the number of live instances of {}, {}"_s, object, definition)
                 || !comparison.isSame(cached.objectsRenewedAtMakersOf(object), fresh.objectsRenewedAtMakersOf(object), "the objects renewed where {}, {}, is made"_s, object, definition)))
             return false;
+        auto listOf = [](ObjectUses uses) {
+            return Vector<ObjectUse>(uses.size(), [&](size_t index) {
+                return uses[index];
+            });
+        };
         if (!comparison.isSameList(cached.aliasesOf(object), fresh.aliasesOf(object), "the aliases of {}, {}"_s, object, definition)
-            || !comparison.isSameList(cached.usesOf(object), fresh.usesOf(object), "the uses of {}, {}"_s, object, definition)
+            || !comparison.isSameList(listOf(cached.usesOf(object)).span(), listOf(fresh.usesOf(object)).span(), "the uses of {}, {}"_s, object, definition)
             || !comparison.isSameList(cached.contentsOf(object), fresh.contentsOf(object), "the contents of {}, {}"_s, object, definition)
             || !comparison.isSameList(cached.containersOf(object), fresh.containersOf(object), "the containers of {}, {}"_s, object, definition))
             return false;
@@ -671,12 +676,12 @@ static bool checkFrequencies(Comparison& comparison, const Function& function, c
 {
     comparison.begin(FunctionAnalysis::Frequencies);
     for (BlockID block : graph.reversePostOrder()) {
-        if (!comparison.isSame(cached.frequencyOf(block), fresh.frequencyOf(block), "the frequency of {}"_s, block)
-            || !comparison.isSame(cached.classOf(block), fresh.classOf(block), "the class of {}"_s, block))
+        if (!comparison.isSame(cached.frequencyOf(block).predicted(), fresh.frequencyOf(block).predicted(), "the frequency of {}"_s, block)
+            || !comparison.isSame(cached.classOf(block).predicted(), fresh.classOf(block).predicted(), "the class of {}"_s, block))
             return false;
         forEachOutgoingEdge(function, block, [&](Edge edge, const Target&) {
             if (!comparison.foundDifference())
-                comparison.isSame(cached.classOf(edge), fresh.classOf(edge), "the class of {}"_s, edge);
+                comparison.isSame(cached.classOf(edge).predicted(), fresh.classOf(edge).predicted(), "the class of {}"_s, edge);
         });
         if (comparison.foundDifference())
             return false;

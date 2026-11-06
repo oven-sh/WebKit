@@ -1,4 +1,4 @@
-# Allocations, closures, built-ins and literals are constants inside the operands that read them. A string that is a property key of the program is that key, any other string is its kind. An allocation without operands has no statement.
+# Allocations, closures, built-ins and literals are constants inside the operands that read them. A string is its key, whether or not a property is named so. An allocation without operands has no statement.
 # RUN: valueflow-body f0
 # CHECK: body f0: nodes=3 sites=5 edges=0 edgesOnceReached=0 seeds=2 statements=4
 # CHECK-NEXT: n0 parameter v0
@@ -13,7 +13,7 @@
 # CHECK-NEXT: reached: seed host{{*}} <- ArrayPrototypePush
 # CHECK-NEXT: NewObject v3 (-, int)
 # CHECK-NEXT: NewArray v8 (-, s0, closure f1)
-# CHECK-NEXT: Call v9 (n0, s0, s1, closure f1, ArrayPrototypePush, "x", string, s2) throws n2
+# CHECK-NEXT: Call v9 (n0, s0, s1, closure f1, ArrayPrototypePush, "x", "no key of the program", s2) throws n2
 # CHECK-NEXT: ElemGet v10 (s0, "x") throws n2
 
 module m0 path="main.js" displayPath="main.js"

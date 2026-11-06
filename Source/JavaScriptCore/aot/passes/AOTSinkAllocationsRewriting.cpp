@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTDecidedBranches.h"
+#include "AOTPredictedValues.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -86,6 +88,29 @@ void RewriteCursor::willKeepThrowingValue(ObjectInterpreter& interpreter)
         cut(interpreter);
 }
 
+void RewriteCursor::willBuild(ObjectInterpreter& interpreter)
+{
+    if (m_numberOfBuildsBegun++ || !m_originalHandler)
+        return;
+    if (m_handlerArgumentsAreStale) {
+        std::optional<Target> target = handlerTargetFor(m_interpreterAtTerminator ? *m_interpreterAtTerminator : interpreter);
+        if (m_function.at(block()).handler != target) {
+            BlockID next = addUncoveredBlock();
+            m_function.edit(next, { BlockEdit::Edges, BlockEdit::Arguments }).handler = WTF::move(target);
+            m_builder.emitJump(next);
+            moveTo(next);
+        }
+        m_handlerArgumentsAreStale = false;
+    }
+    m_handlerOfBuild = m_function.at(block()).handler;
+}
+
+void RewriteCursor::didBuild()
+{
+    if (!--m_numberOfBuildsBegun)
+        m_handlerOfBuild = std::nullopt;
+}
+
 void RewriteCursor::cut(ObjectInterpreter& interpreter)
 {
     BlockID next = addCoveredBlock(interpreter);
@@ -97,6 +122,8 @@ BlockID RewriteCursor::addUncoveredBlock()
 {
     BlockID block = m_builder.addBlock(m_frequency);
     m_function.edit(block, BlockEdit::Rest).shape = m_function.at(m_originalBlock).shape;
+    if (m_handlerOfBuild)
+        m_function.edit(block, { BlockEdit::Edges, BlockEdit::Arguments }).handler = m_handlerOfBuild;
     return block;
 }
 
@@ -138,6 +165,7 @@ static bool carriesField(const VirtualFamily& family, const ObjectState& state, 
 static TypeID typeOfCarriedField(const AllocationSinking& sinking, VirtualObjectID object, const ObjectState& state, uint32_t fieldIndex, TypeArena& types)
 {
     const VirtualObjectContext& context = sinking.objectContext();
+    ShapeContext shapes = sinking.shapeContext(object);
     const Candidate& candidate = sinking.at(object);
     const VirtualFamily& family = sinking.familyOf(object);
     const VirtualField& field = family.fieldAt(fieldIndex);
@@ -146,11 +174,12 @@ static TypeID typeOfCarriedField(const AllocationSinking& sinking, VirtualObject
     for (const ObjectVariant& variant : state.variants) {
         const VirtualShape& shape = family.at(variant.shape);
         if (hasStored(shape, fieldIndex))
-            type = types.unionOf(type, typeOfField(context, family.descriptionOf(shape), field));
+            type = types.unionOf(type, typeOf(contentsOf(shapes, family.descriptionOf(shape), fieldIndex), types));
     }
-    if (type != TypeTable::never && field.kind == VirtualFieldKind::Element) {
+    // A join passes its fields on to other joins of the family, whose variants may differ, so every join carries the union over the family.
+    if (type != TypeTable::never && (field.kind == VirtualFieldKind::Element || (candidate.isJoin && field.isProperty()))) {
         for (const VirtualObjectDescription& description : family.descriptions())
-            type = types.unionOf(type, typeOfField(context, description, field));
+            type = types.unionOf(type, typeOf(contentsOf(shapes, description, fieldIndex), types));
     }
 
     if (state.hasCell() && state.fieldsValidInCell.get(fieldIndex)) {
@@ -159,7 +188,7 @@ static TypeID typeOfCarriedField(const AllocationSinking& sinking, VirtualObject
             descriptionsOfCells = descriptionsOfCells.subspan(candidate.descriptionIndex, 1);
         for (const VirtualObjectDescription& description : descriptionsOfCells) {
             if (canLoadSpeculatively(context, description, field) == SpeculativeLoad::Safe)
-                type = types.unionOf(type, typeOfField(context, description, field));
+                type = types.unionOf(type, typeOf(contentsOf(shapes, description, fieldIndex), types));
         }
     }
     return type;
@@ -200,8 +229,9 @@ bool AllocationSinking::splitEdgesNeedingCode(IRBuilder& builder)
     AOT::sort(m_edgesNeedingCode, { }, [](const Edge& edge) {
         return std::pair { edge.from, edge.targetIndex };
     });
+    // What is built on the exit of a block that a handler covers is built under that handler.
     for (Edge edge : m_edgesNeedingCode)
-        builder.splitEdge(edge);
+        builder.splitEdge(edge, m_function.at(edge.from).handler);
     return true;
 }
 
@@ -241,14 +271,19 @@ void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shap
     for (auto [read, replacement] : tables.replacedReads)
         replaceReadWithValue(m_program, builder.function(), substitution, read, replacement);
     substitution.apply(builder.function(), &m_analyses);
+    nameFactsWhereUnspecifiedValuesAreUsed(builder, m_analyses);
+    if (!tables.claimsAssumedOfContents.isEmpty()) {
+        PredictedValues predicted(builder.function());
+        settleProofsBehindAnsweredChecks(builder.function(), tables.claimsAssumedOfContents.span(), &predicted);
+    }
 }
 
 ValueID AllocationSinking::sameValueThroughTests(ValueID id)
 {
     if (m_tables)
-        return id.index() < m_tables->identityOfValue.size() ? m_tables->identityOfValue[id.index()] : sameObjectThroughCasts(m_function, id);
+        return id.index() < m_tables->identityOfValue.size() ? m_tables->identityOfValue[id.index()] : sameObjectThroughCasts(m_function, id).valueInFrontOfFacts();
     const ValueIdentities& identities = m_analyses.identities();
-    return id.index() < identities.numberOfValues() ? identities.identityOf(id) : sameObjectThroughCasts(m_function, id);
+    return id.index() < identities.numberOfValues() ? identities.identityOf(id) : sameObjectThroughCasts(m_function, id).valueInFrontOfFacts();
 }
 
 void AllocationSinking::forEachHeadValue(const SinkingState& head, NOESCAPE const ScopedLambda<void(const HeadValue&)>& functor) const
@@ -415,10 +450,12 @@ void AllocationSinking::rewriteBlock(BlockID block)
 
     if (m_inputs.throwingTerminators.get(block.index()))
         m_cursor->willKeepThrowingValue(interpreter);
+    m_cursor->willEnterEdges(interpreter);
     for (const OutgoingEdge& outgoing : edges) {
         if (!interpreter.isDeadEdge(terminator, outgoing.edge.targetIndex))
             rewriteEdge(interpreter, terminator, outgoing);
     }
+    m_cursor->didEnterEdges();
     if (foldTerminator(interpreter, terminator))
         m_tables->blocksWithDecidedBranches.append(m_cursor->block());
     for (const Target& target : terminator.targets)
@@ -588,7 +625,7 @@ void AllocationSinking::raiseFrequenciesBehindDecidedBranches()
     Function& function = m_cursor->builder().function();
     bool hasAnalysesOfRewrittenFunction = false;
     for (BlockID block : m_tables->blocksWithDecidedBranches) {
-        if (!isRarerThan(function.at(function.at(block).terminator.next().block).frequency, function.at(block).frequency))
+        if (!isRarerThan(function.at(function.at(block).terminator.next().block).frequency, function.at(block).frequency).predicted())
             continue;
         if (!std::exchange(hasAnalysesOfRewrittenFunction, true))
             m_analyses.didChangeControlFlow();

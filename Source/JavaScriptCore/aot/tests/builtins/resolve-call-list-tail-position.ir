@@ -1,7 +1,7 @@
-# A list call that has to stay a tail call passes the one pristine array it spreads and builds no list. It never becomes a call of a built-in, which is no tail call
+# A list call that has to stay a tail call passes the one pristine array it spreads and builds no list. A built-in that calls nobody in its place comes back whatever the list holds, so the call of it need not stay one
 # FORM: Prepared optimizing
 # RUN: pass ResolveBuiltins
-# STATISTIC: ReturnCallsDemoted = 0
+# STATISTIC: ReturnCallsDemoted = 2
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -38,19 +38,17 @@ function f2 name="builtinWithListForm" parameters=[{type=Array<number, pristine[
     AppendSpread v2, v0
     v4 = CallList v1, -, v2
     ReturnCall v4
-# CHECK-NOT: CallBuiltin
 # CHECK-NOT: AppendSpread
-# CHECK: v4: anything = CallList v1, -, v0
-# CHECK-NEXT: ReturnCall v4
+# CHECK: v4: number = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List {{*}}tail
+# CHECK-NEXT: Return v4
 }
 
 function f3 name="builtinWithListFormAndWholeList" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
     v1 = Builtin builtin=MathMax
     v2 = CallList v1, -, v0
     ReturnCall v2
-# CHECK-NOT: CallBuiltin
-# CHECK: v2: anything = CallList v1, -, v0
-# CHECK-NEXT: ReturnCall v2
+# CHECK: v2: number = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List {{*}}tail
+# CHECK-NEXT: Return v2
 }
 
 function f4 name="elementBesideSpread" parameters=[{type=anything}, {type=Array<anything, pristine[Storage, Names]>}] results=[{type=anything}] {

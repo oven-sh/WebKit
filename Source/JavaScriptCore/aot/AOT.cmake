@@ -19,12 +19,16 @@ set(JavaScriptCore_AOT_RUNTIME_FACTS_GENERATED_HEADERS
 # What aot/support/generator/vector.ts writes.
 set(JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS "${JavaScriptCore_AOT_GENERATED_DIR}/AOTVector.h")
 
-# WEBKIT_COMPUTE_SOURCES bundles aot/ as it bundles the rest of JavaScriptCore. There are two lists because a bundle is compiled with one set of options.
+# WEBKIT_COMPUTE_SOURCES bundles aot/ as it bundles the rest of JavaScriptCore. There are three lists because a bundle is compiled with one set of options.
 set(JavaScriptCoreAOT_UNIFIED_SOURCE_LIST_FILES "aot/Sources.txt")
-# People keep this list. Build-only sources: nothing of them is left in an executable without the compiler. What a build runs once (the emitters of stubs), never (verifiers, printers) or hardly ever (passes for rare forms).
+# People keep these two lists. Build-only sources: nothing of them is left in an executable without the compiler.
+# What every build runs for a moment: the assembler and the catalog of stubs, what writes the image, what reads flow's results.
 set(JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_LIST_FILES "aot/SourcesCompiledForSize.txt")
 set(JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_BUNDLE_PREFIX "CompiledForSize")
-# All that a build without AoT (-DENABLE_AOT=0 among the compiler's flags) compiles of the two lists: what the rest of JavaScriptCore calls either way.
+# What a build never runs (verifiers, printers) or hardly ever (passes and emitters for rare forms). Nothing is inlined here unless that makes the caller smaller.
+set(JavaScriptCoreAOTCompiledForMinimumSize_UNIFIED_SOURCE_LIST_FILES "aot/SourcesCompiledForMinimumSize.txt")
+set(JavaScriptCoreAOTCompiledForMinimumSize_UNIFIED_SOURCE_BUNDLE_PREFIX "CompiledForMinimumSize")
+# All that a build without AoT (-DENABLE_AOT=0 among the compiler's flags) compiles of the three lists: what the rest of JavaScriptCore calls either way.
 set(JavaScriptCore_AOT_SOURCES_WITHOUT_AOT
     aot/runtime/AOTRemovableFeature.cpp
 )
@@ -70,6 +74,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/image/AOTCallSiteTable.h
     aot/image/AOTCodeSites.h
     aot/image/AOTCompile.h
+    aot/image/AOTFaultHandler.h
     aot/image/AOTFaultTable.h
     aot/image/AOTImage.h
     aot/image/AOTImageFormat.h
@@ -107,6 +112,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/object/AOTSlotAccess.h
     aot/object/AOTSlotRepresentation.h
     aot/pipeline/AOTPassID.h
+    aot/place/AOTBodyFactsForTables.h
     aot/runtime/AOTBuiltinCells.h
     aot/runtime/AOTBuiltinModules.h
     aot/runtime/AOTCallSiteCache.h
@@ -127,6 +133,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTJSONWords.h
     aot/runtime/AOTMembersLeftOut.h
     aot/runtime/AOTModuleData.h
+    aot/runtime/AOTModuleGraph.h
     aot/runtime/AOTModuleHost.h
     aot/runtime/AOTModuleRecord.h
     aot/runtime/AOTModuleWords.h
@@ -167,6 +174,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/support/AOTCompileOptionWords.h
     aot/support/AOTCompileOptions.h
     aot/support/AOTDiagnostics.h
+    aot/support/AOTHostFunctionTexts.h
     aot/support/AOTLimits.h
     aot/support/AOTLosses.h
     aot/support/AOTStatistics.h
@@ -213,6 +221,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTArrayTests.cpp
     aot/tests/AOTArrivalCountTests.cpp
     aot/tests/AOTAssignmentPlanTests.cpp
+    aot/tests/AOTB3Dump.cpp
     aot/tests/AOTB3HeapTests.cpp
     aot/tests/AOTB3PolicyTests.cpp
     aot/tests/AOTBackEndPhaseTests.cpp
@@ -307,8 +316,10 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTImageTextTests.cpp
     aot/tests/AOTImageUnitPlacementTests.cpp
     aot/tests/AOTInlinedSerializerTests.cpp
+    aot/tests/AOTInnerPointerValidationTests.cpp
     aot/tests/AOTInstanceKeyOrderTests.cpp
     aot/tests/AOTInterpretedStoreUnderCompiledPrototypeTests.cpp
+    aot/tests/AOTLedgerTests.cpp
     aot/tests/AOTListedFieldsTests.cpp
     aot/tests/AOTLoadedProgramTestSupport.cpp
     aot/tests/AOTLocationsReadAtRunTimeTests.cpp
@@ -440,6 +451,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTValueFlowSolveTestCommands.cpp
     aot/tests/AOTValueFlowTestCommands.cpp
     aot/tests/AOTValueFlowWhyTestCommands.cpp
+    aot/tests/AOTValueFlowWidenedReport.cpp
     aot/tests/AOTVerifierTests.cpp
     aot/tests/AOTWaiterOrderProgramTests.cpp
     aot/tests/AOTWebAssemblyImageTests.cpp
@@ -484,18 +496,27 @@ function(AOT_COMPUTE_SOURCES)
         return ()
     endif ()
     set(WEBKIT_MAX_BUNDLE_SIZE 16)
-    foreach (list IN ITEMS JavaScriptCoreAOT JavaScriptCoreAOTCompiledForSize)
+    foreach (list IN ITEMS JavaScriptCoreAOT JavaScriptCoreAOTCompiledForSize JavaScriptCoreAOTCompiledForMinimumSize)
         set(${list}_DERIVED_SOURCES_DIR "${JavaScriptCore_DERIVED_SOURCES_DIR}")
         WEBKIT_COMPUTE_SOURCES(${list})
     endforeach ()
-    if (COMPILER_IS_CLANG AND NOT MSVC)
+    if (COMPILER_IS_CLANG)
         set_source_files_properties(${JavaScriptCoreAOTCompiledForSize_SOURCES} ${JavaScriptCore_AOT_GENERATED_SOURCES_COMPILED_FOR_SIZE} PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-mllvm=-force-attribute=optsize>")
+        set_source_files_properties(${JavaScriptCoreAOTCompiledForMinimumSize_SOURCES} PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-mllvm=-force-attribute=minsize>")
+        # Unrolling loops whose trip count is not known adds 2% to this code and no speed. Under ThinLTO loops are unrolled in the link, so this counts where the objects are machine code.
+        set_source_files_properties(${JavaScriptCoreAOT_SOURCES} PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-mllvm=-unroll-runtime=false>")
     endif ()
     if (COMPILER_IS_GCC_OR_CLANG AND NOT MSVC)
         # A switch that has no default names every enumerator: whoever adds one is shown each question it has to answer.
-        set_property(SOURCE ${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} APPEND PROPERTY COMPILE_OPTIONS -Werror=switch -include "${JAVASCRIPTCORE_DIR}/aot/support/AOTStandardLibraryAssertions.h")
+        # The prefix is read as text. A precompiled header is loaded in front of every -include, and AOTPrefix.h begins with what has to stand in front of the standard library's headers.
+        set_property(SOURCE ${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} ${JavaScriptCoreAOTCompiledForMinimumSize_SOURCES} APPEND PROPERTY COMPILE_OPTIONS -Werror=switch -include "${JAVASCRIPTCORE_DIR}/aot/support/AOTPrefix.h")
+        set_source_files_properties(${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} ${JavaScriptCoreAOTCompiledForMinimumSize_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     endif ()
-    set(JavaScriptCore_SOURCES ${JavaScriptCore_SOURCES} ${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} PARENT_SCOPE)
+    if (COMPILER_IS_CLANG)
+        # No pointer, reference or view into a temporary is kept beyond the statement that made the temporary. Both drivers of clang take the flag.
+        set_property(SOURCE ${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} ${JavaScriptCoreAOTCompiledForMinimumSize_SOURCES} APPEND PROPERTY COMPILE_OPTIONS -Werror=dangling)
+    endif ()
+    set(JavaScriptCore_SOURCES ${JavaScriptCore_SOURCES} ${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} ${JavaScriptCoreAOTCompiledForMinimumSize_SOURCES} PARENT_SCOPE)
 endfunction()
 
 # The generators run while CMake configures, so that every generated file is there before anything is compiled. A file is written only when its text changes.
@@ -575,7 +596,7 @@ endfunction()
 function(AOT_READ_LIBRARY_SOURCES result problemsResult)
     set(problems)
     set(sources)
-    foreach (list IN ITEMS ${JavaScriptCoreAOT_UNIFIED_SOURCE_LIST_FILES} ${JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_LIST_FILES})
+    foreach (list IN ITEMS ${JavaScriptCoreAOT_UNIFIED_SOURCE_LIST_FILES} ${JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_LIST_FILES} ${JavaScriptCoreAOTCompiledForMinimumSize_UNIFIED_SOURCE_LIST_FILES})
         file(STRINGS "${JAVASCRIPTCORE_DIR}/${list}" paths)
         set(previous "")
         foreach (path IN LISTS paths)

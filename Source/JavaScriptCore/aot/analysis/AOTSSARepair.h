@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -21,6 +22,7 @@ class SSARepair {
     WTF_MAKE_NONCOPYABLE(SSARepair);
 public:
     SSARepair(IRBuilder&, FunctionAnalyses&);
+    ~SSARepair();
 
     using Variable = unsigned;
     Variable addVariable(ValueID definition);
@@ -50,6 +52,7 @@ private:
         TypeID expected;
     };
 
+    void setIsPending(bool);
     void separateUsesAsGuards();
     void splitCoveredBlocksAfterDefinitions();
 
@@ -64,7 +67,12 @@ private:
     FunctionAnalyses& m_analyses;
     Vector<VariableData> m_variables;
     BitVector m_isDefinition;
+    Vector<std::pair<ValueID, Variable>, 8> m_definitions;
+    // Of the first of them, once somebody asks and they are many.
+    mutable UncheckedKeyHashMap<uint32_t, Variable, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_variableOfDefinition;
+    mutable size_t m_numberOfIndexedDefinitions { 0 };
     bool m_didRun { false };
+    bool m_isPending { false };
 };
 
 } } } // namespace JSC::AOT::Typed

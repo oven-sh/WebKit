@@ -2,6 +2,11 @@
 # in variables and calls their methods. Each construction is one allocation of the exact class that lists its fields, without a read of a prototype, and no test of a shape, a type, a prototype or a slot,
 # no access by name and no call is left in the loop, in whichever function the inliner leaves it. The constructor of Base as other callers enter it allocates under the prototype of new.target and takes the two layouts from flow's proof, without a test.
 # RUN: pipeline NumberAndEncode
+# CHECK-LABEL: function f2 name="Base"
+# CHECK: [[prototype]]: object = GetConstructPrototype
+# CHECK-NEXT: [[allocated]]: object = NewObject [[prototype]] layout=L0
+# CHECK-NEXT: [[proven]]: L0|L1 = AssumeType [[allocated]] provenType=L0|L1
+# CHECK-NEXT: PutSlot [[proven]], -, {{*}} key="x" receivers=[L0, L1] level=Proven
 # CHECK: LoopHint
 # CHECK-NOT: ShapeTest
 # CHECK-NOT: TypeTest
@@ -17,11 +22,6 @@
 # CHECK-NOT: PropSet
 # CHECK-NOT: = Call
 # CHECK: = Increment
-# CHECK-LABEL: function f2 name="Base"
-# CHECK: [[prototype]]: object = GetConstructPrototype
-# CHECK-NEXT: [[allocated]]: object = NewObject [[prototype]] layout=L0
-# CHECK-NEXT: [[proven]]: L0|L1 = AssumeType [[allocated]] provenType=L0|L1
-# CHECK-NEXT: PutSlot [[proven]], -, {{*}} key="x" receivers=[L0, L1] level=Proven
 
 layout L0 kind=Instance name="Base" module=m0 position=6 constructor=f2 fields=[{key="x" declared={type=anything}}]
 layout L1 kind=Instance name="Sub" module=m0 position=83 base=L0 constructor=f4 fields=[{key="y" declared={type=anything}}] supertypes=[L0] flags=[HasHeritage]

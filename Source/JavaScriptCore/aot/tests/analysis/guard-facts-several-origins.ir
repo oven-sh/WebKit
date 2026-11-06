@@ -247,3 +247,23 @@ function f12 name="testsOfTwoKeyOrders" parameters=[{type=L0}] results=[{type=an
 # CHECK-LABEL: function f12
 # CHECK-NEXT: v3 facts: [KeyOrder of v0 by v1 or v2 reads OrderWords]
 # CHECK: v4 guard v3: Available
+
+function f13 name="keyOrderOfAnAllocationOrOfATest" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = AllGuards v2
+    Jump -> next b3(v3)
+  b2():
+    PropSet v2, v0 key="x" mode=Strict
+    v5 = HasKeyOrder v2 layout=L0 fields=[0, 1]
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    v7 = GetSlot v2, v6 key="x" receivers=[L0] level=Proven
+    Return v7
+  b4():
+    Return
+}
+# CHECK-LABEL: function f13
+# CHECK: v6 facts: [KeyOrder of v2 by allocation v2 or v5 reads ShapeWords[L0] OrderWords]
+# CHECK: v7 guard v6: Available

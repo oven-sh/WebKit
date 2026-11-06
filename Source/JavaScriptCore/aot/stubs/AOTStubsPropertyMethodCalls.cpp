@@ -16,6 +16,7 @@
 #include "AOTFunctionData.h"
 #include "AOTLayoutData.h"
 #include "AOTPropertyCachesFront.h"
+#include "AOTStubFrames.h"
 #include "AOTStubProgramTables.h"
 #include "AOTStubsCallLists.h"
 #include "AOTStubsField.h"
@@ -98,7 +99,7 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
         return kind.slimClosureKind() == 1 && !FunctionKindData { }.slimClosureKind();
     }());
 
-    // A validating build allocates nothing in frames, and with wide references no slot defers a closure.
+    // A validating build creates the closure that it calls, and with wide references no slot defers a closure.
     if (jit.options().validates || jit.options().useWideReferences)
         return;
 
@@ -113,6 +114,7 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
     otherwise.append(jit.branchIfNotCell(thisGPR));
     jit.load32SignedExtendTo64(Address(thisGPR, offsetOfShapeWord), index);
     otherwise.append(jit.branchTest32(CCallHelpers::PositiveOrZero, index));
+    branchUnlessShapeOfThisImage(jit, index, otherwise);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldTableEntries)), table);
     jit.load32(BaseIndex(table, index, CCallHelpers::TimesFour), index);
     jit.add32(calleeGPR, index);
@@ -186,7 +188,7 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
         jit.load64(Address(sp, (i + 2) * sizeof(EncodedJSValue)), argumentGPR(i));
     jit.addPtr(TrustedImm32(offsetOfClosure), sp, calleeGPR);
     jit.move(TrustedImm32(count), countGPR);
-    jit.loadStubAddress(callValueCell(count), jit.clobberRegister(callTargetRegister));
+    jit.loadStubAddress(callValueCell(count), valueEntryGPR);
     jit.jumpToStub(callFromArgumentListFrame());
 
     otherwise.link(&jit);
@@ -204,7 +206,9 @@ static void emitReadMethodAndCall(StubAssembler& jit, unsigned count)
     emitCallOfUncreatedClosure(jit, count);
     jit.move(calleeGPR, jit.reuseScratch(slotNameRegister));
     jit.move(thisGPR, R0);
-    jit.callStub(getById().withCallerFrame(CallerFrame::StubFrame));
+    jit.callStub(getById());
+    // Whatever the read throws or runs is shown where the read is written. The call comes behind.
+    jit.bindReturnLabel(StubFrameKind::MethodRead);
     Jump notCell = jit.branchIfNotCell(R0);
     jit.move(R0, calleeGPR);
     jit.load64(Address(sp, sizeof(EncodedJSValue)), thisGPR);
@@ -329,10 +333,10 @@ void generateTryGetSuperById(StubAssembler& jit)
     Jump isNotVariable = branchIfSlotKindDiffers(jit, slot, Slot::Kind::Variable, scratch);
     {
         const CachedSlot variable(SlotForm::PackedSlot, Slot::Kind::Variable, cell, InvalidGPRReg);
-        const FieldReadRegisters registers = fieldReadRegisters(cell, scratch);
+        FieldReadRegisters registers = fieldReadRegisters(cell, scratch);
         FieldReadExits exits;
         variable.loadFirstPayloadWord(jit, registers.field.slotData);
-        loadStaticsBase(jit, cell, structureID);
+        loadStaticsBaseOfVariable(jit, variable, cell, structureID, registers);
         computeFieldAddress(jit, registers.field, false, exits.isAbsent);
         readFieldAndReturn(jit, registers, exits);
         needsGenericRead.append(exits.isAbsent);

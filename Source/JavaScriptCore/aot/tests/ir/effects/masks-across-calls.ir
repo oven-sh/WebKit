@@ -17,13 +17,13 @@ function f0 name="writesFiveLocations" captures=[{type=env L0}] parameters=[{typ
     PutModuleVariable v2 variable=g0
     Return
 }
-# CHECK: f0 return: writes(ModuleVariables/1) throw: none p0: [Inspects] writes(EnvironmentFields/1) p1: [Inspects] writes(ObjectFields/3)
+# CHECK: f0 return: writes(ModuleVariables/1) throwsForLackOfStack throw: throwsForLackOfStack p0: [Inspects] writes(EnvironmentFields/1) p1: [Inspects] writes(ObjectFields/3)
 function f1 name="callsWriter" captures=[{type=env L0}] parameters=[{type=L1}, {type=number}] results=[{type=undefined}] {
   b0(v0: env L0, v1: L1, v2: number):
     v3 = CallDirect v0, v1, v2 function=f0
     Return
 }
-# CHECK: f1 return: writes(ModuleVariables/1) throw: none p0: [{{*}}] writes(EnvironmentFields/1) p1: [{{*}}] writes(ObjectFields/3)
+# CHECK: f1 return: writes(ModuleVariables/1) throwsForLackOfStack throw: writes(ModuleVariables/1) throwsForLackOfStack p0: [{{*}}] writes(EnvironmentFields/1) p1: [{{*}}] writes(ObjectFields/3)
 function f2 name="writesEntireHeaps" parameters=[{type=L1}, {type=function}] results=[{type=undefined}] {
     DefineGetter v0, v1 key="x"
     Return
@@ -42,7 +42,7 @@ function f4 name="callsSeventyWriters" parameters=[{type=L2}, {type=number}] res
 # END REPEAT
     Return
 }
-# CHECK: f4 return: none throw: none p0: [{{*}}] writes(ObjectFields/[[bits]])
+# CHECK: f4 return: throwsForLackOfStack throw: throwsForLackOfStack p0: [{{*}}] writes(ObjectFields/[[bits]])
 # CHECK-NOT: NamedProperties
 # REPEAT: i = 0..69
 function f%(i+5) name="writesKey%(i)" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
@@ -54,8 +54,8 @@ function f75 name="callsCallerOfSeventy" parameters=[{type=L2}, {type=number}] r
     v2 = CallDirect v0, v1 function=f4
     Return
 }
-# CHECK: f5 return: none throw: none p0: [Inspects] writes(ObjectFields/1)
-# CHECK: f74 return: none throw: none p0: [Inspects] writes(ObjectFields/1)
+# CHECK: f5 return: throwsForLackOfStack throw: throwsForLackOfStack p0: [Inspects] writes(ObjectFields/1)
+# CHECK: f74 return: throwsForLackOfStack throw: throwsForLackOfStack p0: [Inspects] writes(ObjectFields/1)
 # CHECK-LABEL: function f1
 # CHECK-NEXT: v3 CallDirect: writes(ModuleVariables/1, EnvironmentFields/1, ObjectFields/3)
 # CHECK-LABEL: function f3

@@ -1,0 +1,92 @@
+# function fibonacci(index: number): number {
+#   return index < 2 ? index : fibonacci(index - 1) + fibonacci(index - 2);
+# }
+# declare const input: any;
+# (globalThis as any).answer = fibonacci(input | 0);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=19 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=175 kind=CallResult
+typesite w3 module=m0 position=73 kind=CallResult
+typesite w4 module=m0 position=96 kind=CallResult
+variable g0 name="fibonacci" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="globalThis" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v3 = Convert v2 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v4 = GetModuleVariable variable=g0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="input" [isFreeName]
+    v7 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v8 = Integer
+    v9 = BitOr v7, v8
+    v10 = Call v4, -, v9 calleeName="fibonacci"
+    v11 = Convert v10 declared={type=number site=w2}
+    PropSet v3, v11 key="answer"
+    v13 = Undefined
+    Return v13
+}
+function f1 name="fibonacci" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Integer integer=2
+    v2 = Less v0, v1
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    Jump -> next b6(v3)
+  b4(v4):
+    Jump -> next b5()
+  b5():
+    v5 = GetModuleVariable variable=g0
+    v6 = Integer integer=1
+    v7 = Sub v4, v6
+    v8 = Call v5, -, v7 calleeName="fibonacci"
+    v9 = Convert v8 declared={type=number site=w3}
+    v10 = GetModuleVariable variable=g0
+    v11 = Integer integer=2
+    v12 = Sub v4, v11
+    v13 = Call v10, -, v12 calleeName="fibonacci"
+    v14 = Convert v13 declared={type=number site=w4}
+    v15 = Add v9, v14
+    Jump -> next b6(v15)
+  b6(v16):
+    v17 = Convert v16 declared={type=number site=w1}
+    Return v17
+}
+
+# A function that calls itself does so directly, with the number in a floating-point register both ways.
+# CHECK-LABEL: name="fibonacci" role=Source
+# CHECK: Double b@[[index]] = ArgumentReg(
+# CHECK: Int32 b@[[isSmall]] = LessThan(b@[[index]],
+# CHECK-NEXT: Branch(b@[[isSmall]], Terminal,
+# CHECK: Double b@[[before]] = Sub(b@[[index]],
+# CHECK-NEXT: Double b@[[first]] = Patchpoint(b@[[before]]:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:CallDirect)
+# CHECK: Double b@[[twoBefore]] = Sub(b@[[index]],
+# CHECK-NEXT: Double b@[[second]] = Patchpoint(b@[[twoBefore]]:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:CallDirect)
+# CHECK-NEXT: Double b@[[sum]] = Add(b@[[first]], b@[[second]],
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="fibonacci" role=Source
+# NONE: Branch(
+# NONE-NOT: Branch(
+# NONE-NOT: BitwiseCast(
+# NONE-NOT: IToD(
+# NONE-LABEL: end of function
+# CALLS-LABEL: f1: size=
+# CALLS-NEXT: function f1 x2

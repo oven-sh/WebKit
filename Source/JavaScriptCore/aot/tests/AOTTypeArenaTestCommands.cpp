@@ -98,7 +98,7 @@ static void printNewTypes(PrintStream& out, const TypeTable& table, unsigned fir
         if (type.classes.isEmpty())
             out.println(NewTypeText { id, firstNew }, " = int["_s, type.integers.minimum, ',', type.integers.maximum, ']');
         else
-            out.println(NewTypeText { id, firstNew }, " = Array<"_s, NewTypeText { type.classes[0].contentsAt(0), firstNew }, '>');
+            out.println(NewTypeText { id, firstNew }, " = Array<"_s, NewTypeText { type.classes[0].writtenContentsAt(0), firstNew }, '>');
     }
 }
 

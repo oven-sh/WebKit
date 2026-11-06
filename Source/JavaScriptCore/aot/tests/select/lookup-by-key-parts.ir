@@ -1,7 +1,7 @@
 # `map.get(a + ":" + b)`: a key that is put together for one lookup in a Map or a Set is not created, and the lookup takes its parts
 # FORM: Prepared
 # RUN: pass Select
-# STATISTIC: KeyPartsLookupGroups = 19
+# STATISTIC: KeyPartsLookupGroups = 23
 # LOSS: MaxKeyParts x1 f16 v4
 # CHECK: outcome: Changed
 
@@ -273,4 +273,48 @@ function f20 name="concatenationWithoutMark" parameters=[{type=Map}, {type=strin
 # CHECK-NEXT: b0(
 # CHECK-NEXT: [[found20]]: {{*}} = MapGetByKeyParts v0, v1, v2
 # CHECK-NEXT: Return [[found20]]
+}
+
+# `undefined` and `null` print in one way each: an element of a list, an optional field
+function f21 name="partsThatMayBeMissing" parameters=[{type=Map}, {type=Set}, {type=undefined|string}, {type=null|i32}, {type=string}] results=[{type=anything}] {
+    v5 = Strcat v2, v4 [isLikelyKey]
+    v6 = CallBuiltin v0, v5 overload=MapPrototypeGet/0
+    v7 = Strcat v4, v3 [isLikelyKey]
+    v8 = CallBuiltin v1, v7 overload=SetPrototypeHas/0
+    v9 = NewArray v6, v8 contents=anything
+    Return v9
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[inMap21]]: {{*}} = MapGetByKeyParts v0, v2, v4
+# CHECK-NEXT: [[inSet21]]: boolean = HasByKeyParts v1, v4, v3
+# CHECK-NEXT: = NewArray [[inMap21]], [[inSet21]]
+}
+
+function f22 name="partThatIsATextOrAnInteger" parameters=[{type=Map}, {type=i32|string}, {type=undefined|null|i32|string}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = CallBuiltin v0, v3 overload=MapPrototypeGet/0
+    v5 = Strcat v2, v1 [isLikelyKey]
+    v6 = CallBuiltin v0, v5 overload=MapPrototypeHas/0
+    v7 = NewArray v4, v6 contents=anything
+    Return v7
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[first22]]: {{*}} = MapGetByKeyParts v0, v1, v2
+# CHECK-NEXT: [[second22]]: boolean = HasByKeyParts v0, v2, v1
+# CHECK-NEXT: = NewArray [[first22]], [[second22]]
+}
+
+# A number that may be missing is still a number, and what is always missing is no text that changes
+function f23 name="otherPartsThatMayBeMissing" parameters=[{type=Map}, {type=string}, {type=undefined|number}, {type=undefined|null}, {type=undefined|boolean}] results=[{type=anything}] {
+    v5 = Strcat v1, v2 [isLikelyKey]
+    v6 = CallBuiltin v0, v5 overload=MapPrototypeGet/0
+    v7 = Strcat v1, v3 [isLikelyKey]
+    v8 = CallBuiltin v0, v7 overload=MapPrototypeGet/0
+    v9 = Strcat v1, v4 [isLikelyKey]
+    v10 = CallBuiltin v0, v9 overload=MapPrototypeGet/0
+    v11 = NewArray v6, v8, v10 contents=anything
+    Return v11
+# CHECK-NOT: ByKeyParts
+# CHECK: v5: string = Strcat v1, v2 [isLikelyKey]
+# CHECK: v7: string = Strcat v1, v3 [isLikelyKey]
+# CHECK: v9: string = Strcat v1, v4 [isLikelyKey]
+# CHECK-NOT: ByKeyParts
 }

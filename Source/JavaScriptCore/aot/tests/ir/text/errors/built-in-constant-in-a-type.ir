@@ -1,0 +1,6 @@
+# A built-in constant is a primitive value, and a type names built-in objects
+# RUN: print
+# DIAGNOSTIC: IdOutOfRange
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="x" module=m0 declared={type=builtin(SymbolIterator)} initialization=Undefined

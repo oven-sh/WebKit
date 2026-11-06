@@ -1,0 +1,25 @@
+# function read(o) { return [o.x, o.above]; }  read({ x: input })
+# Flow has seen a compiled object come to both reads. The table of fields answers for x. No layout has `above`: an object finds it on what it was put below, and the site remembers where.
+# OPTIONS: only-passes=EstimateHeat
+# RUN: place site-caches
+# CHECK: site caches 1,
+# CHECK-NEXT: f1 v2 PropGet cache=
+# CHECK-NOT: cache=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = CallDirect v2 function=f1
+    v4 = CallDirect v2 function=f1
+    Return
+}
+function f1 name="read" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x" receivers=[L0]
+    v2 = PropGet v0 key="above" receivers=[L0]
+    v3 = StrictEq v1, v2
+    Return v3
+}

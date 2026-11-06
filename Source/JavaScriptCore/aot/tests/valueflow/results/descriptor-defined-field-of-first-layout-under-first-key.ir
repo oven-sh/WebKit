@@ -1,0 +1,45 @@
+# function fill(made, options) { Object.defineProperty(made, "value", { value: options, enumerable: false }); made.a = 1; .. made.e = 1 }, as in store-to-escaped-instance-adds-field.ir.
+# Type is the first layout of the program and "value" its first key. The field keeps the form of its definition however many names are noted behind it.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Type" constructor=f1 fields=[{key="value" declared={type=anything} flags=[IsAddedLate, IsEnforced] form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Type" constructor=f1 flags=[IsConstructorFunction]
+layout L1 name="PropertyDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Options"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L2
+    v2 = FinishObject v1
+    v3 = Construct v0, -, v2
+    v4 = PropGet v3 key="value"
+    v5 = PropGet v3 key="a"
+    Return
+}
+function f1 name="Type" module=m0 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    v2 = NewClosure function=f2
+    v3 = Call v2, -, v0, v1
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="publish" [isFreeName]
+    v6 = Call v5, -, v0, v2
+    v7 = Undefined
+    Return v7
+}
+function f2 name="fill" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = String string="value"
+    v5 = Boolean
+    v6 = NewObject -, v1, v5 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = Call v3, v2, v0, v4, v7
+    v9 = Integer integer=1
+    PropSet v0, v9 key="a" mode=Strict
+    PropSet v0, v9 key="b" mode=Strict
+    PropSet v0, v9 key="c" mode=Strict
+    PropSet v0, v9 key="d" mode=Strict
+    PropSet v0, v9 key="e" mode=Strict
+    v15 = Undefined
+    Return v15
+}

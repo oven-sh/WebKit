@@ -1456,6 +1456,11 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
         RETURN(result);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // With a Proxy in the global object's prototype chain, the lookups below can run a `has` trap, and the trap can declare a
+    // global lexical binding with this name. Read the epoch first so that what we cache here is invalidated in that case.
+    auto globalLexicalBindingEpoch = globalObject->globalLexicalBindingEpoch();
+#endif
     JSObject* resolvedScope = JSScope::resolve(globalObject, scope, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     CHECK_EXCEPTION();
@@ -1475,7 +1480,11 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
                 ConcurrentJSLocker locker(codeBlock->m_lock);
                 metadata.m_resolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
                 metadata.m_globalObject.set(vm, codeBlock, globalObject);
+#if USE(BUN_JSC_ADDITIONS)
+                metadata.m_globalLexicalBindingEpoch = globalLexicalBindingEpoch;
+#else
                 metadata.m_globalLexicalBindingEpoch = globalObject->globalLexicalBindingEpoch();
+#endif
             }
         } else if (resolvedScope->isGlobalLexicalEnvironment()) {
             JSGlobalLexicalEnvironment* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(resolvedScope);

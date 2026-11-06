@@ -192,6 +192,8 @@ export interface DumpedResult {
   iteratedOperand: DumpedOperand | null;
   iterationKind: IterationKind | null;
   prototypeSource: DumpedOperand | null;
+  testedOperand: DumpedOperand | null;
+  testedType: DumpedType | null;
   properties: { name: string; type: DumpedType }[];
 }
 
@@ -240,6 +242,8 @@ export interface DumpedEntry {
   mutability: Mutability;
   platforms: TargetPlatform[];
   flags: BuiltinFlag[];
+  isAddedAtFirstRead: boolean;
+  isAddedAsEnumerable: boolean;
   holder: string | null;
   name: string;
   isSymbolName: boolean;

@@ -17,14 +17,18 @@
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
+#include "AOTHeat.h"
 #include "AOTIRBuilder.h"
+#include "AOTPlaceTypeTestsPlan.h"
 #include "AOTProgramCaches.h"
+#include "AOTPropertyAccess.h"
 #include "AOTRepresentation.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
+#include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include "AOTVisibleStores.h"
 #include <algorithm>
@@ -60,16 +64,24 @@ TypeID slotTypeOf(const Program& program, const Field& field)
     // The slot of an accessor holds its GetterSetter. Its type is that of the getter, which every writer of the slot tests.
     if (field.form.contains(FieldForm::IsAccessor))
         return field.slotType ? field.slotType : TypeTable::anything;
-    if (field.slotType && !field.declared.isExpected())
-        return field.slotType;
+    if (TypeID narrowed = narrowedSlotTypeOf(field))
+        return narrowed;
     return program.provenTypeOf(field.declared);
 }
 
 bool slotHoldsUndefinedAndNull(const Program& program, FieldReference reference)
 {
+    if (!isObjectLayout(program.at(reference.layout).kind))
+        return false;
     const Type& type = program.at(slotTypeOf(program, fieldAt(program, reference)));
     bool hasMarkers = !type.isNever() && type.hasOnlyPrimitives(Primitive::Number | Primitive::Boolean | Primitive::UndefinedOrNull);
     return hasMarkers && !flowOf(program, reference).stability.contains(FieldStability::IsNeverStoredWithOtherType);
+}
+
+Type slotContentsTypeOf(const Program& program, FieldReference reference)
+{
+    const Type& type = program.at(slotTypeOf(program, fieldAt(program, reference)));
+    return slotHoldsUndefinedAndNull(program, reference) ? type.withPrimitives(Primitive::UndefinedOrNull) : type;
 }
 
 bool holdsRawValueFromBirth(const Program& program, FieldReference reference)
@@ -82,7 +94,7 @@ bool holdsRawValueFromBirth(const Program& program, FieldReference reference)
 
 static void sortAndRemoveRepeated(auto& list)
 {
-    AOT::sort(list);
+    AOT::sortInLine(list);
     removeRepeatedElements(list);
 }
 
@@ -281,7 +293,7 @@ static std::optional<FieldEvidence> collectFieldEvidence(const Program& program,
         }
     });
     evidence.layoutsKept = uniteMembers(&Scan::layoutSetsKept, program.layouts.size(), [&](LayoutSetID set) -> const auto& {
-        return program.at(set).members;
+        return program.at(set).written();
     });
     // A field is narrowed where it is declared.
     for (size_t index : BitVector(evidence.layoutsKept)) {
@@ -317,49 +329,49 @@ static bool isDeclaredInCheckedCode(const Program& program, LayoutID id)
 enum class IntegerEvidence : bool { TypesAndStores, Uses };
 
 // Nothing bounds a number that is added to. An index and a position end where the table and the text end.
-static bool mayOutgrowInt32(const Program& program, const FieldEvidence& evidence, FieldReference reference)
+static Expected<bool> mayOutgrowInt32(const Program& program, const FieldEvidence& evidence, FieldReference reference)
 {
     const Field& field = fieldAt(program, reference);
     bool isDeclaredInt32 = program.at(slotTypeOf(program, field)).isInt32OrNullish() || field.declared.has(PositionFlags::IsInt32Promise);
-    return !isDeclaredInt32 && evidence.stores.isAddedTo(reference.layout, reference.field) && !evidence.stores.isUsedAsInteger(reference.layout, reference.field);
+    return !isDeclaredInt32 && evidence.stores.isAddedTo(reference.layout, reference.field).predicted() && !evidence.stores.isUsedAsInteger(reference.layout, reference.field).predicted();
 }
 
-static std::optional<Type> findIntegersToKeepInSlot(const Program& program, const FieldEvidence& evidence, FieldReference reference, IntegerEvidence admitted)
+static Expected<std::optional<Type>> findIntegersToKeepInSlot(const Program& program, const FieldEvidence& evidence, FieldReference reference, IntegerEvidence admitted)
 {
     const Field& field = fieldAt(program, reference);
     if (!canBeStoredBehindAllocation(field))
-        return std::nullopt;
+        return std::optional<Type>();
     const Type& slotType = program.at(slotTypeOf(program, field));
     if (!(slotType.primitives & Primitive::Integer) || slotType.primitives & Primitive::Absent)
-        return std::nullopt;
+        return std::optional<Type>();
     if (!slotType.isNumberOrNullish() && !slotType.isAnything())
-        return std::nullopt;
+        return std::optional<Type>();
 
     const Vector<StoredKinds>& constantsByField = evidence.constantData[reference.layout.index()];
     StoredKinds constants = constantsByField.isEmpty() ? StoredKinds { } : constantsByField[reference.field];
     if (constants.contains(StoredKind::Other) || nullishPrimitivesOf(constants) & ~slotType.primitives)
-        return std::nullopt;
+        return std::optional<Type>();
 
-    StoredKinds stored = evidence.stores.kindsStoredIn(reference.layout, reference.field);
+    StoredKinds stored = evidence.stores.kindsStoredIn(reference.layout, reference.field).predicted();
     bool listsOnlyInt32s = field.declared.established() && program.at(*field.declared.established()).isInt32OrNullish();
     bool isDeclaredInt32 = listsOnlyInt32s || slotType.isInt32OrNullish() || field.declared.has(PositionFlags::IsInt32Promise);
     // A position in a text and an index of a table get numbers that nobody can bound: what a scanner counts up, what a caller passes.
     bool isCountedWith = admitted == IntegerEvidence::Uses && slotType.isNumberOrNullish() && stored.contains(StoredKind::Int32) && !stored.contains(StoredKind::NoInt32)
-        && evidence.stores.isUsedAsInteger(reference.layout, reference.field) && isDeclaredInCheckedCode(program, reference.layout);
+        && evidence.stores.isUsedAsInteger(reference.layout, reference.field).predicted() && isDeclaredInCheckedCode(program, reference.layout);
     // An object that starts with a number of a wider type is made with a filler and gets the number by a tested store.
     bool isShownOnlyInt32s = stored.contains(StoredKind::Int32) && !stored.contains(StoredKind::Other)
-        && (evidence.layoutsKept.get(reference.layout.index()) || evidence.stores.typesOfInitialValuesFitInt32Slot(reference.layout, reference.field));
+        && (evidence.layoutsKept.get(reference.layout.index()) || evidence.stores.typesOfInitialValuesFitInt32Slot(reference.layout, reference.field).predicted());
     if (!isDeclaredInt32 && !isShownOnlyInt32s && !isCountedWith)
-        return std::nullopt;
+        return std::optional<Type>();
 
     Range integers = (listsOnlyInt32s ? program.at(*field.declared.established()) : slotType).integers.intersectWith(inlineInt32s);
     if (integers.isEmpty())
-        return std::nullopt;
+        return std::optional<Type>();
 
     uint16_t nullish = nullishPrimitivesOf(stored | constants);
     if (!field.flags.contains(FieldFlags::IsRequired))
         nullish |= Primitive::Undefined;
-    return Type::integer(integers).withPrimitives(nullish & slotType.primitives);
+    return std::optional(Type::integer(integers).withPrimitives(nullish & slotType.primitives));
 }
 
 static bool isDeclaredObjectLayout(LayoutKind kind)
@@ -424,6 +436,7 @@ static void updateInheritedFields(Program& program, const ParallelLoops& loops)
             const Field& declaration = fieldAt(program, { field.originLayout, *field.originField });
             field.declared = declaration.declared;
             field.slotType = declaration.slotType;
+            field.typeBeforeNarrowing = declaration.typeBeforeNarrowing;
             field.form = declaration.form;
             field.flags.set(FieldFlags::IsEnforced, declaration.flags.contains(FieldFlags::IsEnforced));
         }
@@ -661,8 +674,8 @@ static void forEachNumberExpectedToBeInt32(const FieldEvidence& evidence, Functi
 {
     forEachCheckedNumberParameter(function, [&](ValueID check, unsigned index) {
         unsigned parameter = index - function.firstParameterIndex();
-        if (evidence.stores.kindsPassedTo(id, parameter) == StoredKinds { StoredKind::Int32 })
-            functor(check, index, evidence.functionsHandedOn.quickGet(id.index()) || evidence.stores.typesPassedLieInInt32(id, parameter));
+        if (evidence.stores.kindsPassedTo(id, parameter).predicted() == StoredKinds { StoredKind::Int32 })
+            functor(check, index, evidence.functionsHandedOn.quickGet(id.index()) || evidence.stores.typesPassedLieInInt32(id, parameter).predicted());
     });
 }
 
@@ -718,8 +731,9 @@ static Vector<FunctionID> findAffectedFunctionsLargestFirst(const Program& progr
 {
     const ParallelLoops& loops = build.parallelLoops();
     // Most functions that name the key of a narrowed field name it on other objects.
+    const bool narrowsNoField = narrowedKeys.isEmpty();
     auto hasAccessTypedOtherwise = [&](FunctionID id) {
-        if (narrowedKeys.isEmpty())
+        if (narrowsNoField)
             return false;
         std::optional<ScratchTypeArena> types;
         return anyListedValue(program, id, Value::opcodesWithKey, [&](ValueID, const Value& value) {
@@ -727,7 +741,7 @@ static Vector<FunctionID> findAffectedFunctionsLargestFirst(const Program& progr
                 return false;
             if (!types)
                 types.emplace(program.types);
-            return resultTypeOf(program, program.at(id), value, *types) != value.type || expectedTypeOf(program, program.at(id), value, *types) != value.expected().predicted();
+            return resultTypeOf(program, program.at(id), value, *types) != value.type || expectedTypeOf(program, program.at(id), value, *types) != value.expected();
         });
     };
     auto hasUnprovenValue = [&](FunctionID id) {
@@ -775,7 +789,12 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
         Field& field = program.at(reference.layout).fields[reference.field];
         if (field.declared.established() == type)
             return false;
-        field.declared.establish(Proven::byPosition(type));
+        // A written type that leaves these integers out was a prediction of what the field holds at first.
+        if (!field.typeBeforeNarrowing && !field.declared.has(PositionFlags::IsInt32Promise))
+            field.typeBeforeNarrowing = field.declared.written() && expected.isSubsetOf(program.at(field.declared.written()), program) ? field.declared.written() : slotTypeOf(program, field);
+        field.declared.establish(Proven::byTestsAtStores(ExpectedType(type)));
+        field.flags.set(FieldFlags::IsCountedWith, evidence->stores.isAddedTo(reference.layout, reference.field).predicted() || evidence->stores.isUsedAsInteger(reference.layout, reference.field).predicted()
+            || evidence->stores.isUsedAsBits(reference.layout, reference.field).predicted() || evidence->stores.isStoredCopiesOfIntegers(reference.layout, reference.field).predicted());
         narrowedKeys.set(field.key.index());
         return true;
     };
@@ -794,13 +813,13 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
             FieldReference reference { LayoutID(layoutIndex), fieldIndex };
             if (fieldAt(program, reference).flags.contains(FieldFlags::IsInherited))
                 continue;
-            if (std::optional<Type> expected = findIntegersToKeepInSlot(program, *evidence, reference, IntegerEvidence::TypesAndStores)) {
-                if (mayOutgrowInt32(program, *evidence, reference)) {
+            if (std::optional<Type> expected = findIntegersToKeepInSlot(program, *evidence, reference, IntegerEvidence::TypesAndStores).predicted()) {
+                if (mayOutgrowInt32(program, *evidence, reference).predicted()) {
                     fieldsAddedTo[layoutIndex].set(fieldIndex);
                     hasFieldsAddedTo.store(true, std::memory_order_relaxed);
                 }
                 found.append({ reference, WTF::move(*expected) });
-            } else if (findIntegersToKeepInSlot(program, *evidence, reference, IntegerEvidence::Uses)) {
+            } else if (findIntegersToKeepInSlot(program, *evidence, reference, IntegerEvidence::Uses).predicted()) {
                 countedFields[layoutIndex].set(fieldIndex);
                 hasCountedFields.store(true, std::memory_order_relaxed);
             }
@@ -831,7 +850,7 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
         });
         sortAndRemoveRepeated(fieldsThatMakeCellsSmaller);
         for (FieldReference reference : fieldsThatMakeCellsSmaller) {
-            if (std::optional<Type> expected = findIntegersToKeepInSlot(program, *evidence, reference, IntegerEvidence::Uses))
+            if (std::optional<Type> expected = findIntegersToKeepInSlot(program, *evidence, reference, IntegerEvidence::Uses).predicted())
                 narrow(reference, *expected);
         }
     }
@@ -919,6 +938,134 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
         storeUnprovenInitialValues(program, id, function, arenas.types, build);
     });
     return candidates;
+}
+
+// What is stored may lie outside the type, so only a test finds the value in its slot. The slot is as wide as one that holds any value.
+static bool hasFormThatOnlyTestsMakeUseOf(const Program& program, const Field& field)
+{
+    if (!field.flags.contains(FieldFlags::IsEnforced) || field.flags.contains(FieldFlags::IsInherited) || !field.form.isEmpty() || !canBeStoredBehindAllocation(field))
+        return false;
+    if (field.flow.location.deferral != ClosureDeferral::Unknown || field.flow.stability.contains(FieldStability::IsNeverStoredWithOtherType))
+        return false;
+    return likelyWidthOfSlot(program, field) == sizeof(EncodedJSValue);
+}
+
+// AddGenericVersion takes every check away, and with it what the check has proven.
+static bool restsOnCheck(const Function& function, ValueID value)
+{
+    return std::ranges::any_of(CastChain(function, value), [&](ValueID cast) { return function.at(cast).opcode == Opcode::Check; });
+}
+
+void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, BuildContext& build)
+{
+    const Program& program = editor.program();
+    const ParallelLoops& loops = build.parallelLoops();
+    Vector<FieldReference> fields = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
+        if (!hasSlots(program, LayoutID(layoutIndex)))
+            return;
+        const Vector<Field>& fieldsOfLayout = program.layouts[layoutIndex].fields;
+        for (uint32_t index = 0; index < fieldsOfLayout.size(); ++index) {
+            if (hasFormThatOnlyTestsMakeUseOf(program, fieldsOfLayout[index]))
+                found.append({ LayoutID(layoutIndex), index });
+        }
+    });
+    if (fields.isEmpty())
+        return;
+    sortAndRemoveRepeated(fields);
+    BitVector keys;
+    for (FieldReference field : fields)
+        keys.set(fieldAt(program, field).key.index());
+
+    // Where a test may be placed the form pays. Elsewhere it costs an access by name wherever the object is known to have the field.
+    constexpr uint8_t inCodeThatMayGetTests = 1 << 0;
+    constexpr uint8_t byNameForItsForm = 1 << 1;
+    Vector<uint8_t> whereNamed(FillWith { }, fields.size(), uint8_t { 0 });
+    forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
+        FunctionID id(index);
+        const Function& function = program.functions[index];
+        if (!function.hasBody())
+            return;
+        AnalysisContext context { build, program, nullptr, nullptr, id };
+        std::optional<FunctionAnalyses> analyses;
+        auto note = [&](BlockID block, FieldReference field, NOESCAPE const Invocable<bool()> auto& goesByNameWithoutTests) {
+            FieldReference declaration = declarationOf(program, field);
+            auto position = std::ranges::lower_bound(fields, declaration);
+            if (position == fields.end() || *position != declaration)
+                return;
+            AtomicRef<uint8_t> where(whereNamed[position - fields.begin()]);
+            uint8_t known = where.load(std::memory_order_relaxed);
+            if (known & inCodeThatMayGetTests)
+                return;
+            if (!analyses)
+                analyses.emplace(context, function);
+            if (mayPlaceTestsOfAccessesByName(heat, *analyses, block))
+                where.fetch_or(inCodeThatMayGetTests, std::memory_order_relaxed);
+            else if (!(known & byNameForItsForm) && goesByNameWithoutTests())
+                where.fetch_or(byNameForItsForm, std::memory_order_relaxed);
+        };
+        forEachListedValue(program, id, opcodesThatListInitialValues, [&](BlockID block, uint32_t, ValueID, const Value& allocation) {
+            if (!writesInitialValues(program, allocation))
+                return;
+            for (uint32_t valueIndex = 0; valueIndex < allocation.numberOfVariadicOperands(); ++valueIndex) {
+                note(block, { allocation.layout(), allocation.fields()[valueIndex] }, [&] {
+                    return restsOnCheck(function, allocation.variadicOperands()[valueIndex]) || isUnprovenInitialValue(program, function, allocation, valueIndex);
+                });
+            }
+        });
+        auto namesKey = [&](NameKind kind, uint32_t name) { return kind == NameKind::Key && keys.get(name); };
+        forEachListedValueNaming(program, id, namedAccesses, namesKey, [&](BlockID block, ValueID, const Value& access) {
+            std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(program, function, access);
+            if (!query || query->start != MemberStart::Instance || !keys.get(query->key.index()))
+                return;
+            auto noteFieldOf = [&](LayoutID layout, bool isProven) {
+                if (std::optional<FieldReference> field = findField(program, layout, query->key, BaseChain::Predicted))
+                    note(block, *field, [&] { return isProven; });
+            };
+            const LayoutList& expected = query->receivers.expected.predicted();
+            for (LayoutID layout : query->receivers.proven)
+                noteFieldOf(layout, true);
+            for (LayoutID layout : expected)
+                noteFieldOf(layout, false);
+            // PlaceTypeTests guesses the layout of such a receiver by the names that are asked of it.
+            if (!query->receivers.isProven() && expected.isEmpty()) {
+                for (LayoutID layout : program.layoutsWithName(query->key))
+                    noteFieldOf(layout, false);
+            }
+        });
+    });
+    size_t numberKept = 0;
+    for (size_t index = 0; index < fields.size(); ++index) {
+        if (whereNamed[index] == byNameForItsForm)
+            fields[numberKept++] = fields[index];
+    }
+    fields.shrink(numberKept);
+    if (fields.isEmpty())
+        return;
+
+    for (FieldReference reference : fields) {
+        Field& field = editor.at(reference);
+        field.declared.expect(field.declared.expected());
+        field.declared.remove(PositionFlags::IsInt32Promise);
+        field.flags.remove(FieldFlags::IsEnforced);
+        // No store moves a value out of a slot that holds any value.
+        if (field.flow.location.initialization == InitializationState::SetAtCreation && field.flow.stability.containsAll({ FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined })) {
+            field.flow.occupancy = Occupancy::AlwaysFilled;
+            field.flow.prototypeName = PrototypeNameState::Unknown;
+        }
+    }
+    Vector<FieldReference> copies = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
+        const Vector<Field>& fieldsOfLayout = program.layouts[layoutIndex].fields;
+        for (uint32_t index = 0; index < fieldsOfLayout.size(); ++index) {
+            const Field& field = fieldsOfLayout[index];
+            if (field.flags.contains(FieldFlags::IsInherited) && originCanBeResolved(program, field) && std::ranges::binary_search(fields, FieldReference { field.originLayout, *field.originField }))
+                found.append({ LayoutID(layoutIndex), index });
+        }
+    });
+    for (FieldReference copy : copies) {
+        Field& field = editor.at(copy);
+        field.declared = fieldAt(program, { field.originLayout, *field.originField }).declared;
+        field.flags.remove(FieldFlags::IsEnforced);
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

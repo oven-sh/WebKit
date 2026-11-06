@@ -1,7 +1,7 @@
 # A store outside a constructor to a field that the program declares expects its slot to be filled. Where that test fails the store creates the field under the tests that the object inherits nothing of the name, and only behind those does it go by name. A field that nothing declares and that flow gave room is often created by just such a store: there the creating store comes first, and the slot is not tested
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot
-# RUN: pipeline ConvertCountersToIntegers
+# RUN: pipeline SeparateUnlikelyLoopPaths
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

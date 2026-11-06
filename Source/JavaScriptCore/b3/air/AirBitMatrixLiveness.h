@@ -99,6 +99,12 @@ public:
 
     BitMatrixLivenessStatus status() const { return m_status; }
 
+    // For whoever may take an index to be live where it is not. An index that is live along the likely path and dead in the rare blocks that lie between the blocks of that path is listed at two
+    // boundaries for each of them, so with many such indices the lists grow with the square of the code. Where the lists would hold more than this, an index counts as live in every block between
+    // the first and the last one where it is live, in the order of the layout, but for the blocks that name it. Then it is listed only beside a block that names it and at both ends.
+    void countGapsAsLivePast(size_t maxBoundaryIndices) { m_maxBoundaryIndices = maxBoundaryIndices; }
+    bool hasCountedGapsAsLive() const { return m_hasCountedGapsAsLive; }
+
     Workset makeWorkset() const { return Workset(m_wordsPerSet); }
 
     void copyLiveAtTailInto(Workset& workset, BasicBlock* block) const
@@ -195,6 +201,8 @@ private:
     class IndicesByBlock {
     public:
         void append(unsigned blockIndex, unsigned index) { m_unsorted.append(IndexAtBlock { blockIndex, index }); }
+        size_t size() const { return m_unsorted.size(); }
+        void shrink(size_t size) { m_unsorted.shrink(size); }
 
         void sortByBlock(unsigned numberOfBlocks)
         {
@@ -402,6 +410,14 @@ private:
         }
 
         bool changesSet(unsigned position) const { return m_numberOfTransferWords[position]; }
+
+        void forEachWordOfNamedIndices(unsigned position, NOESCAPE const Invocable<void(unsigned wordIndex, uint64_t named)> auto& func) const
+        {
+            if (!changesSet(position))
+                return;
+            for (const TransferWord& transfer : m_transferWords.subspan(m_firstTransferWord[position], m_numberOfTransferWords[position]))
+                func(transfer.index, transfer.gen | transfer.kill);
+        }
 
         unsigned headOf(unsigned position) const { return m_head[position]; }
         unsigned tailOf(unsigned position) const { return m_tail[position]; }
@@ -612,6 +628,12 @@ private:
 
     void recordBoundariesOfSlice(const SliceRows& rows, const BlocksInPostOrder& order, size_t firstWord, const Vector<unsigned>& visitedPositions, Vector<unsigned>& lastSliceRecordingBoundaryAfter, unsigned sliceNumber)
     {
+        const size_t sizeAtTail = m_liveOnlyAtTail.size();
+        const size_t sizeAtHead = m_liveOnlyAtHeadOfNextBlock.size();
+        const size_t sizeAtFirstBlock = m_liveAtHeadOfFirstBlock.size();
+        // Each slice gets its share, so what one slice lists does not depend on the others.
+        const size_t maxSize = m_maxBoundaryIndices == std::numeric_limits<size_t>::max() ? m_maxBoundaryIndices : sizeAtTail + sizeAtHead + m_maxBoundaryIndices / m_wordsPerSet * rows.wordsPerRow();
+
         auto recordOnce = [&](unsigned position) {
             if (lastSliceRecordingBoundaryAfter[position] == sliceNumber)
                 return;
@@ -620,6 +642,13 @@ private:
         };
         for (unsigned position : visitedPositions) {
             recordOnce(position);
+            if (m_liveOnlyAtTail.size() + m_liveOnlyAtHeadOfNextBlock.size() > maxSize) [[unlikely]] {
+                m_liveOnlyAtTail.shrink(sizeAtTail);
+                m_liveOnlyAtHeadOfNextBlock.shrink(sizeAtHead);
+                m_liveAtHeadOfFirstBlock.shrink(sizeAtFirstBlock);
+                recordBoundariesOfSliceWithoutGaps(rows, order, firstWord, visitedPositions);
+                return;
+            }
             if (unsigned previous = order.previousInLayout[position]; previous != BlocksInPostOrder::none) {
                 recordOnce(previous);
                 continue;
@@ -627,6 +656,90 @@ private:
             forEachInDifference(rows.at(rows.headOf(position)), nullptr, firstWord, rows.wordsPerRow(), [&](unsigned index) {
                 m_liveAtHeadOfFirstBlock.append(index);
             });
+        }
+    }
+
+    // See countGapsAsLivePast(). A block that names no index of the slice and has none live was not visited. A block that does not name an index has it live at its head and at its tail or at neither,
+    // so whoever walks the blocks backward and opens and closes ranges at the boundaries and at the names finds each range in the state that the next boundary expects.
+    NEVER_INLINE void recordBoundariesOfSliceWithoutGaps(const SliceRows& rows, const BlocksInPostOrder& order, size_t firstWord, const Vector<unsigned>& visitedPositions)
+    {
+        m_hasCountedGapsAsLive = true;
+        const size_t words = rows.wordsPerRow();
+        Vector<unsigned> positions = visitedPositions;
+        std::ranges::sort(positions, { }, [&](unsigned position) {
+            return order.blockIndexes[position];
+        });
+        const unsigned numberOfPositions = positions.size();
+
+        struct LastBlock {
+            unsigned ordinal;
+            unsigned bit;
+        };
+        Vector<LastBlock> lastBlocks;
+        Vector<uint64_t> store(FillWith { }, 6 * words, static_cast<uint64_t>(0));
+        uint64_t* liveLater = store.mutableSpan().data();
+        for (unsigned ordinal = numberOfPositions; ordinal--;) {
+            const uint64_t* head = rows.at(rows.headOf(positions[ordinal]));
+            const uint64_t* tail = rows.at(rows.tailOf(positions[ordinal]));
+            for (size_t i = 0; i < words; ++i) {
+                uint64_t live = head[i] | tail[i];
+                for (uint64_t word = live & ~liveLater[i]; word; word &= word - 1)
+                    lastBlocks.append({ ordinal, static_cast<unsigned>(i * 64 + std::countr_zero(word)) });
+                liveLater[i] |= live;
+            }
+        }
+
+        // Live in a visited block before the boundary and in one behind it.
+        uint64_t* acrossPrevious = liveLater + words;
+        uint64_t* acrossNext = acrossPrevious + words;
+        uint64_t* named = acrossNext + words;
+        uint64_t* headOfThis = named + words;
+        uint64_t* tailOfPrevious = headOfThis + words;
+        uint64_t* tailOfThis = liveLater;
+        auto recordBoundaryAfter = [&](unsigned position, const uint64_t* tail, const uint64_t* headOfNext) {
+            const unsigned blockIndex = order.blockIndexes[position];
+            forEachInDifference(tail, headOfNext, firstWord, words, [&](unsigned index) {
+                m_liveOnlyAtTail.append(blockIndex, index);
+            });
+            if (!headOfNext)
+                return;
+            forEachInDifference(headOfNext, tail, firstWord, words, [&](unsigned index) {
+                m_liveOnlyAtHeadOfNextBlock.append(blockIndex, index);
+            });
+        };
+        for (unsigned ordinal = 0; ordinal < numberOfPositions; ++ordinal) {
+            const unsigned position = positions[ordinal];
+            const uint64_t* head = rows.at(rows.headOf(position));
+            const uint64_t* tail = rows.at(rows.tailOf(position));
+            for (size_t i = 0; i < words; ++i) {
+                acrossNext[i] = acrossPrevious[i] | head[i] | tail[i];
+                named[i] = 0;
+            }
+            for (; !lastBlocks.isEmpty() && lastBlocks.last().ordinal == ordinal; lastBlocks.removeLast())
+                acrossNext[lastBlocks.last().bit / 64] &= ~(static_cast<uint64_t>(1) << (lastBlocks.last().bit % 64));
+            rows.forEachWordOfNamedIndices(position, [&](unsigned wordIndex, uint64_t namedInWord) {
+                named[wordIndex] = namedInWord;
+            });
+            for (size_t i = 0; i < words; ++i) {
+                uint64_t inGap = acrossPrevious[i] & acrossNext[i] & ~named[i];
+                headOfThis[i] = head[i] | inGap;
+                tailOfThis[i] = tail[i] | inGap;
+            }
+
+            if (unsigned previous = order.previousInLayout[position]; previous != BlocksInPostOrder::none)
+                recordBoundaryAfter(previous, ordinal && positions[ordinal - 1] == previous ? tailOfPrevious : acrossPrevious, headOfThis);
+            else {
+                forEachInDifference(headOfThis, nullptr, firstWord, words, [&](unsigned index) {
+                    m_liveAtHeadOfFirstBlock.append(index);
+                });
+            }
+            unsigned next = order.nextInLayout[position];
+            if (next == BlocksInPostOrder::none)
+                recordBoundaryAfter(position, tailOfThis, nullptr);
+            else if (ordinal + 1 == numberOfPositions || positions[ordinal + 1] != next)
+                recordBoundaryAfter(position, tailOfThis, acrossNext);
+            std::swap(tailOfThis, tailOfPrevious);
+            std::swap(acrossNext, acrossPrevious);
         }
     }
 
@@ -746,6 +859,8 @@ private:
     const uint64_t* m_liveAtHead { nullptr };
     const uint64_t* m_liveAtTail { nullptr };
     bool m_usesSlices { false };
+    bool m_hasCountedGapsAsLive { false };
+    size_t m_maxBoundaryIndices { std::numeric_limits<size_t>::max() };
     BitMatrixLivenessStatus m_status { BitMatrixLivenessStatus::NotComputed };
 };
 

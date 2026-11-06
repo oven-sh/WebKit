@@ -65,7 +65,7 @@ const PropertyRun* propertyRunAt(Instance* instance, uint32_t number)
     return run;
 }
 
-static bool canDefinePropertiesOneByOne(Structure* structure)
+static bool canPutPropertiesDirectly(Structure* structure)
 {
     return structure->typeInfo().type() == FinalObjectType
         && !structure->isCompiledStructure()
@@ -76,9 +76,15 @@ static bool canDefinePropertiesOneByOne(Structure* structure)
         && !structure->hasListedImmutableProperties();
 }
 
+// A definition replaces a property that is configurable, whatever it was, and is refused by one that is not.
+static bool canDefinePropertiesOneByOne(Structure* structure)
+{
+    return canPutPropertiesDirectly(structure) && !structure->hasNonConfigurableProperties();
+}
+
 static bool canStorePropertyRun(Structure* structure)
 {
-    return canDefinePropertiesOneByOne(structure)
+    return canPutPropertiesDirectly(structure)
         && !structure->isDictionary()
         && structure->propertyAccessesAreCacheable()
         && structure->transitionCountEstimate() <= Structure::s_maxTransitionLength;
@@ -151,7 +157,7 @@ static bool tryAddRun(Instance* instance, VM& vm, const PropertyRunStore& store)
         if (!chain.didFlatten)
             rememberRefusal(instance, store.cache, before, &store.run, chain);
         else if (store.cache)
-            instance->state->propertyCaches->siteCaches().didFailToFill(store.cache);
+            instance->state->propertyCaches->siteCaches().didFailToFillWithRun(store.cache);
         return false;
     }
     if (!store.object->tryPutDirectPropertyRun(vm, store.run, store.values)) {

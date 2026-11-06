@@ -8,12 +8,16 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTIR.h"
+#include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTVector.h"
+#include "AOTWrittenFunction.h"
 #include <algorithm>
+#include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -60,7 +64,7 @@ static bool namesEveryCallee(const Type& callee)
     return callee.isObject() && callee.hasOnlyKnownCallees() && !callee.layouts;
 }
 
-static bool mayThrowBeforeEntry(const Program& program, const Type& callee, BuiltinCallMode mode)
+bool mayThrowBeforeEntry(const Program& program, const Type& callee, BuiltinCallMode mode)
 {
     if (!namesEveryCallee(callee))
         return true;
@@ -84,33 +88,128 @@ static Effects effectsOfContentsRead(OperandKind kind)
     return effects;
 }
 
-static bool mayEnterTableLookup(const Program& program, const Value& tableCall)
+static bool mayEnterTableLookup(const Program& program, LayoutSetID receivers, PropertyKeyID key)
 {
-    MemberPartition partition = partitionMembers({ program, nullptr }, program.at(tableCall.receivers()).members.span(), tableCall.key(), Access::Read);
+    MemberPartition partition = partitionMembers({ program, nullptr }, program.at(receivers).completeMembers(), key, Access::Read);
     return !partition.rest.isEmpty() || std::ranges::any_of(partition.arms, [](const MemberArm& arm) {
         return arm.answer.kind != MemberKind::Method || !arm.answer.receiverProofs.isEmpty() || !arm.answer.conditions.isEmpty();
     });
 }
 
+// Every table call of one name on one family asks the same, and the answer looks at every class of the family.
+static bool mayEnterTableLookup(const Program& program, const Value& tableCall)
+{
+    LayoutSetID receivers = tableCall.receivers();
+    PropertyKeyID key = tableCall.key();
+    PropertyAccessCache* cache = program.propertyAccessCache();
+    if (!cache || TypeTable::isProvisional(receivers) || TypeTable::isProvisional(key))
+        return mayEnterTableLookup(program, receivers, key);
+
+    using Entry = PropertyAccessCache::LookupOfTableCall;
+    uint32_t hash = computeHash(receivers.index(), key.index());
+    auto isWanted = [&](const Entry& entry) {
+        return entry.receivers == receivers && entry.key == key;
+    };
+    const Entry* known = cache->lookupsOfTableCalls.find(hash, isWanted);
+    if (!known)
+        known = &cache->lookupsOfTableCalls.add(hash, Entry { receivers, key, mayEnterTableLookup(program, receivers, key) }, isWanted);
+    RELEASE_ASSERT(!cache->checksAnswers || known->mayBeEntered == mayEnterTableLookup(program, receivers, key));
+    return known->mayBeEntered;
+}
+
+std::span<const FunctionID> entrypointsOfTableCall(const Program& program, const Value& call)
+{
+    if (call.opcode != Opcode::CallTable)
+        return { };
+    return program.at(call.entrypoints()).written().functions;
+}
+
 CalleeList calleesOfCall(const Program& program, const Value& call)
 {
+    // The set is sorted: one copy, where adding a thousand entrypoints one by one searches a thousand times.
+    if (call.opcode == Opcode::CallTable && !entrypointsOfTableCall(program, call).empty() && !mayEnterTableLookup(program, call))
+        return CalleeList::complete(program.at(call.entrypoints()).written());
+
     CalleeList namedCallees = CalleeList::none();
     forEachFunctionReference(call, [&](FunctionID callee, FunctionReferenceKind kind) {
         if (isCall(kind))
             namedCallees.add(callee);
     });
+    for (FunctionID entrypoint : entrypointsOfTableCall(program, call))
+        namedCallees.add(entrypoint);
     if (call.opcode == Opcode::CallTable && !mayEnterTableLookup(program, call))
-        namedCallees.functions.removeFirst(call.function());
-    if (!namedCallees.functions.isEmpty())
+        namedCallees.remove(call.function());
+    if (!namedCallees.runsNothing())
         return namedCallees;
     if (Value::opcodesWithCallees.contains(call.opcode))
         return calleesOf(program, call.callees());
     return CalleeList::unknown();
 }
 
+static CalleeSetID stampThatListsCalleesOf(const Program& program, const Value& call)
+{
+    if (!Value::opcodesWithCallees.contains(call.opcode))
+        return { };
+    bool namesCallee = false;
+    bool namesOnlyTableLookup = call.opcode == Opcode::CallTable && entrypointsOfTableCall(program, call).empty();
+    forEachFunctionReference(call, [&](FunctionID callee, FunctionReferenceKind kind) {
+        if (!isCall(kind))
+            return;
+        namesCallee = true;
+        namesOnlyTableLookup = namesOnlyTableLookup && callee == call.function();
+    });
+    if (namesCallee && (!namesOnlyTableLookup || mayEnterTableLookup(program, call)))
+        return { };
+    return call.callees();
+}
+
+CalleeSetID calleeSetOfCall(const Program& program, const Value& call)
+{
+    if (!entrypointsOfTableCall(program, call).empty())
+        return mayEnterTableLookup(program, call) ? CalleeSetID() : call.entrypoints();
+    return stampThatListsCalleesOf(program, call);
+}
+
+// A long set of entrypoints is read from the call by whoever wants the functions that are entered.
+static void addFunctionsEnteredBeside(const Program& program, const Value& call, EffectDescription& description)
+{
+    forEachFunctionReference(call, [&](FunctionID entered, FunctionReferenceKind kind) {
+        if (isCall(kind))
+            description.addSlowPathFunction(entered);
+    });
+    if (call.opcode != Opcode::CallTable || program.at(call.entrypoints()).isLong())
+        return;
+    for (FunctionID entrypoint : entrypointsOfTableCall(program, call))
+        description.addSlowPathFunction(entrypoint);
+}
+
 static bool listsWhatReceiverFinds(const Program& program, const Value& call)
 {
-    return call.opcode == Opcode::CallTable && call.callees() && calleesOf(program, call.callees()).isComplete;
+    return call.opcode == Opcode::CallTable && call.callees() && program.at(call.callees()).listsEveryCallee();
+}
+
+CalleeSetID longCalleeSetRunBy(const Program& program, const Value& call)
+{
+    if (!Value::opcodesWithCallees.contains(call.opcode) || !call.callees())
+        return { };
+    const CalleeSet& named = program.at(call.callees());
+    // A construction also runs what reads the prototype, and a built-in what its operands hold.
+    if (!named.isLong() || !named.written().builtins.empty() || callModeOf(call.opcode) != BuiltinCallMode::Call || effectRuleOf(call.opcode) != EffectRule::Call)
+        return { };
+    if (declaredEffectsOf(program, call).maySuspend)
+        return { };
+    return listsWhatReceiverFinds(program, call) ? call.callees() : stampThatListsCalleesOf(program, call);
+}
+
+EffectDescription describeCodeRunBesideLongCalleeSet(const Program& program, const Value& call, CalleeSetID set)
+{
+    EffectDescription description;
+    description.leavesOutOwnEffects = true;
+    if (listsWhatReceiverFinds(program, call))
+        addFunctionsEnteredBeside(program, call, description);
+    if (!program.at(set).listsEveryCallee())
+        description.addUnknownCode();
+    return description;
 }
 
 static Effects effectsOfFindingCallee()
@@ -128,21 +227,17 @@ CalleeList calleesThatBoundEffectsOf(const Program& program, const Value& call)
     return calleesOfCall(program, call);
 }
 
-static void describeEntrypoint(const Function& callee, BuiltinCallMode mode, EffectDescription& description)
+static void describeEntrypoint(const Program& program, FunctionID id, BuiltinCallMode mode, EffectDescription& description)
 {
+    const Function& callee = program.at(id);
     if (throwsBeforeEntry(callee, mode))
         description.addThrow();
     if (callee.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }))
         description.addOwn(declaredBoundOf(Opcode::CreateRest));
-    if (callee.has(FunctionCapabilities::RecordsCallee))
+    if (callee.has(FunctionCapabilities::RecordsCallee) || recordsCalleeOnlyOnceRenamed(program, id))
         description.addOwn(declaredBoundOf(Opcode::RecordCallee));
-    if (callee.has(FunctionCapabilities::RecordsCalleeOnceRenamed))
+    if (callee.capabilities.containsAll({ FunctionCapabilities::RecordsCallee, FunctionCapabilities::RecordsCalleeOnceRenamed }))
         description.addOwn(declaredBoundOf(Opcode::AreFunctionNamesUnchanged));
-}
-
-static bool takesThisFromConstruction(const Function& callee)
-{
-    return callee.constructorForm() != ConstructorForm::NotConstructor && !isClassConstructor(callee);
 }
 
 static void describeReadOfConstructPrototype(const Program& program, const Type& newTarget, EffectDescription& description)
@@ -153,26 +248,49 @@ static void describeReadOfConstructPrototype(const Program& program, const Type&
 
 static void describeCreationOfThis(const Program& program, FunctionID callee, const EnteringOperands& operands, EffectDescription& description)
 {
-    if (!takesThisFromConstruction(program.at(callee)))
+    if (!program.at(callee).takesThisFromConstruction())
         return;
     describeReadOfConstructPrototype(program, operands.newTarget ? program.at(operands.newTarget) : Type::forFunction(callee), description);
-    description.addOwn(declaredBoundOf(Opcode::NewObject));
+    // new.target selects the class of the object.
+    LayoutID constructed = program.at(callee).constructedClass;
+    if (operands.newTarget || !constructed)
+        description.addOwn(declaredBoundOf(Opcode::NewObject));
+    else
+        description.addOwn(hasOnePrototypeObject(program, constructed) ? declaredBoundOf(NamedEffectSet::Allocates) : effectsOfAllocatingWithPrototype(program, constructed));
 }
 
-void describeCallees(const Program& program, const CalleeList& callees, BuiltinCallMode mode, const EnteringOperands& operands, EffectDescription& description)
+static NEVER_INLINE bool describeEntrypointsOfLongList(const Program& program, std::span<const FunctionID> callees, BuiltinCallMode mode, EffectDescription& description, const EffectSummaries& summaries)
+{
+    AnswersForCalleeLists* answers = description.leavesOutOwnEffects ? nullptr : summaries.answersForCalleeLists();
+    if (!answers)
+        return false;
+    description.own.merge(answers->effectsOfEntering(callees, static_cast<uint64_t>(mode), [&] {
+        EffectDescription entrypoints;
+        for (FunctionID callee : callees)
+            describeEntrypoint(program, callee, mode, entrypoints);
+        return entrypoints.own;
+    }));
+    return true;
+}
+
+void describeCallees(const Program& program, const CalleeList& callees, BuiltinCallMode mode, const EnteringOperands& operands, EffectDescription& description, const EffectSummaries* summaries)
 {
     bool constructs = mode == BuiltinCallMode::Construct;
-    description.addFunctions(callees.functions.span());
-    for (FunctionID callee : callees.functions) {
-        describeEntrypoint(program.at(callee), mode, description);
-        if (constructs)
-            describeCreationOfThis(program, callee, operands, description);
+    Callees listed = callees.listed();
+    description.addFunctions(listed.functions);
+    bool isLongList = summaries && !constructs && listed.functions.size() >= AnswersForCalleeLists::fewestCallees;
+    if (!isLongList || !describeEntrypointsOfLongList(program, listed.functions, mode, description, *summaries)) {
+        for (FunctionID callee : listed.functions) {
+            describeEntrypoint(program, callee, mode, description);
+            if (constructs)
+                describeCreationOfThis(program, callee, operands, description);
+        }
     }
-    for (BuiltinID callee : callees.builtins)
+    for (BuiltinID callee : listed.builtins)
         describeCallOf(program, callee, mode, description);
-    if (constructs && operands.newTarget && !callees.builtins.isEmpty())
+    if (constructs && operands.newTarget && !listed.builtins.empty())
         describeReadOfConstructPrototype(program, program.at(operands.newTarget), description);
-    if (!callees.isComplete)
+    if (!callees.listsEveryCallee())
         description.addUnknownCode();
 }
 
@@ -228,16 +346,16 @@ static TypeID typeOfNewTarget(const Function& function, const Value& call)
     return newTarget ? function.at(newTarget).type : TypeID();
 }
 
-static void describeCalleesOfCall(const Program& program, const Function& function, const Value& call, const CalleeList& callees, BuiltinCallMode mode, EffectDescription& description)
+static void describeCalleesOfCall(const Program& program, const Function& function, const Value& call, const CalleeList& callees, BuiltinCallMode mode, EffectDescription& description, const EffectSummaries* summaries)
 {
     EnteringOperands operands;
     operands.newTarget = typeOfNewTarget(function, call);
-    describeCallees(program, callees, mode, operands, description);
+    describeCallees(program, callees, mode, operands, description, summaries);
 }
 
 static void describeOperandsGivenToBuiltins(const Program& program, const Function& function, const Value& call, const CalleeList& callees, BuiltinCallMode mode, EffectDescription& description)
 {
-    if (callees.builtins.isEmpty())
+    if (callees.listed().builtins.empty())
         return;
 
     std::optional<BuiltinCallForm> form = formOfArguments(call.opcode);
@@ -249,18 +367,18 @@ static void describeOperandsGivenToBuiltins(const Program& program, const Functi
     Vector<TypeID, 4> arguments = typesOfArguments(function, call, *form);
     ValueID receiver = receiverOf(call);
     TypeID receiverType = receiver ? function.at(receiver).type : TypeTable::undefined;
-    for (BuiltinID callee : callees.builtins)
+    for (BuiltinID callee : callees.listed().builtins)
         describeOperandsOfCall(program, callee, mode, *form, receiverType, arguments.span(), description);
 }
 
 static void describeNamedCallees(const CalleeList& callees, EffectDescription& description)
 {
-    description.addFunctions(callees.functions.span());
-    if (!callees.isComplete)
+    description.addFunctions(callees.listed().functions);
+    if (!callees.listsEveryCallee())
         description.addUnknownCode();
 }
 
-void describeCall(const Program& program, const Function& function, const Value& value, const Effects& declared, EffectDescription& description)
+void describeCall(const Program& program, const Function& function, const Value& value, const Effects& declared, EffectDescription& description, const EffectSummaries* summaries)
 {
     if (declared.maySuspend) {
         describeBound(declared, description);
@@ -271,15 +389,12 @@ void describeCall(const Program& program, const Function& function, const Value&
     CalleeList callees = calleesThatBoundEffectsOf(program, value);
     if (listsWhatReceiverFinds(program, value)) {
         description.addOwn(effectsOfFindingCallee());
-        forEachFunctionReference(value, [&](FunctionID entered, FunctionReferenceKind kind) {
-            if (isCall(kind))
-                description.addSlowPathFunction(entered);
-        });
+        addFunctionsEnteredBeside(program, value, description);
     }
     if (callsThatCopyArgumentsOfAnyNumber.contains(value.opcode))
         description.addThrow();
     if (Value::opcodesWithCallees.contains(value.opcode)) {
-        describeCalleesOfCall(program, function, value, callees, mode, description);
+        describeCalleesOfCall(program, function, value, callees, mode, description, summaries);
         describeOperandsGivenToBuiltins(program, function, value, callees, mode, description);
     } else
         describeNamedCallees(callees, description);

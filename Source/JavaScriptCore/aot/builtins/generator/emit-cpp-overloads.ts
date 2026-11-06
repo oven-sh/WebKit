@@ -306,6 +306,8 @@ function formatResult(result: ModelResult, pools: Pools): string {
     ["iteratedOperand", formatOperand(result.iteratedOperand)],
     ["iterationKind", iterationKind === null ? null : formatUnlessDefault("IterationKind", iterationKind, "Values")],
     ["prototypeSource", formatOperand(result.prototypeSource)],
+    ["testedOperand", formatOperand(result.testedOperand)],
+    ["testedType", formatId("BuiltinTypeID", result.testedType)],
     ["properties", pools.resultProperties.addStretch(result.properties.map(formatResultProperty))],
   ]);
 }

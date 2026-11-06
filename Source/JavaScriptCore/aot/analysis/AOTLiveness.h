@@ -17,6 +17,7 @@
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 
@@ -64,13 +65,33 @@ public:
         std::span<const ValueID> m_values;
     };
 
+    // What has been found out about one set of values. Blocks share most of what is live at their heads, and a part that several share is looked through once.
+    class AnswersAboutValues {
+    private:
+        friend class Liveness;
+
+        const Liveness* m_liveness { nullptr };
+        Vector<uint8_t> m_answersOfSharedSets;
+    };
+
     LiveValues liveAtHead(BlockID) const LIFETIME_BOUND;
     bool isAnyLiveAtHead(BlockID) const;
+    bool isAnyLiveAtHead(BlockID, const BitVector& values, AnswersAboutValues&) const;
     bool isLiveAtHead(ValueID, BlockID) const;
 
+    // Calls the functor for each value that `isPoint` accepts, in each block from the last to the first, with those of the values live after it, in ascending order,
+    // that are live after no other point that follows. The functor makes them held operands of the point, which keeps them live after every point before it.
+    // The work goes by the uses of the function, not by how much is live.
+    using IsLive = ScopedLambda<bool(ValueID)>;
+    using LastCrossing = void(ValueID point, std::span<const ValueID> values, const IsLive& isLiveAfterPoint);
+    void forEachLastCrossing(NOESCAPE const ScopedLambda<bool(ValueID)>& isPoint, NOESCAPE const ScopedLambda<LastCrossing>&) const;
+
+    // What it costs goes by the block and by what is live in it, not by the values of the function: a function of many blocks has one of these for each.
     class LocalCalc {
+        WTF_MAKE_NONCOPYABLE(LocalCalc);
     public:
         LocalCalc(const Liveness&, BlockID);
+        ~LocalCalc();
 
         void execute(uint32_t index);
 
@@ -78,24 +99,40 @@ public:
         {
             RELEASE_ASSERT(id.index() < m_liveness.m_useLists.numberOfValues());
             RELEASE_ASSERT(m_liveness.isTrackedValue(id));
-            return m_live.quickGet(id.index());
+            return m_words[id.index() / 64] >> (id.index() % 64) & 1;
         }
 
-        size_t numberOfLiveValues() const { return m_live.bitCount(); }
+        size_t numberOfLiveValues() const
+        {
+            size_t count = 0;
+            for (uint32_t word : wordsInUse())
+                count += std::popcount(m_words[word]);
+            return count;
+        }
 
+        // In ascending order.
         void forEachLive(NOESCAPE const Invocable<void(ValueID)> auto& functor) const
         {
-            for (size_t index : m_live)
-                functor(ValueID(index));
+            for (uint32_t word : wordsInUse()) {
+                for (uint64_t bits = m_words[word]; bits; bits &= bits - 1)
+                    functor(ValueID(64 * word + std::countr_zero(bits)));
+            }
         }
 
     private:
         void use(ValueID);
+        // Whether it was live before.
+        bool add(ValueID);
+        std::span<const uint32_t> wordsInUse() const LIFETIME_BOUND;
 
         const Liveness& m_liveness;
         BlockID m_block;
         uint32_t m_index { 0 };
-        BitVector m_live;
+        // A bit for each value of the function. They are borrowed from the Liveness, all clear, and given back so.
+        Vector<uint64_t> m_words;
+        // Every word that has held a bit. Sorted, and each once, up to m_numberOfSortedWords.
+        mutable Vector<uint32_t, 16> m_wordsInUse;
+        mutable size_t m_numberOfSortedWords { 0 };
     };
 
 private:
@@ -138,6 +175,9 @@ private:
         Set unite(Set first, Set second) { return unite(first, second, m_numberOfInnerLevels); }
         bool contains(Set, uint32_t key) const;
         void forEach(Set set, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const { forEach(set, 0, m_numberOfInnerLevels, functor); }
+        size_t numberOfSets() const { return m_nodes.size(); }
+        // `answers` has an entry for each set, zero at first, and goes with one functor.
+        bool containsAny(Set set, Vector<uint8_t>& answers, NOESCAPE const Invocable<bool(uint32_t)> auto& functor) const { return containsAny(set, 0, m_numberOfInnerLevels, answers, functor); }
 
     private:
         static constexpr unsigned slotsPerNode = 8;
@@ -170,6 +210,29 @@ private:
             }
         }
 
+        bool containsAny(Set set, uint32_t firstKey, unsigned level, Vector<uint8_t>& answers, NOESCAPE const Invocable<bool(uint32_t)> auto& functor) const
+        {
+            constexpr uint8_t notAsked = 0;
+            constexpr uint8_t no = 1;
+            constexpr uint8_t yes = 2;
+            if (!set)
+                return false;
+            if (answers[set] != notAsked)
+                return answers[set] == yes;
+            const Node& node = m_nodes[set];
+            bool found = false;
+            for (unsigned slot = 0; slot < slotsPerNode && !found; ++slot) {
+                if (level) {
+                    found = containsAny(node[slot], firstKey + (slot << (bitsPerLeafKey + bitsPerSlotIndex * (level - 1))), level - 1, answers, functor);
+                    continue;
+                }
+                for (uint32_t bits = node[slot]; bits && !found; bits &= bits - 1)
+                    found = functor(firstKey + slot * bitsPerLeafWord + std::countr_zero(bits));
+            }
+            answers[set] = found ? yes : no;
+            return found;
+        }
+
         Vector<Node> m_nodes;
         unsigned m_numberOfInnerLevels { 0 };
     };
@@ -196,6 +259,8 @@ private:
     Vector<SharedSets::Set> m_sharedSetAtHead;
     Vector<ValueID> m_valuesInSharedSets;
     bool m_hasTrackedBases { false };
+    mutable Lock m_spareWordsLock;
+    mutable Vector<Vector<uint64_t>, 1> m_spareWords WTF_GUARDED_BY_LOCK(m_spareWordsLock);
 };
 
 class LivenessOfAskedValues {

@@ -1,0 +1,161 @@
+# Behind an edge of a test a value is what the test has left of it. A later test of the same value, for whatever type, is decided where nothing is left for one of its edges.
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Circle" module=m0 fields=[{key="radius" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 name="Square" module=m0 fields=[{key="side" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L2 name="Line" module=m0 fields=[{key="length" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+
+function f0 name="widerTypeBehindThePassedTest" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = TypeTest v0 testedType=undefined|null|L0
+    Branch v2 -> taken b3(| 0), notTaken b4(| 0)
+  b2():
+    v3 = TypeTest v0 testedType=undefined|null|L1
+    Branch v3 -> taken b5(| 0), notTaken b6(| 0)
+  b3(v4: L0):
+    Return v4
+  b4(v5: L1):
+    v6 = Undefined
+    Return v6
+  b5(v7: L1):
+    Return v7
+  b6(v8: L0):
+    v9 = Null
+    Return v9
+# CHECK: TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK-NOT: = Null
+# CHECK: [[fact]]: fact = Specified
+# CHECK-NEXT: [[circle]]: L0 = AssumeType v0, [[fact]] provenType=L0
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK-NOT: = Null
+# CHECK: : L1 = AssumeType v0, {{*}} provenType=L1
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK-NOT: = Null
+}
+
+function f1 name="lastOfThreeIsWhatIsLeft" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = TypeTest v0 testedType=L1
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Integer integer=2
+    Return v4
+  b4():
+    v5 = TypeTest v0 testedType=L2
+    Branch v5 -> taken b5(), notTaken b6()
+  b5():
+    v6 = Integer integer=3
+    Return v6
+  b6():
+    v7 = Integer integer=4
+    Return v7
+# CHECK-COUNT-2: Branch
+# CHECK-NOT: Branch
+# CHECK-NOT: integer=4
+# CHECK: Return
+}
+
+function f2 name="nullTestBehindATestForAnObject" parameters=[{type=undefined|null|L0}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Null
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b3(), notTaken b4()
+  b2():
+    v4 = Integer integer=1
+    Return v4
+  b3():
+    v5 = Integer integer=2
+    Return v5
+  b4():
+    v6 = ToBoolean v0
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    v7 = Integer integer=3
+    Return v7
+  b6():
+    v8 = Integer integer=4
+    Return v8
+# CHECK-COUNT-1: Branch
+# CHECK-NOT: Branch
+# CHECK-NOT: integer=2
+# CHECK-NOT: integer=4
+# CHECK: Return
+}
+
+function f3 name="testBesideTheEdgeStays" parameters=[{type=L0|L1}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    v2 = TypeTest v0 testedType=L0
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v3 = Integer integer=1
+    Return v3
+  b3():
+    v4 = TypeTest v0 testedType=L1
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    v5 = Integer integer=2
+    Return v5
+  b5():
+    v6 = Integer integer=3
+    Return v6
+# CHECK-COUNT-3: Branch
+}
+
+function f4 name="expectationBehindTheFailedTest" parameters=[{type=number|L0}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Expect v0 expectedType=number
+    Return v3
+# CHECK: [[stood]]: fact = Specified
+# CHECK-NEXT: [[number]]: number = AssumeType v0, [[stood]] provenType=number
+# CHECK-NEXT: = Expect [[number]] expectedType=number
+}
+
+function f5 name="testBehindABranchThatIsDecidedInTheSameRun" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Boolean boolean=true
+    Branch v2 -> taken b3(), notTaken b4()
+  b2():
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v4 = TypeTest v0 testedType=undefined|L0
+    Branch v4 -> taken b5(), notTaken b6()
+  b4():
+    v5 = TypeTest v0 testedType=undefined|L1
+    Branch v5 -> taken b5(), notTaken b6()
+  b5():
+    v6 = Integer integer=1
+    Return v6
+  b6():
+    v7 = Integer integer=2
+    Return v7
+# CHECK-COUNT-1: Branch
+# CHECK-NOT: Branch
+# CHECK-NOT: integer=2
+# CHECK: Return
+}

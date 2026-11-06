@@ -1,0 +1,131 @@
+# A test that begins the call again may stand in a handler, where nothing but the throw has happened. What the handler makes in front of the test is made behind it;
+# what takes the caught value stays at the head of the handler, on the way that begins again too.
+# FORM: Prepared
+# RUN: pass RestartInGenericVersion VerifyProgram
+# STATISTIC: RestartsInGenericVersion = 2
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Record name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+
+function f1 name="cleanup" module=m0 role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f2 fallback=f3} {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=L0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: L0):
+    v4 = CallDirect v3, v1 function=f2
+    ReturnCall v4 requirement=Allowed
+  b2() frequency=Unlikely:
+    v5 = CallDirect v0, v1 function=f3
+    ReturnCall v5 requirement=Allowed
+}
+
+function f2 name="cleanup" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=L0}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = RequireObjectCoercible v1 nullishAccess=Read
+    Jump -> next b2()
+  b2():
+    Return v1
+  b3() role=CleanupHandler:
+    v3 = CatchValue
+    v4 = IsSlotFilled v0 key="x" receivers=[L0] level=Expected
+    Branch v4 -> taken b4(| 0), notTaken b5()
+  b4(v5: guard):
+    v6 = GetSlot v0, v5 key="x" receivers=[L0] level=Expected
+    Throw v3
+  b5() frequency=Rare:
+    v7 = PropGet v0 key="x"
+    Throw v3
+# CHECK: b3() role=CleanupHandler:
+# CHECK-NEXT: v3: anything = CatchValue
+# CHECK-NEXT: IsSlotFilled v0
+# CHECK-NEXT: Branch v4 -> taken b4(| 0), notTaken [[restart]]()
+# CHECK: b4(v5: guard):
+# CHECK-NEXT: GetSlot v0, v5
+# CHECK-NOT: PropGet
+# CHECK: [[restart]]() frequency=Rare:
+# CHECK: = CallDirect v0, v1 function=f3 [isNeverInlined]
+}
+
+function f3 name="cleanup" module=m0 role=GenericVersion flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} creator=Version{provenVersion=f2} {
+  b0(v0: anything, v1: anything) frequency=Unlikely:
+    Jump -> next b1()
+  b1() frequency=Unlikely handler=b3():
+    v2 = RequireObjectCoercible v1 nullishAccess=Read
+    Jump -> next b2()
+  b2() frequency=Unlikely:
+    Return v1
+  b3() role=CleanupHandler frequency=Unlikely:
+    v3 = CatchValue
+    v4 = PropGet v0 key="x"
+    Throw v3
+}
+
+function f4 name="keeps" module=m0 role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f5 fallback=f6} {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=L0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: L0):
+    v4 = CallDirect v3, v1 function=f5
+    ReturnCall v4 requirement=Allowed
+  b2() frequency=Unlikely:
+    v5 = CallDirect v0, v1 function=f6
+    ReturnCall v5 requirement=Allowed
+}
+
+function f5 name="keeps" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=L0}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = RequireObjectCoercible v1 nullishAccess=Read
+    Jump -> next b2()
+  b2():
+    Return v1
+  b3() role=CleanupHandler:
+    v3 = CatchException
+    v4 = CatchValue
+    v5 = NewArray v4 contents=anything
+    v6 = IsSlotFilled v0 key="x" receivers=[L0] level=Expected
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7: guard):
+    v8 = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
+    Return v5
+  b5() frequency=Rare:
+    v9 = PropGet v0 key="x"
+    Rethrow v3
+# CHECK: b3() role=CleanupHandler:
+# CHECK-NEXT: = CatchException
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: IsSlotFilled v0
+# CHECK-NEXT: Branch v6 -> taken b4(| 0), notTaken [[restart]]()
+# CHECK: b4(v7: guard):
+# CHECK-NEXT: = NewArray v4
+# CHECK-NEXT: GetSlot v0, v7
+# CHECK-NOT: PropGet
+# CHECK: [[restart]]() frequency=Rare:
+# CHECK: = CallDirect v0, v1 function=f6 [isNeverInlined]
+}
+
+function f6 name="keeps" module=m0 role=GenericVersion flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} creator=Version{provenVersion=f5} {
+  b0(v0: anything, v1: anything) frequency=Unlikely:
+    Jump -> next b1()
+  b1() frequency=Unlikely handler=b3():
+    v2 = RequireObjectCoercible v1 nullishAccess=Read
+    Jump -> next b2()
+  b2() frequency=Unlikely:
+    Return v1
+  b3() role=CleanupHandler frequency=Unlikely:
+    v3 = CatchException
+    v4 = CatchValue
+    v5 = NewArray v4 contents=anything
+    v6 = PropGet v0 key="x"
+    Return v5
+}

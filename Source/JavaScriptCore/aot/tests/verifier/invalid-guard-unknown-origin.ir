@@ -7,8 +7,10 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
 function f0 name="badUnspecifiedGuard" parameters=[{type=object}] results=[{type=anything}] {
     v1 = Unspecified valueType=guard
-    v2 = GetSlotOrUndefined v0, v1 key="x" receivers=[L0] level=Proven
-    Return v2
+    v2 = Specified
+    v3 = AssumeType v1, v2 provenType=guard
+    v4 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    Return v4
 }
 function f1 name="badUnspecifiedGuardOnOnePath" parameters=[{type=object}] results=[{type=anything}] {
     v1 = ShapeTest v0 layouts=[L0]
@@ -19,8 +21,10 @@ function f1 name="badUnspecifiedGuardOnOnePath" parameters=[{type=object}] resul
     v3 = Unspecified valueType=guard
     Jump -> next b3(v3)
   b3(v4):
-    v5 = GetSlotOrUndefined v0, v4 key="x" receivers=[L0] level=Proven
-    Return v5
+    v5 = Specified
+    v6 = AssumeType v4, v5 provenType=guard
+    v7 = GetSlotOrUndefined v0, v6 key="x" receivers=[L0] level=Proven
+    Return v7
 }
 function f2 name="goodGuardOnBothPaths" parameters=[{type=object}] results=[{type=anything}] {
     v1 = ShapeTest v0 layouts=[L0]
@@ -40,8 +44,10 @@ function f2 name="goodGuardOnBothPaths" parameters=[{type=object}] results=[{typ
 }
 function f3 name="badUnspecifiedGuardOfFilledSlot" parameters=[{type=L0}] results=[{type=anything}] {
     v1 = Unspecified valueType=guard
-    v2 = GetSlot v0, v1 key="x" receivers=[L0] level=Proven
-    Return v2
+    v2 = Specified
+    v3 = AssumeType v1, v2 provenType=guard
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Proven
+    Return v4
 }
 function f4 name="badUnspecifiedGuardBesideUnspecifiedObject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
     Branch v1 -> taken b1(), notTaken b2()
@@ -54,11 +60,16 @@ function f4 name="badUnspecifiedGuardBesideUnspecifiedObject" parameters=[{type=
     v5 = Unspecified valueType=guard
     Jump -> next b3(v4, v5)
   b3(v6, v7):
-    v8 = GetSlot v6, v7 key="x" receivers=[L0] level=Proven
-    Return v8
+    v8 = Specified
+    v9 = AssumeType v6, v8 provenType=object
+    v10 = AssumeType v7, v8 provenType=guard
+    v11 = GetSlot v9, v10 key="x" receivers=[L0] level=Proven
+    Return v11
 }
 function f5 name="goodUnspecifiedGuardWhereTheTypeIsEnough" parameters=[{type=L0}] results=[{type=anything}] {
     v1 = Unspecified valueType=guard
-    v2 = GetSlotOrUndefined v0, v1 key="x" receivers=[L0] level=Proven
-    Return v2
+    v2 = Specified
+    v3 = AssumeType v1, v2 provenType=guard
+    v4 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    Return v4
 }

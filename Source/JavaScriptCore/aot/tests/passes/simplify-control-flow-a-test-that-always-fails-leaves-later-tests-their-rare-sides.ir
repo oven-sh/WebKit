@@ -1,0 +1,32 @@
+# Deciding a test for its unlikely side makes that side likely, not the unlikely side of a later, undecided test
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoTests" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+    v2 = String string="a"
+    v3 = TypeTest v2 testedType=number
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Unreachable
+  b2() frequency=Unlikely:
+    v4 = PropGet v0 key="first"
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Unlikely:
+    v5 = PropGet v0 key="inside"
+    Jump -> next b4()
+  b4():
+    v6 = TypeTest v0 testedType=number
+    Branch v6 -> taken b5(| 0), notTaken b6()
+  b5(v7):
+    Return v7
+  b6() frequency=Unlikely:
+    v8 = PropGet v0 key="later"
+    v9 = Integer integer=0
+    Return v9
+# CHECK: PropGet v0 key="first"
+# CHECK: b3():
+# CHECK-NEXT: PropGet v0 key="inside"
+# CHECK: b6() frequency=Unlikely:
+# CHECK-NEXT: PropGet v0 key="later"
+}

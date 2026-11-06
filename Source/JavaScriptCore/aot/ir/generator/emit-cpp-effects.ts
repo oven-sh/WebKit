@@ -84,6 +84,15 @@ function effectsHeaders(schema: Schema): OutputFile[] {
       "AOTSchemaValueEffects.h",
       ['"AOTBlock.h"', '"AOTMemoryLocation.h"'],
       effectFunction("const Value& value", "value.opcode", "Opcode", schema.operations, "value"),
+    ),
+    header(
+      "AOTSchemaEntryEffects.h",
+      enumIncludes,
+      effectFunction("Opcode opcode", "opcode", "Opcode", schema.operations, null),
+    ),
+    header(
+      "AOTSchemaTerminatorEffects.h",
+      ['"AOTBlock.h"', ...enumIncludes],
       effectFunction(
         "const Terminator& terminator",
         "terminator.kind",
@@ -91,11 +100,6 @@ function effectsHeaders(schema: Schema): OutputFile[] {
         schema.terminators,
         "terminator",
       ),
-    ),
-    header(
-      "AOTSchemaEntryEffects.h",
-      enumIncludes,
-      effectFunction("Opcode opcode", "opcode", "Opcode", schema.operations, null),
       effectFunction("TerminatorKind kind", "kind", "TerminatorKind", schema.terminators, null),
     ),
     header(

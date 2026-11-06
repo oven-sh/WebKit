@@ -1,0 +1,64 @@
+# declare const input: any;
+# const given: number = String(input).codePointAt(0)!;
+# const pair = { a: given, b: 2 };
+# (globalThis as any).answer = pair.a;
+# (globalThis as any).other = pair.b;
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f0
+# REQUIRES: unsanitized-code
+# RUN(NOWHERE): lower-to-b3 optimized f0
+# REQUIRES(NOWHERE): unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=32 kind=Variable
+typesite w1 module=m0 position=85 kind=Variable
+typesite w2 module=m0 position=48 kind=CallResult
+layout L0 module=m0 position=92 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=String
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = Call v0, -, v2 calleeName="String"
+    v4 = Convert v3 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v5 = PropGet v4 key="codePointAt"
+    v6 = Integer
+    v7 = Call v5, v4, v6 calleeKey="codePointAt" calleeName="codePointAt"
+    v8 = Convert v7 declared={type=undefined|number site=w2} illTypedCause=DeclarationWithoutBody
+    v9 = Convert v8 declared={type=number site=w0} illTypedCause=Assertion
+    v10 = Integer integer=2
+    v11 = Convert v10 declared={type=number}
+    v12 = NewObject -, v9, v11 layout=L0 fields=[0, 1]
+    v13 = FinishObject v12
+    v14 = Convert v13 declared={type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="globalThis" [isFreeName]
+    v17 = Convert v16 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v18 = Convert v17 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v19 = PropGet v14 key="a"
+    PropSet v18, v19 key="answer"
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="globalThis" [isFreeName]
+    v23 = Convert v22 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v24 = Convert v23 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v25 = PropGet v14 key="b"
+    PropSet v24, v25 key="other"
+    v27 = Undefined
+    Return v27
+}
+
+# The field is declared a number, and what the allocation lists for it is a number or undefined. The slot has room for both.
+# The one read by name is that of the global variable.
+# CHECK-LABEL: function f0 role=Source
+# CHECK: Patchpoint({{*}}:PropGet)
+# CHECK-NOT: Patchpoint({{*}}:PropGet)
+# CHECK-LABEL: end of function f0
+
+# No object is made, and nothing is stored by name.
+# NOWHERE-LABEL: function f0 role=Source
+# NOWHERE-NOT: :NewObject
+# NOWHERE-NOT: :PropSet
+# NOWHERE-LABEL: end of function f0

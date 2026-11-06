@@ -89,6 +89,8 @@ struct HoistPlan {
     unsigned numberOfPeeledValues { 0 };
     unsigned numberOfHoistsBeyondRegisters { 0 };
     bool hoistsGuard { false };
+    // A guard on what changes from turn to turn is asked in front of the loop about the first turn, and nothing says that it passes.
+    bool firstTurnMayFailPeeledGuard { false };
 
     bool isHoisted(Value* value) const { return hoistedValues.contains(value); }
 };

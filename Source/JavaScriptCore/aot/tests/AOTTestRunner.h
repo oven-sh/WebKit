@@ -31,6 +31,7 @@ struct TestRunRequest {
     String filter;
     unsigned jobs { 0 };
     bool showsOutput { false };
+    // Without a launcher every file runs in this process, one after the other.
     const ChildProcessLauncher* launcher { nullptr };
     TestVariant variant;
 };
@@ -45,6 +46,7 @@ TestRunSummary runTestFiles(const TestRunRequest&, PrintStream&);
 
 inline constexpr ASCIILiteral runSubcommandName = "run"_s;
 inline constexpr ASCIILiteral showOutputFlag = "--show-output"_s;
+inline constexpr ASCIILiteral singleProcessRunFlag = "--single-process"_s;
 inline constexpr ASCIILiteral optionFlag = "--option"_s;
 inline constexpr ASCIILiteral onlyDiagnosticFlag = "--only-diagnostic"_s;
 

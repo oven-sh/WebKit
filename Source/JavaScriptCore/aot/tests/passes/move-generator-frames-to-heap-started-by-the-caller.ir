@@ -1,0 +1,63 @@
+# A body that asks at its entry whether it is running goes: whoever called it fills the frame himself, and takes the first step by calling the function that resumes
+# FORM: Prepared
+# RUN: pass MoveGeneratorFramesToHeap
+# STATISTIC: GeneratorsWithHeapFrames = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="counts" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f1 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f0
+    v3 = CallDirect v0, v1, v2 function=f1
+    Return v2
+}
+function f1 name="counts" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=number}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f1 promiseParameter=2} {
+    v3 = IsGeneratorRunning v2
+    Branch v3 -> taken b4(), notTaken b1()
+  b1():
+    v4 = Undefined
+    v5 = YieldBySavingFrame v2, v4 @10
+    v6 = ResultAt v5 index=0
+    v7 = ResultAt v5 index=1
+    Switch v7 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2() frequency=Rare:
+    Throw v6
+  b3() frequency=Rare:
+    Return v6
+  b4():
+    v8 = YieldBySavingFrame v2, v1 @11
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
+  b5() frequency=Rare:
+    Throw v9
+  b6() frequency=Rare:
+    Return v9
+  b7():
+    Return v1
+}
+function f2 name="first" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
+    v2 = NewGenerator v0 function=f0
+    MarkGeneratorRunning v2
+    v4 = CallDirect v0, v1, v2 function=f1
+    v5 = TakeGeneratorStepStatus v2
+    Return v4
+}
+# CHECK: function f0 name="counts" {{*}}creator=Coroutine{ramp=f0 body=f3}
+# CHECK: [[frame]]: anything = NewHeapFrame v2 function=f3 numberOfWords=2
+# CHECK-NEXT: PutHeapFrameWord [[frame]], v2
+# CHECK-NEXT: PutHeapFrameWord [[frame]], v1 index=1
+# CHECK-NEXT: SuspendInHeapFrame v2, [[frame]] [isFirstRun]
+# CHECK-NOT: CallDirect
+# CHECK: function f1 name="counts"
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: function f2 name="first"
+# CHECK: MarkGeneratorRunning v2
+# CHECK-NEXT: [[started]]: anything = NewHeapFrame v2 function=f3 numberOfWords=2
+# CHECK-NEXT: PutHeapFrameWord [[started]], v2
+# CHECK-NEXT: PutHeapFrameWord [[started]], v1 index=1
+# CHECK-NEXT: SuspendInHeapFrame v2, [[started]] [isFirstRun, staysRunning]
+# CHECK-NEXT: [[mode]]: 0 = Integer
+# CHECK-NEXT: [[sent]]: undefined = Undefined
+# CHECK-NEXT: CallDirect [[started]], [[mode]], [[sent]] function=f3
+# CHECK: function f3 name="counts"
+# CHECK: GetResumeIndex

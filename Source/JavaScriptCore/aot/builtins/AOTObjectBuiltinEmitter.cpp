@@ -47,7 +47,7 @@ CellPointer ObjectBuiltinEmitter::createObjectWithPrototype(const InlineCall& ca
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
     TypedPointer cache = instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(builtins.objects.objectCreate));
-    LValue offset = m_out.bitAnd(m_out.lShr(prototype.value(), m_out.constInt32(ObjectBuiltinWords::objectCreateShift - logEntrySize)), m_out.constIntPtr((ObjectBuiltinWords::objectCreateSize - 1) << logEntrySize));
+    LValue offset = m_out.bitAnd(m_out.lShr(prototype.value(), ObjectBuiltinWords::objectCreateShift - logEntrySize), (ObjectBuiltinWords::objectCreateSize - 1) << logEntrySize);
     LValue entry = m_out.add(cache.base(), offset);
     CellPointer cachedPrototype(m_out.loadPtr(m_out.address(*cache.heap(), entry, cache.offset() + OBJECT_OFFSETOF(CacheEntry, prototype))));
     branchUnless(equal(cachedPrototype, prototype), slowPath);
@@ -126,12 +126,19 @@ Condition ObjectBuiltinEmitter::isSameValue(const OperationContext& context, Val
         return Integer(m_out.bitCast(x.value(), B3::Int64));
     };
     auto areSameNumber = [&](Number x, Number y) {
-        return logicalOr(equal(bitsOf(x), bitsOf(y)), logicalAnd(notEqualOrUnordered(x, x), notEqualOrUnordered(y, y)));
+        Integer bitsOfX = bitsOf(x);
+        Condition haveSameBits = equal(bitsOfX, bitsOf(y));
+        Condition xIsNaN = notEqualOrUnordered(x, x);
+        return logicalOr(haveSameBits, logicalAnd(xIsNaN, notEqualOrUnordered(y, y)));
     };
-    if (left.isInteger() && right.isInteger())
-        return equal(integerOperand(a), integerOperand(b));
-    if (left.isNumber() && right.isNumber())
-        return areSameNumber(numberOperand(a), numberOperand(b));
+    if (left.isInteger() && right.isInteger()) {
+        Integer x = integerOperand(a);
+        return equal(x, integerOperand(b));
+    }
+    if (left.isNumber() && right.isNumber()) {
+        Number x = numberOperand(a);
+        return areSameNumber(x, numberOperand(b));
+    }
     Boxed x = boxedOperand(context, a);
     Boxed y = boxedOperand(context, b);
     if (!(left.primitives & Primitive::Number) || !(right.primitives & Primitive::Number))
@@ -139,9 +146,11 @@ Condition ObjectBuiltinEmitter::isSameValue(const OperationContext& context, Val
     LBasicBlock numbers = newBlock();
     LBasicBlock others = newBlock();
     Join<Condition> join(m_out);
-    branch(logicalAnd(isNumber(x), isNumber(y)), { normalEdge(numbers), normalEdge(others) });
+    Condition xIsNumber = isNumber(x);
+    branch(logicalAnd(xIsNumber, isNumber(y)), { normalEdge(numbers), normalEdge(others) });
     m_out.appendTo(numbers);
-    join.add(areSameNumber(numberToDouble(x), numberToDouble(y)));
+    Number numberX = numberToDouble(x);
+    join.add(areSameNumber(numberX, numberToDouble(y)));
     m_out.appendTo(others);
     join.add(equal(x, y));
     return join.finish();
@@ -160,9 +169,11 @@ void ObjectBuiltinEmitter::generateObjectIs(const InlineCall& call)
         LBasicBlock decided = newBlock();
         branch(isSame, { normalEdge(decided), normalEdge(differentBits) });
         m_out.appendTo(differentBits);
-        branch(logicalAnd(isCell(x), isCell(y)), { normalEdge(cells), normalEdge(decided) });
+        Condition xIsCell = isCell(x);
+        branch(logicalAnd(xIsCell, isCell(y)), { normalEdge(cells), normalEdge(decided) });
         m_out.appendTo(cells);
-        branch(hasCellTypeIn(unboxCell(x), { StringType, HeapBigIntType }), { rareEdge(missBlockOf(call)), normalEdge(decided) });
+        Condition isComparedByContents = hasCellTypeIn(unboxCell(x), { StringType, HeapBigIntType });
+        branch(isComparedByContents, { rareEdge(missBlockOf(call)), normalEdge(decided) });
         m_out.appendTo(decided);
     }
     finish(call, isSame);
@@ -188,6 +199,42 @@ void ObjectBuiltinEmitter::generateObjectFreeze(const InlineCall& call)
     missUnless(call, below(word, word32(orderWordHasExtraProperties)));
     storeField(cell, m_heaps.AOTObject_orderWord, bitOr(word, frozen));
     finish(call, get(argument), type);
+}
+
+// An object that is made in the block of the call and that nothing in between names.
+static bool isUnseenNewObject(const Function& function, const Block& block, ValueID call, ValueID object)
+{
+    ValueID finished;
+    if (function.at(object).opcode == Opcode::FinishObject) {
+        finished = object;
+        object = function.at(finished).objectOperand();
+    }
+    if (function.at(object).opcode != Opcode::NewObject)
+        return false;
+    std::span<const ValueID> values = block.values.span();
+    size_t made = std::ranges::find(values, object) - values.begin();
+    if (made == values.size())
+        return false;
+    for (ValueID between : values.subspan(made + 1)) {
+        if (between == call)
+            break;
+        if (between == finished)
+            continue;
+        std::span<const ValueID> operands = function.at(between).operands();
+        if (std::ranges::contains(operands, object) || (finished && std::ranges::contains(operands, finished)))
+            return false;
+    }
+    return true;
+}
+
+void ObjectBuiltinEmitter::generateObjectAssign(const InlineCall& call)
+{
+    ValueID target = call.argument(0);
+    CellPointer object = objectOrMiss(call, target);
+    Boxed source = boxedOperand(call.context(), call.argument(1));
+    bool isUnseen = isUnseenNewObject(m_function, m_function.at(call.context().block()), call.context().valueID(), target);
+    missUnless(call, callOperation<Condition>(call.context(), isUnseen ? RuntimeOperation::ObjectAssignToUnseenObject : RuntimeOperation::ObjectAssignWithoutCode, { object, source }, { .calledBuiltin = functionOf(call.overload()) }));
+    finish(call, get(target), typeOf(target));
 }
 
 void ObjectBuiltinEmitter::generateObjectPrototypeToString(const InlineCall& call)

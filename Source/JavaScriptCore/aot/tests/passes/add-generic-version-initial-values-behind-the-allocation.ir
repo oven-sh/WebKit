@@ -1,11 +1,10 @@
-# In the generic version `false` stands in the allocation for the value that the check for a boolean has turned away, and a store behind the allocation tests the value.
+# `false` stands in the allocation for a value of which a boolean is only expected, and a store behind the allocation tests the value.
 # Nothing stands in for a symbol. The symbol that is listed last is defined behind its allocation. The symbol in front of a method stays in the allocation: its field takes anything.
 # The empty string stands in for a string: add-generic-version-a-string-stands-in-for-a-string-field.ir
 # FORM: AsRead
 # OPTIONS: disable=flow-results
 # RUN: pipeline AddGenericVersion
 # STATISTIC: InitialValuesStoredBehindAllocations = 2
-# CHECK: frequency=Unlikely
 # CHECK: = NewObject -, {{*}} layout=L0 fields=[0, 1]
 # CHECK: [[filler]]: false = Boolean
 # CHECK-NEXT: [[flagged]]: L1 = NewObject -, [[filler]], {{*}} layout=L1 fields=[0, 1]

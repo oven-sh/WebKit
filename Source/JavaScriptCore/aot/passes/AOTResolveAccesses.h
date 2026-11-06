@@ -17,7 +17,10 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // The operations that resolveAccesses() looks at. A deletion by a constant key becomes a deletion by name.
-inline constexpr OpcodeSet accessesToResolve = accessesByNameOrKey | OpcodeSet { Opcode::ElemDelete };
+// They name another receiver than the object at which the lookup starts.
+inline constexpr OpcodeSet readsForAnotherReceiver { Opcode::SuperGet, Opcode::GetByValWithThis };
+inline constexpr OpcodeSet deletions { Opcode::PropDelete, Opcode::ElemDelete };
+inline constexpr OpcodeSet accessesToResolve = accessesByNameOrKey | readsForAnotherReceiver | deletions | OpcodeSet { Opcode::GetInternalField };
 
 struct AccessOperands {
     ValueID receiver;
@@ -41,10 +44,13 @@ std::optional<SiteContent> contentOfNamedAccess(const FunctionPassContext&, cons
 std::optional<ElementAccessSite> planElementAccessSite(FunctionPassContext&, const ValueSite&);
 
 bool isOnlyCalled(FunctionAnalyses&, ValueID read);
+bool isOnlyCalledBehindJoins(FunctionAnalyses&, ValueID read);
 
 AccessOperands operandsOfNamedAccess(const Value& access);
 SlotStamp createSlotStamp(FunctionPassContext&, const Value& access, const PropertyAccessPlan&);
 PassOutcome addEmptySlotCases(FunctionPassContext&);
+PassOutcome planAccessesBehindSlotTestsForProvenReceivers(FunctionPassContext&);
+PassOutcome splitReadsByExpectedReceivers(FunctionPassContext&);
 PassOutcome addCasesOfFieldsWithoutStorage(FunctionPassContext&);
 Effects effectsAfterRewrite(FunctionPassContext&, const PropertyAccessPlan&, const SlotStamp&);
 Effects effectsAfterRewrite(const ElementAccessPlan&, const Type& key);

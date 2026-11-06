@@ -13,6 +13,7 @@
 #include "AOTMappedCopyInlines.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTObjectModelCaches.h"
 #include "AOTOperationCallScope.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeCounters.h"
@@ -24,6 +25,7 @@
 #include "PropertyNameArray.h"
 #include <array>
 #include <wtf/SetForScope.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -278,6 +280,28 @@ static void testLeavesOutExcludedNames(LoadedProgram& program)
     }
 }
 
+static void testNamesBesideTheFieldsOfTheSourceSelectThePlan(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    std::optional<uint32_t> numberOfLabel = vm.aotState().identifiers->numberOf(Identifier::fromString(vm, "label"_s).impl());
+    AOT_TEST_CHECK(numberOfLabel);
+    std::array<uint32_t, 1> identifiers { *numberOfLabel };
+    constexpr uint32_t runNumberPlusOne = 3;
+    std::span<UniquedStringImpl* const> withoutLabel = program.state().objects->caches->assignmentPlans.excludedNames(vm, { runNumberPlusOne, identifiers }).names();
+    auto restOfPointWith = [&](ASCIILiteral name) {
+        Object* source = createPoint(program, 1, 2);
+        addName(program, source, name, 3);
+        Object* rest = allocate(program, "Pair"_s);
+        if (tryRepeatAssignment(vm, program.state(), rest, source, runNumberPlusOne) == RepeatedCopy::IsNotDone)
+            AOT_TEST_CHECK(tryDefinePropertiesOf(vm, *rest, source, withoutLabel));
+        return rest;
+    };
+    for (int32_t turn = 0; turn < 3; ++turn)
+        AOT_TEST_CHECK(hasKeys(program, restOfPointWith("label"_s), { "x"_s, "y"_s }));
+    AOT_TEST_CHECK(hasKeys(program, restOfPointWith("late"_s), { "x"_s, "y"_s, "late"_s }));
+    AOT_TEST_CHECK(hasKeys(program, restOfPointWith("label"_s), { "x"_s, "y"_s }));
+}
+
 static bool isRefused(LoadedProgram& program, JSObject* source)
 {
     Object* target = createCopy(program);
@@ -461,6 +485,8 @@ static void testCopiesTwoObjectsAtOnce(LoadedProgram& program)
         return object;
     };
 
+    // The first object that is given a name keeps it in a table of its own. The next one makes the Structure that those behind it share.
+    createOrdinary();
     // The first pair of a kind is copied one behind the other.
     AOT_TEST_CHECK(!tryCopyTwoObjects(vm, state, realm, createOrdinary(), createPair(program, { 1, 0 })));
     Structure* structure = nullptr;
@@ -568,22 +594,6 @@ static void testPlansOutliveCollectionsWhileTheirStructuresLive(LoadedProgram& p
     AOT_TEST_CHECK(valueOf(vm, RuntimeCounterID::AssignmentPlansMade) == plansMade);
 }
 
-static void testClonedStructuresAreForgottenAtEachCollection(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
-        JSObject* source = constructEmptyObject(program.realm());
-        put(program, source, "a"_s, 1);
-        put(program, source, "b"_s, 2);
-        ClonedStructure& cloned = program.instance().allocation.clonedStructures[AllocationWords::placeOfClonedStructure(source->structureID().bits())];
-        JSObject* copy = uncheckedDowncast<JSObject>(callOperationFromTest(vm, operationAOTCopyObject, &program.instance(), JSValue::encode(source), 0, 0, nullptr).value);
-        AOT_TEST_CHECK(copy != source && copy->structureID() == source->structureID() && holdsPropertiesOf(program, copy, source));
-        AOT_TEST_CHECK(static_cast<uint32_t>(cloned.header) == source->structureID().bits() && cloned.cellSize == JSFinalObject::allocationSize(source->structure()->inlineCapacity()));
-        vm.heap.collectSync(scope);
-        AOT_TEST_CHECK(!cloned.header && !cloned.cellSize);
-    }
-}
-
 static void testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -595,7 +605,7 @@ static void testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollectio
     for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
         Object* source = createPoint(program, 1, 2);
         Object* first = allocate(program, "Pair"_s);
-        const MappedCopy*& place = instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(first->orderAndShapeWords(), source->orderAndShapeWords(), 0)];
+        const MappedCopy*& place = instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(first->orderAndShapeWords(), source->orderAndShapeWords(), 0)];
         AOT_TEST_CHECK(!place && !tryCopy(first, source) && enumerableKeysOf(program, first).isEmpty());
         RepeatedCopy way = tryRepeatAssignment(vm, program.state(), first, source, 0);
         AOT_TEST_CHECK(way == RepeatedCopy::ByMap || way == RepeatedCopy::ByMapForTheFirstTime);
@@ -679,7 +689,7 @@ static void testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists(LoadedProgra
 static void testIntegersMoveIntoSlotsThatMayHoldNone()
 {
     MappedCopy::Move move { };
-    move.kind = moveKindFor(SlotRepresentation::Int32, SlotRepresentation::OptionalInt32, false);
+    move.kind = moveKindFor(SlotRepresentation::Int32, SlotRepresentation::OptionalInt32, SlotFit::Always);
     AOT_TEST_CHECK(move.kind == MappedCopy::MoveKind::Int32AsOptionalInt32);
     auto moves = [&](int32_t integer) {
         uint64_t stored = 0;
@@ -700,6 +710,49 @@ static void testIntegersMoveIntoSlotsThatMayHoldNone()
         AOT_TEST_CHECK(!moves(integer));
 }
 
+// The word of a literal string becomes the reference to its cell without a frame, once the cell is made.
+static void testLiteralStringsMoveIntoSlotsOfReferences()
+{
+    constexpr uintptr_t cageBase = 1ull << 40;
+    constexpr uint32_t reference = minCell32 + 6;
+    const std::array<uint32_t, 3> literalStrings { 0, reference, 0 };
+    enum class Outcome : uint8_t { IsAbsent, IsLeftToOtherWay, IsMoved };
+    uint64_t stored = 0;
+    auto move = [&](SlotRepresentation from, SlotRepresentation to, SlotFit fit, uint64_t bits) {
+        MappedCopy::Move move { };
+        move.kind = moveKindFor(from, to, fit);
+        AOT_TEST_CHECK(move.kind == (from == SlotRepresentation::LiteralString32 ? MappedCopy::MoveKind::NarrowLiteralString : MappedCopy::MoveKind::WideLiteralString));
+        bool isLeftToOtherWay = false;
+        bool didMove = tryMove(cageBase, move, reinterpret_cast<const uint8_t*>(&bits), [&](auto moved) {
+            AOT_TEST_CHECK(sizeof(moved) == widthOf(to));
+            stored = moved;
+        }, [&] {
+            isLeftToOtherWay = true;
+            return false;
+        }, literalStrings.data());
+        AOT_TEST_CHECK(!didMove || !isLeftToOtherWay);
+        return didMove ? Outcome::IsMoved : isLeftToOtherWay ? Outcome::IsLeftToOtherWay : Outcome::IsAbsent;
+    };
+    for (SlotFit fit : { SlotFit::Always, SlotFit::UnlessUndefinedOrNull }) {
+        for (SlotRepresentation to : { SlotRepresentation::Cell32, SlotRepresentation::OptionalCell32 }) {
+            constexpr SlotRepresentation from = SlotRepresentation::LiteralString32;
+            AOT_TEST_CHECK(move(from, to, fit, literalStringWord(1)) == Outcome::IsMoved && stored == reference);
+            AOT_TEST_CHECK(move(from, to, fit, reference + 1) == Outcome::IsMoved && stored == reference + 1);
+            AOT_TEST_CHECK(move(from, to, fit, literalStringWord(0)) == Outcome::IsLeftToOtherWay && move(from, to, fit, literalStringWord(2)) == Outcome::IsLeftToOtherWay);
+            AOT_TEST_CHECK(move(from, to, fit, undefinedCell32) == Outcome::IsLeftToOtherWay && move(from, to, fit, nullCell32) == Outcome::IsLeftToOtherWay);
+            AOT_TEST_CHECK(move(from, to, fit, absentCell32) == Outcome::IsAbsent);
+        }
+        for (SlotRepresentation to : { SlotRepresentation::JSValue, SlotRepresentation::Cell }) {
+            constexpr SlotRepresentation from = SlotRepresentation::LiteralString;
+            AOT_TEST_CHECK(move(from, to, fit, literalStringWord(1)) == Outcome::IsMoved && stored == std::bit_cast<uint64_t>(MarkedBlockCage::decode(cageBase, reference)));
+            AOT_TEST_CHECK(move(from, to, fit, cageBase + 64) == Outcome::IsMoved && stored == cageBase + 64);
+            AOT_TEST_CHECK(move(from, to, fit, literalStringWord(2)) == Outcome::IsLeftToOtherWay);
+            AOT_TEST_CHECK(move(from, to, fit, JSValue::ValueUndefined) == Outcome::IsLeftToOtherWay && move(from, to, fit, JSValue::ValueNull) == Outcome::IsLeftToOtherWay);
+            AOT_TEST_CHECK(move(from, to, fit, JSValue::ValueEmpty) == Outcome::IsAbsent);
+        }
+    }
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withPoints)() = runNativeTestWithLoadedProgram<assignmentPlanTests, programText, body>;
 
@@ -712,6 +765,7 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/creates-field-behind-added-names"_s, withPoints<testCreatesFieldBehindAddedNames> },
         { "assignment-plans/keeps-order-where-field-lies-between-added-names"_s, withPoints<testKeepsOrderWhereFieldLiesBetweenAddedNames> },
         { "assignment-plans/leaves-out-excluded-names"_s, withPoints<testLeavesOutExcludedNames> },
+        { "assignment-plans/names-beside-the-fields-of-the-source-select-the-plan"_s, withPoints<testNamesBesideTheFieldsOfTheSourceSelectThePlan> },
         { "assignment-plans/refuses-what-only-lookup-can-copy"_s, withPoints<testRefusesWhatOnlyLookupCanCopy> },
         { "assignment-plans/follows-changes-to-fields"_s, withPoints<testFollowsChangesToFields> },
         { "assignment-plans/copies-fields-of-same-layout-in-any-order"_s, withPoints<testCopiesFieldsOfSameLayoutInAnyOrder> },
@@ -721,10 +775,10 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/kinds-of-pairs-that-come-in-turns-keep-their-plans"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans<24, 4>> },
         { "assignment-plans/kinds-of-pairs-that-find-no-place-leave-the-plans-of-others"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans<60, 60>> },
         { "assignment-plans/plans-outlive-collections-while-their-structures-live"_s, withPoints<testPlansOutliveCollectionsWhileTheirStructuresLive> },
-        { "assignment-plans/cloned-structures-are-forgotten-at-each-collection"_s, withPoints<testClonedStructuresAreForgottenAtEachCollection> },
         { "assignment-plans/copies-without-frame-fill-empty-objects-and-are-forgotten-at-each-collection"_s, withPoints<testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection> },
         { "assignment-plans/copies-without-frame-overwrite-fields-that-the-target-lists"_s, withPoints<testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists> },
         { "assignment-plans/integers-move-into-slots-that-may-hold-none"_s, testIntegersMoveIntoSlotsThatMayHoldNone },
+        { "assignment-plans/literal-strings-move-into-slots-of-references"_s, testLiteralStringsMoveIntoSlotsOfReferences },
     };
     return tests;
 }

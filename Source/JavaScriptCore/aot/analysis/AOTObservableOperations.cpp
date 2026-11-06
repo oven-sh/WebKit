@@ -77,6 +77,20 @@ void ReasonsForOperationsThatWent::add(ValueID id, InPlaceOfOperation reason)
     m_explained.set(id.index());
 }
 
+void ReasonsForOperationsThatWent::addForOperationThatWent(ValueID idBeforeRun, InPlaceOfOperation reason)
+{
+    m_explained.set(idBeforeRun.index());
+    if (!m_outer)
+        return;
+    if (m_valuesOfOuterAtStart.isEmpty()) {
+        m_outer->addForOperationThatWent(idBeforeRun, reason);
+        return;
+    }
+    size_t index = m_valuesOfOuterAtStart.find(idBeforeRun);
+    if (index != notFound)
+        m_outer->addForOperationThatWent(ValueID(index), reason);
+}
+
 template<typename SomeID>
 static void renumber(Vector<SomeID>& current, std::span<const SomeID> newIDs)
 {
@@ -110,7 +124,7 @@ void didReplaceBody(ReasonsForOperationsThatWent& reasons)
     reasons.didReplaceBody();
 }
 
-Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContext& context, const Function& before, const Function& after, const ReasonsForOperationsThatWent& reasons)
+Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContext& context, const Function& before, const Function& after, ReasonsForOperationsThatWent& reasons)
 {
     Vector<OperationThatWent> result;
     if (reasons.hasLostTrack() || !before.hasBody() || !after.hasBody() || before.bodyIsReleased || after.bodyIsReleased || !hasTypedValues(before) || !hasTypedValues(after))
@@ -201,9 +215,13 @@ Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContex
             bool isListed = !!now;
             if (isListed && block.handler && !hasHandlerAfter.quickGet(now.index()) && effectsOf(context, after, after.at(now)).normal.mayThrow && !reasons.hasReasonFor(id))
                 result.append({ id, blockID, value.opcode, OperationThatWent::How::LostItsHandler, OperationThatWent::Under::TypesAsTheyStand });
-            // An operation that has become another one is the matter of whoever rewrote it.
-            if (isListed)
+            // The pass that rewrote an operation into another one is responsible for it: it may know operand values that the types do not show.
+            // The replacement may have no effect and be removed by a later run, which does not report it, so tell the outer listener now.
+            if (isListed) {
+                if (reasons.outer() && after.at(now).opcode != value.opcode && isSeenByProgram(declaredBoundOf(value.opcode)))
+                    reasons.addForOperationThatWent(id, InPlaceOfOperation::NothingByProofOfThePass);
                 continue;
+            }
             if (!blockIsReached || (endWasCut && index >= numberOfValuesUpToLastOneLeft))
                 continue;
             const Effects& bound = declaredBoundOf(value.opcode);
@@ -211,8 +229,12 @@ Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContex
                 continue;
             Effects effects = effectsOf(context, before, value).onAnyEdge();
             bool isSeen = isSeenByProgram(effects) && !cannotHappenGivenOperands(context.program, before, value);
-            if (!isSeen && !isOwedToCheck(value))
+            if (!isSeen && !isOwedToCheck(value)) {
+                // Whoever has listened for longer knows the operands by the types that they had when it began. Each run in between has answered for what it made of them.
+                if (reasons.outer())
+                    reasons.addForOperationThatWent(id, InPlaceOfOperation::NothingByProofOfThePass);
                 continue;
+            }
             if (reasons.hasReasonFor(id) || hasNewOperationAtPlaceOf(value))
                 continue;
             result.append({ id, blockID, value.opcode, OperationThatWent::How::IsGone, isSeen ? OperationThatWent::Under::TypesAsTheyStand : OperationThatWent::Under::TypesWithoutChecks });

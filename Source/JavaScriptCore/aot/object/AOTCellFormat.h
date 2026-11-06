@@ -57,6 +57,12 @@ static constexpr uint8_t frameCellState = UINT8_MAX;
 static constexpr uint32_t shapeWordOf(uint32_t shape) { return 0 - shape; }
 static constexpr uint32_t shapeOf(uint32_t shapeWord) { return 0 - shapeWord; }
 
+enum class KeyListKind : uint8_t { Strings, StringsAndSymbols, Symbols };
+// The lists with symbols lie in the table of key lists under the words of shapes that a program with fewer shapes than the step does not have.
+static constexpr uint32_t keyListWordStep = (1u << 29) + 341;
+static constexpr uint32_t keyListWordOf(uint32_t shapeWord, KeyListKind kind) { return shapeWord - static_cast<uint32_t>(kind) * keyListWordStep; }
+static constexpr bool hasKeyListsInTable(KeyListKind kind, uint32_t numberOfShapes) { return kind == KeyListKind::Strings || numberOfShapes < keyListWordStep; }
+
 static constexpr unsigned orderWordCountShift = 15;
 static constexpr uint32_t orderWordOrderMask = (1u << orderWordCountShift) - 1;
 static constexpr uint32_t maxFieldsInOrder = (1 << 12) - 1;
@@ -78,6 +84,9 @@ static constexpr uint32_t orderWordIntegrityBits = orderWordIsFrozen | orderWord
 static constexpr uint32_t orderAndCountMask = orderWordHasFieldOutsideSlot - 1;
 static constexpr uint64_t orderCountAndShapeMask = UINT64_MAX << 32 | orderAndCountMask;
 static constexpr uint32_t outOfLineOrderWord = orderWordOf(orderStoredOutOfLine, 0);
+// The Structure holds the entries. The count says how many of them, from the first on, are the object's; 0 says all: an order of one object, or one that is longer than a count can say.
+static constexpr uint32_t outOfLineOrderWordFor(size_t numberOfEntries) { return orderWordOf(orderStoredOutOfLine, numberOfEntries <= maxFieldsInOrder ? static_cast<uint32_t>(numberOfEntries) : 0); }
+static constexpr uint32_t orderWordCountBits = maxFieldsInOrder << orderWordCountShift;
 static constexpr uint32_t unorderedOrderWord = orderWordOf(0, 0);
 
 // An Extension is a word of bits and, in ascending order, the granules whose bits are set. The offset of a slot counts every granule, held or not.
@@ -132,6 +141,8 @@ static_assert(offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t));
 static_assert(offsetOfFirstField == offsetOfShapeWord + sizeof(uint32_t));
 static_assert(orderWordOf(maxKeyOrdersPerLayout - 1, maxFieldsInOrder) <= orderAndCountMask);
 static_assert(outOfLineOrderWord <= orderAndCountMask);
+static_assert(outOfLineOrderWordFor(maxFieldsInOrder) <= orderAndCountMask && countOf(outOfLineOrderWordFor(maxFieldsInOrder)) == maxFieldsInOrder);
+static_assert(outOfLineOrderWordFor(maxFieldsInOrder + 1) == outOfLineOrderWord && (outOfLineOrderWordFor(1) & ~orderWordCountBits) == outOfLineOrderWord);
 static_assert(isOrderStoredOutOfLine(outOfLineOrderWord | orderWordIntegrityBits | orderWordHasExtraProperties));
 static_assert(!isOrderStoredOutOfLine(orderWordOf(maxKeyOrdersPerLayout - 1, maxFieldsInOrder)));
 static_assert(shapeWordOf(1) & compiledObjectShapeBit);

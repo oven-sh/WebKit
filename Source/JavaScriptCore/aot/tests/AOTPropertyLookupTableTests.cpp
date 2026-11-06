@@ -395,7 +395,7 @@ void vmTeardownReleasesRows()
 {
     auto haveNoRows = [](const Vector<StructureID>& ids) {
         for (StructureID id : ids) {
-            if (StructureRows::singleton().rowOf(id))
+            if (StructureRows::ofImageAt(0).rowOf(id))
                 return false;
         }
         return true;
@@ -530,7 +530,7 @@ bool hasPublishedWords(TableFixture& fixture, const Instance& instance)
     const PropertyCacheWords& words = instance.propertyCaches;
     for (SlotAccess access : allSlotAccesses) {
         const FrontWords& front = words.front[static_cast<unsigned>(access)];
-        if (front.plane != fixture.front().plane(access) || front.rowsForStructureIDZero != StructureRows::singleton().rowsForStructureIDZero())
+        if (front.plane != fixture.front().plane(access) || front.rowsForStructureIDZero != StructureRows::ofImageAt(0).rowsForStructureIDZero())
             return false;
     }
     return words.hashedSlots == fixture.hashedTable().entries() && words.hashedSlotOffsetMask == fixture.hashedTable().offsetMask()
@@ -1081,6 +1081,8 @@ void validatorStopsAtStaleRows()
             ChildProcessResult result = launcher.run(arguments.span());
             setStaleRowRequest(nullptr);
             AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
+            if (!result.output.contains("AOT validation: "_s))
+                dataLogLn("asked for ", which, ", the child printed:\n", result.output);
             AOT_TEST_CHECK(result.output.contains("AOT validation: a row of the property caches does not agree with the Structure it is filed under"_s));
             AOT_TEST_CHECK(result.output.contains(makeString("AOT validation: "_s, nameOf(ValidationFailureKind::CacheHitDiffers))));
         }
@@ -1111,6 +1113,8 @@ void validatorStopsAtStaleRows()
     Structure* target = fixture.addProperty(unlike, number + 2, offset);
     fixture.caches().set(kept, fixture.nameWithoutNumber(number + 2), SlotAccess::Store, transitionSlot(kept, target, offset));
     AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
+    ensureStillAliveHere(kept);
+    ensureStillAliveHere(target);
     fixture.caches().validate(vm);
 }
 

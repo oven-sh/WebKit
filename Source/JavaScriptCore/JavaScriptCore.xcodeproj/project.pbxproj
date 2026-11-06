@@ -87,7 +87,6 @@
 			isa = PBXAggregateTarget;
 			buildConfigurationList = 14CFB10523035EF300F0048C /* Build configuration list for PBXAggregateTarget "Unlock Keychain" */;
 			buildPhases = (
-				E1AC2E2C20F7B95800B0897D /* Unlock Keychain */,
 			);
 			dependencies = (
 			);
@@ -102,7 +101,6 @@
 		072F534E2E3C0B7100389E15 /* CachedCall.h in Headers */ = {isa = PBXBuildFile; fileRef = A7F8690E0F9584A100558697 /* CachedCall.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		072F534F2E3C0BC200389E15 /* ProtoCallFrame.h in Headers */ = {isa = PBXBuildFile; fileRef = 65FB5115184EE8F800C12B70 /* ProtoCallFrame.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		072F53502E3C0F3300389E15 /* JITSubGenerator.h in Headers */ = {isa = PBXBuildFile; fileRef = FE98B5B61BB9AE110073E7A6 /* JITSubGenerator.h */; };
-		072F53512E3C3F8700389E15 /* BytecodeGeneratorBase.h in Headers */ = {isa = PBXBuildFile; fileRef = 14C5AD6522F1866C00F1FB83 /* BytecodeGeneratorBase.h */; };
 		072F53522E3C3FDA00389E15 /* ProfileTypeBytecodeFlag.h in Headers */ = {isa = PBXBuildFile; fileRef = 14BA7752211A8E5F008D0B05 /* ProfileTypeBytecodeFlag.h */; };
 		077B97302FD2BBE10042BC77 /* JavaScriptCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077B972F2FD2BBE10042BC77 /* JavaScriptCore.swift */; };
 		077BB36E2FD3AD620042BC77 /* SwiftTestingHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077BB36D2FD3AD620042BC77 /* SwiftTestingHarness.swift */; };
@@ -1384,7 +1382,6 @@
 		73AD062923FF662600F53593 /* DeleteByStatus.h in Headers */ = {isa = PBXBuildFile; fileRef = 73AD062823FF662600F53593 /* DeleteByStatus.h */; };
 		790081391E95A8EC0052D7CD /* WasmModule.h in Headers */ = {isa = PBXBuildFile; fileRef = 790081371E95A8EC0052D7CD /* WasmModule.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		7905BB691D12050E0019FE57 /* InlineAccess.h in Headers */ = {isa = PBXBuildFile; fileRef = 7905BB671D12050E0019FE57 /* InlineAccess.h */; };
-		79160DBE1C8E3EC8008C085A /* ProxyRevoke.h in Headers */ = {isa = PBXBuildFile; fileRef = 79160DBC1C8E3EC8008C085A /* ProxyRevoke.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		7919B7801E03559C005BEED8 /* B3Compile.h in Headers */ = {isa = PBXBuildFile; fileRef = 7919B77F1E03559C005BEED8 /* B3Compile.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		79233C2B1D34715700C5A834 /* JITMathIC.h in Headers */ = {isa = PBXBuildFile; fileRef = 79233C291D34715700C5A834 /* JITMathIC.h */; };
 		79281BD120B62B3E002E2A60 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 51F0EB6105C86C6B00E6DF1B /* Foundation.framework */; };
@@ -4181,8 +4178,7 @@
 		14BE7D3217135CF400D1807A /* WeakInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WeakInlines.h; sourceTree = "<group>"; };
 		14BFCE6810CDB1FC00364CCE /* WeakGCMap.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WeakGCMap.h; sourceTree = "<group>"; };
 		14C1F9CF22EA51FD0040B145 /* Wasm.rb */ = {isa = PBXFileReference; lastKnownFileType = text.script.ruby; path = Wasm.rb; sourceTree = "<group>"; };
-		14C5AD6522F1866C00F1FB83 /* BytecodeGeneratorBase.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BytecodeGeneratorBase.h; sourceTree = "<group>"; };
-		14C5AD6622F1866C00F1FB83 /* BytecodeGeneratorBaseInlines.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BytecodeGeneratorBaseInlines.h; sourceTree = "<group>"; };
+		14C5AD6622F1866C00F1FB83 /* BytecodeGeneratorInlines.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BytecodeGeneratorInlines.h; sourceTree = "<group>"; };
 		14CA958A16AB50DE00938A06 /* StaticPropertyAnalyzer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = StaticPropertyAnalyzer.h; sourceTree = "<group>"; };
 		14CA958C16AB50FA00938A06 /* ObjectAllocationProfile.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ObjectAllocationProfile.h; sourceTree = "<group>"; };
 		14CC3BA12138A238002D58B6 /* InstructionStream.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = InstructionStream.cpp; sourceTree = "<group>"; };
@@ -4362,7 +4358,6 @@
 		276B38BA2A71D25B00252F4E /* ProxyObjectInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ProxyObjectInlines.h; sourceTree = "<group>"; };
 		276B38BB2A71D25B00252F4E /* JSAsyncFunctionInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = JSAsyncFunctionInlines.h; sourceTree = "<group>"; };
 		276B38BC2A71D25B00252F4E /* JSModuleEnvironmentInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = JSModuleEnvironmentInlines.h; sourceTree = "<group>"; };
-		276B38FA2A71D2B100252F4E /* ProxyRevokeInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ProxyRevokeInlines.h; sourceTree = "<group>"; };
 		276B38FB2A71D2B200252F4E /* JSStringIteratorInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = JSStringIteratorInlines.h; sourceTree = "<group>"; };
 		276B38FC2A71D2B200252F4E /* PropertyTableInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PropertyTableInlines.h; sourceTree = "<group>"; };
 		276B38FD2A71D2B200252F4E /* NativeErrorConstructorInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NativeErrorConstructorInlines.h; sourceTree = "<group>"; };
@@ -5101,8 +5096,6 @@
 		790081371E95A8EC0052D7CD /* WasmModule.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WasmModule.h; sourceTree = "<group>"; };
 		7905BB661D12050E0019FE57 /* InlineAccess.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = InlineAccess.cpp; sourceTree = "<group>"; };
 		7905BB671D12050E0019FE57 /* InlineAccess.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = InlineAccess.h; sourceTree = "<group>"; };
-		79160DBB1C8E3EC8008C085A /* ProxyRevoke.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ProxyRevoke.cpp; sourceTree = "<group>"; };
-		79160DBC1C8E3EC8008C085A /* ProxyRevoke.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ProxyRevoke.h; sourceTree = "<group>"; };
 		7919B77F1E03559C005BEED8 /* B3Compile.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = B3Compile.h; path = b3/B3Compile.h; sourceTree = "<group>"; };
 		79233C291D34715700C5A834 /* JITMathIC.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = JITMathIC.h; sourceTree = "<group>"; };
 		79281BDC20B62B3E002E2A60 /* testmem */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = testmem; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -8782,8 +8775,7 @@
 			children = (
 				969A07200ED1CE3300F1F681 /* BytecodeGenerator.cpp */,
 				969A07210ED1CE3300F1F681 /* BytecodeGenerator.h */,
-				14C5AD6522F1866C00F1FB83 /* BytecodeGeneratorBase.h */,
-				14C5AD6622F1866C00F1FB83 /* BytecodeGeneratorBaseInlines.h */,
+				14C5AD6622F1866C00F1FB83 /* BytecodeGeneratorInlines.h */,
 				969A07270ED1CE6900F1F681 /* Label.h */,
 				960097A50EBABB58007A7297 /* LabelScope.h */,
 				655EB29A10CE2581001A990E /* NodesCodegen.cpp */,
@@ -9687,9 +9679,6 @@
 				79B00CBA1C6AB07E0088C65D /* ProxyObject.cpp */,
 				79B00CBB1C6AB07E0088C65D /* ProxyObject.h */,
 				276B38BA2A71D25B00252F4E /* ProxyObjectInlines.h */,
-				79160DBB1C8E3EC8008C085A /* ProxyRevoke.cpp */,
-				79160DBC1C8E3EC8008C085A /* ProxyRevoke.h */,
-				276B38FA2A71D2B100252F4E /* ProxyRevokeInlines.h */,
 				0F5780A118FE1E98001E72D9 /* PureNaN.h */,
 				0F0CD4C015F1A6040032F1C0 /* PutDirectIndexMode.h */,
 				147B84620E6DE6B1004775A4 /* PutPropertySlot.h */,
@@ -11623,7 +11612,6 @@
 				0F21C27F14BEAA8200ADC64B /* BytecodeConventions.h in Headers */,
 				E3D877741E65C0A000BE945A /* BytecodeDumper.h in Headers */,
 				969A07230ED1CE3300F1F681 /* BytecodeGenerator.h in Headers */,
-				072F53512E3C3F8700389E15 /* BytecodeGeneratorBase.h in Headers */,
 				E328DAE81D38D005001A2529 /* BytecodeGeneratorification.h in Headers */,
 				E328DAE91D38D005001A2529 /* BytecodeGraph.h in Headers */,
 				53663FDA23562F96005EA68C /* BytecodeIndex.h in Headers */,
@@ -12836,7 +12824,6 @@
 				276B38D72A71D26400252F4E /* ProxyConstructorInlines.h in Headers */,
 				79B00CBF1C6AB07E0088C65D /* ProxyObject.h in Headers */,
 				276B38DF2A71D26400252F4E /* ProxyObjectInlines.h in Headers */,
-				79160DBE1C8E3EC8008C085A /* ProxyRevoke.h in Headers */,
 				0F5780A218FE1E98001E72D9 /* PureNaN.h in Headers */,
 				0F15CD231BA5F9860031FFD3 /* PutByIdFlags.h in Headers */,
 				0F9332A414CA7DD90085F3C6 /* PutByStatus.h in Headers */,
@@ -14105,21 +14092,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
 			shellScript = "exec \"${SCRIPT_INPUT_FILE_0}\"\n";
-		};
-		E1AC2E2C20F7B95800B0897D /* Unlock Keychain */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-			);
-			name = "Unlock Keychain";
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "UNLOCK_SCRIPT_PATH=\"${SRCROOT}/../../../Internal/Tools/Scripts/unlock-safari-engineering-keychain-if-needed\"\n\n[[ -x \"${UNLOCK_SCRIPT_PATH}\" ]] && exec \"${UNLOCK_SCRIPT_PATH}\"\n\nexit 0\n";
 		};
 		E3D6F6ED25D78C0100C20EB4 /* Generate Entitlements */ = {
 			isa = PBXShellScriptBuildPhase;

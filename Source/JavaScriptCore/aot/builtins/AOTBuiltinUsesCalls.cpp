@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTFlowResults.h"
+#include "AOTForwardedCalls.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTTypeRelations.h"
 #include <algorithm>
@@ -150,16 +151,16 @@ static bool mayBeAmongCallees(const Program& program, const Value& call, Builtin
 {
     if (!Value::opcodesWithCallees.contains(call.opcode) || !call.callees())
         return true;
-    const CalleeSet& callees = program.at(call.callees());
-    return !callees.isComplete || callees.builtins.contains(program.builtins().canonicalID(callee));
+    std::optional<ProvenValue<Callees>> callees = program.at(call.callees()).all();
+    return !callees || std::ranges::contains(callees->value().builtins, program.builtins().canonicalID(callee));
 }
 
-static bool isOnlyBuiltinSeenAtCall(const Program& program, const Value& call, BuiltinID callee)
+static Expected<bool> isOnlyBuiltinSeenAtCall(const Program& program, const Value& call, BuiltinID callee)
 {
     if (!Value::opcodesWithCallees.contains(call.opcode) || !call.callees())
         return false;
-    const CalleeSet& callees = program.at(call.callees());
-    return callees.builtins.size() == 1 && program.builtins().canonicalID(callees.builtins[0]) == callee;
+    std::span<const BuiltinID> seen = program.at(call.callees()).seen().predicted().builtins;
+    return seen.size() == 1 && program.builtins().canonicalID(seen[0]) == callee;
 }
 
 static BuiltinCalleeAnswer findCalleeByTypes(const BuiltinUseInputs&, const Value& call);
@@ -178,11 +179,12 @@ static BuiltinCalleeAnswer findCalleeSeenWithDirectFunction(const BuiltinUseInpu
         return { };
     const BuiltinTable& table = inputs.program.builtins();
     const CalleeSet& callees = inputs.program.at(call.callees());
-    for (BuiltinID seen : callees.builtins) {
+    std::optional<ProvenValue<Callees>> all = callees.all();
+    for (BuiltinID seen : callees.seen().predicted().builtins) {
         BuiltinID callee = table.canonicalID(seen);
         if (!isCalledOnlyDirectly(table, callee) || !hasDirectFunction(table, callee))
             continue;
-        bool isOnlyCallee = callees.isComplete && callees.functions.isEmpty() && callees.builtins.size() == 1;
+        bool isOnlyCallee = all && all->value().functions.empty() && all->value().builtins.size() == 1;
         if (!isOnlyCallee)
             return { callee, { }, { }, true };
         bool isFunction = inputs.program.typeOf(inputs.function, call.calleeOperand()).isSubsetOf(Type::function(), inputs.program);
@@ -227,7 +229,9 @@ bool mayFindProvenCallee(const BuiltinUseInputs& inputs, const Value& call)
 {
     if (singleBuiltinOf(inputs.program.typeOf(inputs.function, call.calleeOperand())))
         return true;
-    return Value::opcodesWithCallees.contains(call.opcode) && call.callees() && !inputs.program.at(call.callees()).builtins.isEmpty();
+    if (Value::opcodesWithCallees.contains(call.opcode) && call.callees() && !inputs.program.at(call.callees()).seen().predicted().builtins.empty())
+        return true;
+    return mayFindProvenCallOfFunctionBoundToReceiver(inputs, call);
 }
 
 static bool mayObserveThisValue(const BuiltinTable& table, BuiltinID callee)
@@ -263,8 +267,14 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
     if (arguments.size() > defaultLimitValue(LimitID::MaxBuiltinCallArguments, hostArchitecture()))
         return { };
 
+    if (BuiltinUsePlan plan = planCallOfFunctionBoundToReceiver(inputs, use, point))
+        return plan;
+
     BuiltinCalleeAnswer answer = findCallee(inputs, call);
     if (!answer.callee || !canBecomeBuiltinCall(inputs.program.builtins(), answer.callee))
+        return { };
+    // The function works on what it is bound to, which only the read tells.
+    if (inputs.program.builtins().at(answer.callee).kind == BuiltinKind::Accessor)
         return { };
 
     KnownBuiltinCall known;
@@ -278,6 +288,9 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
     } else {
         known.operands.receiver = call.thisValueOperand();
         known.stamps.expectedResult = call.expectedResult();
+        // JSC compiles `f.call(..)` and `f.apply(..)` in place, so a refusal names `f.call`. Reached any other way, the built-in runs in a frame of its own and names nothing.
+        if (call.calleeKey() && forwardsCallOfAnyReceiver(answer.callee) && findOwnMember(inputs.program, Builtins::FunctionPrototype, call.calleeKey()) == answer.callee)
+            known.stamps.calleeName = call.calleeName();
         thisValueHandling = thisValueHandlingOf(inputs, answer.callee, known.operands.receiver);
     }
     if (thisValueHandling == ThisValueHandling::KeepsGenericCall)
@@ -298,7 +311,7 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
     bool calleeIsProven = !answer.testedReceiverType && !answer.testedCalleeType && !answer.testsCodeOfCallee;
     if (inputs.asksOnlyForProvenPlans && calleeIsProven && plan.kind == BuiltinUseKind::Call && !plan.isProven() && !isCalledOnlyDirectly(inputs.program.builtins(), answer.callee))
         degradeToUnmatchedCall(plan);
-    if (plan.kind == BuiltinUseKind::UnmatchedCall && answer.testedCalleeType && !(answer.testedReceiverType && isOnlyBuiltinSeenAtCall(inputs.program, call, answer.callee)))
+    if (plan.kind == BuiltinUseKind::UnmatchedCall && answer.testedCalleeType && !(answer.testedReceiverType && isOnlyBuiltinSeenAtCall(inputs.program, call, answer.callee).predicted()))
         return { };
 
     bool isPossible = true;
@@ -322,7 +335,7 @@ static BuiltinID findExpectedParent(const Program& program, const Value& call)
 
     const BuiltinTable& table = program.builtins();
     BuiltinID expected;
-    for (BuiltinID seen : program.at(call.callees()).builtins) {
+    for (BuiltinID seen : program.at(call.callees()).seen().predicted().builtins) {
         bool isConstructor = std::ranges::any_of(table.overloadsOf(seen), [](const BuiltinOverload& overload) {
             return overload.mode == BuiltinCallMode::Construct;
         });
@@ -410,13 +423,16 @@ BuiltinUsePlan planRematch(const BuiltinUseInputs& inputs, ValueID use, ProgramP
     known.mode = overload.mode;
     known.operands.receiver = receiver;
     known.operands.arguments.append(call.argumentsOperands());
-    known.stamps = { call.expectedResult(), call.accessSite(), call.allocationSite() };
+    known.stamps = { call.expectedResult(), call.accessSite(), call.allocationSite(), call.calleeName() };
 
     auto withoutSameCall = [&](BuiltinUsePlan&& plan) -> BuiltinUsePlan {
         if (plan.kind == BuiltinUseKind::UnmatchedCall)
             return { };
         bool isSameCall = form == BuiltinCallForm::Whole && plan.kind == BuiltinUseKind::Call && plan.call.overload == call.overload() && !insertsOperations(plan.call);
         if (isSameCall)
+            return { };
+        // The expected type of an operand may fit only an overload that says less than the one the tests in front of the call have proven.
+        if (form == BuiltinCallForm::Whole && plan.kind == BuiltinUseKind::Call && !effectsWhenApplied(inputs, plan).isSubsetOf(effectsOf(inputs.effects, inputs.function, call).normal))
             return { };
         return WTF::move(plan);
     };

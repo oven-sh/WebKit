@@ -34,7 +34,7 @@
 #include "AbstractModuleRecord.h"
 #include "BuiltinExecutables.h"
 #include "BuiltinNames.h"
-#include "BytecodeGeneratorBaseInlines.h"
+#include "BytecodeGeneratorInlines.h"
 #include "BytecodeGeneratorification.h"
 #include "BytecodeOptimizer.h"
 #include "BytecodeUseDef.h"
@@ -106,10 +106,9 @@ struct VarArgsOp<OpSuperConstruct> {
     using type = OpSuperConstructVarargs;
 };
 
-template<>
-void GenericLabel<JSGeneratorTraits>::setLocation(BytecodeGenerator& generator, unsigned location)
+void Label::setLocation(BytecodeGenerator& generator, unsigned location)
 {
-    static_cast<JSC::BytecodeGenerator&>(generator).invalidateLoadedPrivateNames();
+    generator.invalidateLoadedPrivateNames();
     m_location = location;
     
     for (auto offset : m_unresolvedJumps) {
@@ -395,8 +394,14 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     return ParserError(ParserError::ErrorNone);
 }
 
+void BytecodeGenerator::allocateCalleeSaveSpace()
+{
+    for (size_t i = 0; i < CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters(); i++)
+        addVar();
+}
+
 BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
-    : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
+    : m_codeBlock(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock))
     , m_codeGenerationMode(codeGenerationMode)
     , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
@@ -413,6 +418,8 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedP
     , m_needsToUpdateArrowFunctionContext(programNode->usesArrowFunction() || programNode->usesEval())
     , m_ecmaMode(ECMAMode::fromBool(programNode->isStrictMode()))
 {
+    allocateCalleeSaveSpace();
+
     ASSERT_UNUSED(parentScopeTDZVariables, !parentScopeTDZVariables);
 
     m_codeBlock->setNumParameters(1); // Allocate space for "this"
@@ -444,7 +451,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedP
 }
 
 BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, UnlinkedFunctionCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
-    : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
+    : m_codeBlock(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock))
     , m_codeGenerationMode(codeGenerationMode)
     , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
@@ -475,6 +482,8 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     , m_ecmaMode(ECMAMode::fromBool(functionNode->isStrictMode()))
     , m_derivedContextType(codeBlock->derivedContextType())
 {
+    allocateCalleeSaveSpace();
+
 #if USE(BUN_JSC_ADDITIONS)
     m_isPrivateBuiltinFunction = m_isBuiltinFunction && (!m_scopeNode->source().provider() || !m_scopeNode->source().provider()->sourceURL());
 #endif
@@ -1024,7 +1033,7 @@ IGNORE_GCC_WARNINGS_END
 }
 
 BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
-    : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
+    : m_codeBlock(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock))
     , m_codeGenerationMode(codeGenerationMode)
     , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
@@ -1042,6 +1051,8 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCod
     , m_ecmaMode(ECMAMode::fromBool(evalNode->isStrictMode()))
     , m_derivedContextType(codeBlock->derivedContextType())
 {
+    allocateCalleeSaveSpace();
+
     m_codeBlock->setNumParameters(1);
 
     pushPrivateAccessNames(parentPrivateNameEnvironment);
@@ -1092,7 +1103,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCod
 }
 
 BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNode, UnlinkedModuleProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
-    : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
+    : m_codeBlock(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock))
     , m_codeGenerationMode(codeGenerationMode)
     , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
@@ -1110,6 +1121,8 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     , m_needsToUpdateArrowFunctionContext(moduleProgramNode->usesArrowFunction() || moduleProgramNode->usesEval())
     , m_ecmaMode(ECMAMode::strict())
 {
+    allocateCalleeSaveSpace();
+
     ASSERT_UNUSED(parentScopeTDZVariables, !parentScopeTDZVariables);
     codeBlock->setVariableDeclarations(moduleProgramNode->varDeclarations());
 
@@ -1535,7 +1548,7 @@ void BytecodeGenerator::emitLoopHint()
 
 void BytecodeGenerator::emitJump(Label& target)
 {
-    OpJmp::emit(this, target.bind(this));
+    OpJmp::emit(this, target.bind(m_writer));
 }
 
 void BytecodeGenerator::emitCheckTraps()
@@ -1583,7 +1596,7 @@ bool BytecodeGenerator::fuseCompareAndJump(RegisterID* cond, Label& target, bool
         if (swapOperands)
             std::swap(binop.m_lhs, binop.m_rhs);
 
-        JmpOp::emit(this, binop.m_lhs, binop.m_rhs, target.bind(this));
+        JmpOp::emit(this, binop.m_lhs, binop.m_rhs, target.bind(m_writer));
         return true;
     }
     return false;
@@ -1597,7 +1610,7 @@ bool BytecodeGenerator::fuseTestAndJmp(RegisterID* cond, Label& target)
     if (cond->index() == unop.m_dst.offset() && cond->isTemporary() && !cond->refCount()) {
         rewind();
 
-        JmpOp::emit(this, unop.m_operand, target.bind(this));
+        JmpOp::emit(this, unop.m_operand, target.bind(m_writer));
         return true;
     }
     return false;
@@ -1636,105 +1649,105 @@ void BytecodeGenerator::emitJumpIfTrue(RegisterID* cond, Label& target)
         } else if (m_lastOpcodeID == op_beloweq) {
             if (fuseCompareAndJump<OpBeloweq, OpJbeloweq>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_eq_null && target.isForward()) {
+        } else if (m_lastOpcodeID == op_eq_null) {
             if (fuseTestAndJmp<OpEqNull, OpJeqNull>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_neq_null && target.isForward()) {
+        } else if (m_lastOpcodeID == op_neq_null) {
             if (fuseTestAndJmp<OpNeqNull, OpJneqNull>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_is_undefined_or_null && target.isForward()) {
+        } else if (m_lastOpcodeID == op_is_undefined_or_null) {
             if (fuseTestAndJmp<OpIsUndefinedOrNull, OpJundefinedOrNull>(cond, target))
                 return;
         }
     }
 
-    OpJtrue::emit(this, cond, target.bind(this));
+    OpJtrue::emit(this, cond, target.bind(m_writer));
 }
 
 void BytecodeGenerator::emitJumpIfFalse(RegisterID* cond, Label& target)
 {
     if (canDoPeepholeOptimization()) {
-        if (m_lastOpcodeID == op_less && target.isForward()) {
+        if (m_lastOpcodeID == op_less) {
             if (fuseCompareAndJump<OpLess, OpJnless>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_lesseq && target.isForward()) {
+        } else if (m_lastOpcodeID == op_lesseq) {
             if (fuseCompareAndJump<OpLesseq, OpJnlesseq>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_greater && target.isForward()) {
+        } else if (m_lastOpcodeID == op_greater) {
             if (fuseCompareAndJump<OpGreater, OpJngreater>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_greatereq && target.isForward()) {
+        } else if (m_lastOpcodeID == op_greatereq) {
             if (fuseCompareAndJump<OpGreatereq, OpJngreatereq>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_eq && target.isForward()) {
+        } else if (m_lastOpcodeID == op_eq) {
             if (fuseCompareAndJump<OpEq, OpJneq>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_stricteq && target.isForward()) {
+        } else if (m_lastOpcodeID == op_stricteq) {
             if (fuseCompareAndJump<OpStricteq, OpJnstricteq>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_neq && target.isForward()) {
+        } else if (m_lastOpcodeID == op_neq) {
             if (fuseCompareAndJump<OpNeq, OpJeq>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_nstricteq && target.isForward()) {
+        } else if (m_lastOpcodeID == op_nstricteq) {
             if (fuseCompareAndJump<OpNstricteq, OpJstricteq>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_below && target.isForward()) {
+        } else if (m_lastOpcodeID == op_below) {
             if (fuseCompareAndJump<OpBelow, OpJbeloweq>(cond, target, true))
                 return;
-        } else if (m_lastOpcodeID == op_beloweq && target.isForward()) {
+        } else if (m_lastOpcodeID == op_beloweq) {
             if (fuseCompareAndJump<OpBeloweq, OpJbelow>(cond, target, true))
                 return;
         } else if (m_lastOpcodeID == op_not) {
             if (fuseTestAndJmp<OpNot, OpJtrue>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_eq_null && target.isForward()) {
+        } else if (m_lastOpcodeID == op_eq_null) {
             if (fuseTestAndJmp<OpEqNull, OpJneqNull>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_neq_null && target.isForward()) {
+        } else if (m_lastOpcodeID == op_neq_null) {
             if (fuseTestAndJmp<OpNeqNull, OpJeqNull>(cond, target))
                 return;
-        } else if (m_lastOpcodeID == op_is_undefined_or_null && target.isForward()) {
+        } else if (m_lastOpcodeID == op_is_undefined_or_null) {
             if (fuseTestAndJmp<OpIsUndefinedOrNull, OpJnundefinedOrNull>(cond, target))
                 return;
         }
     }
 
-    OpJfalse::emit(this, cond, target.bind(this));
+    OpJfalse::emit(this, cond, target.bind(m_writer));
 }
 
 void BytecodeGenerator::emitJumpIfNotFunctionCall(RegisterID* cond, Label& target)
 {
-    OpJneqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::callFunction), target.bind(this));
+    OpJneqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::callFunction), target.bind(m_writer));
 }
 
 void BytecodeGenerator::emitJumpIfNotFunctionApply(RegisterID* cond, Label& target)
 {
-    OpJneqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::applyFunction), target.bind(this));
+    OpJneqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::applyFunction), target.bind(m_writer));
 }
 
 void BytecodeGenerator::emitJumpIfNotReflectConstruct(RegisterID* cond, Label& target)
 {
-    OpJneqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::reflectConstructFunction), target.bind(this));
+    OpJneqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::reflectConstructFunction), target.bind(m_writer));
 }
 
 void BytecodeGenerator::emitJumpIfNotEvalFunction(RegisterID* cond, Label& target)
 {
-    OpJneqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::evalFunction), target.bind(this));
+    OpJneqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::evalFunction), target.bind(m_writer));
 }
 
 void BytecodeGenerator::emitJumpIfEmptyPropertyNameEnumerator(RegisterID* cond, Label& target)
 {
-    OpJeqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::emptyPropertyNameEnumerator), target.bind(this));
+    OpJeqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::emptyPropertyNameEnumerator), target.bind(m_writer));
 }
 
 void BytecodeGenerator::emitJumpIfSentinelString(RegisterID* cond, Label& target)
 {
-    OpJeqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::sentinelString), target.bind(this));
+    OpJeqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::sentinelString), target.bind(m_writer));
 }
 
 unsigned BytecodeGenerator::emitWideJumpIfNotFunctionHasOwnProperty(RegisterID* cond, Label& target)
 {
-    OpJneqPtr::emit<OpcodeSize::Wide32>(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::hasOwnPropertyFunction), target.bind(this));
+    OpJneqPtr::emit<OpcodeSize::Wide32>(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::hasOwnPropertyFunction), target.bind(m_writer));
     return m_lastInstruction.offset();
 }
 
@@ -3984,7 +3997,7 @@ ExpectedFunction BytecodeGenerator::emitExpectedFunctionSnippet(RegisterID* dst,
         if (callArguments.argumentCountIncludingThis() >= 2)
             return NoExpectedFunction;
         
-        OpJneqPtr::emit(this, func, moveLinkTimeConstant(nullptr, LinkTimeConstant::Object), realCall->bind(this));
+        OpJneqPtr::emit(this, func, moveLinkTimeConstant(nullptr, LinkTimeConstant::Object), realCall->bind(m_writer));
         
         if (dst != ignoredResult())
             emitNewObject(dst);
@@ -4000,7 +4013,7 @@ ExpectedFunction BytecodeGenerator::emitExpectedFunctionSnippet(RegisterID* dst,
         if (callArguments.argumentCountIncludingThis() > 2)
             return NoExpectedFunction;
         
-        OpJneqPtr::emit(this, func, moveLinkTimeConstant(nullptr, LinkTimeConstant::Array), realCall->bind(this));
+        OpJneqPtr::emit(this, func, moveLinkTimeConstant(nullptr, LinkTimeConstant::Array), realCall->bind(m_writer));
         
         if (dst != ignoredResult()) {
             if (callArguments.argumentCountIncludingThis() == 2)
@@ -4018,7 +4031,7 @@ ExpectedFunction BytecodeGenerator::emitExpectedFunctionSnippet(RegisterID* dst,
         return NoExpectedFunction;
     }
     
-    OpJmp::emit(this, done.bind(this));
+    OpJmp::emit(this, done.bind(m_writer));
     emitLabel(realCall.get());
     
     return expectedFunction;
@@ -5541,7 +5554,7 @@ RegisterID* BytecodeGenerator::emitRestParameter(RegisterID* result, unsigned nu
 void BytecodeGenerator::emitRequireObjectCoercible(RegisterID* value, ASCIILiteral error)
 {
     Ref<Label> target = newLabel();
-    OpJnundefinedOrNull::emit(this, value, target->bind(this));
+    OpJnundefinedOrNull::emit(this, value, target->bind(m_writer));
     emitThrowTypeError(error);
     emitLabel(target.get());
 }
@@ -5549,7 +5562,7 @@ void BytecodeGenerator::emitRequireObjectCoercible(RegisterID* value, ASCIILiter
 void BytecodeGenerator::emitRequireObjectCoercibleForDestructuring(RegisterID* value, const Identifier* propertyName)
 {
     Ref<Label> target = newLabel();
-    OpJnundefinedOrNull::emit(this, value, target->bind(this));
+    OpJnundefinedOrNull::emit(this, value, target->bind(m_writer));
 
     if (propertyName && !propertyName->isNull()) {
         auto errorMessageStr = tryMakeString("Cannot destructure property '"_s, propertyName->string(), "' from null or undefined value"_s);
@@ -5755,7 +5768,7 @@ void BytecodeGenerator::emitIteratorGenericClose(RegisterID* iterator, const Thr
 void BytecodeGenerator::emitIteratorClose(RegisterID* iterator, RegisterID* nextOrIndex, RegisterID* iterable, const ThrowableExpressionData* node)
 {
     Ref<Label> done = newLabel();
-    OpIteratorCloseCheck::emit(this, iterator, nextOrIndex, iterable, done->bind(this));
+    OpIteratorCloseCheck::emit(this, iterator, nextOrIndex, iterable, done->bind(m_writer));
     emitIteratorGenericClose(iterator, node);
     emitLabel(done.get());
 }

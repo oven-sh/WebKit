@@ -43,7 +43,7 @@ void returnIfFencedAndNotBlack(StubAssembler& jit, GPRReg owner)
 // Does what Heap::addToRememberedSet() does for a black owner while no collector runs concurrently. Falls through when the segment is full, which the operation handles.
 static void returnIfMarkStackTakes(StubAssembler& jit, GPRReg owner, GPRReg scratch)
 {
-#if CPU(X86_64) && !ASSERT_ENABLED
+#if CPU(X86_64)
     constexpr GPRReg top = CCallHelpers::s_scratchRegister;
     RELEASE_ASSERT(noOverlap(owner, scratch, top));
     JumpList leftToOperation;
@@ -54,13 +54,16 @@ static void returnIfMarkStackTakes(StubAssembler& jit, GPRReg owner, GPRReg scra
     leftToOperation.append(jit.branch64(CCallHelpers::AboveOrEqual, top, TrustedImm32(MutatorMarkStackLayout::segmentCapacity)));
     jit.addPtr(TrustedImm32(1), Address(scratch, MutatorMarkStackLayout::offsetOfTop()));
     jit.loadPtr(Address(scratch, MutatorMarkStackLayout::offsetOfHeadSegment()), scratch);
+#if ASSERT_ENABLED
+    jit.addPtr(TrustedImm32(1), Address(scratch, MutatorMarkStackLayout::offsetOfTopInSegment));
+#endif
     jit.storePtr(owner, BaseIndex(scratch, top, CCallHelpers::TimesEight, MutatorMarkStackLayout::offsetOfFirstCellInSegment));
     jit.store8(TrustedImm32(static_cast<int32_t>(CellState::PossiblyGrey)), Address(owner, JSCell::cellStateOffset()));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.barriersExecuted)), scratch);
     jit.addPtr(TrustedImm32(1), Address(scratch));
     jit.returnToCaller();
     leftToOperation.link(&jit);
-#elif CPU(ARM64) && !ASSERT_ENABLED
+#elif CPU(ARM64)
     // An addition to a word in memory and the store of a constant take the macro assembler's scratch register, so neither comes while top is in it.
     static_assert(MutatorMarkStackLayout::segmentCapacity < 1 << 12, "The capacity is the immediate of one comparison.");
     const GPRReg top = jit.scratchRegister();
@@ -74,6 +77,9 @@ static void returnIfMarkStackTakes(StubAssembler& jit, GPRReg owner, GPRReg scra
     jit.add64(TrustedImm32(1), top);
     jit.storePtr(top, Address(scratch, MutatorMarkStackLayout::offsetOfTop()));
     jit.loadPtr(Address(scratch, MutatorMarkStackLayout::offsetOfHeadSegment()), scratch);
+#if ASSERT_ENABLED
+    jit.storePtr(top, Address(scratch, MutatorMarkStackLayout::offsetOfTopInSegment));
+#endif
     jit.getEffectiveAddress(BaseIndex(scratch, top, CCallHelpers::TimesEight), scratch);
     jit.storePtr(owner, Address(scratch, MutatorMarkStackLayout::offsetOfFirstCellInSegment - static_cast<ptrdiff_t>(sizeof(JSCell*))));
     jit.store8(TrustedImm32(static_cast<int32_t>(CellState::PossiblyGrey)), Address(owner, JSCell::cellStateOffset()));

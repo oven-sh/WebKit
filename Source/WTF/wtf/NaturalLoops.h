@@ -65,8 +65,7 @@ public:
 
     // This is the slower, but simpler, way of asking if a block belongs to
     // a natural loop. It's faster to call NaturalLoops::belongsTo(), which
-    // tries to be O(loop depth) rather than O(loop size). Loop depth is
-    // almost always smaller than loop size. A *lot* smaller.
+    // is O(1) rather than O(loop size).
     bool contains(typename Graph::Node block) const
     {
         for (unsigned i = m_body.size(); i--;) {
@@ -112,6 +111,9 @@ private:
     unsigned m_outerLoopIndex;
     unsigned m_innerLoopIndex;
     unsigned m_index;
+    unsigned m_nestBegin { 0 };
+    unsigned m_nestEnd { 0 };
+    unsigned m_depth { 0 };
 };
 
 template<typename Graph>
@@ -153,16 +155,11 @@ public:
                     continue;
                 // At this point, we've proven 'header' is actually a loop header and
                 // that 'footer' is a loop footer.
-                bool found = false;
-                for (unsigned j = m_loops.size(); j--;) {
-                    if (m_loops[j].header() == header) {
-                        m_loops[j].addBlock(footer);
-                        found = true;
-                        break;
-                    }
-                }
-                if (found)
+                // The loop of this header, if it has one by now, is the one that was added last.
+                if (!m_loops.isEmpty() && m_loops.last().header() == header) {
+                    m_loops.last().addBlock(footer);
                     continue;
+                }
                 NaturalLoop<Graph> loop(graph, header, m_loops.size());
                 loop.addBlock(footer);
                 m_loops.append(loop);
@@ -174,11 +171,11 @@ public:
         FastBitVector seenBlocks;
         Vector<typename Graph::Node, 4> blockWorklist;
         seenBlocks.resize(graph.numNodes());
+        seenBlocks.clearAll();
     
         for (unsigned i = m_loops.size(); i--;) {
             NaturalLoop<Graph>& loop = m_loops[i];
         
-            seenBlocks.clearAll();
             ASSERT(blockWorklist.isEmpty());
         
             dataLogLnIf(verbose, "Dealing with loop ", loop);
@@ -206,6 +203,10 @@ public:
                     seenBlocks[graph.index(predecessor)] = true;
                 }
             }
+
+            // Every block that was seen is in the loop.
+            for (unsigned j = loop.size(); j--;)
+                seenBlocks[graph.index(loop[j])] = false;
         }
 
         // Figure out reverse mapping from blocks to loops.
@@ -243,6 +244,35 @@ public:
             loop.m_outerLoopIndex = m_innerMostLoopIndices[loop.header()][1];
             if (loop.m_outerLoopIndex != UINT_MAX)
                 m_loops[loop.m_outerLoopIndex].m_innerLoopIndex = loop.index();
+        }
+
+        // Number the loops in preorder, so that a loop and everything nested in it occupy one range of numbers.
+        Vector<unsigned> firstInnerLoop(FillWith { }, m_loops.size(), UINT_MAX);
+        Vector<unsigned> nextSiblingLoop(FillWith { }, m_loops.size(), UINT_MAX);
+        unsigned firstOuterMostLoop = UINT_MAX;
+        for (unsigned i = m_loops.size(); i--;) {
+            unsigned& first = m_loops[i].isOuterMostLoop() ? firstOuterMostLoop : firstInnerLoop[m_loops[i].m_outerLoopIndex];
+            nextSiblingLoop[i] = first;
+            first = i;
+        }
+        unsigned nextNumber = 0;
+        unsigned depth = 0;
+        for (unsigned i = firstOuterMostLoop; i != UINT_MAX;) {
+            m_loops[i].m_nestBegin = nextNumber++;
+            m_loops[i].m_depth = ++depth;
+            if (firstInnerLoop[i] != UINT_MAX) {
+                i = firstInnerLoop[i];
+                continue;
+            }
+            while (i != UINT_MAX) {
+                m_loops[i].m_nestEnd = nextNumber;
+                --depth;
+                if (nextSiblingLoop[i] != UINT_MAX) {
+                    i = nextSiblingLoop[i];
+                    break;
+                }
+                i = m_loops[i].m_outerLoopIndex;
+            }
         }
     
         if (selfCheck) {
@@ -316,23 +346,14 @@ public:
     
     bool belongsTo(typename Graph::Node block, const NaturalLoop<Graph>& candidateLoop) const
     {
-        // It's faster to do this test using the loop itself, if it's small.
-        if (candidateLoop.size() < 4)
-            return candidateLoop.contains(block);
-        
-        for (const NaturalLoop<Graph>* loop = innerMostLoopOf(block); loop; loop = innerMostOuterLoop(*loop)) {
-            if (loop == &candidateLoop)
-                return true;
-        }
-        return false;
+        const NaturalLoop<Graph>* loop = innerMostLoopOf(block);
+        return loop && loop->m_nestBegin >= candidateLoop.m_nestBegin && loop->m_nestBegin < candidateLoop.m_nestEnd;
     }
     
     unsigned loopDepth(typename Graph::Node block) const
     {
-        unsigned depth = 0;
-        for (const NaturalLoop<Graph>* loop = innerMostLoopOf(block); loop; loop = innerMostOuterLoop(*loop))
-            depth++;
-        return depth;
+        const NaturalLoop<Graph>* loop = innerMostLoopOf(block);
+        return loop ? loop->m_depth : 0;
     }
     
     // Return all loops this belongs to. The first entry in the vector is the innermost loop. The last is the

@@ -1,4 +1,4 @@
-# Without flow results closures are slim where the function is not expected to get properties: not those of a function that constructs a layout
+# Without flow results every closure is full: any function object may be given a displayName, and a stack frame asks such a one for the name that it has had since the first look for it
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow disable=flow-results
 # RUN: plan-slots closures
@@ -28,10 +28,11 @@ function f2 name="fourCaptures" kind=Arrow captures=[{type=number}, {type=number
 function f3 name="Made" results=[{type=anything}] {
     Return
 }
-# CHECK: f1 Slim
-# CHECK-NEXT: f2 Slim
+# CHECK: f1 Full
+# CHECK-NEXT: f2 Full
 # CHECK-NEXT: f3 Full
 # CHECK-NOT: Slim
-# KINDS: f1 isSlim callableKind=Arrow
-# KINDS-NEXT: f2 isSlim callableKind=Arrow
+# KINDS-NOT: isSlim
+# KINDS: f1 callableKind=Arrow
+# KINDS-NEXT: f2 callableKind=Arrow
 # KINDS-NEXT: f3 hasInferredName

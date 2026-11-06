@@ -39,7 +39,7 @@ public:
 
 private:
     static unsigned vectorLengthOf(const JSCell* owner);
-    void grow() WTF_REQUIRES_LOCK(m_lock);
+    bool tryGrow() WTF_REQUIRES_LOCK(m_lock);
 
     JSCell** m_cursor { nullptr };
     JSCell** m_end { nullptr };

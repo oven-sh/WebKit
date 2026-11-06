@@ -13,6 +13,7 @@
 #include "AOTLoopEntry.h"
 #include "AOTSelectionContext.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTStringRuleSupport.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -139,10 +140,13 @@ static bool suspendsBetween(SelectionContext& context, ProgramPoint first, Progr
     });
 }
 
-static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& context, PairTable& table, BlockID user, BlockID outermostHeader)
+// A reader that resolves ropes may throw, and so may the flattening that replaces it, so the flattening is hoisted no further than the reader's handler covers.
+static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& context, PairTable& table, BlockID user, BlockID outermostHeader, bool userResolvesRopes)
 {
+    const Function& function = context.function();
     const NaturalLoops& loops = context.analyses().naturalLoops();
     std::optional<BlockID> header;
+    std::optional<BlockID> headerSharingUserHandler;
     // What is invariant in a loop is invariant in the loops inside it, and a loop around a suspending loop suspends too.
     for (const NaturalLoop* loop = loops.innerMostLoopOf(user); loop; loop = loops.innerMostOuterLoop(*loop)) {
         bool loopSuspends = table.suspendingLoops.ensure(loop->header(), [&] {
@@ -155,10 +159,12 @@ static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& contex
         if (loopSuspends)
             break;
         header = loop->header();
+        if (function.at(loop->header()).handler == function.at(user).handler)
+            headerSharingUserHandler = header;
         if (loop->header() == outermostHeader)
             break;
     }
-    return header;
+    return userResolvesRopes && headerSharingUserHandler ? headerSharingUserHandler : header;
 }
 
 // The reader has a string. Outside the loop the same value may have a wider type, which the loop entry tests.
@@ -175,12 +181,12 @@ static std::optional<InvariantOperand> findInvariantString(SelectionContext& con
     return findOutermostInvariantLoop(context, block, context.analyses().identityOf(string), mayBeString);
 }
 
-static std::optional<uint32_t> findOrAddPair(SelectionContext& context, PairTable& table, BlockID block, ValueID string)
+static std::optional<uint32_t> findOrAddPair(SelectionContext& context, PairTable& table, BlockID block, ValueID string, bool readerResolvesRopes)
 {
     std::optional<InvariantOperand> invariant = findInvariantString(context, block, string);
     if (!invariant)
         return std::nullopt;
-    std::optional<BlockID> header = findLoopWithoutSuspension(context, table, block, invariant->header);
+    std::optional<BlockID> header = findLoopWithoutSuspension(context, table, block, invariant->header, readerResolvesRopes);
     if (!header)
         return std::nullopt;
 
@@ -210,12 +216,12 @@ static Vector<StringCharacterMatch> collectReaders(SelectionContext& context, Pa
             if (!reader)
                 continue;
 
-            reader->pair = findOrAddPair(context, table, block, reader->string);
             reader->resolvesRopes = effectsOfFlatteningString.isSubsetOf(context.analyses().effectsOf(id));
+            reader->pair = findOrAddPair(context, table, block, reader->string, reader->resolvesRopes);
             reader->readsCharacters = reader->resolvesRopes && !readersThatOnlyCutPieces.contains(opcode);
             if (reader->pair) {
                 Pair& pair = table.pairs[*reader->pair];
-                pair.hasLikelyReader |= function.at(block).frequency != BlockFrequency::Rare;
+                pair.hasLikelyReader |= function.at(block).frequency.predicted() != BlockFrequency::Rare;
                 pair.hasResolvingReader |= reader->resolvesRopes;
                 pair.resolvesUnderOtherHandler |= reader->resolvesRopes && function.at(block).handler != function.at(pair.header).handler;
             }
@@ -235,7 +241,7 @@ static bool runsRightBehind(SelectionContext& context, BlockID block, BlockID fo
         return true;
     const Function& function = context.function();
     std::span<const BlockID> predecessors = context.analyses().cfg().predecessors(follower);
-    return predecessors.size() == 1 && predecessors[0] == block && function.at(follower).frequency == function.at(block).frequency && function.at(follower).handler == function.at(block).handler;
+    return predecessors.size() == 1 && predecessors[0] == block && function.at(follower).frequency.isSamePredictionAs(function.at(block).frequency) && function.at(follower).handler == function.at(block).handler;
 }
 
 // The first reader that resolves ropes leaves the string flat for every reader it dominates.
@@ -266,7 +272,7 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
 
     std::optional<bool> functionSuspends;
     for (auto& remaining : readersOfString.values()) {
-        AOT::sort(remaining, { }, [&](const PlacedIndex& placed) {
+        AOT::sortInLine(remaining, { }, [&](const PlacedIndex& placed) {
             return std::pair { cfg.reversePostOrderIndex(placed.point.block), placed.point.index };
         });
         while (remaining.size() > 1) {
@@ -285,7 +291,7 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
                 flatteningReader = first.index;
             unsigned numberOfLikelyReads = firstReader.readsCharacters;
             for (const PlacedIndex& follower : remaining) {
-                if (!readers[follower.index].readsCharacters || function.at(follower.point.block).frequency != function.at(first.point.block).frequency || !staysFlatUntil(follower))
+                if (!readers[follower.index].readsCharacters || !function.at(follower.point.block).frequency.isSamePredictionAs(function.at(first.point.block).frequency) || !staysFlatUntil(follower))
                     continue;
                 ++numberOfLikelyReads;
                 if (!flatteningReader && runsRightBehind(context, first.point.block, follower.point.block))
@@ -312,12 +318,15 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
 }
 
 // The flat string of a loop is defined on the only entry of the header, so it reaches all that the header dominates, the code behind the loop included.
+// When the entry gets its own block under the header's handler, the handler gains a predecessor before the header, so code after the handler can be reached without the flat string.
 static bool reaches(SelectionContext& context, const Pair& pair, ProgramPoint point)
 {
     FunctionAnalyses& analyses = context.analyses();
     if (pair.firstReader)
         return analyses.dominates(pair.firstReader, point);
-    return pair.header != point.block && analyses.dominators().dominates(pair.header, point.block);
+    if (pair.header == point.block || !analyses.dominators().dominates(pair.header, point.block))
+        return false;
+    return !loopEntryGetsNewHandlerEdge(context, pair.header) || analyses.naturalLoops().belongsTo(point.block, *analyses.naturalLoops().headerOf(pair.header));
 }
 
 // A string that was flattened stays flat: a place that the flattening of the same string dominates takes that flat string.
@@ -377,14 +386,14 @@ static void sharePairsOfOneString(SelectionContext& context, Vector<Pair>& pairs
 static ValueID appendFlattenIfString(IRBuilder& builder, ValueID value)
 {
     Function& function = builder.function();
-    BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+    Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
     ValueID test = builder.appendTypeTest(value, TypeTable::string);
     IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, frequency, rarerOf(frequency, BlockFrequency::Unlikely));
 
     ValueID flat = builder.append(Opcode::FlattenString, { branch.provenOnTaken });
     TypeID flatStringType = function.at(flat).type;
     BlockID join = builder.addBlock(frequency);
-    ValueID result = builder.addParameter(join, flatStringType);
+    ValueID result = builder.addParameter(join, builder.types().intern(builder.types().at(flatStringType).withPrimitives(Primitive::Unspecified)));
     builder.emitJump(join, Arguments { flat });
 
     builder.moveToEndOf(branch.notTaken);
@@ -418,6 +427,11 @@ static void emitFlatString(SelectionContext& context, GroupRewriter& rewriter, P
 static void rewriteReader(SelectionContext& context, GroupRewriter& rewriter, const StringCharacterMatch& match, ValueID flat)
 {
     ValueID root = match.group.root;
+    if (flat && match.resolvesRopes && rewriter.function().at(rewriter.rootBlock()).handler)
+        context.noteRemovedAllocationUnderHandler();
+    // The reader runs only where the value is a string, and there the flat string has been made.
+    if (flat && context.typeOf(flat).mayBeUnspecified())
+        flat = rewriter.insert(makeCastBehindFact(rewriter.function(), rewriter.builder().types(), flat, rewriter.insert(IRBuilder::make(Opcode::Specified))));
     if (!match.read) {
         Value& row = rewriter.function().edit(root);
         if (flat) {

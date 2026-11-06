@@ -1,0 +1,33 @@
+# function F() { this.b = undefined }  const made = new F();  JSON.stringify({ made }, function (key, value) { value.b = Map; return value });  made.b
+# The replacer's `value` is the unknown object. The solver keeps Map out of nodes made for the unknown object and lists the unknown object in its place, so the store still counts as a write to F's field.
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="F" {{*}}fields=[{key="b" declared={type=anything}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="F" constructor=f1 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 fields=[{key="made" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Construct v0
+    v2 = Builtin builtin=JSON
+    v3 = PropGet v2 key="stringify"
+    v4 = NewObject -, v1 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f2
+    v7 = Call v3, v2, v5, v6
+    v8 = PropGet v1 key="b"
+    Return v8
+}
+function f1 name="F" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+    v1 = Undefined
+    PropSet v0, v1 key="b"
+    v3 = Undefined
+    Return v3
+}
+function f2 length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=Map
+    PropSet v1, v2 key="b"
+    Return v1
+}

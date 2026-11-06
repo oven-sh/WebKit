@@ -9,16 +9,47 @@
 
 #include "AOTCFG.h"
 #include "AOTFlowIDs.h"
+#include "AOTFlowModuleOrder.h"
 #include "AOTVector.h"
+#include <array>
 #include <optional>
+#include <tuple>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
+#define FOR_EACH_AOT_WAY_INTO_FILE(v) \
+    v(EntryPoint) \
+    v(StaticImport) \
+    v(DeferredImport) \
+    v(Require) \
+    v(ImportCall) \
+    v(NameMadeAtRunTime) \
+    v(Host)
+
+#define FOR_EACH_AOT_RUNNER_OF_JOBS(v) \
+    v(EndOfTurn) \
+    v(RequireOfESModule) \
+    v(NameMadeAtRunTime) \
+    v(Builtin)
+
+#define AOT_LIST_ENUMERATOR(name) name,
+// A file whose body runs and that no way in has spoken for may begin at any time.
+enum class FlowWayIntoFile : uint8_t { FOR_EACH_AOT_WAY_INTO_FILE(AOT_LIST_ENUMERATOR) };
+enum class FlowRunnerOfJobs : uint8_t { FOR_EACH_AOT_RUNNER_OF_JOBS(AOT_LIST_ENUMERATOR) };
+#undef AOT_LIST_ENUMERATOR
+
+#define AOT_LIST_WAY(name) FlowWayIntoFile::name,
+#define AOT_LIST_RUNNER(name) FlowRunnerOfJobs::name,
+inline constexpr std::array allWaysIntoFile { FOR_EACH_AOT_WAY_INTO_FILE(AOT_LIST_WAY) };
+inline constexpr std::array allRunnersOfJobs { FOR_EACH_AOT_RUNNER_OF_JOBS(AOT_LIST_RUNNER) };
+#undef AOT_LIST_WAY
+#undef AOT_LIST_RUNNER
+
 struct FlowModuleLoad {
     FunctionID function;
     ModuleID target;
-    bool isSynchronous { false };
+    FlowWayIntoFile way { FlowWayIntoFile::NameMadeAtRunTime };
 };
 
 struct FlowCall {
@@ -27,6 +58,23 @@ struct FlowCall {
     FunctionID callee;
 
     friend auto operator<=>(const FlowCall&, const FlowCall&) = default;
+};
+
+// A call with many callees. Calls with the same callees share the list: n calls of any of n functions would be n * n FlowCalls.
+struct FlowCallOfList {
+    FunctionID caller;
+    ValueID site;
+    uint32_t calleeList { 0 };
+
+    friend auto operator<=>(const FlowCallOfList&, const FlowCallOfList&) = default;
+};
+
+// Who calls whom, sorted by caller and site. A function that somebody else may enter is called by `host`.
+struct FlowCallsOfProgram {
+    Vector<FlowCall> calls;
+    Vector<FlowCallOfList> callsOfLists;
+    Vector<Vector<FunctionID>> calleeLists;
+    FunctionID host;
 };
 
 struct FlowStaticFieldAccess {
@@ -43,21 +91,38 @@ struct FlowOrderInputs {
     BitVector evaluatedModules;
     BitVector modulesLoadedByName;
     BitVector modulesLoadedByHost;
+    BitVector modulesNamedByOperationsNobodyKnows;
+    bool hostRunsWaitingJobs { false };
     Vector<FlowModuleLoad> moduleLoads;
     Vector<FlowCall> calls;
+    Vector<FlowCallOfList> callsOfLists;
+    Vector<Vector<FunctionID>> calleeLists;
     Vector<FlowStaticFieldAccess> staticFieldAccesses;
     BitVector staticFieldsOfEscapedClasses;
 
     FunctionID host() const { return FunctionID(program.functions.size()); }
-};
 
-struct FlowModuleOrder {
-    Vector<uint32_t> componentOf;
-    BitVector modulesInCycles;
-    Vector<BitVector> componentsCompletedBefore;
-
-    bool completesBefore(ModuleID first, ModuleID second) const;
-    bool runsAfterRequests(ModuleID module) const { return module.index() < componentOf.size() && !modulesInCycles.get(module.index()); }
+    // Every call, by caller and site, but those of a list that the second functor leaves out.
+    void forEachCall(NOESCAPE const Invocable<void(const FlowCall&)> auto& functor, NOESCAPE const Invocable<bool(const FlowCallOfList&)> auto& visitsCallees) const
+    {
+        size_t next = 0;
+        auto visitCallsOfListsBefore = [&](const FlowCall* call) {
+            for (; next < callsOfLists.size(); ++next) {
+                const FlowCallOfList& callOfList = callsOfLists[next];
+                if (call && std::tuple(call->caller, call->site) <= std::tuple(callOfList.caller, callOfList.site))
+                    return;
+                if (!visitsCallees(callOfList))
+                    continue;
+                for (FunctionID callee : calleeLists[callOfList.calleeList])
+                    functor(FlowCall { callOfList.caller, callOfList.site, callee });
+            }
+        };
+        for (const FlowCall& call : calls) {
+            visitCallsOfListsBefore(&call);
+            functor(call);
+        }
+        visitCallsOfListsBefore(nullptr);
+    }
 };
 
 FlowModuleOrder computeModuleOrder(const FlowOrderInputs&);
@@ -72,6 +137,8 @@ struct FlowLocationOrder {
     StoreCount stores { StoreCount::Unknown };
     bool undefinedAtStartIsNeverRead { false };
     bool isStoredBeforeCallersOfReaders { false };
+    bool isStoredBeforeCapturersRun { false };
+    bool holdsClosureOverOwnEnvironment { false };
 };
 
 struct FlowScopeLocationNumbering {

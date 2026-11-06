@@ -55,6 +55,8 @@ static constexpr OpcodeSet opcodesOf(SiteList list)
         return callSiteOpcodes;
     case SiteList::Accesses:
         return accessesToResolve;
+    case SiteList::ElementReads:
+        return { Opcode::ElemGet };
     case SiteList::TypedResultCalls:
         return typedResultCallOpcodes;
     }

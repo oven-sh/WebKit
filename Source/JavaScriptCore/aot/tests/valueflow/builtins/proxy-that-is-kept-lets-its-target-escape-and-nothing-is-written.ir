@@ -1,5 +1,6 @@
-# class Body { constructor() { this.hits = 0 } step(by) { return by } }; body = new Body; body.step(1); kept = new Proxy(body, {}); return body.hits
-# Whoever holds the proxy reaches the target through it: the target is in unknown hands, and its method is called with operands nobody knows.
+# class Body { constructor() { this.hits = 0 } step(by) { return by } }; body = new Body; body.step(1); kept = new Proxy(body, {}); kept instanceof Body; return body.hits
+# Something is done to the proxy that no rule asks a trap for. From then on whoever holds the proxy reaches the target through it: the target is in unknown hands, and its method is called with
+# operands nobody knows.
 # No code has run that nobody compiles. What has escaped is written only where a statement stores through the unknown object, and none does: the field holds the integer it was made with.
 # RUN: valueflow-apply
 # CHECK: function f0 name="main" {{*}}results=[{type=int}]
@@ -24,8 +25,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v10 = Builtin builtin=Proxy
     v11 = Construct v10, -, v5, v9
     PutModuleVariable v11 variable=g0
-    v13 = PropGet v5 key="hits"
-    Return v13
+    v13 = InstanceOf v11, v4
+    v14 = PropGet v5 key="hits"
+    Return v14
 }
 function f1 name="Body" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
     v1 = GetConstructPrototype v0 layout=L0

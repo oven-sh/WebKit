@@ -2,7 +2,7 @@
 # FORM: Prepared
 # OPTIONS: heat=EverythingIsHot
 # RUN: pass ExpandOwnKeys
-# STATISTIC: OwnKeyWalksExpanded = 2
+# STATISTIC: OwnKeyWalksExpanded = 3
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=string}}] flow={constructorOrders=[{fields=[1, 0]}]}
@@ -37,6 +37,20 @@ function f2 name="unchangedAllocation" parameters=[{type=number}, {type=string}]
 # CHECK: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
 # CHECK-NEXT: [[xKey2]]: "x" = String string="x"
 # CHECK-NEXT: [[yKey2]]: "y" = String string="y"
-# CHECK-NEXT: [[keys2]]: Array<string> = NewArray [[xKey2]], [[yKey2]] contents=string
+# CHECK-NEXT: [[keys2]]: Array<string, Contiguous> = NewArray [[xKey2]], [[yKey2]] contents=string arrayStorage=Contiguous
 # CHECK-NOT: ObjectKeys
+}
+
+function f3 name="listThatGetsLonger" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = CallBuiltin -, v2 overload=ObjectKeys/0
+    v4 = AssumeType v3 provenType=Array<string, proven, pristine[Storage, Names]>
+    v5 = Integer integer=200000
+    v6 = CallBuiltin v4, v5 overload=ArrayPrototypeLength/1
+    v7 = Integer
+    v8 = ElemGet v4, v7 [keyIsIntegral]
+    Return v8
+# The new array is allocated as Contiguous. pristine[Storage] does not say that it stays so: the longer length converts it. The proven type names no storage kind.
+# CHECK: [[keys3]]: Array<string, Contiguous> = NewArray {{*}} contents=string arrayStorage=Contiguous
+# CHECK: Array<string, proven, pristine[Storage, Names]> = AssumeType [[keys3]] provenType=Array<string, proven, pristine[Storage, Names]>
 }

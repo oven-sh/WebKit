@@ -50,7 +50,7 @@ void testDerivedLayouts()
         AOT_TEST_CHECK(id == LayoutID(program->numberOfLayoutsAsRead() + index));
         AOT_TEST_CHECK(layout.kind == LayoutKind::BuiltinResult && layout.builtinLayout == BuiltinLayoutID(index));
         AOT_TEST_CHECK(layout.fields.size() == builtins.at(BuiltinLayoutID(index)).fields.size() && layout.ownFieldCount == layout.fields.size());
-        AOT_TEST_CHECK(hasElements(program->at(program->declaredMembersOf(id)).members, { id }));
+        AOT_TEST_CHECK(hasElements(program->at(program->declaredMembersOf(id)).written(), { id }));
     }
 
     LayoutID namespaceLayout = program->at(m0).namespaceLayout;
@@ -58,10 +58,10 @@ void testDerivedLayouts()
     AOT_TEST_CHECK(program->at(namespaceLayout).kind == LayoutKind::ModuleNamespace && program->at(namespaceLayout).namespaceOf == m0);
     AOT_TEST_CHECK(program->at(namespaceLayout).fields.size() == program->at(m0).exports.size());
 
-    AOT_TEST_CHECK(hasElements(program->at(program->declaredMembersOf(L0)).members, { L0, L2, L3 }));
-    AOT_TEST_CHECK(hasElements(program->at(program->declaredMembersOf(L1)).members, { L1 }));
-    AOT_TEST_CHECK(hasElements(program->at(program->declaredMembersOf(L2)).members, { L2, L3 }));
-    AOT_TEST_CHECK(hasElements(program->at(program->declaredMembersOf(L3)).members, { L3 }));
+    AOT_TEST_CHECK(hasElements(program->at(program->declaredMembersOf(L0)).written(), { L0, L2, L3 }));
+    AOT_TEST_CHECK(hasElements(program->at(program->declaredMembersOf(L1)).written(), { L1 }));
+    AOT_TEST_CHECK(hasElements(program->at(program->declaredMembersOf(L2)).written(), { L2, L3 }));
+    AOT_TEST_CHECK(hasElements(program->at(program->declaredMembersOf(L3)).written(), { L3 }));
 }
 
 constexpr ASCIILiteral privateNamesText = R"IR(layout L0 kind=Instance name="C" module=m0 fields=[{key=#"p"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}, {key="p" declared={type=number}}]
@@ -150,6 +150,8 @@ void addModuleListDamages(const ReaderFixture& fixture, RecordDamages& damages)
     auto requiredName = offsetsOf<Wire::RequiredName>(fixture, List::RequiredNames, 0);
     damages.id("RequiredName.module"_s, requiredName(offsetof(Wire::RequiredName, module)), List::Modules);
     damages.id("RequiredName.name"_s, requiredName(offsetof(Wire::RequiredName, name)), List::Strings);
+    damages.optionalID("RequiredName.exportName"_s, requiredName(offsetof(Wire::RequiredName, exportName)), List::Strings);
+    damages.optionalID("RequiredName.specifier"_s, requiredName(offsetof(Wire::RequiredName, specifier)), List::Strings);
 }
 
 void testModuleRecords()
@@ -165,6 +167,7 @@ void testModuleRecords()
         damages.enumerator<SyntheticExportRule>("Module.exportRule"_s, module(offsetof(Wire::Module, exportRule)));
         damages.enumerator<RequireResult>("Module.requireResult"_s, module(offsetof(Wire::Module, requireResult)));
         damages.enumerator<ExternalKind>("Module.externalKind"_s, module(offsetof(Wire::Module, externalKind)));
+        damages.optionalID("Module.typeAttribute"_s, module(offsetof(Wire::Module, typeAttribute)), List::Strings);
         damages.external("Module.runtimeModule"_s, module(offsetof(Wire::Module, runtimeModule)));
         damages.optionalID("Module.referrer"_s, module(offsetof(Wire::Module, referrer)), List::Modules);
         damages.optionalID("Module.body"_s, module(offsetof(Wire::Module, body)), List::Functions);
@@ -176,7 +179,11 @@ void testModuleRecords()
         damages.span("Module.requiredNames"_s, module(offsetof(Wire::Module, requiredNames)));
         damages.span("SourcePositions.lineStarts"_s, module(offsetof(Wire::Module, positions.lineStarts)));
         damages.span("SourcePositions.columnAdjustments"_s, module(offsetof(Wire::Module, positions.columnAdjustments)));
+        damages.span("SourcePositions.textPrintedInPlace"_s, module(offsetof(Wire::Module, positions.textPrintedInPlace)));
+        damages.span("SourcePositions.textOfBody"_s, module(offsetof(Wire::Module, positions.textOfBody)));
+        damages.span("SourcePositions.whereThisIsMade"_s, module(offsetof(Wire::Module, positions.whereThisIsMade)));
         damages.span("Module.functionText"_s, module(offsetof(Wire::Module, functionText)));
+        damages.span("Module.typesCutFromFunctionText"_s, module(offsetof(Wire::Module, typesCutFromFunctionText)));
     }
     addModuleListDamages(fixture, damages);
     expectEach(fixture, damages.damages());

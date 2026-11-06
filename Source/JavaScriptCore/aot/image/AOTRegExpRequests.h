@@ -21,6 +21,7 @@
 namespace JSC { namespace AOT {
 
 namespace Typed {
+class CallGraph;
 class FlowResults;
 class StringArena;
 }
@@ -105,7 +106,7 @@ private:
     uint32_t m_numberOfLiterals { 0 };
 };
 
-JS_EXPORT_PRIVATE RegExpRequests collectRegExpRequests(const Typed::Program&, const Typed::FlowResults&, Typed::StringArena&, BuildContext&);
+JS_EXPORT_PRIVATE RegExpRequests collectRegExpRequests(const Typed::Program&, const Typed::FlowResults&, const Typed::CallGraph&, Typed::StringArena&, BuildContext&);
 
 } } // namespace JSC::AOT
 

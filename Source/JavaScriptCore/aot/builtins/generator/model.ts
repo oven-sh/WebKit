@@ -24,6 +24,7 @@ import type {
   IntrinsicPosition,
   IterationKind,
   KeyedProtocol,
+  LinkedFunctionExpansion,
   Mutability,
   NativeCallKind,
   OperandRole,
@@ -310,6 +311,8 @@ export interface ModelResult {
   iteratedOperand: ModelOperand | null;
   iterationKind: IterationKind | null;
   prototypeSource: ModelOperand | null;
+  testedOperand: ModelOperand | null;
+  testedType: ModelType | null;
   properties: readonly ModelResultProperty[];
 }
 
@@ -410,6 +413,8 @@ export interface ModelCondition {
   buildAdmitsRuntimeCode: boolean;
   callRunsOtherCode: boolean;
   objectNobodyKnowsIsWritten: boolean;
+  testsReplaceBuiltins: boolean;
+  programStores: ModelBuiltin | null;
 }
 
 export interface ModelFeatureUse {
@@ -478,6 +483,8 @@ export interface ModelHostObject {
   fields: readonly ModelHostObjectField[];
   internalFields: readonly ModelHostObjectInternalField[];
   keepsStringsOfStoredValues: boolean;
+  nativeAccessors: readonly ModelName[];
+  platforms: readonly TargetPlatform[];
   source: Source;
 }
 
@@ -553,6 +560,8 @@ export interface ModelBuiltin {
   members: readonly ModelBuiltin[];
   overloads: readonly ModelOverload[];
   constant: ModelConstant | null;
+  isAddedAtFirstRead: boolean;
+  isAddedAsEnumerable: boolean;
   /** Of a native binding that some text of the library names: what the host evaluates it by. It depends on how Bun is built, so the engine's half of the table does not hold it. */
   hostNumber: number;
   attachments: ModelAttachments;
@@ -583,7 +592,6 @@ export interface ModelClass {
   constructor: ModelBuiltin | null;
   prototype: ModelBuiltin | null;
   jsType: string;
-  typedArrayType: string;
   instanceTest: InstanceTest;
   sharingMode: SharingMode | null;
   instanceCppClass: CppClassRef | null;
@@ -598,6 +606,7 @@ export interface ModelClass {
   namesDefinedOnNewInstances: readonly ModelName[] | null;
   typesOfNamesDefinedOnNewInstances: readonly ModelResultProperty[];
   namesMadeByStaticMembers: readonly { name: ModelName; member: ModelName }[];
+  namesReadToDescribeInstances: readonly ModelName[];
   constructorOnlyReadsPrototypeOfNewTarget: boolean;
   slots: readonly ModelSlot[];
   stateHeap: Heap | null;
@@ -629,6 +638,7 @@ export interface ModelModule {
   listsAllExports: boolean;
   isPublic: boolean;
   namespace: ModelBuiltin;
+  exportsHoldingModuleObject: readonly ModelName[];
   exportsHeldByNamespace: readonly ModelName[];
 }
 
@@ -636,6 +646,7 @@ export type ModelFunctionRole = RuntimeFunctionRole | "Model";
 
 export interface ModelFunction {
   id: number;
+  token: string;
   role: ModelFunctionRole;
   file: string;
   name: string;
@@ -666,7 +677,7 @@ export type ModelIntrinsicMeaning =
   | { intrinsic: "PrependArgument"; callee: ModelName; argument: number }
   | { intrinsic: "HasPromiseStatus"; status: PromiseStatus }
   | { intrinsic: "NativeCall"; kind: NativeCallKind }
-  | { intrinsic: "LinkedFunction"; function: ModelFunction }
+  | { intrinsic: "LinkedFunction"; function: ModelFunction; expansion?: LinkedFunctionExpansion }
   | {
       intrinsic:
         | "IsNullish"

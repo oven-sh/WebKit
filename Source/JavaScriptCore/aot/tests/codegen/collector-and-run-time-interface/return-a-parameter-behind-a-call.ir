@@ -1,0 +1,121 @@
+# type Entry = { follower: Entry | null; weight: number };
+# let newest: Entry | null = null;
+# function remember(weight: number): void {
+#   newest = { follower: newest, weight };
+# }
+# function note(entry: Entry): Entry {
+#   remember(entry.weight);
+#   return entry;
+# }
+# declare const input: any;
+# (globalThis as any).answer = [note({ follower: null, weight: +input }), note({ follower: null, weight: 1.5 }), newest];
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f2
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air f2
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air f2
+# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=108 kind=Parameter function=f1
+typesite w1 module=m0 position=61 kind=Variable
+typesite w2 module=m0 position=189 kind=Parameter function=f2
+typesite w3 module=m0 position=175 kind=Result
+typesite w4 module=m0 position=312 kind=CallResult
+typesite w5 module=m0 position=354 kind=CallResult
+layout L0 name="Entry" module=m0 position=5 fields=[{key="follower" declared={type=undefined|null|L0 flags=[OmitsUndefined]} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Object{layout=L0 members=[{key="follower" value=Null}, {key="weight" value=Number{value=1.5}}]} module=m0
+variable g0 name="remember" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="newest" module=m0 declared={type=undefined|null|absent|L0 site=w1 flags=[OmitsUndefined]}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Null
+    v3 = Convert v2 declared={type=undefined|null|L0 site=w1 flags=[OmitsUndefined]}
+    PutModuleVariable v3 variable=g1
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="globalThis" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v8 = Convert v7 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v9 = Null
+    v10 = Convert v9 declared={type=undefined|null|L0 flags=[OmitsUndefined]}
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="input" [isFreeName]
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = ToNumber v13
+    v15 = Convert v14 declared={type=number}
+    v16 = NewObject -, v10, v15 layout=L0 fields=[0, 1]
+    v17 = FinishObject v16
+    v18 = Call v1, -, v17 calleeName="note"
+    v19 = Convert v18 declared={type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}
+    v20 = Data data=d0
+    v21 = Call v1, -, v20 calleeName="note"
+    v22 = Convert v21 declared={type=undefined|null|L0 site=w5 flags=[OmitsNull, OmitsUndefined]}
+    v23 = GetModuleVariable variable=g1
+    v24 = CheckInitialized v23 name="newest"
+    v25 = NewArray v19, v22, v24 contents=anything
+    PropSet v8, v25 key="answer"
+    v27 = Undefined
+    Return v27
+}
+function f1 name="remember" module=m0 position=90 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="newest"
+    v3 = GetModuleVariable variable=g1
+    v4 = CheckInitialized v3 name="newest"
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[OmitsUndefined]}
+    v6 = Convert v0 declared={type=number}
+    v7 = NewObject -, v5, v6 layout=L0 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = Convert v8 declared={type=undefined|null|L0 site=w1 flags=[OmitsUndefined]}
+    PutModuleVariable v9 variable=g1
+    v11 = Undefined
+    Return v11
+}
+function f2 name="note" module=m0 position=175 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v0 key="weight"
+    v3 = Call v1, -, v2 calleeName="remember"
+    v4 = Convert v0 declared={type=undefined|null|L0 site=w3 flags=[OmitsNull, OmitsUndefined]}
+    Return v4
+}
+
+# The call allocates, so it may collect, and the caller may hold the only reference to the entry. What is returned is the word that came in.
+# CHECK-LABEL: name="note" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[entry]] = ArgumentReg(
+# CHECK: Patchpoint(b@{{*}}:Register({{*}}), resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, {{*}}:CallDirect)
+# CHECK-NEXT: Return(b@[[entry]], Terminal)
+# CHECK-LABEL: end of function
+# Across the call the word lies where the collector looks: on x86-64 in the frame, written as the frame is set up and read back as it is left.
+# X64-LABEL: name="note" role=Source
+# X64-NEXT: BB#0:
+# X64-NEXT: EnterFrame $0, %rdi, $0
+# X64-NEXT: MoveDouble 24(%rdi), %xmm0
+# X64-NEXT: Patch &Patchpoint
+# X64-NEXT: LeaveFrame %rax, $0
+# X64-NEXT: Ret64 %rax
+# X64-LABEL: end of function
+# On ARM64 it lies in a register that every callee saves into its own frame before it uses it.
+# ARM64-LABEL: name="note" role=Source
+# ARM64-NEXT: BB#0:
+# ARM64-NEXT: EnterFrame {{*}}, %x19
+# ARM64-NEXT: Move %x0, %x19
+# ARM64-NEXT: MoveDouble 24(%x0), %q0
+# ARM64-NEXT: Patch &Patchpoint
+# ARM64-NEXT: Move %x19, %x0
+# ARM64-NEXT: LeaveFrame %x19
+# ARM64-NEXT: Ret64 %x0
+# ARM64-LABEL: end of function

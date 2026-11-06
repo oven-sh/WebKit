@@ -10,17 +10,21 @@
 
 #include "AOTAnalysisContext.h"
 #include "AOTBuildContext.h"
+#include "AOTCFG.h"
+#include "AOTEdgeResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTPredictedValues.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
 #include "AOTThreads.h"
+#include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <utility>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -49,12 +53,88 @@ struct InitializerCall {
     Keys keysObservedWhereObjectRefusesDefinition { };
 };
 
-bool isNeverEntered(const Function& function, BlockID block)
-{
-    return std::ranges::any_of(function.at(block).parameters, [&](ValueID parameter) {
-        return function.at(parameter).type == TypeTable::never;
-    });
-}
+// The blocks that no version of the function enters: nothing has the type of one of their parameters. In the generic version a check lets everything through,
+// so behind checks a cast counts as what it is handed, any other operation as the most that it makes of any operands, and a test leaves of that what it leaves.
+class BlocksNeverEntered {
+public:
+    BlocksNeverEntered(const Program& program, const Function& function, const CFG& cfg)
+        : m_blocks(function.blocks.size())
+    {
+        PredictedValues predicted(function, cfg);
+        bool hasParameterBehindCheck = false;
+        forEachParameterThatNothingIs(function, [&](BlockID block, ValueID parameter) {
+            if (predicted.isBehindCheck(parameter))
+                hasParameterBehindCheck = true;
+            else
+                m_blocks.quickSet(block.index());
+        });
+        if (!hasParameterBehindCheck)
+            return;
+
+        ScratchTypeArena scratch(program.types);
+        TypeArena& types = scratch;
+        TypingContext context { program, function, types };
+        Vector<TypeID> typesWithoutChecks(function.values.size());
+        auto typeWithoutChecks = [&](ValueID value) {
+            while (predicted.isBehindCheck(value) && isCast(function.at(value).opcode))
+                value = function.at(value).operand(0);
+            if (!predicted.isBehindCheck(value))
+                return function.at(value).type;
+            TypeID& type = typesWithoutChecks[value.index()];
+            if (std::optional<Type> widest = type ? std::nullopt : tryWidestNaturalTypeOf(function.at(value)))
+                type = types.intern(WTF::move(*widest));
+            return type;
+        };
+        auto comparesWithValueBehindCheck = [&](const Value& test, uint32_t operandIndex) {
+            for (uint32_t index = 0; index < test.numberOfOperands(); ++index) {
+                if (index != operandIndex && predicted.isBehindCheck(test.operand(index)))
+                    return true;
+            }
+            return false;
+        };
+        for (BlockID block : cfg.reversePostOrder()) {
+            const TargetList& targets = function.at(block).terminator.targets;
+            for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
+                if (!cfg.singleIncomingEdge(targets[targetIndex].block))
+                    continue;
+                const auto& parameters = function.at(targets[targetIndex].block).parameters;
+                uint32_t firstParameter = firstEdgeResultParameter(function, block, targetIndex);
+                for (uint32_t resultIndex = 0; firstParameter + resultIndex < parameters.size(); ++resultIndex) {
+                    ValueID parameter = parameters[firstParameter + resultIndex];
+                    if (!predicted.isBehindCheck(parameter))
+                        continue;
+                    std::optional<EdgeResult> result = tryGetEdgeResult(function, { block, targetIndex, resultIndex });
+                    if (!result || result->kind != EdgeResultKind::NarrowedOperand || !result->test)
+                        continue;
+                    TypeID source = typeWithoutChecks(result->subject);
+                    const Value& test = function.at(result->test);
+                    if (source && !comparesWithValueBehindCheck(test, result->operandIndex))
+                        typesWithoutChecks[parameter.index()] = types.intern(narrowTypeByTest(context, types.at(source), test, result->operandIndex, result->side));
+                }
+            }
+        }
+        forEachParameterThatNothingIs(function, [&](BlockID block, ValueID parameter) {
+            TypeID type = typeWithoutChecks(parameter);
+            if (type && types.at(type).isNever())
+                m_blocks.quickSet(block.index());
+        });
+    }
+
+    bool contains(BlockID block) const { return m_blocks.quickGet(block.index()); }
+
+private:
+    static void forEachParameterThatNothingIs(const Function& function, NOESCAPE const Invocable<void(BlockID, ValueID)> auto& functor)
+    {
+        for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+            for (ValueID parameter : function.blocks[block].parameters) {
+                if (function.at(parameter).type == TypeTable::never)
+                    functor(BlockID(block), parameter);
+            }
+        }
+    }
+
+    BitVector m_blocks;
+};
 
 constexpr AbstractHeapSet propertyHeaps {
     AbstractHeap::ObjectFields, AbstractHeap::NamedProperties, AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::Elements, AbstractHeap::ArrayStorage
@@ -104,6 +184,7 @@ InitializerSummary summarizeInitializer(const Program& program, const Function& 
     if (cfg.hasHandlers() || cfg.hasCycle())
         return summary;
 
+    BlocksNeverEntered blocksNeverEntered(program, initializer, cfg);
     ValueIdentities identities(initializer, cfg);
     ValueID object = identities.identityOf(initializer.at(entryBlock).parameters[*thisIndex]);
     auto isObject = [&](ValueID id) {
@@ -113,14 +194,18 @@ InitializerSummary summarizeInitializer(const Program& program, const Function& 
     auto aliasesObject = [&](ValueID id) {
         return id && (isObject(id) || closuresCapturingObject.contains(identities.identityOf(id)));
     };
+    // Definitions are only appended, so each is added to a set of keys once.
+    size_t numberOfShownDefinitions = 0;
     auto showDefinitions = [&] {
-        for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined)
+        for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined.span().subspan(numberOfShownDefinitions))
             summary.keysShownToOtherCode.add(definition.key);
+        numberOfShownDefinitions = summary.definitionsOfUndefined.size();
     };
+    size_t numberOfDefinitionsBeforeOthers = 0;
 
     Keys keysDefinedTwice;
     for (BlockID block : cfg.reversePostOrder()) {
-        if (isNeverEntered(initializer, block))
+        if (blocksNeverEntered.contains(block))
             continue;
         for (ValueID id : initializer.at(block).values) {
             const Value& value = initializer.at(id);
@@ -145,8 +230,9 @@ InitializerSummary summarizeInitializer(const Program& program, const Function& 
             if (!definesProperty || usesOfObject != 1u + storesAlias)
                 return summary;
             summary.holdsItself |= storesAlias;
-            for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined)
+            for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined.span().subspan(numberOfDefinitionsBeforeOthers))
                 summary.keysDefinedBeforeOthers.add(definition.key);
+            numberOfDefinitionsBeforeOthers = summary.definitionsOfUndefined.size();
             std::optional<PropertyKeyID> key = keyOfFieldAccess(program, value);
             if (!key) {
                 if (program.typeOf(initializer, value.operand(OperandIndex::ElemDefine::property)).hasObjects())
@@ -202,7 +288,7 @@ struct ConstructionWalk {
         if (usesOfObjectIn(terminator) || leavesConstructor(terminator.kind) || mergesObjectWithOtherValues(terminator))
             observeEverything(state);
         for (const Target& target : terminator.targets) {
-            if (isNeverEntered(function, target.block))
+            if (blocksNeverEntered.contains(target.block))
                 continue;
             if (target.block == firstBlock)
                 entersFirstBlockAgain = true;
@@ -306,7 +392,7 @@ struct ConstructionWalk {
     bool mergesObjectWithOtherValues(const Terminator& terminator)
     {
         for (const Target& target : terminator.targets) {
-            if (isNeverEntered(function, target.block))
+            if (blocksNeverEntered.contains(target.block))
                 continue;
             const auto& parameters = function.at(target.block).parameters;
             for (uint32_t index = 0; index < target.arguments.size(); ++index) {
@@ -324,6 +410,7 @@ struct ConstructionWalk {
     ValueID object;
     bool isKnownToOtherCode { true };
     const Function& function { analyses.function() };
+    BlocksNeverEntered blocksNeverEntered { program, function, analyses.cfg() };
     Vector<std::optional<State>> statesAtHead = Vector<std::optional<State>>(function.blocks.size());
     Keys observedKeys { };
     bool hasChanged { false };
@@ -340,8 +427,9 @@ bool returnsOnlyConstructedObject(const Program& program, BuildContext& build, F
     std::optional<unsigned> thisIndex = constructor.thisParameterIndex();
     ValueID thisParameter = thisIndex ? analyses.identityOf(constructor.at(entryBlock).parameters[*thisIndex]) : ValueID();
     Vector<BlockID> blocks(analyses.cfg().reversePostOrder());
+    BlocksNeverEntered blocksNeverEntered(program, constructor, analyses.cfg());
     blocks.removeAllMatching([&](BlockID block) {
-        return isNeverEntered(constructor, block);
+        return blocksNeverEntered.contains(block);
     });
     Vector<ValueID, 8> worklist;
     for (BlockID block : blocks) {
@@ -434,8 +522,9 @@ bool keepsObjectToItself(const Program& program, BuildContext& build, FunctionID
     }
 
     Vector<ValueID, 8> accesses;
+    BlocksNeverEntered blocksNeverEntered(program, constructor, analyses.cfg());
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (isNeverEntered(constructor, block))
+        if (blocksNeverEntered.contains(block))
             continue;
         for (ValueID valueID : constructor.at(block).values) {
             const Value& value = constructor.at(valueID);
@@ -675,7 +764,7 @@ KeysOfLiterals keysStoredRightAfterAllocations(const Program& program, const Fun
             bool isStrictStore = value.opcode == Opcode::PropSet && value.mode() == ECMAMode::Strict && program.nameClassOf(value.key()) != NameClass::Proto;
             ValueID receiver;
             for (uint32_t index = 0; index < value.numberOfOperands() && numberOfFreshObjects; ++index) {
-                ValueID object = value.operand(index) ? sameObjectThroughCasts(function, value.operand(index)) : ValueID();
+                ValueID object = value.operand(index) ? sameObjectThroughCasts(function, value.operand(index)).valueInFrontOfFacts() : ValueID();
                 if (!object || !isFresh.get(object.index()))
                     continue;
                 if ((isStrictStore || value.opcode == Opcode::PropDefine) && index == *receiverOf(value.opcode))
@@ -689,7 +778,9 @@ KeysOfLiterals keysStoredRightAfterAllocations(const Program& program, const Fun
                 keys.add(receiver.index(), Vector<PropertyKeyID, 8>()).iterator->value.append(value.key());
 
             if (value.opcode == Opcode::NewObject ? !program.at(value.layout()).isEnvironment() : value.opcode == Opcode::Data && program.at(value.data()).root.is<DataNode::Object>()) {
-                isFresh.set(id.index());
+                // A bit vector grows to the bit that is set and no further: thousands of objects would copy it thousands of times.
+                isFresh.ensureSize(function.values.size());
+                isFresh.quickSet(id.index());
                 objectsOfBlock.append(id);
                 ++numberOfFreshObjects;
             }

@@ -11,6 +11,7 @@
 #include "AOTModuleGraph.h"
 #include "AOTNativeTest.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT {
@@ -63,6 +64,32 @@ public:
     bool has(unsigned module, Flags expected) const { return flagsOf(module) == expected; }
     bool isImportedByModule(unsigned module) const { return m_modules[module].isImportedByModule(); }
 
+    void group(std::span<const ModuleImportSite> sites) { m_groupsLoadedWithGroups = groupModulesLoadedTogether(m_modules.mutableSpan(), m_requests.span(), sites); }
+    void group(std::initializer_list<ModuleImportSite> sites) { m_groupsLoadedWithGroups = groupModulesLoadedTogether(m_modules.mutableSpan(), m_requests.span(), std::span(sites.begin(), sites.size())); }
+    unsigned headOf(unsigned module) const
+    {
+        uint32_t group = m_modules[module].referrerRuntimeModuleOrLoadGroup;
+        return group < m_nodes.size() ? group : module;
+    }
+    bool areLoadedTogether(std::initializer_list<unsigned> modules) const
+    {
+        return std::ranges::all_of(modules, [&](unsigned module) {
+            return headOf(module) == headOf(*modules.begin());
+        });
+    }
+    // Of the group of the module, each by one of its modules.
+    bool groupsLoadedWithItAre(unsigned module, std::initializer_list<unsigned> expected) const
+    {
+        uint32_t group = m_modules[headOf(module)].referrerRuntimeModuleOrLoadGroup;
+        if (group == Number24::max)
+            return !expected.size();
+        std::span<const uint32_t> list = m_groupsLoadedWithGroups.span().subspan(group - m_nodes.size() + 1, m_groupsLoadedWithGroups[group - m_nodes.size()]);
+        return list.size() == expected.size() && std::ranges::all_of(expected, [&](unsigned other) {
+            return std::ranges::contains(list, headOf(other));
+        });
+    }
+    bool hasNoLists() const { return m_groupsLoadedWithGroups.isEmpty(); }
+
 private:
     struct Node {
         ModuleData data;
@@ -79,7 +106,7 @@ private:
         data.exportRule = exportRule;
         data.flags = wireFlags.toRaw();
         data.body = optionalNumber24(UINT32_MAX);
-        data.referrerOrRuntimeModule = optionalNumber24(UINT32_MAX);
+        data.referrerRuntimeModuleOrLoadGroup = optionalNumber24(UINT32_MAX);
         m_nodes.append(Node { data, { }, 0, 0 });
         return m_nodes.size() - 1;
     }
@@ -87,6 +114,7 @@ private:
     Vector<Node> m_nodes;
     Vector<ModuleData> m_modules;
     Vector<ModuleRequestData> m_requests;
+    Vector<uint32_t> m_groupsLoadedWithGroups;
 };
 
 constexpr Flags plainModule { Flag::IsSynchronous, Flag::IsSimple };
@@ -433,6 +461,171 @@ static void testWireFlagIsUntouched()
     AOT_TEST_CHECK(!graph.flagsOf(importer).contains(Flag::HasTopLevelAwait) && !graph.flagsOf(other).contains(Flag::HasTopLevelAwait));
 }
 
+static void testWhatOneRootLeadsToIsLoadedTogether()
+{
+    Graph graph;
+    unsigned entryPoint = graph.addSourceText(Flag::IsEntryPoint);
+    unsigned first = graph.addSourceText();
+    unsigned second = graph.addSourceText();
+    unsigned file = graph.addCommonJS();
+    unsigned imported = graph.addSourceText();
+    unsigned below = graph.addSourceText();
+    graph.request(entryPoint, first);
+    graph.request(entryPoint, file);
+    graph.request(first, second);
+    graph.request(second, first);
+    graph.request(imported, below);
+    graph.request(imported, second);
+    graph.compute();
+    graph.group({ { entryPoint, imported } });
+    AOT_TEST_CHECK(graph.areLoadedTogether({ entryPoint, first, second }) && graph.areLoadedTogether({ imported, below }) && !graph.areLoadedTogether({ entryPoint, imported }));
+    // Whoever calls that import() runs in a module that was loaded with the entry point.
+    AOT_TEST_CHECK(graph.hasNoLists());
+}
+
+static void testWhatTwoRootsLeadToIsAGroupOfItsOwn()
+{
+    Graph graph;
+    unsigned entryPoint = graph.addSourceText(Flag::IsEntryPoint);
+    unsigned left = graph.addSourceText();
+    unsigned right = graph.addSourceText();
+    unsigned onlyLeft = graph.addSourceText();
+    unsigned shared = graph.addSourceText();
+    unsigned belowShared = graph.addSourceText();
+    unsigned late = graph.addSourceText();
+    unsigned onlyLate = graph.addSourceText();
+    graph.request(left, onlyLeft);
+    graph.request(onlyLeft, shared);
+    graph.request(right, shared);
+    graph.request(shared, belowShared);
+    graph.request(late, belowShared);
+    graph.request(late, onlyLate);
+    graph.compute();
+    // The last import() stands in a module that only one of the others loads.
+    graph.group({ { entryPoint, left }, { entryPoint, right }, { onlyLeft, late } });
+    AOT_TEST_CHECK(graph.areLoadedTogether({ left, onlyLeft }) && graph.areLoadedTogether({ shared, belowShared }) && graph.areLoadedTogether({ late, onlyLate }));
+    AOT_TEST_CHECK(!graph.areLoadedTogether({ left, shared }) && !graph.areLoadedTogether({ right, shared }) && !graph.areLoadedTogether({ left, right }) && !graph.areLoadedTogether({ late, left }));
+    AOT_TEST_CHECK(graph.groupsLoadedWithItAre(left, { shared }) && graph.groupsLoadedWithItAre(right, { shared }));
+    AOT_TEST_CHECK(graph.groupsLoadedWithItAre(shared, { }) && graph.groupsLoadedWithItAre(late, { }) && graph.groupsLoadedWithItAre(entryPoint, { }));
+}
+
+// More roots than go at once, some below another root, over imports with cycles: modules are together exactly where the same roots come to them first.
+static void testManyRootsSplitLikeOneAtATime()
+{
+    constexpr unsigned numberOfEntryPoints = 150;
+    constexpr unsigned numberOfRootsBelow = 100;
+    constexpr unsigned numberOfModules = 300;
+    Graph graph;
+    unsigned top = graph.addSourceText(Flag::IsEntryPoint);
+    Vector<unsigned> roots;
+    for (unsigned index = 0; index < numberOfEntryPoints; ++index)
+        roots.append(graph.addSourceText(Flag::IsEntryPoint));
+    for (unsigned index = 0; index < numberOfRootsBelow; ++index)
+        roots.append(graph.addSourceText());
+    unsigned firstModule = roots.last() + 1;
+    for (unsigned index = 0; index < numberOfModules; ++index)
+        graph.addSourceText();
+    unsigned numberOfNodes = firstModule + numberOfModules;
+    Vector<Vector<unsigned>> imports(numberOfNodes);
+    uint32_t seed = 12345;
+    auto draw = [&](unsigned below) {
+        seed = seed * 48271 % 2147483647;
+        return seed % below;
+    };
+    auto import = [&](unsigned from, unsigned to) {
+        graph.request(from, to);
+        imports[from].append(to);
+    };
+    for (unsigned count = 0; count < 6; ++count)
+        import(top, firstModule + draw(numberOfModules));
+    for (unsigned root : roots) {
+        for (unsigned count = 0; count < 3; ++count)
+            import(root, firstModule + draw(numberOfModules));
+    }
+    for (unsigned index = 0; index < numberOfModules; ++index) {
+        // Mostly toward the end. Every tenth one goes back, which makes cycles.
+        unsigned module = firstModule + index;
+        if (index + 1 < numberOfModules)
+            import(module, module + 1 + draw(std::min(numberOfModules - index - 1, 8u)));
+        if (!(index % 10))
+            import(module, firstModule + draw(numberOfModules));
+    }
+    graph.compute();
+    Vector<ModuleImportSite> sites;
+    for (unsigned index = numberOfEntryPoints; index < roots.size(); ++index)
+        sites.append(ModuleImportSite { top, roots[index] });
+    graph.group(sites.span());
+
+    auto reachOf = [&](unsigned root) {
+        Vector<bool> isReached(FillWith { }, numberOfNodes, false);
+        Vector<unsigned> found { root };
+        isReached[root] = true;
+        while (!found.isEmpty()) {
+            for (unsigned target : imports[found.takeLast()]) {
+                if (!std::exchange(isReached[target], true))
+                    found.append(target);
+            }
+        }
+        return isReached;
+    };
+    Vector<bool> reachOfTop = reachOf(top);
+    Vector<Vector<unsigned>> rootsOf(numberOfNodes);
+    for (unsigned module = 0; module < numberOfNodes; ++module) {
+        if (reachOfTop[module])
+            rootsOf[module].append(top);
+    }
+    for (unsigned index = 0; index < roots.size(); ++index) {
+        Vector<bool> reach = reachOf(roots[index]);
+        for (unsigned module = 0; module < numberOfNodes; ++module) {
+            if (reach[module] && (index < numberOfEntryPoints || !reachOfTop[module]))
+                rootsOf[module].append(roots[index]);
+        }
+    }
+    for (unsigned first = 0; first < numberOfNodes; ++first) {
+        for (unsigned second = first + 1; second < numberOfNodes; ++second) {
+            if (!rootsOf[first].isEmpty() || !rootsOf[second].isEmpty())
+                AOT_TEST_CHECK((rootsOf[first] == rootsOf[second]) == graph.areLoadedTogether({ first, second }));
+        }
+    }
+}
+
+static void testARootThatTwoModulesNameIsBelowNeither()
+{
+    Graph graph;
+    unsigned entryPoint = graph.addSourceText(Flag::IsEntryPoint);
+    unsigned left = graph.addSourceText();
+    unsigned right = graph.addSourceText();
+    unsigned belowLeft = graph.addSourceText();
+    unsigned late = graph.addSourceText();
+    graph.request(left, belowLeft);
+    graph.request(late, belowLeft);
+    graph.request(right, late, Edge::Require);
+    graph.compute();
+    graph.group({ { entryPoint, left }, { entryPoint, right }, { left, late } });
+    // The require() may load it while nothing has loaded the other importer.
+    AOT_TEST_CHECK(!graph.areLoadedTogether({ left, belowLeft }) && !graph.areLoadedTogether({ late, belowLeft }));
+    AOT_TEST_CHECK(graph.groupsLoadedWithItAre(left, { belowLeft }) && graph.groupsLoadedWithItAre(late, { belowLeft }) && graph.groupsLoadedWithItAre(right, { }));
+}
+
+static void testWhatAFileNamesIsBelowNoRoot()
+{
+    Graph graph;
+    unsigned entryPoint = graph.addSourceText(Flag::IsEntryPoint);
+    unsigned imported = graph.addSourceText();
+    unsigned file = graph.addCommonJS();
+    unsigned required = graph.addSourceText();
+    unsigned shared = graph.addSourceText();
+    graph.request(imported, file);
+    graph.request(imported, shared);
+    graph.request(file, required, Edge::Require);
+    graph.request(required, shared);
+    graph.compute();
+    graph.group({ { entryPoint, imported } });
+    // The file runs while the graph that imports it is loaded.
+    AOT_TEST_CHECK(!graph.areLoadedTogether({ imported, shared }) && !graph.areLoadedTogether({ required, shared }));
+    AOT_TEST_CHECK(graph.groupsLoadedWithItAre(imported, { shared }) && graph.groupsLoadedWithItAre(required, { shared }));
+}
+
 std::span<const NativeTest> moduleGraphTests()
 {
     static constexpr NativeTest tests[] = {
@@ -454,6 +647,11 @@ std::span<const NativeTest> moduleGraphTests()
         { "module-graph/dynamic-star-export-is-the-modules-own"_s, testDynamicStarExportIsTheModulesOwn },
         { "module-graph/long-chain"_s, testLongChain },
         { "module-graph/wire-flag-is-untouched"_s, testWireFlagIsUntouched },
+        { "module-graph/what-one-root-leads-to-is-loaded-together"_s, testWhatOneRootLeadsToIsLoadedTogether },
+        { "module-graph/what-two-roots-lead-to-is-a-group-of-its-own"_s, testWhatTwoRootsLeadToIsAGroupOfItsOwn },
+        { "module-graph/many-roots-split-like-one-at-a-time"_s, testManyRootsSplitLikeOneAtATime },
+        { "module-graph/a-root-that-two-modules-name-is-below-neither"_s, testARootThatTwoModulesNameIsBelowNeither },
+        { "module-graph/what-a-file-names-is-below-no-root"_s, testWhatAFileNamesIsBelowNoRoot },
     };
     return tests;
 }

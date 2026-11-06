@@ -18,7 +18,7 @@ operation JSONParseString (cursor: Cursor/inspects) -> results(natural(boolean),
 operation JSONParseKey (cursor: Cursor/inspects) -> results(natural(boolean), natural(string), natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseKey
 operation JSONParseNumber (cursor: Cursor/inspects) -> results(natural(boolean), natural(number), natural(Cursor)) ; reads(ParserState) ; runtime = JSONParseNumber
 operation JSONParseInteger (cursor: Cursor/inspects) -> results(natural(boolean), natural(int[-9007199254740991, 9007199254740991]), natural(Cursor)) ; reads(ParserState) ; runtime = JSONParseInteger
-operation JSONParseValue (cursor: Cursor/inspects) -> results(natural(boolean), unknown, natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseValue
+operation JSONParseValue (cursor: Cursor/inspects) -> results(natural(boolean), natural(null | boolean | number | string | object), natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseValue
 operation JSONFindMember (string: String, cursor: Cursor/inspects) -> results(natural(JSONMemberSearch), natural(Cursor)) ; reads(ParserState) ; runtime = JSONFindMember
 operation JSONMemberRepeats (string: String, valueStart: Cursor/inspects) -> natural(boolean) ; reads(ParserState) ; runtime = JSONMemberRepeats
 operation JSONKeyHasEscapes (cursor: Cursor/inspects) -> natural(boolean) ; reads(ParserState)
@@ -27,6 +27,9 @@ operation JSONObjectBegin (layout: Layout) -> natural(KeyOrder) ; none
 operation JSONObjectKey (order: KeyOrder/inspects, layout: Layout, field: Field) -> natural(KeyOrder) ; reads(RuntimeState) ; runtime = JSONObjectKey
 operation JSONObjectFinish (order: KeyOrder/inspects, object: Layout/inspects, extra: Any/retains(object), layout: Layout) -> natural(JSONOutcome) ; Allocates reads(OrderWords, ObjectFields) writes(OrderWords, NamedProperties, RuntimeState) ; runtime = JSONObjectFinish
 operation JSONParseExtraMembers (layout: Layout, cursor: Cursor/inspects, extra: Any/returns, order: KeyOrder/inspects) -> results(natural(JSONOutcome), unknown, natural(Cursor), natural(KeyOrder)) ; Allocates reads(ParserState, NamedProperties, Elements, StringStorage) writes(NamedProperties, Elements, ArrayStorage, StringStorage, RuntimeState) ; runtime = JSONParseExtraMembers
+operation GetOrderWord (object: Layout/inspects, guard?: Guard/inspects, layout: Layout) -> natural(uint32) ; reads(OrderWords) ; relies = Shape ; guarded = object
+operation GetFieldInKeyOrder (order: Integer/inspects, position: Integer/inspects, layout: Layout) -> natural(int[-2, 65535]) ; reads(RuntimeState) ; runtime = KeyOrderEntries
+operation GetKeyNamesInOrder (order: Integer/inspects, position: Integer/inspects, layout: Layout) -> unknown ; Allocates reads(RuntimeState) throws ; runtime = KeyNamesInOrder
 
 family ExpectedRows Prepared..Placed
 operation ExpectRows (target: Any/inspects, layout: Layout) -> none ; Allocates writes(NamedProperties) ; runtime = ExpectRows

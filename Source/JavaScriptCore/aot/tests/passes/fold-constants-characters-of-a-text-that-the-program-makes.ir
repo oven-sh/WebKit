@@ -1,0 +1,106 @@
+# A text that a literal would hold in another way than the operation that makes it stays an operation. Its characters are known all the same, and whoever asks for them alone gets a constant
+# FORM: Prepared
+# RUN: pass FoldConstants
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lengthOfNarrowAndWideParts" results=[{type=number}] {
+    v0 = String string="abc"
+    v1 = String string="中"
+    v2 = Add v0, v1
+    v3 = GetStringLength v2
+    Return v3
+# CHECK: v2: string = Add v0, v1
+# CHECK: v3: 4 = Integer integer=4
+# CHECK-NEXT: Return v3
+}
+
+function f1 name="theTextItselfStays" results=[{type=string}] {
+    v0 = String string="abc"
+    v1 = String string="中"
+    v2 = Add v0, v1
+    Return v2
+# CHECK: v2: string = Add v0, v1
+# CHECK-NEXT: Return v2
+}
+
+function f2 name="answerIsNumber" results=[{type=number}] {
+    v0 = String string="abc"
+    v1 = String string="中"
+    v2 = Add v0, v1
+    v3 = CallBuiltin v2, v1 overload=StringPrototypeIndexOf/0
+    Return v3
+# CHECK: v3: 3 = Integer integer=3
+# CHECK-NEXT: Return v3
+}
+
+function f3 name="answerIsTextAndStays" results=[{type=string}] {
+    v0 = String string="abc"
+    v1 = String string="中"
+    v2 = Add v0, v1
+    v3 = Integer integer=0
+    v4 = Integer integer=3
+    v5 = CallBuiltin v2, v3, v4 overload=StringPrototypeSlice/0
+    Return v5
+# CHECK: v5: string = CallBuiltin v2, v3, v4 overload=StringPrototypeSlice/0
+# CHECK-NEXT: Return v5
+}
+
+function f4 name="oneCallAfterAnother" results=[{type=number}] {
+    v0 = String string="abc"
+    v1 = String string="中"
+    v2 = Add v0, v1
+    v3 = Integer integer=2
+    v4 = CallBuiltin v2, v3 overload=StringPrototypeRepeat/0
+    v5 = String string=""
+    v6 = CallBuiltin v4, v1, v5 overload=StringPrototypeReplaceAll/1
+    v7 = GetStringLength v6
+    Return v7
+# Nobody asks the last call for its answer any more
+# CHECK-NOT: StringPrototypeReplaceAll
+# CHECK: v7: 6 = Integer integer=6
+# CHECK-NEXT: Return v7
+}
+
+function f5 name="comparedWithLiteral" results=[{type=boolean}] {
+    v0 = String string="abc"
+    v1 = String string="中"
+    v2 = Add v0, v1
+    v3 = String string="abc中"
+    v4 = StrictEq v2, v3
+    Return v4
+# CHECK: v4: true = Boolean boolean=true
+# CHECK-NEXT: Return v4
+}
+
+function f6 name="joinedWithMore" results=[{type=number}] {
+    v0 = String string="abc"
+    v1 = String string="中"
+    v2 = Add v0, v1
+    v3 = Add v2, v0
+    v4 = GetStringLength v3
+    Return v4
+# CHECK: v3: string = Add v2, v0
+# CHECK: v4: 7 = Integer integer=7
+# CHECK-NEXT: Return v4
+}
+
+function f7 name="aCallThatThrowsStays" results=[{type=number}] {
+    v0 = String string="abc"
+    v1 = String string="中"
+    v2 = Add v0, v1
+    v3 = Integer integer=-1
+    v4 = CallBuiltin v2, v3 overload=StringPrototypeRepeat/0
+    v5 = GetStringLength v4
+    Return v5
+# CHECK: v4: string = CallBuiltin v2, v3 overload=StringPrototypeRepeat/0
+# CHECK: = GetStringLength v4
+}
+
+function f8 name="unknownPart" parameters=[{type=string}] results=[{type=number}] {
+    v1 = String string="中"
+    v2 = Add v0, v1
+    v3 = GetStringLength v2
+    Return v3
+# CHECK: = GetStringLength v2
+}

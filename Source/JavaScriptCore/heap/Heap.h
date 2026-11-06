@@ -304,7 +304,6 @@ class Heap;
     v(moduleNamespaceObjectSpace, moduleNamespaceObjectHeapCellType, JSModuleNamespaceObject) \
     v(nativeStdFunctionSpace, nativeStdFunctionHeapCellType, JSNativeStdFunction) \
     v(proxyObjectSpace, cellHeapCellType, ProxyObject) \
-    v(proxyRevokeSpace, cellHeapCellType, ProxyRevoke) \
     v(rawJSONObjectSpace, cellHeapCellType, JSRawJSONObject) \
     v(remoteFunctionSpace, cellHeapCellType, JSRemoteFunction) \
     v(scopedArgumentsTableSpace, destructibleCellHeapCellType, ScopedArgumentsTable) \
@@ -393,7 +392,9 @@ public:
     MarkedSpace& objectSpace() LIFETIME_BOUND { return m_objectSpace; }
     JS_EXPORT_PRIVATE MarkedBlockCage& cage();
     JS_EXPORT_PRIVATE AlignedMemoryAllocator* cellAllocator();
-    bool tryCollectForExhaustedCage(GCDeferralContext*);
+    // The allocator that found no memory, or null for a table of the VM.
+    bool tryCollectForExhaustedCage(GCDeferralContext*, AlignedMemoryAllocator*);
+    bool isOutsideCage(AlignedMemoryAllocator*) const;
     void collectForExhaustedCage();
     bool tryUseReserveOfExhaustedCage(AlignedMemoryAllocator*);
 
@@ -437,6 +438,7 @@ public:
     size_t allocationBudgetThisCycle() { return effectiveMaxEdenSize(); }
 #endif
     bool hasHeapAccess() const { return m_worldState.load() & hasAccessBit; }
+    bool needCollectionEpilogue() const { return m_worldState.load() & needCollectionEpilogueBit; }
     bool worldIsStopped() const { return m_worldIsStopped; }
     bool worldIsRunning() const { return !worldIsStopped(); }
 #if ASSERT_ENABLED
@@ -515,8 +517,6 @@ public:
             reportExtraMemoryAllocatedSlowCase(deferralContext, cell, size);
     }
     JS_EXPORT_PRIVATE void reportExtraMemoryVisited(size_t);
-    // At the end of a collection, for a cell whose memory outside the heap is no longer what was reported for it.
-    JS_EXPORT_PRIVATE void didChangeVisitedExtraMemory(size_t reported, size_t current);
 
 #if ENABLE(RESOURCE_USAGE)
     // Use this API to report the subset of extra memory that lives outside this process.
@@ -621,6 +621,8 @@ public:
     // buffer adopted storage that reportExtraMemoryAllocated() had reported. The first reference counts only the rest
     // as allocated. The size of the heap (extraMemorySize()) gets the whole buffer either way.
     void addReference(JSCell*, ArrayBuffer*, size_t bytesAlreadyReported = 0);
+    JS_EXPORT_PRIVATE bool tryReserveCapacityForNewArrayBuffer();
+    bool tryGrowListOfArrayBuffersEarly();
     
     bool isDeferred() const { return !!m_deferralDepth; }
 
@@ -790,6 +792,7 @@ private:
     void checkConn(GCConductor);
 
     void collectInMutatorThread();
+    void collectInMutatorThreadUntilDone();
     
     void stopThePeriphery();
     void resumeThePeriphery();

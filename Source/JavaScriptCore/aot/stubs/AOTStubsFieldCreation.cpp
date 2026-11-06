@@ -15,6 +15,8 @@
 #include "AOTObjectWords.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsAllocation.h"
+#include "AOTStubsBarriers.h"
 
 namespace JSC { namespace AOT {
 
@@ -55,8 +57,16 @@ static void computeTransitionHash(StubAssembler& jit, const KeyOrderRegisters& r
 #endif
 }
 
+// Nobody lists the keys of the objects of such a layout, so they keep no order.
+static Jump branchIfKeepsNoKeyOrder(StubAssembler& jit, GPRReg layout)
+{
+    LayoutData testedBits { };
+    testedBits.keysAreNeverEnumerated = true;
+    return jit.branchTest32(CCallHelpers::NonZero, Address(layout), TrustedImm32(static_cast<int32_t>(testedBits.firstWord())));
+}
+
 // The orders that the compiler listed lie in the image. Whoever knows the layout and the index of the field in it saves the way to both.
-static Jump stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegisters& r, std::optional<FieldOfLayout> known)
+static JumpList stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegisters& r, std::optional<FieldOfLayout> known)
 {
     const GPRReg layout = known ? known->layout : r.scratch;
     const GPRReg limit = known ? r.scratch : jit.scratchRegister();
@@ -65,6 +75,7 @@ static Jump stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegisters& 
     static_assert(OBJECT_OFFSETOF(FieldData, flags) == sizeof(uint32_t) && std::endian::native == std::endian::little);
     const Address tables(instanceGPR, AOT_INSTANCE_OFFSET(image.tables));
     JumpList doesNotApply;
+    JumpList isListed;
 
     jit.load32(Address(r.object, offsetOfOrderWord), r.words);
     doesNotApply.append(jit.branchTest32(CCallHelpers::NonZero, r.words, TrustedImm32(static_cast<int32_t>(~orderAndCountMask))));
@@ -72,6 +83,7 @@ static Jump stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegisters& 
         loadStructure(jit, r.object, layout);
         jit.loadPtr(Address(layout, CompiledStructure::offsetOfLayout()), layout);
     }
+    isListed.append(branchIfKeepsNoKeyOrder(jit, layout));
     jit.and32(TrustedImm32(orderWordOrderMask), r.words, r.entry);
     doesNotApply.append(jit.branch32(CCallHelpers::AboveOrEqual, r.entry, Address(layout, OBJECT_OFFSETOF(LayoutData, numberOfOrders))));
     jit.lshift32(TrustedImm32(2), r.entry);
@@ -99,7 +111,7 @@ static Jump stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegisters& 
         doesNotApply.append(jit.branch32(CCallHelpers::NotEqual, r.words, r.slotKey));
     }
     jit.add32(TrustedImm32(1 << orderWordCountShift), Address(r.object, offsetOfOrderWord));
-    Jump isListed = jit.jump();
+    isListed.append(jit.jump());
 
     doesNotApply.link(&jit);
     return isListed;
@@ -108,7 +120,7 @@ static Jump stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegisters& 
 void appendFieldToKeyOrder(StubAssembler& jit, const KeyOrderRegisters& r, JumpList& hasNoTransition, std::optional<FieldOfLayout> known)
 {
     RELEASE_ASSERT(noOverlap(r.object, r.slotKey, r.entry, r.words, r.scratch));
-    Jump isListed = stepInsideOrderOfImage(jit, r, known);
+    JumpList isListed = stepInsideOrderOfImage(jit, r, known);
     const GPRReg transition = r.scratch;
     const Address wordsBefore(transition, KeyOrderTransition::offsetOfOrderAndShapeWordsBefore());
 
@@ -117,6 +129,8 @@ void appendFieldToKeyOrder(StubAssembler& jit, const KeyOrderRegisters& r, JumpL
     loadStructure(jit, r.object, r.scratch);
     // What is cached about the objects below a prototype relies on the run time's report of a field that the prototype gets.
     hasNoTransition.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.scratch, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
+    jit.loadPtr(Address(r.scratch, CompiledStructure::offsetOfLayout()), r.entry);
+    isListed.append(branchIfKeepsNoKeyOrder(jit, r.entry));
     jit.load16(Address(r.scratch, CompiledStructure::offsetOfNumberOfExtraKeys()), r.scratch);
     hasNoTransition.append(jit.branch32(CCallHelpers::Equal, r.scratch, TrustedImm32(CompiledStructure::unknownNumberOfExtraKeys)));
     jit.lshift32(TrustedImm32(bitsPerSlotKey), r.scratch);
@@ -195,15 +209,18 @@ void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, cons
     jit.jump().linkTo(findStorage, &jit);
 
     cannotAppend.link(&jit);
-    jit.preservingCallerSavedRegisters(false, [&](unsigned) {
-        const GPRReg A0 = jit.reuseScratch(StubRegister::A0);
-        const GPRReg A1 = jit.reuseScratch(StubRegister::A1);
-        const GPRReg A2 = jit.reuseScratch(StubRegister::A2);
-        RELEASE_ASSERT(object != A2 && noOverlap(instanceGPR, A1, A2));
-        jit.move(granuleBit, A2);
-        jit.move(object, A1);
-        jit.move(instanceGPR, A0);
-        jit.callOperation(Entry::operationAOTEnsureExtensionGranules, jit.reuseScratch(StubRegister::Operation));
+    // The offset may share its register with the address.
+    loadOffsetOfExtensionWord();
+    // Neither stub touches a floating-point register, and the operations that they leave the rest to save all of them.
+    jit.preservingCallerSavedRegisters(false, RegisterSet::allFPRs(), [&](unsigned) {
+        const StubKey allocate = allocateExtension(extensionCellSizeFor(1));
+        const StubSignature signature = signatureOfAllocateExtension(allocate);
+        const GPRReg owner = signature.operands[0].gpr();
+        jit.shuffleRegisters<GPRReg, 3>({ object, r.field.extensionWordOffset, granuleBit }, { owner, signature.operands[1].gpr(), signature.operands[2].gpr() });
+        jit.callStub(allocate);
+        // The collector finds a new Extension only through its owner.
+        jit.move(owner, signatureOfWriteBarrier(writeBarrier()).operands[0].gpr());
+        jit.callStub(writeBarrier());
     });
     jit.jump().linkTo(findStorage, &jit);
 }

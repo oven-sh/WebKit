@@ -2,7 +2,7 @@
 # the field is what a `let` would be: the type loses undefined, one store is at most one store, and the allocation no longer lists the field.
 # A field that a closure reads before its store keeps it, and so does one that the program itself stores undefined to
 # RUN: valueflow-apply
-# CHECK: layout L0 {{*}}{key="early" declared={type=1} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}{{*}}{key="late" declared={type=undefined|1} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation}{{*}}{key="cleared" declared={type=undefined|1} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+# CHECK: layout L0 {{*}}{key="early" declared={type=1} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead isStoredBeforeCapturersRun=true}{{*}}{key="late" declared={type=undefined|1} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation}{{*}}{key="cleared" declared={type=undefined|1} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead isStoredBeforeCapturersRun=true}
 # CHECK-LABEL: function f0 name="main"
 # CHECK: = NewObject -, {{*}} layout=L0 fields=[1]
 # CHECK-LABEL: function f1 name="reader"

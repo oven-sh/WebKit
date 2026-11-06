@@ -181,13 +181,33 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
             hasOtherKind.link(&jit);
             return;
         }
+        case CellTestKind::IsClosureOf: {
+            static_assert(ClosureWord::functionShift == 32);
+            const GPRReg function = r.scratch;
+            Jump hasOtherKind = branchOnKind(CCallHelpers::NotEqual);
+            jit.load8(Address(r.value, JSCell::typeInfoTypeOffset()), cellType);
+            Jump isSlimClosure = jit.branch32(CCallHelpers::Equal, cellType, TrustedImm32(SlimClosureType));
+            // A slim closure that has got properties keeps the number of its function elsewhere.
+            cannot.append(jit.branch32(CCallHelpers::Equal, cellType, TrustedImm32(SlimClosureWithPropertiesType)));
+            testFailed.append(jit.branch32(CCallHelpers::NotEqual, cellType, TrustedImm32(CompiledClosureType)));
+            jit.load32(Address(r.value, offsetOfClosureEntry + sizeof(uint32_t)), function);
+            Jump hasUpperHalf = jit.jump();
+            isSlimClosure.link(&jit);
+            jit.load32(Address(r.value, offsetOfSlimClosureWord + sizeof(uint32_t)), function);
+            hasUpperHalf.link(&jit);
+            jit.and32(TrustedImm32(ClosureWord::functionMask), function);
+            isAccepted.append(jit.branch32(CCallHelpers::Equal, function, Address(cellTest, RuntimeCellTest::offsetOfOperand())));
+            testFailed.append(jit.jump());
+            hasOtherKind.link(&jit);
+            return;
+        }
         case CellTestKind::InheritsClassInfo:
         case CellTestKind::IsPristine:
         case CellTestKind::IsBuiltinCell:
-        case CellTestKind::IsClosureOf:
         case CellTestKind::IsSymbol:
         case CellTestKind::SharingModeIs:
         case CellTestKind::IsNamespaceOf:
+        case CellTestKind::CarriesBrandOfClass:
             cannot.append(branchOnKind(CCallHelpers::Equal));
             return;
         }

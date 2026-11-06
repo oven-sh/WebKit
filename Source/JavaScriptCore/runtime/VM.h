@@ -514,10 +514,12 @@ public:
     using AOTState = AOT::VMState;
     AOTState& aotState() LIFETIME_BOUND { return m_aotState; }
     bool hasCompiledCode() const { return m_aotState.hasCompiledCode; }
+    bool runsOnlyStaticCode() const { return Options::disallowNonStaticCode() && (hasCompiledCode() || !Options::disallowNonStaticCodeOnlyBesideCompiledCode()); }
     static constexpr ptrdiff_t offsetOfAOTState() { return OBJECT_OFFSETOF(VM, m_aotState); }
     AOTState m_aotState;
 #else
     static constexpr bool hasCompiledCode() { return false; }
+    static bool runsOnlyStaticCode() { return Options::disallowNonStaticCode(); }
 #endif
     ArrayStoragePolicy arrayStoragePolicy() const { return hasCompiledCode() || Options::keepDenseArraysDense() ? ArrayStoragePolicy::KeepsDenseArraysDense : ArrayStoragePolicy::UsesArrayStorageForSpeed; }
     PropertyRunTable propertyRuns;
@@ -647,6 +649,7 @@ public:
     WriteBarrier<NativeExecutable> m_promiseAllSettledSlowRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnyRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnySlowRejectFunctionExecutable;
+    WriteBarrier<NativeExecutable> m_proxyRevokeExecutable;
 
     WriteBarrier<JSCell> m_orderedHashTableDeletedValue;
     WriteBarrier<JSCell> m_orderedHashTableSentinel;
@@ -741,6 +744,8 @@ public:
     }
     static constexpr ptrdiff_t offsetOfOrderedHashTableDeletedValue() { return OBJECT_OFFSETOF(VM, m_orderedHashTableDeletedValue); }
 
+    static constexpr ptrdiff_t offsetOfOrderedHashTableSentinel() { return OBJECT_OFFSETOF(VM, m_orderedHashTableSentinel); }
+
     Structure* sentinelStructure() { return m_sentinelStructure.get(); }
     JSSentinel* fastArrayValuesSentinel() { return m_fastArrayValuesSentinel.get(); }
     JSSentinel* fastArrayKeysSentinel() { return m_fastArrayKeysSentinel.get(); }
@@ -771,6 +776,7 @@ public:
     inline NativeExecutable* promiseAllSettledSlowRejectFunctionExecutable();
     inline NativeExecutable* promiseAnyRejectFunctionExecutable();
     inline NativeExecutable* promiseAnySlowRejectFunctionExecutable();
+    inline NativeExecutable* proxyRevokeExecutable();
 
     WeakGCMap<WTF::SymbolImpl*, Symbol, PtrHash<WTF::SymbolImpl*>> symbolImplToSymbolMap;
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> atomStringToJSStringMap;
@@ -954,7 +960,6 @@ public:
     }
 
     void* lastStackTop() { return m_lastStackTop; }
-    void lowerLastStackTop(void* lowestAddress) { m_lastStackTop = std::min(m_lastStackTop, lowestAddress); }
     void LEGACY_NODELETE setLastStackTop(const Thread&);
     
 #if ENABLE(C_LOOP)
@@ -1246,7 +1251,13 @@ public:
     void setShouldBuildPCToCodeOriginMapping() { m_shouldBuildPCToCodeOriginMapping = true; }
     bool shouldBuilderPCToCodeOriginMapping() const { return m_shouldBuildPCToCodeOriginMapping; }
 
-    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry() { return *m_bytecodeIntrinsicRegistry; }
+    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry()
+    {
+        if (!m_bytecodeIntrinsicRegistry) [[unlikely]]
+            createBytecodeIntrinsicRegistry();
+        return *m_bytecodeIntrinsicRegistry;
+    }
+    bool hasBytecodeIntrinsicRegistry() const { return !!m_bytecodeIntrinsicRegistry; }
     
     ShadowChicken* shadowChicken() { return m_shadowChicken.getIfExists(); }
     ShadowChicken& ensureShadowChicken() { return m_shadowChicken.get(*this); }
@@ -1396,6 +1407,7 @@ private:
     NativeExecutable* promiseAllSettledSlowRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnyRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnySlowRejectFunctionExecutableSlow();
+    NativeExecutable* proxyRevokeExecutableSlow();
 
     void updateStackLimits();
 
@@ -1551,6 +1563,21 @@ public:
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
+#if ENABLE(AOT)
+    // While the innermost queue is this one, reactions go to the microtask queue. It stays in the chain, where the collector finds it.
+    SynchronousModuleQueue* m_synchronousModuleQueueSetAside { nullptr };
+#endif
+    // The queue that reactions are diverted to.
+    SynchronousModuleQueue* synchronousModuleQueue() const
+    {
+        if (!m_synchronousModuleQueue) [[likely]]
+            return nullptr;
+#if ENABLE(AOT)
+        if (m_synchronousModuleQueue == m_synchronousModuleQueueSetAside) [[unlikely]]
+            return nullptr;
+#endif
+        return m_synchronousModuleQueue;
+    }
 
     class SynchronousModuleQueueScope {
         WTF_MAKE_NONCOPYABLE(SynchronousModuleQueueScope);
@@ -1636,8 +1663,6 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 #endif
 
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
-// sanitizeStackForVM() clears from where its last call stood. What ran since then may have gone deeper.
-JS_EXPORT_PRIVATE void sanitizeStackForVMFrom(VM&, void* lowestAddress);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
 // While one of these is alive, properties can be put directly on an object whose Structure says hasImmutableProperties(); it changes

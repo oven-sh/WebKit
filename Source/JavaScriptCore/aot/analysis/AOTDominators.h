@@ -47,6 +47,10 @@ public:
 
     bool dominates(BlockID from, BlockID to) const { return from == to || strictlyDominates(from, to); }
 
+    // The blocks of the tree in the order in which a walk from the root enters them. What a block dominates has the numbers from its own to the last one below it.
+    uint32_t numberOf(BlockID block) const { return placeOf(block).number; }
+    uint32_t lastNumberBelow(BlockID block) const { return placeOf(block).lastNumberBelow; }
+
     std::span<const BlockID> children(BlockID block) const
     {
         RELEASE_ASSERT(block.index() < m_cfg.numNodes());

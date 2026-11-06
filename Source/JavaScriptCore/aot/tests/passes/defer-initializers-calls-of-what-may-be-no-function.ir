@@ -1,0 +1,150 @@
+# A call of what is no function throws a TypeError, and so do a call of a class and `new` of what is no constructor. The callees of a call are what it enters, and such a call enters nothing.
+# A call that may throw so stays where it stands, with the object whose method makes it. Where all that arrives can be called, nobody can tell when the call ran, and it is put off with the object.
+#   function called(x) { if (off) x = () => 1; ({ answers() { x() } }).answers() } called(0)
+#   function constructed(x) { if (off) x = function () {}; ({ answers() { new x } }).answers() } constructed(() => 1)
+#   function classCalled(x) { if (off) x = () => 1; ({ answers() { x() } }).answers() } classCalled(class {})
+#   function proven(x) { if (off) x = () => 1; ({ answers() { x() } }).answers() } proven(() => 1)
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline DeferInitializers
+# STATISTIC: InitializersDeferred = 1
+
+# CHECK-LABEL: function f1 name="called"
+# CHECK: = Call {{*}} callees=[f5]
+# CHECK-LABEL: function f2 name="constructed"
+# CHECK: = Call {{*}} callees=[f6]
+# CHECK-LABEL: function f3 name="classCalled"
+# CHECK: = Call {{*}} callees=[f7]
+# CHECK-LABEL: function f4 name="proven"
+# CHECK-NOT: = Call
+# CHECK: Return
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance module=m0 constructor=f11
+layout L1 module=m0 fields=[{key="answers" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L2 module=m0 fields=[{key="answers" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L3 module=m0 fields=[{key="answers" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L4 module=m0 fields=[{key="answers" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Integer
+    v2 = Call v0, -, v1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f9
+    v5 = Call v3, -, v4
+    v6 = NewClosure function=f3
+    v7 = NewClosure function=f11
+    v8 = NewClass v7 layout=L0
+    v9 = FinishClass v8 layout=L0
+    v10 = Call v6, -, v9
+    v11 = NewClosure function=f4
+    v12 = NewClosure function=f9
+    v13 = Call v11, -, v12
+    Return
+}
+function f1 name="called" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="off" [isFreeName]
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2(v0)
+  b1():
+    v4 = NewClosure function=f9
+    Jump -> next b2(v4)
+  b2(v5):
+    v6 = NewClosure v5 function=f5
+    v7 = NewObject layout=L1
+    PropDefine v7, v6 key="answers"
+    v9 = FinishObject v7
+    v10 = PropGet v9 key="answers"
+    v11 = Call v10, v9
+    Return
+}
+function f2 name="constructed" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="off" [isFreeName]
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2(v0)
+  b1():
+    v4 = NewClosure function=f10
+    Jump -> next b2(v4)
+  b2(v5):
+    v6 = NewClosure v5 function=f6
+    v7 = NewObject layout=L2
+    PropDefine v7, v6 key="answers"
+    v9 = FinishObject v7
+    v10 = PropGet v9 key="answers"
+    v11 = Call v10, v9
+    Return
+}
+function f3 name="classCalled" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="off" [isFreeName]
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2(v0)
+  b1():
+    v4 = NewClosure function=f9
+    Jump -> next b2(v4)
+  b2(v5):
+    v6 = NewClosure v5 function=f7
+    v7 = NewObject layout=L3
+    PropDefine v7, v6 key="answers"
+    v9 = FinishObject v7
+    v10 = PropGet v9 key="answers"
+    v11 = Call v10, v9
+    Return
+}
+function f4 name="proven" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="off" [isFreeName]
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2(v0)
+  b1():
+    v4 = NewClosure function=f9
+    Jump -> next b2(v4)
+  b2(v5):
+    v6 = NewClosure v5 function=f8
+    v7 = NewObject layout=L4
+    PropDefine v7, v6 key="answers"
+    v9 = FinishObject v7
+    v10 = PropGet v9 key="answers"
+    v11 = Call v10, v9
+    Return
+}
+function f5 name="answers" module=m0 kind=Method captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f6 name="answers" module=m0 kind=Method captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Construct v0
+    Return
+}
+function f7 name="answers" module=m0 kind=Method captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f8 name="answers" module=m0 kind=Method captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f9 name="x" module=m0 kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f10 name="x" module=m0 results=[{type=anything}] {
+    Return
+}
+function f11 module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}

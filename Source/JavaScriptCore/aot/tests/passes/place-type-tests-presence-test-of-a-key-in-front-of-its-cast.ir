@@ -19,7 +19,7 @@ function f0 name="readsAtCastKey" parameters=[{type=Array<number>}, {type=number
   b2():
     Return v2
 # CHECK: = TypeTest v1 testedType=number
-# CHECK: [[key]]: int|whole = AssumeType [[number]] provenType=int|whole
+# CHECK: [[key]]: int|whole = AssumeType [[number]], [[here22]] provenType=int|whole
 # CHECK: = GetArrayElement v0, [[key]], {{*}} [keyIsIntegral, isPresent]
 # CHECK: = IsElementPresent v0, [[number]], {{*}} arrayStorage=Double
 }

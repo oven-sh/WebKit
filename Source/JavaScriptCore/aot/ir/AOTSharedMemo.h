@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTOutgrownTable.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -115,6 +116,8 @@ private:
                 larger->insert(node);
             tables.append(WTF::move(larger));
             table.store(tables.last().get(), std::memory_order_release);
+            if (tables.size() > 1)
+                letGoOfPagesOfOutgrownTable(tables[tables.size() - 2]->slots.mutableSpan());
             return *tables.last();
         }
 
@@ -168,7 +171,7 @@ public:
         };
         if (const ProvisionalSet* known = m_provisionalSets.find(hash, isWanted))
             return known->list;
-        return m_provisionalSets.add(hash, ProvisionalSet { set, phase, idOf(types.at(set).members.span()) }, isWanted).list;
+        return m_provisionalSets.add(hash, ProvisionalSet { set, phase, idOf(types.at(set).written().span()) }, isWanted).list;
     }
 
 private:

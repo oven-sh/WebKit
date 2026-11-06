@@ -11,6 +11,7 @@
 #include "AOTArrayBufferViewBuiltinEmitter.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTBuiltinOperationSupport.h"
+#include "AOTBuiltinTypes.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTResultRules.h"
@@ -30,6 +31,26 @@ static LValue bitwiseCast(Output& out, LValue value)
 BufferBuiltinEmitter::BufferBuiltinEmitter(CodeGenerator& generator)
     : BuiltinFamilyEmitter(generator)
 {
+}
+
+void BufferBuiltinEmitter::generateDataViewByteLength(const InlineCall& call)
+{
+    ArrayBufferViewBuiltinEmitter& views = emitter<ArrayBufferViewBuiltinEmitter>();
+    CellPointer view = cellOperand(call.receiver());
+    missUnless(call, views.hasFixedLength(view));
+    // A view of a detached buffer has no bytes, and the getter throws.
+    Integer length = views.lengthOf(view);
+    missUnless(call, isNotZero(length));
+    finish(call, length, Range { 1, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
+}
+
+void BufferBuiltinEmitter::generateArrayBufferByteLength(const InlineCall& call)
+{
+    CellPointer cell = cellOperand(call.receiver());
+    Pointer buffer = loadField<Pointer>(cell, m_heaps.JSArrayBuffer_impl);
+    Integer length = loadField<Integer>(buffer, m_heaps.ArrayBuffer_sizeInBytes);
+    ensureStillAliveHere(cell);
+    finish(call, length, Range { 0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
 }
 
 void BufferBuiltinEmitter::generateDataViewGet(const InlineCall& call)
@@ -68,6 +89,50 @@ void BufferBuiltinEmitter::generateDataViewSet(const InlineCall& call)
     storeBytes(address, elements, stored, order);
     ensureStillAliveHere(view);
     finishWithUndefined(call);
+}
+
+// `source.copy(target, targetStart, sourceStart, sourceEnd)` copies as many bytes as are available and fit. A position that is negative, fractional or past the end of the source falls back to the function.
+void BufferBuiltinEmitter::generateBufferCopy(const InlineCall& call)
+{
+    ArrayBufferViewBuiltinEmitter& views = emitter<ArrayBufferViewBuiltinEmitter>();
+    LBasicBlock miss = missBlockOf(call);
+    CellPointer source = cellOperand(call.receiver());
+    CellPointer target = cellOperand(call.argument(0));
+    auto positionOr = [&](unsigned argumentIndex, Integer otherwise) {
+        ValueID id = call.argumentOrNull(argumentIndex);
+        if (!id)
+            return otherwise;
+        Integer position = offsetOrElse(id, miss);
+        if (mayBeNegative(id))
+            branchUnless(greaterThanOrEqual(position, 0), miss);
+        return position;
+    };
+    auto byteLengthOf = [&](CellPointer view, ValueID id) {
+        return Integer(m_out.shl(views.lengthOf(view).value(), logElementSize(typedArrayTypeOf(m_builtins, typeOf(id)))));
+    };
+    Integer targetStart = positionOr(1, integer(0));
+    Integer sourceStart = positionOr(2, integer(0));
+    missUnless(call, views.haveFixedLength(source, target));
+    Integer sourceLength = byteLengthOf(source, call.receiver());
+    Integer sourceEnd = positionOr(3, sourceLength);
+    if (call.numberOfArguments() > 2)
+        branchUnless(lessThanOrEqual(sourceStart, sourceLength), miss);
+    if (call.numberOfArguments() > 3)
+        sourceEnd = select(lessThan(sourceEnd, sourceLength), sourceEnd, sourceLength);
+    Integer available = sub(sourceEnd, sourceStart);
+    Integer room = sub(byteLengthOf(target, call.argument(0)), targetStart);
+    Integer least = select(lessThan(available, room), available, room);
+    Integer count = select(greaterThan(least, 0), least, 0);
+    LBasicBlock move = newBlock();
+    LBasicBlock done = newBlock();
+    m_out.branch(isNotZero(count).value(), normalEdge(move), unlikelyEdge(done));
+
+    m_out.appendTo(move);
+    views.moveBytes(call.context(), target, targetStart, source, sourceStart, count);
+    m_out.jump(done);
+
+    m_out.appendTo(done);
+    finish(call, count, Range { 0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
 }
 
 BufferBuiltinEmitter::ByteOrder BufferBuiltinEmitter::byteOrderOf(const InlineCall& call, unsigned argumentIndex, unsigned size)
@@ -151,7 +216,7 @@ Operand BufferBuiltinEmitter::loadBytes(const OperationContext& context, Pointer
         LValue bits = inByteOrder(size == 2 ? m_out.load16ZeroExt32(pointer) : size == 4 ? m_out.load32(pointer) : m_out.load64(pointer), size, order);
         switch (elements) {
         case TypeInt16:
-            element = shiftRight(shiftLeft(Word32(bits), word32(16)), word32(16));
+            element = shiftRight(shiftLeft(Word32(bits), 16), 16);
             break;
         case TypeUint16:
         case TypeInt32:
@@ -226,7 +291,8 @@ Integer BufferBuiltinEmitter::low64Of(CellPointer bigInt)
 {
     return either<Integer>(isNotZero(loadField<Word32>(bigInt, m_heaps.JSBigInt_length)), [&] {
         Integer digit = loadField<Integer>(bigInt, m_heaps.JSBigInt_data);
-        return select(isNegativeBigInt(bigInt), neg(digit), digit);
+        Condition isNegative = isNegativeBigInt(bigInt);
+        return select(isNegative, neg(digit), digit);
     }, [&] {
         return integer(0);
     });
@@ -268,16 +334,21 @@ Operand BufferBuiltinEmitter::valueToStoreOrElse(ValueID id, TypedArrayType elem
         return numberOperand(id);
     if (isBigInt(elements)) {
         CellPointer bigInt = cellOperand(id);
-        branchUnless(belowOrEqual(loadField<Word32>(bigInt, m_heaps.JSBigInt_length), word32(1)), otherwise);
+        branchUnless(belowOrEqual(loadField<Word32>(bigInt, m_heaps.JSBigInt_length), 1), otherwise);
         Integer value = low64Of(bigInt);
         Condition isNegative = isNegativeBigInt(bigInt);
-        branchUnless(elements == TypeBigUint64 ? logicalNot(isNegative) : logicalOr(isZero(value), equal(lessThan(value, integer(0)), isNegative)), otherwise);
+        if (elements == TypeBigUint64)
+            branchUnless(logicalNot(isNegative), otherwise);
+        else {
+            Condition valueIsZero = isZero(value);
+            branchUnless(logicalOr(valueIsZero, equal(lessThan(value, 0), isNegative)), otherwise);
+        }
         return value;
     }
     Integer value = offsetOrElse(id, otherwise);
     Range range = elementTypeOf(elements).integers;
     if (const Type& valueType = typeOf(id); !valueType.isInteger() || !valueType.integers.isSubsetOf(range))
-        branchUnless(belowOrEqual(sub(value, integer(range.minimum)), integer(range.maximum - range.minimum)), otherwise);
+        branchUnless(belowOrEqual(sub(value, range.minimum), range.maximum - range.minimum), otherwise);
     return low32(value);
 }
 

@@ -9,7 +9,7 @@ function f0 name="permanentCells" role=Library parameters=[{type=anything}] resu
     v2 = BigInt digits="12345678901234567890"
     v3 = Builtin builtin=MathMax
     v4 = KeyConstant key=@@iterator
-    v5 = LinkTimeConstant constant=6
+    v5 = LinkTimeConstant constant=3
     v6 = SharedRegExpLiteral pattern="a+"
     v7 = TypeTest v0 testedType="a"|"b"
     Return

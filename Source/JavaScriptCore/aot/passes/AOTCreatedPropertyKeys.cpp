@@ -71,7 +71,7 @@ static ReturnedStrings findReturnedStrings(const Program& program, FunctionID id
     while (!worklist.isEmpty()) {
         ValueID returned = worklist.takeLast();
         const Value& value = function.at(returned);
-        if (ValueID definition = sameObjectThroughCasts(function, returned); definition != returned)
+        if (ValueID definition = sameObjectThroughCasts(function, returned).valueInFrontOfFacts(); definition != returned)
             add(definition);
         else if (value.opcode == Opcode::Parameter) {
             for (const Block& block : function.blocks) {
@@ -169,7 +169,7 @@ void markResultsUsedAsKeys(ProgramEditor& editor, BuildContext& build)
                 found.append(findUseOfResult(program, FunctionID(index), useLists, call));
         }
     });
-    AOT::stableSort(uses, { }, &KeyResultUse::callee);
+    AOT::stableSortInLine(uses, { }, &KeyResultUse::callee);
 
     uint64_t numberOfMarkedStrings = 0;
     for (const ReturnedStrings& strings : returned) {
@@ -235,7 +235,7 @@ bool callsSymbolDirectly(const BuiltinTable& builtins, const Function& function,
 
 std::optional<PropertyKey> keyOfSymbolsCreatedBy(const Function& function, const Value& operation)
 {
-    if (operation.opcode != Opcode::Call || !function.module || !operation.hasPosition())
+    if (operation.opcode != Opcode::Call || !function.module || !operation.callNumber())
         return std::nullopt;
 
     std::span<const ValueID> arguments = operation.variadicOperands();
@@ -249,7 +249,7 @@ std::optional<PropertyKey> keyOfSymbolsCreatedBy(const Function& function, const
             return std::nullopt;
         description = text->string();
     }
-    return PropertyKey { .kind = PropertyKeyKind::CreatedSymbol, .text = description, .module = function.module, .position = operation.position };
+    return PropertyKey { .kind = PropertyKeyKind::CreatedSymbol, .text = description, .module = function.module, .callNumber = operation.callNumber() };
 }
 
 std::optional<PropertyKey> keyOfSymbolRegisteredBy(const BuiltinTable& builtins, const Function& function, const Value& operation)

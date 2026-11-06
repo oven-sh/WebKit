@@ -28,7 +28,8 @@
 # CHECK-NEXT: [[made]]: L0 = CallDirect function=[[initializer]]
 # CHECK-NEXT: Jump -> next [[rest]]([[made]])
 # CHECK: [[filled]]():
-# CHECK-NEXT: [[found]]: L0 = AssumeType [[held]] provenType=L0
+# CHECK-NEXT: [[here31]]: fact = Specified
+# CHECK-NEXT: [[found]]: L0 = AssumeType [[held]], [[here31]] provenType=L0
 # CHECK-NEXT: Jump -> next [[rest]]([[found]])
 # CHECK: function [[initializer]] name="" module=m0 {{*}}role=OutlinedBody {{*}}results=[{type=L0}] {{*}}derivation={source=f0}
 # CHECK: [[object]]: L0 = NewObject

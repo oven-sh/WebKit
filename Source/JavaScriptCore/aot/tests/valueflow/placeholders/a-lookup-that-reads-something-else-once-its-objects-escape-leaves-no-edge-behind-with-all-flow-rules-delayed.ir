@@ -1,0 +1,25 @@
+# holder = { name }; below = { __proto__: holder }; below.name; somethingNoTableLists(below)
+# While nothing has escaped, the lookup of `name` leads what is written on the two objects into its answer. Then both escape, the object nobody knows covers them, and the lookup asks for other reads.
+# Nobody asks for the first read any more and it goes to rest. Its edge into the answer goes with it: left in, it would deliver again as soon as any statement, for any purpose, asked for a read
+# of the same objects under the same name, and what flow answers would hang on which keys happen to coincide.
+# OPTIONS: testing=DelayFlowRules,DelayOtherFlowRules
+# RUN: valueflow-why outlived-edges
+# CHECK: outlived-edges 0 of
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Below"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject v1 layout=L1 fields=[]
+    v3 = PropGet v2 key="name"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="somethingThatNoTableLists" [isFreeName]
+    v6 = Call v5, -, v2
+    Return
+}
+function f1 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}

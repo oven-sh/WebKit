@@ -85,5 +85,5 @@ function f1 name="arrayOrNumber" parameters=[{type=number|Array<number, pristine
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

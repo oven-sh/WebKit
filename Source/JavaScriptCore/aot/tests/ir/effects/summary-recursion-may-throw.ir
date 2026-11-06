@@ -1,4 +1,4 @@
-# A cycle of direct calls can overflow the stack, so its functions and their callers may throw. A call chain without a cycle cannot
+# A cycle of direct calls runs until the stack ends, so its functions and their callers throw by rule. A call outside every cycle throws only where a frame finds no room
 # FORM: Prepared
 # RUN: effects summaries
 
@@ -35,5 +35,5 @@ function f6 name="leaf" parameters=[{type=number}] results=[{type=number}] {
 # CHECK: f2 return: throws throw: throws
 # CHECK: f3 return: throws throw: throws
 # CHECK: f4 return: throws throw: throws
-# CHECK: f5 return: none throw: none
-# CHECK: f6 return: none throw: none
+# CHECK: f5 return: throwsForLackOfStack throw: throwsForLackOfStack
+# CHECK: f6 return: throwsForLackOfStack throw: throwsForLackOfStack

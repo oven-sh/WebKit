@@ -1,0 +1,31 @@
+# A test run opens a name on Object.prototype, which takes no other new name. A read of that name that misses on the way up may find it there, so it stays a lookup.
+# So does a read of a member of Object.prototype that is listed as replaceable. The members that are not listed are still constants.
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="port" declared={type=number} flags=[IsRequired]}]
+replaceablebuiltin member=ObjectPrototypeHasOwnProperty
+openedname holder=ObjectPrototype name="proxy"
+function f0 name="openedName" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="proxy"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="openedName"
+# CHECK: anything = PropGet v0 key="proxy"
+
+function f1 name="replaceableMember" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="hasOwnProperty"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="replaceableMember"
+# CHECK-NOT: builtin(ObjectPrototypeHasOwnProperty)
+# CHECK: anything = PropGet v0 key="hasOwnProperty"
+
+function f2 name="neighborStaysLocked" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="isPrototypeOf"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="neighborStaysLocked"
+# CHECK-NOT: IsBuiltinLocationUnchanged
+# CHECK: builtin(ObjectPrototypeIsPrototypeOf)

@@ -1,0 +1,55 @@
+# Where two new lists meet, the guard parameter proves their storage if both are born with the same one, whether the list names it or its elements decide it
+# FORM: Prepared
+# RUN: guards
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="oneNamesWhatTheElementsOfTheOtherDecide" parameters=[{type=object}, {type=boolean}, {type=int[0, 0]}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v0 contents=object arrayStorage=Contiguous [contentsAreProven]
+    v4 = AllGuards v3
+    Jump -> next b3(v3, v4)
+  b2():
+    v5 = NewArray v0, v0 contents=object
+    v6 = AllGuards v5
+    Jump -> next b3(v5, v6)
+  b3(v7, v8):
+    v9 = GetArrayElement v7, v2, v8 arrayStorage=Contiguous [keyIsIntegral]
+    Return v9
+}
+# CHECK-LABEL: function f0
+# CHECK: v8 facts: [Pristine of v7 by allocation v3 reads PrototypeLinks NamedProperties, ArrayStorage of v7 by allocation v3 reads ArrayStorage]
+
+function f1 name="neitherNamesIt" parameters=[{type=object}, {type=boolean}, {type=int[0, 0]}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v0 contents=object
+    v4 = AllGuards v3
+    Jump -> next b3(v3, v4)
+  b2():
+    v5 = NewArray v0, v0 contents=object
+    v6 = AllGuards v5
+    Jump -> next b3(v5, v6)
+  b3(v7, v8):
+    v9 = GetArrayElement v7, v2, v8 arrayStorage=Contiguous [keyIsIntegral]
+    Return v9
+}
+# CHECK-LABEL: function f1
+# CHECK: v8 facts: [Pristine of v7 by allocation v3 reads PrototypeLinks NamedProperties, ArrayStorage of v7 by allocation v3 reads ArrayStorage]
+
+function f2 name="objectsOnOneWayNumbersOnTheOther" parameters=[{type=object}, {type=boolean}, {type=i32}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v0 contents=object
+    v4 = AllGuards v3
+    Jump -> next b3(v3, v4)
+  b2():
+    v5 = NewArray v2 contents=i32
+    v6 = AllGuards v5
+    Jump -> next b3(v5, v6)
+  b3(v7, v8):
+    Return v7
+}
+# CHECK-LABEL: function f2
+# CHECK: v8 facts: [Pristine of v7 by allocation v3 reads PrototypeLinks NamedProperties]

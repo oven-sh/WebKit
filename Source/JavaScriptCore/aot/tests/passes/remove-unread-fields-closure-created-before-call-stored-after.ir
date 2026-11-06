@@ -1,0 +1,83 @@
+# A closure in a field of an environment that nothing reads holds what it captures. Until the environment is given the closure, by its allocation or by a store, only the function has the closure,
+# and the function holds what it is about to store as well. So what may leave the block between the place where the closure is made and the place where the environment is given it says nothing:
+# where every operation completes between that place and the store that names the captured object in a field of its own, the closure holds nothing that the environment does not hold.
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}}}, {key="unread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L1 kind=Environment name="scopeGivenInFrontOfACall" fields=[{key="x" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}}}, {key="unread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L2 kind=Environment name="scopeStoredToInFrontOfACall" fields=[{key="x" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}}}, {key="unread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+
+function f0 name="listedBehindTheCall" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure v0 function=f4
+    v3 = Call v1, -
+    v4 = NewObject -, v2 layout=L0 fields=[1]
+    PutEnvironmentField v4, v0 layout=L0 field=0
+    v6 = NewClosure v4 function=f5
+    Return v6
+# CHECK-NOT: function=f4
+# CHECK: = Call v1
+# CHECK-NEXT: [[scope0]]:{{*}}= NewObject layout=L0
+# CHECK-NEXT: PutEnvironmentField [[scope0]], v0 layout=L0
+# CHECK-NEXT: = NewClosure [[scope0]] function=f5
+}
+
+function f1 name="storedBehindTheCall" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure v0 function=f4
+    v3 = Call v1, -
+    v4 = NewObject layout=L0
+    PutEnvironmentField v4, v2 layout=L0 field=1
+    PutEnvironmentField v4, v0 layout=L0 field=0
+    v7 = NewClosure v4 function=f5
+    Return v7
+# CHECK-NOT: function=f4
+# CHECK: = Call v1
+# CHECK-NEXT: [[scope1]]:{{*}}= NewObject layout=L0
+# CHECK-NEXT: PutEnvironmentField [[scope1]], v0 layout=L0
+# CHECK-NEXT: = NewClosure [[scope1]] function=f5
+}
+
+function f2 name="listedInFrontOfTheCall" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure v0 function=f4
+    v3 = NewObject -, v2 layout=L1 fields=[1]
+    v4 = NewClosure v3 function=f6
+    v5 = Call v1, -, v4
+    PutEnvironmentField v3, v0 layout=L1 field=0
+    Return v4
+# The call may leave the function with the environment in other hands, and then the closure alone holds the object.
+# CHECK: v2:{{*}}= NewClosure v0 function=f4
+# CHECK-NEXT: = NewObject -, v2 layout=L1 fields=[1]
+}
+
+function f3 name="storedInFrontOfTheCall" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure v0 function=f4
+    v3 = NewObject layout=L2
+    PutEnvironmentField v3, v2 layout=L2 field=1
+    v5 = NewClosure v3 function=f7
+    v6 = Call v1, -, v5
+    PutEnvironmentField v3, v0 layout=L2 field=0
+    Return v5
+# CHECK: v2:{{*}}= NewClosure v0 function=f4
+# CHECK: PutEnvironmentField v3, v2 layout=L2 field=1
+}
+
+function f4 name="readsObject" kind=Arrow captures=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    Return v0
+}
+function f5 name="readsScope" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+function f6 name="readsScopeGivenInFrontOfACall" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}
+function f7 name="readsScopeStoredToInFrontOfACall" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2 field=0
+    Return v1
+}

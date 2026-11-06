@@ -26,12 +26,12 @@ namespace JSC { namespace AOT { namespace Typed {
 
 using DecorationMark = B3::AbstractHeapRepository::DecorationMark;
 
-static bool receivesUnspecifiedValue(const Function& function, const BitVector& unspecifiedValues, Edge edge, uint32_t parameterIndex)
+static bool receivesMarkedValue(const Function& function, const BitVector& markedValues, Edge edge, uint32_t parameterIndex)
 {
     IncomingValue incoming = incomingValueOf(function, edge, parameterIndex);
     switch (incoming.kind) {
     case IncomingValue::Kind::Argument:
-        return unspecifiedValues.get(incoming.argument.index());
+        return markedValues.get(incoming.argument.index());
     case IncomingValue::Kind::EdgeResult:
         break;
     }
@@ -39,7 +39,7 @@ static bool receivesUnspecifiedValue(const Function& function, const BitVector& 
     EdgeResult result = edgeResultAt(function, incoming.result);
     switch (result.kind) {
     case EdgeResultKind::NarrowedOperand:
-        return unspecifiedValues.get(result.subject.index());
+        return markedValues.get(result.subject.index());
     case EdgeResultKind::Guard:
     case EdgeResultKind::DeclaredResult:
         return false;
@@ -47,36 +47,29 @@ static bool receivesUnspecifiedValue(const Function& function, const BitVector& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A function that returns the parts of an object returns Unspecified values for the parts that the returned variant does not have.
-static bool isUnspecifiedAtDefinition(const Function& function, const Value& value)
-{
-    if (value.opcode == Opcode::Unspecified)
-        return true;
-    return value.opcode == Opcode::ResultAt && effectRuleOf(function.at(value.resultsOperand()).opcode) == EffectRule::Call;
-}
-
-static bool returnsUnspecifiedOperand(const Function& function, const Value& value, const BitVector& unspecifiedValues)
+static bool returnsMarkedOperand(const Function& function, const Value& value, const BitVector& markedValues)
 {
     if (!hasRegister(value.representation))
         return false;
-    bool returnsUnspecified = false;
+    bool returnsMarked = false;
     forEachReturnedOperand(function, value, [&](ValueID operand) {
-        returnsUnspecified |= unspecifiedValues.get(operand.index());
+        returnsMarked |= markedValues.get(operand.index());
     });
-    return returnsUnspecified;
+    return returnsMarked;
 }
 
-static BitVector collectUnspecifiedValues(const Function& function, const CFG& cfg)
+// A validating build marks a read that it moved to where the program does not read. The type does not say so: a pass that saw the mark would decide otherwise than in any other build.
+static BitVector collectValuesValidatedWhereLookedAt(const Function& function, const CFG& cfg)
 {
-    BitVector unspecifiedValues;
+    BitVector markedValues;
     for (BlockID block : cfg.reversePostOrder()) {
         for (ValueID id : function.at(block).values) {
-            if (isUnspecifiedAtDefinition(function, function.at(id)))
-                unspecifiedValues.set(id.index());
+            if (function.at(id).opcode == Opcode::GetModuleVariable && function.at(id).isValidatedWhereLookedAt())
+                markedValues.set(id.index());
         }
     }
-    if (unspecifiedValues.isEmpty())
-        return unspecifiedValues;
+    if (markedValues.isEmpty())
+        return markedValues;
 
     bool changed = true;
     while (changed) {
@@ -85,25 +78,27 @@ static BitVector collectUnspecifiedValues(const Function& function, const CFG& c
             const Block& block = function.at(id);
             for (uint32_t parameterIndex = 0; parameterIndex < block.parameters.size(); ++parameterIndex) {
                 for (Edge edge : cfg.incomingEdges(id)) {
-                    if (receivesUnspecifiedValue(function, unspecifiedValues, edge, parameterIndex))
-                        changed |= unspecifiedValues.add(block.parameters[parameterIndex].index());
+                    if (receivesMarkedValue(function, markedValues, edge, parameterIndex))
+                        changed |= markedValues.add(block.parameters[parameterIndex].index());
                 }
             }
             for (ValueID value : block.values) {
-                if (returnsUnspecifiedOperand(function, function.at(value), unspecifiedValues))
-                    changed |= unspecifiedValues.add(value.index());
+                if (returnsMarkedOperand(function, function.at(value), markedValues))
+                    changed |= markedValues.add(value.index());
             }
         }
         changed &= cfg.hasCycle();
     }
-    return unspecifiedValues;
+    return markedValues;
 }
 
-bool CodeGenerator::mayBeUnspecified(ValueID id)
+bool CodeGenerator::isValidatedWhereLookedAt(ValueID id)
 {
-    if (!m_unspecifiedValues)
-        m_unspecifiedValues = collectUnspecifiedValues(function(), analyses().cfg());
-    return m_unspecifiedValues->get(id.index());
+    if (typeOf(id).mayBeUnspecified())
+        return true;
+    if (!m_valuesValidatedWhereLookedAt)
+        m_valuesValidatedWhereLookedAt = collectValuesValidatedWhereLookedAt(function(), analyses().cfg());
+    return m_valuesValidatedWhereLookedAt->get(id.index());
 }
 
 // Decode declares the effects of creating a string constant, yet the decoded reference of a cell is plain arithmetic.
@@ -189,7 +184,7 @@ bool CodeGenerator::hasTypeOnlyBehindTest(ValueID parameter)
 
 static bool isPinnedByEffects(const Effects& effects)
 {
-    return effects.mayExitSideways() || effects.mayCollect || !effects.writes.isEmpty();
+    return effects.mayThrowOtherThanStackOverflow() || effects.mayBeTerminated || effects.mayRunOtherCode() || effects.mayCollect || !effects.writes.isEmpty();
 }
 
 static bool isCallOrPhi(B3::Opcode opcode)
@@ -212,9 +207,9 @@ static bool hasUnconditionalType(CodeGenerator& generator, std::span<const LValu
 {
     const Value& value = generator.function().at(id);
     if (value.opcode == Opcode::Parameter)
-        return !generator.mayBeUnspecified(id) && (published == PublishedValue::Itself || !generator.hasTypeOnlyBehindTest(id));
+        return !generator.typeOf(id).mayBeUnspecified() && (published == PublishedValue::Itself || !generator.hasTypeOnlyBehindTest(id));
     if (value.opcode == Opcode::ResultAt)
-        return !generator.mayBeUnspecified(id) && isPinnedWithOperation(generator, loweredValues[id.index()], value.resultsOperand());
+        return !generator.typeOf(id).mayBeUnspecified() && isPinnedWithOperation(generator, loweredValues[id.index()], value.resultsOperand());
 
     switch (resultRuleOf(value.opcode)) {
     case ResultRule::Constant:
@@ -245,7 +240,7 @@ static bool typeHoldsWhereverComputed(CodeGenerator& generator, std::span<const 
 
     bool holdsForOperands = true;
     value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        holdsForOperands &= value.operandKind(operandIndex) != OperandKind::Guard
+        holdsForOperands &= value.operandKind(operandIndex) != OperandKind::Guard && value.operandKind(operandIndex) != OperandKind::Fact
             && hasUnconditionalType(generator, loweredValues, valueBeforeConversions(function, operand), PublishedValue::DerivedFromIt);
     });
     return holdsForOperands;
@@ -291,24 +286,31 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
 {
     constexpr unsigned headerSize = sizeof(JSCell);
 
-    bool hasOnlyCells = !(type.primitives & ~cellPrimitives);
-    ASSERT(hasOnlyCells);
-    if (!hasOnlyCells)
+    ASSERT(!(type.primitives & ~cellPrimitives));
+    // The word is zero for a built-in that the realm lacks, or whose property held another value when it was first looked up.
+    if (!type.builtins.isEmpty())
         return 0;
     if (type.environment)
         return placement.layout(type.environment).size;
     if (type.isAnyString() || type.isOpaque(OpaqueKind::FlatString))
         return sizeof(JSString);
-    if (!type.hasOnlyLayouts(program))
+    if (!type.hasOnlyLayouts())
         return headerSize;
 
     std::optional<unsigned> least;
     for (LayoutID member : membersOf(program, type)) {
         const PlannedLayout& layout = placement.layout(member);
-        unsigned size = layout.hasSlots() ? layout.size : headerSize;
+        unsigned size = layout.holdsCompiledObjects() ? layout.size : headerSize;
         least = least ? std::min(*least, size) : size;
     }
     return least.value_or(0);
+}
+
+bool CodeGenerator::holdsTypeWhereverComputed(ValueID id)
+{
+    // A reference is used as it was lowered. Any other form has to be converted first, and B3 may do that earlier.
+    PublishedValue published = function().at(id).representation == Representation::Cell ? PublishedValue::Itself : PublishedValue::DerivedFromIt;
+    return !typeOf(id).mayBeUnspecified() && typeHoldsWhereverComputed(*this, m_values.span(), id, published);
 }
 
 void CodeGenerator::publishKnownProperties(ValueID id, LValue lowered)
@@ -324,10 +326,10 @@ void CodeGenerator::publishKnownPropertiesOfConvertedValue(ValueID id, Operand c
 void CodeGenerator::publishKnownProperties(ValueID id, Operand operand, bool isConverted)
 {
     LValue lowered = operand.value;
-    if (lowered->isConstant())
+    const Type& type = typeOf(id);
+    if (lowered->isConstant() || type.mayBeUnspecified())
         return;
 
-    const Type& type = typeOf(id);
     Representation representation = operand.representation;
     std::optional<B3::IntRange> range = B3::mayHaveKnownRange(lowered->opcode()) ? knownRangeOf(type, representation) : std::nullopt;
     unsigned bytes = representation == Representation::Cell ? leastCellSizeOf(program(), m_inputs.program.placement, type) : 0;
@@ -358,9 +360,30 @@ static std::optional<int64_t> constantStepOf(const InductionStep& step, Represen
     return amount.value();
 }
 
+// Once the other entries into such a cycle are removed, an edge that enters the loop today becomes a back edge, and it passes the counter unchanged.
+static bool isOnCycleWithSeveralEntries(FunctionAnalyses& analyses, const LoopInduction& induction)
+{
+    const NaturalLoops& loops = analyses.naturalLoops();
+    const NaturalLoop& loop = loops.loop(induction.loopIndex);
+    auto enters = [&](Edge edge) {
+        return !loops.belongsTo(edge.from, loop);
+    };
+    if (std::ranges::count_if(analyses.cfg().incomingEdges(induction.header), enters) <= 1)
+        return false;
+
+    const BlockCycles::Forest& forest = analyses.blockCycles().forest();
+    for (unsigned cycle = forest.innermost(induction.header); cycle != BlockCycles::Forest::none; cycle = forest[cycle].parent) {
+        if (!forest[cycle].isReducible())
+            return true;
+    }
+    return false;
+}
+
 void CodeGenerator::publishInductionVariables()
 {
     for (const LoopInduction& loop : analyses().inductionVariables().loops()) {
+        if (loop.variables.isEmpty() || isOnCycleWithSeveralEntries(analyses(), loop))
+            continue;
         for (const InductionVariable& counter : loop.variables) {
             if (counter.steppedValues.size() != 1)
                 continue;

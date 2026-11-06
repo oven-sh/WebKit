@@ -35,10 +35,14 @@ void castArgumentsToParameters(IRBuilder&, BlockID jumpingBlock, bool validates)
 const Value* typeTestBranchedOn(const Function&, const Block&);
 bool holdsOnlyKnownFunctions(const Type&);
 
+// Nothing is left out of the type of a value that may be any function where a test for one function refuses it. Such a test may refuse a closure that is no longer as it was created.
+bool mayRefuseChangedClosures(const Type& typeOfTestedValue);
+
 struct BranchOnTypeTest {
     ValueID subject;
     TypeID testedType;
     BlockID block;
+    bool mayRefuseChangedClosures { false };
 
     auto test() const { return std::tuple { subject.index(), testedType.index() }; }
 };
@@ -106,8 +110,52 @@ private:
     Vector<std::pair<ValueID, std::unique_ptr<Vector<Type>>>, 4> m_slotTypesByReceiver;
 };
 
+// What the tests above a block have left of the values that its own test looks at, whichever type or value each of them asks for.
+class TestsOfSameValues {
+public:
+    TestsOfSameValues(FunctionAnalyses&, TypeArena&);
+
+    // What is expected of a value where the tests above have left nothing else of it.
+    struct ProvenExpectation {
+        BlockID block;
+        ValueID expectation;
+        TypeID type;
+    };
+
+    KnownBoolean outcomeBehindDominatingTests(BlockID branchingBlock);
+    Vector<ProvenExpectation, 4> takeProvenExpectations();
+    bool isEmpty() const { return m_operands.isEmpty(); }
+    // Branches have become jumps. The values are the same. False if no test is left that could say something of another.
+    bool didChangeControlFlow();
+
+private:
+    struct TestedOperand {
+        ValueID subject;
+        BlockID block;
+        // The test that the block branches on, or what the block expects of the value.
+        ValueID user;
+        uint32_t operandIndex;
+        bool isExpectation { false };
+    };
+
+    bool isLive(const TestedOperand&) const;
+    void computeOutcomes();
+
+    FunctionAnalyses& m_analyses;
+    TypeArena& m_types;
+    // The operands that stand for a value which several blocks test or expect something of, those for one value side by side. At least one of them is tested.
+    Vector<TestedOperand, 16> m_operands;
+    BitVector m_blocksThatTest;
+    bool m_hasExpectations { false };
+    bool m_hasOutcomes { false };
+    Vector<KnownBoolean> m_outcomes;
+    Vector<ProvenExpectation, 4> m_provenExpectations;
+};
+
+void proveExpectation(IRBuilder&, const TestsOfSameValues::ProvenExpectation&);
+
 KnownBoolean evaluateConditionByDefinitions(FunctionAnalyses&, BlockID branchingBlock);
-KnownBoolean evaluateCondition(FunctionAnalyses&, const TypeTestBranches&, SlotValueTests&, BlockID branchingBlock);
+KnownBoolean evaluateCondition(FunctionAnalyses&, const TypeTestBranches&, SlotValueTests&, TestsOfSameValues&, BlockID branchingBlock);
 std::optional<uint32_t> decidedTargetOf(const Terminator&, KnownValue tested);
 
 void decideTerminator(IRBuilder&, BlockID, uint32_t targetIndex);

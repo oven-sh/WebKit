@@ -24,6 +24,7 @@ import type {
   NativeCallerSpec,
   NativeCallKind,
   NativeMentionSpec,
+  OperandName,
   Origin,
   ParameterType,
   Scope,
@@ -67,6 +68,7 @@ export interface SignatureDeclaration extends SignatureColumns {
   resultsByPlatform?: readonly PlatformResultDeclaration[];
   resultProperties?: readonly ResultPropertyDeclaration[];
   prefixProperties?: readonly ResultPropertyDeclaration[];
+  answersWhetherInstance?: { operand: OperandName; type: TypeSpec };
   capability: Capability;
   throws: boolean;
   /** It throws, and it has no step of its own that does: see b.propagated. */
@@ -341,6 +343,9 @@ export interface HostObjectDeclaration {
   fields: readonly HostObjectFieldSpec[];
   internalFields: readonly HostObjectInternalFieldSpec[];
   keepsStringsOfStoredValues: boolean;
+  nativeAccessors: readonly string[];
+  /** The systems on which native code makes it. */
+  platforms: readonly TargetPlatform[];
 }
 
 /** What native code passes to a member that it finds under the name on an operand and calls. */
@@ -373,6 +378,12 @@ export interface SeenCodeOnlyDeclaration {
   nativeFiles: readonly string[];
 }
 
+/** The same as `namesDefinedOnNewInstances: []` in the declaration of each class. */
+export interface InstancesWithoutOwnNamesDeclaration {
+  declares: "InstancesWithoutOwnNames";
+  classes: readonly ClassName[];
+}
+
 export type Declaration =
   | NamespaceDeclaration
   | StaticTableDeclaration
@@ -403,7 +414,8 @@ export type Declaration =
   | NamedMemberCallDeclaration
   | HostMethodCallDeclaration
   | StartupDeclaration
-  | SeenCodeOnlyDeclaration;
+  | SeenCodeOnlyDeclaration
+  | InstancesWithoutOwnNamesDeclaration;
 
 export interface SourcedDeclaration {
   declaration: Declaration;

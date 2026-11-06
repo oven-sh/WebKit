@@ -479,7 +479,8 @@ EncodedText encodeText(const TextInputs& inputs, BuildContext& context)
     if (!encodeStringRecords(result, inputs, strings, ends, context))
         return { };
     result.identifiers = bytesOf(Vector<ImageIdentifier>(inputs.identifiers.count(), [&](size_t number) {
-        if (!number)
+        // A number of an image below that this program does not use.
+        if (!number || (!inputs.identifiers.at(static_cast<uint32_t>(number)).key && !inputs.identifiers.at(static_cast<uint32_t>(number)).text))
             return ImageIdentifier { 0, 0 };
         return encodeIdentifier(inputs.program, inputs.identifiers.at(static_cast<uint32_t>(number)), strings.decoded.span());
     }));

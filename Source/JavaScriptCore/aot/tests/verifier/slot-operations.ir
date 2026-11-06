@@ -4,7 +4,7 @@
 # DIAGNOSTIC: InvalidGuard 7
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Point" fields=[{key="x" declared={type=anything} flow={occupancy=AlwaysFilled}}, {key="y" declared={type=anything}}, {key="m" declared={type=anything} flow={location={deferral=CapturesNothing deferredFunction=f0} occupancy=AlwaysFilled}}]
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flow={occupancy=AlwaysFilled}}, {key="y" declared={type=anything}}, {key="m" declared={type=anything} flow={location={deferral=CapturesNothing deferredFunction=f0} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 layout L1 name="Size" fields=[{key="w" declared={type=anything} flow={occupancy=AlwaysFilled}}, {key="x" declared={type=anything}}]
 layout L2 kind=Instance name="Derived" flow={baseState=Layout base=L0}
 function f0 name="method" results=[{type=undefined}]

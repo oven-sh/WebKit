@@ -4,7 +4,7 @@
 # RUN: valueflow-results
 # CHECK-NOT: function f
 # CHECK: access S0 function=f0 kind=Call mayCallBoundFunction=true
-# CHECK: builtin-use {{*}} [Tested, Read, Called, Constructed, Written, Escaped]
+# CHECK: builtin-use {{*}} [Tested, Read, Called, Constructed, Written, Escaped, StoredByName]
 # CHECK: feature
 # CHECK: locale Unknown
 # CHECK: unseen-code OptionAdmitsCode

@@ -37,6 +37,7 @@ struct InlineFrameShape {
     uint32_t callee;
     bool isTailCall;
     bool isConstruct;
+    BuiltinID calledBuiltin { };
 };
 
 struct BodiesImage {
@@ -110,7 +111,7 @@ inline SiteBody bodyWithInlineFrames(uint32_t function, unsigned numberOfSuspens
     sites.inlineFrames.append(InlineFrame { 0, 0, 0, false, false });
     for (const InlineFrameShape& frame : frames) {
         OptionalIndex callSite = addPosition(frame.parent);
-        sites.inlineFrames.append(InlineFrame { frame.parent, *callSite, sketch.calleeIndex(frame.callee), frame.isTailCall, frame.isConstruct });
+        sites.inlineFrames.append(InlineFrame { frame.parent, *callSite, sketch.calleeIndex(frame.callee), frame.isTailCall, frame.isConstruct, frame.calledBuiltin });
     }
     sites.numberOfSitesWithoutCode = numberOfSuspensionSites + static_cast<unsigned>(frames.size());
 

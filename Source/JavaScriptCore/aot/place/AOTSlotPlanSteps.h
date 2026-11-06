@@ -92,7 +92,7 @@ struct SlotPlanContext {
 
     void forEachHolder(PropertyKeyID key, LayoutSetID receivers, NOESCAPE const Invocable<void(LayoutID, SlotRow)> auto& functor) const
     {
-        for (LayoutID member : program.at(receivers).members) {
+        for (LayoutID member : program.at(receivers).seen().predicted()) {
             if (!isCompiledObject(member))
                 continue;
             if (std::optional<uint32_t> field = program.at(member).findField(key))
@@ -123,22 +123,23 @@ struct SlotAccessUse {
     SlotAccessKey access;
     uint32_t sites { 0 };
     SiteWeight weight { 0 };
-    double fillHeat { 0 };
+    SiteHeat fillHeat { 0 };
     uint32_t storesWithoutAllocation { 0 };
     uint32_t storesIntoFilledSlots { 0 };
     uint32_t storesIntoNewObjects { 0 };
 };
 
 struct SlotRowUse {
-    bool isStoredSomewhere() const { return fillHeat || initializingSites || storesOfConstructorWithValue || storesOfUndefined; }
-    bool isLikelyFilled() const { return isFilledBesideCreation() || (holderHeat && fillHeat >= holderHeat * 0.4999); }
-    bool isFilledBesideCreation() const { return storesOfConstructorWithValue || (isRequiredByDeclaringType && isStoredSomewhere()); }
+    Expected<bool> isStoredSomewhere() const { return fillHeat.predicted() || initializingSites || storesOfConstructorWithValue || storesOfUndefined; }
+    Expected<bool> isLikelyFilled() const { return isFilledBesideCreation().predicted() || (holderHeat.predicted() && (fillHeat >= holderHeat * 0.4999).predicted()); }
+    Expected<bool> isFilledBesideCreation() const { return storesOfConstructorWithValue || (isRequiredByDeclaringType && isStoredSomewhere().predicted()); }
 
+    uint32_t accessSites { 0 };
     SiteWeight accessWeight { 0 };
-    double fillHeat { 0 };
-    double holderHeat { 0 };
-    bool hasHoldersMadeInLoop { false };
-    double heatFilledBesideCreation { 0 };
+    SiteHeat fillHeat { 0 };
+    SiteHeat holderHeat { 0 };
+    Expected<bool> hasHoldersMadeInLoop { false };
+    SiteHeat heatFilledBesideCreation { 0 };
     uint32_t initializingSites { 0 };
     uint32_t initializingSitesOfOwnLayout { 0 };
     uint32_t sitesInitializingWithValue { 0 };
@@ -156,8 +157,8 @@ struct SlotRowUse {
 
 struct LayoutUse {
     uint32_t allocationSites { 0 };
-    double creationHeat { 0 };
-    bool isMadeInLoop { false };
+    SiteHeat creationHeat { 0 };
+    Expected<bool> isMadeInLoop { false };
 };
 
 struct VariableUse {
@@ -181,7 +182,10 @@ struct SlotUses {
     Vector<VariableUse> variables;
     Vector<SiteWeight> keyWeights;
     FastBitVector keysNamed;
+    FastBitVector keysDefinedByDescriptor;
     FastBitVector stringsNamed;
+    // One bit: whether some code reads by a key that it finds only at run time.
+    FastBitVector readsByKeyFoundAtRunTime;
     BitVector functionsWhoseNewClosuresAreStoredInto;
 };
 
@@ -227,6 +231,8 @@ struct SlotClaim {
     bool isSetAtCreation { false };
     bool needsAbsentState { false };
     bool needsWideReference { false };
+    // The reference is wide because few such objects are created. Next to a layout that keeps it narrow, it is narrow too.
+    bool isWideByChoice { false };
     bool deferredClosureCapturesObject { false };
     bool deferredClosureCapturesEnvironment { false };
     SlotRepresentation representation { SlotRepresentation::JSValue };
@@ -302,7 +308,7 @@ Vector<SlotClaim> chooseSlotRepresentations(const SlotPlanContext&, const SlotUs
 PackedLayouts packObjects(const SlotPlanContext&, const SlotUses&, const JoinedRows&, std::span<const SlotClaim>);
 void packEnvironments(const SlotPlanContext&, const SlotUses&, std::span<const SlotClaim>, PackedLayouts&);
 OccupiedBytes occupiedBytesOf(const SlotPlanContext&, const PackedLayouts&, LayoutID);
-void widenSlotsIntoPadding(const SlotPlanContext&, const SlotUses&, std::span<const SlotClaim>, WidenedRepresentations, PackedLayouts&);
+void widenSlotsIntoPadding(const SlotPlanContext&, const SlotUses&, const JoinedRows&, std::span<const SlotClaim>, WidenedRepresentations, PackedLayouts&);
 void reserveEmptySlots(const SlotPlanContext&, const SlotUses&, PackedLayouts&, const EmptySlotRoom&);
 void reserveEmptySlotsInPadding(const SlotPlanContext&, const SlotUses&, PackedLayouts&);
 

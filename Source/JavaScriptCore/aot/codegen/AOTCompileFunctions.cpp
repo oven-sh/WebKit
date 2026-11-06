@@ -186,7 +186,7 @@ static std::optional<ForwardingPlan> planForwarding(const CodeGenerationWorker& 
     std::span<const ValueID> valuesBeforeCall = block.values.span().first(block.values.size() - 1);
     for (ValueID value : valuesBeforeCall) {
         Opcode opcode = function.at(value).opcode;
-        if (opcode != Opcode::GetCapture && opcode != Opcode::AssumeType && !isCastThatProvesNothing(opcode))
+        if (opcode != Opcode::GetCapture && opcode != Opcode::AssumeType && !makesFact(opcode) && !isCastThatProvesNothing(opcode))
             return std::nullopt;
     }
     if (!generatesOnlyWhatTheProgramAsksFor(worker, inputs, id))
@@ -352,7 +352,8 @@ void compileFunctions(const CodeGenerationWorker& worker, const CodeGenerationIn
 
     Vector<std::unique_ptr<FunctionCodeGenerator>, 16> generators;
     Vector<B3::Procedure*, 16> procedures;
-    const bool comparesWithBackEnd = worker.build.options().validatesBackEnd;
+    // With this switch on, the back end adds stores that forwarding code does not have.
+    const bool comparesWithBackEnd = worker.build.options().validatesBackEnd && !worker.build.recordedOptions().has(TestingSwitch::OverwriteDeadValuesAtCollections);
     BitVector isForwardingCode(ids.size());
     CurrentWorkScope workScope(inputs.program, FunctionID());
     currentWork().setPass(PassID::GenerateCode);

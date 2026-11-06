@@ -1,7 +1,7 @@
 # A rest array whose elements are only read or forwarded is never allocated: its elements are the arguments in the frame
 # FORM: Prepared
 # RUN: pass SinkAllocations
-# STATISTIC: AllocationsRemoved = 7
+# STATISTIC: AllocationsRemoved = 8
 # STATISTIC: AllocationsSunk = 2
 
 module m0 path="main.js" displayPath="main.js"
@@ -59,8 +59,10 @@ function f6 name="untypedIndex" role=GenericEntrypoint flags=[HasThis] captures=
     v3 = CreateRest firstArgument=1
     v4 = ElemGet v3, v2
     Return v4
-# CHECK: v3: Array = CreateRest firstArgument=1
-# CHECK-NEXT: = ElemGet v3, v2
+# CHECK-NOT: CreateRest
+# CHECK-NOT: ElemGet
+# CHECK: [[argument6]]: anything = GetMyArgumentByVal v2 firstArgument=1
+# CHECK-NEXT: v4: anything = Upcast [[argument6]] castType=anything
 }
 
 function f7 name="forwardedCall" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {

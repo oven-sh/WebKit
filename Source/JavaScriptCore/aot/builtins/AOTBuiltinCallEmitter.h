@@ -30,6 +30,10 @@ public:
     void generateToIntegerOrInfinity(const ValueContext&);
     void generateNewSetFromData(const ValueContext&);
     void generateNewMapFromData(const ValueContext&);
+    void generateNewFormatterWithPattern(const ValueContext&);
+    void generateSetUpFormatterWithOptions(const ValueContext&);
+    void generateFormatDateWithPattern(const ValueContext&);
+    void generateFormatNumberWithPattern(const ValueContext&);
     void generateNewArgumentList(const ValueContext&);
     void generateSharedRegExpLiteral(const ValueContext&);
     void generateIsBuiltinLocationUnchanged(const ValueContext&);
@@ -43,6 +47,7 @@ public:
 
 private:
     Boxed readCachedGetter(const ValueContext&, const BuiltinOverload&, uint32_t offsetOfCachedValue);
+    Vector<BuiltinOverloadID, 4> ownSlotsReadBy(const ValueContext&, const BuiltinOverload&);
     Boxed readOwnSlot(const ValueContext&, const BuiltinOverload&);
     Boxed loadProperty(CellPointer object, PropertyOffset);
     Boxed callCustomGetter(const OperationContext&, BuiltinOverloadID, Boxed receiver, bool receiverIsMatched);

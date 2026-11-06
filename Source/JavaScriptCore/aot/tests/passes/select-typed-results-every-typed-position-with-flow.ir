@@ -1,7 +1,7 @@
 # JSON.parse(text) as lowering writes it in front of each typed position: a variable, an argument of a call by value, where only the expected type stands behind the call, a tail call, whose cast names the type, and a field. Flow models the objects at each, so each record type gets its parser.
 # A function with a typed result that reaches the call under no name of its own is not modeled, and its result stays plain
 # FORM: AsRead
-# OPTIONS: report=Declines
+# OPTIONS: report=Declines heat=EverythingIsHot
 # RUN: pipeline SeparateUnlikelyLoopPaths
 # STATISTIC: ParsersCreated = 4
 # CHECK: decline TypedResultNotSelected f6 {{*}} reason=TargetIsNotModeledByFlow
@@ -98,7 +98,13 @@ function f5 name="takeArgument" parameters=[{type=undefined|null|L1 flags=[IsExp
 function f6 name="calleeOutOfAVariable" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
     v1 = GetModuleVariable variable=g1
     v2 = Call v1, -, v0 calleeName="parse"
-    v3 = Convert v2 declared={type=undefined|null|L0} illTypedCause=FromLooseType
-    v4 = PropGet v3 key="otherId"
-    Return v4
+    v3 = Boolean boolean=true
+    Branch v3 -> taken b1(v2), notTaken b2()
+  b1(v4):
+    v5 = Convert v4 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    v6 = PropGet v5 key="otherId"
+    Return v6
+  b2():
+    v7 = NewObject layout=L0
+    Jump -> next b1(v7)
 }

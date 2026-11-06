@@ -48,7 +48,8 @@ function f5 name="instance-of-a-constructor-function" parameters=[{type=L2 flags
 # CHECK: true = Boolean boolean=true
 # CHECK: ([[made5]]: L2):
 # CHECK: = HasLayoutPrototype [[made5]],
-# CHECK: = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}, {layout=L2 side=Static key=@@hasInstance}, {kind=PrototypeLinkUnchanged layout=L2 side=Static}]
+# The parent of a constructor function is not asked for: `Object.setPrototypeOf(Below, Above)` comes before the first construction, and the guard of the member is armed over the chain that is there.
+# CHECK: = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}, {layout=L2 side=Static key=@@hasInstance}]
 }
 function f6 name="unrelated-class" parameters=[{type=L4 flags=[IsExpected]}, {type=f0}] results=[{type=anything}] {
   b0(v0: anything ~ L4, v1: f0):

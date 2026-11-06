@@ -62,6 +62,7 @@ public:
     void generateInstanceOf(const ValueContext&);
     void generateHasInPrototypeChain(const ValueContext&);
     bool fetchesPrototypeItself(ValueID builtin);
+    bool comparesOnlyTextOf(ValueID string);
     void generateToBoolean(const ValueContext&);
     void generateLogicalNot(const ValueContext&);
     void generateTypeOf(const ValueContext&);
@@ -102,9 +103,9 @@ private:
     CellPointer concatenationOfParts(const ValueContext&);
     Operand unaryOnIntegers(const ValueContext&, UnaryOperator);
     Operand unaryOnCheckedIntegers(const ValueContext&, UnaryOperator);
-    Operand unaryOnNumbers(UnaryOperator, Number);
+    Operand unaryOnNumbers(UnaryOperator, ValueID operand);
     Word32 bitwiseOnWords(BitwiseOperator, Word32, Word32);
-    template<typename Functor> Word32 int32ConvertedOnce(const ValueContext& user, ValueID number, const Functor& convert);
+    template<typename Functor> Word32 int32ConvertedOnce(const ValueContext& user, ValueID number, bool needsLowestBitsAlone, const Functor& convert);
 
     // Without a relation the operands are compared for equality.
     template<typename T> Condition compare(std::optional<Relation>, T, T);
@@ -117,8 +118,17 @@ private:
     struct Int32OfNumber {
         BlockID block;
         Word32 word;
+        bool hasLowestBitsAlone;
+        // Once it is listed by its block: the nearest earlier conversion in a block that dominates this one.
+        uint32_t conversionAbove { UINT32_MAX };
     };
-    UncheckedKeyHashMap<uint32_t, Vector<Int32OfNumber, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_int32OfNumbers;
+    struct Int32sOfNumber {
+        Vector<Int32OfNumber, 1> conversions;
+        // The positions of the first conversions, by the number of their block in the dominator tree. Empty while the conversions are few.
+        Vector<uint32_t> byBlock;
+    };
+    const Int32OfNumber* findInt32ConvertedBefore(Int32sOfNumber&, BlockID, bool needsLowestBitsAlone);
+    UncheckedKeyHashMap<uint32_t, Int32sOfNumber, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_int32OfNumbers;
 
     struct RemainderLeftToTest {
         ValueID dividend;

@@ -130,7 +130,8 @@ function f5 name="edgeResult" parameters=[{type=number|string}, {type=boolean}, 
   b6(v7):
     Return v7
   b7(v8):
-    Return v8
+    v9 = Negate v8
+    Return v9
 # CHECK: b5(v5: number|string):
 # CHECK: b6(v7: string):
 # CHECK: b7(v8: number):

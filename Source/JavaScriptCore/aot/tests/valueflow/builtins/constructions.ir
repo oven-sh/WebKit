@@ -2,7 +2,7 @@
 # RUN: valueflow-solve calls
 # CHECK: f0 v5 -> Map
 # CHECK-NEXT: f0 v7 -> MapPrototypeGet
-# CHECK-NEXT: f0 v8 -> f1 object
+# CHECK-NEXT: f0 v8 -> f1
 # CHECK-NEXT: f0 v12 -> Set
 # CHECK-NEXT: f0 v15 -> SetPrototypeForEach
 # CHECK-NEXT: f0 v16 -> Map

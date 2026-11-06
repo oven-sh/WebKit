@@ -60,6 +60,17 @@ void removeEntry(Vector<Entry, inlineCapacity>& entries, Key Entry::* key, Key v
         entries.removeAt(entry - entries.begin());
 }
 
+// `values` is in ascending order, like the entries.
+template<typename Entry, size_t inlineCapacity, typename Key>
+void removeEntries(Vector<Entry, inlineCapacity>& entries, Key Entry::* key, std::span<const Key> values)
+{
+    if (values.empty())
+        return;
+    entries.removeAllMatching([&](const Entry& entry) {
+        return std::ranges::binary_search(values, entry.*key);
+    });
+}
+
 struct ObjectVariant {
     std::optional<uint8_t> tagBit;
     VirtualShapeID shape;
@@ -213,13 +224,29 @@ enum class ReturnedObjects : uint8_t { AreBuilt, StayVirtual };
 // An analysis goes through the function about this often: the solver until its decisions stand, a count, and both again for each round of candidates given up.
 inline constexpr uint64_t expectedNumberOfSweeps = 16;
 
+class Heat;
+
+struct BlocksThatMayGetTests {
+    const Heat& heat;
+    BitVector asked { };
+    BitVector answers { };
+};
+
 struct SinkingPolicy {
     ReturnedObjects returnedObjects { ReturnedObjects::AreBuilt };
     bool recordsLosses { true };
     bool leavesWhenNoAllocationPays { false };
+    // In a field whose slot has room for them. The parts of a result and of an argument have the types of the fields alone.
+    bool followsUndefinedAndNullInFields { false };
+    BlocksThatMayGetTests* blocksThatMayGetTests { nullptr };
     // Ascending: what addTracesOfFruitlessAllocations() has listed behind earlier analyses of the function. Allocations with such a number are not followed again.
     const Vector<uint64_t>* tracesOfFruitlessAllocations { nullptr };
+    TypeArena* types { nullptr };
 };
+
+// One rule for whatever puts a value into a field: a store, a copy out of the field of another object, and the look ahead that says which stores will fold.
+enum class Admission : uint8_t { Refused, IsOfFieldType, TakesRoomBesideFieldType };
+Admission admissionOf(const AllocationSinking&, const VirtualObjectDescription&, const VirtualField&, FieldContents stored);
 
 struct BuildCause {
     std::optional<Opcode> opcode;
@@ -244,6 +271,12 @@ struct Candidate {
     bool diesVirtual { false };
     bool diesOutsideJoins { false };
     bool isBuiltBeforeBranches { false };
+    // The same, from the point where the object holds its referrer. The solver requests it in one round and follows it from the next round on.
+    bool isBuiltBeforeBranchesOnceCyclic { false };
+    bool willBeBuiltBeforeBranchesOnceCyclic { false };
+    // Created under a handler and needed where no handler covers: it is built before the path leaves the handler, so that a failed allocation throws to that handler. Requested and followed as above.
+    bool isBuiltUnderHandler { false };
+    bool willBeBuiltUnderHandler { false };
     bool wasFruitlessBefore { false };
     // Abandoned before the families were made: no field of it is known, so nothing may take it up again.
     bool isLeftOut { false };
@@ -265,18 +298,24 @@ struct VirtualReturn {
     ObjectState state;
 };
 
-// The first five are filled for a block when AllocationSinking::prepare() is called for it.
+// The first six are filled for a block when AllocationSinking::prepare() is called for it.
 struct SinkingInputs {
     BitVector throwingValues;
     BitVector valuesWritingObjects;
     BitVector valuesCallingUnknownCode;
+    UncheckedKeyHashMap<uint32_t, uint64_t> memberGuardsEndedByValues;
+    UncheckedKeyHashMap<uint32_t, uint64_t> memberGuardsReadByValues;
     BitVector throwingTerminators;
     BitVector conditionsOnlyBranchedOn;
+    BitVector guardsThatMoreThanOperationsTake;
     BitVector blocksInCycles;
     BitVector mergeBlocks;
     BitVector blocksWithCandidates;
     BitVector blocksWithJoins;
+    // Each block's handler block, as the function was read.
+    Vector<BlockID> handlers;
     bool hasOperationsOnSlots { false };
+    bool hasObjectsGivenPrototypes { false };
     bool isLargeForItsWork { false };
 };
 
@@ -304,6 +343,7 @@ public:
     ObjectValues& ensure(VirtualObjectID object) { return ensureEntry(m_entries, &Entry::object, object).values; }
     const ObjectValues* find(VirtualObjectID) const;
     void remove(VirtualObjectID object) { removeEntry(m_entries, &Entry::object, object); }
+    void remove(std::span<const VirtualObjectID> ascendingObjects) { removeEntries(m_entries, &Entry::object, ascendingObjects); }
 
 private:
     struct Entry {
@@ -345,6 +385,7 @@ struct RewriteTables {
     BitVector enteredBlocks;
     Vector<BlockID, 2> blocksWithDecidedBranches;
     Vector<std::pair<ValueID, ValueID>> replacedReads;
+    Vector<ValueID> claimsAssumedOfContents;
     Vector<ValueID> entryConstants;
     Vector<BlockID> order;
     // No object is there, none is made and none is entered into a block behind: to rewrite such a block is to put it together again as it was.
@@ -370,6 +411,12 @@ public:
     void setOrigin(Origin origin) { m_builder.setOrigin(origin); }
 
     void stateDidChange() { m_handlerArgumentsAreStale = true; }
+    // Building may fail to allocate and throw. Every block added between the two is covered like the block where the first one is called, so the handler sees the objects as they were before.
+    void willBuild(ObjectInterpreter&);
+    void didBuild();
+    // What is built on the exits of a block goes before its terminator, so the handler sees the objects as they are there.
+    void willEnterEdges(ObjectInterpreter& atTerminator) { m_interpreterAtTerminator = &atTerminator; }
+    void didEnterEdges() { m_interpreterAtTerminator = nullptr; }
     void willKeepThrowingValue(ObjectInterpreter&);
     void cut(ObjectInterpreter&);
 
@@ -385,8 +432,11 @@ private:
     Function& m_function;
     BlockID m_originalBlock;
     std::optional<Target> m_originalHandler;
-    BlockFrequency m_frequency { BlockFrequency::Normal };
+    Expected<BlockFrequency> m_frequency { BlockFrequency::Normal };
     bool m_handlerArgumentsAreStale { false };
+    unsigned m_numberOfBuildsBegun { 0 };
+    std::optional<Target> m_handlerOfBuild;
+    ObjectInterpreter* m_interpreterAtTerminator { nullptr };
 };
 
 // What an analysis ended with: which candidates it gave up, and what it decided to build where.
@@ -418,18 +468,42 @@ public:
     void countStatistics();
     Vector<SunkAllocation> outcomes() const;
 
-    FunctionAnalyses& analyses() { return m_analyses; }
-    const FunctionAnalyses& analyses() const { return m_analyses; }
+    FunctionAnalyses& analyses()
+    {
+        RELEASE_ASSERT(!m_tables);
+        return m_analyses;
+    }
+    const FunctionAnalyses& analyses() const
+    {
+        RELEASE_ASSERT(!m_tables);
+        return m_analyses;
+    }
+    void holdRoadAgainstCount(SinkingMode mode, ValueID id, uint32_t road)
+    {
+        if (mode == SinkingMode::Count)
+            m_roadsCounted.set(id.index() + 1, road);
+        else if (mode == SinkingMode::Rewrite) {
+            auto counted = m_roadsCounted.find(id.index() + 1);
+            RELEASE_ASSERT(counted == m_roadsCounted.end() || counted->value == road);
+        }
+    }
     const AnalysisContext& context() const { return m_analyses.context(); }
     const Program& program() const { return m_program; }
     const Function& function() const { return m_function; }
     const SinkingPolicy& policy() const { return m_policy; }
     const VirtualObjectContext& objectContext() const LIFETIME_BOUND { return m_objectContext; }
     ShapeContext shapeContext(VirtualObjectID) const;
+    // By family. Empty: none does.
+    const Vector<VirtualObjectID>& objectsWhoseCreationMayBeOrderedWithGuards() const LIFETIME_BOUND;
 
     uint32_t numberOfCandidates() const { return m_candidates.size(); }
-    Candidate& at(VirtualObjectID object) LIFETIME_BOUND { return m_candidates[object.index()]; }
-    const Candidate& at(VirtualObjectID object) const LIFETIME_BOUND { return m_candidates[object.index()]; }
+    Candidate& at(VirtualObjectID object) LIFETIME_BOUND
+    {
+        if (m_trialRange) [[unlikely]]
+            willAccessInTrial(object.index());
+        return m_candidates[object.index()];
+    }
+    const Candidate& at(VirtualObjectID object) const LIFETIME_BOUND { return const_cast<AllocationSinking&>(*this).at(object); }
     VirtualFamily& familyOf(VirtualObjectID object) LIFETIME_BOUND { return m_families[at(object).family.index()]; }
     const VirtualFamily& familyOf(VirtualObjectID object) const LIFETIME_BOUND { return m_families[at(object).family.index()]; }
     const VirtualObjectDescription& descriptionOf(VirtualObjectID) const LIFETIME_BOUND;
@@ -438,6 +512,12 @@ public:
     KeyOrderTable& orders() { return m_orders; }
     const KeyOrderTable& orders() const { return m_orders; }
     SinkingDecisions& decisions() { return m_decisions; }
+    std::span<const ValueID> guardsOfNoObjectIn(ValueID guards) const LIFETIME_BOUND
+    {
+        auto found = m_guardsOfNoObject.find(guards.index() + 1);
+        return found == m_guardsOfNoObject.end() ? std::span<const ValueID> { } : found->value.span();
+    }
+    void setGuardsOfNoObjectIn(ValueID guards, Vector<ValueID, 2>&& others) { m_guardsOfNoObject.set(guards.index() + 1, WTF::move(others)); }
     const SinkingInputs& inputs() const { return m_inputs; }
     // Before anything is asked about the values or the terminator of the block.
     void prepare(BlockID block)
@@ -462,8 +542,10 @@ public:
     bool checksShortcuts() const { return m_checksShortcuts; }
     const BitVector& loadableFieldsOf(VirtualObjectID);
     bool storesByNameWaitIn(BlockID) const;
+    bool mayGetTests(BlockID) const;
     // The object has to be built where no store by name may stand. It is built where the store stands instead, in the rare arm, as an object that takes no such value always was.
     void refuseUnprovenValues(VirtualObjectID);
+    void didStoreUndefinedOrNull(VirtualObjectID, uint32_t field);
     const SinkingState* headOf(BlockID) const;
     // What can be said of the state at a head without making one for a block that is entered with nothing.
     bool isReached(BlockID block) const { return isEnteredWithNothing(block) || headOf(block); }
@@ -504,13 +586,18 @@ public:
     bool hasStartedOverWithFewerCandidates() const { return m_hasStartedOverWithFewerCandidates; }
     bool exceeds(LimitID, uint64_t amount, ValueID);
     void abandon(VirtualObjectID, LimitID = LimitID::None);
+    void abandonJoinsOfFamilyOf(VirtualObjectID);
     void tagVariants(BlockID, VirtualObjectID, ObjectState&);
     void buildAtHeadForLackOfTagBits(BlockID, VirtualObjectID);
     bool isIgnored(Edge) const;
+    bool isOutsideTrialRange(BlockID block) const { return m_trialRange && !m_trialRange->quickGet(block.index()); }
     void addVirtualReturn(VirtualReturn&&);
     void addEdgeNeedingCode(Edge);
     void didEnterJoin(VirtualObjectID join, VirtualObjectID source) { m_entriesIntoJoins.append(EntryIntoJoin { join, source }); }
     void didBuildAfterMerge(VirtualObjectID, BlockID mergeBlock);
+    bool buildCycleBeforeBranches(const SinkingState&, VirtualObjectID holder, VirtualObjectID held);
+    void buildUnderHandler(VirtualObjectID);
+    BlockID handlerOf(BlockID block) const { return m_inputs.handlers[block.index()]; }
     bool mayBeListOfNumbers(VirtualObjectID) const;
     void didTestListThatMayNotFit(ValueID literal) { m_testedListsThatMayNotFit.appendIfNotContains(literal); }
 
@@ -537,8 +624,10 @@ private:
     void computeInputsOf(BlockID);
 
     void solve();
+    void solveAgainIn(std::span<const BlockID> range);
     void giveUpOnEveryCandidate();
     bool startOverWithFewerCandidates();
+    void giveUpOnCandidatesCarriedTooFar();
     void giveUpForLackOfWork(std::span<const uint32_t> candidates);
     void analyzeUntilNothingChanges();
     void setAsideJoinsThatCarryOnlyCells();
@@ -550,17 +639,21 @@ private:
     void takeBackJoinsSetAside();
     void invalidateResults();
     void count();
+    void countIn(std::span<const BlockID> range);
     void countBlock(BlockID);
     bool abandonUnprofitableCandidates();
     bool buildBeforeBranchesInsteadOfAbandoning();
     void abandonJoinsThatOnlyFeedAbandonedJoins();
     bool paysToSink(const Candidate&) const;
     void resetCounters();
+    void willAccessInTrial(uint32_t candidate);
 
     bool meetsObjectMadeOnAnotherWay(const Candidate&) const;
     bool handOnToNextJoin(IRBuilder&, const Candidate& join);
     Vector<Edge, 2> collectCellEdges(VirtualObjectID, BlockID mergeBlock);
     Vector<BlockID> collectLiveRange(VirtualObjectID, BlockID mergeBlock);
+    bool savesAllocation(VirtualObjectID, BlockID merge, const BitVector& allocatedOnEveryPath) const;
+    bool mayPayWithoutEdges(VirtualObjectID, std::span<const Edge>, std::span<const BlockID> range, const BitVector& allocatedOnEveryPath);
     bool paysWithoutEdges(VirtualObjectID, std::span<const Edge>);
     void duplicate(IRBuilder&, std::span<const BlockID> region, std::span<const Edge> cellEdges);
 
@@ -590,8 +683,11 @@ private:
     Vector<std::optional<BitVector>> m_blocksWithLiveDefinition;
     Vector<uint64_t> m_tracesOfAllocations;
     Vector<VirtualFamily> m_families;
+    mutable std::optional<Vector<VirtualObjectID>> m_objectsWhoseCreationMayBeOrderedWithGuards;
     KeyOrderTable m_orders;
     SinkingDecisions m_decisions;
+    UncheckedKeyHashMap<uint32_t, Vector<ValueID, 2>> m_guardsOfNoObject;
+    UncheckedKeyHashMap<uint32_t, uint32_t> m_roadsCounted;
     SinkingInputs m_inputs;
     SinkingNames m_names;
     struct RelevantValues {
@@ -625,6 +721,16 @@ private:
     bool m_setsAsideJoins { false };
     Vector<VirtualReturn, 2> m_returns;
     Vector<Edge, 2> m_ignoredEdges;
+    const BitVector* m_trialRange { nullptr };
+    // A trial saves a candidate when it first asks for it, and resets its counters when it first asks for it after resetCounters(): it costs the same however many candidates there are.
+    struct TrialsOfCandidate {
+        uint32_t lastSavedIn { 0 };
+        uint32_t lastResetIn { 0 };
+    };
+    Vector<TrialsOfCandidate> m_trialsOfCandidates;
+    Vector<std::pair<uint32_t, Candidate>> m_candidatesSavedInTrial;
+    uint32_t m_trial { 0 };
+    bool m_didResetCountersInTrial { false };
     Vector<Edge, 2> m_edgesNeedingCode;
     Vector<ValueID, 2> m_testedListsThatMayNotFit;
     const FreshResultShape* m_resultShape { nullptr };
@@ -648,6 +754,12 @@ struct BytesOperands {
 std::optional<BytesOperands> findBytesOperands(const Program&, const Function&, const Value& call, BuiltinCallForm formOfCall);
 
 bool isFrameAllocatable(const AllocationSinking&, const Candidate&);
+// It goes where an operand of it is an object that is not built there.
+inline bool goesWithUnbuiltOperands(Opcode opcode)
+{
+    return familyOf(opcode) == OperationFamily::RuntimeValidation || opcode == Opcode::ReleaseHint;
+}
+
 bool buildsOperand(const Program&, const Value& user, uint32_t operandIndex);
 
 } } } // namespace JSC::AOT::Typed

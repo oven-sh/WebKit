@@ -51,7 +51,7 @@ const recursionHelpers = `struct RecursiveRead {
 
 static bool enterSpan(RecordChecker& checker, RecursiveRead& recursion, size_t numberOfRecords)
 {
-    constexpr uint64_t maxDepth = std::max(valueOnARM64Of(LimitID::MaxNestingDepth), valueOnX86_64Of(LimitID::MaxNestingDepth));
+    constexpr uint64_t maxDepth = std::max(valueOnARM64Of(LimitID::MaxDataNestingDepth), valueOnX86_64Of(LimitID::MaxDataNestingDepth));
     if (recursion.depth >= maxDepth || numberOfRecords > recursion.remainingRecords) {
         checker.fail(InternalErrorKind::DuplicateListEntry);
         return false;
@@ -336,6 +336,7 @@ function readSpan(recursiveCallees: readonly string[], field: Field, source: str
   }
   const isRecursive = recursiveCallees.includes(nameOf(element));
   const readElements = [
+    `${target}.reserveInitialCapacity(elements.size());`,
     `${target}.grow(elements.size());`,
     "for (size_t i = 0; i < elements.size(); ++i)",
     `    read(checker, elements[i], ${target}[i]${isRecursive ? ", recursion" : ""});`,

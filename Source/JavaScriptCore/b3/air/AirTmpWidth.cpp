@@ -49,7 +49,7 @@ void TmpWidth::recompute(Code& code)
     analyzer.run(code);
 }
 
-void TmpWidth::fixpointMoves(const Vector<Inst*>& moves)
+void TmpWidth::fixpointMoves(const Vector<Copy>& moves)
 {
     bool changed = true;
     bool goesDown = false;
@@ -57,13 +57,9 @@ void TmpWidth::fixpointMoves(const Vector<Inst*>& moves)
         changed = false;
         goesDown = !goesDown;
         for (size_t step = 0; step < moves.size(); ++step) {
-            Inst* move = moves[goesDown ? step : moves.size() - 1 - step];
-            ASSERT(move->kind.opcode == Move);
-            ASSERT(move->args()[0].isTmp());
-            ASSERT(move->args()[1].isTmp());
-
-            Widths& srcWidths = widths(move->args()[0].tmp());
-            Widths& dstWidths = widths(move->args()[1].tmp());
+            const Copy& move = moves[goesDown ? step : moves.size() - 1 - step];
+            Widths& srcWidths = widths(move.source);
+            Widths& dstWidths = widths(move.destination);
 
             // Legend:
             //

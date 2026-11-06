@@ -13,6 +13,7 @@
 #include "AOTFlowUnseenCode.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTSort.h"
+#include <algorithm>
 #include <tuple>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -26,6 +27,8 @@ static_assert(SourceLocation { } == noSourceLocation, "A default-constructed rec
 static auto sortKeyOf(const FlowIndirectCall& call) { return std::tuple(call.caller, call.site, call.callee, call.kind); }
 static auto sortKeyOf(const FlowBoundFunctionUse& use) { return std::tuple(use.target, use.numberOfBoundArguments); }
 static auto sortKeyOf(const FlowBoundFunctionAtSite& bound) { return std::tuple(bound.site, bound.use, bound.target, bound.numberOfBoundArguments); }
+static auto sortKeyOf(const FlowClosureStoredUnderKey& stored) { return std::tuple(stored.key, stored.function); }
+static auto sortKeyOf(const FlowProxiesSeenAtSite& seen) { return seen.site; }
 static auto sortKeyOf(const FlowSinkOperand& operand) { return std::tuple(operand.call, operand.operandIndex); }
 static auto sortKeyOf(const FlowTypedResultCall& record) { return record.call; }
 static auto sortKeyOf(const FlowDataNode& node) { return std::tuple(node.rootSite, node.ordinal); }
@@ -59,9 +62,13 @@ static void checkTableOrder(const FlowResultTables& tables)
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.accessSiteLosses, tables.sites.accessSites));
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.callsOfBoundFunctions, tables.sites.accessSites));
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.receiversThatMayHaveDecidedStorage, tables.sites.accessSites));
+    RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.receiversSeenAtSites, tables.sites.accessSites));
+    RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.sitesThatHandOverOnlyDataFromOutside, tables.sites.accessSites));
+    RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.callsHandedOnlyDataFromOutside, tables.sites.accessSites));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.sinkOperands));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.typedResultCalls));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.boundFunctionsAtSites));
+    RELEASE_ASSERT(isStrictlyAscending(tables.sites.closuresStoredUnderKeys));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.dataNodes));
 
     RELEASE_ASSERT(isStrictlyAscending(tables.builtins.locations));
@@ -109,7 +116,7 @@ static Vector<AllocationClassID> sortClosureClassesByFunction(const Vector<Alloc
         if (classes[index].closureFunction)
             closureClasses.append(AllocationClassID(index));
     }
-    AOT::stableSort(closureClasses, { }, [&](AllocationClassID id) {
+    AOT::stableSortInLine(closureClasses, { }, [&](AllocationClassID id) {
         return classes[id.index()].closureFunction;
     });
     return closureClasses;
@@ -187,20 +194,47 @@ const AllocationClass& FlowResults::at(AllocationClassID id) const { return reco
 const FlowSiteLoss& FlowResults::lossOf(AccessSiteID id) const { return recordAt(m_tables.sites.accessSiteLosses, id, m_unknown.loss); }
 bool FlowResults::mayCallBoundFunction(AccessSiteID call) const { return recordAt(m_tables.sites.callsOfBoundFunctions, call, false); }
 
+const FlowProxiesSeenAtSite* FlowResults::findProxiesSeenAt(AccessSiteID access) const { return access ? findRecord(m_tables.sites.proxiesSeenAtSites, access) : nullptr; }
+
 bool FlowResults::mayChangeStorageOfReceiver(AccessSiteID access) const
 {
     const Vector<bool>& mayHaveDecidedStorage = m_tables.sites.receiversThatMayHaveDecidedStorage;
     return mayHaveDecidedStorage.isEmpty() || (access && !recordAt(mayHaveDecidedStorage, access, true));
 }
+
+bool FlowResults::handsOverOnlyDataFromOutside(AccessSiteID access) const
+{
+    return access && recordAt(m_tables.sites.sitesThatHandOverOnlyDataFromOutside, access, false);
+}
+
+bool FlowResults::isHandedOnlyDataFromOutside(AccessSiteID call) const
+{
+    return call && recordAt(m_tables.sites.callsHandedOnlyDataFromOutside, call, false);
+}
+
+std::optional<LayoutSetID> FlowResults::receiversSeenAt(AccessSiteID access) const
+{
+    uint32_t seen = access ? recordAt(m_tables.sites.receiversSeenAtSites, access, 0u) : 0;
+    if (!seen)
+        return std::nullopt;
+    return seen == 1 ? LayoutSetID() : LayoutSetID(seen - 2);
+}
+
 AllocationSiteID FlowResults::typedResultSite(LayoutID layout) const { return recordAt(m_tables.sites.typedResultSites, layout, AllocationSiteID()); }
 const BuiltinLocationFlow* FlowResults::findBuiltinLocation(BuiltinID holder, PropertyKeyID key) const { return findRecord(m_tables.builtins.locations, std::tuple(holder, key)); }
 
-std::span<const FlowBoundFunctionAtSite> FlowResults::boundFunctionsSeenAt(AccessSiteID site, FlowBoundFunctionUseAtSite use) const
+Expected<std::span<const FlowBoundFunctionAtSite>> FlowResults::boundFunctionsSeenAt(AccessSiteID site, FlowBoundFunctionUseAtSite use) const
 {
     auto [first, end] = std::ranges::equal_range(m_tables.sites.boundFunctionsAtSites, std::pair(site, use), { }, [](const FlowBoundFunctionAtSite& bound) {
         return std::pair(bound.site, bound.use);
     });
-    return std::span(first, end);
+    return std::span<const FlowBoundFunctionAtSite>(first, end);
+}
+
+Expected<std::span<const FlowClosureStoredUnderKey>> FlowResults::closuresSeenStoredUnder(PropertyKeyID key) const
+{
+    auto [first, end] = std::ranges::equal_range(m_tables.sites.closuresStoredUnderKeys, key, { }, &FlowClosureStoredUnderKey::key);
+    return std::span<const FlowClosureStoredUnderKey>(first, end);
 }
 
 bool FlowResults::runsAtMostOnce(const Program& program, FunctionID id) const
@@ -271,6 +305,22 @@ void FlowResults::removeEntryParameters(FunctionID function, const BitVector& re
     summaries.shrink(numberOfRemainingParameters);
 }
 
+void FlowResults::replaceEntryParameter(FunctionID function, uint32_t entryParameter, const OperandSummary& summaryOfNewValue)
+{
+    if (!hasResults() || !isAnalyzed(m_tables.functions, function))
+        return;
+    RELEASE_ASSERT(!m_borrowedParameters.size());
+
+    Vector<OperandSummary>& summaries = m_tables.functions.parameterSummaries[function.index()];
+    if (entryParameter >= summaries.size())
+        return;
+    summaries[entryParameter] = summaryOfNewValue;
+    for (OperandSummary& summary : summaries) {
+        if (summary.retainedIn == RetainedIn::Operand && summary.retainingOperand == entryParameter)
+            summary = { summary.uses, RetainedIn::UnknownMemory, 0 };
+    }
+}
+
 void FlowResults::setOperandSummaries(Vector<Vector<OperandSummary>>&& parameterSummaries, Vector<Vector<OperandUses>>&& storedValueUses)
 {
     RELEASE_ASSERT(parameterSummaries.size() == m_tables.functions.functions.size());
@@ -335,6 +385,8 @@ bool FlowResults::areClosuresAsCreated(FunctionID closureFunction, std::span<con
 
 bool FlowResults::closuresMayBeRenamed(FunctionID closureFunction) const
 {
+    if (!hasResults())
+        return true;
     FunctionID analyzed = findAnalyzedFunction(closureFunction);
     return analyzed && m_tables.functions.functionsWhoseClosuresMayBeRenamed.get(analyzed.index());
 }
@@ -345,8 +397,24 @@ bool FlowResults::closuresMayBeRenamedOnlyWhereNobodySees(FunctionID closureFunc
     return analyzed && m_tables.functions.functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees.get(analyzed.index());
 }
 
+bool FlowResults::closuresGoOutOfSightUnnamed(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && m_tables.functions.functionsWhoseClosuresGoOutOfSightUnnamed.get(analyzed.index());
+}
+
+bool FlowResults::closuresMayBeNamedOutOfSight(FunctionID closureFunction) const
+{
+    if (!hasResults())
+        return true;
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && m_tables.functions.functionsWhoseClosuresMayBeNamedOutOfSight.get(analyzed.index());
+}
+
 bool FlowResults::closuresAreGivenDisplayName(FunctionID closureFunction) const
 {
+    if (!hasResults())
+        return true;
     FunctionID analyzed = findAnalyzedFunction(closureFunction);
     return analyzed && m_tables.functions.functionsWhoseClosuresAreGivenDisplayName.get(analyzed.index());
 }
@@ -385,6 +453,12 @@ bool FlowResults::closuresAreStoredUnder(FunctionID closureFunction, PropertyKey
     });
 }
 
+bool FlowResults::closuresKeepTheirIntegrity(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && !m_tables.functions.functionsWhoseClosuresChangeIntegrity.get(analyzed.index());
+}
+
 bool FlowResults::closuresMeetOneOf(FunctionID closureFunction, OptionSet<ObjectMutation> mutations) const
 {
     return holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, closureFunction, [&](const AllocationClass& closures) {
@@ -402,6 +476,18 @@ const SinkCandidates& FlowResults::sinkCandidates(AccessSiteID call, uint32_t op
 {
     const FlowSinkOperand* operand = findRecord(m_tables.sites.sinkOperands, std::tuple(call, operandIndex));
     return operand ? operand->candidates : m_unknown.sinkCandidates;
+}
+
+bool FlowResults::isTypedResultUnprofitable(AccessSiteID call) const
+{
+    const FlowTypedResultCall* record = findRecord(m_tables.sites.typedResultCalls, call);
+    return record && record->isUnprofitable;
+}
+
+void FlowResults::markTypedResultsUnprofitable(std::span<const AccessSiteID> sortedCalls)
+{
+    for (FlowTypedResultCall& record : m_tables.sites.typedResultCalls)
+        record.isUnprofitable |= std::ranges::binary_search(sortedCalls, record.call);
 }
 
 TypeID FlowResults::typedResultType(AccessSiteID call) const
@@ -430,16 +516,25 @@ OptionSet<BuiltinUse> FlowResults::usesOf(BuiltinID builtin) const
     return record ? OptionSet<BuiltinUse>::fromRaw(static_cast<uint32_t>(record->uses)) : OptionSet<BuiltinUse>();
 }
 
-// Removing this feature puts a function that throws in place of the built-in's native code. A member of the host without a guard of its own has that of the nearest holder.
-std::optional<RemovableFeature> guardOf(const BuiltinTable& builtins, BuiltinID builtin)
+// A member of the host without a guard of its own has that of the nearest holder.
+static std::span<const BuiltinFeatureUse> linesWithGuardOf(const BuiltinTable& builtins, BuiltinID builtin)
 {
     for (BuiltinID guarded = builtin; guarded; guarded = builtins.at(guarded).holder) {
-        for (const BuiltinFeatureUse& line : builtins.featureUsesOf(builtins.canonicalID(guarded))) {
-            if (line.isGuard)
-                return line.feature;
-        }
+        std::span<const BuiltinFeatureUse> lines = builtins.featureUsesOf(builtins.canonicalID(guarded));
+        if (std::ranges::any_of(lines, &BuiltinFeatureUse::isGuard))
+            return lines;
         if (builtins.at(guarded).origin != BuiltinOrigin::Host)
             break;
+    }
+    return { };
+}
+
+// Removing this feature puts a function that throws in place of the built-in's native code.
+std::optional<RemovableFeature> guardOf(const BuiltinTable& builtins, BuiltinID builtin)
+{
+    for (const BuiltinFeatureUse& line : linesWithGuardOf(builtins, builtin)) {
+        if (line.isGuard)
+            return line.feature;
     }
     return std::nullopt;
 }
@@ -457,18 +552,21 @@ bool isGuardedByRemovedFeature(const BuiltinTable& builtins, BuiltinID builtin, 
 
 BitVector findBuiltinsThatMayBeTrimmed(const BuiltinTable& builtins, std::span<const FeatureUseRecord> featureUses, const AOT::CompileOptions& options)
 {
-    FeatureBits keptFeatures { };
+    FeatureBits usedFeatures { };
     for (const FeatureUseRecord& use : featureUses) {
         if (use.kind == FeatureUseKind::Named || !contains(options.featuresKeptOnlyWhenNamed, use.feature))
-            keptFeatures[use.feature / 64] |= 1ull << use.feature % 64;
+            usedFeatures[use.feature / 64] |= 1ull << use.feature % 64;
     }
-    for (size_t word = 0; word < keptFeatures.size(); ++word)
-        keptFeatures[word] &= ~options.removedFeatures[word];
 
+    // The function that throws also stands there where nothing uses a feature that the native code cannot run without. Which of the features those are is known where the host is linked: they are among the ones that the built-in uses whatever it is called with.
     BitVector mayBeTrimmed(builtins.builtinCount());
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-        std::optional<RemovableFeature> guard = guardOf(builtins, BuiltinID(index));
-        mayBeTrimmed.quickSet(index, guard && !contains(keptFeatures, static_cast<uint32_t>(*guard)));
+        mayBeTrimmed.quickSet(index, std::ranges::any_of(linesWithGuardOf(builtins, BuiltinID(index)), [&](const BuiltinFeatureUse& line) {
+            uint32_t feature = static_cast<uint32_t>(line.feature);
+            if (line.isGuard && contains(options.removedFeatures, feature))
+                return true;
+            return !line.condition && !line.overload && !contains(usedFeatures, feature);
+        }));
     }
     return mayBeTrimmed;
 }

@@ -43,6 +43,8 @@ struct ModuleEvaluationSite {
 struct SlotInReceivers {
     LayoutID memberWithoutField;
     LayoutID memberWithRemovedField;
+    LayoutID memberWithAccessor;
+    LayoutID memberWithValue;
     bool isAlwaysFilled { true };
     bool mayHoldDeferredClosure { false };
 };
@@ -130,6 +132,7 @@ private:
     void verifyOwnType(BlockID, ValueID, const Value&);
     void verifyParameterTypes(BlockID, const Block&);
     void verifyOperands(BlockID, ValueID, const Value&);
+    void verifyCastsWithoutFacts();
     void verifyOperands(BlockID, const Terminator&);
     void verifyOperandKind(BlockID, ValueID user, uint32_t operandIndex, ValueID operand, OperandKind, LayoutID layoutPayload);
     void verifyRequiredTypes(BlockID, ValueID, const Value&);
@@ -147,14 +150,18 @@ private:
     void verifyProofs();
     void verifyOperandKindsWithoutChecks();
     void verifyStoredTypesWithoutChecks();
+    void verifyProofsOfValueBesideMode(BlockID, ValueID suspension);
     void verifyGuardOperand(BlockID, ValueID user, const Value&, ProofSet neededFromGuard, ValueID guard);
 
     void verifyUnspecifiedValues();
+    bool verifyNoOperandIsUnspecified(BlockID, ValueID, const Value&);
+    bool verifyNoOperandIsUnspecified(BlockID, const Terminator&);
 
     void verifyOperations();
     void verifyOperation(BlockID, uint32_t indexInBlock, ValueID, const Value&);
     void verifyTerminatorOperation(BlockID, const Terminator&);
     void verifyFormRules(BlockID, const Block&);
+    void verifyVariableRead(BlockID, ValueID, const Value&);
     void verifyCatch(BlockID, uint32_t indexInBlock, ValueID, const Value&);
     void verifyReturnCall(BlockID, const Terminator&);
     void verifyTestAndBranch(BlockID, const Terminator&);
@@ -171,6 +178,7 @@ private:
     void verifyBuiltinOperation(BlockID, ValueID, const Value&);
     void verifyDirectEval(BlockID, ValueID, const Value&);
     void verifySlotOperation(BlockID, ValueID, const Value&);
+    void verifyFormsOfListedFields(BlockID, ValueID, const Value& allocation);
     void verifyKeyedTail(BlockID, ValueID, const Value&, size_t numberOfKeys);
     void verifyElementOperation(BlockID, ValueID, const Value&);
     void verifyStringBuilderOperation(BlockID, ValueID, const Value&);
@@ -212,6 +220,7 @@ public:
     ProgramVerifier(const Program&, IRForm, BuildContext&, const VerifierInputs&);
 
     bool run();
+    bool runRecords();
     bool runIDs();
 
 private:
@@ -252,6 +261,7 @@ private:
     void verifyDerivationChains();
 
     void verifyFunctionBodies();
+    void recheckUnavailableGuards(Vector<InternalError>&);
 
     const Program& m_program;
     IRForm m_form;

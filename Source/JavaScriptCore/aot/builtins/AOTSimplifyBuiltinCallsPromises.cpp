@@ -62,7 +62,7 @@ static std::optional<PromiseAllOfLiteral> matchPromiseAllOfLiteral(FunctionPassC
 static TypeID fulfillmentTypeOf(const Program& program, const Type& promise)
 {
     const ClassPart* part = promise.findClassPart(BuiltinClasses::Promise);
-    return part ? part->contentsAt(program.builtins(), ContentsSlot::Value) : TypeTable::anything;
+    return part ? part->writtenContentsAt(program.builtins(), ContentsSlot::Value) : TypeTable::anything;
 }
 
 unsigned simplifyPromiseAllOfLiterals(FunctionPassContext& context, const BuiltinCallSites& calls)

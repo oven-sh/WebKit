@@ -1,0 +1,30 @@
+# const o = { plain: 1 }; o.$call = function (x) { return x + 1 }  const k = same(o)  print(k.$call(1))
+# Nothing outside the library can write the name, so the function does not leave with the object. The read through what the shell hands back finds it on the object that has left.
+# OPTIONS: check=VerifyEachPass
+# RUN: run-in-shell globalThis.same = value => value;
+# CHECK: 2
+# CHECK-NEXT: exited with 0
+
+layout L0 name="Made" fields=[{key="plain" declared={type=number}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    PropSet v1, v2 key=@#"call" mode=Strict
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="same" [isFreeName]
+    v6 = Call v5, -, v1 calleeName="same"
+    v7 = PropGet v6 key=@#"call"
+    v8 = Integer integer=1
+    v9 = Call v7, v6, v8 calleeKey=@#"call" calleeName="call"
+    v10 = PropGet v4 key="print" [isFreeName]
+    v11 = Call v10, -, v9 calleeName="print"
+    Return
+}
+function f1 name="call" module=m0 position=20 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}

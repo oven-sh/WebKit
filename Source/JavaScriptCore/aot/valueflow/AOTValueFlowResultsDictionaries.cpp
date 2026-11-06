@@ -21,7 +21,7 @@ static BitVector findLayoutSetsNaming(const Program& program, const BitVector& l
 {
     BitVector sets(program.types.numberOfLayoutSets());
     for (uint32_t index : findIndicesInParallel(loops, program.types.numberOfLayoutSets(), [&](unsigned index) {
-        return std::ranges::any_of(program.at(LayoutSetID(index)).members, [&](LayoutID member) { return layouts.quickGet(member.index()); });
+        return std::ranges::any_of(program.at(LayoutSetID(index)).written(), [&](LayoutID member) { return layouts.quickGet(member.index()); });
     }))
         sets.quickSet(index);
     return sets;
@@ -38,7 +38,7 @@ struct NamedLayoutFinder {
     void operator()(LayoutSetID id) const
     {
         if (id && setsNamingThem.quickGet(id.index()))
-            std::ranges::for_each(program.at(id).members, *this);
+            std::ranges::for_each(program.at(id).written(), *this);
     }
     void operator()(const auto&) const { }
 
@@ -93,8 +93,8 @@ static void listLayoutsNamedIn(const Program& program, const FlowApplication& ap
         LayoutSetID layouts = std::exchange(rest.layouts, LayoutSetID());
         if (!layouts || !rest.isNever())
             return;
-        const LayoutSet& set = program.at(layouts);
-        if (!set.hasMembersWithoutLayout && std::ranges::all_of(set.members, [&](LayoutID member) { return finder.layouts.quickGet(member.index()); }))
+        auto all = program.at(layouts).all();
+        if (all && std::ranges::all_of(*all, [&](LayoutID member) { return finder.layouts.quickGet(member.index()); }))
             finder(layouts);
     };
     for (const Value& value : function.values) {
@@ -121,15 +121,15 @@ static Type typeBehindDictionaries(const Program& program, const BitVector& layo
     Type behind = type;
     bool namesDictionaries = false;
     if (type.layouts) {
-        LayoutSet set = program.at(type.layouts);
-        namesDictionaries = set.members.removeAllMatching([&](LayoutID member) {
+        Vector<LayoutID> members = program.at(type.layouts).written();
+        namesDictionaries = members.removeAllMatching([&](LayoutID member) {
             return layoutsOfDictionaries.quickGet(member.index());
         });
         if (namesDictionaries)
-            behind.layouts = set.members.isEmpty() && !set.hasMembersWithoutLayout ? LayoutSetID() : types.intern(WTF::move(set));
+            behind.layouts = members.isEmpty() ? LayoutSetID() : types.intern(LayoutSet::complete(WTF::move(members)));
     }
     for (ClassPart& part : behind.classes) {
-        for (TypeID& contents : part.contents)
+        for (TypeID& contents : part.writtenContents)
             contents = behindOf(contents);
     }
     if (namesDictionaries && namesObjectInTheirPlace)
@@ -161,7 +161,7 @@ static void createTypesBehindDictionaries(const Program& program, const BitVecto
     };
     Vector<uint32_t> typesThatMayChange = findIndicesInParallel(loops, numberOfTypes, [&](unsigned index) {
         const Type& type = program.at(TypeID(index));
-        return namesDictionaries(type) || std::ranges::any_of(type.classes, [](const ClassPart& part) { return !part.contents.isEmpty(); });
+        return namesDictionaries(type) || std::ranges::any_of(type.classes, [](const ClassPart& part) { return !part.writtenContents.isEmpty(); });
     });
     Vector<uint32_t> changedTypes;
     Vector<TypeID> testedBehind;
@@ -171,7 +171,7 @@ static void createTypesBehindDictionaries(const Program& program, const BitVecto
         for (bool didChange = true; std::exchange(didChange, false);) {
             for (uint32_t index : typesThatMayChange) {
                 const Type& type = program.at(TypeID(index));
-                if (!namesDictionaries(type) && !std::ranges::any_of(type.classes, [&](const ClassPart& part) { return std::ranges::any_of(part.contents, isChanged); }))
+                if (!namesDictionaries(type) && !std::ranges::any_of(type.classes, [&](const ClassPart& part) { return std::ranges::any_of(part.writtenContents, isChanged); }))
                     continue;
                 TypeID behind = arena.intern(typeBehindDictionaries(program, layoutsOfDictionaries, type, arena, behindOf));
                 if (changed[index] == behind)

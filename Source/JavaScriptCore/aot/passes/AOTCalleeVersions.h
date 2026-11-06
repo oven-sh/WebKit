@@ -20,6 +20,8 @@ BuiltinID singleBuiltinFunction(const Program&, const Type&);
 // One copy for whatever function is passed: in it the parameter is known to hold a function.
 DerivedFunctionKey calleeVersionKeyForAnyFunction(FunctionID function, uint32_t entryParameter, bool mayBeNullish);
 bool canHaveCalleeVersion(const Program&, FunctionID, uint32_t entryParameter);
+// Whether the copy was made for this function of the program.
+bool calleeVersionIsFor(const Function& version, FunctionID callee);
 
 } } } // namespace JSC::AOT::Typed
 

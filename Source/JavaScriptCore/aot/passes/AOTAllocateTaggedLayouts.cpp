@@ -99,7 +99,7 @@ static ValueID findParameterStoredAsTag(const Program& program, const Function& 
 }
 
 // In a block of its own, which goes on to the rest of the function with the object.
-static BlockID addAllocationBlock(IRBuilder& builder, const Value& allocationOfMaker, LayoutID layout, BlockFrequency frequency, BlockID rest)
+static BlockID addAllocationBlock(IRBuilder& builder, const Value& allocationOfMaker, LayoutID layout, Expected<BlockFrequency> frequency, BlockID rest)
 {
     BlockID block = builder.addBlock(frequency);
     builder.moveToEndOf(block);
@@ -110,7 +110,7 @@ static BlockID addAllocationBlock(IRBuilder& builder, const Value& allocationOfM
 }
 
 // In the block of the builder. Each member is allocated as the maker is, and every other tag goes on to the given block.
-static void emitSwitchOnTag(IRBuilder& builder, const TaggedFamily& family, ValueID tag, BlockID otherTag, const Value& allocationOfMaker, BlockFrequency frequency, BlockID rest)
+static void emitSwitchOnTag(IRBuilder& builder, const TaggedFamily& family, ValueID tag, BlockID otherTag, const Value& allocationOfMaker, Expected<BlockFrequency> frequency, BlockID rest)
 {
     BlockID start = builder.currentBlock();
     Vector<std::pair<int64_t, Target>> integerCases;
@@ -369,7 +369,7 @@ static bool allocateInClassConstructor(Program& program, BuildContext& build, Ty
     RELEASE_ASSERT(function.at(own->block).values.last() == ownValue);
     function.edit(own->block, BlockEdit::Values).values.removeLast();
 
-    BlockFrequency frequency = function.at(own->block).frequency;
+    Expected<BlockFrequency> frequency = function.at(own->block).frequency;
     builder.setHandler(function.at(own->block).handler);
     BlockID otherTag = addAllocationBlock(builder, allocationOfMaker, family.maker, frequency, rest);
     BlockID ownConstruction = builder.addBlock(frequency);

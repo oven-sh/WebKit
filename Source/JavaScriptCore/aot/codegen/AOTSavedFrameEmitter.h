@@ -29,6 +29,12 @@ public:
     void generateAwaitBySavingFrame(const ValueContext&);
     void generateAwaitCallBySavingFrame(const ValueContext&);
     void generateYieldBySavingFrame(const ValueContext&);
+    void generateNewHeapFrame(const ValueContext&);
+    void generateNewHeapWords(const ValueContext&);
+    void generateGetHeapFrameWord(const ValueContext&);
+    void generatePutHeapFrameWord(const ValueContext&);
+    void generateGetResumeIndex(const ValueContext&);
+    void generateSuspendInHeapFrame(const ValueContext&);
     void generateAsyncGeneratorYield(const ValueContext&);
     void generateReturnAsyncResult(const ValueContext&);
     void generatePromiseAllOfElements(const ValueContext&);
@@ -38,7 +44,7 @@ public:
 
 private:
     CoroutineKind kindOfFunction() const;
-    CellPointer allocateGenerator(CellPointer closure, LBasicBlock slowPath);
+    CellPointer allocateGenerator(std::optional<CellPointer> closure, LBasicBlock slowPath);
     LValue cellOrZero(ValueID driver);
     LValue driverAsPassed(ValueID driver);
     TypedPointer stateOf(CellPointer generator);

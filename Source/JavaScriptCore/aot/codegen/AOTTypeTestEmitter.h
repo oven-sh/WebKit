@@ -27,6 +27,7 @@ public:
 
     void emitBranch(Operand, const TypeTestPlan&, BranchTargets, CodeShape);
     Condition emitBoolean(Operand, const TypeTestPlan&, CodeShape);
+    std::optional<Condition> tryEmitAsOneCondition(Operand, const TypeTestPlan&, CodeShape);
 
     Condition passesCellTest(CellPointer, const CellTest&, const Type& from);
     Condition isCallable(CellPointer);

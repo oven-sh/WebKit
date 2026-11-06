@@ -72,20 +72,16 @@ function f2 name="tryMayThrow" parameters=[{type=anything}] results=[{type=anyth
 # CHECK: = Call v0, -, v0
 # CHECK: [[landing]]() role=CleanupHandler:
 # CHECK-NEXT: [[caught]]: anything = CatchValue
-# CHECK: Jump -> next [[finalizer]]({{*}}, [[caught]])
-# CHECK: [[finalizer]]([[selector]]: int[0, 1], [[thrown]]: anything):
-# CHECK-NEXT: = Call v0
-# CHECK-NEXT: Switch [[selector]] cases=[0] -> case
-# CHECK: Throw [[thrown]]
+# CHECK-NOT: Jump
+# CHECK: = Call v0
+# CHECK: = Call v0
 # SCHEDULE: handler=[[landing]]():
 # SCHEDULE: = Call v0, -, v0
 # SCHEDULE: [[landing]]() role=CleanupHandler:
-# SCHEDULE-NEXT: = CatchValue
-# SCHEDULE: Jump -> next [[finalizer]](
-# SCHEDULE: [[finalizer]]([[selector]]: int[0, 1], [[thrown]]: anything
+# SCHEDULE-NEXT: [[caught]]: anything = CatchValue
 # SCHEDULE-NEXT: = Call v0
-# SCHEDULE-NEXT: Switch [[selector]] cases=[0] -> case
-# SCHEDULE: Throw [[thrown]]
+# SCHEDULE-NEXT: Throw [[caught]]
+# SCHEDULE-NOT: Switch
 }
 
 function f3 name="tryOnlyReturns" parameters=[{type=anything}] results=[{type=anything}] {

@@ -1058,6 +1058,8 @@ $(PROJECT_DIR)/Modules/webauthn/RegistrationResponseJSON.idl
 $(PROJECT_DIR)/Modules/webauthn/ResidentKeyRequirement.idl
 $(PROJECT_DIR)/Modules/webauthn/UnknownCredentialOptions.idl
 $(PROJECT_DIR)/Modules/webauthn/UserVerificationRequirement.idl
+$(PROJECT_DIR)/Modules/webauthn/WebAuthnOperationErrorCode.idl
+$(PROJECT_DIR)/Modules/webauthn/WebAuthnOperationException.idl
 $(PROJECT_DIR)/Modules/webcodecs/AacEncoderConfig.idl
 $(PROJECT_DIR)/Modules/webcodecs/AudioSampleFormat.idl
 $(PROJECT_DIR)/Modules/webcodecs/AvcEncoderConfig.idl
@@ -1224,7 +1226,6 @@ $(PROJECT_DIR)/Scripts/GenerateQuirkBehaviors.rb
 $(PROJECT_DIR)/Scripts/GenerateSettings.rb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDeclarations.cpp.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDeclarations.h.erb
-$(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDefinitions.h.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorID.h.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorID.serialization.in.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirksAccessors.cpp.erb
@@ -2204,6 +2205,7 @@ $(PROJECT_DIR)/testing/MockPaymentAddress.idl
 $(PROJECT_DIR)/testing/MockPaymentContactFields.idl
 $(PROJECT_DIR)/testing/MockPaymentCoordinator.idl
 $(PROJECT_DIR)/testing/MockPaymentError.idl
+$(PROJECT_DIR)/testing/MockPhoneNumberPossessionConfiguration.idl
 $(PROJECT_DIR)/testing/MockRTCRtpTransform.idl
 $(PROJECT_DIR)/testing/MockWebAuthenticationConfiguration.idl
 $(PROJECT_DIR)/testing/RequestedGPU.idl

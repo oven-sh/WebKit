@@ -2,7 +2,7 @@
 # FORM: AsRead
 # RUN: compile
 # REQUIRES: unsanitized-code
-# OPTIONS: heat=everything-is-hot threads=1 check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations
+# OPTIONS: heat=everything-is-hot threads=1 check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:NarrowConstantVariables
 # STATISTIC: LoopsRotated >= 38
 # STATISTIC: NullChecksFoldedIntoAccesses >= 38
 # CHECK: image not empty

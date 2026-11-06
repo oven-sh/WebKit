@@ -10,10 +10,12 @@
 
 #include "AOTClassMemberTable.h"
 #include "AOTClassPrototype.h"
+#include "AOTClosureWord.h"
 #include "AOTCompiledStructure.h"
 #include "AOTFieldTable.h"
 #include "AOTImageText.h"
 #include "AOTPropertyCachesFront.h"
+#include "AOTStubProgramTables.h"
 #include "AOTStubsField.h"
 #include "AOTStubsPropertyAccessors.h"
 #include "AOTStubsPropertyExtraProperties.h"
@@ -238,7 +240,7 @@ static void loadNumberOfName(StubAssembler& jit, const ObjectLookupRegisters& r,
     static_assert(sizeof(UniquedStringImpl) == 24);
     switch (name) {
     case ObjectLookupName::IsGivenByNumber:
-        hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName)));
+        hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(jit.options().maxNameInFieldTable)));
         return;
     case ObjectLookupName::IsGivenByUID:
         // The names of the image are atoms that lie in the order of their numbers. Text made at run time that equals one of them is that atom.
@@ -247,11 +249,11 @@ static void loadNumberOfName(StubAssembler& jit, const ObjectLookupRegisters& r,
             subtractWordAt(jit, Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), r.name, r.index);
             isNoNameOfImage.append(jit.branch64(CCallHelpers::AboveOrEqual, r.name, Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.capacity))));
             jit.load32(Address(r.uid, OBJECT_OFFSETOF(LazyStringHeader, number)), r.name);
-            hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName)));
+            hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(jit.options().maxNameInFieldTable)));
         } else {
             subtractWordAt(jit, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), r.name, r.index);
             isNoNameOfImage.append(jit.branch64(CCallHelpers::AboveOrEqual, r.name, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.sizeOfProgramIdentifiers))));
-            hasNoColumn.append(jit.branch64(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName * sizeof(UniquedStringImpl))));
+            hasNoColumn.append(jit.branch64(CCallHelpers::Above, r.name, TrustedImm32(jit.options().maxNameInFieldTable * sizeof(UniquedStringImpl))));
             jit.urshift32(TrustedImm32(3), r.name);
             jit.mul32(TrustedImm32(static_cast<int32_t>(0xaaaaaaabu)), r.name, r.name);
         }
@@ -262,16 +264,22 @@ static void loadNumberOfName(StubAssembler& jit, const ObjectLookupRegisters& r,
 }
 
 // object stands for the prototype object of a class, which is as the class declares it for as long as it does. The row of the class is complete. Goes on where the class declares no such member.
-static void answerByClassMembersAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const ObjectLookupRegisters& r, ObjectLookupName name, JumpList& isUnknown)
+static void answerByClassMembersAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const ObjectLookupRegisters& r, ObjectLookupName name, JumpList& isNoClassPrototype, JumpList& isUnknown)
 {
     const GPRReg entry = r.size;
     loadStructure(jit, r.object, r.structure);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.infoOfClassPrototypes)), r.index);
-    isUnknown.append(jit.branchPtr(CCallHelpers::NotEqual, Address(r.structure, Structure::classInfoOffset()), r.index));
+    isNoClassPrototype.append(jit.branchPtr(CCallHelpers::NotEqual, Address(r.structure, Structure::classInfoOffset()), r.index));
     // The closures of the members are those of the Instance of its realm.
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), r.index);
     isUnknown.append(jit.branchPtr(CCallHelpers::NotEqual, Address(r.structure, Structure::realmOffset()), r.index));
     isUnknown.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(r.object, JSObject::butterflyOffset())));
+    if (jit.options().sharesRealms) {
+        jit.load32(Address(r.object, ClassPrototype::offsetOfClassNumber()), r.index);
+        if (jit.options().layoutIndicesBelow)
+            jit.sub32(TrustedImm32(static_cast<int32_t>(jit.options().layoutIndicesBelow)), r.index);
+        isUnknown.append(jit.branch32(CCallHelpers::AboveOrEqual, r.index, TrustedImm32(static_cast<int32_t>(jit.options().numberOfLayoutIndices))));
+    }
     // `constructor` is a member of every class, whether or not the image names it.
     loadNumberOfName(jit, r, name, isUnknown, isUnknown);
     jit.load32(Address(r.object, ClassPrototype::offsetOfMemberRow()), r.index);
@@ -321,6 +329,35 @@ static void answerByClassMembersAndReturn(StubAssembler& jit, ObjectLookupQuesti
         returnAnswer(jit, question, false);
     }
     isNotDeclared.link(&jit);
+}
+
+// The name is no symbol. Closure::getOwnPropertySlot(), SlimClosure::getOwnPropertySlot() and ReifiedSlimClosure::getOwnPropertySlot(): beside the three properties that are made when they are first looked for,
+// and what a class declares as static, a function object of the program has what its property table lists. One that was given no property has no table.
+static void branchOnFunctionObject(StubAssembler& jit, const ObjectLookupRegisters& r, JumpList& hasWhatPropertyTableLists, JumpList& hasNothing, JumpList& isNoFunctionObject, JumpList& isUnknown)
+{
+    static_assert(SlimClosureWithPropertiesType == SlimClosureType + 1 && CompiledClosureType > SlimClosureWithPropertiesType - SlimClosureType);
+    FunctionKindData constructor { };
+    constructor.isConstructor = 1;
+    const GPRReg type = r.size;
+    const GPRReg function = r.vector;
+    const GPRReg kind = r.size;
+
+    jit.load8(Address(r.object, JSCell::typeInfoTypeOffset()), type);
+    Jump isClosure = jit.branch32(CCallHelpers::Equal, type, TrustedImm32(CompiledClosureType));
+    jit.sub32(TrustedImm32(SlimClosureType), type);
+    isNoFunctionObject.append(jit.branch32(CCallHelpers::Above, type, TrustedImm32(SlimClosureWithPropertiesType - SlimClosureType)));
+    isClosure.link(&jit);
+    for (ptrdiff_t offsetOfUID : { AOT_INSTANCE_OFFSET(propertyCaches.nameUID), AOT_INSTANCE_OFFSET(propertyCaches.lengthUID), AOT_INSTANCE_OFFSET(propertyCaches.prototypeUID) })
+        isUnknown.append(jit.branchPtr(CCallHelpers::Equal, Address(instanceGPR, static_cast<int32_t>(offsetOfUID)), r.uid));
+    hasNothing.append(jit.branchTest32(CCallHelpers::Zero, type));
+    hasWhatPropertyTableLists.append(jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(CompiledClosureType)));
+    // What a class declares as static lies in variables, and the class object may be yet to be made.
+    jit.load64(Address(r.object, offsetOfClosureEntry), function);
+    extractBits(jit, function, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, function);
+    branchUnlessClosureNumberOfThisImage(jit, function, isUnknown);
+    loadKindOfClosureFunction(jit, function, kind);
+    hasWhatPropertyTableLists.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(std::bit_cast<uint16_t>(constructor))));
+    isUnknown.append(jit.jump());
 }
 
 void locateFieldOfObject(StubAssembler& jit, const ObjectLookupRegisters& r, ObjectLookupName name, JumpList& hasNoField, JumpList& isUnknown)
@@ -427,6 +464,14 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
         }
     };
 
+    // Only a name that starts with a digit can be an index. For a 16-bit character this checks the low byte. The name is not empty.
+    auto branchIfNameBeginsWithDigit = [&] {
+        jit.loadPtr(Address(r.uid, StringImpl::dataOffset()), r.index);
+        jit.load8(Address(r.index), r.index);
+        jit.sub32(TrustedImm32('0'), r.index);
+        return jit.branch32(CCallHelpers::BelowOrEqual, r.index, TrustedImm32(9));
+    };
+
     isUnknown.append(jit.branchIfNotCell(r.receiver));
     isUnknown.append(jit.branchIfNotObject(r.receiver));
     // The empty name is the one name of the image whose uid is no atom of the image, so neither can be had from the other.
@@ -435,8 +480,10 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
 
     Label askObject = jit.label();
     Jump hasOwnLookup = jit.branchTest8(CCallHelpers::NonZero, Address(r.object, JSCell::typeInfoFlagsOffset()), TrustedImm32(flagsOfOwnLookup));
+    Label askPropertyTable = jit.label();
     // A name may spell an index, and an element is in no property table.
-    isUnknown.append(jit.branchTest8(CCallHelpers::NonZero, Address(r.object, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
+    Jump hasElements = jit.branchTest8(CCallHelpers::NonZero, Address(r.object, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask));
+    Label askPropertyTableForNameThatSpellsNoIndex = jit.label();
     loadStructure(jit, r.object, r.structure);
     answerByPropertyTableAndReturn(jit, question, r, isAbsentHere, isUnknown, isUnknown, [] { }, willReturnValue);
 
@@ -461,7 +508,7 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     hasOwnLookup.link(&jit);
     // The tables of the image go by the number of a name, which a symbol does not have.
     isUnknown.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.uid, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsSymbol())));
-    Jump isNotCompiledObject = jit.branch8(CCallHelpers::NotEqual, Address(r.object, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledObjectType));
+    JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, r.object);
     answerByFieldRecordAndReturn(jit, question, r, name, isUnknown);
     jit.branchTest32(CCallHelpers::Zero, Address(r.object, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)).linkTo(askObjectAbove, &jit);
     loadStructure(jit, r.object, r.structure);
@@ -473,7 +520,9 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     loadExtraProperties(jit, objectWithExtraProperties, r.index, r.object, extraPropertiesDoNotSay);
     // In their place may be the record of what is still to be made.
     extraPropertiesDoNotSay.append(jit.branch8(CCallHelpers::NotEqual, Address(r.object, JSCell::typeInfoTypeOffset()), TrustedImm32(FinalObjectType)));
-    extraPropertiesDoNotSay.append(jit.branchTest8(CCallHelpers::NonZero, Address(r.object, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
+    Jump extraPropertiesHaveNoElements = jit.branchTest8(CCallHelpers::Zero, Address(r.object, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask));
+    extraPropertiesDoNotSay.append(branchIfNameBeginsWithDigit());
+    extraPropertiesHaveNoElements.link(&jit);
     loadStructure(jit, r.object, r.structure);
     answerByPropertyTableAndReturn(jit, question, r, isAbsentFromExtraProperties, extraPropertiesDoNotSay, isUnknown, restoreName);
 
@@ -486,13 +535,49 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     restoreName();
     isUnknown.append(jit.jump());
 
+    hasElements.link(&jit);
+    isUnknown.append(branchIfNameBeginsWithDigit());
+    jit.jump().linkTo(askPropertyTableForNameThatSpellsNoIndex, &jit);
+
     isNotCompiledObject.link(&jit);
     if (jit.options().useWideReferences) {
         isUnknown.append(jit.jump());
         return;
     }
-    answerByClassMembersAndReturn(jit, question, r, name, isUnknown);
+    JumpList hasWhatPropertyTableLists;
+    JumpList hasNothing;
+    JumpList isNoFunctionObject;
+    branchOnFunctionObject(jit, r, hasWhatPropertyTableLists, hasNothing, isNoFunctionObject, isUnknown);
+    hasWhatPropertyTableLists.linkTo(askPropertyTable, &jit);
+    hasNothing.linkTo(askObjectAbove, &jit);
+
+    isNoFunctionObject.link(&jit);
+    JumpList isNoClassPrototype;
+    answerByClassMembersAndReturn(jit, question, r, name, isNoClassPrototype, isUnknown);
     jit.jump().linkTo(askObjectAbove, &jit);
+
+    // A class may say that it has a lookup of its own for what follows from saying so, and look things up as every object does.
+    isNoClassPrototype.link(&jit);
+    isUnknown.append(jit.branchTest8(CCallHelpers::NonZero, Address(r.object, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
+    jit.loadPtr(Address(r.structure, Structure::classInfoOffset()), r.index);
+    jit.loadPtr(Address(r.index, OBJECT_OFFSETOF(ClassInfo, methodTable) + OBJECT_OFFSETOF(MethodTable, getOwnPropertySlot)), r.index);
+    jit.branchPtr(CCallHelpers::Equal, Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.lookupOfOrdinaryObjects)), r.index).linkTo(askPropertyTable, &jit);
+    auto branchIfNamed = [&](ptrdiff_t offsetOfUID) {
+        return jit.branchPtr(CCallHelpers::Equal, Address(instanceGPR, static_cast<int32_t>(offsetOfUID)), r.uid);
+    };
+    isUnknown.append(branchIfNamed(AOT_INSTANCE_OFFSET(propertyCaches.lengthUID)));
+
+    // JSArray::getOwnPropertySlot() answers by itself for the length alone.
+    Jump isNoArray = jit.branchPtr(CCallHelpers::NotEqual, Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.lookupOfArrays)), r.index);
+    isUnknown.append(branchIfNameBeginsWithDigit());
+    jit.jump().linkTo(askPropertyTableForNameThatSpellsNoIndex, &jit);
+
+    // JSFunction::getOwnPropertySlot() makes three properties when they are first looked for.
+    isNoArray.link(&jit);
+    isUnknown.append(jit.branchPtr(CCallHelpers::NotEqual, Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.lookupOfFunctions)), r.index));
+    isUnknown.append(branchIfNamed(AOT_INSTANCE_OFFSET(propertyCaches.nameUID)));
+    isUnknown.append(branchIfNamed(AOT_INSTANCE_OFFSET(propertyCaches.prototypeUID)));
+    jit.jump().linkTo(askPropertyTable, &jit);
 }
 
 // StringImpl::ref().
@@ -683,7 +768,7 @@ void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const
 
     // Object::tryStoreExtraProperty(): what a compiled object has beside its fields lies in an ordinary object of its own.
     JumpList hasNoField;
-    cannot.append(jit.branch8(CCallHelpers::NotEqual, Address(owner, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledObjectType)));
+    cannot.append(branchIfNotCompiledObjectOfThisImage(jit, owner));
     cannot.append(jit.branchTest32(CCallHelpers::Zero, Address(owner, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
     locateFieldOfObject(jit, r, name, hasNoField, cannot);
     cannot.append(jit.jump());
@@ -801,7 +886,7 @@ static void emitBoundNameProbe(StubAssembler& jit, uint32_t number)
 #if CPU(X86_64)
     const uint32_t upperHalf = PackedSlot::upperHalfForOwnInlineValue(static_cast<uint16_t>(number));
     Jump isNotCell = jit.branchIfNotCell(R0);
-    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number, true, true, false, callerFrame }, isNotInFieldTable);
+    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number, true, true, false, callerFrame, jit.bindingPolicy().expectedFieldTableEntry(number) }, isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     loadFrontRowOfCell(jit, SlotAccess::Read, R0, row, T10);
     Jump isNotOwnInlineValue = jit.branch32(CCallHelpers::NotEqual, inCell(PackedSlot::offsetOfLocation()), TrustedImm32(static_cast<int32_t>(upperHalf)));
@@ -825,7 +910,7 @@ static void emitBoundNameProbe(StubAssembler& jit, uint32_t number)
     jit.jumpToStub(getById().withCallerFrame(callerFrame));
 #else
     Jump isNotCell = jit.branchIfNotCell(R0);
-    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number, true, true, false, callerFrame }, isNotInFieldTable);
+    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number, true, true, false, callerFrame, jit.bindingPolicy().expectedFieldTableEntry(number) }, isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     jit.move(TrustedImm32(number), T9);
     jit.load32(Address(R0, JSCell::structureIDOffset()), T11);
@@ -871,7 +956,8 @@ void generateGetById(StubAssembler& jit)
     const GPRReg cell = T12;
     loadStructureIDOfReceiver(jit, R0, T11, *miss, [&] {
         JumpList isNotInFieldTable;
-        returnFieldByTable(jit, { R0, name, T11, cell, std::nullopt, true, true, false, callerFrame }, isNotInFieldTable);
+        // The probe shifts by its index, which x86-64 does by this register alone.
+        returnFieldByTable(jit, { R0, name, T14, cell, std::nullopt, true, true, false, callerFrame }, isNotInFieldTable);
         isNotInFieldTable.link(&jit);
         behindFieldTable = jit.label();
         jit.bindEntry(getByIdBehindFieldTable().withCallerFrame(callerFrame));
@@ -958,15 +1044,16 @@ void generateInById(StubAssembler& jit)
     JumpList isNotInFront;
     JumpList miss;
     JumpList isNotInFieldTable;
+    miss.append(jit.branchIfNotCell(R0));
+    Label asksCell = jit.label();
     auto emitPresenceBySlot = [&](const ProbedSlot& probed, JumpList& isUnknown) {
         Jump isNotField = branchUnlessSlotNamesField(jit, probed, T10);
         returnFieldPresence(jit, CachedSlot(probed.form, Slot::Kind::Field, probed.header, probed.payload), { R0, T10, structureID, structureID, T14 }, miss);
 
         isNotField.link(&jit);
-        returnPresenceBySlot(jit, question, probed, R0, isUnknown);
+        returnPresenceBySlot(jit, question, probed, R0, asksCell, isUnknown);
     };
 
-    miss.append(jit.branchIfNotCell(R0));
     auto emitReturnFalse = [&] {
         jit.move(TrustedImm32(0), R0);
         jit.returnToCaller();
@@ -989,7 +1076,14 @@ void generateInById(StubAssembler& jit)
     loadIdentifier(jit, name, T10, miss);
     JumpList isInNoTable;
     findHashedSlot(jit, SlotAccess::Read, { structureID, T10, T14, T12, T13, T13 }, isInNoTable);
-    emitPresenceBySlot({ SlotForm::Slot, T12, T13 }, miss);
+    JumpList slotDoesNotSay;
+    emitPresenceBySlot({ SlotForm::Slot, T12, T13 }, slotDoesNotSay);
+    slotDoesNotSay.link(&jit);
+    if (question == PresenceQuestion::In && jit.options().callsTrapsOfProxies.predicted()) {
+        miss.append(branchIfSlotKindDiffers(jit, { SlotForm::Slot, T12, T13 }, Slot::Kind::Uncacheable, T10));
+        jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, T13), throughProxy(TrapOfProxy::Has));
+    }
+    miss.append(jit.jump());
 
     isInNoTable.link(&jit);
     countMissOfPair(jit, structureID, T10, T12, miss);

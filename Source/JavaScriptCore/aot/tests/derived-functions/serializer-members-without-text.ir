@@ -4,8 +4,8 @@
 # STATISTIC: SerializersCreated = 4
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="WithoutText" fields=[{key="nothing" declared={type=undefined}}, {key="id" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="tag" declared={type=symbol}}, {key="either" declared={type=undefined|symbol}}, {key="name" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1, 2, 3, 4]}]}
-layout L1 name="OnlyWithoutText" fields=[{key="nothing" declared={type=undefined}}, {key="tag" declared={type=symbol}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L0 name="WithoutText" fields=[{key="nothing" declared={type=undefined} flow={stability=[IsNeverStoredWithOtherType]}}, {key="id" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="tag" declared={type=symbol}}, {key="either" declared={type=undefined|symbol}}, {key="name" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1, 2, 3, 4]}]}
+layout L1 name="OnlyWithoutText" fields=[{key="nothing" declared={type=undefined} flow={stability=[IsNeverStoredWithOtherType]}}, {key="tag" declared={type=symbol}}] flow={constructorOrders=[{fields=[0, 1]}]}
 layout L2 name="Handler" fields=[{key="id" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="run" declared={type=f0}}, {key="name" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1, 2]}]}
 layout L3 name="SymbolOrNumber" fields=[{key="value" declared={type=number|symbol}}] flow={constructorOrders=[{fields=[0]}]}
 function f0 name="run" module=m0 kind=Arrow thisType={type=anything} results=[{type=undefined}] {

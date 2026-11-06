@@ -57,7 +57,7 @@ const ClassInfo JSPromise::s_info = { "Promise"_s, &Base::s_info, nullptr, nullp
 #if USE(BUN_JSC_ADDITIONS)
 static ALWAYS_INLINE bool runsInSynchronousModuleQueue(VM& vm, InternalMicrotask task, JSValue context)
 {
-    if (!vm.m_synchronousModuleQueue) [[likely]]
+    if (!vm.synchronousModuleQueue()) [[likely]]
         return false;
 #if ENABLE(AOT)
     if (task == InternalMicrotask::CompiledAsyncFunctionResume)

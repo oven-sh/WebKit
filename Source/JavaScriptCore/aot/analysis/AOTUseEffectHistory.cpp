@@ -49,7 +49,7 @@ static std::optional<uint32_t> actionIndexOf(const Function& function, const Use
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool hasKnownHistory(const TrackedObject& object, std::span<const ObjectUse> objectUses, OperandUses requestedUses)
+static bool hasKnownHistory(const TrackedObject& object, ObjectUses objectUses, OperandUses requestedUses)
 {
     OperandUses listedUses;
     bool hasEscapingUse = false;
@@ -189,7 +189,7 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
         addAction(allocation.block, allocation.index, object, ActionKind::Reset);
     }
 
-    AOT::sort(pendingActions, { }, [](const PendingAction& pending) {
+    AOT::sortInLine(pendingActions, { }, [](const PendingAction& pending) {
         auto& action = pending.action;
         return std::tuple { pending.blockOrder, action.object, action.index, action.kind == ActionKind::Event };
     });
@@ -304,11 +304,11 @@ Occurrence UseEffectHistory::AtPoint::occurrenceOf(ObjectID object) const
 
     bool hasOccurred = !!(m_head[wordIndexOf(object)] & maskOf(object));
     if (!m_actions.empty()) {
-        for (auto& action : std::ranges::equal_range(m_actions, object, { }, &Action::object)) {
-            if (action.index >= m_index)
-                break;
-            hasOccurred = action.kind == ActionKind::Event;
-        }
+        // The last action in front of the point decides.
+        auto actions = std::ranges::equal_range(m_actions, object, { }, &Action::object);
+        auto end = std::ranges::lower_bound(actions, m_index, { }, &Action::index);
+        if (end != actions.begin())
+            hasOccurred = std::prev(end)->kind == ActionKind::Event;
     }
     return hasOccurred ? Occurrence::MayHaveOccurred : Occurrence::HasNotOccurred;
 }

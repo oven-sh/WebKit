@@ -61,7 +61,7 @@ function f3 name="testBehindProof" flags=[IsAsync, IsGenerator, TakesCallee] par
 
 # CHECK-LABEL: function f6 name="proofHasSecondUse"
 # CHECK-NOT: AsyncGeneratorYield
-# CHECK: v3{{*}}= AwaitBySavingFrame v1, [[driver2]], v0 @11
+# CHECK: v3{{*}}= AwaitBySavingFrame v1, [[driver2]] @11
 # CHECK-NEXT: v4{{*}}= AssumeType v3 provenType=int[0, 9]
 # CHECK-NEXT: v5{{*}}= YieldBySavingFrame [[driver2]], v4, v0 @12
 # CHECK: Return v4
@@ -69,7 +69,7 @@ function f3 name="testBehindProof" flags=[IsAsync, IsGenerator, TakesCallee] par
 
 # CHECK-LABEL: function f7 name="testBehindProof"
 # CHECK-NOT: AsyncGeneratorYield
-# CHECK: v3{{*}}= AwaitBySavingFrame v1, [[driver3]], v0 @11
+# CHECK: v3{{*}}= AwaitBySavingFrame v1, [[driver3]] @11
 # CHECK-NEXT: v4{{*}}= AssumeType v3 provenType=number|string
 # CHECK-NEXT: v5: number = Check v4 expectedType=number cause=AddedByPass
 # CHECK-NEXT: v6{{*}}= YieldBySavingFrame [[driver3]], v5, v0 @12

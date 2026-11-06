@@ -180,9 +180,9 @@ function f7 name="positionIsNotKnown" parameters=[{type=anything}, {type=anythin
 }
 
 # The users of the read were chosen for a NaN. Its type is still the one from before its position was tested, and undefined would fit it.
-function f8 name="holeTakenForNaN" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-    v2 = NewArray v0, v1 contents=number holes=[1]
-    v3 = AssumeType v2 provenType=Array<number, proven, Double, pristine[Storage]>
+function f8 name="holeTakenForNaN" parameters=[{type=int|fractional}, {type=int|fractional}] results=[{type=number}] {
+    v2 = NewArray v0, v1 contents=int|fractional holes=[1] arrayStorage=Double [contentsAreProven]
+    v3 = AssumeType v2 provenType=Array<int|fractional, proven, Double, pristine[Storage]>
     v4 = Integer integer=1
     v5 = IsInBounds v3, v4
     Branch v5 -> taken b1(| 0), notTaken b2()
@@ -193,7 +193,7 @@ function f8 name="holeTakenForNaN" parameters=[{type=number}, {type=number}] res
   b2():
     Return v0
 # CHECK-NOT: Undefined
-# CHECK: v2:{{*}}= NewArray v0, v1 contents=number holes=[1]
+# CHECK: v2:{{*}}= NewArray v0, v1 contents=int|fractional holes=[1]
 # CHECK-NOT: Undefined
 # CHECK: v7:{{*}}= GetArrayElement v3, v4, v6 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds, readsHoleAsNaN]
 # CHECK-NEXT: v8:{{*}}= Sub v7, v0

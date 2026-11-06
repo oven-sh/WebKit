@@ -78,11 +78,13 @@ function f2 name="literalOrParameter" parameters=[{type=anything}, {type=object}
 # CHECK-NOT: NewObject
 # CHECK: b2():
 # CHECK: Jump -> next b3({{*}}, v1, 
-# CHECK: b3([[tag7]]: i32, [[cell7]]: object, 
+# CHECK: b3([[tag7]]: i32, [[cell7]]: object|unspecified, 
 # CHECK: b4():
 # CHECK-NEXT: Switch [[tag7]] cases=[
-# CHECK: ([[built7]]: object):
-# CHECK-NEXT: = Call v0, -, [[built7]]
+# CHECK: ([[built7]]: object|unspecified):
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: [[built7There]]: object = AssumeType [[built7]], [[filled1]] provenType=object
+# CHECK-NEXT: = Call v0, -, [[built7There]]
 # CHECK: Jump -> next {{*}}([[cell7]])
 # CHECK: [[literal7]]:{{*}}= NewObject -, {{*}} layout=L0 fields=[0, 1]
 # CHECK-NEXT: Jump -> next {{*}}([[literal7]])
@@ -247,7 +249,9 @@ function f9 name="builtObjectMeetsLiteralAfterMerge" parameters=[{type=anything}
 # CHECK: b6([[tag15]]: i32, 
 # CHECK: b7():
 # CHECK-NEXT: Switch [[tag15]] cases=[
-# CHECK: ([[read15]]: L0):
-# CHECK-NEXT: = PropGet [[read15]] key="y"
+# CHECK: ([[read15]]: unspecified|L0):
+# CHECK-NEXT: [[filled2]]: fact = Specified
+# CHECK-NEXT: [[read15There]]: L0 = AssumeType [[read15]], [[filled2]] provenType=L0
+# CHECK-NEXT: = PropGet [[read15There]] key="y"
 # CHECK: = NewObject -, {{*}} layout=L0 fields=[0, 1]
 }

@@ -1,0 +1,49 @@
+# Every turn of the inner loop asks the same of a list that was there ahead of both loops. A copy of the inner loop would come back to it each turn, so the test would stay in the loop. The loop around it is separated instead: its copy comes back behind all the turns of the inner loop, and the back end asks ahead of the inner loop
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 1
+# LOSS: MaxTypeValuesRounds
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lastOfEach" parameters=[{type=Array}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    v4 = Undefined
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v2
+    Branch v8 -> taken b2(| 0), notTaken b9()
+  b2(v9):
+    v10 = Integer integer=0
+    Jump -> next b3(v10, v6)
+  b3(v11, v12):
+    LoopHint
+    v14 = Less v11, v1
+    Branch v14 -> taken b4(| 0), notTaken b8()
+  b4(v15):
+    v16 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v16 -> taken b5(| 0), notTaken b6()
+  b5(v17):
+    v18 = GetArrayElement v0, v15, v17 level=Expected [keyIsIntegral]
+    Jump -> next b7(v18)
+  b6() frequency=Unlikely:
+    v19 = ElemGet v0, v15 [keyIsIntegral]
+    Jump -> next b7(v19)
+  b7(v20):
+    v21 = Increment v15
+    Jump -> next b3(v21, v20)
+  b8():
+    v22 = Increment v9
+    Jump -> next b1(v22, v12)
+  b9():
+    Return v6
+# The inner loop is entered from the outer one as before, and what has left comes back where the outer loop is entered.
+# CHECK: Jump -> next [[entry]](v3, v4)
+# CHECK: b2(v9: int[0, 99]):
+# CHECK: Jump -> next b3(v10, v6)
+# CHECK: Branch v16 -> taken b5(| 0), notTaken [[failed]]({{*}})
+# CHECK: [[failed]]({{*}}) frequency=Rare:
+# CHECK: [[entry]]({{*}}):
+# CHECK-NEXT: Jump -> next b1(
+}

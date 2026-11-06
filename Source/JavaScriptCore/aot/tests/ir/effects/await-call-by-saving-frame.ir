@@ -23,10 +23,10 @@ function f3 name="caller" role=CoroutineBody flags=[IsAsync] parameters=[{type=u
     Return v2
 }
 # CHECK-NOT: suspends
-# CHECK: f1 return: none throw: none
+# CHECK: f1 return: throwsForLackOfStack throw: throwsForLackOfStack
 # CHECK-NOT: suspends
 # CHECK: f3 return: {{*}}callsUnknownCode
 # CHECK-NOT: suspends
 # CHECK-LABEL: function f3
-# CHECK: v1 CallDirect: none
+# CHECK: v1 CallDirect: throwsForLackOfStack
 # CHECK-NEXT: v2 AwaitCallBySavingFrame: unknownCode suspends

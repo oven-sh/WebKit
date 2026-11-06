@@ -1,0 +1,122 @@
+# type Mark = { at: number; label?: string };
+# function mark(at: number): Mark {
+#   return { at };
+# }
+# declare const input: any;
+# for (let turn = 0; turn < 2; turn++) {
+#   const plain = mark(+input);
+#   const named: Mark = { at: +input, label: String(input) };
+#   (globalThis as any).answer = [plain, named, plain.at + named.at, plain.label, named.label];
+# }
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:SplitFreshResults
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): generate-code calls
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=58 kind=Parameter function=f1
+typesite w1 module=m0 position=44 kind=Result
+typesite w2 module=m0 position=132 kind=Variable
+typesite w3 module=m0 position=200 kind=Variable
+typesite w4 module=m0 position=178 kind=CallResult
+typesite w5 module=m0 position=235 kind=CallResult
+layout L0 name="Mark" module=m0 position=5 fields=[{key="at" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w2}
+    Jump -> next b2(v3)
+  b2(v4: number):
+    LoopHint
+    v6 = Integer integer=2
+    v7 = Less v4, v6
+    Branch v7 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v8):
+    Jump -> next b4()
+  b4():
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="input" [isFreeName]
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    v12 = ToNumber v11
+    v13 = Call v1, -, v12 calleeName="mark"
+    v14 = Convert v13 declared={type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="input" [isFreeName]
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = ToNumber v17
+    v19 = Convert v18 declared={type=number}
+    v20 = Builtin builtin=String
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="input" [isFreeName]
+    v23 = Call v20, -, v22 calleeName="String"
+    v24 = Convert v23 declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v25 = NewObject -, v19, v24 layout=L0 fields=[0, 1]
+    v26 = FinishObject v25
+    v27 = Convert v26 declared={type=undefined|null|L0 site=w3 flags=[OmitsNull, OmitsUndefined]}
+    v28 = Builtin builtin=GlobalThis
+    v29 = PropGet v28 key="globalThis" [isFreeName]
+    v30 = Convert v29 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v31 = Convert v30 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v32 = PropGet v14 key="at"
+    v33 = PropGet v27 key="at"
+    v34 = Add v32, v33
+    v35 = PropGet v14 key="label"
+    v36 = PropGet v27 key="label"
+    v37 = NewArray v14, v27, v34, v35, v36 contents=anything
+    PropSet v31, v37 key="answer"
+    Jump -> next b5()
+  b5():
+    v39 = Increment v8
+    v40 = Convert v39 declared={type=number site=w2}
+    Jump -> next b2(v40)
+  b6(v41):
+    Jump -> next b7()
+  b7():
+    v42 = Undefined
+    Return v42
+}
+function f1 name="mark" module=m0 position=44 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=number}
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Convert v3 declared={type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    Return v4
+}
+
+# The literal leaves out the optional field. The object has the one shape of the type all the same: the word of the missing field gets the mark for empty, which is zero.
+# CHECK-LABEL: name="mark" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK: Int64 b@[[mark]] = Patchpoint($1(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
+# CHECK-NEXT: Double b@[[at]] = ArgumentReg(
+# CHECK-NEXT: Store(b@[[at]], b@[[mark]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK: Store($0(b@{{*}}), b@[[mark]], offset = 24, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK: Return(b@[[mark]], Terminal)
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="mark" role=Source
+# NONE-NOT: |Writes:JSCell_header
+# NONE-NOT: Reads:JSCell
+# NONE-COUNT-1: Patchpoint(
+# NONE-NOT: Patchpoint(
+# NONE-LABEL: end of function
+# CALLS: f1: size=
+# CALLS-NEXT: stub AllocateCell.HeaderAndWords.n2 x1
+# CALLS-NOT: stub
+# CALLS-NOT: operation
+# CALLS: f{{*}}: size=
+# X64: instructions: 7, patchpoints: 1
+# ARM64: instructions: 8, patchpoints: 1, rare instructions: 2

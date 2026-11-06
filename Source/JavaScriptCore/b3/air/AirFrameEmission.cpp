@@ -118,9 +118,10 @@ static unsigned bytesBelowReturnAddress(const Code& code)
 
 static void allocateOnStack(CCallHelpers& jit, unsigned bytes)
 {
-    // Any register serves: this push only allocates the word.
+    // This push only allocates the word, but what it stores stays for as long as the frame is there, and a stale copy of a pointer keeps its object alive. Any other register
+    // may hold one: the result register holds what the caller's last call returned, which is often the argument. This one always holds an address of the stack.
     if (bytes == sizeof(CPURegister))
-        jit.push(GPRInfo::returnValueGPR);
+        jit.push(CCallHelpers::framePointerRegister);
     else if (bytes)
         jit.subPtr(CCallHelpers::TrustedImm32(bytes), CCallHelpers::stackPointerRegister);
 }

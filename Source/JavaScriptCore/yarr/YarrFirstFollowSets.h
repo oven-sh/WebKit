@@ -128,6 +128,7 @@ private:
     Outcome chargeVisit(Walk&);
     Outcome collect(const PatternAlternative&, unsigned firstTermIndex, const Continuation*, bool passedAssertion, Walk&);
     Outcome collectLookahead(const PatternTerm&, Walk&);
+    Outcome collectBackReference(const PatternTerm&, const PatternAlternative&, unsigned termIndex, const Continuation*, Walk&);
     NextCharacters internMembers(Walk&);
     WordCharacterKnowledge lastCharacterKnowledge(const PatternAlternative&, unsigned endTermIndex, WordClassKind, unsigned& budget);
     WordCharacterKnowledge groupLastCharacterKnowledge(const PatternTerm&, WordClassKind, unsigned& budget);

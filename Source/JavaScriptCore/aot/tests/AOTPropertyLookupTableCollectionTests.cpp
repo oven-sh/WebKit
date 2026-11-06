@@ -124,6 +124,7 @@ void checkLivenessOfPayload(Slot slot, Structure* live, Structure* dead, const I
     uintptr_t cageBase = MarkedBlockCage::baseOf(live);
     switch (Slot::payloadOf(slot.kind)) {
     case SlotPayload::Holder:
+    case SlotPayload::Key:
         AOT_TEST_CHECK(slot.namesOnlyLiveCells(isMarked, cageBase));
         slot.holder = live;
         AOT_TEST_CHECK(slot.namesOnlyLiveCells(isMarked, cageBase));

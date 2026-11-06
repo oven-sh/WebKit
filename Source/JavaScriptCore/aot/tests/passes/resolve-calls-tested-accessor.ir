@@ -79,11 +79,17 @@ function f9 name="getter-with-capture" parameters=[{type=L0 flags=[IsExpected]}]
 }
 function f10 name="nothing-expected" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="size"
-    PropSet v0, v1 key="size"
     Return v2
 # CHECK-NEXT: b0(v0: object, v1: anything):
 # CHECK-NEXT: v2: anything = PropGet v0 key="size"
-# CHECK-NEXT: PropSet v0, v1 key="size"
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
+function f11 name="expected-from-a-store-under-a-name-that-built-ins-only-read" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="size"
+    PropSet v0, v1 key="size"
+    Return v2
+# CHECK-NEXT: b0(v0: object ~ L0|L1
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1
+# CHECK: = CallDirect {{*}}, v1 function=f2 [calleeIsPredicted]
 }

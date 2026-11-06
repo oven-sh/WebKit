@@ -21,7 +21,7 @@ inline constexpr EscapeReasons callReasons { EscapeReason::PassedToUnknownCode, 
 inline constexpr OperandUses leakingUses { OperandUse::Retains, OperandUse::Returns, OperandUse::PassesToUserCode };
 
 struct ValueSet {
-    BitVector objects;
+    SparseObjectSet objects;
     bool mayBeUntracked { true };
 };
 
@@ -32,8 +32,8 @@ struct SolvedObject {
     OperandUses appliedUses;
 };
 
+// Applies to PointsToResults::objectsOf(). A chain of n values that n objects reach has n x n pairs of object and use, so a pair costs one ObjectID.
 struct SolvedUse {
-    ObjectID object;
     Use use;
     OperandUses uses;
     EscapeReasons reasons;
@@ -41,6 +41,8 @@ struct SolvedUse {
     ValueID retainedBy;
     bool isContentsStore { false };
     bool readsContents { false };
+    uint32_t firstObject { 0 };
+    uint32_t numberOfObjects { 0 };
 };
 
 struct SolvedContents {
@@ -58,9 +60,12 @@ struct PointsToResults {
     Vector<AnswerFromTypes> answersFromTypes;
     Vector<SolvedObject> objects;
     Vector<SolvedUse> uses;
+    Vector<ObjectID> objectsOfUses;
     Vector<SolvedContents> contents;
     Vector<ValueSetID> setOfValue;
     Vector<ValueSet> sets;
+
+    std::span<const ObjectID> objectsOf(const SolvedUse& use) const LIFETIME_BOUND { return objectsOfUses.subspan(use.firstObject, use.numberOfObjects); }
 
     const ValueSet* setOf(ValueID id) const LIFETIME_BOUND
     {

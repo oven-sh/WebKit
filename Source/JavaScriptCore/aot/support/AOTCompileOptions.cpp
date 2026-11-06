@@ -315,10 +315,26 @@ public:
         recorded.admittedCode = static_cast<uint8_t>(m_wire.admittedCode);
 
         options.action = m_wire.action;
+        options.widensFlow = m_wire.flowOverride == FlowOverride::Widened;
         options.reports = m_wire.reports;
         options.excludedCode = m_wire.excludedCode;
         recorded.omitsFunctionSource = hasFlag(options.excludedCode, ExcludedCode::FunctionSource);
         options.output = m_wire.output;
+        if (m_wire.target.imagesBelow.size) {
+            if (options.sharesRealms()) {
+                // The address of a list of as many records of the same form, one for each image.
+                std::span list { std::bit_cast<const Wire::ImagesBelowWords*>(static_cast<uintptr_t>(m_wire.target.imagesBelow.address)), static_cast<size_t>(m_wire.target.imagesBelow.size) };
+                for (const Wire::ImagesBelowWords& image : list)
+                    options.imagesBelow.append(std::span { std::bit_cast<const uint8_t*>(static_cast<uintptr_t>(image.address)), static_cast<size_t>(image.size) });
+            } else
+                reportInvalid(m_wire.target.imagesBelow.size);
+        }
+        if (m_wire.target.referenceLibraryImage.size) {
+            if (options.holdsLibraryAlone())
+                options.referenceLibraryImage = std::span { std::bit_cast<const uint8_t*>(static_cast<uintptr_t>(m_wire.target.referenceLibraryImage.address)), static_cast<size_t>(m_wire.target.referenceLibraryImage.size) };
+            else
+                reportInvalid(m_wire.target.referenceLibraryImage.size);
+        }
         options.executableIdentity = m_wire.executableIdentity;
         options.removedFeatures = m_wire.removedFeatures;
         options.featuresKeptOnlyWhenNamed = m_wire.target.featuresKeptOnlyWhenNamed;
@@ -429,6 +445,13 @@ private:
                 testing = withoutFlag(testing, TestingSwitch::FailPredictions);
             }
         }
+        const Wire::FlowScheduleWords& schedule = m_wire.bisection.flowSchedule;
+        if (schedule.number && hasFlag(testing, TestingSwitch::DelayFlowRules) && schedule.number <= UINT8_MAX)
+            recorded.numberOfFlowSchedule = static_cast<uint8_t>(schedule.number);
+        else if (schedule.number)
+            reportInvalid(schedule.number);
+        if (schedule.reserved)
+            reportInvalid(schedule.reserved);
         recorded.testing = static_cast<uint16_t>(testing);
     }
 
@@ -442,8 +465,10 @@ private:
         options.validatesBackEnd = hasFlag(checks, CheckSet::ValidateBackEnd);
         options.checksClaimsToBackEnd = hasFlag(checks, CheckSet::ClaimsToBackEnd);
         options.checksMovedLoads = hasFlag(checks, CheckSet::MovedLoads);
+        options.checksDecidedComparisons = hasFlag(checks, CheckSet::DecidedComparisons);
+        options.checksSpillSlots = hasFlag(checks, CheckSet::SpillSlots) || options.recorded.validates || options.validatesBackEnd;
+        options.checksAllocatedRegisters = hasFlag(checks, CheckSet::AllocatedRegisters) || options.recorded.validates || options.validatesBackEnd;
         options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
-        options.checksThatFunctionsGetPastEntry = hasFlag(checks, CheckSet::FunctionsGetPastEntry);
         options.checksThatUsedValuesAreListed = ASSERT_ENABLED || hasFlag(checks, CheckSet::UsedValuesAreListed) || hasFlag(static_cast<TestingSwitch>(options.recorded.testing), TestingSwitch::CheckProofsAtRunTime);
         options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);
         options.validatesReferences = options.validatesReferenceGuards || hasFlag(checks, CheckSet::ValidateReferences);
@@ -673,8 +698,6 @@ static std::optional<String> applyLimit(Wire::CompileOptions& options, const Opt
     auto limit = findMember<LimitID>(name);
     if (!limit || *limit == LimitID::None)
         return unknownNameSentence(word.noun, name);
-    if (!canBeLowered(*limit))
-        return makeString("the limit "_s, name, " fails the build and cannot be lowered"_s);
     auto loweredValue = parseNumber<uint64_t>(*loweredValueText);
     if (!loweredValue)
         return notANumberSentence(*loweredValueText);
@@ -694,7 +717,7 @@ static void listLimits(PrintStream& out)
     for (LimitID limit : allMembersOf<LimitID>) {
         if (limit == LimitID::None)
             continue;
-        ASCIILiteral mark = canBeLowered(limit) ? ""_s : " (cannot be lowered)"_s;
+        ASCIILiteral mark = isLoweredByAll(limit) ? ""_s : " (not lowered by All)"_s;
         listValue(out, nameOf(limit), ' ', defaultLimitValue(limit, hostArchitecture()), ' ', nameOf(stageOf(limit)), ' ', nameOf(protectsOf(limit)), ' ', nameOf(degradesToOf(limit)), mark);
     }
 }
@@ -726,6 +749,11 @@ static std::optional<String> applyTesting(Wire::CompileOptions& options, const O
         if (*testingSwitch == Wire::TestingSwitch::FailPredictions) {
             if (auto sentence = applyNumbersOfFailPredictions(options, numbers))
                 return sentence;
+        } else if (*testingSwitch == Wire::TestingSwitch::DelayFlowRules) {
+            auto number = parseNumber<uint8_t>(numbers.value_or("0"_s));
+            if (!number)
+                return notANumberSentence(*numbers);
+            options.bisection.flowSchedule.number = *number;
         } else if (numbers)
             return makeString(name, " takes no number"_s);
         addFlag(options.testing, *testingSwitch);

@@ -1,4 +1,4 @@
-# An opaque kind has its own representation: a cell, a raw word, or nothing for a guard. A cell that may be absent is a JSValue, a raw word stays one.
+# An opaque kind has its own representation: a cell, a raw word, or nothing for a guard or a fact. A cell that may be absent is a JSValue, a raw word stays one.
 # RUN: rep
 # CHECK: t0: rep RawWord slot Int64 cells no legal [RawWord]
 # CHECK-NEXT: t1: rep RawWord slot Int64 cells no legal [RawWord]
@@ -20,6 +20,7 @@
 # CHECK-NEXT: cursor: RawWord legal [RawWord]
 # CHECK-NEXT: keyorder: RawWord legal [RawWord]
 # CHECK-NEXT: guard: Void legal [Void]
+# CHECK-NEXT: fact: Void legal [Void]
 # CHECK-NEXT: flatstring: Cell legal [Cell, Cell32, JSValue]
 # CHECK-NEXT: codeaddress: RawWord legal [RawWord]
 # CHECK-NEXT: jsonholders: RawWord legal [RawWord]

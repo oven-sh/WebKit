@@ -9,6 +9,7 @@
 
 #include "AOTCompactList.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <concepts>
@@ -18,6 +19,45 @@
 #include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT {
+
+// The values of a list that is so many times shorter than the other are looked for there by halving.
+AOT_THRESHOLD(size_t, timesShorterToSearchByHalving, 16);
+
+template<typename T>
+bool sortedListsOverlap(std::span<const T> a, std::span<const T> b)
+{
+    if (a.size() > b.size())
+        std::swap(a, b);
+    if (a.size() * timesShorterToSearchByHalving < b.size()) {
+        return std::ranges::any_of(a, [&](T value) {
+            return std::ranges::binary_search(b, value);
+        });
+    }
+    size_t indexInA = 0;
+    size_t indexInB = 0;
+    while (indexInA < a.size() && indexInB < b.size()) {
+        if (a[indexInA] == b[indexInB])
+            return true;
+        if (a[indexInA] < b[indexInB])
+            ++indexInA;
+        else
+            ++indexInB;
+    }
+    return false;
+}
+
+template<typename T>
+bool sortedListIncludes(std::span<const T> list, std::span<const T> included)
+{
+    if (included.size() > list.size())
+        return false;
+    if (included.size() * timesShorterToSearchByHalving < list.size()) {
+        return std::ranges::all_of(included, [&](T value) {
+            return std::ranges::binary_search(list, value);
+        });
+    }
+    return std::ranges::includes(list, included);
+}
 
 template<typename T, size_t inlineCapacity = 0>
 class SortedSet {
@@ -73,25 +113,13 @@ SortedSet<T, inlineCapacity>::SortedSet(std::span<const T> unsortedValues)
 template<typename T, size_t inlineCapacity>
 bool SortedSet<T, inlineCapacity>::isSubsetOf(const SortedSet& other) const
 {
-    return size() <= other.size() && std::ranges::includes(other.m_values, m_values);
+    return sortedListIncludes(other.span(), span());
 }
 
 template<typename T, size_t inlineCapacity>
 bool SortedSet<T, inlineCapacity>::overlaps(const SortedSet& other) const
 {
-    size_t index = 0;
-    size_t otherIndex = 0;
-    while (index < size() && otherIndex < other.size()) {
-        T value = m_values[index];
-        T otherValue = other.m_values[otherIndex];
-        if (value == otherValue)
-            return true;
-        if (value < otherValue)
-            ++index;
-        else
-            ++otherIndex;
-    }
-    return false;
+    return sortedListsOverlap(span(), other.span());
 }
 
 template<typename T, size_t inlineCapacity>
@@ -121,6 +149,14 @@ bool SortedSet<T, inlineCapacity>::remove(T value)
 template<typename T, size_t inlineCapacity>
 bool SortedSet<T, inlineCapacity>::unite(const SortedSet& other)
 {
+    // A few values find their places by halving, and what stands behind them moves up: nothing is compared one by one, nothing copied.
+    AOT_THRESHOLD(size_t, mostValuesAddedOneByOne, 4);
+    if (other.size() <= mostValuesAddedOneByOne && &other != this) {
+        bool hasGrown = false;
+        for (T value : other)
+            hasGrown |= add(value);
+        return hasGrown;
+    }
     if (other.isSubsetOf(*this))
         return false;
     if (isEmpty()) {
@@ -156,8 +192,11 @@ void SortedSet<T, inlineCapacity>::filter(const SortedSet& other, CommonValues c
 {
     size_t writeIndex = 0;
     size_t otherIndex = 0;
+    bool usesBinarySearch = size() * timesShorterToSearchByHalving < other.size();
     for (size_t readIndex = 0; readIndex < size(); ++readIndex) {
         T value = m_values[readIndex];
+        if (usesBinarySearch)
+            otherIndex = std::lower_bound(other.begin() + otherIndex, other.end(), value) - other.begin();
         while (otherIndex < other.size() && other.m_values[otherIndex] < value)
             ++otherIndex;
         bool isCommon = otherIndex < other.size() && other.m_values[otherIndex] == value;

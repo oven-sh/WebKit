@@ -60,6 +60,9 @@ public:
         return false;
     }
 
+    static constexpr ptrdiff_t offsetOfBrand() { return OBJECT_OFFSETOF(BrandedStructure, m_brand); }
+    static constexpr ptrdiff_t offsetOfParentBrand() { return OBJECT_OFFSETOF(BrandedStructure, m_parentBrand); }
+
     template<typename Visitor>
     static void visitAdditionalChildren(JSCell* cell, Visitor& visitor)
     {

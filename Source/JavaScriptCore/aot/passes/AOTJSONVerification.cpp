@@ -390,7 +390,7 @@ struct TypedDataVerifier {
     // An allocation that is made again on several ways arrives as the parameter of the block where they meet.
     bool isNewObjectOf(LayoutID layout, ValueID object)
     {
-        return holdsForOriginsOf(object, false, [&](ValueID value) { return analyses.sameObjectThroughCasts(value); }, [&](const Value& value, auto&) {
+        return holdsForOriginsOf(object, false, [&](ValueID value) { return analyses.sameObjectThroughCasts(value).valueInFrontOfFacts(); }, [&](const Value& value, auto&) {
             return value.opcode == Opcode::NewObject && value.layout() == layout;
         });
     }

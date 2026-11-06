@@ -1,6 +1,6 @@
 # The same function with one more caller: text that a direct eval runs finds f by its name and may pass anything. Nothing is said of the parameter and of the callee, and the record names the eval
 # RUN: valueflow-apply
-# CHECK: function f1 name="f" {{*}}parameters=[{type=undefined|null|string|L0|nolayout flags=[IsExpected]}]
+# CHECK: function f1 name="f" {{*}}parameters=[{type=undefined|null|string|L0 flags=[IsExpected]}]
 # CHECK-NOT: callees=[builtin(StringPrototypeCharCodeAt)]
 # RUN(RESULTS): valueflow-results
 # RESULTS: unseen-code EvaluatesText f0:v5
@@ -44,7 +44,7 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     IteratorClose v8 completion=Throw
     Rethrow v21
 }
-function f1 name="f" module=m0 parameters=[{type=undefined|null|string|L0|nolayout flags=[IsExpected]}] results=[{type=anything}] {
+function f1 name="f" module=m0 parameters=[{type=undefined|null|string|L0 flags=[IsExpected]}] results=[{type=anything}] {
     v1 = PropGet v0 key="charCodeAt"
     v2 = Integer
     v3 = Call v1, v0, v2 calleeKey="charCodeAt"

@@ -1,0 +1,84 @@
+# interface Held { size: any }   function copied(): Held { return { ...{ size: () => 2 } } }   function made(): Held { return { set size(x) {} } }   function other() { return { set width(x) {} } }
+# interface Given { depth: any }   function given(): Given { return { ...globalThis.options } }   function alsoMade(): Given { return { set depth(x) {} } }
+# A copy lays the values of its source down under their names. One of the objects with L0 is such a copy, so the field of L0 holds values, and the setter of the literal stays an extra property.
+# Nobody lists what the copy into L3 brings, so it may bring any name.
+# The literal of L1 is the only birth of its layout: its setter lies in the slot.
+# FORM: AsRead
+# RUN: pipeline ApplyFlowResults
+# CHECK: layout L0 name="Held"
+# CHECK-NOT: IsAccessor
+# CHECK: layout L1 {{*}}form=[IsAccessor]{{*}}setterType=f7
+# CHECK: layout L2
+# CHECK-NOT: IsAccessor
+# CHECK: function f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Held" fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+layout L1 fields=[{key="width" declared={type=anything} flags=[IsRequired]}]
+layout L2 fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Given" fields=[{key="depth" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = PropGet v0 key="size"
+    v2 = CallDirect function=f2
+    v3 = PropGet v2 key="size"
+    v4 = CallDirect function=f3
+    v5 = PropGet v4 key="width"
+    v6 = CallDirect function=f4
+    v7 = PropGet v6 key="depth"
+    v8 = CallDirect function=f5
+    v9 = PropGet v8 key="depth"
+    v10 = Add v1, v3
+    v11 = Add v10, v5
+    v12 = Add v11, v7
+    v13 = Add v12, v9
+    Return v13
+}
+function f1 name="copied" results=[{type=anything}] {
+    v0 = NewObject layout=L2
+    v1 = NewClosure function=f6
+    PropDefine v0, v1 key="size"
+    v3 = FinishObject v0
+    v4 = NewObject layout=L0
+    CopyDataProperties v4, v3
+    v6 = FinishObject v4
+    Return v6
+}
+function f2 name="made" results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f7
+    DefineSetter v0, v1 key="size"
+    v3 = FinishObject v0
+    Return v3
+}
+function f3 name="other" results=[{type=anything}] {
+    v0 = NewObject layout=L1
+    v1 = NewClosure function=f7
+    DefineSetter v0, v1 key="width"
+    v3 = FinishObject v0
+    Return v3
+}
+function f4 name="given" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="options" [isFreeName]
+    v2 = NewObject layout=L3
+    CopyDataProperties v2, v1
+    v4 = FinishObject v2
+    Return v4
+}
+function f5 name="alsoMade" results=[{type=anything}] {
+    v0 = NewObject layout=L3
+    v1 = NewClosure function=f7
+    DefineSetter v0, v1 key="depth"
+    v3 = FinishObject v0
+    Return v3
+}
+function f6 name="size" kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f7 name="size" kind=Setter parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}

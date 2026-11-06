@@ -26,6 +26,7 @@
 #include "config.h"
 #include "HeapSnapshotBuilder.h"
 
+#include "AOTHeapHooks.h"
 #include "AOTRemovableFeature.h"
 #include "DeferGCInlines.h"
 #include "Heap.h"
@@ -391,8 +392,11 @@ NEVER_INLINE void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
             // "Object" in snapshots and not get the name of the prototype's parent.
             JSObject* object = asObject(node.cell);
             if (JSGlobalObject* globalObject = object->realmMayBeNull()) {
+#if ENABLE(AOT)
+                AOT::HeapHooks::LookForConstructorBySnapshot look;
+#endif
                 PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-                if (!object->getOwnPropertySlot(object, globalObject, vm.propertyNames->constructor, slot))
+                if (!object->ordinaryGetOwnPropertySlot(globalObject, vm.propertyNames->constructor, slot))
                     className = JSObject::calculatedClassName(object);
             }
         }

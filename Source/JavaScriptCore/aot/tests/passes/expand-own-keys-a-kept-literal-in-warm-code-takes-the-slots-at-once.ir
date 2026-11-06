@@ -1,0 +1,36 @@
+# Outside hot code a spread into a new literal copies the slots at once, ahead of the operation, where the source is expected to have the layout of the literal. Another expected layout gets an arm of its own
+# FORM: Prepared optimizing
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass ExpandOwnKeys
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="State" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="c" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={constructorOrders=[{}, {fields=[0, 1, 2]}]}
+layout L1 name="Holder" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="c" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={constructorOrders=[{}, {fields=[0, 1, 2]}]}
+
+function f0 name="returnedInWarmCode" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: number):
+    v2 = NewObject layout=L0
+    CopyDataProperties v2, v0
+    PropDefine v2, v1 key="b"
+    v5 = FinishObject v2
+    Return v5
+# CHECK: v2:{{*}}= NewObject layout=L0
+# CHECK-NEXT: = TryCopyFields v2, v0 layout=L0
+# CHECK-NOT: HasKeyOrder
+# CHECK: CopyDataProperties v2, v0
+# CHECK-NOT: HasKeyOrder
+}
+
+function f1 name="givenOneOfTwoLayouts" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L0 | L1, v1: number):
+    v2 = NewObject layout=L0
+    CopyDataProperties v2, v0
+    PropDefine v2, v1 key="b"
+    v5 = FinishObject v2
+    Return v5
+# CHECK: v2:{{*}}= NewObject layout=L0
+# CHECK-NEXT: = TryCopyFields v2, v0 layout=L0
+# CHECK: CopyDataProperties v2, v0
+# CHECK: = ShapeTest v0 layouts=[L1]
+# CHECK: = HasKeyOrder v0{{*}} layout=L1 fields=[0, 1, 2]
+}

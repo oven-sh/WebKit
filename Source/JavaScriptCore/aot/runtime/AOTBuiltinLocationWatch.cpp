@@ -210,6 +210,7 @@ void publishStructureOfOwnSlot(Instance& instance, BuiltinOverloadID id)
     uint32_t& published = instance.builtins.ownSlotStructureIDs[slot.structure.index()];
     if (published)
         return;
+    instance.builtins.ownSlotStructuresLookedFor |= 1u << slot.structure.index();
 
     const BuiltinRealmStructure& description = table.at(slot.structure);
     BuiltinClassID builtinClass = table.receiverClassOf(overload.builtin);
@@ -226,15 +227,13 @@ void publishStructureOfOwnSlot(Instance& instance, BuiltinOverloadID id)
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArmBuiltinLocation, size_t, (Instance* instance, uint32_t member))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArmBuiltinLocation);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTArmBuiltinLocation);
     OPERATION_RETURN(scope, instance->state->builtinFamilies->locationWatch->arm(vm, BuiltinID(member)));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindOwnSlotStructure, void, (Instance* instance, uint32_t overload))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTFindOwnSlotStructure);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTFindOwnSlotStructure);
     publishStructureOfOwnSlot(*instance, BuiltinOverloadID(overload));
 }
 

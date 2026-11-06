@@ -1,0 +1,31 @@
+# The first loop's exit edge goes straight to the second loop's header; both are unrolled, and every exit of the first enters the second's first turn
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass UnrollShortLoops
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoLoops" parameters=[{type=i32}] results=[{type=number}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=2
+    Jump -> next b1(v1, v1)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v2
+    Branch v6 -> taken b2(), notTaken b3(v3, v1)
+  b2():
+    v7 = Add v3, v0
+    v8 = Increment v4
+    Jump -> next b1(v7, v8)
+  b3(v9, v10):
+    LoopHint
+    v12 = Less v10, v2
+    Branch v12 -> taken b4(), notTaken b5()
+  b4():
+    v13 = Sub v9, v0
+    v14 = Increment v10
+    Jump -> next b3(v13, v14)
+  b5():
+    Return v9
+# CHECK-NOT: LoopHint
+# CHECK-NOT: notTaken b3(
+}

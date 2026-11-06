@@ -10,6 +10,7 @@
 
 #include "AOTErrorMessages.h"
 #include "AOTInstance.h"
+#include "AOTNativeCallValidation.h"
 #include "AOTOperationScope.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
@@ -42,14 +43,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNativeBinding, EncodedJSValue, (Instance* i
     }
     JSValue result = nativeBinding(globalObject, index);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (validatesNativeCalls(vm)) [[unlikely]]
+        noteNativeBindingResult(index, result);
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, JSCell*, (Instance* instance, uint32_t constant))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTLinkTimeConstant);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTLinkTimeConstant);
     DeferTerminationForAWhile deferTermination(vm);
-    DeferGCForAWhile deferGC(vm);
     JSCell* cell = globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constant));
     instance->realm.linkTimeConstants[constant] = JSValue::encode(cell);
     OPERATION_RETURN(scope, cell);

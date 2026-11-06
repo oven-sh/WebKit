@@ -1,0 +1,35 @@
+# sum = (sum + list[i]) | 0 in a loop, where the list holds numbers: one test that the element is a whole int32, and behind it the sum is computed in integers. Where the test fails it is computed in numbers.
+# FORM: Selected
+# RUN: generate-code ExactIntegersBehindNumbers
+# CHECK: : size=
+# CHECK-NOT: no code
+# CHECK: statistic ExactIntegersBehindNumbers 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lowWordOfRunningSum" parameters=[{type=Array<number>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: i32):
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3: i32, v4: int[0, 127]):
+    LoopHint
+    v6 = Less v4, v1 form=Integers
+    TestAndBranch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = HasArrayStorage v0 arrayStorage=Double
+    TestAndBranch v7 -> taken b3(| 0), notTaken b5()
+  b3(v8: guard):
+    v9 = IsElementPresent v0, v4, v8 arrayStorage=Double [keyIsIntegral]
+    TestAndBranch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10: guard):
+    v11 = AllGuards v8, v10
+    v12 = GetArrayElement v0, v4, v11 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    v13 = Add v3, v12 form=Numbers
+    v14 = Integer integer=0
+    v15 = BitOr v13, v14 form=Numbers
+    v16 = Increment v4 form=Integers
+    v17 = Integer integer=127
+    v18 = BitAnd v16, v17 form=Integers
+    Jump -> next b1(v15, v18)
+  b5():
+    Return v3
+}

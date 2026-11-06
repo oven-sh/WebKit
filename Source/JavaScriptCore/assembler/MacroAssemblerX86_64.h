@@ -2061,6 +2061,94 @@ public:
         }
     }
 
+    void minOrSecondDouble(FPRegisterID src, FPRegisterID dest)
+    {
+        minOrSecondDouble(dest, src, dest);
+    }
+
+    void minOrSecondDouble(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        // dest = op1 < op2 ? op1 : op2
+        if (supportsAVX())
+            m_assembler.vminsd_rrr(op2, op1, dest);
+        else {
+            if (op1 != dest && op2 == dest) {
+                moveDouble(op2, fpTempRegister);
+                moveDouble(op1, dest);
+                m_assembler.minsd_rr(fpTempRegister, dest);
+                return;
+            }
+            moveDouble(op1, dest);
+            m_assembler.minsd_rr(op2, dest);
+        }
+    }
+
+    void minOrSecondFloat(FPRegisterID src, FPRegisterID dest)
+    {
+        minOrSecondFloat(dest, src, dest);
+    }
+
+    void minOrSecondFloat(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        // dest = op1 < op2 ? op1 : op2
+        if (supportsAVX())
+            m_assembler.vminss_rrr(op2, op1, dest);
+        else {
+            if (op1 != dest && op2 == dest) {
+                moveDouble(op2, fpTempRegister);
+                moveDouble(op1, dest);
+                m_assembler.minss_rr(fpTempRegister, dest);
+                return;
+            }
+            moveDouble(op1, dest);
+            m_assembler.minss_rr(op2, dest);
+        }
+    }
+
+    void maxOrSecondDouble(FPRegisterID src, FPRegisterID dest)
+    {
+        maxOrSecondDouble(dest, src, dest);
+    }
+
+    void maxOrSecondDouble(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        // dest = op1 > op2 ? op1 : op2
+        if (supportsAVX())
+            m_assembler.vmaxsd_rrr(op2, op1, dest);
+        else {
+            if (op1 != dest && op2 == dest) {
+                moveDouble(op2, fpTempRegister);
+                moveDouble(op1, dest);
+                m_assembler.maxsd_rr(fpTempRegister, dest);
+                return;
+            }
+            moveDouble(op1, dest);
+            m_assembler.maxsd_rr(op2, dest);
+        }
+    }
+
+    void maxOrSecondFloat(FPRegisterID src, FPRegisterID dest)
+    {
+        maxOrSecondFloat(dest, src, dest);
+    }
+
+    void maxOrSecondFloat(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        // dest = op1 > op2 ? op1 : op2
+        if (supportsAVX())
+            m_assembler.vmaxss_rrr(op2, op1, dest);
+        else {
+            if (op1 != dest && op2 == dest) {
+                moveDouble(op2, fpTempRegister);
+                moveDouble(op1, dest);
+                m_assembler.maxss_rr(fpTempRegister, dest);
+                return;
+            }
+            moveDouble(op1, dest);
+            m_assembler.maxss_rr(op2, dest);
+        }
+    }
+
     void subDouble(FPRegisterID src, FPRegisterID dest)
     {
         subDouble(dest, src, dest);
@@ -3627,6 +3715,11 @@ public:
     void ret()
     {
         m_assembler.ret();
+    }
+
+    void retAndPop(uint16_t bytesPoppedBehindReturnAddress)
+    {
+        m_assembler.ret(bytesPoppedBehindReturnAddress);
     }
 
     void compare8(RelationalCondition cond, Address left, TrustedImm32 right, RegisterID dest)
@@ -6681,29 +6774,39 @@ public:
 
     void loadVector(Address address, FPRegisterID dest)
     {
-        ASSERT(supportsAVX());
-        m_assembler.vmovups_mr(address.offset, address.base, dest);
+        if (supportsAVX())
+            m_assembler.vmovups_mr(address.offset, address.base, dest);
+        else
+            m_assembler.movups_mr(address.offset, address.base, dest);
     }
 
     void loadVector(BaseIndex address, FPRegisterID dest)
     {
-        ASSERT(supportsAVX());
-        m_assembler.vmovups_mr(address.offset, address.base, address.index, address.scale, dest);
+        if (supportsAVX())
+            m_assembler.vmovups_mr(address.offset, address.base, address.index, address.scale, dest);
+        else
+            m_assembler.movups_mr(address.offset, address.base, address.index, address.scale, dest);
     }
     
     void storeVector(FPRegisterID src, Address address)
     {
-        ASSERT(supportsAVX());
-        ASSERT(Options::useWasmSIMD());
-        m_assembler.vmovups_rm(src, address.offset, address.base);
+        if (supportsAVX())
+            m_assembler.vmovups_rm(src, address.offset, address.base);
+        else
+            m_assembler.movups_rm(src, address.offset, address.base);
     }
     
     void storeVector(FPRegisterID src, BaseIndex address)
     {
-        ASSERT(supportsAVX());
-        ASSERT(Options::useWasmSIMD());
-        m_assembler.vmovups_rm(src, address.offset, address.base, address.index, address.scale);
+        if (supportsAVX())
+            m_assembler.vmovups_rm(src, address.offset, address.base, address.index, address.scale);
+        else
+            m_assembler.movups_rm(src, address.offset, address.base, address.index, address.scale);
     }
+
+    // Without AVX an operation on vectors overwrites its left operand.
+    enum class VectorOperationWithoutAVX : uint8_t { Add, Sub, Mul, Div, MaxSigned, MinSigned, MaxUnsigned, MinUnsigned, NarrowSigned, NarrowUnsigned, And, Or, Xor, Swizzle, DotProduct };
+    JS_EXPORT_PRIVATE void emitVectorOperationWithoutAVX(VectorOperationWithoutAVX, SIMDLane, FPRegisterID left, FPRegisterID right, FPRegisterID dest);
 
     void compare64(RelationalCondition cond, RegisterID left, TrustedImm32 right, RegisterID dest)
     {
@@ -8451,7 +8554,8 @@ public:
 
     void vectorAdd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
-        RELEASE_ASSERT(supportsAVX());
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Add, simdInfo.lane, left, right, dest);
 
         switch (simdInfo.lane) {
         case SIMDLane::f32x4:
@@ -8479,7 +8583,8 @@ public:
 
     void vectorSub(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
-        RELEASE_ASSERT(supportsAVX());
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Sub, simdInfo.lane, left, right, dest);
 
         switch (simdInfo.lane) {
         case SIMDLane::f32x4:
@@ -8507,7 +8612,8 @@ public:
 
     void vectorMul(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
-        RELEASE_ASSERT(supportsAVX());
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Mul, simdInfo.lane, left, right, dest);
 
         switch (simdInfo.lane) {
         case SIMDLane::f32x4:
@@ -8711,8 +8817,9 @@ public:
 
     void vectorDiv(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
-        RELEASE_ASSERT(supportsAVX());
         ASSERT(scalarTypeIsFloatingPoint(simdInfo.lane));
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Div, simdInfo.lane, left, right, dest);
         switch (simdInfo.lane) {
         case SIMDLane::f32x4:
             m_assembler.vdivps_rrr(right, left, dest);
@@ -8727,6 +8834,9 @@ public:
 
     void vectorMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
+        if (!supportsAVX() && scalarTypeIsIntegral(simdInfo.lane))
+            return emitVectorOperationWithoutAVX(simdInfo.signMode == SIMDSignMode::Signed ? VectorOperationWithoutAVX::MaxSigned : VectorOperationWithoutAVX::MaxUnsigned, simdInfo.lane, left, right, dest);
+
         switch (simdInfo.lane) {
         case SIMDLane::i8x16:
             if (supportsAVX()) {
@@ -8794,6 +8904,9 @@ public:
 
     void vectorMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
+        if (!supportsAVX() && scalarTypeIsIntegral(simdInfo.lane))
+            return emitVectorOperationWithoutAVX(simdInfo.signMode == SIMDSignMode::Signed ? VectorOperationWithoutAVX::MinSigned : VectorOperationWithoutAVX::MinUnsigned, simdInfo.lane, left, right, dest);
+
         switch (simdInfo.lane) {
         case SIMDLane::i8x16:
             if (supportsAVX()) {
@@ -8894,8 +9007,9 @@ public:
 
     void vectorAnd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
-        RELEASE_ASSERT(supportsAVX());
         RELEASE_ASSERT(simdInfo.lane == SIMDLane::v128);
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::And, simdInfo.lane, left, right, dest);
         m_assembler.vandps_rrr(right, left, dest);
     }
 
@@ -8911,15 +9025,17 @@ public:
 
     void vectorOr(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
-        RELEASE_ASSERT(supportsAVX());
         RELEASE_ASSERT(simdInfo.lane == SIMDLane::v128);
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Or, simdInfo.lane, left, right, dest);
         m_assembler.vorps_rrr(right, left, dest);
     }
 
     void vectorXor(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
-        RELEASE_ASSERT(supportsAVX());
         RELEASE_ASSERT(simdInfo.lane == SIMDLane::v128);
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Xor, simdInfo.lane, left, right, dest);
         m_assembler.vxorps_rrr(right, left, dest);
     }
 
@@ -9128,8 +9244,14 @@ public:
 
     void vectorSqrt(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
     {
-        RELEASE_ASSERT(supportsAVX());
         ASSERT(scalarTypeIsFloatingPoint(simdInfo.lane));
+        if (!supportsAVX()) {
+            if (simdInfo.lane == SIMDLane::f32x4)
+                m_assembler.sqrtps_rr(input, dest);
+            else
+                m_assembler.sqrtpd_rr(input, dest);
+            return;
+        }
         if (simdInfo.lane == SIMDLane::f32x4)
             m_assembler.vsqrtps_rr(input, dest);
         else
@@ -9225,6 +9347,8 @@ public:
     {
         ASSERT(simdInfo.signMode != SIMDSignMode::None);
         ASSERT(scalarTypeIsIntegral(simdInfo.lane));
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(simdInfo.signMode == SIMDSignMode::Signed ? VectorOperationWithoutAVX::NarrowSigned : VectorOperationWithoutAVX::NarrowUnsigned, simdInfo.lane, lower, upper, dest);
 
         switch (simdInfo.lane) {
         case SIMDLane::i16x8:
@@ -9991,16 +10115,14 @@ public:
     {
         if (supportsAVX())
             m_assembler.vpshufb_rrr(b, a, dest);
-        else {
-            if (a != dest)
-                m_assembler.movapd_rr(a, dest);
-            m_assembler.pshufb_rr(b, dest);
-        }
+        else
+            emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Swizzle, SIMDLane::i8x16, a, b, dest);
     }
 
     void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest)
     {
-        RELEASE_ASSERT(supportsAVX());
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::DotProduct, SIMDLane::i32x4, a, b, dest);
         m_assembler.vpmaddwd_rrr(b, a, dest);
     }
 

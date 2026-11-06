@@ -9,6 +9,7 @@
 
 #include "AOTOperationEmitter.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <optional>
 #include <span>
 
@@ -35,6 +36,10 @@ struct StateOfNewObject {
     uint32_t orderWord { 0 };
     bool mayHaveExtension { false };
     bool hasLayoutPrototype { true };
+    // The fields that those stores have created, sorted: a later store finds them listed.
+    Vector<PropertyKeyID, 8> createdKeys;
+
+    bool hasCreated(PropertyKeyID key) const { return std::ranges::binary_search(createdKeys, key.index(), { }, &PropertyKeyID::index); }
 
     friend bool operator==(const StateOfNewObject&, const StateOfNewObject&) = default;
 };
@@ -54,6 +59,15 @@ public:
 
     // From where the offset of access.slot leads to the slot of this object: the cell, or an address behind it where the receivers keep the field at different offsets.
     CellPointer baseOfSlot(CellPointer, const FieldAccess&);
+
+    // Object.defineProperty(object, "key", { .. }) where the object's layout keeps the field with the attributes that the definition creates.
+    // Creates the field in its slot, if the object is extensible, is not a prototype and lacks the property. Otherwise the object is unchanged.
+    struct CreationByDefinition {
+        bool isEmitted { false };
+        // Where control goes if the field was not created. Null for an object that the function has just allocated.
+        LBasicBlock leftToRunTime { nullptr };
+    };
+    CreationByDefinition tryCreateFieldByDefinition(const ValueContext& definition, CellPointer);
 
     // Lists the key.
     bool didCreateField(const ValueContext&, CellPointer, const FieldAccess&, bool needsStorage, std::optional<uint32_t> placePlusOne = std::nullopt);
@@ -83,14 +97,24 @@ private:
     std::optional<PlaceOfStoreThatMayAdd> placeOfStoreThatMayAdd(ValueID);
     std::optional<StateOfNewObject> stateAtBirth(ValueID allocation) const;
     std::optional<StateOfNewObject> stateOfObjectsThatMeet(BlockID, ValueID parameter);
+    struct LastStateOfNewObject {
+        ValueID object;
+        ValueID user;
+        StateOfNewObject before;
+    };
+
     bool leavesObjectsAsTheyAre(ValueID);
     bool applyStoreBySlot(StateOfNewObject&, const Value& store) const;
+    std::optional<FieldAccess> fieldCreatedByDefinition(const Value& definition) const;
+    bool slotTakesAccessor(const Field&, SlotRepresentation, ValueID getter, ValueID setter) const;
+    CellPointer newGetterSetter(const ValueContext&, ValueID getter, ValueID setter);
 
     const FieldAccess& fieldAccessOf(const ValueContext&) const;
     Operand readSlot(const ValueContext&, CellPointer, const FieldAccess&, bool absentIsUndefined);
     // Nothing where the operation has got its result without a read.
     std::optional<CellPointer> loadHalfOfAccessorInSlot(const ValueContext&, ptrdiff_t offsetInGetterSetter);
     void readDeferringSlot(const ValueContext&, bool readsEmptySlotAsUndefined);
+    CellPointer makeDeferredClosure(const ValueContext&, CellPointer, const FieldAccess&);
     Operand loadDeferringSlot(const ValueContext&, CellPointer, const FieldAccess&, bool readsEmptySlotAsUndefined);
     bool mayHaveLeftDeferringSlot(const ValueContext&, const FieldAccess&) const;
     Operand loadDeferringSlotOrFieldOutsideIt(const ValueContext&, CellPointer, const FieldAccess&);
@@ -118,6 +142,7 @@ private:
 
     // By value, for the stores that may add a field.
     Vector<uint32_t> m_storesThatMayAddInFront;
+    std::optional<LastStateOfNewObject> m_lastStateOfNewObject;
 };
 
 void SlotAccessEmitter::takeKeyOrderStepOr(CellPointer cell, const std::optional<KeyOrderStep>& step, NOESCAPE const Invocable<void()> auto& otherwise)

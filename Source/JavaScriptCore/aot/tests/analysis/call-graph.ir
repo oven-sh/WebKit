@@ -7,8 +7,8 @@ entry module=m0
 layout L0 kind=Instance name="Holder" constructor=f8 flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangePrototype]} classFlow={prototypeLink=Fixed prototypeNamesAreComplete=true namedMembers=[{key="y" kind=Getter function=f9 mutability=Fixed}, {key="z" function=f10 mutability=Fixed closureUse=CalledOnly}]}
 variable g0 name="hoisted" declared={type=anything} initialization=Function function=f3
 variable g1 name="stored" declared={type=anything}
-runtimefunction id=65 function=f17
-runtimefunction id=131089 function=f20
+runtimefunction id=ArrayPrototypeMap function=f17
+runtimefunction id=ArraySortSort function=f20
 
 function f0 name="" kind=Module results=[{type=anything}] {
     v0 = CallDirect function=f1
@@ -85,7 +85,7 @@ function f16 name="mapsArray" parameters=[{type=Array<number>}] results=[{type=a
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0
     Return v2
 }
-function f17 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f17 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
     v2 = Call v1 callees=[f18]
     Return v2
 }
@@ -98,7 +98,7 @@ function f19 name="storedAndCallsUnknownCode" results=[{type=anything}] {
     v2 = Call v1
     Return v2
 }
-function f20 name="sort" role=Library enclosingRuntimeFunction=131089 parameters=[{type=anything}] results=[{type=anything}] {
+function f20 name="sort" role=Library enclosingRuntimeFunction=ArraySortSort parameters=[{type=anything}] results=[{type=anything}] {
     Return v0
 }
 function f21 name="sortsArray" parameters=[{type=anything}] results=[{type=anything}] {

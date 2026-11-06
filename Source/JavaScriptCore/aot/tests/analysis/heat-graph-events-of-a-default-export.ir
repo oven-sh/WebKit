@@ -1,0 +1,29 @@
+# export default { fetch }: the host hands the default export of the entry to Bun.serve. The handler gets events as one that the program itself registers with Bun.serve, and hands them on to what it calls.
+# FORM: AsRead
+# RUN: heat-graph flow classes
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="default" variable=g0}]
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}]
+layout L0 name="Server" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="default" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f1 name="fetch" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect function=f2
+    Return v1
+}
+function f2 name="calledByHandler" results=[{type=anything}] {
+    Return
+}
+# CHECK: host: f0*1.000000 f1*32768.000000
+# CHECK: activations:
+# CHECK-NEXT: f0 1.000000
+# CHECK-NEXT: f1 32768.000000
+# CHECK-NEXT: f2 32768.000000
+# CHECK-NEXT: entries per event:
+# CHECK-NEXT: f1 32768.000000
+# CHECK-NEXT: f2 32768.000000

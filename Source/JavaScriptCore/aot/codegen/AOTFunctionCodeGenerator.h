@@ -11,6 +11,7 @@
 #include "AOTCodeRecords.h"
 #include "AOTCompileFunctions.h"
 #include "AOTFrameAddressValidation.h"
+#include "AOTInnerPointerValidation.h"
 #include "AOTNarrowReferenceValidation.h"
 #include "AOTRelocationLowering.h"
 #include "AOTStackCheckEmitter.h"
@@ -78,6 +79,7 @@ private:
     StackCheckState m_stackChecks;
     Vector<FrameAddressViolation> m_frameAddressViolations;
     NarrowReferenceFindings m_narrowReferenceFindings;
+    InnerPointerFindings m_innerPointerFindings;
     uint32_t m_numberOfLateReferenceGuards { 0 };
     // Last, so that it is destroyed first: its generators and client phases point into the members above.
     std::unique_ptr<B3::Procedure> m_procedure;

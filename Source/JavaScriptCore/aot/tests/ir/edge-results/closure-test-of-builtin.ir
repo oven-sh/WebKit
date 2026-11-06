@@ -3,11 +3,11 @@
 # RUN: print
 
 module m0 path="main.js" displayPath="main.js"
-runtimefunction id=12 function=f1
+runtimefunction id=FunctionPrototypeCall function=f1
 function f0 name="callee" captures=[{type=number}] results=[{type=number}] {
     Return v0
 }
-function f1 name="call" role=Library flags=[HasRestParameter, HasThis] enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+function f1 name="call" role=Library flags=[HasRestParameter, HasThis] enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
     v3 = CallList v0, v1, v2
     Return v3
 }

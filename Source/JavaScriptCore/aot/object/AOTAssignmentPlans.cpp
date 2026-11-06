@@ -13,6 +13,7 @@
 #include "AOTKeyOrderTable.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSort.h"
 #include "AOTState.h"
@@ -38,6 +39,7 @@ ExcludedNameList::ExcludedNameList(Vector<UniquedStringImpl*>&& names, uint32_t 
 AssignmentPlanCache::AssignmentPlanCache(State& state)
     : m_state(state)
     , m_chainDependentOwner(state.chainDependents->addOwner(*this))
+    , m_sets(state.tableArena)
 {
     state.caches->add(CacheKind::WeakByKey, "assignment plans"_s, *this);
     if (Options::aotCountsPath())
@@ -102,7 +104,7 @@ bool AssignmentPlanCache::isSecondCopy(uint32_t hash)
 NEVER_INLINE AssignmentPlan* AssignmentPlanCache::makePlan(VM& vm, JSObject* target, JSObject* extraProperties, const AssignmentSource& source, uint32_t hash)
 {
     if (!m_sets)
-        m_sets = makeUniqueWithoutFastMallocCheck<Sets>();
+        m_sets.make();
     unsigned setIndex = hash % numberOfSets;
     Set& set = (*m_sets)[setIndex];
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {
@@ -117,6 +119,7 @@ NEVER_INLINE AssignmentPlan* AssignmentPlanCache::makePlan(VM& vm, JSObject* tar
     plan.target = target->structureID();
     plan.source = source.object->structureID();
     plan.sourcePropertyStorage = source.propertyStorageStructureID();
+    plan.sourceStructureNamesPropertyStorage = !source.compiledObject || source.compiledObject->compiledStructure().extraPropertiesStructureID() == plan.sourcePropertyStorage;
     plan.extraPropertiesBefore = extraProperties ? extraProperties->structureID() : StructureID();
     plan.sourceOrderWord = source.orderWord;
     plan.servesDefinitionsOnly = source.defines;
@@ -218,7 +221,7 @@ static std::optional<Vector<AssignedProperty, 16>> listOwnProperties(VM& vm, con
         if (!listed)
             return std::nullopt;
         for (const PropertyListEntry& property : *listed) {
-            if (hasForm(property.field))
+            if (hasForm(property.field) || (property.field && isPreparedBeforeLookups(vm, property.name)))
                 return std::nullopt;
             properties.append({ property.name, property.field, property.offsetInExtraProperties });
         }
@@ -235,13 +238,15 @@ static std::optional<Vector<AssignedProperty, 16>> listOwnProperties(VM& vm, con
             const FieldData& field = layout.fields()[index];
             if (field.attributes() || hasForm(&field))
                 return std::nullopt;
+            if (objects.layouts.hasSymbolKey(field) && isPreparedBeforeLookups(vm, objects.layouts.nameOf(vm, field)))
+                return std::nullopt;
             if (objects.layouts.hasStringKey(field) || objects.layouts.hasSymbolKey(field))
                 properties.append({ objects.layouts.nameOf(vm, field), &field, invalidOffset });
         }
         return properties;
     }
     Structure* sourceStructure = source.object->structure();
-    if (sourceStructure->isDictionary() || source.object->hasNonReifiedStaticProperties() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
+    if (!flattenOnce(vm, source.object) || source.object->hasNonReifiedStaticProperties() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
         return std::nullopt;
     bool hasOnlyDataProperties = true;
     sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
@@ -293,7 +298,7 @@ static Structure* structureWithAddedNames(VM& vm, Structure* structure, std::spa
 void AssignmentPlanCache::growMappedCopies()
 {
     Vector<std::unique_ptr<MappedCopy>> before = std::exchange(m_mappedCopies, { });
-    zeroSpan(std::span { m_state.instance.allocation.copiesWithoutFrame });
+    zeroSpan(m_state.instance.copiesWithoutFrame());
     size_t size = before.isEmpty() ? minNumberOfPlacesForMappedCopies : before.size() * 2;
     m_mappedCopies.grow(size);
     m_shiftForMappedCopies = 64 - WTF::fastLog2(static_cast<unsigned>(size));
@@ -342,36 +347,42 @@ FieldMap* AssignmentPlanCache::fieldMapFor(const LayoutData& target, const Layou
     }
     auto map = makeUnique<FieldMap>();
     map->excludedRunNumberPlusOne = excludedRunNumberPlusOne;
-    map->entries.fill(FieldMap::isUnknown, source.numberOfFields);
+    map->entries.fill(FieldMap::Entry { }, source.numberOfFields);
     maps.append(WTF::move(map));
     return maps.last().get();
 }
 
-uint16_t AssignmentPlanCache::describeMappedField(VM& vm, const LayoutData& target, const FieldData& from, uint32_t excludedRunNumberPlusOne)
+FieldMap::Entry AssignmentPlanCache::describeMappedField(VM& vm, const LayoutData& target, const FieldData& from, uint32_t excludedRunNumberPlusOne)
 {
     RuntimeLayoutTable& layouts = m_state.objects->layouts;
     if (from.attributes() || hasForm(&from))
-        return FieldMap::isNotServed;
+        return { FieldMap::isNotServed };
     if (!layouts.hasStringKey(from) && !layouts.hasSymbolKey(from))
-        return FieldMap::isLeftOut;
+        return { FieldMap::isLeftOut };
     UniquedStringImpl* name = layouts.nameOf(vm, from);
+    if (isPreparedBeforeLookups(vm, name))
+        return { FieldMap::isNotServed };
     if (excludedRunNumberPlusOne && m_excludedListsByRun.get(excludedRunNumberPlusOne)->contains(name))
-        return FieldMap::isLeftOut;
+        return { FieldMap::isLeftOut };
     const FieldData* to = layouts.field(vm, target, name);
     if (!to || to->flags & (fieldIsStoredOnce | fieldAttributeFlags | fieldMayExistWithoutStorage))
-        return FieldMap::isNotServed;
+        return { FieldMap::isNotServed };
     if (to->holdsRawValueFromBirth)
-        return FieldMap::isNotServed;
+        return { FieldMap::isNotServed };
     SlotRepresentation representation = to->slot.representation();
     if (from.slot.representation() == SlotRepresentation::DeferredClosure || representation == SlotRepresentation::DeferredClosure)
-        return FieldMap::isNotServed;
+        return { FieldMap::isNotServed };
     // A granule starts as zeros, which have to say that the fields in it are absent. The copy fills a granule that holds one field.
     const SlotTraits traits = traitsOf(representation);
     if (to->isOutOfLine() && traits.absentBits && traits.width != extensionGranuleSize)
-        return FieldMap::isNotServed;
-    uint16_t entry = FieldMap::firstField + target.indexOf(*to);
-    static_assert(FieldMap::firstField + maxFieldsInOrder < FieldMap::isTested);
-    return alwaysFits(layouts, from, *to) ? entry : entry | FieldMap::isTested;
+        return { FieldMap::isNotServed };
+    static_assert(FieldMap::firstField + maxFieldsInOrder < FieldMap::testsUndefinedAndNull);
+    SlotFit fit = fitOf(layouts, from, *to);
+    uint16_t state = FieldMap::firstField + target.indexOf(*to);
+    if (fit == SlotFit::UnlessUndefinedOrNull)
+        state |= FieldMap::testsUndefinedAndNull;
+    uint8_t acceptedKinds = fit == SlotFit::IsTested ? kindsAlwaysAccepted(layouts.typeOf(*to)).toRaw() : 0;
+    return { state, moveKindFor(from.slot.representation(), representation, fit), acceptedKinds };
 }
 
 void AssignmentPlanCache::fillPlanForCopyOfTwo(VM& vm, CopyOfTwoPlan& plan, JSGlobalObject* realm, const AssignmentSource* first, const AssignmentSource* second, bool isOrdinaryCopy)
@@ -492,6 +503,52 @@ CopyOfTwoPlan* AssignmentPlanCache::planForCopyOfTwo(VM& vm, JSGlobalObject* rea
     return &plan;
 }
 
+void AssignmentPlanCache::describeMove(VM& vm, AssignmentPlan::FieldStore& store, const LayoutData& target, bool sharesTypes)
+{
+    using MovesFrom = AssignmentPlan::FieldStore::MovesFrom;
+    const FieldData& to = *store.to;
+    SlotRepresentation representation = to.slot.representation();
+    MappedCopy::Move move { 0, 0, MappedCopy::MoveKind::OtherForm, static_cast<uint8_t>(widthOf(representation)), false, to.isOutOfLine(), SlotRepresentation::JSValue, representation, store.acceptedKinds.toRaw(), target.indexOf(to) };
+    move.leastInt32 = store.leastInt32;
+    move.greatestInt32 = store.greatestInt32;
+    if (!store.from) {
+        std::optional<MappedCopy::MoveKind> kind = moveKindOutOfOrdinaryObject(m_state.objects->layouts, store);
+        if (!kind)
+            return;
+        move.kind = *kind;
+        bool isInline = isInlineOffset(store.sourceOffset);
+        store.movesFrom = isInline ? MovesFrom::InlineProperties : MovesFrom::OutsideProperties;
+        store.bytesInSource = static_cast<int32_t>((isInline ? store.sourceOffset : offsetInOutOfLineStorage(store.sourceOffset)) * sizeof(EncodedJSValue));
+        store.move = move;
+        return;
+    }
+    // Where a field lies in an Extension goes by the granules that the Extension has, which no plan knows.
+    if (!sharesTypes || store.from->isOutOfLine() || !store.isDirect)
+        return;
+    FieldMap::Entry entry = describeMappedField(vm, target, *store.from, 0);
+    if (entry.state < FieldMap::firstField || entry.kind == MappedCopy::MoveKind::OtherForm || entry.kind == MappedCopy::MoveKind::Tested)
+        return;
+    ASSERT(entry.fieldOfTarget() == target.indexOf(to));
+    move.kind = entry.kind;
+    move.representationOfSource = store.from->slot.representation();
+    move.acceptedKinds = entry.acceptedKinds;
+    move.testsUndefinedAndNull = !!(entry.state & FieldMap::testsUndefinedAndNull);
+    store.movesFrom = MovesFrom::Cell;
+    store.bytesInSource = static_cast<int32_t>(store.from->slot.offset);
+    store.move = move;
+}
+
+NEVER_INLINE void AssignmentPlanCache::describeMoves(AssignmentPlan& plan)
+{
+    plan.hasDescribedMoves = true;
+    const LayoutData& layout = uncheckedDowncast<CompiledStructure>(plan.target.decode())->layout();
+    for (AssignmentPlan::FieldStore& store : plan.fieldStores) {
+        // A run copies such bits without a move.
+        if (!store.copiesBitsUntested)
+            describeMove(*m_state.instance.vm, store, layout, plan.sharesTypesWithSource);
+    }
+}
+
 void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index, JSObject* target, JSObject* extraProperties, const AssignmentSource& source)
 {
     Object* record = compiledObjectOrNull(target);
@@ -502,7 +559,9 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
     auto properties = listAssignedProperties(vm, source, plan.excludedList);
     if (!properties)
         return notePlanWithoutUse("the source has no list of its properties"_s);
+    // A source of another image is listed and read by its own image, which also makes the closures that its fields defer. Its values are tested like those of an ordinary object.
     bool sharesTypes = source.compiledObject && &source.compiledObject->state() == &m_state;
+    plan.sharesTypesWithSource = sharesTypes;
     const LayoutData* layout = record ? &record->layout() : nullptr;
     JSGlobalObject* realm = target->structure()->realm();
     Structure* extraPropertiesBefore = extraProperties ? extraProperties->structure() : Instance::of(realm)->realm.emptyExtraPropertiesStructure;
@@ -547,28 +606,41 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         }
         if (field->flags & (fieldIsStoredOnce | fieldAttributeFlags))
             return notePlanWithoutUse("a field of the target is stored once or has a form"_s);
-        // A run writes slots by itself, and a marker in such a slot has to set the mark of the cell.
-        if (field->holdsRawValueFromBirth)
-            return notePlanWithoutUse("the mark of the target's cell answers for a field"_s);
+        if (isPreparedBeforeLookups(vm, property.name))
+            return notePlanWithoutUse("the target is asked to prepare itself before a store to a field"_s);
         if (extraProperties && isValidOffset(extraPropertiesBefore->get(vm, property.name)))
             return notePlanWithoutUse("a field of the target lies among its extra properties"_s);
         const SlotTraits traits = traitsOf(field->slot.representation());
+        SlotFit fit = sharesTypes && property.field ? fitOf(layouts, *property.field, *field) : SlotFit::IsTested;
         storesInSourceOrder.append(static_cast<uint16_t>(fieldStores.size()));
         fieldStores.append(AssignmentPlan::FieldStore {
             .from = property.field,
             .to = field,
             .sourceOffset = property.offset,
             .acceptedKinds = kindsAlwaysAccepted(layouts.typeOf(*field)),
-            .sourceAlwaysFits = sharesTypes && property.field && alwaysFits(layouts, *property.field, *field),
+            .sourceAlwaysFits = fit == SlotFit::Always,
+            .sourceFitsUnlessUndefinedOrNull = fit == SlotFit::UnlessUndefinedOrNull,
             .isDirect = !(field->isOutOfLine() && traits.absentBits && traits.width != extensionGranuleSize),
             .copiesBits = property.field && property.field->slot.representation() == field->slot.representation(),
             .holdsCell = traits.holdsCell,
             .hasAbsent = traits.hasAbsent,
+            .leavesUndefinedAndNullToOtherWay = !!field->holdsRawValueFromBirth,
             .width = traits.width,
             .absentBits = traits.absentBits,
         });
         AssignmentPlan::FieldStore& store = fieldStores.last();
-        store.copiesBitsUntested = store.sourceAlwaysFits && store.copiesBits && store.isDirect && !(field->flags & fieldMayExistWithoutStorage) && field->slot.representation() != SlotRepresentation::DeferredClosure;
+        if (const RuntimeType& type = layouts.typeOf(*field); type.primitiveSet().contains(PrimitiveSet::Integer)) {
+            auto range = type.integerRange();
+            int64_t least = range ? std::max<int64_t>(range->first, INT32_MIN) : INT32_MIN;
+            int64_t greatest = range ? std::min<int64_t>(range->second, INT32_MAX) : INT32_MAX;
+            if (least <= greatest) {
+                store.leastInt32 = static_cast<int32_t>(least);
+                store.greatestInt32 = static_cast<int32_t>(greatest);
+                store.writesInt32AsItIs = holdsIntegersBetween(field->slot.representation(), least, greatest);
+            }
+        }
+        store.copiesBitsUntested = store.sourceAlwaysFits && store.copiesBits && store.isDirect && !(field->flags & fieldMayExistWithoutStorage) && field->slot.representation() != SlotRepresentation::DeferredClosure
+            && !(store.leavesUndefinedAndNullToOtherWay && property.field->slotHoldsUndefinedAndNull);
         plan.mayStoreCells |= traits.holdsCell;
         plan.readsOutOfLineFields |= property.field && property.field->isOutOfLine();
         if (field->isOutOfLine())
@@ -577,7 +649,7 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             creatableFieldNames.append(property.name);
     }
     auto isIntercepted = [&](UniquedStringImpl* name) {
-        return !source.defines && !storeCreatesOwnProperty(realm, target->structure(), target, name, ChainDependent { name, index, m_chainDependentOwner });
+        return !source.defines && !storeCreatesOwnProperty(realm, target->structure(), target, name, *m_state.chainDependents, ChainDependent { name, index, m_chainDependentOwner });
     };
     if (std::ranges::any_of(addedNames.span(), isIntercepted) || std::ranges::any_of(creatableFieldNames.span(), isIntercepted))
         return notePlanWithoutUse("a prototype intercepts a name that a store may create"_s);
@@ -588,6 +660,15 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         for (size_t i = 0; i < addedNames.size(); ++i)
             extraPropertyStores[storesOfAddedNames[i]].offset = extraPropertiesAfter->get(vm, addedNames[i]);
         plan.extraPropertiesAfter = extraPropertiesAfter;
+        for (auto& store : extraPropertyStores) {
+            auto bytesOf = [](PropertyOffset offset) {
+                return static_cast<int32_t>((isInlineOffset(offset) ? offset : offsetInOutOfLineStorage(offset)) * sizeof(EncodedJSValue));
+            };
+            store.isOutsideInSource = isValidOffset(store.sourceOffset) && !isInlineOffset(store.sourceOffset);
+            store.isOutsideInTarget = !isInlineOffset(store.offset);
+            store.bytesInSource = isValidOffset(store.sourceOffset) ? bytesOf(store.sourceOffset) : 0;
+            store.bytesInTarget = bytesOf(store.offset);
+        }
         if (record)
             plan.targetAfter = m_state.objects->structures.withExtraProperties(vm, record->compiledStructure(), extraPropertiesAfter);
     }

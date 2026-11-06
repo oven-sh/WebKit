@@ -1,0 +1,45 @@
+# A caller that keeps the function object of its callee in its frame reads it for nothing else than its captures. The environment answers that read, and the caller keeps the environment: whoever lists the frames finds the function object in its field.
+# So the function object is made as if nobody kept it: where it is first read to be handed on.
+# FORM: Prepared
+# RUN: pass ReadCapturesFromEnvironments
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="family" fields=[{key="count" declared={type=number}}, {key="leaf" declared={type=f1}}]
+
+function f0 name="family" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewClosure v2 function=f1
+    PutEnvironmentField v2, v3 layout=L0 field=1
+    v5 = NewClosure v2 function=f2
+    v6 = NewClosure v2 function=f3
+    v7 = Call v1, -, v5, v6
+    Return v7
+# CHECK-NOT: function=f1
+# CHECK: Return
+}
+
+function f1 name="leaf" captures=[{type=env L0}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee, RecordsCalleeOnceRenamed] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+
+function f2 name="calls" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    v2 = GetCapture v1 function=f1
+    KeepCalleeInFrame v1 @7
+    v4 = CallDirect v2 function=f1 [calleeIsKeptInFrame] @7
+    Return v4
+# CHECK-NOT: GetCapture
+# CHECK: KeepEnvironmentOfCalleeInFrame v0 layout=L0 field=1 @7
+# CHECK-NEXT: = CallDirect v0 function=f1 [calleeIsKeptInFrame] @7
+}
+
+function f3 name="gives" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    Return v1
+# CHECK: [[made]]: f1 = NewClosure v0 function=f1
+# CHECK-NEXT: PutEnvironmentField v0, [[made]] layout=L0 field=1
+}

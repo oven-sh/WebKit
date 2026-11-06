@@ -1,0 +1,47 @@
+# class Registry extends Map {}  class Failure extends TypeError {}  class Plain {}
+# An object of Registry is a Map, and one of Failure is a TypeError and an Error. Neither is a Set, and a Map need not be an object of Registry.
+# RUN: subset
+# CHECK: t0 <= t1: yes overlaps: yes
+# CHECK: t0 <= t2: no overlaps: no
+# CHECK: t0 <= t3: no overlaps: no
+# CHECK: t0 <= t6: no overlaps: no
+# CHECK: t0 <= t7: yes overlaps: yes
+# CHECK: t1 <= t0: no overlaps: yes
+# CHECK: t1 <= t4: no overlaps: yes
+# CHECK: t3 <= t0: no overlaps: no
+# CHECK: t4 <= t1: no overlaps: yes
+# CHECK: t4 <= t7: yes overlaps: yes
+# CHECK: t5 <= t1: no overlaps: no
+# CHECK: t5 <= t6: yes overlaps: yes
+# CHECK: t5 <= t8: yes overlaps: yes
+# CHECK: t6 <= t5: no overlaps: yes
+# CHECK: laws hold
+# RUN(MEET): intersect
+# MEET: t0 & t1 = L0
+# MEET-NEXT: t0 - t1 = never
+# MEET: t0 & t3 = never
+# MEET-NEXT: t0 - t3 = L0
+# MEET: t1 & t0 = L0
+# MEET-NEXT: t1 - t0 = Map
+# MEET: t4 & t1 = L0
+# MEET-NEXT: t4 - t1 = L1
+# MEET: t5 & t6 = L2
+# MEET-NEXT: t5 - t6 = never
+# MEET: t7 & t0 = L0
+# MEET-NEXT: t7 - t0 = L1|Map
+# MEET: laws hold
+# RUN(CAST): cast
+# CAST: t0 as t1 = L0
+# CAST: t0 as t3 = never
+# CAST: t1 as t0 = L0
+# CAST: t1 as t4 = L0
+# CAST: t4 as t1 = L0
+# CAST: t5 as t6 = L2
+# CAST: t6 as t5 = L2
+# CAST: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Registry" flags=[HasHeritage] writtenBuiltinBase=Map
+layout L1 kind=Instance name="Plain"
+layout L2 kind=Instance name="Failure" flags=[HasHeritage] writtenBuiltinBase=TypeError
+function f0 name="types" parameters=[{type=L0}, {type=Map}, {type=L1}, {type=Set}, {type=L0|L1}, {type=L2}, {type=Error}, {type=Map|L1}, {type=TypeError}] results=[{type=undefined}]

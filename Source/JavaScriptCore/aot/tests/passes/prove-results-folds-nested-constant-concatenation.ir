@@ -1,0 +1,30 @@
+# The callee returns one text on every way out, so its result is proven. In the caller a join of texts has another join among its parts, whose type says only that it is a string.
+# One pass knows the text of both and writes the outer one as a constant, and a later one takes the constant away, which nobody uses.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ProveResults
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="word" parameters=[{type=boolean}] results=[{type="x" flags=[IsExpected]}] {
+    v1 = String string="x"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="word"{{*}}results=[{type="x"}] 
+
+function f1 name="joinsAJoin" parameters=[{type=boolean}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f0
+    v2 = String string="pre"
+    v3 = Strcat v2, v1
+    v4 = Strcat v3, v2
+    v5 = TypeTest v1 testedType=string
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6):
+    Return v6
+  b2(v7):
+    Return v7
+}
+# CHECK-LABEL: function f1 name="joinsAJoin"
+# CHECK: : "x" = CallDirect v0 function=f0
+# CHECK-NOT: Strcat
+# CHECK: Return

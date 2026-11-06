@@ -1,4 +1,4 @@
-# indexOf() and includes() have inline code for what is compared by identity: a boolean, a symbol, null, undefined, an object. A string or a big integer alone stays a call.
+# indexOf() and includes() have inline code for what is compared by identity: a boolean, a symbol, null, undefined, an object. A big integer alone stays a call. A string alone becomes an inline call with no slow path.
 # Where the type leaves open which it is, the inline code asks, in fast code alone
 # FORM: Prepared
 # OPTIONS: heat=EverythingIsHot
@@ -25,7 +25,8 @@ function f3 name="indexOfString" parameters=[{type=Array<anything, pristine[Stor
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
     Return v2
 # CHECK-NOT: TryCallInline
-# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+# CHECK-NOT: CallBuiltin
+# CHECK: v2:{{*}}= CallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1
 }
 function f4 name="includesBigInt" parameters=[{type=Array<anything, pristine[Storage]>}, {type=bigint}] results=[{type=anything}] {
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/1

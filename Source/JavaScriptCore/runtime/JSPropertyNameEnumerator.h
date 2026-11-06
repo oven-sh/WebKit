@@ -58,7 +58,7 @@ public:
         return &vm.propertyNameEnumeratorSpace();
     }
 
-    static JSPropertyNameEnumerator* tryCreate(VM&, Structure*, uint32_t, uint32_t, PropertyNameArrayBuilder&&, uint32_t cachedOrderWord = 0, uint32_t cachedOrderWordMask = 0);
+    static JSPropertyNameEnumerator* tryCreate(VM&, Structure*, uint32_t, uint32_t, PropertyNameArrayBuilder&&, uint32_t cachedOrderWord = 0, uint32_t cachedOrderWordMask = 0, uint32_t numberOwnProperties = 0);
     static JSPropertyNameEnumerator* create(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, PropertyNameArrayBuilder&& propertyNames, uint32_t cachedOrderWord = 0, uint32_t cachedOrderWordMask = 0)
     {
         auto* result = tryCreate(vm, structure, indexedLength, numberStructureProperties, WTF::move(propertyNames), cachedOrderWord, cachedOrderWordMask);
@@ -85,6 +85,8 @@ public:
     StructureID cachedStructureID() const { return m_cachedStructureID.value(); }
     uint32_t indexedLength() const { return m_indexedLength; }
     uint32_t endStructurePropertyIndex() const { return m_endStructurePropertyIndex; }
+    // The names below it are the base's own for as long as isCurrentFor(base). Only below endStructurePropertyIndex() is the index of a name also the offset of its property.
+    uint32_t endOwnPropertyIndex() const { return m_endOwnPropertyIndex; }
     uint32_t endGenericPropertyIndex() const { return m_endGenericPropertyIndex; }
     uint32_t cachedInlineCapacity() const { return m_cachedInlineCapacity; }
     uint32_t sizeOfPropertyNames() const { return endGenericPropertyIndex(); }
@@ -92,6 +94,7 @@ public:
     static constexpr ptrdiff_t cachedStructureIDOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_cachedStructureID); }
     static constexpr ptrdiff_t indexedLengthOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_indexedLength); }
     static constexpr ptrdiff_t endStructurePropertyIndexOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_endStructurePropertyIndex); }
+    static constexpr ptrdiff_t endOwnPropertyIndexOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_endOwnPropertyIndex); }
     static constexpr ptrdiff_t endGenericPropertyIndexOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_endGenericPropertyIndex); }
     static constexpr ptrdiff_t cachedInlineCapacityOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_cachedInlineCapacity); }
     static constexpr ptrdiff_t flagsOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_flags); }
@@ -118,7 +121,7 @@ public:
 private:
     friend class LLIntOffsetsExtractor;
 
-    JSPropertyNameEnumerator(VM&, Structure*, uint32_t, uint32_t, WriteBarrier<JSString>*, unsigned, uint32_t cachedOrderWord, uint32_t cachedOrderWordMask);
+    JSPropertyNameEnumerator(VM&, Structure*, uint32_t, uint32_t, WriteBarrier<JSString>*, unsigned, uint32_t cachedOrderWord, uint32_t cachedOrderWordMask, uint32_t numberOwnProperties);
     void finishCreation(VM&, RefPtr<PropertyNameArray>&&);
 
     // JSPropertyNameEnumerator is immutable data structure, which allows VM to cache the empty one.
@@ -132,9 +135,10 @@ private:
     uint32_t m_flags { 0 };
     uint32_t m_cachedOrderWord;
     uint32_t m_cachedOrderWordMask;
+    uint32_t m_endOwnPropertyIndex;
 };
 
-void getEnumerablePropertyNames(JSGlobalObject*, JSObject*, PropertyNameArrayBuilder&, uint32_t& indexedLength, uint32_t& structurePropertyCount);
+void getEnumerablePropertyNames(JSGlobalObject*, JSObject*, PropertyNameArrayBuilder&, uint32_t& indexedLength, uint32_t& structurePropertyCount, uint32_t* ownPropertyCount = nullptr);
 
 inline JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject*, JSObject* base);
 

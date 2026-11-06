@@ -259,7 +259,8 @@ export function checkNamesReadByNativeCode(
   for (const { holder, names, namesOnlyInspected } of namesReadByNativeCode) {
     const refuse = (reason: string) =>
       problems.add(null, `${holder.text} lists the names that native code reads, and ${reason}`);
-    if (holder.scope !== "Realm") refuse("every module has an object of its own");
+    // A class of a module's native binding has one prototype, whatever module object leads to it.
+    if (holder.scope !== "Realm" && holder.kind !== "Prototype") refuse("every module has an object of its own");
     if (holder.sameObjectAs !== null)
       refuse(`it is the same object as ${holder.sameObjectAs.text}, where the list belongs`);
     if (holder.flags.includes("IsGlobalObject")) refuse("native code finds every global variable on the global object");

@@ -8,9 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTImageSiteTestBodies.h"
+#include "AOTOperationData.h"
 #include "AOTStubsExceptions.h"
 #include "AOTVector.h"
 #include <array>
+#include <bit>
 #include <initializer_list>
 #include <limits>
 #include <optional>
@@ -181,6 +183,30 @@ static void testFaultSitesFrameInTheMiddle()
 
     BodiesImage built(2, bodies(sketch.take()));
     checkFaults(built.image, 1, faults);
+}
+
+static void testFaultSitesCallSitesShareWords()
+{
+    auto callSite = [](uint32_t name, unsigned registerNumber) {
+        ThrowSiteWord word { };
+        word.kind = static_cast<uint32_t>(ThrowKind::NotAFunction);
+        word.representation = static_cast<uint32_t>(Typed::Representation::Void);
+        word.registerNumber = registerNumber;
+        word.a = name;
+        return std::bit_cast<uint32_t>(word);
+    };
+    ThrowSiteWord read = std::bit_cast<ThrowSiteWord>(callSite(1, 0));
+    read.kind = static_cast<uint32_t>(ThrowKind::NullishRead);
+    std::array<uint32_t, 8> words { callSite(1, 0), callSite(1, 3), callSite(1, 5), callSite(2, 0), callSite(3, 7), std::bit_cast<uint32_t>(read), std::bit_cast<uint32_t>(read) + 1, callSite(1, 0) };
+    FaultBody body = bodyWithFaults(1, true, words.size(), [&](unsigned i) -> FaultWords {
+        return { words[i] };
+    });
+    for (ExpectedFault& fault : body.faults) {
+        if (fault.words[0] == callSite(1, 0))
+            fault.words[0] = callSite(1, 3);
+    }
+    BodiesImage built(2, bodies(WTF::move(body.code)));
+    checkFaults(built.image, 1, body.faults);
 }
 
 static void testFaultSitesSecondWords()
@@ -364,7 +390,8 @@ std::span<const NativeTest> faultTableTests()
         { "image/fault-sites/frames"_s, testFaultSitesFrames },
         { "image/fault-sites/frame-in-the-middle"_s, testFaultSitesFrameInTheMiddle },
         { "image/fault-sites/several-bodies"_s, [] { checkFramedBodiesFaults(20, 7, [](uint32_t function, unsigned i) -> FaultWords { return { 7 * function + i }; }); } },
-        { "image/fault-sites/wide-word-numbers"_s, [] { checkFramedBodiesFaults(70, 1000, [](uint32_t function, unsigned i) -> FaultWords { return { 1000 * (function - 1) + i }; }); } },
+        { "image/fault-sites/wide-word-numbers"_s, [] { checkFramedBodiesFaults(70, 1000, [](uint32_t function, unsigned i) -> FaultWords { return { ThrowSiteWord::numberOfRegistersPerBank * (1000 * (function - 1) + i) }; }); } },
+        { "image/fault-sites/call-sites-share-words"_s, testFaultSitesCallSitesShareWords },
         { "image/fault-sites/second-words"_s, testFaultSitesSecondWords },
         { "image/fault-sites/third-words"_s, testFaultSitesThirdWords },
         { "image/fault-sites/outside"_s, testFaultSitesOutside },

@@ -7,12 +7,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEffectsOfProtocols.h"
 #include "AOTIRTestSupport.h"
 #include "AOTProvisionalFunctions.h"
+#include "AOTResultRulesInternal.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <array>
+#include <type_traits>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -34,7 +37,7 @@ RecordsOfTask internRecordsOfTask(TypeArena& arena, unsigned task)
     RecordsOfTask records;
     records.key = arena.textKey(StringID(task % 4));
     records.layouts = arena.completeLayoutSet(std::array<LayoutID, 2> { LayoutID(task % 5), LayoutID(task % 3) });
-    records.callees = arena.intern(CalleeSet { { FunctionID(task % 6), FunctionID(task % 2) }, { }, true });
+    records.callees = arena.intern(CalleeSet::complete({ FunctionID(task % 6), FunctionID(task % 2) }, { }));
     records.range = arena.intern(Type::integer(Range { 0, 100 + task % 7 }));
     const TypeID contents[] { records.range };
     records.array = arena.intern(Type::builtinClass(BuiltinClasses::Array, contents));
@@ -84,7 +87,7 @@ TypeID internNestedLists(TypeTable& types, const ParallelLoops* loops, unsigned 
 unsigned nestingDepthOf(const TypeTable& types, TypeID list)
 {
     unsigned depth = 0;
-    for (; !types.at(list).classes.isEmpty(); list = types.at(list).classes[0].contents[0])
+    for (; !types.at(list).classes.isEmpty(); list = types.at(list).classes[0].writtenContents[0])
         ++depth;
     return depth;
 }
@@ -252,7 +255,7 @@ static void layoutSetOfTwoTasksGetsOneID()
     }
     TypeRemap remap = phase.finish(StringRemap());
     AOT_TEST_CHECK(remap(sets[0]) == remap(sets[1]) && types.numberOfLayoutSets() == 1);
-    AOT_TEST_CHECK(hasElements(types.at(remap(sets[0])).members, { LayoutID(0u), LayoutID(1u) }));
+    AOT_TEST_CHECK(hasElements(types.at(remap(sets[0])).written(), { LayoutID(0u), LayoutID(1u) }));
     AOT_TEST_CHECK(!remap.isIdentity() && !remap.isIdentityFor(0) && remap.isIdentityFor(1) && !remap.isIdentityFor(2));
 }
 
@@ -332,6 +335,30 @@ static void fullSharedMemoRejectsNewEntries()
     }
     SharedTypeMemo::Counts counts = memo.counts();
     AOT_TEST_CHECK(counts.fullShards && counts.entries == numberOfKeysFound && numberOfKeysFound < numberOfKeys);
+}
+
+static void idsThatDifferInHighBitsHashDifferently()
+{
+    auto hashOf = [](uint32_t prefix, uint32_t first, uint32_t second) {
+        WordHasher hasher;
+        hasher.add(prefix);
+        hasher.add(first);
+        hasher.add(second);
+        return hasher.hash();
+    };
+    constexpr unsigned highBitsShift = 29;
+    for (uint32_t prefix = 0; prefix < 64; ++prefix) {
+        uint64_t hashOfFinalIDs = hashOf(prefix, TypeTable::anything.index(), TypeTable::anything.index());
+        for (uint32_t firstBits = 1; firstBits < 8; ++firstBits) {
+            for (uint32_t secondHighBits = 0; secondHighBits < 8; ++secondHighBits) {
+                for (uint32_t secondLowBits = 0; secondLowBits < 8; ++secondLowBits) {
+                    uint32_t first = TypeTable::anything.index() ^ firstBits << highBitsShift;
+                    uint32_t second = TypeTable::anything.index() ^ secondHighBits << highBitsShift ^ secondLowBits;
+                    AOT_TEST_CHECK(hashOf(prefix, first, second) != hashOfFinalIDs);
+                }
+            }
+        }
+    }
 }
 
 static void arenasShareOnlySideEffectFreeAnswers()
@@ -445,11 +472,64 @@ static void internedTablesDoNotDependOnSharedAnswers()
     AOT_TEST_CHECK(haveEqualRecords<LayoutSetID>(plainTypes, sharingTypes, plainTypes.numberOfLayoutSets()));
 }
 
+// A guess about callees turns into no list and into no answer by itself, and nobody but Proven makes a fact of anything.
+static_assert(!std::is_convertible_v<Expected<Callees>, Callees> && !std::is_constructible_v<bool, Expected<bool>>);
+static_assert(!std::is_constructible_v<ProvenValue<Callees>, Callees> && !std::is_constructible_v<ProvenValue<Callees>, Expected<Callees>>);
+static_assert(std::is_convertible_v<ProvenValue<Callees>, Callees> && std::is_convertible_v<ProvenValue<Callees>, Expected<Callees>>);
+
+static void onlyCompleteListOfCalleesSaysAllThatIsEntered()
+{
+    TypeTable types(BuiltinTable::singleton());
+    FunctionID first(1u);
+    FunctionID second(2u);
+    const CalleeSet& complete = types.at(types.intern(CalleeSet::complete({ second, first }, { Builtins::MathMax })));
+    const CalleeSet& open = types.at(types.intern(CalleeSet::open({ second, first }, { Builtins::MathMax })));
+    AOT_TEST_CHECK(complete != open && complete.listsEveryCallee() && !open.listsEveryCallee());
+    AOT_TEST_CHECK(complete.all() && hasElements(complete.all()->value().functions, { first, second }) && hasElements(complete.all()->value().builtins, { Builtins::MathMax }));
+    AOT_TEST_CHECK(!open.all() && !CalleeSet().all());
+    AOT_TEST_CHECK(hasElements(open.seen().predicted().functions, { first, second }) && hasElements(open.followed().value(), { first, second }));
+
+    CalleeList list = CalleeList::complete(complete.written());
+    AOT_TEST_CHECK(list.all() && !list.functionsAlone() && !list.runsNothing() && list.mayRunUserCode());
+    list.removeBuiltins();
+    AOT_TEST_CHECK(list.functionsAlone() && hasElements(list.functionsAlone()->value(), { first, second }));
+    list.addUnknownCallees();
+    AOT_TEST_CHECK(!list.all() && !list.functionsAlone() && hasElements(list.listed().functions, { first, second }) && list == CalleeList::open({ open.written().functions, { } }));
+    AOT_TEST_CHECK(CalleeList::none().runsNothing() && CalleeList::none().functionsAlone() && !CalleeList::unknown().all() && CalleeList::unknown().mayRunUserCode());
+}
+
+// A plan that is found refused in a memo is skipped, and under --aot-verify-each-pass it is made again, to see that it uses no record of the phase: that alone is what skipping it would leave out.
+static void hitInMemoOfArenaIsEventThatUsesNoRecord()
+{
+    TypeTable types(BuiltinTable::singleton());
+    TypeID narrow = types.intern(Type::integer(Range { 0, 10 }));
+    TypeID wide = types.intern(Type::integer(Range { 0, 20 }));
+    TypeInterningPhase phase(types, 1);
+    {
+        TypeArena arena(phase, 0);
+        uint64_t events = arena.unshareableEventCount();
+        uint64_t uses = arena.useCountOfRecordsOfPhase();
+        AOT_TEST_CHECK(arena.unionOf(narrow, wide) == wide && arena.intersectionOf(narrow, wide) == narrow);
+        AOT_TEST_CHECK(arena.unshareableEventCount() == events && arena.useCountOfRecordsOfPhase() == uses);
+        AOT_TEST_CHECK(arena.unionOf(narrow, wide) == wide && arena.intersectionOf(narrow, wide) == narrow);
+        AOT_TEST_CHECK(arena.unshareableEventCount() == events + 2 && arena.useCountOfRecordsOfPhase() == uses);
+
+        events = arena.unshareableEventCount();
+        AOT_TEST_CHECK(TypeTable::isProvisional(arena.intern(Type::integer(Range { 0, 30 }))));
+        AOT_TEST_CHECK(arena.unshareableEventCount() == events + 1 && arena.useCountOfRecordsOfPhase() == uses + 1);
+        AOT_TEST_CHECK(TypeTable::isProvisional(arena.intern(Type::integer(Range { 0, 30 }))));
+        AOT_TEST_CHECK(arena.unshareableEventCount() == events + 2 && arena.useCountOfRecordsOfPhase() == uses + 2);
+    }
+    phase.finish(StringRemap());
+}
+
 #define FOR_EACH_AOT_TYPE_ARENA_TEST(v) \
     v(internedTablesDoNotDependOnThreads) v(listsNestedToAnyDepthAreMergedAlikeByOneThreadAndByMany) v(provisionalStringLiteralsAreSortedAfterRemap) v(scratchArenaInOpenPhaseLeavesNoRecord) \
     v(scratchArenaWithoutOpenPhaseLeavesNoRecord) v(scratchArenasWithoutOpenPhaseOnManyThreads) v(layoutSetOfTwoTasksGetsOneID) \
     v(tasksCommitInTheListedOrder) v(discardedPhaseLeavesNoRecord) v(sharedMemoIsThreadSafe) v(fullSharedMemoRejectsNewEntries) \
-    v(arenasShareOnlySideEffectFreeAnswers) v(verifyingSharedMemoRecomputesAnswers) v(internedTablesDoNotDependOnSharedAnswers)
+    v(idsThatDifferInHighBitsHashDifferently) \
+    v(arenasShareOnlySideEffectFreeAnswers) v(verifyingSharedMemoRecomputesAnswers) v(internedTablesDoNotDependOnSharedAnswers) \
+    v(onlyCompleteListOfCalleesSaysAllThatIsEntered) v(hitInMemoOfArenaIsEventThatUsesNoRecord)
 
 std::span<const NativeTest> typeArenaTests()
 {

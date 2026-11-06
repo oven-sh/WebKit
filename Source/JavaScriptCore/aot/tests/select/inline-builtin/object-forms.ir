@@ -338,8 +338,8 @@ function f23 name="setPrototypeOfInCompactBlock" parameters=[{type=object}, {typ
 # CHECK-NOT: CallInline
 
 function f24 name="reflectConstruct" parameters=[{type=function}, {type=Array}, {type=function}] results=[{type=anything}] {
-    v3 = CallBuiltin -, v0, v1 overload=ReflectConstruct/0 [isReflectConstructSyntax]
-    v4 = CallBuiltin -, v0, v1, v2 overload=ReflectConstruct/1 [isReflectConstructSyntax]
+    v3 = CallBuiltin -, v0, v1 overload=ReflectConstruct/0 [isDoneInPlace]
+    v4 = CallBuiltin -, v0, v1, v2 overload=ReflectConstruct/1 [isDoneInPlace]
     Return v4
 }
 # FORMS: function f24

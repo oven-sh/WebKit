@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowBodies.h"
@@ -23,15 +24,14 @@ static ValueSetID maskOf(const ValueFlowOperand& operand) { return operand.mask 
 
 static ValueSetID valueHeldInGraph(const ValueFlowGraph& graph, ValueFlowNodeID node)
 {
-    std::span<const ValueSetID> values = graph.values();
-    return node.index() < values.size() ? values[node.index()] : ValueSets::nothing;
+    return node.index() < graph.numberOfNodes() ? graph.valueOf(node) : ValueSets::nothing;
 }
 
 ValueFlowRuleContext::ValueFlowRuleContext(const ValueFlowSolver& solver, ValueFlowRoundLog& log, ValueSetMaker& maker)
     : m_solver(solver)
     , m_log(log)
     , m_instancedFunctions(solver.m_input.instancedFunctions)
-    , m_skipsRedundantAdds(!solver.m_input.isAskedHowValuesCame && !solver.m_input.remembersWhoLoggedEachEdge)
+    , m_skipsRedundantMarks(!solver.m_input.isAskedHowValuesCame && !solver.m_input.remembersWhoLoggedEachEdge)
     , m_maker(maker)
 {
 }
@@ -40,12 +40,14 @@ const Program& ValueFlowRuleContext::program() const { return *m_solver.m_input.
 const ValueFlowUniverse& ValueFlowRuleContext::universe() const { return *m_solver.m_input.universe; }
 const ValueFlowProgramNodes& ValueFlowRuleContext::nodes() const { return *m_solver.m_input.nodes; }
 uint64_t ValueFlowRuleContext::mostMembersToldApart() const { return m_solver.m_input.mostMembersToldApart; }
+bool ValueFlowRuleContext::followsSpiesOutOfSight() const { return m_solver.m_input.build && m_solver.m_input.build->options().admitsReplacedBuiltins() && !m_solver.m_input.build->options().admitsFilesRunByHost(); }
 
 void ValueFlowRuleContext::begin(ValueFlowStatementID statement)
 {
     m_statement = statement;
     m_madeNodesOfStatement = m_solver.isMadeByRule(statement) && statement.index() < m_solver.numberOfStatements() ? m_solver.m_madeNodesOfStatement[statement.index() - m_solver.m_input.statements.size()] : UINT32_MAX;
     ++m_runEpoch;
+    m_isNativeWalk = m_madeNodesOfStatement != UINT32_MAX && m_solver.m_madeNodes[m_madeNodesOfStatement].key.isLookupByNativeWalk();
     m_isFirstRunOfStatementOfBody = m_solver.hasStatementOfBodyNeverRun(statement);
     m_filtersKnownEdges = !m_isFirstRunOfStatementOfBody || m_solver.m_isFullRound;
     m_firstEdgeOfRun = m_log.edges.size();
@@ -67,8 +69,38 @@ void ValueFlowRuleContext::beginWhereMade(ValueFlowStatementID statement, const 
     begin(statement);
     m_madeNodesOfStatement = madeNodes;
     m_keyOfStatementOfThisTurn = &key;
+    m_isNativeWalk = key.isLookupByNativeWalk();
     m_filtersKnownEdges = m_solver.m_isFullRound;
     m_rememberedByStatementOfThisTurn = { };
+}
+
+void ValueFlowRuleContext::keepSetsHeld(ValueSets& sets) const
+{
+    for (const PrototypesAtCreation& remembered : m_prototypesAtCreationOfSets) {
+        sets.keep(remembered.objects);
+        sets.keep(remembered.prototypes);
+    }
+    sets.keep(m_closuresTakingReceiver.closures);
+    sets.keep(m_objectsToldApart.objects);
+    sets.keep(m_instancesOfLayouts.objects);
+    sets.keep(m_instancesOfLayouts.instances);
+    sets.keep(m_objectsToldApart.answer.rest);
+    for (ValueSetID group : m_objectsToldApart.answer.groups)
+        sets.keep(group);
+    sets.keep(m_rememberedOnGeneralWay);
+    sets.keep(m_rememberedByStatementOfThisTurn);
+    for (ValueSetID remembered : m_rememberedByThread)
+        sets.keep(remembered);
+    for (ValueSetID constant : m_constantsOfThisTurn.values())
+        sets.keep(constant);
+    for (ValueSetID seen : m_sourcesOfCopiesSeenFrom.values())
+        sets.keep(seen);
+    for (const auto& operands : m_narrowedOperandsOfRun) {
+        for (const ValueFlowOperand& operand : *operands) {
+            sets.keep(operand.constant);
+            sets.keep(operand.mask);
+        }
+    }
 }
 
 const ValueFlowNodeKey& ValueFlowRuleContext::keyOfStatement() const { return m_keyOfStatementOfThisTurn ? *m_keyOfStatementOfThisTurn : m_solver.keyOf(m_statement); }
@@ -85,6 +117,10 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
         size_t kept = m_firstNodeReadOfRun;
         for (size_t first = m_firstNodeReadOfRun; first < endOfNodesRead; first += mostAtOnce) {
             size_t end = std::min(endOfNodesRead, first + mostAtOnce);
+            for (size_t index = first; index < end; ++index)
+                m_solver.prefetchReadersOf(m_log.nodesRead[index]);
+            for (size_t index = first; index < end; ++index)
+                m_solver.prefetchFirstReadersOf(m_log.nodesRead[index]);
             for (size_t index = first; index < end; ++index)
                 m_solver.prefetchWhetherKnownReader(m_log.nodesRead[index], m_statement);
             if (first == m_firstNodeReadOfRun) {
@@ -115,13 +151,8 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
             m_log.namesWatched.shrink(kept);
         }
     }
-    if (!m_filtersKnownEdges) {
-        if (endOfEdges > m_log.mostEdges) [[unlikely]] {
-            m_log.hasDroppedEdges = true;
-            m_log.edges.shrink(std::max<size_t>(m_firstEdgeOfRun, m_log.mostEdges));
-        }
+    if (!m_filtersKnownEdges)
         return;
-    }
     size_t kept = m_firstEdgeOfRun;
     std::span<ValueFlowEdge> edges = m_log.edges.mutableSpan();
     for (size_t first = m_firstEdgeOfRun; first < endOfEdges; first += mostAtOnce) {
@@ -141,10 +172,6 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
         for (size_t index = 0; index < batch.size(); ++index) {
             if (present >> index & 1)
                 continue;
-            if (kept >= m_log.mostEdges) [[unlikely]] {
-                m_log.hasDroppedEdges = true;
-                break;
-            }
             edges[kept++] = batch[index];
         }
     }
@@ -153,6 +180,7 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
 
 void ValueFlowRuleContext::end()
 {
+    m_narrowedOperandsOfRun.shrink(0);
     leaveOutWhatIsKnown();
     if (m_keyOfStatementOfThisTurn) {
         if (m_rememberedByStatementOfThisTurn)
@@ -175,9 +203,47 @@ void ValueFlowRuleContext::end()
     });
 }
 
-FunctionID ValueFlowRuleContext::functionOfStatement() const { return m_keyOfStatementOfThisTurn ? FunctionID() : m_solver.statementAt(m_statement).function; }
-std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFlowStatement& statement) const { return m_operandsInPlace.empty() ? m_solver.operandsOf(statement) : m_operandsInPlace; }
+FunctionID ValueFlowRuleContext::functionOfStatement() const { return m_keyOfStatementOfThisTurn ? FunctionID() : m_solver.copyOfStatementAt(m_statement).function; }
+// `if (!$isProxyObject(x)) use(x);`: the rules see x as the test lets it through. What the results read stays as it is: a mask there is a claim about the value, not about one use of it.
+std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFlowStatement& statement)
+{
+    if (!m_operandsInPlace.empty())
+        return m_operandsInPlace;
+    std::span<const ValueFlowOperand> operands = m_solver.operandsOf(statement);
+    if (!statement.guardsOfOperands) [[likely]]
+        return operands;
+    std::span<const ValueFlowOperand> guards = m_solver.guardsOf(statement);
+    m_narrowedOperandsOfRun.append(makeUnique<Vector<ValueFlowOperand, 8>>(operands));
+    Vector<ValueFlowOperand, 8>& narrowed = *m_narrowedOperandsOfRun.last();
+    for (size_t index = 0; index < std::min<size_t>(narrowed.size(), 8); ++index) {
+        for (size_t position = 0; position < std::min<size_t>(guards.size(), 4); ++position) {
+            if (!(statement.guardsOfOperands >> (index * 4 + position) & 1) || !guards[position].mask)
+                continue;
+            ValueFlowOperand& operand = narrowed[index];
+            // A mask of another kind lets through more than the members of its set: the operand is what it lets through, cut by the test.
+            if (operand.maskKind != ValueFlowMaskKind::Plain) {
+                operand = ValueFlowOperand { { }, m_maker.intersect(valueOf(operand).m_set, guards[position].mask), { } };
+                continue;
+            }
+            operand.mask = operand.mask ? m_maker.intersect(operand.mask, guards[position].mask) : guards[position].mask;
+        }
+    }
+    return narrowed.span();
+}
+std::span<const ValueFlowOperand> ValueFlowRuleContext::objectsReadUnderKeyOfStore(const ValueFlowStatement& statement) const
+{
+    return m_operandsInPlace.empty() ? m_solver.objectsReadUnderKeyOfStore(statement) : std::span<const ValueFlowOperand>();
+}
 ValueFlowNodeID ValueFlowRuleContext::markersOf(FunctionID function) { return nodeFor(ValueFlowNodeKey::markersOf(function)); }
+
+bool ValueFlowRuleContext::canBeReached(const ValueFlowStatement& statement)
+{
+    for (const ValueFlowOperand& guard : m_solver.guardsOf(statement)) {
+        if (!meet(valueOf(guard), ValueSets::anything))
+            return false;
+    }
+    return true;
+}
 void ValueFlowRuleContext::makeInstanceOfOtherCalls(FunctionID function) { makeInstance(*instancedFunctions()->find(function), ValueFlowInstancedFunctions::markerOfOtherCalls()); }
 
 ValueFlowNodeID ValueFlowRuleContext::restArgumentEntered(FunctionID function, unsigned index)
@@ -199,8 +265,17 @@ ValueFlowNodeID ValueFlowRuleContext::instanceOf(ValueFlowNodeID node, ValueFlow
 ALWAYS_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeRead(ValueFlowNodeID node)
 {
     if (!node || node.index() < m_firstNodeOfInstance || node.index() >= m_endOfNodesOfInstance)
-        return node;
+        return m_markerEntered ? instanceGivingBack(node) : node;
     return instanceOf(node, m_markerOfRun);
+}
+
+// What a call gets back from the instance that it has entered: the node that all instances share holds what any of them returns.
+NEVER_INLINE ValueFlowNodeID ValueFlowRuleContext::instanceGivingBack(ValueFlowNodeID node)
+{
+    if (!node || !m_instancedFunctions->holdsNode(node))
+        return node;
+    makeInstance(*m_instancedFunctions->find(nodes().functionOf(node)), m_markerEntered);
+    return instanceOf(node, m_markerEntered);
 }
 
 ALWAYS_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeHandedTo(ValueFlowNodeID node)
@@ -261,6 +336,7 @@ ValueFlowRuleContext::InstanceOfRun::~InstanceOfRun()
 ClimbingSet ValueFlowRuleContext::setOfKey() const { return ClimbingSet(keyOfStatement().set); }
 uint32_t ValueFlowRuleContext::numberOfMembersOfKey() const { return sets().size(keyOfStatement().set); }
 ValueFlowName ValueFlowRuleContext::nameOfKey() const { return keyOfStatement().name(); }
+bool ValueFlowRuleContext::isLookupForCall() const { return !isStatementOfBody() && keyOfStatement().isLookupForCall(); }
 ValueFlowCallKind ValueFlowRuleContext::callKindOfKey() const { return keyOfStatement().callKind(); }
 ValueFlowObjectID ValueFlowRuleContext::markerOfKey() const { return keyOfStatement().markerOfCallGroup(); }
 
@@ -278,6 +354,58 @@ ClimbingSet ValueFlowRuleContext::valueOf(ValueFlowNodeID named)
         return ClimbingSet(m_solver.withoutWhatOtherMembersCover(*constant, m_maker));
     m_log.nodesRead.append(node);
     return ClimbingSet(m_solver.valueForReadersOf(node, m_maker));
+}
+
+// A proxy comes to every place through the list of the followed ones, so whoever finds it in a value finds it listed.
+ClimbingSet ValueFlowRuleContext::proxiesAskedByTheirTrapsIn(const ValueFlowOperand& operand)
+{
+    if (!m_solver.m_input.nodes)
+        return { };
+    ValueSetID followed = valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed));
+    if (followed == ValueSets::nothing)
+        return { };
+    ClimbingSet proxies = restrict(valueOf(operand), followed);
+    if (meet(proxies, ValueSets::anything) && !m_keyOfStatementOfThisTurn)
+        m_log.statementsThatAskProxiesByTheirTraps.append(m_statement);
+    return proxies;
+}
+
+ClimbingSet ValueFlowRuleContext::withoutProxiesThatWalksPass(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return values;
+    ValueSetID passed = valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesThatHandOnWhatComesFromBelow));
+    return passed == ValueSets::nothing ? values : restrict(values, ValueSets::complement(passed));
+}
+
+ClimbingSet ValueFlowRuleContext::proxiesThatWalksPassAmong(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return { };
+    return restrict(values, valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesThatHandOnWhatComesFromBelow)));
+}
+
+void ValueFlowRuleContext::noteThatStatementAsksProxiesOfConstructorByTheirTraps()
+{
+    if (m_solver.m_input.nodes && !m_keyOfStatementOfThisTurn && valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed)) != ValueSets::nothing)
+        m_log.statementsThatAskProxiesByTheirTraps.append(m_statement);
+}
+
+ClimbingSet ValueFlowRuleContext::followedProxiesAmong(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return { };
+    return restrict(values, valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed)));
+}
+
+void ValueFlowRuleContext::openProxiesAmong(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return;
+    ValueSetID followed = valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed));
+    if (followed == ValueSets::nothing || !meet(values, followed))
+        return;
+    add(nodes().ofHost(ValueFlowHostNode::ProxiesThatAreOpen), restrict(values, followed));
 }
 
 bool ValueFlowRuleContext::holdsAnything(ValueFlowNodeID named)
@@ -349,6 +477,13 @@ ClimbingSet ValueFlowRuleContext::valueWithin(ClimbingSet within, ValueFlowNodeI
     return restrict(ClimbingSet(valueHeldInGraph(m_solver.graph(), node)), within.m_set);
 }
 
+ClimbingSet ValueFlowRuleContext::coveredByUnknownObjectAmong(ClimbingSet objects)
+{
+    if (!m_solver.m_input.escaped)
+        return ClimbingSet();
+    return valueWithin(restrict(objects, m_maker.intersect(m_solver.m_objectsThatPlaceholdersMayCover, ValueSets::complement(m_solver.m_objectsAlwaysFollowed))), m_solver.m_input.escaped);
+}
+
 ClimbingSet ValueFlowRuleContext::valueWithinAskedLast(ClimbingSet within, ValueFlowNodeID node)
 {
     size_t numberWatched = m_log.partsWatched.size();
@@ -382,22 +517,22 @@ bool ValueFlowRuleContext::holdsAnyOf(ClimbingSet within, ValueFlowNodeID named)
     return false;
 }
 
+ClimbingSet ValueFlowRuleContext::membersMissingNowFrom(ValueFlowNodeID node, ClimbingSet set) { return restrict(set, ValueSets::complement(m_maker.intersect(valueHeldInGraph(m_solver.graph(), node), set.m_set))); }
 ClimbingSet ValueFlowRuleContext::membersMissingFrom(ValueFlowNodeID node, ClimbingSet set) { return restrict(set, ValueSets::complement(valueWithin(set, node).m_set)); }
 
 ValueSetID& ValueFlowRuleContext::rememberedByStatement()
 {
     if (m_keyOfStatementOfThisTurn)
         return m_rememberedByStatementOfThisTurn;
+    if (m_solver.m_usesGeneralRulesOnly) {
+        if (std::exchange(m_statementThatRemembersOnGeneralWay, m_statement) != m_statement)
+            m_rememberedOnGeneralWay = { };
+        return m_rememberedOnGeneralWay;
+    }
     return m_solver.m_rememberedByStatement[m_statement.index()];
 }
 
 bool ValueFlowRuleContext::isStatementOfBody() const { return m_statement.index() < m_solver.m_input.statements.size(); }
-
-bool ValueFlowRuleContext::wasAddedInEarlierRound(ValueFlowNodeID node, ClimbingSet set) const
-{
-    std::optional<ValueFlowNodeID> holding = m_solver.findMadeNode(keyOfConstant(set.m_set));
-    return holding && m_solver.graph().hasAdded(ValueFlowEdge { *holding, node });
-}
 
 ClimbingSet ValueFlowRuleContext::membersNewToThread(ClimbingSet set, unsigned number)
 {
@@ -414,6 +549,25 @@ ClimbingSet ValueFlowRuleContext::newSince(ValueFlowNodeID named)
     ValueSetID held = valueOf(node).m_set;
     m_log.valuesShown.append(ValueFlowNodeSet { node, held });
     return ClimbingSet(m_maker.intersect(held, ValueSets::complement(m_solver.valueShownTo(m_statement, node))));
+}
+
+ValueSetID ValueFlowRuleContext::instancesOfLayoutsRememberedOf(ClimbingSet objects)
+{
+    InstancesOfLayouts& known = m_instancesOfLayouts;
+    if (known.objects == objects.m_set)
+        return known.instances;
+    if (!sets().isSubset(known.objects, objects.m_set))
+        known = { };
+    Vector<ValueFlowObjectID, 16> instances;
+    sets().forEachMember(m_maker.intersect(objects.m_set, ValueSets::complement(known.objects)), [&](ValueFlowObjectID object) {
+        if (LayoutID layout = universe().layoutOf(object))
+            instances.append(universe().instanceOf(layout));
+    });
+    AOT::sort(instances);
+    instances.shrink(instances.size() - std::ranges::unique(instances).size());
+    known.instances = m_maker.unite(known.instances, m_maker.of(instances.span()));
+    known.objects = objects.m_set;
+    return known.instances;
 }
 
 ClimbingSet ValueFlowRuleContext::markedAmong(ClimbingSet objects, OptionSet<ObjectMutation> mutations)
@@ -460,7 +614,7 @@ NEVER_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeForUncached(const ValueFl
     bool namesNodeOfThisRound = key.kind == ValueFlowMadeNodeKind::Masked && ValueFlowRoundLog::isNumberedByLog(key.maskedNode());
     std::optional<uint32_t> existing = namesNodeOfThisRound ? std::nullopt : m_solver.findOrMakeNodesWhereAskedFor(key, hash, m_log, m_maker);
     ValueFlowNodeID node = existing ? m_solver.m_madeNodes[*existing].first : m_log.nodeFor(key);
-    if (existing && key.kind == ValueFlowMadeNodeKind::Constant && m_solver.m_madeNodes[*existing].isOfThisTurn)
+    if (existing && key.kind == ValueFlowMadeNodeKind::Constant && m_solver.m_madeNodes[*existing].has(ValueFlowSolver::MadeNodes::IsOfThisTurn))
         m_constantsOfThisTurn.add(node.index(), key.set);
     else if (existing)
         known = { static_cast<uint64_t>(key.payload) << 32 | key.set.index(), static_cast<uint32_t>(key.kind) << 8 | key.detail, node, *existing };
@@ -481,7 +635,7 @@ ValueFlowNodeID ValueFlowRuleContext::constantNodeForEdge(const ValueFlowNodeKey
         return ofTurn.node;
     uint32_t number = *m_solver.findOrMakeNodesWhereAskedFor(key, hash, m_log, m_maker);
     ValueFlowNodeID node = m_solver.m_madeNodes[number].first;
-    if (m_solver.m_madeNodes[number].isOfThisTurn)
+    if (m_solver.m_madeNodes[number].has(ValueFlowSolver::MadeNodes::IsOfThisTurn))
         ofTurn = { detailAndSet, turn, node };
     else
         known = { key.set.index(), key.detail, node, number };
@@ -499,6 +653,7 @@ ValueFlowNodeKey ValueFlowRuleContext::keyOfConstant(ValueSetID set) const
 bool ValueFlowRuleContext::leavesOut(ValueFlowUnknownSource source) const { return m_solver.m_input.unknownSourcesLeftOut.contains(source); }
 bool ValueFlowRuleContext::leavesOutSomeUnknownSource() const { return !m_solver.m_input.unknownSourcesLeftOut.isEmpty(); }
 RefusedCode ValueFlowRuleContext::refusedCode() const { return m_solver.m_input.refusedCode; }
+bool ValueFlowRuleContext::isSabotaged(Sabotage part) const { return m_solver.m_input.build && m_solver.m_input.build->isSabotaged(part); }
 
 bool ValueFlowRuleContext::isGuardedByRemovedFeature(BuiltinID builtin) const
 {
@@ -538,14 +693,63 @@ NEVER_INLINE ClimbingSet ValueFlowRuleContext::objectsThatMayHoldSomethingUnder(
     return m_solver.mayBeComputedKey(name) ? unite(*holders, valueWithin(objects, writtenUnderUnknownKey())) : *holders;
 }
 
-ValueFlowNodeID ValueFlowRuleContext::read(ClimbingSet objects, ValueFlowName name)
+ValueFlowNodeID ValueFlowRuleContext::readWhatWasWritten(ClimbingSet objects, ValueFlowName name, ReadUse use)
 {
     AOT_THRESHOLD(uint32_t, mostObjectsReadWhole, 8);
+    ASSERT(!m_solver.m_input.program || !namesElementByText(*m_solver.m_input.program, name));
     if (name.kind == ValueFlowNameKind::Property && !ValueSets::isComplement(objects.m_set) && sets().size(objects.m_set) > mostObjectsReadWhole)
         objects = objectsThatMayHoldSomethingUnder(name, objects);
     if (objects.m_set == ValueSets::nothing)
         return holdingNothing();
-    return nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
+    return nodeFor(use == ReadUse::OnlyWhatLetsInUnseenCode ? ValueFlowNodeKey::readOfWhatLetsInUnseenCode(objects.m_set, name) : ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
+}
+
+std::optional<ClimbingSet> ValueFlowRuleContext::peekAtWhatWasWritten(ClimbingSet objects, ValueFlowName name)
+{
+    ASSERT(name.kind != ValueFlowNameKind::Property);
+    if (objects.m_set == ValueSets::nothing)
+        return ClimbingSet();
+    std::optional<ValueFlowNodeID> node = m_solver.findNodeMadeBeforeThisTurn(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
+    if (!node)
+        return std::nullopt;
+    return ClimbingSet(m_solver.valueForReadersOf(*node, m_maker));
+}
+
+ClimbingSet ValueFlowRuleContext::peekAtWhatIsWrittenThrough(ClimbingSet objects, ValueFlowName name)
+{
+    if (objects.m_set == ValueSets::nothing)
+        return ClimbingSet();
+    std::optional<ValueFlowNodeID> node = m_solver.findNodeMadeBeforeThisTurn(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Written, objects.m_set, name));
+    return node ? ClimbingSet(m_solver.valueForReadersOf(*node, m_maker)) : ClimbingSet();
+}
+
+ClimbingSet ValueFlowRuleContext::seenFromObjectUp(ValueFlowObjectID object) const
+{
+    return ClimbingSet(ValueSetID(m_solver.m_seenFromObjectUp[object.index()].load(std::memory_order_acquire)));
+}
+
+void ValueFlowRuleContext::noteSeenFromObjectUp(ValueFlowObjectID object, ClimbingSet seen)
+{
+    m_solver.m_seenFromObjectUp[object.index()].store(seen.m_set.index(), std::memory_order_release);
+}
+
+std::optional<ClimbingSet> ValueFlowRuleContext::sourcesOfCopiesSeenFrom(ClimbingSet objects)
+{
+    if (m_turnOfSourcesOfCopiesSeen != m_solver.m_numberOfTurn)
+        return std::nullopt;
+    auto seen = m_sourcesOfCopiesSeenFrom.find(objects.m_set.index());
+    if (seen == m_sourcesOfCopiesSeenFrom.end())
+        return std::nullopt;
+    return ClimbingSet(seen->value);
+}
+
+void ValueFlowRuleContext::noteSourcesOfCopiesSeenFrom(ClimbingSet objects, ClimbingSet seen)
+{
+    if (m_turnOfSourcesOfCopiesSeen != m_solver.m_numberOfTurn) {
+        m_turnOfSourcesOfCopiesSeen = m_solver.m_numberOfTurn;
+        m_sourcesOfCopiesSeenFrom.clear();
+    }
+    m_sourcesOfCopiesSeenFrom.set(objects.m_set.index(), seen.m_set);
 }
 
 void ValueFlowRuleContext::addObjectsOfProgram(ValueFlowNodeID node, ClimbingSet objects) { add(node, restrict(objects, ValueSets::complement(universe().placeholdersAlone()))); }
@@ -602,6 +806,7 @@ bool ValueFlowRuleContext::usesGeneralRulesOnly() const { return m_solver.m_uses
 
 ValueFlowNodeID ValueFlowRuleContext::written(ClimbingSet objects, ValueFlowName name)
 {
+    ASSERT(!m_solver.m_input.program || !namesElementByText(*m_solver.m_input.program, name));
     if (std::optional<ValueFlowRareWrite> write = rareWriteFoundUnder(name.kind); write && m_solver.m_input.nodes && m_solver.m_input.universe)
         addObjectsOfProgram(rareWriteNode(*write), objects);
     if (m_solver.m_input.nodes && m_solver.m_input.universe) {
@@ -614,7 +819,7 @@ ValueFlowNodeID ValueFlowRuleContext::written(ClimbingSet objects, ValueFlowName
             add(nodeFor(ValueFlowNodeKey::holdersOfLibraryExportsWrittenUnder(PropertyKeyID(name.payload))), restrict(objects, universe().objectsOfLibraryFoundByNameAlone()));
     }
     ValueFlowNodeID written = nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Written, objects.m_set, name));
-    if (name.kind == ValueFlowNameKind::Property && m_solver.m_input.nodes) {
+    if ((name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter) && m_solver.m_input.nodes) {
         for (BuiltinName called : program().builtins().namesOfHostMethodsCallingStartupLoads()) {
             if (program().keyOf(called).index() == name.payload)
                 connect(written, nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads));
@@ -631,8 +836,15 @@ bool ValueFlowRuleContext::runsCodeThatRecordsDescribe() const
     return function && universe().builtinTables().isCodeThatRecordsDescribe(function);
 }
 
-ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowName name)
+// A read under a name, and the steps of protocols, which read under names.
+static bool goesOnThroughUnknownObjectByName(ValueFlowNameKind kind)
 {
+    return kind == ValueFlowNameKind::Property || kind == ValueFlowNameKind::OpenedIterators || kind == ValueFlowNameKind::IteratedValues || kind == ValueFlowNameKind::IteratorResults || kind == ValueFlowNameKind::AwaitedValue;
+}
+
+ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowName name, LookupUse use)
+{
+    ASSERT(!m_solver.m_input.program || !namesElementByText(*m_solver.m_input.program, name));
     if (sets().contains(receivers.m_set, ValueFlowUniverse::unknownObject()) && runsCodeThatRecordsDescribe()) {
         ValueFlowNodeID found = lookup(ClimbingSet(m_maker.intersect(receivers.m_set, ValueSets::complement(universe().unknownObjectAlone()))), name);
         ValueFlowNodeID answer = masked(found, ValueSets::complement(m_maker.of(calleeOfDescribedCall(universe()))));
@@ -642,7 +854,52 @@ ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowNam
     }
     if (receivers.m_set == ValueSets::nothing)
         return holdingNothing();
-    return nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Lookup, receivers.m_set, name));
+    if (use == LookupUse::Any && isNativeWalk() && goesOnThroughUnknownObjectByName(name.kind))
+        return nodeFor(ValueFlowNodeKey::lookupByNativeWalk(receivers.m_set, name));
+    return nodeFor(use == LookupUse::OnlyCalledOnReceiver ? ValueFlowNodeKey::lookupForCall(receivers.m_set, name) : ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Lookup, receivers.m_set, name));
+}
+
+const Function& ValueFlowRuleContext::functionWithBody(FunctionID id) const { return m_solver.functionWithBody(id); }
+
+static const Value* copyOfOperationAt(std::span<const ValueFlowCopyOfOperation> all, FunctionID function, ValueID site)
+{
+    auto placeOf = [](FunctionID function, ValueID site) {
+        return static_cast<uint64_t>(function.index()) << 32 | site.index();
+    };
+    auto found = std::ranges::lower_bound(all, placeOf(function, site), { }, [&](const ValueFlowCopyOfOperation& copy) {
+        return placeOf(copy.function, copy.site);
+    });
+    return found != all.end() && found->function == function && found->site == site ? &found->operation : nullptr;
+}
+
+const Value& ValueFlowRuleContext::operationOf(const ValueFlowStatement& statement) const
+{
+    if (!statement.factsOfText.contains(ValueFlowFactOfText::HasCopyOfOperation))
+        return functionWithBody(statement.function).at(statement.site);
+    const Value* copy = copyOfOperationAt(m_solver.m_input.copiesOfOperations, statement.function, statement.site);
+    RELEASE_ASSERT(copy);
+    return *copy;
+}
+
+const Value& ValueFlowRuleContext::operationAt(FunctionID function, ValueID site) const
+{
+    const Value* copy = copyOfOperationAt(m_solver.m_input.copiesOfOperations, function, site);
+    return copy ? *copy : functionWithBody(function).at(site);
+}
+
+const ValueFlowRareFactsOfText* ValueFlowRuleContext::rareFactsOfText(const ValueFlowStatement& statement) const
+{
+    if (!statement.factsOfText.contains(ValueFlowFactOfText::HasRareFacts))
+        return nullptr;
+    auto placeOf = [](FunctionID function, ValueID site) {
+        return static_cast<uint64_t>(function.index()) << 32 | site.index();
+    };
+    std::span<const ValueFlowRareFactsOfText> all = m_solver.m_input.rareFactsOfText;
+    auto found = std::ranges::lower_bound(all, placeOf(statement.function, statement.site), { }, [&](const ValueFlowRareFactsOfText& facts) {
+        return placeOf(facts.function, facts.site);
+    });
+    RELEASE_ASSERT(found != all.end() && found->function == statement.function && found->site == statement.site);
+    return &*found;
 }
 
 ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCallKind kind, ValueFlowCalleeOrigin origin)
@@ -721,7 +978,7 @@ void ValueFlowRuleContext::connect(const ValueFlowOperand& operand, ValueFlowNod
 
 ALWAYS_INLINE bool ValueFlowRuleContext::isRedundantAdd(ValueFlowNodeID node, ValueSetID set)
 {
-    if (!m_skipsRedundantAdds || node.index() >= m_solver.graph().numberOfNodes())
+    if (node.index() >= m_solver.graph().numberOfNodes())
         return false;
     if (m_instancedFunctions && m_instancedFunctions->holdsNode(node))
         return false;
@@ -770,7 +1027,7 @@ void ValueFlowRuleContext::mark(ClimbingSet objects, OptionSet<ObjectMutation> m
     ValueFlowNodeID holdingObjects;
     for (ObjectMutation mutation : mutations) {
         ValueFlowNodeID marked = mutationNode(mutation);
-        if (isRedundantAdd(marked, objects.m_set)) {
+        if (m_skipsRedundantMarks && isRedundantAdd(marked, objects.m_set)) {
             ++m_log.numberOfConnectionsOfRun;
             continue;
         }
@@ -803,11 +1060,21 @@ void ValueFlowRuleContext::useAsAnswerOfUnknownObject(BuiltinID builtin, OptionS
         add(nodes().ofHost(ValueFlowHostNode::UsedBuiltins), object);
     if (uses.contains(BuiltinUse::Written))
         add(nodes().ofHost(ValueFlowHostNode::WrittenBuiltins), object);
-    if (uses.containsAny({ BuiltinUse::Called, BuiltinUse::Constructed }))
+    bool readCountsAsCall = uses.contains(BuiltinUse::Read) && program().builtins().has(BuiltinMark::ReadLoadsCodeByName, program().builtins().canonicalID(builtin));
+    if (readCountsAsCall || uses.containsAny({ BuiltinUse::Called, BuiltinUse::Constructed }))
         add(nodes().ofHost(ValueFlowHostNode::RunBuiltins), object);
 }
 
 void ValueFlowRuleContext::noteMembersNotToldApart() { m_log.statementsWithMembersNotToldApart.append(m_statement); }
+
+FunctionID ValueFlowRuleContext::libraryFunctionToEnter(RuntimeFunctionID id)
+{
+    if (const RuntimeFunctionEntry* entry = findRuntimeFunction(program(), id); entry && entry->function)
+        return entry->function;
+    if (id && !m_solver.lacksLibraryFunction(id))
+        m_log.libraryFunctionsLacked.append(id);
+    return { };
+}
 
 } } } // namespace JSC::AOT::Typed
 

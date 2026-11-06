@@ -1,5 +1,5 @@
 # A suspension lists what the suspended function holds: what it listed when it was read, which is what the names of the parameters hold there, the receiver,
-# and each value that is read behind the suspension. A number is not listed, and neither is a value that is read only in front of the suspension,
+# and each value that is read behind the suspension. What a later suspension lists is live until then and is not listed again. A number is not listed, and neither is a value that is read only in front of the suspension,
 # nor a parameter that the suspension did not list.
 # FORM: Prepared
 # RUN: pass SplitCoroutines
@@ -18,5 +18,5 @@ function f0 name="awaitsTwice" flags=[IsAsync, HasThis] thisType={type=object} p
 }
 # CHECK-LABEL: function f1 name="awaitsTwice"
 # CHECK: b0(v0: object, v1: object, v2: number, v3: anything, v4: object, [[driver]]: undefined|Promise):
-# CHECK: AwaitBySavingFrame v3, [[driver]], v1, v0, v3, v6, v7 @10
+# CHECK: AwaitBySavingFrame v3, [[driver]], v1, v6 @10
 # CHECK: AwaitBySavingFrame v11, [[driver]], v0, v7, v3 @20

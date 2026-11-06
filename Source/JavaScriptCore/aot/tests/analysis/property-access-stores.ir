@@ -192,7 +192,7 @@ function f39 name="store-may-meet-the-setter-of-the-class" parameters=[{type=L7}
     PropSet v0, v1 key="level"
     Return
 }
-# CHECK-NEXT: F39 v2 PropSet [[level]]: form=Slot level=Expected operation=PutSlot receivers=[L7] proofs=[SlotFilled] testsDeclaredType storedValueFits missPath member=(Field level=Proven holder=L7 field=0)
+# CHECK-NEXT: F39 v2 PropSet [[level]]: form=Slot level=Expected operation=PutSlot receivers=[L7] proofs=[SlotFilled] storedValueFits missPath member=(Field level=Proven holder=L7 field=0)
 function f40 name="store-any-value-where-the-type-of-the-field-is-only-expected" parameters=[{type=L8}, {type=string}] results=[{type=anything}] {
     PropSet v0, v1 key="loose"
     Return

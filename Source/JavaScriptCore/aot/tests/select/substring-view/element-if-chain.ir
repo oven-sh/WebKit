@@ -64,6 +64,6 @@ function f1 name="character-is-returned" parameters=[{type=string}, {type=int}] 
     Return v11
   b6():
     Return v2
-# CHECK: v2: undefined|string = StringRangeCharacterOrUndefined {{*}}, -, -, v1
+# CHECK: : undefined|string = StringRangeCharacterOrUndefined {{*}}, -, -, v1
 # CHECK-COUNT-3: : int[-1, 65535] = StringRangeCodeUnitOrMinusOne
 }

@@ -11,6 +11,7 @@
 #include "AOTCodeGenerator.h"
 #include "AOTHeaps.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubRegisters.h"
 #include "AOTVector.h"
@@ -171,7 +172,7 @@ private:
         for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
             uint32_t begin = components.firstMemberOf[component];
             std::span<uint32_t> positions = components.members.mutableSpan().subspan(begin, components.firstMemberOf[component + 1] - begin);
-            std::ranges::sort(positions);
+            AOT::sort(positions);
             blocks.shrink(0);
             for (uint32_t position : positions)
                 blocks.append(postOrder[position]);
@@ -296,6 +297,22 @@ private:
         return isShift(word, B3::ZShr) && pointerSource(word->child(0)) == sourceOfLow32Bits(pointer);
     }
 
+    // The pointer if the word names a cell, or the word if it is one of the constants: what remains of a decode after the pointer that the word was encoded from has replaced the sum.
+    // An encode selects between the same two, based on the pointer.
+    static bool decodesWordBesideItsPointer(B3::Value* select)
+    {
+        B3::Value* condition = select->child(0);
+        if (condition->numChildren() != 2 || !condition->child(1)->isConstant())
+            return false;
+        B3::Value* asked = sourceOfLow32Bits(condition->child(0));
+        for (unsigned i = 1; i <= 2; ++i) {
+            B3::Value* word = select->child(3 - i);
+            if (isEncodingOf(word, select->child(i)) && asked == sourceOfLow32Bits(word))
+                return true;
+        }
+        return false;
+    }
+
     static B3::Value* wordOf(B3::Value* value, bool* isDisplaced = nullptr)
     {
         for (;;) {
@@ -313,6 +330,8 @@ private:
                 value = value->child(0);
                 continue;
             case B3::Select: {
+                if (decodesWordBesideItsPointer(value))
+                    return value;
                 B3::Value* first = value->child(1);
                 B3::Value* second = value->child(2);
                 if (first->isConstant() || isEncodingOf(second, first))
@@ -514,7 +533,9 @@ private:
         auto* memory = word->as<B3::MemoryValue>();
         if (!memory || memory->opcode() != B3::Load || !memory->range())
             return false;
-        return m_heaps.permanentCells.begin() <= memory->range().begin() && memory->range().end() <= m_heaps.permanentCells.end();
+        return std::ranges::any_of(m_heaps.permanentCells, [&](B3::HeapRange cells) {
+            return cells.begin() <= memory->range().begin() && memory->range().end() <= cells.end();
+        });
     }
 
     bool definesReference(B3::Value* value) const
@@ -728,10 +749,10 @@ private:
         return effects.writes.overlaps(m_heaps.collectorState) && effects.writes.overlaps(m_heaps.weakTableStorage) && effects.reads.overlaps(m_heaps.frameSlots);
     }
 
-    bool savesFrame(B3::Value* safepoint) const
+    static bool savesFrame(B3::Value* safepoint)
     {
-        Typed::ValueID origin = Typed::valueOfOrigin(safepoint->origin());
-        return origin && m_origins.suspensions.get(origin.index());
+        auto* stackmap = safepoint->as<B3::StackmapValue>();
+        return stackmap && stackmap->isSuspension();
     }
 
     static bool usesOnlyBits(B3::Value* user, unsigned child)
@@ -756,6 +777,11 @@ private:
             return !child;
         case B3::Store:
             return child || user->child(0)->type() != B3::Int32;
+        case B3::Patchpoint: {
+            // Without a result and without access to the heap, the code can only compare the word.
+            B3::Effects effects = user->effects();
+            return user->type() == B3::Void && !effects.reads && !effects.writes && !effects.exitsSideways && !effects.terminal;
+        }
         default:
             return false;
         }
@@ -978,7 +1004,7 @@ static HeapsOfCollection heapsOfCollectionIn(B3::Procedure& proc)
         .collectorState = heaps.rangeOf(heaps.collectorState),
         .weakTableStorage = heaps.rangeOf(heaps.weakTableStorage),
         .frameSlots = heaps.rangeOf(heaps.frameSlots),
-        .permanentCells = heaps.rangeOf(heaps.AOTInstance_stringCells),
+        .permanentCells = { heaps.rangeOf(heaps.AOTInstance_stringCells), heaps.rangeOf(heaps.AOTInstance_closureCells) },
     };
 }
 

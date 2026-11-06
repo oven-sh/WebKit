@@ -470,10 +470,6 @@ void runValueFlowFamiliesTestCommand(TestCommandContext& context)
     }
 
     ValueFlowSolution solution(*context.program, context.build);
-    if (!solution.hasResult()) {
-        context.out.println("stopped at a limit");
-        return;
-    }
     if (printsReceivers)
         printReceivers(context.out, solution);
     if (printsCallees)

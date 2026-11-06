@@ -227,7 +227,7 @@ function f8 name="literalsReplacedByCallResultInLoop" parameters=[{type=anything
     Return
 # CHECK: b1():
 # CHECK-NOT: NewObject
-# CHECK: b4({{*}}[[tag8]]: i32, [[carried8]]: L0, 
+# CHECK: b4({{*}}[[tag8]]: i32, [[carried8]]: unspecified|L0, 
 # CHECK: b5():
 # CHECK-NEXT: v13: L0 = CallDirect function=f9
 # CHECK: Jump -> next b4({{*}}, v13, 

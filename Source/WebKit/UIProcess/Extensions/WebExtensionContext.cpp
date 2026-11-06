@@ -211,7 +211,7 @@ RefPtr<API::Data> WebExtensionContext::localizedResourceData(const RefPtr<API::D
     if (!equalLettersIgnoringASCIICase(mimeType, "text/css"_s) || !resourceData)
         return resourceData;
 
-    RefPtr decoder = WebCore::TextResourceDecoder::create(mimeType, PAL::UTF8Encoding());
+    RefPtr decoder = WebCore::TextResourceDecoder::create(WebCore::TextResourceDecoder::contentTypeForMIMEType(mimeType), PAL::UTF8Encoding());
     auto stylesheetContents = decoder->decode(resourceData->span());
 
     auto localizedString = localizedResourceString(stylesheetContents, mimeType);
@@ -1979,6 +1979,19 @@ RefPtr<WebInspectorUIProxy> WebExtensionContext::inspector(const API::InspectorE
     return nullptr;
 }
 #endif // ENABLE(INSPECTOR_EXTENSIONS)
+
+void WebExtensionContext::setStorageAccessLevel(WebExtensionDataType dataType, WebExtensionStorageAccessLevel accessLevel)
+{
+    m_storageAccessLevels.set(dataType, accessLevel);
+
+    saveStorageAccessLevelsToStorage();
+
+    if (!isLoaded())
+        return;
+
+    if (RefPtr extensionController = this->extensionController())
+        extensionController->sendToAllProcesses(Messages::WebExtensionContextProxy::SetStorageAccessLevel(dataType, accessLevel), identifier());
+}
 
 size_t WebExtensionContext::quotaForStorageType(WebExtensionDataType storageType)
 {

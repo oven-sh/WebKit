@@ -35,6 +35,8 @@ struct CallPatchpointRequest {
     bool runsWithoutFrame { false };
     bool neverReturns { false };
     bool holdsUniqueRecord { false };
+    // Not a function of the program. Whether one is called from there is among the effects.
+    bool callsStub { false };
 };
 
 class RuntimeCallEmitter final : public OperationEmitter {
@@ -58,6 +60,7 @@ public:
     LValue callDirectFunction(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive, std::optional<HostFrameOfDirectCall> = std::nullopt, BuiltinID calledBuiltin = { });
     // The function takes no realm, so it neither throws, allocates nor calls back, whatever the operation does around the call.
     StubCallResult callDirectFunctionReturningFields(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive);
+    LValue callDirectFunctionReturningNumber(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive);
 
     StubCallResult callStub(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions& = { });
     StubCallResult callStubWithoutSite(StubKey, std::span<const LValue> operands, const CallOptions& = { });
@@ -68,10 +71,19 @@ public:
     B3::PatchpointValue* createCallPatchpoint(const OperationContext&, const CallPatchpointRequest&);
     void finishCallPatchpoint(const OperationContext&, B3::PatchpointValue*, uint32_t site, const CallPatchpointRequest&);
     enum class CellConversions : uint8_t { AsEffectsSay, None, WhateverEffectsSay };
-    void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay);
+    // The slot of a site is filled, emptied and filled again by the stubs and the run time. No operation of the IR says so: only generated code reads the slots.
+    // The cell that the closure table has for a function is filled where the closure is first asked for, which no operation and no summary of a callee says either. It goes by the same rule: whoever fills it makes a cell.
+    enum class SlotsOfSites : uint8_t { MayChange, StayAsTheyAre };
+    SlotsOfSites slotsOfSitesBehindStub(const OperationContext*, const Effects&, bool makesClosureOfTable = false) const;
+    // For the end of a procedure. A write matters to a reader in the same procedure, and a call that writes nothing may be moved, merged or left out.
+    void stateWhichCallsChangeWhatOnlyGeneratedCodeReads();
+    void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay, SlotsOfSites = SlotsOfSites::MayChange);
     Effects effectsOfCall(const OperationContext&, const Effects& effectsOfCallee) const;
+    Effects effectsOfCall(const EffectsOnEdges& effectsOfOperation, const Effects& effectsOfCallee) const;
 
     RegisterSet registersClobberedByCalls() const;
+    // A lookup may replace a table in the image by a copy on the heap. That changes the word in the collection and nothing that AOTCompactTable_lookupHeader reads means: code that has read a table in the image goes on to the stub.
+    void setCallsOnlyMoveTables(bool value) { m_callsOnlyMoveTables = value; }
     // Under validation: where a call patchpoint stores the registers that its callee keeps. One call of a frame runs at a time.
     B3::Air::StackSlot* keptRegisterStorage() { return ensureRegisterStorage(m_keptRegisterStorage); }
     // The same for the registers that a landing pad relies on, stored before each operation that may throw to one.
@@ -118,6 +130,9 @@ private:
     B3::Air::StackSlot* ensureRegisterStorage(B3::Air::StackSlot*&);
 
     B3::Air::StackSlot* m_transientBuffer { nullptr };
+    Vector<B3::PatchpointValue*, 16> m_callsThatMayChangeSlotsOfSites;
+    Vector<B3::PatchpointValue*, 4> m_callsThatLookForPrivateNames;
+    bool m_callsOnlyMoveTables { false };
     B3::Air::StackSlot* m_keptRegisterStorage { nullptr };
     B3::Air::StackSlot* m_landingPadRegisterStorage { nullptr };
 };

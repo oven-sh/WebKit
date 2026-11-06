@@ -112,6 +112,7 @@ class JSObject : public JSCell {
     enum PutMode : uint8_t {
         PutModePut,
         PutModeDefineOwnProperty,
+        PutModeDefineOwnPropertyWithoutClosureHooks,
     };
 
 public:
@@ -178,6 +179,9 @@ public:
     enum class SortMode { Default, Ascending };
     template<SortMode mode = SortMode::Default, typename Functor>
     void forEachOwnIndexedProperty(NOESCAPE const Functor&);
+    // For a caller that reads the named properties another way: what they are does not matter here.
+    template<SortMode = SortMode::Default, typename Functor>
+    void forEachOwnElement(NOESCAPE const Functor&);
 
 private:
     static bool getOwnPropertySlotImpl(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
@@ -186,6 +190,10 @@ public:
 
     JS_EXPORT_PRIVATE static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
     bool getOwnPropertySlotInline(JSGlobalObject*, PropertyName, PropertySlot&);
+    // OrdinaryGetOwnProperty on an object of any class: no override is asked, so no code of the program runs.
+    bool ordinaryGetOwnPropertySlot(JSGlobalObject*, PropertyName, PropertySlot&);
+    // Whether getDirectOffset() finds the property, or the object keeps it where its Structure does not list it.
+    bool hasDirectProperty(JSGlobalObject*, PropertyName);
 
     // The key difference between this and getOwnPropertySlot is that getOwnPropertySlot
     // currently returns incorrect results for the DOM window (with non-own properties)
@@ -684,7 +692,7 @@ public:
     bool canPerformFastPutInlineExcludingProto();
 
     bool mayBePrototype() const;
-    void didAddPropertyWithTransition(VM&, PropertyName);
+    template<bool notifiesCompiledClosure = true> void didAddPropertyWithTransition(VM&, PropertyName);
     void didBecomePrototype(VM&);
 
     std::optional<Structure::PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
@@ -846,11 +854,11 @@ private:
     template<PutMode>
     ASCIILiteral putDirectInternal(VM&, PropertyName, JSValue, unsigned attr, PutPropertySlot&);
     void setStructureForAddedProperty(VM&, Structure* previous, Structure* next, PropertyOffset, PutPropertySlot&);
-    JS_EXPORT_PRIVATE NEVER_INLINE void setStructureForAddedPropertySlow(VM&, Structure* previous, Structure* next, PropertyOffset, PutPropertySlot&);
 #if ENABLE(AOT)
     bool hasPrivateBrandAsField(VM&, JSValue brand) const;
     JS_EXPORT_PRIVATE JSValue getDirectFromCompiledObject(VM&, PropertyName, unsigned* attributesOrNull) const;
     JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledObject(VM&, PropertyName, JSValue, unsigned attributes, PutMode, PutPropertySlot&);
+    JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledClosure(VM&, PropertyName, JSValue, unsigned attributes, PutPropertySlot&);
 #endif
 
     JS_EXPORT_PRIVATE NEVER_INLINE ASCIILiteral putDirectToDictionaryWithoutExtensibility(VM&, PropertyName, JSValue, PutPropertySlot&);

@@ -9,7 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
+#include "AOTNumberLiteralStrings.h"
+#include "AOTRepresentationRules.h"
+#include "AOTStringBuilderStorage.h"
 #include "AOTStubsStrings.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "B3MemoryValue.h"
 #include "JSString.h"
@@ -108,7 +112,8 @@ CellPointer StringEmitter::substringBaseOf(CellPointer rope)
     static_assert(widthOfFiber1Lower == 32 && shiftOfFiber2 == 16, "load32 and load16 read the two parts of fiber 1");
     LValue lower = m_out.load32(m_out.address(m_heaps.JSRopeString_fiber1, rope.value(), JSRopeString::offsetOfFiber1Lower()));
     LValue upper = m_out.load16ZeroExt32(m_out.address(m_heaps.JSRopeString_fiber2, rope.value(), JSRopeString::offsetOfFiber2()));
-    return CellPointer(m_out.bitOr(m_out.zeroExtPtr(lower), m_out.shl(m_out.zeroExtPtr(upper), m_out.constInt32(widthOfFiber1Lower))));
+    LValue lowerBits = m_out.zeroExtPtr(lower);
+    return CellPointer(m_out.bitOr(lowerBits, m_out.shl(m_out.zeroExtPtr(upper), widthOfFiber1Lower)));
 }
 
 CharacterSource StringEmitter::sourceOfRope(const OperationContext& context, CellPointer rope, Pointer fiber)
@@ -167,7 +172,10 @@ CharacterView StringEmitter::viewOf(const OperationContext& context, ValueID str
 
 CharacterView StringEmitter::subview(const CharacterView& view, CodeUnitRange range)
 {
-    Integer offset(m_out.shl(zeroExtended(range.start).value(), logicalNot(view.is8Bit).value()));
+    if (range.start.value()->isInt32(0))
+        return { view.characters, range.end, view.is8Bit, view.owner };
+    Integer start = zeroExtended(range.start);
+    Integer offset(m_out.shl(start.value(), logicalNot(view.is8Bit).value()));
     return { offsetBy(view.characters, offset, 0), sub(range.end, range.start), view.is8Bit, view.owner };
 }
 
@@ -192,8 +200,70 @@ Word32 StringEmitter::lengthOf(CellPointer string)
     return join.finish();
 }
 
+Word32 StringEmitter::lengthOf(LiteralStringWord word, const Type& type)
+{
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    bool mayBeCell = type.primitives & Primitive::String;
+    Vector<std::pair<StringID, unsigned>, 16> lengths;
+    for (StringID literal : type.stringLiterals) {
+        if (inputs().literalStrings.indexOf(literal))
+            lengths.append({ literal, m_program.strings.toWTFString(literal).length() });
+        else
+            mayBeCell = true;
+    }
+    unsigned commonest = commonestOf(Vector<unsigned, 16>(lengths.size(), [&](size_t index) { return lengths[index].second; }).span());
+    std::optional<NarrowReference> narrow = mayBeCell ? std::nullopt : narrowWordBehind(word);
+    auto isLiteral = [&](StringID literal) {
+        if (narrow)
+            return equal(*narrow, NarrowReference(m_out.constInt32(static_cast<int32_t>(literalStringWord(inputs().literalStrings.numberOf(literal))))));
+        return equal(word, conversions.literalStringConstant(literal));
+    };
+    // Strings that are written side by side have neighboring numbers. Their lengths then lie in one constant, a byte for each number, and the word says how far to shift it.
+    auto lengthOutOfConstant = [&]() -> std::optional<Word32> {
+        AOT_THRESHOLD(unsigned, minSelectsInPlaceOfWhichConstantIsShifted, 3);
+        constexpr uint32_t numbersInConstant = sizeof(uint32_t);
+        uint32_t least = std::numeric_limits<uint32_t>::max();
+        uint32_t greatest = 0;
+        unsigned selects = 0;
+        for (auto [literal, lengthOfLiteral] : lengths) {
+            if (lengthOfLiteral > std::numeric_limits<uint8_t>::max())
+                return std::nullopt;
+            uint32_t number = inputs().literalStrings.numberOf(literal);
+            least = std::min(least, number);
+            greatest = std::max(greatest, number);
+            selects += lengthOfLiteral != commonest;
+        }
+        if (selects < minSelectsInPlaceOfWhichConstantIsShifted || greatest - least >= numbersInConstant)
+            return std::nullopt;
+        uint32_t lengthsByNumber = 0;
+        for (auto [literal, lengthOfLiteral] : lengths)
+            lengthsByNumber |= lengthOfLiteral << (8 * (inputs().literalStrings.numberOf(literal) - least));
+        static_assert(literalStringShift == 2, "twice the distance between two words is eight times the distance between their numbers");
+        LValue distance = m_out.sub(narrow ? narrow->value() : m_out.castToInt32(word.value()), m_out.constInt32(static_cast<int32_t>(literalStringWord(least))));
+        LValue shifted = m_out.lShr(m_out.constInt32(static_cast<int32_t>(lengthsByNumber)), m_out.shl(distance, m_out.constInt32(1)));
+        return Word32(m_out.bitAnd(shifted, m_out.constInt32(std::numeric_limits<uint8_t>::max())));
+    };
+    auto lengthByNumber = [&] {
+        if (std::optional<Word32> length = lengthOutOfConstant())
+            return *length;
+        Word32 length = word32(static_cast<int32_t>(commonest));
+        for (auto [literal, lengthOfLiteral] : lengths) {
+            if (lengthOfLiteral != commonest)
+                length = Word32(m_out.select(isLiteral(literal).value(), m_out.constInt32(static_cast<int32_t>(lengthOfLiteral)), length.value()));
+        }
+        return length;
+    };
+    if (!mayBeCell)
+        return lengthByNumber();
+    return selectByBranch<Word32>(conversions.isStringCell(word), [&] {
+        return lengthOf(CellPointer(word.value()));
+    }, lengthByNumber);
+}
+
 Word32 StringEmitter::lengthOf(ValueID string)
 {
+    if (representationOf(string) == Representation::LiteralString)
+        return lengthOf(in<LiteralStringWord>(string), typeOf(string));
     CellPointer cell = in<CellPointer>(string);
     if (!typeOf(string).isOpaque(OpaqueKind::FlatString))
         return lengthOf(cell);
@@ -231,7 +301,7 @@ Word32 StringEmitter::codePointAt(const CharacterView& view, Word32 index)
     LBasicBlock isSingleUnit = newBlock();
     Join<Word32> join(m_out);
     auto isSurrogate = [&](Word32 unit, int32_t first) {
-        return equal(bitAnd(unit, word32(~0x3ff)), word32(first));
+        return equal(bitAnd(unit, ~0x3ff), first);
     };
 
     m_out.branch(view.is8Bit.value(), normalEdge(narrow), unlikelyEdge(wide));
@@ -252,7 +322,7 @@ Word32 StringEmitter::codePointAt(const CharacterView& view, Word32 index)
     m_out.branch(isSurrogate(trail, 0xdc00).value(), normalEdge(isPair), unlikelyEdge(isSingleUnit));
 
     m_out.appendTo(isPair);
-    join.add(sub(add(shiftLeft(lead, word32(10)), trail), word32(U16_SURROGATE_OFFSET)));
+    join.add(sub(add(shiftLeft(lead, 10), trail), U16_SURROGATE_OFFSET));
 
     m_out.appendTo(isSingleUnit);
     join.add(lead);
@@ -304,7 +374,7 @@ Integer StringEmitter::truncateToInteger(Number position)
 #if !CPU(ARM64)
     Number limit = number(static_cast<double>(1ll << 32));
     Number negativeLimit = number(-static_cast<double>(1ll << 32));
-    position = select(equal(position, position), position, number(0));
+    position = select(equal(position, position), position, 0);
     position = select(greaterThan(position, limit), limit, position);
     position = select(lessThan(position, negativeLimit), negativeLimit, position);
     return emitter<ConversionEmitter>().toInteger(position);
@@ -332,7 +402,7 @@ Integer StringEmitter::truncateToIndex(Number position)
     if (std::optional<LValue> source = integerBehindConversion(position))
         return (*source)->type() == B3::Int32 ? signExtended(Word32(*source)) : Integer(*source);
 #if !CPU(ARM64)
-    position = select(equal(position, position), position, number(0));
+    position = select(equal(position, position), position, 0);
 #endif
     return emitter<ConversionEmitter>().toInteger(position);
 }
@@ -348,12 +418,14 @@ Word32 StringEmitter::clampToLength(const StringPosition& position, Word32 lengt
         if (!isRelativeToEnd)
             return word32(0);
         Integer sum = add(limit, x);
-        return low32(select(lessThan(sum, integer(0)), integer(0), sum));
+        return low32(select(lessThan(sum, 0), 0, sum));
     };
 
     Range range = x.value()->hasInt() ? Range::one(x.value()->asInt()) : position.range;
     if (range.minimum >= 0 || range.maximum < 0) {
         build().statistics().count(StatisticID::StringPositionsWithKnownSign);
+        if (range == Range::one(0))
+            return word32(0);
         return range.minimum >= 0 ? countedFromStart() : countedFromEnd();
     }
 
@@ -386,7 +458,7 @@ CodeUnitRange StringEmitter::clampRange(StringRangeMethod method, Word32 length,
     auto singleUnit = [&](bool isRelativeToEnd) -> CodeUnitRange {
         // Outside the string the index is -1, so the end is 0.
         Word32 index = low32(indexInString(first.value, length, isRelativeToEnd));
-        Word32 start = select(lessThan(index, word32(0)), word32(0), index);
+        Word32 start = select(lessThan(index, 0), 0, index);
         return { start, add(index, word32(1)) };
     };
 
@@ -396,6 +468,8 @@ CodeUnitRange StringEmitter::clampRange(StringRangeMethod method, Word32 length,
         if (!second)
             return { from, length };
         Word32 to = clampToLength(*second, length, true);
+        if (from.value()->isInt32(0))
+            return { from, to };
         return { from, select(lessThan(to, from), from, to) };
     }
     case StringRangeMethod::Substring: {
@@ -403,6 +477,8 @@ CodeUnitRange StringEmitter::clampRange(StringRangeMethod method, Word32 length,
         if (!second)
             return { from, length };
         Word32 to = clampToLength(*second, length, false);
+        if (from.value()->isInt32(0))
+            return { from, to };
         Condition isReversed = greaterThan(from, to);
         return { select(isReversed, to, from), select(isReversed, from, to) };
     }
@@ -423,14 +499,17 @@ CodeUnitRange StringEmitter::clampRange(StringRangeMethod method, Word32 length,
 Integer StringEmitter::indexInString(Integer x, Word32 length, bool isRelativeToEnd)
 {
     Integer limit = zeroExtended(length);
-    if (isRelativeToEnd)
-        x = select(lessThan(x, integer(0)), add(x, limit), x);
-    return select(below(x, limit), x, integer(-1));
+    if (isRelativeToEnd) {
+        Condition countsFromEnd = lessThan(x, 0);
+        x = select(countsFromEnd, add(x, limit), x);
+    }
+    return select(below(x, limit), x, -1);
 }
 
 void StringEmitter::generateSubstring(const ValueContext& value)
 {
-    define(value, substring(value, in<CellPointer>(value->stringOperand()), { word32Of(value->startOperand()), word32Of(value->endOperand()) }));
+    CellPointer string = in<CellPointer>(value->stringOperand());
+    define(value, substring(value, string, { word32Of(value->startOperand()), word32Of(value->endOperand()) }));
 }
 
 void StringEmitter::generateSubstringOrUndefined(const ValueContext& value)
@@ -452,8 +531,11 @@ void StringEmitter::generateFlattenString(const ValueContext& value)
     LBasicBlock isRope = newBlock();
     LBasicBlock continuation = newBlock();
 
+    // A text that was just put together of two or more is a rope unless all but one were empty.
+    Opcode producer = m_function.at(value->stringOperand()).opcode;
+    bool isLikelyRope = producer == Opcode::Add || producer == Opcode::Strcat;
     Pointer fiber = loadField<Pointer>(string, m_heaps.JSString_value);
-    m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), normalEdge(isFlat), unlikelyEdge(isRope));
+    m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), isLikelyRope ? unlikelyEdge(isFlat) : normalEdge(isFlat), isLikelyRope ? normalEdge(isRope) : unlikelyEdge(isRope));
 
     m_out.appendTo(isFlat);
     ValueFromBlock cellWhenFlat = m_out.anchor(string.value());
@@ -480,7 +562,8 @@ void StringEmitter::generateStringRange(const ValueContext& value)
     std::optional<StringPosition> second;
     if (ValueID operand = value->secondOperand())
         second = truncatedPositionOf(operand, value->method());
-    CodeUnitRange range = clampRange(value->method(), word32Of(value->lengthOperand()), truncatedPositionOf(value->firstOperand(), value->method()), second);
+    Word32 length = word32Of(value->lengthOperand());
+    CodeUnitRange range = clampRange(value->method(), length, truncatedPositionOf(value->firstOperand(), value->method()), second);
     defineResults(value, { range.start, range.end });
 }
 
@@ -499,9 +582,14 @@ CellPointer StringEmitter::concatenate(const OperationContext& context, std::spa
     return result;
 }
 
-CellPointer StringEmitter::concatenateValues(const OperationContext& context, std::span<const Boxed> primitives, bool isLikelyKey)
+CellPointer StringEmitter::concatenateKey(const OperationContext& context, std::span<const Boxed> primitives, KeyUse keyUse)
 {
-    return callOperation<CellPointer>(context, RuntimeOperation::Concatenate, { word32(static_cast<int32_t>(primitives.size())), argumentBuffer(primitives), word32(isLikelyKey) });
+    using StringUse = StringBuilderStorage::StringUse;
+    StringUse use = keyUse == KeyUse::NameOfProperty ? StringUse::LikelyName : StringUse::LikelyKey;
+    // Where code seldom runs, the call of the operation saves the registers of the code around it.
+    if (primitives.size() == 2 && context.shape() != CodeShape::Compact)
+        return CellPointer(callStub(context, concatenateKeyOfPair(keyUse == KeyUse::NameOfProperty ? ConcatenatedKeyForm::Name : ConcatenatedKeyForm::Key), { primitives[0].value(), primitives[1].value() }).first);
+    return callOperation<CellPointer>(context, RuntimeOperation::Concatenate, { word32(static_cast<int32_t>(primitives.size())), argumentBuffer(primitives), word32(static_cast<int32_t>(use)) });
 }
 
 CellPointer StringEmitter::integerToString(const OperationContext& context, Integer value)

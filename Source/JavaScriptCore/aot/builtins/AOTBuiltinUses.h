@@ -30,6 +30,7 @@ struct BuiltinUseInputs {
     bool keepsFunctionNames { false };
     bool asksOnlyForProvenPlans { false };
     bool* asksAboutPlace { nullptr };
+    FunctionAnalyses* identities { nullptr };
 
     TypingContext typing() const { return { program, function, types }; }
     BuiltinLookupContext lookup() const { return { program, flow }; }
@@ -50,6 +51,8 @@ struct UseRequirement {
 struct BuiltinUsePlan {
     BuiltinUseKind kind { BuiltinUseKind::None };
     BuiltinID member;
+    // Of a read: the entry under the name that is read, which its holder may add at that moment. Another name of the same object stays as it is.
+    BuiltinID location;
     PropertyKeyID key;
     std::optional<Value> constant;
     BuiltinCallPlan call;
@@ -61,6 +64,8 @@ struct BuiltinUsePlan {
     ValueID newTarget;
     TypeID assumedResult;
     bool isNeverInlined { false };
+    // A private name of the engine finds the member, and the property that the program sees stays as it is.
+    bool readsPrivateAlias { false };
     Vector<UseRequirement, 2> requirements;
 
     explicit operator bool() const { return kind != BuiltinUseKind::None; }
@@ -77,10 +82,14 @@ BuiltinUsePlan planBuiltinUse(const BuiltinUseInputs&, ValueID use, ProgramPoint
 bool mayFindProvenPlan(const BuiltinUseInputs&, const Value& use);
 bool mayFindProvenAccess(const BuiltinUseInputs&, const Value& access);
 bool mayFindProvenCallee(const BuiltinUseInputs&, const Value& call);
+bool mayFindProvenCallOfFunctionBoundToReceiver(const BuiltinUseInputs&, const Value& call);
 
 BuiltinUsePlan planBuiltinRead(const BuiltinUseInputs&, ValueID use, ProgramPoint);
 BuiltinUsePlan planBuiltinStore(const BuiltinUseInputs&, ValueID use, ProgramPoint);
 BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs&, ValueID use, ProgramPoint);
+BuiltinUsePlan planCallOfFunctionBoundToReceiver(const BuiltinUseInputs&, ValueID use, ProgramPoint);
+// The read that made the callee: of the called member from the receiver of the call, or of an accessor that answers a function bound to its receiver.
+ValueID findReadOfCallee(const Program&, const Function&, const Value& call);
 BuiltinUsePlan planSuperCallOfBuiltin(const BuiltinUseInputs&, ValueID use, ProgramPoint);
 BuiltinUsePlan planListCallOfBuiltin(const BuiltinUseInputs&, ValueID use, ValueID array, ProgramPoint);
 ValueID findOnlySpreadIntoListOf(const BuiltinUseInputs&, ValueID listCall);

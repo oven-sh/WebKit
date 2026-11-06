@@ -32,6 +32,7 @@
 #include <initializer_list>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -146,9 +147,15 @@ class TypeRecord {
 public:
     TypeRecord(std::initializer_list<RuntimeCellTest> tests)
     {
-        m_words.append(0);
+        // As the encoder of the tables writes them: the tests of one function each stand behind all others, by rising number.
+        Vector<RuntimeCellTest> ordered(tests);
+        std::ranges::stable_sort(ordered, { }, [](const RuntimeCellTest& test) -> int64_t {
+            return test.kind == CellTestKind::IsClosureOf ? static_cast<int64_t>(test.operand) : -1;
+        });
+        size_t numberInFront = std::ranges::count_if(ordered, [](const RuntimeCellTest& test) { return test.kind != CellTestKind::IsClosureOf; });
+        m_words.append(static_cast<uint32_t>(std::min<size_t>(numberInFront, RuntimeType::hasManyTestsOfMoreThanOneFunction)) << 24);
         m_words.append(static_cast<uint32_t>(tests.size()));
-        for (const RuntimeCellTest& test : tests) {
+        for (const RuntimeCellTest& test : ordered) {
             auto words = std::bit_cast<std::array<uint32_t, 2>>(test);
             m_words.append(words[0]);
             m_words.append(words[1]);
@@ -317,6 +324,15 @@ static NEVER_INLINE void addTwoPropertiesInARow(LoadedProgram& program, HiddenCe
     hidden[1] = hide(second);
 }
 
+// A collection takes every word of the stack above it for a reference. What a function that has returned left there lies under the frames of the collection, which do not write every word of theirs,
+// and which frames those are depends on which thread collects.
+static NEVER_INLINE void overwriteFramesOfFunctionsThatReturned()
+{
+    volatile uint8_t bytes[16 * KB];
+    for (size_t i = 0; i < sizeof(bytes); ++i)
+        bytes[i] = 0;
+}
+
 static void testAdditionThatWaitsForItsFirstStructure(LoadedProgram& program)
 {
     if (framesAreThoseOfAddressSanitizer)
@@ -325,9 +341,11 @@ static void testAdditionThatWaitsForItsFirstStructure(LoadedProgram& program)
     auto hiddenOffTheStack = makeUniqueWithoutFastMallocCheck<HiddenCells>();
     vm.heap.collectNow(Sync, CollectionScope::Full);
     addTwoPropertiesInARow(program, *hiddenOffTheStack);
+    overwriteFramesOfFunctionsThatReturned();
     vm.heap.collectNow(Sync, CollectionScope::Eden);
     AOT_TEST_CHECK(numberOfMarkedCells(vm, *hiddenOffTheStack, 2) == 2);
-    // A full collection ends every Structure that no object has.
+    // A full collection ends every Structure that no object has. The young collection may have run on this thread, with both in its hands.
+    overwriteFramesOfFunctionsThatReturned();
     vm.heap.collectNow(Sync, CollectionScope::Full);
     AOT_TEST_CHECK(!numberOfMarkedCells(vm, *hiddenOffTheStack, 2));
 }

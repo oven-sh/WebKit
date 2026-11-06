@@ -190,7 +190,7 @@ static void checkEffectsCover(const StubCatalog& catalog, const StubRecording& r
     for (size_t index : recording.operationsCalled)
         AOT_TEST_CHECK(effectsOf(static_cast<Entry>(index)).isSubsetOf(effects));
     for (const StubReference& reference : recording.references) {
-        if (reference.kind != StubReference::Kind::ReturnedAddress)
+        if (reference.kind != StubReference::Kind::ReturnedAddress && reference.kind != StubReference::Kind::PollAfterOperation)
             AOT_TEST_CHECK(catalog.effectsOf(reference.target).isSubsetOf(effects));
     }
 }
@@ -241,7 +241,7 @@ static void checkReadSummaries(const StubCatalog& catalog)
     AOT_TEST_CHECK(&catalog.summaryOf(getById().withImmediate(nameWithReadStub)) == &catalog.summaryOf(getById()));
 
     // The way to a getter stores and loads two floating-point registers, not all: the others are lost to whoever reads or stores by name.
-    for (StubKey key : { getById(), getByIdAtSite(), putById(PutMode::Strict) }) {
+    for (StubKey key : { getById(), getByIdAtSite(), getByIdAtSiteHashed(), putById(PutMode::Strict) }) {
         RegisterSet kept = RegisterSet::allFPRs();
         kept.exclude(catalog.summaryOf(key).clobbered);
         AOT_TEST_CHECK(kept.numberOfSetRegisters() < RegisterSet::allFPRs().numberOfSetRegisters() / 2);
@@ -255,6 +255,8 @@ static void checkPreservingCallSummary(const StubCatalog& catalog, StubKey key)
     const StubSummary& summary = catalog.summaryOf(key);
     RegisterSet callProtocolRegisters = macroClobberedRegisters();
     callProtocolRegisters.merge(resultAndImmediateRegisters(summary.signature));
+    for (GPRReg reg : registersThatPreservingCallsTakeArgumentsIn())
+        callProtocolRegisters.add(reg, IgnoreVectors);
     if (preservingCallShapes[key.form()].saves == OperationCall::Saves::CallerSavedGPRs)
         callProtocolRegisters.merge(RegisterSet::allFPRs());
     AOT_TEST_CHECK(callProtocolRegisters.subsumes(summary.clobbered));

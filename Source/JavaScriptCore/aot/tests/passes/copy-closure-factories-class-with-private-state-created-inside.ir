@@ -1,0 +1,36 @@
+# const make = () => { const state = new WeakMap(); return class { constructor(v) { state.set(this, v); } }; };   const C = make();
+# The token and every access are inside the factory: the copy of the class has a private name and a token of its own.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK: layout L1 kind=Instance{{*}}constructor=f3 fields=[{key=#"state"@L1
+# CHECK-LABEL: function f3 name="constructor"
+# CHECK: PrivateDefine v4, v0, v2 layout=L1
+# CHECK-LABEL: function f4 name="make"
+# CHECK: NewClassToken layout=L1
+# CHECK: NewClosure v0 function=f3
+# CHECK: NewClass {{*}} layout=L1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="C" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance module=m0 position=20 constructor=f2 fields=[{key=#"state"@L0 declared={type=anything} flags=[IsPrivate, IsHidden]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f1 name="make" module=m0 position=10 kind=Arrow results=[{type=anything}] {
+    v0 = NewClassToken layout=L0
+    v1 = NewClosure v0 function=f2
+    v2 = NewClass v1 layout=L0
+    v3 = FinishClass v2 layout=L0
+    Return v3
+}
+function f2 name="constructor" module=m0 position=20 kind=BaseConstructor flags=[HasNewTarget] length=1 captures=[{type=anything}] parameters=[{type=anything}] results=[{type=object}] constructedClass=L0 {
+    v3 = GetConstructPrototype v1 layout=L0
+    v4 = NewObject v3 layout=L0
+    PrivateDefine v4, v0, v2 layout=L0
+    Return v4
+}

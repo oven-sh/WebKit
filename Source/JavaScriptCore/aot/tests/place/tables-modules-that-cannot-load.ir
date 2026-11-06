@@ -1,0 +1,36 @@
+# /odd.js has `import "./nowhere.js"` and /main.js imports /odd.js: neither can load. The image says so of each, and with which failure, for code outside the image that imports one of them.
+# LIBRARY: own
+# RUN: tables modules
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/odd.js" displayPath="odd.js" body=f1
+module m2 path="/fine.js" displayPath="fine.js" body=f2
+modulefailure q0 importer=m2 specifier="./asked-for-late.js"
+modulefailure q1 importer=m1 specifier="./nowhere.js"
+modulefailure q2 importer=m1 specifier="./nowhere.js" endsLoadOf=m1
+modulefailure q3 importer=m1 specifier="./nowhere.js" endsLoadOf=m0
+entry module=m0
+entry module=m2
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = ThrowModuleFailure failure=q1
+    Unreachable
+}
+
+function f1 name="odd" kind=Module results=[{type=anything}] {
+    v0 = ThrowModuleFailure failure=q1
+    Unreachable
+}
+
+function f2 name="fine" kind=Module results=[{type=anything}] {
+    v0 = ThrowModuleFailure failure=q0
+    Unreachable
+}
+
+# CHECK: failure importer=m2 specifier="./asked-for-late.js"
+# CHECK-NEXT: failure importer=m1 specifier="./nowhere.js"
+# CHECK-NEXT: failure importer=m1 specifier="./nowhere.js"
+# CHECK-NEXT: failure importer=m1 specifier="./nowhere.js"
+# CHECK-NEXT: loadFailure module=m0 failure=3
+# CHECK-NEXT: loadFailure module=m1 failure=2
+# CHECK-NEXT: modulesByPath

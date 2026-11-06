@@ -47,6 +47,10 @@ PristineAspectSet pristineAspectsProvenBy(const Type&, BuiltinClassID);
 
 Type typeOfBuiltinConstant(const BuiltinTable&, BuiltinID);
 TypedArrayType typedArrayTypeOf(const BuiltinTable&, const Type&);
+bool hasOnlyMapsAndSets(const Program&, const Type&);
+
+// A string that was just made has no hash yet.
+inline constexpr OpcodeSet makersOfStrings { Opcode::Add, Opcode::CallBuiltin, Opcode::Strcat, Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::StringBuilderFinish, Opcode::StringBuilderToString, Opcode::ToString };
 
 } } } // namespace JSC::AOT::Typed
 

@@ -108,7 +108,19 @@ public:
     }
 
     Latin1Character* reserve(JSGlobalObject*, size_t size);
+    Latin1Character* tryReserve(size_t size);
+    struct Reservation {
+        size_t length;
+        // Bytes that may be written behind them. What is committed of them is held against the longest string when the string is made, or more room is asked for.
+        size_t maxLengthOfRest { 0 };
+        // A buffer that has to be replaced is made larger by this, if that can be had.
+        size_t roomForMore { 0 };
+    };
+    Latin1Character* reserve(JSGlobalObject*, const Reservation&);
+    Latin1Character* tryReserve(const Reservation&);
     void commit(const Latin1Character* cursor);
+    // Gives back the room that a Reservation left behind what was committed. Throws and returns false if the text is longer than a string can be.
+    bool checkLength(JSGlobalObject*);
     bool hasRoomAt(const Latin1Character* cursor, size_t size) const
     {
         ASSERT(m_characters <= cursor && cursor <= m_characters + m_limit);
@@ -126,12 +138,14 @@ public:
     enum class StringUse : uint8_t {
         Unknown,
         LikelyKey,
+        // A key of properties alone. What is made for it is a name at once, and is not made one by the first access.
+        LikelyName,
     };
 
     JSString* toString(JSGlobalObject*, Instance&, StringUse);
     JSString* finish(JSGlobalObject*, Instance&, StringUse);
     std::optional<StringKeyCache::Lookup> tryFinishWithCachedKey(Instance&, JSString*& key, unsigned& hash);
-    JSString* finishWithNewKey(Instance&, unsigned hash);
+    JSString* finishWithNewKey(JSGlobalObject*, Instance&, unsigned hash);
     static JSString* concatenate(JSGlobalObject*, Instance&, std::span<const EncodedJSValue> primitives, StringUse);
     static JSString* tryFindKeyByParts(Instance&, std::span<const EncodedJSValue> primitives);
 
@@ -172,7 +186,7 @@ private:
         uint32_t maxPooledBuilders;
     };
 
-    StringBuilderStorage(VM&, Structure*, StackManager::Mirror& levelLimit);
+    StringBuilderStorage(VM&, Structure*, StackManager::Mirror& levelLimit, StringBuilderWords&);
     static StringBuilderStorage* create(Instance&);
     void reset();
     void returnToPool(Instance&);
@@ -189,8 +203,10 @@ private:
 
     bool tryEnsureRoom(size_t size) { return tryEnsureRoom(size, size); }
     bool tryEnsureRoom(size_t length, size_t bytesWritten);
+    bool tryMakeRoom(size_t length, size_t bytesWritten, size_t roomForMore);
     bool tryReplaceBuffer(size_t newCapacity);
     void dropBuffer();
+    void dropLargeBuffer(size_t longestTextInBuffer);
     bool ensureRoom(JSGlobalObject*, size_t size);
     void throwOutOfMemory(JSGlobalObject*);
     static bool holderInTheMiddleRepeats(const JSONHolderRecord* innermost);
@@ -220,7 +236,10 @@ private:
     JSONHolderRecord* m_jsonHolders { nullptr };
     WatchedJSONLevels m_watchedLevels;
     uint32_t m_lengthWhenWatchBegan { 0 };
+    uint32_t m_positionWhenSegmentsWereJoined { 0 };
+    uint32_t m_capacityOfNextBuffer { 0 };
     StackManager::Mirror& m_levelLimit;
+    StringBuilderWords& m_words;
     WriteBarrier<StringBuilderStorage> m_nextFree;
     WriteBarrier<JSString> m_lastString;
     uint32_t m_lengthOfLastString { 0 };
@@ -239,16 +258,22 @@ struct StackStringBuilder {
     static constexpr uint32_t minLengthAppendedByReference = defaultLimitValue(LimitID::MinLengthAppendedByReference, hostArchitecture());
 
     bool isOnStack() const { return limit == buffer + capacity; }
+    // One string and nothing behind it. It is the text unless something follows, and there is no room, so whatever follows comes by a call.
+    bool holdsOneString() const { return limit == buffer; }
     std::span<const Latin1Character> charactersOnStack(const Latin1Character* cursor) const LIFETIME_BOUND { return { buffer, cursor }; }
 
     // These return null after throwing.
     StringBuilderStorage* moveToStorage(JSGlobalObject*, Instance&, const Latin1Character* cursor);
     Latin1Character* didChangeStorage(JSGlobalObject*);
+    Latin1Character* holdOneString(JSString*);
     JSString* finish(JSGlobalObject*, Instance&, const Latin1Character* cursor, StringBuilderStorage::StringUse);
 
     Latin1Character* limit;
     Latin1Character* lengthOrigin;
-    StringBuilderStorage* storage;
+    union {
+        StringBuilderStorage* storage;
+        JSString* oneString;
+    };
     Latin1Character buffer[capacity + maxBytesWrittenPastLimit];
 };
 

@@ -16,7 +16,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=131089 function=f1
+runtimefunction id=ArraySortSort function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Integer integer=3
     v1 = NewArray v0 contents=anything
@@ -25,7 +25,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = Call v3, v1, v2 calleeKey="sort"
     Return
 }
-function f1 name="sort" role=Library flags=[HasThis] enclosingRuntimeFunction=131089 parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="sort" role=Library flags=[HasThis] enclosingRuntimeFunction=ArraySortSort parameters=[{type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="sort"
     v3 = Call v2, v0, v1 calleeKey="sort"
     Return v3

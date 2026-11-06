@@ -8,7 +8,7 @@ variable g0 name="none" module=m0 declared={type=function} initialization=Functi
 variable g1 name="assigned" module=m0 declared={type=anything} initialization=Function function=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = GetModuleVariable variable=g0
-    v1 = PropGet v0 key="length"
+    v1 = PropGet v0 key="custom"
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="publish" [isFreeName]
     v4 = Call v3, -, v1

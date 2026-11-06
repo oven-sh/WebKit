@@ -1,0 +1,106 @@
+# `let out = ""; while (..) if (escape) out += ..; return out + text.slice(start, end)`: where nothing was appended on the way, the last part is the text, so the length
+# of the builder is asked in front of the last append. A slice made for the append alone is made on either side: behind other text selection still copies its characters.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass CreateStringBuilders
+# RUN(SELECTED): pass CreateStringBuilders Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sliceBehindRareAppends" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    v9 = Integer integer=1
+    v10 = Add v6, v9
+    Branch v2 -> taken b3(), notTaken b4(v5)
+  b3():
+    v11 = String string="\\"
+    v12 = Add v5, v11
+    Jump -> next b4(v12)
+  b4(v13):
+    Jump -> next b1(v13, v10)
+  b5():
+    v14 = CallBuiltin v0, v4, v6 overload=StringPrototypeSlice/0
+    v15 = Add v5, v14
+    Return v15
+}
+# CHECK-LABEL: name="sliceBehindRareAppends"
+# CHECK: [[start0]]:{{*}}= ResultAt [[bounds0]]
+# CHECK-NEXT: [[end0]]:{{*}}= ResultAt [[bounds0]] index=1
+# CHECK-NEXT: [[length0]]:{{*}}= StringBuilderLength v5
+# CHECK-NEXT: [[zero0]]: 0 = Integer
+# CHECK-NEXT: [[isEmpty0]]: boolean = StrictEq [[length0]], [[zero0]]
+# CHECK-NEXT: Branch [[isEmpty0]] -> taken [[alone0]](), notTaken [[behind0]]()
+# CHECK: [[text0]]([[result0]]: string):
+# CHECK-NEXT: Return [[result0]]
+# CHECK: [[alone0]]():
+# CHECK-NEXT: StringBuilderDiscard v5
+# CHECK-NEXT: [[slice0]]: string = Substring v0, [[start0]], [[end0]]
+# CHECK-NEXT: Jump -> next [[text0]]([[slice0]])
+# CHECK: [[behind0]]():
+# CHECK-NEXT: v14: string = Substring v0, [[start0]], [[end0]]
+# CHECK-NEXT: StringBuilderAppend v5, v14
+# CHECK-NEXT: [[finished0]]: string = StringBuilderFinish v5
+# CHECK-NEXT: Jump -> next [[text0]]([[finished0]])
+# SELECTED-LABEL: name="sliceBehindRareAppends"
+# SELECTED: StringBuilderDiscard
+# SELECTED-NEXT: = Substring
+# SELECTED: StringBuilderAppendStringRange
+# SELECTED-NEXT: = StringBuilderFinish
+
+function f1 name="stringBehindRareAppends" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    v9 = Integer integer=1
+    v10 = Add v6, v9
+    Branch v2 -> taken b3(), notTaken b4(v5)
+  b3():
+    v11 = String string="\\"
+    v12 = Add v5, v11
+    Jump -> next b4(v12)
+  b4(v13):
+    Jump -> next b1(v13, v10)
+  b5():
+    v14 = Add v5, v0
+    Return v14
+}
+# CHECK-LABEL: name="stringBehindRareAppends"
+# CHECK: = StringBuilderLength v5
+# CHECK: StringBuilderDiscard v5
+# CHECK-NEXT: Jump -> next {{*}}(v0)
+# CHECK: StringBuilderAppend v5, v0
+# CHECK-NEXT: = StringBuilderFinish v5
+
+function f2 name="behindTextOnEveryWay" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Integer integer=1
+    v9 = Add v5, v8
+    v10 = Add v4, v0
+    Jump -> next b1(v10, v9)
+  b3():
+    v11 = String string="<"
+    v12 = Add v4, v11
+    v13 = Add v12, v0
+    Return v13
+}
+# CHECK-LABEL: name="behindTextOnEveryWay"
+# CHECK-NOT: StringBuilderLength
+# CHECK: = StringBuilderFinish

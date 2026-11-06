@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTSchemaOperationColumns.h"
@@ -16,7 +17,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr ProofSet proofsUnitedOverOrigins { Proof::Shape, Proof::OwnInstance, Proof::SlotFilled, Proof::NoExtraProperties, Proof::NoFieldOutsideSlot, Proof::BirthFieldsFilled, Proof::NotFrozen, Proof::KeyOrder };
+static constexpr ProofSet proofsUnitedOverOrigins { Proof::Shape, Proof::OwnInstance, Proof::SlotFilled, Proof::NoExtraProperties, Proof::NoFieldOutsideSlot, Proof::BirthFieldsFilled, Proof::NotFrozen, Proof::KeyOrder, Proof::InBounds };
 
 GuardFacts GuardAvailability::factsAfterEdge(const GuardFacts& factsBeforeEdge, Edge edge) const
 {
@@ -25,39 +26,64 @@ GuardFacts GuardAvailability::factsAfterEdge(const GuardFacts& factsBeforeEdge, 
 
     BlockID target = targetOf(m_function, edge).block;
     const UseLists& useLists = m_analyses.useLists();
+    auto isBoundAnew = [&](ValueID value) {
+        ValueLocation location = value ? useLists.locationOf(value) : ValueLocation();
+        return location.placement == ValuePlacement::Parameter && location.block == target;
+    };
     GuardFacts result { GuardKnowledge::Known, { } };
     for (const GuardFact& fact : factsBeforeEdge.facts) {
-        ValueLocation location = fact.subject ? useLists.locationOf(fact.subject) : ValueLocation();
-        if (location.placement != ValuePlacement::Parameter || location.block != target)
+        if (!isBoundAnew(fact.subject))
             result.facts.append(fact);
     }
 
     auto& parameters = m_function.at(target).parameters;
-    for (uint32_t parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex) {
-        ValueID parameter = parameters[parameterIndex];
-        if (isGuardValue(m_function, parameter) || m_analyses.identityOf(parameter) != parameter)
-            continue;
-        ValueID passed = valuePassedOn(m_function, edge, parameterIndex);
-        if (!passed)
-            continue;
-        ValueID subject = m_analyses.identityOf(passed);
+    auto forEachParameterThatTakes = [&](const Invocable<void(ValueID parameter, ValueID identityOfPassedValue)> auto& functor) {
+        for (uint32_t parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex) {
+            ValueID parameter = parameters[parameterIndex];
+            if (isGuardValue(m_function, parameter) || m_analyses.identityOf(parameter) != parameter)
+                continue;
+            if (ValueID passed = valuePassedOn(m_function, edge, parameterIndex))
+                functor(parameter, m_analyses.identityOf(passed));
+        }
+    };
+    forEachParameterThatTakes([&](ValueID parameter, ValueID subject) {
         for (const GuardFact& fact : factsBeforeEdge.facts) {
             if (fact.subject != subject)
                 continue;
             result.facts.append(fact);
             result.facts.last().subject = parameter;
         }
+    });
+
+    bool namesPosition = std::ranges::any_of(result.facts, [](const GuardFact& fact) {
+        return !!fact.position;
+    });
+    if (!namesPosition)
+        return result;
+
+    GuardFacts atPositionsAfterEdge { GuardKnowledge::Known, { } };
+    for (const GuardFact& fact : result.facts) {
+        if (!isBoundAnew(fact.position))
+            atPositionsAfterEdge.facts.append(fact);
     }
-    return result;
+    forEachParameterThatTakes([&](ValueID parameter, ValueID position) {
+        for (const GuardFact& fact : result.facts) {
+            if (fact.position != position)
+                continue;
+            atPositionsAfterEdge.facts.append(fact);
+            atPositionsAfterEdge.facts.last().position = parameter;
+        }
+    });
+    return atPositionsAfterEdge;
 }
 
-std::optional<ValueID> GuardAvailability::subjectBeforeEdge(ValueID subjectAfterEdge, Edge edge) const
+std::optional<ValueID> GuardAvailability::valueBeforeEdge(ValueID valueAfterEdge, Edge edge) const
 {
-    if (!subjectAfterEdge)
-        return subjectAfterEdge;
-    ValueLocation location = m_analyses.useLists().locationOf(subjectAfterEdge);
+    if (!valueAfterEdge)
+        return valueAfterEdge;
+    ValueLocation location = m_analyses.useLists().locationOf(valueAfterEdge);
     if (location.placement != ValuePlacement::Parameter || location.block != targetOf(m_function, edge).block)
-        return subjectAfterEdge;
+        return valueAfterEdge;
     ValueID passed = valuePassedOn(m_function, edge, location.index);
     if (!passed)
         return std::nullopt;
@@ -99,6 +125,15 @@ bool GuardAvailability::haveSameOrigin(const GuardOrigin& a, const GuardOrigin& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool GuardAvailability::isSamePosition(ValueID a, ValueID b) const
+{
+    if (a == b)
+        return true;
+    if (!a || !b)
+        return false;
+    return areSameNumberConstantThroughCasts(m_analyses.program(), m_function, a, b);
+}
+
 bool GuardAvailability::areSameFact(const GuardFact& a, const GuardFact& b) const
 {
     auto hasOriginsOf = [&](const GuardFact& fact, const GuardFact& other) {
@@ -108,7 +143,7 @@ bool GuardAvailability::areSameFact(const GuardFact& a, const GuardFact& b) cons
             });
         });
     };
-    return a.proofs == b.proofs && a.subject == b.subject && a.dependsOn == b.dependsOn && hasOriginsOf(a, b) && hasOriginsOf(b, a);
+    return a.proofs == b.proofs && a.subject == b.subject && isSamePosition(a.position, b.position) && a.dependsOn == b.dependsOn && hasOriginsOf(a, b) && hasOriginsOf(b, a);
 }
 
 static bool testImplies(const Value& test, const Value& impliedTest)
@@ -125,12 +160,83 @@ static bool testImplies(const Value& test, const Value& impliedTest)
     return false;
 }
 
+static std::optional<EdgeResult> findOnlyProofBehind(const Function& function, ValueID guard)
+{
+    std::optional<Edge> onlyEdge;
+    uint32_t parameterIndex = 0;
+    for (uint32_t from = 0; from < function.blocks.size(); ++from) {
+        bool entersTwice = false;
+        forEachOutgoingEdge(function, BlockID(from), [&](Edge edge, const Target& target) {
+            size_t index = function.at(target.block).parameters.find(guard);
+            if (index == notFound)
+                return;
+            entersTwice |= !!onlyEdge;
+            onlyEdge = edge;
+            parameterIndex = static_cast<uint32_t>(index);
+        });
+        if (entersTwice)
+            return std::nullopt;
+    }
+    if (!onlyEdge)
+        return std::nullopt;
+    IncomingValue incoming = incomingValueOf(function, *onlyEdge, parameterIndex);
+    if (incoming.kind != IncomingValue::Kind::EdgeResult)
+        return std::nullopt;
+    std::optional<EdgeResult> result = tryGetEdgeResult(function, incoming.result);
+    return result && result->kind == EdgeResultKind::Guard && result->test ? result : std::nullopt;
+}
+
+static bool asksSameOfSubject(const Function& function, const Value& test, const Value& other)
+{
+    if (!test.hasSamePayloadAs(other) || test.numberOfOperands() != other.numberOfOperands())
+        return false;
+    for (uint32_t operandIndex = subjectOperandIndex + 1; operandIndex < test.numberOfOperands(); ++operandIndex) {
+        if (test.operandKind(operandIndex) == OperandKind::Guard)
+            continue;
+        ValueID operand = test.operand(operandIndex);
+        ValueID operandOfOther = other.operand(operandIndex);
+        if (!operand != !operandOfOther || (operand && definitionThroughUpcasts(function, operand) != definitionThroughUpcasts(function, operandOfOther)))
+            return false;
+    }
+    return true;
+}
+
+// Each access names the kind of storage that it relies on, and is held to its guard. What the kind says of the elements answers questions about them, and of an answered question nothing is left.
+static bool saysAsMuchOfElements(const Program& program, const Type& array, ArrayStorage storage, ArrayStorage other)
+{
+    Type heldInOther = typeOfElementRead(other);
+    if (typeOfElementRead(storage).isSubsetOf(heldInOther, program))
+        return true;
+    const ClassPart* part = array.singleBuiltinClass();
+    std::optional<ProvenValue<TypeID>> elements = part ? part->provenContentsAt(program.builtins(), ContentsSlot::Element) : std::nullopt;
+    return elements && program.at(*elements).isSubsetOf(heldInOther, program);
+}
+
+bool provesAsMuchAs(const Program& program, const Function& function, ValueID guard, ValueID other)
+{
+    if (guard == other)
+        return true;
+    std::optional<EdgeResult> proof = findOnlyProofBehind(function, guard);
+    std::optional<EdgeResult> proofOfOther = findOnlyProofBehind(function, other);
+    if (!proof || !proofOfOther || proof->proof != proofOfOther->proof || proof->side != proofOfOther->side || !proof->subject || !proofOfOther->subject)
+        return false;
+    if (definitionThroughUpcasts(function, proof->subject) != definitionThroughUpcasts(function, proofOfOther->subject) || !function.at(proof->subject).type)
+        return false;
+    const Value& test = function.at(proof->test);
+    const Value& testOfOther = function.at(proofOfOther->test);
+    if (test.opcode != testOfOther.opcode)
+        return false;
+    if (asksSameOfSubject(function, test, testOfOther) || testImplies(test, testOfOther))
+        return true;
+    return proof->proof == Proof::ArrayStorage && proof->side == EdgeSide::Taken && saysAsMuchOfElements(program, program.typeOf(function, proof->subject), test.arrayStorage(), testOfOther.arrayStorage());
+}
+
 static std::span<const uint32_t> fieldsListedBy(const Value& allocation)
 {
     return Value::opcodesWithFields.contains(allocation.opcode) ? allocation.fields() : std::span<const uint32_t>();
 }
 
-static bool allocationImplies(const Program& program, const Value& allocation, const Value& impliedAllocation, Proof proof)
+static bool allocationImplies(const Program& program, const Function& function, const Value& allocation, const Value& impliedAllocation, Proof proof)
 {
     switch (proof) {
     case Proof::Shape:
@@ -149,7 +255,7 @@ static bool allocationImplies(const Program& program, const Value& allocation, c
     case Proof::Pristine:
         return program.at(allocation.type).singleBuiltinClass()->builtinClass == program.at(impliedAllocation.type).singleBuiltinClass()->builtinClass;
     case Proof::ArrayStorage:
-        return program.at(allocation.type).singleBuiltinClass()->arrayStorage == program.at(impliedAllocation.type).singleBuiltinClass()->arrayStorage;
+        return arrayStorageOfNewArray(program, function, allocation) == arrayStorageOfNewArray(program, function, impliedAllocation) && (allocatesWritableStorage(function, allocation) || !allocatesWritableStorage(function, impliedAllocation));
     case Proof::None:
     case Proof::TestedType:
     case Proof::Truthiness:
@@ -185,7 +291,7 @@ bool GuardAvailability::originImplies(const GuardOrigin& origin, const GuardOrig
         return false;
     case GuardSource::Allocation:
         return origin.source == GuardSource::Allocation && std::ranges::all_of(allMembersOf<Proof>, [&](Proof proof) {
-            return !proofs.contains(proof) || allocationImplies(program, m_function.at(origin.test), m_function.at(implied.test), proof);
+            return !proofs.contains(proof) || allocationImplies(program, m_function, m_function.at(origin.test), m_function.at(implied.test), proof);
         });
     }
 
@@ -248,7 +354,7 @@ GuardFacts GuardAvailability::meetFacts(const GuardFacts& a, const GuardFacts& b
 
 bool GuardAvailability::leavesUnspecified(Edge edge, ValueID subjectAfterEdge) const
 {
-    std::optional<ValueID> subject = subjectBeforeEdge(subjectAfterEdge, edge);
+    std::optional<ValueID> subject = valueBeforeEdge(subjectAfterEdge, edge);
     return subject && *subject && m_function.at(*subject).opcode == Opcode::Unspecified;
 }
 
@@ -278,7 +384,7 @@ bool GuardAvailability::tryWiden(GuardFact& fact, const GuardFacts& factsOnOther
     const GuardFact* partner = nullptr;
     ProofSet proofs;
     for (const GuardFact& candidate : factsOnOtherWay.facts) {
-        if (candidate.subject != fact.subject)
+        if (candidate.subject != fact.subject || !isSamePosition(candidate.position, fact.position))
             continue;
         ProofSet united;
         for (Proof proof : allMembersOf<Proof>) {

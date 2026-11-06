@@ -40,7 +40,7 @@ function f5 name="method" parameters=[{type=L0}] results=[{type=anything}] {
 function f6 name="construct" parameters=[{type=f2}] results=[{type=anything}] {
     v1 = Construct v0
     Return v1
-# CHECK: = CallDirect {{*}} [isConstruction]
+# CHECK: = CallDirect {{*}} [isConstruction, calleeIsPredicted]
 # CHECK-NOT: = Construct
 }
 function f7 name="expected-receiver" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTExpected.h"
 #include "AOTLayout.h"
 #include "AOTSortedSet.h"
 #include "AOTVector.h"
@@ -49,8 +50,8 @@ class FamilyTables {
 public:
     struct Candidates {
         LayoutList proven;
-        LayoutList predicted;
-        LayoutList ofExpectedType;
+        Expected<LayoutList> expected;
+        Expected<LayoutList> ofExpectedType;
     };
 
     explicit FamilyTables(const Program&);

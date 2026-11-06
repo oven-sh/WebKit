@@ -69,18 +69,20 @@ Condition PrimitiveEmitter::isUndefinedOrNull(Boxed value, uint16_t occurringPri
     bool mayBeEmpty = occurringPrimitives & Primitive::Absent;
     if (!mayBeEmpty && B3::Air::Arg::isValidBitImm64Form(bitsOutsideUndefined))
         return Condition(m_out.testIsZero64(value.value(), m_out.constInt64(bitsOutsideUndefined)));
-    return Condition(m_out.equal(m_out.bitAnd(value.value(), m_out.constInt64(~JSValue::UndefinedTag)), m_out.constInt64(JSValue::ValueNull)));
+    return Condition(m_out.equal(m_out.bitAnd(value.value(), ~JSValue::UndefinedTag), JSValue::ValueNull));
 }
 
 Number PrimitiveEmitter::numberToDouble(Boxed value)
 {
-    return select(isInt32(value), toNumber(unboxInt32(value)), unboxDouble(value));
+    Condition holdsInt32 = isInt32(value);
+    Number fromInt32 = toNumber(unboxInt32(value));
+    return select(holdsInt32, fromInt32, unboxDouble(value));
 }
 
 CellPointer PrimitiveEmitter::decode(NarrowReference reference)
 {
     RELEASE_ASSERT(m_cellCageBase);
-    return CellPointer(m_out.add(m_cellCageBase, m_out.shl(m_out.zeroExtPtr(reference.value()), m_out.constInt32(cell32Shift))));
+    return CellPointer(m_out.add(m_cellCageBase, m_out.shl(m_out.zeroExtPtr(reference.value()), cell32Shift)));
 }
 
 NarrowReference PrimitiveEmitter::compress(CellPointer cell)
@@ -97,19 +99,19 @@ Condition PrimitiveEmitter::hasCellTypeIn(CellPointer cell, JSTypeRange range)
         return equal(type, word32(range.first));
     if (range.last == MaxJSType)
         return aboveOrEqual(type, word32(range.first));
-    return below(sub(type, word32(range.first)), word32(range.last - range.first + 1));
+    return below(sub(type, range.first), range.last - range.first + 1);
 }
 
 Condition PrimitiveEmitter::hasCellTypeAbove(CellPointer cell, JSType type)
 {
     RELEASE_ASSERT(type < MaxJSType && isStableCellTypeRange({ static_cast<JSType>(type + 1), MaxJSType }));
-    return above(loadCellType(cell), word32(type));
+    return above(loadCellType(cell), type);
 }
 
 Condition PrimitiveEmitter::hasOrHadCellType(CellPointer cell, JSType type)
 {
     RELEASE_ASSERT(!isTakenInPlace(type));
-    return equal(loadCellType(cell), word32(type));
+    return equal(loadCellType(cell), type);
 }
 
 // A type that a cell takes or leaves in place is read as one of the bytes that change: alone, so that the comparison takes it from memory.
@@ -117,7 +119,7 @@ Condition PrimitiveEmitter::hasMutableCellType(CellPointer cell, JSType type)
 {
     constexpr ptrdiff_t offsetInUsefulBytes = JSCell::typeInfoTypeOffset() - JSCell::indexingTypeAndMiscOffset();
     static_assert(offsetInUsefulBytes > 0 && offsetInUsefulBytes < 4);
-    return equal(Word32(m_out.load8ZeroExt32(m_out.address(cell.value(), m_heaps.JSCell_usefulBytes, offsetInUsefulBytes))), word32(type));
+    return equal(Word32(m_out.load8ZeroExt32(m_out.address(cell.value(), m_heaps.JSCell_usefulBytes, offsetInUsefulBytes))), type);
 }
 
 Pointer PrimitiveEmitter::loadStructure(CellPointer cell)
@@ -127,7 +129,8 @@ Pointer PrimitiveEmitter::loadStructure(CellPointer cell)
 
 Pointer PrimitiveEmitter::decodeStructureID(Word32 structureID)
 {
-    return Pointer(m_out.bitOr(m_out.zeroExtPtr(structureID.value()), loadImmutablePointer(AOT_INSTANCE_PREFIX_OFFSET(structureIDBase)).value()));
+    LValue offset = m_out.zeroExtPtr(structureID.value());
+    return Pointer(m_out.bitOr(offset, loadImmutablePointer(AOT_INSTANCE_PREFIX_OFFSET(structureIDBase)).value()));
 }
 
 Pointer PrimitiveEmitter::loadImmutablePointer(ptrdiff_t offset)
@@ -143,6 +146,11 @@ Word32 PrimitiveEmitter::loadImmutable32(ptrdiff_t offset)
 Integer PrimitiveEmitter::loadImmutable64(ptrdiff_t offset)
 {
     return Integer(m_out.load64(instanceField(m_heaps.AOTInstance_fixedFields, offset)));
+}
+
+Word32 PrimitiveEmitter::loadFilledOnce32(ptrdiff_t offset)
+{
+    return Word32(m_out.load32(instanceField(m_heaps.AOTInstance_fieldsFilledOnce, offset)));
 }
 
 Word32 PrimitiveEmitter::loadMutable32(ptrdiff_t offset)
@@ -166,14 +174,31 @@ TypedPointer PrimitiveEmitter::instanceField(const B3::AbstractHeap& heap, ptrdi
 
 CellPointer PrimitiveEmitter::singleCharacterString(Word32 character)
 {
-    return CellPointer(m_out.loadPtr(m_out.baseIndex(m_heaps.singleCharacterStrings, loadImmutablePointer(AOT_INSTANCE_OFFSET(singleCharacterStrings)).value(), m_out.zeroExtPtr(character.value()))));
+    Pointer strings = loadImmutablePointer(AOT_INSTANCE_OFFSET(singleCharacterStrings));
+    return CellPointer(m_out.loadPtr(m_out.baseIndex(m_heaps.singleCharacterStrings, strings.value(), m_out.zeroExtPtr(character.value()))));
 }
 
-void PrimitiveEmitter::mutatorFence()
+LValue PrimitiveEmitter::countTrailingZerosOfNonZero(LValue bits)
+{
+    B3::PatchpointValue* count = m_out.patchpoint(B3::Int64);
+    count->appendSomeRegister(bits);
+    count->effects = B3::Effects::none();
+    // B3 may count ahead of the branch that rules zero out, where nothing reads the count. With assertions the count of zero traps, so it stays behind the branch.
+    count->effects.controlDependent = ASSERT_ENABLED;
+    count->setRunsWithoutFrame(true);
+    count->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        jit.countTrailingZeros64WithoutNullCheck(params[1].gpr(), params[0].gpr());
+    });
+    return count;
+}
+
+std::optional<MutatorFence> PrimitiveEmitter::mutatorFence()
 {
 #if CPU(X86_64)
     m_out.fence(&m_heaps.root, nullptr);
+    return std::nullopt;
 #else
+    LBasicBlock branchBlock = m_out.m_block;
     LBasicBlock fence = m_out.newBlock();
     LBasicBlock done = m_out.newBlock();
     m_out.branch(m_out.load8ZeroExt32(instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))), rareEdge(fence), normalEdge(done));
@@ -181,6 +206,7 @@ void PrimitiveEmitter::mutatorFence()
     m_out.fence(&m_heaps.root, nullptr);
     m_out.jump(done);
     m_out.appendTo(done);
+    return MutatorFence { branchBlock, done };
 #endif
 }
 
@@ -192,6 +218,7 @@ void PrimitiveEmitter::ensureStillAliveHere(CellPointer cell)
     patchpoint->effects.reads = B3::HeapRange::top();
     patchpoint->append(cell.value(), B3::ValueRep::ColdAny);
     patchpoint->setRunsWithoutFrame(true);
+    patchpoint->onlyKeepsChildrenAlive = true;
     patchpoint->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
 }
 

@@ -61,7 +61,8 @@ void StaticsEmitter::storeVariable(VariableID id, Operand stored, const Type& st
         if (!(storedType.primitives & Primitive::Undefined))
             break;
         Boxed boxed = stored.as<Boxed>();
-        stored = select(equal(boxed, undefined()), boxedConstant(JSValue()), boxed);
+        Condition isUndefined = equal(boxed, undefined());
+        stored = select(isUndefined, boxedConstant(JSValue()), boxed);
         break;
     }
     }
@@ -82,6 +83,19 @@ TypedPointer StaticsEmitter::guardByteOf(GuardBitID id)
 uint8_t StaticsEmitter::guardMaskOf(GuardBitID id) const
 {
     return static_cast<uint8_t>(1u << m_placement.guardBit(id).bit % bitsPerByte);
+}
+
+void StaticsEmitter::fillVariablesOfEnteredFile()
+{
+    const StaticsPlan& statics = m_placement.statics();
+    if (!statics.functionsThatEnterFiles.get(m_id.index()))
+        return;
+    uint32_t group = statics.groupFilledWhenEntered(m_function.module).value();
+    Word32 isFilled(m_out.load8ZeroExt32(inStatics(m_heaps.entire(AbstractHeap::ModuleVariables), statics.offsetOfFilledFiles + group)));
+    ifElse(notEqual(isFilled, word32(0)), [] { }, [&] {
+        Operand arguments[] { word32(static_cast<int32_t>(group)) };
+        callWithoutSite(RuntimeOperation::FillVariablesOfFiles, arguments, Representation::Void, { .isOnRarePath = true });
+    });
 }
 
 TypedPointer StaticsEmitter::branchCounter(uint32_t number)

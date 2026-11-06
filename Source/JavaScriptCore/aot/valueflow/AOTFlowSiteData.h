@@ -47,6 +47,18 @@ inline void forEachDataNodeInPreorder(const DataNode& root, NOESCAPE const Invoc
     }
 }
 
+inline Vector<uint32_t, 16> fieldsFilledBy(const Program& program, const Layout& declared, const DataNode::Object& object)
+{
+    Vector<uint32_t, 16> fields;
+    for (const DataMember& member : object.members) {
+        if (std::optional<uint32_t> field = declared.findField(member.key))
+            fields.append(*field);
+        else if (program.nameClassOf(member.key) != NameClass::Index)
+            break;
+    }
+    return fields;
+}
+
 inline bool isExpandedForItsSizeAlone(const DataNode& root, uint64_t maxExpandedNodes)
 {
     uint64_t numberOfNodes = 0;

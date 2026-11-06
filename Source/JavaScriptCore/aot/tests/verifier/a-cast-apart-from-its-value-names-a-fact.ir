@@ -1,0 +1,101 @@
+# A cast that no test backs says something of its value. Right behind the definition of the value it says so wherever the value is at hand. Behind a branch, behind an operation that may leave, or in another block
+# it says what holds from there on, and names a fact that is made there: a read through the cast names the cast, the cast names the fact, and so nobody puts the read in front of the place
+# FORM: Prepared
+# RUN: verify casts-name-their-facts
+# DIAGNOSTIC: CastWithoutFact 5
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flow={occupancy=AlwaysFilled}}]
+variable g0 name="held" declared={type=anything} initialization=Undefined
+
+function f0 name="goodCastBehindTheDefinition" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = AssumeType v0 provenType=L0
+    v2 = GetSlot v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}
+function f1 name="goodCastOfParameterAtTheHeadOfItsBlock" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = AssumeType v0 provenType=L0
+    v2 = GetSlot v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}
+function f2 name="goodCastBehindWhatCannotLeave" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = TypeTest v0 testedType=int
+    v3 = Upcast v1 castType=anything
+    v4 = AssumeType v3 provenType=L0
+    v5 = GetSlot v4 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+function f3 name="goodCastBehindTheTestNamesFact" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Specified
+    v3 = AssumeType v0, v2 provenType=L0
+    v4 = GetSlot v3 key="x" receivers=[L0] level=Proven
+    Return v4
+  b2():
+    v5 = Double number=0.5
+    Return v5
+}
+function f4 name="goodCastOfCastThatNamesFact" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Specified
+    v3 = AssumeType v0, v2 provenType=undefined|L0
+    v4 = AssumeType v3 provenType=L0
+    v5 = GetSlot v4 key="x" receivers=[L0] level=Proven
+    Return v5
+  b2():
+    v6 = Double number=0.5
+    Return v6
+}
+function f5 name="badCastBehindBranch" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = AssumeType v0 provenType=L0
+    v3 = GetSlot v2 key="x" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    v4 = Double number=0.5
+    Return v4
+}
+function f6 name="badCastBehindTestOfItsValue" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b2(), notTaken b1()
+  b1():
+    v2 = AssumeType v0 provenType=L0
+    v3 = GetSlot v2 key="x" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    v4 = Double number=0.5
+    Return v4
+}
+function f7 name="badCastBehindCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -
+    v3 = AssumeType v0 provenType=L0
+    v4 = GetSlot v3 key="x" receivers=[L0] level=Proven
+    Return v4
+}
+function f8 name="badCastOfUpcastInTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Upcast v0 castType=anything
+    v4 = AssumeType v3 provenType=L0
+    v5 = GetSlot v4 key="x" receivers=[L0] level=Proven
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v5
+}
+function f9 name="badCastOfCastWithoutFact" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = AssumeType v0 provenType=undefined|L0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = AssumeType v2 provenType=L0
+    v4 = GetSlot v3 key="x" receivers=[L0] level=Proven
+    Return v4
+  b2():
+    v5 = Double number=0.5
+    Return v5
+}

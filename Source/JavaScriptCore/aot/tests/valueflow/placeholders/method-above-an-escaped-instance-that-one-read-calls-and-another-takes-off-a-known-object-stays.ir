@@ -1,0 +1,35 @@
+# class Meter { measure(by) {} }; const meter = new Meter; input(meter); meter.measure(1); kept = Meter.prototype.measure
+# The instance has escaped, so the lookup under `measure` from it goes on through a value nobody knows; that read is only called on its holder. The other read under the name hands its value on, but off an object that is known. Neither holds a function that it found on a value nobody knows: the method does not escape.
+# RUN: valueflow-why escaped=f2
+# CHECK: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Meter" constructor=f1
+variable g0 name="kept" module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="measure"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Call v7, -, v5
+    v9 = PropGet v5 key="measure"
+    v10 = Integer integer=1
+    v11 = Call v9, v5, v10 calleeKey="measure"
+    v12 = PropGet v4 key="prototype"
+    v13 = PropGet v12 key="measure"
+    PutModuleVariable v13 variable=g0
+    Return
+}
+function f1 name="Meter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="measure" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}

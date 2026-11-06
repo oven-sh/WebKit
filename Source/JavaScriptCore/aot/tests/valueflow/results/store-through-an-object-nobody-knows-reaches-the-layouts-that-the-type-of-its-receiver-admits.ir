@@ -1,7 +1,7 @@
 # holder.a = node; holder.b = symbol; function setParent(o: Node) { o.parent = 1.5 }  setParent(holder.a); symbol.parent
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Node" fields=[{key="parent" declared={type=int|fractional}
-# CHECK: layout L1 name="Symbol" fields=[{key="parent" declared={type=string}
+# CHECK: layout L1 name="Symbol" fields=[{key="parent" declared={type="s"}
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

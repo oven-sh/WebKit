@@ -8,10 +8,17 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowRecords.h"
 #include "AOTSort.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowAnalysis.h"
+#include "AOTValueIdentity.h"
+#include "AOTValueFlowHeapTables.h"
+#include "AOTValueFlowRuleContext.h"
+#include <wtf/HashMap.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringHash.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -129,6 +136,8 @@ static void printStatement(PrintStream& out, const ValueFlowSolver& solver, Valu
     out.print(nameOf(statement.kind));
     if (statement.function)
         out.print(" f", statement.function.index());
+    if (statement.kind == ValueFlowStatementKind::Behavior)
+        out.print(" n", statement.result.index());
     if (solver.isMadeByRule(id) && statement.kind != ValueFlowStatementKind::Escape) {
         out.print(" ");
         printKey(out, solver, solver.keyOf(id));
@@ -276,6 +285,254 @@ static void printTimeline(PrintStream& out, ValueFlowSolution& solution)
     }
 }
 
+// An edge out of a made node stays in the graph when the statement that logged it no longer asks for the node. Whoever keeps the node awake makes the edge deliver.
+// `shows` counts the edges that bring their target a member that no other edge brings it.
+static void printOutlivedEdges(PrintStream& out, ValueFlowSolution& solution)
+{
+    constexpr unsigned numberOfEdgesPrinted = 24;
+    const ValueFlowSolver& solver = solution.solver();
+    BorrowedValueSetMaker borrowedMaker(solution.makerPool());
+    ValueSetMaker& maker = borrowedMaker.get();
+    Vector<ValueFlowSolver::LoggedEdge> edges;
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        const ValueFlowNodeKey* key = solver.keyOfMadeNode(logged.edge.from);
+        if (!key || !logged.statement || key->kind == ValueFlowMadeNodeKind::Constant || key->kind == ValueFlowMadeNodeKind::Marked || key->kind == ValueFlowMadeNodeKind::Instance || key->kind == ValueFlowMadeNodeKind::Hub)
+            continue;
+        edges.append(logged);
+    }
+    std::ranges::stable_sort(edges, { }, [](const ValueFlowSolver::LoggedEdge& logged) {
+        return logged.statement.index();
+    });
+    uint64_t outlived = 0;
+    HashMap<String, unsigned> outlivedBySort;
+    uint64_t ofNodesAwake = 0;
+    uint64_t ofStatementsAtRest = 0;
+    uint64_t showing = 0;
+    unsigned printed = 0;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> askedFor;
+    ValueFlowStatementID statementOfSet;
+    for (const ValueFlowSolver::LoggedEdge& logged : edges) {
+        if (logged.statement != statementOfSet) {
+            statementOfSet = logged.statement;
+            askedFor.clear();
+            solver.forEachMadeNodeAskedForBy(logged.statement, [&](const ValueFlowNodeKey& key, ValueFlowStatementID) {
+                askedFor.add(solver.indexOfMadeNodes(key));
+            });
+        }
+        const ValueFlowNodeKey& key = *solver.keyOfMadeNode(logged.edge.from);
+        uint32_t record = solver.indexOfMadeNodes(key);
+        if (askedFor.contains(record) || solver.statementOfMadeNodesAt(record) == logged.statement)
+            continue;
+        bool isInGraph = false;
+        solver.graph().forEachPredecessor(logged.edge.to, [&](ValueFlowNodeID predecessor) {
+            isInGraph |= predecessor == logged.edge.from;
+        });
+        if (!isInGraph)
+            continue;
+        ++outlived;
+        bool isAtRest = solver.isAtRest(logged.statement);
+        {
+            const ValueFlowNodeKey* keyOfTarget = solver.keyOfMadeNode(logged.edge.to);
+            const ValueFlowStatement& statement = solver.statementAt(logged.statement);
+            StringPrintStream sort;
+            sort.print(solver.numberOfUsesOfMadeNodesAt(record) ? "awake " : "at rest ", nameOf(key.kind), " > ", keyOfTarget ? nameOf(keyOfTarget->kind) : "node"_s, " by ");
+            if (statement.kind == ValueFlowStatementKind::Operation)
+                sort.print(statement.opcode);
+            else
+                sort.print(nameOf(statement.kind));
+            sort.print(isAtRest ? " at rest" : "");
+            outlivedBySort.add(sort.toString(), 0).iterator->value++;
+        }
+        if (!solver.numberOfUsesOfMadeNodesAt(record))
+            continue;
+        ++ofNodesAwake;
+        ofStatementsAtRest += isAtRest;
+        ValueSetID fromOthers = ValueSets::nothing;
+        solver.graph().forEachPredecessor(logged.edge.to, [&](ValueFlowNodeID predecessor) {
+            if (predecessor != logged.edge.from)
+                fromOthers = maker.unite(fromOthers, solver.possibleValuesOf(predecessor));
+        });
+        ValueSetID alone = maker.intersect(maker.intersect(solver.possibleValuesOf(logged.edge.from), solver.possibleValuesOf(logged.edge.to)), ValueSets::complement(fromOthers));
+        if (alone == ValueSets::nothing)
+            continue;
+        ++showing;
+        if (++printed > numberOfEdgesPrinted)
+            continue;
+        out.print("round ", logged.round, isAtRest ? " at rest " : " ");
+        printNode(out, solution, logged.edge.from);
+        out.print(" -> ");
+        printNode(out, solution, logged.edge.to);
+        out.print(" alone brings ");
+        printValue(out, solution, alone);
+        out.print("      by ");
+        printStatement(out, solver, logged.statement);
+        out.println();
+    }
+    {
+        Vector<std::pair<String, unsigned>> sorts;
+        for (auto& entry : outlivedBySort)
+            sorts.append({ entry.key, entry.value });
+        std::ranges::sort(sorts, [](const auto& first, const auto& second) {
+            return first.second != second.second ? first.second > second.second : codePointCompareLessThan(first.first, second.first);
+        });
+        for (auto& [sort, count] : sorts)
+            out.println("outlived: ", count, " ", sort);
+    }
+    out.println("outlived-edges ", outlived, " of ", edges.size(), " | out of nodes that are awake ", ofNodesAwake, " | of them logged by statements at rest ", ofStatementsAtRest, " | shows ", showing);
+
+    // A statement that once connected a node whole and now connects it through a mask asks for the node still: the mask cuts nothing.
+    uint64_t wholeAndMasked = 0;
+    uint64_t wholeFirst = 0;
+    HashMap<String, unsigned> wholeFirstBySort;
+    printed = 0;
+    for (const ValueFlowSolver::LoggedEdge& logged : edges) {
+        const ValueFlowNodeKey& key = *solver.keyOfMadeNode(logged.edge.from);
+        if (key.kind != ValueFlowMadeNodeKind::Masked || !solver.keyOfMadeNode(key.maskedNode()))
+            continue;
+        const ValueFlowSolver::LoggedEdge* whole = solver.findLoggedEdge(ValueFlowEdge { key.maskedNode(), logged.edge.to });
+        if (!whole || whole->statement != logged.statement)
+            continue;
+        ++wholeAndMasked;
+        // A mask that widens to everything is no loss. One that comes behind the whole node is.
+        if (whole->round >= logged.round)
+            continue;
+        ++wholeFirst;
+        const ValueFlowStatement& statement = solver.statementAt(logged.statement);
+        StringPrintStream sort;
+        sort.print(nameOf(solver.keyOfMadeNode(key.maskedNode())->kind), " by ");
+        if (statement.kind == ValueFlowStatementKind::Operation)
+            sort.print(statement.opcode);
+        else
+            sort.print(nameOf(statement.kind));
+        wholeFirstBySort.add(sort.toString(), 0).iterator->value++;
+        if (++printed > numberOfEdgesPrinted)
+            continue;
+        out.print("whole in round ", whole->round, ", masked in round ", logged.round, " ");
+        printNode(out, solution, key.maskedNode());
+        out.print(" -> ");
+        printNode(out, solution, logged.edge.to);
+        out.print("      by ");
+        printStatement(out, solver, logged.statement);
+        out.println();
+    }
+    Vector<std::pair<String, unsigned>> sorts;
+    for (auto& entry : wholeFirstBySort)
+        sorts.append({ entry.key, entry.value });
+    std::ranges::sort(sorts, [](const auto& first, const auto& second) {
+        return first.second != second.second ? first.second > second.second : codePointCompareLessThan(first.first, second.first);
+    });
+    for (auto& [sort, count] : sorts)
+        out.println("whole first, then masked: ", count, " ", sort);
+    out.println("whole-and-masked ", wholeAndMasked, " | whole first ", wholeFirst);
+}
+
+static void printFirstCallsOfUnknownCallees(PrintStream& out, ValueFlowSolution& solution)
+{
+    constexpr unsigned numberOfEdgesPrinted = 40;
+    const ValueFlowSolver& solver = solution.solver();
+    unsigned printed = 0;
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        const ValueFlowNodeKey* key = solver.keyOfMadeNode(logged.edge.to);
+        if (!key || key->kind != ValueFlowMadeNodeKind::CallGroup || !key->set || ValueSets::isComplement(key->set) || !solver.sets().contains(key->set, ValueFlowUniverse::unknownObject()))
+            continue;
+        if (++printed > numberOfEdgesPrinted)
+            return;
+        out.print("round ", logged.round, " ");
+        printNode(out, solution, logged.edge.to);
+        out.print(" <- ");
+        printNode(out, solution, logged.edge.from);
+        out.print("      by ");
+        printStatement(out, solver, logged.statement);
+        out.println();
+    }
+}
+
+static void printFirstEscapes(PrintStream& out, ValueFlowSolution& solution)
+{
+    constexpr unsigned numberOfEdgesPrinted = 150;
+    const ValueFlowSolver& solver = solution.solver();
+    unsigned printed = 0;
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        if (logged.edge.to != ValueFlowProgramNodes::escaped() && logged.edge.to != ValueFlowProgramNodes::lost())
+            continue;
+        if (++printed > numberOfEdgesPrinted)
+            return;
+        out.print("round ", logged.round, logged.edge.to == ValueFlowProgramNodes::escaped() ? " escaped <- " : " lost <- ");
+        printNode(out, solution, logged.edge.from);
+        out.print("      by ");
+        printStatement(out, solver, logged.statement);
+        out.print("      now holding ");
+        printValue(out, solution, solver.possibleValuesOf(logged.edge.from));
+    }
+}
+
+static void printEdgesInto(PrintStream& out, ValueFlowSolution& solution, ValueFlowNodeID node)
+{
+    const ValueFlowSolver& solver = solution.solver();
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        if (logged.edge.to != node)
+            continue;
+        out.print("round ", logged.round, " <- ");
+        printNode(out, solution, logged.edge.from);
+        out.print(" holding ");
+        printValue(out, solution, solver.possibleValuesOf(logged.edge.from));
+        out.print("      by ");
+        printStatement(out, solver, logged.statement);
+        out.println();
+    }
+}
+
+// The way that printWhyHeld() prints is one way in the graph as it ends. These are the edges in the order in which they were logged.
+static void printFirstEdgesCarrying(PrintStream& out, ValueFlowSolution& solution, ValueFlowNodeID node, ValueFlowObjectID member)
+{
+    constexpr unsigned numberOfEdgesPrinted = 6;
+    const ValueFlowSolver& solver = solution.solver();
+    unsigned printed = 0;
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        if (logged.edge.to != node || !solver.sets().contains(solver.possibleValuesOf(logged.edge.from), member))
+            continue;
+        if (++printed > numberOfEdgesPrinted)
+            return;
+        out.print("  round ", logged.round, " <- ");
+        printNode(out, solution, logged.edge.from);
+        out.print("   by ");
+        printStatement(out, solver, logged.statement);
+        out.println();
+    }
+}
+
+// Back from a node along the earliest logged edge that carries the object. Where the heap feeds a node without a logged edge, the next node is the one that explain() names.
+static void printFirstWay(PrintStream& out, ValueFlowSolution& solution, ValueFlowNodeID node, ValueFlowObjectID member)
+{
+    constexpr unsigned numberOfStepsPrinted = 40;
+    const ValueFlowSolver& solver = solution.solver();
+    Vector<ValueFlowNodeID> visited;
+    for (unsigned step = 0; step < numberOfStepsPrinted; ++step) {
+        visited.append(node);
+        out.print("  ");
+        printNode(out, solution, node);
+        const ValueFlowSolver::LoggedEdge* first = nullptr;
+        for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+            if (logged.edge.to == node && !visited.contains(logged.edge.from) && solver.sets().contains(solver.possibleValuesOf(logged.edge.from), member)) {
+                first = &logged;
+                break;
+            }
+        }
+        if (first) {
+            out.print("   round ", first->round, " by ");
+            printStatement(out, solver, first->statement);
+            out.println();
+            node = first->edge.from;
+            continue;
+        }
+        out.println();
+        Vector<ValueFlowNodeID> way = solver.explain(node, member);
+        if (way.size() < 2 || visited.contains(way[1]))
+            return;
+        node = way[1];
+    }
+}
+
 static void printWhyHeld(PrintStream& out, ValueFlowSolution& solution, ValueFlowNodeID node, ValueFlowObjectID member)
 {
     const ValueFlowSolver& solver = solution.solver();
@@ -299,8 +556,58 @@ static void printWhyHeld(PrintStream& out, ValueFlowSolution& solution, ValueFlo
     }
 }
 
-static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
+using WaysOfEscape = HashMap<uint32_t, Vector<ValueFlowNodeID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+
+// A function, its prototype object and `constructor` escape together: each has a constant edge into the escaped set once one of them is there.
+// That edge is the shortest path and says nothing. Another edge that holds the object says how it got there.
+static const Vector<ValueFlowNodeID>& explainEscape(ValueFlowSolution& solution, ValueFlowObjectID object, WaysOfEscape& known)
 {
+    auto entry = known.add(object.index(), Vector<ValueFlowNodeID> { });
+    if (!entry.isNewEntry)
+        return entry.iterator->value;
+    const ValueFlowSolver& solver = solution.solver();
+    ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
+    ValueFlowNodeID carriedOut = solution.bodies().nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut);
+    auto isConstantOfEscape = [&](ValueFlowNodeID node, ValueFlowNodeID into) {
+        const ValueFlowNodeKey* key = solver.keyOfMadeNode(node);
+        if (!key || key->kind != ValueFlowMadeNodeKind::Constant)
+            return false;
+        ValueFlowStatementID logger = solver.statementThatLogged({ node, into });
+        return logger && solver.statementAt(logger).kind == ValueFlowStatementKind::Escape;
+    };
+    Vector<ValueFlowNodeID> way = solver.explain(escaped, object);
+    if (way.size() == 2 && isConstantOfEscape(way[1], escaped)) {
+        Vector<ValueFlowNodeID> other;
+        for (ValueFlowNodeID into : { escaped, carriedOut }) {
+            solver.graph().forEachPredecessor(into, [&](ValueFlowNodeID predecessor) {
+                if (!other.isEmpty() || predecessor == carriedOut || isConstantOfEscape(predecessor, into) || !solver.sets().contains(solver.possibleValuesOf(predecessor), object))
+                    return;
+                Vector<ValueFlowNodeID> rest = solver.explain(predecessor, object);
+                if (rest.isEmpty())
+                    return;
+                other.append(escaped);
+                if (into == carriedOut)
+                    other.append(carriedOut);
+                other.appendVector(rest);
+            });
+        }
+        if (!other.isEmpty())
+            way = WTF::move(other);
+    }
+    entry.iterator->value = WTF::move(way);
+    return entry.iterator->value;
+}
+
+static bool holdsContentsOfListedObjects(const ValueFlowNodeKey* key)
+{
+    if (!key || !key->set || ValueSets::isComplement(key->set))
+        return false;
+    return key->kind == ValueFlowMadeNodeKind::Written || key->kind == ValueFlowMadeNodeKind::WrittenUnderKind;
+}
+
+static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution, bool printsLineForEachClosure = false)
+{
+    WaysOfEscape waysOfEscape;
     constexpr size_t numberOfRootsPrinted = 30;
     using ByNumber = WTF::UnsignedWithZeroKeyHashTraits<uint32_t>;
     const ValueFlowSolver& solver = solution.solver();
@@ -308,14 +615,17 @@ static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
     ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
     ValueSetID escaped = solver.possibleValuesOf(escapedNode);
 
+    // A node that retires hands its predecessors straight to the node that covers it: that edge has no statement. The one that brought the value to the retired node has.
     HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, ByNumber> loggerOfEdgeIntoRetiredNode;
+    HashMap<uint32_t, ValueFlowNodeID, IntHash<uint32_t>, ByNumber> retiredNodeBehind;
     for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
-        if (solver.graph().isRetired(logged.edge.to))
+        if (solver.graph().isRetired(logged.edge.to)) {
             loggerOfEdgeIntoRetiredNode.add(logged.edge.from.index(), logged.statement);
+            retiredNodeBehind.add(logged.edge.from.index(), logged.edge.to);
+        }
     }
     auto holdsWhatIsWritten = [&](ValueFlowNodeID node) {
-        const ValueFlowNodeKey* key = solver.keyOfMadeNode(node);
-        return key && (key->kind == ValueFlowMadeNodeKind::Written || key->kind == ValueFlowMadeNodeKind::WrittenUnderKind) && key->set;
+        return holdsContentsOfListedObjects(solver.keyOfMadeNode(node));
     };
     auto isStatementOfEscape = [&](ValueFlowStatementID id) {
         ValueFlowStatementKind kind = solver.statementAt(id).kind;
@@ -326,12 +636,13 @@ static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
         if (auto found = holders.find(object.index()); found != holders.end())
             return found->value;
         ValueFlowObjectID holder;
-        Vector<ValueFlowNodeID> way = solver.explain(escapedNode, object);
+        const Vector<ValueFlowNodeID>& way = explainEscape(solution, object, waysOfEscape);
         if (way.size() > 1) {
             ValueFlowStatementID logger = solver.statementThatLogged({ way[1], way[0] });
             if (!logger && !holdsWhatIsWritten(way[1]))
                 logger = loggerOfEdgeIntoRetiredNode.get(way[1].index());
-            if (logger ? isStatementOfEscape(logger) : holdsWhatIsWritten(way[1])) {
+            bool isCarriedOut = !logger && way.size() > 2 && holdsWhatIsWritten(way[2]);
+            if (logger ? isStatementOfEscape(logger) : holdsWhatIsWritten(way[1]) || isCarriedOut) {
                 size_t written = way.findIf(holdsWhatIsWritten);
                 if (written != notFound) {
                     solver.sets().forEachMember(solver.keyOfMadeNode(way[written])->set, [&](ValueFlowObjectID member) {
@@ -360,6 +671,40 @@ static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
                 break;
             root = holder;
         }
+        if (printsLineForEachClosure) {
+            out.print("closure f", universe.closureFunction(object).index(), " root ");
+            printObject(out, solution, root);
+            const Vector<ValueFlowNodeID>& way = explainEscape(solution, root, waysOfEscape);
+            for (size_t index = 0; index + 1 < way.size(); ++index) {
+                out.print(" < ");
+                printNode(out, solution, way[index + 1]);
+                ValueFlowStatementID statement = solver.statementThatLogged({ way[index + 1], way[index] });
+                if (!statement) {
+                    statement = loggerOfEdgeIntoRetiredNode.get(way[index + 1].index());
+                    if (ValueFlowNodeID retired = retiredNodeBehind.get(way[index + 1].index())) {
+                        out.print(" into the retired ");
+                        printNode(out, solution, retired);
+                    }
+                }
+                if (statement) {
+                    out.print(" by ");
+                    printStatement(out, solver, statement);
+                    if (const ValueFlowStatement& logging = solver.statementAt(statement); index < 2 && logging.kind == ValueFlowStatementKind::Operation && !solution.bodies().operandsOf(logging).empty()) {
+                        out.print(" first operand:");
+                        unsigned printed = 0;
+                        solution.sets().forEachMember(solution.possibleValuesOf(solution.bodies().operandsOf(logging)[0]), [&](ValueFlowObjectID member) {
+                            if (!universe.isObject(member) || ++printed > 6)
+                                return;
+                            out.print(" ");
+                            printObject(out, solution, member);
+                        });
+                        out.print(printed > 6 ? " .." : "", " ;");
+                    }
+                }
+            }
+            out.println();
+            return;
+        }
         size_t place = roots.findIf([&](const Root& other) {
             return other.object == root;
         });
@@ -370,6 +715,8 @@ static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
         ++roots[place].closures;
     });
 
+    if (printsLineForEachClosure)
+        return;
     AOT::stableSort(roots, std::greater { }, &Root::closures);
     out.println("roots ", roots.size());
     for (const Root& root : roots.span().first(std::min(roots.size(), numberOfRootsPrinted))) {
@@ -511,19 +858,373 @@ static void printSeeds(PrintStream& out, ValueFlowSolution& solution)
     out.println("escaped closures: ", closures);
 }
 
+static bool isCallOfValue(const ValueFlowStatement& statement)
+{
+    if (statement.kind != ValueFlowStatementKind::Operation || !statement.operandCount)
+        return false;
+    switch (statement.opcode) {
+    case Opcode::Call:
+    case Opcode::CallList:
+    case Opcode::Construct:
+    case Opcode::ConstructList:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static std::optional<unsigned> receiverPositionOf(const ValueFlowStatement& statement)
+{
+    if (statement.kind != ValueFlowStatementKind::Operation || isCallOfValue(statement))
+        return std::nullopt;
+    std::optional<uint8_t> receiver = receiverOf(statement.opcode);
+    if (!receiver || *receiver >= statement.operandCount)
+        return std::nullopt;
+    return *receiver;
+}
+
+// Each call whose callee may be a value nobody knows, by where that value comes from. The result of another such call is followed to that call's callee,
+// and what is found on a receiver nobody knows to that receiver. `unknown-callees=names` lists the functions and objects too, `unknown-callees/16` looks at one site in sixteen.
+// `unknown-receivers` does the same for the receiver of each property access and prefixes each row with the operation.
+static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, bool printsNames, unsigned oneSiteIn, bool sortsReceivers)
+{
+    constexpr unsigned mostSteps = 48;
+    const ValueFlowSolver& solver = solution.solver();
+    const ValueFlowBodies& bodies = solution.bodies();
+    const ValueFlowUniverse& universe = bodies.universe();
+    const Program& program = solution.program();
+    ValueFlowObjectID unknown = ValueFlowUniverse::unknownObject();
+    ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
+
+    auto holdsUnknown = [&](ValueFlowNodeID node) {
+        return node && solution.sets().contains(solver.possibleValuesOf(node), unknown);
+    };
+    auto nameOfFunction = [&](FunctionID id) {
+        const Function& function = program.at(id);
+        StringPrintStream text;
+        text.print("f", id.index(), " ", function.name ? String::fromUTF8(program.string(function.name)) : String("(anonymous)"_s), " ", nameOf(function.role));
+        if (function.module)
+            text.print(" ", String::fromUTF8(program.string(program.at(function.module).displayPath)));
+        return text.toString();
+    };
+    struct Escape {
+        String shape;
+        String detail;
+    };
+    // A node that retires hands its predecessors straight to the node that covers it: that edge has no statement. The one that brought the value to the retired node has.
+    HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> loggerOfEdgeIntoRetiredNode;
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        if (solver.graph().isRetired(logged.edge.to))
+            loggerOfEdgeIntoRetiredNode.add(logged.edge.from.index(), logged.statement);
+    }
+    auto whyEscapedItself = [&](ValueFlowObjectID, const Vector<ValueFlowNodeID>& way) -> Escape {
+        if (way.size() < 2)
+            return { way.isEmpty() ? "has not escaped"_s : "escaped from the start"_s, emptyString() };
+        ValueFlowStatementID id = solver.statementThatLogged({ way[1], way[0] });
+        if (!id)
+            id = loggerOfEdgeIntoRetiredNode.get(way[1].index());
+        if (!id) {
+            // No rule logs an edge of a body: an operand that its operation hands to code out of sight.
+            FunctionID owner = bodies.nodes().functionOf(way[1]);
+            if (!owner)
+                return { "escaped by no statement"_s, emptyString() };
+            StringPrintStream shape;
+            if (owner.index() >= program.functions.size()) {
+                // The nodes of the host stand behind those of the functions. The number is that of ValueFlowHostNode.
+                shape.print("escaped through host node ", way[1].index() - bodies.nodes().firstNodeOf(owner));
+                if (way.size() > 2) {
+                    if (const ValueFlowNodeKey* key = solver.keyOfMadeNode(way[2]))
+                        shape.print(", out of ", nameOf(key->kind));
+                    if (ValueFlowStatementID logger = solver.statementThatLogged({ way[2], way[1] })) {
+                        const ValueFlowStatement& statement = solver.statementAt(logger);
+                        shape.print(", by ");
+                        if (statement.kind == ValueFlowStatementKind::Operation)
+                            shape.print(statement.opcode);
+                        else
+                            shape.print(nameOf(statement.kind));
+                    }
+                }
+                return { shape.toString(), emptyString() };
+            }
+            shape.print("escaped as an operand of ");
+            bool isFound = false;
+            for (const ValueFlowStatement& user : bodies.statementsOf(owner.index())) {
+                if (user.kind != ValueFlowStatementKind::Operation || isCast(user.opcode))
+                    continue;
+                isFound = std::ranges::any_of(bodies.operandsOf(user), [&](const ValueFlowOperand& operand) { return operand.node == way[1]; });
+                if (isFound) {
+                    shape.print(user.opcode);
+                    break;
+                }
+            }
+            if (!isFound)
+                shape.print("no operation");
+            shape.print(" in ", nameOf(program.at(owner).role));
+            if (way.size() > 2) {
+                if (const ValueFlowNodeKey* key = solver.keyOfMadeNode(way[2]))
+                    shape.print(", out of ", nameOf(key->kind));
+            }
+            return { shape.toString(), nameOfFunction(owner) };
+        }
+        const ValueFlowStatement& statement = solver.statementAt(id);
+        StringPrintStream shape;
+        shape.print("escaped by ");
+        if (statement.kind == ValueFlowStatementKind::Operation)
+            shape.print(statement.opcode);
+        else
+            shape.print(nameOf(statement.kind));
+        StringPrintStream detail;
+        printStatement(detail, solver, id);
+        if (statement.function && statement.function.index() < program.functions.size()) {
+            shape.print(" in ", nameOf(program.at(statement.function).role));
+            detail.print(" in ", nameOfFunction(statement.function));
+        }
+        return { shape.toString(), detail.toString() };
+    };
+
+    WaysOfEscape waysOfEscape;
+    // What an escaped object holds escapes with it. The holder that escaped for another reason is the cause.
+    auto findHolderThatCarriedOut = [&](const Vector<ValueFlowNodeID>& way) -> ValueFlowObjectID {
+        if (way.size() < 3 || way[1] != bodies.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut))
+            return { };
+        const ValueFlowNodeKey* key = solver.keyOfMadeNode(way[2]);
+        if (!holdsContentsOfListedObjects(key))
+            return { };
+        ValueFlowObjectID holder;
+        solution.sets().forEachMember(key->set, [&](ValueFlowObjectID member) {
+            if (!holder && universe.isObject(member) && member != unknown && solution.sets().contains(solver.possibleValuesOf(escaped), member))
+                holder = member;
+        });
+        return holder;
+    };
+    auto whyEscaped = [&](ValueFlowObjectID escapedObject) -> Escape {
+        constexpr unsigned mostHoldersClimbed = 16;
+        ValueFlowObjectID object = escapedObject;
+        Vector<ValueFlowNodeID> way = explainEscape(solution, object, waysOfEscape);
+        unsigned holdersClimbed = 0;
+        Vector<ValueFlowObjectID, mostHoldersClimbed> passed { object };
+        while (holdersClimbed < mostHoldersClimbed) {
+            ValueFlowObjectID holder = findHolderThatCarriedOut(way);
+            if (!holder || passed.contains(holder))
+                break;
+            passed.append(holder);
+            object = holder;
+            way = explainEscape(solution, object, waysOfEscape);
+            ++holdersClimbed;
+        }
+        Escape escape = whyEscapedItself(object, way);
+        if (holdersClimbed)
+            escape.shape = makeString("held by "_s, universe.closureFunction(object) ? "a closure"_s : universe.builtinOf(object) ? "a built-in"_s : "an object"_s, " that "_s, escape.shape);
+        return escape;
+    };
+
+    struct Root {
+        String kind;
+        String detail;
+        String shape { emptyString() };
+    };
+    auto rootOf = [&](ValueFlowNodeID node) -> Root {
+        for (unsigned step = 0; step < mostSteps; ++step) {
+            Vector<ValueFlowNodeID> way = solver.explain(node, unknown);
+            if (way.size() < 2)
+                return { "no way"_s, emptyString() };
+            size_t last = way.size() - 1;
+            ValueFlowEdge birth { way[last], way[last - 1] };
+            std::optional<ValueFlowUnknownSource> source = solver.unknownSourceOf(birth);
+            ValueFlowStatementID id = solver.statementThatLogged(birth);
+            if (!source || !id)
+                return { source ? String(nameOf(*source)) : String("no source"_s), "no statement"_s };
+            const ValueFlowStatement& statement = solver.statementAt(id);
+
+            if (isCallOfValue(statement) && *source == ValueFlowUnknownSource::ResultOfUnknownCallee && holdsUnknown(bodies.operandsOf(statement)[0].node)) {
+                node = bodies.operandsOf(statement)[0].node;
+                continue;
+            }
+            if (solver.isMadeByRule(id) && statement.kind != ValueFlowStatementKind::Escape && solver.keyOf(id).kind == ValueFlowMadeNodeKind::Lookup) {
+                const ValueFlowNodeKey& key = solver.keyOf(id);
+                bool receiverIsUnknown = key.set && (ValueSets::isComplement(key.set) || solution.sets().contains(key.set, unknown));
+                bool listsObject = false;
+                if (!receiverIsUnknown) {
+                    solution.sets().forEachMember(key.set, [&](ValueFlowObjectID member) {
+                        listsObject |= universe.isObject(member);
+                    });
+                }
+                if ((receiverIsUnknown || !listsObject) && last >= 2) {
+                    ValueFlowStatementID reader = solver.statementThatLogged({ way[last - 1], way[last - 2] });
+                    if (reader && solver.statementAt(reader).kind == ValueFlowStatementKind::Operation && solver.statementAt(reader).operandCount && holdsUnknown(bodies.operandsOf(solver.statementAt(reader))[0].node)) {
+                        node = bodies.operandsOf(solver.statementAt(reader))[0].node;
+                        continue;
+                    }
+                }
+                StringPrintStream detail;
+                if (receiverIsUnknown)
+                    return { makeString("member of a receiver nobody knows, "_s, nameOf(*source)), "the reader is not found"_s };
+                if (!listsObject) {
+                    printKey(detail, solver, key);
+                    return { makeString("member of a primitive, "_s, nameOf(*source)), detail.toString() };
+                }
+                ValueFlowObjectID holder;
+                solution.sets().forEachMember(key.set, [&](ValueFlowObjectID member) {
+                    if (!holder && universe.isObject(member))
+                        holder = member;
+                });
+                Escape escape = whyEscaped(holder);
+                printObject(detail, solution, holder);
+                detail.print(" (set of ", solution.sets().size(key.set), ") ", escape.shape, " ", escape.detail);
+                ASCIILiteral kindOfHolder = universe.closureFunction(holder) ? "a closure"_s : universe.builtinOf(holder) ? "a built-in"_s : "an object"_s;
+                return { makeString("member of a known object, "_s, nameOf(*source)), detail.toString(), makeString(kindOfHolder, ", "_s, escape.shape) };
+            }
+            if (*source == ValueFlowUnknownSource::ParameterOfEscapedFunction) {
+                FunctionID function = bodies.nodes().functionOf(birth.to);
+                if (function && function.index() < program.functions.size()) {
+                    Escape escape = whyEscaped(universe.closureOf(function));
+                    unsigned parameter = birth.to.index() - bodies.nodes().firstNodeOf(function);
+                    bool isThis = parameter < program.at(function).numberOfEntryParameters() && program.at(function).entryParameterKind(parameter) == EntryParameter::This;
+                    return { "parameter of an escaped function"_s, makeString(nameOfFunction(function), " "_s, escape.shape, " "_s, escape.detail), makeString(isThis ? "this"_s : "an argument"_s, " of "_s, nameOf(program.at(function).role), ", "_s, escape.shape) };
+                }
+                return { "parameter of an escaped function"_s, "a node of no function"_s };
+            }
+            StringPrintStream detail;
+            printStatement(detail, solver, id);
+            if (statement.kind == ValueFlowStatementKind::Operation && statement.operandCount) {
+                detail.print(" on");
+                printMembersByName(detail, solution, solution.possibleValuesOf(bodies.operandsOf(statement)[0]));
+            }
+            if (statement.function && statement.function.index() < program.functions.size())
+                detail.print(" in ", nameOfFunction(statement.function));
+            StringPrintStream shape;
+            if (statement.kind == ValueFlowStatementKind::Operation)
+                shape.print(statement.opcode);
+            else
+                shape.print(nameOf(statement.kind));
+            if (statement.function && statement.function.index() < program.functions.size())
+                shape.print(" in ", nameOf(program.at(statement.function).role));
+            return { String(nameOf(*source)), detail.toString(), shape.toString() };
+        }
+        return { "a cycle of calls and reads"_s, emptyString() };
+    };
+
+    HashMap<String, unsigned> sitesOfKind;
+    HashMap<String, unsigned> sitesOfRoot;
+    HashMap<String, unsigned> sitesOfShape;
+    HashMap<uint32_t, Root, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> rootOfNode;
+    unsigned calls = 0;
+    unsigned unknownCallees = 0;
+    std::array<unsigned, 2> unknownCalleesWrittenIn { };
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (!solver.isReached(FunctionID(index)))
+            continue;
+        for (const ValueFlowStatement& statement : bodies.statementsOf(index)) {
+            std::optional<unsigned> position = sortsReceivers ? receiverPositionOf(statement) : isCallOfValue(statement) ? std::optional<unsigned>(0) : std::nullopt;
+            if (!position)
+                continue;
+            ++calls;
+            ValueFlowNodeID callee = bodies.operandsOf(statement)[*position].node;
+            if (!holdsUnknown(callee))
+                continue;
+            ++unknownCallees;
+            ++unknownCalleesWrittenIn[isWrittenInProgram(program.at(FunctionID(index)))];
+            if (unknownCallees % oneSiteIn)
+                continue;
+            Root root = rootOfNode.ensure(callee.index(), [&] {
+                return rootOf(callee);
+            }).iterator->value;
+            StringPrintStream prefix;
+            if (sortsReceivers)
+                prefix.print(statement.opcode, ": ");
+            String kind = makeString(prefix.toString(), root.kind);
+            sitesOfKind.add(kind, 0).iterator->value++;
+            sitesOfRoot.add(makeString(kind, "\t"_s, root.detail), 0).iterator->value++;
+            sitesOfShape.add(makeString(kind, "\t"_s, root.shape), 0).iterator->value++;
+        }
+    }
+
+    auto printSorted = [&](const HashMap<String, unsigned>& table, ASCIILiteral label) {
+        Vector<std::pair<unsigned, String>> rows;
+        for (auto& entry : table)
+            rows.append({ entry.value, entry.key });
+        std::ranges::sort(rows, [](const auto& a, const auto& b) {
+            return a.first != b.first ? a.first > b.first : codePointCompareLessThan(a.second, b.second);
+        });
+        out.println(label, " ", rows.size());
+        for (const auto& row : rows)
+            out.println(row.first, "\t", row.second);
+    };
+    out.println(sortsReceivers ? "accesses " : "calls ", calls, sortsReceivers ? " of unknown receivers " : " of unknown callees ", unknownCallees, ": written in the program ", unknownCalleesWrittenIn[1], ", in the library ", unknownCalleesWrittenIn[0]);
+    printSorted(sitesOfKind, "kinds"_s);
+    printSorted(sitesOfShape, "shapes"_s);
+    if (printsNames)
+        printSorted(sitesOfRoot, "roots"_s);
+}
+
 static void printValuesAt(PrintStream& out, ValueFlowSolution& solution, const ValueFlowStatement& statement)
 {
     out.println("  ", statement.opcode, solution.solver().isReached(statement.function) ? "" : " in a function that is not reached");
+    BorrowedValueSetMaker borrowedMaker(solution.makerPool());
+    // A prediction reads what is seen at a node, a proof what is possible there.
+    auto printWhatIsSeenAt = [&](ValueFlowNodeID node) {
+        ValueSetID seen = solution.solver().seenValuesOf(node);
+        if (seen == solution.solver().possibleValuesOf(node))
+            return;
+        out.print("    seen at n", node.index(), " ");
+        if (ValueSets::isComplement(seen))
+            out.println("all but a few members");
+        else
+            printValue(out, solution, seen);
+    };
     unsigned index = 0;
     for (const ValueFlowOperand& operand : solution.bodies().operandsOf(statement)) {
         out.print("  operand ", index++, " ");
         if (operand.node)
             out.print("n", operand.node.index(), " ");
         printValue(out, solution, solution.possibleValuesOf(operand));
+        if (operand.node)
+            printWhatIsSeenAt(operand.node);
+    }
+    index = 0;
+    for (const ValueFlowOperand& guard : solution.bodies().guardsOf(statement)) {
+        out.print("  behind test ", index++, " n", guard.node.index(), " ");
+        printValue(out, solution, ValueFlowRuleContext::valueShownToRules(guard, solution.solver(), borrowedMaker.get()));
     }
     if (statement.result) {
         out.print("  result n", statement.result.index(), " ");
         printValue(out, solution, solution.solver().possibleValuesOf(statement.result));
+        printWhatIsSeenAt(statement.result);
+    }
+}
+
+// Where unseen code cannot run an escaped object suffers what the unknown object suffers, so the marks of that one object decide the facts about all of them.
+static void printWhoMarks(PrintStream& out, ValueFlowSolution& solution, ValueFlowObjectID object)
+{
+    constexpr unsigned numberOfStatementsPrinted = 12;
+    const ValueFlowSolver& solver = solution.solver();
+    const Program& program = solution.program();
+    for (ObjectMutation mutation : allObjectMutations) {
+        std::optional<ValueFlowNodeID> marked = solver.findMadeNode(ValueFlowNodeKey::marked(mutation));
+        if (!marked || !solver.sets().contains(solver.possibleValuesOf(*marked), object))
+            continue;
+        Vector<ValueFlowStatementID> statements;
+        unsigned inProgram = 0;
+        unsigned inLibrary = 0;
+        unsigned elsewhere = 0;
+        for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+            if (logged.edge.to != *marked || !logged.statement || !solver.sets().contains(solver.possibleValuesOf(logged.edge.from), object) || statements.contains(logged.statement))
+                continue;
+            statements.append(logged.statement);
+            FunctionID function = solver.statementAt(logged.statement).function;
+            if (!function || function.index() >= program.functions.size())
+                ++elsewhere;
+            else if (program.at(function).role == FunctionRole::Library || program.at(function).role == FunctionRole::Model)
+                ++inLibrary;
+            else
+                ++inProgram;
+        }
+        out.println("  ", nameOf(mutation), ": statements ", statements.size(), ", in the program ", inProgram, ", in the library ", inLibrary, ", of no function ", elsewhere);
+        for (ValueFlowStatementID statement : statements.span().first(std::min<size_t>(statements.size(), numberOfStatementsPrinted))) {
+            out.print("    ");
+            printStatement(out, solver, statement);
+            out.println();
+        }
     }
 }
 
@@ -595,6 +1296,8 @@ static void printFalsifiers(PrintStream& out, ValueFlowSolution& solution, std::
         case ValueFlowNameKind::RestArgument:
         case ValueFlowNameKind::AddedNames:
         case ValueFlowNameKind::FoundThroughEscapedInstances:
+        case ValueFlowNameKind::NamesOfMethods:
+        case ValueFlowNameKind::NamespaceExports:
             return { };
         }
     };
@@ -796,10 +1499,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
     const Program& program = *context.program;
     PrintStream& out = context.out;
     ValueFlowSolution solution(*context.program, context.build, ValueFlowSolver::Rounds::Due, ValueFlowSolution::Witnesses::ForEveryEdge);
-    if (!solution.hasResult()) {
-        out.println("stopped at a limit");
-        return;
-    }
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowBodies& bodies = solution.bodies();
     const ValueFlowUniverse& universe = bodies.universe();
@@ -827,8 +1526,28 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             printTimeline(out, solution);
             continue;
         }
-        if (word == "escape-roots"_s) {
-            printRootsOfEscape(out, solution);
+        if (word == "first-escapes"_s) {
+            printFirstEscapes(out, solution);
+            continue;
+        }
+        if (word == "outlived-edges"_s) {
+            printOutlivedEdges(out, solution);
+            continue;
+        }
+        if (word == "first-unknown-calls"_s) {
+            printFirstCallsOfUnknownCallees(out, solution);
+            continue;
+        }
+        if (word.startsWith("unknown-callees"_s) || word.startsWith("unknown-receivers"_s)) {
+            size_t slash = word.find('/');
+            std::optional<uint32_t> oneSiteIn = slash == notFound ? std::optional<uint32_t>(1) : numberAfter(word, slash + 1);
+            if (!oneSiteIn || !*oneSiteIn)
+                return printBadArgument(out, word);
+            printUnknownCallees(out, solution, word.contains("=names"_s), *oneSiteIn, word.startsWith("unknown-receivers"_s));
+            continue;
+        }
+        if (word == "escape-roots"_s || word == "escape-lines"_s) {
+            printRootsOfEscape(out, solution, word == "escape-lines"_s);
             continue;
         }
         if (word.startsWith("holds="_s)) {
@@ -839,6 +1558,77 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
                 return printBadArgument(out, word);
             out.println(word);
             printWhyHeld(out, solution, ValueFlowNodeID(*node), ValueFlowObjectID(*object));
+            continue;
+        }
+        if (word.startsWith("first-way="_s)) {
+            size_t colon = word.find(':');
+            std::optional<uint32_t> node = numberAfter(word, 11);
+            std::optional<uint32_t> object = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
+            if (!node || !object || *node >= solver.graph().numberOfNodes() || *object >= universe.numberOfObjects())
+                return printBadArgument(out, word);
+            out.println(word);
+            printFirstWay(out, solution, ValueFlowNodeID(*node), ValueFlowObjectID(*object));
+            continue;
+        }
+        if (word.startsWith("first-into="_s)) {
+            size_t colon = word.find(':');
+            std::optional<uint32_t> node = numberAfter(word, 12);
+            std::optional<uint32_t> object = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
+            if (!node || !object || *node >= solver.graph().numberOfNodes() || *object >= universe.numberOfObjects())
+                return printBadArgument(out, word);
+            out.println(word);
+            printFirstEdgesCarrying(out, solution, ValueFlowNodeID(*node), ValueFlowObjectID(*object));
+            continue;
+        }
+        if (word == "marks=unknown"_s) {
+            out.println(word);
+            printWhoMarks(out, solution, ValueFlowUniverse::unknownObject());
+            continue;
+        }
+        if (word.startsWith("marks=o"_s)) {
+            std::optional<uint32_t> number = numberAfter(word, 7);
+            if (!number || *number >= universe.numberOfObjects())
+                return printBadArgument(out, word);
+            out.println(word);
+            printWhoMarks(out, solution, ValueFlowObjectID(*number));
+            continue;
+        }
+        if (word.startsWith("object=o"_s)) {
+            std::optional<uint32_t> number = numberAfter(word, 8);
+            if (!number || *number >= universe.numberOfObjects())
+                return printBadArgument(out, word);
+            ValueFlowObjectID object(*number);
+            out.print(word, " kind ", static_cast<unsigned>(universe.kindOf(object)));
+            if (BuiltinID builtin = universe.builtinOf(object))
+                out.print(" built-in ", builtins.tokenOf(builtin));
+            if (BuiltinClassID builtinClass = universe.classOf(object))
+                out.print(" class ", builtins.tokenOf(builtinClass), builtins.at(builtinClass).listsNamesDefinedOnNewInstances ? " (lists own names)" : " (lists no own names)");
+            const ValueFlowHeapTables& heap = universe.builtinTables().heap();
+            out.println(solver.sets().contains(universe.knownObjects(), object) ? " known" : "", solver.sets().contains(universe.builtinObjects(), object) ? " built-in-object" : "", solver.sets().contains(heap.objectsOfRealm(), object) ? " of-realm" : "", solver.sets().contains(heap.lockedObjects(), object) ? " locked" : "", solver.sets().contains(universe.objectsThatMayBeAnything(), object) ? " may-be-anything" : "");
+            continue;
+        }
+        if (word.startsWith("out-of="_s)) {
+            std::optional<uint32_t> node = numberAfter(word, 8);
+            if (!node || *node >= solver.graph().numberOfNodes())
+                return printBadArgument(out, word);
+            out.println(word);
+            for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+                if (logged.edge.from != ValueFlowNodeID(*node))
+                    continue;
+                out.print("  round ", logged.round, " -> ");
+                printNode(out, solution, logged.edge.to);
+                out.print("   by ");
+                printStatement(out, solver, logged.statement);
+                out.println();
+            }
+            continue;
+        }
+        if (word.startsWith("into="_s)) {
+            std::optional<uint32_t> node = numberAfter(word, 6);
+            if (!node || *node >= solver.graph().numberOfNodes())
+                return printBadArgument(out, word);
+            out.println(word);
+            printEdgesInto(out, solution, ValueFlowNodeID(*node));
             continue;
         }
         if (word == "evaluators"_s) {

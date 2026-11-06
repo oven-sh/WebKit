@@ -1,4 +1,4 @@
-# Where a name has one declaration more than the limit, the layout that flow saw arrive at the read is kept, whatever else arrives, and the last of the others is left out
+# Where a name has more declarations than the limit, one fewer than the limit is kept. The layout that flow saw arrive at the read is among them, whatever else arrives, and the last of the others are left out
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
 # LOSS: MaxDeclarationsPredictedFromNames x2 f0 v1
@@ -14,16 +14,16 @@ function f0 name="seenToArrive" parameters=[{type=object flags=[IsExpected]}] re
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="lanes" receivers=[L4, ..]
     Return v1
-# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L4):
-# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L4
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L4):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L4
 }
 
 function f1 name="nothingElseToGoBy" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="lanes"
     Return v1
-# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3):
-# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2
 }
 
 function f2 name="Queue" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0

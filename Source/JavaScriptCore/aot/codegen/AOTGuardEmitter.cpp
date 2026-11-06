@@ -42,8 +42,10 @@ static_assert(offsetOfFirstField <= MarkedBlock::atomSize);
 Condition GuardEmitter::isPresentCell(Boxed value, const Type& type)
 {
     // The empty value has no tag bits, so it passes isCell.
-    if (type.primitives & Primitive::Absent)
-        return logicalAnd(isCell(value), isNotEmpty(value));
+    if (type.primitives & Primitive::Absent) {
+        Condition hasNoTagBits = isCell(value);
+        return logicalAnd(hasNoTagBits, isNotEmpty(value));
+    }
     return isCell(value);
 }
 
@@ -159,9 +161,38 @@ void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+void GuardEmitter::defineTestOfCompiledObject(const ValueContext& value, NOESCAPE const Invocable<Condition()> auto& test)
+{
+    ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
+    const Type& type = typeOf(value->objectOperand());
+    if (!shapes.mayBeCellWithBrand(type)) {
+        CellPointer cell = in<CellPointer>(value->objectOperand());
+        checkClaim(cell, [&] {
+            return shapes.isCompiledObject(cell);
+        });
+        defineTest(value, test());
+        return;
+    }
+    if (shapes.hasOnlyCellsWithBrands(type)) {
+        defineTest(value, boolean(false));
+        return;
+    }
+    defineTest(value, selectByBranch<Condition>(shapes.isCompiledObject(in<CellPointer>(value->objectOperand())), test, [&] {
+        return boolean(false);
+    }));
+}
+
 void GuardEmitter::generateHasNoExtraProperties(const ValueContext& value)
 {
-    defineTest(value, emitter<ShapeTestEmitter>().hasNoExtraProperties(in<CellPointer>(value->objectOperand())));
+    ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
+    if (const Type& type = typeOf(value->objectOperand()); shapes.hasOnlyCellsWithBrands(type)) {
+        CellPointer cell = in<CellPointer>(value->objectOperand());
+        defineTest(value, shapes.hasOnlyCellsCreatedWithoutProperties(type) ? shapes.hasNoPropertyOfItsOwn(cell) : shapes.hasOnlyClassFieldNames(cell));
+        return;
+    }
+    defineTestOfCompiledObject(value, [&] {
+        return shapes.hasNoExtraProperties(in<CellPointer>(value->objectOperand()));
+    });
 }
 
 // The bits of the flags byte of a compiled object that pass the test when they are clear. None: the test looks elsewhere.
@@ -209,13 +240,16 @@ void GuardEmitter::planTestsOfFlags()
             const Value& test = m_function.at(id);
             const Terminator& terminator = m_function.at(block).terminator;
             bool decidesBranch = terminator.isConditionalBranch() && terminator.conditionOperand() == id;
-            if (uint8_t flags = decidesBranch ? flagsTestedBy(test) : 0)
+            uint8_t flags = decidesBranch ? flagsTestedBy(test) : 0;
+            if (flags && emitter<ShapeTestEmitter>().mayBeCellWithBrand(typeOf(test.objectOperand())))
+                continue;
+            if (flags)
                 tests.append(Test { id, analyses().identityOf(test.objectOperand()), block, &destinationOf(m_function, terminator.notTaken()), flags });
             else if (test.opcode == Opcode::HasNoFieldOutsideSlot)
                 mayBeUnfinished.add(analyses().identityOf(test.objectOperand()));
         }
     }
-    AOT::stableSort(tests, { }, [](const Test& test) {
+    AOT::stableSortInLine(tests, { }, [](const Test& test) {
         return test.object.index();
     });
 
@@ -264,26 +298,53 @@ Condition GuardEmitter::orderWordHasNoBits(const ValueContext& value, uint32_t b
 
 void GuardEmitter::generateHasNoFieldOutsideSlot(const ValueContext& value)
 {
-    defineTest(value, flagsTestedBy(value.value()) ? testOfFlags(value) : orderWordHasNoBits(value, orderWordHasFieldOutsideSlot));
+    defineTestOfCompiledObject(value, [&] {
+        return flagsTestedBy(value.value()) ? testOfFlags(value) : orderWordHasNoBits(value, orderWordHasFieldOutsideSlot);
+    });
 }
 
 void GuardEmitter::generateHasBirthFieldsFilled(const ValueContext& value)
 {
-    defineTest(value, build().recordedOptions().isSabotaged(Sabotage::UnfinishedObjectsPassForFinished) ? boolean(true) : testOfFlags(value));
+    defineTestOfCompiledObject(value, [&] {
+        return build().recordedOptions().isSabotaged(Sabotage::UnfinishedObjectsPassForFinished) ? boolean(true) : testOfFlags(value);
+    });
 }
 
 void GuardEmitter::generateIsNotFrozen(const ValueContext& value)
 {
-    defineTest(value, orderWordHasNoBits(value, orderWordIntegrityBits));
+    defineTestOfCompiledObject(value, [&] {
+        return orderWordHasNoBits(value, orderWordIntegrityBits);
+    });
 }
 
 void GuardEmitter::generateHasLayoutPrototype(const ValueContext& value)
 {
+    ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
+    if (const Type& type = typeOf(value->objectOperand()); shapes.hasOnlyCellsWithBrands(type)) {
+        defineTest(value, shapes.hasPrototypeOfItsClass(in<CellPointer>(value->objectOperand()), type));
+        return;
+    }
     // The state of an object that was handed a prototype is known only behind a test that has passed.
     if (emitter<SlotAccessEmitter>().stateOfNewObjectBefore(value, value->objectOperand()))
         defineTest(value, boolean(true));
-    else
-        defineTest(value, testOfFlags(value));
+    else {
+        defineTestOfCompiledObject(value, [&] {
+            return testOfFlags(value);
+        });
+    }
+}
+
+// A class without a rank has no word to compare with. What is made below the prototype is linked as it is built.
+void GuardEmitter::generateIsPrototypeOfClass(const ValueContext& value)
+{
+    std::optional<uint32_t> rank = m_placement.rankOfClass(declaredLayoutOf(m_program, value->layout()));
+    if (!rank) {
+        defineTest(value, boolean(false));
+        return;
+    }
+    Pointer prototypes = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.classPrototypes));
+    ptrdiff_t offset = static_cast<ptrdiff_t>(*rank) * sizeof(void*);
+    defineTest(value, Condition(m_out.equal(in<CellPointer>(value->prototypeOperand()).value(), m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), prototypes.value(), offset)))));
 }
 
 void GuardEmitter::generateIsPristine(const ValueContext& value)
@@ -347,8 +408,10 @@ void GuardEmitter::generateHasKeyOrder(const ValueContext& value)
         defineTest(value, boolean(false));
         return;
     }
-    Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(in<CellPointer>(value->objectOperand()));
-    defineTest(value, equal(bitAnd(orderWord, word32(orderAndCountMask)), word32(expected->value())));
+    defineTestOfCompiledObject(value, [&] {
+        Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(in<CellPointer>(value->objectOperand()));
+        return equal(bitAnd(orderWord, orderAndCountMask), expected->value());
+    });
 }
 
 void GuardEmitter::generateIsClosureOf(const ValueContext& value)
@@ -413,7 +476,7 @@ Condition GuardEmitter::isClosureAsCreated(CellPointer cell, BuiltinClassID buil
     }
     // `Base.call(this)`: a constructor function has its `prototype` property, which hides no other name. A word that is read too early is zero, and the test fails.
     for (unsigned index = 0; index < ClosureWords::numberOfStructuresWithPrototypeProperty; ++index)
-        isAsCreated = logicalOr(isAsCreated, equal(structureID, loadImmutable32(AOT_INSTANCE_OFFSET(closures.structuresWithPrototypeProperty) + index * sizeof(uint32_t))));
+        isAsCreated = logicalOr(isAsCreated, equal(structureID, loadFilledOnce32(AOT_INSTANCE_OFFSET(closures.structuresWithPrototypeProperty) + index * sizeof(uint32_t))));
     return isAsCreated;
 }
 
@@ -428,7 +491,8 @@ Condition GuardEmitter::isNotThenable(const OperationContext&, Boxed value, cons
 
 Condition GuardEmitter::hasInstanceRealm(Pointer structure)
 {
-    return equal(loadField<Pointer>(structure, m_heaps.Structure_realm), loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)));
+    Pointer realm = loadField<Pointer>(structure, m_heaps.Structure_realm);
+    return equal(realm, loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)));
 }
 
 void GuardEmitter::branchOnIsNotThenable(Boxed value, const Type& type, BranchTargets targets)
@@ -446,7 +510,7 @@ void GuardEmitter::branchOnIsNotThenable(Boxed value, const Type& type, BranchTa
     }
 
     Pointer structure = loadStructure(cell);
-    Word32 thenableState = bitAnd(loadField<Word32>(structure, m_heaps.Structure_bitField), word32(Structure::s_definitelyNonThenableStateBits));
+    Word32 thenableState = bitAnd(loadField<Word32>(structure, m_heaps.Structure_bitField), Structure::s_definitelyNonThenableStateBits);
     Condition isCachedAsNonThenable = equal(thenableState, word32(static_cast<int32_t>(Structure::DefinitelyNonThenableState::NonThenable) << Structure::s_definitelyNonThenableStateShift));
 
     // The Structure of a compiled object gets this state only where it lists the extra properties of its objects, or they have none.
@@ -469,7 +533,7 @@ void GuardEmitter::branchOnIsWatched(TypedPointer inlineWatchpointSet, BranchTar
     branch(hasNoBits(data, InlineWatchpointSet::IsThinFlag), { normalEdge(isInflated), targets.notTaken });
 
     m_out.appendTo(isInflated);
-    branch(equal(loadByte(data, m_heaps.WatchpointSet_state), word32(IsWatched)), targets);
+    branch(equal(loadByte(data, m_heaps.WatchpointSet_state), IsWatched), targets);
 }
 
 } } } // namespace JSC::AOT::Typed

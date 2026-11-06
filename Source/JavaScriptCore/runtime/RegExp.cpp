@@ -28,6 +28,7 @@
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
 #include "SourceCharacters.h"
+#include "WeakInlines.h"
 #include "YarrCharacterSetBits.h"
 #include "YarrJIT.h"
 #include "YarrPattern.h"
@@ -242,7 +243,8 @@ const AOT::ImageRegExp* RegExp::imageRecord() const
 
 void RegExp::finishCreationFromImage(VM& vm, const AOT::ImageRegExp& record)
 {
-    uint32_t index = AOT::RegExpRecords(*vm.aotState().image).idOf(record).index();
+    // A number says nothing without its image, and any image may run when the record is asked for.
+    uint32_t index = vm.aotState().hasSeveralImages ? imageRecordIsFoundByPattern : AOT::RegExpRecords(*vm.aotState().image).idOf(record).index();
     m_imageRecordNumber = index + 1 < imageRecordIsFoundByPattern ? index + 1 : imageRecordIsFoundByPattern;
     if (record.form() == AOT::RegExpRecordForm::NoMetadata)
         return;
@@ -276,7 +278,7 @@ void RegExp::updateMetadataFromPattern(Yarr::YarrPattern& pattern)
 #if USE(BUN_JSC_ADDITIONS)
     // The compile paths call this again for a RegExp whose RareData finishCreation already built (the callers
     // RELEASE_ASSERT that the pattern parsed to the same subpattern count). Replacing it would free a RareData
-    // the concurrent marker may be reading in visitChildren and drop m_cachedGroupsStructureID.
+    // the concurrent marker may be reading in visitChildren and drop the cached Structure of the groups.
     if (m_rareData)
         return;
 #endif
@@ -324,8 +326,10 @@ void RegExp::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<RegExp>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+#if !USE(BUN_JSC_ADDITIONS)
     if (thisObject->m_rareData)
         visitor.append(thisObject->m_rareData->m_cachedGroupsStructureID);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(RegExp);
@@ -333,7 +337,11 @@ DEFINE_VISIT_CHILDREN(RegExp);
 Structure* RegExp::ensureGroupsStructure(VM& vm, JSGlobalObject* globalObject)
 {
     ASSERT(hasNamedCaptures());
+#if USE(BUN_JSC_ADDITIONS)
+    if (Structure* cached = m_rareData->m_cachedGroupsStructure.get()) {
+#else
     if (Structure* cached = m_rareData->m_cachedGroupsStructureID.get()) {
+#endif
         if (cached->realm() == globalObject)
             return cached;
     }
@@ -355,7 +363,11 @@ Structure* RegExp::ensureGroupsStructure(VM& vm, JSGlobalObject* globalObject)
         expectedOffset++;
     }
     ASSERT(!structure->outOfLineCapacity());
+#if USE(BUN_JSC_ADDITIONS)
+    m_rareData->m_cachedGroupsStructure = Weak<Structure>(structure);
+#else
     m_rareData->m_cachedGroupsStructureID.set(vm, this, structure);
+#endif
     return structure;
 }
 
@@ -424,8 +436,13 @@ std::optional<Yarr::CharacterSetView> RegExp::specificCharacterClass() const
 
 static Yarr::PatternAnalysis patternAnalysisFor(VM& vm)
 {
-    // The second: so that a shell without a compiled program can test the flat program.
-    return vm.hasCompiledCode() || Options::validateRegExpFlatProgram() ? Yarr::PatternAnalysis::Performed : Yarr::PatternAnalysis::Skipped;
+    // The others: so that a shell without a compiled program can test the flat program, and what stands behind the code of an image.
+    bool isPerformed = vm.hasCompiledCode() || Options::validateRegExpFlatProgram();
+#if ENABLE(AOT)
+    // Where nothing compiles a pattern as for an image, the JIT takes the pattern as it is written.
+    isPerformed |= Options::useRegExpImageMode();
+#endif
+    return isPerformed ? Yarr::PatternAnalysis::Performed : Yarr::PatternAnalysis::Skipped;
 }
 
 static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, const String& source, Yarr::ErrorCode& errorCode)
@@ -449,6 +466,7 @@ void RegExp::crashIfLiteralIsInterpreted() const
 
 void RegExp::byteCodeCompileIfNecessary(VM* vm)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExp::byteCodeCompileIfNecessary);
 #if ENABLE(AOT)
     crashIfLiteralIsInterpreted();
 #endif
@@ -524,6 +542,16 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
     return Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
 }
 
+bool RegExp::collectMatchesOfOneSetOrRun(VM& vm, StringView subject, Vector<unsigned, 128>& matches)
+{
+    if (m_state != NotCompiled && m_state != ByteCode)
+        return false;
+    compileIfNecessary(vm, subject.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, subject);
+    if (m_state != ByteCode || !m_regExpBytecode)
+        return false;
+    return Yarr::collectMatchesOfOneSetOrRun(m_regExpBytecode.get(), subject, matches);
+}
+
 void RegExp::countInterpretedMatch(VM& vm)
 {
     AOT::count(vm, AOT::RuntimeCounterID::RegExpMatchesInterpreted);
@@ -561,6 +589,7 @@ bool RegExp::compileWithJIT(VM* vm, Yarr::YarrPattern& pattern, Yarr::CharSize c
 
 void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExp::compile);
     Locker locker { cellLock() };
 
 #if ENABLE(AOT)
@@ -656,6 +685,7 @@ bool RegExp::matchConcurrently(
 
 void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExp::compileMatchOnly);
     Locker locker { cellLock() };
 
 #if ENABLE(AOT)

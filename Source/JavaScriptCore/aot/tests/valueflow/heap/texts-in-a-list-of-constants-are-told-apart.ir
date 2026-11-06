@@ -1,13 +1,13 @@
 # table = { run: 1, stop: 2 }; names = ["run", "stop"]; table[names[0]]    others = ["run", "written nowhere else"]; others[0]
-# A list whose elements are all constants is one Data operation. A text in it that is a name of the program is that name, as it is in a list with a variable in it, so the read under it
-# is a read under two names. A text that names nothing is a text nobody knows (primitive7).
+# A list whose elements are all constants is one Data operation. A text in it is told apart, as it is in a list with a variable in it, so the read under it
+# is a read under two names. A text that names no property is told apart as well.
 # RUN: valueflow-why values=f0:v3 values=f0:v7 values=f0:v9
 # CHECK: values=f0:v3
 # CHECK: result {{*}} 3 members: primitive0 key{{*}} key{{*}}
 # CHECK: values=f0:v7
 # CHECK: operand 1 {{*}} 2 members: key{{*}} key{{*}}
 # CHECK: values=f0:v9
-# CHECK: result {{*}} 3 members: primitive0 primitive7 key{{*}}
+# CHECK: result {{*}} 3 members: primitive0 key{{*}} key{{*}}
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

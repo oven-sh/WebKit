@@ -100,6 +100,8 @@ const functionKind = (name: string, pristineTest: "Mark" | "ClosureAsCreated" = 
     pristineTest,
     lockedMembers: ["prototype"],
     closedToOtherNames: ["prototype"],
+    // As for Function: the compiler follows no function made from text.
+    namesDefinedOnNewInstances: [],
     usesFeature: "Interpreter",
     nativeSymbols: [`call${name}Constructor`, `construct${name}Constructor`],
     call: fromText,
@@ -507,11 +509,11 @@ export default b.declarations(
   }),
   b.class("%MapIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: hostStep(advancesAndExposesContents, collectionHeaps) },
+    proto: { next: libraryStep("MapIteratorPrototype", "next", iteratorResult) },
   }),
   b.class("%SetIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: hostStep(advancesAndExposesContents, collectionHeaps) },
+    proto: { next: libraryStep("SetIteratorPrototype", "next", iteratorResult) },
   }),
   b.class("%StringIterator%", {
     ...lockedIteratorColumns,

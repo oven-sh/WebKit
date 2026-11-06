@@ -3,6 +3,7 @@
 # A function without captures is called without its closure, so in a default build nothing is left of the callee: the read of the field is dead, and whatever the slot holds, `listed` runs.
 # The lie: a writer that nobody listed (`storeInSlotWithoutTest` of the shell) puts a closure of `other` into the slot of `callback`.
 # The flow analysis is off, and the text says by hand what it would find: the field holds closures of `listed` alone (the function type of the source admits every function), the slot is always filled and the property never leaves it.
+# Without the analysis any function object may get another name, and a call of one that a stack trace shows has to say which it entered. No stack trace shows `listed`, so its calls may be direct.
 # A validating build puts ValidateCallee in front of a call that a type made direct, and that keeps the callee alive (the run with the prefix IR).
 # What ends the process is the test of the read that was kept. A validating build tests every value against its own type where the value is made and again at each use,
 # and the type of this callee is the very list that ValidateCallee compares it with. So the failure is a ValueType at the read.
@@ -48,7 +49,7 @@ function f1 name="run" parameters=[{type=L0 site=w0}] results=[{type=anything}] 
     v2 = Call v1, v0 calleeKey="callback"
     Return v2
 }
-function f2 name="listed" results=[{type=anything}] {
+function f2 name="listed" flags=[IsHiddenInStackTraces] results=[{type=anything}] {
     v0 = String string="listed"
     Return v0
 }

@@ -25,7 +25,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v1 = NewClass v0 layout=L1
     v2 = Builtin builtin=Symbol
     v3 = String string="k"
-    v4 = Call v2, -, v3 @200
+    v4 = Call v2, -, v3 callNumber=200 @200
     PutModuleVariable v4 variable=g0
     v6 = FinishClass v1 layout=L1
     v7 = Integer integer=1
@@ -44,7 +44,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 function f1 name="keys" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
     v1 = String string="k"
-    v2 = Call v0, -, v1 @100
+    v2 = Call v0, -, v1 callNumber=100 @100
     v3 = NewObject -, v2 layout=L4 fields=[0]
     v4 = NewClosure v3 function=f4
     v5 = Call v4
@@ -55,7 +55,7 @@ function f1 name="keys" module=m1 kind=CommonJsModule thisType={type=anything} r
 }
 function f2 name="makeKey" results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
-    v1 = Call v0 @300
+    v1 = Call v0 callNumber=300 @300
     PutModuleVariable v1 variable=g1
     v3 = NewObject layout=L3
     v4 = Integer integer=1
@@ -83,14 +83,14 @@ function f4 name="storeUnderKey" module=m1 kind=Arrow captures=[{type=env L4}] r
 }
 function f5 name="copy" results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
-    v1 = Call v0 @400
+    v1 = Call v0 callNumber=400 @400
     PutModuleVariable v1 variable=g2
     Return
 # CHECK-NOT: KeyConstant
 }
 function f6 name="otherCopy" results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
-    v1 = Call v0 @400
+    v1 = Call v0 callNumber=400 @400
     PutModuleVariable v1 variable=g2
     Return
 # CHECK-NOT: KeyConstant
@@ -101,7 +101,7 @@ function f7 name="makeKeysInLoop" results=[{type=anything}] {
     Jump -> next b1()
   b1():
     LoopHint
-    v3 = Call v0 @500
+    v3 = Call v0 callNumber=500 @500
     PutModuleVariable v3 variable=g3
     Branch v1 -> taken b1(), notTaken b2()
   b2():

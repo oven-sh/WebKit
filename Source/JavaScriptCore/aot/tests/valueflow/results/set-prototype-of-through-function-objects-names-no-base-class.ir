@@ -1,0 +1,83 @@
+# function Emitter() {}; function Sibling() {}; Object.setPrototypeOf(flag ? Emitter.prototype : Emitter, Sibling.prototype)
+# A write of a prototype link through an object that flow has lost is filed on every holder that has escaped, function objects and prototype objects alike. It says nothing about the bases of classes:
+# a base that is expected and does not hold costs every guard on the links of the class and of the classes below it. So a write that also goes through a function object names no base.
+# function inherits(Below, Above) { Object.setPrototypeOf(Below.prototype, Above.prototype) }; inherits(First, Base); inherits(Second, Base)
+# A helper that links classes writes through their prototype objects, and names the base of both
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Emitter"
+# CHECK-NOT: prototypeBase
+# CHECK: layout L1 kind=Instance name="Sibling"
+# CHECK-NOT: prototypeBase
+# CHECK: layout L3 kind=Instance name="Base"
+# CHECK-NOT: prototypeBase
+# CHECK: layout L4 kind=Instance name="First" {{*}}prototypeBase=L3
+# CHECK: layout L5 kind=Instance name="Second" {{*}}prototypeBase=L3
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Emitter" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Sibling" constructor=f2 flags=[IsConstructorFunction]
+layout L2 name="Plain"
+layout L3 kind=Instance name="Base" constructor=f3 flags=[IsConstructorFunction]
+layout L4 kind=Instance name="First" constructor=f4 flags=[IsConstructorFunction]
+layout L5 kind=Instance name="Second" constructor=f5 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = PropGet v0 key="prototype"
+    v3 = PropGet v1 key="prototype"
+    v4 = Undefined
+    v5 = Builtin builtin=MathRandom
+    v6 = Call v5
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v8):
+    v9 = Builtin builtin=ObjectSetPrototypeOf
+    v10 = Call v9, -, v8, v3
+    v11 = Construct v0
+    v12 = Construct v1
+    v13 = NewClosure function=f3
+    v14 = NewClosure function=f4
+    v15 = NewClosure function=f5
+    v16 = NewClosure function=f6
+    v17 = Call v16, -, v14, v13
+    v18 = Call v16, -, v15, v13
+    v19 = Construct v13
+    v20 = Construct v14
+    v21 = Construct v15
+    Return
+}
+function f1 name="Emitter" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="Sibling" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="Base" flags=[HasThis] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="First" flags=[HasThis] thisType={type=L4 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="Second" flags=[HasThis] thisType={type=L5 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f6 name="inherits" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="prototype"
+    v3 = PropGet v1 key="prototype"
+    v4 = Builtin builtin=ObjectSetPrototypeOf
+    v5 = Call v4, -, v2, v3
+    Return
+}

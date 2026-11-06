@@ -1,0 +1,26 @@
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="H" constructor=f0 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce staticLink=Fixed}
+function f0 name="H" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    Return
+}
+
+function f1 name="the-target-comes-from-outside" parameters=[{type=i32}, {type=object}] results=[{type=anything}] {
+    v2 = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}, {kind=PrototypeLinkUnchanged layout=L0}, {kind=MemberPassedByStores layout=L0 key="a"}]
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3: guard):
+    v4 = NewObject layout=L0
+    v5 = HasLayoutPrototype v4
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6: guard):
+    v7 = AllGuards v6, v3
+    PutSlot v4, v7, v0 key="a" receivers=[L0] level=Expected
+    CopyDataProperties v1, v4
+    Return v1
+  b3() frequency=Unlikely:
+    Return v1
+# CHECK: [[source]]: L0 = NewObject
+# CHECK: CopyDataProperties v1, [[source]]
+}

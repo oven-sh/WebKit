@@ -1,0 +1,21 @@
+# const back = input(function () {}); back.constructor; back()
+# `Function` is the `constructor` of every function, so whoever holds a function holds it. That a closure has escaped, and that `constructor` is read off a value nobody knows, says no more than that:
+# only `Function` itself in unknown hands, or a call of it, is an event.
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen EvaluatesText
+# CHECK: unseen-code no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = PropGet v3 key="constructor"
+    v5 = Call v3, -
+    Return
+}
+function f1 name="any" results=[{type=anything}] {
+    Return
+}

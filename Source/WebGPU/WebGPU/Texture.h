@@ -27,7 +27,6 @@
 
 #import "BindableResource.h"
 #import <Metal/Metal.h>
-#import <WebGPU/WGPUTextureImpl.h>
 #import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/HashMap.h>
@@ -53,7 +52,7 @@ class TextureView;
 struct ResolvedTextureViewDescriptor;
 
 // https://gpuweb.github.io/gpuweb/#gputexture
-class Texture final : public WebGPU::Texture, public WGPUTextureImpl, public TrackedResource {
+class Texture final : public WebGPU::Texture, public TrackedResource {
     WTF_MAKE_TZONE_ALLOCATED(Texture);
 public:
     // The texture allows views in the given view formats, not in descriptor.viewFormats.
@@ -118,6 +117,9 @@ public:
     WebGPU::Extent3D physicalMiplevelSpecificTextureExtent(uint32_t mipLevel);
 
     id<MTLTexture> texture() const { return m_texture; }
+    // A texture bound directly, rather than through a view, has no swizzle to apply.
+    id<MTLTexture> LEGACY_NODELETE sampledTexture() const { return m_texture; }
+    bool hasSwizzle() const { return false; }
 
     uint32_t width() const { return m_width; }
     uint32_t height() const { return m_height; }

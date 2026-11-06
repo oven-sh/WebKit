@@ -96,7 +96,7 @@ function f7 name="readRatio" results=[{type=anything}] {
 # CHECK: "count" OptionalInt32 @
 # Only its entrypoint enters each reader, so the body is there
 # CODE-LABEL: name="readFilled" module=m0 role=GenericEntrypoint
-# CODE: [[filled]]: L0 @Cell = GetModuleVariable variable=g0
+# CODE: [[filled]]: L0 @Cell = GetModuleVariable {{*}}variable=g0
 # CODE-NEXT: [[next]]: undefined|L0 @JSValue = GetSlot [[filled]] key="next"
 # CODE-NEXT: L0 @JSValue = AssumeType [[next]] provenType=L0
 # CODE-NOT: TypeTest
@@ -104,10 +104,10 @@ function f7 name="readRatio" results=[{type=anything}] {
 # CODE-NOT: TypeTest
 # CODE: i32 @Int32 = BitXor [[count]],
 # CODE-LABEL: name="readFilledOnOnePath" module=m0 role=GenericEntrypoint
-# CODE: [[filledOnOnePath]]: L1 @Cell = GetModuleVariable variable=g1
+# CODE: [[filledOnOnePath]]: L1 @Cell = GetModuleVariable {{*}}variable=g1
 # CODE-NEXT: [[holdsNumber]]: boolean @Boolean = IsSlotFilled [[filledOnOnePath]] key="count" {{*}}[holdsDeclaredType]
 # CODE-NEXT: TestAndBranch [[holdsNumber]]
 # CODE: @Int32 = GetSlot [[filledOnOnePath]], {{*}} key="count" {{*}}[holdsDeclaredType]
 # CODE-LABEL: name="readRatio" module=m0 role=GenericEntrypoint
-# CODE: [[filledAgain]]: L0 @Cell = GetModuleVariable variable=g0
+# CODE: [[filledAgain]]: L0 @Cell = GetModuleVariable {{*}}variable=g0
 # CODE-NEXT: number @Double = GetSlot [[filledAgain]] key="ratio"

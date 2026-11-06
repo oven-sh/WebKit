@@ -19,11 +19,11 @@ struct CodeShapeModel {
 inline constexpr CodeShapeModel codeShapeModel { };
 
 // Compact code calls. Balanced code has in line what is short and pays at once. Fast code has the long forms in line too: an append, equality, the test of a barrier.
-constexpr CodeShape codeShapeFor(double heat, bool runsAtMostOnce, BlockFrequency recordedFrequency, double fastFrom = codeShapeModel.fastFrom)
+constexpr CodeShape codeShapeFor(Expected<double> heat, bool runsAtMostOnce, Expected<BlockFrequency> recordedFrequency, Expected<double> fastFrom = codeShapeModel.fastFrom)
 {
-    if (runsAtMostOnce || recordedFrequency == BlockFrequency::Rare || heat < codeShapeModel.compactBelow)
+    if (runsAtMostOnce || recordedFrequency.predicted() == BlockFrequency::Rare || heat.predicted() < codeShapeModel.compactBelow)
         return CodeShape::Compact;
-    if (heat >= fastFrom)
+    if (heat.predicted() >= fastFrom.predicted())
         return CodeShape::Fast;
     return CodeShape::Balanced;
 }

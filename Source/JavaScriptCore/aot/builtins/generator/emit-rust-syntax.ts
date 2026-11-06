@@ -136,6 +136,7 @@ function formatIntrinsic(meaning: ModelIntrinsicMeaning): string {
     case "HasPromiseStatus":
       return `Intrinsic::HasPromiseStatus(PromiseStatus::${meaning.status})`;
     case "LinkedFunction":
+      if (meaning.expansion !== undefined) return `Intrinsic::${meaning.expansion}`;
       return `Intrinsic::LinkedFunction(${formatRuntimeFunction(meaning.function.id)})`;
     case "IfAbruptCloseIterator":
     case "IsNullish":

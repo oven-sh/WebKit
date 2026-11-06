@@ -44,8 +44,10 @@ ImageText::ImageText(const Image& image)
     , m_text(image.section<uint8_t>(ImageSection::Text))
     , m_identifiers(image.section<ImageIdentifierWord>(ImageSection::Identifiers))
     , m_stringConstants(image.section<uint32_t>(ImageSection::StringConstants))
+    , m_firstStringHeader(image.header().numbers.firstStringHeader)
 #if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    , m_stringHeaders(image.section<ImageStringHeader>(ImageSection::StringHeaders))
+    , m_stringHeaders(image.section<ImageStringHeader>(ImageSection::StringHeaders).first(image.header().numbers.endOfStringHeaders - image.header().numbers.firstStringHeader))
+    , m_headerOfNumberZero(m_stringHeaders.data() - m_firstStringHeader)
     , m_addressOfText(image.header().address + image.header().sections[static_cast<unsigned>(ImageSection::Text)].offset)
 {
 }
@@ -140,7 +142,7 @@ StringImpl* ImageText::headerOf(StringID string) const
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     return m_stringRecords[word.number()].hasText() ? &ensureLazyHeader(word.number()) : nullptr;
 #else
-    const ImageStringHeader& header = m_stringHeaders[word.number()];
+    const ImageStringHeader& header = headerAt(word.number());
     ASSERT(!header.length || header.refCount == StringImpl::refCountOfStaticString());
     return header.length ? reinterpret_cast<StringImpl*>(const_cast<ImageStringHeader*>(&header)) : nullptr;
 #endif
@@ -167,8 +169,12 @@ StringView ImageText::view(StringID string) const
     else
         range = rangeFor(m_stringRecords[word.number()]);
 #else
-    else if (const ImageStringHeader& header = m_stringHeaders[word.number()]; header.length)
+    else if (const ImageStringHeader& header = headerAt(word.number()); header.length) {
+        // The header of a name that an image before this one has points into the text of that image.
+        if (word.number() < m_firstStringHeader)
+            return StringView(reinterpret_cast<const StringImpl&>(header));
         range = { static_cast<uint32_t>(header.characters - m_addressOfText), header.length };
+    }
 #endif
     if (word.is16Bit())
         return StringView(spanReinterpretCast<const char16_t>(m_text.subspan(range.offset, range.length * sizeof(char16_t))));
@@ -180,7 +186,7 @@ unsigned ImageText::hash(StringID string) const
     ImageStringWord word = m_strings[string.index()];
 #if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     if (word.hasIdentifierNumber()) {
-        const ImageStringHeader& header = m_stringHeaders[word.number()];
+        const ImageStringHeader& header = headerAt(word.number());
         return header.length ? header.hash() : StringImpl::empty()->hash();
     }
 #endif
@@ -194,7 +200,7 @@ unsigned ImageText::hash(StringID string) const
     const ImageStringRecord& record = m_stringRecords[word.number()];
     return record.hasText() ? record.hash() : StringImpl::empty()->hash();
 #else
-    return m_stringHeaders[word.number()].hash();
+    return headerAt(word.number()).hash();
 #endif
 }
 
@@ -305,6 +311,24 @@ static void forbidWrites(std::span<uint8_t> pages)
     mprotect(pages.data(), pages.size(), PROT_READ);
 }
 #endif
+
+bool copyStringHeadersBehind(std::span<const uint8_t> firstImage, std::span<const uint8_t> image)
+{
+    const ImageNumberRanges& numbers = headerOfImage(image).numbers;
+    if (numbers.endOfStringHeaders > headerOfImage(firstImage).numbers.capacityOfStringHeaders)
+        return false;
+    size_t size = static_cast<size_t>(numbers.endOfStringHeaders - numbers.firstStringHeader) * sizeof(ImageStringHeader);
+    std::span<const uint8_t> source = image.subspan(rangeOfStringHeaders(image).offset, size);
+    std::span<const uint8_t> target = firstImage.subspan(rangeOfStringHeaders(firstImage).offset + static_cast<size_t>(numbers.firstStringHeader) * sizeof(ImageStringHeader), size);
+    if (source.empty())
+        return true;
+    std::span<uint8_t> pages = pagesHolding(target);
+    if (!allowWrites(pages))
+        return false;
+    memcpySpan(std::span { const_cast<uint8_t*>(target.data()), target.size() }, source);
+    forbidWrites(pages);
+    return true;
+}
 
 bool relocateLoadedImage(std::span<const uint8_t> image)
 {

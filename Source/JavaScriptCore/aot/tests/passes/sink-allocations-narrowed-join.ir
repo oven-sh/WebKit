@@ -31,9 +31,13 @@ function f0 name="builtInTwoBranches" parameters=[{type=anything}, {type=boolean
     Return v0
 # CHECK-NOT: TypeTest
 # CHECK: b5():
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, [[filled1]] provenType=anything
 # CHECK-NEXT: [[first0]]: Array = NewArray
 # CHECK: Jump -> next b7([[first0]])
 # CHECK: b6():
+# CHECK-NEXT: [[filled2]]: fact = Specified
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, [[filled2]] provenType=anything
 # CHECK-NEXT: [[second0]]: Array = NewArray
 # CHECK: Jump -> next b7([[second0]])
 # CHECK: b7([[cell0]]: undefined|Array):
@@ -191,6 +195,8 @@ function f5 name="narrowedParameterHoldsCells" parameters=[{type=anything}, {typ
     Return v10
 # CHECK-NOT: AssumeType
 # CHECK: b5():
+# CHECK-NEXT: [[filled3]]: fact = Specified
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, [[filled3]] provenType=anything
 # CHECK-NEXT: [[built5]]: Array = NewArray
 # CHECK: Jump -> next b6([[built5]])
 # CHECK: b6([[either5]]: Array):
@@ -220,9 +226,11 @@ function f6 name="builtInOneBranch" parameters=[{type=anything}, {type=boolean}]
     Return v8
   b8():
     Return v0
-# CHECK: b7([[tag6]]: i32, [[carried6]]: undefined|Array,
+# CHECK: b7([[tag6]]: i32, [[carried6]]: undefined|unspecified|Array,
 # CHECK-NEXT: Switch [[tag6]]
-# CHECK: ([[cell6]]: undefined|Array):
-# CHECK-NEXT: [[narrowed6]]: Array = AssumeType [[cell6]] provenType=Array
-# CHECK-NEXT: = CallBuiltin [[narrowed6]] overload=ArrayPrototypeLength/0
+# CHECK: ([[cell6]]: undefined|unspecified|Array):
+# CHECK-NEXT: [[narrowed6]]: unspecified|Array = AssumeType [[cell6]] provenType=Array
+# CHECK-NEXT: [[filled4]]: fact = Specified
+# CHECK-NEXT: [[narrowed6There]]: Array = AssumeType [[narrowed6]], [[filled4]] provenType=Array
+# CHECK-NEXT: = CallBuiltin [[narrowed6There]] overload=ArrayPrototypeLength/0
 }

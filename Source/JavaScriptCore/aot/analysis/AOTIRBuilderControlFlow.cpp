@@ -21,17 +21,7 @@ static bool hasContents(const Block& block)
 {
     const Terminator& terminator = block.terminator;
     return terminator.kind != TerminatorKind::Unreachable || !terminator.targets.isEmpty() || !block.values.isEmpty() || !block.parameters.isEmpty()
-        || block.handler || block.role != BlockRole::Ordinary || block.subject || block.frequency != BlockFrequency::Normal;
-}
-
-static TypeID partInside(const Program& program, TypeArena& types, TypeID narrower, TypeID type)
-{
-    if (!narrower)
-        return { };
-    TypeID part = types.intersectionOf(narrower, type);
-    if (part == TypeTable::never || part == type || !types.at(part).isSubsetOf(types.at(type), program))
-        return { };
-    return part;
+        || block.handler || block.role != BlockRole::Ordinary || block.subject || block.frequency.predicted() != BlockFrequency::Normal;
 }
 
 static ValueID appendExpectation(IRBuilder& builder, ValueID result, const DeclaredType& declared)
@@ -95,12 +85,12 @@ static ValueID appendResolvedTailCast(IRBuilder& builder, ValueID result, const 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-BlockID IRBuilder::splitEdge(Edge edge)
+BlockID IRBuilder::splitEdge(Edge edge, std::optional<Target> newBlockHandler)
 {
     RELEASE_ASSERT(m_insertions.isEmpty());
     RELEASE_ASSERT(!edge.isHandlerEdge());
 
-    std::optional<Target> handler = std::exchange(m_handler, std::nullopt);
+    std::optional<Target> handler = std::exchange(m_handler, WTF::move(newBlockHandler));
     BlockID added = addBlock(rarerOf(m_function.at(edge.from).frequency, m_function.at(targetOf(m_function, edge).block).frequency));
     m_handler = WTF::move(handler);
 
@@ -146,7 +136,7 @@ Vector<BlockID> IRBuilder::splitBlock(BlockID block, std::span<const uint32_t> a
         RELEASE_ASSERT(ascendingIndexes[i - 1] < ascendingIndexes[i]);
     RELEASE_ASSERT(ascendingIndexes.back() <= numberOfValues);
 
-    BlockFrequency frequency = m_function.at(block).frequency;
+    Expected<BlockFrequency> frequency = m_function.at(block).frequency;
     CodeShape shape = m_function.at(block).shape;
     std::optional<Target> handler = std::exchange(m_handler, m_function.at(block).handler);
     parts.reserveInitialCapacity(ascendingIndexes.size());
@@ -237,8 +227,7 @@ void IRBuilder::demoteReturnCall(BlockID block)
 
     ValueID result = terminator.callOperand();
     Value& call = m_function.edit(result, ValueEdit::Definition);
-    // What is written Reflect.construct(..) constructs, and a construction is no tail call.
-    call.isTailCall = !(FlagMask::isReflectConstructSyntax(call.opcode) && call.isReflectConstructSyntax());
+    call.isTailCall = true;
     Vector<TailCast, 2> casts;
     for (TailCast cast : terminator.casts())
         casts.append(cast);

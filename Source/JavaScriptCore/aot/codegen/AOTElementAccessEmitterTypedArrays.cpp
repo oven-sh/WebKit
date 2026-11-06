@@ -15,6 +15,7 @@
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTSlotEmitter.h"
 #include "AOTTypedArrayKinds.h"
+#include "AOTValueIdentity.h"
 #include "JSArrayBufferView.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -54,6 +55,19 @@ TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(CellPointer view, 
     return { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
 }
 
+TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(ValueID id, LBasicBlock isNotFixedLength)
+{
+    CellPointer view = in<CellPointer>(id);
+    const Value& definition = m_function.at(sameObjectThroughCasts(m_function, id));
+    if (definition.opcode != Opcode::CallInline || definition.inlineBuiltin() != InlineBuiltin::TypedArrayWithLength)
+        return typedArrayElementsOf(view, isNotFixedLength);
+    if (generator().validatesOrChecksProofs())
+        branchUnless(hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask), isNotFixedLength);
+    else
+        branchUnless(boolean(true), isNotFixedLength);
+    return { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
+}
+
 // The guard has found the view to have a fixed length and the position to be inside it.
 TypedArrayElements ElementAccessEmitter::typedArrayElementsInsideView(const ValueContext& value, CellPointer view, Integer index)
 {
@@ -79,8 +93,14 @@ Operand ElementAccessEmitter::loadTypedArrayElement(const TypedArrayElements& el
 
 Word32 ElementAccessEmitter::clampedToUint8(Integer value)
 {
-    Integer nonNegative = select(lessThan(value, integer(0)), integer(0), value);
-    return low32(select(greaterThan(nonNegative, integer(UINT8_MAX)), integer(UINT8_MAX), nonNegative));
+    Integer nonNegative = select(lessThan(value, 0), 0, value);
+    return low32(select(greaterThan(nonNegative, UINT8_MAX), UINT8_MAX, nonNegative));
+}
+
+Word32 ElementAccessEmitter::clampedToUint8(Word32 value)
+{
+    Word32 nonNegative = select(lessThan(value, 0), 0, value);
+    return select(greaterThan(nonNegative, UINT8_MAX), UINT8_MAX, nonNegative);
 }
 
 void ElementAccessEmitter::storeTypedArrayElement(const TypedArrayElements& elements, Integer index, TypedArrayType type, Operand stored)
@@ -94,7 +114,7 @@ void ElementAccessEmitter::storeTypedArrayElement(const TypedArrayElements& elem
             bits = stored.is<Integer>() ? low32(stored.as<Integer>()) : stored.as<Word32>();
         stored = slot == SlotRepresentation::Uint32 ? Operand(zeroExtended(bits)) : Operand(bits);
     } else if (isClamped(type))
-        stored = clampedToUint8(stored.is<Word32>() ? signExtended(stored.as<Word32>()) : stored.as<Integer>());
+        stored = stored.is<Word32>() ? clampedToUint8(stored.as<Word32>()) : clampedToUint8(stored.as<Integer>());
 
     TypedPointer element(m_heaps.TypedArrayProperties, offsetBy(elements.vector, index, logElementSize(type)).value());
     emitter<SlotEmitter>().store(element, slot, stored);
@@ -112,7 +132,7 @@ void ElementAccessEmitter::generateHasFixedBytes(const ValueContext& value)
     CellPointer view = in<CellPointer>(value->viewOperand());
     Condition hasFixedLength = hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask);
     Condition hasMemory = isNotZero(Integer(loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector).value()));
-    Condition isShort = belowOrEqual(loadField<Integer>(view, m_heaps.JSArrayBufferView_length), integer(std::numeric_limits<int32_t>::max()));
+    Condition isShort = belowOrEqual(loadField<Integer>(view, m_heaps.JSArrayBufferView_length), std::numeric_limits<int32_t>::max());
     defineTest(value, logicalAnd(logicalAnd(hasFixedLength, hasMemory), isShort));
 }
 
@@ -146,7 +166,7 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
     OperandJoin join(m_out, representation);
 
     Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), outside);
-    TypedArrayElements elements = typedArrayElementsOf(view, otherwise);
+    TypedArrayElements elements = typedArrayElementsOf(value->viewOperand(), otherwise);
     branchUnless(below(index, elements.length), outside);
     Operand element = loadTypedArrayElement(elements, index, type);
     join.add(TypedArraySupport(generator()).inRepresentation(value, representation, element, elementTypeOf(type)));
@@ -198,7 +218,7 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
 
     LBasicBlock otherwise = newBlock();
     if (storesInline) {
-        TypedArrayElements elements = typedArrayElementsOf(view, otherwise);
+        TypedArrayElements elements = typedArrayElementsOf(value->viewOperand(), otherwise);
         branchUnless(below(index, elements.length), done);
         storeTypedArrayElement(elements, index, type, elementToStore());
         m_out.jump(done);

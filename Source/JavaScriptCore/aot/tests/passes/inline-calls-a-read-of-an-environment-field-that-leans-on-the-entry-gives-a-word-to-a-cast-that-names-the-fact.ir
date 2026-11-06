@@ -1,0 +1,52 @@
+# That a variable of an enclosing function has been stored holds where a function that reads it is entered. A read of an environment field has no room for a fact. In the copy of the reader it says that the word
+# may be anything, and the cast behind it names the fact that says where the copy begins: the load may go wherever the environment is at hand, and whoever looks at the value stays behind where the call stood.
+# A field that is set when the environment is made needs none of it
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="text" declared={type=string} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}}}, {key="given" declared={type=string} flags=[IsImmutable] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation isUnchangedDuringActivation=true}}}]
+
+function f0 name="reads" captures=[{type=env L0}] results=[{type=number}] {
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = GetStringLength v1
+    Return v2
+}
+# CHECK-LABEL: name="reads"
+# CHECK: string = GetEnvironmentField v0 layout=L0
+# CHECK-NOT: mayPrecedeItsStore
+function f1 name="readsWhatIsSetAtCreation" captures=[{type=env L0}] results=[{type=number}] {
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    v2 = GetStringLength v1
+    Return v2
+}
+function f2 name="calls" parameters=[{type=f0}, {type=boolean}] results=[{type=anything}] {
+    v2 = GetCapture v0 function=f0 index=0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v2 function=f0 [isAlwaysInlined]
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: name="calls"
+# CHECK: b1():
+# CHECK-NEXT: [[entered]]: fact = Entered function=f0
+# CHECK: [[word]]: string|unspecified = GetEnvironmentField {{*}} layout=L0 [mayPrecedeItsStore]
+# CHECK-NEXT: [[text]]: string = AssumeType [[word]], [[entered]] provenType=string
+# CHECK-NEXT: = GetStringLength [[text]]
+
+function f3 name="callsReaderOfWhatIsSetAtCreation" parameters=[{type=f1}, {type=boolean}] results=[{type=anything}] {
+    v2 = GetCapture v0 function=f1 index=0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v2 function=f1 [isAlwaysInlined]
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: name="callsReaderOfWhatIsSetAtCreation"
+# CHECK-NOT: Entered
+# CHECK: string = GetEnvironmentField {{*}} layout=L0 field=1
+# CHECK-NOT: mayPrecedeItsStore

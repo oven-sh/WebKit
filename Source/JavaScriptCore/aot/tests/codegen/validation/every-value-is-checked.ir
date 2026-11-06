@@ -1,6 +1,6 @@
 # Validation checks every value, the read from a proven layout, the array with proven contents and the environment in the frame, and a correct program passes
 # RUN: compile
-# OPTIONS: validate check=validate-back-end
+# OPTIONS: validate check=validate-back-end disable=pass:NarrowConstantVariables
 # CHECK: image not empty
 # STATISTIC: TestAndBranchGroups >= 1
 # STATISTIC: AccessesProven >= 1

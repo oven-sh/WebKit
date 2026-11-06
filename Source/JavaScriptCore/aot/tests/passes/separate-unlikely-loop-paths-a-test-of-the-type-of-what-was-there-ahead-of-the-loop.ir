@@ -1,0 +1,35 @@
+# Every turn asks whether what was handed in is a list, and no turn can change the answer. Only the path behind a failure runs other code: that path leaves, and the back end
+# asks ahead of the loop that is left.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="askForLists" parameters=[{type=anything}, {type=int[0, 100]}] results=[{type=int[0, 100]}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    v7 = TypeTest v0 testedType=Array
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8):
+    Jump -> next b5()
+  b4() frequency=Unlikely:
+    v9 = PropGet v0 key="list"
+    Jump -> next b5()
+  b5():
+    v10 = Increment v6
+    Jump -> next b1(v10)
+  b6():
+    Return v3
+# CHECK: Branch v7 -> taken b3(| 0), notTaken [[failed]](
+# CHECK: b5():
+# CHECK-NEXT: v10: int[1, 100] = Increment v6
+# CHECK-NEXT: Jump -> next b1(v10)
+# CHECK: [[failed]]({{*}}) frequency=Rare:
+# CHECK-NEXT: [[read]]: anything = PropGet v0 key="list"
+}

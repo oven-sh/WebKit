@@ -26,15 +26,18 @@ function f0 name="keysOrValues" parameters=[{type=Map<string, number>}, {type=bo
   b5():
     Return v9
 # CHECK: v2: MapIterator = CallBuiltin v0 overload=MapPrototypeKeys/0
-# CHECK: [[nothing]]: MapIterator = Unspecified valueType=MapIterator
+# CHECK: [[nothing]]: unspecified|MapIterator = Unspecified valueType=MapIterator
 # CHECK-NEXT: Jump -> next b3([[nothing]],
 # CHECK: v3: MapIterator = CallBuiltin v0 overload=MapPrototypeValues/0
 # CHECK-NEXT: [[other]]: 1 = Integer integer=1
 # CHECK: Jump -> next b3(v3, [[other]],
-# CHECK-NEXT: b3(v4: MapIterator, [[arm]]: int[0, 1], [[map]]: Map<string, number>):
+# CHECK-NEXT: b3(v4: unspecified|MapIterator, [[arm]]: int[0, 1], [[map]]: unspecified|Map<string, number>):
 # CHECK-NEXT: Switch [[arm]] cases=[0] -> case [[walk]](), otherwise [[protocol]]()
-# CHECK: = MapNext [[map]],
+# CHECK: = MapNext [[mapInArm]],
+# CHECK: [[mapInArm]]: Map<string, number> = AssumeType [[map]], [[isMap]] provenType=Map<string, number>
 # CHECK: [[protocol]]() frequency=Unlikely:
-# CHECK-NEXT: = CallDirect v4 function=[[openIterator]] [isNeverInlined]
+# CHECK-NEXT: [[isIterator]]: fact = Specified
+# CHECK-NEXT: [[iterator]]: MapIterator = AssumeType v4, [[isIterator]] provenType=MapIterator
+# CHECK-NEXT: = CallDirect [[iterator]] function=[[openIterator]] [isNeverInlined]
 # CHECK: function [[openIterator]] name="openIterator"
 }

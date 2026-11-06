@@ -222,6 +222,8 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     // TODO: remove once atomic strings are process-wide.
     static constexpr const unsigned s_hashFlagNeverAtomize = 1u << 6;
+    // A string in the image of a compiled program. Like an atom, it is the same StringImpl each time the program evaluates the literal.
+    static constexpr const unsigned s_hashFlagIsInImage = 1u << 7;
 #endif
 
     static constexpr const unsigned s_hashZeroValue = 0;
@@ -271,6 +273,14 @@ public:
     WTF_EXPORT_PRIVATE static RefPtr<StringImpl> create(std::span<const char8_t>);
 
     static Ref<StringImpl> createSubstringSharingImpl(StringImpl&, unsigned offset, unsigned length);
+    static Ref<StringImpl> createSubstringSharingImpl(StringImpl& rep, unsigned offset, unsigned length, unsigned hash)
+    {
+        Ref string = createSubstringSharingImpl(rep, offset, length);
+        ASSERT(hash == (string->is8Bit() ? StringHasher::computeHashAndMaskTop8Bits(string->span8()) : StringHasher::computeHashAndMaskTop8Bits(string->span16())));
+        if (!string->isStatic() && !string->hasHash())
+            string->setHash(hash);
+        return string;
+    }
 
     ALWAYS_INLINE static Ref<StringImpl> create(ASCIILiteral literal) { return createWithoutCopying(literal.span8()); }
 
@@ -283,6 +293,18 @@ public:
         Ref string = create(characters);
         if (!string->isStatic() && !string->hasHash())
             string->setHash(hash);
+        return string;
+    }
+    static RefPtr<StringImpl> tryCreate(std::span<const Latin1Character> characters, unsigned hash)
+    {
+        ASSERT(!characters.empty());
+        ASSERT(hash == StringHasher::computeHashAndMaskTop8Bits(characters));
+        std::span<Latin1Character> copy;
+        RefPtr string = tryCreateUninitialized(characters.size(), copy);
+        if (!string) [[unlikely]]
+            return nullptr;
+        copyCharacters(copy, characters);
+        string->setHash(hash);
         return string;
     }
 
@@ -340,6 +362,11 @@ public:
 
     bool isSymbol() const { return m_hashAndFlags & s_hashFlagStringKindIsSymbol; }
     bool isAtom() const { return m_hashAndFlags & s_hashFlagStringKindIsAtom; }
+#if USE(BUN_JSC_ADDITIONS)
+    bool isAtomOrInImage() const { return m_hashAndFlags & (s_hashFlagStringKindIsAtom | s_hashFlagIsInImage); }
+#else
+    bool isAtomOrInImage() const { return isAtom(); }
+#endif
     void setIsAtom(bool);
     
     bool isExternal() const { return bufferOwnership() == BufferExternal; }
@@ -374,7 +401,7 @@ public:
     static constexpr uint32_t refCountOfStaticString() { return s_refCountFlagIsStaticString; }
     static constexpr unsigned hashAndFlagsOfStaticString(unsigned hash, bool is8Bit, StringKind stringKind)
     {
-        return (is8Bit ? s_hashFlag8BitBuffer : s_hashZeroValue) | s_hashFlagDidReportCost | stringKind | BufferInternal | (hash << s_flagCount);
+        return (is8Bit ? s_hashFlag8BitBuffer : s_hashZeroValue) | s_hashFlagDidReportCost | s_hashFlagIsInImage | stringKind | BufferInternal | (hash << s_flagCount);
     }
 #endif
 

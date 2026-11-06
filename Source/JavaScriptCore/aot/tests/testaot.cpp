@@ -9,24 +9,33 @@
 #include <wtf/MainThread.h>
 
 #if OS(WINDOWS)
+#include <fcntl.h>
+#include <io.h>
 #include <windows.h>
 #endif
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTableBindings.h"
 #include "AOTChildProcess.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTCrashExitCode.h"
 #include "AOTDiagnostics.h"
+#include "AOTImageFormat.h"
 #include "AOTLimits.h"
 #include "AOTNativeTest.h"
 #include "AOTPass.h"
 #include "AOTPassID.h"
 #include "AOTProgramFile.h"
+#include "AOTProgramTables.h"
+#include "AOTRuntimeDescription.h"
 #include "AOTSchemaEnums.h"
 #include "AOTTestCommand.h"
 #include "AOTTestRunner.h"
 #include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
+#include "AOTValueFlowWidenedReport.h"
+#include "AOTValueFlowWidenedSolve.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include "InitializeThreading.h"
@@ -54,18 +63,18 @@ struct SubcommandEntry {
 static constexpr ASCIILiteral filterFlag = "--filter"_s;
 static constexpr ASCIILiteral jobsFlag = "--jobs"_s;
 
-static constexpr ASCIILiteral runFlags[] { filterFlag, jobsFlag, showOutputFlag, optionFlag, onlyDiagnosticFlag };
+static constexpr ASCIILiteral runFlags[] { filterFlag, jobsFlag, showOutputFlag, singleProcessRunFlag, optionFlag, onlyDiagnosticFlag };
 static constexpr ASCIILiteral nativeFlags[] { previousNativeTestFlag, singleProcessFlag, nativeTestPartFlag };
-static constexpr ASCIILiteral printFlags[] { "--until"_s, "--function"_s, "--wire"_s };
+static constexpr ASCIILiteral printFlags[] { "--until"_s, "--function"_s, "--wire"_s, "--command"_s };
 static constexpr ASCIILiteral compileFlags[] { "--output"_s };
 static constexpr ASCIILiteral fuzzReaderFlags[] { "--seed"_s, "--count"_s };
 
 static constexpr SubcommandEntry subcommandEntries[] {
     { "all"_s, Subcommand::All, { }, "<folder>"_s },
-    { runSubcommandName, Subcommand::Run, runFlags, "<file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--option=<option word>].. [--only-diagnostic=<kind>]"_s },
+    { runSubcommandName, Subcommand::Run, runFlags, "<file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--single-process] [--option=<option word>].. [--only-diagnostic=<kind>]"_s },
     { nativeSubcommandName, Subcommand::Native, nativeFlags, "[<filter>] [--after=<name>] [--part=<i>/<n>] [--single-process]"_s },
-    { "list"_s, Subcommand::List, { }, "commands|passes|options|limits|statistics|diagnostics"_s },
-    { "print"_s, Subcommand::Print, printFlags, "<program> [--until=<PassID>] [--function=f<n>].. [--wire] { option word }"_s },
+    { "list"_s, Subcommand::List, { }, "commands|passes|options|limits|statistics|diagnostics|image-format"_s },
+    { "print"_s, Subcommand::Print, printFlags, "<program> [--until=<PassID>] [--function=f<n>].. [--wire] [--command=\"<command> { argument }\"] { option word }"_s },
     { "compile"_s, Subcommand::Compile, compileFlags, "<program> --output=<image> { option word }"_s },
     { "write-out"_s, Subcommand::WriteOut, { }, "<file>"_s },
     { "fuzz-reader"_s, Subcommand::FuzzReader, fuzzReaderFlags, "[--seed=<n>] [--count=<n>] [<program>..]"_s },
@@ -174,10 +183,14 @@ static int runRunSubcommand(std::span<const String> arguments, const ChildProces
             request.showsOutput = true;
             continue;
         }
+        if (argument == singleProcessRunFlag) {
+            request.launcher = nullptr;
+            continue;
+        }
 
         StringView flagName = flagNameOf(argument);
         StringView value = StringView(argument).substring(flagName.length() + 1);
-        if (flagName == showOutputFlag)
+        if (flagName == showOutputFlag || flagName == singleProcessRunFlag)
             return reportError(exitCodeForInvalidCommandLine, "testaot run: ", flagName, " takes no value");
         if (value.isEmpty())
             return reportError(exitCodeForInvalidCommandLine, "testaot run: ", flagName, " needs a value");
@@ -273,7 +286,7 @@ static void listLimits(PrintStream& out)
 {
     for (LimitID limit : allMembersOf<LimitID>) {
         if (limit != LimitID::None)
-            out.println(nameOf(limit), " ", defaultLimitValue(limit, hostArchitecture()), canBeLowered(limit) ? "" : " fixed", " ", purposeOf(limit));
+            out.println(nameOf(limit), " ", defaultLimitValue(limit, hostArchitecture()), isLoweredByAll(limit) ? "" : " fixed", " ", purposeOf(limit));
     }
 }
 
@@ -297,6 +310,21 @@ static void listDiagnostics(PrintStream& out)
     }
 }
 
+// For tools that read an executable without these headers. The facts are the ones that the executable's run time states about itself, so a tool can tell whether this list is about that run time.
+static void listImageFormat(PrintStream& out)
+{
+    std::span<const ASCIILiteral> names = namesOfRuntimeFacts();
+    auto facts = spanReinterpretCast<const uint32_t>(descriptionOfThisRuntime().subspan(sizeof(RuntimeDescription)));
+    for (size_t i = 0; i < names.size(); ++i)
+        out.println("fact ", facts[i], " ", names[i]);
+#define AOT_PRINT_IMAGE_SECTION(name, Element, statistic) out.println("section " #name);
+    FOR_EACH_AOT_IMAGE_SECTION(AOT_PRINT_IMAGE_SECTION)
+#undef AOT_PRINT_IMAGE_SECTION
+    out.println("offset ProgramTables::firstEnvironmentShape ", offsetof(ProgramTables, firstEnvironmentShape));
+    out.println("offset ProgramTables::closureFunctions ", offsetof(ProgramTables, closureFunctions));
+    out.println("offset ProgramTables::ranges ", offsetof(ProgramTables, ranges));
+}
+
 struct ListEntry {
     ASCIILiteral name;
     void (*print)(PrintStream&);
@@ -309,6 +337,7 @@ static constexpr ListEntry listEntries[] {
     { "limits"_s, listLimits },
     { "statistics"_s, listStatistics },
     { "diagnostics"_s, listDiagnostics },
+    { "image-format"_s, listImageFormat },
 };
 
 static int runListSubcommand(std::span<const String> arguments)
@@ -346,11 +375,19 @@ int main(int argc, char** argv)
 {
     using namespace JSC::AOT;
 
+#if OS(WINDOWS)
+    terminateWithExceptionCodeOnCrash();
+    // A line ends the same way on every system.
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
+
     JSC::Config::configureForTesting();
     // As Bun says where it runs compiled code: on macOS a process without the JIT that says nothing has no SharedArrayBuffer.
     JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 
     WTF::initializeMainThread();
+    Typed::reportWhatIsFoundOnlyFromLessBy(Typed::reportWhatIsFoundOnlyFromLessInWords);
 
     std::span<char*> commandLine = unsafeMakeSpan(argv, static_cast<size_t>(argc));
     const SubcommandEntry* entry = commandLine.size() > 1 ? findSubcommand(StringView::fromLatin1(commandLine[1])) : nullptr;
@@ -369,7 +406,6 @@ int main(int argc, char** argv)
             return exitCodeForInvalidCommandLine;
         if (JSC::Options::aotImagePath()) {
             JSC::Options::useSharedArrayBuffer() = true;
-            JSC::Options::useShadowRealm() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             for (const String& option : parsedCommandLine->jscOptions)
@@ -378,6 +414,8 @@ int main(int argc, char** argv)
         JSC::Options::notifyOptionsChanged();
     }
     JSC::initialize();
+    BuiltinBindings::bindNativeHelpersOfEngine();
+    installTrapReporter();
 
     checkTestCommandNames();
     setProgramPath(String::fromUTF8(commandLine[0]));
@@ -389,10 +427,13 @@ int main(int argc, char** argv)
 
     switch (entry->subcommand) {
     case Subcommand::All:
+        enterTemporaryFolder();
         return runAllSubcommand(arguments, createLauncher());
     case Subcommand::Run:
+        enterTemporaryFolder();
         return runRunSubcommand(arguments, createLauncher());
     case Subcommand::Native:
+        enterTemporaryFolder();
         return runNativeSubcommand(arguments, createLauncher());
     case Subcommand::List:
         return runListSubcommand(arguments);

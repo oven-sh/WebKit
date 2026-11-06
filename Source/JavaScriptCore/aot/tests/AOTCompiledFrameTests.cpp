@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCallSiteCache.h"
 #include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTCompiledCaller.h"
@@ -360,6 +361,63 @@ static void testWhichFramesAreShown()
     AOT_TEST_CHECK(!belowShownFrame.shows(TraceVisibility::VisibleOnlyOnTop, false) && belowShownFrame.shows(TraceVisibility::Visible, false));
 }
 
+// The table without an image: what resolve() does with an address that it does not find.
+struct CallSiteCacheSlots {
+    static constexpr uintptr_t firstAddress = 0x100000000000;
+
+    const void* addressWith(size_t primary, std::initializer_list<size_t> secondaries)
+    {
+        for (uintptr_t address = nextAddress + (primary << 2);; address += CallSiteCache::initialNumberOfEntries << 2) {
+            size_t secondary = address * 0x9e3779b97f4a7c15ull >> (64 - std::countr_zero(CallSiteCache::initialNumberOfEntries));
+            if (std::ranges::find(secondaries, secondary) != secondaries.end()) {
+                nextAddress = (address & ~((CallSiteCache::initialNumberOfEntries << 2) - 1)) + (CallSiteCache::initialNumberOfEntries << 2);
+                return std::bit_cast<const void*>(address);
+            }
+        }
+    }
+
+    unsigned askForAll(std::span<const void* const> addresses)
+    {
+        unsigned numberNotFound = 0;
+        for (const void* address : addresses) {
+            if (cache.find(address))
+                continue;
+            ++numberNotFound;
+            cache.slotForNewEntry(address).address = address;
+        }
+        return numberNotFound;
+    }
+
+    size_t numberOfEntries() const { return cache.m_entries.size(); }
+
+    CallSiteCache cache;
+    uintptr_t nextAddress { firstAddress };
+};
+
+static void testCallSiteCacheMakesRoomInTheOtherSlot()
+{
+    // The first has one slot. The third shares it, and its other slot is held by the second, which has a free one.
+    CallSiteCacheSlots slots;
+    const void* addresses[] = { slots.addressWith(5, { 5 }), slots.addressWith(9, { 70 }), slots.addressWith(9, { 5 }) };
+    for (unsigned turn = 0; turn < 8; ++turn)
+        slots.askForAll(addresses);
+    AOT_TEST_CHECK(!slots.askForAll(addresses));
+    AOT_TEST_CHECK(slots.numberOfEntries() == CallSiteCache::initialNumberOfEntries);
+}
+
+static void testCallSiteCacheGrowsWhereEntriesPushEachOtherOut()
+{
+    // Three addresses with two slots between them.
+    CallSiteCacheSlots slots;
+    const void* addresses[] = { slots.addressWith(5, { 9 }), slots.addressWith(9, { 5 }), slots.addressWith(5, { 9 }) };
+    AOT_TEST_CHECK(slots.askForAll(addresses) == 3);
+    AOT_TEST_CHECK(slots.askForAll(addresses));
+    for (unsigned turn = 0; turn < 8 * CallSiteCache::maxNumberOfEntries; ++turn)
+        slots.askForAll(addresses);
+    AOT_TEST_CHECK(!slots.askForAll(addresses));
+    AOT_TEST_CHECK(slots.numberOfEntries() > CallSiteCache::initialNumberOfEntries);
+}
+
 std::span<const NativeTest> compiledFrameTests()
 {
     static constexpr NativeTest tests[] = {
@@ -375,6 +433,8 @@ std::span<const NativeTest> compiledFrameTests()
         { "compiled-frames/tail-call-of-a-builtin-that-throws"_s, testTailCallOfABuiltinThatThrows },
         { "compiled-frames/no-frame-is-compiled-without-an-image"_s, testNoFrameIsCompiledWithoutAnImage },
         { "compiled-frames/which-frames-are-shown"_s, testWhichFramesAreShown },
+        { "compiled-frames/call-site-cache-makes-room-in-the-other-slot"_s, testCallSiteCacheMakesRoomInTheOtherSlot },
+        { "compiled-frames/call-site-cache-grows-where-entries-push-each-other-out"_s, testCallSiteCacheGrowsWhereEntriesPushEachOtherOut },
     };
     return tests;
 }

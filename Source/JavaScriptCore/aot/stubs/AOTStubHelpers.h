@@ -87,17 +87,34 @@ void boxExactInt32(StubAssembler&, GPRReg integer, GPRReg result);
 void decodeCell32(StubAssembler&, GPRReg word, GPRReg result);
 // The reference is bits 0 to 31 of word. The bits above are not cleared.
 void encodeCell32(StubAssembler&, GPRReg cell, GPRReg word);
+// The same for a cell that the program passes in. A narrow reference never refers to a cell kept in a frame; a build that validates or checks proofs at run time checks that here.
+void encodeCellOfProgram(StubAssembler&, GPRReg cell, GPRReg word);
 // Gives an Extension one more granule in the room it has. Leaves where granuleBits is more than one bit, where a granule held comes after it, and where the Extension is full.
 void appendGranule(StubAssembler&, GPRReg extension, GPRReg granuleBits, GPRReg scratch, GPRReg secondScratch, JumpList& cannotAppend);
+// How many units of sixteen bytes an Extension with these granules takes. There are at most maxGranulesOfExtensionFromStub.
+constexpr unsigned maxGranulesOfExtensionFromStub = 13;
+void loadUnitsOfExtensionWith(StubAssembler&, GPRReg granuleBits, GPRReg units, GPRReg scratch);
 // The caller has proven that the word is a literal string word.
-void loadLiteralString(StubAssembler&, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated);
+// The instance may lie in the scratch register.
+void loadLiteralString(StubAssembler&, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated, GPRReg instance = instanceGPR);
 void decodeStructureID(CCallHelpers&, GPRReg idAndResult);
 void loadStructure(StubAssembler&, GPRReg cell, GPRReg result);
 void extractBits(StubAssembler&, GPRReg source, unsigned shift, unsigned width, GPRReg result);
 void loadShapeWord(StubAssembler&, GPRReg cell, GPRReg result);
+// In an image that shares its realms, a compiled object may be of another image. Its shape is no index into the tables of this one, so it goes the way of an object that is not compiled.
+// The register holds the shape word of a compiled object.
+void branchUnlessShapeOfThisImage(StubAssembler&, GPRReg shapeWord, JumpList& otherwise);
+// The register holds the closure number of a closure.
+void branchUnlessClosureNumberOfThisImage(StubAssembler&, GPRReg number, JumpList& otherwise);
+// The cell is a compiled object.
+void branchIfObjectOfOtherImage(StubAssembler&, GPRReg cell, JumpList& isOfOtherImage);
+JumpList branchIfNotCompiledObjectOfThisImage(StubAssembler&, GPRReg cell);
+Jump branchIfCompiledObjectOfThisImage(StubAssembler&, GPRReg cell);
 void loadCellVM(StubAssembler&, GPRReg cellAndResult);
 // Overwrites structure.
 Jump branchIfNotOfThisRealm(StubAssembler&, GPRReg structure);
+// Overwrites structure.
+void branchIfHasNamesOrIsNotOfThisRealm(StubAssembler&, GPRReg structure, JumpList&);
 Jump branchIfNotPristine(StubAssembler&, GPRReg cell);
 // The masked indexing byte of a pristine cell. For any other cell a value above 0xff, which equals no indexing shape.
 void loadPristineArrayKind(StubAssembler&, GPRReg array, GPRReg kind, unsigned mask);
@@ -137,11 +154,19 @@ struct VectorGrowth {
     GPRReg storage;
     GPRReg allocator;
     GPRReg scratch;
+    // In place of an array: the extra properties of a compiled object.
+    bool isOfExtraProperties { false };
 };
 // For an array whose vector is as long as the array. Gives it the vector that JSObject::ensureLength() gives it for one more element. The public length stays. Preserves array alone.
 void growFullVector(StubAssembler&, const VectorGrowth&, JumpList& slowPath);
 // The same for an array that is to have neededLength elements, which its vector has no room for. Preserves array and neededLength.
 void growVectorFor(StubAssembler&, const VectorGrowth&, GPRReg neededLength, JumpList& slowPath);
+
+// AOTStubsElements.cpp
+// A trap is handed an index as its text. The texts of the small ones are kept once they have been asked for. Goes on where the base is a proxy and the text of the key is there. Writes storage, index and text.
+void loadTextOfIndexForTrap(StubAssembler&, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);
+// The same for a key that is an int32, whatever it is asked of.
+void loadKeptTextOfIndex(StubAssembler&, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);
 
 // AOTStubsBarriers.cpp
 Jump branchIfBarrierIsNeeded(StubAssembler&, GPRReg owner, GPRReg scratch);
@@ -179,6 +204,12 @@ inline void checkStubOperands(StubKey target, std::initializer_list<GPRReg> regi
 inline Address softStackLimit()
 {
     return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
+}
+
+// A trap that waits to be handled moves this limit above every stack pointer.
+inline Address trapAwareSoftStackLimit()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
 }
 
 } } // namespace JSC::AOT

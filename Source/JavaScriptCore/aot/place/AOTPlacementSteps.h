@@ -25,6 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 struct PlacementContext {
     const SlotPlan& slots() const { return inputs.slots; }
     bool isCompiledObject(LayoutID id) const { return inputs.slots.storageOf(id) == LayoutStorage::CompiledObject; }
+    bool holdsCompiledObjects(LayoutID id) const { return inputs.slots.holdsCompiledObjects(id); }
     bool isEnvironment(LayoutID id) const { return inputs.slots.storageOf(id) == LayoutStorage::Environment; }
     bool receivesShape(LayoutID id) const { return isCompiledObject(id) || isEnvironment(id) || id == closureLayout; }
 
@@ -171,14 +172,18 @@ struct SiteLists {
     Vector<SourceSite> templateObjects;
     Vector<DataID> copyOnWriteArrays;
     Vector<DataID> arraysWithStorageInImage;
+    Vector<DataID> dataMadeOnce;
     Vector<BuiltinCellKey> builtinCells;
     Vector<StringID> bigIntConstants;
     Vector<RequireEdgeUse> requireEdges;
     Vector<ModuleBuiltinUse> moduleBuiltins;
+    Vector<ModuleID> moduleNamespaces;
     unsigned maxClosureCaptures { 0 };
 };
 
 struct PlacedSites : SiteLists {
+    // The fields that stores may create, per layout, in the order in which the bodies contain the stores.
+    Vector<FieldCreationUse> sourceFieldCreations;
     // By function: how many stores that may add a field the functions in front of it have. One entry more than there are functions.
     Vector<uint32_t> firstStoreThatMayAdd;
     // By store that may add a field, the functions in their sequence.
@@ -238,6 +243,7 @@ struct LiteralSites {
     Vector<uint32_t> templateObjectOffsets;
     Vector<uint32_t> sharedStorageOffsets;
     Vector<uint32_t> nodesOfStorageInImage;
+    Vector<uint32_t> cellOffsetsOfDataMadeOnce;
 };
 
 struct PlacedOrderWords {

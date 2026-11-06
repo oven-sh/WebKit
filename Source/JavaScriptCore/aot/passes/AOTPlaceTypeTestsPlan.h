@@ -18,16 +18,24 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class FunctionAnalyses;
+class Heat;
+
 // The operations that the rules report as sites: accesses by name and by key, element accesses whose position is not tested yet, calls and what they rest on, operators, tests of a type.
 inline constexpr OpcodeSet testSiteOpcodes = builtinUseOpcodes | Value::opcodesWithForm | namedAccesses | OpcodeSet {
     Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas,
     Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement,
-    Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::SuperGet, Opcode::SuperSet, Opcode::CallBuiltin,
+    Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::SuperConstructList, Opcode::ConstructSuperForwardVarargs, Opcode::SuperGet, Opcode::SuperSet, Opcode::CallBuiltin,
     Opcode::GetConstructPrototype, Opcode::InstanceOf, Opcode::NewObject, Opcode::TypeTest,
 };
 
 // PlaceTypeTests has nothing to do in a function without any of these. The two others are the question for an element, whose arm for a hole it marks, and the test of a slot, behind which it reads an option that was left out.
 inline constexpr OpcodeSet opcodesPlaceTypeTestsLooksFor = testSiteOpcodes | OpcodeSet { Opcode::HasArrayElement, Opcode::IsSlotFilled };
+
+bool mayPlaceTestsOfAccessesByName(const Heat&, FunctionAnalyses&, BlockID);
+// A prediction: what arrives as the receiver in this function has none of the layouts of the program, whatever other callers hand over.
+bool arrivesWithoutLayoutOfProgram(FunctionPassContext&, BlockID, ValueID receiver);
+bool paysToLeaveDataFromOutsideUntested(FunctionPassContext&, BlockID);
 
 enum class PlannedTestPosition : uint8_t { BeforeUse, OnEdge };
 
@@ -87,6 +95,10 @@ struct TestPlacementPlan {
 enum class ProofsHeldByGuards : uint8_t { AreListed, AreLeftOut };
 Vector<ExistingProof> findExistingProofs(FunctionPassContext&, const TestConditions&, ProofsHeldByGuards = ProofsHeldByGuards::AreListed);
 ValueID ensureEdgeResult(IRBuilder&, FunctionAnalyses&, Edge, uint32_t proof);
+
+// The `k` of `k < list.length` in front of `list[k]`.
+enum class ComparedPositions : uint8_t { HaveNoTests, HaveTests };
+PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext&, ComparedPositions);
 
 TestPlacementPlan planTestPlacement(FunctionPassContext&);
 TestPlacementPlan planTestPlacement(FunctionPassContext&, TestSites&&);

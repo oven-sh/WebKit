@@ -3,10 +3,10 @@
 # the image puts Derived below Base, and what the constructor of Base allocates under the prototype object of Derived is an instance of Derived and nothing else.
 # RUN: valueflow-apply
 # CHECK-LABEL: function f0
-# CHECK: [[made]]: L0|L1 = AssumeType v7
-# CHECK: PropGet [[made]] key="a" {{*}} receivers=[L0, L1]
-# CHECK: PropGet [[made]] key="b" {{*}} receivers=[L0, L1]
-# CHECK: function f2 {{*}} results=[{type=L0|L1}]
+# CHECK: [[made]]: L1 = AssumeType v7
+# CHECK: PropGet [[made]] key="a" {{*}} receivers=[L1]
+# CHECK: PropGet [[made]] key="b" {{*}} receivers=[L1]
+# CHECK: function f2 {{*}} results=[{type=L1}]
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Base" constructor=f2 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]

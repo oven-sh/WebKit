@@ -1,0 +1,29 @@
+# function size(chunk) { return chunk.byteLength }   const queue = [{ byteLength: 2 }, new Uint8Array(4)]; size(queue[0]); size(literal)
+# The front end guesses from the names that a parameter is read under which layouts arrive, and converts each argument to the guess. Flow knows all that arrives at the conversion.
+# Where that is more than the guess names, the guess says nothing of which of them comes: the value is expected to be what arrives. A guess that covers what arrives stays.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[either]]: undefined|L0|Uint8Array{{*}} = AssumeType v7
+# CHECK-NOT: ~
+# CHECK: = Upcast [[either]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="byteLength" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=Uint8Array
+    v3 = Integer integer=4
+    v4 = Construct v2, -, v3
+    v5 = NewArray v1, v4 contents=anything
+    v6 = Integer
+    v7 = ElemGet v5, v6
+    v8 = Convert v7 declared={type=undefined|null|number|string|L0 flags=[IsExpected]}
+    v9 = CallDirect v8 function=f1
+    Return
+}
+function f1 name="size" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="byteLength"
+    Return v1
+}

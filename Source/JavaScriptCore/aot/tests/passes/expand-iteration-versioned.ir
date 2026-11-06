@@ -48,7 +48,7 @@ function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {t
 # CHECK: Jump -> next [[header0]]()
 # CHECK-NEXT: [[header0]]() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: = Call [[next0]], [[iterator0]]
+# CHECK-NEXT: = CallDirect [[iterator0]], [[next0]] function={{*}} [isNeverInlined]
 # CHECK: [[body0]]() frequency=Unlikely handler=[[landing0]]():
 # CHECK-NEXT: [[called0]]: anything = Call v1, -, [[value0]]
 # CHECK: = CallDirect [[iterator0]] function=[[closeIterator]] [isNeverInlined]
@@ -206,5 +206,5 @@ function f5 name="coroutine" role=CoroutineBody flags=[IsAsync] parameters=[{typ
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

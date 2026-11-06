@@ -1,14 +1,15 @@
 # The host enters a handler once per event, and a call of a known callee hands that on. Where the handler calls a name or a value, each function that may stand there is entered as often, and hands that on through calls of known callees alone.
 # A value that is called is one of the application's functions. What was entered by such a guess hands its entries on through calls of known callees alone.
 # An even branch counts as taken. The handler is listed though the object that holds it has escaped before it is registered
+# A name has the number of its place among the names that functions lie under, in the order of the text: the two names that are called stand first
 # FORM: AsRead
 # RUN: heat-graph flow classes
 
 module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
 entry module=m0
-layout L0 name="Options" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}]
-layout L1 name="Methods" fields=[{key="calledByHandler" declared={type=anything} flags=[IsRequired]}, {key="calledBehindGuess" declared={type=anything} flags=[IsRequired]}]
+layout L0 name="Methods" fields=[{key="calledByHandler" declared={type=anything} flags=[IsRequired]}, {key="calledBehindGuess" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Options" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
@@ -19,10 +20,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v5 = Call v1, -, v4
     v6 = NewClosure function=f6
     v7 = NewClosure function=f7
-    v8 = NewObject -, v6, v7 layout=L1 fields=[0, 1]
+    v8 = NewObject -, v6, v7 layout=L0 fields=[0, 1]
     v9 = Call v1, -, v8
     v10 = NewClosure function=f1
-    v11 = NewObject -, v10 layout=L0 fields=[0]
+    v11 = NewObject -, v10 layout=L1 fields=[0]
     PropSet v0, v11 key="options" mode=Strict
     v13 = Builtin builtin=BunServe
     v14 = Builtin builtin=Bun

@@ -1,0 +1,45 @@
+# The image says what the source calls a variable of an environment and a variable that closures hold a copy of, for heap snapshots. It says so where the place can hold a cell, and of no file of the library
+# RUN(SCOPE): tables layouts
+# RUN(ROWS): tables modules
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Environment name="scope" module=m0 fields=[{key=@"binding.0" declared={type=anything} variableName="count"}, {key=@"newTarget.1" declared={type=anything}}, {key=@"binding.2" declared={type=number} variableName="total"}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return
+}
+function f1 name="reads" module=m0 kind=Arrow captures=[{type=env L0}, {type=number variableName="width"}, {type=anything variableName="held"}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number, v2: anything, v3: anything):
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    v5 = GetEnvironmentField v0 layout=L0 field=1
+    v6 = GetEnvironmentField v0 layout=L0 field=2
+    v7 = NewArray v1, v2, v3, v4, v5, v6 contents=anything holes=[]
+    Return v7
+}
+function f2 name="makes" module=m0 parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0, v1 layout=L0 fields=[0, 1, 2]
+    v3 = NewClosure v2, v1, v0, v0 function=f1
+    Return v3
+}
+function f3 name="makesInLibrary" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f4
+    Return v1
+}
+function f4 name="readsInLibrary" module=m1 kind=Arrow captures=[{type=anything variableName="inner"}] results=[{type=anything}] {
+    Return v0
+}
+
+# SCOPE: environment shape={{*}} index=L0 kind=Environment name="scope"
+# SCOPE-NEXT: variable name="count" slot=
+# SCOPE-NEXT: variable name="" slot=
+# SCOPE-NOT: name="total"
+
+# ROWS: namedCapture function={{*}} slot={{*}} name="held"
+# ROWS-NOT: namedCapture

@@ -41,7 +41,7 @@ function f1 name="nestOfTestsThatDecideNothing" parameters=[{type=number}, {type
     Branch v6 -> taken b2(), notTaken b5()
   b2():
     v7 = Integer integer=3
-    v8 = StrictEq v0, v7
+    v8 = StrictEq v2, v7
     Branch v8 -> taken b3(), notTaken b4()
   b3():
     Jump -> next b4()

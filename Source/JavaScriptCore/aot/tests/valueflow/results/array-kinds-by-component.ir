@@ -31,12 +31,12 @@
 # CHECK-LABEL: variable g10 name="hasHole"
 # CHECK: declared={type=Array<int[1, 2], proven, Int32
 # CHECK-LABEL: function f0 name="main"
-# CHECK: = NewArray v0, v1 contents=int[1, 2]|fractional allocationSite=
-# CHECK: = NewArray v2 contents=int[1, 2]|fractional allocationSite=
-# CHECK: = NewArray v0, v1 contents=int[1, 2] allocationSite=
+# CHECK: = NewArray v0, v1 contents=int[1, 2]|fractional allocationSite={{*}}arrayStorage=Double
+# CHECK: = NewArray v2 contents=int[1, 2]|fractional allocationSite={{*}}arrayStorage=Double
+# CHECK: = NewArray v0, v1 contents=int[1, 2] allocationSite={{*}}arrayStorage=Int32
 # CHECK: = NewArray v2 contents=double allocationSite={{*}}arrayStorage=Contiguous
 # CHECK: = NewArray v2 contents=undefined|fractional allocationSite={{*}}arrayStorage=Contiguous
-# CHECK: = NewArray v0, v1 contents=int[1, 2] holes=[1] allocationSite=
+# CHECK: = NewArray v0, v1 contents=int[1, 2] holes=[1] allocationSite={{*}}arrayStorage=Int32
 # CHECK-LABEL: function f1 name="first"
 # CHECK: parameters=[{type=Array<int[1, 2]|fractional, proven, Double
 # CHECK-LABEL: function f2 name="second"

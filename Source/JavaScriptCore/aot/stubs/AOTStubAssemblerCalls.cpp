@@ -33,9 +33,9 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
     const unsigned padding = (bytesPushed + sizeof(CPURegister)) % stackAlignmentBytes() ? sizeof(CPURegister) : 0;
     if (padding)
         subPtr(TrustedImm32(padding), stackPointerRegister);
-    loadEntry(entry, leafFunctionGPR);
+    loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), leafFunctionGPR);
     emitStackAlignmentCheck();
-    CCallHelpers::call(leafFunctionGPR, OperationPtrTag);
+    CCallHelpers::call(Address(leafFunctionGPR, offsetInRuntimeTable(entry)), OperationPtrTag);
     if (padding)
         addPtr(TrustedImm32(padding), stackPointerRegister);
 #else
@@ -48,7 +48,7 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
 }
 
 // An access that calls an accessor keeps few floating-point registers: storing and loading all of them was a third of the way to a getter and back.
-static RegisterSet floatingPointRegistersLostToAccessors(StubCallee callee)
+RegisterSet floatingPointRegistersLostToAccessors(StubCallee callee)
 {
     constexpr unsigned numberKept = 2;
     RegisterSet lost = RegisterSet::macroClobberedFPRs();
@@ -80,17 +80,23 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     RegisterSet lostAnyway = m_recording.clobbered();
     lostAnyway.merge(RegisterSet::macroClobberedGPRs());
     lostAnyway.merge(floatingPointRegistersLostToAccessors(preservingCall.callee));
+    RELEASE_ASSERT(!preservingCall.cellToKeep || !lostAnyway.contains(*preservingCall.cellToKeep, IgnoreVectors));
     preservingRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, [&](unsigned) {
         emitCall();
     });
     // The epilogue takes the stack pointer from the frame pointer, so the padding is not taken off first.
     emitFunctionEpilogue();
     if (!preservingCall.checksException) {
+        RELEASE_ASSERT(!preservingCall.emitBeforeReturn);
         ret();
         return;
     }
     loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
     Jump threw = branchTestPtr(NonZero, Address(scratch, VM::exceptionOffset()));
+    if (preservingCall.emitBeforeReturn)
+        (*preservingCall.emitBeforeReturn)();
+    if (preservingCall.callee == StubCallee::HostFunction)
+        pollBeforeReturningFromNativeCode();
     ret();
     threw.link(this);
     if (key().callerFrame() == CallerFrame::StubFrame)

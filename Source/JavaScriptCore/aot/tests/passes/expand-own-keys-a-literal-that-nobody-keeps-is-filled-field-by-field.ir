@@ -1,4 +1,4 @@
-# A spread into a new literal of the source's own layout copies the slots at once where somebody keeps the literal. Where nobody does, it reads and defines field by field, as a literal that lists its members does, so that the object need not be made
+# A spread into a new literal of the source's own layout copies the slots at once where the literal is made. In a hot loop a literal that nobody keeps is read and defined field by field, as a literal that lists its members is, so that the object need not be made. Outside a loop the operation behind the arms meets them again with the object made, so there the slots are copied at once too
 # FORM: Prepared optimizing
 # OPTIONS: heat=EverythingIsHot
 # RUN: pass ExpandOwnKeys
@@ -6,18 +6,23 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="State" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="c" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={constructorOrders=[{}, {fields=[0, 1, 2]}]}
 
-function f0 name="readAndDropped" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ~ L0, v1: number):
-    v2 = NewObject layout=L0
-    CopyDataProperties v2, v0
-    PropDefine v2, v1 key="b"
-    v5 = FinishObject v2
-    v6 = GetSlot v5 key="a" receivers=[L0] level=Proven
-    Return v6
+function f0 name="readAndDroppedInLoop" parameters=[{type=object}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: number, v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = NewObject layout=L0
+    CopyDataProperties v4, v0
+    PropDefine v4, v1 key="b"
+    v7 = FinishObject v4
+    v8 = GetSlot v7 key="a" receivers=[L0] level=Proven
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v8
 # CHECK-NOT: TryCopyFields
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2]
 # CHECK: [[a]]:{{*}}= GetSlot v0, {{*}} key="a"
-# CHECK: PropDefine v2, [[a]] key="a"
+# CHECK: PropDefine v4, [[a]] key="a"
 # CHECK-NOT: TryCopyFields
 }
 
@@ -28,6 +33,19 @@ function f1 name="returned" parameters=[{type=object}, {type=number}] results=[{
     PropDefine v2, v1 key="b"
     v5 = FinishObject v2
     Return v5
+# CHECK: v2:{{*}}= NewObject layout=L0
+# CHECK-NEXT: = TryCopyFields v2, v0 layout=L0
+# CHECK-NOT: HasKeyOrder
+}
+
+function f2 name="readAndDroppedOutsideLoop" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: number):
+    v2 = NewObject layout=L0
+    CopyDataProperties v2, v0
+    PropDefine v2, v1 key="b"
+    v5 = FinishObject v2
+    v6 = GetSlot v5 key="a" receivers=[L0] level=Proven
+    Return v6
 # CHECK: v2:{{*}}= NewObject layout=L0
 # CHECK-NEXT: = TryCopyFields v2, v0 layout=L0
 # CHECK-NOT: HasKeyOrder

@@ -131,6 +131,27 @@ struct PositionTable {
         uint8_t position = index < positions.size() ? positions[index] : absent;
         return position == absent ? std::nullopt : std::optional<unsigned>(position);
     }
+};
+
+// Which case of a switch each member takes, in one table that every copy of the switch reads.
+template<typename E, uint8_t (*find)(E)>
+struct CaseTable {
+    static constexpr std::array<uint8_t, numberOfEnumerators<E>> tabulate()
+    {
+        std::array<uint8_t, numberOfEnumerators<E>> cases { };
+        for (E member : allMembersOf<E>)
+            cases[static_cast<size_t>(member)] = find(member);
+        return cases;
+    }
+
+    static constexpr std::array<uint8_t, numberOfEnumerators<E>> cases = tabulate();
+
+    static uint8_t at(E member)
+    {
+        size_t index = static_cast<size_t>(member);
+        RELEASE_ASSERT(index < cases.size());
+        return cases[index];
+    }
 };`.split("\n");
 
 const positionIncludes = `#include "AOTSchemaFlagMasks.h"

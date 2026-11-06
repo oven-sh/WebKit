@@ -14,6 +14,7 @@
 #include "AOTBuiltinUses.h"
 #include "AOTCodeShapes.h"
 #include "AOTIRBuilder.h"
+#include "AOTPredictedValues.h"
 #include "AOTResolveAccesses.h"
 #include "AOTResultRules.h"
 #include "AOTSelectionContext.h"
@@ -41,7 +42,7 @@ static PassOutcome noteExpectedElements(const Program& program, Function& functi
     for (Value& value : function.editAllValues()) {
         if (value.opcode != Opcode::ElemGet && value.opcode != Opcode::ElemSet)
             continue;
-        ExpectedElements expected = expectedElementsOf(program, program.expectedOrTypeOf(function, value.objectOperand()));
+        ExpectedElements expected = expectedElementsOf(program, program.expectedOrTypeOf(function, value.objectOperand()).predicted());
         if (expected == value.expectedElements())
             continue;
         value.setExpectedElements(expected);
@@ -196,10 +197,13 @@ PassOutcome select(FunctionPassContext& pass)
         if (!context.isEnabled(rule.id))
             continue;
         rule.apply(context);
+        if (context.takeDidKeepType())
+            settleProofsBehindAnsweredChecks(pass.function, pass.analyses.cfg());
         restoreExactTypes(pass, context);
     }
     if (context.didRewrite())
         outcome = PassOutcome::Changed;
+    outcome |= removeRedundantHandlersAfterSelection(pass, context.removedAllocationUnderHandler());
 
     bool didReturnTestedValues = returnTestedValues(pass.function);
     if (didReturnTestedValues)

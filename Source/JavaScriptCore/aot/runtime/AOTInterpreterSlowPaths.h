@@ -109,7 +109,7 @@ std::optional<bool> tryInstanceOf(JSGlobalObject*, JSValue, JSValue constructor)
 inline constexpr PropertyOffset narrowReferenceInSiteCache = 1 << 30;
 inline constexpr PropertyOffset extraPropertyInSiteCache = 1 << 29;
 inline constexpr uint32_t maxHiddenWordOffsetInSiteCache = (extraPropertyInSiteCache >> 16) - 1;
-std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject*, Structure* ofCompiledObject, const Identifier&);
+std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject*, JSCell* compiledObject, Structure* before, const Identifier&);
 
 // After the interpreter's lookup in an object that is not compiled. Files what the interpreter's own cache cannot hold: an absent name, an accessor, a property of a compiled object above the base.
 void didGetById(JSGlobalObject*, JSObject* base, Structure* structureBefore, const Identifier&, const PropertySlot&);
@@ -233,6 +233,11 @@ void checkPlacesInSymbolTable(SymbolTable&);
 
 inline constexpr unsigned customAccessorRecordShift = 5;
 static_assert(sizeof(CustomAccessorRecord) == 1u << customAccessorRecordShift);
+// For an object that holds no answer of an earlier call.
+JSValue callCustomGetter(const CustomAccessorRecord&, JSCell* base, const Identifier&);
+
+// Of a FieldOrInherited slot, where the slot of the field is empty.
+inline constexpr uint8_t flagsOfInheritedValuesLeftToSlowPath = Slot::inheritsGetter | Slot::emptySlotMayBeUndefined;
 
 inline constexpr ptrdiff_t offsetOfPromiseAllocator = AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].allocator);
 inline constexpr ptrdiff_t offsetOfPromiseHeader = AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].header);

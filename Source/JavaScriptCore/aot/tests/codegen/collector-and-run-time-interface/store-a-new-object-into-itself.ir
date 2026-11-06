@@ -1,0 +1,74 @@
+# type Entry = { follower: Entry | null; weight: number };
+# function makeRing(weight: number): Entry {
+#   const entry: Entry = { follower: null, weight };
+#   entry.follower = entry;
+#   return entry;
+# }
+# declare const input: any;
+# (globalThis as any).answer = makeRing(+input).follower!.weight + makeRing(1.5).weight;
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:SplitFreshResults
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=75 kind=Parameter function=f1
+typesite w1 module=m0 position=57 kind=Result
+typesite w2 module=m0 position=250 kind=CallResult
+typesite w3 module=m0 position=286 kind=CallResult
+typesite w4 module=m0 position=108 kind=Variable
+layout L0 name="Entry" module=m0 position=5 fields=[{key="follower" declared={type=undefined|null|L0 flags=[OmitsUndefined]} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = ToNumber v8
+    v10 = Call v1, -, v9 calleeName="makeRing"
+    v11 = Convert v10 declared={type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}
+    v12 = PropGet v11 key="follower"
+    v13 = PropGet v12 key="weight"
+    v14 = Double number=1.5
+    v15 = Call v1, -, v14 calleeName="makeRing"
+    v16 = Convert v15 declared={type=undefined|null|L0 site=w3 flags=[OmitsNull, OmitsUndefined]}
+    v17 = PropGet v16 key="weight"
+    v18 = Add v13, v17
+    PropSet v5, v18 key="answer"
+    v20 = Undefined
+    Return v20
+}
+function f1 name="makeRing" module=m0 position=57 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Null
+    v2 = Convert v1 declared={type=undefined|null|L0 flags=[OmitsUndefined]}
+    v3 = Convert v0 declared={type=number}
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Convert v5 declared={type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v6, v6 key="follower"
+    Return v6
+}
+
+# Nothing can collect between the allocation and the store, so the collector has not marked the new object and the store needs no barrier: the store is all that the assignment leaves.
+# CHECK-LABEL: name="makeRing" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK: Int64 b@[[entry]] = Patchpoint({{*}}:NewObject)
+# CHECK-NOT: Load8Z(b@[[entry]], offset = 7,
+# CHECK-NOT: :PutSlot)
+# CHECK-NOT: Patchpoint(
+# CHECK: Store(b@[[entry]], b@[[entry]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
+# CHECK-NEXT: Return(b@[[entry]], Terminal)
+# CHECK-NOT: :PutSlot)
+# CHECK-NOT: Patchpoint(
+# CHECK-LABEL: end of function

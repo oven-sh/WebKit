@@ -1,0 +1,108 @@
+# function describe(value: number, unit?: number): number {
+#   return unit === undefined ? value : value * unit;
+# }
+# function describeBoth(value: number): number {
+#   return describe(value) + (describe as any)(value, value + 1, value * 7);
+# }
+# declare const input: any;
+# (globalThis as any).answer = describeBoth(+input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1 f2
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f2
+# REQUIRES(NONE): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=18 kind=Parameter function=f1
+typesite w1 module=m0 position=33 kind=Parameter function=f1
+typesite w2 module=m0 kind=Result
+typesite w3 module=m0 position=134 kind=Parameter function=f2
+typesite w4 module=m0 position=112 kind=Result
+typesite w5 module=m0 position=291 kind=CallResult
+typesite w6 module=m0 position=168 kind=CallResult
+variable g0 name="describe" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = ToNumber v8
+    v10 = Call v1, -, v9 calleeName="describeBoth"
+    v11 = Convert v10 declared={type=number site=w5}
+    PropSet v5, v11 key="answer"
+    v13 = Undefined
+    Return v13
+}
+function f1 name="describe" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=undefined|number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|number):
+    Jump -> next b1()
+  b1():
+    v2 = TypeTest v1 testedType=undefined
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    Jump -> next b6(v0)
+  b4(v4):
+    Jump -> next b5()
+  b5():
+    v5 = Convert v4 declared={type=number} illTypedCause=Assertion
+    v6 = Mul v0, v5
+    Jump -> next b6(v6)
+  b6(v7):
+    v8 = Convert v7 declared={type=number site=w2}
+    Return v8
+}
+function f2 name="describeBoth" module=m0 position=112 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="describe"
+    v3 = Convert v2 declared={type=number site=w6}
+    v4 = GetModuleVariable variable=g0
+    v5 = Integer integer=1
+    v6 = Add v0, v5
+    v7 = Integer integer=7
+    v8 = Mul v0, v7
+    v9 = Call v4, -, v0, v6, v8 calleeName="describe"
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Add v3, v10
+    v12 = Convert v11 declared={type=number site=w4} illTypedCause=FromLooseType
+    Return v12
+}
+
+# The parameter that may be missing travels in a floating-point register, where undefined is one bit pattern among the NaNs.
+# CHECK-LABEL: name="describe" role=Source
+# CHECK: Double b@[[unit]] = ArgumentReg(
+# CHECK: Int64 b@[[bits]] = BitwiseCast(b@[[unit]],
+# CHECK: Int32 b@[[isMissing]] = GreaterEqual(b@[[bits]],
+# CHECK: Branch(b@[[isMissing]], Terminal,
+# CHECK-LABEL: end of function
+# Both calls are direct and pass two registers. The first passes that bit pattern. The third argument of the second has no parameter: it is not passed, and its product is not computed.
+# CHECK-LABEL: name="describeBoth" role=Source
+# CHECK: Double b@[[first]] = Patchpoint(b@[[value]]:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
+# CHECK: Double b@[[second]] = Patchpoint(b@[[value]]:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
+# CHECK-NEXT: Double b@[[sum]] = Add(b@[[first]], b@[[second]],
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="describeBoth" role=Source
+# NONE-NOT: Mul(
+# NONE-NOT: :Call)
+# NONE-LABEL: end of function
+# X64: instructions: 5, patchpoints: 0
+# ARM64: instructions: 6, patchpoints: 0

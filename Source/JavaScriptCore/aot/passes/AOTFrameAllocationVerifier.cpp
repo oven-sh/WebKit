@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBlockCycles.h"
+#include "AOTBuildContext.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTFlowResults.h"
@@ -451,6 +452,9 @@ BitVector FramePointerVerifier::computeHolders(std::span<const ValueID> allocati
 
 void verifyFramePointers(FunctionAnalyses& analyses, Vector<InternalError>& found)
 {
+    // What that sabotage plants has to be found by running the program.
+    if (analyses.context().build.isSabotaged(Sabotage::CellsThatAreKeptLieInFrames))
+        return;
     FramePointers pointers(analyses.program(), analyses.function());
     if (!pointers.isEmpty())
         FramePointerVerifier(analyses, pointers, found).run();

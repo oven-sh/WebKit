@@ -21,9 +21,6 @@ void applyFlowResults(Program&, FlowResults&, BuildContext&);
 // So flow's word is written down in front of each store of a value that stands behind a check. Not for the very value that a check tests: flow takes a value that it knows nothing of to lie in the type of the check.
 // applyBodyUpdate() does it. For whoever puts a check into a body behind that.
 void assumeTypesOfPositionsAtStores(const Program&, FunctionID, Function&, TypeArena&, BuildContext&);
-// The copy of a body that runs without its checks takes values from the typed code as well. Where nothing tells two classes apart, a test gives its value the tested type, which need not lie inside the type in front of the test.
-// The body without its checks stores what fits each position, and so does the typed code. So flow's word is written down in front of each store of the copy whose value is typed outside its position.
-bool assumeTypesOfPositionsAtStoresInCopy(IRBuilder&, Function&, TypeArena&, std::span<const BlockID> copiedBlocks);
 // False for the slot of an object that a store tests: whoever takes a check away stores what no longer fits behind the allocation, and of such a field flow leaves out the primitives that those stores turn away.
 bool takesOnlyWhatFlowHolds(const Program&, const Value& store, uint32_t operandIndex);
 void computeOperandSummaries(const Program&, FlowResults&, BuildContext&);
@@ -50,6 +47,8 @@ struct FlowBodyApplication {
     bool provesEverything { false };
     // Every entry into the function is a construction.
     bool isOnlyConstructed { false };
+    const BitVector* keysOfWidenedFields { nullptr };
+    const BitVector* widenedVariables { nullptr };
 };
 
 struct FlowBodyCounts {
@@ -60,12 +59,16 @@ struct FlowBodyCounts {
 FlowBodyCounts applyBodyUpdate(const FlowBodyApplication&);
 void demoteTailCallsWithChecks(const Program&, FunctionID, Function&, TypeArena&, BuildContext&);
 void initializeMembersOfListedHolders(const Program&, const FlowResults&, FunctionID, Function&, TypeArena&, BuildContext&);
+void nameSymbolsCreatedByLibraryModule(const Program&, FunctionID, Function&, TypeArena&, BuildContext&);
 
 Value makeAssumeType(ValueID operand, ProvenType);
+// What is true of the value from a place on, and not wherever the value is at hand: behind a test that is gone, where a call stood, where another name of the value was narrower.
+Value makeAssumeType(ValueID operand, ValueID fact, ProvenInEveryVersion);
 Value makeValidateType(ValueID operand, TypeID validatedType);
 Value makeValidateCallee(ValueID callee, TypeID validatedType);
 
 bool isWorthNarrowing(const Program&, const Type& current, const Type& narrowed);
+bool leavesOutOnlyInstancesOfBuiltinClasses(const Type& expected, const Type& held, TypeArena&);
 
 } } } // namespace JSC::AOT::Typed
 

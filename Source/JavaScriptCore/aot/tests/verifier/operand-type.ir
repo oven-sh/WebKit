@@ -104,7 +104,9 @@ function f20 name="badAbsentEnvironmentLayout" captures=[{type=env L0}] paramete
     v2 = Unspecified valueType=absent|env L0
     Jump -> next b3(v2)
   b3(v3):
-    v4 = GetEnvironmentField v3 layout=L0 field=0
+    v4 = Specified
+    v5 = AssumeType v3, v4 provenType=absent|env L0
+    v6 = GetEnvironmentField v5 layout=L0 field=0
     Return
 }
 function f21 name="goodEnvironmentLayout" captures=[{type=env L0}] results=[{type=undefined}] {
@@ -135,7 +137,9 @@ function f25 name="badAbsentEnvironment" captures=[{type=env L0}] parameters=[{t
     v2 = Unspecified valueType=absent|env L0
     Jump -> next b3(v2)
   b3(v3):
-    MarkEnvironmentEscaped v3
+    v4 = Specified
+    v5 = AssumeType v3, v4 provenType=absent|env L0
+    MarkEnvironmentEscaped v5
     Return
 }
 function f26 name="goodEnvironment" captures=[{type=env L0}] results=[{type=undefined}] {
@@ -156,7 +160,9 @@ function f28 name="badAbsentEvalOperand" captures=[{type=env L0}] parameters=[{t
     v3 = Unspecified valueType=absent|env L0
     Jump -> next b3(v3)
   b3(v4):
-    v5 = DirectEval v1, v1, -, v4 evalScope=e0
+    v5 = Specified
+    v6 = AssumeType v4, v5 provenType=absent|env L0
+    v7 = DirectEval v1, v1, -, v6 evalScope=e0
     Return
 }
 function f29 name="goodEvalOperands" captures=[{type=env L0}] parameters=[{type=anything}, {type=classtoken}] results=[{type=undefined}] {

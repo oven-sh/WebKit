@@ -7,10 +7,10 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="record"
 layout L1 kind=Instance name="class" constructor=f15
 layout L2 kind=Environment name="environment"
-runtimefunction id=0 function=f2
+runtimefunction id=PromiseConstructorPromise function=f2
 function f0 name="origin" parameters=[{type=anything}] results=[{type=anything}]
 function f1 name="other" results=[{type=anything}]
-function f2 name="goodLibrary" role=Library enclosingRuntimeFunction=0 results=[{type=anything}]
+function f2 name="goodLibrary" role=Library enclosingRuntimeFunction=PromiseConstructorPromise results=[{type=anything}]
 function f3 name="goodThis" kind=Method flags=[HasThis] thisType={type=object} results=[{type=anything}]
 function f4 name="badThisTypeWithoutThis" kind=Method thisType={type=object} results=[{type=anything}]
 function f5 name="goodRestParameter" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}]
@@ -22,7 +22,7 @@ function f10 name="badAsyncGeneratorWithoutCallee" flags=[IsAsync, IsGenerator] 
 function f11 name="badGuardCrossesCall" parameters=[{type=guard}] results=[{type=anything}]
 function f12 name="badBuilderCursorCrossesCall" results=[{type=buildercursor}]
 function f13 name="goodCursorCrossesCall" role=Parser parameters=[{type=cursor}] results=[{type=anything}] creator=Parser{type=anything}
-function f14 name="badRuntimeFunctionNotListed" role=Library enclosingRuntimeFunction=1 results=[{type=anything}]
+function f14 name="badRuntimeFunctionNotListed" role=Library enclosingRuntimeFunction=DisposableStackPrototypeAddDisposableResource results=[{type=anything}]
 function f15 name="goodConstructor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f16 name="badConstructedClassIsRecord" results=[{type=anything}] constructedClass=L0
 function f17 name="badConstructedClassHasOtherConstructor" results=[{type=anything}] constructedClass=L1

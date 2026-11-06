@@ -4,12 +4,12 @@
 # OPTIONS: only-passes=PromoteEnvironmentsToVariables,ComputeEffectSummaries,ResolveCalls,EliminateDeadCode,RemoveUnreadFields check=VerifyEachPass
 # STATISTIC: EnvironmentsPromotedToVariables = 1
 # STATISTIC: UnreadVariableStoresRemoved = 1
-# CHECK: variable g1 name="onlyCalled.1"{{*}}stores=Never{{*}}reads=NeverRead
-# CHECK: variable g2 name="readAsValue.2"{{*}}stores=AtMostOnce
+# CHECK: variable g1 name="onlyCalled"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK: variable g2 name="readAsValue"{{*}}stores=AtMostOnce
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 kind=Environment name="wrapper" fields=[{key=@"counter.0" declared={type=anything}}, {key=@"onlyCalled.1" declared={type=anything}}, {key=@"readAsValue.2" declared={type=anything}}]
+layout L0 kind=Environment name="wrapper" fields=[{key=@"counter.0" declared={type=anything} variableName="counter"}, {key=@"onlyCalled.1" declared={type=anything} variableName="onlyCalled"}, {key=@"readAsValue.2" declared={type=anything} variableName="readAsValue"}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = NewClosure function=f1

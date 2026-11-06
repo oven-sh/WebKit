@@ -12,6 +12,7 @@
 #include "AOTIntegerRelations.h"
 #include "AOTSort.h"
 #include <algorithm>
+#include <limits>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/HashMap.h>
 
@@ -138,7 +139,9 @@ bool dominatesAfterSplit(FunctionAnalyses& analyses, Edge edge, BlockID block)
     });
 }
 
-static LoopInduction findInduction(FunctionAnalyses& analyses, const NaturalLoop& loop)
+enum class StepsOfLoopsInside : uint8_t { AreUnknown, GiveDirection };
+
+static LoopInduction findInduction(FunctionAnalyses& analyses, const NaturalLoop& loop, StepsOfLoopsInside stepsOfLoopsInside)
 {
     const Program& program = analyses.program();
     const Function& function = analyses.function();
@@ -229,6 +232,8 @@ static LoopInduction findInduction(FunctionAnalyses& analyses, const NaturalLoop
         Range totals;
         std::optional<InductionStep> invariant;
         bool isUnknown = false;
+        bool mayStepFurtherUp = false;
+        bool mayStepFurtherDown = false;
         Vector<PendingValue, 8> pending;
         UncheckedKeyHashMap<ValueID, int64_t> accumulatedAtParameter;
 
@@ -245,7 +250,12 @@ static LoopInduction findInduction(FunctionAnalyses& analyses, const NaturalLoop
                 return giveUp();
             auto visited = accumulatedAtParameter.add(parameter, accumulated);
             if (!visited.isNewEntry) {
-                isUnknown |= visited.iterator->value != accumulated;
+                if (visited.iterator->value == accumulated)
+                    return;
+                // A loop inside steps the variable as well, any number of times. Where every way that comes by again has added, the least sum is the one without them.
+                if (stepsOfLoopsInside == StepsOfLoopsInside::AreUnknown)
+                    return giveUp();
+                (accumulated > visited.iterator->value ? mayStepFurtherUp : mayStepFurtherDown) = true;
                 return;
             }
             for (Edge edge : cfg.incomingEdges(location.block)) {
@@ -325,6 +335,12 @@ static LoopInduction findInduction(FunctionAnalyses& analyses, const NaturalLoop
                 visit(pending.takeLast());
             if (isUnknown)
                 return std::nullopt;
+        }
+
+        if (mayStepFurtherUp || mayStepFurtherDown) {
+            if (invariant || totals.isEmpty() || (mayStepFurtherUp && mayStepFurtherDown))
+                return std::nullopt;
+            totals = totals.unionWith(Range::one(mayStepFurtherUp ? std::numeric_limits<int64_t>::max() : std::numeric_limits<int64_t>::min()));
         }
 
         if (!invariant) {
@@ -439,7 +455,7 @@ static LoopInduction findInduction(FunctionAnalyses& analyses, const NaturalLoop
         if (relationalOperators.contains(function.at(terminator.conditionOperand()).opcode))
             testingBlocks.append(block);
     }
-    AOT::sort(testingBlocks, { }, [&](BlockID block) {
+    AOT::sortInLine(testingBlocks, { }, [&](BlockID block) {
         return cfg.reversePostOrderIndex(block);
     });
 
@@ -523,7 +539,12 @@ InductionVariables::InductionVariables(FunctionAnalyses& analyses)
     const NaturalLoops& loops = analyses.naturalLoops();
     m_loops.reserveInitialCapacity(loops.numLoops());
     for (unsigned index = 0; index < loops.numLoops(); ++index)
-        m_loops.append(findInduction(analyses, loops.loop(index)));
+        m_loops.append(findInduction(analyses, loops.loop(index), StepsOfLoopsInside::AreUnknown));
+}
+
+LoopInduction findInductionThroughLoopsInside(FunctionAnalyses& analyses, const NaturalLoop& loop)
+{
+    return findInduction(analyses, loop, StepsOfLoopsInside::GiveDirection);
 }
 
 const LoopInduction& InductionVariables::of(const NaturalLoop& loop) const

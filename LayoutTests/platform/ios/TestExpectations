@@ -54,10 +54,13 @@ http/tests/site-isolation/ios/exposed-content-rect.html [ Pass ]
 http/tests/site-isolation/ios/exposed-content-rect-nested.html [ Pass ]
 http/tests/site-isolation/ios/exposed-content-rect-same-site-nested.html [ Pass ]
 http/tests/site-isolation/ios/exposed-content-rect-scrolled-cross-site-parent.html [ Pass ]
+http/tests/site-isolation/ios/exposed-content-rect-scrolled-cross-site-parent-cross-site-child.html [ Pass ]
+http/tests/site-isolation/ios/exposed-content-rect-programmatic-scroll-in-cross-site-frame.html [ Pass ]
 http/tests/site-isolation/ios/exposed-content-rect-same-site-then-cross-site-nested.html [ Pass ]
 http/tests/site-isolation/ios/exposed-content-rect-3d-transformed.html [ Pass ]
 http/tests/site-isolation/ios/exposed-content-rect-scrolled-same-site-parent.html [ Pass ]
 http/tests/site-isolation/ios/exposed-content-rect-scrolled-same-site-parent-paint.html [ Pass ]
+http/tests/site-isolation/ios/text-indicator-in-scrolled-cross-site-frame.html [ Pass ]
 http/tests/site-isolation/ios/select-and-drag-in-transformed-cross-origin-iframe.html [ Pass ]
 http/tests/site-isolation/ios/long-press-in-cross-origin-iframe-in-scrolled-main-frame.html [ Pass ]
 http/tests/site-isolation/ios/long-press-in-cross-site-grandchild-of-scrolled-middle-frame.html [ Pass ]
@@ -331,6 +334,7 @@ http/tests/eventloop/idle-callback-not-affected-by-timers-in-cross-origin.html [
 fast/events/touch/ios/touch-event-regions-layer-tree [ Pass ]
 fast/events/touch/ios/touch-event-regions-layer-tree/input [ Skip ]
 fast/events/touch/ios/touch-event-regions-layer-tree/scrolling [ Skip ]
+fast/events/touch/ios/touch-event-regions-layer-tree/dispatch [ Skip ]
 
 #//////////////////////////////////////////////////////////////////////////////////////////
 # End platform-specific directories.
@@ -1623,8 +1627,9 @@ imported/w3c/web-platform-tests/css/css-view-transitions/old-content-inline-with
 
 # Site isolation testing infrastructure for accessibility doesn't exist on iOS.
 http/tests/site-isolation/accessibility/ [ Skip ]
-# ...except this test, which verifies the in-process rotor search returns a remote-frame placeholder for an out-of-process iframe.
+# ...except these tests, which run in-process and use the iOS remote-frame placeholder (AXRemoteElement).
 http/tests/site-isolation/accessibility/heading-search-returns-remote-frame.html [ Pass ]
+http/tests/site-isolation/accessibility/remote-frame-built-during-remote-element-lookup.html [ Pass ]
 
 ###
 # Known failures
@@ -2657,6 +2662,7 @@ accessibility/editable-svg-arrow-movement.html [ Pass ]
 accessibility/editable-webpage-focused-ui-element.html [ Pass ]
 accessibility/element-haspopup.html [ Pass ]
 accessibility/element-outside-modal-with-zindex.html [ Pass ]
+accessibility/element-path-in-scaled-container.html [ Pass ]
 accessibility/element-path-with-css-transforms.html [ Pass ]
 accessibility/element-reflection-arialabelledby.html [ Pass ]
 accessibility/ellipsis-text.html [ Pass ]
@@ -6188,6 +6194,9 @@ imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customiz
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-picker-pseudo-target-text.html [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/select-hr-listbox.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-picker-option-animation-reopens.html [ Skip ]
+
+# Relies on test_driver.click(), which is not supported on iOS.
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/selectedcontent-restore.optional.html [ Skip ]
 
 # Newly imported WPT tests that are timing out on iOS.
 imported/w3c/web-platform-tests/html/semantics/forms/the-button-element/button-activate-keyup-prevented.html [ Skip ]
@@ -10297,8 +10306,6 @@ webkit.org/b/325197 css3/filters/backdrop/backdrop-filter-fractional-translation
 [ Debug ] imported/w3c/web-platform-tests/shadow-dom/cross-shadow-boundary-selection-splittext-crash.html [ Pass Timeout ]
 [ Debug ] imported/w3c/web-platform-tests/web-locks/acquire.https.any.sharedworker.html [ Pass Failure ]
 
-webkit.org/b/246372 [ Release ] imported/w3c/web-platform-tests/content-security-policy/inheritance/history-iframe.sub.html [ Pass Failure ]
-
 webkit.org/b/326104 [ Release ] imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-001.html [ ImageOnlyFailure ]
 webkit.org/b/326104 [ Release ] imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-005.html [ ImageOnlyFailure ]
 webkit.org/b/326104 [ Release ] imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-004.html [ ImageOnlyFailure ]
@@ -10326,8 +10333,6 @@ webkit.org/b/325024 [ Debug ] platform/ios/media/media-element-does-not-eagerly-
 webkit.org/b/325029 [ Release ] http/wpt/user-activation/bless.html [ Pass Failure ]
 webkit.org/b/325029 [ Release ] http/wpt/user-activation/bless-edge-cases.sub.html [ Pass Failure ]
 webkit.org/b/325029 [ Release ] http/wpt/user-activation/bless-nested.sub.html [ Pass Failure ]
-
-webkit.org/b/325036 [ Release ] http/tests/security/mixedContent/secure-page-navigates-to-basic-auth-secure-page-via-insecure-redirect.https.html [ Pass Timeout ]
 
 webkit.org/b/325037 [ Debug ] imported/w3c/web-platform-tests/editing/crashtests/inserthtml-in-li-in-option.html [ Pass Crash ]
 
@@ -10406,8 +10411,6 @@ webkit.org/b/326715 [ Debug ] compositing/contents-format/deep-color-backing-sto
 # Accelerated radial gradients produce premultiplied pixels with color greater than alpha.
 webkit.org/b/327400 fast/canvas/canvas-gradient-premultiplied-color-not-exceeding-alpha.html [ Failure ]
 
-webkit.org/b/328264 [ Debug ] http/tests/ipc/createnewpage-file-body-sandbox-extension.html [ Failure ]
-
 webkit.org/b/327795 [ Debug ] fast/text-extraction/debug-text-extraction-word-limit-with-links.html [ Pass Crash ]
 
 webkit.org/b/327797 imported/w3c/web-platform-tests/css/css-scroll-anchoring/after-scrollable-range-shrinkage-001.html [ Pass Failure ]
@@ -10456,3 +10459,4 @@ webkit.org/b/327767 svg/text/text-text-06-t.svg [ Failure ]
 webkit.org/b/327767 svg/text/text-text-07-t.svg [ Failure ]
 webkit.org/b/327767 svg/text/text-tspan-01-b.svg [ Failure ]
 webkit.org/b/327767 svg/text/text-vkern.svg [ Failure ]
+webkit.org/b/289121 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-mandatory-getStats.https.html [ Pass Failure ]

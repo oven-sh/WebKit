@@ -1,0 +1,69 @@
+# A list literal that names storage for numbers alone is born with it, and nobody who reads the name tests the storage. So its contents are proven and are stored there as they are, its elements are
+# held to them, and a type proves such storage of a literal only where the literal names it. A literal that names none is born with the storage that fits the types of its elements
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: StoredTypeMismatch 6
+# DIAGNOSTIC: PayloadOutOfRange 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="anythingAmongDoubles" parameters=[{type=anything}, {type=fractional}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=fractional arrayStorage=Double [contentsAreProven]
+    Return v2
+}
+function f1 name="stringAmongIntegers" parameters=[{type=i32}, {type=string}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=i32 arrayStorage=Int32 [contentsAreProven]
+    Return v2
+}
+function f2 name="fractionAmongIntegers" parameters=[{type=i32}, {type=fractional}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=i32 arrayStorage=Int32 [contentsAreProven]
+    Return v2
+}
+function f3 name="doublesProvenOfLiteralThatNamesNoStorage" parameters=[{type=fractional}, {type=fractional}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=fractional
+    v3 = AssumeType v2 provenType=Array<fractional, proven, Double>
+    Return v3
+}
+function f4 name="doublesProvenOfLiteralThatNamesIntegers" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=i32 arrayStorage=Int32 [contentsAreProven]
+    v3 = AssumeType v2 provenType=Array<i32, proven, Double>
+    Return v3
+}
+function f5 name="contentsThatMayBeNaNAmongDoubles" parameters=[{type=fractional}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=number arrayStorage=Double [contentsAreProven]
+    Return v1
+}
+function f6 name="contentsThatMayBeFractionsAmongIntegers" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=i32|fractional arrayStorage=Int32 [contentsAreProven]
+    Return v1
+}
+function f7 name="storageNamedForContentsThatAreNotProven" parameters=[{type=fractional}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=fractional arrayStorage=Double
+    Return v1
+}
+function f8 name="anythingAmongProvenContentsThatMayGetStorageForNumbers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=undefined|fractional [contentsAreProven]
+    Return v1
+}
+function f9 name="anythingAmongProvenContentsInStorageForEveryValue" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=string [contentsAreProven]
+    Return v1
+}
+function f10 name="doubles" parameters=[{type=fractional}, {type=i32}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=i32|fractional arrayStorage=Double [contentsAreProven]
+    v3 = AssumeType v2 provenType=Array<i32|fractional, proven, Double>
+    Return v3
+}
+function f11 name="integers" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=i32 arrayStorage=Int32 [contentsAreProven]
+    v3 = AssumeType v2 provenType=Array<i32, proven, Int32>
+    Return v3
+}
+function f12 name="anythingWhereNoStorageIsNamed" parameters=[{type=anything}, {type=fractional}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=fractional
+    Return v2
+}
+function f13 name="anythingInStorageForEveryValue" parameters=[{type=anything}, {type=fractional}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=fractional arrayStorage=Contiguous [contentsAreProven]
+    v3 = AssumeType v2 provenType=Array<fractional, proven, Contiguous>
+    Return v3
+}

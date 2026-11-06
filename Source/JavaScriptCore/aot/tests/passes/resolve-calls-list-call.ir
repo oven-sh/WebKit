@@ -65,7 +65,7 @@ function f8 name="superCallForwardsList" parameters=[{type=f4}, {type=anything},
 # CHECK-NEXT: = SuperConstruct v0, v1, {{*}}, {{*}} layout=L1
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = SuperConstructList v0, v1, v2 layout=L1
-# TWICE: = CallDirect v1, {{*}}, {{*}} function=f4 [isConstruction]
+# TWICE: = CallDirect v1, {{*}}, {{*}} function=f4 [isConstruction, calleeIsPredicted]
 # TWICE-NOT: = SuperConstruct v0
 }
 

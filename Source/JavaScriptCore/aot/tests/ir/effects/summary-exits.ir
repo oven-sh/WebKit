@@ -34,13 +34,13 @@ function f3 name="returnsCall" results=[{type=undefined}] {
     v0 = CallDirect function=f4
     ReturnCall v0
 }
-# CHECK-NEXT: f3 return: writes(ModuleVariables/1) throw: none
+# CHECK-NEXT: f3 return: writes(ModuleVariables/1) throwsForLackOfStack throw: writes(ModuleVariables/1) throwsForLackOfStack
 function f4 name="cannotThrow" results=[{type=undefined}] {
     v0 = Undefined
     PutModuleVariable v0 variable=g0
     Return
 }
-# CHECK-NEXT: f4 return: writes(ModuleVariables/1) throw: none
+# CHECK-NEXT: f4 return: writes(ModuleVariables/1) throwsForLackOfStack throw: throwsForLackOfStack
 function f5 name="flagsOfThrowingPath" parameters=[{type=boolean}] results=[{type=undefined}] {
     Branch v0 -> taken b1(), notTaken b2()
   b1():

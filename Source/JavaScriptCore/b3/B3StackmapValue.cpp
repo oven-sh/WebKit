@@ -102,6 +102,10 @@ void StackmapValue::dumpMeta(CommaPrinter& comma, PrintStream& out) const
         out.print(comma, "isSuspension"_s);
     if (m_sharesLatePath)
         out.print(comma, "sharesLatePath"_s);
+    if (m_releasesDeadValues)
+        out.print(comma, "releasesDeadValues"_s);
+    if (!m_childrenLetGoByCallee.isEmpty())
+        out.print(comma, "childrenLetGoByCallee = "_s, m_childrenLetGoByCallee);
     if constexpr (B3StackmapValueInternal::dumpRegisters) {
         out.print(", earlyClobbered = ", m_earlyClobbered,
             ", lateClobbered = ", m_lateClobbered, ", usedRegisters = ", m_usedRegisters);

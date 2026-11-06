@@ -13,12 +13,14 @@
 #include "JSCJSValue.h"
 #include "JSExportMacros.h"
 #include <array>
+#include <memory>
 #include <utility>
 #include <wtf/Assertions.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
@@ -37,11 +39,26 @@ struct RuntimeCounters {
 
     std::array<uint64_t, numberOfRuntimeCounters> values { };
     std::array<uint64_t, numberOfLimits> limitHits { };
+    // No stub and no compiled code counts it, so no instance has a word for it.
+    uint64_t stackListingsAfterGivenUpCaptures { 0 };
+    uint64_t ropesFlattenedForPrefixTests { 0 };
+    uint64_t nativeTextsHashed { 0 };
+
+    // How often the places of a file ran, in a program that counts them, by the compiler's numbers.
+    using CountedFile = Vector<uint64_t>;
+    // By what the compiler says of the file. A file that runs again, in another realm or from another image, goes on counting where it was.
+    UncheckedKeyHashMap<String, std::unique_ptr<CountedFile>> countedFiles;
+    // By Image::position(), then by the number of a module of that image. Null until the module counts for the first time.
+    Vector<Vector<CountedFile*>, 1> countedFilesOfImages;
 };
 
 JS_EXPORT_PRIVATE void count(VM&, RuntimeCounterID);
 void count(Instance&, RuntimeCounterID);
 JS_EXPORT_PRIVATE void countLimitHit(VM&, LimitID);
+// tryCaptureStackTrace() has walked the stack and keeps nothing of it: its caller lists the frames one by one.
+void countStackListingAfterGivenUpCapture(VM&);
+void countRopeFlattenedForPrefixTest(VM&);
+void countNativeTextHashed(VM&);
 
 JS_EXPORT_PRIVATE uint64_t valueOf(VM&, RuntimeCounterID);
 JS_EXPORT_PRIVATE uint64_t limitHitsOf(VM&, LimitID);

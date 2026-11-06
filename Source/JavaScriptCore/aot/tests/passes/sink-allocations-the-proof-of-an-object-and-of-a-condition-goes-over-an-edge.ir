@@ -1,0 +1,41 @@
+# The proof of an object that stands beside the proof of a condition is handed to the next block: the object is built in front of the edge, and the block takes the proof of the built object with that of the condition
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="V" constructor=f0 fields=[{key="x" declared={type=anything}}]
+function f0 name="V" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    Return
+}
+
+function f1 name="handed-on" parameters=[{type=i32}, {type=boolean}] results=[{type=anything}] {
+    v2 = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L0}, {kind=MemberPassedByStores layout=L0 key="x"}]
+    Branch v2 -> taken b1(| 0), notTaken b6()
+  b1(v3: guard):
+    v4 = NewObject layout=L0
+    v5 = HasLayoutPrototype v4
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6: guard):
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    v7 = AllGuards v6, v3
+    v8 = AllGuards v7
+    PutSlot v4, v7, v0 key="x" receivers=[L0] level=Expected
+    Jump -> next b5(v8)
+  b4():
+    v10 = AllGuards v6, v3
+    PutSlot v4, v10, v0 key="x" receivers=[L0] level=Expected
+    Return v0
+  b5(v12: guard):
+    PutSlot v4, v12, v0 key="x" receivers=[L0] level=Expected
+    Return v4
+  b6() frequency=Unlikely:
+    Return v0
+# CHECK: b3():
+# CHECK: [[cell]]: L0 = NewObject layout=L0
+# CHECK: b4():
+# CHECK-NEXT: Return v0
+# CHECK: b5(
+# CHECK: PutSlot [[cell]]
+}

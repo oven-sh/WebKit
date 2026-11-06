@@ -12,6 +12,7 @@
 #include "AOTCodeGenerationDriver.h"
 #include "AOTCodeTemplates.h"
 #include "AOTCompileOptions.h"
+#include "AOTEffectSummaries.h"
 #include "AOTFFIStubs.h"
 #include "AOTIRProgram.h"
 #include "AOTImageBuilder.h"
@@ -131,7 +132,14 @@ static GeneratedProgram generateProgram(Typed::PipelineOutput& pipeline, Prepare
     }
 
     Typed::CodeGenerationInputs inputs = createCodeGenerationInputs(pipeline, plan);
+    Typed::EffectSummaries effectsByOperandTypes;
+    if (context.validates()) {
+        effectsByOperandTypes = Typed::computeEffectSummariesByOperandTypes(*pipeline.program, *pipeline.flow, context);
+        inputs.effectsByOperandTypes = &effectsByOperandTypes;
+    }
     CodeGenerationJob codeGeneration(inputs, *pipeline.program, context, &plan.bodiesWithoutCode);
+    context.giveFreedMemoryBack();
+    times.didFinish("put bodies away"_s);
     // Most of encoding the text runs on one thread, so it runs beside code generation, which is longer. So does most of the flow report, which reads what flow has left and no body.
     runTasksInParallel(context.parallelLoops(), {
         [&] {
@@ -144,6 +152,7 @@ static GeneratedProgram generateProgram(Typed::PipelineOutput& pipeline, Prepare
         [&] { buildReport(); },
     });
     times.didFinish("generate code, encode program tables and text, compile regular expressions"_s);
+    context.giveFreedMemoryBack();
     return result;
 }
 
@@ -177,7 +186,7 @@ static std::optional<ImageParts> createImageParts(const Typed::PipelineOutput& p
     if (diagnostics.hasErrors())
         return std::nullopt;
 
-    if (mayUseFFI(pipeline))
+    if (mayUseFFI(pipeline, context.options()))
         parts.ffiStubs = generateFFIStubs(context);
     times.didFinish("generate FFI stubs"_s);
     if (diagnostics.hasErrors())
@@ -269,7 +278,7 @@ static Vector<SiteCounts> countSitesByFunctionAsRead(const Typed::Program& progr
 
 static Vector<FunctionReport> collectFunctionReports(const Typed::Program& program, const BuiltImage& built, std::span<OperationCounts> operationCountsByFunction, std::span<const SiteCounts> sitesByFunctionAsRead, BuildContext& context)
 {
-    CodeIndex index(built.functions.span());
+    CodeIndex index(built.functions.span(), &context.parallelLoops());
     return collectInParallel<FunctionReport>(context.parallelLoops(), program.functions.size(), [&](unsigned functionIndex, Vector<FunctionReport>& reports) {
         const Typed::Function& function = program.functions[functionIndex];
         SiteCounts sites = functionIndex < sitesByFunctionAsRead.size() ? sitesByFunctionAsRead[functionIndex] : SiteCounts { };
@@ -305,14 +314,14 @@ static void writeSymbols(const Typed::PipelineOutput& pipeline, const BuiltImage
         writeMapFile(options.logging.mapFilePath, symbols.span(), inputs, output.image.span(), context);
 }
 
-static void writeReports(const Typed::PipelineOutput& pipeline, const BuiltImage& built, std::span<OperationCounts> operationCountsByFunction, std::span<const SiteCounts> sitesByFunctionAsRead, BuildContext& context, CompileOutput& output)
+static void writeReports(const Typed::PipelineOutput& pipeline, const BuiltImage& built, const CodeGenerationPlan& plan, std::span<OperationCounts> operationCountsByFunction, std::span<const SiteCounts> sitesByFunctionAsRead, BuildContext& context, CompileOutput& output)
 {
     PhaseTimes times(context, Stage::BuildImage);
     const CompileOptions& options = context.options();
     const Typed::Program& program = *pipeline.program;
 
     if (options.obfuscates()) {
-        output.obfuscatedSites = collectObfuscatedSites(built.functions, program, context);
+        output.obfuscatedSites = collectObfuscatedSites(built.functions, program, context, plan.bodyFactsForTables.placesOfTailCalls.span());
         times.didFinish("collect obfuscated sites"_s);
     }
     if (hasFlag(options.reports, ReportSet::Functions)) {
@@ -347,7 +356,7 @@ static void generateImage(Typed::PipelineOutput& pipeline, PreparedProgram& prep
     pipeline.releaseCodeGenerationInputs(context);
     BuiltImage built = createImage(pipeline, generated, context, output);
     if (!context.diagnostics().hasErrors())
-        writeReports(pipeline, built, generated.code.operationCountsByFunction.mutableSpan(), sitesByFunctionAsRead.span(), context, output);
+        writeReports(pipeline, built, generated.plan, generated.code.operationCountsByFunction.mutableSpan(), sitesByFunctionAsRead.span(), context, output);
     if (whatTheBuildLeaves == WhatTheBuildLeaves::DiesBeforeTheCallReturns) {
         PhaseTimes times(context, Stage::BuildImage);
         built.functions.clearOnAllThreads(context);
@@ -378,7 +387,9 @@ static void run(NOESCAPE const PipelineRunner& runPipeline, BuildContext& contex
     output.entryModuleIDs = program.entries.map([](const Typed::Entry& entry) {
         return entry.module.index() + 1;
     });
-    if (context.options().isVerifyOnly()) {
+    if (pipeline->endedBehindFlowAnalysis)
+        output.flowReport = WTF::move(pipeline->usesOfLibraryCode);
+    else if (context.options().isVerifyOnly()) {
         PhaseTimes times(context, Stage::AnalyzeFlow);
         buildFlowReport(*pipeline, Typed::collectFlowReportBodyRecords(program, context), context, output);
         times.didFinish("collect type tests, build flow report"_s);
@@ -408,8 +419,20 @@ static void takeResults(BuildContext& context, CompileOutput& output, WhatTheBui
         times.didFinish("destroy results"_s);
     }
     output.diagnostics = context.takeDiagnostics();
-    if (context.options().logging.logsPhaseTimes) [[unlikely]]
+    if (context.options().logging.logsPhaseTimes) [[unlikely]] {
         context.statistics().dumpPassTimes(WTF::dataFile());
+        // What stands beside a limit that stops a build. The names are written out: nameOf(StatisticID) would keep the names of all statistics in an executable that has no other use for them.
+        Vector<uint64_t> counted = context.statistics().values();
+        static constexpr std::pair<ASCIILiteral, StatisticID> sizes[] = {
+            { "functions emitted"_s, StatisticID::ImageFunctionsEmitted }, { "code bytes"_s, StatisticID::CodeBytesEmitted }, { "table bytes"_s, StatisticID::TableBytesEmitted },
+            { "program table bytes"_s, StatisticID::ProgramTableBytesEmitted }, { "text bytes"_s, StatisticID::TextBytesEmitted }, { "identifiers"_s, StatisticID::IdentifiersNumbered },
+            { "string constants"_s, StatisticID::StringConstantsNumbered }, { "literal strings"_s, StatisticID::LiteralStringsNumbered }, { "shapes"_s, StatisticID::Shapes }, { "call sites"_s, StatisticID::CallSitesEmitted },
+        };
+        dataLog("AOT size of the image:");
+        for (auto [name, id] : sizes)
+            dataLog(" | ", name, " ", counted[static_cast<unsigned>(id)]);
+        dataLogLn();
+    }
     output.statistics = context.takeStatistics();
     output.limitValues = Vector<uint64_t>(context.limits().span());
     if (output.diagnostics.hasErrors()) {
@@ -426,11 +449,25 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
     Box<BinarySemaphore> outputIsComplete = Box<BinarySemaphore>::create();
     Ref<Thread> buildThread = startBuildThread("AOT build"_s, [&, outputIsComplete] {
         BuildContext context(options, hostPool);
+        context.setFunctionTexts(owner.functionTexts);
         run([&](const Typed::ReaderOfFinishedBodies& readBesideLastEffectSummaries) {
             return Typed::runPipeline(program, owner.externalBodies, context, [&] {
                 if (owner.release)
                     owner.release(owner.owner);
-            }, readBesideLastEffectSummaries);
+            }, readBesideLastEffectSummaries, [&](const Typed::FlowReport& report) {
+                if (!owner.goesOnBehindFlowAnalysis)
+                    return true;
+                FlowFindings findings {
+                    report.unseenCode.span().data(), report.unseenCode.size(),
+                    report.builtinsUsed.span().data(), report.builtinsUsed.size(),
+                    report.libraryFunctionsLacked.span().data(), report.libraryFunctionsLacked.size(),
+                    report.exportsThatSpiesReplace.span().data(), report.exportsThatSpiesReplace.size(),
+                    report.builtinsThatTestsReplace.span().data(), report.builtinsThatTestsReplace.size(),
+                    report.namesThatTestsAdd.span().data(), report.namesThatTestsAdd.size(),
+                    report.textOfNamesThatTestsAdd.span().data(), report.textOfNamesThatTestsAdd.size(),
+                };
+                return owner.goesOnBehindFlowAnalysis(owner.owner, &findings);
+            });
         }, context, *output, WhatTheBuildLeaves::DiesBesideTheCaller);
         takeResults(context, *output, WhatTheBuildLeaves::DiesBesideTheCaller);
         context.parallelLoops().sendRestingThreadsBack();

@@ -11,6 +11,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTRegExpFlags.h"
 #include "AOTStaticsEmitter.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsRegExp.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -77,7 +78,7 @@ void AllocationEmitter::generateNewSuppressedError(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewSuppressedError, { in<Boxed>(value->errorOperand()), in<Boxed>(value->suppressedOperand()) }, { .capturesStackTrace = true }));
 }
 
-CellPointer AllocationEmitter::createArguments(const ValueContext& value, RuntimeOperation operation, std::optional<CellPointer> callee)
+CellPointer AllocationEmitter::createArguments(const ValueContext& value, std::optional<CellPointer> callee)
 {
     ValueID countOperand = value->countOperand();
     Word32 count = word32(0);
@@ -109,23 +110,21 @@ CellPointer AllocationEmitter::createArguments(const ValueContext& value, Runtim
     for (ValueID parameter : value->parametersOperands())
         parameters.append(in<Boxed>(parameter));
 
-    Vector<Operand, 4> arguments;
+    CellPointer rest = in<CellPointer>(value->restOperand());
+    Pointer buffer = argumentBuffer(parameters.span());
     if (callee)
-        arguments.append(*callee);
-    arguments.append(count);
-    arguments.append(in<CellPointer>(value->restOperand()));
-    arguments.append(argumentBuffer(parameters.span()));
-    return callOperation(value, operation, arguments.span(), Representation::Cell, { }).as<CellPointer>();
+        return CellPointer(callStub(value, createMappedArguments(), { callee->value(), count.value(), rest.value(), buffer.value(), word32(static_cast<int32_t>(parameters.size())).value() }).first);
+    return CellPointer(callStub(value, AOT::createArguments(), { count.value(), rest.value(), buffer.value() }).first);
 }
 
 void AllocationEmitter::generateCreateUnmappedArguments(const ValueContext& value)
 {
-    define(value, createArguments(value, RuntimeOperation::CreateUnmappedArguments, std::nullopt));
+    define(value, createArguments(value, std::nullopt));
 }
 
 void AllocationEmitter::generateCreateMappedArguments(const ValueContext& value)
 {
-    define(value, createArguments(value, RuntimeOperation::CreateMappedArguments, in<CellPointer>(value->calleeOperand())));
+    define(value, createArguments(value, in<CellPointer>(value->calleeOperand())));
 }
 
 void AllocationEmitter::generateGetMappedArgument(const ValueContext& value)

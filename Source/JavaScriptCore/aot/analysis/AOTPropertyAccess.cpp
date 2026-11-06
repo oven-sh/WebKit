@@ -166,6 +166,9 @@ std::optional<PropertyAccessQuery> propertyAccessQueryOf(const Program& program,
     Opcode opcode = access.opcode;
     if (!isNamedAccess(opcode) || (FlagMask::isFreeName(opcode) && access.isFreeName()))
         return std::nullopt;
+    // It has been moved as a read that runs nothing. The read behind its failing side is the one to plan for.
+    if (opcode == Opcode::PropGet && access.asksOnlyTables())
+        return std::nullopt;
 
     PropertyAccessQuery query;
     query.access = accessOf(opcode);
@@ -195,7 +198,7 @@ std::optional<PropertyAccessQuery> propertyAccessQueryOf(const Program& program,
         query.start = MemberStart::ClassObject;
         query.expectedClassObject = classObject;
         query.receivers.level = KnowledgeLevel::Expected;
-        query.receivers.predicted.add(program.at(classObject).constructedClass);
+        query.receivers.expected = LayoutList { program.at(classObject).constructedClass };
         return query;
     }
 
@@ -205,7 +208,7 @@ std::optional<PropertyAccessQuery> propertyAccessQueryOf(const Program& program,
         query.receivers = receiverCandidates(program, function, receiver, stamp);
     } else {
         query.receivers = candidatesOf(program, receiverType, nullptr, { });
-        query.receivers.predicted.clear();
+        query.receivers.expected = LayoutList();
     }
     query.isListedByAllocation = isAllocationListing(program, function, receiver, query.key);
     query.isLeftOutByUnfinishedAllocation = isUnfinishedAllocationLeavingOut(program, function, receiver, query.key);
@@ -328,9 +331,9 @@ static MemberSelection selectMembers(const PropertyAccessQuery& query)
     const ReceiverCandidates& receivers = query.receivers;
     if (receivers.isProven())
         return receivers.proven.isEmpty() ? MemberSelection { } : MemberSelection { MemberSource::Proven };
-    if (receivers.predicted.isEmpty())
+    if (receivers.expected.predicted().isEmpty())
         return { MemberSource::None, UnprovenCause::UnknownObject };
-    if (receivers.predicted.size() > query.maxMembers)
+    if (receivers.expected.predicted().size() > query.maxMembers)
         return { MemberSource::None, UnprovenCause::LimitReached, LimitID::MaxAccessPlanMembers };
     return { MemberSource::Expected };
 }
@@ -428,7 +431,7 @@ static bool isTestedForFewOfManyReceiversOfLibrary(const Program& program, const
     if (query.module && program.at(query.module).kind != ModuleKind::RuntimeSource && !program.at(query.module).flags.contains(ModuleFlags::IsLibrary))
         return false;
     size_t tested = plan.receivers.size();
-    size_t expected = query.receivers.predicted.size();
+    size_t expected = query.receivers.expected.predicted().size();
     return expected > tested && tested * maxOtherReceiversForEachTestedOneInLibrary < expected - tested;
 }
 
@@ -444,7 +447,7 @@ static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& conte
             return context.program.at(layout).module == query.module;
         });
         bool hasLayoutOfExpectedType = std::ranges::any_of(plan.receivers, [&](LayoutID layout) {
-            return query.receivers.ofExpectedType.contains(layout);
+            return query.receivers.ofExpectedType.predicted().contains(layout);
         });
         std::tuple<bool, bool, size_t, bool> weight { arm.answer.kind != MemberKind::Absent, hasLayoutOfExpectedType, plan.receivers.size(), hasLayoutOfModule };
         if (weight <= weightOfHeaviest)
@@ -496,6 +499,19 @@ PropertyAccessPlan planPropertyAccess(const PropertyAccessContext& context, cons
         return plan;
 
     const ReceiverCandidates& receivers = query.receivers;
+    // A class below nothing lays its private names on what its own constructor allocates.
+    if (query.isPrivate && query.access == Access::Has && receivers.isMadeByHostAlone && !context.program.at(query.declaringLayout).has(LayoutFlags::HasHeritage)) {
+        plan.form = AccessForm::Constant;
+        plan.operation = Opcode::Boolean;
+        plan.booleanConstant = false;
+        plan.level = KnowledgeLevel::Proven;
+        if (receivers.mayBeNullish) {
+            plan.requiredProofs.add(Proof::NotNullish);
+            plan.needsMissPath = true;
+            plan.level = KnowledgeLevel::Expected;
+        }
+        return plan;
+    }
     if (receivers.isProven() && receivers.hasOtherParts) {
         plan.form = AccessForm::Split;
         plan.level = receivers.level;
@@ -528,7 +544,7 @@ PropertyAccessPlan planPropertyAccess(const PropertyAccessContext& context, cons
         memberLevel = receivers.level;
         break;
     case MemberSource::Expected:
-        partition = partitionFor(context, query, receivers.predicted);
+        partition = partitionFor(context, query, receivers.expected.predicted());
         plan = planExpectedMembers(context, query, partition);
         memberLevel = KnowledgeLevel::Expected;
         break;

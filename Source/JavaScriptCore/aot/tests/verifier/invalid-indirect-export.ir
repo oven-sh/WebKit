@@ -1,0 +1,13 @@
+# an indirect export names a module whose names only the run knows: code that is not compiled, or a module with a star export that is followed at run time
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 1
+
+module m0 path="main" displayPath="main" requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m5 completes=true}]
+module m1 path="goodOverUncompiledCode" displayPath="goodOverUncompiledCode" requests=[{target=m4 completes=true}] exports=[{name="c" kind=Indirect module=m4 importName="c"}]
+module m2 path="goodOverStars" displayPath="goodOverStars" requests=[{target=m3 completes=true}] exports=[{name="c" kind=Indirect module=m3 importName="c"}]
+module m3 path="stars" displayPath="stars" requests=[{target=m4 isDynamicStarExport=true completes=true}]
+module m4 path="external" displayPath="external" kind=External referrer=m3
+module m5 path="badOverListedNames" displayPath="badOverListedNames" requests=[{target=m6 completes=true}] exports=[{name="c" kind=Indirect module=m6 importName="c"}]
+module m6 path="listed" displayPath="listed"
+entry module=m0

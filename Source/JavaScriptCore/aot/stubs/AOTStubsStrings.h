@@ -10,6 +10,7 @@
 #include "AOTStubDescriptor.h"
 #include "AOTStubFrontEnds.h"
 #include "AOTStubHelpers.h"
+#include "RegisterSet.h"
 #include <initializer_list>
 
 namespace JSC { namespace AOT {
@@ -19,13 +20,19 @@ constexpr StubKey flattenString() { return StubKey(StubFamily::FlattenString); }
 constexpr StubKey stringsAreEqual() { return StubKey(StubFamily::StringsAreEqual); }
 constexpr StubKey distinctStringsAreEqual() { return StubKey(StubFamily::DistinctStringsAreEqual); }
 constexpr StubKey compareStrings() { return StubKey(StubFamily::CompareStrings); }
+// The operands: two strings. The result: their order by the default collator, -1, 0 or 1, sign-extended to 64 bits.
+constexpr StubKey stringLocaleCompare() { return StubKey(StubFamily::StringLocaleCompare); }
 // The operands: a string and a position, which is in range where it is below the length as an unsigned 64-bit number. The result: the code point there, or undefinedInteger.
 constexpr StubKey stringCodePointAt() { return StubKey(StubFamily::StringCodePointAt); }
 // The operands: a builder and a string.
 constexpr StubKey stringBuilderAppendString() { return StubKey(StubFamily::StringBuilderAppendString); }
+// The operand: a builder.
+constexpr StubKey stringBuilderDiscard() { return StubKey(StubFamily::StringBuilderDiscard); }
 // The operands: a StackStringBuilder, its cursor and a string. The result: the cursor behind the string.
 constexpr StubKey stackStringBuilderAppendString() { return StubKey(StubFamily::StackStringBuilderAppendString); }
 constexpr StubKey integerToString() { return StubKey(StubFamily::IntegerToString); }
+enum class ConcatenatedKeyForm : uint8_t { Key, Name };
+constexpr StubKey concatenateKeyOfPair(ConcatenatedKeyForm form) { return StubKey(StubFamily::ConcatenateKeyOfPair).withForm(static_cast<uint8_t>(form)); }
 constexpr StubKey substring() { return StubKey(StubFamily::Substring); }
 constexpr StubKey findCharacter8() { return StubKey(StubFamily::FindCharacter8); }
 
@@ -35,8 +42,8 @@ constexpr StubKey concatenate(unsigned count)
     return StubKey(StubFamily::Concatenate).withCount(count);
 }
 
-static_assert(exists(ropeCharacters()) && exists(flattenString()) && exists(stringCodePointAt()) && exists(stringBuilderAppendString()) && exists(stackStringBuilderAppendString()));
-static_assert(exists(stringsAreEqual()) && exists(compareStrings()) && exists(integerToString()) && exists(substring()) && exists(findCharacter8()));
+static_assert(exists(ropeCharacters()) && exists(flattenString()) && exists(stringCodePointAt()) && exists(stringBuilderAppendString()) && exists(stringBuilderDiscard()) && exists(stackStringBuilderAppendString()));
+static_assert(exists(stringsAreEqual()) && exists(compareStrings()) && exists(stringLocaleCompare()) && exists(integerToString()) && exists(substring()) && exists(findCharacter8()));
 static_assert(exists(distinctStringsAreEqual()) && bodyOf(distinctStringsAreEqual()) == stringsAreEqual());
 static_assert(exists(concatenate(2)) && exists(concatenate(3)));
 static_assert(!exists(concatenate(2).withCount(1)) && !exists(concatenate(3).withCount(4)));
@@ -47,6 +54,9 @@ void returnResult(StubAssembler& jit, auto value)
     jit.move(value, jit.result());
     jit.returnToCaller();
 }
+
+// AOTStubsStringConversions.cpp set gets the address of the StringKeyCache::KeyOfPair that may have the two parts. x86-64 leaves the scratch register alone.
+void locateKeysOfPair(StubAssembler&, GPRReg first, GPRReg second, GPRReg set, GPRReg scratch);
 
 // AOTStubsStrings.cpp fiber holds the value word of string. length may be fiber.
 void loadStringLength(StubAssembler&, GPRReg string, GPRReg fiber, GPRReg length);
@@ -68,6 +78,8 @@ void loadSubstringBaseAndOffset(StubAssembler&, GPRReg string, GPRReg base, GPRR
 void packSubstringFibers(StubAssembler&, GPRReg base, GPRReg offset, GPRReg length, GPRReg lengthWord);
 // impl arrives with the value word of string, which is a rope. For a substring, impl gets the impl of the base and characters the address of the first unit.
 void loadSubstringCharacters(StubAssembler&, GPRReg string, GPRReg impl, GPRReg characters, GPRReg length, JumpList& isNotSubstring);
+// fiber arrives with the value word of string, which is a rope, and gets the address of the first character of a piece of an 8-bit string.
+void load8BitCharactersOfSubstring(StubAssembler&, GPRReg string, GPRReg fiber, GPRReg offset, MacroAssembler::JumpList& isOther);
 struct ComparedBytes {
     GPRReg first;
     GPRReg second;
@@ -87,6 +99,17 @@ struct ComparedImpls {
 };
 // Two impls of one length, with the flags that both have. Falls through when the characters are the same. At needsLeaf the impls are untouched, elsewhere all five registers are overwritten.
 void branchIfCharactersDiffer(StubAssembler&, const ComparedImpls&, MacroAssembler::JumpList& differ, MacroAssembler::JumpList& needsLeaf);
+struct ComparedStrings {
+    GPRReg first;
+    GPRReg second;
+    GPRReg firstFiber;
+    GPRReg secondFiber;
+    GPRReg length;
+    GPRReg offset;
+    GPRReg word;
+};
+// Two strings of one length with their value words. Falls through when the characters are the same. At needsOperation the strings are untouched. word may be one of the strings.
+void branchIfCharactersInPlaceDiffer(StubAssembler&, const ComparedStrings&, MacroAssembler::JumpList& differ, MacroAssembler::JumpList& needsOperation);
 struct ScannedBytes {
     GPRReg bytes;
     GPRReg size;
@@ -100,6 +123,8 @@ struct ScannedBytes {
 void branchUnlessASCIIOutsideRange(StubAssembler&, const ScannedBytes&, uint8_t first, uint8_t last, MacroAssembler::JumpList& isNot);
 // Calls operationAOTFlatten in a frame of its own, which only preservedGPRs survive, then jumps to continuation or to the exception handler. Overwrites T9.
 void flattenSubject(StubAssembler&, GPRReg string, std::initializer_list<GPRReg> preservedGPRs, Label continuation);
+
+PreludeExit emitJSONAppendValuePrelude(StubAssembler&);
 
 // AOTStubsStringConversions.cpp A flat 8-bit string of ASCII characters without a letter of the other case is its own conversion.
 PreludeExit emitToLowerCasePrelude(StubAssembler&);
@@ -124,6 +149,8 @@ struct FlatSubstringRegisters {
     GPRReg result;
     GPRReg firstScratch;
     GPRReg secondScratch;
+    // What else the caller holds in registers. result is the register in which a function returns its value.
+    RegisterSet alsoKept { };
 };
 // string is no rope, and bits 32 to 63 of start and length are zero.
 [[nodiscard]] AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler&, const FlatSubstringRegisters&, MacroAssembler::JumpList& fails);

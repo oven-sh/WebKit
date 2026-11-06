@@ -23,6 +23,7 @@
 #include "StrongInlines.h"
 #include "WeakInlines.h"
 #include <array>
+#include <wtf/text/MakeString.h>
 
 #if ENABLE(WEBASSEMBLY)
 #include "WebAssemblyGCStructure.h"
@@ -363,6 +364,15 @@ static void testVariantsWithOutOfLineKeyOrder(LoadedProgram& program)
     AOT_TEST_CHECK(table.withOutOfLineKeyOrder(vm, *usual, otherEntries) != variant);
     AOT_TEST_CHECK(table.withOutOfLineKeyOrder(vm, *usual, shorterEntries) != variant);
     AOT_TEST_CHECK(table.withNumberedKeyOrder(vm, *variant) == usual && table.withNumberedKeyOrder(vm, *usual) == usual);
+
+    // An order that was made longer still serves whoever asks for what it began as, and its entries lie where they lay.
+    CompiledStructure* shorter = table.withOutOfLineKeyOrder(vm, *usual, shorterEntries);
+    const uint16_t* entriesOfShorter = shorter->outOfLineKeyOrder().data();
+    AOT_TEST_CHECK(shorter->tryAppendToOutOfLineKeyOrder(0));
+    AOT_TEST_CHECK(equalSpans(shorter->outOfLineKeyOrder(), std::span<const uint16_t>(entries)) && shorter->outOfLineKeyOrder().data() == entriesOfShorter);
+    AOT_TEST_CHECK(table.withOutOfLineKeyOrder(vm, *usual, shorterEntries) == shorter && table.withOutOfLineKeyOrder(vm, *usual, entries) == variant);
+    while (shorter->tryAppendToOutOfLineKeyOrder(0)) { }
+    AOT_TEST_CHECK(shorter->outOfLineKeyOrder().data() == entriesOfShorter && shorter->outOfLineKeyOrder().size() <= maxFieldsInOrder);
 }
 
 static void testComponentsOfVariantAreIndependent(LoadedProgram& program)
@@ -445,7 +455,6 @@ static void testVariantNobodyHoldsLivesAsLongAsItsPrototype(LoadedProgram& progr
 
     AOT_TEST_CHECK(!prototypes.hasOverflowed());
     prototypes.clear();
-    sanitizeStackForVM(vm);
     vm.heap.collectSync(CollectionScope::Full);
     vm.heap.collectSync(CollectionScope::Full);
     unsigned numberCollected = 0;
@@ -480,7 +489,6 @@ static void testUsualStructureWithoutObjectsOutlastsCollections(LoadedProgram& p
     Weak<Structure> dropped;
     allocateAndDropObject(program, dropped);
     AOT_TEST_CHECK(dropped);
-    sanitizeStackForVM(vm);
     vm.heap.collectSync(CollectionScope::Eden);
     AOT_TEST_CHECK(dropped);
     vm.heap.collectSync(CollectionScope::Full);

@@ -75,15 +75,7 @@ OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType& type)
     return kinds;
 }
 
-// A slot holds undefined or null wherever it has a marker for it, whatever the type of its field says.
-static bool hasEveryMarkerOf(SlotRepresentation from, SlotRepresentation to)
-{
-    SlotTraits fromTraits = traitsOf(from);
-    SlotTraits toTraits = traitsOf(to);
-    return (!fromTraits.hasUndefined || toTraits.hasUndefined) && (!fromTraits.hasNull || toTraits.hasNull);
-}
-
-static bool acceptsEveryValue(const RuntimeType& type)
+bool acceptsEveryValue(const RuntimeType& type)
 {
     if (!type.primitiveSet().containsAll(allPrimitives) || type.integerRange() || !type.literalStrings().empty())
         return false;
@@ -125,11 +117,13 @@ static bool typeAlwaysFits(const RuntimeLayoutTable& layouts, const FieldData& f
     return fromRange && fromRange->first >= toRange->first && fromRange->second <= toRange->second;
 }
 
-bool alwaysFits(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to)
+SlotFit fitOf(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to)
 {
-    if (to.keepsStateOfBirth && !from.keepsStateOfBirth)
-        return false;
-    return hasEveryMarkerOf(from.slot.representation(), to.slot.representation()) && typeAlwaysFits(layouts, from, to);
+    if ((to.keepsStateOfBirth && !from.keepsStateOfBirth) || !typeAlwaysFits(layouts, from, to))
+        return SlotFit::IsTested;
+    if (from.slotHoldsUndefinedAndNull && !(layouts.slotAdmits(to, jsUndefined()) && layouts.slotAdmits(to, jsNull())))
+        return SlotFit::UnlessUndefinedOrNull;
+    return SlotFit::Always;
 }
 
 std::optional<AcceptedValue> acceptInSlot(Object& target, const FieldData& to, JSValue value)
@@ -238,6 +232,7 @@ bool applyMovesToNewObject(VM& vm, const FieldMovePlan& plan, JSFinalObject* tar
 }
 
 FieldMovePlanCache::FieldMovePlanCache(State& state)
+    : m_sets(state.tableArena)
 {
     state.caches->add(CacheKind::WeakByKey, "field move plans"_s, *this);
 }
@@ -276,7 +271,7 @@ const FieldMovePlan& FieldMovePlanCache::add(VM& vm, FieldMovePlanKey&& key, std
 {
     ASSERT(plan);
     if (!m_sets)
-        m_sets = makeUniqueWithoutFastMallocCheck<Sets>();
+        m_sets.make();
     m_lastFound = nullptr;
     Set& set = setFor(key);
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {
@@ -319,6 +314,8 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
         return nullptr;
     State& state = *instance->state;
     Object* compiled = compiledObjectOrNull(source);
+    if (state.sharesRealm && compiled && !compiled->isDescribedBy(state)) [[unlikely]]
+        return nullptr;
     FieldMovePlanKey key { .targetWords = excluded.numberPlusOne };
     if (compiled) {
         if (compiled->hasExtraProperties() || compiled->hasOutOfLineKeyOrder() || compiled->layout().keysAreNeverEnumerated)
@@ -333,8 +330,13 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
     DeferGC deferGC(vm);
     FieldMovePlanCache& plans = state.objects->caches->movePlans;
     const FieldMovePlan* plan = plans.find(key);
-    if (!plan)
+    if (!plan) {
+        if (!compiled && !excluded.numberPlusOne && source->structure()->isDictionary() && source->structure()->storedPrototype() == JSValue(realm->objectPrototype())) {
+            if (JSFinalObject* copy = tryCopyDictionary(vm, source))
+                return copy;
+        }
         plan = &plans.add(vm, WTF::move(key), state.objects->caches->assignmentPlans.createPlanForOrdinaryCopy(vm, realm, source, excluded));
+    }
     if (!plan->isUsable())
         return nullptr;
     if (plan->sourceHasDeferredClosures)

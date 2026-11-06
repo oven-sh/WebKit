@@ -11,6 +11,7 @@
 #include "AOTID.h"
 #include "CodeType.h"
 #include "JSExportMacros.h"
+#include "LineColumn.h"
 #include <optional>
 #include <wtf/text/WTFString.h>
 
@@ -26,6 +27,11 @@ using CompiledFunctionID = Typed::ID<struct CompiledFunctionIDTag>;
 
 enum class TraceVisibility : uint8_t { Visible, VisibleOnlyOnTop, Hidden };
 enum class StackTraceBuiltinKind : uint8_t { None, JSBuiltin, JSBuiltinConstructor, HostFunction };
+
+inline constexpr LineColumn startOfBuiltinFunction { 1, 11 };
+// Where plain Bun keeps the functions that its transpiler calls, those that apply decorators among them. Programs look for its frames.
+inline constexpr ASCIILiteral moduleOfCompilerHelpers = "bun:wrap"_s;
+static_assert(sizeof("function (") == startOfBuiltinFunction.column, "JSC reports every frame of a built-in written in JavaScript at the start of its parameters");
 
 struct FunctionTraceData;
 struct SourcePosition;
@@ -56,9 +62,13 @@ public:
     JS_EXPORT_PRIVATE FunctionID sourceFunction() const;
     JS_EXPORT_PRIVATE bool rejectsOnThrow() const;
     JS_EXPORT_PRIVATE StackTraceBuiltinKind builtinKind() const;
+    // A helper of the compiler that plain Bun keeps in a module of its own. Its frames name moduleOfCompilerHelpers.
+    JS_EXPORT_PRIVATE bool isHelperOfCompiler() const;
     JS_EXPORT_PRIVATE std::optional<SourcePosition> definition() const;
 
 private:
+    bool isOfCalledBuiltin() const;
+
     FunctionID m_function;
     const FunctionTraceData* m_record;
 };

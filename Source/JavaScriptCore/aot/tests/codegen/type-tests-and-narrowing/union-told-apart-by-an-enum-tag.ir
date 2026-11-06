@@ -1,0 +1,133 @@
+# const enum Kind { Leaf, Pair }
+# type Leaf = { kind: Kind.Leaf; value: number };
+# type Pair = { kind: Kind.Pair; left: number; right: number };
+# function total(node: Leaf | Pair): number {
+#   if (node.kind === Kind.Leaf) return node.value;
+#   return node.left + node.right;
+# }
+# declare const input: any;
+# const leaf: Leaf = { kind: Kind.Leaf, value: +input };
+# const pair: Pair = { kind: Kind.Pair, left: +input, right: +input };
+# (globalThis as any).answer = total(input ? leaf : pair);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=302 kind=Variable
+typesite w1 module=m0 position=357 kind=Variable
+typesite w2 module=m0 position=156 kind=Parameter function=f1
+typesite w3 module=m0 position=141 kind=Result
+typesite w4 module=m0 position=449 kind=CallResult
+layout L0 name="Leaf" module=m0 position=36 fields=[{key="kind" declared={type=0} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L1 name="Pair" module=m0 position=84 fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="left" declared={type=number} flags=[IsRequired]}, {key="right" declared={type=number} flags=[IsRequired]}] ownFieldCount=3
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Undefined
+    v1 = NewClosure function=f1
+    v2 = Convert v1 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v3 = Integer
+    v4 = Convert v3 declared={type=0}
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="input" [isFreeName]
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    v8 = ToNumber v7
+    v9 = Convert v8 declared={type=number}
+    v10 = NewObject -, v4, v9 layout=L0 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = Convert v11 declared={type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v13 = Integer integer=1
+    v14 = Convert v13 declared={type=1}
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="input" [isFreeName]
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = ToNumber v17
+    v19 = Convert v18 declared={type=number}
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="input" [isFreeName]
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    v23 = ToNumber v22
+    v24 = Convert v23 declared={type=number}
+    v25 = NewObject -, v14, v19, v24 layout=L1 fields=[0, 1, 2]
+    v26 = FinishObject v25
+    v27 = Convert v26 declared={type=undefined|null|L1 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v28 = Builtin builtin=GlobalThis
+    v29 = PropGet v28 key="globalThis" [isFreeName]
+    v30 = Convert v29 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v31 = Convert v30 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v32 = Builtin builtin=GlobalThis
+    v33 = PropGet v32 key="input" [isFreeName]
+    v34 = ToBoolean v33
+    Branch v34 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v35):
+    Jump -> next b3()
+  b3():
+    Jump -> next b6(v12)
+  b4(v36):
+    Jump -> next b5()
+  b5():
+    Jump -> next b6(v27)
+  b6(v37):
+    v38 = Call v2, -, v37 calleeName="total"
+    v39 = Convert v38 declared={type=number site=w4}
+    PropSet v31, v39 key="answer"
+    v41 = Undefined
+    Return v41
+}
+function f1 name="total" module=m0 position=141 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="kind"
+    v2 = Integer
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    Jump -> next b3()
+  b3():
+    v6 = Convert v5 declared={type=undefined|null|L0} illTypedCause=Assertion
+    v7 = PropGet v6 key="value"
+    v8 = Convert v7 declared={type=number site=w3}
+    Return v8
+  b4(v9):
+    v10 = NarrowByField v0, v9 key="kind"
+    Jump -> next b5()
+  b5():
+    v11 = Convert v10 declared={type=undefined|null|L1} illTypedCause=Assertion
+    v12 = PropGet v11 key="left"
+    v13 = PropGet v11 key="right"
+    v14 = Add v12, v13
+    v15 = Convert v14 declared={type=number site=w3}
+    Return v15
+}
+
+# A tag of two enum members is one byte in the object. `node.kind === Kind.Leaf` loads the byte and branches on it: there is no comparison to make with zero. The tag decides the layout, so the fields of either arm are plain loads.
+# CHECK-LABEL: name="total" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[node]] = ArgumentReg(
+# CHECK-NEXT: Int32 b@[[kind]] = Load8Z(b@[[node]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Branch(b@[[kind]], Terminal
+# CHECK-NEXT: Successors: Then:#[[pair]], Else:#[[leaf]]
+# CHECK-NEXT: BB#[[pair]]:
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Double b@[[left]] = Load(b@[[node]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@[[right]] = Load(b@[[node]], offset = 32, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@[[sum]] = Add(b@[[left]], b@[[right]]
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
+# CHECK-NEXT: BB#[[leaf]]:
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Double b@[[value]] = Load(b@[[node]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Return(b@[[value]], Terminal)
+# CHECK-NOT: BB#
+# CHECK-LABEL: end of function
+# X64: instructions: 6, patchpoints: 0
+# ARM64: instructions: 8, patchpoints: 0

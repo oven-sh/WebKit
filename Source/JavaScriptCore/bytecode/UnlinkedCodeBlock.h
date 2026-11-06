@@ -413,8 +413,6 @@ protected:
 private:
     friend class BytecodeRewriter;
     friend class UnlinkedCodeBlockGenerator;
-    template<typename Traits>
-    friend class BytecodeGeneratorBase;
 
     template<typename CodeBlockType>
     friend class CachedCodeBlock;

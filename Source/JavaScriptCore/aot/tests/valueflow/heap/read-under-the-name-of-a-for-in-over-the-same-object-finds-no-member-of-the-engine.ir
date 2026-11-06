@@ -1,7 +1,7 @@
 # One step of each loop. record = { a: first }; for (name in record) record[name]();   other = { constructor: second }; for (name in other) { delete other[name]; other[name]() }
-# heir = Object.create({ c: third }); for (name in heir) heir[name]();   names = { d: 1 }; target = { e: fourth }; for (name in names) target[name]()
+# heir = Object.create({ c: third }); for (name in heir) heir[name]();   target = { e: fourth }; for (name in names) target[name](), where nobody knows what `names` is
 # The enumeration has listed the property that the read finds, and no member that the engine makes is enumerable: not Object.prototype.constructor, not hasOwnProperty. So the callee is what the program has stored.
-# What is inherited from an object of the program is found. Where the program deletes from the object the lookup may go on to a member of the same name: of a name that the program has written there, and of no other. A name out of another object may spell any member.
+# What is inherited from an object of the program is found. Where the program deletes from the object the lookup may go on to a member of the same name: of a name that the program has written there, and of no other. A name out of another object, whose names nobody can list, may spell any member.
 # RUN: valueflow-solve calls
 # CHECK: f0 v7 -> f1
 # CHECK-NOT: f0 v7 -> f1 {{*}}Object
@@ -62,8 +62,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v26 = Call v25, v20
     Jump -> next b9()
   b9():
-    v27 = Integer integer=1
-    v28 = NewObject -, v27 layout=L3 fields=[0]
+    v27 = Builtin builtin=GlobalThis
+    v28 = PropGet v27 key="names" [isFreeName]
     v29 = NewClosure function=f4
     v30 = NewObject -, v29 layout=L4 fields=[0]
     v31 = ForInOpen v28

@@ -19,7 +19,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 Boxed CallEmitter::callWithList(const OperationContext& context, Boxed callee, Boxed thisValue, Word32 count, Pointer list, const CallOptions& options)
 {
-    return Boxed(callStub(context, AOT::callWithList(), { callee.value(), thisValue.value(), zeroExtended(count).value(), list.value() }, options).first);
+    return Boxed(callStub(context, AOT::callWithList(positionOf(context, options)), { callee.value(), thisValue.value(), zeroExtended(count).value(), list.value() }, options).first);
 }
 
 void CallEmitter::generateCallList(const ValueContext& value)
@@ -29,18 +29,19 @@ void CallEmitter::generateCallList(const ValueContext& value)
     Boxed thisValue = thisOrUndefined(value->thisValueOperand());
     LValue list = in<CellPointer>(value->listOperand()).value();
     ConventionCall call {
-        .stub = callWithArray(),
+        .stub = callWithArray(positionOf(value)),
         .stubOperands = singleElementSpan(list),
         .callee = callee.value(),
         .thisValue = thisValue.value(),
     };
     if (!value.returnCall()) {
+        if (value->isTailCall && mayForwardCallToReceiver(value))
+            requireCallableBeforeTailCall(value, callee, thisValue);
         define(value, callByConvention(value, call, { .throwSite = siteThatNamesCallee(value) }));
         return;
     }
 
-    if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        requireCallableBeforeTailCall(value, callee, siteThatNamesCallee(value));
+    requireCallableBeforeTailCall(value, callee, thisValue);
     tailCallByConvention(value, call);
 }
 
@@ -64,6 +65,11 @@ Boxed CallEmitter::constructValue(const OperationContext& context, ConstructSynt
 Boxed CallEmitter::superConstructWithList(const OperationContext& context, Boxed parent, Boxed newTarget, Word32 count, Pointer list)
 {
     return Boxed(callStub(context, AOT::superConstructWithList(), { parent.value(), newTarget.value(), zeroExtended(count).value(), list.value() }, { .constructs = true }).first);
+}
+
+Boxed CallEmitter::superConstructWithArray(const OperationContext& context, Boxed parent, Boxed newTarget, CellPointer list)
+{
+    return Boxed(callStub(context, AOT::superConstructWithArray(), { parent.value(), newTarget.value(), list.value() }, { .constructs = true }).first);
 }
 
 void CallEmitter::generateConstruct(const ValueContext& value)

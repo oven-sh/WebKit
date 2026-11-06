@@ -24,7 +24,7 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
     using enum Representation;
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     if (holdsAnyNaN(to)) {
-        Operand number = source.is<Number>() || source.is<NumberWithPayload>() ? source : convert(context, conversion, sourceID, source, type, Double);
+        Operand number = source.is<Number>() ? source : convert(context, conversion, sourceID, source, type, Double);
         return Operand(to, number.value);
     }
     if (holdsAnyNaN(source.representation) && to != JSValue) {

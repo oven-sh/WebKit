@@ -82,22 +82,28 @@ private:
 
     InitialFields collectInitialFields(LayoutID, std::span<const uint32_t> fields, std::span<const ValueID> values);
     CellPointer allocateCell(const ValueContext&, AllocationID, const PlannedLayout&, AllocationStorage, ZeroedBy);
+    bool initializesFrameObjectInStub(const ValueContext&, LayoutID);
     CellPointer allocateFrameCell(const ValueContext&, AllocationID, const PlannedLayout&);
     ZeroedBy whoZeroesBodyOfFreshCell(const ValueContext&, AllocationID, const BitVector& isInitialField, AllocationStorage);
     template<typename Visitor> void forEachEmptySlot(LayoutID, const BitVector& isInitialField, const Visitor&);
     CellPointer takeReleasedCellOrAllocate(const ValueContext&, AllocationID, uint32_t freeCellOffset);
-    void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, ZeroedBy);
+    void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, ZeroedBy, bool hasStateOfFrameCell);
+    static Representation representationWantedBy(const InitialField&);
+    bool isNarrowedWhereStored(const InitialField&) const;
+    Operand takeForSlot(const InitialField&);
     void storeInitialFields(CellPointer, LayoutID, const InitialFields&);
     void storeEmptySlots(CellPointer, LayoutID, const BitVector& isInitialField, ZeroedBy);
     void barrierIfCellWasStored(const ValueContext&, CellPointer, const InitialFields&);
     void storeFieldsInExtension(const ValueContext&, CellPointer, LayoutID, const InitialFields&, OwnerBarrier);
     void storePrototype(const ValueContext&, CellPointer, ValueID prototype, std::optional<Word32> numberOfAllocation = std::nullopt);
+    bool looksAtPrototypeBeforeAllocating(const ValueContext&);
+    CellPointer allocateInstance(const ValueContext&, AllocationID, ValueID prototype);
     Vector<WordOfEmptyObject, 8> wordsOfEmptyObject(LayoutID);
     ValueID findOnlyAllocationIn(BlockID from, const Target&);
     std::optional<AllocationsByCase> findAllocationsByCase(const TerminatorContext&);
     void generateNewObjectChosenByTable(const ValueContext&, const AllocationChosenByTable&);
     ValueID findCopyThatFills(const ValueContext&);
-    CellPointer createArguments(const ValueContext&, RuntimeOperation, std::optional<CellPointer> callee);
+    CellPointer createArguments(const ValueContext&, std::optional<CellPointer> callee);
 
     AllocationChosenByTable m_allocationChosenByTable;
 };

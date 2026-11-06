@@ -120,7 +120,7 @@ function f5 name="callInside" parameters=[{type=int[0, 100]}, {type=anything}] r
 # CHECK: Jump -> next b1(v2)
 }
 
-function f6 name="secondExit" parameters=[{type=int[0, 100]}, {type=boolean}] results=[{type=undefined}] {
+function f6 name="secondExit" parameters=[{type=int[0, 100]}, {type=boolean}] results=[{type=number}] {
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -132,11 +132,13 @@ function f6 name="secondExit" parameters=[{type=int[0, 100]}, {type=boolean}] re
     v8 = Add v6, v7
     Branch v1 -> taken b4(), notTaken b5()
   b3():
-    Return
+    v9 = Integer integer=1
+    Return v9
   b4():
     Jump -> next b1(v8)
   b5():
-    Return
+    v10 = Integer integer=2
+    Return v10
 # CHECK: b0(
 # CHECK: Jump -> next b1(v2)
 }

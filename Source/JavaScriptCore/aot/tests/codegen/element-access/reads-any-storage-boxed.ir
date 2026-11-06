@@ -7,6 +7,7 @@
 # RUN: generate-code calls
 # RUN(S): code-shapes
 # RUN(R): pass ChooseRepresentations
+# RUN(HOLE): lower-to-b3 optimized f4
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="holdsInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
@@ -45,7 +46,9 @@ function f4 name="hasNoHoles" parameters=[{type=Array<anything, proven, pristine
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }
-# CHECK-NOT: f4: size=[[boxed]] frame=
+# HOLE: Int64 b@[[element]] = Load(b@{{*}}, ControlDependent|Reads:Elements.1,
+# HOLE-NOT: Branch(b@[[element]],
+# HOLE-LABEL: end of function
 function f5 name="atNumber" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2

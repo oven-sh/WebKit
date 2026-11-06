@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTLimits.h"
+#include "AOTThreads.h"
 #include "AOTVector.h"
 #include <wtf/Locker.h>
 #include <wtf/StdLibExtras.h>
@@ -34,7 +35,7 @@ StringInterningPhase::StringInterningPhase(StringTable& table, unsigned numberOf
     : m_table(table)
 {
     m_firstUses.grow(numberOfTasks);
-    RELEASE_ASSERT(!table.m_openPhase);
+    RELEASE_ASSERT(!table.m_openPhase && !ParallelLoops::isInsideLoop());
     table.m_openPhase = this;
 }
 
@@ -91,10 +92,12 @@ StringRemap StringInterningPhase::finish(std::span<const unsigned> taskOrder)
     discard();
 
     StringRemap remap;
-    remap.m_finalIDs = Vector<Vector<StringID>>(ProvisionalStringID::maxStorages, [&](size_t number) {
-        const Storage* storage = m_storages.at(number);
-        return Vector<StringID>(FillWith { }, storage ? storage->strings.size() : 0, StringID());
-    });
+    if (!m_storages.isEmpty()) {
+        remap.m_finalIDs = Vector<Vector<StringID>>(ProvisionalStringID::maxStorages, [&](size_t number) {
+            const Storage* storage = m_storages.at(number);
+            return Vector<StringID>(FillWith { }, storage ? storage->strings.size() : 0, StringID());
+        });
+    }
     remap.m_tasksWithNewStrings.ensureSize(m_firstUses.size());
 
     for (unsigned task : taskOrder) {

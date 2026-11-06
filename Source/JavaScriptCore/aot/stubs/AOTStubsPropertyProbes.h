@@ -16,12 +16,15 @@
 
 namespace JSC { namespace AOT {
 
+struct FieldReadRegisters;
+
 inline constexpr StubRegister slotHeaderRegister = StubRegister::T12;
 inline constexpr StubRegister slotPayloadRegister = StubRegister::T13;
 inline constexpr StubRegister slotNameRegister = stubImmediateRegister;
 inline constexpr StubRegister storedValueByIdRegister = StubRegister::A1;
 inline constexpr StubRegister keyCellRegister = StubRegister::A1;
 inline constexpr StubRegister storedValueByValRegister = StubRegister::A2;
+inline constexpr StubRegister valueStoredThroughProxyRegister = StubRegister::T10;
 #if CPU(X86_64)
 inline constexpr StubRegister readSiteCacheRegister = StubRegister::A1;
 inline constexpr StubRegister storeSiteCacheRegister = StubRegister::A2;
@@ -136,7 +139,8 @@ void loadFrontRowOfCell(CCallHelpers&, SlotAccess, GPRReg cell, GPRReg row, GPRR
 // The cell of the front table for a Structure and a name lies at plane + index * 8. structureIDAndIndex holds the StructureID.
 void locateFrontCell(StubAssembler&, SlotAccess, GPRReg structureIDAndIndex, GPRReg column, GPRReg plane);
 // Answers what most reads find, each by a comparison with the cell where it lies: a value of the receiver's own in its cell, then that nothing has the name.
-void returnByFrontCell(StubAssembler&, GPRReg receiver, GPRReg column, GPRReg plane, GPRReg index, GPRReg cell, JumpList& hasOtherName);
+// countMissAtSite: for a site that holds the slot of another Structure, whose header is in cell. A value that lies at the place the site names is read there and is no miss.
+void returnByFrontCell(StubAssembler&, GPRReg receiver, GPRReg column, GPRReg plane, GPRReg index, GPRReg cell, JumpList& hasOtherName, const ScopedLambda<void()>* countMissAtSite = nullptr);
 #endif
 void loadIdentifier(StubAssembler&, GPRReg identifierNumber, GPRReg uid, JumpList& isNotCreated);
 
@@ -168,6 +172,8 @@ struct FieldTableProbe {
     bool answersAbsent { false };
     // For a probe that returns what it reads.
     std::optional<CallerFrame> answersMissingFields { };
+    // With boundName: the entry that is expected, of the form InlineValue or OutOfLineValue. One comparison with the whole entry then stands for the name and the form.
+    std::optional<uint32_t> expectedEntry { };
 };
 
 // Reads a field of a compiled object that is in its slot in the cell into result, which may be any of the probe's registers, and goes on with finish, which leaves the stub.
@@ -276,9 +282,13 @@ void linkToSlotCannot(StubAssembler&, JumpList&, SlotHandlerTable, SlotFinisher,
 void loadValueBySlot(StubAssembler&, const CachedSlot&, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result);
 void loadInheritedValueBySlot(StubAssembler&, const CachedSlot&, GPRReg storage, GPRReg wordIndex, GPRReg result);
 enum class KindOfProbedSlot : uint8_t { IsInHeader, IsInT10 };
-void returnPresenceBySlot(StubAssembler&, PresenceQuestion, const ProbedSlot&, GPRReg receiver, JumpList& isUnknown, KindOfProbedSlot = KindOfProbedSlot::IsInHeader);
+// `in` of a receiver whose slot leaves the answer to an object above it is `in` of that object: it becomes the receiver, and the stub goes on at asksReceiver.
+void returnPresenceBySlot(StubAssembler&, PresenceQuestion, const ProbedSlot&, GPRReg receiver, Label asksReceiver, JumpList& isUnknown, KindOfProbedSlot = KindOfProbedSlot::IsInHeader);
 
-void loadStaticsBase(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics);
+void loadStaticsBase(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg instance = instanceGPR);
+// Of the instance that holds the variable of a slot. The registers may hold the slot: it is read first.
+// Where realms are shared the variable may be of another image: the read that follows finds literal text through the instance of that image, which is kept in the scratch register for numbers.
+void loadStaticsBaseOfVariable(StubAssembler&, const CachedSlot&, GPRReg staticsBase, GPRReg scratch, FieldReadRegisters&);
 void markStaticsCard(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg offsetInStatics);
 
 // What filled a site was not in the field table: an access that the table answers never gets as far as a fill.

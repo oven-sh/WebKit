@@ -12,15 +12,21 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
+#include "AOTClaims.h"
 #include "AOTDeferDefinitions.h"
 #include "AOTDefinitions.h"
+#include "AOTDescriptorLiteral.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDescription.h"
+#include "AOTEffectsOfAccesses.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
+#include "AOTFlowRecords.h"
 #include "AOTFlowResults.h"
+#include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
@@ -31,13 +37,13 @@
 #include "AOTPredictedValues.h"
 #include "AOTProgramCaches.h"
 #include "AOTSlotPlan.h"
-#include "AOTStronglyConnectedComponents.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTWholeLiterals.h"
 #include <memory>
 #include <ranges>
 #include <wtf/HashMap.h>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -50,7 +56,9 @@ static Value makeVariableAccess(Opcode opcode, VariableID variable, std::initial
     return access;
 }
 
-static ValueID assumeType(IRBuilder& builder, ValueID value, TypeID wanted)
+enum class ClaimHolds : uint8_t { WhereverValueIs, FromHereOn };
+
+static ValueID assumeType(IRBuilder& builder, ValueID value, TypeID wanted, ClaimHolds holds = ClaimHolds::WhereverValueIs)
 {
     TypeID type = builder.function().at(value).type;
     if (builder.types().at(type).isSubsetOf(builder.types().at(wanted), builder.context().program))
@@ -58,6 +66,8 @@ static ValueID assumeType(IRBuilder& builder, ValueID value, TypeID wanted)
     TypeID castType = builder.types().intersectionOf(type, wanted);
     if (builder.context().build.validates())
         builder.append(makeValidateType(value, castType));
+    if (holds == ClaimHolds::FromHereOn)
+        return builder.append(makeAssumeType(value, builder.append(Opcode::Specified, { }), Proven::behindFact(castType)));
     return builder.append(makeAssumeType(value, Proven::byRulesWithoutChecks(castType)));
 }
 
@@ -95,7 +105,9 @@ static Vector<FunctionID> findFunctionsToEdit(const Program& program, const Para
 }
 
 // A store for which an opcode is named stays as a mark and stores a new value of that opcode. A value that is stored where it is made gets a store behind it.
-static void removeValues(IRBuilder& builder, const BitVector& isRemoved, const MapByIndex<VariableID>& storedWhereMade, const Invocable<std::optional<Opcode>(ValueID)> auto& markStoredBy)
+using MembersFirstRead = Vector<BuiltinID, 0>;
+
+static void removeValues(IRBuilder& builder, const BitVector& isRemoved, const MapByIndex<VariableID>& storedWhereMade, const Invocable<std::optional<Opcode>(ValueID)> auto& markStoredBy, const MapByIndex<const MembersFirstRead*>& firstReadsLeftBehind = { })
 {
     Function& function = builder.function();
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
@@ -103,9 +115,17 @@ static void removeValues(IRBuilder& builder, const BitVector& isRemoved, const M
         BlockValues kept;
         kept.reserveInitialCapacity(values.size());
         for (ValueID id : values) {
-            if (isRemoved.quickGet(id.index()))
-                continue;
             builder.setOrigin(function.at(id).origin());
+            if (isRemoved.quickGet(id.index())) {
+                if (auto found = firstReadsLeftBehind.find(id.index()); found != firstReadsLeftBehind.end()) {
+                    for (BuiltinID member : *found->value) {
+                        Value initialization = IRBuilder::make(Opcode::InitializeBuiltin);
+                        initialization.setBuiltin(member);
+                        kept.append(builder.addDetached(WTF::move(initialization)));
+                    }
+                }
+                continue;
+            }
             if (std::optional<Opcode> mark = markStoredBy(id)) {
                 kept.append(builder.addDetached(IRBuilder::make(*mark)));
                 function.edit(id, ValueEdit::Definition).setValueOperand(kept.last());
@@ -146,6 +166,7 @@ struct ConstantVariableStore {
     VariableID variable;
     KnownValue value;
     std::optional<Vector<KnownValue, 8>> list;
+    std::optional<Vector<ConstantMember, 8>> members;
 };
 
 } // anonymous namespace
@@ -163,11 +184,13 @@ static Vector<ConstantVariableStore> collectConstantStores(const Program& progra
             // The type of what a store stores has to lie inside the type of the variable, so the type has to say the constant.
             KnownValue stored;
             std::optional<Vector<KnownValue, 8>> list;
+            std::optional<Vector<ConstantMember, 8>> members;
             if (value.opcode == Opcode::PutModuleVariable) {
-                stored = knownValueOfType(program, program.typeOf(program.functions[index], value.valueOperand()));
+                stored = knownValueOfType(program.typeOf(program.functions[index], value.valueOperand()));
                 list = findConstantsOfWholeLiteral(program, flow, program.functions[index], value.valueOperand());
+                members = findMembersOfWholeObject(program, flow, program.functions[index], value.valueOperand());
             }
-            stores.append(ConstantVariableStore { value.variable(), stored.isObject() ? KnownValue() : stored, WTF::move(list) });
+            stores.append(ConstantVariableStore { value.variable(), stored.isObject() ? KnownValue() : stored, WTF::move(list), WTF::move(members) });
         });
     });
 }
@@ -183,14 +206,444 @@ static ConstantLists collectListsStoredAlone(const Program& program, const Vecto
     for (const ConstantVariableStore& store : stores) {
         if (store.list && numberOfStores[store.variable.index()] == 1)
             lists.entries.append({ store.variable, Vector<KnownValue>(store.list->span()) });
+        if (store.members && numberOfStores[store.variable.index()] == 1)
+            lists.objects.append({ store.variable, Vector<ConstantMember>(store.members->span()) });
     }
     AOT::sort(lists.entries, { }, &ConstantLists::Entry::variable);
+    AOT::sort(lists.objects, { }, &ConstantLists::ObjectEntry::variable);
     return lists;
 }
 
 ConstantLists collectConstantLists(const Program& program, const FlowResults& flow, BuildContext& build)
 {
     return collectListsStoredAlone(program, collectConstantStores(program, flow, build));
+}
+
+// Whatever names a key and is neither a read of it nor a question about it, where its row in the schema lets it write a property or does not bound what it does.
+// An operation that comes into the schema is in here until its row says otherwise.
+static const OpcodeSet& operationsThatMayStoreUnderTheirKey()
+{
+    static const OpcodeSet opcodes = [] {
+        OpcodeSet result;
+        for (Opcode opcode : allMembersOf<Opcode>) {
+            if (!Value::opcodesWithKey.contains(opcode) || accessOf(opcode) == Access::Read || accessOf(opcode) == Access::Has)
+                continue;
+            if (!effectFactsOf(opcode).staysWithinDeclaredBound || declaredBoundOf(opcode).writes.containsAny({ AbstractHeap::ObjectFields, AbstractHeap::NamedProperties }))
+                result.add(opcode);
+        }
+        RELEASE_ASSERT(result.contains(Opcode::PropSet) && result.contains(Opcode::PropDefine) && result.contains(Opcode::SuperSet));
+        return result;
+    }();
+    return opcodes;
+}
+
+static bool isWrittenByAllocationsAlone(const Field& field)
+{
+    constexpr OptionSet<FieldFlags> flagsOfOtherFields { FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::IsInherited, FieldFlags::IsAddedLate };
+    const LocationFlow& location = field.flow.location;
+    return field.key && !field.flags.containsAny(flagsOfOtherFields) && !field.form.contains(FieldForm::IsAccessor) && !field.declared.isExpected()
+        && location.writers == WriterState::AllKnown && location.stores == StoreCount::AtMostOnce && location.initialization == InitializationState::SetAtCreation
+        && field.flow.occupancy == Occupancy::AlwaysFilled && field.flow.stability == everyFlagOf<FieldStability>();
+}
+
+// `const E = {}; E.A = 0; E.B = 1;`. Every store is found by the name, or the type of the field says the one value that any of them stores.
+static bool isWrittenByStoresOfKnownValues(const Program& program, const Field& field)
+{
+    constexpr OptionSet<FieldFlags> flagsOfOtherFields { FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::IsInherited };
+    const LocationFlow& location = field.flow.location;
+    return field.key && !field.flags.containsAny(flagsOfOtherFields) && !field.form.contains(FieldForm::IsAccessor) && !field.declared.isExpected()
+        && location.writers == WriterState::AllKnown && location.initialization != InitializationState::SetAtCreation
+        && field.flow.prototypeName == PrototypeNameState::AbsentOnPrototypes && field.flow.stability == everyFlagOf<FieldStability>()
+        && (location.storeNaming == StoreNaming::EveryStoreNamesLocation || knownValueOfType(program.at(field.declared.written())).isKnown());
+}
+
+// No setter and no read-only property answers for the name, so the store gives the object a property of its own, or a new value to the one it has.
+static bool storeRunsNoCode(const Layout& layout, const Field& field)
+{
+    return !field.form.contains(FieldForm::IsAccessor) && field.flow.prototypeName == PrototypeNameState::AbsentOnPrototypes && field.flow.stability.contains(FieldStability::IsNeverRedefined)
+        && layout.flow.impossibleMutations.containsAll({ ObjectMutation::ChangePrototype, ObjectMutation::ChangeIntegrity });
+}
+
+namespace {
+
+// Follows a new object for as long as nobody can see it without what is stored on the way: no code runs but the code that is followed, nothing is thrown, and nothing is read from an object.
+// `const E = {}; E.A = 0;`, `(function (E) { E[E["A"] = 0] = "A"; })(E = exports.E || (exports.E = {}));`
+class WalkBehindBirth {
+public:
+    WalkBehindBirth(const Program& program, const BitVector& layoutsWalkedBehind, const Layout& layout, std::span<KnownValue> known)
+        : m_program(program)
+        , m_layoutsWalkedBehind(layoutsWalkedBehind)
+        , m_layout(layout)
+        , m_known(known)
+    {
+    }
+
+    void walk(FunctionID id, BlockID block, size_t positionOfBirth)
+    {
+        Names names { m_program.at(id).at(block).values[positionOfBirth] };
+        follow(id, block, positionOfBirth + 1, names);
+    }
+
+private:
+    using Names = Vector<ValueID, 4>;
+
+    static bool isObject(const Function& function, const Names& names, ValueID value)
+    {
+        return names.contains(sameObjectThroughCasts(function, value).valueInFrontOfFacts());
+    }
+
+    bool followStore(const Function& function, const Names& names, const Value& store)
+    {
+        auto receivers = store.receivers() ? m_program.at(store.receivers()).all() : std::nullopt;
+        if (!receivers)
+            return false;
+        for (LayoutID receiver : receivers->value()) {
+            const Layout& layout = m_program.at(receiver);
+            std::optional<uint32_t> field = layout.findField(store.key());
+            if (!field || !storeRunsNoCode(layout, layout.fields[*field]))
+                return false;
+        }
+        if (std::optional<uint32_t> field = isObject(function, names, store.objectOperand()) ? m_layout.findField(store.key()) : std::nullopt)
+            m_known[*field] = knownValueOf(m_program, function, store.valueOperand());
+        return true;
+    }
+
+    // `E[0] = "A"`: above the object lies Object.prototype alone, which takes no index.
+    bool createsElement(const Function& function, const Names& names, const Value& store) const
+    {
+        return isObject(function, names, store.objectOperand()) && isArrayIndex(m_program.typeOf(function, store.propertyOperand())) && m_program.builtins().closesIndexKeys(Builtins::ObjectPrototype)
+            && m_layout.flow.impossibleMutations.containsAll({ ObjectMutation::ChangePrototype, ObjectMutation::ChangeIntegrity, ObjectMutation::RedefineProperty });
+    }
+
+    // Whether the callee comes back with nobody having seen the object. A function is followed once: what calls itself is not a straight line.
+    bool followCall(const Function& function, Names& names, ValueID id, const Value& call)
+    {
+        auto callees = call.callees() ? m_program.at(call.callees()).all() : std::nullopt;
+        if (!callees || !callees->value().builtins.empty() || callees->value().functions.size() != 1)
+            return false;
+        FunctionID calleeID = callees->value().functions[0];
+        const Function& callee = m_program.at(calleeID);
+        bool runsToItsEnd = (callee.kind == FunctionKind::Plain || callee.kind == FunctionKind::Arrow) && !callee.flags.containsAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
+        if (!callee.hasBody() || !runsToItsEnd || m_followed.contains(calleeID))
+            return false;
+        m_followed.append(calleeID);
+        Names namesInCallee;
+        for (uint32_t index = 0; index < call.numberOfOperands(); ++index) {
+            if (!call.operand(index) || !isObject(function, names, call.operand(index)))
+                continue;
+            std::optional<uint32_t> parameter = entryParameterOf(callee, call, index);
+            if (!parameter)
+                return false;
+            namesInCallee.append(callee.at(entryBlock).parameters[*parameter]);
+        }
+        std::optional<bool> returnsObject = follow(calleeID, entryBlock, 0, namesInCallee);
+        if (returnsObject.value_or(false))
+            names.append(id);
+        return !!returnsObject;
+    }
+
+    // Where the function returns with nobody having seen the object: whether the object is what it returns.
+    std::optional<bool> follow(FunctionID id, BlockID blockID, size_t position, Names& names)
+    {
+        const Function& function = m_program.at(id);
+        for (size_t numberOfBlocks = 0; numberOfBlocks++ < function.blocks.size(); position = 0) {
+            const Block& block = function.at(blockID);
+            for (; position < block.values.size(); ++position) {
+                const Value& value = function.at(block.values[position]);
+                bool goesOn = false;
+                switch (value.opcode) {
+                case Opcode::PropSet:
+                    goesOn = followStore(function, names, value);
+                    break;
+                case Opcode::ElemSet:
+                case Opcode::ElemDefine:
+                    goesOn = createsElement(function, names, value);
+                    break;
+                case Opcode::Call:
+                    goesOn = followCall(function, names, block.values[position], value);
+                    break;
+                case Opcode::GetModuleVariable:
+                case Opcode::PutModuleVariable:
+                    goesOn = true;
+                    break;
+                case Opcode::NewObject:
+                    // A walk begins here too: a thousand literals in a row are walked behind once, not a thousand times.
+                    goesOn = !m_layoutsWalkedBehind.quickGet(value.layout().index());
+                    break;
+                default:
+                    goesOn = isRematerializable(value) || isCastWithoutTest(value.opcode) || (interpretedOf(value.opcode) == Interpretation::Allocation && declaredBoundOf(value.opcode).isUnobservable());
+                    break;
+                }
+                if (!goesOn)
+                    return std::nullopt;
+            }
+            if (block.terminator.kind == TerminatorKind::Return)
+                return block.terminator.valueOperand() && isObject(function, names, block.terminator.valueOperand());
+            if (block.terminator.kind != TerminatorKind::Jump)
+                return std::nullopt;
+            const Target& next = block.terminator.next();
+            for (size_t index = 0; index < next.arguments.size(); ++index) {
+                if (isObject(function, names, next.arguments[index]))
+                    names.append(function.at(next.block).parameters[index]);
+            }
+            blockID = next.block;
+        }
+        return std::nullopt;
+    }
+
+    const Program& m_program;
+    const BitVector& m_layoutsWalkedBehind;
+    const Layout& m_layout;
+    std::span<KnownValue> m_known;
+    Vector<FunctionID, 4> m_followed;
+};
+
+} // anonymous namespace
+
+static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
+{
+    const Program& program = editor.program();
+    const ParallelLoops& loops = build.parallelLoops();
+    constexpr OptionSet<LayoutFlags> flagsOfOtherLayouts { LayoutFlags::HasHeritage, LayoutFlags::HasMembersWithoutLayout, LayoutFlags::IsTypeParameter, LayoutFlags::IsNeverAllocated, LayoutFlags::IsWrittenUnderDictionaryType, LayoutFlags::IsDerived, LayoutFlags::IsOfCreatedObject };
+    auto isStoredBehindBirth = [&](const Field& field) {
+        return isWrittenByStoresOfKnownValues(program, field);
+    };
+    BitVector hasCandidates(program.layouts.size());
+    BitVector hasFieldsStoredBehindBirth(program.layouts.size());
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        const Layout& layout = program.layouts[index];
+        bool isLiteral = (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Container) && !layout.flags.containsAny(flagsOfOtherLayouts);
+        bool isFilledByNativeCode = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
+        if (!isLiteral || isFilledByNativeCode || layout.flow.baseState != BaseState::None || !program.layoutsBelow(LayoutID(index)).empty())
+            continue;
+        if (std::ranges::any_of(layout.fields, isStoredBehindBirth))
+            hasFieldsStoredBehindBirth.quickSet(index);
+        if (hasFieldsStoredBehindBirth.quickGet(index) || std::ranges::any_of(layout.fields, isWrittenByAllocationsAlone))
+            hasCandidates.quickSet(index);
+    }
+    if (hasCandidates.isEmpty())
+        return;
+
+    // The value is unknown where no primitive constant is listed for the field.
+    struct Listing {
+        FieldReference field;
+        KnownValue value;
+        // The slot of a constant is as narrow as the constant, and what a function makes again and again is filled with fewer stores where its slots are alike. There only the reads change.
+        bool keepsTypeOfField { false };
+    };
+    // The values lie at the indexes of their fields, written in one pass over the object. A lookup per field is quadratic in a large literal.
+    using ValuesOfFields = Vector<KnownValue, 16>;
+    auto listFields = [&](LayoutID id, const ValuesOfFields& values, bool listsFieldsOfBirth, bool listsFieldsStoredLater, bool keepsTypes, Vector<Listing>& found) {
+        const Layout& layout = program.at(id);
+        for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+            if (listsFieldsOfBirth && isWrittenByAllocationsAlone(layout.fields[field]) ? true : listsFieldsStoredLater && isStoredBehindBirth(layout.fields[field]))
+                found.append({ { id, field }, values[field].isObject() ? KnownValue() : values[field], keepsTypes });
+        }
+    };
+    auto valuesOfMembers = [&](const DataNode::Object& object) {
+        const Layout& layout = program.at(object.layout);
+        ValuesOfFields values(layout.fields.size());
+        for (const DataMember& member : object.members | std::views::reverse) {
+            if (std::optional<uint32_t> field = layout.findField(member.key))
+                values[*field] = knownValueOf(member.value);
+        }
+        return values;
+    };
+    auto rootObjectOf = [&](const Value& data) -> const DataNode::Object* {
+        const DataNode::Object* object = program.at(data.data()).root.tryAs<DataNode::Object>();
+        return object && object->layout && hasFieldsStoredBehindBirth.quickGet(object->layout.index()) ? object : nullptr;
+    };
+    Vector<Listing> listings = collectInParallel<Listing>(loops, program.functions.size(), [&](unsigned index, Vector<Listing>& found) {
+        const Function& function = program.functions[index];
+        bool hasBirth = false;
+        forEachListedValue(program, FunctionID(index), { Opcode::NewObject, Opcode::Data }, [&](BlockID, uint32_t, ValueID, const Value& birth) {
+            hasBirth |= birth.opcode == Opcode::NewObject ? hasCandidates.quickGet(birth.layout().index()) : !!rootObjectOf(birth);
+        });
+        if (!hasBirth)
+            return;
+        for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+            const BlockValues& values = function.blocks[block].values;
+            for (size_t position = 0; position < values.size(); ++position) {
+                const Value& birth = function.at(values[position]);
+                LayoutID id;
+                ValuesOfFields known;
+                if (birth.opcode == Opcode::NewObject && hasCandidates.quickGet(birth.layout().index())) {
+                    id = birth.layout();
+                    known.grow(program.at(id).fields.size());
+                    std::span<const uint32_t> listed = birth.fields();
+                    for (size_t operand = listed.size() == birth.numberOfVariadicOperands() ? listed.size() : 0; operand--;)
+                        known[listed[operand]] = knownValueOf(program, function, birth.variadicOperands()[operand]);
+                } else if (const DataNode::Object* object = birth.opcode == Opcode::Data ? rootObjectOf(birth) : nullptr) {
+                    id = object->layout;
+                    known = valuesOfMembers(*object);
+                } else
+                    continue;
+                if (hasFieldsStoredBehindBirth.quickGet(id.index()))
+                    WalkBehindBirth(program, hasFieldsStoredBehindBirth, program.at(id), known.mutableSpan()).walk(FunctionID(index), BlockID(block), position);
+                listFields(id, known, birth.opcode == Opcode::NewObject, true, !function.isModuleBody(), found);
+            }
+        }
+    });
+    listings.appendVector(collectInParallel<Listing>(loops, program.data.size(), [&](unsigned index, Vector<Listing>& found) {
+        forEachDataNodeInPreorder(program.data[index].root, [&](uint32_t ordinal, const DataNode& node) {
+            const DataNode::Object* object = node.tryAs<DataNode::Object>();
+            // Stores may follow the operation that makes the root. Nothing names an object inside while it is made.
+            if (object && object->layout && hasCandidates.quickGet(object->layout.index()))
+                listFields(object->layout, valuesOfMembers(*object), true, !!ordinal, false, found);
+        });
+    }));
+    AOT::stableSortInLine(listings, { }, &Listing::field);
+    // A type says which integer, string or boolean, not which fraction: a read of such a field becomes the number itself.
+    struct ConstantField {
+        FieldReference field;
+        TypeID type;
+        KnownValue number;
+    };
+    Vector<ConstantField> constants;
+    BitVector keysOfConstants;
+    BitVector keysWithStoresToLookAt;
+    BitVector layoutsWithConstants(program.layouts.size());
+    for (size_t first = 0; first < listings.size();) {
+        size_t end = first;
+        bool isOneConstant = true;
+        bool keepsType = false;
+        for (; end < listings.size() && listings[end].field == listings[first].field; ++end) {
+            isOneConstant &= listings[end].value.isKnown() && listings[end].value == listings[first].value;
+            keepsType |= listings[end].keepsTypeOfField;
+        }
+        FieldReference reference = listings[first].field;
+        KnownValue value = listings[first].value;
+        first = end;
+        if (!isOneConstant)
+            continue;
+        const Field& field = fieldAt(program, reference);
+        Type constant = typeOfKnownPrimitive(value);
+        if (!constant.isSubsetOf(program.at(field.declared.written()), program))
+            continue;
+        TypeID narrowed = editor.types().intern(constant);
+        bool typeSaysValue = knownValueOfType(constant) == value;
+        bool fieldSaysValue = narrowed == field.declared.written() && typeSaysValue;
+        // Its slot is empty until the store, so a read is typed with `undefined` whatever the field says.
+        if (isStoredBehindBirth(field)) {
+            if (!fieldSaysValue)
+                keysWithStoresToLookAt.set(field.key.index());
+            keepsType = true;
+        } else if (fieldSaysValue)
+            continue;
+        constants.append({ reference, keepsType ? field.declared.written() : narrowed, typeSaysValue && !keepsType ? KnownValue() : value });
+        keysOfConstants.set(field.key.index());
+        layoutsWithConstants.quickSet(reference.layout.index());
+    }
+    auto findConstant = [&](LayoutID id, PropertyKeyID key) -> const ConstantField* {
+        std::optional<uint32_t> field = layoutsWithConstants.quickGet(id.index()) ? program.at(id).findField(key) : std::nullopt;
+        auto found = field ? std::ranges::lower_bound(constants, FieldReference { id, *field }, { }, &ConstantField::field) : constants.end();
+        return found != constants.end() && found->field == FieldReference { id, *field } ? &*found : nullptr;
+    };
+    if (!keysWithStoresToLookAt.isEmpty()) {
+        // A store of the same constant changes nothing, whenever it runs. A store to nobody knows which objects is listed by its key, with this bit.
+        constexpr uint32_t isKey = 1u << 31;
+        Vector<uint32_t> changed = collectInParallel<uint32_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
+            // `{ ...{ f: 7 }, ...{ f: y } }`: the literal lists the first value and defines the member again.
+            forEachListedValue(program, FunctionID(index), operationsThatMayStoreUnderTheirKey(), [&](BlockID, uint32_t, ValueID, const Value& store) {
+                if (!store.key() || !keysWithStoresToLookAt.get(store.key().index()))
+                    return;
+                // A store and a definition say what they store, and into what. Of anything else the name alone is known.
+                bool saysWhatItStores = store.opcode == Opcode::PropSet || store.opcode == Opcode::PropDefine;
+                auto receivers = saysWhatItStores && store.receivers() ? program.at(store.receivers()).all() : std::nullopt;
+                if (!receivers) {
+                    found.append(store.key().index() | isKey);
+                    return;
+                }
+                for (LayoutID receiver : receivers->value()) {
+                    const ConstantField* constant = findConstant(receiver, store.key());
+                    if (constant && isStoredBehindBirth(fieldAt(program, constant->field)) && constant->number != knownValueOf(program, program.functions[index], store.valueOperand()))
+                        found.append(constant - constants.begin());
+                }
+            });
+        });
+        BitVector isChanged(constants.size());
+        BitVector keysChanged;
+        for (uint32_t entry : changed) {
+            if (entry & isKey)
+                keysChanged.set(entry & ~isKey);
+            else
+                isChanged.quickSet(entry);
+        }
+        size_t kept = 0;
+        for (size_t position = 0; position < constants.size(); ++position) {
+            const Field& field = fieldAt(program, constants[position].field);
+            if (isChanged.quickGet(position) || (keysChanged.get(field.key.index()) && isStoredBehindBirth(field)))
+                continue;
+            constants[kept++] = constants[position];
+        }
+        constants.shrink(kept);
+    }
+    if (constants.isEmpty())
+        return;
+
+    // The type of a field is described to the run time. A constant that no access of the program may find is worth no description.
+    auto forEachConstantFoundBy = [&](const Function& function, const Value& access, NOESCAPE const Invocable<void(size_t position)> auto& functor) {
+        if (!Value::opcodesWithKey.contains(access.opcode) || !access.key() || !keysOfConstants.get(access.key().index()) || !access.numberOfOperands() || !access.operand(0))
+            return;
+        const Value& receiver = function.at(access.operand(0));
+        for (TypeID type : { receiver.type, receiver.expected().predicted() }) {
+            if (!type)
+                continue;
+            for (LayoutID id : membersOf(program, program.at(type))) {
+                if (const ConstantField* found = findConstant(id, access.key()))
+                    functor(found - constants.begin());
+            }
+        }
+    };
+    using Reader = std::pair<FunctionID, size_t>;
+    Vector<Reader> readers = collectInParallel<Reader>(loops, program.functions.size(), [&](unsigned index, Vector<Reader>& found) {
+        const Function& function = program.functions[index];
+        if (!function.hasBody())
+            return;
+        forEachListedValue(program, FunctionID(index), Value::opcodesWithKey, [&](BlockID, uint32_t, ValueID, const Value& access) {
+            forEachConstantFoundBy(function, access, [&](size_t position) { found.append({ FunctionID(index), position }); });
+        });
+    });
+    BitVector isFound(constants.size());
+    Vector<FunctionID> functions;
+    for (auto [function, position] : readers) {
+        if (!isFound.quickSet(position) && constants[position].type != fieldAt(program, constants[position].field).declared.written())
+            editor.at(constants[position].field).declared.changeType(Proven::byPosition(constants[position].type));
+        if (functions.isEmpty() || functions.last() != function)
+            functions.append(function);
+    }
+    // A function enters its next schedule with the types that it has, but for what is typed from variables and signatures. An access that may find a narrowed field counts as edited, so its function is typed anew.
+    // The receiver is proven to be an object of these layouts, and each holds the same number in a field that is always filled and never changes.
+    auto findNumberRead = [&](const Function& function, const Value& access) {
+        KnownValue number;
+        if (access.opcode != Opcode::PropGet || !access.operand(0))
+            return number;
+        const Type& receiver = program.typeOf(function, access.operand(0));
+        if (!receiver.hasOnlyLayouts())
+            return number;
+        for (LayoutID id : membersOf(program, receiver)) {
+            const ConstantField* found = findConstant(id, access.key());
+            bool isSameNumber = found && found->number.isKnown() && (!number.isKnown() || number == found->number);
+            if (!isSameNumber)
+                return KnownValue();
+            number = found->number;
+        }
+        return number;
+    };
+    editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID, Function& function, TaskArenas& arenas) {
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                bool findsConstant = false;
+                forEachConstantFoundBy(function, function.at(id), [&](size_t) { findsConstant = true; });
+                if (!findsConstant)
+                    continue;
+                if (KnownValue number = findNumberRead(function, function.at(id)); number.isKnown())
+                    becomeConstant(program, function, arenas.types, id, number);
+                else
+                    function.edit(id, ValueEdit::Definition);
+            }
+        }
+    });
 }
 
 ConstantLists narrowConstantVariables(ProgramEditor& editor, const FlowResults& flow, BuildContext& build)
@@ -223,6 +676,7 @@ ConstantLists narrowConstantVariables(ProgramEditor& editor, const FlowResults& 
         if (narrowed != variable.declared.written())
             editor.at(VariableID(index)).declared.changeType(Proven::byPosition(narrowed));
     }
+    narrowConstantFields(editor, build);
     return collectListsStoredAlone(program, stores);
 }
 
@@ -564,6 +1018,8 @@ static void changeVariables(ProgramEditor& editor, DefinitionPlan& plan)
                 variable.initialization = VariableInitialization::Function;
                 variable.function = deferral.function;
                 variable.flow.stores = StoreCount::Never;
+                if (id == deferral.variableReadInBody && variable.flow.reads == ReadState::NeverRead)
+                    variable.flow.reads = ReadState::OnlyWhereDefined;
                 break;
             case Deferral::Kind::RegExp:
                 variable.declared.changeType(Proven::byPosition(editor.types().intern(program.at(variable.declared.written()).withPrimitives(Primitive::Absent))));
@@ -740,30 +1196,10 @@ struct VariableFacts {
 struct InitializerScanContext {
     AnalysisContext analysisContextOf(FunctionID id) const { return { runner.build(), program, &inputs.flow, &inputs.effects, id }; }
 
-    // Whether the body of the one module has run to its end when the body of the other begins: the other imports it, directly or not, and no circle of imports holds both.
-    bool hasRunBefore(ModuleID finished, ModuleID beginning, BitVector& importedByBeginning) const
-    {
-        if (circlesOfImports.componentOf[finished.index()] == circlesOfImports.componentOf[beginning.index()])
-            return false;
-        if (importedByBeginning.isEmpty()) {
-            importedByBeginning.ensureSize(program.modules.size());
-            Vector<ModuleID, 32> worklist { beginning };
-            importedByBeginning.quickSet(beginning.index());
-            while (!worklist.isEmpty()) {
-                for (const ModuleRequest& request : program.at(worklist.takeLast()).requests) {
-                    if (request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Evaluation && !importedByBeginning.quickSet(request.target.index()))
-                        worklist.append(request.target);
-                }
-            }
-        }
-        return importedByBeginning.quickGet(finished.index());
-    }
-
     const Program& program;
     const OptimizationInputs& inputs;
     const PassRunner& runner;
     const VariableFacts& variables;
-    const StronglyConnectedComponents& circlesOfImports;
     // By function: the module that has it as its body. One file may hold the bodies of several modules, and all that is written in a file names the record of the file.
     const Vector<ModuleID>& moduleWithBody;
 };
@@ -778,6 +1214,8 @@ struct Item {
     ValueID value;
     BlockID join;
     Vector<BlockID, 0> blocks;
+    // The members of built-in objects that the functions it calls read for the first time, in that order. Where the item is put off, they are read where it stood.
+    MembersFirstRead membersFirstRead;
 };
 
 struct ValueOfVariable {
@@ -806,6 +1244,7 @@ struct InitializerCalleeAnswer {
     bool returnsWhatItMade { false };
     // The answer holds where the bodies of the modules of these variables have run.
     Vector<VariableID, 0> variablesTakenToBeSet;
+    MembersFirstRead membersFirstRead;
 };
 
 struct Knowledge {
@@ -813,6 +1252,9 @@ struct Knowledge {
     BitVector made;
     // An object that never changes once it is made: what is read out of it is the same whenever it is read.
     BitVector unchanging;
+    // What MovableCode::isOnlyFilledHere() has answered, by allocation. A body may store to one object thousands of times, and each answer reads all uses of the object.
+    mutable BitVector isKnownWhetherOnlyFilled { };
+    mutable BitVector isOnlyFilled { };
 };
 
 struct CallContext {
@@ -951,17 +1393,32 @@ struct MovableCode {
     const InitializerScanContext& context;
     TaskArenas& arenas;
     const Program& program { context.program };
-    MapByIndex<Vector<std::pair<CallContext, InitializerCalleeAnswer>, 1>> answers { };
+    MapByIndex<Vector<std::pair<CallContext, InitializerCalleeAnswer>, 0>> answers { };
     Vector<std::pair<uint32_t, CallContext>, 8> beingAnswered { };
     unsigned numberOfAnswers { 0 };
     // What a call has made and what never changes decide the answer. The version comes from the types alone.
     MapByIndex<Vector<std::pair<Vector<TypeID, 8>, std::unique_ptr<const Function>>, 1>> versions { };
     size_t numberOfValuesInKeptVersions { 0 };
     Vector<VariableID, 4> variablesTakenToBeSet { };
+    MembersFirstRead membersFirstRead { };
+    // Of what is being looked at: whether every run of the item comes by it.
+    bool isPassedByEveryRun { true };
+    // Object.defineProperty makes a function's property read-only unless the descriptor says otherwise, and a store to it throws in strict code.
+    // The function moves from body to body, so the two are communicated by name: the names on either side of everything that was judged movable, and those whose stores do not move.
+    Vector<StringID, 4> namesMadeReadOnly { };
+    Vector<StringID, 4> namesStoredOnFunctions { };
+    Vector<StringID, 4> namesRejectingStores { };
 
     const Type& typeOf(const Function& function, ValueID id) const { return arenas.types.at(function.at(id).type); }
     bool isText(StringID string, ASCIILiteral text) const { return equalSpans(program.string(string), text.span8()); }
     bool isText(PropertyKeyID key, ASCIILiteral text) const { return program.at(key).text && isText(program.at(key).text, text); }
+    bool lists(const Vector<StringID, 4>& names, StringID name) const { return std::ranges::any_of(names, [&](StringID listed) { return equalSpans(program.string(listed), program.string(name)); }); }
+    void addTo(Vector<StringID, 4>& names, StringID name) const
+    {
+        if (!lists(names, name))
+            names.append(name);
+    }
+    bool hasStoreToReadOnlyName() const { return std::ranges::any_of(namesStoredOnFunctions, [&](StringID name) { return lists(namesMadeReadOnly, name); }); }
     bool isMadeOrNoReference(const Function& function, const Knowledge& known, ValueID id) const { return known.made.get(id.index()) || !mayBeReference(typeOf(function, id)); }
     // To make a key of it runs no code.
     bool isPrimitiveKey(const Function& function, ValueID id) const { return !typeOf(function, id).hasObjects() && typeOf(function, id).isJavaScriptValue(); }
@@ -986,7 +1443,19 @@ struct MovableCode {
     }
 
     // The function allocates the object without a prototype of its own, and does nothing with it but store to it, read from it and keep it.
-    bool isOnlyFilledHere(FunctionAnalyses& analyses, ValueID object) const
+    bool isOnlyFilledHere(FunctionAnalyses& analyses, const Knowledge& known, ValueID object) const
+    {
+        size_t allocation = allocationOf(analyses.function(), object).index();
+        if (!known.isKnownWhetherOnlyFilled.get(allocation)) {
+            known.isKnownWhetherOnlyFilled.ensureSize(known.made.size());
+            known.isOnlyFilled.ensureSize(known.made.size());
+            known.isKnownWhetherOnlyFilled.quickSet(allocation);
+            known.isOnlyFilled.quickSet(allocation, isOnlyFilledByItsUses(analyses, object));
+        }
+        return known.isOnlyFilled.get(allocation);
+    }
+
+    bool isOnlyFilledByItsUses(FunctionAnalyses& analyses, ValueID object) const
     {
         auto fillsReadsOrKeeps = [](Opcode opcode) {
             switch (opcode) {
@@ -1042,21 +1511,43 @@ struct MovableCode {
         return arenas.types.intern(widened);
     }
 
+    // `new` lays the object below what the function that it is made for holds under `prototype` at that moment. A class holds one object there for good.
+    bool findsSamePrototypeWheneverDone(const Function& caller, const Knowledge& known, const Value& construct, std::span<const FunctionID> callees) const
+    {
+        ValueID newTarget = construct.newTargetOperand() ? construct.newTargetOperand() : construct.calleeOperand();
+        if (known.made.get(newTarget.index()) || known.unchanging.get(newTarget.index()))
+            return true;
+        if (construct.newTargetOperand()) {
+            if (!hasOnlyFunctions(typeOf(caller, newTarget)))
+                return false;
+            callees = typeOf(caller, newTarget).functions.span();
+        }
+        const PropertyKeyID prototype = program.keyOf(BuiltinNames::prototype);
+        return std::ranges::all_of(callees, [&](FunctionID id) {
+            return isClassConstructorFunction(program.at(id)) || context.inputs.flow.areClosuresAsCreated(id, singleElementSpan(prototype));
+        });
+    }
+
     InitializerCalleeAnswer answerForCall(const Function& caller, const Knowledge& known, const Value& call)
     {
         if (call.opcode != Opcode::Call && call.opcode != Opcode::Construct && call.opcode != Opcode::CallDirect)
             return { };
+        if (call.opcode != Opcode::CallDirect && mayThrowBeforeEntry(program, typeOf(caller, call.calleeOperand()), call.opcode == Opcode::Construct ? BuiltinCallMode::Construct : BuiltinCallMode::Call))
+            return { };
         CalleeList callees = calleesOfCall(program, call);
         // What the call of this run hands on says more than what all calls hand on.
-        if (!callees.isComplete && call.opcode != Opcode::CallDirect && hasOnlyFunctions(typeOf(caller, call.calleeOperand()))) {
+        if (!callees.listsEveryCallee() && call.opcode != Opcode::CallDirect && hasOnlyFunctions(typeOf(caller, call.calleeOperand()))) {
             callees = CalleeList::none();
             for (FunctionID function : typeOf(caller, call.calleeOperand()).functions)
                 callees.add(function);
         }
-        if (!callees.isComplete || !callees.builtins.isEmpty() || callees.functions.isEmpty())
+        std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+        if (!functions || functions->value().empty())
+            return { };
+        if (call.opcode == Opcode::Construct && !findsSamePrototypeWheneverDone(caller, known, call, functions->value()))
             return { };
         InitializerCalleeAnswer result { true, true };
-        for (FunctionID id : callees.functions) {
+        for (FunctionID id : functions->value()) {
             const Function& callee = program.at(id);
             unsigned numberOfParameters = callee.numberOfEntryParameters();
             // A rest parameter and `arguments` are made at the entrance, which this does not follow.
@@ -1085,6 +1576,9 @@ struct MovableCode {
             InitializerCalleeAnswer answer = answerFor(id, handed);
             // One callee that may not move settles it: a call of one of a thousand functions asks about one.
             if (!answer.mayMove)
+                return { };
+            // What is read where the item stood is what the one callee reads in every run.
+            if (!answer.membersFirstRead.isEmpty() && (!isPassedByEveryRun || functions->value().size() > 1))
                 return { };
             result.returnsWhatItMade &= answer.returnsWhatItMade;
         }
@@ -1132,7 +1626,7 @@ struct MovableCode {
         }
         auto isUnchanging = [&](const Value& value) {
             const Type& type = arenas.types.at(value.type);
-            if (type.hasOnlyLayouts(program) && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) { return program.at(id).flow.impossibleMutations.containsAll(mutationsOfContents); }))
+            if (type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) { return program.at(id).flow.impossibleMutations.containsAll(mutationsOfContents); }))
                 return true;
             if (isOtherNameOfFirstOperand(function, value))
                 return known.unchanging.get(value.operand(0).index());
@@ -1194,7 +1688,7 @@ struct MovableCode {
             const Type& arrayType = typeOf(function, test.objectOperand());
             const ClassPart* part = hasOnlyPristineArrays(arrayType) ? arrayType.singleBuiltinClass() : nullptr;
             BlockID taken = block.terminator.targets[0].block;
-            if (!part || !part->contentsAreProven || part->contents.isEmpty() || numberOfPredecessors[taken.index()] != 1)
+            if (!part || !part->contentsAreProven || part->writtenContents.isEmpty() || numberOfPredecessors[taken.index()] != 1)
                 continue;
             // Nothing in front of the read has run that could take the element away.
             const BlockValues& values = function.at(taken).values;
@@ -1204,7 +1698,7 @@ struct MovableCode {
             const Value& read = function.at(*found);
             if (sameObjectThroughCasts(function, read.objectOperand()) == sameObjectThroughCasts(function, test.objectOperand())
                 && definitionThroughUpcasts(function, read.propertyOperand()) == definitionThroughUpcasts(function, test.propertyOperand()))
-                narrowings.append({ taken, static_cast<uint32_t>(found - values.begin()), part->contents[0] });
+                narrowings.append({ taken, static_cast<uint32_t>(found - values.begin()), *part->provenContentsAt(0) });
         }
         if (narrowings.isEmpty())
             return;
@@ -1293,11 +1787,18 @@ struct MovableCode {
         FunctionAnalyses analyses(context.analysisContextOf(id), function);
         Knowledge known = findKnowledge(analyses, handed);
         InitializerCalleeAnswer answer { true, true };
+        BitVector blocksPassedByEveryRun(function.blocks.size());
+        if (analyses.opcodesOfValues().contains(Opcode::InitializeBuiltin) || analyses.opcodesOfValues().intersects(Value::opcodesWithCallees)) {
+            for (BlockID passed : findBlocksThatEveryRunPasses(analyses))
+                blocksPassedByEveryRun.quickSet(passed.index());
+        }
+        SetForScope isPassedInThisBody(isPassedByEveryRun, true);
         for (BlockID blockID : analyses.cfg().reversePostOrder()) {
             const Block& block = function.at(blockID);
             // Nothing says of a loop that it ends.
             if (block.handler || analyses.isInCycle(blockID))
                 return { };
+            isPassedByEveryRun = blocksPassedByEveryRun.quickGet(blockID.index());
             for (ValueID valueID : block.values) {
                 if (!isRematerializable(function.at(valueID)) && !mayMove(analyses, known, valueID))
                     return { };
@@ -1318,18 +1819,21 @@ struct MovableCode {
                 if (knownContext != handed)
                     continue;
                 variablesTakenToBeSet.appendVector(answer.variablesTakenToBeSet);
+                membersFirstRead.appendVector(answer.membersFirstRead);
                 return answer;
             }
         }
         // Many a helper is plain enough as it stands, and that answer serves whatever the types of a call are.
         bool hasTypes = std::ranges::any_of(handed.types, [](TypeID type) { return !!type; });
         size_t numberTakenBefore = variablesTakenToBeSet.size();
+        size_t numberReadBefore = membersFirstRead.size();
         InitializerCalleeAnswer asItStands;
         if (hasTypes) {
             asItStands = answerFor(id, CallContext { handed.made, handed.unchanging, { } });
             if (asItStands.mayMove && asItStands.returnsWhatItMade)
                 return asItStands;
             variablesTakenToBeSet.shrink(numberTakenBefore);
+            membersFirstRead.shrink(numberReadBefore);
         }
         const Function& function = program.at(id);
         std::pair<uint32_t, CallContext> question { id.index(), handed };
@@ -1347,32 +1851,21 @@ struct MovableCode {
         else {
             answer = WTF::move(asItStands);
             variablesTakenToBeSet.appendVector(std::exchange(answer.variablesTakenToBeSet, { }));
+            membersFirstRead.appendVector(std::exchange(answer.membersFirstRead, { }));
         }
         beingAnswered.removeLast();
+        // Only the first read of a member adds it. A list that kept the others would double with each function that calls another one twice.
+        for (BuiltinID member : membersFirstRead.subspan(numberReadBefore)) {
+            if (!answer.membersFirstRead.contains(member))
+                answer.membersFirstRead.append(member);
+        }
+        membersFirstRead.shrink(numberReadBefore);
+        membersFirstRead.appendVector(answer.membersFirstRead);
         answer.variablesTakenToBeSet.append(variablesTakenToBeSet.subspan(numberTakenBefore));
         AOT::sort(answer.variablesTakenToBeSet);
         removeRepeatedElements(answer.variablesTakenToBeSet);
-        answers.add(id.index(), Vector<std::pair<CallContext, InitializerCalleeAnswer>, 1> { }).iterator->value.append({ handed, answer });
+        answers.add(id.index(), Vector<std::pair<CallContext, InitializerCalleeAnswer>, 0> { }).iterator->value.append({ handed, answer });
         return answer;
-    }
-
-    // What Object.defineProperty makes of a property may refuse a store.
-    bool isDefinedByDescriptor(FunctionAnalyses& analyses, ValueID object) const
-    {
-        const Function& function = analyses.function();
-        Vector<ValueID, 4> names { allocationOf(function, object) };
-        for (size_t index = 0; index < names.size(); ++index) {
-            for (const Use& use : analyses.useLists().usesOf(names[index])) {
-                if (use.kind != Use::Kind::Operand)
-                    continue;
-                const Value& user = function.at(use.user);
-                if (isOtherNameOfFirstOperand(function, user) && user.operand(0) == names[index])
-                    names.append(use.user);
-                else if (user.opcode == Opcode::CallBuiltin && isObjectDefineProperty(builtinCallOf(program, user)))
-                    return true;
-            }
-        }
-        return false;
     }
 
     // A store to an object that the initializer has made and that no accessor, no lock and no other prototype stands in the way of.
@@ -1391,19 +1884,26 @@ struct MovableCode {
             bool setsName = hasName && !defines;
             bool isRefusedAbove = setsName && (program.at(value.key()).kind == PropertyKeyKind::WellKnownSymbol
                 || (isText(value.key(), "constructor"_s) && std::ranges::any_of(type.functions, [&](FunctionID id) { return isCoroutine(id); })));
-            if (isRefusedAbove || isDefinedByDescriptor(analyses, object))
+            if (isRefusedAbove)
                 return false;
             if (setsName && isText(value.key(), "prototype"_s) && std::ranges::all_of(type.functions, [&](FunctionID id) { return program.at(id).kind == FunctionKind::Plain && !isCoroutine(id); }))
                 return true;
-            return hasName && (defines || std::ranges::none_of(type.functions, [&](FunctionID id) { return isClassConstructorFunction(program.at(id)); }))
+            bool isLikeAnyOtherName = hasName && (defines || std::ranges::none_of(type.functions, [&](FunctionID id) { return isClassConstructorFunction(program.at(id)); }))
                 && std::ranges::none_of(namesWithRules, [&](ASCIILiteral name) { return isText(value.key(), name); });
+            StringID name = isLikeAnyOtherName ? program.at(value.key()).text : StringID();
+            if (!name)
+                return isLikeAnyOtherName;
+            if (lists(namesRejectingStores, name))
+                return false;
+            addTo(namesStoredOnFunctions, name);
+            return true;
         }
         // No index of a pristine array is an accessor, and nobody can add one to the prototypes above it.
         // All that was done to an array since the initializer made it has passed these rules, and none of them lets an index become an accessor or the prototype change.
         if (hasOnlyArrays(type, { }) && !hasName && typeOf(function, value.propertyOperand()).isNumber())
             return true;
-        if (function.at(allocationOf(function, object)).opcode != Opcode::NewDictionary || !isOnlyFilledHere(analyses, object)) {
-            bool hasOnlyPlainObjects = type.isObject() && type.hasOnlyLayouts(program) && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) {
+        if (function.at(allocationOf(function, object)).opcode != Opcode::NewDictionary || !isOnlyFilledHere(analyses, known, object)) {
+            bool hasOnlyPlainObjects = type.isObject() && type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) {
                 return (program.at(id).kind == LayoutKind::Record || program.at(id).kind == LayoutKind::Container) && !program.at(id).base;
             });
             // No such object ever gets an accessor, a lock or another prototype: above it stands Object.prototype, which nobody can change.
@@ -1412,7 +1912,7 @@ struct MovableCode {
                 return flow.impossibleMutations.containsAll({ ObjectMutation::ChangePrototype, ObjectMutation::ChangeIntegrity, ObjectMutation::RedefineProperty }) && flow.ownAccessorsAreComplete && flow.ownAccessors.isEmpty()
                     && std::ranges::none_of(program.at(id).fields, [](const Field& field) { return field.form.containsAny({ FieldForm::IsAccessor, FieldForm::IsReadOnly, FieldForm::IsNotConfigurable }); });
             };
-            if (!hasOnlyPlainObjects || (!std::ranges::all_of(membersOf(program, type), isKnownToStayPlain) && !isOnlyFilledHere(analyses, object)))
+            if (!hasOnlyPlainObjects || (!std::ranges::all_of(membersOf(program, type), isKnownToStayPlain) && !isOnlyFilledHere(analyses, known, object)))
                 return false;
         }
         // The setter of __proto__ does nothing with what is neither an object nor null.
@@ -1460,14 +1960,12 @@ struct MovableCode {
             if (!isCast(function.at(descriptor).opcode))
                 break;
         }
-        const Value& literal = function.at(descriptor);
-        if (literal.opcode != Opcode::NewObject || literal.prototypeOperand() || program.at(literal.layout()).kind != LayoutKind::Record)
+        std::optional<DescriptorLiteral> described = readDescriptorLiteral(program, function, function.at(descriptor));
+        if (!described || described->isAccessor() || described->closureEnvironment)
             return false;
-        return std::ranges::all_of(literal.fields(), [&](uint32_t index) {
-            const Field& field = program.at(literal.layout()).fields[index];
-            bool isKnown = field.key && (isText(field.key, "value"_s) || isText(field.key, "writable"_s) || isText(field.key, "enumerable"_s) || isText(field.key, "configurable"_s));
-            return isKnown && !field.form.contains(FieldForm::IsAccessor);
-        });
+        if (key.opcode == Opcode::String && !described->flags.contains(PropertyDescriptorFlags::IsWritable))
+            addTo(namesMadeReadOnly, key.string());
+        return true;
     }
 
     bool mayMoveByEffects(FunctionAnalyses& analyses, const Knowledge& known, ValueID id)
@@ -1518,10 +2016,23 @@ struct MovableCode {
         return isFine;
     }
 
+    // The member is read where the item stood, so the operation goes with the item.
+    std::optional<bool> firstReadMayMove(const Value& value)
+    {
+        if (value.opcode != Opcode::InitializeBuiltin)
+            return std::nullopt;
+        if (!isPassedByEveryRun || !onlyAddsMemberToHolder(program.builtins(), value.builtin()))
+            return false;
+        membersFirstRead.append(value.builtin());
+        return true;
+    }
+
     bool mayMove(FunctionAnalyses& analyses, const Knowledge& known, ValueID id)
     {
         const Function& function = analyses.function();
         const Value& value = function.at(id);
+        if (std::optional<bool> answer = firstReadMayMove(value))
+            return *answer;
         switch (value.opcode) {
         case Opcode::LoopHint:
             // The caller has looked at the loop.
@@ -1545,8 +2056,8 @@ struct MovableCode {
         case Opcode::NewClass:
             return known.made.get(value.constructorOperand().index());
         case Opcode::DefineMethod:
-            // The prototype property of a class cannot be redefined.
-            if (!value.key() && value.side() == ClassSide::Static && (typeOf(function, value.computedKeyOperand()).primitives & Primitive::AnyString))
+            // The prototype property of a class cannot be redefined. A key in brackets may spell it.
+            if (value.side() == ClassSide::Static && (value.key() ? isText(value.key(), "prototype"_s) : !!(typeOf(function, value.computedKeyOperand()).primitives & Primitive::AnyString)))
                 return false;
             return known.made.get(value.classObjectOperand().index()) && (value.key() || isPrimitiveKey(function, value.computedKeyOperand()));
         case Opcode::CallBuiltin:
@@ -1578,7 +2089,7 @@ struct InitializerPlan {
 } // anonymous namespace
 
 // Of a body that runs at most once and stores to a variable that may stay empty.
-static void findInitializerUnits(const InitializerScanContext& context, FunctionID id, TaskArenas& arenas, Vector<InitializerUnit>& found)
+static void findInitializerUnits(const InitializerScanContext& context, FunctionID id, TaskArenas& arenas, Vector<InitializerUnit>& found, Vector<StringID, 4>&& namesRejectingStores = { })
 {
     constexpr uint32_t noItem = UINT32_MAX;
     enum class State : uint8_t { Stays, IsRepeated, Moves };
@@ -1587,6 +2098,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
     const Function& function = program.at(id);
     FunctionAnalyses analyses(context.analysisContextOf(id), function);
     MovableCode code { context, arenas };
+    code.namesRejectingStores = WTF::move(namesRejectingStores);
     CFG& cfg = analyses.cfg();
 
     Vector<BlockID, 16> spine = findBlocksThatEveryRunPasses(analyses);
@@ -1680,7 +2192,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
                     return true;
                 if (program.typeOf(function, value.valueOperand()).primitives & Primitive::Absent)
                     return false;
-            } else if (!isCastWithoutTest(value.opcode) || value.numberOfOperands() != 1)
+            } else if (!isCastWithoutTest(value.opcode) || std::ranges::count_if(value.operands(), [](ValueID operand) { return !!operand; }) != 1)
                 return false;
         }
     };
@@ -1709,7 +2221,6 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
     // Items that take what a variable holds without looking into it: they read the variable.
     Vector<std::pair<uint32_t, ValueID>> readings;
     Vector<uint32_t> itemsUsedByCodeThatStays;
-    BitVector modulesImported;
     auto find = [&](uint32_t item) {
         while (parents[item] != item) {
             parents[item] = parents[parents[item]];
@@ -1751,6 +2262,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
         auto terminatorMayMove = [&](BlockID block) { return !function.at(block).terminator.origin().inlineFrame && code.terminatorMayMove(analyses, block); };
         if (!item.isRegion())
             return valueMayMove(item.value);
+        SetForScope isPassedInsideRegion(code.isPassedByEveryRun, false);
         // Nothing says of a loop that it ends.
         return terminatorMayMove(item.block) && std::ranges::all_of(item.blocks, [&](BlockID interior) {
             const Block& block = function.at(interior);
@@ -1768,7 +2280,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
                 for (ValueID link = taken;; link = function.at(link).operand(0)) {
                     if (stateOf(link) == State::Moves)
                         itemsUsedByCodeThatStays.append(itemOf[link.index()]);
-                    if (stateOf(link) != State::IsRepeated || !function.at(link).numberOfOperands())
+                    if (stateOf(link) != State::IsRepeated || !function.at(link).numberOfOperands() || !function.at(link).operand(0))
                         break;
                 }
             });
@@ -1779,6 +2291,8 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
             return stay();
         }
         if (block.handler || block.isHandlerBlock() || item.endsBody() || analyses.executionCountOf(item.block) != ExecutionCount::AtMostOnce)
+            return stay();
+        if (value && value->opcode == Opcode::InitializeBuiltin)
             return stay();
         if (value && value->opcode == Opcode::GetModuleVariable && isStoredHere.get(value->variable().index())) {
             uint32_t store = firstStoreTo.get(value->variable().index());
@@ -1793,14 +2307,23 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
 
         // First as if what variables hold were made elsewhere: then the item only reads those variables.
         code.variablesTakenToBeSet.shrink(0);
+        code.membersFirstRead.shrink(0);
         bool looksIntoWhatVariablesHold = !isStore && !mayMove(item, knownIfVariablesHoldWhatWasMadeElsewhere);
-        if (looksIntoWhatVariablesHold && !mayMove(item, known))
-            return stay();
+        if (looksIntoWhatVariablesHold) {
+            code.membersFirstRead.shrink(0);
+            if (!mayMove(item, known))
+                return stay();
+        }
+        MembersFirstRead membersFirstRead;
+        for (BuiltinID member : code.membersFirstRead) {
+            if (!membersFirstRead.contains(member))
+                membersFirstRead.append(member);
+        }
         ModuleID evaluated = context.moduleWithBody[id.index()];
         bool areSetInFrontOfItem = std::ranges::all_of(code.variablesTakenToBeSet, [&](VariableID variable) {
             ModuleID module = program.at(variable).module;
             if (module != (evaluated ? evaluated : function.module))
-                return evaluated && context.hasRunBefore(module, evaluated, modulesImported);
+                return evaluated && context.inputs.flow.completesBefore(module, evaluated);
             // The store of this body stands in front of the item.
             auto store = firstStoreTo.find(variable.index());
             return store != firstStoreTo.end() && store->value < index;
@@ -1830,6 +2353,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
         if (takesWhatStays)
             return stay();
         states[index] = State::Moves;
+        items[index].membersFirstRead = WTF::move(membersFirstRead);
         for (uint32_t other : united)
             unite(index, other);
         for (ValueID taken : read)
@@ -1837,6 +2361,11 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
     };
     for (uint32_t index = 0; index < items.size(); ++index)
         classify(index);
+    // Stores to such a name stay, with everything they keep alive. Other decisions relied on them, so the scan restarts.
+    if (code.hasStoreToReadOnlyName()) {
+        code.namesRejectingStores.appendVector(code.namesMadeReadOnly);
+        return findInitializerUnits(context, id, arenas, found, WTF::move(code.namesRejectingStores));
+    }
 
     auto estimatedCostOf = [&](const Item& item) -> unsigned {
         constexpr unsigned costOfCode = 1000;
@@ -1966,9 +2495,9 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
         found.append(WTF::move(whatStays));
 }
 
-static ValueID assumeWithout(IRBuilder& builder, ValueID value, uint16_t primitives)
+static ValueID assumeWithout(IRBuilder& builder, ValueID value, uint16_t primitives, ClaimHolds holds = ClaimHolds::WhereverValueIs)
 {
-    return assumeType(builder, value, builder.types().intern(builder.types().at(builder.function().at(value).type).withoutPrimitives(primitives)));
+    return assumeType(builder, value, builder.types().intern(builder.types().at(builder.function().at(value).type).withoutPrimitives(primitives)), holds);
 }
 
 static void buildInitializerUnit(const InitializerUnit& unit, const Function& body, IRBuilder& builder)
@@ -2013,9 +2542,7 @@ static void buildInitializerUnit(const InitializerUnit& unit, const Function& bo
         builder.emitTerminator(WTF::move(copy));
     };
 
-    builder.setOrigin(unit.items.first().originIn(body));
-    builder.moveToEndOf(builder.addBlock());
-    for (ValueID id : unit.repeated) {
+    auto repeat = [&](ValueID id) {
         // A cast comes behind what it casts. The test for a dead zone has passed where it stands.
         Vector<ValueID, 4> chain;
         for (ValueID link = id; link && !values.contains(link.index()); link = body.at(link).numberOfOperands() ? body.at(link).operand(0) : ValueID())
@@ -2028,17 +2555,38 @@ static void buildInitializerUnit(const InitializerUnit& unit, const Function& bo
             builder.setOrigin(body.at(link).origin());
             values.add(link.index(), assumeType(builder, copyIn(values, body.at(link).operand(0)), body.at(link).type));
         }
-    }
+    };
+    // What is done again is done where it is first taken, as in the body. All of it at the top would be held from there to its use, and a long initializer has more of it than there are registers.
+    // The place is one that every run of the function passes, so what is done there is there for whatever takes it later.
+    BitVector isRepeated(body.values.size());
+    for (ValueID id : unit.repeated)
+        isRepeated.quickSet(id.index());
+    auto repeatWhatIsTakenBy = [&](const auto& user) {
+        user.forEachChild([&](ValueID operand) {
+            if (operand && isRepeated.quickGet(operand.index()))
+                repeat(operand);
+        });
+    };
+
+    builder.setOrigin(unit.items.first().originIn(body));
+    builder.moveToEndOf(builder.addBlock());
     for (const ValueOfVariable& taken : unit.valuesOfVariables)
         readInPlaceOf(taken.value, taken.variable);
 
     ValueID stored;
     for (const Item& item : unit.items) {
         if (!item.isRegion()) {
+            repeatWhatIsTakenBy(body.at(item.value));
             copyValue(item.value);
             if (body.at(item.value).opcode == Opcode::PutModuleVariable)
                 stored = copyIn(values, body.at(item.value).valueOperand());
             continue;
+        }
+        repeatWhatIsTakenBy(body.at(item.block).terminator);
+        for (BlockID block : item.blocks) {
+            for (ValueID id : body.at(block).values)
+                repeatWhatIsTakenBy(body.at(id));
+            repeatWhatIsTakenBy(body.at(block).terminator);
         }
         for (BlockID block : item.blocks)
             addBlockLike(block);
@@ -2052,6 +2600,8 @@ static void buildInitializerUnit(const InitializerUnit& unit, const Function& bo
         }
         builder.moveToEndOf(copyIn(blocks, item.join));
     }
+    for (ValueID id : unit.repeated)
+        repeat(id);
     for (const ValueOfVariable& added : unit.addedVariables) {
         stored = copyIn(values, added.value);
         builder.append(makeVariableAccess(Opcode::PutModuleVariable, added.variable, { stored }));
@@ -2067,6 +2617,7 @@ static void removeUnits(const InitializerPlan& plan, std::span<const Initializer
     BitVector isRemoved(function.values.size());
     BitVector marksDeclaration(function.values.size());
     MapByIndex<VariableID> storedWhereMade;
+    MapByIndex<const MembersFirstRead*> firstReadsLeftBehind;
     auto remove = [&](const auto& values) {
         for (ValueID value : values)
             isRemoved.quickSet(value.index());
@@ -2080,6 +2631,8 @@ static void removeUnits(const InitializerPlan& plan, std::span<const Initializer
             if (!item.isRegion()) {
                 bool staysAsMark = function.at(item.value).opcode == Opcode::PutModuleVariable && plan.emptinessOf(function.at(item.value).variable()) != Emptiness::AbsentFromBirth;
                 (staysAsMark ? marksDeclaration : isRemoved).quickSet(item.value.index());
+                if (!item.membersFirstRead.isEmpty())
+                    firstReadsLeftBehind.add(item.value.index(), &item.membersFirstRead);
                 continue;
             }
             for (BlockID id : item.blocks) {
@@ -2101,7 +2654,7 @@ static void removeUnits(const InitializerPlan& plan, std::span<const Initializer
         if (!marksDeclaration.quickGet(id.index()))
             return std::nullopt;
         return plan.emptinessOf(function.at(id).variable()) == Emptiness::AbsentFromDeclaration ? Opcode::Absent : Opcode::Undefined;
-    });
+    }, firstReadsLeftBehind);
 }
 
 static void fillVariablesAtReads(const InitializerPlan& plan, FunctionID id, IRBuilder& builder)
@@ -2163,9 +2716,9 @@ static void fillVariablesAtReads(const InitializerPlan& plan, FunctionID id, IRB
             made = assumeWithout(builder, builder.append(makeVariableAccess(Opcode::GetModuleVariable, variable)), isMarkedByUndefined ? Primitive::Absent | Primitive::Undefined : Primitive::Absent);
         builder.endExpansion(expansion, made);
 
-        // A cast, which stays behind the test. What the edge of a test hands on is the read itself to the back end, which would take what hangs on it out of a loop and in front of the test.
+        // A cast that names a fact made behind the test: it stays there, and so does whoever looks at the value.
         builder.moveToEndOf(branch.notTaken);
-        builder.endExpansion(expansion, assumeWithout(builder, held, isMarkedByUndefined ? Primitive::Undefined : Primitive::Absent));
+        builder.endExpansion(expansion, assumeWithout(builder, held, isMarkedByUndefined ? Primitive::Undefined : Primitive::Absent, ClaimHolds::FromHereOn));
     });
 }
 
@@ -2187,23 +2740,7 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
     times.didFinish("collectVariableFacts"_s);
     if (std::ranges::all_of(variables.emptiness, [](Emptiness emptiness) { return emptiness == Emptiness::None; }))
         return;
-    // A module that requires its importer while its own body runs closes a circle too.
-    using ModulePair = std::pair<ModuleID, ModuleID>;
-    Vector<ModulePair> requiredModules = collectInParallel<ModulePair>(loops, program.functions.size(), [&](unsigned index, Vector<ModulePair>& found) {
-        forEachValueListedOrNot(program, FunctionID(index), { Opcode::RequireModule, Opcode::EvaluateModule }, [&](ValueID, const Value& value) {
-            if (value.opcode == Opcode::RequireModule && program.functions[index].module)
-                found.append({ program.functions[index].module, value.module() });
-            if (value.opcode == Opcode::EvaluateModule)
-                found.append({ value.referrer(), value.module() });
-        });
-    });
-    Vector<Vector<ModuleID>> modulesReachedFrom(program.modules.size(), [&](size_t index) {
-        return program.modules[index].requests.map([](const ModuleRequest& request) { return request.target; });
-    });
-    for (auto [from, to] : requiredModules)
-        modulesReachedFrom[from.index()].append(to);
-    StronglyConnectedComponents circlesOfImports = computeStronglyConnectedComponents(program.modules.size(), [&](unsigned index) -> const Vector<ModuleID>& { return modulesReachedFrom[index]; });
-    InitializerScanContext context { program, inputs, runner, variables, circlesOfImports, moduleWithBody };
+    InitializerScanContext context { program, inputs, runner, variables, moduleWithBody };
 
     InitializerPlan plan { variables.emptiness };
     Vector<uint32_t> bodies = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
@@ -2253,8 +2790,8 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
                 variable.module = body.module;
                 variable.declared = proven ? DeclaredType(*proven) : DeclaredType(ExpectedType(type));
                 variable.initialization = VariableInitialization::Uninitialized;
-                variable.flow.writers = WriterState::AllKnown;
-                variable.flow.stores = StoreCount::AtMostOnce;
+                variable.flow.writers = writerStateOf(writersOfVariableThatPassFillsOnce()).state;
+                variable.flow.stores = storeCountOf(writersOfVariableThatPassFillsOnce()).state;
                 variable.flow.initialization = InitializationState::StoredBeforeEveryRead;
                 addedInBody.add(added.variable.index(), editor.addVariable(WTF::move(variable)));
             }
@@ -2297,6 +2834,9 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
         unit.function = editor.addFunctionLike(unit.body, WTF::move(head));
         created.append(unit.function);
         unitOfCreated.append(index);
+        // Flow saw the body take these as values. The function reads them.
+        for (const ValueOfVariable& taken : unit.valuesOfVariables)
+            editor.at(taken.variable).flow.reads = ReadState::Unknown;
         for (VariableID id : unit.variables) {
             plan.unitOf[id.index()] = index;
             ++numberOfVariablesFilled;

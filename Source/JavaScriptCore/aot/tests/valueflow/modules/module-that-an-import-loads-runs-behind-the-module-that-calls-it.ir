@@ -1,0 +1,23 @@
+# main.mjs: import("./c.mjs"); export var v = 1        c.mjs: import { v } from "./main.mjs"; export var seen = v
+# Nothing in the program runs the jobs of the loader while a module runs: c.mjs runs when main.mjs has run to its end, and no read sees undefined
+# RUN: valueflow-apply
+# CHECK: variable g0 name="v" {{*}}declared={type=1} initialization=Undefined flow={writers=AllKnown {{*}}initialization=StoredBeforeEveryRead
+# CHECK-LABEL: function f1 name="c"
+# CHECK: : 1 = GetModuleVariable variable=g0
+
+variable g0 name="v" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="seen" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 exports=[{name="v" variable=g0}]
+module m1 path="/app/c.mjs" displayPath="c.mjs" flags=[KeepsError] body=f1 requests=[{target=m0 completes=true}] exports=[{name="seen" variable=g1}]
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f1 name="c" module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    PutModuleVariable v0 variable=g1
+    Return
+}

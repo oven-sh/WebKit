@@ -1,0 +1,65 @@
+# A type that holds any object names no layout: a body that has it proven reads the object by name, as the generic version does. Tests, a typed body and a generic version would be three functions for the code of one.
+#   f1 anyObject: `job: Job`, and nobody in the program makes a Job: it stays one function, an async function too (f2)
+#   f3 anyObjectBesideNumber: the entrance tests the number alone, and the typed body keeps the check of the object
+#   f4 checkedInBody: the value of the parameter is checked for any object behind a cast: it stays one function
+# FORM: Prepared
+# RUN: pass SplitBehindEntryChecks VerifyProgram
+# STATISTIC: FunctionsSplitBehindEntryChecks = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Parameter
+typesite w4 module=m0 position=50 kind=Parameter
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewArray v0, v1, v2, v3 contents=anything
+    Return v4
+}
+function f1 name="anyObject" module=m0 position=100 flags=[IsChecked] length=1 parameters=[{type=undefined|null|object site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|object):
+    v1 = Check v0 expectedType=undefined|null|object site=w0
+    v2 = PropGet v1 key="id"
+    Return v2
+}
+# CHECK-LABEL: function f1 name="anyObject" module=m0 position=100 flags=[IsChecked]
+# CHECK: v1: undefined|null|object = Check v0 expectedType=undefined|null|object site=w0
+function f2 name="anyObjectAwaited" module=m0 position=200 flags=[IsAsync, IsChecked] length=1 parameters=[{type=undefined|null|object site=w1 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|object):
+    v1 = Check v0 expectedType=undefined|null|object site=w1
+    v2 = Null
+    v3 = Await v2, v1
+    v4 = PropGet v1 key="id"
+    Return v4
+}
+# CHECK-LABEL: function f2 name="anyObjectAwaited" module=m0 position=200 flags=[IsAsync, IsChecked]
+# CHECK: v1: undefined|null|object = Check v0 expectedType=undefined|null|object site=w1
+function f3 name="anyObjectBesideNumber" module=m0 position=300 flags=[IsChecked] length=2 parameters=[{type=undefined|null|object site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|object, v1: anything ~ number):
+    v2 = Check v0 expectedType=undefined|null|object site=w2
+    v3 = Check v1 expectedType=number site=w3
+    v4 = PropGet v2 key="id"
+    v5 = Add v4, v3
+    Return v5
+}
+# CHECK-LABEL: function f3 name="anyObjectBesideNumber" module=m0 position=300 role=EntryChecks
+# CHECK: = TypeTest v1 testedType=number
+# CHECK-NOT: = TypeTest
+function f4 name="checkedInBody" module=m0 position=400 flags=[IsChecked] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Check v0 expectedType=object site=w4
+    v2 = PropGet v1 key="id"
+    Return v2
+}
+# CHECK-LABEL: function f4 name="checkedInBody" module=m0 position=400 flags=[IsChecked]
+# CHECK: v1: object = Check v0 expectedType=object site=w4
+# CHECK: name="anyObjectBesideNumber" module=m0 position=300 flags=[IsChecked] length=2
+# CHECK: = Check v0 expectedType=undefined|null|object site=w2

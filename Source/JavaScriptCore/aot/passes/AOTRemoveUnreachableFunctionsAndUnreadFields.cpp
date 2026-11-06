@@ -19,8 +19,10 @@
 #include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTObservableOperations.h"
 #include "AOTPassRunner.h"
 #include "AOTPhaseTimes.h"
+#include "AOTProgramCaches.h"
 #include "AOTRemoveUnreadExports.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTSchemaWalkers.h"
@@ -83,10 +85,37 @@ BitVector findReachableFunctions(const Program& program, const CallGraph& callGr
             reachedBodies.append(function);
     };
 
+    // The functions of a set are reached by the first body that names it.
+    auto readOnce = [](Vector<uint8_t>& isRead, size_t index) {
+        AtomicRef flag(isRead[index]);
+        return !flag.load(std::memory_order_relaxed) && !flag.exchange(1, std::memory_order_relaxed);
+    };
+    Vector<uint8_t> isLongSetRead(FillWith { }, callGraph.numberOfLongSets(), static_cast<uint8_t>(0));
+    Vector<uint8_t> isCalleeSetRead(FillWith { }, program.types.numberOfCalleeSets(), static_cast<uint8_t>(0));
+
     Vector<FunctionID> frontier;
     // The tables take the body of a module or of a function that is registered for the host as the sign that it can run.
     BitVector isCalledByHost = functionsCalledByHost(program, loops);
+    // A declared function is a root for whoever reads its variable and gets its closure. What is left of one that has lost parameters only hands on to the version without them, for nobody where the variable is never read.
+    BitVector isOnlyInUnreadVariable(count);
+    for (const Variable& variable : program.variables) {
+        if (variable.function && variable.flow.reads == ReadState::NeverRead)
+            isOnlyInUnreadVariable.quickSet(variable.function.index());
+    }
+    for (const Variable& variable : program.variables) {
+        if (variable.function && variable.flow.reads != ReadState::NeverRead)
+            isOnlyInUnreadVariable.quickClear(variable.function.index());
+    }
+    auto onlyHandsOnToOwnVersion = [&](FunctionID id) {
+        const Function& function = program.at(id);
+        if (!function.hasBody() || function.blocks.size() != 1 || function.at(entryBlock).values.size() != 1)
+            return false;
+        const Value& call = function.at(function.at(entryBlock).values[0]);
+        return call.opcode == Opcode::CallDirect && program.at(call.function()).derivation.source == id;
+    };
     for (FunctionID root : callGraph.roots()) {
+        if (isOnlyInUnreadVariable.quickGet(root.index()) && !isCalledByHost.get(root.index()) && callGraph.numberOfCallSites(root) == callGraph.numberOfCallSitesInCode(root) && onlyHandsOnToOwnVersion(root))
+            continue;
         if (isCalledByHost.get(root.index()) || entrypointsOf(root).empty())
             reach(root, frontier);
     }
@@ -98,8 +127,14 @@ BitVector findReachableFunctions(const Program& program, const CallGraph& callGr
     while (!frontier.isEmpty()) {
         frontier = collectInParallel<FunctionID>(loops, frontier.size(), [&](unsigned position, Vector<FunctionID>& reachedBodies) {
             // An operation that may enter a function has the effects of that body, also where it enters through an entrypoint: a function without a body counts as unknown code.
-            for (FunctionID callee : callGraph.calleesOf(frontier[position]))
+            for (FunctionID callee : callGraph.ownCalleesOf(frontier[position]))
                 reach(callee, reachedBodies);
+            for (uint32_t set : callGraph.longSetsOf(frontier[position])) {
+                if (!readOnce(isLongSetRead, set))
+                    continue;
+                for (FunctionID callee : callGraph.membersOfLongSet(set))
+                    reach(callee, reachedBodies);
+            }
             forEachFunctionReference(program, frontier[position], [&](FunctionID target, FunctionReferenceKind kind) {
                 switch (kind) {
                 case FunctionReferenceKind::Call:
@@ -121,6 +156,8 @@ BitVector findReachableFunctions(const Program& program, const CallGraph& callGr
                     return;
                 for (FunctionID entrypoint : entrypointsOf(bound->target))
                     reach(entrypoint, reachedBodies);
+            }, [&](CalleeSetID set) {
+                return readOnce(isCalleeSetRead, set.index());
             });
         });
     }
@@ -196,6 +233,9 @@ static constexpr OperandUses keyedStoreUses { OperandUse::StoresByKey, OperandUs
 
 static bool isUnread(const BuildContext& build, const Layout& layout, const Field& field)
 {
+    // The brand of a class without private methods only tells its evaluations apart. A private field says by itself whether an object has it.
+    if (field.flags.contains(FieldFlags::IsBrand))
+        return !field.flags.containsAny({ FieldFlags::IsInherited, FieldFlags::IsAddedLate, FieldFlags::IsBrandOfMethods }) && layout.classFlow.evaluations == ExecutionCount::AtMostOnce;
     constexpr OptionSet<FieldFlags> excludedFlags { FieldFlags::IsInherited, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden };
     if (field.flags.containsAny(excludedFlags) || field.form.contains(FieldForm::IsAccessor))
         return false;
@@ -216,6 +256,7 @@ static bool isUnread(const BuildContext& build, const Layout& layout, const Fiel
     case ReadState::Unknown:
         return build.isSabotaged(Sabotage::RemovedFieldsHaveUnknownReaders);
     case ReadState::OnlyAccessed:
+    case ReadState::OnlyWhereDefined:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -262,7 +303,7 @@ private:
     {
         if (type.isOpaque(OpaqueKind::Guard))
             return false;
-        if (type.anyObject || type.anyFunction || !type.classes.isEmpty() || !type.isJavaScriptValue() || type.primitives & Primitive::Symbol || hasMembersWithoutLayout(m_program, type))
+        if (type.anyObject || type.anyFunction || !type.classes.isEmpty() || !type.isJavaScriptValue() || type.primitives & Primitive::Symbol)
             return true;
         return std::ranges::any_of(type.functions, [&](FunctionID function) {
             return !m_program.at(function).captures.isEmpty() || !m_flow.closuresGoUnnoticed(function);
@@ -476,8 +517,8 @@ private:
         return answer;
     }
 
-    // What its holder names in a field of its own, stored once, lives as long as the holder: an environment wherever the store stands, anything else where the holder is an environment whose field stays and is filled in front of the closure,
-    // or behind it in the same block where every operation in between completes: until the store runs, the function holds what it is about to store.
+    // A value stored once into its holder's own field lives as long as the holder: an environment wherever the store is, anything else if the holder is an environment whose field is kept and is filled before the holder is passed the closure,
+    // or after that in the same block if every operation in between completes: until the store runs, the function holds what it is about to store.
     bool isHeldBy(ValueID holder, ValueID held, ValueID closure)
     {
         if (!holder)
@@ -509,11 +550,25 @@ private:
             return false;
         if (found->value == holder || m_program.typeOf(m_function, held).environment)
             return true;
+        ValueID given = findProvidingOperation(holder, closure);
         ValueLocation store = useLists().locationOf(found->value);
-        ValueLocation made = useLists().locationOf(closure);
+        ValueLocation made = useLists().locationOf(given);
         if (store.placement != ValuePlacement::InBlock || made.placement != ValuePlacement::InBlock || store.block != made.block)
             return false;
-        return store.index < made.index || numberOfExitsInFrontOf(found->value) == numberOfExitsInFrontOf(closure);
+        return store.index < made.index || numberOfExitsInFrontOf(found->value) == numberOfExitsInFrontOf(given);
+    }
+
+    // Until it is passed to its holder, a closure with no other use is only reachable from the function, which also holds what it is about to store.
+    ValueID findProvidingOperation(ValueID holder, ValueID closure)
+    {
+        std::span<const Use> uses = useLists().usesOf(closure);
+        if (uses.size() != 1 || uses[0].kind != Use::Kind::Operand)
+            return closure;
+        const Value& user = m_function.at(uses[0].user);
+        if (user.opcode == Opcode::NewObject)
+            return uses[0].user == holder ? holder : closure;
+        bool isStoreToHolder = user.opcode == Opcode::PutEnvironmentField && uses[0].operandIndex == OperandIndex::PutEnvironmentField::value && user.operand(OperandIndex::PutEnvironmentField::environment) == holder;
+        return isStoreToHolder ? uses[0].user : closure;
     }
 
     // How many of the operations that stand in front of a value in its block may leave the block.
@@ -549,12 +604,12 @@ private:
     Vector<uint32_t> m_numberOfExitsInFront;
 };
 
-static bool mayHaveNamespaceObject(NamespaceUse use)
+static bool mayBeReadByUnknownKey(NamespaceUse use)
 {
     switch (use) {
     case NamespaceUse::Unknown:
-    case NamespaceUse::NamedReadsOnly:
         return true;
+    case NamespaceUse::NamedReadsOnly:
     case NamespaceUse::NeverCreated:
         return false;
     }
@@ -602,6 +657,51 @@ static BitVector findUsedValues(const Function& function)
     return isUsed;
 }
 
+// Only GetModuleVariable reads a variable that no module, eval scope or class object shows to anybody else, so a scan of the bodies sees every read of it.
+static BitVector findVariablesThatOnlyBodiesRead(const Program& program, const FlowResults& flow)
+{
+    BitVector variables;
+    if (!flow.hasResults())
+        return variables;
+
+    BitVector isReadOutsideBodies(program.variables.size());
+    auto add = [&](VariableID variable) {
+        if (variable)
+            isReadOutsideBodies.quickSet(variable.index());
+    };
+    BitVector isReadByHost(program.modules.size());
+    for (const Entry& entry : program.entries) {
+        if (!entry.hostReads.isEmpty())
+            isReadByHost.quickSet(entry.module.index());
+    }
+    for (unsigned index = 0; index < program.modules.size(); ++index) {
+        const Module& module = program.modules[index];
+        const ModuleFlow& moduleFlow = flow.module(ModuleID(index));
+        bool isEveryExportRead = isReadByHost.quickGet(index) || mayBeReadByUnknownKey(moduleFlow.namespaceUse);
+        for (const ModuleExport& entry : module.exports) {
+            if (entry.variable && (isEveryExportRead || std::ranges::binary_search(moduleFlow.exportsReadByName, entry.variable)))
+                add(entry.variable);
+        }
+        for (const SyntheticExport& entry : module.syntheticExports)
+            add(entry.variable);
+        // The run time reads the variable that holds `module.exports` for whoever asks for the value of the module, takes its names from that value, or holds its module object.
+        if (module.exportsVariable && program.at(module.exportsVariable).flow.reads == ReadState::Unknown)
+            add(module.exportsVariable);
+    }
+    for (const EvalScope& scope : program.evalScopes) {
+        for (const EvalBinding& binding : scope.bindings)
+            add(binding.variable);
+    }
+
+    variables.ensureSize(program.variables.size());
+    for (unsigned index = 0; index < program.variables.size(); ++index) {
+        const Variable& variable = program.variables[index];
+        if (!variable.owner && variable.flow.writers == WriterState::AllKnown && !isReadOutsideBodies.quickGet(index))
+            variables.quickSet(index);
+    }
+    return variables;
+}
+
 void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
 {
     const Program& program = editor.program();
@@ -616,50 +716,17 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         areReceiverSetsEnabled = build.isEnabled(FlowResultKind::ReceiverSets, function);
     for (uint32_t layoutIndex = 0; areReceiverSetsEnabled && layoutIndex < program.layouts.size(); ++layoutIndex) {
         const Layout& layout = program.layouts[layoutIndex];
-        if (!supportsRemovalOf(layout.kind) || layout.flow.allocation == AllocationState::NeverAllocated)
+        if (!supportsRemovalOf(layout.kind))
             continue;
+        bool onlyDeclaresFieldsOfLayoutsBelow = layout.flow.allocation == AllocationState::NeverAllocated;
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+            if (onlyDeclaresFieldsOfLayoutsBelow && !hasNoAccesses(layout.fields[field].flow.location))
+                continue;
             if (isUnread(build, layout, layout.fields[field]))
                 fields.append(FieldReference { LayoutID(layoutIndex), field });
         }
     }
-    // Only GetModuleVariable reads a variable that no module, eval scope or class object names, so the scan sees every read of it.
-    if (inputs.flow.hasResults()) {
-        BitVector isReadOutsideBodies(program.variables.size());
-        auto add = [&](VariableID variable) {
-            if (variable)
-                isReadOutsideBodies.quickSet(variable.index());
-        };
-        BitVector isReadByHost(program.modules.size());
-        for (const Entry& entry : program.entries) {
-            if (!entry.hostReads.isEmpty())
-                isReadByHost.quickSet(entry.module.index());
-        }
-        for (unsigned index = 0; index < program.modules.size(); ++index) {
-            const Module& module = program.modules[index];
-            bool isEveryExportRead = isReadByHost.quickGet(index) || mayHaveNamespaceObject(inputs.flow.module(ModuleID(index)).namespaceUse);
-            for (const ModuleExport& entry : module.exports) {
-                if (entry.variable && (isEveryExportRead || program.at(entry.variable).flow.reads == ReadState::Unknown))
-                    add(entry.variable);
-            }
-            for (const SyntheticExport& entry : module.syntheticExports)
-                add(entry.variable);
-            // The run time reads the variable that holds `module.exports` for whoever asks for the value of the module, takes its names from that value, or holds its module object.
-            if (module.exportsVariable && program.at(module.exportsVariable).flow.reads == ReadState::Unknown)
-                add(module.exportsVariable);
-        }
-        for (const EvalScope& scope : program.evalScopes) {
-            for (const EvalBinding& binding : scope.bindings)
-                add(binding.variable);
-        }
-
-        variables.ensureSize(program.variables.size());
-        for (unsigned index = 0; index < program.variables.size(); ++index) {
-            const Variable& variable = program.variables[index];
-            if (!variable.owner && variable.flow.writers == WriterState::AllKnown && !isReadOutsideBodies.quickGet(index))
-                variables.quickSet(index);
-        }
-    }
+    variables = findVariablesThatOnlyBodiesRead(program, inputs.flow);
     if (fields.isEmpty() && variables.isEmpty())
         return;
 
@@ -723,7 +790,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         if (PropertyKeyID key = fieldAt(program, fields[candidate]).key)
             candidatesByKey.append({ key, candidate });
     }
-    AOT::sort(candidatesByKey);
+    AOT::sortInLine(candidatesByKey);
 
     for (const EvalScope& scope : program.evalScopes) {
         for (const EvalBinding& binding : scope.bindings) {
@@ -753,6 +820,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
     using FunctionAccesses = std::pair<FunctionID, Vector<RemovableAccess>>;
     FreshDataFunctions freshDataFunctions(program.functions.size());
     UnnoticedObjects unnoticedObjects(program, inputs.flow);
+    std::optional<ProgramCaches> caches(std::in_place, program, build);
     Vector<FunctionAccesses> functions = collectInParallel<FunctionAccesses>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionAccesses>& collected) {
         FunctionID id(index);
         const Function& function = program.at(id);
@@ -784,12 +852,19 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                 bool reachesOnlyCandidates = false;
                 bool mayReachAnyLayout = false;
                 if (LayoutSetID stamp = value.receivers()) {
-                    members = program.at(stamp).members.span();
-                    reachesOnlyCandidates = program.at(stamp).isComplete;
+                    auto all = program.at(stamp).all();
+                    members = all ? all->value() : program.at(stamp).seen().predicted();
+                    reachesOnlyCandidates = !!all;
                 } else if (std::optional<uint8_t> receiver = receiverOf(opcode)) {
                     const Type& type = program.typeOf(function, value.operand(*receiver));
                     members = membersOf(program, type);
                     mayReachAnyLayout = type.anyObject;
+                    // A read loses its stamp where a check above it becomes an expectation. Flow still says which objects it saw arrive.
+                    bool asksFlow = mayReachAnyLayout && !createsPropertyByName(opcode) && !build.isSabotaged(Sabotage::RemovedFieldsHaveUnknownReaders);
+                    if (std::optional<LayoutSetID> seen = asksFlow ? inputs.flow.receiversSeenAt(value.accessSite()) : std::nullopt) {
+                        members = *seen ? program.at(*seen).seen().predicted() : std::span<const LayoutID>();
+                        mayReachAnyLayout = false;
+                    }
                 }
 
                 PropertyKeyID key = Value::opcodesWithKey.contains(opcode) ? value.key() : PropertyKeyID();
@@ -800,10 +875,12 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                 // Most keys are the key of no candidate, and then no member has a candidate under the key.
                 if (!keysOfCandidates.get(key.index()))
                     return;
-                // Nothing says which objects arrive here. On one without the field the store would create a property.
-                if (mayReachAnyLayout && createsPropertyByName(opcode)) {
-                    for (auto [keyOfCandidate, candidate] : std::ranges::equal_range(candidatesByKey, key, { }, &std::pair<PropertyKeyID, uint32_t>::first))
-                        markLive(candidate);
+                // Nothing says which objects arrive here. On one without the field a store would create a property. A read may be one of those whose value flow saw only called.
+                if (mayReachAnyLayout) {
+                    for (auto [keyOfCandidate, candidate] : std::ranges::equal_range(candidatesByKey, key, { }, &std::pair<PropertyKeyID, uint32_t>::first)) {
+                        if (createsPropertyByName(opcode) || fieldAt(program, fields[candidate]).flow.location.reads == ReadState::OnlyCalled)
+                            markLive(candidate);
+                    }
                     return;
                 }
 
@@ -821,7 +898,9 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                     return;
                 AOT::sort(found);
                 removeRepeatedElements(found);
-                bool isRemovableStore = isRemovableSlotStore(opcode) && !stores.keepsObjectAlive(value.operand(*storedOf(opcode)), value.operand(*receiverOf(opcode)));
+                // The class holds its token, whatever becomes of the store of a brand.
+                bool isStoreOfBrand = fieldAt(program, fields[found[0]]).flags.contains(FieldFlags::IsBrand);
+                bool isRemovableStore = isRemovableSlotStore(opcode) && (isStoreOfBrand || !stores.keepsObjectAlive(value.operand(*storedOf(opcode)), value.operand(*receiverOf(opcode))));
                 addAccess(WTF::move(found), reachesOnlyCandidates && (isRemovableStore || isUnusedSlotRead()));
             };
 
@@ -830,7 +909,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                     markFieldsLive(layout);
                 auto addNamedField = [&](uint32_t field, ValueID stored, ValueID holder) {
                     if (auto candidate = candidateOf(layout, field))
-                        addAccess({ *candidate }, stored && !stores.keepsObjectAlive(stored, holder));
+                        addAccess({ *candidate }, stored && (fieldAt(program, { layout, field }).flags.contains(FieldFlags::IsBrand) || !stores.keepsObjectAlive(stored, holder)));
                 };
                 for (const PayloadFieldInfo& field : payloadFieldsOf(opcode)) {
                     if (field.kind == PayloadKind::Field) {
@@ -863,6 +942,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         if (!accesses.isEmpty())
             collected.append({ id, WTF::move(accesses) });
     });
+    caches.reset();
 
     // An access goes only if each candidate that it may reach goes.
     struct CandidateSet : WTF::UnionFind<CandidateSet> { };
@@ -907,7 +987,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         if (field.flow.occupancy == Occupancy::FilledAtBirth || field.flow.occupancy == Occupancy::FilledWithValueAtBirth)
             field.flow.occupancy = Occupancy::Unknown;
         // A validating build tells the run time which names it took away, so that a lookup of one from outside compiled code ends the process.
-        if (build.validates())
+        if (build.validates() && !field.flags.contains(FieldFlags::IsBrand))
             field.flags.add(FieldFlags::IsRemovedAsUnread);
         ++numberOfRemovedFields;
     }
@@ -992,18 +1072,6 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
     });
 }
 
-static bool mayBeReadByUnknownKey(NamespaceUse use)
-{
-    switch (use) {
-    case NamespaceUse::Unknown:
-        return true;
-    case NamespaceUse::NamedReadsOnly:
-    case NamespaceUse::NeverCreated:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildContext& build)
 {
     if (!flow.hasResults())
@@ -1029,10 +1097,26 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
         if (variable.flow.reads == ReadState::NeverRead && variable.flow.writers == WriterState::AllKnown && !variable.owner && !mayBeReadThroughNamespace)
             unreadVariables.set(index);
     }
+
+    // Flow saw the reads that have become constants since.
+    const ParallelLoops& loops = build.parallelLoops();
+    BitVector variablesToLookFor = findVariablesThatOnlyBodiesRead(program, flow);
+    variablesToLookFor.exclude(unreadVariables);
+    if (!variablesToLookFor.isEmpty()) {
+        Vector<uint8_t> isRead(FillWith { }, program.variables.size(), static_cast<uint8_t>(0));
+        forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
+            forEachListedValue(program, FunctionID(index), { Opcode::GetModuleVariable, Opcode::GetEncodedModuleVariable }, [&](BlockID, uint32_t, ValueID, const Value& value) {
+                WTF::atomicStore(&isRead[value.variable().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+            });
+        });
+        for (size_t index : variablesToLookFor) {
+            if (!isRead[index])
+                unreadVariables.set(index);
+        }
+    }
     if (unreadVariables.isEmpty())
         return;
 
-    const ParallelLoops& loops = build.parallelLoops();
     using FunctionStores = std::pair<FunctionID, Vector<VariableID, 4>>;
     Vector<uint8_t> mayHoldObjects(FillWith { }, program.variables.size(), static_cast<uint8_t>(0));
     EffectSummaries unknownSummaries;
@@ -1083,13 +1167,16 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
             });
         }
         // The annotation says that the call may go when nobody uses its answer. An argument can be such a call too, and a cast that tests nothing is no use by itself.
+        ObservableOperations observable({ program, unknownSummaries }, function);
         for (bool didRemove = true; std::exchange(didRemove, false);) {
             BitVector usedValues = findUsedValues(function);
             for (Block& block : function.editAllBlocks()) {
                 didRemove |= !!block.values.removeAllMatching([&](ValueID id) {
                     const Value& value = function.at(id);
+                    if (usedValues.quickGet(id.index()))
+                        return false;
                     bool isAnnotatedPure = (value.opcode == Opcode::Call || value.opcode == Opcode::Construct) && value.isAnnotatedPure();
-                    return (isAnnotatedPure || isCastWithoutTest(value.opcode)) && !usedValues.quickGet(id.index());
+                    return isAnnotatedPure || isCastWithoutTest(value.opcode) || (resultRuleOf(value.opcode) == ResultRule::Constant && observable.neitherThrowsNorRunsCode(id));
                 });
             }
         }
@@ -1098,6 +1185,8 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
     variablesWithRemovedStores.exclude(variablesWithRemainingStores);
     for (size_t index : variablesWithRemovedStores)
         editor.at(VariableID(index)).flow.stores = StoreCount::Never;
+    for (size_t index : unreadVariables)
+        editor.at(VariableID(index)).flow.reads = ReadState::NeverRead;
     build.statistics().count(StatisticID::UnreadVariableStoresRemoved, numberOfRemovedStores);
 }
 

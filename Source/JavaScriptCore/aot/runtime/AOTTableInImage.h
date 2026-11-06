@@ -22,17 +22,19 @@ struct TableInImage {
     struct Key {
         uint32_t string;
         unsigned hash;
+        uint32_t stringConstant { 0 };
     };
 
     const uint8_t* index() const { return reinterpret_cast<const uint8_t*>(this + 1); }
     const uint32_t* strings() const { return reinterpret_cast<const uint32_t*>(index() + (static_cast<size_t>(2) << keysShift)); }
-    const uint64_t* values() const { return reinterpret_cast<const uint64_t*>(strings() + capacity); }
+    const uint32_t* stringConstants() const { return strings() + capacity; }
+    const uint64_t* values() const { return reinterpret_cast<const uint64_t*>(stringConstants() + capacity); }
     StringID stringAt(uint32_t entry) const { return StringID(strings()[entry]); }
     StringView textAt(const Image& image, uint32_t entry) const { return image.text().view(stringAt(entry)); }
 
     template<typename Matches> ALWAYS_INLINE std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches& matches) const
     {
-        return CompactTable::probeIndex(CompactTable::slotKindFor(capacity), index(), indexBits, count, hash, matches);
+        return CompactTable::probeIndex(CompactTable::slotKindFor(capacity), index(), indexBits & CompactTable::numberOfIndexBits, count, hash, matches);
     }
     ALWAYS_INLINE std::optional<uint32_t> find(const Image& image, StringView key, unsigned hash) const
     {

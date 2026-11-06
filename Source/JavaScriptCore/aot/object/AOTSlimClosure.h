@@ -20,10 +20,10 @@ struct State;
 class ReifiedSlimClosure;
 
 template<typename Visitor>
-ALWAYS_INLINE void visitSlimClosureCaptures(const JSCell* cell, FunctionID function, Visitor& visitor)
+ALWAYS_INLINE void visitSlimClosureCaptures(const JSCell* cell, uint32_t closureNumber, Visitor& visitor)
 {
     const EncodedJSValue* captures = reinterpret_cast<const EncodedJSValue*>(reinterpret_cast<const uint8_t*>(cell) + offsetOfSlimClosureCaptures);
-    unsigned numberOfReferences = captureCountsOf(function).references;
+    unsigned numberOfReferences = captureCountsOfClosureNumber(closureNumber).references;
     for (unsigned i = 0; i < numberOfReferences; ++i)
         visitor.appendUnbarriered(JSValue::decode(captures[i]));
 }
@@ -66,12 +66,13 @@ public:
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
-    FunctionID function() const { return FunctionID(ClosureWord::functionOf(m_word)); }
-    FunctionKindData kind() const { return functionKindData(function()); }
+    uint32_t closureNumber() const { return ClosureWord::closureNumberOf(m_word); }
+    FunctionID function() const { return functionOfClosureWord(m_word); }
+    FunctionKindData kind() const { return kindOfClosureNumber(closureNumber()); }
     bool canConstruct() const { return FunctionTables::canConstruct(kind()); }
     bool isBound() const { return kind().isBound(); }
-    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
-    unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
+    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOfClosureNumber(closureNumber()).captures }; }
+    unsigned numberOfReferences() const { return captureCountsOfClosureNumber(closureNumber()).references; }
     State& state() const;
     bool nameWasLookedFor() const { return TypeInfo::perCellBit(inlineTypeFlags()); }
     void noteLookForName() { setPerCellBit(true); }
@@ -107,7 +108,7 @@ ALWAYS_INLINE bool SlimClosure::tryVisitFields(SlimClosure* closure, Visitor& vi
     if (closure->structureID() != structureID)
         return false;
     if (word)
-        visitSlimClosureCaptures(closure, FunctionID(ClosureWord::functionOf(word)), visitor);
+        visitSlimClosureCaptures(closure, ClosureWord::closureNumberOf(word), visitor);
     return true;
 }
 
@@ -130,7 +131,7 @@ public:
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> ALWAYS_INLINE static void visitFields(ReifiedSlimClosure* closure, Visitor& visitor) { visitSlimClosureCaptures(closure, closure->function(), visitor); }
+    template<typename Visitor> ALWAYS_INLINE static void visitFields(ReifiedSlimClosure* closure, Visitor& visitor) { visitSlimClosureCaptures(closure, closure->closureNumber(), visitor); }
     static void analyzeHeap(JSCell*, HeapAnalyzer&);
     static CallData getCallData(JSCell*);
     static CallData getConstructData(JSCell*);
@@ -144,14 +145,17 @@ public:
     // Under every other name defineOwnProperty() is that of an ordinary object.
     static bool hasOrdinaryDefineOwnProperty(VM&, PropertyName);
 
-    FunctionID function() const { return FunctionID(*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(butterfly()) + offsetOfFunctionIndexInButterfly())); }
-    FunctionKindData kind() const { return functionKindData(function()); }
+    uint32_t closureNumber() const { return *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(butterfly()) + offsetOfFunctionIndexInButterfly()); }
+    FunctionID function() const { return closureFunctionWithNumber(closureNumber()); }
+    FunctionKindData kind() const { return kindOfClosureNumber(closureNumber()); }
     bool canConstruct() const { return FunctionTables::canConstruct(kind()); }
     bool isBound() const { return kind().isBound(); }
-    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
-    unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
+    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOfClosureNumber(closureNumber()).captures }; }
+    unsigned numberOfReferences() const { return captureCountsOfClosureNumber(closureNumber()).references; }
     State& state() const;
     JSValue lookForNameProperty(VM&);
+    // ClosureWord::isRenamedBit.
+    void markRenamed() { setPerCellBit(true); }
 
 private:
     ReifiedSlimClosure() = delete;

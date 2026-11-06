@@ -58,6 +58,8 @@ enum class ValueFlowNameKind : uint8_t {
     RestArgument,
     AddedNames,
     FoundThroughEscapedInstances,
+    NamesOfMethods,
+    NamespaceExports,
 };
 
 enum class ValueFlowNameSort : uint8_t { Value, Getter, Setter, Deletion, Redefinition, PrototypeLink, Copy, Other };
@@ -130,6 +132,8 @@ constexpr ValueFlowNameShape shapeOf(ValueFlowNameKind kind)
     case ValueFlowNameKind::RestArgument:
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
+    case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::NamespaceExports:
         return { Sort::Other, Reach::NoKey };
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -186,6 +190,8 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
     case ValueFlowNameKind::RestArgument:
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
+    case ValueFlowNameKind::NamesOfMethods:
+    case ValueFlowNameKind::NamespaceExports:
         return false;
     }
     return false;
@@ -199,16 +205,37 @@ struct ValueFlowName {
     static constexpr ValueFlowName property(PropertyKeyID key) { return { ValueFlowNameKind::Property, key.index() }; }
     static constexpr ValueFlowName getter(PropertyKeyID key) { return { ValueFlowNameKind::Getter, key.index() }; }
     static constexpr ValueFlowName setter(PropertyKeyID key) { return { ValueFlowNameKind::Setter, key.index() }; }
+    static ValueFlowName property(const Program& program, PropertyKeyID key) { return key && program.isIndexLike(key) ? of(ValueFlowNameKind::Elements) : property(key); }
+    static ValueFlowName getter(const Program& program, PropertyKeyID key) { return key && program.isIndexLike(key) ? of(ValueFlowNameKind::GetterUnderUnknownKey) : getter(key); }
+    static ValueFlowName setter(const Program& program, PropertyKeyID key) { return key && program.isIndexLike(key) ? of(ValueFlowNameKind::SetterUnderUnknownKey) : setter(key); }
 
     friend constexpr bool operator==(const ValueFlowName&, const ValueFlowName&) = default;
     friend constexpr auto operator<=>(const ValueFlowName&, const ValueFlowName&) = default;
 };
 
-inline constexpr ValueFlowName keyOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xffffffff };
-inline constexpr ValueFlowName valueOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffe };
-inline constexpr ValueFlowName sourcesOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffd };
-inline constexpr ValueFlowName entriesPairsOfMap { ValueFlowNameKind::HiddenSlot, 0xfffffffc };
-inline constexpr ValueFlowName describedObjectName { ValueFlowNameKind::HiddenSlot, 0xfffffffb };
+struct ValueFlowCellName : ValueFlowName {
+    constexpr explicit ValueFlowCellName(ValueFlowNameKind kind, uint32_t payload = 0)
+        : ValueFlowName { kind, payload }
+    {
+        ASSERT_UNDER_CONSTEXPR_CONTEXT(shapeOf(kind).sort == ValueFlowNameSort::Other);
+    }
+};
+
+inline bool namesElementByText(const Program& program, ValueFlowName name)
+{
+    ValueFlowNameShape shape = shapeOf(name.kind);
+    PropertyKeyID key(name.payload);
+    return shape.reach == ValueFlowNameReach::OneKey && shape.isValueOrAccessor() && key && program.isIndexLike(key);
+}
+
+inline constexpr ValueFlowCellName keyOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xffffffff };
+inline constexpr ValueFlowCellName valueOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffe };
+inline constexpr ValueFlowCellName sourcesOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffd };
+inline constexpr ValueFlowCellName entriesPairsOfMap { ValueFlowNameKind::HiddenSlot, 0xfffffffc };
+inline constexpr ValueFlowCellName describedObjectName { ValueFlowNameKind::HiddenSlot, 0xfffffffb };
+inline constexpr ValueFlowCellName proxyItselfName { ValueFlowNameKind::HiddenSlot, 0xfffffffa };
+inline constexpr ValueFlowCellName listedValuesOfProxyName { ValueFlowNameKind::HiddenSlot, 0xfffffff9 };
+inline constexpr ValueFlowCellName descriptorsAnsweredByProxyName { ValueFlowNameKind::HiddenSlot, 0xfffffff8 };
 
 inline constexpr ValueFlowName elementsName = ValueFlowName::of(ValueFlowNameKind::Elements);
 inline constexpr ValueFlowName unknownKeyName = ValueFlowName::of(ValueFlowNameKind::UnknownKey);
@@ -218,8 +245,9 @@ inline constexpr ValueFlowName everyGetterName = ValueFlowName::of(ValueFlowName
 inline constexpr ValueFlowName copiedFromName = ValueFlowName::of(ValueFlowNameKind::CopiedFrom);
 inline constexpr ValueFlowName prototypeLinkName = ValueFlowName::of(ValueFlowNameKind::PrototypeLink);
 inline constexpr ValueFlowName chainWithoutCopiesOntoRealmName { ValueFlowNameKind::PrototypeLink, 1 };
-inline constexpr ValueFlowName allocatedAsName = ValueFlowName::of(ValueFlowNameKind::AllocatedAs);
-inline constexpr ValueFlowName awaitedValueName = ValueFlowName::of(ValueFlowNameKind::AwaitedValue);
+inline constexpr ValueFlowCellName allocatedAsName { ValueFlowNameKind::AllocatedAs };
+inline constexpr ValueFlowCellName allocatedWithHolesName { ValueFlowNameKind::AllocatedAs, 1 };
+inline constexpr ValueFlowCellName awaitedValueName { ValueFlowNameKind::AwaitedValue };
 
 enum class ValueFlowMaskKind : uint8_t {
     Plain,
@@ -296,8 +324,44 @@ enum class ValueFlowStatementKind : uint8_t {
     ModulesLoadedByName,
 };
 
+// What rules ask of the text of an operation. It is the same in every round, so it is read once, and no rule opens the body of the function for it.
+enum class ValueFlowFactOfText : uint8_t {
+    HasSecondOperand = 1 << 0,
+    IsFreeName = 1 << 1,
+    HasRareFacts = 1 << 2,
+    HasCopyOfOperation = 1 << 3,
+    // Of an ElemGet: `object[name]` in `for (name in object)`.
+    ReadsUnderNameOfEnumerationOfSameObject = 1 << 4,
+    // Of an ElemSet: objectsReadUnderKeyOfStore() finds one object, or two. They stand behind the operands of the statement.
+    StoresWhatOneObjectHoldsUnderSameKey = 1 << 5,
+    StoresWhatTwoObjectsHoldUnderSameKey = 1 << 6,
+    // Of an IteratorResume with an index: the step of `...rest`, which runs once for each place from its own on, or a step of a pattern whose steps do not take place after place from the first on.
+    StepFillsNoOnePlace = 1 << 7,
+};
+
+// Of the few operations of which one of these holds, in the order of functions and sites.
+struct ValueFlowRareFactsOfText {
+    FunctionID function;
+    ValueID site;
+    // entryNamedByOperations() of the callee of a call, or of a PropGet itself.
+    BuiltinID entryNamed;
+    // Of a call whose statement has no key: the member that a longer look at the text finds.
+    PropertyKeyID keyOfMemberCalledOnItsHolder;
+    // Of an ElemGet or an ElemSet: `object["$" + name]`: the text that is written in front of the rest of the key.
+    StringID textThatKeyBeginsWith;
+    std::optional<uint8_t> positionInPair { };
+};
+
+// An operation whose rule reads what the operation itself says: a layout and its fields, a module, the kind of an iterator. A Value holds all of that itself. In the order of functions and sites.
+struct ValueFlowCopyOfOperation {
+    FunctionID function;
+    ValueID site;
+    Value operation;
+};
+
 struct ValueFlowStatement {
     ValueFlowStatementKind kind { ValueFlowStatementKind::Operation };
+    OptionSet<ValueFlowFactOfText> factsOfText;
     Opcode opcode { };
     FunctionID function;
     ValueID site;
@@ -306,6 +370,19 @@ struct ValueFlowStatement {
     ValueFlowNodeID result;
     ValueFlowNodeID thrown;
     uint32_t firstSite { UINT32_MAX };
+    // Of a PropGet: what it reads is tested, or is the callee of a call on the object it was read from, and goes nowhere else.
+    bool isOnlyCalledOnItsHolder { false };
+    // Of a ModuleNamespace: the object is tested, or is the receiver of a call, and goes nowhere else.
+    bool isOnlyReceiverOfCalls { false };
+    // Of a PropGet or an ElemGet: what it reads is tested, or a member is read off it of which the same holds, and nothing else is done with it.
+    bool isOnlyTested { false };
+    // What the tests in front of its block let through. Where one of these holds nothing the statement never runs.
+    uint8_t guardCount { 0 };
+    uint32_t firstGuard { 0 };
+    // Four bits for each of the first eight operands: bit g says that the operand is the very value that guard g tested for the type of its cell, which never changes. The rules see it as the test lets it through.
+    uint32_t guardsOfOperands { 0 };
+    // Of an operation that names a key: that key. Of a call of a member read from its receiver: the key of that member.
+    PropertyKeyID key;
 };
 
 enum class ValueFlowCallKind : uint8_t {

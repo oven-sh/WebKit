@@ -1,0 +1,25 @@
+# A function that calls itself directly has no copy that calls only copies.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = Call v0
+    Return
+}
+function f1 name="make" module=m0 position=10 kind=Arrow results=[{type=anything}] {
+    v0 = CallDirect function=f2
+    v1 = NewClosure function=f3
+    Return v1
+}
+function f2 name="loop" module=m0 position=20 results=[{type=anything}] {
+    v0 = CallDirect function=f2
+    Return v0
+}
+function f3 name="made" module=m0 position=30 kind=Arrow results=[{type=anything}] {
+    Return
+}

@@ -8,7 +8,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="x" declared={type=anything}}]
-runtimefunction id=0 function=f38
+runtimefunction id=PromiseConstructorPromise function=f38
 
 function f0 name="usedRoot" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
     Branch v0 -> taken b1(), notTaken b2()
@@ -558,7 +558,7 @@ function f37 name="createsError" parameters=[{type=number}, {type=anything}] res
 # CHECK-COUNT-10: TypeError = CallDirect function=[[newError]]
 # CHECK-NOT: CallBuiltin
 
-function f38 name="hiddenLibraryFunctionCreatesError" role=Library flags=[IsHiddenInStackTraces] enclosingRuntimeFunction=0 parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+function f38 name="hiddenLibraryFunctionCreatesError" role=Library flags=[IsHiddenInStackTraces] enclosingRuntimeFunction=PromiseConstructorPromise parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 1..6
   b%(i)() frequency=Rare:

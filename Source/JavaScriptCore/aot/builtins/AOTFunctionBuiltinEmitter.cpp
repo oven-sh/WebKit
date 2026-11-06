@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBarrierEmitter.h"
+#include "AOTCallEmitter.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTClosureWord.h"
 #include "AOTElementAccessEmitter.h"
@@ -33,7 +34,7 @@ void FunctionBuiltinEmitter::missUnlessCallableClosure(const InlineCall& call, C
     auto missUnlessFullClosure = [&](bool mayBeConstructor) {
         missUnless(call, hasStructureIDAt(AOT_INSTANCE_OFFSET(closures.closureHeaders[0])));
         if (mayBeConstructor)
-            missUnless(call, isZero(bitAnd(loadField<Integer>(target, m_heaps.AOTClosure_entry), integer(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit)))));
+            missUnless(call, isZero(bitAnd(loadField<Integer>(target, m_heaps.AOTClosure_entry), static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit))));
     };
     if (FunctionID known = type.singleFunction()) {
         switch (m_placement.slots().closureFormOf(known)) {
@@ -83,7 +84,7 @@ void FunctionBuiltinEmitter::generateFunctionBind(const InlineCall& call)
     {
         CodeGenerator::InitializationScope scope(generator());
         bound = emitter<CellAllocationEmitter>().allocateObject(InlineAllocation::BoundFunction, prepare);
-        storeField(bound, m_heaps.JSObject_butterfly, pointerConstant(0));
+        storeField(bound, m_heaps.JSNonArray_butterfly, pointerConstant(0));
         storeField(bound, m_heaps.JSCallee_scope, loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)));
         storeField(bound, m_heaps.JSFunction_executableOrRareData, loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.boundFunctionExecutable)));
         storeField(bound, m_heaps.JSBoundFunction_targetFunction, target);
@@ -115,7 +116,7 @@ void FunctionBuiltinEmitter::generateReflectApply(const InlineCall& call)
     finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::Apply, { boxCell(function), thisValue, boxCell(list) }));
 }
 
-// Bytecode constructs in place too, so the stack has no frame of Reflect.construct. The host function throws what the arguments do not allow.
+// Bytecode also constructs in place, so the stack has no frame for Reflect.construct, and a construct is never a tail call. The host function throws for invalid arguments, so that call stays where it is written.
 void FunctionBuiltinEmitter::generateReflectConstruct(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments() == 2 || call.numberOfArguments() == 3);
@@ -127,7 +128,9 @@ void FunctionBuiltinEmitter::generateReflectConstruct(const InlineCall& call)
     Boxed target = constructorOrMiss(call.argument(0));
     Boxed list = boxCell(objectOrMiss(call, call.argument(1)));
     Boxed newTarget = call.numberOfArguments() == 3 ? constructorOrMiss(call.argument(2)) : target;
-    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::ConstructWithArray, { target, newTarget, list }, { .constructs = true }));
+    Origin origin = call.context().origin();
+    origin.isTailCall = false;
+    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::ConstructWithArray, { target, newTarget, list }, { .origin = origin, .constructs = true }));
 }
 
 void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)
@@ -139,6 +142,9 @@ void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)
     Boxed function = boxedOperand(call.context(), call.receiver());
     Boxed thisValue = argumentOrUndefined(0);
     Boxed list = argumentOrUndefined(1);
+    // The operation has no name for what it refuses.
+    if (!typeOf(call.receiver()).isSubsetOf(m_program.at(TypeTable::function), m_program))
+        emitter<CallEmitter>().requireCallable(call.context(), function, CallEmitter::siteThatNamesCallee(*call.value()), call.context().origin().isTailCall);
     finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::Apply, { function, thisValue, list }));
 }
 

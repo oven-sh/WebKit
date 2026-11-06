@@ -1,0 +1,36 @@
+# function pair(f) { return f({}, {}) }  pair(Proxy.revocable); pair(Object.keys)
+# function lists(f) { return f({}) }  lists(Object.values); lists(Object.keys)
+# One object stands for what a call makes, whichever function arrives there. Proxy.revocable makes an ordinary object and Object.keys a list, so the first call answers an object of no one class.
+# Both functions that arrive at the second call make a list.
+# RUN: valueflow-apply
+# CHECK: function f1 name="pair" {{*}}results=[{type=object}]
+# CHECK: function f2 name="lists" {{*}}results=[{type=Array<{{*}}>}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Empty"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=ProxyRevocable
+    v2 = Call v0, -, v1
+    v3 = Builtin builtin=ObjectKeys
+    v4 = Call v0, -, v3
+    v5 = NewClosure function=f2
+    v6 = Builtin builtin=ObjectValues
+    v7 = Call v5, -, v6
+    v8 = Call v5, -, v3
+    Return
+}
+function f1 name="pair" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = NewObject layout=L0 fields=[]
+    v3 = Call v0, -, v1, v2
+    Return v3
+}
+function f2 name="lists" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = Call v0, -, v1
+    Return v2
+}

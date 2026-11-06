@@ -30,12 +30,21 @@ static OperatorForm chooseNumericForm(Opcode opcode, const OperatorTypes& types)
     return OperatorForm::Generic;
 }
 
-static OperatorForm chooseConcatenationForm(CodeShape shape, const OperatorTypes& types)
+static bool isEmptyStringPlusPossibleString(const OperatorSite& site, const Type& text, const Type& other)
 {
+    return text.singleStringLiteral() == site.typing.program.strings.emptyString() && other.primitives & Primitive::AnyString && !(other.primitives & Primitive::Absent);
+}
+
+static OperatorForm chooseConcatenationForm(const OperatorSite& site, const OperatorTypes& types)
+{
+    CodeShape shape = site.shape;
     const Type& left = types.left;
     const Type& right = types.right;
-    if (left.hasObjects() || right.hasObjects())
+    if (left.hasObjects() || right.hasObjects()) {
+        if (isEmptyStringPlusPossibleString(site, left, right) || isEmptyStringPlusPossibleString(site, right, left))
+            return OperatorForm::MayBeString;
         return OperatorForm::Generic;
+    }
     if (left.isAnyString() && right.isAnyString())
         return OperatorForm::Strings;
     if (left.isAnyString() || right.isAnyString())
@@ -52,12 +61,12 @@ static OperatorForm chooseConcatenationForm(CodeShape shape, const OperatorTypes
     return OperatorForm::Generic;
 }
 
-static OperatorForm chooseAdditionForm(CodeShape shape, const OperatorTypes& types)
+static OperatorForm chooseAdditionForm(const OperatorSite& site, const OperatorTypes& types)
 {
     OperatorForm numericForm = chooseNumericForm(Opcode::Add, types);
     if (numericForm != OperatorForm::Generic)
         return numericForm;
-    return chooseConcatenationForm(shape, types);
+    return chooseConcatenationForm(site, types);
 }
 
 static OperatorForm chooseBitwiseForm(Opcode opcode, const OperatorTypes& types)
@@ -77,7 +86,7 @@ OperatorForm chooseArithmeticForm(const OperatorSite& site, Opcode opcode, const
 {
     switch (opcode) {
     case Opcode::Add:
-        return chooseAdditionForm(site.shape, types);
+        return chooseAdditionForm(site, types);
     case Opcode::Sub:
     case Opcode::Mul:
     case Opcode::Div:

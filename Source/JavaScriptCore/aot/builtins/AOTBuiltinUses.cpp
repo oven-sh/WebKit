@@ -37,6 +37,7 @@ public:
     {
         expectArgumentsToBePresent(isCalledOnlyDirectly(inputs.program.builtins(), callee));
         expectArgumentsRefusedWhenAbsentToBePresent(inputs.program.builtins(), callee, mode);
+        expectArgumentsTakenAsTheyAreOnlyWhenPresentToBePresent(inputs.program.builtins(), callee, mode);
         expectArgumentsToBeWhatEveryOverloadTakes(inputs.program.builtins(), callee, mode);
         if (mode == BuiltinCallMode::Call)
             expectReceiverToBePresent(inputs.program.builtins(), callee);
@@ -82,6 +83,33 @@ private:
                     && fitOf(m_typing, TypeTable::null, parameter->accepted).fit == TypeFit::Outside;
             });
             if (refusesAbsentArgument && isTakenAsItIs)
+                m_expected.arguments[index] = present;
+        }
+    }
+
+    // `text.replace(pattern, "")` where the pattern is null|RegExp: one overload takes a RegExp as it is and neither undefined nor null. Expect the object, and pick that overload. `undefined|string` stays as it is: it is what a read of a list that may miss answers, and the overload that takes it is not another kind of call.
+    void expectArgumentsTakenAsTheyAreOnlyWhenPresentToBePresent(const BuiltinTable& table, BuiltinID callee, BuiltinCallMode mode)
+    {
+        TypeArena& types = m_typing.types;
+        for (size_t index = 0; index < m_expected.arguments.size() && index <= BuiltinOperand::maxArgumentIndex; ++index) {
+            TypeID proven = m_proven.arguments[index];
+            if (m_expected.arguments[index] != proven || !types.at(proven).mayBeUndefinedOrNull())
+                continue;
+            TypeID present = types.intern(types.at(proven).withoutPrimitives(Primitive::UndefinedOrNull));
+            if (!types.at(present).isObject())
+                continue;
+            bool isTakenOnlyWhenPresent = std::ranges::any_of(table.overloadIDsOf(callee), [&](BuiltinOverloadID id) {
+                const BuiltinOverload& overload = table.at(id);
+                if (overload.mode != mode)
+                    return false;
+                const BuiltinParameter* parameter = table.parameterFor(overload, BuiltinOperand::argument(static_cast<unsigned>(index)));
+                if (!parameter || parameter->mode != BuiltinParameterMode::Required || parameter->conversion != BuiltinConversion::None)
+                    return false;
+                return fitOf(m_typing, present, parameter->accepted).fit == TypeFit::Inside
+                    && fitOf(m_typing, TypeTable::undefined, parameter->accepted).fit == TypeFit::Outside
+                    && fitOf(m_typing, TypeTable::null, parameter->accepted).fit == TypeFit::Outside;
+            });
+            if (isTakenOnlyWhenPresent)
                 m_expected.arguments[index] = present;
         }
     }
@@ -167,6 +195,9 @@ static BuiltinUsePlan planByOpcode(const BuiltinUseInputs& inputs, ValueID use, 
 
     switch (opcode) {
     case Opcode::PropGet:
+        // It has been moved as a read that runs nothing. The read behind its failing side is the one that becomes the call of a getter.
+        if (inputs.function.at(use).asksOnlyTables())
+            return { };
         return planBuiltinRead(inputs, use, point);
     case Opcode::PropSet:
         return planBuiltinStore(inputs, use, point);
@@ -236,7 +267,7 @@ void degradeToUnmatchedCall(BuiltinUsePlan& plan)
 
 bool hasOnlyNeverAllocatedLayouts(const Program& program, const Type& type)
 {
-    return type.hasOnlyLayouts(program) && std::ranges::all_of(membersOf(program, type), [&](LayoutID member) {
+    return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID member) {
         return program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
 }
@@ -444,6 +475,14 @@ static Value makeConstant(const Program& program, const BuiltinUsePlan& plan)
     return WTF::move(*constant);
 }
 
+// The value of a read may be known at build time. What the read does to the holder is not undone by that.
+static std::optional<Value> tryMakeInitializationOfReadMember(const BuiltinTable& table, const FlowResults& flow, const BuiltinUsePlan& plan)
+{
+    if (!plan.location || (plan.readsPrivateAlias && onlyAddsMemberToHolder(table, plan.member)))
+        return std::nullopt;
+    return tryMakeInitializeBuiltin(table, flow, plan.location);
+}
+
 static Value makeHostValueRead(const BuiltinUsePlan& plan)
 {
     Value read = IRBuilder::make(Opcode::GetBuiltinValue);
@@ -469,7 +508,7 @@ Effects effectsWhenApplied(const BuiltinUseInputs& inputs, const BuiltinUsePlan&
     case BuiltinUseKind::Constant: {
         Value constant = makeConstant(inputs.program, plan);
         Effects effects = declaredBoundOf(constant.opcode);
-        if (tryMakeInitializeBuiltin(inputs.program.builtins(), inputs.flow, constant))
+        if (tryMakeInitializationOfReadMember(inputs.program.builtins(), inputs.flow, plan))
             effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
         effects.merge(nullishCheckEffects);
         return effects;
@@ -545,7 +584,7 @@ static void finish(const BuiltinUseRewrite& rewrite, const ReplacedEffects& repl
     FunctionPassContext& context = rewrite.context;
     Value& value = context.function.edit(rewrite.use);
     value.type = resultTypeOf(context.program, context.function, value, context.types, &context.typingMemo);
-    value.setExpected(ExpectedType(expectedTypeOf(context.program, context.function, value, context.types, &context.typingMemo)));
+    value.setExpected(expectedTypeOf(context.program, context.function, value, context.types, &context.typingMemo));
     checkRewrite(context, ValueSite { rewrite.block, 0, rewrite.use }, replaced);
 }
 
@@ -577,10 +616,10 @@ static bool reliesOnPristineOperand(const BuiltinCallPlan& call)
 
 static void becomePlannedCall(Value& value, const BuiltinUsePlan& plan, const BuiltinCallOperands& operands)
 {
-    bool isReflectConstructSyntax = FlagMask::isReflectConstructSyntax(value.opcode) && value.isReflectConstructSyntax();
+    bool isDoneInPlace = FlagMask::isDoneInPlace(value.opcode) && value.isDoneInPlace();
     becomeBuiltinCall(value, plan.call.overload, plan.form, operands, plan.stamps);
     value.setNeedsPristineReceiver(reliesOnPristineOperand(plan.call));
-    value.setIsReflectConstructSyntax(isReflectConstructSyntax);
+    value.setIsDoneInPlace(isDoneInPlace);
 }
 
 static ValueID insertNewTarget(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& plan, Origin origin)
@@ -627,9 +666,15 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
 
     Origin origin = function.at(rewrite.use).origin();
     bool isPropertyAccess = accessOf(function.at(rewrite.use).opcode) != Access::None;
+    // A step of a function that is called in tail position runs inside the function, when the frame of the caller is gone.
+    const Terminator& terminator = function.at(rewrite.block).terminator;
+    bool isCalledInTailPosition = terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == rewrite.use;
     auto insertWithOrigin = [&](auto&& inserted) {
         ValueID id = rewrite.insert(WTF::move(inserted));
-        function.edit(id, ValueEdit::Definition).setOrigin(origin);
+        Value& value = function.edit(id, ValueEdit::Definition);
+        value.setOrigin(origin);
+        if (isCalledInTailPosition && Value::opcodesWithCalledBuiltin.contains(value.opcode) && value.calledBuiltin())
+            value.isTailCall = true;
         return id;
     };
     InsertBeforeCall insert = insertWithOrigin;
@@ -640,7 +685,7 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
     case BuiltinUseKind::Constant: {
         insertReceiverCheck(context, function.at(rewrite.use).objectOperand(), plan.nullishCheck, insert);
         Value constant = makeConstant(context.program, plan);
-        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(context.program.builtins(), context.inputs.flow, constant))
+        if (std::optional<Value> initialization = tryMakeInitializationOfReadMember(context.program.builtins(), context.inputs.flow, plan))
             insert(WTF::move(*initialization));
         replaceKeepingOrigin(function.edit(rewrite.use), WTF::move(constant));
         break;

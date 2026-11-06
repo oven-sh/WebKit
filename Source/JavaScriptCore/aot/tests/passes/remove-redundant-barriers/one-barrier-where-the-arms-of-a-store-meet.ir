@@ -1,0 +1,113 @@
+# A store is made in one arm for each place that its slot has in the layouts of the object. Where the arms meet again, one barrier does for all of them.
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}] flow={members=[L0]}
+layout L1 fields=[{key="w" declared={type=anything}}, {key="x" declared={type=anything}}] flow={members=[L1]}
+layout L2 fields=[{key="x" declared={type=anything}}, {key="z" declared={type=anything}}] flow={members=[L2]}
+function f0 name="two-arms" parameters=[{type=L0|L1}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0|L1, v1: anything):
+    v2 = TypeTest v0 testedType=L0
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3: L0):
+    PutSlot v3, -, v1 key="x" receivers=[L0] level=Proven
+    Jump -> next b3()
+  b2(v5: L1):
+    PutSlot v5, -, v1 key="x" receivers=[L1] level=Proven
+    Jump -> next b3()
+  b3():
+    v7 = Undefined
+    Return v7
+# CHECK: PutSlot v3, -, v1 key="x"{{*}}[laterBarrierCovers]
+# CHECK: PutSlot v5, -, v1 key="x"{{*}}[laterBarrierCovers]
+# CHECK: b3():
+# CHECK-NEXT: RememberOwner v0
+# CHECK-NOT: RememberOwner
+}
+function f1 name="an-ordinary-block-that-stores-nothing-comes-in-beside-them" parameters=[{type=L0|L1}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: L0|L1, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    v3 = TypeTest v0 testedType=L0
+    TestAndBranch v3 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v4: L0):
+    PutSlot v4, -, v1 key="x" receivers=[L0] level=Proven
+    Jump -> next b4()
+  b3(v6: L1):
+    PutSlot v6, -, v1 key="x" receivers=[L1] level=Proven
+    Jump -> next b4()
+  b4():
+    v8 = Undefined
+    Return v8
+# CHECK-NOT: laterBarrierCovers
+# CHECK-NOT: RememberOwner
+}
+function f2 name="a-block-that-is-seldom-run-comes-in-beside-them" parameters=[{type=L0|L1}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: L0|L1, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    v3 = TypeTest v0 testedType=L0
+    TestAndBranch v3 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v4: L0):
+    PutSlot v4, -, v1 key="x" receivers=[L0] level=Proven
+    Jump -> next b5()
+  b3(v6: L1):
+    PutSlot v6, -, v1 key="x" receivers=[L1] level=Proven
+    Jump -> next b5()
+  b4() frequency=Unlikely:
+    Jump -> next b5()
+  b5():
+    v8 = Undefined
+    Return v8
+# CHECK-COUNT-2: [laterBarrierCovers]
+# CHECK: b5():
+# CHECK-NEXT: RememberOwner v0
+}
+function f3 name="a-call-stands-behind-the-store-of-one-arm" parameters=[{type=L0|L1}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0|L1, v1: anything):
+    v2 = TypeTest v0 testedType=L0
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3: L0):
+    PutSlot v3, -, v1 key="x" receivers=[L0] level=Proven
+    v5 = Call v1
+    Jump -> next b3()
+  b2(v6: L1):
+    PutSlot v6, -, v1 key="x" receivers=[L1] level=Proven
+    Jump -> next b3()
+  b3():
+    v8 = Undefined
+    Return v8
+# CHECK-NOT: laterBarrierCovers
+# CHECK-NOT: RememberOwner
+}
+function f4 name="the-arms-store-into-two-objects" parameters=[{type=L0}, {type=L0}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: L0, v1: L0, v2: anything, v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    PutSlot v0, -, v2 key="x" receivers=[L0] level=Proven
+    Jump -> next b3()
+  b2():
+    PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
+    Jump -> next b3()
+  b3():
+    v6 = Undefined
+    Return v6
+# CHECK-NOT: laterBarrierCovers
+# CHECK-NOT: RememberOwner
+}
+function f5 name="a-later-store-under-the-wider-name-covers" parameters=[{type=L0|L2}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0|L2, v1: anything):
+    v2 = TypeTest v0 testedType=L2
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: L2):
+    PutSlot v3, -, v1 key="z" receivers=[L2] level=Proven
+    PutSlot v0, -, v1 key="x" receivers=[L0, L2] level=Proven
+    Jump -> next b2()
+  b2():
+    v6 = Undefined
+    Return v6
+# CHECK: PutSlot v3, -, v1 key="z"{{*}}[laterBarrierCovers]
+# CHECK-NEXT: PutSlot v0, -, v1 key="x"
+# CHECK-NOT: laterBarrierCovers
+}

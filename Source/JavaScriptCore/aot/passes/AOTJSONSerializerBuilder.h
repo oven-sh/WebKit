@@ -14,6 +14,7 @@ namespace JSC { namespace AOT { namespace Typed {
 struct JSONSerializerBuilder {
     // False: appendRoot() would write nothing and leave for whenThereIsNoText.
     bool hasPlanFor(ValueID) const;
+    bool writesOnePrimitive(ValueID) const;
     // All that it writes is in the string builder when it returns.
     void appendRoot(ValueID, BlockID whenThereIsNoText);
     // Code of the program may run while the value is written.

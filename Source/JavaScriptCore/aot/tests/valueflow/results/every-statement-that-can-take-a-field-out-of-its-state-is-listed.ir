@@ -3,7 +3,7 @@
 # One object stands for all that Item constructs, and it has escaped: whatever a statement does through a value nobody knows it may do to an Item.
 # RUN: valueflow-why falsifiers=L0
 # CHECK: family L0 objects 1 escaped 1 lost 0
-# CHECK: F{{*}}L0{{*}}store{{*}}size{{*}}unknown{{*}}PropSet f0 v11{{*}}main{{*}}string
+# CHECK: F{{*}}L0{{*}}store{{*}}size{{*}}unknown{{*}}PropSet f0 v11{{*}}main{{*}}keys:1
 # CHECK: F{{*}}L0{{*}}delete-under-unknown-key{{*}}-{{*}}unknown{{*}}ElemDelete f0 v13
 # CHECK: F{{*}}L0{{*}}store{{*}}next{{*}}listed{{*}}PropSet f0 v14{{*}}L0
 # CHECK: F{{*}}L0{{*}}redefine{{*}}next{{*}}unknown{{*}}Call f0 v19

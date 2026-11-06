@@ -1,0 +1,59 @@
+# The path behind a step that did not step the generator is rare
+# FORM: Prepared optimizing
+# RUN: pass SimplifyBuiltinCalls SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="notStepped" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = StepGenerator v0, v1 check=IsGenerator
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    v5 = Integer integer=2
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = ResumeGenerator v0, v1
+    Return v7
+  b2():
+    Return v3
+# CHECK: b1() frequency=Rare:
+# CHECK: b2():
+}
+
+function f1 name="completed" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = StepGenerator v0, v1 check=IsGenerator
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    v5 = Integer integer=1
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Undefined
+    Return v7
+  b2():
+    Return v3
+# CHECK: b1():
+# CHECK: b2():
+}
+
+function f2 name="reachedFromElsewhere" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = StepGenerator v0, v1 check=IsGenerator
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Integer integer=2
+    v7 = StrictEq v5, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ResumeGenerator v0, v1
+    Return v8
+  b3():
+    Return v4
+# CHECK: b2():
+# CHECK: b3():
+}

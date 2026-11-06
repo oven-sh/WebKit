@@ -79,6 +79,9 @@ public:
     bool hasUnprovenFields() const { return m_hasUnprovenFields; }
     bool refusesUnprovenValues() const { return m_refusesUnprovenValues; }
     void refuseUnprovenValues() { m_refusesUnprovenValues = true; }
+    // A store has given the field a value that may be undefined or null, for which its slot has room beside the values of its type.
+    bool mayHoldUndefinedOrNull(uint32_t field) const { return m_fieldsThatMayHoldUndefinedOrNull.get(field); }
+    bool addFieldThatMayHoldUndefinedOrNull(uint32_t field) { return !m_fieldsThatMayHoldUndefinedOrNull.set(field); }
     const VirtualField& fieldAt(uint32_t field) const LIFETIME_BOUND { return m_fields[field]; }
     uint32_t numberOfFields() const { return m_fields.size(); }
 
@@ -99,7 +102,9 @@ private:
     Vector<VirtualField, 8> m_fields;
     bool m_hasUnprovenFields { false };
     bool m_refusesUnprovenValues { false };
+    BitVector m_fieldsThatMayHoldUndefinedOrNull;
     Vector<VirtualShape, 4> m_shapes;
+    UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_shapesByHash;
     UncheckedKeyHashMap<uint64_t, uint8_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_tagBits;
     unsigned m_numberOfTagBits { 0 };
     unsigned m_numberOfReservedTagBits { 0 };
@@ -112,6 +117,16 @@ struct ShapeContext {
     const VirtualFamily& family;
     const KeyOrderTable& orders;
 };
+
+// What a field carries: a value of the type, or undefined or null beside those. Whoever stores into a field, reads it, tests it, hands it on or builds the object from it asks for this and not for typeOfField().
+struct FieldContents {
+    TypeID type;
+    bool mayAlsoBeUndefinedOrNull { false };
+};
+FieldContents contentsOf(const ShapeContext&, const VirtualObjectDescription&, uint32_t field);
+bool isWithin(const Program&, FieldContents, TypeID bound);
+bool mayBeUndefinedOrNull(const Program&, FieldContents);
+TypeID typeOf(FieldContents, TypeArena&);
 
 TypeID typeOfShape(const ShapeContext&, const VirtualShape&);
 bool hasStored(const VirtualShape&, uint32_t field);
@@ -132,8 +147,21 @@ Type typeOfNumbersIn(ArrayStorage);
 
 KnownBoolean evaluateTest(const ShapeContext&, const VirtualShape&, const Value& test, uint32_t operandIndex);
 bool hasEveryFieldOfBirthStored(const ShapeContext&, const VirtualShape&);
+
+// The run time learns of a class, and of the prototypes of its objects, as the objects are made, and the member guards of the class say what it has learned.
+// So an object is made in front of whatever may end those guards, and one that is handed its prototype also in front of whatever reads them.
+struct GuardsOrderedWithCreation {
+    // Of MemoryLocation::memberGuards().
+    uint64_t mask { 0 };
+    bool includesReads { false };
+};
+GuardsOrderedWithCreation guardsOrderedWithCreation(const ShapeContext&, const VirtualShape&);
+bool creationMayBeOrderedWithGuards(const VirtualObjectContext&, const VirtualObjectDescription&);
+
+// Whether the function above may name one for a shape of this description.
 KnownBoolean evaluateTestOfTwoShapes(const ShapeContext&, const VirtualShape& left, const VirtualShape& right, bool areSameObject, const Value& test);
 CastOutcome evaluateCast(const ShapeContext&, const VirtualShape&, const Value& cast);
+KnownBoolean evaluateTypeTestOfShape(const ShapeContext&, const VirtualShape&, const Type& tested);
 std::optional<uint32_t> findShapeCase(const ShapeContext&, const VirtualShape&, const Terminator& switchOnShape);
 
 inline constexpr OpcodeSet evaluatedTests {
@@ -144,7 +172,7 @@ inline constexpr OpcodeSet evaluatedTests {
 };
 
 inline constexpr OpcodeSet testsLeftToRun {
-    Opcode::IsNotThenable, Opcode::AreMembersUnchanged, Opcode::IsEnumeratorCurrent, Opcode::IsInsideView,
+    Opcode::IsNotThenable, Opcode::AreMembersUnchanged, Opcode::IsEnumeratorCurrent, Opcode::IsInsideView, Opcode::IsPrototypeOfClass,
     Opcode::IsBuiltinLocationUnchanged,
 };
 

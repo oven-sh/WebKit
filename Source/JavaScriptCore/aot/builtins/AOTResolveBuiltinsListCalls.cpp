@@ -8,10 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTForwardedCalls.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTTypeTestSite.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -58,7 +60,7 @@ static bool canMoveToCall(FunctionAnalyses& analyses, const Function& function, 
 static bool canPlaceTests(FunctionPassContext& context, std::span<const UseRequirement> requirements, BlockID block)
 {
     FunctionAnalyses& analyses = context.analyses;
-    if (analyses.blockFrequencies().classOf(block) == BlockFrequency::Rare)
+    if (analyses.blockFrequencies().classOf(block).predicted() == BlockFrequency::Rare)
         return false;
 
     const BuiltinTable& table = context.program.builtins();
@@ -78,9 +80,10 @@ static BuiltinUsePlan planBuiltinCallee(const BuiltinUseInputs& inputs, const Va
 {
     if (inputs.function.at(site.value).opcode != Opcode::CallList)
         return { };
-    if (tailCallRequirementOf(inputs.function, site.block, site.value) == TailCallRequirement::Required)
-        return { };
     BuiltinUsePlan plan = planListCallOfBuiltin(inputs, site.value, array, point);
+    // Whatever the list turns out to be, the callee is this built-in. Unless it calls somebody in its place it comes back here, so the frame may stay.
+    if (plan && tailCallRequirementOf(inputs.function, site.block, site.value) == TailCallRequirement::Required && forwardsCall(inputs.program.builtins().at(plan.call.overload)))
+        return { };
     RELEASE_ASSERT(!plan || (plan.form == BuiltinCallForm::List && plan.operands.arguments.size() == 1 && plan.operands.arguments[0] == array));
     return plan;
 }
@@ -94,7 +97,7 @@ static std::optional<ListCallSite> planCallOfSpreadArray(FunctionPassContext& co
         return std::nullopt;
 
     ValueID iterable = function.at(spread).iterableOperand();
-    ValueID list = analyses.sameObjectThroughCasts(function.at(site.value).listOperand());
+    ValueID list = sameObjectBehindFacts(function, function.at(site.value).listOperand());
     if (!canMoveToCall(analyses, function, site, list, spread))
         return std::nullopt;
 
@@ -180,7 +183,7 @@ static void rewriteProvenListCall(FunctionPassContext& context, const ListCallSi
     becomeBuiltinCall(call, plan.call.overload, BuiltinCallForm::List, plan.operands, plan.stamps);
     call.setNeedsPristineReceiver(!isPristineByType);
     call.type = resultTypeOf(program, function, call, context.types);
-    call.setExpected(ExpectedType(expectedTypeOf(program, function, call, context.types)));
+    call.setExpected(expectedTypeOf(program, function, call, context.types));
     checkRewrite(context, listCall.site, replaced);
 }
 

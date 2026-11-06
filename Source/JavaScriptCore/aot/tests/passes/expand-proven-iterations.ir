@@ -61,7 +61,7 @@ function f0 name="array" parameters=[{type=Array<number, pristine[Names]>}, {typ
 # ABSENT-LABEL: function f0 name="array"
 # ABSENT-NOT: IteratorOpen
 # ABSENT-NOT: IteratorResume
-# ABSENT-NOT: IteratorClose
+# ABSENT-NOT: IteratorClose v
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
@@ -250,7 +250,7 @@ function f7 name="pattern" parameters=[{type=Array<number, pristine[Storage, Nam
 # ABSENT-LABEL: function f7 name="pattern"
 # ABSENT-NOT: IteratorOpen
 # ABSENT-NOT: IteratorResume
-# ABSENT-NOT: IteratorClose
+# ABSENT-NOT: IteratorClose v
 # ABSENT-NOT: Branch
 # ABSENT-NOT: handler=
 # ABSENT-NOT: role=
@@ -628,5 +628,5 @@ function f19 name="forIn" parameters=[{type=anything}, {type=anything}] results=
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

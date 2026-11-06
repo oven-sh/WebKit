@@ -37,6 +37,18 @@ public:
             initializeProgramStatics();
     }
     void initializeStatics(uint32_t firstWord, uint32_t endWord);
+    void putBack(uint32_t offset, uint32_t size);
+    // By its number in ProgramTables::staticsOfFiles(): the group and all that its files import.
+    void fillVariablesOfFiles(uint32_t group);
+    bool fillsVariablesWithFiles() const { return m_filledFiles; }
+    // For whoever hands out the names of a file that is being evaluated and may not have been entered.
+    void fillVariablesOfAllFiles();
+    void ensureVariableIsFilled(uint32_t offset)
+    {
+        if (offset / sizeof(uint64_t) - m_firstWordFilledWithFiles < m_numberOfWordsFilledWithFiles) [[unlikely]]
+            fillVariablesOfFiles(groupWithWord(offset / sizeof(uint64_t)));
+    }
+    bool isFilled(uint32_t offset) const;
     void didStoreRootInStatics(uint32_t offset) { m_slots.record(m_instance.statics() + offset); }
     void setCell(uint32_t offset, JSCell* cell) { at<RememberedSlot<JSCell*>>(offset).set(m_slots, cell); }
 
@@ -48,13 +60,21 @@ public:
 
     static JSValue readVariable(Instance&, SlotData);
     static JSValue readVariableWithoutAllocating(const Instance&, SlotData);
+    // Nothing has been stored to it. Allocates nothing.
+    static bool isVariableEmpty(const Instance&, SlotData);
+    // Null if the variable does not hold a string.
+    static String readStringWithoutAllocating(const Instance&, SlotData);
     static void writeVariable(Instance&, SlotData, JSValue);
+    // Allocates nothing: the collector's threads call it.
+    JSCell* cellIn(const NamedVariableData&) const;
 
     template<typename Visitor> void visitRoots(Visitor&);
 
 private:
     template<typename Appender> void visitRegion(Appender&, size_t begin, size_t end);
     void initializeProgramStatics();
+    bool isInitialized(uint32_t offset) const;
+    uint32_t groupWithWord(uint32_t word) const;
 
     Instance& m_instance;
     const ProgramTables& m_tables;
@@ -62,6 +82,9 @@ private:
     RememberedSlotSet m_slots;
     bool m_programStaticsInitialized { false };
     uint32_t m_readOnlyStaticsSize { 0 };
+    uint32_t m_firstWordFilledWithFiles { 0 };
+    uint32_t m_numberOfWordsFilledWithFiles { 0 };
+    uint8_t* m_filledFiles { nullptr };
 };
 
 } } // namespace JSC::AOT

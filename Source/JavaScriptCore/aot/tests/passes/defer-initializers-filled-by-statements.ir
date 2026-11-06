@@ -24,6 +24,7 @@
 # CHECK: = GetModuleVariable variable=g2
 # CHECK: [[first]]: L0 = NewObject
 # CHECK-NEXT: PutModuleVariable [[first]] variable=g0
+# CHECK-NEXT: = Double number=2.5
 # CHECK-NEXT: PropSet [[first]], {{*}} key="n"
 # CHECK-NEXT: PropSet [[first]], {{*}} key="n"
 # CHECK-NEXT: Return [[first]]
@@ -31,6 +32,7 @@
 # CHECK: function {{*}} name="" {{*}}role=OutlinedBody
 # CHECK: = GetModuleVariable variable=g2
 # CHECK: [[second]]: L0 = NewObject
+# CHECK-NEXT: = Double number=1.5
 # CHECK-NEXT: PropSet [[second]], {{*}} key="n"
 # CHECK-NEXT: PropSet [[second]], {{*}} key="n"
 # CHECK-NEXT: PutModuleVariable [[second]] variable=g1

@@ -13,6 +13,8 @@
 #include "AOTIRProgram.h"
 #include <algorithm>
 #include <array>
+#include <mutex>
+#include <span>
 #include <wtf/DataLog.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
@@ -28,9 +30,18 @@ namespace CurrentWorkInternal {
 
 static constexpr size_t numberOfRecords = 512;
 
-static constinit std::array<CurrentWork, numberOfRecords> records { };
+using Records = std::array<CurrentWork, numberOfRecords>;
+
+static constinit std::atomic<Records*> records { nullptr };
 constinit CurrentWork sharedRecord { };
 constinit thread_local CurrentWork* recordOfThread = &sharedRecord;
+
+// None until a thread takes one.
+static std::span<CurrentWork> allRecords()
+{
+    Records* made = records.load(std::memory_order_acquire);
+    return made ? std::span<CurrentWork>(*made) : std::span<CurrentWork>();
+}
 
 namespace {
 
@@ -86,7 +97,11 @@ CurrentWork& takeRecord()
 #else
     UNUSED_VARIABLE(holder);
 #endif
-    for (CurrentWork& record : records) {
+    static std::once_flag makeRecords;
+    std::call_once(makeRecords, [] {
+        records.store(makeUniqueWithoutFastMallocCheck<Records>().release(), std::memory_order_release);
+    });
+    for (CurrentWork& record : allRecords()) {
         if (record.isTaken.load(std::memory_order_relaxed) || record.isTaken.exchange(true, std::memory_order_acquire))
             continue;
         recordOfThread = &record;
@@ -286,7 +301,7 @@ size_t describeWhatThreadsAreCompiling(std::span<char> buffer)
     double longestTimeInFunction = 60;
     PassID passOfLongestTime = PassID::None;
     bool isStuck = false;
-    for (const CurrentWork& record : CurrentWorkInternal::records) {
+    for (const CurrentWork& record : CurrentWorkInternal::allRecords()) {
         if (!record.isTaken.load(std::memory_order_acquire))
             continue;
         WorkAsRead work(record);

@@ -85,6 +85,9 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
 #if ENABLE(GPU_PROCESS)
     DrawFrameToSnapshot(WebCore::FrameIdentifier frameID, WebCore::IntRect rect, WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
 #endif
+#if ENABLE(GPU_PROCESS) && PLATFORM(COCOA)
+    PrepareForPrinting() -> (bool success)
+#endif
 
     GarbageCollectJavaScriptObjects()
     GetStorageAreaMapCountForTesting() -> (uint64_t storageAreaMapCount)
@@ -137,6 +140,10 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
 #endif
 #if PLATFORM(MAC)
     ScrollerStylePreferenceChanged(bool useOvelayScrollbars)
+#endif
+
+#if HAVE(TEXT_SCALE_FACTOR)
+    SetTextScaleFactor(std::optional<float> textScaleFactor)
 #endif
 
 #if PLATFORM(IOS_FAMILY)

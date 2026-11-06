@@ -13,6 +13,7 @@
 #include <memory>
 #include <span>
 #include <wtf/Forward.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -26,7 +27,9 @@ class VM;
 
 namespace AOT {
 
+class Image;
 struct Instance;
+struct VMState;
 
 namespace HeapHooks {
 
@@ -37,14 +40,40 @@ void visitCalleesOfFrames(VM&, SlotVisitor&, uint64_t phase);
 void visitCalleesOfFrames(VM&, AbstractSlotVisitor&, uint64_t phase);
 // For a thread of the collector, before it does anything for the heap of the VM: what it asks of the image it asks of the image of that VM.
 void willWorkOnThisThread(VM&);
+// While it lives, this thread does the work of the VM's own thread, which is stopped. Of several images in one realm, the one that the VM runs is the one that runs here,
+// and whoever runs another one for a while changes both. willWorkOnThisThread() looked while the program still ran, which goes from image to image.
+class WorkForStoppedVMScope {
+    WTF_MAKE_NONCOPYABLE(WorkForStoppedVMScope);
+public:
+    explicit WorkForStoppedVMScope(VM&);
+    ~WorkForStoppedVMScope();
+
+private:
+    bool m_hasSeveralImages;
+    VMState* m_stateOfThread { nullptr };
+    const Image* m_imageOfThread { nullptr };
+};
 void didChangeBarrierThreshold(VM&, unsigned threshold, bool mutatorShouldBeFenced);
 void willAnalyzeHeap(VM&);
+void willCollectForExhaustedCage(VM&);
+// No collection runs because it would find no memory for itself. The call in compiled code that led here throws the error that is owed, as after a collection.
+void didFindNoRoomWhereCollectionMayRun(VM&);
 String nameOfCompiledCallee(JSCell*);
+bool isModuleEnvironment(JSCell*);
 [[noreturn]] void crashOnCellVisitMismatch(VM&, const JSCell*);
 // Where the cells of a live Structure keep their 32-bit references, from the start of the cell. Nothing for a Structure of other cells than compiled objects.
 std::span<const uint32_t> offsetsOfNarrowReferences(const Structure*);
 // For a validating image, while the mutators are stopped. Allocates nothing and runs no code, so a thread that marks may call it.
 void validateSlotsOf(VM&, const JSCell* compiledObject);
+
+// While a heap snapshot names an object after the function that it finds under `constructor`. The name is a label for whoever reads the snapshot, so the compiler
+// counts no read for it. A validating image lets this one look name a field that was removed as unread, and no other name and no other look.
+class LookForConstructorBySnapshot {
+    WTF_MAKE_NONCOPYABLE(LookForConstructorBySnapshot);
+public:
+    JS_EXPORT_PRIVATE LookForConstructorBySnapshot();
+    JS_EXPORT_PRIVATE ~LookForConstructorBySnapshot();
+};
 
 } // namespace HeapHooks
 
@@ -67,6 +96,10 @@ public:
 
     static constexpr size_t segmentCapacity = CapacityFromSize<Segment::blockSize>::value;
     static constexpr ptrdiff_t offsetOfFirstCellInSegment = sizeof(Segment);
+#if ASSERT_ENABLED
+    // The segment counts its cells too, and append() compares the two counts.
+    static constexpr ptrdiff_t offsetOfTopInSegment = OBJECT_OFFSETOF(Segment, m_top);
+#endif
     static ptrdiff_t offsetOfTop() { return OBJECT_OFFSETOF(MutatorMarkStackLayout, m_top); }
     // The list of segments begins with its head. initializeCollectorWords() checks that.
     static ptrdiff_t offsetOfHeadSegment() { return OBJECT_OFFSETOF(MutatorMarkStackLayout, m_segments); }

@@ -130,7 +130,7 @@ function f15 name="call-of-a-receiver-nobody-knows" parameters=[{type=anything},
     v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeCall/0 builtinCallForm=AnyReceiver accessSite=7
     Return v3
 # CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
-# CHECK-NEXT: v3: anything = Call v0, v1, v2 accessSite=7
+# CHECK-NEXT: v3: anything = Call v0, v1, v2 calledBuiltin=FunctionPrototypeCall accessSite=7
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 }

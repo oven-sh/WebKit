@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTValueFlowBuiltins.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 void runCoroutine(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
@@ -37,7 +39,7 @@ void runCoroutine(const ValueFlowStatement& statement, ValueFlowRuleContext& con
     if (context.holdsAnyOf(coroutine, ValueFlowProgramNodes::escaped()))
         context.add(sent, unknownValue(context, ValueFlowUnknownSource::ParameterOfEscapedFunction));
 
-    context.connect(nodes.thrown(function), ValueFlowProgramNodes::escaped());
+    carryOut(context, nodes.thrown(function));
 
     ValueFlowNodeID prototype = context.lookup(only(context, universe.closureOf(function)), nameOf(context, BuiltinNames::prototype));
     context.connect(context.masked(prototype, universe.objects()), context.written(coroutine, prototypeLinkName));
@@ -60,7 +62,7 @@ void runGeneratorOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
 {
     const ValueFlowUniverse& universe = context.universe();
     std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
-    ResumeMode mode = context.program().at(statement.function).at(statement.site).resumeMode();
+    ResumeMode mode = context.operationOf(statement).resumeMode();
     ClimbingSet generators = context.restrict(context.valueOf(operands[0]), universe.objects());
     std::span<const ValueFlowOperand> sent = operands.subspan(1, 1);
 

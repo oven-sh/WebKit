@@ -71,7 +71,7 @@ static FunctionID findBodyEnteredAsGiven(const PlacementContext& context, Functi
     if (call.opcode != Opcode::CallDirect || call.argumentsOperands().size() != block.parameters.size())
         return { };
     for (ValueID id : block.values.span().first(block.values.size() - 1)) {
-        if (!isCast(entrypoint.at(id).opcode))
+        if (!isCast(entrypoint.at(id).opcode) && !makesFact(entrypoint.at(id).opcode))
             return { };
     }
     for (size_t index = 0; index < block.parameters.size(); ++index) {
@@ -122,7 +122,7 @@ static Vector<MethodTableRow> createRows(const PlacementContext& context, const 
                 row.entries.append({ shape, target, guard });
         };
         PropertyAccessContext access { context.program, &context.inputs.flow };
-        MemberPartition partition = partitionMembers(access, context.program.at(use.receivers).members.span(), use.selector.key, Access::Read);
+        MemberPartition partition = partitionMembers(access, context.program.at(use.receivers).completeMembers(), use.selector.key, Access::Read);
         for (const MemberArm& arm : partition.arms) {
             FunctionID target = arm.answer.kind == MemberKind::Method && arm.answer.receiverProofs.isEmpty() ? functions.entrypointOf(arm.answer.method, use.selector) : FunctionID();
             GuardBitID guard;
@@ -131,6 +131,9 @@ static Vector<MethodTableRow> createRows(const PlacementContext& context, const 
                 if (!guard)
                     target = { };
             }
+            // A single call may enter any of them, and reads the result from where the lookup returns it.
+            const CallingConventions& conventions = context.inputs.callingConventions;
+            RELEASE_ASSERT(!target || conventions.locationsOf(context.program, target).results == conventions.locationsOf(context.program, row.lookup).results);
             LayoutList receivers = target ? receiversOfTableEntrypoint(context.program, use.selector.key, arm.answer.method) : LayoutList();
             for (LayoutID layout : arm.layouts) {
                 bool isExpectedByEntrypoint = target && receivers.contains(layout);

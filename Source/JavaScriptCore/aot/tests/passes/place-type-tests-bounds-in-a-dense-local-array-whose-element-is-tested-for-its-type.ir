@@ -1,0 +1,59 @@
+# A read in a loop of a dense array that the function allocates in front of the loop gets the test of the bounds where its value goes into a test that only an absent element fails: the one test takes the place of the other. Where an operator takes the value as it is, the read keeps its arm for a position outside
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="tested" parameters=[{type=i32}, {type=i32}, {type=i32}] results=[{type=i32}] {
+    v3 = NewArray v0, v1 contents=i32 arrayStorage=Int32 [contentsAreProven]
+    v4 = AssumeType v3 provenType=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>
+    v5 = Integer integer=0
+    v6 = Integer integer=1
+    Jump -> next b1(v5, v5)
+  b1(v7, v8):
+    LoopHint
+    v10 = Less v7, v2
+    Branch v10 -> taken b2(), notTaken b5()
+  b2():
+    v11 = BitAnd v7, v6
+    v12 = ElemGet v4, v11
+    v13 = TypeTest v12 testedType=number
+    Branch v13 -> taken b3(| 0), notTaken b4()
+  b3(v14):
+    v15 = Add v8, v14
+    v16 = BitOr v15, v5
+    v17 = Increment v7
+    Jump -> next b1(v17, v16)
+  b4():
+    Return v5
+  b5():
+    Return v8
+}
+# CHECK-LABEL: function f0 name="tested"
+# CHECK: = IsInBounds
+# CHECK: : i32 = GetArrayElement {{*}}[keyIsIntegral, isInBounds]
+
+function f1 name="added" parameters=[{type=i32}, {type=i32}, {type=i32}] results=[{type=i32}] {
+    v3 = NewArray v0, v1 contents=i32 arrayStorage=Int32 [contentsAreProven]
+    v4 = AssumeType v3 provenType=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>
+    v5 = Integer integer=0
+    v6 = Integer integer=1
+    Jump -> next b1(v5, v5)
+  b1(v7, v8):
+    LoopHint
+    v10 = Less v7, v2
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = BitAnd v7, v6
+    v12 = ElemGet v4, v11
+    v13 = Add v8, v12
+    v14 = BitOr v13, v5
+    v15 = Increment v7
+    Jump -> next b1(v15, v14)
+  b3():
+    Return v8
+}
+# CHECK-LABEL: function f1 name="added"
+# CHECK-NOT: IsInBounds
+# CHECK: : undefined|i32 = ElemGet
+# CHECK-NOT: IsInBounds

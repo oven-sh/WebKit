@@ -20,6 +20,7 @@
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
+#include "AOTWrittenFunction.h"
 #include <algorithm>
 #include <ranges>
 #include <wtf/Noncopyable.h>
@@ -39,6 +40,41 @@ struct PendingMove {
     Use use;
 };
 
+class ObjectsInBits {
+public:
+    class Iterator {
+    public:
+        explicit Iterator(BitVector::iterator position)
+            : m_position(position)
+        {
+        }
+
+        ObjectID operator*() const { return ObjectID(*m_position); }
+
+        Iterator& operator++()
+        {
+            ++m_position;
+            return *this;
+        }
+
+        friend bool operator==(const Iterator& a, const Iterator& b) { return a.m_position == b.m_position; }
+
+    private:
+        BitVector::iterator m_position;
+    };
+
+    explicit ObjectsInBits(const BitVector& bits LIFETIME_BOUND)
+        : m_bits(bits)
+    {
+    }
+
+    Iterator begin() const { return Iterator(m_bits.begin()); }
+    Iterator end() const { return Iterator(m_bits.end()); }
+
+private:
+    const BitVector& m_bits;
+};
+
 class FramePlanner {
     WTF_MAKE_NONCOPYABLE(FramePlanner);
 public:
@@ -47,7 +83,7 @@ public:
     FramePlan run();
 
 private:
-    ObjectSet candidates() const { return ObjectSet(m_isCandidate); }
+    ObjectsInBits candidates() const { return ObjectsInBits(m_isCandidate); }
     ValueID allocationOf(ObjectID object) const { return m_escape.at(object).definition; }
     const Value& definitionOf(ObjectID object) const LIFETIME_BOUND { return m_function.at(allocationOf(object)); }
     bool isCandidate(ObjectID object) const { return m_isCandidate.get(object.index()); }
@@ -69,11 +105,13 @@ private:
     bool keepClosureUntilItLeaves(ObjectID closure);
     bool isPassedOnByBranch(const Use&) const;
     bool willHaveLongFormsInLine(BlockID);
-    bool mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const;
+    Expected<bool> mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const;
     bool isOnlyCalled(ObjectID closure) const;
     void checkCellForms();
     void checkUses();
     AllocationHeapCause checkUse(ObjectID, const ObjectUse&) const;
+    OperandSummary summarizeUse(ValueID user, uint32_t operandIndex) const;
+    bool writesOnlyInsideFrameCells(ValueID user, uint32_t operandIndex) const;
     bool mayLeakContentsThrough(const ObjectUse&) const;
     bool leaksContents(ObjectID cell) const;
     void checkUsesOfArrays();
@@ -97,6 +135,15 @@ private:
     BitVector m_isCandidate;
     Vector<FrameDecision> m_decisions;
     FramePlan m_plan;
+
+    // What the callees of a call do with an operand is the same for every object that may arrive there.
+    struct OperandOfCall {
+        std::optional<OperandSummary> summary;
+        std::optional<bool> writesOnlyInsideFrameCells;
+    };
+    OperandOfCall& operandOfCall(ValueID call, uint32_t operandIndex) const;
+    mutable Vector<uint32_t> m_endOfOperandsOfCall;
+    mutable Vector<OperandOfCall> m_operandsOfCalls;
 };
 
 } // anonymous namespace
@@ -184,19 +231,10 @@ static bool isValueOfDeferringField(const Program& program, const Value& user, u
     }
     if ((user.opcode != Opcode::PutSlot && user.opcode != Opcode::PutSlotOrAdd) || operandIndex != OperandIndex::PutSlot::value)
         return false;
-    return std::ranges::any_of(program.at(user.receivers()).members, [&](LayoutID member) {
+    return std::ranges::any_of(program.at(user.receivers()).completeMembers(), [&](LayoutID member) {
         std::optional<uint32_t> field = program.at(member).findField(user.key());
         return field && defersClosure(member, *field);
     });
-}
-
-// A validating build reads the header of every object and closure that a proof names, and a cell of a frame may have none. An array has its header wherever it lies.
-static bool staysOnHeapForValidation(const Program& program, const BuildContext& build, const Value& allocation)
-{
-    bool readsHeaders = build.validates() || build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime);
-    if (!readsHeaders || arrayAllocationsWithStorage.contains(allocation.opcode))
-        return false;
-    return allocation.opcode != Opcode::NewObject || !program.at(allocation.layout()).isEnvironment();
 }
 
 // A conversion, a test against `prototype` and the like read members of the function, which makes it an object with properties.
@@ -323,10 +361,38 @@ bool FramePlanner::mayGiveFrameCell(ValueID value) const
     return false;
 }
 
+static bool meansCellMayOutliveFrame(AllocationHeapCause cause)
+{
+    switch (cause) {
+    case AllocationHeapCause::Escapes:
+    case AllocationHeapCause::SeveralLiveInstances:
+    case AllocationHeapCause::HasUntrackedAlias:
+    case AllocationHeapCause::LiveAcrossSuspension:
+    case AllocationHeapCause::LiveAtReturnCall:
+    case AllocationHeapCause::HeldByHeapCell:
+    case AllocationHeapCause::HeldAcrossIterations:
+    case AllocationHeapCause::SeenByNativeCode:
+        return true;
+    case AllocationHeapCause::None:
+    case AllocationHeapCause::NotTracked:
+    case AllocationHeapCause::HasNoFrameForm:
+    case AllocationHeapCause::ChangedByUse:
+    case AllocationHeapCause::ClosureIsNotOnlyCalled:
+    case AllocationHeapCause::LayoutDefersClosures:
+    case AllocationHeapCause::FieldsCreatedLater:
+    case AllocationHeapCause::ExceedsLimit:
+    case AllocationHeapCause::MaterializationDoesNotPay:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void FramePlanner::moveToHeap(ObjectID object, AllocationHeapCause cause, std::optional<Use> use, LimitID limit)
 {
     FrameDecision& decision = m_decisions[object.index()];
     if (decision.storage == AllocationStorage::Heap)
+        return;
+    if (m_build.isSabotaged(Sabotage::CellsThatAreKeptLieInFrames) && meansCellMayOutliveFrame(cause) && !isArray(object))
         return;
     decision.storage = AllocationStorage::Heap;
     decision.isLent = false;
@@ -345,9 +411,10 @@ bool FramePlanner::isHiddenRestOfEveryCallee(const Use& use) const
     if (effectRuleOf(call.opcode) != EffectRule::Call)
         return false;
     CalleeList callees = calleesOfCall(m_program, call);
-    if (!callees.isComplete || !callees.builtins.isEmpty())
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions)
         return false;
-    return std::ranges::all_of(callees.functions, [&](FunctionID id) {
+    return std::ranges::all_of(functions->value(), [&](FunctionID id) {
         const Function& callee = m_program.at(id);
         std::optional<uint32_t> entryParameter = entryParameterOf(callee, call, use.operandIndex);
         return entryParameter && *entryParameter == callee.hiddenRestParameterIndex();
@@ -371,7 +438,7 @@ void FramePlanner::collectCandidates()
                 m_plan.count(StatisticID::EmptyArgumentListsShared);
                 continue;
             }
-            if (value.storage() != AllocationStorage::Heap || staysOnHeapForValidation(m_program, m_build, value))
+            if (value.storage() != AllocationStorage::Heap)
                 continue;
             if (arrayAllocationsWithStorage.contains(value.opcode) && !canLieInFrame(m_program, m_build, value))
                 continue;
@@ -481,22 +548,34 @@ AOT_THRESHOLD(unsigned, maxUsesOfClosureKeptUntilItLeaves, 8);
 
 bool FramePlanner::willHaveLongFormsInLine(BlockID block)
 {
-    BlockFrequency frequency = m_function.at(block).frequency;
-    if (frequency != BlockFrequency::Normal)
+    Expected<BlockFrequency> frequency = m_function.at(block).frequency;
+    if (frequency.predicted() != BlockFrequency::Normal)
         return false;
-    double activations = m_heat.activationsOf(m_program, m_plan.function);
+    Expected<double> activations = m_heat.activationsOf(m_program, m_plan.function);
     if (codeShapeFor(activations * roundingOfFrequencySums, false, frequency) != CodeShape::Fast && runsNoBlockMoreOftenThanEntry(m_analyses.cfg()))
         return false;
     if (m_analyses.executionCountOf(block) == ExecutionCount::AtMostOnce)
         return false;
-    double frequencyInFunction = m_analyses.blockFrequencies().frequencyOf(block);
-    double heat = activations * frequencyInFunction;
-    return codeShapeFor(heat, false, frequency, m_heat.leastHeatOfFastCode(m_program, m_plan.function, frequencyInFunction)) == CodeShape::Fast && m_heat.isAmongHottestCode(heat);
+    Expected<double> frequencyInFunction = m_analyses.blockFrequencies().frequencyOf(block);
+    Expected<double> heat = activations * frequencyInFunction;
+    return codeShapeFor(heat, false, frequency, m_heat.leastHeatOfFastCode(m_program, m_plan.function, frequencyInFunction)) == CodeShape::Fast && m_heat.isAmongHottestCode(heat).predicted();
 }
 
 bool FramePlanner::isPassedOnByBranch(const Use& use) const
 {
     return !findNarrowedParameters(m_function, m_analyses.useLists(), use).isEmpty();
+}
+
+static bool mayFollow(const Function& function, const CFG& cfg, const UseLists& useLists, ValueID definition, const Use& earlier, const Use& later)
+{
+    if (earlier.block == later.block && useLists.isBefore(earlier, later))
+        return true;
+    BlockID blockOfDefinition = useLists.blockOf(definition);
+    BitVector barrier(function.blocks.size());
+    barrier.quickSet(blockOfDefinition.index());
+    return std::ranges::any_of(cfg.successors(earlier.block), [&](BlockID successor) {
+        return successor != blockOfDefinition && cfg.blocksReachableFrom(successor, barrier).get(later.block.index());
+    });
 }
 
 // Whoever borrows the closure cannot tell it from another one afterwards.
@@ -513,9 +592,12 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     BlockID blockOfDefinition = useLists.blockOf(definition);
     if (!willHaveLongFormsInLine(blockOfDefinition))
         return false;
-    std::span<const ObjectUse> knownUses = m_escape.usesOf(closure);
+    ObjectUses knownUses = m_escape.usesOf(closure);
+    // A stack trace lists a call under the name of the function object that ran, and what leaves is another function object.
+    bool isListedUnderItsOwnName = m_program.at(writtenFunctionOf(m_program, m_function.at(definition).function())).has(FunctionCapabilities::RecordsCalleeOnceRenamed);
     bool isLent = false;
     bool isBorrowed = false;
+    Vector<Use, 2> usesThatRunIt;
     Vector<Use, 2> lastUses;
     Vector<Use, 1> madeAgainAt;
     for (const Use& use : uses) {
@@ -525,12 +607,15 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
         // A use that keeps the closure in a cell, gives it back or passes it on makes another way to it, which is not among the uses of the value.
         bool staysInFrame = use.kind == Use::Kind::Operand && known != knownUses.end() && (!known->isEscape || effectRuleOf(m_function.at(use.user).opcode) == EffectRule::Call) && !isPassedOnByBranch(use);
         if (staysInFrame && known->uses.containsOnly(usesOfBorrowedParameter) && checkUse(closure, *known) == AllocationHeapCause::None) {
+            // What is left of a call that was copied into this function is the word that keeps its callee.
+            if (isListedUnderItsOwnName && (known->uses.containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly }) || m_function.at(use.user).opcode == Opcode::KeepCalleeInFrame))
+                usesThatRunIt.append(use);
             isBorrowed = true;
             continue;
         }
         lastUses.append(use);
-        bool runsOften = m_function.at(use.block).frequency == BlockFrequency::Normal;
-        if (runsOften && use.kind == Use::Kind::Operand && mayLendArgument(m_function.at(use.user), use.operandIndex) && mayFindBorrowingCallee(m_function.at(use.user), use.operandIndex)) {
+        bool runsOften = m_function.at(use.block).frequency.predicted() == BlockFrequency::Normal;
+        if (runsOften && use.kind == Use::Kind::Operand && mayLendArgument(m_function.at(use.user), use.operandIndex) && mayFindBorrowingCallee(m_function.at(use.user), use.operandIndex).predicted()) {
             isLent = true;
             continue;
         }
@@ -542,6 +627,12 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     }
     if (!isLent && !isBorrowed)
         return false;
+    for (const Use& earlier : usesThatRunIt) {
+        for (const Use& later : lastUses) {
+            if (mayFollow(m_function, m_analyses.cfg(), useLists, definition, earlier, later))
+                return false;
+        }
+    }
     if (isLent && closureFormOf(m_program, *m_flow, m_function.at(definition).function()) != ClosureForm::Slim)
         return false;
     for (const Use& use : lastUses) {
@@ -555,25 +646,37 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     return true;
 }
 
-bool FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const
+// Whoever is lent a closure and does not borrow it moves it to the heap.
+Expected<bool> FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const
 {
     auto borrows = [&](FunctionID id) {
-        std::optional<uint32_t> entryParameter = entryParameterOf(m_program.at(id), call, operandIndex);
-        return entryParameter && m_flow->framePointerSummary(id, *entryParameter).uses.containsOnly(usesOfBorrowedParameter);
+        const Function& callee = m_program.at(id);
+        if (std::optional<uint32_t> entryParameter = entryParameterOf(callee, call, operandIndex))
+            return m_flow->framePointerSummary(id, *entryParameter).uses.containsOnly(usesOfBorrowedParameter);
+        // An argument without a parameter is unused.
+        std::optional<uint32_t> argument = call.variadicOperandIndex(operandIndex);
+        return argument && *argument >= callee.numberOfPositionalParameters() && !callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter });
     };
     CalleeList callees = calleesOfCall(m_program, call);
-    if (std::ranges::any_of(callees.functions, borrows))
+    Callees seen = callees.seen().predicted();
+    if (std::ranges::any_of(seen.functions, borrows))
         return true;
-    if (!callees.isComplete)
-        return callees.functions.isEmpty();
+    if (!callees.listsEveryCallee())
+        return seen.functions.empty();
 
     const BuiltinTable& table = m_program.builtins();
-    return std::ranges::any_of(callees.builtins, [&](BuiltinID builtin) {
+    return std::ranges::any_of(seen.builtins, [&](BuiltinID builtin) {
         return std::ranges::any_of(table.overloadsOf(builtin), [&](const BuiltinOverload& overload) {
             const RuntimeFunctionEntry* entry = overload.code.implementation.function ? findRuntimeFunction(m_program, overload.code.implementation.function) : nullptr;
             return entry && borrows(entry->function);
         });
     });
+}
+
+// A cell in a frame keeps the fields that it is made with. One that is made with every field of its layout has none left to create, however other objects of the layout come by theirs.
+bool mayCreateFieldsLater(const Layout& layout, size_t numberOfFieldsAtAllocation)
+{
+    return layout.flow.fieldCreation != FieldCreation::OnlyAtConstruction && numberOfFieldsAtAllocation != layout.fields.size();
 }
 
 static AllocationHeapCause checkObjectForm(const Program& program, const Value& object)
@@ -600,7 +703,7 @@ static AllocationHeapCause checkObjectForm(const Program& program, const Value& 
         if (defersClosureWithCapture(flowOf(program, FieldReference { id, field }).location.deferral))
             return AllocationHeapCause::LayoutDefersClosures;
     }
-    if (layout.flow.fieldCreation != FieldCreation::OnlyAtConstruction)
+    if (mayCreateFieldsLater(layout, object.fields().size()))
         return AllocationHeapCause::FieldsCreatedLater;
     return AllocationHeapCause::None;
 }
@@ -609,7 +712,7 @@ static AllocationHeapCause checkCellForm(const Program& program, const Value& al
 {
     if (allocation.opcode != Opcode::NewClosure)
         return checkObjectForm(program, allocation);
-    // The list of recorded callees holds the closure that the function is entered through, and the collector visits the list. Where it is the run time that records, once a closure of the function was renamed, no closure that lies in a frame is written into the list.
+    // A frame of such a function is named by the closure that the function was entered through, when the stack is read. Where no statement is seen to rename a closure of the function, one that lies in a frame has the name that is written.
     const Function& callee = program.at(allocation.function());
     if (callee.has(FunctionCapabilities::RecordsCallee) && !callee.has(FunctionCapabilities::RecordsCalleeOnceRenamed))
         return AllocationHeapCause::ClosureIsNotOnlyCalled;
@@ -678,10 +781,11 @@ AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& ent
 
     if (!mayLookAtFrameCells(rule) && rule == EffectRule::Builtin && entry.uses.containsOnly(inlineUsesOfFrameCells))
         return AllocationHeapCause::SeenByNativeCode;
-    if (mayLeakFramePointer(m_program, m_flow, m_function, user, operandIndex)) {
+    OperandSummary summary = summarizeUse(entry.use.user, operandIndex);
+    if (mayLeakFramePointer(m_program, m_function, user, operandIndex, summary)) {
         bool isDecidedByHolder = isInFrame(object)
             && entry.uses.contains(OperandUse::Retains)
-            && summarizeFramePointerUse(m_program, m_flow, m_function, user, operandIndex).retainedIn != RetainedIn::UnknownMemory;
+            && summary.retainedIn != RetainedIn::UnknownMemory;
         if (!isDecidedByHolder)
             return AllocationHeapCause::Escapes;
     }
@@ -718,8 +822,49 @@ AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& ent
     if (isClosure || isEnvironment)
         return AllocationHeapCause::None;
 
-    OperandMemory memory = memoryAccessedThrough(m_analyses.effectContext(), m_function, user, operandIndex, m_analyses.effectsOf(entry.use.user));
-    return memory.writes.containsOnly(heapsInsideFrameCells) ? AllocationHeapCause::None : AllocationHeapCause::ChangedByUse;
+    return writesOnlyInsideFrameCells(entry.use.user, operandIndex) ? AllocationHeapCause::None : AllocationHeapCause::ChangedByUse;
+}
+
+FramePlanner::OperandOfCall& FramePlanner::operandOfCall(ValueID call, uint32_t operandIndex) const
+{
+    if (m_endOfOperandsOfCall.isEmpty())
+        m_endOfOperandsOfCall.fill(0, m_function.values.size());
+    uint32_t& end = m_endOfOperandsOfCall[call.index()];
+    uint32_t numberOfOperands = m_function.at(call).numberOfOperands();
+    if (!end) {
+        m_operandsOfCalls.grow(m_operandsOfCalls.size() + numberOfOperands);
+        end = m_operandsOfCalls.size();
+    }
+    return m_operandsOfCalls[end - numberOfOperands + operandIndex];
+}
+
+OperandSummary FramePlanner::summarizeUse(ValueID id, uint32_t operandIndex) const
+{
+    const Value& user = m_function.at(id);
+    if (effectRuleOf(user.opcode) != EffectRule::Call)
+        return summarizeFramePointerUse(m_program, m_flow, m_function, user, operandIndex);
+    std::optional<OperandSummary>& summary = operandOfCall(id, operandIndex).summary;
+    if (!summary) {
+        summary = summarizeFramePointerUse(m_program, m_flow, m_function, user, operandIndex);
+        m_build.statistics().count(StatisticID::CallOperandsSummarizedForFrames);
+    }
+    return *summary;
+}
+
+bool FramePlanner::writesOnlyInsideFrameCells(ValueID id, uint32_t operandIndex) const
+{
+    const Value& user = m_function.at(id);
+    auto ask = [&] {
+        return memoryAccessedThrough(m_analyses.effectContext(), m_function, user, operandIndex, m_analyses.effectsOf(id)).writes.containsOnly(heapsInsideFrameCells);
+    };
+    if (effectRuleOf(user.opcode) != EffectRule::Call)
+        return ask();
+    std::optional<bool>& answer = operandOfCall(id, operandIndex).writesOnlyInsideFrameCells;
+    if (!answer) {
+        answer = ask();
+        m_build.statistics().count(StatisticID::CallOperandsSummarizedForFrames);
+    }
+    return *answer;
 }
 
 bool FramePlanner::mayLeakContentsThrough(const ObjectUse& entry) const
@@ -727,7 +872,7 @@ bool FramePlanner::mayLeakContentsThrough(const ObjectUse& entry) const
     if (entry.use.kind != Use::Kind::Operand)
         return false;
     const Value& user = m_function.at(entry.use.user);
-    return user.operandKind(entry.use.operandIndex) != OperandKind::Guard && mayLeakContents(m_program, m_flow, m_function, user, entry.use.operandIndex);
+    return user.operandKind(entry.use.operandIndex) != OperandKind::Guard && summarizeUse(entry.use.user, entry.use.operandIndex).uses.containsAny(usesLeakingContents);
 }
 
 bool FramePlanner::leaksContents(ObjectID cell) const
@@ -893,7 +1038,8 @@ void FramePlanner::checkReturnCalls()
         auto calleesEndTheirTailCalls = [&] {
             if (!answer) {
                 CalleeList callees = calleesOfCall(m_program, call);
-                answer = m_flow && callees.isComplete && callees.builtins.isEmpty() && std::ranges::all_of(callees.functions, [&](FunctionID callee) {
+                std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+                answer = m_flow && functions && std::ranges::all_of(functions->value(), [&](FunctionID callee) {
                     const FrameArrayParameters& table = m_flow->frameArrayParameters();
                     return call.opcode == Opcode::CallDirect ? table.endsItsTailCalls(callee) : table.endsItsTailCallsWhenCalledByValue(callee);
                 });
@@ -908,6 +1054,9 @@ void FramePlanner::checkReturnCalls()
                 if (isCandidate(object) && isLent(object) && allocationOf(object) == operand && mayLendArgument(call, operandIndex))
                     continue;
                 if (isCandidate(object) && m_decisions[object.index()].madeAgainAt.contains(use))
+                    continue;
+                // A borrower of a closure returns no part of it, and a non-borrower is passed the heap closure. So the result of the call it was lent to is never the cell in the frame.
+                if (isCandidate(object) && isLent(object) && sameObjectThroughCasts(m_function, operand) != allocationOf(object))
                     continue;
                 if (isCandidate(object) && calleesEndTheirTailCalls())
                     keepsFrame |= mayBeInFrame(object);
@@ -1009,7 +1158,7 @@ std::optional<ObjectID> FramePlanner::findHolder(const Use& use) const
         return std::nullopt;
 
     const Value& user = m_function.at(use.user);
-    OperandSummary summary = summarizeFramePointerUse(m_program, m_flow, m_function, user, use.operandIndex);
+    OperandSummary summary = summarizeUse(use.user, use.operandIndex);
     switch (summary.retainedIn) {
     case RetainedIn::UnknownMemory:
         return std::nullopt;
@@ -1022,7 +1171,7 @@ std::optional<ObjectID> FramePlanner::findHolder(const Use& use) const
             return std::nullopt;
         if (user.opcode == Opcode::PutEnvironmentField && mayLeakStoredValue(m_flow, FieldReference { user.layout(), user.field() }))
             return std::nullopt;
-        std::optional<ObjectID> holder = m_escape.objectDefinedBy(m_analyses.sameObjectThroughCasts(user.operand(summary.retainingOperand)));
+        std::optional<ObjectID> holder = m_escape.objectDefinedBy(m_analyses.sameObjectThroughCasts(user.operand(summary.retainingOperand)).valueInFrontOfFacts());
         std::optional<CellPlace> place = placeStoredTo(user, use.operandIndex);
         if (!holder || !place || !cellHasPlace(m_program, definitionOf(*holder), *place))
             return std::nullopt;
@@ -1101,7 +1250,7 @@ void FramePlanner::checkMaterialization()
     for (ObjectID environment : candidates()) {
         if (m_decisions[environment.index()].storage != AllocationStorage::FrameUntilMaterialized)
             continue;
-        std::span<const ObjectUse> uses = m_escape.usesOf(environment);
+        ObjectUses uses = m_escape.usesOf(environment);
         auto isCaptureOfFrameClosure = [&](const ObjectUse& entry) {
             return entry.use.kind == Use::Kind::Operand && frameClosures.get(entry.use.user.index());
         };
@@ -1146,7 +1295,7 @@ void FramePlanner::finishPlan()
             m_plan.add(m_program, value, value.storage(), value.opcode == Opcode::NewClosure && value.isLent());
         }
     }
-    AOT::sort(m_plan.decisions, { }, &FrameDecision::allocation);
+    AOT::sortInLine(m_plan.decisions, { }, &FrameDecision::allocation);
 }
 
 } } } // namespace JSC::AOT::Typed

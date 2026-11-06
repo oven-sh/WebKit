@@ -22,10 +22,11 @@ public:
     void barrierAfterStores(const ValueContext& store, CellPointer owner, std::span<const ValueID> stored);
     void elementBarrierAfterStore(const ValueContext& store, CellPointer array, std::span<const Boxed> stored);
     void barrier(const OperationContext&, CellPointer owner);
+    void barrierBehindStores(const ValueContext&, ValueID owner);
     OwnerBarrier barrierOfExtension(const ValueContext& store) const;
     void markCardOfStatics(uint32_t offsetInStatics);
     Condition isBeyondBarrierThreshold(CellPointer);
-    void fenceAfterInitialization() { mutatorFence(); }
+    void fenceAfterInitialization();
 
     void validateAfterStore(const ValueContext& store);
     void validateBeforeCollection(const OperationContext&);
@@ -37,6 +38,7 @@ private:
     bool shouldEmitBarrier(const ValueContext& store, bool mayStoreCell);
     ValueID ownerOperandOf(const Value& store) const;
     bool ownerIsOnlyInFrames(const Value& store) const;
+    bool isOnlyInFrames(ValueID owner) const;
     template<typename Functor> void forEachStoredOperand(const Value& store, const Functor&) const;
     bool hasSingleStoredCell(const Value& store) const;
     const Type* storedTypeOf(const Value& store) const;

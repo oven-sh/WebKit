@@ -108,3 +108,4 @@ CLAUDE.md
 
 # Ignore libpas builds and log-outputs
 /Source/bmalloc/build*/
+rustc-ice-*.txt

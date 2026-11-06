@@ -1,0 +1,89 @@
+# What enters a join that may hold a sunk object is a constant, which needs no cell, or a cell. The analysis and the rewriting have to say the same.
+# `[b, a] = [a, b]` with b null: the read of the sunk list's element is no constant to the analysis. The rewriting has put the null in its place by the time it comes to the edge.
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="f" parameters=[{type=null|true|int|bigint|"ab"|object}, {type=object}, {type=object}] results=[{type=anything}] {
+  b0(v0: null|true|int|bigint|"ab"|object, v1: object, v2: object):
+    v3: null = Null
+    v4: null|true|int|bigint|"ab"|object ~ int = Upcast v0 castType=anything
+    v5: boolean ~ true = TypeTest v4 testedType=int
+    Branch v5 -> taken b6(| 0), notTaken b17(| 0)
+  b1(v6: null|Array<null|Array<null|Array, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>):
+    LoopHint
+    v8: boolean = StrictEq v6, v6
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    v9: boolean = Eq v24, v6
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10: undefined = Undefined
+    Return v10
+  b4():
+    v11: Array<null|true|int|bigint|object|"ab", Contiguous> = NewArray v24, v6 contents=null|true|int|bigint|object|"ab" arrayStorage=Contiguous [contentsAreProven]
+    v12: Array<null|true|int|bigint|object|"ab", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<null|true|int|bigint|object|"ab", proven, Contiguous, pristine[Storage, Names, Dense]>
+    v13: 0 = Integer
+    v14: undefined|null|true|int|bigint|object|"ab" = GetArrayElement v12, v13 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v15: undefined|null|true|int|bigint|object|"ab" ~ undefined|null|Array = Upcast v14 castType=anything
+    v16: 1 = Integer integer=1
+    v17: undefined|null|true|int|bigint|object|"ab" = GetArrayElement v12, v16 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v18: undefined|null|true|int|bigint|object|"ab" ~ int = Upcast v17 castType=anything
+    v19: boolean = TypeTest v18 testedType=i32
+    Branch v19 -> taken b9(v15), notTaken b11(v15, v18)
+  b5():
+    v20: Array<null|Array<null|Array, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v6 contents=null|Array<null|Array, proven, Contiguous, pristine[Storage, Names, Dense]> arrayStorage=Contiguous [contentsAreProven]
+    v21: Array<null|Array<null|Array, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<null|Array<null|Array, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+    Jump -> next b1(v21)
+  b6(v22: int):
+    v23 = Upcast v1 castType=object
+    v24 = Upcast v23 castType=object
+    Jump -> next b1(v3)
+  b7():
+    Unreachable
+  b8():
+    Unreachable
+  b9(v25: undefined|null|true|int|bigint|object|"ab" ~ undefined|null|Array):
+    v26: string = TypeOf v25
+    v27: string ~ "bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = Upcast v26 castType=string
+    Return v27
+  b10():
+    Unreachable
+  b11(v28: undefined|null|true|int|bigint|object|"ab" ~ undefined|null|Array, v29: undefined|null|true|int|bigint|object|"ab" ~ int) frequency=Unlikely:
+    v30: number ~ int = ToNumber v29
+    Jump -> next b9(v28)
+  b12():
+    Unreachable
+  b13(v31: null|Array<null|Array<null|Array, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+    LoopHint
+    v33: boolean = StrictEq v31, v31
+    Branch v33 -> taken b14(), notTaken b15()
+  b14() frequency=Unlikely:
+    v34: boolean = Eq v47, v31
+    Branch v34 -> taken b3(), notTaken b16()
+  b15() frequency=Unlikely:
+    v35: Array<null|Array<null|Array, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v31 contents=null|Array<null|Array, proven, Contiguous, pristine[Storage, Names, Dense]> arrayStorage=Contiguous [contentsAreProven]
+    v36: Array<null|Array<null|Array, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<null|Array<null|Array, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+    Jump -> next b13(v36)
+  b16() frequency=Unlikely:
+    v37: Array<null|true|int|bigint|object|"ab", Contiguous> = NewArray v47, v31 contents=null|true|int|bigint|object|"ab" arrayStorage=Contiguous [contentsAreProven]
+    v38: Array<null|true|int|bigint|object|"ab", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v37 provenType=Array<null|true|int|bigint|object|"ab", proven, Contiguous, pristine[Storage, Names, Dense]>
+    v39: 0 = Integer
+    v40: undefined|null|true|int|bigint|object|"ab" = GetArrayElement v38, v39 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v41: undefined|null|true|int|bigint|object|"ab" ~ undefined|null|Array = Upcast v40 castType=anything
+    v42: 1 = Integer integer=1
+    v43: undefined|null|true|int|bigint|object|"ab" = GetArrayElement v38, v42 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v44: undefined|null|true|int|bigint|object|"ab" ~ int = Upcast v43 castType=anything
+    Jump -> next b11(v41, v44)
+  b17(v45: null|true|bigint|"ab"|object) frequency=Unlikely:
+    v46 = Upcast v2 castType=object
+    v47 = Upcast v46 castType=object
+    Jump -> next b13(v3)
+  b18():
+    Unreachable
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: Unspecified
+# CHECK: = ToNumber
+# CHECK-NOT: Unspecified

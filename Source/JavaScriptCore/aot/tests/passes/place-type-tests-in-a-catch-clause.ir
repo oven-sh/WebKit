@@ -1,0 +1,22 @@
+# A catch clause is reached by a throw alone and so counts as rare. What the program wrote there gets its tests as any other code of the program; the arm of a failed test inside the clause gets none
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.ts" displayPath="main.ts"
+
+function f0 name="lengthOfMessage" flags=[IsChecked] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b3()
+  b1() handler=b2():
+    Throw v0
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    v3: anything ~ string = PropGet v2 key="message"
+    v4 = PropGet v3 key="length"
+    Return v4
+  b3():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="lengthOfMessage"
+# CHECK: role=CatchHandler:
+# CHECK: = TypeTest v3 testedType=string

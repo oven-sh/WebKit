@@ -1,0 +1,53 @@
+# class Registry extends Map {}  function ofClass(x) {}  function plain(x) {}  function either(x) {}   ofClass(new Registry()); plain(new Map()); either(new Registry()); either(new Map())
+# All three are guessed to take a Registry. What `super()` makes is proven a Map and no more, and the guess of its layout stays beside that: the test of the layout is what makes a call of a method direct.
+# Where a plain Map arrives the guess leaves it out, and goes: a test of the layout would fail each time. Where both arrive, both are expected.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f2 name="ofClass"
+# CHECK: b0(v0: anything ~ L0):
+# CHECK-NEXT: : Map ~ L0 = AssumeType v0 provenType=Map
+# CHECK-LABEL: function f3 name="plain"
+# CHECK-NOT: L0
+# CHECK-LABEL: function f4 name="either"
+# CHECK: : Map ~ L0|Map<{{*}}> = AssumeType v0 provenType=Map
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Registry" constructor=f1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Map
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f1
+    v3 = NewClass v2, v0, v1 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4
+    v6 = Construct v0
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v5
+    v9 = NewClosure function=f3
+    v10 = Call v9, -, v6
+    v11 = NewClosure function=f4
+    v12 = Call v11, -, v5
+    v13 = Call v11, -, v6
+    Return
+}
+function f1 name="Registry" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L0
+    v4 = Check v3 expectedType=L0
+    Return v4
+}
+function f2 name="ofClass" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+function f3 name="plain" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+function f4 name="either" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size"
+    Return v1
+}

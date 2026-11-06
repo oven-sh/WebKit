@@ -158,6 +158,8 @@ void generatePutById(StubAssembler& jit)
     miss.append(jit.branchIfNotCell(R0));
     storeFieldByTable(jit, { R0, number, structureID, cell, std::nullopt, true, true }, A1, row, operationFor(mode), isNotInFieldTable);
     isNotInFieldTable.link(&jit);
+    // The table of fields takes names that have no column in the front table.
+    Jump hasNoFrontColumn = jit.branch32(CCallHelpers::Above, number, TrustedImm32(RowDisplacementTable::maxColumn));
     // The receiver is a cell.
     jit.bindEntry(putByIdBehindFieldTable(mode));
     jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
@@ -180,6 +182,7 @@ void generatePutById(StubAssembler& jit)
     jit.bindEntry(putByIdHashed(mode));
     miss.append(jit.branchIfNotCell(R0));
     hasOtherName.link(&jit);
+    hasNoFrontColumn.link(&jit);
     jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
     loadIdentifier(jit, number, uid, miss);
     JumpList isInNoTable;

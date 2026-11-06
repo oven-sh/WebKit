@@ -143,7 +143,7 @@ void sortByHashAndUnit(std::span<Window> windows, std::span<Window> scratch)
         return static_cast<unsigned>(window.hash >> 48 & (numberOfParts - 1));
     };
     if (windows.size() < 4 * numberOfParts) {
-        AOT::sort(windows, isLess);
+        AOT::sortInLine(windows, isLess);
         return;
     }
     std::array<uint32_t, numberOfParts + 1> starts { };
@@ -155,7 +155,7 @@ void sortByHashAndUnit(std::span<Window> windows, std::span<Window> scratch)
     for (auto& window : windows)
         scratch[next[partOf(window)]++] = window;
     for (unsigned part = 0; part < numberOfParts; ++part)
-        AOT::sort(scratch.subspan(starts[part], starts[part + 1] - starts[part]), isLess);
+        AOT::sortInLine(scratch.subspan(starts[part], starts[part + 1] - starts[part]), isLess);
     memcpySpan(windows, scratch);
 }
 
@@ -258,7 +258,7 @@ private:
         });
         forEachIndexInParallel(loops, m_functions.size(), [&](unsigned function) {
             if (numberOfSites[function] > 1)
-                AOT::sort(m_result.sites[function], { }, &OutlinedSite::offset);
+                AOT::sortInLine(m_result.sites[function], { }, &OutlinedSite::offset);
         });
     }
 

@@ -1,0 +1,35 @@
+# const defaults = { locations: false, ranges: false }; const options = {}; for (const name in defaults) options[name] = defaults[name]; options.version = false; hand(options); options.locations
+# The store names what the enumerated object lists, so the copy has a field for each of those names. It is a prediction: the fields hold anything, and a name that the enumeration shows beside them is stored as a name without a field.
+# RUN: valueflow-apply
+# CHECK: layout L1 fields=[{key="version" {{*}}}, {key="locations" declared={type=anything} flags=[IsAddedLate, IsEnforced]{{*}}}, {key="ranges" declared={type=anything} flags=[IsAddedLate, IsEnforced]{{*}}}]
+
+layout L0 fields=[{key="locations" declared={type=anything} flags=[IsRequired]}, {key="ranges" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 fields=[{key="version" declared={type=anything}}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Boolean
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject layout=L1
+    v4 = FinishObject v3
+    v5 = ForInOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = ForInStep v5, v2
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b3(), notTaken b2()
+  b2():
+    v10 = ElemGet v2, v9
+    ElemSet v4, v9, v10
+    Jump -> next b1()
+  b3():
+    PropSet v4, v0 key="version"
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="hand" [isFreeName]
+    v15 = Call v14, -, v4
+    v16 = PropGet v4 key="locations"
+    Return v16
+}

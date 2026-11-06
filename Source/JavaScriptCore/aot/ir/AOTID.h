@@ -51,6 +51,23 @@ inline void add(Hasher& hasher, ID<Tag> id)
 using ValueID = ID<struct ValueIDTag>;
 using BlockID = ID<struct BlockIDTag>;
 
+class RootThroughCasts {
+public:
+    RootThroughCasts() = default;
+    explicit RootThroughCasts(ValueID root)
+        : m_root(root)
+    {
+    }
+
+    explicit operator bool() const { return !!m_root; }
+    friend bool operator==(RootThroughCasts, RootThroughCasts) = default;
+    friend bool operator==(RootThroughCasts root, ValueID value) { return root.m_root == value; }
+    ValueID valueInFrontOfFacts() const { return m_root; }
+
+private:
+    ValueID m_root;
+};
+
 using StringID = ID<struct StringIDTag>;
 using PropertyKeyID = ID<struct PropertyKeyIDTag>;
 using FunctionID = ID<struct FunctionIDTag>;

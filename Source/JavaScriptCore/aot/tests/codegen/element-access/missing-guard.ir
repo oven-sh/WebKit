@@ -1,0 +1,84 @@
+# Code generation rejects an element access that skips the storage test or the bounds test and names no guard. The command removes the guard operands after verification
+# FORM: Placed
+# RUN: generate-code remove-guard-operands
+# DIAGNOSTIC: InvalidGuard 6
+# CHECK: f0: no code
+# CHECK-NEXT: f1: no code
+# CHECK-NEXT: f2: no code
+# CHECK-NEXT: f3: no code
+# CHECK-NEXT: f4: no code
+# CHECK-NEXT: f5: no code
+# CHECK-NEXT: f6: size=
+# CHECK-NEXT: f7: size=
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readInBounds" parameters=[{type=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = IsInBounds v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+function f1 name="readPresent" parameters=[{type=Array<i32, proven, Int32, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = IsElementPresent v0, v1 arrayStorage=Int32
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Int32 level=Expected [isPresent]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+function f2 name="readWithTestedStorage" parameters=[{type=Array<i32, proven, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Int32 level=Expected
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+function f3 name="storeInBounds" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
+    v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    PutArrayElement v0, v1, v2, v7 arrayStorage=Int32 mode=Strict level=Expected [isInBounds]
+    Return
+  b3():
+    Return
+}
+function f4 name="readInsideView" parameters=[{type=Int8Array}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = IsInsideView v0, v1 typedArrayType=1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=1 level=Expected [isInsideView]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+function f5 name="storeInsideView" parameters=[{type=Int8Array}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
+    v3 = IsInsideView v0, v1 typedArrayType=1
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=1 level=Expected [isInsideView]
+    Return
+  b2():
+    Return
+}
+function f6 name="storageProvenByType" parameters=[{type=Array<i32, proven, Int32, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven
+    Return v2
+}
+function f7 name="checkedRead" parameters=[{type=Array<i32, proven, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}

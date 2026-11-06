@@ -63,6 +63,11 @@ static void printFlowReport(PrintStream& out, const Program& program, const Flow
         printWitness(record.witness);
         printer.endLine();
     }
+    for (const LackedFunctionRecord& record : report.libraryFunctionsLacked) {
+        printer.beginLine("library-function-lacked"_s);
+        print(record.function);
+        printer.endLine();
+    }
     for (const FeatureUseRecord& record : report.featuresUsed) {
         printer.beginLine("feature-used"_s);
         print(record.feature);

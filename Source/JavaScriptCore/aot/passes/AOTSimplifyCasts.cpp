@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTFieldValueNarrowing.h"
 #include "AOTFlowApply.h"
 #include "AOTObservableOperations.h"
 #include "AOTPredictedValues.h"
@@ -130,6 +131,7 @@ struct CastSimplification : Rewrite {
             if (!canMoveCast(cfg, candidate))
                 continue;
             const Value cast = at(candidate.cast);
+            bool joinSaysLessThanCast = false;
             builder().setOrigin(cast.origin());
             for (Edge edge : cfg.incomingEdges(candidate.block)) {
                 ValueID& argument = editTarget(function, edge).arguments[candidate.parameterIndex];
@@ -140,11 +142,18 @@ struct CastSimplification : Rewrite {
                     Value castOnEdge = cast;
                     castOnEdge.setOperand(0, argument);
                     castOnEdge.setExpected({ });
+                    // Where the ways that meet here bring a fact each, the cast on an edge names the one that its own way brings.
+                    if (size_t factIndex = cast.opcode == Opcode::AssumeType && cast.factOperand() ? at(candidate.block).parameters.find(cast.factOperand()) : notFound; factIndex != notFound)
+                        castOnEdge.setFactOperand(targetOf(function, edge).arguments[factIndex]);
+                    // A check that nothing on its edge passes has the whole type that it asks for.
+                    joinSaysLessThanCast |= !context.types.at(resultTypeOf(program, function, castOnEdge, context.types, &context.typingMemo)).isSubsetOf(context.types.at(cast.type), program);
                     passed = builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), WTF::move(castOnEdge));
                 }
                 didChangeEdge |= passed != argument;
                 argument = passed;
             }
+            if (joinSaysLessThanCast)
+                edit(candidate.cast, ValueEdit::Definition).becomeAssumeType(cast.operand(0), Proven::byRulesBehindChecks(cast.type));
             movedParameters.append(cast.operand(0));
         }
         if (movedParameters.isEmpty())
@@ -172,6 +181,22 @@ struct CastSimplification : Rewrite {
         if (!expected || expected == at(operand).expected().predicted())
             return false;
         return !typeOf(operand).isSubsetOf(program.at(expected), program);
+    }
+
+    // What a list is expected to hold says how its elements are stored, also where the list itself is proven. A literal without elements is expected to hold nothing, which says nothing.
+    bool expectsContentsThatAreNotIn(const Value& cast, const Type& type)
+    {
+        TypeID expected = cast.expected().predicted();
+        if (!expected || !type.isSubsetOf(program.at(expected), program) || isUnchangedByCastTo(type, program.at(expected)))
+            return false;
+        return std::ranges::any_of(program.at(expected).classes, [](const ClassPart& part) {
+            return std::ranges::any_of(part.writtenContents, [](TypeID contents) { return contents != TypeTable::never; });
+        });
+    }
+
+    bool expectsOtherContentsThan(const Value& cast, ValueID operand)
+    {
+        return cast.expected().predicted() != at(operand).expected().predicted() && expectsContentsThatAreNotIn(cast, typeOf(operand));
     }
 
     void eraseValue(BlockID block, uint32_t index)
@@ -220,6 +245,8 @@ struct CastSimplification : Rewrite {
             ValueID inner = substitution.resolve(at(narrowest).operand(0));
             if (expectsNarrowerTypeThan(at(narrowest), inner) || !isUnchangedByCastTo(typeOf(inner), typeOf(narrowest)))
                 break;
+            if (expectsOtherContentsThan(at(narrowest), inner) && expectsContentsThatAreNotIn(at(narrowest), typeOf(id)))
+                break;
             narrowest = inner;
         }
         unsigned changed = narrowest != operand;
@@ -230,14 +257,23 @@ struct CastSimplification : Rewrite {
             noteCastThatStays(id);
             return changed;
         }
+        if (narrowsHolderToNothing({ program, function, context.types }, cast)) {
+            noteCastThatStays(id);
+            return changed;
+        }
         if (saysMoreThanTypeOnCredit(cast, operand)) {
             claimsKeptBehindChecks.append(id);
+            return changed;
+        }
+        if (isTestOfLanguageAnsweredOnCredit(cast, operand)) {
+            claimsKeptBehindChecks.append(id);
+            noteCastThatStays(id);
             return changed;
         }
         // A cast stands behind the checks in front of every operand, and what takes its place behind those in front of the first.
         bool standsBehindMoreChecksThanOperand = cast.opcode == Opcode::Check || cast.numberOfOperands() > 1;
 
-        if (!expectsNarrowerTypeThan(cast, operand) && typeOf(operand).hasLiteralStrings() == typeOf(id).hasLiteralStrings() && isUnchangedByCastTo(typeOf(operand), typeOf(id))) {
+        if (!expectsNarrowerTypeThan(cast, operand) && !expectsOtherContentsThan(cast, operand) && typeOf(operand).hasLiteralStrings() == typeOf(id).hasLiteralStrings() && isUnchangedByCastTo(typeOf(operand), typeOf(id))) {
             substitution.replace(id, operand);
             eraseValue(block, index);
         } else if (repeatableCasts.contains(cast.opcode))
@@ -271,6 +307,25 @@ struct CastSimplification : Rewrite {
     bool saysMoreThanTypeOnCredit(const Value& cast, ValueID operand)
     {
         return cast.opcode == Opcode::AssumeType && !cast.isBehindChecks() && isBehindCheck(operand);
+    }
+
+    // What the language asks of a value it asks in every version of the function. A type that is owed to a check answers in the typed version alone, so the test stays until the function has its generic version.
+    bool isTestOfLanguageAnsweredOnCredit(const Value& cast, ValueID operand)
+    {
+        return cast.opcode != Opcode::Check && repeatableCasts.contains(cast.opcode) && isBehindCheck(operand) && !isAnsweredInFrontOfChecks(cast, operand);
+    }
+
+    // A cast hands on the value that it was given, so what that value is in front of every check it is in every version.
+    bool isAnsweredInFrontOfChecks(const Value& test, ValueID operand)
+    {
+        while (isBehindCheck(operand)) {
+            if (!isCast(at(operand).opcode))
+                return false;
+            operand = substitution.resolve(at(operand).operand(0));
+        }
+        Value sameTest = test;
+        sameTest.setOperand(0, operand);
+        return typeOf(operand).isSubsetOf(computeResultType(TypingContext { program, function, context.types }, sameTest), program);
     }
 
     bool isBehindCheck(ValueID value)
@@ -310,7 +365,7 @@ struct CastSimplification : Rewrite {
             return 1ull << 63 | access.variable().index();
         if (access.opcode != Opcode::GetEnvironmentField && access.opcode != Opcode::PutEnvironmentField)
             return 0;
-        ValueID environment = analyses.sameObjectThroughCasts(substitution.resolve(access.environmentOperand()));
+        ValueID environment = analyses.sameObjectThroughCasts(substitution.resolve(access.environmentOperand())).valueInFrontOfFacts();
         return access.field() < 1u << 24 ? 1ull << 62 | static_cast<uint64_t>(environment.index()) << 24 | access.field() : 0;
     }
 
@@ -327,10 +382,10 @@ struct CastSimplification : Rewrite {
     unsigned repointOperand(ValueID id, uint32_t operandIndex, const Vector<ValueID>& narrowestCast)
     {
         ValueID current = at(id).operand(operandIndex);
-        ValueID cast = narrowestCast[analyses.sameObjectThroughCasts(current).index()];
+        ValueID cast = narrowestCast[analyses.sameObjectThroughCasts(current).valueInFrontOfFacts().index()];
         if (!cast || typeOf(cast) == typeOf(current) || !isUnchangedByCastTo(typeOf(cast), typeOf(current)))
             return 0;
-        if (!program.expectedOrTypeOf(function, cast).isSubsetOf(program.expectedOrTypeOf(function, current), program))
+        if (!program.expectedOrTypeOf(function, cast).predicted().isSubsetOf(program.expectedOrTypeOf(function, current).predicted(), program))
             return 0;
         Value& user = edit(id, ValueEdit::Definition);
         user.setOperand(operandIndex, cast);
@@ -371,7 +426,7 @@ struct CastSimplification : Rewrite {
         auto addDominatingCast = [&](ValueID id) {
             passed.add(keyOf(id), id);
             addedCasts.append(id);
-            ValueID object = analyses.sameObjectThroughCasts(id);
+            ValueID object = analyses.sameObjectThroughCasts(id).valueInFrontOfFacts();
             ValueID before = narrowestCast[object.index()];
             if (before && typeOf(before).isSubsetOf(typeOf(id), program))
                 return;

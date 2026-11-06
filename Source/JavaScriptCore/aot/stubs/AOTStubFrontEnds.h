@@ -58,6 +58,7 @@ struct OperationPrelude {
 };
 
 std::span<const OperationPrelude> operationPreludes();
+bool hasPrelude(Entry);
 
 } } // namespace JSC::AOT
 

@@ -84,6 +84,8 @@ static void printValueFlowBody(PrintStream& out, const Program& program, const V
             return printBefore(FunctionID(name.owner), ".thrown"_s);
         case Kind::OfHost:
             return out.print("host"_s, name.owner);
+        case Kind::Hub:
+            return out.print("host"_s, numberOfValueFlowHostNodes + name.owner);
         }
         RELEASE_ASSERT_NOT_REACHED();
     };
@@ -251,7 +253,7 @@ static void printValueFlowBody(PrintStream& out, const Program& program, const V
 void runValueFlowBodyTestCommand(TestCommandContext& context)
 {
     const Program& program = *context.program;
-    ValueFlowBuiltinTables tables(program.builtins(), context.build.limit(LimitID::MaxObjectsOfTypedResult));
+    ValueFlowBuiltinTables tables(program.builtins());
     auto print = [&](const ValueFlowBody& body) {
         printValueFlowBody(context.out, program, body);
     };

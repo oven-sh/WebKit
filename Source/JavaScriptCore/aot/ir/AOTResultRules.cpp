@@ -17,8 +17,10 @@
 #include "AOTIRProgram.h"
 #include "AOTResultRulesInternal.h"
 #include "AOTTypeRelations.h"
+#include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <concepts>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -29,7 +31,7 @@ static const Function& recordOf(const Program& program, FunctionID function)
     return program.at(function);
 }
 
-static constexpr OpcodeSet arrayElementReads { Opcode::GetArrayElement, Opcode::GetContiguousIndex };
+static constexpr OpcodeSet arrayElementReads { Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex };
 
 static Type typeOfKeyConstant(const TypingContext& context, PropertyKeyID id)
 {
@@ -54,6 +56,9 @@ static Type typeOfBuiltinEntry(const TypingContext& context, BuiltinID builtin)
     const BuiltinTable& builtins = context.program.builtins();
     if (compiledModuleWithObject(context.program, builtins.canonicalID(builtin)))
         return Type::object();
+    // `o[s]` with `s = Symbol.iterator` is a read by name, as `o[Symbol.iterator]` is.
+    if (BuiltinName symbol = builtins.nameOfSymbol(builtin))
+        return Type::symbolLiteral(context.program.keyOf(symbol));
     if (builtins.at(builtin).kind != BuiltinKind::DataProperty)
         return typeOfBuiltinConstant(builtins, builtin);
 
@@ -89,8 +94,12 @@ Type typeOfConstant(const TypingContext& context, const Value& value)
     case Opcode::Builtin:
     case Opcode::ModuleBuiltin:
         return typeOfBuiltinEntry(context, value.builtin());
-    case Opcode::Data:
-        return typeOfData(context, context.program.at(value.data()).root);
+    case Opcode::Data: {
+        Type type = typeOfData(context, context.program.at(value.data()).root);
+        if (!type.classes.isEmpty())
+            type.classes[0].arrayStorage = value.arrayStorage();
+        return type;
+    }
     case Opcode::NewClosure:
         return Type::forFunction(value.function());
     case Opcode::KeyConstant:
@@ -215,7 +224,7 @@ static bool canLookUpField(const TypingContext& context, const Type& receiver)
 {
     switch (context.level) {
     case TypeLevel::Proven:
-        return receiver.hasOnlyLayouts(context.program);
+        return receiver.hasOnlyLayouts();
     case TypeLevel::Expected:
         return !!receiver.layouts;
     }
@@ -341,25 +350,20 @@ static bool hasProofs(const ClassPart& part)
 static TypeID testablePartOf(const TypingContext& context, TypeID target)
 {
     const Type& type = context.types.at(target);
-    bool hasMembersWithoutLayout = type.layouts && context.types.at(type.layouts).hasMembersWithoutLayout;
-    if (type.classes.isEmpty() && type.builtins.isEmpty() && !hasMembersWithoutLayout)
+    if (type.classes.isEmpty() && type.builtins.isEmpty())
         return target;
 
     const BuiltinTable& builtins = context.program.builtins();
     auto isUntestableBuiltin = [&](BuiltinID builtin) {
         return !isTestableBuiltin(builtins, builtin);
     };
-    bool namesOnlyWhatTestsFind = !hasMembersWithoutLayout && type.regExpLiteralSet.isEmpty() && std::ranges::none_of(type.builtins, isUntestableBuiltin) && std::ranges::all_of(type.classes, [&](const ClassPart& part) {
+    bool namesOnlyWhatTestsFind = type.regExpLiteralSet.isEmpty() && std::ranges::none_of(type.builtins, isUntestableBuiltin) && std::ranges::all_of(type.classes, [&](const ClassPart& part) {
         return hasInstanceTest(builtins, part) && !hasProofs(part);
     });
     if (namesOnlyWhatTestsFind)
         return target;
 
     Type testable = type;
-    if (hasMembersWithoutLayout) {
-        const Vector<LayoutID>& members = context.types.at(type.layouts).members;
-        testable.layouts = members.isEmpty() ? LayoutSetID() : context.types.intern(LayoutSet { Vector<LayoutID>(members), true });
-    }
     testable.classes.removeAllMatching([&](const ClassPart& part) {
         return !hasInstanceTest(builtins, part);
     });
@@ -410,6 +414,10 @@ Type typeOfConvert(const TypingContext& context, const Type& source, const Type&
         return narrowed.isNever() ? proven.castTo(expected, types) : narrowed;
     }
 
+    // A request that resolves to nothing is replaced by its operand, so it has its operand's type, including the functions listed alongside any function, which a cast would drop.
+    if (source.anyFunction && !source.functions.isEmpty() && resolveConvert(context, proven, declared).cast == CastResolution::Nothing)
+        return source;
+
     TypeID target = targetOfConvert(context, declared);
     TypeID testable = testablePartOf(context, target);
     if (testable != target && proven.isSubsetOf(types.at(target), context.program))
@@ -443,9 +451,52 @@ Type ResultRules::sameAs(const Value& value, uint32_t operandIndex)
 {
     ValueID operand = value.operand(operandIndex);
     const Type& source = context.typeOf(operand);
+    // The definition throws for what is no object.
+    if (value.opcode == Opcode::DefineOwnProperty)
+        return source.withOnlyObjects();
     if (value.opcode != Opcode::Convert)
         return source;
     return typeOfConvert(context, source, context.types.at(context.function.at(operand).type), value.declared());
+}
+
+// The prototype of `new.target` selects the layout, whichever class above it the allocation is written in.
+static ValueID newTargetThatSelectsLayout(const Function& function, const Value& allocation)
+{
+    const Value& prototype = function.at(sameObjectThroughCasts(function, allocation.prototypeOperand()));
+    return prototype.opcode == Opcode::GetConstructPrototype ? prototype.newTargetOperand() : ValueID();
+}
+
+// For a class that is not below the class of the allocation the run time makes an ordinary object.
+static bool mayLieAtOrBelow(const Program& program, LayoutID id, LayoutID above)
+{
+    for (size_t steps = 0; id && steps < program.layouts.size(); ++steps) {
+        if (id == above)
+            return true;
+        const LayoutFlow& flow = program.at(id).flow;
+        if (flow.baseState == BaseState::Unknown)
+            return true;
+        id = flow.baseState == BaseState::Layout ? flow.base : LayoutID();
+    }
+    return false;
+}
+
+static Vector<LayoutID, 8> layoutsSelectedByNewTarget(const TypingContext& context, const Value& allocation)
+{
+    ValueID operand = newTargetThatSelectsLayout(context.function, allocation);
+    if (!operand)
+        return { };
+    const Type& newTarget = context.types.at(context.function.at(operand).type);
+    if (!newTarget.isObject() || !newTarget.hasOnlyKnownCallees() || newTarget.layouts || newTarget.functions.isEmpty() || !newTarget.builtins.isEmpty())
+        return { };
+    Vector<LayoutID, 8> layouts;
+    for (FunctionID constructor : newTarget.functions) {
+        LayoutID constructed = context.program.at(constructor).constructedClass;
+        if (!constructed)
+            return { };
+        if (mayLieAtOrBelow(context.program, constructed, allocation.layout()))
+            layouts.append(constructed);
+    }
+    return layouts;
 }
 
 Type ResultRules::allocation(const Value& value, LayoutID layout)
@@ -454,6 +505,8 @@ Type ResultRules::allocation(const Value& value, LayoutID layout)
         return typeOfAllocatedLayout(context, layout);
     if (context.level == TypeLevel::Proven)
         return Type::object();
+    if (Vector<LayoutID, 8> selected = layoutsSelectedByNewTarget(context, value); !selected.isEmpty())
+        return Type::forLayouts(selected.span(), context.types);
     Vector<LayoutID, 8> layouts { layout };
     layouts.append(context.program.layoutsExpectedBelow(layout));
     return Type::forLayouts(layouts.span(), context.types);
@@ -484,6 +537,8 @@ Type ResultRules::allocation(const Value&, BuiltinLayoutID layout)
 Type ResultRules::declared(const Value& value, VariableID variable)
 {
     Type declared = context.typeOf(context.program.at(variable).declared);
+    if (value.opcode == Opcode::GetModuleVariable && value.mayPrecedeItsStore())
+        return declared.withPrimitives(Primitive::Unspecified);
     if (value.opcode != Opcode::GetEncodedModuleVariable || !(declared.primitives & Primitive::Undefined))
         return declared;
     return declared.withoutPrimitives(Primitive::Undefined).withPrimitives(Primitive::Absent);
@@ -494,6 +549,8 @@ Type ResultRules::declared(const Value& value, LayoutID layout, uint32_t field)
     const Vector<Field>& fields = context.program.at(layout).fields;
     if (field >= fields.size())
         return Type::anything();
+    if (value.opcode == Opcode::GetEnvironmentField && value.mayPrecedeItsStore())
+        return context.typeOf(fields[field].declared).withPrimitives(Primitive::Unspecified);
     if (!receiverOf(value.opcode) || fields[field].flags.contains(FieldFlags::IsBrand))
         return context.typeOf(fields[field].declared);
     return provenOrUnknown(tryTypeOfNamedRead(context, receiverTypeOf(context, value), fields[field].key));
@@ -531,11 +588,10 @@ Type ResultRules::declared(const Value& value, FunctionID function, uint32_t res
 {
     const Function& callee = recordOf(context.program, function);
     bool readsCapture = value.opcode == Opcode::GetCapture;
-    const Vector<DeclaredType>& positions = readsCapture ? callee.captures : callee.results;
     uint32_t index = readsCapture ? value.index() : resultIndex;
-    if (index >= positions.size())
+    if (index >= (readsCapture ? callee.captures.size() : callee.results.size()))
         return Type::anything();
-    return context.types.adopt(context.typeOf(positions[index]));
+    return context.types.adopt(context.typeOf(readsCapture ? callee.captures[index] : callee.results[index]));
 }
 
 Type ResultRules::declared(const Value&, LayoutID layout)
@@ -551,8 +607,10 @@ Type ResultRules::declared(const Value& value, ModuleID module)
     return Type::forLayout(layout, context.types);
 }
 
-Type ResultRules::declared(const Value&, TypeID type)
+Type ResultRules::declared(const Value& value, TypeID type)
 {
+    if (value.opcode == Opcode::Unspecified)
+        return context.types.at(type).withPrimitives(Primitive::Unspecified);
     return context.types.at(type);
 }
 
@@ -635,7 +693,16 @@ Type ResultRules::unknown(const Value& value)
 
 Type ResultRules::cast(const Value& value, uint32_t operandIndex, TypeID castType)
 {
-    return context.typeOf(value.operand(operandIndex)).castTo(context.types.at(castType), context.types);
+    const Type& source = context.typeOf(value.operand(operandIndex));
+    const Type& target = context.types.at(castType);
+    Type result = source.castTo(target, context.types);
+    // Where the objects that are declared are none of those that are proven to come, the declaration says nothing of which come: `list: { length: number }` is a layout, and arrays are handed in.
+    if (value.opcode == Opcode::AssumeType && context.level == TypeLevel::Expected && !result.hasObjects() && source.hasObjects() && target.hasObjects())
+        result = result.unionWith(target.withOnlyObjects(), context.types);
+    // Only a cast that names a fact takes away that the word may be anything.
+    if (source.mayBeUnspecified() && !(value.opcode == Opcode::AssumeType && value.factOperand()))
+        return result.withPrimitives(Primitive::Unspecified);
+    return result;
 }
 
 // The one place where what is expected of a value becomes what is proven of it: a check tests. An expectation that nothing tests proves nothing.
@@ -730,6 +797,8 @@ Type computeResultType(const TypingContext& context, const Value& value)
     return computeResultType(context, value, 0);
 }
 
+static std::optional<SharedAnswers> answerSharingFor(const Value&);
+
 namespace {
 
 struct ResultRulesWithoutType {
@@ -737,9 +806,9 @@ struct ResultRulesWithoutType {
 
     const TypingContext& context;
 
-    enum class Key : uint32_t { Opcode = UINT32_MAX - 15, Constant, Closure, Layout, NamedRead, SlotRead, CastToType, CastOfOperand };
+    enum class Key : uint32_t { Opcode = UINT32_MAX - 15, Constant, Closure, Layout, NamedRead, SlotRead, CastToType, CastOfOperand, ElementRead };
 
-    TypeID rememberedResult(Key key, SharedAnswers answers, const Value& value, NOESCAPE const auto& addWords)
+    TypeID rememberedResult(Key key, std::optional<SharedAnswers> answers, const Value& value, NOESCAPE const auto& addWords)
     {
         if (!context.memo)
             return { };
@@ -816,16 +885,18 @@ struct ResultRulesWithoutType {
 
     TypeID sameAs(const Value& value, uint32_t operandIndex)
     {
-        if (value.opcode == Opcode::Convert)
+        if (value.opcode == Opcode::Convert || value.opcode == Opcode::DefineOwnProperty)
             return { };
         return idInArena(context.typeIDOf(value.operand(operandIndex)));
     }
 
-    TypeID declared(const Value&, TypeID type) { return idInArena(type); }
+    TypeID declared(const Value& value, TypeID type) { return value.opcode == Opcode::Unspecified ? TypeID() : idInArena(type); }
 
     TypeID declared(const Value& value, VariableID variable)
     {
         TypeID declared = context.typeIDOf(context.program.at(variable).declared);
+        if (value.opcode == Opcode::GetModuleVariable && value.mayPrecedeItsStore())
+            return { };
         if (value.opcode != Opcode::GetEncodedModuleVariable || !(context.types.at(declared).primitives & Primitive::Undefined))
             return idInArena(declared);
         return { };
@@ -860,11 +931,10 @@ struct ResultRulesWithoutType {
     {
         const Function& callee = recordOf(context.program, function);
         bool readsCapture = value.opcode == Opcode::GetCapture;
-        const Vector<DeclaredType>& positions = readsCapture ? callee.captures : callee.results;
         uint32_t index = readsCapture ? value.index() : resultIndex;
-        if (index >= positions.size())
+        if (index >= (readsCapture ? callee.captures.size() : callee.results.size()))
             return TypeTable::anything;
-        return idInArena(context.typeIDOf(positions[index]));
+        return idInArena(context.typeIDOf(readsCapture ? callee.captures[index] : callee.results[index]));
     }
 
     TypeID declared(const Value& value, LayoutID layout, uint32_t field)
@@ -872,6 +942,8 @@ struct ResultRulesWithoutType {
         const Vector<Field>& fields = context.program.at(layout).fields;
         if (field >= fields.size())
             return TypeTable::anything;
+        if (value.opcode == Opcode::GetEnvironmentField && value.mayPrecedeItsStore())
+            return { };
         if (!receiverOf(value.opcode) || fields[field].flags.contains(FieldFlags::IsBrand))
             return idInArena(context.typeIDOf(fields[field].declared));
         return { };
@@ -897,8 +969,12 @@ struct ResultRulesWithoutType {
 
     TypeID cast(const Value& value, uint32_t operandIndex, TypeID castType)
     {
+        TypeID source = context.typeIDOf(value.operand(operandIndex));
+        if (context.types.at(source).mayBeUnspecified()) [[unlikely]]
+            return { };
         return rememberedResult(Key::CastToType, SharedAnswers::AboutTypes, value, [&](auto& hasher) {
-            hasher.add(context.typeIDOf(value.operand(operandIndex)).index(), castType.index());
+            hasher.add(source.index(), castType.index());
+            hasher.add(static_cast<uint32_t>(value.opcode == Opcode::AssumeType && context.level == TypeLevel::Expected));
         });
     }
 
@@ -942,6 +1018,23 @@ struct ResultRulesWithoutType {
         });
     }
 
+    // Reads of one list differ in their access sites, which the answer does not hang on. A list of n functions read at n sites would hash the n functions at each.
+    TypeID declaredContents(const Value& value, std::integral auto operandIndex, auto&&)
+    {
+        if (value.opcode == Opcode::ElemGet) {
+            return rememberedResult(Key::ElementRead, answerSharingFor(value), value, [&](auto& hasher) {
+                hasher.add(context.typeIDOf(value.operand(operandIndex)).index(), context.typeIDOf(value.propertyOperand()).index());
+                hasher.add(level());
+            });
+        }
+        if (value.opcode == Opcode::GetArrayElement) {
+            return rememberedResult(Key::ElementRead, answerSharingFor(value), value, [&](auto& hasher) {
+                hasher.add(context.typeIDOf(value.operand(operandIndex)).index(), level());
+                hasher.add(value.flags, static_cast<uint32_t>(value.arrayStorage()));
+            });
+        }
+        return { };
+    }
     TypeID declaredContents(auto&&...) { return { }; }
     TypeID declaredResult(auto&&...) { return { }; }
 };
@@ -1053,7 +1146,7 @@ static constexpr OpcodeSet opcodesTypedAlikeAtBothLevels = []() consteval {
     return opcodes;
 }();
 
-static constexpr OpcodeSet opcodesWhoseRuleReadsTheLevel { Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::Convert, Opcode::NewObject, Opcode::NarrowByField };
+static constexpr OpcodeSet opcodesWhoseRuleReadsTheLevel { Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::Convert, Opcode::NewObject, Opcode::NarrowByField, Opcode::AssumeType };
 
 static void addKeyOfResult(auto& hasher, const TypingContext& context, const Value& value)
 {
@@ -1067,6 +1160,10 @@ static void addKeyOfResult(auto& hasher, const TypingContext& context, const Val
     });
     if (value.opcode == Opcode::Convert)
         hasher.add(context.function.at(value.valueOperand()).type);
+    if (isExpected && mayAllocateOtherLayout(context.program, value)) {
+        ValueID newTarget = newTargetThatSelectsLayout(context.function, value);
+        hasher.add(newTarget ? context.function.at(newTarget).type : TypeID());
+    }
 }
 
 TypeID computeResultTypeID(const TypingContext& context, const Value& value)
@@ -1099,7 +1196,7 @@ TypeID resultTypeOf(const Program& program, const Function& function, const Valu
     return computeResultTypeID({ program, function, arena, TypeLevel::Proven, memo }, value);
 }
 
-TypeID expectedTypeOf(const Program& program, const Function& function, const Value& value, TypeArena& arena, TypingMemo* memo)
+ExpectedType expectedTypeOf(const Program& program, const Function& function, const Value& value, TypeArena& arena, TypingMemo* memo)
 {
     TypeID expected = computeResultTypeID({ program, function, arena, TypeLevel::Expected, memo }, value);
     if (expected == value.type)
@@ -1108,7 +1205,7 @@ TypeID expectedTypeOf(const Program& program, const Function& function, const Va
     Type met = type.intersectWith(arena.at(expected), arena);
     if (met.isNever() || met == type || !met.isSubsetOf(type, program))
         return { };
-    return arena.intern(met);
+    return ExpectedType(arena.intern(met));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -18,6 +18,7 @@
 #include "CellState.h"
 #include "JSCell.h"
 #include "RememberedSlot.h"
+#include "StoredCellLog.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -63,7 +64,11 @@ ValueID BarrierEmitter::ownerOperandOf(const Value& store) const
 
 bool BarrierEmitter::ownerIsOnlyInFrames(const Value& store) const
 {
-    ValueID owner = ownerOperandOf(store);
+    return isOnlyInFrames(ownerOperandOf(store));
+}
+
+bool BarrierEmitter::isOnlyInFrames(ValueID owner) const
+{
     if (isFrameCell(m_function, owner))
         return true;
 
@@ -71,7 +76,7 @@ bool BarrierEmitter::ownerIsOnlyInFrames(const Value& store) const
     const Type& type = typeOf(owner);
     if (type.environment)
         return frameAllocation.isOnlyInFrames(type.environment);
-    return type.hasOnlyLayouts(m_program) && std::ranges::all_of(membersOf(m_program, type), [&](LayoutID layout) {
+    return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(m_program, type), [&](LayoutID layout) {
         return frameAllocation.isOnlyInFrames(layout);
     });
 }
@@ -167,6 +172,15 @@ void BarrierEmitter::barrier(const OperationContext& context, CellPointer owner)
     didEmitBarrier(owner);
 }
 
+// The stores in front of it are marked as covered by a later barrier: this one.
+void BarrierEmitter::barrierBehindStores(const ValueContext& value, ValueID owner)
+{
+    if (m_options.recorded.isSabotaged(Sabotage::StoresNeedNoBarrier) || isOnlyInFrames(owner))
+        return;
+    build().statistics().count(StatisticID::BarriersEmitted);
+    barrier(value, in<CellPointer>(owner));
+}
+
 // The owner names its new Extension, which is a store like the one that needs the room.
 OwnerBarrier BarrierEmitter::barrierOfExtension(const ValueContext& store) const
 {
@@ -198,8 +212,32 @@ void BarrierEmitter::elementBarrierAfterStore(const ValueContext& store, CellPoi
     LBasicBlock continuation = newBlock();
     m_out.branch(isBeyondBarrierThreshold(array).value(), normalEdge(continuation), rareEdge(slowPath));
     m_out.appendTo(slowPath);
-    for (Boxed value : stored)
+    for (Boxed value : stored) {
+        LBasicBlock remembers = newBlock();
+        LBasicBlock next = newBlock();
+        // A long array that has been marked stays so, and every store into it comes here. The first questions of generateRememberElement() are asked in place, in its order:
+        // where they end it with nothing to remember, nothing is called. Every other answer is left to the stub, which asks again.
+        if (store.shape() == CodeShape::Fast) {
+            LBasicBlock nothingMarks = newBlock();
+            LBasicBlock isLong = newBlock();
+            LBasicBlock isStoredCell = newBlock();
+            m_out.branch(m_out.load8ZeroExt32(instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))), rareEdge(remembers), normalEdge(nothingMarks));
+            m_out.appendTo(nothingMarks);
+            // Read anew, as the stub reads it: a read that the store shared with this side would no longer be part of the store's own comparison.
+            Word32 vectorLength = loadField<Word32>(loadField<Pointer>(CellPointer(m_out.opaque(array.value())), m_heaps.JSArray_butterfly), m_heaps.Butterfly_vectorLength);
+            m_out.branch(m_out.below(vectorLength.value(), m_out.constInt32(StoredCellLog::minVectorLengthOfOwner)), normalEdge(remembers), normalEdge(isLong));
+            m_out.appendTo(isLong);
+            m_out.branch(isCell(value).value(), normalEdge(isStoredCell), normalEdge(next));
+            m_out.appendTo(isStoredCell);
+            static_assert(!static_cast<unsigned>(CellState::PossiblyBlack));
+            m_out.branch(m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, value.value(), JSCell::cellStateOffset())), normalEdge(remembers), normalEdge(next));
+        } else
+            m_out.jump(remembers);
+        m_out.appendTo(remembers);
         callBarrierStub(store, rememberElement(), { array.value(), value.value() }, { .isOnRarePath = true });
+        m_out.jump(next);
+        m_out.appendTo(next);
+    }
     m_out.jump(continuation);
     m_out.appendTo(continuation);
 }
@@ -214,7 +252,9 @@ void BarrierEmitter::didEmitBarrier(CellPointer owner)
     if (!generator().validates())
         return;
     LValue pendingOwner = m_out.load64(pendingBarrierOwner());
-    m_out.store64(m_out.select(m_out.equal(pendingOwner, owner.value()), m_out.constInt64(0), pendingOwner), pendingBarrierOwner());
+    LValue isPending = m_out.equal(pendingOwner, owner.value());
+    LValue stillPending = m_out.select(isPending, m_out.constInt64(0), pendingOwner);
+    m_out.store64(stillPending, pendingBarrierOwner());
 }
 
 void BarrierEmitter::validateAfterStore(const ValueContext& store)
@@ -238,11 +278,19 @@ void BarrierEmitter::validateAfterStore(const ValueContext& store)
         failValidationIf(store, Condition(m_out.equal(state, m_out.constInt32(static_cast<int32_t>(CellState::PossiblyBlack)))), owner);
         return;
     }
-    case BarrierDecision::LaterBarrierCovers:
-        m_out.store64(in<CellPointer>(ownerOperand).value(), pendingBarrierOwner());
+    case BarrierDecision::LaterBarrierCovers: {
+        CellPointer owner = in<CellPointer>(ownerOperand);
+        m_out.store64(owner.value(), pendingBarrierOwner());
         return;
     }
+    }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+void BarrierEmitter::fenceAfterInitialization()
+{
+    if (std::optional<MutatorFence> fence = mutatorFence())
+        m_records.mutatorFences.fences.append(*fence);
 }
 
 void BarrierEmitter::validateBeforeCollection(const OperationContext& context)

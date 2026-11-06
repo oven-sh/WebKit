@@ -29,6 +29,8 @@ inline constexpr uint16_t BigInt = static_cast<uint16_t>(PrimitiveSet::BigInt);
 inline constexpr uint16_t Absent = static_cast<uint16_t>(PrimitiveSet::Absent);
 inline constexpr uint16_t LiteralString = static_cast<uint16_t>(PrimitiveSet::LiteralString);
 inline constexpr uint16_t LiteralSymbol = static_cast<uint16_t>(PrimitiveSet::LiteralSymbol);
+// The word may be anything. It takes the representation of the rest of the type, and only a cast that names a fact takes it away.
+inline constexpr uint16_t Unspecified = static_cast<uint16_t>(PrimitiveSet::Unspecified);
 
 inline constexpr uint16_t Boolean = False | True;
 inline constexpr uint16_t Double = WholeNumber | FractionalNumber;
@@ -39,7 +41,7 @@ inline constexpr uint16_t AnyString = String | LiteralString;
 inline constexpr uint16_t AnySymbol = Symbol | LiteralSymbol;
 inline constexpr uint16_t NumberLike = UndefinedOrNull | Boolean | Number;
 inline constexpr uint16_t All = UndefinedOrNull | Boolean | Number | String | Symbol | BigInt;
-inline constexpr uint16_t Defined = All | Absent | LiteralString | LiteralSymbol;
+inline constexpr uint16_t Defined = All | Absent | LiteralString | LiteralSymbol | Unspecified;
 }
 
 inline constexpr uint16_t cellPrimitives = Primitive::AnyString | Primitive::AnySymbol | Primitive::BigInt;
@@ -127,7 +129,7 @@ constexpr Range Range::widenedFrom(Range previous) const
 }
 
 static_assert(Primitive::Defined == (1u << numberOfEnumerators<PrimitiveSet>) - 1);
-static_assert(!(Primitive::All & (Primitive::Absent | Primitive::LiteralString | Primitive::LiteralSymbol)));
+static_assert(!(Primitive::All & (Primitive::Absent | Primitive::LiteralString | Primitive::LiteralSymbol | Primitive::Unspecified)));
 static_assert(static_cast<double>(maxTrackedInteger + 1) == 0x1p62);
 static_assert(Range::full().contains(maxTrackedInteger) && !Range::full().contains(maxTrackedInteger + 1));
 static_assert(Range::empty().isSubsetOf(Range::one(0)));

@@ -1,0 +1,39 @@
+# promise = Promise.resolve(JSON.parse(text)); promise.then(reaction);  list = JSON.parse(other); list.push(handed)
+# What JSON.parse makes was allocated as an ordinary object or an array, so it fails the test for a promise as an object literal does. Promise.resolve takes the overload for any other value, which answers
+# a new promise that holds the data, and not the one for a promise, which answers a promise that nobody knows. `then` on the answer is the built-in, no code that nobody knows runs,
+# and what is pushed onto another parsed list stays with the program.
+# RUN: valueflow-solve calls
+# CHECK: f0 v6 -> PromiseResolve
+# CHECK-NEXT: f0 v9 -> PromisePrototypeThen
+# RUN(ESCAPED): valueflow-why escaped=f2
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+# RUN(NUMBERS): valueflow-solve
+# NUMBERS: unknown 0 untracked 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=JSON
+    v1 = Builtin builtin=JSONParse
+    v2 = String string="{}"
+    v3 = Call v1, v0, v2
+    v4 = Builtin builtin=Promise
+    v5 = Builtin builtin=PromiseResolve
+    v6 = Call v5, v4, v3
+    v7 = PropGet v6 key="then"
+    v8 = NewClosure function=f1
+    v9 = Call v7, v6, v8
+    v10 = String string="[]"
+    v11 = Call v1, v0, v10
+    v12 = PropGet v11 key="push"
+    v13 = NewClosure function=f2
+    v14 = Call v12, v11, v13
+    Return
+}
+function f1 name="reaction" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f2 name="handed" kind=Arrow results=[{type=anything}] {
+    Return
+}

@@ -20,8 +20,10 @@ function f0 name="castAddsProofs" parameters=[{type=anything}, {type=boolean}] r
   b3():
     Return
 # CHECK: LoopHint
-# CHECK-NEXT: v3: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}} provenType=undefined|Array<number, proven, pristine[Storage, Names]>
-# CHECK-NEXT: [[narrowed0]]: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}} provenType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: [[inLoop]]: fact = Specified
+# CHECK-NEXT: v3: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}}, [[inLoop]] provenType=undefined|Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: [[atTest]]: fact = Specified
+# CHECK-NEXT: [[narrowed0]]: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}}, [[atTest]] provenType=Array<number, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v4: true = TypeTest [[narrowed0]] testedType=Array
 # CHECK: (v5: Array<number, proven, pristine[Storage, Names]>):
 # CHECK: = GetArrayElement v5, v6{{*}} level=Proven

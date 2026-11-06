@@ -58,8 +58,7 @@ function f0 name="unknown" parameters=[{type=anything}] results=[{type=anything}
 # CHECK-NEXT: [[stop0]]: int[0, 2147483648] = ResultAt [[step0]] index=2
 # CHECK-NEXT: Jump -> next [[after0]]([[doneOfString0]], [[character0]], [[stop0]])
 # CHECK-NEXT: [[iteratorStep0]]([[stepped0]]: object) frequency=Unlikely:
-# CHECK-NEXT: [[result0]]: anything = Call [[next0]], [[stepped0]]
-# CHECK-NEXT: = RequireObject [[result0]] runtimeError=IteratorResultNotObject
+# CHECK-NEXT: = CallDirect [[stepped0]], [[next0]] function={{*}} [isNeverInlined]
 # The string gets no copy of the loop for itself.
 # ABSENT-COUNT-2: LoopHint
 # ABSENT-NOT: LoopHint
@@ -84,7 +83,7 @@ function f1 name="object" parameters=[{type=object}] results=[{type=anything}] {
 # CHECK: Jump -> next [[header1]]()
 # CHECK-NEXT: [[header1]]() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: = Call [[next1]], [[iterator1]]
+# CHECK-NEXT: = CallDirect [[iterator1]], [[next1]] function={{*}} [isNeverInlined]
 # CHECK: ([[iterable1]]: object) frequency=Unlikely:
 # CHECK-NEXT: = CallDirect [[iterable1]] function=[[openIterator]] [isNeverInlined]
 # CHECK: [[iterator1]]: object = ResultAt {{*}}
@@ -153,7 +152,7 @@ function f3 name="stringOrArray" parameters=[{type=string|Array<number>}] result
 # CHECK: Jump -> next [[header3]]()
 # CHECK-NEXT: [[header3]]() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: = Call [[next3]], [[iterator3]]
+# CHECK-NEXT: = CallDirect [[iterator3]], [[next3]] function={{*}} [isNeverInlined]
 # CHECK: ([[iterable3]]: string|Array<number>) frequency=Unlikely:
 # CHECK-NEXT: = CallDirect [[iterable3]] function=[[openIterator]] [isNeverInlined]
 # CHECK: [[string3]]([[text3]]: string) frequency=Unlikely:
@@ -286,7 +285,7 @@ function f7 name="noClassArm" parameters=[{type=anything}] results=[{type=anythi
 # CHECK-NEXT: [[length7]]: int[0, 2147483647] = GetStringLength [[walked7]]
 # CHECK-NEXT: = Less [[position7]], [[length7]]
 # CHECK: [[iteratorStep7]]([[stepped7]]: object):
-# CHECK-NEXT: = Call [[next7]], [[stepped7]]
+# CHECK-NEXT: = CallDirect [[stepped7]], [[next7]] function={{*}} [isNeverInlined]
 # CHECK: = Substring [[walked7]],
 # ABSENT-COUNT-1: LoopHint
 # ABSENT-NOT: LoopHint
@@ -336,5 +335,5 @@ function f8 name="patternReadAtOnce" parameters=[{type=anything}] results=[{type
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

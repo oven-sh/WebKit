@@ -1,0 +1,37 @@
+# function promised(f) { return f({}).length }  promised(next of async generators); promised(Object.keys)
+# function stepped(f) { return f({}).length }  stepped(next of list iterators); stepped(Object.keys)
+# One object stands for what a call makes, whichever function arrives there. A list always has a length of its own. The promise of a step and the result of a step have none:
+# the read goes up to the objects above them and may find nothing.
+# RUN: valueflow-apply
+# CHECK: function f1 name="promised" {{*}}results=[{type=undefined|number}]
+# CHECK: function f2 name="stepped" {{*}}results=[{type=undefined|number}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Empty"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=AsyncGeneratorPrototypeNext
+    v2 = Call v0, -, v1
+    v3 = Builtin builtin=ObjectKeys
+    v4 = Call v0, -, v3
+    v5 = NewClosure function=f2
+    v6 = Builtin builtin=MapIteratorPrototypeNext
+    v7 = Call v5, -, v6
+    v8 = Call v5, -, v3
+    Return
+}
+function f1 name="promised" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = Call v0, -, v1
+    v3 = PropGet v2 key="length"
+    Return v3
+}
+function f2 name="stepped" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = Call v0, -, v1
+    v3 = PropGet v2 key="length"
+    Return v3
+}

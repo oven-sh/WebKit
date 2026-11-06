@@ -17,6 +17,7 @@
 #include <array>
 #include <wtf/BitVector.h>
 #include <wtf/CommaPrinter.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -38,7 +39,7 @@ void Effects::dump(PrintStream& out) const
     if (!writes.isEmpty())
         out.print(separator, "writes("_s, writes, ")"_s);
     if (mayThrow)
-        out.print(separator, mayThrowByRule() ? "throws"_s : "throwsForLackOfMemory"_s);
+        out.print(separator, mayThrowByRule() ? "throws"_s : mayThrowOtherThanStackOverflow() ? "throwsForLackOfMemory"_s : "throwsForLackOfStack"_s);
     if (mayCollect)
         out.print(separator, "collects"_s);
     if (mayCallUnknownCode)
@@ -56,18 +57,46 @@ void EffectsOnEdges::dump(PrintStream& out) const
         out.print(" | on throw: "_s, handler);
 }
 
+namespace {
+
+// Most operations share their bound with others: the table holds each bound once.
+template<size_t capacity>
+struct DistinctBounds {
+    std::array<uint8_t, numberOfOpcodes> rowOf { };
+    std::array<Effects, capacity> rows { };
+    size_t numberOfRows { 0 };
+};
+
+constexpr auto boundsWithRoomForAll = [] {
+    DistinctBounds<numberOfOpcodes> result;
+    for (Opcode member : allMembersOf<Opcode>) {
+        EffectBoundBuilder builder;
+        forEachDeclaredEffect(member, builder);
+        Effects bound = withDeclaredKindOfThrow(member, builder.effects());
+        size_t row = 0;
+        while (row < result.numberOfRows && result.rows[row] != bound)
+            ++row;
+        if (row == result.numberOfRows)
+            result.rows[result.numberOfRows++] = bound;
+        result.rowOf[static_cast<unsigned>(member)] = static_cast<uint8_t>(row);
+    }
+    return result;
+}();
+static_assert(boundsWithRoomForAll.numberOfRows <= 256);
+
+constexpr auto distinctBounds = [] {
+    DistinctBounds<boundsWithRoomForAll.numberOfRows> result;
+    result.rowOf = boundsWithRoomForAll.rowOf;
+    for (; result.numberOfRows < result.rows.size(); ++result.numberOfRows)
+        result.rows[result.numberOfRows] = boundsWithRoomForAll.rows[result.numberOfRows];
+    return result;
+}();
+
+} // anonymous namespace
+
 const Effects& declaredBoundInTable(Opcode opcode)
 {
-    static const std::array<Effects, numberOfOpcodes> bounds = [] {
-        std::array<Effects, numberOfOpcodes> result;
-        for (Opcode member : allMembersOf<Opcode>) {
-            EffectBoundBuilder builder;
-            forEachDeclaredEffect(member, builder);
-            result[static_cast<unsigned>(member)] = withDeclaredKindOfThrow(member, builder.effects());
-        }
-        return result;
-    }();
-    return bounds[static_cast<unsigned>(opcode)];
+    return distinctBounds.rows[distinctBounds.rowOf[static_cast<unsigned>(opcode)]];
 }
 
 namespace {
@@ -102,24 +131,24 @@ struct RowsWithoutPayload {
 
 const Effects* findDeclaredEffectsOfEveryValue(Opcode opcode)
 {
-    static const RowsWithoutPayload rows = [] {
-        RowsWithoutPayload result;
+    static const RowsWithoutPayload& rows = *[] {
+        auto result = makeUniqueWithoutFastMallocCheck<RowsWithoutPayload>();
         for (Opcode member : allMembersOf<Opcode>) {
             RowWithoutPayloadBuilder builder;
             forEachDeclaredEffect(member, builder);
             if (builder.namesPlaceByPayload())
                 continue;
-            result.effects[static_cast<unsigned>(member)] = withDeclaredKindOfThrow(member, builder.effects());
-            result.opcodes.add(member);
+            result->effects[static_cast<unsigned>(member)] = withDeclaredKindOfThrow(member, builder.effects());
+            result->opcodes.add(member);
         }
-        return result;
+        return result.release();
     }();
     return rows.opcodes.contains(opcode) ? &rows.effects[static_cast<unsigned>(opcode)] : nullptr;
 }
 
 EffectsOnEdges effectsOf(const EffectContext& context, const Function& function, const Value& value)
 {
-    return resolveEffects(context, describeEffects(context.program, function, value));
+    return resolveEffects(context, describeEffects(context.program, function, value, &context.summaries));
 }
 
 EffectsOnEdges effectsOf(const EffectContext& context, const Function& function, const Terminator& terminator)
@@ -168,11 +197,12 @@ static EffectsOnEdges calleeEffectsBeyondOperands(const EffectContext& context, 
 static EffectsOnEdges callEffectsBeyondOperands(const EffectContext& context, const Function& function, const Value& call, const EffectsOnEdges& effects)
 {
     CalleeList callees = calleesThatBoundEffectsOf(context.program, call);
-    if (!callees.isComplete || !callees.builtins.isEmpty())
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions)
         return effects;
     EffectDescription description = describeEffects(context.program, function, call);
     description.functions.clear();
-    for (FunctionID callee : callees.functions)
+    for (FunctionID callee : functions->value())
         description.own.merge(calleeEffectsBeyondOperands(context, callee, call));
     return resolveEffects(context, description);
 }

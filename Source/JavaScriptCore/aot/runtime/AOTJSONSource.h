@@ -33,6 +33,7 @@ struct JSONSource {
     const uint8_t* end { nullptr };
     size_t capacity { 0 };
     void* ownerStackPointer { nullptr };
+    const uint8_t* furthestAttemptedPosition { nullptr };
     RefPtr<StringImpl> wideText;
     uint32_t numberOfKeyOrderLists { 0 };
     JSONSourceEncoding encoding { JSONSourceEncoding::Latin1 };

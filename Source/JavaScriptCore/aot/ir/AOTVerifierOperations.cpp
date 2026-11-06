@@ -8,8 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinPristine.h"
+#include "AOTFlowResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTInductionVariables.h"
 #include "AOTJSONVerification.h"
@@ -28,7 +30,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet opcodesWithConstructionRules { Opcode::FinishObject, Opcode::FinishClass, Opcode::DefineMethod, Opcode::GetClassPrototype };
 static constexpr OpcodeSet opcodesWithClassRules { Opcode::NewClass, Opcode::SuperConstruct, Opcode::SuperConstructList };
-static constexpr OpcodeSet tailCallOpcodes { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallForwardVarargs };
+static constexpr OpcodeSet tailCallOpcodes { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallTable, Opcode::CallForwardVarargs };
 
 static bool isPrivateKind(PropertyKeyKind kind)
 {
@@ -200,6 +202,12 @@ static bool asksForWhatNoCodeAnswers(const Value& value)
     return value.opcode == Opcode::RegExpMatchLiteral && !value.regExpOperand() && value.regExpFlags().containsAny(flagsOfMatchesUsingObject);
 }
 
+// Whoever adds a read or a store keeps the record of the place true: a later pass takes the stores of what nothing reads, and the room of what nothing stores to.
+static bool agreesWithRecord(const LocationFlow& flow, bool isRead)
+{
+    return isRead ? flow.reads != ReadState::NeverRead : flow.writers != WriterState::AllKnown || flow.stores != StoreCount::Never;
+}
+
 void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, ValueID id, const Value& value)
 {
     Opcode opcode = value.opcode;
@@ -221,12 +229,19 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
             verifyClassOperation(block, id, value);
         else if (opcode == Opcode::NewArray || Value::opcodesWithKeyIsIntegral.contains(opcode))
             verifyElementOperation(block, id, value);
+        else if (opcode == Opcode::NewObject) {
+            verifyFormsOfListedFields(block, id, value);
+            if (m_program.at(value.layout()).flow.allocation == AllocationState::NeverAllocated)
+                fail(InternalErrorKind::InvalidLayout, block, id, value.layout().index());
+        }
         return;
     case OperationFamily::Constant:
         if (opcode == Opcode::NewClosure)
             verifyClosureOperation(block, id, value);
         else if (opcode == Opcode::Builtin || opcode == Opcode::ModuleBuiltin)
             verifyBuiltinOperation(block, id, value);
+        else if (opcode == Opcode::Data)
+            verifyElementOperation(block, id, value);
         else if (opcode == Opcode::KeyConstant && isPrivateKind(m_program.at(value.key()).kind))
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
@@ -298,8 +313,20 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
     case OperationFamily::Module:
         if (opcode == Opcode::EvaluateModule || opcode == Opcode::RecordRequire)
             verifyModuleEvaluation(block, id, value);
+        // A module whose namespace object is never created has no word for it. An operation that flow analysis saw and that never runs asks the runtime, which keeps the object with the module. Passes add no other such operation.
+        else if ((opcode == Opcode::ModuleNamespace || opcode == Opcode::ImportModule) && m_inputs.flow && m_inputs.flow->hasResults() && m_inputs.flow->module(value.module()).namespaceUse == NamespaceUse::NeverCreated && !m_inputs.flow->wasNamespaceNamedByOperation(value.module()))
+            fail(InternalErrorKind::InvalidModule, block, id, value.module().index());
         return;
-    case OperationFamily::Binding: case OperationFamily::Operator: case OperationFamily::Hint: case OperationFamily::Control:
+    case OperationFamily::Binding:
+        if (Value::opcodesWithVariable.contains(opcode) && !agreesWithRecord(m_program.at(value.variable()).flow, opcode != Opcode::PutModuleVariable))
+            fail(InternalErrorKind::InvalidVariable, block, id, value.variable().index());
+        else if (opcode == Opcode::GetModuleVariable || opcode == Opcode::GetEncodedModuleVariable)
+            verifyVariableRead(block, id, value);
+        else if ((opcode == Opcode::GetEnvironmentField || opcode == Opcode::PutEnvironmentField) && value.field() < m_program.at(value.layout()).fields.size()
+            && !agreesWithRecord(flowOf(m_program, { value.layout(), value.field() }).location, opcode == Opcode::GetEnvironmentField))
+            fail(InternalErrorKind::InvalidEnvironmentUse, block, id);
+        return;
+    case OperationFamily::Operator: case OperationFamily::Hint: case OperationFamily::Control:
     case OperationFamily::Iteration: case OperationFamily::ForIn: case OperationFamily::EngineIntrinsic:
     case OperationFamily::PromiseIntrinsic: case OperationFamily::CollectionIntrinsic:
     case OperationFamily::GuardValue: case OperationFamily::OwnAccess: case OperationFamily::ExpandedIteration: case OperationFamily::JSONParse:
@@ -308,6 +335,22 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// A variable that nothing fills stays as it began, and its type says so.
+void FunctionVerifier::verifyVariableRead(BlockID block, ValueID id, const Value& value)
+{
+    const Variable& variable = m_program.at(value.variable());
+    if (variable.flow.writers != WriterState::AllKnown || variable.flow.stores != StoreCount::Never || variable.flow.initialization == InitializationState::SetAtCreation)
+        return;
+    if (variable.initialization == VariableInitialization::Function || variable.declared.isExpected())
+        return;
+    // Every load of a module that cannot be linked throws, so no read of what the module would have filled is ever come to.
+    if (std::ranges::contains(m_program.moduleFailures, variable.module, &ModuleFailure::importer))
+        return;
+    uint16_t initialValue = variable.initialization == VariableInitialization::Undefined ? Primitive::Undefined : Primitive::Absent;
+    if (!(m_program.at(variable.declared.written()).primitives & initialValue))
+        fail(InternalErrorKind::InvalidVariable, block, id, value.variable().index());
 }
 
 void FunctionVerifier::verifyCatch(BlockID block, uint32_t indexInBlock, ValueID id, const Value& value)
@@ -324,7 +367,10 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
 {
     switch (value.opcode) {
     case Opcode::Upcast:
-        need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()));
+        if (typeOf(value.valueOperand()).mayBeUnspecified())
+            need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()).withPrimitives(Primitive::Unspecified));
+        else
+            need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()));
         return;
     case Opcode::Expect:
         if (hasClassProofs(m_program.at(value.expectedType().predicted())))
@@ -344,9 +390,18 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
+    case Opcode::AssumeType: {
+        // Nobody tests storage for numbers alone where a type proves it. A literal is born with such storage only where it names it.
+        const ClassPart* part = m_program.at(value.provenType()).singleBuiltinClass();
+        if (!part || !part->contentsAreProven || !holdsOnlyNumbers(part->arrayStorage))
+            return;
+        const Value& array = m_function.at(analyses().sameObjectThroughCasts(value.valueOperand()).valueInFrontOfFacts());
+        if (array.opcode == Opcode::NewArray && array.arrayStorage() != part->arrayStorage)
+            fail(InternalErrorKind::StoredTypeMismatch, block, id, value.valueOperand().index());
+        return;
+    }
     case Opcode::Convert:
     case Opcode::NarrowByField:
-    case Opcode::AssumeType:
     case Opcode::CheckInitialized:
     case Opcode::RequireObjectCoercible:
     case Opcode::RequireObject:
@@ -414,11 +469,11 @@ void FunctionVerifier::verifyTerminatorOperation(BlockID block, const Terminator
         Vector<LayoutID, 16> members;
         for (LayoutSetID id : terminator.layoutSets()) {
             const LayoutSet& set = m_program.at(id);
-            if (!set.isComplete || set.members.isEmpty()) {
+            if (!set.all() || set.written().isEmpty()) {
                 fail(InternalErrorKind::PayloadOutOfRange, block);
                 return;
             }
-            members.appendVector(set.members);
+            members.appendVector(set.written());
         }
         if (hasDuplicates(members.span()))
             fail(InternalErrorKind::DuplicateListEntry, block);

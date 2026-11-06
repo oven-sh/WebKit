@@ -13,7 +13,7 @@ layout L1 kind=Instance name="D" constructor=f4
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
     v1 = String string="k"
-    v2 = Call v0, -, v1 @100
+    v2 = Call v0, -, v1 callNumber=100 @100
     v3 = NewClosure function=f1
     v4 = NewClass v3 layout=L0
     v5 = ToPropertyKey v2

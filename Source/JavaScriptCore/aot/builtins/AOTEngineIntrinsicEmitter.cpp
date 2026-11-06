@@ -10,6 +10,7 @@
 
 #include "AOTRuntimeValidation.h"
 #include "AOTSavedFrameEmitter.h"
+#include "AOTStubsPropertyKeys.h"
 #include "AOTThrowEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -23,6 +24,12 @@ void EngineIntrinsicEmitter::generateIsConstructor(const ValueContext& value)
 {
     Boxed operand = boxedOperand(value, value->valueOperand());
     defineAs(value, callWithoutSite<Condition>(RuntimeOperation::IsConstructor, { operand }), m_program.at(TypeTable::boolean));
+}
+
+void EngineIntrinsicEmitter::generateReadsIteratorOfListUnseen(const ValueContext& value)
+{
+    Boxed operand = boxedOperand(value, value->valueOperand());
+    defineAs(value, callWithoutSite<Condition>(RuntimeOperation::ReadsIteratorOfListUnseen, { operand }), m_program.at(TypeTable::boolean));
 }
 
 void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& value)
@@ -46,7 +53,7 @@ void EngineIntrinsicEmitter::generateGetByValWithThis(const ValueContext& value)
     Boxed base = boxedOperand(value, value->objectOperand());
     Boxed thisValue = boxedOperand(value, value->thisValueOperand());
     Boxed key = boxedOperand(value, value->propertyOperand());
-    defineAs(value, callOperation<Boxed>(value, RuntimeOperation::GetByValWithThis, { base, thisValue, key }), typeOf(value.id()));
+    defineAs(value, Boxed(callStub(value, getSuperByVal(), { base.value(), key.value(), thisValue.value() }).first), typeOf(value.id()));
 }
 
 void EngineIntrinsicEmitter::generateGetOwnProperty(const ValueContext& value)
@@ -60,7 +67,7 @@ void EngineIntrinsicEmitter::generateToLength(const ValueContext& value)
     Boxed operand = boxedOperand(value, value->valueOperand());
     defineAs(value, either<Boxed>(isInt32(operand), [&] {
         Word32 length = unboxInt32(operand);
-        return boxInt32(select(lessThan(length, word32(0)), word32(0), length));
+        return boxInt32(select(lessThan(length, 0), 0, length));
     }, [&] {
         return callOperation<Boxed>(value, RuntimeOperation::ToLength, { operand }, { .isOnRarePath = true });
     }), m_program.at(TypeTable::number));

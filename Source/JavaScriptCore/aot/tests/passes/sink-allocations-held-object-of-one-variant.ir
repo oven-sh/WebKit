@@ -29,6 +29,10 @@ function f0 name="sliceOfOneVariant" parameters=[{type=string}, {type=boolean}, 
 # CHECK: [[without]]() frequency=Rare:
 # CHECK-NEXT: = NewObject -, [[name]] layout=L0 fields=[0]
 # CHECK: [[with]]() frequency=Rare:
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: {{*}}: string = AssumeType {{*}}, [[filled1]] provenType=string
+# CHECK-NEXT: {{*}}: int[0, 2147483647] = AssumeType {{*}}, [[filled1]] provenType=int[0, 2147483647]
+# CHECK-NEXT: {{*}}: int[0, 2147483647] = AssumeType {{*}}, [[filled1]] provenType=int[0, 2147483647]
 # CHECK-NEXT: [[slice]]: string = Substring
 # CHECK-NEXT: = NewObject -, [[name]], [[slice]] layout=L0 fields=[0, 1]
 }

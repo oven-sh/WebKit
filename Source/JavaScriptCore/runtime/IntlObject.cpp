@@ -437,6 +437,9 @@ static void addScriptlessLocaleIfNeeded(LocaleSet& availableLocales, StringView 
     ASSERT(subtags[2].is8Bit() && subtags[2].containsOnlyASCII());
     buffer.append(subtags[2].span8());
 
+    // A static StringImpl is never freed, so do not create one that the set would not keep.
+    if (availableLocales.contains(String::fromLatin1(buffer.span())))
+        return;
     availableLocales.add(StringImpl::createStaticStringImpl(buffer.span()));
 }
 
@@ -447,13 +450,15 @@ const LocaleSet& intlAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = true;
+        constexpr bool isImmortal = false;
         int32_t count = uloc_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
             String locale = languageTagForLocaleID(uloc_getAvailable(i), isImmortal);
             if (locale.isEmpty())
                 continue;
-            availableLocales->add(locale);
+            // addScriptlessLocaleIfNeeded() may have added it already. A static StringImpl is never freed, so do not create one that the set would not keep.
+            if (!availableLocales->contains(locale))
+                availableLocales->add(StringImpl::createStaticStringImpl(locale.span8()));
             addScriptlessLocaleIfNeeded(availableLocales.get(), locale);
         }
     });
@@ -585,13 +590,14 @@ const LocaleSet& intlCollatorAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = true;
+        constexpr bool isImmortal = false;
         int32_t count = ucol_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
             String locale = languageTagForLocaleID(ucol_getAvailable(i), isImmortal);
             if (locale.isEmpty())
                 continue;
-            availableLocales->add(locale);
+            if (!availableLocales->contains(locale))
+                availableLocales->add(StringImpl::createStaticStringImpl(locale.span8()));
             addScriptlessLocaleIfNeeded(availableLocales.get(), locale);
         }
         IntlCollator::checkICULocaleInvariants(availableLocales.get());
@@ -606,13 +612,14 @@ const LocaleSet& intlSegmenterAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = true;
+        constexpr bool isImmortal = false;
         int32_t count = ubrk_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
             String locale = languageTagForLocaleID(ubrk_getAvailable(i), isImmortal);
             if (locale.isEmpty())
                 continue;
-            availableLocales->add(locale);
+            if (!availableLocales->contains(locale))
+                availableLocales->add(StringImpl::createStaticStringImpl(locale.span8()));
             addScriptlessLocaleIfNeeded(availableLocales.get(), locale);
         }
     });
@@ -1989,6 +1996,22 @@ static std::optional<String> canonicalizeTimeZoneNameFromICUTimeZone(String&& ti
     return std::make_optional(WTF::move(timeZoneName));
 }
 
+// tzdata 2026d turned these from links back into zones, and CLDR 49 followed. TC39-TG2 agreed that they should stay
+// non-primary identifiers, as they were with tzdata 2024b through 2026c.
+// https://github.com/tc39/ecma402/issues/1103
+static std::optional<ASCIILiteral> mapPOSIXStyleTimeZoneToPrimary(StringView timeZone)
+{
+    if (timeZone == "EST5EDT"_s)
+        return "America/New_York"_s;
+    if (timeZone == "CST6CDT"_s)
+        return "America/Chicago"_s;
+    if (timeZone == "MST7MDT"_s)
+        return "America/Denver"_s;
+    if (timeZone == "PST8PDT"_s)
+        return "America/Los_Angeles"_s;
+    return std::nullopt;
+}
+
 // Map a known-valid IANA time zone ID to its primary IANA zone identifier. On ICU 74+,
 // ucal_getIanaTimeZoneID honors the IANA "Backward" links and returns up-to-date
 // names (e.g. "Asia/Calcutta" -> "Asia/Kolkata", "America/Buenos_Aires" ->
@@ -1996,6 +2019,9 @@ static std::optional<String> canonicalizeTimeZoneNameFromICUTimeZone(String&& ti
 // form. UTC-equivalent zones are normalized to "UTC" per ECMA-402.
 String toPrimaryIanaTimeZoneIdentifier(std::span<const char16_t> timeZone)
 {
+    if (auto primary = mapPOSIXStyleTimeZoneToPrimary(StringView(timeZone)))
+        return *primary;
+
     Vector<char16_t, 32> buffer;
     // Bun on macOS links against system libicucore.A.dylib whose version is
     // determined by the macOS deployment target, not the bundled ICU 74 headers.
@@ -2221,8 +2247,13 @@ String TimeZone::toString() const
 
 String TimeZone::toICUString() const
 {
-    if (!isUTCOffset())
-        return intlTimeZoneIDToString(m_id);
+    if (!isUTCOffset()) {
+        auto& identifier = intlTimeZoneIDToString(m_id);
+        // Where ICU treats these as canonical zones, they have their own rules and no display names.
+        if (auto primary = mapPOSIXStyleTimeZoneToPrimary(identifier))
+            return *primary;
+        return identifier;
+    }
     // ICU expects offsets in "GMT[+-]HHMM" form, no colon, four digits.
     int64_t offset = m_offset;
     bool negative = offset < 0;

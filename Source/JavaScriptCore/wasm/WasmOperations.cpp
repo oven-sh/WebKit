@@ -856,6 +856,8 @@ static void doOSREntry(JSWebAssemblyInstance* instance, Probe::Context& context,
 #if CPU(ARM64E)
     // LR needs to be untagged since OSR entry function prologue will tag it with SP. This is similar to tail-call.
     context.gpr(ARM64Registers::lr) = std::bit_cast<UCPURegister>(untagCodePtrWithStackPointerForJITCall(context.gpr<void*>(ARM64Registers::lr), context.sp()));
+#elif ENABLE(RETURN_ADDRESS_SIGNING)
+    context.gpr(ARM64Registers::lr) = std::bit_cast<UCPURegister>(authenticateReturnAddress(context.gpr<void*>(ARM64Registers::lr), context.sp()));
 #endif
 #elif CPU(RISCV64)
     // move(framePointerRegister, stackPointerRegister);

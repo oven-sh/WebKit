@@ -18,7 +18,7 @@ struct TypeAlternative {
     TypeID contents;
 };
 
-inline TypeID expectationOf(const DeclaredType& declared) { return declared.expected().predicted(); }
+inline ExpectedType expectationOf(const DeclaredType& declared) { return declared.expected(); }
 Vector<TypeAlternative, 4> alternativesOf(const Program&, TypeID);
 
 } } } // namespace JSC::AOT::Typed

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCellFormat.h"
 #include "AOTClosure.h"
@@ -56,6 +57,13 @@ FieldAccessID Placement::findFieldAccess(PropertyKeyID key, LayoutSetID receiver
         return SlotAccessKey { access.key, access.receivers, access.isStore };
     });
     return position ? FieldAccessID(*position) : FieldAccessID();
+}
+
+uint32_t Placement::closureNumberOf(FunctionID entrypoint) const
+{
+    ClosureFunctionRange range = m_functions.closureFunctions;
+    RELEASE_ASSERT(entrypoint.index() >= range.first.index() && entrypoint.index() < range.end.index());
+    return entrypoint.index() - range.first.index() + range.numbersBelow;
 }
 
 std::optional<uint32_t> Placement::moduleBuiltinCellOffset(BuiltinID builtin, ModuleID module) const
@@ -176,7 +184,7 @@ static void countStatistics(const Placement& placement, const PlacedSites& sites
             ++countOf(shapes.testOf(tests[index].tested).form);
     }
 
-    statistics.count(StatisticID::Shapes, shapes.shapeCountInRange(1, shapes.numberOfShapes()));
+    statistics.count(StatisticID::Shapes, shapes.shapeCountInRange(shapes.shapesBelow() + 1, shapes.numberOfShapes()));
     statistics.count(StatisticID::ShapeTestNeverPasses, neverPasses);
     statistics.count(StatisticID::ShapeTestRange, ranges);
     statistics.count(StatisticID::ShapeTestBitSet, bitSets);
@@ -216,7 +224,7 @@ static String describeDisagreement(const Program& program, const SlotAccessKey& 
 {
     StringPrintStream out;
     out.print(access.isStore ? "a store"_s : "a read"_s);
-    out.print(" through "_s, program.types.at(access.receivers).members.size(), " layouts, which keep it in "_s, agreement.groups.size(), " places; "_s);
+    out.print(" through "_s, program.types.at(access.receivers).written().size(), " layouts, which keep it in "_s, agreement.groups.size(), " places; "_s);
     out.print(agreement.membersWithoutSlot.size(), " of them have no slot for it"_s);
     return out.toString();
 }
@@ -289,7 +297,7 @@ static FieldAccess createFieldAccess(const PlacementContext& context, TypeArena&
         row.slot.indexInLayoutRecord = std::nullopt;
     }
     row.extensionWord = group.extensionWord;
-    bool everyReceiverIsMember = group.members.size() == program.types.at(access.receivers).members.size();
+    bool everyReceiverIsMember = group.members.size() == program.types.at(access.receivers).written().size();
     row.membersWithField = everyReceiverIsMember ? access.receivers : arena.completeLayoutSet(group.members.span());
 
     TypeID contents;
@@ -407,18 +415,10 @@ static BitVector computeTypesNeededAtRunTime(const PlacementContext& context, co
         for (size_t index : sites.typesTestedByCode)
             addType(TypeID(index));
     }
-    // The tables name the type of a variable in two places: a static field of a class, and a binding that a direct eval sees.
+    // The tables name the type of a variable in one place: a static field of a class.
     for (const Layout& layout : program.layouts) {
         for (const StaticField& field : layout.staticFields)
             addType(program.at(field.variable).declared.written());
-    }
-    for (const EvalScope& scope : program.evalScopes) {
-        for (const EvalBinding& binding : scope.bindings) {
-            if (binding.variable)
-                addType(program.at(binding.variable).declared.written());
-            else if (binding.layout && binding.field && binding.kind != EvalBindingKind::MappedArgument)
-                addType(fieldAt(program, declarationOf(program, { binding.layout, *binding.field })).declared.written());
-        }
     }
     for (unsigned index = 0; index < program.layouts.size(); ++index) {
         LayoutID id(index);
@@ -429,7 +429,7 @@ static BitVector computeTypesNeededAtRunTime(const PlacementContext& context, co
     while (!worklist.isEmpty()) {
         const Type& type = program.at(worklist.takeLast());
         for (const ClassPart& part : type.classes) {
-            for (TypeID contents : part.contents)
+            for (TypeID contents : part.writtenContents)
                 addType(contents);
         }
         for (LayoutID layout : membersOf(program, type))
@@ -448,7 +448,7 @@ static void appendCellsOfClass(const BuiltinClass& builtinClass, Vector<BuiltinC
 
 static void sortAndRemoveKeysWithoutCell(const BuiltinTable& builtins, Vector<BuiltinCellKey>& cells)
 {
-    AOT::sort(cells, { }, &BuiltinCellKey::encoded);
+    AOT::sortInLine(cells, { }, &BuiltinCellKey::encoded);
     removeRepeatedElements(cells);
     cells.removeAllMatching([&](BuiltinCellKey key) {
         return !key.hasCell(builtins);
@@ -506,6 +506,11 @@ static void numberBuiltinCells(const PlacementContext& context, PlacedSites& sit
     cells.appendVector(eagerCells);
     for (const BuiltinUseRecord& use : context.inputs.flow.builtinUses())
         cells.append(BuiltinCellKey::object(BuiltinID(use.builtin)));
+    // Where the keys of a holder may be listed, the run time tells a member that compiled code has asked for from one that the program has read.
+    for (size_t index = 0, size = cells.size(); index < size; ++index) {
+        if (cells[index].kind() == BuiltinCellKey::Kind::Object && firstReadChangesListedKeys(builtins, context.inputs.flow, cells[index].builtin()))
+            cells.append(BuiltinCellKey::value(cells[index].builtin()));
+    }
     sortAndRemoveKeysWithoutCell(builtins, cells);
 
     numbering.eagerBuiltinCells = eagerCells.map([&](BuiltinCellKey key) {
@@ -532,7 +537,7 @@ static void numberKeyCells(const PlacementContext& context, const BodyScansForPl
     removeRepeatedElements(uses, [](const KeyCellUse& first, const KeyCellUse& later) {
         return first.key == later.key;
     });
-    AOT::sort(uses, { }, [](const KeyCellUse& use) {
+    AOT::sortInLine(uses, { }, [](const KeyCellUse& use) {
         return std::tuple(use.module, use.sourceFunction, use.key);
     });
 
@@ -679,9 +684,16 @@ Placement PlacementInSteps::numberWhatRepresentationsAsk(ProgramEditor& editor, 
                 },
                 [&] {
                     state.run("computeTypesNeededAtRunTime"_s, [&] {
-                        placement.m_typesNeededAtRunTime = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude);
-                        placement.m_typesWithCells = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Include);
-                        state.typesThatOrderShapes = sites.layoutsOutOfUse.isEmpty() ? placement.m_typesNeededAtRunTime : computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude, LayoutsOutOfUse::Include);
+                        runTasksInParallel(loops, {
+                            [&] { placement.m_typesNeededAtRunTime = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude); },
+                            [&] { placement.m_typesWithCells = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Include); },
+                            [&] {
+                                if (!sites.layoutsOutOfUse.isEmpty())
+                                    state.typesThatOrderShapes = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude, LayoutsOutOfUse::Include);
+                            },
+                        });
+                        if (sites.layoutsOutOfUse.isEmpty())
+                            state.typesThatOrderShapes = placement.m_typesNeededAtRunTime;
                     });
                 },
                 [&] { state.run("chooseShapeVariants"_s, [&] { state.variants = chooseShapeVariants(context, sites); }); },

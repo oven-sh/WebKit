@@ -48,7 +48,7 @@ static void printCodeShapes(PrintStream& out, FunctionPassContext& pass)
     for (size_t index = 0; index < pass.function.blocks.size(); ++index) {
         BlockID id(index);
         const Block& block = pass.function.at(id);
-        out.println("f"_s, pass.id.index(), " b"_s, index, " "_s, nameOf(block.shape), " heat="_s, FixedWidthDouble(pass.heatOf(id), 0, 2), " once="_s, static_cast<unsigned>(pass.runsAtMostOnce(id)), " recorded="_s, nameOf(block.frequency));
+        out.println("f"_s, pass.id.index(), " b"_s, index, " "_s, nameOf(block.shape), " heat="_s, FixedWidthDouble(pass.heatOf(id).predicted(), 0, 2), " once="_s, static_cast<unsigned>(pass.runsAtMostOnce(id)), " recorded="_s, nameOf(block.frequency.predicted()));
     }
 }
 

@@ -127,7 +127,7 @@ static void letAirEmitFrame(B3::Air::Policy& policy)
 }
 
 static constexpr bool RegisterPolicy::* allocatorRegisterFields[] = { &RegisterPolicy::chargesForCalleeSaves, &RegisterPolicy::discountsPreferredRegisterMoves, &RegisterPolicy::hintsTwoAddressOperands, &RegisterPolicy::usesSecondPreferredRegister, &RegisterPolicy::evictsHolderOfPreferredRegister };
-static constexpr bool LiveRangeSplitPolicy::* allocatorSplitFields[] = { &LiveRangeSplitPolicy::splitsAroundClobbersEarly, &LiveRangeSplitPolicy::spansStretchesOfClobbers, &LiveRangeSplitPolicy::limitsClobberSitesPerSplit, &LiveRangeSplitPolicy::splitsIntoClustersOverBlocks };
+static constexpr bool LiveRangeSplitPolicy::* allocatorSplitFields[] = { &LiveRangeSplitPolicy::splitsAroundClobbersEarly, &LiveRangeSplitPolicy::splitsAroundClobbersThatRead, &LiveRangeSplitPolicy::keepsUnusedTmpsOnStackThroughLoops, &LiveRangeSplitPolicy::spillsTmpsReadInPlaceFirst, &LiveRangeSplitPolicy::spansStretchesOfClobbers, &LiveRangeSplitPolicy::splitsIntoClustersOverBlocks };
 
 static void enableAllAllocatorFields(B3::Air::Policy& policy)
 {
@@ -373,6 +373,7 @@ void testPolicyDumpNamesEveryField()
     CHECK_POLICY_DUMP_NAMES(registers, hintsTwoAddressOperands, true);
     CHECK_POLICY_DUMP_NAMES(registers, usesSecondPreferredRegister, true);
     CHECK_POLICY_DUMP_NAMES(registers, evictsHolderOfPreferredRegister, true);
+    CHECK_POLICY_DUMP_NAMES(registers, patchpointsKeepOnlyLowerHalvesOfVectors, true);
     CHECK_POLICY_DUMP_NAMES(registers, unsavedCalleeSaves, calleeSaves);
     CHECK_POLICY_DUMP_NAMES(registers, savedByCallee, calleeSaves);
     CHECK_POLICY_DUMP_NAMES(registers, calleeSavesClobberedAtSuspensions, calleeSaves);
@@ -381,14 +382,17 @@ void testPolicyDumpNamesEveryField()
     CHECK_POLICY_DUMP_NAMES(splitting, splitMultiplier, 3.0);
     CHECK_POLICY_DUMP_NAMES(splitting, maxLoopFractionOfLiveRange, 0.5);
     CHECK_POLICY_DUMP_NAMES(splitting, splitsAroundClobbersEarly, true);
+    CHECK_POLICY_DUMP_NAMES(splitting, splitsAroundClobbersThatRead, true);
+    CHECK_POLICY_DUMP_NAMES(splitting, keepsUnusedTmpsOnStackThroughLoops, true);
+    CHECK_POLICY_DUMP_NAMES(splitting, spillsTmpsReadInPlaceFirst, true);
     CHECK_POLICY_DUMP_NAMES(splitting, spansStretchesOfClobbers, true);
-    CHECK_POLICY_DUMP_NAMES(splitting, limitsClobberSitesPerSplit, true);
     CHECK_POLICY_DUMP_NAMES(splitting, splitsIntoClustersOverBlocks, true);
     CHECK_POLICY_DUMP_NAMES(splitting, splitsAroundFrame, true);
     CHECK_POLICY_DUMP_NAMES(frame, coalescesSpillSlots, false);
     CHECK_POLICY_DUMP_NAMES(frame, emitsFrame, true);
     CHECK_POLICY_DUMP_NAMES(frame, shrinkWraps, true);
     CHECK_POLICY_DUMP_NAMES(frame, maxBytesAllocatedBeforeStackCheck, 4096);
+    CHECK_POLICY_DUMP_NAMES(frame, smallestFrameTestedAtSetup, 0);
     CHECK_POLICY_DUMP_NAMES(frame, registersClobberedByFrameSetup, calleeSaves);
     CHECK_POLICY_DUMP_NAMES(frame, mayPlaceSlotsAboveFrameRecord, true);
     CHECK_POLICY_DUMP_NAMES(frame, mayPushCalleeSaves, true);
@@ -890,6 +894,7 @@ void testStorePairOfCallArguments()
 #include "testair_bun_allocation.h"
 #include "testair_bun_entry_clobbers.h"
 #include "testair_bun_validate.h"
+#include "testair_bun_release.h"
 
 #if CPU(ARM64)
 #define RUN_BUN_TESTS_OF_CPU() do { \
@@ -937,4 +942,5 @@ void testStorePairOfCallArguments()
         RUN_BUN_ALLOCATION_TESTS(); \
         RUN_BUN_ENTRY_CLOBBER_TESTS(); \
         RUN_BUN_VALIDATE_TESTS(); \
+        RUN_BUN_RELEASE_TESTS(); \
     } while (false)

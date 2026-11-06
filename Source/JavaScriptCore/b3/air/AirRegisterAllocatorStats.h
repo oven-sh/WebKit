@@ -77,7 +77,9 @@ namespace JSC { namespace B3 { namespace Air {
     macro(numSplitAroundClobberRegisterMoves)   \
     macro(numSplitAroundClobberStackMoves)      \
     macro(numSplitAroundClobberStretches)       \
-    macro(numSplitAroundClobberSitesInStretches)
+    macro(numSplitAroundClobberSitesInStretches) \
+    macro(numColdUsesKeptThroughSecondSplit)    \
+    macro(numColdUsesKeptThroughSecondSplitBetweenDefs)
 
 class AirAllocateRegistersStats {
 public:

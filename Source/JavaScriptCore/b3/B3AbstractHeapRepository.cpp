@@ -62,6 +62,7 @@
 #include "KeyAtomStringCache.h"
 #include "NumericStrings.h"
 #include "RegExpObject.h"
+#include "BrandedStructure.h"
 #include "ScopedArguments.h"
 #include "ShadowChicken.h"
 #include "StructureArrayStorageInlines.h"

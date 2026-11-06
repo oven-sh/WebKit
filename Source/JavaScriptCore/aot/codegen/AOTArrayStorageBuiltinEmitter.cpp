@@ -78,7 +78,7 @@ void ArrayStorageBuiltinEmitter::generateArraySetLength(const InlineCall& call)
     branchUnless(belowOrEqual(sub(length, newLength), maxClearedElements), slowPath);
     Integer hole = integer(static_cast<int64_t>(arrayStorageForms.back().hole));
     for (const ArrayStorageForm& form : std::span(arrayStorageForms).first(arrayStorageForms.size() - 1))
-        hole = select(elements().hasWritableShape(mode, form), integer(static_cast<int64_t>(form.hole)), hole);
+        hole = select(elements().hasWritableShape(mode, form), static_cast<int64_t>(form.hole), hole);
     ValueFromBlock firstCleared = m_out.anchor(newLength.value());
     m_out.jump(clearLoop);
 
@@ -127,7 +127,7 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     }
 
     ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(call.receiver())).kind;
-    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(call.receiver()));
+    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(call.receiver())).predicted();
     ArrayStorageFormList forms = elements().candidateFormsFor(pushed, expected);
     // An array of any other kind than its element type declares takes the stub, which knows them all.
     if (hasArrayStorageForm(declared) && forms.size() > 1 && forms.first()->kind == declared)
@@ -222,9 +222,16 @@ void ArrayStorageBuiltinEmitter::pushSeveral(const InlineCall& call, CellPointer
 const Type& ArrayStorageBuiltinEmitter::typeOfArraysCreatedBy(const InlineCall& call)
 {
     if (const ValueContext* value = call.value()) {
-        std::optional<Use> use = analyses().useLists().singleUse(value->id());
-        if (use && use->kind == Use::Kind::Operand && m_function.at(use->user).opcode == Opcode::AssumeType)
-            return typeOf(use->user);
+        ValueID onlyCast;
+        for (const Use& use : analyses().useLists().usesOf(value->id())) {
+            if (use.kind == Use::Kind::Operand && m_function.at(use.user).operandKind(use.operandIndex) == OperandKind::Guard)
+                continue;
+            if (onlyCast || use.kind != Use::Kind::Operand || use.operandIndex || !isCast(m_function.at(use.user).opcode))
+                return resultTypeOf(call);
+            onlyCast = use.user;
+        }
+        if (onlyCast)
+            return typeOf(onlyCast);
     }
     return resultTypeOf(call);
 }
@@ -233,14 +240,20 @@ void ArrayStorageBuiltinEmitter::generateArrayWithLength(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments());
     ArrayAllocationEmitter allocation(generator());
-    LBasicBlock isNotInteger = newBlock();
-    Join<Integer> join(m_out);
-    join.add(elements().indexOrElse(call.argument(0), false, isNotInteger));
+    auto lengthAtRunTime = [&] {
+        LBasicBlock isNotInteger = newBlock();
+        Join<Integer> join(m_out);
+        join.add(elements().indexOrElse(call.argument(0), false, isNotInteger));
 
-    m_out.appendTo(isNotInteger);
-    join.add(integer(invalidArrayLength));
-    Integer length = join.finish();
-    finishInlineCall(call, allocation.newArrayOfHoles(call.context(), length, allocation.formAtAllocation(typeOfArraysCreatedBy(call))));
+        m_out.appendTo(isNotInteger);
+        join.add(integer(invalidArrayLength));
+        return join.finish();
+    };
+    const Type& given = typeOf(call.argument(0));
+    bool isWritten = given.isInteger() && given.integers.minimum == given.integers.maximum && Range::length().contains(given.integers.minimum);
+    Integer length = isWritten ? integer(given.integers.minimum) : lengthAtRunTime();
+    bool isDoneInPlace = call.value() && (*call.value())->isDoneInPlace();
+    finishInlineCall(call, allocation.newArrayOfHoles(call.context(), length, allocation.formAtAllocation(typeOfArraysCreatedBy(call)), isDoneInPlace ? BuiltinID() : functionOf(call.overload())));
 }
 
 void ArrayStorageBuiltinEmitter::generateArrayOf(const InlineCall& call)
@@ -278,7 +291,8 @@ void ArrayStorageBuiltinEmitter::generateArrayIsArray(const InlineCall& call)
     join.add(boolean(true));
 
     m_out.appendTo(isOtherCell);
-    branch(hasCellType(cell, ProxyObjectType), { rareEdge(missBlockOf(call)), normalEdge(isNotArray) });
+    Condition isProxy = hasCellType(cell, ProxyObjectType);
+    branch(isProxy, { rareEdge(missBlockOf(call)), normalEdge(isNotArray) });
 
     m_out.appendTo(isNotArray);
     join.add(boolean(false));

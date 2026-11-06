@@ -26,6 +26,8 @@ struct ClosureFunctionRange {
     FunctionID first;
     FunctionID end;
     uint32_t omittedWordCount { 0 };
+    // The closure numbers that the images below have given out: ClosureFunctionRangeData.
+    uint32_t numbersBelow { 0 };
 };
 
 JS_EXPORT_PRIVATE ClosureForm closureFormOf(const Program&, const FlowResults&, FunctionID);

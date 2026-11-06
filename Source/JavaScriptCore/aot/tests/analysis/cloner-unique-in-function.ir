@@ -1,0 +1,32 @@
+# The first suspension of a generator appears once in its body, so a block that holds it gets no copy. A yield may appear any number of times
+# FORM: Prepared
+# RUN: duplicate function=f0 region=b2 redirect=b1.0
+# RUN(YIELD): duplicate function=f1 region=b2 redirect=b1.0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="startsBehindMergePoint" flags=[IsGenerator, TakesCallee] parameters=[{type=boolean}] results=[{type=Generator}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    InitialYield
+    Return v1
+}
+# CHECK: check: UniqueInFunction
+# CHECK-NOT: function
+function f1 name="yieldsBehindMergePoint" flags=[IsGenerator, TakesCallee] parameters=[{type=boolean}] results=[{type=Generator}] {
+    InitialYield
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    v3 = Yield v1
+    v4 = ResultAt v3 index=0
+    Return v4
+}
+# YIELD: check: CanClone
+# YIELD: function f1
+# YIELD: b1():
+# YIELD-NEXT: Jump -> next [[copy]]()
+# YIELD: [[copy]]():
+# YIELD-NEXT: = Yield v1

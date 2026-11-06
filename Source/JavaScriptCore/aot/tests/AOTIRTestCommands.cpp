@@ -88,13 +88,19 @@ static void printRoundTripComparison(PrintStream& out, const String& firstText, 
 
 static void runRoundTrip(TestCommandContext& context)
 {
-    if (!context.arguments.empty()) {
-        printBadArgument(context.out, context.arguments.front());
+    std::span<const String> words = context.arguments;
+    PrintedFields fields = PrintedFields::All;
+    if (!words.empty() && words.front() == "wire"_s) {
+        fields = PrintedFields::WireOnly;
+        words = words.subspan(1);
+    }
+    if (!words.empty()) {
+        printBadArgument(context.out, words.front());
         return;
     }
 
     StringPrintStream first;
-    printProgram(first, *context.program);
+    printProgram(first, *context.program, fields);
     String firstText = first.toString();
     context.out.print(firstText);
 
@@ -104,7 +110,7 @@ static void runRoundTrip(TestCommandContext& context)
         return;
     }
     StringPrintStream second;
-    printProgram(second, *again);
+    printProgram(second, *again, fields);
     printRoundTripComparison(context.out, firstText, second.toString());
 }
 
@@ -143,11 +149,14 @@ static void runVerify(TestCommandContext& context)
     PlacedTableSizes unboundedSizes { UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
     VerifierInputs inputs { .placed = &unboundedSizes };
     for (const String& word : context.arguments) {
-        if (word != "optimizing"_s) {
+        if (word == "optimizing"_s)
+            inputs.isOptimizing = true;
+        else if (word == "casts-name-their-facts"_s)
+            inputs.castsNameTheirFacts = true;
+        else {
             printBadArgument(context.out, word);
             return;
         }
-        inputs.isOptimizing = true;
     }
 
     if (context.form == IRForm::AsRead)

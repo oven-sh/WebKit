@@ -1,0 +1,116 @@
+# for (const line of lines) { const c = JSON.parse(line); c[0] === "p" ? .. : .. }
+# Behind a test for Double storage `c[0] === "p"` is false by the type of the element. The read and the comparison go, and what is left names neither the list nor the guard.
+# In storage for any value the list may hold the text, so that code answers for no such list. Nothing in the copy would show it, so the copy is refused where it is made.
+# The same holds for the guard of another list, for a guard that proves something else or that comes over two edges, and for a value of a wider type than the value that it stands for.
+# FORM: Prepared
+# RUN: duplicate function=f0 region=b3 standIn=v2:v5 enter=b4.0
+# RUN: duplicate function=f1 region=b3 standIn=v2:v5 enter=b4.0
+# RUN: duplicate function=f2 region=b3 standIn=v3:v6 enter=b4.0
+# RUN: duplicate function=f3 region=b3 standIn=v2:v6 enter=b4.0
+# RUN: duplicate function=f4 region=b4 standIn=v3:v6 enter=b5.0
+# RUN: duplicate function=f5 region=b3 standIn=v2:v0 enter=b2.0
+# DIAGNOSTIC: CopyRunsBehindLess 1
+# CHECK: check: CanClone
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="listThatMayHoldAnything" parameters=[{type=Array<anything>}] results=[{type=boolean}] {
+    v1 = HasArrayStorage v0 arrayStorage=Double
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    Jump -> next b3()
+  b2():
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v3 -> taken b4(| 0), notTaken b5()
+  b3():
+    v4 = Boolean boolean=false
+    Return v4
+  b4(v5: guard):
+    Jump -> next b5()
+  b5():
+    v6 = Boolean boolean=true
+    Return v6
+}
+function f1 name="listOnlyExpectedToHoldNumbers" parameters=[{type=Array<number>}] results=[{type=boolean}] {
+    v1 = HasArrayStorage v0 arrayStorage=Double
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    Jump -> next b3()
+  b2():
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v3 -> taken b4(| 0), notTaken b5()
+  b3():
+    v4 = Boolean boolean=false
+    Return v4
+  b4(v5: guard):
+    Jump -> next b5()
+  b5():
+    v6 = Boolean boolean=true
+    Return v6
+}
+function f2 name="guardOfAnotherList" parameters=[{type=Array<anything>}, {type=Array<anything>}] results=[{type=boolean}] {
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard):
+    Jump -> next b3()
+  b2():
+    v4 = HasArrayStorage v1 arrayStorage=Double
+    Branch v4 -> taken b4(| 0), notTaken b5()
+  b3():
+    v5 = Boolean boolean=false
+    Return v5
+  b4(v6: guard):
+    Jump -> next b5()
+  b5():
+    v7 = Boolean boolean=true
+    Return v7
+}
+function f3 name="guardThatProvesSomethingElse" parameters=[{type=Array<anything>}] results=[{type=boolean}] {
+    v1 = HasArrayStorage v0 arrayStorage=Double
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    Jump -> next b3()
+  b2():
+    v3 = Integer integer=0
+    v4 = IsInBounds v0, v3
+    Branch v4 -> taken b4(| 0), notTaken b5()
+  b3():
+    v5 = Boolean boolean=false
+    Return v5
+  b4(v6: guard):
+    Jump -> next b5()
+  b5():
+    v7 = Boolean boolean=true
+    Return v7
+}
+function f4 name="guardThatComesOverTwoEdges" parameters=[{type=Array<anything>}, {type=boolean}] results=[{type=boolean}] {
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b6()
+  b1(v3: guard):
+    Branch v1 -> taken b4(), notTaken b2()
+  b2():
+    v4 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v4 -> taken b5(| 0), notTaken b3()
+  b3():
+    Jump -> next b5(v3)
+  b4():
+    v5 = Boolean boolean=false
+    Return v5
+  b5(v6: guard):
+    Jump -> next b6()
+  b6():
+    v7 = Boolean boolean=true
+    Return v7
+}
+function f5 name="valueOfWiderType" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Jump -> next b3()
+  b2():
+    Jump -> next b4()
+  b3():
+    Return v2
+  b4():
+    v3 = Undefined
+    Return v3
+}

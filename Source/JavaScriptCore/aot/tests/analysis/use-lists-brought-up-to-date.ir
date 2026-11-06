@@ -1,4 +1,4 @@
-# Use lists that are held when the builder edits a function are told that it has touched a block, and are made anew for the next who asks. A checking build compares them with the function
+# Use lists that are held when the builder edits a long function read the blocks that have changed again for the next who asks, and keep the rest. A checking build compares them with the function
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN(ORDER): repair function=f0 redirect=b2.1:b1 use-lists
@@ -31,6 +31,70 @@ function f0 name="lists" parameters=[{type=boolean}, {type=number}] results=[{ty
     Return v8
   b4():
     v10 = Negate v2
+    v11 = Negate v10
+    v12 = Negate v11
+    v13 = Negate v12
+    v14 = Negate v13
+    v15 = Negate v14
+    v16 = Negate v15
+    v17 = Negate v16
+    v18 = Negate v17
+    v19 = Negate v18
+    v20 = Negate v19
+    v21 = Negate v20
+    v22 = Negate v21
+    v23 = Negate v22
+    v24 = Negate v23
+    v25 = Negate v24
+    v26 = Negate v25
+    v27 = Negate v26
+    v28 = Negate v27
+    v29 = Negate v28
+    v30 = Negate v29
+    v31 = Negate v30
+    v32 = Negate v31
+    v33 = Negate v32
+    v34 = Negate v33
+    v35 = Negate v34
+    v36 = Negate v35
+    v37 = Negate v36
+    v38 = Negate v37
+    v39 = Negate v38
+    v40 = Negate v39
+    v41 = Negate v40
+    v42 = Negate v41
+    v43 = Negate v42
+    v44 = Negate v43
+    v45 = Negate v44
+    v46 = Negate v45
+    v47 = Negate v46
+    v48 = Negate v47
+    v49 = Negate v48
+    v50 = Negate v49
+    v51 = Negate v50
+    v52 = Negate v51
+    v53 = Negate v52
+    v54 = Negate v53
+    v55 = Negate v54
+    v56 = Negate v55
+    v57 = Negate v56
+    v58 = Negate v57
+    v59 = Negate v58
+    v60 = Negate v59
+    v61 = Negate v60
+    v62 = Negate v61
+    v63 = Negate v62
+    v64 = Negate v63
+    v65 = Negate v64
+    v66 = Negate v65
+    v67 = Negate v66
+    v68 = Negate v67
+    v69 = Negate v68
+    v70 = Negate v69
+    v71 = Negate v70
+    v72 = Negate v71
+    v73 = Negate v72
+    v74 = Negate v73
     Return v10
 }
 # The edge puts b2 in front of b1, and nothing reaches b4 any more.
@@ -38,7 +102,7 @@ function f0 name="lists" parameters=[{type=boolean}, {type=number}] results=[{ty
 # ORDER: use-lists:
 # ORDER: v1 uses: [v2(0) v2(1) v5(1) v3(1) b1.0(1)]
 # ORDER: v2 uses: [v5(0) b2.0(1) v3(0) v4(0) v8(1)]
-# ORDER: detached: [v10]
+# ORDER: detached: [v10 v11 v12 v13 v14 v15 v16 v17 v18 v19 v20 v21 v22 v23 v24 v25 v26 v27 v28 v29 v30 v31 v32 v33 v34 v35 v36 v37 v38 v39 v40 v41 v42 v43 v44 v45 v46 v47 v48 v49 v50 v51 v52 v53 v54 v55 v56 v57 v58 v59 v60 v61 v62 v63 v64 v65 v66 v67 v68 v69 v70 v71 v72 v73 v74]
 # Blocks that nobody has touched change places, the order becomes b0 b2 b4 b1 b3.
 # SWAP: Branch v0 -> taken b2(), notTaken b1()
 # SWAP: use-lists:
@@ -57,25 +121,25 @@ function f0 name="lists" parameters=[{type=boolean}, {type=number}] results=[{ty
 # JUMP: use-lists:
 # JUMP: v0 uses: [b0.terminator(0)]
 # JUMP: v2 uses: [v3(0) v4(0) v5(0) b2.0(1) v8(1)]
-# JUMP: detached: [v10]
+# JUMP: detached: [v10 v11 v12 v13 v14 v15 v16 v17 v18 v19 v20 v21 v22 v23 v24 v25 v26 v27 v28 v29 v30 v31 v32 v33 v34 v35 v36 v37 v38 v39 v40 v41 v42 v43 v44 v45 v46 v47 v48 v49 v50 v51 v52 v53 v54 v55 v56 v57 v58 v59 v60 v61 v62 v63 v64 v65 v66 v67 v68 v69 v70 v71 v72 v73 v74]
 # INSERT: use-lists:
 # INSERT: v3 location: b1 value 1
 # INSERT: v9 location: b3 value 2
-# INSERT: v11 location: b1 value 0
-# INSERT: v12 location: b3 value 1
+# INSERT: v75 location: b1 value 0
+# INSERT: v76 location: b3 value 1
 # REPLACE: use-lists:
 # REPLACE: v2 uses: [v3(0) v4(0) v5(0) b2.0(0) b2.0(1) v8(1) v10(0)]
 # REPLACE: v5 uses: []
 # ADD: use-lists:
 # ADD: v1 uses: [v2(0) v2(1) v3(1) b1.0(1) b1.0(2) v5(1)]
 # ADD: v2 uses: [v3(0) v4(0) v5(0) b2.0(1) b2.0(2) v8(1) v10(0)]
-# ADD: v11 location: b3 parameter 2
+# ADD: v75 location: b3 parameter 2
 # REMOVE: use-lists:
 # REMOVE: v1 uses: [v2(0) v2(1) v3(1) v5(1)]
 # REMOVE: v2 uses: [v3(0) v4(0) v5(0) v8(1) v10(0)]
 # REMOVE: detached: [v7]
 # EXPAND: use-lists:
-# EXPAND: v2 uses: [v3(0) v4(0) v5(0) b2.0(1) v11(1) v10(0)]
+# EXPAND: v2 uses: [v3(0) v4(0) v5(0) b2.0(1) v75(1) v10(0)]
 # EXPAND: v8 location: b5 parameter 0
 # EXPAND: v8 uses: [v9(0) b5.terminator(0)]
 function f1 name="handler" parameters=[{type=anything}, {type=number}] results=[{type=number}] {

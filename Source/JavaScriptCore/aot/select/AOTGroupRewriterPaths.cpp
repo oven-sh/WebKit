@@ -46,7 +46,7 @@ static void unfuseBranchOnPath(Terminator& terminator, ValueID condition)
         changeBranchKind(terminator, TerminatorKind::Branch);
 }
 
-BlockFrequency GroupRewriter::slowPathFrequency() const
+Expected<BlockFrequency> GroupRewriter::slowPathFrequency() const
 {
     return BlockFrequency::Rare;
 }
@@ -79,7 +79,7 @@ void GroupRewriter::emitTestAndBranchAsValue()
 {
     Value test = function().at(m_group.root);
     RELEASE_ASSERT(branchesOf(test.opcode) != Branches::No);
-    BlockFrequency frequency = function().at(state().block).frequency;
+    Expected<BlockFrequency> frequency = function().at(state().block).frequency;
 
     beginArms();
     ValueID condition = builder().append(WTF::move(test));
@@ -215,19 +215,34 @@ void GroupRewriter::emitSlowPath(ValueID succeeded)
     builder().endExpansion(*m_expansion, results.span());
 }
 
-void GroupRewriter::emitTwoWay(Terminator&& fast)
+void GroupRewriter::emitTwoWay(Terminator&& fast, Vector<Value, 1>&& inFront, Vector<Value, 1>&& behindFastPath)
 {
     RELEASE_ASSERT(m_group.hasSlowPath && fast.kind == TerminatorKind::TryCallInline && fast.targets.isEmpty());
     RELEASE_ASSERT(!hasMemberUsedOutside(m_group));
     RELEASE_ASSERT(hasResult(m_originals.last()) && !numberOfResultsOf(m_session.m_context.program(), function(), m_originals.last()));
 
     expandRoot();
+    for (Value& value : inFront)
+        builder().append(WTF::move(value));
     BlockID head = builder().currentBlock();
     BlockID miss = addArm(slowPathFrequency());
-    fast.targets.append(Target { m_expansion->continuation, { }, { } });
+    BlockID done = m_expansion->continuation;
+    ValueID answer;
+    if (!behindFastPath.isEmpty()) {
+        done = addArm(function().at(head).frequency);
+        answer = builder().addParameter(done, m_originals.last().type);
+    }
+    fast.targets.append(Target { done, { }, { } });
     fast.targets.append(Target { miss, { }, { } });
     builder().emitTerminator(WTF::move(fast));
     m_blocksWithCreatedTerminators.append(head);
+
+    if (answer) {
+        builder().moveToEndOf(done);
+        for (Value& value : behindFastPath)
+            builder().append(WTF::move(value));
+        endArm(answer);
+    }
 
     builder().moveToEndOf(miss);
     endArm(appendOriginals());
@@ -257,7 +272,7 @@ void GroupRewriter::beginArms(ValueID follower, bool followerIsOnlyReturned)
     std::optional<Terminator> duplicatedTerminator;
     if (followerIsOnlyReturned)
         duplicatedTerminator = entered.terminator;
-    BlockFrequency frequency = entered.frequency;
+    Expected<BlockFrequency> frequency = entered.frequency;
     ValueID handedOver = entered.parameters[0];
     Vector<ValueID, 2> earlierValues(entered.values.span().first(index));
     Vector<Value, 3> originals;
@@ -271,7 +286,7 @@ void GroupRewriter::beginArms(ValueID follower, bool followerIsOnlyReturned)
     builder().moveToEndOf(head);
 }
 
-BlockID GroupRewriter::addArm(BlockFrequency frequency)
+BlockID GroupRewriter::addArm(Expected<BlockFrequency> frequency)
 {
     RELEASE_ASSERT(m_expansion);
     return builder().addBlock(frequency);

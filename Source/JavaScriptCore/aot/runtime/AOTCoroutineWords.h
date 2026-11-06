@@ -21,6 +21,8 @@ class AsyncGeneratorStepInProgress;
 
 struct CoroutineWords {
     uint64_t savedFrameHeader;
+    // Of a generator that inherits from %GeneratorPrototype% itself.
+    uint64_t plainGeneratorHeader;
     uint32_t emptyGeneratorPrototypeStructureID;
     uint32_t emptyAsyncGeneratorPrototypeStructureID;
     // The waiter of an async function that has just finished and returns next. It runs under waiterAsyncContext, which it captured when it was suspended.

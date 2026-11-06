@@ -1,0 +1,120 @@
+# A property that cannot be configured takes a definition only of the value, the getter and the setter that it has. So Object.defineProperty() tells two closures of one function apart,
+# by whatever way its descriptor comes to them: each of them is made.
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,AllocateInFrames
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0
+layout L1 fields=[{key="set" declared={type=anything}}]
+layout L2 fields=[{key="held" declared={type=anything}}]
+variable g0 name="defined" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+# REPEAT: i = 1..5
+    v%(i*2+1) = CallDirect function=f%(i)
+    v%(i*2+2) = CallDirect function=f%(i)
+# END REPEAT
+    Return
+}
+
+function f1 name="writesItIntoTheDescriptor" results=[{type=anything}] {
+    v0 = NewClosure function=f10
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = GetModuleVariable variable=g0
+    v4 = String string="a"
+    v5 = NewObject layout=L1
+    PropSet v5, v0 key="set"
+    v7 = FinishObject v5
+    v8 = Call v2, v1, v3, v4, v7
+    Return
+# CHECK-NOT: isHeldByClosureTable
+}
+
+function f2 name="returnsItFromAGetterOfTheDescriptor" results=[{type=anything}] {
+    v0 = NewClosure function=f11
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = GetModuleVariable variable=g0
+    v4 = String string="b"
+    v5 = NewObject layout=L1
+    v6 = NewClosure v0 function=f20
+    DefineGetter v5, v6 key="set"
+    v8 = FinishObject v5
+    v9 = Call v2, v1, v3, v4, v8
+    Return
+# CHECK-NOT: isHeldByClosureTable
+}
+
+function f3 name="writesItUnderAKeyThatIsComputed" results=[{type=anything}] {
+    v0 = NewClosure function=f12
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = GetModuleVariable variable=g0
+    v4 = String string="c"
+    v5 = NewObject layout=L0
+    v6 = FinishObject v5
+    v7 = CallDirect function=f21
+    ElemSet v6, v7, v0
+    v9 = Call v2, v1, v3, v4, v6
+    Return
+# CHECK-NOT: isHeldByClosureTable
+}
+
+function f4 name="writesItIntoTheObjectAboveTheDescriptor" results=[{type=anything}] {
+    v0 = NewClosure function=f13
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = GetModuleVariable variable=g0
+    v4 = String string="d"
+    v5 = NewObject layout=L1
+    PropSet v5, v0 key="set"
+    v7 = FinishObject v5
+    v8 = Builtin builtin=ObjectCreate
+    v9 = Call v8, v1, v7
+    v10 = Call v2, v1, v3, v4, v9
+    Return
+# CHECK-NOT: isHeldByClosureTable
+}
+
+function f5 name="keepsItInAnObjectThatIsNoDescriptor" results=[{type=anything}] {
+    v0 = NewClosure function=f14
+    v1 = NewObject layout=L2
+    PropSet v1, v0 key="held"
+    v3 = FinishObject v1
+    v4 = PropGet v3 key="held"
+    v5 = Call v4, -
+    Return
+# CHECK: = NewClosure function=f14 {{*}}[isHeldByClosureTable]
+}
+
+# REPEAT: i = 6..9
+function f%(i) name="unused%(i)" results=[{type=anything}] {
+    Return
+}
+# END REPEAT
+# REPEAT: i = 10..14
+function f%(i) name="made%(i)" kind=Arrow results=[{type=anything}] {
+    Return
+}
+# END REPEAT
+# REPEAT: i = 15..19
+function f%(i) name="unused%(i)" results=[{type=anything}] {
+    Return
+}
+# END REPEAT
+function f20 name="set" kind=Getter captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f21 name="key" results=[{type=anything}] {
+    v0 = String string="se"
+    v1 = String string="t"
+    v2 = Add v0, v1
+    Return v2
+}

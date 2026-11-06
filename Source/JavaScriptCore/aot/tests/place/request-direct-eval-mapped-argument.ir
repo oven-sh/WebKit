@@ -26,5 +26,5 @@ function f1 name="sloppy" flags=[IsSloppy, HasThis, TakesCallee, HasArgumentCoun
 # CHECK-NOT: binding
 
 # PLACED: request @4 DirectEval e0 m0
-# PLACED-NEXT: requests size=52 shared=0
+# PLACED-NEXT: requests size=48 shared=0
 # PLACED: = DirectEval v3, v0, -, v6 evalScope=e0 request=4

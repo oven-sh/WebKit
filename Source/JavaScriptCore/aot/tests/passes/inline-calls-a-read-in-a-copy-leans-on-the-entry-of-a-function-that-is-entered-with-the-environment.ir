@@ -1,0 +1,129 @@
+# A field that is stored before any function that captures the environment can run is stored wherever a function is entered with the environment, and stays stored. Such a function holds the copy of a reader: the read
+# in the copy leans on the entry of the function that holds it, as that function's own reads do, so it keeps its type and may go wherever they may. Not so a field that is only known to be stored where its readers are
+# entered, a read off an environment that the function gets hold of later, or the copy of a callee that is only predicted.
+# A function that is declared beside the holder lies in a field of the environment that it captures: what its closure captures is the holder's own environment.
+# Copied on into a third function, such a read leans on where that copy begins
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="text" declared={type=string} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead isStoredBeforeCapturersRun=true}}}, {key="late" declared={type=string} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}}}, {key="reads" declared={type=f0} flags=[IsImmutable] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation holdsClosureOverOwnEnvironment=true}}}, {key="other" declared={type=f0} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation}}}]
+
+function f0 name="reads" captures=[{type=env L0}] results=[{type=number}] {
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = GetStringLength v1
+    Return v2
+}
+function f1 name="readsLate" captures=[{type=env L0}] results=[{type=number}] {
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    v2 = GetStringLength v1
+    Return v2
+}
+
+function f2 name="isEnteredWithTheEnvironment" captures=[{type=env L0}] parameters=[{type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f0 [isAlwaysInlined]
+    Return v2
+  b2():
+    Return
+}
+# CHECK-LABEL: name="isEnteredWithTheEnvironment"
+# CHECK-NOT: AssumeType
+# CHECK: b1():
+# CHECK: [[text]]: string = GetEnvironmentField {{*}} layout=L0 [leansOnEntryOfBody]
+# CHECK-NEXT: = GetStringLength [[text]]
+
+function f3 name="holdsReaderOfWhatIsStoredLate" captures=[{type=env L0}] parameters=[{type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f1 [isAlwaysInlined]
+    Return v2
+  b2():
+    Return
+}
+# CHECK-LABEL: name="holdsReaderOfWhatIsStoredLate"
+# CHECK: [[enteredLate]]: fact = Entered function=f1
+# CHECK: [[wordLate]]: string|unspecified = GetEnvironmentField {{*}} layout=L0 field=1 [mayPrecedeItsStore]
+# CHECK-NEXT: = AssumeType [[wordLate]], [[enteredLate]] provenType=string
+
+function f4 name="getsHoldOfAnotherEnvironment" captures=[{type=env L0}] parameters=[{type=f0}, {type=boolean}] results=[{type=anything}] {
+    v3 = GetCapture v1 function=f0 index=0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallDirect v3 function=f0 [isAlwaysInlined]
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: name="getsHoldOfAnotherEnvironment"
+# CHECK: [[enteredAnother]]: fact = Entered function=f0
+# CHECK: [[wordAnother]]: string|unspecified = GetEnvironmentField {{*}} layout=L0 [mayPrecedeItsStore]
+# CHECK-NEXT: = AssumeType [[wordAnother]], [[enteredAnother]] provenType=string
+
+function f5 name="holdsCalleeThatIsPredicted" captures=[{type=env L0}] parameters=[{type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f0 [isAlwaysInlined, calleeIsPredicted]
+    Return v2
+  b2():
+    Return
+}
+# CHECK-LABEL: name="holdsCalleeThatIsPredicted"
+# CHECK: [[enteredPredicted]]: fact = Entered function=f0
+# CHECK: [[wordPredicted]]: string|unspecified = GetEnvironmentField {{*}} layout=L0 [mayPrecedeItsStore]
+# CHECK-NEXT: = AssumeType [[wordPredicted]], [[enteredPredicted]] provenType=string
+
+function f6 name="holdsTheHolder" parameters=[{type=f9}, {type=boolean}] results=[{type=anything}] {
+    v2 = GetCapture v0 function=f9 index=0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v2 function=f9 [isAlwaysInlined]
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: name="holdsTheHolder"
+# CHECK-NOT: leansOnEntryOfBody
+# CHECK: [[enteredHolder]]: fact = Entered function=f9
+# CHECK: [[wordOfHolder]]: string|unspecified = GetEnvironmentField {{*}} layout=L0 [mayPrecedeItsStore]
+# CHECK-NEXT: [[textOfHolder]]: string = AssumeType [[wordOfHolder]], [[enteredHolder]] provenType=string
+# CHECK-NEXT: = GetStringLength [[textOfHolder]]
+
+function f7 name="callsTheFunctionDeclaredBesideIt" captures=[{type=env L0}] parameters=[{type=boolean}] results=[{type=anything}] {
+    v2 = GetEnvironmentField v0 layout=L0 field=2
+    v3 = GetCapture v2 function=f0 index=0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallDirect v3 function=f0 [isAlwaysInlined]
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: name="callsTheFunctionDeclaredBesideIt"
+# CHECK-NOT: AssumeType
+# CHECK: b1():
+# CHECK: [[beside]]: string = GetEnvironmentField {{*}} layout=L0 [leansOnEntryOfBody]
+# CHECK-NEXT: = GetStringLength [[beside]]
+
+function f8 name="callsWhatSomebodyStoredInTheField" captures=[{type=env L0}] parameters=[{type=boolean}] results=[{type=anything}] {
+    v2 = GetEnvironmentField v0 layout=L0 field=3
+    v3 = GetCapture v2 function=f0 index=0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallDirect v3 function=f0 [isAlwaysInlined]
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: name="callsWhatSomebodyStoredInTheField"
+# CHECK: [[enteredOther]]: fact = Entered function=f0
+# CHECK: [[wordOther]]: string|unspecified = GetEnvironmentField {{*}} layout=L0 [mayPrecedeItsStore]
+# CHECK-NEXT: = AssumeType [[wordOther]], [[enteredOther]] provenType=string
+
+function f9 name="holdsACopy" captures=[{type=env L0}] results=[{type=number}] inlineFrames=[{}, {callee=f0 module=m0}] {
+    v1 = GetEnvironmentField v0 layout=L0 field=0 [leansOnEntryOfBody] @0:1
+    v2 = GetStringLength v1 @0:1
+    Return v2
+}

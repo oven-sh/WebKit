@@ -28,6 +28,7 @@
 
 #include "HeapIterationScope.h"
 #include "HeapSnapshot.h"
+#include "MarkedBlockInlines.h"
 #include "SubspaceInlines.h"
 #include "SymbolTable.h"
 #include "VM.h"

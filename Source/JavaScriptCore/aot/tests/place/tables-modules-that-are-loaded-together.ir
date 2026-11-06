@@ -1,0 +1,36 @@
+# The ES modules of a program stand in groups: whatever has loaded one module of a group has loaded all of them. What the entry point imports is one group (m0, m1). Each import() of the entry point
+# begins a load: m2 brings in m3, and m4 nothing of its own. Both lead to m5 and through it to m6: a group that is loaded with either. The import() of m7 stands in m3, which runs only when m2 has
+# been loaded: so m6, which m7 imports too, is loaded by then, and m7 with m8 is a group that brings in no other.
+# LIBRARY: own
+# RUN: tables
+# RUN(ROWS): tables modules
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/with-main.ts" displayPath="with-main.ts"
+module m2 path="/left.ts" displayPath="left.ts" requests=[{target=m3 completes=true}]
+module m3 path="/only-left.ts" displayPath="only-left.ts" body=f1 requests=[{target=m5 completes=true}, {target=m1 completes=true}]
+module m4 path="/right.ts" displayPath="right.ts" requests=[{target=m5 completes=true}]
+module m5 path="/shared.ts" displayPath="shared.ts" requests=[{target=m6 completes=true}]
+module m6 path="/below-shared.ts" displayPath="below-shared.ts"
+module m7 path="/late.ts" displayPath="late.ts" requests=[{target=m6 completes=true}, {target=m8 completes=true}]
+module m8 path="/only-late.ts" displayPath="only-late.ts"
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = ImportModule module=m2 referrer=m0
+    v1 = ImportModule module=m4 referrer=m0
+    Return
+}
+function f1 name="only-left" module=m3 kind=Module results=[{type=anything}] {
+    v0 = ImportModule module=m7 referrer=m3
+    Return
+}
+
+# CHECK: groupsLoadedWithGroups 4 8
+
+# ROWS: loadedTogether module=m1 head=m0
+# ROWS-NEXT: groupsLoadedWith head=m2 heads=[m5]
+# ROWS-NEXT: loadedTogether module=m3 head=m2
+# ROWS-NEXT: groupsLoadedWith head=m4 heads=[m5]
+# ROWS-NEXT: loadedTogether module=m6 head=m5
+# ROWS-NEXT: loadedTogether module=m8 head=m7

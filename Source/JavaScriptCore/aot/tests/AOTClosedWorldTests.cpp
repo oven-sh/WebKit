@@ -22,13 +22,13 @@ using Flags = OptionSet<ImageFlag>;
 
 static constexpr Flags closed { };
 // Text may ask process.getBuiltinModule for a module of the library under a name that nobody knows. No file of the program answers to such a name: closed-world/modules/evaluated-text-finds-no-module-by-name.
-static constexpr Flags runsText { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName };
+static constexpr Flags runsText { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::RunsUnreadCode };
 // A module that stays outside the image has require and every module of the library. It sees no module object of the program and replaces no answer of the loader.
-static constexpr Flags runsModuleFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
-static constexpr Flags findsModulesByName { ImageFlag::LoadsModulesByName };
-static constexpr Flags loadsCodeFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LoadsCodeOutsideImage };
+static constexpr Flags runsModuleFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::RunsUnreadCode };
+static constexpr Flags findsModulesByName { ImageFlag::LoadsModulesByName, ImageFlag::FindsDataFilesByName };
+static constexpr Flags loadsCodeFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LoadsCodeOutsideImage, ImageFlag::FindsDataFilesByName, ImageFlag::RunsUnreadCode };
 static constexpr Flags showsWaysBetweenModuleObjects { ImageFlag::ShowsWaysBetweenModuleObjects };
-static constexpr Flags open { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
+static constexpr Flags open { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName, ImageFlag::StoresPathOfMainModule, ImageFlag::RunsUnreadCode };
 
 #define AOT_APPLY_EVALUATOR_TEXT R"IR(function f1 name="apply" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -475,7 +475,6 @@ static void testReachableEvaluatorLeavesTheProgramClosed()
     AOT_TEST_CHECK(flagsOf(callsUnknownFunction) == closed);
     AOT_TEST_CHECK(flagsOf(evaluatorsFromUnknownCode) == closed);
     AOT_TEST_CHECK(flagsOf(evaluatorUnderUnknownKey) == closed);
-    AOT_TEST_CHECK(flagsOf(evaluatorComesBackFromUnknownCode) == closed);
     AOT_TEST_CHECK(flagsOf(evaluatorUnderUnknownKeyOfGlobalObject) == closed);
 }
 
@@ -486,6 +485,7 @@ static void testCallThatStartsUnseenCodeAdmitsNothingElse()
     AOT_TEST_CHECK(flagsOf(installsPlugin) == runsText);
     AOT_TEST_CHECK(flagsOf(evaluatesTextBesideOtherModule) == runsText);
     AOT_TEST_CHECK(flagsOf(unseenCodeMayCallLoader) == runsText);
+    AOT_TEST_CHECK(flagsOf(evaluatorComesBackFromUnknownCode) == runsText);
 }
 
 static void testUncompiledModuleOpensTheProgram()
@@ -533,13 +533,14 @@ static void testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown()
 {
     AOT_TEST_CHECK(flagsOf(takesMainModuleAsFrontEndSays) == showsWaysBetweenModuleObjects);
     AOT_TEST_CHECK(flagsOf(takesMainModuleBehindFrontEnd) == closed);
-    AOT_TEST_CHECK(flagsOf(takesMainModuleAsFrontEndSays, { "disable=flow-results"_s }) == (open | showsWaysBetweenModuleObjects));
+    AOT_TEST_CHECK(flagsOf(takesMainModuleAsFrontEndSays, { "disable=flow-results"_s, "exclude=CodeOutsideImage"_s }) == (open | showsWaysBetweenModuleObjects));
 }
 
 static void testExcludedTextLeavesTheProgramClosed()
 {
     AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "exclude=EvaluatedText"_s }) == closed);
     AOT_TEST_CHECK(flagsOf(installsPlugin, { "exclude=EvaluatedText"_s }) == runsText);
+    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "exclude=HostEvaluatedText"_s }) == runsText);
 }
 
 static void testLossesOfTheAnalysisAdmitNothing()
@@ -550,7 +551,9 @@ static void testLossesOfTheAnalysisAdmitNothing()
 
 static void testProgramThatWasNotAnalyzedIsOpen()
 {
-    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s }) == open);
+    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s, "exclude=CodeOutsideImage"_s }) == open);
+    // Any load may name a file outside the image, so only the options say whether one is loaded.
+    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s }) == (runsOnlyCodeOfImage ? open : open | Flags { ImageFlag::LoadsCodeOutsideImage }));
 }
 
 static void testObfuscationIsAnotherFlag()
@@ -579,9 +582,9 @@ static void testEvaluatorUnderUnknownKeyIsRefused()
     checkShellOutput(evaluatorUnderUnknownKey, refusal(1), "globalThis.text = '1 + 1'; globalThis.holder = globalThis; globalThis.name = 'ev' + 'al';"_s);
 }
 
-static void testEvaluatorThatComesBackFromUnknownCodeIsRefused()
+static void testEvaluatorThatComesBackFromUnknownCodeRuns()
 {
-    checkShellOutput(evaluatorComesBackFromUnknownCode, refusal(1), "globalThis.text = '1 + 1'; globalThis.keep = value => { globalThis.kept = value; };"_s);
+    checkShellOutput(evaluatorComesBackFromUnknownCode, "number\n"_s, "globalThis.text = '1 + 1'; globalThis.keep = value => { globalThis.kept = value; };"_s);
 }
 
 static void testEveryRealmOfClosedProgramRefusesEvaluation()
@@ -675,7 +678,7 @@ std::span<const NativeTest> closedWorldTests()
         { "closed-world/evaluation/program-that-evaluates-text-keeps-every-evaluator"_s, testProgramThatEvaluatesTextKeepsEveryEvaluator },
         { "closed-world/evaluation/option-keeps-every-evaluator"_s, testOptionKeepsEveryEvaluator },
         { "closed-world/evaluation/evaluator-under-unknown-key-is-refused"_s, testEvaluatorUnderUnknownKeyIsRefused },
-        { "closed-world/evaluation/evaluator-that-comes-back-from-unknown-code-is-refused"_s, testEvaluatorThatComesBackFromUnknownCodeIsRefused },
+        { "closed-world/evaluation/evaluator-that-comes-back-from-unknown-code-runs"_s, testEvaluatorThatComesBackFromUnknownCodeRuns },
         { "closed-world/evaluation/every-realm-of-closed-program-refuses-evaluation"_s, testEveryRealmOfClosedProgramRefusesEvaluation },
         { "closed-world/declarations/script-shadows-no-constant-of-compiled-code"_s, testScriptShadowsNoConstantOfCompiledCode },
         { "closed-world/modules/closed-program-finds-no-module-by-name"_s, testClosedProgramFindsNoModuleByName },

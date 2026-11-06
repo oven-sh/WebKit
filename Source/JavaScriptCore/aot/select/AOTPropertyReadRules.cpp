@@ -38,7 +38,7 @@ static bool isPlainRead(SelectionContext& context, ValueID id)
     const Value& value = context.function().at(id);
     if (value.opcode != Opcode::PropGet || context.isClaimed(id) || context.isOnSlowPath(id) || value.type != TypeTable::anything)
         return false;
-    if (value.isFreeName() || value.isForTypeOf())
+    if (value.isFreeName() || value.isForTypeOf() || value.asksOnlyTables())
         return false;
     if (!isOrdinaryKey(context.program(), value.key()) || !context.slots().hasColumn(value.key()))
         return false;

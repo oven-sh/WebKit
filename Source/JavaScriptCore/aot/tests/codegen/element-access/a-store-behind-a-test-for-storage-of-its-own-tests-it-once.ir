@@ -1,0 +1,32 @@
+# A store that may pass the length goes the slow way where the storage is shared with a literal. Behind a test that asked for storage of the array's own it reads the byte of the form no more; behind one that asked for the form alone it does
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: lower-to-b3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="behindATestForStorageOfItsOwn" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=int[0, 7]}, {type=anything}] results=[{type=undefined}] {
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutArrayElement v0, v1, v2, v4 arrayStorage=Contiguous mode=Strict level=Expected [keyIsIntegral]
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: name="behindATestForStorageOfItsOwn" role=Source
+# CHECK: Load8Z({{*}}Reads:JSArray_indexingTypeAndMisc, v3:HasArrayStorage)
+# CHECK-NOT: Equal({{*}}:PutArrayElement)
+# CHECK: Reads:JSArray_butterfly, v{{*}}:PutArrayElement)
+# CHECK-LABEL: end of function f0
+function f1 name="behindATestForTheFormAlone" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=int[0, 7]}, {type=anything}] results=[{type=undefined}] {
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutArrayElement v0, v1, v2, v4 arrayStorage=Contiguous mode=Strict level=Expected [keyIsIntegral]
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: name="behindATestForTheFormAlone" role=Source
+# CHECK: Equal({{*}}:PutArrayElement)
+# CHECK-LABEL: end of function f1

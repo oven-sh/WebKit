@@ -195,6 +195,10 @@ inline Policy randomProgramPolicy(RelocationLowering& lowering)
 
     policy.allocation.keepsValuesAfterLowering = true;
 
+    policy.upstream.allowsSIMD = true;
+    policy.loops.vectorizes = true;
+    policy.loops.unrolls = true;
+
     policy.addressing.isPositionIndependent = true;
     policy.addressing.namesPinnedRegistersDirectly = true;
     policy.addressing.dataSectionSpace = testDataSectionSpace;
@@ -210,8 +214,10 @@ inline Policy randomProgramPolicy(RelocationLowering& lowering)
     policy.air.registers.evictsHolderOfPreferredRegister = true;
 
     policy.air.splitting.splitsAroundClobbersEarly = true;
+    policy.air.splitting.splitsAroundClobbersThatRead = true;
+    policy.air.splitting.keepsUnusedTmpsOnStackThroughLoops = true;
+    policy.air.splitting.spillsTmpsReadInPlaceFirst = true;
     policy.air.splitting.spansStretchesOfClobbers = true;
-    policy.air.splitting.limitsClobberSitesPerSplit = true;
     policy.air.splitting.splitsIntoClustersOverBlocks = true;
     policy.air.splitting.splitsAroundFrame = true;
 

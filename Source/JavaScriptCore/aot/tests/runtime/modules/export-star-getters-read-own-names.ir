@@ -1,0 +1,47 @@
+# source = { first: "one", second: "two", third: "three" }; target = {}; __exportStar(source, target); report(target)
+# The front end sends a call of the helper as the operation, and behind its `false` what the helper does: it lists the keys of the source and defines a getter for each. The operation makes the closures of the getter itself, so it lays each key into the capture in the form in which the getter's code holds it.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.report = target => { print(Object.keys(target).join(), target.first, target.second, target.third); };
+# CHECK: first,second,third one two three
+# CHECK-NEXT: exited with 0
+# The key is one of three texts, which is what gives it a form of its own.
+# RUN(KEY): pipeline ChooseRepresentations
+# KEY: function f1 name="get" {{*}}captures=[{{*}}{type="first"|"second"|"third"
+# KEY: "first"|"second"|"third" @LiteralString = GetCapture
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}, {key="third" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Target" fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="one"
+    v1 = String string="two"
+    v2 = String string="three"
+    v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
+    v4 = NewObject layout=L1
+    v5 = FinishObject v4
+    v6 = TryReExportFields v5, v3 function=f1
+    Branch v6 -> taken b2(), notTaken b1()
+  b1():
+    v7 = Builtin builtin=ObjectKeys
+    v8 = Call v7, -, v3
+    v9 = String string="first"
+    v10 = NewClosure v3, v9 function=f1
+    DefineGetter v5, v10 key="first"
+    v12 = String string="second"
+    v13 = NewClosure v3, v12 function=f1
+    DefineGetter v5, v13 key="second"
+    v15 = String string="third"
+    v16 = NewClosure v3, v15 function=f1
+    DefineGetter v5, v16 key="third"
+    Jump -> next b2()
+  b2():
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="report" [isFreeName]
+    v20 = Call v19, -, v5
+    Return
+}
+function f1 name="get" captures=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}

@@ -1,16 +1,25 @@
 # "use strict"; Helper.prototype.define = function (name) { this.target[name] = function () { return name; }; return this; };
 # Helper.prototype.alias = function (name) { return this.define(name); };   new Helper(object).alias("a");
-# A call in tail position ends its block, so no test of the callee is put in front of it: `alias` gets a copy, and the copy calls `define` as written.
+# A call in tail position ends its block, and the test of the callee needs a block behind the call: in the copy of `alias` the call stays marked as one in tail position and its result is returned.
+# `define` gets a copy of its own, which is pasted in, so no frame is left over where the text has none.
 # FORM: AsRead
 # RUN: pass CopyClosureFactories
 # CHECK: outcome: Changed
 # CHECK-LABEL: function f0 name="main"
 # CHECK: NewClosure v7 function=f5
+# CHECK-LABEL: function f4 name="alias"
+# CHECK: [[written]]{{*}} = Call v2, v0, v1
+# CHECK-NEXT: ReturnCall [[written]]
 # CHECK-LABEL: function f5 name="alias"
-# CHECK-NOT: IsClosureOf
-# CHECK: [[call]]{{*}} = Call v2, v0, v1
-# CHECK-NEXT: ReturnCall [[call]]
-# CHECK-NOT: name="define"
+# CHECK: [[isDefine]]{{*}} = IsClosureOf {{*}} function=f2
+# CHECK-NEXT: Branch [[isDefine]]
+# CHECK: [[copy]]{{*}} = NewClosure v0 function=f7
+# CHECK-NEXT: = Call [[copy]], v1, v2 [isAlwaysInlined] {{*}}tail
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = Call v3, v1, v2 {{*}}tail
+# CHECK-NOT: ReturnCall
+# CHECK-LABEL: function f7 name="define"
+# CHECK: ElemSet v0, v2,
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -1,5 +1,5 @@
 # The library's questions about the kind of a cell are tests for the classes whose instances are the cells of that kind: they fold where the type answers, and what passes has the type.
-# The kinds are numbered as the table lists them: 7 JSMapType, 8 JSPromiseType, 9 JSSetType, 4 to 2 Int8ArrayType to BigUint64ArrayType, 5 JSArrayIteratorType, none ArrayType.
+# The kinds are numbered as the table lists them: 8 JSMapType, 9 JSPromiseType, 11 JSSetType, 4 to 2 Int8ArrayType to BigUint64ArrayType, 5 JSArrayIteratorType, none ArrayType.
 # Not the question for ArrayType, which an array of a class below Array fails, not a kind that no class of the table has, and not of what has the layout of a class below a built-in class
 # FORM: Prepared
 # RUN: pass SimplifyBuiltinCalls
@@ -8,12 +8,12 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Registry" flow={baseState=BuiltinClass baseClass=Map}
 function f0 name="kinds" parameters=[{type=anything}, {type=Map}, {type=string|L0}, {type=Array}] results=[{type=anything}] {
-    v4 = HasJSType v0 first=7 last=7
-    v5 = HasJSType v0 first=9 last=9
-    v6 = HasJSType v0 first=8 last=8
+    v4 = HasJSType v0 first=8 last=8
+    v5 = HasJSType v0 first=11 last=11
+    v6 = HasJSType v0 first=9 last=9
     v7 = HasJSType v0 first=4 last=2
-    v8 = HasJSType v1 first=7 last=7
-    v9 = HasJSType v2 first=7 last=7
+    v8 = HasJSType v1 first=8 last=8
+    v9 = HasJSType v2 first=8 last=8
     v10 = HasJSType v3
     v11 = HasJSType v0
     v12 = HasJSType v0 first=5 last=5

@@ -25,9 +25,10 @@ function f0 name="builtBehindJoinWithCell" parameters=[{type=boolean}, {type=any
     Return v1
 # CHECK: v4: object = GetConstructPrototype v1 layout=L0
 # CHECK: Jump -> next b3({{*}}, {{*}}, v4)
-# CHECK: b3([[tag0]]: i32, [[cell0]]: object, [[prototype0]]: object):
+# CHECK: b3([[tag0]]: i32, [[cell0]]: object|unspecified, [[prototype0]]: object|unspecified):
 # CHECK: Switch [[tag0]]
-# CHECK: = NewObject [[prototype0]] layout=L0
+# CHECK: [[prototype0There]]: object = AssumeType [[prototype0]], [[filled1]] provenType=object
+# CHECK-NEXT: = NewObject [[prototype0There]] layout=L0
 }
 
 function f1 name="operandIsVirtualObject" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {

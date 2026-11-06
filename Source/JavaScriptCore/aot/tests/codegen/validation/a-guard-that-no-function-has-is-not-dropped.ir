@@ -3,5 +3,5 @@
 # RUN: compile NarrowReferenceGuards NarrowReferencesAcrossSafepoints
 # OPTIONS: references=narrow check=validate-back-end,validate-reference-guards testing=NoLayoutIsMadeSeldom drop-guard=GetSlot:1
 # OPTIONS: disable=pass:InlineCalls,pass:HoistTestsIntoPredecessors,pass:ThreadJumps,pass:SinkAllocations,pass:AllocateInFrames,pass:RemoveUnreadFields
-# CHECK: statistic NarrowReferenceGuards 1
+# CHECK: statistic NarrowReferenceGuards 2
 # PROGRAM-OF: narrow-reference-has-pointer-over-call.ir

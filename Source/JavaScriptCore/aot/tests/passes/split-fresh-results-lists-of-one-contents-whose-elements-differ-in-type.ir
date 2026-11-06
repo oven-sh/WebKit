@@ -21,10 +21,12 @@ function f0 name="listsThatMeet" parameters=[{type=boolean}, {type=fractional}, 
 }
 # CHECK-LABEL: function f0 name="listsThatMeet" module=m0 role=ResultWrapper
 # CHECK: [[call]]:{{*}}= CallDirect v0, v1, v2 function=
-# CHECK: [[fraction]]: fractional = ResultAt [[call]] index=1
-# CHECK-NEXT: [[other]]: anything = ResultAt [[call]] index=2
-# CHECK: = NewArray [[fraction]] contents=fractional
-# CHECK: = NewArray [[other]] contents=fractional
+# CHECK: [[fraction]]: fractional|unspecified = ResultAt [[call]] index=1
+# CHECK-NEXT: [[other]]: anything|unspecified = ResultAt [[call]] index=2
+# CHECK: [[fractionThere]]: fractional = AssumeType [[fraction]], [[filled1]] provenType=fractional
+# CHECK-NEXT: = NewArray [[fractionThere]] contents=fractional
+# CHECK: [[otherThere]]: anything = AssumeType [[other]], [[filled2]] provenType=anything
+# CHECK-NEXT: = NewArray [[otherThere]] contents=fractional
 
 function f1 name="listsThatAreReturnedApart" parameters=[{type=boolean}, {type=fractional}, {type=anything}] results=[{type=Array<fractional>}] {
     Branch v0 -> taken b1(), notTaken b2()
@@ -37,10 +39,12 @@ function f1 name="listsThatAreReturnedApart" parameters=[{type=boolean}, {type=f
 }
 # CHECK-LABEL: function f1 name="listsThatAreReturnedApart" module=m0 role=ResultWrapper
 # CHECK: [[call]]:{{*}}= CallDirect v0, v1, v2 function=
-# CHECK: [[fraction]]: fractional = ResultAt [[call]] index=1
-# CHECK-NEXT: [[other]]: anything = ResultAt [[call]] index=2
-# CHECK: = NewArray [[fraction]] contents=fractional
-# CHECK: = NewArray [[other]] contents=fractional
+# CHECK: [[fraction]]: fractional|unspecified = ResultAt [[call]] index=1
+# CHECK-NEXT: [[other]]: anything|unspecified = ResultAt [[call]] index=2
+# CHECK: [[fractionThere]]: fractional = AssumeType [[fraction]], [[filled1]] provenType=fractional
+# CHECK-NEXT: = NewArray [[fractionThere]] contents=fractional
+# CHECK: [[otherThere]]: anything = AssumeType [[other]], [[filled2]] provenType=anything
+# CHECK-NEXT: = NewArray [[otherThere]] contents=fractional
 
 function f2 name="callsBoth" parameters=[{type=boolean}, {type=fractional}, {type=anything}] results=[{type=undefined}] {
     v3 = CallDirect v0, v1, v2 function=f0

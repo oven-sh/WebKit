@@ -522,6 +522,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #define OFFLINE_ASM_TEXT_SECTION ".text\n"
 #endif
 
+// Whoever unwinds by these tables has to know that the saved return address is signed, and with which key.
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+#define OFFLINE_ASM_CFI_SIGNED_RETURN_ADDRESS ".cfi_b_key_frame\n" ".cfi_negate_ra_state\n"
+#else
+#define OFFLINE_ASM_CFI_SIGNED_RETURN_ADDRESS
+#endif
+
 #if OS(DARWIN)
 #define OFFLINE_ASM_SECTION_BEGINNING_WITH(section, label) \
     ".section __TEXT," section ",regular,pure_instructions\n" \
@@ -538,6 +545,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     ".cfi_endproc\n" \
     section \
     ".cfi_startproc\n" \
+    OFFLINE_ASM_CFI_SIGNED_RETURN_ADDRESS \
     ".cfi_def_cfa fp, 16\n" \
     ".cfi_offset lr, -8\n" \
     ".cfi_offset fp, -16\n"
@@ -650,6 +658,7 @@ DEBUGGER_ANNOTATION_MARKER(before_llint_asm)
 #if CPU(ARM64)
 __asm__(
     ".cfi_startproc\n"
+    OFFLINE_ASM_CFI_SIGNED_RETURN_ADDRESS
     ".cfi_def_cfa fp, 16\n"
     ".cfi_offset lr, -8\n"
     ".cfi_offset fp, -16\n"

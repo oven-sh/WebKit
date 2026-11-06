@@ -14,6 +14,7 @@
 #include "Exception.h"
 #include "JSCInlines.h"
 #include "JSNativeStdFunction.h"
+#include "ObjectConstructor.h"
 #include "StrongInlines.h"
 #include "TopExceptionScope.h"
 #include <wtf/HashMap.h>
@@ -32,6 +33,7 @@ struct StandIn {
     // Of a member without a slot: the getter, or the object on which native code answers for the name. It answers the same function each time, as it would answer the same object.
     Strong<JSObject> answeredBy;
     String name;
+    bool isKnownToBeFunction { false };
 };
 
 struct MembersLeftOut {
@@ -113,7 +115,7 @@ static String takeMessageOfErrorOfCodeLeftOut(VM& vm)
     return message;
 }
 
-static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const String& nameOfMember, JSObject* answeredBy)
+static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const String& nameOfMember, JSObject* answeredBy, const FunctionLeftOut* function = nullptr)
 {
     VM& vm = realm->vm();
     if (answeredBy) {
@@ -127,10 +129,13 @@ static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const 
         auto throwScope = DECLARE_THROW_SCOPE(caller->vm());
         return throwVMError(caller, throwScope, createError(caller, message));
     };
-    JSObject* standIn = JSNativeStdFunction::create(vm, realm, 0, nameOfMember, WTF::move(throwsWhenCalled), NoIntrinsic, NativeFunction(constructStandIn));
+    bool canBeConstructed = !function || function->canBeConstructed;
+    JSObject* standIn = JSNativeStdFunction::create(vm, realm, function ? function->length : 0, nameOfMember, WTF::move(throwsWhenCalled), NoIntrinsic, canBeConstructed ? NativeFunction(constructStandIn) : NativeFunction(callHostFunctionAsConstructor));
+    if (function && canBeConstructed)
+        standIn->putDirect(vm, vm.propertyNames->prototype, constructEmptyObject(realm), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
 
     Locker locker { membersLock };
-    membersByVM().find(&vm)->value.standIns.append(StandIn { Strong<JSObject>(vm, standIn), WTF::move(message), answeredBy ? Strong<JSObject>(vm, answeredBy) : Strong<JSObject>(), nameOfMember });
+    membersByVM().find(&vm)->value.standIns.append(StandIn { Strong<JSObject>(vm, standIn), WTF::move(message), answeredBy ? Strong<JSObject>(vm, answeredBy) : Strong<JSObject>(), nameOfMember, !!function });
     return standIn;
 }
 
@@ -140,6 +145,27 @@ JSValue takeStandInForMemberLeftOut(JSGlobalObject* realm, const String& nameOfM
     if (message.isNull())
         return { };
     return standInThatThrows(realm, WTF::move(message), nameOfMember, answeredBy);
+}
+
+JSValue takeStandInForFunctionLeftOut(JSGlobalObject* realm, const FunctionLeftOut& function, JSObject* answeredBy)
+{
+    String message = takeMessageOfErrorOfCodeLeftOut(realm->vm());
+    if (message.isNull())
+        return { };
+    return standInThatThrows(realm, WTF::move(message), function.name, answeredBy, &function);
+}
+
+bool standsInForFunction(JSCell* cell)
+{
+    if (!cell->inherits<JSNativeStdFunction>())
+        return false;
+    Locker locker { membersLock };
+    auto found = membersByVM().find(&cell->vm());
+    if (found == membersByVM().end())
+        return false;
+    return std::ranges::any_of(found->value.standIns, [&](const StandIn& standIn) {
+        return standIn.isKnownToBeFunction && standIn.function.get() == cell;
+    });
 }
 
 JSValue takeStandInForGetterLeftOut(JSGlobalObject* realm, JSObject* getter)

@@ -5,8 +5,8 @@
 
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
-runtimefunction id=0 function=f1
+runtimefunction id=PromiseConstructorPromise function=f1
 function f0 name="goodSource" results=[{type=anything}]
-function f1 name="goodLibrary" role=Library enclosingRuntimeFunction=0 results=[{type=anything}]
+function f1 name="goodLibrary" role=Library enclosingRuntimeFunction=PromiseConstructorPromise results=[{type=anything}]
 function f2 name="goodModel" role=Model results=[{type=anything}]
 function f3 name="badOutlinedBody" role=OutlinedBody results=[{type=anything}]

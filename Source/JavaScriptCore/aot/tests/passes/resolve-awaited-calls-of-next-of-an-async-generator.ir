@@ -42,7 +42,7 @@ function f10 name="readsBoth" role=CoroutineBody flags=[IsAsync] parameters=[{ty
 # CHECK-NEXT: [[stepped10]]: anything = ResultAt [[step10]]
 # CHECK-NEXT: [[status10]]: int[0, 2] = ResultAt [[step10]] index=1
 # CHECK: Branch [[isResult10]] -> taken [[made10]](), notTaken [[answered10]]()
-# CHECK: [[rest10]](v5: anything ~ object, [[value10]]: anything, [[done10]]: anything):
+# CHECK: [[rest10]](v5: anything|unspecified ~ object, [[value10]]: anything, [[done10]]: anything):
 # CHECK-NEXT: v7: anything = Upcast [[value10]] castType=anything
 # CHECK-NEXT: v8: anything = Upcast [[done10]] castType=anything
 # CHECK: [[made10]]() frequency=Rare:
@@ -82,7 +82,7 @@ function f12 name="underHandler" role=CoroutineBody flags=[IsAsync] parameters=[
     Return v9
 # CHECK: b1() handler=b2():
 # CHECK: StepAsyncGenerator v0,
-# CHECK: [[rest12]](v4: anything, [[value12]]: anything, [[done12]]: anything) handler=b2():
+# CHECK: [[rest12]](v4: anything|unspecified, [[value12]]: anything, [[done12]]: anything) handler=b2():
 # CHECK: frequency=Rare handler=b2():
 }
 
@@ -260,7 +260,7 @@ function f25 name="readsBehindTheTest" role=CoroutineBody flags=[IsAsync] parame
 # CHECK-NOT: NewObject
 # CHECK: StepAsyncGenerator v0, v2, {{*}}
 # CHECK: v8: anything = Upcast [[value25]] castType=anything
-# CHECK: [[rest25]](v4: anything, [[value25]]: anything, [[done25]]: anything):
+# CHECK: [[rest25]](v4: anything|unspecified, [[value25]]: anything, [[done25]]: anything):
 # CHECK-NEXT: TypeTest v0 testedType=undefined|null
 }
 

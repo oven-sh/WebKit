@@ -15,14 +15,16 @@ function f0 name="inputUnspecifiedOnOnePath" parameters=[{type=number}, {type=bo
   b2():
     v5 = Unspecified valueType=L0
     Jump -> next b3(v5)
-  b3(v6: L0):
+  b3(v6: unspecified|L0):
     Switch v0 cases=[0, 1, 2, 3] -> case b4(), case b5(), case b6(), case b7(), otherwise b8()
 # REPEAT: i = 4..7
   b%(i)() frequency=Rare:
-    v%(i*3-5) = String string="bad"
-    v%(i*3-4) = PropGet v3 key="logger"
-    v%(i*3-3) = CallMethod v%(i*3-4), v%(i*3-5), v6 key="report"
-    Return v%(i*3-3)
+    v%(i*5-13) = String string="bad"
+    v%(i*5-12) = PropGet v3 key="logger"
+    v%(i*5-11) = Specified
+    v%(i*5-10) = AssumeType v6, v%(i*5-11) provenType=L0
+    v%(i*5-9) = CallMethod v%(i*5-12), v%(i*5-13), v%(i*5-10) key="report"
+    Return v%(i*5-9)
 # END REPEAT
   b8():
     Return v3

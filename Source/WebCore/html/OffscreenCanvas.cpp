@@ -77,16 +77,20 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DetachedOffscreenCanvas);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(OffscreenCanvas);
 
-DetachedOffscreenCanvas::DetachedOffscreenCanvas(const IntSize& size, bool originClean, RefPtr<PlaceholderRenderingContextSource>&& placeholderSource)
+DetachedOffscreenCanvas::DetachedOffscreenCanvas(const IntSize& size, bool originClean, RefPtr<PlaceholderRenderingContextSource>&& placeholderSource, String&& inheritedLanguage, TextDirection inheritedDirection)
     : m_placeholder(WTF::move(placeholderSource))
     , m_size(size)
     , m_originClean(originClean)
+    , m_inheritedLanguage(WTF::move(inheritedLanguage))
+    , m_inheritedDirection(inheritedDirection)
 {
 }
 
-DetachedOffscreenCanvas::DetachedOffscreenCanvas(const IntSize& size, bool originClean, std::optional<RemotePlaceholderRenderingContextIdentifier> placeholderIdentifier)
+DetachedOffscreenCanvas::DetachedOffscreenCanvas(const IntSize& size, bool originClean, std::optional<RemotePlaceholderRenderingContextIdentifier> placeholderIdentifier, String&& inheritedLanguage, TextDirection inheritedDirection)
     : m_size(size)
     , m_originClean(originClean)
+    , m_inheritedLanguage(WTF::move(inheritedLanguage))
+    , m_inheritedDirection(inheritedDirection)
 {
     if (placeholderIdentifier)
         m_placeholder = *placeholderIdentifier;
@@ -100,10 +104,10 @@ std::unique_ptr<DetachedOffscreenCanvas> DetachedOffscreenCanvas::clone() const
 {
     return WTF::switchOn(m_placeholder,
         [&](const RefPtr<PlaceholderRenderingContextSource>& source) {
-            return makeUnique<DetachedOffscreenCanvas>(m_size, m_originClean, RefPtr { source });
+            return makeUnique<DetachedOffscreenCanvas>(m_size, m_originClean, RefPtr { source }, m_inheritedLanguage.isolatedCopy(), m_inheritedDirection);
         },
         [&](const RemotePlaceholderRenderingContextIdentifier& identifier) {
-            return makeUnique<DetachedOffscreenCanvas>(m_size, m_originClean, identifier);
+            return makeUnique<DetachedOffscreenCanvas>(m_size, m_originClean, identifier, m_inheritedLanguage.isolatedCopy(), m_inheritedDirection);
         });
 }
 
@@ -149,6 +153,12 @@ bool OffscreenCanvas::enabledForContext(ScriptExecutionContext& context)
 Ref<OffscreenCanvas> OffscreenCanvas::create(ScriptExecutionContext& scriptExecutionContext, unsigned width, unsigned height)
 {
     auto canvas = adoptRef(*new OffscreenCanvas(scriptExecutionContext, { static_cast<int>(width), static_cast<int>(height) }, nullptr));
+    if (RefPtr document = dynamicDowncast<Document>(scriptExecutionContext)) {
+        if (RefPtr documentElement = document->documentElement()) {
+            canvas->m_inheritedLanguage = documentElement->effectiveLang();
+            canvas->m_inheritedDirection = documentElement->effectiveTextDirection();
+        }
+    }
     canvas->suspendIfNeeded();
     return canvas;
 }
@@ -158,6 +168,8 @@ Ref<OffscreenCanvas> OffscreenCanvas::create(ScriptExecutionContext& scriptExecu
     Ref<OffscreenCanvas> clone = adoptRef(*new OffscreenCanvas(scriptExecutionContext, detachedCanvas->size(), detachedCanvas->takePlaceholderSource(scriptExecutionContext)));
     if (!detachedCanvas->originClean())
         clone->setOriginTainted();
+    clone->m_inheritedLanguage = AtomString { detachedCanvas->inheritedLanguage() };
+    clone->m_inheritedDirection = detachedCanvas->inheritedDirection();
     clone->suspendIfNeeded();
     return clone;
 }
@@ -165,6 +177,9 @@ Ref<OffscreenCanvas> OffscreenCanvas::create(ScriptExecutionContext& scriptExecu
 Ref<OffscreenCanvas> OffscreenCanvas::create(ScriptExecutionContext& scriptExecutionContext, PlaceholderRenderingContext& placeholder)
 {
     Ref offscreen = adoptRef(*new OffscreenCanvas(scriptExecutionContext, placeholder.size(), LocalPlaceholderRenderingContextSource::create(placeholder)));
+    Ref canvas = placeholder.canvas();
+    offscreen->m_inheritedLanguage = canvas->effectiveLang();
+    offscreen->m_inheritedDirection = canvas->effectiveTextDirection();
     offscreen->suspendIfNeeded();
     return offscreen;
 }
@@ -433,7 +448,7 @@ std::unique_ptr<DetachedOffscreenCanvas> OffscreenCanvas::detach()
 
     m_detached = true;
 
-    auto detached = makeUnique<DetachedOffscreenCanvas>(size(), originClean(), WTF::move(m_placeholderSource));
+    auto detached = makeUnique<DetachedOffscreenCanvas>(size(), originClean(), WTF::move(m_placeholderSource), m_inheritedLanguage.string().isolatedCopy(), m_inheritedDirection);
     setSize(IntSize(0, 0));
     return detached;
 }

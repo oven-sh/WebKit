@@ -11,6 +11,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
 #include <functional>
 #include <tuple>
@@ -76,30 +77,23 @@ static void collectAccesses(FlowScopeIndex& index)
                 auto add = [&](Kind kind, uint32_t subject, FunctionReferenceKind reference = FunctionReferenceKind::Call) {
                     rows.append({ kind, reference, subject, FunctionID(functionIndex), id });
                 };
-                forEachVariable(value, [&](VariableID variable) {
-                    if (variable)
-                        add(value.opcode == Opcode::GetModuleVariable ? Kind::Read : value.opcode == Opcode::PutModuleVariable ? Kind::Store : Kind::OpaqueVariable, variable.index());
-                });
-                forEachLayout(value, [&](LayoutID layout) {
-                    if (!layout || program.at(layout).kind != LayoutKind::Environment)
+                forEachReferenceWithRole(value, WTF::makeVisitor([&](VariableID variable) {
+                    add(value.opcode == Opcode::GetModuleVariable ? Kind::Read : value.opcode == Opcode::PutModuleVariable ? Kind::Store : Kind::OpaqueVariable, variable.index());
+                }, [&](LayoutID layout) {
+                    if (program.at(layout).kind != LayoutKind::Environment)
                         return;
                     if (value.opcode == Opcode::GetEnvironmentField || value.opcode == Opcode::PutEnvironmentField)
                         add(value.opcode == Opcode::GetEnvironmentField ? Kind::Read : Kind::Store, *index.numbering.locationOf(layout, value.field()));
                     else
                         add(value.opcode == Opcode::NewObject ? Kind::Allocation : Kind::OpaqueLayout, layout.index());
-                });
-                forEachFunctionReference(value, [&](FunctionID referenced, FunctionReferenceKind kind) {
-                    if (referenced)
-                        add(Kind::Mention, referenced.index(), kind);
-                });
-                forEachModuleReference(value, [&](ModuleID module, ModuleReferenceKind kind) {
-                    if (module && readsModuleValue(value.opcode, kind))
+                }, [&](FunctionID referenced, FunctionReferenceKind kind) {
+                    add(Kind::Mention, referenced.index(), kind);
+                }, [&](ModuleID module, ModuleReferenceKind kind) {
+                    if (readsModuleValue(value.opcode, kind))
                         add(Kind::ModuleValueRead, module.index());
-                });
-                forEachEvalScope(value, [&](EvalScopeID scope) {
-                    if (scope)
-                        add(Kind::EvalScope, scope.index());
-                });
+                }, [&](EvalScopeID scope) {
+                    add(Kind::EvalScope, scope.index());
+                }, [](auto...) { }));
             }
         }
     });
@@ -137,6 +131,11 @@ static void collectAccesses(FlowScopeIndex& index)
     for (size_t function = 0; function < program.functions.size(); ++function)
         index.firstMention[function + 1] += index.firstMention[function];
 
+    for (size_t variable = 0; variable < program.variables.size(); ++variable) {
+        if (program.variables[variable].flags.contains(VariableFlags::IsReplaceable))
+            index.opaqueLocations.set(variable);
+    }
+
     for (const FlowStaticFieldAccess& access : inputs.staticFieldAccesses) {
         FlowScopeLocation location = access.variable.index();
         if (!access.function) {
@@ -160,6 +159,9 @@ static FunctionID moduleBodyOwnerOf(const FlowScopeIndex& index, ModuleID module
         return { };
     const Module& module = program.at(moduleID);
     if (!canOwnVariablesOf(module.kind) || !module.body || !index.bodies.quickGet(module.body.index()))
+        return { };
+    // Between two runs of the body its variables are as they were before the first, and whatever an earlier run left behind may read them then.
+    if (module.flags.contains(ModuleFlags::RunsAgain))
         return { };
     ModuleID file = program.at(module.body).module;
     if (index.modulesOfFunctionsEnteredWithoutMention.quickGet(moduleID.index()) || (file && index.modulesOfFunctionsEnteredWithoutMention.quickGet(file.index())))
@@ -224,11 +226,15 @@ static void findFunctionsEnteredWithoutMention(FlowScopeIndex& index, const BitV
 static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsEnteredFromOutside)
 {
     const Program& program = index.program();
+    // By function: where its closure is made, if the last mention that was met makes one.
+    Vector<FlowCallSite> closures(program.functions.size());
     for (size_t caller : index.bodies) {
         for (const FlowFunctionMention& mention : index.mentionsIn(FunctionID(static_cast<uint32_t>(caller)))) {
             ++index.calls.numberOfMentions[mention.function.index()];
-            if (program.functions[caller].at(mention.value).opcode == Opcode::CallDirect)
+            Opcode opcode = program.functions[caller].at(mention.value).opcode;
+            if (opcode == Opcode::CallDirect)
                 index.calls.soleCallSites[mention.function.index()] = { FunctionID(static_cast<uint32_t>(caller)), mention.value };
+            closures[mention.function.index()] = opcode == Opcode::NewClosure ? FlowCallSite { FunctionID(static_cast<uint32_t>(caller)), mention.value } : FlowCallSite { };
         }
     }
     for (const Variable& variable : program.variables) {
@@ -238,12 +244,59 @@ static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsE
     for (unsigned function = 0; function < program.functions.size(); ++function) {
         bool canRunOnlyDuringCall = !program.functions[function].isModuleBody() && !program.functions[function].isUnsplitCoroutine();
         if (index.calls.numberOfMentions[function] != 1 || !index.bodies.quickGet(function) || functionsEnteredFromOutside.quickGet(function) || !canRunOnlyDuringCall)
-            index.calls.soleCallSites[function] = { };
+            index.calls.soleCallSites[function] = closures[function] = { };
     }
-    for (const FlowCall& link : index.inputs.calls) {
+    // `(function () { .. })()`   `make(Base)` where the caller has made the closure for this call: the function that makes the only closure calls it, and the body runs once each time the call does.
+    auto callsClosure = [&](const FlowCall& link, const FlowCallSite& closure) {
+        if (link.caller != closure.first || !link.site)
+            return false;
+        const Function& caller = program.at(link.caller);
+        const Value& call = caller.at(link.site);
+        return call.opcode == Opcode::Call && sameObjectThroughCasts(caller, call.calleeOperand()) == closure.second;
+    };
+    // Two calls of a list leave none of its members a sole call site or a closure to look for, and no later call brings either back.
+    Vector<uint8_t> numberOfCallsOfListVisited(FillWith { }, index.inputs.calleeLists.size(), static_cast<uint8_t>(0));
+    index.inputs.forEachCall([&](const FlowCall& link) {
         FlowCallSite& site = index.calls.soleCallSites[link.callee.index()];
+        if (FlowCallSite closure = std::exchange(closures[link.callee.index()], { }); closure.second && callsClosure(link, closure)) {
+            site = { link.caller, link.site };
+            return;
+        }
         if (site != FlowCallSite { link.caller, link.site })
             site = { };
+    }, [&](const FlowCallOfList& call) {
+        if (numberOfCallsOfListVisited[call.calleeList] == 2)
+            return false;
+        ++numberOfCallsOfListVisited[call.calleeList];
+        return true;
+    });
+}
+
+static void findFunctionsThatFilesOfCyclesMayEnter(FlowScopeIndex& index)
+{
+    const Program& program = index.program();
+    index.functionsThatFilesOfCyclesMayEnter = BitVector(program.functions.size());
+    BitVector& functions = index.functionsThatFilesOfCyclesMayEnter;
+    Vector<uint32_t> worklist;
+    for (size_t module : index.moduleOrder.modulesInCycles) {
+        if (FunctionID body = program.modules[module].body; body && !functions.quickSet(body.index()))
+            worklist.append(body.index());
+    }
+    BitVector listsEntered(index.inputs.calleeLists.size());
+    auto enter = [&](FunctionID callee) {
+        if (!functions.quickSet(callee.index()))
+            worklist.append(callee.index());
+    };
+    while (!worklist.isEmpty()) {
+        uint32_t caller = worklist.takeLast();
+        for (const FlowScopeCall& call : entriesOfGroup(index.calls.firstByCaller, index.calls.byCaller, caller))
+            enter(call.callee);
+        for (const FlowScopeCallOfList& call : entriesOfGroup(index.calls.firstCallOfListByCaller, index.calls.callsOfLists, caller)) {
+            if (listsEntered.quickSet(call.calleeList))
+                continue;
+            for (FunctionID callee : index.inputs.calleeLists[call.calleeList])
+                enter(callee);
+        }
     }
 }
 
@@ -258,6 +311,29 @@ static void collectCalls(FlowScopeIndex& index)
             calls.functionsEnteredByHost.set(link.callee.index());
         else
             calls.byCaller.append({ link.caller, link.callee, link.site, { } });
+    }
+    unsigned numberOfFunctions = index.program().functions.size();
+    unsigned numberOfLists = inputs.calleeLists.size();
+    calls.callsOfLists = inputs.callsOfLists.map([&](const FlowCallOfList& link) {
+        return FlowScopeCallOfList { link.caller, link.site, variableBehindSubjectOf(index.program().at(link.caller), link.site), link.calleeList };
+    });
+    groupByIndex(numberOfFunctions, calls.firstListByCallee, calls.listsByCallee, [&](const auto& add) {
+        for (uint32_t list = 0; list < numberOfLists; ++list) {
+            for (FunctionID callee : inputs.calleeLists[list])
+                add(callee.index(), list);
+        }
+    });
+    groupByIndex(numberOfLists, calls.firstCallOfList, calls.callsOfListsByList, [&](const auto& add) {
+        for (uint32_t position = 0; position < calls.callsOfLists.size(); ++position)
+            add(calls.callsOfLists[position].calleeList, position);
+    });
+    calls.firstCallOfListByCaller.fill(0, numberOfFunctions + 1);
+    for (const FlowScopeCallOfList& call : calls.callsOfLists)
+        ++calls.firstCallOfListByCaller[call.caller.index() + 1];
+    for (unsigned function = 0; function < numberOfFunctions; ++function) {
+        calls.firstCallOfListByCaller[function + 1] += calls.firstCallOfListByCaller[function];
+        if (calls.firstListByCallee[function] != calls.firstListByCallee[function + 1])
+            isCalled.set(function);
     }
     for (unsigned function = 0; function < index.program().functions.size(); ++function) {
         if (!isCalled.get(function))
@@ -388,7 +464,7 @@ static void createOwners(FlowScopeIndex& index)
         }
     }
     for (FlowScopeOwner& owner : index.owners)
-        AOT::sort(owner.exports);
+        AOT::sortInLine(owner.exports);
 }
 
 FlowScopeIndex createScopeIndex(const FlowOrderInputs& inputs, const FlowModuleOrder& moduleOrder)
@@ -426,6 +502,7 @@ FlowScopeIndex createScopeIndex(const FlowOrderInputs& inputs, const FlowModuleO
     findVariableOwners(index);
     findSoleCallSites(index, functionsEnteredFromOutside);
     collectCalls(index);
+    findFunctionsThatFilesOfCyclesMayEnter(index);
     findEnvironmentOwners(index);
     createOwners(index);
     return index;

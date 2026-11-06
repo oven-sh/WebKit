@@ -30,9 +30,9 @@ function f4 name="noCalleeNamed" parameters=[{type=function}, {type=L1}] results
     v2 = Call v0, -, v1
     Return
 }
-# CHECK: f0 return: writes(ModuleVariables/1) throw: none
-# CHECK: f1 return: none throw: none p0: [Inspects] writes(EnvironmentFields/1) p1: [Inspects] writes(ObjectFields/1)
-# CHECK: f2 return: writes(ModuleVariables/1, EnvironmentFields/1) throw: none p0: [Calls] p1: [{{*}}] writes(ObjectFields/1)
+# CHECK: f0 return: writes(ModuleVariables/1) throwsForLackOfStack throw: throwsForLackOfStack
+# CHECK: f1 return: throwsForLackOfStack throw: throwsForLackOfStack p0: [Inspects] writes(EnvironmentFields/1) p1: [Inspects] writes(ObjectFields/1)
+# CHECK: f2 return: writes(ModuleVariables/1, EnvironmentFields/1) throwsForLackOfStack throw: writes(ModuleVariables/1, EnvironmentFields/1) throwsForLackOfStack p0: [Calls] p1: [{{*}}] writes(ObjectFields/1)
 # CHECK-NOT: nknown
 # CHECK: f3 return: reads(all) {{*}}callsUnknownCode{{*}} unknown code from f3 v2
 # CHECK: f4 return: reads(all) {{*}}callsUnknownCode{{*}} unknown code from f4 v2

@@ -4,7 +4,7 @@
 # CHECK: values=f0:v4
 # CHECK: result {{*}} 3 members: primitive0 {{*}}object{{*}}@f0
 # CHECK: values=f0:v6
-# CHECK: result {{*}} 2 members: primitive0 primitive{{*}}
+# CHECK: result {{*}} 2 members: primitive0 key{{*}}
 # RUN(OTHER): valueflow-why values=f0:v6
 # OTHER-NOT: result {{*}}object
 

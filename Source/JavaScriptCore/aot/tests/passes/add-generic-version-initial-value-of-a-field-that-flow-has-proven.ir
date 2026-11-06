@@ -1,10 +1,9 @@
-# Flow says of a field that nothing outside its type is ever stored there, and the typed code assumes that type for what the allocation lists. In the generic version an assumed type says nothing,
-# so the array is an array like any other there. What flow has seen holds for the generic version too: it assumes the type of the field again in front of the allocation.
+# Flow says of a field that nothing outside its type is ever stored there. Behind a guard an assumed type that rested on the check says nothing, so the array is an array like any other.
+# What flow has seen holds all the same: the type of the field is assumed again in front of the allocation.
 # The slot is written without a test, so nothing is assumed for the field that flow does not answer for: its value is stored behind the allocation
 # FORM: Prepared
 # RUN: pass AddGenericVersion VerifyProgram
 # STATISTIC: InitialValuesStoredBehindAllocations = 1
-# CHECK: frequency=Unlikely
 # CHECK: [[array]]: Array = NewArray
 # CHECK: [[proven]]: Array<anything, proven, pristine[Storage, Names]> = AssumeType {{*}} provenType=Array<anything, proven, pristine[Storage, Names]>
 # CHECK: [[links]]: L0 = NewObject -, [[proven]], {{*}} layout=L0 fields=[0, 1]

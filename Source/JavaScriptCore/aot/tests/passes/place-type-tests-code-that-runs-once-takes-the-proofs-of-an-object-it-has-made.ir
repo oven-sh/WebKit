@@ -1,0 +1,33 @@
+# Code that runs once gets no test, which would cost a copy of what stands behind it. An object that the function has just made needs none: it is below the prototype of its layout, takes stores,
+# and holds every field in its slot until code runs that may change that. Text made at run time gets the object in the end, so nothing of this is proven for good.
+# FORM: AsRead
+# RUN: pipeline PlaceTypeTests
+
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="early" declared={type=anything}}, {key="other" declared={type=anything}}, {key="late" declared={type=anything}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = Integer integer=1
+    PropSet v1, v3 key="early" mode=Strict
+    PropSet v1, v3 key="other" mode=Strict
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="text" [isFreeName]
+    v8 = Builtin builtin=Function
+    v9 = Construct v8, -, v7
+    v10 = Call v9, -, v1
+    PropSet v1, v3 key="late" mode=Strict
+    Return v10
+# CHECK-NOT: HasLayoutPrototype
+# CHECK-NOT: HasNoFieldOutsideSlot
+# CHECK-NOT: IsNotFrozen
+# CHECK: PutSlotOrAdd {{*}} key="early" receivers=[L0]
+# CHECK: PutSlotOrAdd {{*}} key="other" receivers=[L0]
+# CHECK: = Call
+# CHECK: PropSet {{*}} key="late"
+# CHECK-NOT: PropSet
+}

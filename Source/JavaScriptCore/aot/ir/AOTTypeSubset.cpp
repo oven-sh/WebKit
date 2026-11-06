@@ -91,9 +91,59 @@ bool mayContainAnyCallable(const BuiltinTable& builtins, const Type& type)
     });
 }
 
-bool mayContainAnyBuiltin(const Type& type)
+// A proxy may be callable. It is the closure of no function.
+bool mayContainAnyClosure(const BuiltinTable& builtins, const Type& type)
 {
-    return type.anyFunction || !type.classes.isEmpty();
+    return type.anyFunction || std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+        return isFunctionClass(builtins, part.builtinClass) && builtins.at(part.builtinClass).type != ProxyObjectType;
+    });
+}
+
+static bool inheritsFromPrototypeOf(const BuiltinTable& builtins, BuiltinID object, BuiltinClassID builtinClass)
+{
+    BuiltinID prototype = builtins.at(builtinClass).prototype;
+    if (!prototype)
+        return true;
+    prototype = builtins.canonicalID(prototype);
+    while (true) {
+        const Builtin& entry = builtins.at(object);
+        switch (entry.prototypeLink) {
+        case BuiltinPrototypeLink::Unknown:
+            return true;
+        case BuiltinPrototypeLink::Null:
+            return false;
+        case BuiltinPrototypeLink::Builtin:
+            object = builtins.canonicalID(entry.inheritsFrom);
+            break;
+        }
+        if (object == prototype)
+            return true;
+    }
+}
+
+bool mayBeInstanceOf(const BuiltinTable& builtins, BuiltinID builtin, BuiltinClassID builtinClass)
+{
+    if (isCallableBuiltin(builtins, builtin))
+        return isFunctionClass(builtins, builtinClass);
+    BuiltinID object = builtins.canonicalID(builtin);
+    const Builtin& entry = builtins.at(object);
+    switch (entry.kind) {
+    case BuiltinKind::Prototype:
+        if (!entry.instanceClass || builtins.isSameOrSubclassOf(entry.instanceClass, builtinClass))
+            return true;
+        [[fallthrough]];
+    case BuiltinKind::Namespace:
+        return inheritsFromPrototypeOf(builtins, object, builtinClass);
+    case BuiltinKind::Constructor:
+    case BuiltinKind::Function:
+    case BuiltinKind::Method:
+    case BuiltinKind::Accessor:
+    case BuiltinKind::DataProperty:
+    case BuiltinKind::Constant:
+    case BuiltinKind::NativeBinding:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 const RuntimeFunctionData* findTableRecordOf(const Program& program, FunctionID function)
@@ -174,9 +224,12 @@ LibraryClosuresOfBuiltin libraryClosuresOf(const TypeTable& types, BuiltinID bui
 
 bool mayContainBuiltin(const TypeTable& types, const Type& type, BuiltinID builtin)
 {
-    if (mayContainAnyBuiltin(type) || type.builtins.contains(builtin))
+    if (type.anyFunction || type.builtins.contains(builtin))
         return true;
-    return std::ranges::any_of(type.functions, [&](FunctionID function) {
+    bool mayBeInstance = std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+        return mayBeInstanceOf(types.builtins(), builtin, part.builtinClass);
+    });
+    return mayBeInstance || std::ranges::any_of(type.functions, [&](FunctionID function) {
         return mayBeClosureOf(types, builtin, function);
     });
 }
@@ -198,8 +251,8 @@ bool isPartSubset(const ClassPart& a, const ClassPart& b, const TypeTable& types
         return false;
     if (b.arrayStorage != ArrayStorage::Other && a.arrayStorage != b.arrayStorage)
         return false;
-    for (unsigned index = 0; index < b.contents.size(); ++index) {
-        if (!isSubset(types.at(a.contentsAt(index)), types.at(b.contentsAt(index)), types))
+    for (unsigned index = 0; index < b.writtenContents.size(); ++index) {
+        if (!isSubset(types.at(a.writtenContentsAt(index)), types.at(b.writtenContentsAt(index)), types))
             return false;
     }
     return true;
@@ -217,7 +270,7 @@ static bool areCallablesSubset(const Type& a, const Type& b, const BuiltinTable&
     });
 }
 
-static const ClassPart* findPartHolding(const Type& type, BuiltinClassID builtinClass, const BuiltinTable& builtins)
+const ClassPart* findPartHolding(const Type& type, BuiltinClassID builtinClass, const BuiltinTable& builtins)
 {
     if (const ClassPart* part = type.findClassPart(builtinClass))
         return part;
@@ -248,13 +301,52 @@ static bool areRegExpLiteralsSubset(const Type& a, const Type& b)
     return !a.regExpLiteralSet.isEmpty() && a.regExpLiteralSet.isSubsetOf(b.regExpLiteralSet);
 }
 
+// An object of a subclass of a built-in class is an instance of that class, with its own prototype and properties.
+BuiltinClassID builtinClassWrittenAbove(const TypeTable& types, LayoutID layout)
+{
+    const Program* program = types.program();
+    return program ? program->at(layout).writtenBuiltinBase : BuiltinClassID();
+}
+
+bool isInsideSomeClassPart(const TypeTable& types, LayoutID layout, const Type& type)
+{
+    BuiltinClassID builtinClass = builtinClassWrittenAbove(types, layout);
+    return builtinClass && !types.program()->at(layout).mayBeOrdinaryObject && std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+        bool onlyProvesInstance = !part.contentsAreProven && part.provenPristine.isEmpty() && !(part.builtinClass == BuiltinClasses::RegExp && !type.regExpLiteralSet.isEmpty());
+        return onlyProvesInstance && types.builtins().isSameOrSubclassOf(builtinClass, part.builtinClass);
+    });
+}
+
+// What one class's constructor creates is an instance of its superclasses. It passes for an instance of another class if that class's test cannot distinguish the two.
+bool mayHoldConstructedInstances(const BuiltinTable& builtins, BuiltinClassID holder, BuiltinClassID constructed)
+{
+    if (builtins.isSameOrSubclassOf(constructed, holder) || builtins.isSameOrSubclassOf(holder, constructed))
+        return true;
+    if (builtins.at(holder).instanceTest == BuiltinInstanceTest::None || builtins.at(constructed).instanceTest == BuiltinInstanceTest::None)
+        return false;
+    return relate(builtins, constructed, holder) == ClassRelation::Unknown;
+}
+
+bool mayBeInsideSomeClassPart(const TypeTable& types, LayoutID layout, const Type& type)
+{
+    BuiltinClassID builtinClass = builtinClassWrittenAbove(types, layout);
+    return builtinClass && std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+        return mayHoldConstructedInstances(types.builtins(), part.builtinClass, builtinClass);
+    });
+}
+
 static bool areLayoutsSubset(const Type& a, const Type& b, const TypeTable& types)
 {
     if (!a.layouts || a.layouts == b.layouts)
         return true;
-    if (!b.layouts)
+    if (b.layouts && isSubsetOf(types.at(a.layouts), types.at(b.layouts)))
+        return true;
+    if (b.classes.isEmpty())
         return false;
-    return isSubsetOf(types.at(a.layouts), types.at(b.layouts));
+    std::span<const LayoutID> listed = membersOf(types, b);
+    return std::ranges::all_of(membersOf(types, a), [&](LayoutID member) {
+        return std::ranges::binary_search(listed, member) || isInsideSomeClassPart(types, member, b);
+    });
 }
 
 static bool areObjectsSubset(const Type& a, const Type& b, const TypeTable& types)
@@ -309,8 +401,10 @@ static bool literalsOverlap(const Type& a, const Type& b, LiteralPart<T> part)
 
 static bool callablesOverlap(const BuiltinTable& builtins, const Type& a, const Type& b)
 {
-    return (hasCallableParts(a) && mayContainAnyCallable(builtins, b))
-        || (hasCallableParts(b) && mayContainAnyCallable(builtins, a))
+    return (a.anyFunction && mayContainAnyCallable(builtins, b))
+        || (b.anyFunction && mayContainAnyCallable(builtins, a))
+        || (!a.functions.isEmpty() && mayContainAnyClosure(builtins, b))
+        || (!b.functions.isEmpty() && mayContainAnyClosure(builtins, a))
         || a.functions.overlaps(b.functions);
 }
 
@@ -349,19 +443,24 @@ static bool layoutsOverlap(const Type& a, const Type& b, const TypeTable& types)
     return a.layouts == b.layouts || overlaps(types.at(a.layouts), types.at(b.layouts));
 }
 
+static bool layoutsOverlapClasses(const Type& layouts, const Type& classes, const TypeTable& types)
+{
+    if (!layouts.layouts || classes.classes.isEmpty())
+        return false;
+    return std::ranges::any_of(membersOf(types, layouts), [&](LayoutID member) {
+        return mayBeInsideSomeClassPart(types, member, classes);
+    });
+}
+
 static bool objectsOverlap(const Type& a, const Type& b, const TypeTable& types)
 {
     if (!a.hasObjects() || !b.hasObjects())
         return false;
     if (a.anyObject || b.anyObject)
         return true;
-    auto listsObjectsWithoutLayout = [](const Type& type) {
-        return type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || !type.classes.isEmpty();
-    };
-    if ((hasMembersWithoutLayout(types, a) && listsObjectsWithoutLayout(b)) || (hasMembersWithoutLayout(types, b) && listsObjectsWithoutLayout(a)))
-        return true;
     const BuiltinTable& builtins = types.builtins();
-    return callablesOverlap(builtins, a, b) || builtinsOverlap(a, b, types) || classesOverlap(builtins, a, b) || layoutsOverlap(a, b, types);
+    return callablesOverlap(builtins, a, b) || builtinsOverlap(a, b, types) || classesOverlap(builtins, a, b) || layoutsOverlap(a, b, types)
+        || layoutsOverlapClasses(a, b, types) || layoutsOverlapClasses(b, a, types);
 }
 
 bool overlap(const Type& a, const Type& b, const TypeTable& types)
@@ -397,7 +496,7 @@ std::span<const LayoutID> membersOf(const TypeTable& types, const Type& type)
 {
     if (!type.layouts)
         return { };
-    return types.at(type.layouts).members.span();
+    return types.at(type.layouts).completeMembers();
 }
 
 std::span<const LayoutID> membersOf(const Program& program, const Type& type)

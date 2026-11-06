@@ -16,6 +16,8 @@ public:
     explicit SelectedOperatorEmitter(CodeGenerator&);
 
     void generateIntegerBound(const ValueContext&);
+    void generateRememberOwner(const ValueContext&);
+    void generateMoveTableToHeap(const ValueContext&);
     void generateFulfillFreshPromise(const ValueContext&);
 };
 

@@ -205,13 +205,17 @@ export default b.declarations(
       isView: {
         args: { arg: b.any },
         returns: b.bool,
+        answersWhetherInstance: { arg: b.union(b.instance("TypedArray"), b.instance("DataView")) },
         capability: "heap",
         uses: { arg: b.inspected },
         implementation: b.hostCall,
       },
     },
     proto: {
-      byteLength: bufferGetter(byteCount, readsState),
+      byteLength: {
+        ...bufferGetter(byteCount, readsState),
+        implementation: b.inline("ArrayBufferByteLength", { otherwise: b.hostCall }),
+      },
       detached: bufferGetter(b.bool, readsState),
       maxByteLength: bufferGetter(byteCount, readsState),
       resizable: bufferGetter(b.bool, b.inspected),
@@ -251,6 +255,7 @@ export default b.declarations(
     usesFeature: "DataView",
     nativeSymbols: ["callDataView", "constructDataView"],
     prototypeTable: b.staticTable("runtime/JSDataViewPrototype.cpp", "dataViewTable"),
+    static: { BYTES_PER_ELEMENT: b.constant(1) },
     call: requiresNew,
     construct: {
       args: { buffer: anyArrayBuffer, byteOffset: b.index.loose.optional, byteLength: b.index.loose.optional },
@@ -269,7 +274,11 @@ export default b.declarations(
         usesFeature: "DataView",
         implementation: b.generic,
       },
-      byteLength: { ...viewExtent, nativeSymbols: ["dataViewProtoGetterByteLength"], implementation: b.hostCall },
+      byteLength: {
+        ...viewExtent,
+        nativeSymbols: ["dataViewProtoGetterByteLength"],
+        implementation: b.inline("DataViewByteLength", { otherwise: b.hostCall }),
+      },
       byteOffset: { ...viewExtent, implementation: b.generic },
       getInt8: viewRead("TypeInt8", b.int(-128, 127), singleByte),
       getUint8: viewRead("TypeUint8", b.int(0, 255), singleByte),

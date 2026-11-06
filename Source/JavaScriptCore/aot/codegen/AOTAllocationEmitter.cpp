@@ -82,12 +82,23 @@ static void clobberExtensionWord(Output& out, AOTHeaps& heaps)
     clobber->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
 }
 
+// In line: 75 bytes a site. By the stub: 18 bytes and 3.5 instructions more.
+bool AllocationEmitter::initializesFrameObjectInStub(const ValueContext& value, LayoutID layout)
+{
+    const Layout& declared = m_program.at(layout);
+    if (!isObjectLayout(declared.kind) || declared.flow.fieldCreation == FieldCreation::OnlyAtConstruction)
+        return false;
+    return value.shape() != CodeShape::Fast || !analyses().isInCycle(value.block());
+}
+
 CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, AllocationID id, const PlannedLayout& layout)
 {
     const PlacedAllocation& allocation = m_placement.allocation(id);
     CellAllocationEmitter& cellAllocation = emitter<CellAllocationEmitter>();
     if (!isObjectLayout(m_program.at(allocation.layout).kind))
-        return cellAllocation.allocateInFrame(layout.size);
+        return cellAllocation.allocateInFrame(value, layout.size, &layout);
+    if (initializesFrameObjectInStub(value, allocation.layout))
+        return CellPointer(callStub(value, initializeObjectInFrame(), { m_out.constInt64(id.index()), cellAllocation.allocateInFrame(value, layout.size, &layout).value() }).first);
 
     LBasicBlock hasNoRecord = newBlock();
     Join<Integer> headerOfHeapCells(m_out);
@@ -101,7 +112,7 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, Allo
     headerOfHeapCells.add(callOperation<Integer>(value, RuntimeOperation::GetHeaderOfAllocation, { word32(static_cast<int32_t>(id.index())) }, { .isOnRarePath = true }));
     Integer header = headerOfHeapCells.finish();
 
-    CellPointer cell = cellAllocation.allocateInFrame(layout.size);
+    CellPointer cell = cellAllocation.allocateInFrame(value, layout.size, &layout);
     CodeGenerator::InitializationScope scope(generator());
     cellAllocation.storeHeader(cell, header);
     storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(allocation.orderWord)));
@@ -145,6 +156,10 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
             define(value, *cell);
             return;
         }
+    }
+    if (looksAtPrototypeBeforeAllocating(value)) {
+        define(value, allocateInstance(value, allocation, value->prototypeOperand()));
+        return;
     }
     CellPointer cell = allocateWithFields(value, allocation, value->fields(), value->valuesOperands(), storage);
     if (ValueID prototype = value->prototypeOperand())
@@ -263,11 +278,11 @@ CellPointer AllocationEmitter::allocateCell(const ValueContext& value, Allocatio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void AllocationEmitter::initializeHiddenFields(CellPointer cell, LayoutID layout, AllocationStorage storage, ZeroedBy zeroedBy)
+void AllocationEmitter::initializeHiddenFields(CellPointer cell, LayoutID layout, AllocationStorage storage, ZeroedBy zeroedBy, bool hasStateOfFrameCell)
 {
     // A store whose receiver may also be on the heap runs its barrier, which must not mistake a frame cell for a marked one.
     bool mayReachBarrier = isObjectLayout(m_program.at(layout).kind) || !inputs().frameAllocation.isOnlyInFrames(layout);
-    if (storage != AllocationStorage::Heap && mayReachBarrier)
+    if (storage != AllocationStorage::Heap && mayReachBarrier && !hasStateOfFrameCell)
         m_out.store32As8(m_out.constInt32(frameCellState), m_out.address(m_heaps.collectorState, cell.value(), JSCell::cellStateOffset()));
 
     const SlotPlan& plan = m_placement.slots();
@@ -280,6 +295,21 @@ void AllocationEmitter::initializeHiddenFields(CellPointer cell, LayoutID layout
         m_out.store32As8(m_out.constInt32(0), m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), cell.value(), *isEscapedOffset));
 }
 
+Representation AllocationEmitter::representationWantedBy(const InitialField& field)
+{
+    return field.slot->representation == SlotRepresentation::DeferredClosure ? Representation::Cell32 : Typed::representationOf(field.slot->representation);
+}
+
+bool AllocationEmitter::isNarrowedWhereStored(const InitialField& field) const
+{
+    return representationOf(field.value) == Representation::Cell && representationWantedBy(field) == Representation::Cell32;
+}
+
+Operand AllocationEmitter::takeForSlot(const InitialField& field)
+{
+    return isNarrowedWhereStored(field) ? Operand(in<NarrowReference>(field.value)) : get(field.value);
+}
+
 void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, const InitialFields& initialFields)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
@@ -290,11 +320,14 @@ void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, co
             continue;
         MemoryLocation location = locationOfField(m_program, layout, field.field);
         if (field.slot->representation != SlotRepresentation::DeferredClosure)
-            slots.storeSlot(cell, *field.slot, location, get(field.value), nullptr, typeOf(field.value));
-        else if (isDeferredClosure(m_function, field.value))
-            m_out.store32(m_out.constInt32(uncreatedDeferredClosure), slots.addressOf(cell, *field.slot, location));
-        else
-            m_out.store32(in<NarrowReference>(field.value).value(), slots.addressOf(cell, *field.slot, location));
+            slots.storeSlot(cell, *field.slot, location, takeForSlot(field), nullptr, typeOf(field.value));
+        else if (isDeferredClosure(m_function, field.value)) {
+            LValue uncreated = m_out.constInt32(uncreatedDeferredClosure);
+            m_out.store32(uncreated, slots.addressOf(cell, *field.slot, location));
+        } else {
+            NarrowReference reference = in<NarrowReference>(field.value);
+            m_out.store32(reference.value(), slots.addressOf(cell, *field.slot, location));
+        }
     }
 }
 
@@ -383,11 +416,39 @@ void AllocationEmitter::storeFieldsInExtension(const ValueContext& value, CellPo
         Pointer extension = slots.extensionOf(cell, extensionWord);
         for (const InitialField& field : initialFields) {
             if (field.slot->isOutOfLine())
-                slots.storeInExtension(extension, *field.slot, locationOfField(m_program, layout, field.field), get(field.value));
+                slots.storeInExtension(extension, *field.slot, locationOfField(m_program, layout, field.field), takeForSlot(field));
         }
     }
     if (barrier == OwnerBarrier::Emitted)
         emitter<BarrierEmitter>().barrierAfterStores(value, cell, storedOutOfLine.span());
+}
+
+// An object of another layout takes the place of one in which nothing is stored yet, so that one need not be made.
+bool AllocationEmitter::looksAtPrototypeBeforeAllocating(const ValueContext& value)
+{
+    LayoutID layout = m_placement.allocation(value->allocation()).layout;
+    return mayAllocateOtherLayout(m_program, value.value()) && value->fields().empty() && value->storage() == AllocationStorage::Heap && m_placement.layout(layout).hasSlots() && !m_placement.freeCellOffset(layout);
+}
+
+CellPointer AllocationEmitter::allocateInstance(const ValueContext& value, AllocationID id, ValueID prototype)
+{
+    LayoutID layout = m_placement.allocation(id).layout;
+    auto [cell, isCellOfAllocation] = emitter<CellAllocationEmitter>().allocateInstance(value, id, in<CellPointer>(prototype));
+    if (!wordsOfEmptyObject(layout).isEmpty()) {
+        LBasicBlock fill = newBlock();
+        LBasicBlock isWhole = newBlock();
+        m_out.branch(isCellOfAllocation.value(), normalEdge(fill), normalEdge(isWhole));
+        m_out.appendTo(fill);
+        {
+            CodeGenerator::InitializationScope scope(generator());
+            initializeHiddenFields(cell, layout, AllocationStorage::Heap, ZeroedBy::Stub, false);
+            storeEmptySlots(cell, layout, BitVector(m_placement.layout(layout).numberOfFields()), ZeroedBy::Stub);
+        }
+        m_out.jump(isWhole);
+        m_out.appendTo(isWhole);
+    }
+    emitter<BarrierEmitter>().fenceAfterInitialization();
+    return cell;
 }
 
 // The operation returns the object to use: the prototype of a subclass selects the layout of that subclass.
@@ -445,9 +506,9 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, All
     BitVector isInitialField(layout.numberOfFields());
     for (const InitialField& field : initialFields) {
         bool defersClosure = field.slot->representation == SlotRepresentation::DeferredClosure;
-        Representation wanted = defersClosure ? Representation::Cell32 : Typed::representationOf(field.slot->representation);
+        Representation wanted = representationWantedBy(field);
         bool hasNoValue = defersClosure && isDeferredClosure(m_function, field.value);
-        if (!hasNoValue && representationOf(field.value) != wanted)
+        if (!hasNoValue && representationOf(field.value) != wanted && !isNarrowedWhereStored(field))
             return failWithoutCell(InternalErrorKind::WrongRepresentation);
         if (!field.slot->isOutOfLine())
             isInitialField.set(field.field);
@@ -457,7 +518,7 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, All
     CellPointer cell = allocateCell(value, id, layout, storage, zeroedBy);
     {
         CodeGenerator::InitializationScope scope(generator());
-        initializeHiddenFields(cell, layoutID, storage, zeroedBy);
+        initializeHiddenFields(cell, layoutID, storage, zeroedBy, storage != AllocationStorage::Heap && initializesFrameObjectInStub(value, layoutID));
         storeInitialFields(cell, layoutID, initialFields);
         storeEmptySlots(cell, layoutID, isInitialField, zeroedBy);
     }

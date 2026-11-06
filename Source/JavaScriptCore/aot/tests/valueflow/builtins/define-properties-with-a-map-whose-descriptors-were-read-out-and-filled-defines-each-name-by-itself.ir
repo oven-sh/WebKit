@@ -1,0 +1,131 @@
+# var accessors = { flowing: { configurable: true }, ended: { configurable: true } };
+# accessors.flowing.get = function () { .. }; accessors.ended.get = function () { .. };
+# Object.defineProperties(State.prototype, accessors);
+# Between the literal and the call the map is only read, under names that it was created with. Such a read runs no code and gives the map no name, so each name is defined by itself:
+# a read of `flowing` runs the getter of `flowing` and no other, and under another name nothing is found. The same for a map that is a literal of constants.
+# The third map is read under a name that it was not created with: a getter above it may have given it any name, and every read of every name may meet its getter.
+# RUN: valueflow-solve calls
+# CHECK: f0 v21 -> f4
+# CHECK-NOT: f0 v21 -> f5
+# CHECK: f0 v23 -> f5
+# CHECK-NOT: f0 v23 -> f4
+# CHECK-NOT: f0 v25 -> f
+# CHECK: f0 v38 -> f8
+# CHECK-NOT: f0 v40 -> f
+# CHECK: f0 v55 -> f11
+# CHECK: f0 v57 -> f11
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="State" constructor=f1 flags=[IsConstructorFunction]
+layout L1 name="PropertyDescriptor" fields=[{key="configurable" declared={type=anything}}]
+layout L2 name="Accessors" fields=[{key="flowing" declared={type=anything}}, {key="ended" declared={type=anything}}]
+layout L3 kind=Instance name="Box" constructor=f6 flags=[IsConstructorFunction]
+layout L4 name="AccessorsOfBox" fields=[{key="size" declared={type=anything}}]
+layout L5 kind=Instance name="Bag" constructor=f9 flags=[IsConstructorFunction]
+data d0 root=Object{layout=L4 members=[{key="size" value=Object{layout=L1 members=[{key="configurable" value=Boolean{value=true}}]}}]}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = Boolean boolean=true
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = NewObject -, v2 layout=L1 fields=[0]
+    v5 = NewObject -, v3, v4 layout=L2 fields=[0, 1]
+    v6 = PropGet v5 key="flowing"
+    v7 = NewClosure function=f2
+    PropSet v6, v7 key="get" mode=Strict
+    v9 = PropGet v5 key="ended"
+    v10 = NewClosure function=f3
+    PropSet v9, v10 key="get" mode=Strict
+    v12 = Builtin builtin=Object
+    v13 = Builtin builtin=ObjectDefineProperties
+    v14 = Call v13, v12, v1, v5
+    v15 = Construct v0
+    v16 = Undefined
+    v17 = Undefined
+    v18 = Undefined
+    v19 = Undefined
+    v20 = PropGet v15 key="flowing"
+    v21 = Call v20
+    v22 = PropGet v15 key="ended"
+    v23 = Call v22
+    v24 = PropGet v15 key="other"
+    v25 = Call v24
+    v26 = NewClosure function=f6
+    v27 = PropGet v26 key="prototype"
+    v28 = Data data=d0
+    v29 = PropGet v28 key="size"
+    v30 = NewClosure function=f7
+    PropSet v29, v30 key="get" mode=Strict
+    v32 = Call v13, v12, v27, v28
+    v33 = Construct v26
+    v34 = Undefined
+    v35 = Undefined
+    v36 = Undefined
+    v37 = PropGet v33 key="size"
+    v38 = Call v37
+    v39 = PropGet v33 key="other"
+    v40 = Call v39
+    v41 = NewClosure function=f9
+    v42 = PropGet v41 key="prototype"
+    v43 = NewObject -, v2 layout=L1 fields=[0]
+    v44 = NewObject -, v43 layout=L4 fields=[0]
+    v45 = PropGet v44 key="size"
+    v46 = NewClosure function=f10
+    PropSet v45, v46 key="get" mode=Strict
+    v48 = PropGet v44 key="missing"
+    v49 = Call v13, v12, v42, v44
+    v50 = Construct v41
+    v51 = Undefined
+    v52 = Undefined
+    v53 = Undefined
+    v54 = PropGet v50 key="alpha"
+    v55 = Call v54
+    v56 = PropGet v50 key="beta"
+    v57 = Call v56
+    Return v21
+}
+function f1 name="State" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+function f2 name="get" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    Return v1
+}
+function f3 name="get" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = NewClosure function=f5
+    Return v1
+}
+function f4 name="whileFlowing" module=m0 results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f5 name="onceEnded" module=m0 results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f6 name="Box" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+function f7 name="get" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = NewClosure function=f8
+    Return v1
+}
+function f8 name="ofBox" module=m0 results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f9 name="Bag" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+function f10 name="get" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = NewClosure function=f11
+    Return v1
+}
+function f11 name="ofBag" module=m0 results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}

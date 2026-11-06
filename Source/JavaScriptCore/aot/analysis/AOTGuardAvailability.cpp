@@ -111,6 +111,8 @@ public:
             return result;
         if (m_writer && leavesSlotsAsTested(m_analyses.program(), m_function, m_function.at(m_writer), effects, depended.slotState))
             return result;
+        if (m_writer && leavesArrayStorageAsTested(m_analyses.program(), m_function, m_function.at(m_writer), effects, depended.arrayStorage))
+            return result;
 
         for (size_t index = 0; index < depended.locations.size(); ++index) {
             const MemoryLocation& location = depended.locations[index];
@@ -144,6 +146,8 @@ public:
         if (!reachesObjects(written))
             return false;
         if (written.isLeftByPropertiesBesideFields && m_writer && definesPropertyBesideFields(m_analyses.program(), m_function.at(m_writer), effectsOn(m_effects, written.edge), m_function.at(subject)))
+            return false;
+        if (written.isLeftByPropertiesBesideFields && m_writer && definesDataPropertyAsLayoutDeclares(m_analyses, m_function.at(m_writer), m_function.at(subject)))
             return false;
 
         std::optional<bool> mayEndProof = mayEndProofJudgedByDefinitions(subject, written);
@@ -348,7 +352,7 @@ private:
             m_operandObjects.emplace();
             const EscapeAnalysis& escape = m_analyses.escape();
             auto addObjectsOf = [&](ValueID operand) {
-                m_operandObjects->merge(escape.pointsTo(operand).objects.bits());
+                escape.pointsTo(operand).objects.addTo(*m_operandObjects);
             };
             if (m_writer)
                 m_function.at(m_writer).forEachChild(addObjectsOf);
@@ -410,7 +414,7 @@ std::optional<GuardDependencies> dependenciesOfGuardOf(FunctionAnalyses& analyse
     const Program& program = analyses.program();
     GuardDependencies dependencies(program, locationsReadBy(test));
     dependencies.slotState = slotStateTestedBy(test);
-    dependencies.isLeftByPropertiesBesideFields = proofsLeftByPropertiesBesideFields.contains(provesOf(test.opcode));
+    dependencies.isLeftByPropertiesBesideFields = areLeftByPropertiesBesideFields(ProofSet { provesOf(test.opcode) }, dependencies.locations.span());
     if (test.numberOfOperands() && test.operand(subjectOperandIndex) && testReadsOnlySubject(program, analyses.function(), test))
         dependencies.subject = analyses.identityOf(test.operand(subjectOperandIndex));
     return dependencies;
@@ -510,9 +514,9 @@ void GuardAvailability::leaveOutGuardsInRarerBlocks()
     Vector<uint32_t> mostFrequentFirst(m_guards.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    AOT::stableSort(mostFrequentFirst, std::ranges::greater { }, [&](uint32_t guardIndex) {
+    AOT::stableSortInLine(mostFrequentFirst, std::ranges::greater { }, [&](uint32_t guardIndex) {
         BlockID block = useLists.blockOf(m_guards[guardIndex]);
-        return block ? frequencies.frequencyOf(block) : 0;
+        return block ? frequencies.frequencyOf(block).predicted() : 0;
     });
 
     BitVector solved(m_guards.size());
@@ -566,11 +570,11 @@ void GuardAvailability::numberComponents()
     m_numberOfKillClassesOfNamedGuards = 0;
 
     HashedIndex locationsIndex;
-    auto internLocations = [&](const Vector<MemoryLocation, 2>& locations, TestedSlotState slotState, bool isLeftByPropertiesBesideFields) -> uint32_t {
-        uint32_t hash = computeHash(hashOf(locations.span()), slotState, isLeftByPropertiesBesideFields);
+    auto internLocations = [&](const Vector<MemoryLocation, 2>& locations, TestedSlotState slotState, ArrayStorage arrayStorage, bool isLeftByPropertiesBesideFields) -> uint32_t {
+        uint32_t hash = computeHash(hashOf(locations.span()), slotState, arrayStorage, isLeftByPropertiesBesideFields);
         std::optional<uint32_t> existing = locationsIndex.find(hash, [&](uint32_t position) {
             const DependedLocations& known = m_dependedLocations[position];
-            return known.locations == locations && known.slotState == slotState && known.isLeftByPropertiesBesideFields == isLeftByPropertiesBesideFields;
+            return known.locations == locations && known.slotState == slotState && known.arrayStorage == arrayStorage && known.isLeftByPropertiesBesideFields == isLeftByPropertiesBesideFields;
         });
         if (existing)
             return *existing;
@@ -578,14 +582,15 @@ void GuardAvailability::numberComponents()
         uint32_t position = m_dependedLocations.size();
         m_dependedLocations.append(DependedLocations(m_analyses.program(), Vector<MemoryLocation, 2>(locations)));
         m_dependedLocations.last().slotState = slotState;
+        m_dependedLocations.last().arrayStorage = arrayStorage;
         m_dependedLocations.last().isLeftByPropertiesBesideFields = isLeftByPropertiesBesideFields;
         locationsIndex.add(hash, position);
         return position;
     };
 
     HashedIndex killClassIndex;
-    auto internKillClassWith = [&](const GuardFact& fact, TestedSlotState slotState) -> uint32_t {
-        uint32_t locations = internLocations(fact.dependsOn, slotState, areLeftByPropertiesBesideFields(fact.proofs));
+    auto internKillClassWith = [&](const GuardFact& fact, TestedSlotState slotState, ArrayStorage arrayStorage) -> uint32_t {
+        uint32_t locations = internLocations(fact.dependsOn, slotState, arrayStorage, areLeftByPropertiesBesideFields(fact.proofs, fact.dependsOn.span()));
         ValueID subject = exclusiveSubjectOf(m_analyses, fact);
         uint32_t hash = computeHash(locations, subject);
         std::optional<uint32_t> existing = killClassIndex.find(hash, [&](uint32_t position) {
@@ -602,9 +607,10 @@ void GuardAvailability::numberComponents()
     };
     auto internKillClass = [&](const GuardFact& fact) {
         TestedSlotState slotState = slotStateProvenBy(m_function, fact);
-        uint32_t killClass = internKillClassWith(fact, slotState);
-        if (slotState != TestedSlotState::None) {
-            uint32_t classBetweenTestAndBranch = internKillClassWith(fact, TestedSlotState::None);
+        ArrayStorage arrayStorage = arrayStorageProvenBy(m_analyses.program(), m_function, fact);
+        uint32_t killClass = internKillClassWith(fact, slotState, arrayStorage);
+        if (slotState != TestedSlotState::None || arrayStorage != ArrayStorage::Other) {
+            uint32_t classBetweenTestAndBranch = internKillClassWith(fact, TestedSlotState::None, ArrayStorage::Other);
             m_killClasses[killClass].classBetweenTestAndBranch = classBetweenTestAndBranch;
         }
         return killClass;
@@ -629,7 +635,7 @@ void GuardAvailability::numberComponents()
     m_killClassesBySubject.reserveInitialCapacity(m_killClasses.size());
     for (uint32_t killClass = 0; killClass < m_killClasses.size(); ++killClass)
         m_killClassesBySubject.append(killClass);
-    AOT::sort(m_killClassesBySubject, { }, [&](uint32_t killClass) {
+    AOT::sortInLine(m_killClassesBySubject, { }, [&](uint32_t killClass) {
         return std::pair { m_killClasses[killClass].subject, killClass };
     });
 }
@@ -1085,7 +1091,7 @@ void GuardAvailability::applyDefinitions(BitVector& available, const BitVector& 
     bool unitesGuards = VariadicOperandPosition::guards(value.opcode).has_value();
     for (const Component& component : components) {
         bool isAvailable = !unitesGuards || std::ranges::any_of(value.guardsOperands(), [&](ValueID operand) {
-            return isAvailableIn(available, operand, facts.facts[component.factIndex], facts.facts[component.factIndex].subject);
+            return isAvailableIn(available, operand, facts.facts[component.factIndex], facts.facts[component.factIndex].subject, facts.facts[component.factIndex].position);
         });
         available.quickSet(firstComponent + component.factIndex, isAvailable);
     }
@@ -1156,11 +1162,12 @@ bool GuardAvailability::isProvenOnEdge(Edge edge, const EdgeResult& result, cons
 
 bool GuardAvailability::isAvailableBeforeEdge(const BitVector& available, Edge edge, ValueID guard, const GuardFact& factAfterEdge) const
 {
-    std::optional<ValueID> subject = subjectBeforeEdge(factAfterEdge.subject, edge);
-    return subject && isAvailableIn(available, guard, factAfterEdge, *subject);
+    std::optional<ValueID> subject = valueBeforeEdge(factAfterEdge.subject, edge);
+    std::optional<ValueID> position = valueBeforeEdge(factAfterEdge.position, edge);
+    return subject && position && isAvailableIn(available, guard, factAfterEdge, *subject, *position);
 }
 
-bool GuardAvailability::isAvailableIn(const BitVector& available, ValueID guard, const GuardFact& fact, ValueID subject) const
+bool GuardAvailability::isAvailableIn(const BitVector& available, ValueID guard, const GuardFact& fact, ValueID subject, ValueID position) const
 {
     if (componentsOf(guard).empty())
         return false;
@@ -1169,7 +1176,7 @@ bool GuardAvailability::isAvailableIn(const BitVector& available, ValueID guard,
     const GuardFacts& facts = factsOf(guard);
     for (uint32_t factIndex = 0; factIndex < facts.facts.size(); ++factIndex) {
         const GuardFact& candidate = facts.facts[factIndex];
-        if (available.quickGet(firstComponent + factIndex) && candidate.subject == subject && isAsStrongAs(candidate, fact))
+        if (available.quickGet(firstComponent + factIndex) && candidate.subject == subject && isSamePosition(candidate.position, position) && isAsStrongAs(candidate, fact))
             return true;
     }
     return false;
@@ -1304,7 +1311,7 @@ bool GuardAvailability::mayBeEndedAt(ValueID guard, const Value& user, ProgramPo
 GuardState GuardAvailability::stateAt(ValueID guard, ProgramPoint point) const
 {
     solveFor(guard);
-    return Cursor(*this, point).stateOf(guard);
+    return cursorAt(point).stateOf(guard);
 }
 
 bool GuardAvailability::canSolveForAnyWriters(uint32_t guardIndex) const
@@ -1369,7 +1376,7 @@ std::optional<BitVector> GuardAvailability::componentsProvenAtDefinition(ValueID
         heldByOperands.ensureSize(m_components.size());
         for (const Component& component : components) {
             bool isAvailable = std::ranges::any_of(value.guardsOperands(), [&](ValueID operand) {
-                return isAvailableIn(heldByOperands, operand, facts.facts[component.factIndex], facts.facts[component.factIndex].subject);
+                return isAvailableIn(heldByOperands, operand, facts.facts[component.factIndex], facts.facts[component.factIndex].subject, facts.facts[component.factIndex].position);
             });
             if (isAvailable)
                 available.set(firstComponent + component.factIndex);
@@ -1537,13 +1544,34 @@ GuardState GuardAvailability::stateAt(ValueID guard, ProofSet reliedOn, ValueID 
     if (std::optional<GuardState> state = stateSeenWithoutSolving(guard, reliedOn, subject, point))
         return *state;
     solveFor(guard);
-    return Cursor(*this, point).stateOf(guard, reliedOn, subject);
+    return cursorAt(point).stateOf(guard, reliedOn, subject);
 }
 
 GuardState GuardAvailability::stateAt(ValueID guard, const Value& user, ProgramPoint point) const
 {
     solveFor(guard);
-    return Cursor(*this, point).stateOf(guard, user);
+    return cursorAt(point).stateOf(guard, user);
+}
+
+const GuardAvailability::Cursor& GuardAvailability::cursorAt(ProgramPoint point) const
+{
+    std::optional<Cursor>& cursor = m_cursorOfLastQuestion;
+    if (cursor && cursor->m_block == point.block && cursor->m_index <= point.index && cursor->m_numberOfSolvesSeen == m_solution.numberOfSolves)
+        cursor->advanceTo(point.index);
+    else
+        cursor.emplace(Cursor(*this, point));
+    return *cursor;
+}
+
+void GuardAvailability::walk(BitVector& available, BlockID block, uint32_t firstIndex, uint32_t endIndex) const
+{
+    std::span<const Kill> kills = killsIn(block);
+    auto kill = std::ranges::lower_bound(kills, firstIndex, { }, &Kill::index);
+    for (uint32_t index = firstIndex; index < endIndex; ++index) {
+        for (; kill != kills.end() && kill->index == index; ++kill)
+            available.exclude(m_solution.killSets[kill->killSet].components);
+        applyDefinitions(available, m_solution.solvedGuards, block, index);
+    }
 }
 
 GuardAvailability::Cursor::Cursor(const GuardAvailability& availability, BlockID block)
@@ -1571,10 +1599,7 @@ void GuardAvailability::Cursor::replay() const
         return;
 
     m_available = solution.availableAtHead[m_block.index()];
-    for (uint32_t index = 0; index < m_index; ++index) {
-        m_availability.applyKills(m_available, m_block, index);
-        m_availability.applyDefinitions(m_available, solution.solvedGuards, m_block, index);
-    }
+    m_availability.walk(m_available, m_block, 0, m_index);
 }
 
 void GuardAvailability::Cursor::solveFor(ValueID guard) const
@@ -1587,14 +1612,9 @@ void GuardAvailability::Cursor::solveFor(ValueID guard) const
 void GuardAvailability::Cursor::advanceTo(uint32_t index)
 {
     RELEASE_ASSERT(index >= m_index && index <= m_availability.m_function.at(m_block).values.size());
-    if (!isInSolvedBlock()) {
-        m_index = index;
-        return;
-    }
-    for (; m_index < index; ++m_index) {
-        m_availability.applyKills(m_available, m_block, m_index);
-        m_availability.applyDefinitions(m_available, m_availability.m_solution.solvedGuards, m_block, m_index);
-    }
+    if (isInSolvedBlock())
+        m_availability.walk(m_available, m_block, m_index, index);
+    m_index = index;
 }
 
 GuardState GuardAvailability::Cursor::stateOf(ValueID guard, const ProofSet* reliedOn, ValueID subject) const

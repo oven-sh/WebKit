@@ -31,12 +31,19 @@ struct TypeTestPlan;
 struct CallOptions {
     std::optional<uint32_t> immediate { };
     std::optional<Origin> origin { };
+    // The callee reads something and then calls it. What the read throws or runs is shown here.
+    std::optional<Origin> readBeforeCall { };
     std::optional<B3::PureFunction> pureFunction { };
     std::optional<ThrowSite> throwSite { };
     // The callee runs steps of this function, which has no frame of its own. A stack trace lists the function above the caller.
     BuiltinID calledBuiltin { };
+    // The callee of a direct construct that may leave its frame by a tail call.
+    FunctionID constructedCallee { };
+    // RecordedSite::keptCalleePlusOne.
+    uint32_t keptCalleePlusOne { 0 };
     bool constructs { false };
     bool isTailCall { false };
+    bool callsOwnFunctionObject { false };
     bool isOnRarePath { false };
     bool accessesCollectorState { false };
     // The callee runs code of the host, which the effects of the IR say nothing about: it may give a cell another Structure or another butterfly.
@@ -50,6 +57,10 @@ struct CallOptions {
     bool hasLandingOfMisfit { false };
     // Whatever the callee writes, no cell that exists has another header, butterfly or closure word behind it.
     bool convertsNoCells { false };
+    // The caller is suspended as soon as the callee returns, so it has read what it keeps in its saved registers for the last time.
+    bool callerSuspendsAtReturn { false };
+    // The callee reads and writes what this operation does too, which stands behind the one that the call is emitted for.
+    ValueID alsoPerforms { };
 };
 
 struct StubCallResult {
@@ -120,6 +131,7 @@ protected:
 
     Representation resultRepresentationOf(const InlineCall&) const;
     const Type& resultTypeOf(const InlineCall&) const;
+    ValueID resultOf(const InlineCall&) const;
     LBasicBlock missBlockOf(const InlineCall&);
     void finishInlineCall(const InlineCall&, Operand result);
 
@@ -128,6 +140,11 @@ protected:
     Pointer siteCacheAddress(SiteCacheID);
 
     void fail(const OperationContext& context, InternalErrorKind kind) { m_generator.fail(context, kind); }
+
+    // The code that follows acts on something about the cell that it does not test. A validating build tests it first.
+    void checkClaim(std::optional<CellPointer> about, NOESCAPE const Invocable<Condition()> auto& holds);
+    void reportUnlessClaimHolds(std::optional<CellPointer> about, Condition holds);
+    void checkIsCompiledObjectOf(CellPointer, LayoutSetID);
 
     CodeGenerator& m_generator;
     const Program& m_program;
@@ -150,6 +167,12 @@ void OperationEmitter::defineTestByBranching(const ValueContext& value, NOESCAPE
         return;
     }
     branchOnTest(value.branchTargets());
+}
+
+void OperationEmitter::checkClaim(std::optional<CellPointer> about, NOESCAPE const Invocable<Condition()> auto& holds)
+{
+    if (m_generator.validatesOrChecksProofs())
+        reportUnlessClaimHolds(about, holds());
 }
 
 template<typename T>

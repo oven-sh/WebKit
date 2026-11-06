@@ -185,7 +185,7 @@ void setDataFile(std::unique_ptr<PrintStream>&& file)
     s_file = file.release();
 }
 
-PrintStream& dataFile()
+NEVER_INLINE PrintStream& dataFile()
 {
     initializeLogFile();
     return *s_file;

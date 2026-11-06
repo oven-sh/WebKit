@@ -9,6 +9,7 @@
 
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTRuntimeFunctions.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -292,6 +293,23 @@ static void checkFind()
             for (int32_t start : positionsFor(subject.size())) {
                 if (start >= 0)
                     AOT_TEST_CHECK(find(subject, needle, start) == naiveFind(subject, needle, start));
+            }
+        }
+    }
+    // Many places have the first and the last character of the text and not what lies between. The text itself lies at every distance from both ends.
+    for (ASCIILiteral wanted : { "a"_s, "ab"_s, "axb"_s, "a0123456789012345b"_s }) {
+        Text<CharacterType> needle = textOf<CharacterType>(wanted);
+        for (uint32_t length = 0; length <= 70; ++length) {
+            for (uint32_t place = 0; place <= length; ++place) {
+                Text<CharacterType> text;
+                for (uint32_t i = 0; i < length; ++i)
+                    text.append(static_cast<CharacterType>("ayb"[i % 3]));
+                if (place + needle.size() <= length) {
+                    for (uint32_t i = 0; i < needle.size(); ++i)
+                        text[place + i] = needle[i];
+                }
+                for (uint32_t start : { 0u, place ? place - 1 : 0u, place, std::min(place + 1, length), length })
+                    AOT_TEST_CHECK(find(text, needle, start) == naiveFind(text, needle, start));
             }
         }
     }
@@ -621,6 +639,28 @@ static void testImplEqualsTextOfTheImage(LoadedProgram&)
     AOT_TEST_CHECK(!operationAOTStringImplEqualsImageString(in8Bits(""_s).impl(), accentInImage));
 }
 
+// Read as 16-bit units, the 8-bit characters would be two surrogate pairs.
+static void testElementsSpreadFromPartOfTextThatBecameNarrow(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    Text<Latin1Character> narrow { 0, 0xd8, 0, 0xdc, 0, 0xd8, 0, 0xdc };
+    Text<char16_t> wide { 0, 0xd8, 0, 0xdc, 0, 0xd8, 0, 0xdc };
+    AtomString name { String(narrow.span()) };
+    Strong<JSString> whole(vm, jsString(vm, String(wide.span())));
+    Strong<JSString> part(vm, jsSubstring(realm, whole.get(), 0, 4));
+    AOT_TEST_CHECK(part->isSubstring() && !part->is8Bit());
+    AOT_TEST_CHECK(numberOfElementsSpreadFrom(realm, part.get()) == 4);
+
+    whole->toIdentifier(realm);
+    AOT_TEST_CHECK(whole->tryGetValueImpl() == name.impl() && whole->is8Bit());
+    AOT_TEST_CHECK(part->isSubstring() && !part->is8Bit());
+    AOT_TEST_CHECK(numberOfElementsSpreadFrom(realm, part.get()) == 4);
+
+    Text<char16_t> pairs { 0xd83d, 0xde00, 'a', 0xd83d, 0xd83d, 0xde00, 0xde00 };
+    AOT_TEST_CHECK(numberOfElementsSpreadFrom(realm, jsString(vm, String(pairs.span()))) == 5);
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withSeparators)() = runNativeTestWithLoadedProgram<stringSearchTests, programWithSeparators, body>;
 
@@ -637,6 +677,7 @@ std::span<const NativeTest> stringSearchTests()
         { "string-search/long-separators-8"_s, withSeparators<testLongSeparators8> },
         { "string-search/long-separators-16"_s, withSeparators<testLongSeparators16> },
         { "string-search/impl-equals-text-of-the-image"_s, withSeparators<testImplEqualsTextOfTheImage> },
+        { "string-search/elements-spread-from-part-of-text-that-became-narrow"_s, withSeparators<testElementsSpreadFromPartOfTextThatBecameNarrow> },
     };
     return tests;
 }

@@ -28,7 +28,8 @@ bool hasCallableParts(const Type&);
 bool includesFunction(const Type&, FunctionID);
 bool includesBuiltin(const Type&, BuiltinID, const BuiltinTable&);
 bool mayContainAnyCallable(const BuiltinTable&, const Type&);
-bool mayContainAnyBuiltin(const Type&);
+bool mayContainAnyClosure(const BuiltinTable&, const Type&);
+bool mayBeInstanceOf(const BuiltinTable&, BuiltinID, BuiltinClassID);
 bool mayBeClosureOf(const TypeTable&, BuiltinID, FunctionID);
 struct LibraryClosuresOfBuiltin {
     bool mayBeAnyFunctionOfLibrary { false };
@@ -42,8 +43,14 @@ bool overlapsAnotherClass(const BuiltinTable&, BuiltinClassID, const Type&);
 
 bool isSubset(const Type&, const Type&, const TypeTable&);
 bool isPartSubset(const ClassPart&, const ClassPart&, const TypeTable&);
+// The part for the class, or for a class above it that the same test tells from everything else.
+const ClassPart* findPartHolding(const Type&, BuiltinClassID, const BuiltinTable&);
 bool overlap(const Type&, const Type&, const TypeTable&);
 bool mayBeSameObject(const Type&, const Type&, const TypeTable&);
+BuiltinClassID builtinClassWrittenAbove(const TypeTable&, LayoutID);
+bool mayHoldConstructedInstances(const BuiltinTable&, BuiltinClassID holder, BuiltinClassID constructed);
+bool isInsideSomeClassPart(const TypeTable&, LayoutID, const Type&);
+bool mayBeInsideSomeClassPart(const TypeTable&, LayoutID, const Type&);
 
 enum class DeclaredParts : uint8_t { FromEither, FromSecond };
 

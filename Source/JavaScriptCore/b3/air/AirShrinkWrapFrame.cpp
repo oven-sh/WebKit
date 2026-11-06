@@ -54,9 +54,12 @@ bool takesSlotAddress(Inst& inst)
 
 void addressIncomingArgumentsThroughStackPointer(Inst& inst)
 {
+    const Tmp stackPointer(MacroAssembler::stackPointerRegister);
     for (Arg& arg : inst.args()) {
-        if (isIncomingArgumentAddress(arg))
-            arg = Arg::addr(Tmp(MacroAssembler::stackPointerRegister), arg.offset() - static_cast<Value::OffsetType>(prologueStackPointerDelta()));
+        if (!isIncomingArgumentAddress(arg))
+            continue;
+        Value::OffsetType offset = arg.offset() - static_cast<Value::OffsetType>(prologueStackPointerDelta());
+        arg = arg.isIndex() ? Arg::index(stackPointer, arg.index(), arg.scale(), offset, arg.extend()) : Arg::addr(stackPointer, offset);
     }
 }
 
@@ -99,7 +102,10 @@ private:
     void findLikelyPaths();
     bool continuesLikelyPath(BasicBlock* from, const FrequentedBlock& edge) const;
     bool closeOverLikelyPaths();
+    void addCrowdedBlocks(const BitVector&);
+    Vector<unsigned> findCyclesWithoutRareEdge(unsigned& numberOfCycles);
     bool closeOverCertainPaths();
+    bool closeOverWritesAheadOfFrame();
     bool growOverLiveScratchRegisters(const RegLiveness&);
     void closeRegion(const RegLiveness*);
     void rewriteIncomingArgumentAddresses();
@@ -121,6 +127,7 @@ private:
     BitVector m_isOnLikelyPath;
     BitVector m_addressesIncomingArguments;
     BitVector m_takesSlotAddress;
+    BitVector m_isKnownNotToWriteMemory;
     BitVector m_setsUpFrameAtHead;
     Vector<SplitEdge> m_latestSplitByTarget;
     uint64_t m_savedCalleeSaves { 0 };
@@ -138,6 +145,7 @@ FrameShrinkWrapper::FrameShrinkWrapper(Code& code, const StackColoring& coloring
     , m_isOnLikelyPath(code.size())
     , m_addressesIncomingArguments(code.size())
     , m_takesSlotAddress(code.size())
+    , m_isKnownNotToWriteMemory(code.size())
     , m_setsUpFrameAtHead(code.size())
 {
 }
@@ -198,14 +206,17 @@ std::optional<BitVector> FrameShrinkWrapper::findRegionBeforeAllocation()
 std::optional<BitVector> FrameShrinkWrapper::findRegionFromAllLocalNeeds(const BitVector& crowdedBlocks)
 {
     findLocalNeeds();
-    m_isInRegion.merge(crowdedBlocks);
+    if (!crowdedBlocks.isEmpty()) {
+        closeRegion(nullptr);
+        addCrowdedBlocks(crowdedBlocks);
+    }
     return closeRegionBeforeAllocation();
 }
 
 std::optional<BitVector> FrameShrinkWrapper::growRegionBeforeAllocation(const BitVector& region, const BitVector& crowdedBlocks)
 {
     m_isInRegion.merge(region);
-    m_isInRegion.merge(crowdedBlocks);
+    addCrowdedBlocks(crowdedBlocks);
     return closeRegionBeforeAllocation();
 }
 
@@ -472,6 +483,88 @@ bool FrameShrinkWrapper::closeOverLikelyPaths()
     return true;
 }
 
+Vector<unsigned> FrameShrinkWrapper::findCyclesWithoutRareEdge(unsigned& numberOfCycles)
+{
+    constexpr unsigned unseen = 0;
+    struct Visit {
+        BasicBlock* block;
+        unsigned nextSuccessor;
+    };
+    numberOfCycles = 0;
+    Vector<unsigned> cycleOfBlock(m_code.size(), [](size_t) { return 0; });
+    Vector<unsigned> order(m_code.size(), [](size_t) { return unseen; });
+    Vector<unsigned> lowest(m_code.size(), [](size_t) { return unseen; });
+    BitVector isOpen(m_code.size());
+    Vector<BasicBlock*, 16> open;
+    Vector<Visit, 16> path;
+    unsigned numberSeen = 0;
+    auto enter = [&](BasicBlock* block) {
+        order[block->index()] = lowest[block->index()] = ++numberSeen;
+        isOpen.quickSet(block->index());
+        open.append(block);
+        path.append({ block, 0 });
+    };
+    for (BasicBlock* root : m_code) {
+        if (order[root->index()] != unseen)
+            continue;
+        enter(root);
+        while (!path.isEmpty()) {
+            auto [block, nextSuccessor] = path.last();
+            if (nextSuccessor < block->numSuccessors()) {
+                ++path.last().nextSuccessor;
+                const FrequentedBlock& edge = block->successor(nextSuccessor);
+                if (edge.isRare())
+                    continue;
+                unsigned successor = edge.block()->index();
+                if (order[successor] == unseen)
+                    enter(edge.block());
+                else if (isOpen.quickGet(successor))
+                    lowest[block->index()] = std::min(lowest[block->index()], order[successor]);
+                continue;
+            }
+            path.removeLast();
+            if (!path.isEmpty())
+                lowest[path.last().block->index()] = std::min(lowest[path.last().block->index()], lowest[block->index()]);
+            if (lowest[block->index()] != order[block->index()])
+                continue;
+            bool isCycle = open.last() != block;
+            for (const FrequentedBlock& edge : block->successors())
+                isCycle |= edge.block() == block && !edge.isRare();
+            if (isCycle)
+                ++numberOfCycles;
+            BasicBlock* member;
+            do {
+                member = open.takeLast();
+                isOpen.quickClear(member->index());
+                if (isCycle)
+                    cycleOfBlock[member->index()] = numberOfCycles;
+            } while (member != block);
+        }
+    }
+    return cycleOfBlock;
+}
+
+void FrameShrinkWrapper::addCrowdedBlocks(const BitVector& crowdedBlocks)
+{
+    BitVector blocksThatAskForFrame = crowdedBlocks;
+    blocksThatAskForFrame.exclude(m_isInRegion);
+    if (blocksThatAskForFrame.isEmpty())
+        return;
+    m_isInRegion.merge(blocksThatAskForFrame);
+    unsigned numberOfCycles;
+    Vector<unsigned> cycleOfBlock = findCyclesWithoutRareEdge(numberOfCycles);
+    if (!numberOfCycles)
+        return;
+    BitVector isCrowded(numberOfCycles + 1);
+    for (size_t blockIndex : blocksThatAskForFrame)
+        isCrowded.quickSet(cycleOfBlock[blockIndex]);
+    for (BasicBlock* block : m_code) {
+        unsigned cycle = cycleOfBlock[block->index()];
+        if (cycle && isCrowded.quickGet(cycle))
+            addToRegion(block);
+    }
+}
+
 bool FrameShrinkWrapper::closeOverCertainPaths()
 {
     BitVector reachesExitWithoutFrame(m_code.size());
@@ -508,6 +601,35 @@ bool FrameShrinkWrapper::closeOverCertainPaths()
     return changed;
 }
 
+bool FrameShrinkWrapper::closeOverWritesAheadOfFrame()
+{
+    unsigned smallestFrameTested = m_code.policy().frame.smallestFrameTestedAtSetup;
+    if (smallestFrameTested && computeFrameSizeBound() < smallestFrameTested)
+        return false;
+    if (m_code.proc().policy().validation.setsUpFrameBehindWrites) [[unlikely]]
+        return false;
+
+    BitVector reachesRegion = m_isInRegion;
+    Vector<BasicBlock*, 16> worklist;
+    for (size_t blockIndex : m_isInRegion)
+        worklist.append(m_code[blockIndex]);
+    bool changed = false;
+    while (!worklist.isEmpty()) {
+        for (BasicBlock* predecessor : worklist.takeLast()->predecessors()) {
+            if (reachesRegion.quickSet(predecessor->index()))
+                continue;
+            worklist.append(predecessor);
+            if (m_isKnownNotToWriteMemory.quickGet(predecessor->index()))
+                continue;
+            if (std::ranges::any_of(*predecessor, writesMemoryOutsideFrame))
+                changed |= addToRegion(predecessor);
+            else
+                m_isKnownNotToWriteMemory.quickSet(predecessor->index());
+        }
+    }
+    return changed;
+}
+
 bool FrameShrinkWrapper::growOverLiveScratchRegisters(const RegLiveness& liveness)
 {
     Vector<BasicBlock*, 16> worklist;
@@ -536,6 +658,7 @@ void FrameShrinkWrapper::closeRegion(const RegLiveness* liveness)
     do {
         changed = closeOverLikelyPaths();
         changed |= closeOverCertainPaths();
+        changed |= closeOverWritesAheadOfFrame();
         if (liveness && m_scratchRegisters)
             changed |= growOverLiveScratchRegisters(*liveness);
     } while (changed);

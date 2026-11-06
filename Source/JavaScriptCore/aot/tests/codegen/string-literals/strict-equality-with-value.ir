@@ -36,7 +36,6 @@ function f3 name="emptyText" parameters=[{type=anything}] results=[{type=boolean
     Return v1
 }
 # CHECK-NEXT: f3: size={{*}} constants=0
-# CHECK-NEXT: stub ValueEqualsLiteralOfLength{{*}} x1
 
 # The operator itself, where no rule has made the row of it: the condition of a branch that passes proofs, for one.
 function f4 name="operatorBesideWrittenText" parameters=[{type=anything}] results=[{type=boolean}] {

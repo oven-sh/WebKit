@@ -332,9 +332,10 @@ function f13 name="tooManyClasses" parameters=[{type=Array<number, pristine[Name
 # CHECK: [[notMap13]]([[set13]]: Set<number, pristine[Names]>) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next [[protocol13]]([[set13]])
 # ABSENT-NOT: SetNext
+# ABSENT: function {{*}} name="stepIterator"
 }
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

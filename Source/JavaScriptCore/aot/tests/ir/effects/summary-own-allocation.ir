@@ -11,41 +11,41 @@ function f0 name="storeIntoOwnAllocation" parameters=[{type=anything}] results=[
     PutEnvironmentField v1, v0 layout=L0 field=0
     Return
 }
-# CHECK: f0 return: reads(AllocatorState) writes(AllocatorState) collects throw: none
+# CHECK: f0 return: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects throw: throwsForLackOfStack collects
 function f1 name="storeIntoCapture" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
   b0(v0: env L0, v1: anything):
     PutEnvironmentField v0, v1 layout=L0 field=0
     Return
 }
-# CHECK: f1 return: none throw: none p0: [Inspects] writes(EnvironmentFields/1) p1: [Retains] in p0
+# CHECK: f1 return: throwsForLackOfStack throw: throwsForLackOfStack p0: [Inspects] writes(EnvironmentFields/1) p1: [Retains] in p0
 function f2 name="propSetOnOwnAllocation" parameters=[{type=number}] results=[{type=undefined}] {
     v1 = NewObject -, v0 layout=L1 fields=[0]
     PropSet v1, v0 key="x"
     Return
 }
-# CHECK: f2 return: reads(AllocatorState) writes(AllocatorState) collects throw: none
+# CHECK: f2 return: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects throw: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects
 function f3 name="propSetOnParameter" parameters=[{type=L1}, {type=number}] results=[{type=undefined}] {
     PropSet v0, v1 key="x"
     Return
 }
-# CHECK: f3 return: collects throw: none p0: [Inspects] writes(ObjectFields/1)
+# CHECK: f3 return: throwsForLackOfStack collects throw: throwsForLackOfStack collects p0: [Inspects] writes(ObjectFields/1)
 function f4 name="callsStoreIntoOwnAllocation" parameters=[{type=anything}] results=[{type=undefined}] {
     v1 = CallDirect v0 function=f0
     Return
 }
-# CHECK: f4 return: reads(AllocatorState) writes(AllocatorState) collects throw: none
+# CHECK: f4 return: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects throw: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects
 function f5 name="constructsOwnAllocation" parameters=[{type=number}] results=[{type=undefined}] {
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = CallDirect v1, v0 function=f3
     Return
 }
-# CHECK: f5 return: reads(AllocatorState) writes(AllocatorState) collects throw: none
+# CHECK: f5 return: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects throw: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects
 function f6 name="returnsOwnAllocation" parameters=[{type=number}] results=[{type=L1}] {
     v1 = NewObject -, v0 layout=L1 fields=[0]
     PropSet v1, v0 key="x"
     Return v1
 }
-# CHECK: f6 return: reads(AllocatorState) writes(AllocatorState) collects throw: none
+# CHECK: f6 return: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects throw: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects
 function f7 name="fillsOwnArray" parameters=[{type=number}] results=[{type=Array<number>}] {
     v1 = NewArray contents=number
     AppendElement v1, v0
@@ -63,7 +63,7 @@ function f9 name="storeAfterKeepingOwnAllocation" parameters=[{type=number}] res
     PropSet v1, v0 key="x"
     Return
 }
-# CHECK: f9 return: reads(AllocatorState) writes(ModuleVariables/1, AllocatorState) collects throw: none
+# CHECK: f9 return: reads(AllocatorState) writes(ModuleVariables/1, AllocatorState) throwsForLackOfStack collects throw: reads(AllocatorState) writes(ModuleVariables/1, AllocatorState) throwsForLackOfStack collects
 function f10 name="storeThroughVariable" parameters=[{type=number}] results=[{type=undefined}] {
     v1 = NewObject -, v0 layout=L1 fields=[0]
     PutModuleVariable v1 variable=g0
@@ -76,7 +76,7 @@ function f10 name="storeThroughVariable" parameters=[{type=number}] results=[{ty
   b2():
     Return
 }
-# CHECK: f10 return: reads(ModuleVariables/1, AllocatorState) writes(ModuleVariables/1, ObjectFields/1, AllocatorState) collects throw: none
+# CHECK: f10 return: reads(ModuleVariables/1, AllocatorState) writes(ModuleVariables/1, ObjectFields/1, AllocatorState) throwsForLackOfStack collects throw: reads(ModuleVariables/1, AllocatorState) writes(ModuleVariables/1, ObjectFields/1, AllocatorState) throwsForLackOfStack collects
 function f11 name="storeIntoAllocationOrParameter" parameters=[{type=L1}, {type=number}, {type=boolean}] results=[{type=undefined}] {
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -88,5 +88,5 @@ function f11 name="storeIntoAllocationOrParameter" parameters=[{type=L1}, {type=
     PropSet v4, v1 key="x"
     Return
 }
-# CHECK: f11 return: reads(AllocatorState) writes(AllocatorState) collects throw: none p0: [Inspects] writes(ObjectFields/1)
+# CHECK: f11 return: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects throw: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects p0: [Inspects] writes(ObjectFields/1)
 # CHECK-LABEL: function f0

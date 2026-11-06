@@ -193,7 +193,7 @@ void* CagedAlignedMemoryAllocator::tryAllocateAlignedMemory(size_t alignment, si
     if (void* result = m_cage.tryAllocateAligned(alignment, size))
         return result;
     if (MarkedBlockCage::isRequired())
-        return nullptr;
+        return m_cage.tryAllocateAlignedFromSharedReserve(alignment, size);
     MarkedBlockCage::didAllocateOutside();
     return tryFastCompactAlignedMalloc(alignment, size);
 }

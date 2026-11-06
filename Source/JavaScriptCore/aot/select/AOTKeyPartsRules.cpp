@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTypes.h"
 #include "AOTInlineBuiltinForms.h"
+#include "AOTLoopEntry.h"
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
 #include "AOTVector.h"
@@ -23,6 +25,11 @@ namespace {
 struct KeyPartsMatch {
     SelectionGroup group;
     Opcode lookup;
+};
+
+struct LookupInLoop {
+    SelectionGroup group;
+    InvariantOperand collection;
 };
 
 } // anonymous namespace
@@ -42,7 +49,9 @@ static std::optional<Opcode> lookupOpcodeFor(InlineBuiltin builtin)
 
 static bool isKeyPart(const Type& type)
 {
-    return type.isAnyString() || type.isInt32();
+    if (type.isNever() || type.isUndefinedOrNull())
+        return false;
+    return type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Integer | Primitive::UndefinedOrNull) && type.integers.isSubsetOf(Range::int32());
 }
 
 static std::optional<KeyPartsMatch> findKeyPartsLookup(SelectionContext& context, ValueID id)
@@ -118,6 +127,105 @@ void selectKeyPartsLookup(SelectionContext& context)
     }
 
     context.rewriteGroups(SelectionRuleID::KeyPartsLookup, matches, rewriteKeyPartsLookup);
+}
+
+static bool isLookup(const Program& program, const Value& value)
+{
+    if (value.opcode != Opcode::CallBuiltin)
+        return value.opcode == Opcode::MoveTableToHeap;
+    std::optional<InlineBuiltin> builtin = inlineImplementationOf(program, value);
+    return builtin && lookupOpcodeFor(*builtin);
+}
+
+// Where the loop writes to a table otherwise, the code generator leaves its lookups to the stub.
+static bool writesToTablesOnlyInLookups(SelectionContext& context, const NaturalLoop& loop)
+{
+    const Function& function = context.function();
+    FunctionAnalyses& analyses = context.analyses();
+    auto writesToTables = [](const Effects& effects) { return effects.writes.isTop() || effects.writes.contains(AbstractHeap::CollectionStorage); };
+    for (unsigned i = 0; i < loop.size(); ++i) {
+        BlockID block = loop.at(i);
+        for (ValueID id : function.at(block).values) {
+            if (!isLookup(context.program(), function.at(id)) && writesToTables(analyses.effectsOf(id).onAnyEdge()))
+                return false;
+        }
+        if (writesToTables(analyses.effectsOfTerminator(block).onAnyEdge()))
+            return false;
+    }
+    return true;
+}
+
+using LoopsAsked = Vector<std::pair<BlockID, bool>, 4>;
+
+static std::optional<LookupInLoop> findLookupInLoop(SelectionContext& context, ValueID id, LoopsAsked& loopsAsked)
+{
+    const Function& function = context.function();
+    const Value& call = function.at(id);
+    std::optional<InlineBuiltinSite> site = findInlineBuiltinSite(context, id);
+    if (!site || !lookupOpcodeFor(site->builtin) || site->shape != CodeShape::Fast || chooseInlineForm(*site) != InlineForm::Whole)
+        return std::nullopt;
+
+    // Only strings are keys of a table in the image.
+    ValueID receiver = call.receiverOperand();
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    if (!receiver || arguments.size() != 1 || !context.typeOf(arguments[0]).isAnyStringOrNullish() || makersOfStrings.contains(function.at(arguments[0]).opcode) || !hasOnlyMapsAndSets(context.program(), context.typeOf(receiver)))
+        return std::nullopt;
+
+    BlockID block = context.analyses().useLists().blockOf(id);
+    const NaturalLoop* loop = context.analyses().naturalLoops().innerMostLoopOf(block);
+    if (!loop)
+        return std::nullopt;
+    size_t asked = loopsAsked.findIf([&](const auto& earlier) { return earlier.first == loop->header(); });
+    if (asked == notFound) {
+        asked = loopsAsked.size();
+        loopsAsked.append({ loop->header(), writesToTablesOnlyInLookups(context, *loop) });
+    }
+    if (!loopsAsked[asked].second)
+        return std::nullopt;
+
+    std::optional<InvariantOperand> collection = findOutermostInvariantLoop(context, block, receiver, [&](ValueID candidate) {
+        return function.at(candidate).type == function.at(receiver).type;
+    });
+    if (!collection || !canEmitOnLoopEntry(context, collection->header) || loopEntryGetsNewHandlerEdge(context, collection->header))
+        return std::nullopt;
+    return LookupInLoop { groupOfOne(id), *collection };
+}
+
+void selectMoveLookupTablesToHeap(SelectionContext& context)
+{
+    if (context.build().recordedOptions().useWideReferences() || !context.analyses().cfg().hasCycle())
+        return;
+
+    Vector<LookupInLoop> lookups;
+    LoopsAsked loopsAsked;
+    for (ValueID id : context.candidates(Opcode::CallBuiltin)) {
+        std::optional<LookupInLoop> lookup = findLookupInLoop(context, id, loopsAsked);
+        if (lookup && context.tryClaim(SelectionRuleID::MoveLookupTablesToHeap, lookup->group) == ClaimResult::Claimed)
+            lookups.append(WTF::move(*lookup));
+    }
+
+    struct MovedCollection {
+        InvariantOperand collection;
+        ValueID moved;
+    };
+    Vector<MovedCollection, 4> movedCollections;
+    context.rewriteGroups(SelectionRuleID::MoveLookupTablesToHeap, lookups, [&](GroupRewriter& rewriter, const LookupInLoop& lookup) {
+        size_t index = movedCollections.findIf([&](const MovedCollection& earlier) {
+            return earlier.collection.header == lookup.collection.header && earlier.collection.value == lookup.collection.value;
+        });
+        if (index == notFound) {
+            index = movedCollections.size();
+            movedCollections.append({ lookup.collection, { } });
+            emitOnLoopEntry(context, rewriter.builder(), lookup.collection.header, [&](IRBuilder& atEntry) {
+                movedCollections[index].moved = atEntry.append(Opcode::MoveTableToHeap, { lookup.collection.value });
+            });
+        }
+        if (ValueID moved = movedCollections[index].moved) {
+            rewriter.function().edit(lookup.group.root).setReceiverOperand(moved);
+            context.analyses().didChangeValues();
+        }
+        rewriter.leaveUnclaimed(lookup.group.root);
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -33,14 +33,13 @@ inline Vector<BuiltinID> constantBuiltinMembersToLock(const Program& program, co
 {
     const BuiltinTable& builtins = program.builtins();
     Vector<BuiltinID> members;
-    for (const BuiltinLocationFlow& location : flow.builtinLocations()) {
-        if (location.state != BuiltinLocationState::Constant)
-            continue;
-        BuiltinID member = findOwnMember(program, location.holder, location.key);
-        if (member && canLockAtStartUp(builtins, member))
+    for (size_t index : flow.builtinMembersLockedAtStartUp()) {
+        // A default export is no property of its holder: the loader hands it out.
+        BuiltinID member(static_cast<uint32_t>(index));
+        if (findOwnMember(program, builtins.at(member).holder, program.keyOf(builtins.at(member).name)) == member)
             members.append(member);
     }
-    AOT::sort(members, { }, [&](BuiltinID member) {
+    AOT::sortInLine(members, { }, [&](BuiltinID member) {
         return std::pair { builtins.at(member).holder, member };
     });
     return members;

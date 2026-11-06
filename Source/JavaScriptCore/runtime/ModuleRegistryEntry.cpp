@@ -278,6 +278,20 @@ JSPromise* ModuleRegistryEntry::loadedPromise(JSGlobalObject* globalObject)
     }
     return m_loadPromise.get();
 }
+
+// The entry holds the record of a CommonJS module as the module was when a load that it started came back to it. Whoever asks from now on gets the record of the whole module.
+void ModuleRegistryEntry::replaceRecord(JSGlobalObject* globalObject, AbstractModuleRecord* record)
+{
+    if (m_status == Status::FetchFailed)
+        return;
+    VM& vm = globalObject->vm();
+    m_record.set(vm, this, record);
+    m_status = Status::Fetched;
+    JSPromise* modulePromise = JSPromise::create(vm, globalObject->promiseStructure());
+    modulePromise->markAsHandled();
+    modulePromise->fulfill(vm, record);
+    m_modulePromise.set(vm, this, modulePromise);
+}
 #endif
 
 void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractModuleRecord* record)

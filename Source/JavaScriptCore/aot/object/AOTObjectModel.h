@@ -25,6 +25,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
@@ -58,17 +59,11 @@ public:
     bool shapeHasType(const RuntimeType&, uint32_t shape) const;
     // Only the engine stores a brand. What it stores is a class token, which is no JavaScript value, so no type describes it.
     bool fieldAccepts(const FieldData& field, JSValue value) const { return field.isBrand() || valueHasType(typeOf(field), value); }
-    // A slot holds undefined or null wherever it has a marker for it, whatever the type of its field says.
     bool slotAdmits(const FieldData& field, JSValue value) const
     {
         if (field.isAccessor())
             return false;
-        if (fieldAccepts(field, value))
-            return true;
-        if (field.keepsStateOfBirth)
-            return false;
-        SlotTraits traits = traitsOf(field.slot.representation());
-        return (value.isUndefined() && traits.hasUndefined) || (value.isNull() && traits.hasNull);
+        return fieldAccepts(field, value) || (field.slotHoldsUndefinedAndNull && value.isUndefinedOrNull());
     }
     std::optional<AcceptedValue> accept(const FieldData&, JSValue) const;
     bool passes(const ShapeTestData& test, uint32_t shape) const { return m_tables.passes(test, shape); }
@@ -80,7 +75,11 @@ public:
     bool everyObjectHadRemovedField(const LayoutData&) const;
     // What an object of the layout holds behind its header when Object::create() has made it and nothing is stored yet: the same bytes every time. Kept for whoever makes such objects again and again.
     struct BodyAtBirth {
-        Vector<uint8_t> bytes;
+        std::span<const uint8_t> span() const { return cell.span().subspan(sizeof(JSCell), size); }
+
+        // The cell in whole chunks of sixteen bytes, with zeros for its header and behind its last byte.
+        Vector<uint8_t> cell;
+        size_t size { 0 };
         bool isBornUnfinished { false };
     };
     const BodyAtBirth* bodyAtBirthIfKnown(const LayoutData& layout) const
@@ -88,7 +87,13 @@ public:
         auto found = m_bodiesAtBirth.find(layout.index + 1);
         return found == m_bodiesAtBirth.end() ? nullptr : &found->value;
     }
-    void rememberBodyAtBirth(const LayoutData& layout, std::span<const uint8_t> bytes, bool isBornUnfinished) { m_bodiesAtBirth.add(layout.index + 1, BodyAtBirth { Vector<uint8_t>(bytes), isBornUnfinished }); }
+    void rememberBodyAtBirth(const LayoutData& layout, std::span<const uint8_t> bytes, bool isBornUnfinished)
+    {
+        Vector<uint8_t> cell;
+        cell.fill(0, WTF::roundUpToMultipleOf<16>(sizeof(JSCell) + bytes.size()));
+        memcpySpan(cell.mutableSpan().subspan(sizeof(JSCell)), bytes);
+        m_bodiesAtBirth.add(layout.index + 1, BodyAtBirth { WTF::move(cell), bytes.size(), isBornUnfinished });
+    }
     void didReadAbsentField(VM& vm, const LayoutData& layout, UniquedStringImpl* name) const
     {
         if (!m_tables.removedFields().empty()) [[unlikely]]
@@ -139,6 +144,7 @@ public:
     CompiledStructure* existingWithExtraProperties(const CompiledStructure&, Structure& extraPropertiesStructure);
     CompiledStructure* holdingExtraProperties(VM&, const CompiledStructure&, JSObject* extraProperties);
     CompiledStructure* withOutOfLineKeyOrder(VM&, const CompiledStructure&, std::span<const uint16_t> entries);
+    CompiledStructure* withKeyOrderOfOneObject(VM&, const CompiledStructure&, std::span<const uint16_t> entries, std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder);
     CompiledStructure* withNumberedKeyOrder(VM&, const CompiledStructure&);
 
     JSCell* allocate(VM&, uint32_t allocation);
@@ -169,30 +175,39 @@ private:
         FreeList freeList { 0 };
     };
 
-    AllocationSiteRecord emptyAllocationSiteRecord() { return { .header = 0, .orderAndShapeWords = 0, .allocator = &m_allocatorWithoutRoom, .unused = 0 }; }
+    AllocationSiteRecord emptyAllocationSiteRecord() { return { .header = 0, .orderAndShapeWords = 0, .allocator = &m_allocatorWithoutRoom, .prototype = 0 }; }
 
     std::span<uint32_t> usualStructureIDs() const { return { m_structures, m_tables.firstEnvironmentShape }; }
     std::span<AllocationSiteRecord> allocationSiteRecords() const;
 
     CompiledStructure* usualStructureIfExists(uint32_t shape) const;
+    CompiledStructure* usualStructure(VM&, uint32_t shape);
     Variant usualVariantOf(VM&, const LayoutData&);
     CompiledStructure* createUsual(VM&, const LayoutData&, const Variant&);
     CompiledStructure* create(VM&, const LayoutData&, const Variant&);
     CompiledStructure* find(const Variant&) const;
     CompiledStructure* findOrCreate(VM&, const Variant&);
     static Variant variantOf(const CompiledStructure&);
+    // For a Structure that differs in something else than the key order.
+    static Variant variantWithKeyOrderOf(const CompiledStructure&);
+    // No table lists such a Structure.
+    static bool belongsToOneObject(const Variant& variant) { return variant.heldExtraProperties || variant.keysNamedByOrder; }
 
     template<typename Appender> void visitUsualStructures(Appender&, size_t begin, size_t end);
     template<typename Appender> void visitRecords(Appender&, size_t begin, size_t end);
 
     AllocationSiteRecord* recordOfSameAllocation(uint32_t allocation) const;
     AllocationSiteRecord& ensureRecord(uint32_t allocation);
+    AllocationSiteRecord& ensureRecord(uint32_t allocation, uint32_t shape);
     AllocationSiteRecord& filledRecord(VM&, uint32_t allocation);
 
     State& m_state;
     const ProgramTables& m_tables;
     EnvironmentShapes m_environmentShapes;
     uint32_t* m_structures { nullptr };
+    // Each shape once, whether or not its entry in m_structures is still set.
+    Vector<uint32_t> m_shapesWithStructure;
+    BitVector m_shapeHasStructure;
     uint32_t m_numberOfAllocationSiteRecords { 0 };
     AllocatorWithoutRoom m_allocatorWithoutRoom { };
     // No cell has them. Every other Structure of a compiled object starts as a copy of one: the second is for objects with another prototype than their layout's.
@@ -200,7 +215,6 @@ private:
     std::unique_ptr<VariantMaps> m_variants;
     // In a run with --aotCountsPath.
     std::unique_ptr<MadeStructures> m_made;
-    Vector<StructureID> m_variantsMadeSinceCollection;
     RememberedSlotSet m_writtenStructures;
     RememberedSlotSet m_writtenRecords;
 };
@@ -222,6 +236,9 @@ struct ObjectModel {
 
 inline const FieldData* Object::fieldNamed(State& state, PropertyName name) const
 {
+    // Whoever has a state at hand passes it to save the way to it. It may be the caller's, and the object of another image.
+    if (state.sharesRealm) [[unlikely]]
+        return this->state().objects->layouts.field(*state.instance.vm, layout(), name.uid());
     return state.objects->layouts.field(*state.instance.vm, layout(), name.uid());
 }
 

@@ -347,7 +347,16 @@ static void runFrameArrayParameters(TestCommandContext& context)
             if (table.mayTake(id, entryParameter))
                 context.out.print(separator, entryParameter);
         }
-        context.out.println("]");
+        context.out.print("]");
+        CommaPrinter separatorByValue(", "_s, ", by value ["_s);
+        bool isTakenByValue = false;
+        for (uint32_t entryParameter = 0; entryParameter < numberOfParameters; ++entryParameter) {
+            if (table.mayTakeWhenCalledByValue(id, entryParameter)) {
+                context.out.print(separatorByValue, entryParameter);
+                isTakenByValue = true;
+            }
+        }
+        context.out.println(isTakenByValue ? "]" : "");
     }
 }
 

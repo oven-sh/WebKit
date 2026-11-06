@@ -226,6 +226,7 @@ private:
         OP_STOS_YvEAX                   = 0xAB,
         OP_MOV_EAXIv                    = 0xB8,
         OP_GROUP2_EvIb                  = 0xC1,
+        OP_RET_Iw                       = 0xC2,
         OP_RET                          = 0xC3,
         OP_GROUP11_EvIb                 = 0xC6,
         OP_GROUP11_EvIz                 = 0xC7,
@@ -300,9 +301,11 @@ private:
         OP2_SUBSD_VsdWsd                = 0x5C,
         OP2_MINPS_VpsWps                = 0x5D,
         OP2_MINPD_VpdWpd                = 0x5D,
+        OP2_MINSD_VsdWsd                = 0x5D,
         OP2_DIVSD_VsdWsd                = 0x5E,
         OP2_MAXPS_VpsWps                = 0x5F,
         OP2_MAXPD_VpdWpd                = 0x5F,
+        OP2_MAXSD_VsdWsd                = 0x5F,
         OP2_PUNPCKLBW_VdqWdq            = 0x60,
         OP2_PUNPCKLWD_VdqWdq            = 0x61,
         OP2_PUNPCKLDQ_VdqWdq            = 0x62,
@@ -2858,6 +2861,101 @@ public:
         m_formatter.twoByteOp(OP2_ADDPS_VpsWps, (RegisterID)vd, (RegisterID)vn);
     }
 
+    void addpd_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/addpd
+        // 66 0F 58 /r ADDPD xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_ADDPD_VpdWpd, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void subps_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/subps
+        // NP 0F 5C /r SUBPS xmm1, xmm2/m128
+        m_formatter.twoByteOp(OP2_SUBPS_VpsWps, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void subpd_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/subpd
+        // 66 0F 5C /r SUBPD xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_SUBPD_VpdWpd, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void mulps_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/mulps
+        // NP 0F 59 /r MULPS xmm1, xmm2/m128
+        m_formatter.twoByteOp(OP2_MULPS_VpsWps, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void mulpd_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/mulpd
+        // 66 0F 59 /r MULPD xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_MULPD_VpdWpd, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void divps_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/divps
+        // NP 0F 5E /r DIVPS xmm1, xmm2/m128
+        m_formatter.twoByteOp(OP2_DIVPS_VpsWps, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void divpd_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/divpd
+        // 66 0F 5E /r DIVPD xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_DIVPD_VpdWpd, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void sqrtps_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/sqrtps
+        // NP 0F 51 /r SQRTPS xmm1, xmm2/m128
+        m_formatter.twoByteOp(OP2_SQRTPS_VpsWps, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void sqrtpd_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/sqrtpd
+        // 66 0F 51 /r SQRTPD xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_SQRTPD_VpdWpd, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void pmullw_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/pmullw
+        // 66 0F D5 /r PMULLW xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PMULLW_VdqWdq, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void pmulld_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/pmulld:pmullq
+        // 66 0F 38 40 /r PMULLD xmm1, xmm2/m128 | SSE4_1
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.threeByteOp(OP2_3BYTE_ESCAPE_38, OP3_PMULLD_VdqWdq, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    // [66] 0F [38] opcode /r: an operation on two vector registers that overwrites the second.
+    void vectorOp_rr(bool hasPrefix66, bool hasEscape38, uint8_t opcode, XMMRegisterID vn, XMMRegisterID vd)
+    {
+        if (hasPrefix66)
+            m_formatter.prefix(PRE_SSE_66);
+        if (hasEscape38)
+            m_formatter.threeByteOp(OP2_3BYTE_ESCAPE_38, static_cast<ThreeByteOpcodeID>(opcode), (RegisterID)vd, (RegisterID)vn);
+        else
+            m_formatter.twoByteOp(static_cast<TwoByteOpcodeID>(opcode), (RegisterID)vd, (RegisterID)vn);
+    }
+
     void paddb_rr(XMMRegisterID vn, XMMRegisterID vd)
     {
         // https://www.felixcloutier.com/x86/paddb:paddw:paddd:paddq
@@ -4047,6 +4145,30 @@ public:
         m_formatter.twoByteOp(OP2_SUBSD_VsdWsd, dst, base, index, scale, offset);
     }
 
+    void minsd_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOp(OP2_MINSD_VsdWsd, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void minss_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F3);
+        m_formatter.twoByteOp(OP2_MINSD_VsdWsd, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void maxsd_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOp(OP2_MAXSD_VsdWsd, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void maxss_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F3);
+        m_formatter.twoByteOp(OP2_MAXSD_VsdWsd, (RegisterID)dst, (RegisterID)src);
+    }
+
     void ucomisd_rr(XMMRegisterID src, XMMRegisterID dst)
     {
         m_formatter.prefix(PRE_SSE_66);
@@ -4203,6 +4325,12 @@ public:
     void ret()
     {
         m_formatter.oneByteOp(OP_RET);
+    }
+
+    void ret(uint16_t bytesPoppedBehindReturnAddress)
+    {
+        m_formatter.oneByteOp(OP_RET_Iw);
+        m_formatter.immediate16(bytesPoppedBehindReturnAddress);
     }
 
     void stc()
@@ -6208,6 +6336,38 @@ public:
         // VEX.LIG.F3.0F.WIG 59 /r VMULSS xmm1,xmm2, xmm3/m32
         // B    NA    ModRM:reg (w)    VEX.vvvv (r)    ModRM:r/m (r)    NA
         m_formatter.vexNdsLigWigTwoByteOp(PRE_SSE_F3, OP2_MULSD_VsdWsd, (RegisterID)dst, (RegisterID)b, offset, base, index, scale);
+    }
+
+    void vminsd_rrr(XMMRegisterID a, XMMRegisterID b, XMMRegisterID dst)
+    {
+        // https://www.felixcloutier.com/x86/minsd
+        // VEX.LIG.F2.0F.WIG 5D /r VMINSD xmm1, xmm2, xmm3/m64
+        // B    NA    ModRM:reg (w)    VEX.vvvv (r)    ModRM:r/m (r)    NA
+        m_formatter.vexNdsLigWigTwoByteOp(PRE_SSE_F2, OP2_MINSD_VsdWsd, (RegisterID)dst, (RegisterID)b, (RegisterID)a);
+    }
+
+    void vminss_rrr(XMMRegisterID a, XMMRegisterID b, XMMRegisterID dst)
+    {
+        // https://www.felixcloutier.com/x86/minss
+        // VEX.LIG.F3.0F.WIG 5D /r VMINSS xmm1, xmm2, xmm3/m32
+        // B    NA    ModRM:reg (w)    VEX.vvvv (r)    ModRM:r/m (r)    NA
+        m_formatter.vexNdsLigWigTwoByteOp(PRE_SSE_F3, OP2_MINSD_VsdWsd, (RegisterID)dst, (RegisterID)b, (RegisterID)a);
+    }
+
+    void vmaxsd_rrr(XMMRegisterID a, XMMRegisterID b, XMMRegisterID dst)
+    {
+        // https://www.felixcloutier.com/x86/maxsd
+        // VEX.LIG.F2.0F.WIG 5F /r VMAXSD xmm1, xmm2, xmm3/m64
+        // B    NA    ModRM:reg (w)    VEX.vvvv (r)    ModRM:r/m (r)    NA
+        m_formatter.vexNdsLigWigTwoByteOp(PRE_SSE_F2, OP2_MAXSD_VsdWsd, (RegisterID)dst, (RegisterID)b, (RegisterID)a);
+    }
+
+    void vmaxss_rrr(XMMRegisterID a, XMMRegisterID b, XMMRegisterID dst)
+    {
+        // https://www.felixcloutier.com/x86/maxss
+        // VEX.LIG.F3.0F.WIG 5F /r VMAXSS xmm1, xmm2, xmm3/m32
+        // B    NA    ModRM:reg (w)    VEX.vvvv (r)    ModRM:r/m (r)    NA
+        m_formatter.vexNdsLigWigTwoByteOp(PRE_SSE_F3, OP2_MAXSD_VsdWsd, (RegisterID)dst, (RegisterID)b, (RegisterID)a);
     }
 
     void vsubsd_rrr(XMMRegisterID a, XMMRegisterID b, XMMRegisterID dst)

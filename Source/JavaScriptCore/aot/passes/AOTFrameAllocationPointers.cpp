@@ -49,7 +49,7 @@ static constexpr OperandUses usesOfArrayReaders { OperandUse::Inspects, OperandU
 static constexpr OpcodeSet readersOfArraysWhereTheyLie {
     Opcode::TypeTest, Opcode::IsPristine, Opcode::StrictEq, Opcode::ValueEqualsLiteral, Opcode::ToBoolean,
     Opcode::HasArrayStorage, Opcode::IsInBounds, Opcode::IsElementPresent, Opcode::GetArrayLength, Opcode::GetArrayElement, Opcode::HasSpareArrayCapacity,
-    Opcode::ArrayStorageKind, Opcode::HasContiguousIndex, Opcode::GetContiguousIndex,
+    Opcode::ArrayStorageKind, Opcode::HasContiguousIndex, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex,
     Opcode::CallList, Opcode::AppendElements, Opcode::CreateUnmappedArguments, Opcode::CreateMappedArguments,
     Opcode::ValidateType, Opcode::ValidateSameValue,
 };
@@ -142,11 +142,14 @@ static bool mayHandFrameArrayTo(const Program& program, const FlowResults* flow,
     if (!flow || effectRuleOf(call.opcode) != EffectRule::Call || maySuspend(call.opcode) || call.operandUses(operandIndex).containsAny(callingUses))
         return false;
     CalleeList callees = calleesOfCall(program, call);
-    if (!callees.isComplete || !callees.builtins.isEmpty())
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions)
         return false;
-    return std::ranges::all_of(callees.functions, [&](FunctionID callee) {
+    return std::ranges::all_of(functions->value(), [&](FunctionID callee) {
         std::optional<uint32_t> entryParameter = entryParameterOf(program.at(callee), call, operandIndex);
-        return entryParameter && flow->mayTakeFrameArray(callee, *entryParameter);
+        if (!entryParameter)
+            return false;
+        return call.opcode == Opcode::CallDirect ? flow->mayTakeFrameArray(callee, *entryParameter) : flow->mayTakeFrameArrayWhenCalledByValue(callee, *entryParameter);
     });
 }
 
@@ -323,69 +326,6 @@ bool mayReturnOperand(Opcode opcode)
     return false;
 }
 
-static bool hasSourceOfUnspecifiedValues(FunctionAnalyses& analyses)
-{
-    const OpcodeSet& opcodes = analyses.opcodesOfValues();
-    return opcodes.contains(Opcode::Unspecified) || opcodes.contains(Opcode::ResultAt);
-}
-
-static bool isSourceOfUnspecifiedValues(const Function& function, const Value& value)
-{
-    if (value.opcode == Opcode::Unspecified)
-        return true;
-    return value.opcode == Opcode::ResultAt && effectRuleOf(function.at(value.resultsOperand()).opcode) == EffectRule::Call;
-}
-
-static void forEachValueHandedOn(FunctionAnalyses& analyses, ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor)
-{
-    const Function& function = analyses.function();
-    const Value& value = function.at(id);
-    if (value.opcode != Opcode::Parameter) {
-        forEachReturnedOperand(function, value, functor);
-        return;
-    }
-
-    BlockID block = analyses.useLists().blockOf(id);
-    uint32_t parameterIndex = static_cast<uint32_t>(function.at(block).parameters.find(id));
-    for (Edge edge : analyses.cfg().incomingEdges(block)) {
-        if (ValueID passed = valuePassedOn(function, edge, parameterIndex))
-            functor(passed);
-    }
-}
-
-UnspecifiedValues::UnspecifiedValues(FunctionAnalyses& analyses)
-    : m_analyses(analyses)
-    , m_hasSource(hasSourceOfUnspecifiedValues(analyses))
-{
-    if (m_hasSource)
-        m_isSpecified.ensureSize(analyses.function().values.size());
-}
-
-bool UnspecifiedValues::mayContain(ValueID start)
-{
-    if (!m_hasSource)
-        return false;
-
-    const Function& function = m_analyses.function();
-    m_visited.shrink(0);
-    Vector<ValueID, 8> worklist { start };
-    while (!worklist.isEmpty()) {
-        ValueID id = worklist.takeLast();
-        if (m_isSpecified.quickSet(id.index()))
-            continue;
-        m_visited.append(id);
-        if (isSourceOfUnspecifiedValues(function, function.at(id))) {
-            for (ValueID visited : m_visited)
-                m_isSpecified.quickClear(visited.index());
-            return true;
-        }
-        forEachValueHandedOn(m_analyses, id, [&](ValueID source) {
-            worklist.append(source);
-        });
-    }
-    return false;
-}
-
 FramePointers::FramePointers(const Function& function)
     : FramePointers(nullptr, function, FrameCells::All)
 {
@@ -494,13 +434,14 @@ static OperandSummary summarizePublishedParameter(const Program& program, const 
 static OperandSummary summarizeCallOperand(const Program& program, const FlowResults& flow, const Value& call, uint32_t operandIndex)
 {
     CalleeList callees = calleesOfCall(program, call);
-    if (!callees.isComplete || !callees.builtins.isEmpty() || maySuspend(call.opcode))
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions || maySuspend(call.opcode))
         return { };
 
     OperandUses declaredUses = operandUsesOf(call.opcode, operandIndex);
     bool isCalledValue = declaredUses.containsAny(callingUses);
     OperandSummary summary { isCalledValue ? declaredUses : OperandUses { OperandUse::Inspects }, RetainedIn::UnknownMemory, 0 };
-    for (FunctionID id : callees.functions) {
+    for (FunctionID id : functions->value()) {
         const Function& callee = program.at(id);
         if (!isCalledValue) {
             summary = joinOf(summary, summarizePublishedParameter(program, flow, call, id, entryParameterOf(callee, call, operandIndex)));
@@ -585,7 +526,13 @@ bool mayLeakFramePointer(const Program& program, const FlowResults* flow, const 
 {
     if (isLentTo(function, user, operandIndex))
         return false;
-    OperandSummary summary = summarizeFramePointerUse(program, flow, function, user, operandIndex);
+    return mayLeakFramePointer(program, function, user, operandIndex, summarizeFramePointerUse(program, flow, function, user, operandIndex));
+}
+
+bool mayLeakFramePointer(const Program& program, const Function& function, const Value& user, uint32_t operandIndex, const OperandSummary& summary)
+{
+    if (isLentTo(function, user, operandIndex))
+        return false;
     if (summary.uses.containsAny(unfollowedLeakingUses))
         return true;
     bool isRetained = summary.uses.contains(OperandUse::Retains);

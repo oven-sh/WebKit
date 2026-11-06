@@ -362,7 +362,8 @@ function f16 name="heldInDifferentFieldsOfTwoHolders" parameters=[{type=anything
 # CHECK-NEXT: [[early16]]:{{*}}= NewObject layout=L5
 # CHECK-NEXT: = Call v0, -, [[early16]]
 # CHECK-NOT: fields=[
-# CHECK: = Call v0, -, v9
+# CHECK: [[read16]]: anything = AssumeType v9, [[filled16]] provenType=anything
+# CHECK-NEXT: = Call v0, -, [[read16]]
 # CHECK-NOT: fields=[
 }
 

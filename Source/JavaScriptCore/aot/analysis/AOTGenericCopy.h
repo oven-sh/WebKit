@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTLiveness.h"
 #include "AOTNaturalLoops.h"
 #include "AOTRegionCloner.h"
 #include "AOTVector.h"
@@ -22,9 +23,10 @@ class FunctionAnalyses;
 class SSARepair;
 struct FunctionPassContext;
 
-Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses&, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt);
+// With requestedBlocks, returns only the points inside those blocks, and may omit points at block heads.
+Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses&, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt, const BitVector* requestedBlocks = nullptr);
 
-bool isClosedOnlyByWaysBack(FunctionAnalyses&, const NaturalLoop&);
+Expected<bool> isClosedOnlyByWaysBack(FunctionAnalyses&, const NaturalLoop&);
 
 Vector<TypeID, 4> typesOfCountersOnWayBack(FunctionAnalyses&, TypeArena&, BlockID head);
 
@@ -44,6 +46,7 @@ public:
     void addCopiedBlock(BlockID block) { m_requiredBlocks.append(block); }
     void addStart(BlockID block) { m_starts.append(block); }
     void addEntry(BlockID block) { m_entries.append(block); }
+    void addRedirectedEdge(Edge edge) { m_redirectedEdges.append({ edge.from.index(), edge.targetIndex }); }
     void addRejoinBlock(BlockID block) { m_isRejoinBlock.set(block.index()); }
     void addRejoinBlockWithoutTests(BlockID block) { m_isRejoinBlockWithoutTests.set(block.index()); }
     // The copy comes back here even where the tested code knows more about a live value. Behind the block that value has the type of both.
@@ -59,7 +62,7 @@ public:
     Extent plan(uint64_t maxBlocks, NOESCAPE const RegionCloner::LivenessSource& livenessInsideCopiedBlocks);
     std::span<const BlockID> plannedBlocks() const LIFETIME_BOUND { return m_region.span(); }
 
-    void clone(BlockFrequency (*frequencyOfCopy)(BlockFrequency));
+    void clone(Expected<BlockFrequency> (*frequencyOfCopy)(Expected<BlockFrequency>));
     BlockID copyOf(BlockID block) const { return m_cloner ? m_cloner->cloneOf(block) : BlockID(); }
     ValueID copyOf(ValueID value) const { return m_hasPlaceholder.get(value.index()) ? ValueID() : nameInCopy(value); }
     std::span<const BlockID> copiedBlocks() const { return m_cloner ? m_cloner->clonedBlocks() : std::span<const BlockID> { }; }
@@ -117,18 +120,21 @@ private:
     struct AnswersByBlock {
         BitVector isKnown;
         BitVector answer;
+        Liveness::AnswersAboutValues aboutLiveValues;
     };
 
     bool isInRegion(BlockID block) const { return m_isInRegion.get(block.index()); }
-    bool isRare(BlockID block) const { return m_function.at(block).frequency == BlockFrequency::Rare; }
+    Expected<bool> isRare(BlockID block) const { return m_function.at(block).frequency == BlockFrequency::Rare; }
 
     void computeBlocksReachingNonRareCode();
     void computeNarrowedValues();
     bool hasValueAtHead(BlockID, const BitVector& values, AnswersByBlock&) const;
     void computeRegion(Extent);
+    BitVector computeBlocksReachingBackEdges() const;
     bool addsLoopEntry(BlockID) const;
     bool mergesAllocationWithItsCopyAt(BlockID) const;
     bool mergesAllocationThatSinksWithItsCopyAt(BlockID) const;
+    bool mergesGeneratorWithItsCopyAt(BlockID) const;
     bool canLeaveCopyAt(BlockID) const;
     bool handsOverTooMuchAtExits() const;
     bool tryPlan(Extent, uint64_t maxBlocks, const RegionCloner::LivenessSource&);
@@ -152,6 +158,7 @@ private:
     Vector<BlockID, 8> m_requiredBlocks;
     Vector<BlockID, 8> m_starts;
     Vector<BlockID, 8> m_entries;
+    Vector<std::pair<uint32_t, uint32_t>, 8> m_redirectedEdges;
     Vector<ValueID, 8> m_valuesToBeNarrowed;
     Vector<ValueID, 8> m_valuesNarrowedInUnknownWay;
     Vector<ValueID, 8> m_valuesKnownBeyondTheirTypes;
@@ -176,6 +183,7 @@ private:
     Vector<BlockID, 4> m_untestedRejoins;
     Vector<BlockID, 4> m_testedRejoinBlocks;
     mutable std::optional<BitVector> m_allocationsThatSink;
+    mutable std::optional<BitVector> m_reachesBackEdge;
     Vector<TestedRejoin, 4> m_testedRejoins;
 
     BitVector m_hasPlaceholder;

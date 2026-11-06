@@ -266,7 +266,14 @@ void generateAppendElements(StubAssembler& jit)
     Jump holdsNoCells = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(Int32Shape));
     Jump needsBarrier = branchIfBarrierIsNeeded(jit, array, kind);
     holdsNoCells.link(&jit);
+    jit.returnToCaller();
+
+    // Array.prototype.push stores the length also where it appends nothing, and an array whose length is fixed refuses that.
+    static_assert(UndecidedShape < ContiguousShape && Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && ArrayStorageShape > ContiguousShape && CopyOnWrite > ContiguousShape);
     isEmpty.link(&jit);
+    jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
+    jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), kind);
+    slowPath.append(jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ContiguousShape)));
     jit.returnToCaller();
 
     needsBarrier.link(&jit);

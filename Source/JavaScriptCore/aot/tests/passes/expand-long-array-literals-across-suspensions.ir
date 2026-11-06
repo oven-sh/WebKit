@@ -1,0 +1,38 @@
+# The elements of a long array literal are stored as they are made also where the function suspends between them: the suspensions hold the array, not each element
+# FORM: Prepared
+# RUN: pass ExpandLongArrayLiterals
+# LOSS: MaxArrayLiteralBatch x2 f0 v42
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="awaitsBetweenElements" flags=[IsAsync] parameters=[{type=object}, {type=object}] results=[{type=Promise}] {
+# REPEAT: i = 2..40
+    v%(i) = Await v0
+# END REPEAT
+    v41 = Await v0, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v39, v40
+    v42 = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v39, v40, v41 contents=anything
+    Return v42
+}
+# CHECK-LABEL: function f0
+# CHECK: v2: anything = Await v0
+# CHECK-NOT: AwaitBySavingFrame
+# CHECK: [[filled]]:{{*}}= NewContiguousArray
+# CHECK: PutContiguousIndex [[filled]], {{*}}, v2
+# CHECK: v3: anything = Await v0
+# CHECK: PutContiguousIndex [[filled]], {{*}}, v3
+# CHECK: v41: anything = Await v0, [[filled]]
+# CHECK: PutContiguousIndex [[filled]], {{*}}, v41
+# CHECK: = TruncateNewArray [[filled]],
+
+function f1 name="elementReadBehindTheLiteral" flags=[IsAsync] parameters=[{type=object}, {type=object}] results=[{type=Promise}] {
+# REPEAT: i = 2..40
+    v%(i) = Await v0
+# END REPEAT
+    v41 = Await v0, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v39, v40
+    v42 = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v39, v40, v41 contents=anything
+    PropSet v42, v2 key="first"
+    Return v42
+}
+# CHECK-LABEL: function f1
+# CHECK: [[other]]:{{*}}= NewContiguousArray
+# CHECK: v41: anything = Await v0, v2, [[other]]

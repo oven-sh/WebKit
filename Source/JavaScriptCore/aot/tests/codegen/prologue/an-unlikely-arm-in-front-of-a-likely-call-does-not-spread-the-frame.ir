@@ -20,4 +20,4 @@ function f0 name="unlikelyArmThenLikelyCall" parameters=[{type=boolean}, {type=b
     Return v2
 }
 # CHECK: f0: size={{*}}
-# X64: f0: size=56 frame=16@15-31,42-50
+# X64: f0: size=49 frame=16@15-23,35-43

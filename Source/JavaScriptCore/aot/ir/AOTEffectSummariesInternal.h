@@ -155,6 +155,37 @@ struct StoredAddedEffects {
     CompactEffects effects;
 };
 
+// What is lent is read on another thread until it is taken back, so nobody writes to it meanwhile.
+class LendableSummaries {
+public:
+    explicit LendableSummaries(EffectSummaries&& summaries)
+        : m_summaries(WTF::move(summaries))
+    {
+    }
+
+    const EffectSummaries& read() const LIFETIME_BOUND { return m_summaries; }
+    EffectSummaries& write() LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(!m_isLent);
+        return m_summaries;
+    }
+    const EffectSummaries& lend() LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(!m_isLent);
+        m_isLent = true;
+        return m_summaries;
+    }
+    void takeBack()
+    {
+        RELEASE_ASSERT(m_isLent);
+        m_isLent = false;
+    }
+
+private:
+    EffectSummaries m_summaries;
+    bool m_isLent { false };
+};
+
 class BodySummaries {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BodySummaries);
     WTF_MAKE_NONCOPYABLE(BodySummaries);
@@ -173,7 +204,9 @@ public:
     bool describesFunctionsAsTheyAre(size_t numberOfFunctions) const { return m_bodies.size() == numberOfFunctions && !m_isChangedForTable.contains(1) && !m_isChangedForTableIfLowered.contains(1); }
     const BorrowedParameters& borrowedParameters() const LIFETIME_BOUND { return m_borrowed; }
     BorrowedParameters computeBorrowedParametersOfChangedBodies(const Program&, BuildContext&);
-    const EffectSummaries& seed() const LIFETIME_BOUND { return m_seed; }
+    const EffectSummaries& seed() const LIFETIME_BOUND { return m_seed.read(); }
+    const EffectSummaries& lendSeed() LIFETIME_BOUND { return m_seed.lend(); }
+    void takeSeedBack() { m_seed.takeBack(); }
 
 private:
     friend class EffectSummarizer;
@@ -207,7 +240,7 @@ private:
     Vector<uint64_t> m_stampsOfRecordsAtLatestTable;
     BorrowedParameters m_borrowed;
     Vector<uint64_t> m_parametersWhoseContentsAreCalled;
-    EffectSummaries m_seed { Ref { m_masks }, EffectSummaries::Contents::SayNothingOfBodies };
+    LendableSummaries m_seed { EffectSummaries { Ref { m_masks }, EffectSummaries::Contents::SayNothingOfBodies } };
 
     bool m_isSolved { false };
     Vector<uint8_t> m_isEnteredByUnknownCode;
@@ -238,7 +271,8 @@ constexpr bool isSummarizedByRole(FunctionRole role) { return role == FunctionRo
 uint64_t parametersWhoseContentsAreCalled(const Program&, FunctionID, const BorrowedParameters&);
 
 ExitReachability computeExitReachability(const Function&);
-BodySummary summarizeBodyLocally(const EffectContext&, FunctionID, FunctionAnalyses&, BodyReferenceCollector* = nullptr);
+enum class CalleesAreRead : uint8_t { AsTheyAre, ByOperandTypes };
+BodySummary summarizeBodyLocally(const EffectContext&, FunctionID, FunctionAnalyses&, BodyReferenceCollector* = nullptr, CalleesAreRead = CalleesAreRead::AsTheyAre);
 FunctionSummary createFunctionSummary(Effects onReturn, Effects onThrow, Vector<ParameterSummary>&&, UnknownCodeWitness);
 
 FunctionSummary createSummaryFromFlow(const Program&, const FlowResults&, const BorrowedParameters&, BuildContext&, FunctionID);
@@ -250,6 +284,10 @@ public:
     EffectSummarizer(const Program&, const FlowResults&, BuildContext&, BodySummaries&, Witnesses);
 
     void setIsOnlyCheck() { m_isOnlyCheck = true; }
+    // Only from scratch: the cached result does not record which other bodies it was computed from.
+    void readCalleesByOperandTypes() { m_calleesAreRead = CalleesAreRead::ByOperandTypes; }
+    // Only from scratch. Where these say that a body uses a parameter in fewer ways than the seed does, a caller that hands it an operand reads what the body does.
+    void takeRowsOfBodiesFrom(const EffectSummaries& summaries) { m_rowsOfBodies = &summaries; }
     void giveReferencesTo(BodyReferences* references) { m_references = references; }
     void update(EffectSummaries&);
     void bringSeedUpToDate(EffectSummaries&);
@@ -306,6 +344,8 @@ private:
     BodySummaries& m_kept;
     const Witnesses m_witnessesWanted;
     bool m_isOnlyCheck { false };
+    CalleesAreRead m_calleesAreRead { CalleesAreRead::AsTheyAre };
+    const EffectSummaries* m_rowsOfBodies { nullptr };
     BodyReferences* m_references { nullptr };
     unsigned m_numberOfFunctionsBefore { 0 };
     Vector<uint8_t> m_recordLooksDifferent;

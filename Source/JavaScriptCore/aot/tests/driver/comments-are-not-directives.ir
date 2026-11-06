@@ -1,6 +1,6 @@
 # This file has comments that are not directives
 #
-# CHECK without a colon is a comment
+# NOTE a word in capitals that is no directive begins a comment, and so does: Check that the sum is there
 # RUN: print
 # CHECK: Add
 

@@ -1,0 +1,38 @@
+# const r = flag ? { ok: false, error } : { ok: true, value }; return r.ok ? r.value : r.error;
+# The two objects have different layouts and `ok` has a different type in each. The join carries `ok` as a boolean,
+# and each AssumeType after the branch narrows the join to the one layout inside its type. Neither object is allocated.
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Failure" fields=[{key="error" declared={type=string}}, {key="ok" declared={type=false}}]
+layout L1 name="Success" fields=[{key="ok" declared={type=true}}, {key="value" declared={type=number}}]
+
+function f0 name="okOrError" parameters=[{type=boolean}, {type=string}, {type=number}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Boolean
+    v4 = NewObject -, v3, v1 layout=L0 fields=[1, 0]
+    Jump -> next b3(v4)
+  b2():
+    v5 = Boolean boolean=true
+    v6 = NewObject -, v5, v2 layout=L1 fields=[0, 1]
+    Jump -> next b3(v6)
+  b3(v7: L0|L1):
+    v8 = PropGet v7 key="ok" receivers=[L0, L1]
+    v9 = ToBoolean v8
+    Branch v9 -> taken b4(), notTaken b5()
+  b4():
+    v10 = Specified
+    v11 = AssumeType v7, v10 provenType=L1
+    v12 = PropGet v11 key="value" receivers=[L1]
+    Return v12
+  b5():
+    v13 = Specified
+    v14 = AssumeType v7, v13 provenType=L0
+    v15 = PropGet v14 key="error" receivers=[L0]
+    Return v15
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropGet
+}

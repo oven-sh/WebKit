@@ -17,6 +17,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 enum class FieldRead : uint8_t { Unknown, Value, ValueOrUndefined, Undefined, HeldObject };
+enum class FieldTypeProof : uint8_t { Declared, AssumedOfContents };
 
 struct LateFieldStore {
     VirtualObjectID holder;
@@ -62,6 +63,7 @@ public:
     ObjectValueMap& values() { return *m_values; }
 
     void execute(ValueID);
+    void executeByInterpretation(ValueID);
     void executeTerminator(const Terminator&);
     void executeRelevantValue(const BlockValues&, uint32_t entry);
     void executeTerminatorOf(BlockID);
@@ -90,7 +92,8 @@ public:
         });
     }
     ValueID valueOfField(VirtualObjectID, uint32_t field);
-    ValueID valueOfField(VirtualObjectID, uint32_t field, TypeID typeInVariants);
+    ValueID valueOfField(VirtualObjectID, uint32_t field, TypeID typeInVariants, FieldTypeProof = FieldTypeProof::Declared);
+    ValueID valueOfFieldRead(VirtualObjectID, uint32_t field, TypeID typeOfRead);
     ValueID emitTagTest(VirtualObjectID, uint32_t tagBits);
 
     void returnParts(const Terminator&);
@@ -120,6 +123,7 @@ private:
     void requireCellsOfOperands(ValueID, BuiltinCallForm formOfCall = BuiltinCallForm::Whole);
     void requireCellsOfOperandsBeside(ValueID, uint32_t operandIndex);
     void forgetFieldsWrittenBy(ValueID);
+    void buildObjectsOrderedWithGuardsInFrontOf(ValueID);
     BuildCause causeOf(ValueID user, uint32_t operandIndex) const;
     BuildCause causeOf(const Terminator&, uint32_t operandIndex) const;
     void keep(ValueID);
@@ -147,12 +151,15 @@ private:
     ValueID emitUndefined();
 
     void executeTest(ValueID);
+    bool executePresenceTestOnDenseList(ValueID);
     std::optional<TestEntry> evaluateTestOn(ValueID test) const;
     std::optional<TestEntry> evaluateComparison(ValueID test) const;
     void noteListsThatMayNotFit(ValueID test);
     void executeReturn(const Terminator&);
     void buildBeforeBranch(const Terminator&);
+    void buildBeforeLeavingHandler(const Terminator&);
     void narrow(VirtualObjectID, uint32_t keptTagBits);
+    void narrowToProvenType(VirtualObjectID, TypeID provenType);
     void narrowOnEdge(const Terminator&, uint32_t targetIndex);
     void forgetAnswersOfTests();
     std::optional<TestEntry> answerAtBranch(ValueID condition) const;
@@ -179,13 +186,15 @@ private:
     std::optional<uint32_t> findListedElement(VirtualObjectID, uint32_t position) const;
     bool canAppendListedElements(VirtualObjectID target, VirtualObjectID source);
     std::optional<Vector<CopiedField, 8>> collectCopiedFields(ValueID copy, VirtualObjectID source) const;
-    bool tryResolveTargetFields(VirtualObjectID target, const VirtualObjectDescription& source, std::span<CopiedField>);
+    bool tryResolveTargetFields(VirtualObjectID target, VirtualObjectID source, std::span<CopiedField>);
     void requireCellOfHeldObject(VirtualObjectID holder, uint32_t field, const BuildCause&);
     bool hasListedElements(VirtualObjectID) const;
     Vector<ValueID, 8> listedElementsOf(VirtualObjectID);
+    Vector<ValueID, 8> listedElementsOf(VirtualObjectID, TypeID typeOfElements, FieldTypeProof);
     void requireCellsOfListedElements(VirtualObjectID, const BuildCause&);
 
     void readArgumentList(ValueID read, VirtualObjectID, const VirtualFieldAccess&);
+    bool executeBoundsTestOnArgumentList(ValueID);
     void readArguments(ValueID read, VirtualObjectID, const VirtualFieldAccess&);
     void storeArgument(ValueID store, VirtualObjectID, const VirtualFieldAccess&);
     void forwardArgumentList(ValueID call, VirtualObjectID);

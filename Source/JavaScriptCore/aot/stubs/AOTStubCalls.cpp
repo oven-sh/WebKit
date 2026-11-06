@@ -43,7 +43,7 @@ static bool returnsToItsCallSite(const StubCatalog& catalog, StubKey called)
     if (neverReturns(called))
         return false;
     // It replaces its return address, so no code after the call runs, and the PrologueCheck names the call by the label before it.
-    if (called == pollAtPrologue())
+    if (isPollAtPrologue(called))
         return false;
     // A stub that suspends copies the frame from sp up, and control comes back with the registers of the code that resumes it.
     return !catalog.effectsOf(called).maySuspend;
@@ -157,10 +157,10 @@ uint32_t StubCalls::call(CCallHelpers& jit, StubKey key, OptionalIndex site, con
     return emitCall(jit, finalKey, { SymbolSpace::Stub, indexOf(finalKey) }, { 0, site, { } }, keptRegisters);
 }
 
-uint32_t StubCalls::call(CCallHelpers& jit, StubKey key, uint32_t immediate, OptionalIndex site, const KeptRegisterCheck* keptRegisters)
+uint32_t StubCalls::call(CCallHelpers& jit, StubKey key, uint32_t immediate, OptionalIndex site, const KeptRegisterCheck* keptRegisters, OptionalIndex firstReadSite)
 {
     StubKey finalKey = prepare(jit, key, immediate);
-    return emitCall(jit, finalKey, { SymbolSpace::Stub, indexOf(finalKey) }, { 0, site, { } }, keptRegisters);
+    return emitCall(jit, finalKey, { SymbolSpace::Stub, indexOf(finalKey) }, { 0, site, firstReadSite }, keptRegisters);
 }
 
 void StubCalls::call(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate, OptionalIndex site, const ArgumentMoves& moves, OptionalIndex firstReadSite)
@@ -223,6 +223,16 @@ void StubCalls::callRegister(CCallHelpers& jit, GPRReg address, OptionalIndex si
 void StubCalls::jumpToFunction(CCallHelpers&, FunctionID callee, uint16_t entry)
 {
     emitJump({ SymbolSpace::Function, indexOf(callee), entry });
+}
+
+void StubCalls::moveAddressOfFunction(FunctionID callee, uint16_t entry, GPRReg destination)
+{
+    m_relocations.moveAddress({ SymbolSpace::Function, indexOf(callee), entry }, destination, PCRelativeReach::Far);
+}
+
+void StubCalls::moveAddressOfStub(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate, GPRReg destination)
+{
+    m_relocations.moveAddress({ SymbolSpace::Stub, indexOf(prepare(jit, key, immediate)) }, destination, PCRelativeReach::Far);
 }
 
 void StubCalls::describeCalls(std::span<const Relocation> relocations, CodeBody& body, LinkBuffer* linkBuffer)

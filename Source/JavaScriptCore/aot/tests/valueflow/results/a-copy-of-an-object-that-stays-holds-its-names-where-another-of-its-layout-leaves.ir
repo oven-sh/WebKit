@@ -1,10 +1,9 @@
 # const defaults = { a: 1, b: 2 }   const handedOver = { a: 1, b: 2 }   unknown(handedOver)   const merged = { ...defaults }   const mergedWithWhatLeft = { ...handedOver }
 # Both literals have one layout. Unknown code holds `handedOver` and can give it any name. It never holds `defaults`, so a copy of `defaults` holds `a` and `b` and nothing else,
-# each in a field that the analysis appends and that is always filled. A copy of `handedOver` gets no field.
+# each in a field that the analysis appends and that is always filled. A copy of `handedOver` gets a field for the name that the program reads on it, of which nothing is said.
 # RUN: valueflow-apply
 # CHECK: layout L1 name="OfWhatStays" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="b"{{*}}occupancy=AlwaysFilled
-# CHECK: layout L2 name="OfWhatLeft"
-# CHECK-NOT: fields=[{key="a"
+# CHECK: layout L2 name="OfWhatLeft" fields=[{key="a" declared={type=anything} flags=[IsAddedLate{{*}}]}] flow=
 # CHECK: function f0
 
 module m0 path="main.js" displayPath="main.js" body=f0

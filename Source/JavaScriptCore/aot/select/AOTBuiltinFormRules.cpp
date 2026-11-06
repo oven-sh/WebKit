@@ -8,7 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowResults.h"
+#include "AOTForwardedCalls.h"
 #include "AOTLayout.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "JSBoundFunction.h"
 #include <algorithm>
@@ -52,7 +55,7 @@ static bool hasObjectPart(const Type* type)
 static bool isInRareBlock(const InlineBuiltinSite& site)
 {
     BlockID block = site.context.analyses().useLists().blockOf(site.call);
-    return site.context.function().at(block).frequency == BlockFrequency::Rare;
+    return site.context.function().at(block).frequency.predicted() == BlockFrequency::Rare;
 }
 
 InlineForm chooseFormOfOwnPropertyBuiltin(const InlineBuiltinSite& site)
@@ -99,8 +102,8 @@ static bool canFreezeInPlace(const InlineBuiltinSite& site)
     std::span<const LayoutID> members = membersOf(program, *object);
     // A module namespace object cannot be frozen: its exports stay writable, and the attempt throws.
     bool areOrdinaryObjects = std::ranges::all_of(members, [&](LayoutID member) {
-        LayoutKind kind = program.at(member).kind;
-        return (kind == LayoutKind::Record || kind == LayoutKind::Instance) && !builtinBaseClassOf(program, member);
+        const Layout& layout = program.at(member);
+        return (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance) && !hasFieldUnderSymbolCreatedByLibrary(program, layout) && !builtinBaseClassOf(program, member);
     });
     return !members.empty() && areOrdinaryObjects && !receiverStateOf(program, members).cannot(ObjectMutation::ChangeIntegrity);
 }
@@ -126,6 +129,8 @@ InlineForm chooseFormOfObjectBuiltin(const InlineBuiltinSite& site)
         return callIf(site, !receiverTypeOf(site).hasObjects(), InlineForm::TwoWay);
     case InlineBuiltin::ObjectFreeze:
         return callIf(site, !canFreezeInPlace(site), InlineForm::TwoWay);
+    case InlineBuiltin::ObjectAssign:
+        return callIf(site, site.arguments().size() != 2 || !hasObjectPart(argumentTypeOf(site, 0)), InlineForm::TwoWay);
     case InlineBuiltin::ObjectIs: {
         std::span<const ValueID> arguments = site.arguments();
         RELEASE_ASSERT(arguments.size() == 2);
@@ -147,9 +152,10 @@ InlineForm chooseFormOfFunctionBuiltin(const InlineBuiltinSite& site)
         return callIf(site, site.arguments().size() != 3, InlineForm::TwoWay);
     case InlineBuiltin::ReflectConstruct:
         // Bytecode constructs in place only where the call is written so. Every other call has a frame of the host function.
-        return callIf(site, !site.value().isReflectConstructSyntax() || site.arguments().size() < 2 || site.arguments().size() > 3, InlineForm::TwoWay);
+        return callIf(site, !site.value().isDoneInPlace() || site.arguments().size() < 2 || site.arguments().size() > 3, InlineForm::TwoWay);
     case InlineBuiltin::FunctionApply:
-        return InlineForm::Whole;
+        // Bytecode applies in place only where the call is written `f.apply(..)`. Every other call has a frame of Function.prototype.apply.
+        return callIf(site, !forwardsInPlace(site.value()), InlineForm::Whole);
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -170,10 +176,14 @@ InlineForm chooseFormOfErrorBuiltin(const InlineBuiltinSite& site)
 InlineForm chooseFormOfIntlBuiltin(const InlineBuiltinSite& site)
 {
     switch (site.builtin) {
-    case InlineBuiltin::FormatNumber:
-    case InlineBuiltin::FormatDateTime: {
+    case InlineBuiltin::FormatNumber: {
         const Type* formatted = argumentTypeOf(site, 0);
         return callIf(site, !formatted || !formatted->isNumber(), InlineForm::TwoWay);
+    }
+    case InlineBuiltin::FormatDateTime: {
+        const Type* formatted = argumentTypeOf(site, 0);
+        bool hasTimeValue = formatted && (formatted->isNumber() || formatted->isSubsetOf(Type::builtinClass(BuiltinClasses::Date), site.context.program()));
+        return callIf(site, !hasTimeValue, InlineForm::TwoWay);
     }
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -194,6 +204,14 @@ InlineForm chooseFormOfDateBuiltin(const InlineBuiltinSite& site)
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
+}
+
+// The host's toJSON reads valueOf by name and, for a valid date alone, toISOString. Each first read adds its member to Date.prototype.
+MembersReadByHost membersReadByHostIn(const BuiltinTable& builtins, const BuiltinOverload& overload)
+{
+    if (builtins.canonicalID(overload.builtin) == Builtins::DatePrototypeToJSON)
+        return { { Builtins::DatePrototypeValueOf }, { Builtins::DatePrototypeToISOString } };
+    return { };
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -8,11 +8,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFormatPatterns.h"
 #include "AOTOperationData.h"
 #include "AOTPlacementSteps.h"
+#include "AOTRemovableFeature.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <wtf/BitVector.h>
 #include <wtf/Hasher.h>
 #include <wtf/StdLibExtras.h>
 
@@ -41,6 +44,9 @@ uint32_t sizeInBytesOf(const Program& program, const RequestRecord& request)
         },
         [](const CollectionDataRecord&) -> size_t {
             return sizeof(CollectionDataRequest);
+        },
+        [](const FormatPatternRecord& record) -> size_t {
+            return record.words.sizeInBytes();
         });
     RELEASE_ASSERT(size <= UINT32_MAX);
     return static_cast<uint32_t>(size);
@@ -107,7 +113,8 @@ void collectStringConstantsOf(const Program& program, const RequestRecord& reque
         },
         [&](const CollectionDataRecord& record) {
             collectStringConstantsOf(program, program.at(record.data).root, stringConstants);
-        });
+        },
+        [](const FormatPatternRecord&) { });
 }
 
 void collectStringConstantsOf(const Program&, const DataNode& root, BitVector& stringConstants)
@@ -205,26 +212,20 @@ static void encodeEvalBinding(const TableEncoder& encoder, const EvalBinding& bi
     data.function = operandOf(binding.function);
     data.setter = operandOf(binding.setter);
     data.slot = SlotData::create(0, SlotRepresentation::JSValue);
-    TypeID type;
-    if (binding.variable) {
+    if (binding.variable)
         data.slot = placedVariableSlot(encoder, binding.variable);
-        type = program.at(binding.variable).declared.written();
-    } else {
+    else {
         RELEASE_ASSERT(binding.operand);
         data.operand = operandOf(binding.operand);
         RELEASE_ASSERT(binding.field || (binding.kind != EvalBindingKind::MappedArgument && !binding.layout));
         if (binding.kind == EvalBindingKind::MappedArgument)
             data.slot = SlotData::create(*binding.field, SlotRepresentation::JSValue);
         else if (binding.layout) {
-            FieldReference field { binding.layout, *binding.field };
-            const Field& declaration = fieldAt(program, declarationOf(program, field));
-            const PlacedSlot& slot = encoder.slots.slot(field);
+            const PlacedSlot& slot = encoder.slots.slot({ binding.layout, *binding.field });
             RELEASE_ASSERT(!program.at(binding.layout).isEnvironment() || slot.hasStorage());
             data.slot = slot.data();
-            type = declaration.declared.written();
         }
     }
-    data.type = encoder.typeOffset(type);
 }
 
 static void encodeRequest(TableEncoder& encoder, const DirectEvalRecord& record, std::span<uint8_t>& bytes)
@@ -257,6 +258,19 @@ static void encodeRequest(TableEncoder& encoder, const DataRecord& record, std::
     auto& request = consumeAndReinterpretCastTo<DataRequest>(bytes);
     request.root = encoder.dataNodeOf(record.data);
     request.sharedStorageOffset = record.sharedStorageOffset.value_or(DataRequest::noSharedStorage);
+}
+
+static void encodeRequest(TableEncoder&, const FormatPatternRecord& record, std::span<uint8_t>& bytes)
+{
+    std::span<uint8_t> pattern = consumeSpan(bytes, record.words.sizeInBytes());
+    memcpySpan(pattern, asBytes(record.words.span()));
+    bool isNumber = static_cast<FormatPatternKind>(pattern[offsetof(FormatPatternHeader, kind)]) == FormatPatternKind::Number;
+    std::optional<uint64_t> digest = isNumber
+        ? callRemovable<RemovableFeature::IntlNumberFormat, RemovedFeatureStub::Abort, digestOfThisICU>()
+        : callRemovable<RemovableFeature::IntlDateTimeFormat, RemovedFeatureStub::Abort, digestOfThisICU>();
+    // No ICU has the digest 0.
+    uint64_t stamp = digest.value_or(0);
+    memcpySpan(pattern.subspan(offsetof(FormatPatternHeader, digestOfICU), sizeof(stamp)), asByteSpan(stamp));
 }
 
 void encodeRequestTable(TableEncoder& encoder)
@@ -354,6 +368,18 @@ void encodeStaticsTables(TableEncoder& encoder)
         .sizeFilledAtProgramEntry = statics.sizeFilledAtProgramEntry,
         .distanceFromArrayProfileToLastArray = statics.distanceFromArrayProfileToLastArray,
     } });
+    Vector<StaticsOfFiles> files;
+    Vector<uint32_t> importedFiles;
+    for (const PlacedStaticsOfFiles& group : statics.groupsOfFilesFilledWhenEntered) {
+        files.append({ group.firstWord, static_cast<uint32_t>(importedFiles.size()) });
+        importedFiles.appendVector(group.importedGroups);
+    }
+    if (!files.isEmpty()) {
+        RELEASE_ASSERT(statics.offsetOfFilledFiles == statics.endWordFilledWithFiles * wordSize);
+        files.append({ statics.endWordFilledWithFiles, static_cast<uint32_t>(importedFiles.size()) });
+    }
+    encoder.setTable(ProgramTableIndex::staticsOfFiles, files);
+    encoder.setTable(ProgramTableIndex::staticsOfImportedFiles, importedFiles);
 
     Vector<InitialWord> parts;
     Vector<uint32_t> narrowRoots;
@@ -373,6 +399,11 @@ void encodeStaticsTables(TableEncoder& encoder)
         RELEASE_ASSERT(width == wordSize || !(placed.initialWord >> (bitsInByte * width)));
         parts.append({ placed.offset / wordSize, placed.initialWord << (bitsInByte * (placed.offset % wordSize)) });
     }
+    for (const PlacedStaticsPadding& padding : statics.paddingOfFilesFilledWhenEntered) {
+        if (traitsOf(padding.representation).isNarrowReference)
+            narrowRoots.append(padding.offset);
+        parts.append({ padding.offset / wordSize, padding.initialWord << (bitsInByte * (padding.offset % wordSize)) });
+    }
     AOT::sort(parts, { }, &InitialWord::index);
     Vector<InitialWord> initialWords;
     for (const InitialWord& part : parts) {
@@ -382,12 +413,13 @@ void encodeStaticsTables(TableEncoder& encoder)
             initialWords.append(part);
     }
 
-    // As ProgramStatics divides them: a word that lies on both sides is filled with the later ones, when the instance is created.
+    // As ProgramStatics divides them: a word that lies on both sides is filled with the later ones, when the instance is created. A run goes on from one group of files into the next.
     uint32_t firstWordFilledAtInstanceCreation = statics.sizeFilledAtProgramEntry / wordSize;
+    uint32_t firstWordFilledWithFiles = files.isEmpty() ? UINT32_MAX : statics.firstWordFilledWithFiles;
     Vector<StaticsRun> runs;
     for (unsigned first = 0; first < initialWords.size();) {
         unsigned end = first + 1;
-        while (end < initialWords.size() && initialWords[end].bits == initialWords[first].bits && initialWords[end].index == initialWords[end - 1].index + 1 && initialWords[end].index != firstWordFilledAtInstanceCreation)
+        while (end < initialWords.size() && initialWords[end].bits == initialWords[first].bits && initialWords[end].index == initialWords[end - 1].index + 1 && initialWords[end].index != firstWordFilledAtInstanceCreation && initialWords[end].index != firstWordFilledWithFiles)
             ++end;
         uint64_t bits = initialWords[first].bits;
         runs.append({ initialWords[first].index, end - first, static_cast<uint32_t>(bits), static_cast<uint32_t>(bits >> 32) });

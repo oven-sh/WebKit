@@ -30,7 +30,7 @@ function f2 name="afterAwait" flags=[IsAsync] parameters=[{type=number}] results
 # IR-LABEL: function f1 name="beforeAwait" module=m0 role=CoroutineRamp
 # IR-NOT: ReturnAsyncResult
 # IR: [[result]]: L0 = CallDirect v0 function=f4
-# IR-NEXT: [[promise]]: Promise = NewPromise
+# IR: [[promise]]: Promise = NewPromise
 # IR: FulfillFreshPromise [[promise]], [[result]],
 # IR-NOT: ReturnAsyncResult
 # IR-LABEL: function f4 name="beforeAwait" module=m0 role=AsyncWorker

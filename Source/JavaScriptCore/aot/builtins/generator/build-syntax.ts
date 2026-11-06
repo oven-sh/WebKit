@@ -264,7 +264,7 @@ function resolveMeaning(builder: ModelBuilder, line: SyntaxLine): ModelIntrinsic
       const named = builder.functions.filter(candidate => candidate.name === line.name);
       if (named.length === 0) return builder.reportUnknown(source, `${subjectOf(line)}: no runtime function has this name`);
       if (named.length !== 1) return reject(`${named.length} runtime functions have this name`);
-      return { intrinsic: "LinkedFunction", function: named[0] };
+      return { intrinsic: "LinkedFunction", function: named[0], expansion: spec.expansion };
     }
     case "IfAbruptCloseIterator":
     case "HasJSType":

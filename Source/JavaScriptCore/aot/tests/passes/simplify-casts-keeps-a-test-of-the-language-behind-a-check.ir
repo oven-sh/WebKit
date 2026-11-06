@@ -1,0 +1,47 @@
+# static has(given: any) { const held: object | null = given; return held ? #secret in held : "none"; }
+# What the language asks of a value it asks whatever arrives: `#secret in 5` throws. Where the value has its type by a check, the type answers the question in the typed version alone, and
+# the generic version is made of the body as this pass leaves it. So the test stays while a check stands in front of its operand.
+# It goes where no check stands there, also when the pass itself has taken the check away. AddGenericVersion finds these two checks worth no test of their own: the test of the language is what is left
+# FORM: Prepared
+# RUN: pass SimplifyCasts VerifyProgram
+# CHECK: outcome: Changed
+# RUN(VERSIONS): pass SimplifyCasts AddGenericVersion SimplifyCasts VerifyProgram
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Assertion
+function f0 name="objectBehindCheck" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=object site=w0 cause=MayFail
+    v2 = RequireObject v1 runtimeError=PrivateStaticTestOfNonObject
+    Return v2
+# CHECK: v1: object = Check v0 expectedType=object site=w0
+# CHECK-NEXT: v2: object = RequireObject v1 runtimeError=PrivateStaticTestOfNonObject
+# CHECK-NEXT: Return v2
+}
+function f1 name="coercibleBehindCheck" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=string site=w0 cause=MayFail
+    v2 = RequireObjectCoercible v1 nullishAccess=Iterate
+    Return v2
+# CHECK: v1: string = Check v0 expectedType=string site=w0
+# CHECK-NEXT: v2: string = RequireObjectCoercible v1 nullishAccess=Iterate
+# CHECK-NEXT: Return v2
+}
+function f2 name="behindNoCheck" parameters=[{type=object}] results=[{type=object}] {
+    v1 = RequireObject v0 runtimeError=PrivateStaticTestOfNonObject
+    Return v1
+# CHECK: b0(v0: object):
+# CHECK-NEXT: Return v0
+}
+function f3 name="behindCheckThatGoes" parameters=[{type=object}] results=[{type=object}] {
+    v1 = Check v0 expectedType=object site=w0
+    v2 = RequireObject v1 runtimeError=PrivateStaticTestOfNonObject
+    Return v2
+# CHECK: b0(v0: object):
+# CHECK-NEXT: Return v0
+}
+# VERSIONS-LABEL: function f0 name="objectBehindCheck"
+# VERSIONS-NOT: = Check
+# VERSIONS: = RequireObject v0 runtimeError=PrivateStaticTestOfNonObject
+# VERSIONS-LABEL: function f1 name="coercibleBehindCheck"
+# VERSIONS-NOT: = Check
+# VERSIONS: = RequireObjectCoercible

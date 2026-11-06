@@ -1,0 +1,27 @@
+# exports = {}; exports.fixed = "stored"; exports.plain = "stored"; made = { get atBirth() {} }; made.atBirth = 1
+# The layout gives `fixed` the form of a definition that never runs. The store finds no property and creates an ordinary one, which the slot of the field does not hold:
+# that is a redefinition. A plain field is created by its store, and a field that the allocation lists is there when the store comes.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Exports" fields=[{key="fixed" {{*}}stability=[IsNeverDeleted, IsNeverStoredWithOtherType]}}, {key="plain" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]{{*}}cause=PropertyRedefined
+# CHECK: layout L1 name="Made"
+# CHECK-NOT: cause=PropertyRedefined
+# CHECK: module m0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Exports" fields=[{key="fixed" declared={type=anything} form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]}, {key="plain" declared={type=anything}}]
+layout L1 name="Made" fields=[{key="atBirth" declared={type=anything} form=[IsNotEnumerable]}]
+function f0 name="main" kind=Module flags=[IsSloppy] results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = String string="stored"
+    PropSet v1, v2 key="fixed" mode=Sloppy
+    PropSet v1, v2 key="plain" mode=Sloppy
+    v5 = NewObject -, v2 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    PropSet v6, v2 key="atBirth" mode=Sloppy
+    v8 = PropGet v1 key="fixed"
+    v9 = PropGet v6 key="atBirth"
+    v10 = PropGet v1 key="plain"
+    Return v8
+}

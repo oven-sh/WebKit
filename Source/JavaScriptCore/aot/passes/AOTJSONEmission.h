@@ -106,14 +106,14 @@ public:
         ValueID object;
         ValueID guard;
     };
-    TestedObject emitShapeTest(ValueID, std::span<const LayoutID>, BlockID notTaken, BlockFrequency whenTaken = BlockFrequency::Normal);
+    TestedObject emitShapeTest(ValueID, std::span<const LayoutID>, BlockID notTaken, Expected<BlockFrequency> whenTaken = BlockFrequency::Normal);
     ValueID emitKeyOrderTest(const TestedObject&, LayoutID, std::span<const uint32_t> fields, BlockID notTaken);
     ValueID appendFieldRead(const TestedObject&, LayoutID, uint32_t field, Opcode = Opcode::GetSlot);
 
     void emitBranchOnOutcome(ValueID outcome, BlockID parsed, BlockID rejected, BlockID unknown);
 
     // The block that jumps to the named block takes that block's frequency, and the code goes on along the other edge.
-    ValueID emitProvenBranch(ValueID test, BlockID notTaken, BlockFrequency whenTaken = BlockFrequency::Normal);
+    ValueID emitProvenBranch(ValueID test, BlockID notTaken, Expected<BlockFrequency> whenTaken = BlockFrequency::Normal);
     ValueID emitTypeTest(ValueID, TypeID tested, BlockID notTaken);
     // Tests the parts of the field's type that a TypeTest can establish for this value: it proves no contents, storage or pristine state.
     ValueID emitRequireStoredType(ValueID, TypeID fieldType, BlockID notTaken);

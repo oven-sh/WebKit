@@ -135,6 +135,10 @@ using WebCore::SystemSettings::State = WebCore::SystemSettingsState;
     bool useOverlayScrollbars;
 #endif
 
+#if HAVE(TEXT_SCALE_FACTOR)
+    std::optional<float> textScaleFactor;
+#endif
+
 #if USE(WPE_RENDERER)
     bool isServiceWorkerProcess;
     UnixFileDescriptor hostClientFileDescriptor;
@@ -142,6 +146,7 @@ using WebCore::SystemSettings::State = WebCore::SystemSettingsState;
 #endif
 
     std::optional<WebKit::WebProcessDataStoreParameters> websiteDataStoreParameters;
+    bool isPrintProcess;
 
 #if (PLATFORM(MAC) || PLATFORM(MACCATALYST)) && !ENABLE(LAUNCHSERVICES_SANDBOX_EXTENSION_BLOCKING)
     std::optional<WebKit::SandboxExtensionHandle> launchServicesExtensionHandle;
@@ -223,7 +228,7 @@ using WebCore::SystemSettings::State = WebCore::SystemSettingsState;
     HashMap<WebCore::RegistrableDomain, String> storageAccessUserAgentStringQuirksData;
     HashSet<WebCore::RegistrableDomain> storageAccessPromptQuirksDomains;
     WebKit::ScriptTrackingPrivacyRules scriptTrackingPrivacyRules;
-    WebCore::RuntimeQuirkTable quirkTable;
+    WebCore::QuirkTable quirkTable;
 
     Seconds hiddenPageDOMTimerThrottlingIncreaseLimit;
     Seconds memoryFootprintPollIntervalForTesting;

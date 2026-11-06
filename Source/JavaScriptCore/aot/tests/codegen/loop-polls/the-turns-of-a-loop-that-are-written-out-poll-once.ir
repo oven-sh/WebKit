@@ -1,0 +1,38 @@
+# Several turns of a small counted loop that walks data are written out one behind the other. They run in stretches of a bounded number of turns and poll between two stretches,
+# and the loop that is left for the last turns, fewer than are written out, does not poll
+# FORM: Placed
+# OPTIONS: heat=EverythingIsHot
+# A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64 faulting-loop-polls
+# RUN(ARM64): generate-code calls
+# REQUIRES(ARM64): arm64
+# STATISTIC: LoopsUnrolled = 1
+# STATISTIC: LoopPollsRemoved = 1
+# X64: f0: size={{*}} polls=2
+# ARM64-LABEL: f0: size=
+# ARM64: operation operationAOTPollSlow x2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="walkedInACircle" parameters=[{type=Float64Array<anything, pristine[Storage, Names]>}, {type=int[0, 2147483647]}, {type=number}] results=[{type=number}] {
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4: number, v5: int[0, 2147483647]):
+    LoopHint
+    v7 = Less v5, v1 form=Integers
+    TestAndBranch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8: int[0, 2147483646]):
+    v9 = Integer integer=7
+    v10 = BitAnd v8, v9 form=Numbers
+    v11 = IsInsideView v0, v10 typedArrayType=10 [keyIsIntegral]
+    TestAndBranch v11 -> taken b3(| 0), notTaken b4()
+  b3(v12: guard):
+    v13 = GetTypedArrayElement v0, v10, v12 typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+    v14 = Add v4, v13 form=Numbers
+    v15 = Increment v8 form=Integers
+    Jump -> next b1(v14, v15)
+  b4() frequency=Rare:
+    Return v4
+  b5():
+    Return v4
+}

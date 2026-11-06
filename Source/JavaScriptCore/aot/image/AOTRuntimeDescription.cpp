@@ -81,6 +81,11 @@ std::span<const uint8_t> descriptionOfThisRuntime()
     return { reinterpret_cast<const uint8_t*>(&describedRuntime), describedRuntime.header.size };
 }
 
+std::span<const ASCIILiteral> namesOfRuntimeFacts()
+{
+    return namesOfFacts;
+}
+
 static constexpr void mixIntoStamp(uint64_t& stamp, uint64_t value)
 {
     stamp = (stamp ^ value) * 0x100000001b3ULL;

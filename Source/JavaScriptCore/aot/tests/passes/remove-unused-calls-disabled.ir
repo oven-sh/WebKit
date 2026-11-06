@@ -1,0 +1,22 @@
+# With the pass disabled a call that only makes an object stays though nothing uses its answer
+# FORM: Prepared
+# OPTIONS: disable=pass:RemoveUnusedCalls
+# RUN: pass RemoveUnusedCalls
+# STATISTIC: UnusedCallsRemoved = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="makesAnObject" parameters=[{type=number}] results=[{type=L0}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Return v1
+}
+
+function f1 name="usesNoAnswer" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0
+    Return v0
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: CallDirect v0 function=f0
+# CHECK-NEXT: Return v0
+}

@@ -349,7 +349,7 @@ static void testEverySlotKindOfSmallTables(LoadedProgram& program)
 {
     static_assert(CompactTable::slotKindFor(8) == SlotKind::Tag && CompactTable::slotKindFor(9) == SlotKind::Short);
     static_assert(CompactTable::slotKindFor(254) == SlotKind::Short && CompactTable::slotKindFor(255) == SlotKind::Long);
-    static_assert(CompactTable::slotKindFor((1 << 20) - 2) == SlotKind::Long && CompactTable::slotKindFor((1 << 20) - 1) == SlotKind::Huge);
+    static_assert(CompactTable::slotKindFor(3 << 22) == SlotKind::Long && CompactTable::slotKindFor((3 << 22) + 1) == SlotKind::Huge);
     for (unsigned count : { 1u, 4u, 5u, 8u, 9u, 63u, 64u, 65u, 253u, 254u, 255u, 256u, 1000u })
         checkEveryKeyAt(program, count);
 }
@@ -888,12 +888,12 @@ static void testTableCreatedWithTheLargestLongSlots(LoadedProgram& program)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
     for (uint32_t count : { CompactTable::maxCapacityWithLongSlots, CompactTable::maxCapacityWithLongSlots + 1 }) {
-        AOT_TEST_CHECK(count == 1048574 || count == 1048575);
+        AOT_TEST_CHECK(count == 12582912 || count == 12582913);
         CompactTable* table = CompactTable::tryCreate(program.realm(), Width::Wide, Width::None, count);
         AOT_TEST_CHECK(table && !scope.exception() && table->capacity() >= count);
     }
-    checkIntegerKeys(program, 1048574, SlotKind::Huge);
-    checkIntegerKeys(program, 1048575, SlotKind::Huge);
+    checkIntegerKeys(program, 1048574, SlotKind::Long);
+    checkIntegerKeys(program, 1048575, SlotKind::Long);
 }
 
 static void testLongSlotsBelowTheBoundary(LoadedProgram& program)

@@ -97,7 +97,7 @@ static void removeRepeatedCases(Vector<ChainCase, 8>& cases)
     Vector<uint32_t, 8> order(cases.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    AOT::stableSort(order, { }, constantOf);
+    AOT::stableSortInLine(order, { }, constantOf);
     BitVector isRepeated(cases.size());
     for (size_t i = 1; i < order.size(); ++i) {
         if (constantOf(order[i]) == constantOf(order[i - 1]))

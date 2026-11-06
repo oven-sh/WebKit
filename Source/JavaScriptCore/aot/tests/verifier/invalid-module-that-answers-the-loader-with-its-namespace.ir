@@ -1,0 +1,12 @@
+# only a file of data has one answer for the calls that the build has bound and another for the loader
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 2
+
+variable g0 name="_0" module=m1 declared={type=anything} flags=[IsImmutable]
+variable g1 name="exports" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="main" displayPath="main"
+module m1 path="goodText" displayPath="goodText" kind=Data flags=[AnswersLoaderWithNamespace] requireResult=DefaultExport exports=[{name="default" variable=g0}]
+module m2 path="badESModule" displayPath="badESModule" flags=[AnswersLoaderWithNamespace]
+module m3 path="badCommonJS" displayPath="badCommonJS" kind=CommonJs flags=[AnswersLoaderWithNamespace] exportRule=CommonJs requireResult=ModuleExports exportsVariable=g1
+entry module=m0

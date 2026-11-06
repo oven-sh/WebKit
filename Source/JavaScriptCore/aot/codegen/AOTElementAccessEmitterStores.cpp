@@ -16,6 +16,7 @@
 #include "AOTElementEmitterAllocation.h"
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTStubsArrays.h"
+#include "AOTValueIdentity.h"
 #include <ranges>
 #include <wtf/StdLibExtras.h>
 
@@ -155,7 +156,11 @@ void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayS
 
     LBasicBlock isBeyondLength = newBlock();
     LBasicBlock isWithinLength = newBlock();
-    m_out.branch(test.isInside.value(), normalEdge(isWithinLength), unlikelyEdge(isBeyondLength));
+    // A loop that fills a list stores behind the last element in every turn.
+    if (store.opcode() == Opcode::PutArrayElement && store->isExpectedToAppend())
+        m_out.branch(test.isInside.value(), unlikelyEdge(isWithinLength), normalEdge(isBeyondLength));
+    else
+        m_out.branch(test.isInside.value(), normalEdge(isWithinLength), unlikelyEdge(isBeyondLength));
 
     m_out.appendTo(isBeyondLength);
     branchUnless(below(index, vectorLength(elements)), isBeyondVector);
@@ -186,7 +191,8 @@ bool ElementAccessEmitter::replacesBoxedInt32(const ValueContext& store, const A
 void ElementAccessEmitter::replaceElement(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement)
 {
     if (replacesBoxedInt32(store, form)) {
-        m_out.store32(in<Word32>(store->valueOperand()).value(), elementAt(form, elements, index));
+        Word32 stored = in<Word32>(store->valueOperand());
+        m_out.store32(stored.value(), elementAt(form, elements, index));
         return;
     }
     storeRawElement(form, elements, index, rawElement);
@@ -237,8 +243,11 @@ void ElementAccessEmitter::generatePutArrayElement(const ValueContext& value)
     Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), slowPath, NaNIndexMode::ProduceOutOfBoundsIndex);
     Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
     if (knownForm) {
-        // The guard accepts copy-on-write storage, which only the operation may replace.
-        branchUnless(hasWritableShape(mode, *knownForm), slowPath);
+        // A guard that did not ask accepts copy-on-write storage, which only the operation may replace.
+        if (!generator().hasGuardForWritableStorage(value))
+            branchUnless(hasWritableShape(mode, *knownForm), slowPath);
+        else if (generator().validatesOrChecksProofs())
+            emitter<RuntimeValidationEmitter>().checkPrecondition(value, hasWritableShapeIgnoringLock(mode, *knownForm));
         Operand rawElement = *rawElementToStore(*knownForm, stored, slowPath);
         storeInVector(value, *knownForm, elementsOf(array), index, rawElement, slowPath);
         m_out.jump(continuation);
@@ -294,7 +303,7 @@ void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer 
     }
 
     ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(store->arrayOperand())).kind;
-    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(store->arrayOperand()));
+    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(store->arrayOperand())).predicted();
     ArrayStorageFormList forms = candidateFormsFor(element, expected);
     // An array of any other kind than its element type declares takes the stub, which knows them all.
     if (hasArrayStorageForm(declared) && forms.size() > 1 && forms.first()->kind == declared)
@@ -359,7 +368,8 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
 void ElementAccessEmitter::generateHasSpareArrayCapacity(const ValueContext& value)
 {
     ArrayElements elements = elementsOf(in<CellPointer>(value->arrayOperand()));
-    defineTest(value, below(publicLength(elements), vectorLength(elements)));
+    Integer length = publicLength(elements);
+    defineTest(value, below(length, vectorLength(elements)));
 }
 
 void ElementAccessEmitter::generateReserveArrayCapacity(const ValueContext& value)
@@ -377,18 +387,18 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
     Word32 shape = indexingMode(array, IndexingShapeMask);
     const ClassPart* declared = typeOf(value->arrayOperand()).singleBuiltinClass();
     // What a hole reads as is among the elements of an array that may have holes.
-    if (declared && m_program.at(declared->contentsAt(m_program.builtins(), ContentsSlot::Element)).withoutPrimitives(Primitive::Undefined).isNumber()) {
+    if (declared && m_program.at(declared->expectedContentsAt(m_program.builtins(), ContentsSlot::Element).predicted()).withoutPrimitives(Primitive::Undefined).isNumber()) {
         LBasicBlock isOfOtherKind = newBlock();
         LBasicBlock stillConverts = newBlock();
         LBasicBlock holdsAnyValue = newBlock();
         LBasicBlock liesInFrame = newBlock();
         LBasicBlock isOnHeap = newBlock();
-        branch(belowOrEqual(sub(shape, word32(UndecidedShape)), word32(Int32Shape - UndecidedShape)), { rareEdge(converts), normalEdge(isOfOtherKind) });
+        branch(belowOrEqual(sub(shape, UndecidedShape), Int32Shape - UndecidedShape), { rareEdge(converts), normalEdge(isOfOtherKind) });
 
         m_out.appendTo(isOfOtherKind);
-        uint32_t numberOfPlace = (m_function.position + value.id().index()) % ArrayWords::numberOfCounts;
+        uint32_t numberOfPlace = (m_id.index() + value.id().index()) % ArrayWords::numberOfCounts;
         TypedPointer count = mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.shortYoungArraysConverted) + numberOfPlace);
-        branch(below(Word32(m_out.load8ZeroExt32(count)), word32(ArrayWords::maxShortYoungArraysConverted)), { normalEdge(stillConverts), normalEdge(continuation) });
+        branch(below(Word32(m_out.load8ZeroExt32(count)), ArrayWords::maxShortYoungArraysConverted), { normalEdge(stillConverts), normalEdge(continuation) });
 
         m_out.appendTo(stillConverts);
         branch(equal(shape, word32(ContiguousShape)), { normalEdge(holdsAnyValue), normalEdge(continuation) });
@@ -403,10 +413,11 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
         m_out.jump(continuation);
 
         m_out.appendTo(isOnHeap);
-        m_out.store32(word32(static_cast<int32_t>(numberOfPlace)).value(), mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.placeThatConverts)));
+        Word32 place = word32(static_cast<int32_t>(numberOfPlace));
+        m_out.store32(place.value(), mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.placeThatConverts)));
         m_out.jump(converts);
     } else
-        branch(belowOrEqual(sub(shape, word32(UndecidedShape)), word32(Int32Shape - UndecidedShape)), { rareEdge(converts), normalEdge(continuation) });
+        branch(belowOrEqual(sub(shape, UndecidedShape), Int32Shape - UndecidedShape), { rareEdge(converts), normalEdge(continuation) });
 
     m_out.appendTo(converts);
     callVoidOperation(value, RuntimeOperation::ConvertToDoubleStorage, { array }, { .isOnRarePath = true });
@@ -417,9 +428,20 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
 
 void ElementAccessEmitter::generateAppendElements(const ValueContext& value)
 {
+    ValueID list = sameObjectThroughCasts(m_function, value->arrayOperand()).valueInFrontOfFacts();
+    if (ArrayAllocationEmitter(generator()).appendThatFillsLiteral(value.block(), list) == value.id())
+        return;
     CellPointer array = in<CellPointer>(value->arrayOperand());
     CellPointer source = in<CellPointer>(value->sourceOperand());
     callStub(value, appendElements(), { array.value(), source.value() });
+}
+
+void ElementAccessEmitter::generateAppendMembers(const ValueContext& value)
+{
+    ValueID list = sameObjectThroughCasts(m_function, value->arrayOperand()).valueInFrontOfFacts();
+    if (ArrayAllocationEmitter(generator()).membersThatFillLiteral(value.block(), list) == value.id())
+        return;
+    callVoidOperation(value, RuntimeOperation::AppendMembers, { in<CellPointer>(value->arrayOperand()), in<CellPointer>(value->sourceOperand()) });
 }
 
 } } } // namespace JSC::AOT::Typed

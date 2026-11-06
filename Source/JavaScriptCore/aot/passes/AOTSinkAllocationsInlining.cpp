@@ -13,6 +13,7 @@
 #include "AOTEdgeResults.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTHeat.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -72,20 +73,33 @@ static CallResultUse classifyCallResultUse(const Program& program, const Functio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-enum class UsesLookedAt : uint8_t { All, InLikelyCode };
-
-static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value, UsesLookedAt usesLookedAt)
+static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value, NOESCAPE const Invocable<bool(const Use&)> auto& isLookedAt)
 {
     const Function& function = analyses.function();
     const UseLists& useLists = analyses.useLists();
 
-    BitVector visited(function.values.size());
-    Vector<ValueID, 8> worklist;
-    visited.quickSet(value.index());
-    worklist.append(value);
-    while (!worklist.isEmpty()) {
-        for (const Use& use : useLists.usesOf(worklist.takeLast())) {
-            if (usesLookedAt == UsesLookedAt::InLikelyCode && function.at(use.block).frequency != BlockFrequency::Normal)
+    // Asked for each call, so a bit for each value of the function is made only for a value with many aliases.
+    AOT_THRESHOLD(size_t, mostSearchedInOrder, 16);
+    Vector<ValueID, 16> visited { value };
+    std::optional<BitVector> isVisited;
+    auto visit = [&](ValueID alias) {
+        if (visited.size() <= mostSearchedInOrder) {
+            if (visited.contains(alias))
+                return;
+        } else {
+            if (!isVisited) {
+                isVisited.emplace(function.values.size());
+                for (ValueID earlier : visited)
+                    isVisited->quickSet(earlier.index());
+            }
+            if (isVisited->quickSet(alias.index()))
+                return;
+        }
+        visited.append(alias);
+    };
+    for (size_t next = 0; next < visited.size(); ++next) {
+        for (const Use& use : useLists.usesOf(visited[next])) {
+            if (!isLookedAt(use))
                 continue;
             CallResultUse classified = classifyCallResultUse(analyses.program(), function, use);
             switch (classified.kind) {
@@ -94,13 +108,22 @@ static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value, UsesLoo
             case CallResultUseKind::Interpreted:
                 break;
             case CallResultUseKind::Alias:
-                if (!visited.quickSet(classified.alias.index()))
-                    worklist.append(classified.alias);
+                visit(classified.alias);
                 break;
             }
         }
     }
     return true;
+}
+
+static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value)
+{
+    return isOnlyInterpreted(analyses, value, [](const Use&) { return true; });
+}
+
+static Expected<bool> isOnlyInterpretedInLikelyCode(FunctionAnalyses& analyses, ValueID value)
+{
+    return isOnlyInterpreted(analyses, value, [&](const Use& use) { return analyses.function().at(use.block).frequency.predicted() == BlockFrequency::Normal; });
 }
 
 static bool takesCells(const Program& program, const Value& user)
@@ -143,16 +166,16 @@ public:
         : m_context(context)
         , m_id(context.function.at(call).function())
     {
-        m_isRepeated = isHot(heatClassOf(context, block)) || context.analyses.blockFrequencies().frequencyOf(block) >= HeatModel::minWeightOfCallInLoop;
+        m_isRepeated = isHot(heatClassOf(context, block)).predicted() || context.analyses.blockFrequencies().frequencyOf(block).predicted() >= HeatModel::minWeightOfCallInLoop;
     }
 
-    bool onlyInterpretsRestArgumentsInLikelyCode(uint32_t entryParameter)
+    Expected<bool> onlyInterpretsRestArgumentsInLikelyCode(uint32_t entryParameter)
     {
         const Function& callee = m_context.program.at(m_id);
         if (!m_isRepeated || !callee.hasBody() || !callee.has(FunctionFlags::HasRestParameter) || entryParameter != callee.firstParameterIndex() + callee.numberOfPositionalParameters())
             return false;
         FunctionAnalyses analyses(AnalysisContext { m_context.build, m_context.program, &m_context.inputs.flow, &m_context.inputs.effects, m_id }, callee);
-        return isOnlyInterpreted(analyses, callee.at(entryBlock).parameters[entryParameter], UsesLookedAt::InLikelyCode);
+        return isOnlyInterpretedInLikelyCode(analyses, callee.at(entryBlock).parameters[entryParameter]);
     }
 
 private:
@@ -167,7 +190,7 @@ static bool needsCellOnlyFor(FunctionAnalyses& analyses, ObjectID object, ValueI
     bool isPassedToCall = false;
     for (const ObjectUse& objectUse : analyses.escape().usesOf(object)) {
         bool isOperandOfCall = objectUse.use.kind == Use::Kind::Operand && objectUse.use.user == call;
-        if (objectUse.isEscape && !(isOperandOfCall && callee.onlyInterpretsRestArgumentsInLikelyCode(objectUse.use.operandIndex)))
+        if (objectUse.isEscape && !(isOperandOfCall && callee.onlyInterpretsRestArgumentsInLikelyCode(objectUse.use.operandIndex).predicted()))
             return false;
         if (isOperandOfCall)
             isPassedToCall = true;
@@ -262,7 +285,9 @@ static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, 
     bool hasSeenAll = true;
     Vector<ValueID, maxNames> names { maker };
     auto addName = [&](ValueID name) {
-        if (names.contains(name) || !mayBeReference(analyses.program().typeOf(function, name)))
+        // The values of a function with several results are the operands of a Results, which has no type of its own.
+        bool mayNameObject = mayBeReference(analyses.program().typeOf(function, name)) || numberOfResultsOf(analyses.program(), function, function.at(name)).has_value();
+        if (names.contains(name) || !mayNameObject)
             return;
         if (names.size() < maxNames)
             names.append(name);
@@ -289,9 +314,10 @@ static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, 
                 addName(use.user);
                 break;
             case UseSeenAlone::IsListedAsEscape:
-                if (!(isOperandOfCall && callee.onlyInterpretsRestArgumentsInLikelyCode(use.operandIndex)))
+                if (!(isOperandOfCall && callee.onlyInterpretsRestArgumentsInLikelyCode(use.operandIndex).predicted()))
                     return SeenOfAllocation::Escapes;
-                isPassedToCall = true;
+                // What the callee lets escape may come back out of it, under names that only the objects tell.
+                hasSeenAll = false;
                 break;
             case UseSeenAlone::IsListed:
                 hasSeenAll = hasSeenAll && !maySendObjectOn(analyses, use);
@@ -368,7 +394,7 @@ static unsigned countAllocationsBuiltOnlyFor(FunctionAnalyses& analyses, ValueID
     const EscapeAnalysis& escape = analyses.escape();
     BitVector passedObjects;
     analyses.function().at(call).forEachOperand([&](ValueID operand, uint32_t) {
-        passedObjects.merge(escape.pointsTo(operand).objects.bits());
+        escape.pointsTo(operand).objects.addTo(passedObjects);
     });
 
     unsigned count = 0;
@@ -393,14 +419,14 @@ Vector<SunkAllocation> predictSinking(FunctionAnalyses& analyses)
     return sinking.outcomes();
 }
 
-unsigned sinkableAllocationsAfterInlining(FunctionPassContext& context, BlockID block, ValueID call, NOESCAPE const ScopedLambda<bool()>& calleeReturnsFreshAggregate)
+Expected<unsigned> sinkableAllocationsAfterInlining(FunctionPassContext& context, BlockID block, ValueID call, NOESCAPE const ScopedLambda<bool()>& calleeReturnsFreshAggregate)
 {
     if (context.function.at(call).opcode != Opcode::CallDirect)
         return 0;
 
     CalleeOfCall callee(context, block, call);
     unsigned count = countAllocationsBuiltOnlyFor(context.analyses, call, callee);
-    if (isOnlyInterpreted(context.analyses, call, UsesLookedAt::All) && calleeReturnsFreshAggregate())
+    if (isOnlyInterpreted(context.analyses, call) && calleeReturnsFreshAggregate())
         ++count;
     return count;
 }

@@ -108,14 +108,14 @@ static std::optional<InvalidPart> findInvalidStorage(const Instruction& instruct
     return std::nullopt;
 }
 
-static void printOrigin(IRPrinter& printer, const Instruction& instruction)
+static void printOrigin(IRPrinter& printer, const Instruction& instruction, std::optional<uint32_t> reported = std::nullopt)
 {
     uint32_t inlineFrame = printer.printsEngineFields() ? instruction.inlineFrame : 0;
     bool isTailCall = printer.printsEngineFields() && instruction.isTailCall;
     bool isPartOfConstruction = printer.printsEngineFields() && instruction.isPartOfConstruction;
     if (!instruction.hasPosition() && !inlineFrame && !isTailCall && !isPartOfConstruction)
         return;
-    printer.out().print(" @"_s, instruction.hasPosition() ? instruction.position : 0u);
+    printer.out().print(" @"_s, reported ? *reported : instruction.hasPosition() ? instruction.position : 0u);
     if (inlineFrame)
         printer.out().print(":"_s, inlineFrame);
     if (isTailCall)
@@ -124,18 +124,16 @@ static void printOrigin(IRPrinter& printer, const Instruction& instruction)
         printer.out().print(" constructs"_s);
 }
 
-static std::optional<uint32_t> findStartOfConstruction(const Program& program, const Function& function, const Value& value)
+static const ConstructionStart* findStartOfConstruction(const Program& program, const Function& function, const Value& value)
 {
     if (!value.isPartOfConstruction)
-        return std::nullopt;
+        return nullptr;
     // A program that was only read keeps them with its functions.
     for (const ConstructionStart& construction : function.constructionStarts) {
         if (construction.reported == value.position)
-            return construction.start;
+            return &construction;
     }
-    if (const ConstructionStart* construction = program.findConstructionReportedAt(function.module, value.position))
-        return construction->start;
-    return std::nullopt;
+    return program.findConstructionReportedAt(function.module, value.position);
 }
 
 template<typename IDType>
@@ -227,6 +225,12 @@ static void printLinesOf(IRPrinter& printer, ProgramList list)
     case ProgramList::ModuleFailures:
         printLines(printer, list, program.moduleFailures);
         return;
+    case ProgramList::AmbiguousExports:
+        printLines(printer, list, program.ambiguousExports);
+        return;
+    case ProgramList::SourceStamps:
+        printLines(printer, list, program.sourceStamps);
+        return;
     case ProgramList::EvalScopes:
         printLines(printer, list, program.evalScopes);
         return;
@@ -245,6 +249,12 @@ static void printLinesOf(IRPrinter& printer, ProgramList list)
     case ProgramList::WebAssemblyModules:
         printLines(printer, list, program.webAssemblyModules);
         return;
+    case ProgramList::ReplaceableBuiltins:
+        printLines(printer, list, program.replaceableBuiltins);
+        return;
+    case ProgramList::OpenedNames:
+        printLines(printer, list, program.openedNames);
+        return;
     case ProgramList::Bytes:
     case ProgramList::Words:
     case ProgramList::Strings:
@@ -252,6 +262,7 @@ static void printLinesOf(IRPrinter& printer, ProgramList list)
     case ProgramList::Types:
     case ProgramList::ClassParts:
     case ProgramList::DeclaredTypes:
+    case ProgramList::DeclaredCaptures:
     case ProgramList::Fields:
     case ProgramList::StaticFields:
     case ProgramList::ModuleRequests:
@@ -388,8 +399,8 @@ void IRPrinter::printBlockHead(const Function& function, BlockID id, const Block
         field("role"_s, block.role);
     if (block.subject)
         field("subject"_s, block.subject);
-    if (block.frequency != BlockFrequency::Normal)
-        field("frequency"_s, block.frequency);
+    if (block.frequency.predicted() != BlockFrequency::Normal)
+        field("frequency"_s, block.frequency.predicted());
     if (block.handler) {
         beginField("handler"_s);
         printTarget({ }, *block.handler);
@@ -442,11 +453,17 @@ void IRPrinter::printValue(const Function& function, ValueID id)
         }
         m_out.print("]"_s);
     }
-    printOrigin(*this, value);
-    if (auto written = function.writtenPositionOf(id))
+    const ConstructionStart* construction = printsEngineFields() ? nullptr : findStartOfConstruction(m_program, function, value);
+    bool isShownAtStart = construction && construction->isShownAtStart;
+    printOrigin(*this, value, isShownAtStart ? std::optional<uint32_t>(construction->start) : std::nullopt);
+    if (auto written = isShownAtStart ? std::optional<uint32_t>(value.position) : function.writtenPositionOf(id))
         m_out.print(" @"_s, *written);
-    else if (auto start = printsEngineFields() ? std::nullopt : findStartOfConstruction(m_program, function, value))
-        m_out.print(" @"_s, *start);
+    else if (construction) {
+        m_out.print(" @"_s, construction->start);
+        // The word stands behind a pair of positions.
+        if (construction->isForCallers && value.hasPosition())
+            m_out.print(" callers"_s);
+    }
 }
 
 void IRPrinter::printEngineValueFields(const Value& value)
@@ -657,22 +674,42 @@ void IRPrinter::print(RuntimeModuleID id)
         printInvalid("runtimemodule"_s, id.index());
 }
 
+StringView tokenOf(const BuiltinTable& builtins, RuntimeFunctionID id)
+{
+    std::span<const RuntimeFunctionData> functions = builtins.runtimeFunctions();
+    auto found = std::ranges::lower_bound(functions, id.index(), { }, [](const RuntimeFunctionData& function) { return function.id.index(); });
+    if (found == functions.end() || found->id != id)
+        return { };
+    return byteCast<Latin1Character>(builtinTableRuntimeFunctionTokens[found - functions.begin()]);
+}
+
+RuntimeFunctionID runtimeFunctionFromToken(const BuiltinTable& builtins, StringView token)
+{
+    BuiltinTexts tokens = builtinTableRuntimeFunctionTokens;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        if (token == StringView(byteCast<Latin1Character>(tokens[i])))
+            return builtins.runtimeFunctions()[i].id;
+    }
+    return { };
+}
+
 void IRPrinter::print(RuntimeFunctionID id)
 {
-    if (!printNumber(m_out, m_program.builtins(), id))
+    StringView token = tokenOf(m_program.builtins(), id);
+    if (token.isNull())
         printInvalid("runtimefunction"_s, id.index());
+    else
+        m_out.print(token);
 }
 
 static void dumpLayouts(IRPrinter& printer, const LayoutSet& layouts)
 {
     CommaPrinter bar("|"_s);
-    for (LayoutID member : layouts.members) {
+    for (LayoutID member : layouts.written()) {
         printer.out().print(bar);
         printer.print(member);
     }
-    if (layouts.hasMembersWithoutLayout)
-        printer.out().print(bar, "nolayout"_s);
-    if (!layouts.isComplete)
+    if (!layouts.listsEveryLayout())
         printer.out().print(bar, "?"_s);
 }
 

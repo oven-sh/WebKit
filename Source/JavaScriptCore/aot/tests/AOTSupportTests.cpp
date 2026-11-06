@@ -14,6 +14,7 @@
 #include "AOTDerivedFunctions.h"
 #include "AOTDiagnostics.h"
 #include "AOTFlowResults.h"
+#include "AOTFunctionEditing.h"
 #include "AOTFunctionQueue.h"
 #include "AOTIR.h"
 #include "AOTIRParser.h"
@@ -22,9 +23,12 @@
 #include "AOTLosses.h"
 #include "AOTNativeTest.h"
 #include "AOTPassID.h"
+#include "AOTPersistentSortedSet.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaEnums.h"
+#include "AOTSharedPrefixList.h"
 #include "AOTSort.h"
+#include "AOTSortedSet.h"
 #include "AOTStatistics.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
@@ -34,13 +38,23 @@
 #include "LineColumn.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <compare>
+#include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <numeric>
 #include <optional>
 #include <ranges>
+#include <span>
+#include <utility>
+#include <wtf/EnumTraits.h>
+#include <wtf/FastMalloc.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
+#include <wtf/VectorTraits.h>
 #include <wtf/WeakRandom.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {
 
@@ -294,6 +308,34 @@ static void testDerivedFunctionIDsFromManyThreads()
     AOT_TEST_CHECK(table.find(recorded) == FunctionID(3u));
     table.recordFunctionsOf(*program);
     AOT_TEST_CHECK(table.find(recorded) == FunctionID(3u));
+}
+
+static void testCachesOfProgramLastAsLongAsWhatRunsBesideEdits()
+{
+    BuildContext build(optionsWith({ "threads=8"_s }));
+    std::unique_ptr<Program> program = parseDerivedFunctions(build);
+    ProgramEditor editor(*program);
+    auto hasCachesAndOpenPhases = [&] {
+        return program->propertyAccessCache() && program->sharedFieldTypes() && program->types.hasOpenPhase() && program->strings.hasOpenPhase();
+    };
+    auto hasNone = [&] {
+        return !program->propertyAccessCache() && !program->sharedFieldTypes() && !program->types.hasOpenPhase() && !program->strings.hasOpenPhase();
+    };
+    std::array functions { FunctionID(0u), FunctionID(1u) };
+    for (size_t numberOfFunctions = 0; numberOfFunctions <= functions.size(); ++numberOfFunctions) {
+        std::atomic<unsigned> numberOfEdits { 0 };
+        unsigned numberOfRunsBeside = 0;
+        AOT_TEST_CHECK(hasNone());
+        editFunctionsInParallel(editor, build, std::span<const FunctionID>(functions).first(numberOfFunctions), [&](unsigned, FunctionID, Function&, TaskArenas&) {
+            AOT_TEST_CHECK(hasCachesAndOpenPhases());
+            numberOfEdits.fetch_add(1, std::memory_order_relaxed);
+        }, [&] {
+            AOT_TEST_CHECK(numberOfFunctions ? hasCachesAndOpenPhases() : hasNone());
+            ++numberOfRunsBeside;
+        });
+        AOT_TEST_CHECK(hasNone());
+        AOT_TEST_CHECK(numberOfEdits.load() == numberOfFunctions && numberOfRunsBeside == 1);
+    }
 }
 
 static void testStatisticsFromManyThreads()
@@ -574,6 +616,9 @@ void checkSortsOf(const Vector<uint32_t>& keys)
     std::ranges::sort(expected, { }, &Record::key);
     AOT_TEST_CHECK(sorted == expected);
 #endif
+    Vector<Record> sortedInLine = createRecords<Record>(keys);
+    AOT::sortInLine(sortedInLine, { }, &Record::key);
+    AOT_TEST_CHECK(sortedInLine == sorted);
 
     sorted = createRecords<Record>(keys);
     expected = sorted;
@@ -583,6 +628,9 @@ void checkSortsOf(const Vector<uint32_t>& keys)
     AOT::stableSort(sorted, isGreater);
     std::ranges::stable_sort(expected, isGreater);
     AOT_TEST_CHECK(sorted == expected);
+    sortedInLine = createRecords<Record>(keys);
+    AOT::stableSortInLine(sortedInLine, isGreater);
+    AOT_TEST_CHECK(sortedInLine == expected);
 }
 
 } // namespace
@@ -593,6 +641,7 @@ static void testSortLeavesEqualElementsWhereTheStandardLibraryDoes()
         checkSortsOf<SortedRecord<1>>(keys);
         checkSortsOf<SortedRecord<2>>(keys);
         checkSortsOf<SortedRecord<5>>(keys);
+        checkSortsOf<SortedRecord<20>>(keys);
         checkSortsOf<SortedRecordWithList>(keys);
     });
 }
@@ -615,6 +664,158 @@ static void testSortOfIntegersAndIDs()
     });
 }
 
+struct CountedValue {
+    friend bool operator==(CountedValue a, CountedValue b)
+    {
+        ++numberOfComparisons;
+        return a.value == b.value;
+    }
+    friend std::strong_ordering operator<=>(CountedValue a, CountedValue b)
+    {
+        ++numberOfComparisons;
+        return a.value <=> b.value;
+    }
+
+    static inline size_t numberOfComparisons = 0;
+
+    uint32_t value { 0 };
+};
+
+static void testShortSortedListIsLookedForByHalving()
+{
+    WeakRandom random(1);
+    auto createList = [&](size_t size, uint32_t numberOfValues) {
+        Vector<uint32_t> values(size, [&](size_t) {
+            return random.getUint32(numberOfValues);
+        });
+        std::ranges::sort(values);
+        values.shrink(std::ranges::unique(values).begin() - values.begin());
+        return values;
+    };
+    for (size_t size : { 0, 1, 2, 3, 17, 40 }) {
+        for (size_t otherSize : { 0, 1, 2, 16, 33, 700 }) {
+            for (uint32_t numberOfValues : { 3, 50, 2000, 100000 }) {
+                Vector<uint32_t> list = createList(size, numberOfValues);
+                Vector<uint32_t> other = createList(otherSize, numberOfValues);
+                auto isInOther = [&](uint32_t value) { return other.contains(value); };
+                AOT_TEST_CHECK(sortedListsOverlap(list.span(), other.span()) == std::ranges::any_of(list, isInOther));
+                AOT_TEST_CHECK(sortedListsOverlap(other.span(), list.span()) == std::ranges::any_of(list, isInOther));
+                AOT_TEST_CHECK(sortedListIncludes(other.span(), list.span()) == std::ranges::all_of(list, isInOther));
+            }
+        }
+    }
+
+    constexpr uint32_t size = 1 << 16;
+    Vector<CountedValue> many(size, [](size_t index) {
+        return CountedValue { static_cast<uint32_t>(2 * index) };
+    });
+    for (uint32_t value : { 0u, 1u, size, size + 1, 2 * size }) {
+        std::array<CountedValue, 1> one { CountedValue { value } };
+        bool isAmongMany = !(value % 2) && value < 2 * size;
+        CountedValue::numberOfComparisons = 0;
+        AOT_TEST_CHECK(sortedListsOverlap(std::span<const CountedValue>(one), many.span()) == isAmongMany);
+        AOT_TEST_CHECK(sortedListsOverlap(many.span(), std::span<const CountedValue>(one)) == isAmongMany);
+        AOT_TEST_CHECK(sortedListIncludes(many.span(), std::span<const CountedValue>(one)) == isAmongMany);
+        AOT_TEST_CHECK(CountedValue::numberOfComparisons < 3 * 20);
+    }
+}
+
+static void testPersistentSetsHoldWhatSortedSetsHold()
+{
+    WeakRandom random(1);
+    auto valuesOf = [](const PersistentSortedSet<uint32_t>& set) {
+        Vector<uint32_t> values;
+        set.forEach([&](uint32_t value) {
+            values.append(value);
+        });
+        return values;
+    };
+    auto holdSame = [&](const PersistentSortedSet<uint32_t>& set, const SortedSet<uint32_t>& expected) {
+        return set.size() == expected.size() && std::ranges::equal(valuesOf(set), expected.span());
+    };
+    for (uint32_t numberOfValues : { 1, 4, 40, 3000 }) {
+        Vector<std::pair<PersistentSortedSet<uint32_t>, SortedSet<uint32_t>>> sets(1);
+        for (unsigned step = 0; step < 600; ++step) {
+            auto [set, expected] = sets[random.getUint32(sets.size())];
+            const auto& [other, expectedOther] = sets[random.getUint32(sets.size())];
+            switch (random.getUint32(6)) {
+            case 0:
+                AOT_TEST_CHECK(set.unite(other) == expected.unite(expectedOther));
+                break;
+            case 1:
+                set.intersect(other);
+                expected.intersect(expectedOther);
+                break;
+            case 2:
+                set.subtract(other);
+                expected.subtract(expectedOther);
+                break;
+            default:
+                for (unsigned count = random.getUint32(8); count--;) {
+                    uint32_t value = random.getUint32(numberOfValues);
+                    AOT_TEST_CHECK(set.contains(value) == expected.contains(value));
+                    AOT_TEST_CHECK(set.add(value) == expected.add(value));
+                }
+                break;
+            }
+            AOT_TEST_CHECK(holdSame(set, expected));
+            AOT_TEST_CHECK(holdSame(other, expectedOther));
+            AOT_TEST_CHECK(set.overlaps(other) == expected.overlaps(expectedOther));
+            AOT_TEST_CHECK((set == other) == (expected == expectedOther));
+            PersistentSortedSet<uint32_t> builtAnew;
+            for (uint32_t value : expected)
+                builtAnew.add(value);
+            AOT_TEST_CHECK(builtAnew == set);
+            sets.append({ WTF::move(set), WTF::move(expected) });
+        }
+    }
+
+    constexpr uint32_t numberOfSets = 300000;
+    Vector<PersistentSortedSet<uint32_t>> row(numberOfSets);
+    for (uint32_t index = 1; index < numberOfSets; ++index) {
+        row[index] = row[index - 1];
+        row[index].add(index);
+    }
+    PersistentSortedSet<uint32_t> common = row.last();
+    for (uint32_t index : { numberOfSets - 1, numberOfSets / 2, 7u }) {
+        common.intersect(row[index]);
+        AOT_TEST_CHECK(common == row[index] && common.size() == index && common.contains(index) && !common.contains(index + 1));
+    }
+}
+
+static void testListsShareWhatTheyHeldWhenTheyWereCopied()
+{
+    WeakRandom random(1);
+    Vector<std::pair<SharedPrefixList<uint32_t>, Vector<uint32_t>>> lists(1);
+    for (unsigned step = 0; step < 400; ++step) {
+        auto [list, expected] = lists[random.getUint32(lists.size())];
+        for (unsigned count = random.getUint32(4); count--;) {
+            uint32_t value = random.getUint32(3);
+            list.append(value);
+            expected.append(value);
+        }
+        AOT_TEST_CHECK(list.size() == expected.size() && list.isEmpty() == expected.isEmpty());
+        size_t first = random.getUint32(expected.size() + 2);
+        Vector<uint32_t> seen;
+        AOT_TEST_CHECK(list.allOfFrom(first, [&](uint32_t value) {
+            seen.append(value);
+            return true;
+        }));
+        AOT_TEST_CHECK(std::ranges::equal(seen, expected.span().subspan(std::min(first, expected.size()))));
+        AOT_TEST_CHECK(list.allOf([](uint32_t value) { return value < 2; }) == !expected.contains(2u));
+        for (const auto& [other, expectedOther] : lists)
+            AOT_TEST_CHECK((list == other) == (expected == expectedOther));
+        lists.append({ WTF::move(list), WTF::move(expected) });
+    }
+
+    SharedPrefixList<uint32_t> longest;
+    for (uint32_t index = 0; index < 1000000; ++index) {
+        SharedPrefixList<uint32_t> copy = longest;
+        longest.append(index);
+    }
+    AOT_TEST_CHECK(longest.size() == 1000000);
+}
+
 static void testHeapSortBehindTooManyPartitions()
 {
     using Record = SortedRecord<2>;
@@ -625,9 +826,9 @@ static void testHeapSortBehindTooManyPartitions()
         Vector<Record> expected = sorted;
         std::ranges::less isLess;
         auto projection = &Record::key;
-        OrderedSteps<Record, std::ranges::less, decltype(projection)> order(isLess, projection);
+        PartitioningSteps<Record, std::ranges::less, decltype(projection)> steps(isLess, projection);
         char* first = reinterpret_cast<char*>(sorted.mutableSpan().data());
-        heapSort(order.stepsOfSort(), first, first + sorted.size() * sizeof(Record));
+        heapSort(steps, first, first + sorted.size() * sizeof(Record));
         AOT_TEST_CHECK(std::ranges::is_sorted(sorted, { }, &Record::key));
 #if defined(__GLIBCXX__)
         std::ranges::partial_sort(expected, expected.end(), { }, &Record::key);
@@ -788,6 +989,314 @@ static void testCurrentWorkFitsItsBuffer()
     }
 }
 
+namespace {
+
+struct MallocOfMarkedBuffers {
+    static constexpr uint64_t inUse = 0x6275666665722121;
+    static constexpr size_t wordsInFront = 2;
+
+    static void* malloc(size_t size)
+    {
+        auto* words = static_cast<uint64_t*>(FastMalloc::malloc(size + wordsInFront * sizeof(uint64_t)));
+        words[0] = inUse;
+        ++numberInUse;
+        return words + wordsInFront;
+    }
+    static void* tryMalloc(size_t size) { return malloc(size); }
+    static void* realloc(void* buffer, size_t size)
+    {
+        auto* words = static_cast<uint64_t*>(buffer) - wordsInFront;
+        AOT_TEST_CHECK(words[0] == inUse);
+        return static_cast<uint64_t*>(FastMalloc::realloc(words, size + wordsInFront * sizeof(uint64_t))) + wordsInFront;
+    }
+    static void free(void* buffer)
+    {
+        auto* words = static_cast<uint64_t*>(buffer) - wordsInFront;
+        AOT_TEST_CHECK(words[0] == inUse);
+        words[0] = 0;
+        --numberInUse;
+        FastMalloc::free(words);
+    }
+    static constexpr size_t nextCapacity(size_t capacity) { return FastMalloc::nextCapacity(capacity); }
+
+    static thread_local size_t numberInUse;
+};
+thread_local size_t MallocOfMarkedBuffers::numberInUse = 0;
+
+struct RecordWithPadding {
+    uint64_t number;
+    uint8_t byte;
+
+    friend bool operator==(const RecordWithPadding&, const RecordWithPadding&) = default;
+};
+
+struct alignas(16) RecordAlignedToTwoWords {
+    uint64_t number;
+
+    friend bool operator==(const RecordAlignedToTwoWords&, const RecordAlignedToTwoWords&) = default;
+};
+
+struct RecordThatKnowsWhereItIs {
+    explicit RecordThatKnowsWhereItIs(unsigned number)
+        : number(number)
+        , self(this)
+    {
+    }
+    RecordThatKnowsWhereItIs(const RecordThatKnowsWhereItIs& other)
+        : number(other.number)
+        , self(this)
+    {
+        AOT_TEST_CHECK(other.self == &other);
+    }
+    ~RecordThatKnowsWhereItIs()
+    {
+        AOT_TEST_CHECK(self == this);
+        self = nullptr;
+    }
+    RecordThatKnowsWhereItIs& operator=(const RecordThatKnowsWhereItIs& other)
+    {
+        AOT_TEST_CHECK(self == this && other.self == &other);
+        number = other.number;
+        return *this;
+    }
+
+    friend bool operator==(const RecordThatKnowsWhereItIs& a, const RecordThatKnowsWhereItIs& b) { return a.self == &a && b.self == &b && a.number == b.number; }
+
+    unsigned number;
+    RecordThatKnowsWhereItIs* self;
+};
+
+static_assert(movesAsBytes<uint8_t> && movesAsBytes<FunctionID> && movesAsBytes<RecordWithPadding> && movesAsBytes<RecordAlignedToTwoWords> && movesAsBytes<SortedRecord<9>> && movesAsBytes<String>);
+static_assert(!VectorTraits<FunctionID>::canMoveWithMemcpy && !VectorTraits<RecordWithPadding>::canMoveWithMemcpy);
+static_assert(!movesAsBytes<RecordThatKnowsWhereItIs> && !movesAsBytes<Vector<unsigned, 2>> && !movesAsBytes<std::pair<unsigned, RecordThatKnowsWhereItIs>>);
+
+struct RecordOfLists {
+    unsigned number;
+    Vector<unsigned> list;
+    std::array<Vector<uint8_t>, 2> more;
+
+    friend bool operator==(const RecordOfLists&, const RecordOfLists&) = default;
+};
+
+struct RecordWithInlineList {
+    unsigned number;
+    Vector<unsigned, 2> list;
+
+    friend bool operator==(const RecordWithInlineList&, const RecordWithInlineList&) = default;
+};
+
+struct RecordOfRecordThatKnowsWhereItIs {
+    Vector<unsigned> list;
+    RecordThatKnowsWhereItIs record;
+};
+
+static_assert(movesAsBytes<Vector<unsigned>> && movesAsBytes<Vector<RecordThatKnowsWhereItIs>> && !movesAsBytes<RecordWithInlineList> && !movesAsBytes<RecordOfRecordThatKnowsWhereItIs>);
+#if COMPILER(CLANG) && __has_builtin(__builtin_structured_binding_size)
+static_assert(movesAsBytes<RecordOfLists> && movesAsBytes<std::pair<unsigned, RecordOfLists>> && movesAsBytes<Vector<RecordOfLists>>);
+#endif
+
+struct RecordOfRecordsWithInlineLists {
+    uint8_t flag : 1;
+    Vector<RecordWithInlineList, 2> records;
+    std::pair<unsigned, Vector<uint8_t, 3>> pair;
+    Vector<unsigned> list;
+
+    friend bool operator==(const RecordOfRecordsWithInlineLists&, const RecordOfRecordsWithInlineLists&) = default;
+};
+
+static_assert(!isMendedAfterMovingAsBytes<unsigned> && !isMendedAfterMovingAsBytes<RecordOfLists> && !isMendedAfterMovingAsBytes<RecordThatKnowsWhereItIs> && !isMendedAfterMovingAsBytes<Vector<RecordThatKnowsWhereItIs, 2>> && !isMendedAfterMovingAsBytes<RecordOfRecordThatKnowsWhereItIs>);
+#if !ASAN_ENABLED && COMPILER(CLANG) && __has_builtin(__builtin_structured_binding_size)
+static_assert(isMendedAfterMovingAsBytes<Vector<unsigned, 2>> && isMendedAfterMovingAsBytes<RecordWithInlineList> && isMendedAfterMovingAsBytes<RecordOfRecordsWithInlineLists> && isMendedAfterMovingAsBytes<Vector<Vector<unsigned, 2>, 3>>);
+#endif
+
+template<typename T, size_t inlineCapacity, size_t minCapacity>
+void checkGrowthOfVector(const Invocable<T(unsigned)> auto& create)
+{
+    using VectorUnderTest = Vector<T, inlineCapacity, CrashOnOverflow, minCapacity, MallocOfMarkedBuffers>;
+    using ExpectedVector = WTF::Vector<T, inlineCapacity, CrashOnOverflow, minCapacity>;
+    constexpr unsigned numberOfElements = 2000;
+
+    auto isInline = [](const VectorUnderTest& vector) {
+        auto* start = reinterpret_cast<const char*>(&vector);
+        auto* buffer = reinterpret_cast<const char*>(vector.span().data());
+        return buffer >= start && buffer < start + sizeof(VectorUnderTest);
+    };
+    auto checkEqual = [&](const VectorUnderTest& vector, const ExpectedVector& expected) {
+        AOT_TEST_CHECK(vector.size() == expected.size() && vector.capacity() >= vector.size());
+        AOT_TEST_CHECK(std::ranges::equal(vector, expected));
+        AOT_TEST_CHECK(isInline(vector) == (inlineCapacity && vector.capacity() == inlineCapacity));
+    };
+    auto onBoth = [&](VectorUnderTest& vector, ExpectedVector& expected, const auto& change) {
+        change(vector);
+        change(expected);
+        checkEqual(vector, expected);
+    };
+
+    {
+        VectorUnderTest vector;
+        ExpectedVector expected;
+        unsigned numberOfFullVectors = 0;
+        for (unsigned number = 0; vector.size() < numberOfElements; ++number) {
+            if (vector.size() < vector.capacity() || !vector.size()) {
+                vector.append(T(create(number)));
+                expected.append(T(create(number)));
+                AOT_TEST_CHECK(vector.size() == expected.size() && vector.last() == expected.last());
+                // The first buffer has room for minCapacity elements or 32 bytes, whichever is less.
+                if (!inlineCapacity && vector.size() == 1)
+                    AOT_TEST_CHECK(vector.capacity() == std::min<size_t>(minCapacity, std::max<size_t>(32 / sizeof(T), 1)));
+                continue;
+            }
+            onBoth(vector, expected, [&](auto& list) {
+                T outside(create(number));
+                switch (numberOfFullVectors % 8) {
+                case 0:
+                    list.append(list.first());
+                    break;
+                case 1:
+                    list.append(list.last());
+                    break;
+                case 2:
+                    list.append(outside);
+                    break;
+                case 3:
+                    list.append(WTF::move(outside));
+                    break;
+                case 4:
+                    list.insert((list.size() + 1) / 2, list.first());
+                    break;
+                case 5:
+                    list.append(ExpectedVector(list.span().subspan(list.size() / 2)).span());
+                    break;
+                case 6:
+                    list.constructAndAppend(outside);
+                    break;
+                case 7:
+                    list.insertFill(1, outside, 3);
+                    break;
+                }
+            });
+            ++numberOfFullVectors;
+        }
+        AOT_TEST_CHECK(numberOfFullVectors >= 8);
+
+        VectorUnderTest copy = vector;
+        AOT_TEST_CHECK(copy == vector && copy.capacity() == vector.size());
+        VectorUnderTest moved = WTF::move(copy);
+        AOT_TEST_CHECK(moved == vector && copy.isEmpty());
+        onBoth(vector, expected, [&](auto& list) {
+            list.reserveCapacity(list.capacity() + 1);
+        });
+        onBoth(vector, expected, [&](auto& list) {
+            list.reserveCapacity(list.size());
+        });
+        onBoth(vector, expected, [&](auto& list) {
+            list.shrink(inlineCapacity / 2 + 1);
+            list.shrinkToFit();
+        });
+        onBoth(vector, expected, [&](auto& list) {
+            list.fill(T(create(7)), 3 * inlineCapacity + 40);
+        });
+        onBoth(vector, expected, [&](auto& list) {
+            list.clear();
+        });
+        onBoth(vector, expected, [&](auto& list) {
+            list.reserveInitialCapacity(inlineCapacity + 5);
+            list.append(T(create(1)));
+        });
+    }
+    AOT_TEST_CHECK(!MallocOfMarkedBuffers::numberInUse);
+}
+
+template<typename T>
+void checkGrowthOfVectorsOf(const Invocable<T(unsigned)> auto& create)
+{
+    checkGrowthOfVector<T, 0, 16>(create);
+    checkGrowthOfVector<T, 0, 1>(create);
+    checkGrowthOfVector<T, 1, 16>(create);
+    checkGrowthOfVector<T, 3, 2>(create);
+    checkGrowthOfVector<T, 20, 16>(create);
+}
+
+} // anonymous namespace
+
+static void testVectorsHoldWhatThoseOfWTFHold()
+{
+    auto createInteger = [](unsigned number) {
+        return number;
+    };
+    checkGrowthOfVectorsOf<uint8_t>(createInteger);
+    checkGrowthOfVectorsOf<uint16_t>(createInteger);
+    checkGrowthOfVectorsOf<uint32_t>(createInteger);
+    checkGrowthOfVectorsOf<uint64_t>(createInteger);
+    checkGrowthOfVectorsOf<double>(createInteger);
+    checkGrowthOfVectorsOf<FunctionID>([](unsigned number) {
+        return FunctionID(number);
+    });
+    checkGrowthOfVectorsOf<std::pair<uint64_t, uint64_t>>([](unsigned number) {
+        return std::pair<uint64_t, uint64_t> { number, ~static_cast<uint64_t>(number) };
+    });
+    checkGrowthOfVectorsOf<RecordWithPadding>([](unsigned number) {
+        return RecordWithPadding { number, static_cast<uint8_t>(number) };
+    });
+    checkGrowthOfVectorsOf<RecordAlignedToTwoWords>([](unsigned number) {
+        return RecordAlignedToTwoWords { number };
+    });
+    checkGrowthOfVectorsOf<SortedRecord<9>>([](unsigned number) {
+        return SortedRecord<9> { number, { number + 1, number + 2, 0, 0, 0, 0, 0, 0, number + 9 } };
+    });
+    checkGrowthOfVectorsOf<String>([](unsigned number) {
+        return String::number(number);
+    });
+    checkGrowthOfVectorsOf<RecordThatKnowsWhereItIs>([](unsigned number) {
+        return RecordThatKnowsWhereItIs(number);
+    });
+    checkGrowthOfVectorsOf<Vector<unsigned>>([](unsigned number) {
+        return Vector<unsigned> { number, number + 1 };
+    });
+    checkGrowthOfVectorsOf<RecordOfLists>([](unsigned number) {
+        return RecordOfLists { number, { number, number + 1 }, { { { static_cast<uint8_t>(number) }, { } } } };
+    });
+    checkGrowthOfVectorsOf<RecordWithInlineList>([](unsigned number) {
+        return RecordWithInlineList { number, Vector<unsigned, 2>(number % 4, [&](size_t index) {
+            return number + static_cast<unsigned>(index);
+        }) };
+    });
+    checkGrowthOfVectorsOf<RecordOfRecordsWithInlineLists>([](unsigned number) {
+        auto createRecord = [&](size_t index) {
+            unsigned first = number + static_cast<unsigned>(index);
+            return RecordWithInlineList { first, Vector<unsigned, 2>(first % 4, [&](size_t position) {
+                return first + static_cast<unsigned>(position);
+            }) };
+        };
+        return RecordOfRecordsWithInlineLists { static_cast<uint8_t>(number & 1), Vector<RecordWithInlineList, 2>(number % 5, createRecord), { number, Vector<uint8_t, 3>(number % 6, [&](size_t position) {
+            return static_cast<uint8_t>(number + position);
+        }) }, { number } };
+    });
+    checkGrowthOfVectorsOf<Vector<unsigned, 2>>([](unsigned number) {
+        return Vector<unsigned, 2>(number % 4, [&](size_t index) {
+            return number + static_cast<unsigned>(index);
+        });
+    });
+    checkGrowthOfVectorsOf<std::pair<unsigned, Vector<unsigned>>>([](unsigned number) {
+        return std::pair<unsigned, Vector<unsigned>> { number, { number } };
+    });
+}
+
+enum class EnumWithGap : uint8_t { First, Second, Last = 4 };
+enum class WideEnum : uint16_t { Only };
+
+static void testNamesOfEnumeratorsEndAtTheLastOne()
+{
+    static_assert(WTF::enumNamesSize<EnumWithGap>() == 256 && WTF::enumNamesSizeUpToLastName<EnumWithGap>() == 5);
+    static_assert(WTF::enumNamesSize<WideEnum>() == 511 && WTF::enumNamesSizeUpToLastName<WideEnum>() == 1);
+    AOT_TEST_CHECK(WTF::enumName(EnumWithGap::First) == "First"_s && WTF::enumName(EnumWithGap::Second) == "Second"_s && WTF::enumName(EnumWithGap::Last) == "Last"_s);
+    for (unsigned value = 0; value < 256; ++value)
+        AOT_TEST_CHECK(WTF::enumName(static_cast<EnumWithGap>(value)) == WTF::enumNames<EnumWithGap>()[value]);
+    AOT_TEST_CHECK(WTF::enumName(static_cast<EnumWithGap>(3)).isNull() && WTF::enumName(static_cast<EnumWithGap>(5)).isNull() && WTF::enumName(static_cast<EnumWithGap>(255)).isNull());
+    AOT_TEST_CHECK(WTF::enumName(WideEnum::Only) == "Only"_s && WTF::enumName(static_cast<WideEnum>(510)).isNull());
+    AOT_TEST_CHECK(WTF::enumName(static_cast<WideEnum>(511)) == "enum out of range"_s);
+}
+
 std::span<const NativeTest> supportTests()
 {
     static constexpr NativeTest tests[] = {
@@ -795,6 +1304,7 @@ std::span<const NativeTest> supportTests()
         { "function-queue/many-threads"_s, testFunctionQueueOnManyThreads },
         { "function-queue/behind-long-function"_s, testFunctionQueueBehindLongFunction },
         { "derived-functions/ids-from-many-threads"_s, testDerivedFunctionIDsFromManyThreads },
+        { "function-editing/caches-last-as-long-as-what-runs-beside-edits"_s, testCachesOfProgramLastAsLongAsWhatRunsBesideEdits },
         { "diagnostics/order-by-text-position"_s, testDiagnosticsOrderByTextPosition },
         { "diagnostics/text-position-is-last-context-clause"_s, testTextPositionIsLastContextClause },
         { "diagnostics/two-lists"_s, testDiagnosticsKeepTwoLists },
@@ -815,6 +1325,11 @@ std::span<const NativeTest> supportTests()
         { "sort/equal-elements"_s, testSortLeavesEqualElementsWhereTheStandardLibraryDoes },
         { "sort/integers-and-ids"_s, testSortOfIntegersAndIDs },
         { "sort/heap-sort-behind-too-many-partitions"_s, testHeapSortBehindTooManyPartitions },
+        { "sorted-lists/short-list-is-looked-for-by-halving"_s, testShortSortedListIsLookedForByHalving },
+        { "shared-collections/persistent-sets-hold-what-sorted-sets-hold"_s, testPersistentSetsHoldWhatSortedSetsHold },
+        { "shared-collections/lists-share-what-they-held-when-they-were-copied"_s, testListsShareWhatTheyHeldWhenTheyWereCopied },
+        { "vector/holds-what-that-of-wtf-holds"_s, testVectorsHoldWhatThoseOfWTFHold },
+        { "enum-names/end-at-the-last-enumerator"_s, testNamesOfEnumeratorsEndAtTheLastOne },
     };
     return tests;
 }

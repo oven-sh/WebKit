@@ -1,0 +1,40 @@
+# An object with more fields than there are registers, each of them a narrow reference to an object that a call has made. Each reference is narrowed where it is stored, behind the allocation:
+# in front of it all the narrow forms would be held at one time, each in a place of its own in the frame, and over an allocation, which may collect
+# FORM: AsRead
+# RUN: compile NarrowReferencesAcrossSafepoints
+# RUN(SLOTS): pipeline PlanSlots
+# OPTIONS: references=narrow check=validate-back-end,validate-reference-guards testing=NoLayoutIsMadeSeldom
+# OPTIONS: disable=pass:InlineCalls,pass:SinkAllocations,pass:AllocateInFrames,pass:RemoveUnreadFields,pass:SplitFreshResults
+# SLOTS: "f0" Cell32
+# SLOTS: "f31" Cell32
+# CHECK: image not empty
+# CHECK: statistic NarrowReferencesAcrossSafepoints 0
+
+layout L0 name="Table" fields=[{key="f0" declared={type=L1} flags=[IsRequired]}, {key="f1" declared={type=L1} flags=[IsRequired]}, {key="f2" declared={type=L1} flags=[IsRequired]}, {key="f3" declared={type=L1} flags=[IsRequired]}, {key="f4" declared={type=L1} flags=[IsRequired]}, {key="f5" declared={type=L1} flags=[IsRequired]}, {key="f6" declared={type=L1} flags=[IsRequired]}, {key="f7" declared={type=L1} flags=[IsRequired]}, {key="f8" declared={type=L1} flags=[IsRequired]}, {key="f9" declared={type=L1} flags=[IsRequired]}, {key="f10" declared={type=L1} flags=[IsRequired]}, {key="f11" declared={type=L1} flags=[IsRequired]}, {key="f12" declared={type=L1} flags=[IsRequired]}, {key="f13" declared={type=L1} flags=[IsRequired]}, {key="f14" declared={type=L1} flags=[IsRequired]}, {key="f15" declared={type=L1} flags=[IsRequired]}, {key="f16" declared={type=L1} flags=[IsRequired]}, {key="f17" declared={type=L1} flags=[IsRequired]}, {key="f18" declared={type=L1} flags=[IsRequired]}, {key="f19" declared={type=L1} flags=[IsRequired]}, {key="f20" declared={type=L1} flags=[IsRequired]}, {key="f21" declared={type=L1} flags=[IsRequired]}, {key="f22" declared={type=L1} flags=[IsRequired]}, {key="f23" declared={type=L1} flags=[IsRequired]}, {key="f24" declared={type=L1} flags=[IsRequired]}, {key="f25" declared={type=L1} flags=[IsRequired]}, {key="f26" declared={type=L1} flags=[IsRequired]}, {key="f27" declared={type=L1} flags=[IsRequired]}, {key="f28" declared={type=L1} flags=[IsRequired]}, {key="f29" declared={type=L1} flags=[IsRequired]}, {key="f30" declared={type=L1} flags=[IsRequired]}, {key="f31" declared={type=L1} flags=[IsRequired]}]
+layout L1 name="Entry" fields=[{key="n" declared={type=number} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="use" [isFreeName]
+    v2 = Integer integer=7
+# REPEAT: i = 3..34
+    v%(i) = CallDirect v2 function=f1
+# END REPEAT
+    v35 = NewObject -, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    v36 = CallDirect v35 function=f2
+    v37 = Call v1, -, v36
+    Return v37
+}
+function f1 name="makeEntry" parameters=[{type=number}] results=[{type=L1}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    Return v1
+}
+function f2 name="readLast" parameters=[{type=L0}] results=[{type=number}] {
+    v1 = PropGet v0 key="f31"
+    v2 = Convert v1 declared={type=L1}
+    v3 = PropGet v2 key="n"
+    v4 = Convert v3 declared={type=number}
+    Return v4
+}

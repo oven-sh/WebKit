@@ -499,6 +499,7 @@ Modules/webauthn/AuthenticatorCoordinator.cpp
 Modules/webauthn/AuthenticatorResponse.cpp
 Modules/webauthn/PublicKeyCredential.cpp
 Modules/webauthn/WebAuthenticationUtils.cpp
+Modules/webauthn/WebAuthnOperationException.cpp
 Modules/webauthn/WellKnownOriginList.cpp
 Modules/webauthn/apdu/ApduCommand.cpp
 Modules/webauthn/apdu/ApduResponse.cpp
@@ -2362,7 +2363,7 @@ page/ResizeObservation.cpp @header:RenderStyleGetters @cost:5
 page/ResizeObserver.cpp
 page/ResourceUsageOverlay.cpp
 page/ResourceUsageThread.cpp
-page/RuntimeQuirkTable.cpp
+page/QuirkTable.cpp
 page/Screen.cpp
 page/ScreenOrientation.cpp
 page/ScriptTrackingPrivacyCategory.cpp
@@ -2486,6 +2487,7 @@ platform/MediaSamplesDecoder.cpp
 platform/MediaStrategy.cpp
 platform/NotImplemented.cpp
 platform/NowPlayingManager.cpp
+platform/PacedMediaSamplesDecoder.cpp
 platform/Pasteboard.cpp
 platform/PasteboardCustomData.cpp
 platform/PasteboardWriterData.cpp
@@ -3186,6 +3188,7 @@ rendering/svg/RenderSVGPath.cpp @header:RenderStyleGetters
 rendering/svg/RenderSVGRect.cpp @header:RenderStyleGetters
 rendering/svg/RenderSVGResourceClipper.cpp @header:RenderStyleGetters
 rendering/svg/RenderSVGResourceContainer.cpp @header:RenderStyleGetters
+rendering/svg/RenderSVGResourceFEImage.cpp
 rendering/svg/RenderSVGResourceFilter.cpp @header:RenderStyleGetters
 rendering/svg/RenderSVGResourceFilterPrimitive.cpp @header:RenderStyleGetters
 rendering/svg/RenderSVGResourceGradient.cpp @header:RenderStyleGetters
@@ -3210,16 +3213,10 @@ rendering/svg/SVGRenderSupport.cpp @header:RenderStyleGetters
 rendering/svg/SVGRenderTreeAsText.cpp @header:RenderStyleGetters
 rendering/svg/SVGRenderingContext.cpp @header:RenderStyleGetters
 rendering/svg/SVGTextBoxPainter.cpp @header:RenderStyleGetters
-rendering/svg/SVGTextChunk.cpp @header:RenderStyleGetters
-rendering/svg/SVGTextChunkBuilder.cpp
 rendering/svg/SVGTextLayoutAlgorithm.cpp @header:RenderStyleGetters
-rendering/svg/SVGTextLayoutAttributes.cpp
-rendering/svg/SVGTextLayoutAttributesBuilder.cpp @header:RenderStyleGetters
-rendering/svg/SVGTextLayoutEngine.cpp @header:RenderStyleGetters
 rendering/svg/SVGTextLayoutEngineBaseline.cpp @header:RenderStyleGetters
 rendering/svg/SVGTextLayoutEngineSpacing.cpp
 rendering/svg/SVGTextMetrics.cpp @header:RenderStyleGetters
-rendering/svg/SVGTextMetricsBuilder.cpp @header:RenderStyleGetters
 rendering/svg/SVGTextQuery.cpp @header:RenderStyleGetters
 rendering/svg/legacy/LegacyRenderSVGContainer.cpp @header:RenderStyleGetters
 rendering/svg/legacy/LegacyRenderSVGEllipse.cpp @header:RenderStyleGetters
@@ -3232,6 +3229,7 @@ rendering/svg/legacy/LegacyRenderSVGRect.cpp @header:RenderStyleGetters
 rendering/svg/legacy/LegacyRenderSVGResource.cpp @header:RenderStyleGetters
 rendering/svg/legacy/LegacyRenderSVGResourceClipper.cpp @header:RenderStyleGetters
 rendering/svg/legacy/LegacyRenderSVGResourceContainer.cpp @header:RenderStyleGetters
+rendering/svg/legacy/LegacyRenderSVGResourceFEImage.cpp
 rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp @header:RenderStyleGetters
 rendering/svg/legacy/LegacyRenderSVGResourceFilterPrimitive.cpp @header:RenderStyleGetters
 rendering/svg/legacy/LegacyRenderSVGResourceGradient.cpp @header:RenderStyleGetters
@@ -5190,6 +5188,8 @@ JSStorage.cpp
 JSStorageEvent.cpp
 JSStorageManager.cpp
 JSStreamPipeOptions.cpp
+JSWebAuthnOperationErrorCode.cpp
+JSWebAuthnOperationException.cpp
 JSWebKitBuffer.cpp
 JSWebKitBufferNamespace.cpp
 JSStringCallback.cpp

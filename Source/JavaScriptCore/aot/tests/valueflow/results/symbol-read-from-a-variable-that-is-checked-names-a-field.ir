@@ -16,7 +16,7 @@ variable g0 name="kState" module=m0 declared={type=undefined|null|symbol|absent 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
     v1 = String string="state"
-    v2 = Call v0, -, v1 @100
+    v2 = Call v0, -, v1 callNumber=100 @100
     v3 = Check v2 expectedType=undefined|null|symbol site=w1
     PutModuleVariable v3 variable=g0
     v5 = GetModuleVariable variable=g0

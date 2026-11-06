@@ -26,6 +26,7 @@
 #include "ArrayPrototype.h"
 #include "InlineCacheCompiler.h"
 #include "JSCInlines.h"
+#include "Lookup.h"
 #include "StructureRareDataInlines.h"
 #include <bit>
 #include <wtf/TZoneMallocInlines.h>
@@ -72,6 +73,11 @@ bool ChainDependents::hasChainDependent(VM&, uint32_t structureIDBits, UniquedSt
     return m_structuresWithState.contains(std::bit_cast<StructureID>(structureIDBits));
 }
 
+JSGlobalObject* ChainDependents::realm() const
+{
+    return m_state.instance.globalObject;
+}
+
 ChainDependentOwnerID ChainDependents::addOwner(ChainDependentOwner& owner)
 {
     RELEASE_ASSERT(m_owners.size() < static_cast<size_t>(ChainDependentOwnerID::NoOwner));
@@ -85,6 +91,7 @@ void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDe
         return;
     for (JSObject* object : chainObjects) {
         ASSERT(object->mayBePrototype());
+        m_objectsWithDependents.add(object);
         ObjectDependents& dependents = m_dependentsByObject.ensure(object, [] {
             return ObjectDependents();
         }).iterator->value;
@@ -105,7 +112,7 @@ void ChainDependents::addStateOfStructure(std::span<JSObject* const> chainObject
     add(chainObjects, { uid, structure->id().bits(), ChainDependentOwnerID { } });
 }
 
-void ChainDependents::didChange(JSObject* changed, UniquedStringImpl* uidOrNull)
+void ChainDependents::dropDependentsOn(JSObject* changed, UniquedStringImpl* uidOrNull)
 {
     ASSERT(changed);
     auto iterator = m_dependentsByObject.find(changed);
@@ -149,6 +156,33 @@ void ChainDependents::didChange(JSObject* changed, UniquedStringImpl* uidOrNull)
         m_dependentsByObject.remove(iterator);
     for (const ChainDependent& dependent : dependents)
         drop(dependent);
+}
+
+void ChainDependents::didCreateMembers(const CreatedMembers& created)
+{
+    if (!m_objectsWithDependents.mayContain(created.prototype))
+        return;
+    auto iterator = m_dependentsByObject.find(created.prototype);
+    if (iterator == m_dependentsByObject.end())
+        return;
+    VM& vm = *m_state.instance.vm;
+    DeferGC deferGC(vm);
+    ObjectDependents& all = iterator->value;
+    Vector<ChainDependent, 8> dropped;
+    all.set.removeIf([&](const ChainDependent& dependent) {
+        if (ownerOf(dependent).keepChainDependent(vm, dependent.subject, dependent.uidOrNull, created))
+            return false;
+        dropped.append(dependent);
+        return true;
+    });
+    if (!dropped.isEmpty())
+        all.index = nullptr;
+    if (all.set.isEmpty())
+        m_dependentsByObject.remove(iterator);
+    for (const ChainDependent& dependent : dropped) {
+        ownerOf(dependent).dropChainDependent(vm, dependent.subject, dependent.uidOrNull);
+        count(m_state.instance, RuntimeCounterID::ChainDependentsDropped);
+    }
 }
 
 size_t ChainDependents::numberOfDependents(JSObject* object) const
@@ -209,7 +243,7 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
 {
     ClassTable& classes = state.objects->classes;
     ClassSide side;
-    const LayoutData* layout = classes.classHeldBy(changed, side);
+    const LayoutData* layout = classes.classWithGuardsHeldBy(changed, side);
     if (!layout)
         return;
     if (uidOrNull) {
@@ -225,35 +259,26 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
     classes.didChangePrototypeLink(*layout, side);
 }
 
-enum class ChainObjectChange : bool { MayChangeWhatNamesFind, KeepsWhatNamesFind };
-
-static void tellDependentsOfChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull, ChainObjectChange change)
+void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
 {
-    if (vm.aotState().propertyCaches)
-        vm.aotState().propertyCaches->didChangeObjectOnSomeChain(changed, uidOrNull);
     JSGlobalObject* realm = changed->structure()->realm();
-    // What a realm does to its Object.prototype before it has an Instance is seen when the Instance is created.
-    if (realm && changed == realm->objectPrototype() && Instance::of(realm))
-        vm.aotState().propertyCaches->didChangeObjectPrototype(changed, uidOrNull);
+    for (auto& parts : vm.aotState().parts) {
+        if (!parts.propertyCaches)
+            continue;
+        parts.propertyCaches->didChangeObjectOnSomeChain(changed, uidOrNull);
+        // What a realm does to its Object.prototype before it has an Instance is seen when the Instance is created.
+        if (realm && changed == realm->objectPrototype() && realm->aotInstance())
+            parts.propertyCaches->didChangeObjectPrototype(changed, uidOrNull);
+    }
     for (Instance* instance : vm.aotState().instances) {
         State* state = instance->state;
         if (!state)
             continue;
         if (state->chainDependents)
             state->chainDependents->didChange(changed, uidOrNull);
-        if (state->objects && change == ChainObjectChange::MayChangeWhatNamesFind)
+        if (state->objects)
             didChangeClassHolder(vm, *state, changed, uidOrNull);
     }
-}
-
-void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
-{
-    tellDependentsOfChainObject(vm, changed, uidOrNull, ChainObjectChange::MayChangeWhatNamesFind);
-}
-
-void RuntimeHooks::didFlattenObjectOnPrototypeChain(VM& vm, JSObject* flattened)
-{
-    tellDependentsOfChainObject(vm, flattened, nullptr, ChainObjectChange::KeepsWhatNamesFind);
 }
 
 void RuntimeHooks::didFlattenStructure(VM& vm, Structure* structure)
@@ -274,22 +299,25 @@ void RuntimeHooks::didFlattenStructure(VM& vm, Structure* structure)
 
 void RuntimeHooks::didStartWatchingReplacements(VM& vm)
 {
-    if (vm.aotState().propertyCaches)
-        vm.aotState().propertyCaches->didStartWatchingReplacements();
+    for (auto& parts : vm.aotState().parts) {
+        if (parts.propertyCaches)
+            parts.propertyCaches->didStartWatchingReplacements();
+    }
 }
 
 void RuntimeHooks::didChangeGlobalLexicalBindings(JSGlobalObject* realm)
 {
     didChangeChainObject(realm->vm(), realm, nullptr);
 
-    Instance* instance = Instance::of(realm);
-    State* state = instance ? instance->state : nullptr;
-    if (!state || !state->globalBindings)
-        return;
-    state->globalBindings->dropConstants();
-    // The caller counts the epoch up next, and at this number it starts over.
-    if (realm->globalLexicalBindingEpoch() + 1 == Options::thresholdForGlobalLexicalBindingEpoch())
-        state->globalBindings->dropLocations();
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        State* state = instance->state;
+        if (!state || !state->globalBindings)
+            continue;
+        state->globalBindings->dropConstants();
+        // The caller counts the epoch up next, and at this number it starts over.
+        if (realm->globalLexicalBindingEpoch() + 1 == Options::thresholdForGlobalLexicalBindingEpoch())
+            state->globalBindings->dropLocations();
+    }
 }
 
 static State* stateOrNull(Structure* structure)
@@ -299,12 +327,45 @@ static State* stateOrNull(Structure* structure)
     return instance ? instance->state : nullptr;
 }
 
-bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid)
+bool RuntimeHooks::becomesDictionaryByAddition(VM& vm, JSObject* object, Structure* structure, UniquedStringImpl* uid)
 {
-    return storeThroughChain(walkChain({ globalObject, receiverStructure, receiverOrNull, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid)) == StoreThroughChain::CreatesOwnProperty;
+    JSType type = structure->typeInfo().type();
+    if (type != FinalObjectType && type != CompiledClosureType && type != SlimClosureWithPropertiesType)
+        return false;
+    if (structure->hasBeenDictionary() || isCopyOnWrite(structure->indexingMode()) || structure->isCompiledStructure() || structure->typeInfo().prohibitsPropertyCaching())
+        return false;
+    // The Structure of the extra properties of a compiled object is part of what the Structure of that object says.
+    if (structure->inlineCapacity() == extraPropertiesInlineCapacity && structure->hasMonoProto() && structure->storedPrototype().isNull())
+        return false;
+    State* state = stateOrNull(structure);
+    if (!state || !state->caches)
+        return false;
+    FirstAdditions& additions = firstAdditionsOf(*state);
+    if (additions.shouldMakeStructure(structure, uid) || !hasFewEnoughNamesToBeFilled(structure) || !additions.mayBeginToFill(object))
+        return false;
+    additions.didBeginToFill(vm, object);
+    return true;
 }
 
-bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid, const ChainDependent& dependent)
+void RuntimeHooks::finishFillingObjects(VM& vm)
+{
+    vm.aotState().hasObjectsBeingFilled = false;
+    DeferGC deferGC(vm);
+    for (Instance* instance : vm.aotState().instances) {
+        if (State* state = instance->state; state && state->firstAdditions)
+            state->firstAdditions->finishFilling(vm);
+    }
+}
+
+void RuntimeHooks::didMakeStructureForAddition(VM&, Structure* made)
+{
+    State* state = stateOrNull(made);
+    if (state && state->firstAdditions)
+        state->firstAdditions->didMakeStructure(made);
+}
+
+
+bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid, ChainDependents& ofOwner, const ChainDependent& dependent)
 {
     ChainWalk walk = walkChain({ globalObject, receiverStructure, receiverOrNull, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores }, uid);
     if (storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
@@ -312,11 +373,10 @@ bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverSt
     if (!walk.dependsOnChain())
         return true;
 
-    // The walk passes lazy class prototypes of globalObject's Instance only, and they report to its ChainDependents only.
-    State* state = stateOrNull(receiverStructure);
-    if (!state || &state->instance != Instance::of(globalObject))
+    // The walk passes lazy class prototypes of globalObject only, and they report to the images of that realm only.
+    if (receiverStructure->realm() != globalObject || ofOwner.realm() != globalObject)
         return false;
-    state->chainDependents->add(walk.changeableObjects.span(), dependent);
+    ofOwner.add(walk.changeableObjects.span(), dependent);
     return true;
 }
 
@@ -364,6 +424,42 @@ static bool canWalkThrough(Structure* structure)
     return !isProxyType(structure->typeInfo().type()) && !structure->needImpurePropertyWatchpoint() && !structure->isDictionary() && (structure->isCompiledStructure() || structure->propertyAccessesAreCacheable());
 }
 
+// What walkChain() answers where every object above is an ordinary one or a class prototype without members yet, and none has the name. Nothing of the walk is kept, so nothing is listed.
+static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverStructure, UniquedStringImpl* uid, StoredName name)
+{
+    bool mayBeDeclared = name == StoredName::MayBeSpelledByProgram;
+    if (mayBeDeclared && parseIndex(PropertyName(uid)))
+        return false;
+    for (Structure* below = receiverStructure; !below->typeInfo().overridesGetPrototype() && !(below->isObject() && below->hasPolyProto());) {
+        JSObject* object = below->prototypeForLookup(globalObject).getObject();
+        if (!object)
+            return true;
+        Structure* structure = object->structure();
+        if (object->classInfo() == ClassPrototype::info()) {
+            if (object->butterfly() || (mayBeDeclared && ClassPrototype::hasMember(object, uid)))
+                return false;
+        } else {
+            TypeInfo typeInfo = structure->typeInfo();
+            if (!canWalkThrough(structure) || structure->isCompiledStructure() || !structure->propertyAccessesAreCacheableForAbsence() || typeInfo.overridesGetOwnPropertySlot() || typeInfo.overridesPut())
+                return false;
+            unsigned attributes;
+            std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(uid, attributes);
+            if (!offset || isValidOffset(*offset) || (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(uid)))
+                return false;
+        }
+        below = structure;
+    }
+    return false;
+}
+
+bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid, StoredName name)
+{
+    ASSERT(name == StoredName::MayBeSpelledByProgram || (!parseIndex(PropertyName(uid)) && !globalObject->vm().aotState().identifiers->numberOf(uid)));
+    if (findsNothingAbove(globalObject, receiverStructure, uid, name)) [[likely]]
+        return true;
+    return storeThroughChain(walkChain({ globalObject, receiverStructure, receiverOrNull, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid)) == StoreThroughChain::CreatesOwnProperty;
+}
+
 // A slot filed for an Unknown walk is dropped when this object changes. An object with immutable properties still reifies its static ones.
 static StepResult stopAt(JSObject* object, ChainWalk& walk)
 {
@@ -394,11 +490,9 @@ static void findDeclaredMember(const ChainWalkStart& start, UniquedStringImpl* u
 
 static StepResult passLazyClassPrototypes(const ChainWalkStart& start, UniquedStringImpl* uid, JSObject* objectBelow, JSObject*& object, ChainWalk& walk)
 {
-    Instance* instance = Instance::of(start.globalObject);
     for (; object && object->classInfo() == ClassPrototype::info(); objectBelow = object, object = object->getPrototypeDirect().getObject()) {
         walk.changeableObjects.append(object);
-        // ClassPrototype::createMembers() reports to the ChainDependents of its own Instance only.
-        if (Instance::of(object->structure()->realm()) != instance || object->butterfly())
+        if (object->butterfly())
             return StepResult::Stop;
         if (ClassPrototype::hasMember(object, uid)) {
             findDeclaredMember(start, uid, objectBelow, object, walk);
@@ -520,9 +614,14 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
     VM& vm = start.globalObject->vm();
     Structure* structure = object->structure();
     if (!canWalkThrough(structure)) {
-        if (structure->isDictionary() && start.mode == ChainWalkMode::MayAllocate)
+        // Nothing of a cacheable dictionary moves when it is made flat, and no cell is allocated: the walk goes on through it.
+        bool staysInPlace = structure->isDictionary() && !structure->isUncacheableDictionary();
+        if (staysInPlace)
+            flattenOnce(vm, object);
+        else if (structure->isDictionary() && start.mode == ChainWalkMode::MayAllocate)
             walk.didFlatten = flattenOnce(vm, object);
-        return stopAt(object, walk);
+        if (!staysInPlace || !canWalkThrough(structure))
+            return stopAt(object, walk);
     }
     if (structure->isCompiledStructure())
         return isCompiledObject(object) ? lookUpInCompiledObject(start, uid, *uncheckedDowncast<Object>(object), walk) : stopAt(object, walk);
@@ -543,8 +642,16 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
             walk.changeableObjects.append(object);
         return stopAtProperty(walk, object, object, *offset, attributes);
     }
-    if (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(uid))
-        return stopAt(object, walk);
+    if (structure->hasNonReifiedStaticProperties()) {
+        if (auto entry = structure->findPropertyHashEntry(uid)) {
+            // A read moves every other kind of entry into the object. A custom accessor or value stays in the table of its class until the object changes.
+            unsigned attributes = entry->value->attributes();
+            if (attributes & (PropertyAttribute::BuiltinOrFunctionOrAccessorOrLazyProperty | PropertyAttribute::ConstantInteger) || !(attributes & PropertyAttribute::CustomAccessorOrValue))
+                return stopAt(object, walk);
+            walk.changeableObjects.append(object);
+            return stopAtProperty(walk, object, object, invalidOffset, attributesForStructure(attributes));
+        }
+    }
     bool canGainProperty = structure->isStructureExtensible() && !structure->isImmutablePropertyForReader(uid);
     if (canGainProperty || !structure->hasImmutablePrototype())
         walk.changeableObjects.append(object);
@@ -562,6 +669,9 @@ ChainWalk walkChain(const ChainWalkStart& start, UniquedStringImpl* uid)
     while (!below->typeInfo().overridesGetPrototype() && !(below->isObject() && below->hasPolyProto())) {
         JSObject* object = below->prototypeForLookup(start.globalObject).getObject();
         if (passLazyClassPrototypes(start, uid, objectBelow, object, walk) == StepResult::Stop)
+            break;
+        // A class prototype without members answers by the tables of its own image, whichever runs.
+        if (VM& vm = start.globalObject->vm(); object && vm.aotState().hasSeveralImages && belongsToOtherImageSlow(vm, object)) [[unlikely]]
             break;
         if (!object) {
             walk.result = ChainWalkResult::Absent;

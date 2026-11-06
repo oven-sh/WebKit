@@ -10,12 +10,21 @@
 
 #include "AOTBlockCycles.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTClaimsAboutClassesAndClosures.h"
 #include "AOTFlowStamps.h"
 #include "AOTHeatGraph.h"
+#include "AOTLedgerOfClassesAndClosures.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPrototypesAtCreation.h"
+#include "AOTSharedMemo.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowResultsFieldsInternal.h"
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <bit>
+#include <functional>
 #include <optional>
 #include <tuple>
 #include <utility>
@@ -34,6 +43,21 @@ struct EnteredGroup {
 struct GroupOfStatement {
     uint32_t statement { 0 };
     EnteredGroup group;
+};
+
+// The callees of a large group that bring a row. n calls that each enter any of n functions ask the same of the same group.
+struct CalleesThatBringRows {
+    struct Key {
+        ValueSetID callees;
+        ValueFlowCallKind kind { ValueFlowCallKind::Call };
+        const CalleeSet* stampThatListsCallees { nullptr };
+        bool namesNoEscapedClosure { false };
+
+        friend bool operator==(const Key&, const Key&) = default;
+    };
+
+    Key key;
+    Vector<ValueFlowObjectID> callees;
 };
 
 struct ListsByOwner {
@@ -125,14 +149,14 @@ static BuiltinCallbackTimes mergeTimes(BuiltinCallbackTimes first, BuiltinCallba
     return isCalledPerEvent ? BuiltinCallbackTimes::PerEvent : BuiltinCallbackTimes::Repeatedly;
 }
 
-static BuiltinCallbackTimes timesOfCallbacks(const BuiltinTable& builtins, const CalleeSet* stamp)
+static Expected<BuiltinCallbackTimes> timesOfCallbacks(const BuiltinTable& builtins, const CalleeSet* stamp)
 {
     std::optional<BuiltinCallbackTimes> times;
     auto add = [&](BuiltinCallbackTimes other) {
         times = times ? mergeTimes(*times, other) : other;
     };
     if (stamp) {
-        for (BuiltinID builtin : stamp->builtins) {
+        for (BuiltinID builtin : stamp->seen().predicted().builtins) {
             for (const BuiltinOverload& overload : builtins.overloadsOf(builtin)) {
                 for (const BuiltinCallback& callback : overload.flow.callbacks)
                     add(callback.times);
@@ -155,7 +179,7 @@ static ValueSetID seenValuesStoredIn(const ValueFlowResultInputs& inputs, ValueS
         }
     };
     if (name) {
-        if (const ValueFlowHeapIndex::NodesWrittenUnderName* nodes = inputs.heapIndex->findNodesWrittenUnder(ValueFlowName::property(inputs.program.keyOf(name))))
+        if (const ValueFlowHeapIndex::NodesWrittenUnderName* nodes = inputs.heapIndex->findNodesWrittenUnder(ValueFlowName::property(inputs.program, inputs.program.keyOf(name))))
             take(nodes->nodes.span());
         return found;
     }
@@ -209,6 +233,7 @@ struct CallbacksOfCall {
     struct Row {
         ValueSetID closures;
         BuiltinCallbackTimes times;
+        ValueFlowCallKind kind;
     };
 
     Vector<Row, 8> rows;
@@ -220,20 +245,20 @@ struct CallbacksOfCall {
 static CallbacksOfCall findCallbacksOfCall(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, const ValueFlowStatement& call, const CalleeSet& stamp)
 {
     CallbacksOfCall callbacks;
-    auto add = [&](std::optional<ValueSetID> seen, BuiltinCallbackTimes times) {
+    auto add = [&](std::optional<ValueSetID> seen, BuiltinCallbackTimes times, ValueFlowCallKind kind) {
         if (!seen || ValueSets::isComplement(*seen)) {
             callbacks.everyRowIsListed = false;
             return;
         }
         if (ValueSetID closures = maker.intersect(*seen, inputs.universe().closures()); closures != ValueSets::nothing)
-            callbacks.rows.append({ closures, times });
+            callbacks.rows.append({ closures, times, kind });
     };
-    for (BuiltinID builtin : stamp.builtins) {
+    for (BuiltinID builtin : stamp.seen().predicted().builtins) {
         for (const BuiltinOverload& overload : inputs.program.builtins().overloadsOf(builtin)) {
             for (const BuiltinCallback& callback : overload.flow.callbacks)
-                add(seenValuesAt(inputs, maker, call, callback.callee), callback.times);
+                add(seenValuesAt(inputs, maker, call, callback.callee), callback.times, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode);
             for (const BuiltinHandlerCall& handlerCall : overload.flow.handlerCalls)
-                add(handlersSeenAt(inputs, maker, call, handlerCall.callee), handlerCall.times);
+                add(handlersSeenAt(inputs, maker, call, handlerCall.callee), handlerCall.times, ValueFlowCallKind::CallByNativeCode);
         }
     }
     return callbacks;
@@ -246,7 +271,12 @@ static auto callOrderOf(const FlowIndirectCall& call)
 
 static void mergeIndirectCalls(Vector<FlowIndirectCall>& calls, size_t first)
 {
-    AOT::sort(calls.mutableSpan().subspan(first), { }, callOrderOf);
+    auto standsBehind = [](const FlowIndirectCall& earlier, const FlowIndirectCall& later) {
+        return callOrderOf(earlier) < callOrderOf(later);
+    };
+    if (std::ranges::adjacent_find(calls.span().subspan(first), std::not_fn(standsBehind)) == calls.span().end())
+        return;
+    AOT::sortInLine(calls.mutableSpan().subspan(first), { }, callOrderOf);
     size_t count = first;
     for (size_t index = first; index < calls.size(); ++index) {
         FlowIndirectCall call = calls[index];
@@ -256,7 +286,8 @@ static void mergeIndirectCalls(Vector<FlowIndirectCall>& calls, size_t first)
         }
         FlowIndirectCall& merged = calls[count - 1];
         merged.isInCycle |= call.isInCycle;
-        merged.times = mergeTimes(merged.times, call.times);
+        merged.isAlwaysConstruction &= call.isAlwaysConstruction;
+        merged.times = mergeTimes(merged.times.predicted(), call.times.predicted());
     }
     calls.shrink(count);
 }
@@ -276,6 +307,110 @@ static FlowIndirectCallKind kindOfIndirectCall(const ValueFlowStatement& stateme
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
+
+namespace {
+
+// The accessors that the program lays on objects under keys that nobody knows.
+class AccessorsUnderUnknownKeys {
+public:
+    AccessorsUnderUnknownKeys(const ValueFlowResultInputs&, const ValueFlowHeapIndex&, ValueSetMaker&);
+
+    // The closures among them that a read or a store under the name may find on the objects themselves: none where the program also lays a value that the name may find.
+    ValueSetID findOn(ValueSetMaker&, ValueSetID knownObjects, PropertyKeyID, ValueFlowCallKind) const;
+
+private:
+    using WrittenNode = ValueFlowHeapIndex::WrittenNode;
+
+    void forEachNodeWrittenUnder(ValueFlowName name, NOESCAPE const Invocable<void(const WrittenNode&)> auto& functor) const
+    {
+        if (const auto* written = m_index.findNodesWrittenUnder(name))
+            std::ranges::for_each(written->nodes, functor);
+    }
+    // A descriptor without a value of its own describes whatever lies above it: a value that nobody knows says nothing. It stands for all that has escaped, listed beside it or not.
+    bool laysValue(const WrittenNode& node) const
+    {
+        if (ValueSets::isComplement(node.value))
+            return false;
+        if (m_sets.contains(node.value, ValueFlowUniverse::unknownObject()))
+            return m_sets.meet(node.value, m_objectsInKnownHands);
+        return !m_sets.isSubset(node.value, m_universe.undefinedValue());
+    }
+
+    const Program& m_program;
+    const ValueFlowHeapIndex& m_index;
+    const ValueSets& m_sets;
+    const ValueFlowUniverse& m_universe;
+    ValueSetID m_objectsInKnownHands;
+    ValueSetID m_holdersOfValuesUnderUnknownKey { ValueSets::nothing };
+    ValueSetID m_holdersOfGettersUnderUnknownKey { ValueSets::nothing };
+    ValueSetID m_holdersOfSettersUnderUnknownKey { ValueSets::nothing };
+};
+
+} // anonymous namespace
+
+AccessorsUnderUnknownKeys::AccessorsUnderUnknownKeys(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& index, ValueSetMaker& maker)
+    : m_program(inputs.program)
+    , m_index(index)
+    , m_sets(inputs.sets())
+    , m_universe(inputs.universe())
+    , m_objectsInKnownHands(maker.intersect(inputs.universe().knownObjects(), ValueSets::complement(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped()))))
+{
+    forEachNodeWrittenUnder(ValueFlowName::of(ValueFlowNameKind::UnknownKey), [&](const WrittenNode& node) {
+        if (laysValue(node))
+            m_holdersOfValuesUnderUnknownKey = maker.unite(m_holdersOfValuesUnderUnknownKey, node.objects);
+    });
+    auto findHolders = [&](ValueFlowNameKind kind) {
+        ValueSetID holders = ValueSets::nothing;
+        forEachNodeWrittenUnder(ValueFlowName::of(kind), [&](const WrittenNode& node) {
+            if (m_sets.meet(node.value, m_universe.closures()))
+                holders = maker.unite(holders, node.objects);
+        });
+        return holders;
+    };
+    m_holdersOfGettersUnderUnknownKey = findHolders(ValueFlowNameKind::GetterUnderUnknownKey);
+    m_holdersOfSettersUnderUnknownKey = findHolders(ValueFlowNameKind::SetterUnderUnknownKey);
+}
+
+ValueSetID AccessorsUnderUnknownKeys::findOn(ValueSetMaker& maker, ValueSetID objects, PropertyKeyID key, ValueFlowCallKind kind) const
+{
+    bool isRead = kind == ValueFlowCallKind::Get;
+    if (!m_sets.meet(objects, isRead ? m_holdersOfGettersUnderUnknownKey : m_holdersOfSettersUnderUnknownKey) || m_sets.meet(objects, m_holdersOfValuesUnderUnknownKey))
+        return ValueSets::nothing;
+    bool findsValue = false;
+    forEachNodeWrittenUnder(ValueFlowName::property(m_program, key), [&](const WrittenNode& node) {
+        findsValue |= laysValue(node) && m_sets.meet(node.objects, objects);
+    });
+    if (findsValue)
+        return ValueSets::nothing;
+    ValueSetID accessors = ValueSets::nothing;
+    forEachNodeWrittenUnder(ValueFlowName::of(isRead ? ValueFlowNameKind::GetterUnderUnknownKey : ValueFlowNameKind::SetterUnderUnknownKey), [&](const WrittenNode& node) {
+        if (m_sets.meet(node.objects, objects))
+            accessors = maker.unite(accessors, maker.intersect(node.value, m_universe.closures()));
+    });
+    return accessors;
+}
+
+static ValueSetID findEscapedAccessors(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID receivers, ValueFlowName name)
+{
+    const ValueFlowHeapIndex::NodesWrittenUnderName* written = heap.index().findNodesWrittenUnder(name);
+    if (!written)
+        return ValueSets::nothing;
+    const ValueSets& sets = inputs.sets();
+    ValueSetID escapedClosures = maker.intersect(inputs.universe().closures(), heap.escaped());
+    std::optional<ValueSetID> chain;
+    ValueSetID accessors = ValueSets::nothing;
+    for (const ValueFlowHeapIndex::WrittenNode& node : written->nodes) {
+        if (ValueSets::isComplement(node.value) || !sets.meet(node.value, escapedClosures))
+            continue;
+        if (!chain)
+            chain = heap.chainOf(maker, receivers);
+        if (sets.meet(node.objects, *chain))
+            accessors = maker.unite(accessors, maker.intersect(node.value, escapedClosures));
+    }
+    return accessors;
+}
+
+enum class GroupSource : bool { Rule, FinalState };
 
 static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& inputs, ValueFlowStampedCalls& stampedCalls, FlowResultTables& tables)
 {
@@ -343,7 +478,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                 AOT::sort(groupsOfStatement, { }, orderOfGroup);
                 groupsOfTask.shrink(groupsOfTask.size() - std::ranges::unique(groupsOfStatement, { }, orderOfGroup).size());
                 auto asked = askersAndAskedOfTask.mutableSpan().subspan(firstAskedByStatement);
-                AOT::sort(asked);
+                AOT::sortInLine(asked);
                 askersAndAskedOfTask.shrink(askersAndAskedOfTask.size() - std::ranges::unique(asked).size());
             }
         });
@@ -386,6 +521,11 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
 
     // Only an estimate of how often code runs reads these, and a very large program has none.
     const bool listsWhatWasSeen = !isVeryLargeProgram(program, inputs.build);
+    ValueFlowHeapView heap(inputs);
+    std::optional<AccessorsUnderUnknownKeys> accessorsUnderUnknownKeys;
+    if (listsWhatWasSeen)
+        accessorsUnderUnknownKeys.emplace(inputs, heap.index(), heap.maker());
+    SharedMemo<CalleesThatBringRows> calleesThatBringRows;
     tables.functions.indirectCalls = collectInParallel<FlowIndirectCall>(inputs.loops(), numberOfFunctions, [&](unsigned index, Vector<FlowIndirectCall>& calls) {
         FunctionID id(index);
         if (!inputs.isReached(id))
@@ -401,6 +541,11 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
             std::optional<CallbacksOfCall> callbacksOfStatement;
             ValueSetID escaped = solver.possibleValuesOf(ValueFlowProgramNodes::escaped());
             size_t firstOfStatement = calls.size();
+            // A row says the same whichever group of one kind brings it, so a large group brings rows only for the callees that no large group of its kind has brought.
+            AOT_THRESHOLD(size_t, fewestCalleesListedOnce, 8);
+            std::array<ValueSetID, static_cast<size_t>(ValueFlowCallKind::CallByHost) + 1> listedByKind;
+            listedByKind.fill(ValueSets::nothing);
+            std::optional<AccessSiteID> siteOfStatement;
             // The accessors that one site enters count together, however many of its receivers find each of them.
             auto nameNoEscapedAccessorPastThoseToldApart = [&] {
                 Vector<FunctionID, 8> accessors;
@@ -414,19 +559,88 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                     return call.kind == FlowIndirectCallKind::Accessor && sets.contains(escaped, universe.closureOf(call.callee));
                 }, firstOfStatement);
             };
-            auto add = [&](const EnteredGroup& group, const CalleeSet* stampThatListsCallees) {
+            std::optional<ValueSetID> knownEscapedAccessors;
+            auto escapedAccessorsAtSite = [&](ValueSetMaker& maker) {
+                if (knownEscapedAccessors)
+                    return *knownEscapedAccessors;
+                knownEscapedAccessors = ValueSets::nothing;
+                bool isRead = statement.opcode == Opcode::PropGet;
+                if (!listsWhatWasSeen || statement.kind != ValueFlowStatementKind::Operation || !statement.site || (!isRead && statement.opcode != Opcode::PropSet))
+                    return ValueSets::nothing;
+                static_assert(!OperandIndex::PropGet::object && !OperandIndex::PropSet::object);
+                ValueSetID receivers = std::as_const(heap).possibleValuesOf(maker, bodies.operandsOf(statement)[0]);
+                if (ValueSets::isComplement(receivers))
+                    return ValueSets::nothing;
+                PropertyKeyID key = function.at(statement.site).key();
+                // A read of a primitive starts at the prototype of its kind.
+                Vector<ValueFlowObjectID, 8> prototypesOfPrimitives;
+                sets.forEachMember(maker.intersect(receivers, maker.unite(universe.primitives(), universe.keys())), [&](ValueFlowObjectID primitive) {
+                    forEachPrototypeAtCreation(program, universe, primitive, [&](ValueFlowObjectID prototype) {
+                        prototypesOfPrimitives.append(prototype);
+                    }, [](SilentAboutPrototype) { });
+                });
+                ValueSetID starts = maker.unite(maker.intersect(receivers, universe.knownObjects()), maker.of(prototypesOfPrimitives.span()));
+                knownEscapedAccessors = findEscapedAccessors(inputs, heap, maker, starts, isRead ? ValueFlowName::getter(program, key) : ValueFlowName::setter(program, key));
+                return *knownEscapedAccessors;
+            };
+            // A rule sees an escaped object only until the unknown object covers it, and is not run again when that happens, so which escaped closures its groups name depends on the order of the rules.
+            // The final state answers instead, where it can: it lists no callbacks in a very large program, or of a call whose arguments it cannot tell apart.
+            auto add = [&](EnteredGroup group, const CalleeSet* stampThatListsCallees, GroupSource source) {
                 if (ValueSets::isComplement(group.callees))
                     return;
+                bool finalStateAnswers = listsWhatWasSeen && (!callbacksOfStatement || callbacksOfStatement->everyRowIsListed);
+                if (source == GroupSource::Rule && finalStateAnswers && sets.meet(group.callees, escaped)) {
+                    BorrowedValueSetMaker maker(inputs.makerPool());
+                    bool entersAccessors = group.kind == ValueFlowCallKind::Get || group.kind == ValueFlowCallKind::Set;
+                    ValueSetID kept = maker.get().unite(ValueSets::complement(escaped), entersAccessors ? escapedAccessorsAtSite(maker.get()) : ValueSets::nothing);
+                    group.callees = maker.get().intersect(group.callees, kept);
+                }
                 bool namesNoEscapedClosure = sets.size(group.callees) > inputs.build.limit(LimitID::MaxValueFlowMembersToldApart);
-                sets.forEachMember(group.callees, [&](ValueFlowObjectID callee) {
+                ValueSetID callees = group.callees;
+                if (sets.size(callees) >= fewestCalleesListedOnce) {
+                    BorrowedValueSetMaker maker(inputs.makerPool());
+                    ValueSetID& listed = listedByKind[static_cast<size_t>(group.kind)];
+                    callees = maker.get().intersect(callees, ValueSets::complement(listed));
+                    if (!stampThatListsCallees)
+                        listed = maker.get().unite(listed, namesNoEscapedClosure ? maker.get().intersect(callees, ValueSets::complement(escaped)) : callees);
+                }
+                auto bringsRow = [&](ValueFlowObjectID callee) {
                     FunctionID entered = universe.closureFunction(callee);
                     if (!entered || throwsBeforeEntry(program.at(entered), group.kind))
-                        return;
+                        return false;
                     if (namesNoEscapedClosure && sets.contains(escaped, callee))
+                        return false;
+                    return !stampThatListsCallees || !std::ranges::binary_search(stampThatListsCallees->followed().value(), entered);
+                };
+                auto forEachCalleeThatBringsRow = [&](const auto& functor) {
+                    AOT_THRESHOLD(size_t, fewestCalleesAskedOnce, 16);
+                    if (sets.size(callees) < fewestCalleesAskedOnce) {
+                        sets.forEachMemberInLine(callees, [&](ValueFlowObjectID callee) {
+                            if (bringsRow(callee))
+                                functor(callee);
+                        });
                         return;
-                    if (stampThatListsCallees && std::ranges::binary_search(stampThatListsCallees->functions, entered))
-                        return;
-
+                    }
+                    CalleesThatBringRows::Key key { callees, group.kind, stampThatListsCallees, namesNoEscapedClosure };
+                    uint64_t mixed = (static_cast<uint64_t>(callees.index()) << 8 | static_cast<uint64_t>(group.kind) << 1 | static_cast<uint64_t>(namesNoEscapedClosure)) * 0x9e3779b97f4a7c15ull;
+                    uint32_t hash = static_cast<uint32_t>((mixed ^ std::bit_cast<uintptr_t>(stampThatListsCallees)) * 0x9e3779b97f4a7c15ull >> 32);
+                    auto isWanted = [&](const CalleesThatBringRows& entry) {
+                        return entry.key == key;
+                    };
+                    const CalleesThatBringRows* known = calleesThatBringRows.find(hash, isWanted);
+                    if (!known) {
+                        CalleesThatBringRows found { key, { } };
+                        sets.forEachMember(callees, [&](ValueFlowObjectID callee) {
+                            if (bringsRow(callee))
+                                found.callees.append(callee);
+                        });
+                        known = &calleesThatBringRows.add(hash, WTF::move(found), isWanted);
+                    }
+                    for (ValueFlowObjectID callee : known->callees)
+                        functor(callee);
+                };
+                forEachCalleeThatBringsRow([&](ValueFlowObjectID callee) {
+                    FunctionID entered = universe.closureFunction(callee);
                     if (!std::exchange(hasPreparedSites, true)) {
                         valuesInCycles = BitVector(function.values.size());
                         CFG cfg(function);
@@ -438,9 +652,11 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                                 valuesInCycles.quickSet(value.index());
                         }
                     }
-                    FlowIndirectCall call { .caller = id, .callee = entered, .kind = kindOfIndirectCall(statement, group.kind), .times = BuiltinCallbackTimes::Once };
+                    FlowIndirectCall call { .caller = id, .callee = entered, .kind = kindOfIndirectCall(statement, group.kind), .times = BuiltinCallbackTimes::Once, .isAlwaysConstruction = isConstruction(group.kind) };
                     if (statement.site) {
-                        call.site = application.accessSites.siteOfValue(id, statement.site);
+                        if (!siteOfStatement)
+                            siteOfStatement = application.accessSites.siteOfValue(id, statement.site);
+                        call.site = *siteOfStatement;
                         call.isInCycle = valuesInCycles.quickGet(statement.site.index());
                     }
                     if (call.kind == FlowIndirectCallKind::BuiltinCallback) {
@@ -453,7 +669,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                         }
                         if (!timesOfRows && (!callbacksOfStatement || !callbacksOfStatement->everyRowIsListed)) {
                             if (!timesOfCallbacksOfStatement)
-                                timesOfCallbacksOfStatement = timesOfCallbacks(program.builtins(), stamp);
+                                timesOfCallbacksOfStatement = timesOfCallbacks(program.builtins(), stamp).predicted();
                             timesOfRows = *timesOfCallbacksOfStatement;
                         }
                         call.times = timesOfRows.value_or(BuiltinCallbackTimes::Once);
@@ -462,11 +678,11 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                 });
             };
 
-            if (listsWhatWasSeen && stamp && !stamp->builtins.isEmpty()) {
+            if (listsWhatWasSeen && stamp && !stamp->seen().predicted().builtins.empty()) {
                 BorrowedValueSetMaker maker(inputs.makerPool());
                 callbacksOfStatement = findCallbacksOfCall(inputs, maker.get(), statement, *stamp);
                 for (const CallbacksOfCall::Row& row : callbacksOfStatement->rows)
-                    add(EnteredGroup { row.closures, ValueFlowCallKind::CallByNativeCode }, nullptr);
+                    add(EnteredGroup { row.closures, row.kind }, nullptr, GroupSource::FinalState);
             }
 
             Vector<uint32_t, 8> worklist;
@@ -476,12 +692,29 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
             };
             forEachRequestOf(inputs, idOf(statement), [&](const EnteredGroup& group) {
                 bool isGroupOfCallees = (group.kind == ValueFlowCallKind::Call || group.kind == ValueFlowCallKind::Construct) && function.role != FunctionRole::Model;
-                add(group, isGroupOfCallees ? stamp : nullptr);
+                add(group, isGroupOfCallees ? stamp : nullptr, GroupSource::Rule);
             }, [&](ValueFlowStatementID made) {
                 noteAsker(numberOf(made));
                 follow(numberOf(made));
             });
-            if (worklist.isEmpty())
+            // Whoever holds an accessor that has escaped enters it, so no rule has to enter it from the read or the store that finds it. They run it all the same.
+            auto addAccessorsLaidOnReceivers = [&] {
+                bool isRead = statement.opcode == Opcode::PropGet;
+                if (!accessorsUnderUnknownKeys || statement.kind != ValueFlowStatementKind::Operation || !statement.site || (!isRead && statement.opcode != Opcode::PropSet))
+                    return false;
+                static_assert(!OperandIndex::PropGet::object && !OperandIndex::PropSet::object);
+                BorrowedValueSetMaker maker(inputs.makerPool());
+                ValueSetID receivers = std::as_const(heap).possibleValuesOf(maker.get(), bodies.operandsOf(statement)[0]);
+                if (ValueSets::isComplement(receivers) || !sets.meet(receivers, universe.knownObjects()))
+                    return false;
+                ValueFlowCallKind kind = isRead ? ValueFlowCallKind::Get : ValueFlowCallKind::Set;
+                ValueSetID accessors = accessorsUnderUnknownKeys->findOn(maker.get(), maker.get().intersect(receivers, universe.knownObjects()), function.at(statement.site).key(), kind);
+                if (accessors == ValueSets::nothing)
+                    return false;
+                add(EnteredGroup { accessors, kind }, nullptr, GroupSource::FinalState);
+                return true;
+            };
+            if (!addAccessorsLaidOnReceivers() && worklist.isEmpty())
                 continue;
 
             HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seen;
@@ -490,7 +723,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                 if (!seen.add(number).isNewEntry)
                     continue;
                 for (const GroupOfStatement& entry : groupsOf(number))
-                    add(entry.group, nullptr);
+                    add(entry.group, nullptr, GroupSource::Rule);
                 for (uint32_t asked : statementsAskedFor.of(number))
                     follow(asked);
             }
@@ -534,9 +767,35 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
         for (uint32_t asked : statementsAskedFor.of(number))
             follow(asked);
     }
-    for (size_t function : isEnteredByHost)
-        tables.functions.indirectCalls.append(FlowIndirectCall { .callee = FunctionID(static_cast<uint32_t>(function)), .kind = FlowIndirectCallKind::Host, .times = BuiltinCallbackTimes::Repeatedly });
-    stampedCalls.functionsEnteredWithoutStamp = BitVector(numberOfFunctions);
+    // The host hands the default export of an entry to Bun.serve. Its `fetch` then gets the requests, as that of a program that calls Bun.serve itself.
+    BitVector getsRequests(numberOfFunctions);
+    for (const Entry& entry : program.entries) {
+        for (const HostRead& read : entry.hostReads) {
+            if (!listsWhatWasSeen || !read.builtin || program.builtins().canonicalID(read.builtin) != Builtins::BunServe)
+                continue;
+            auto exported = std::ranges::find(program.at(entry.module).exports, read.exportName, &ModuleExport::name);
+            if (exported == program.at(entry.module).exports.end() || !exported->variable)
+                continue;
+            ValueSetID configurations = solver.possibleValuesOf(bodies.nodes().variable(exported->variable));
+            if (ValueSets::isComplement(configurations))
+                continue;
+            ValueSetID handlers = heap.writtenUnder(heap.maker().intersect(configurations, universe.knownObjects()), ValueFlowName::property(program, program.keyOf(BuiltinNames::fetch)));
+            if (ValueSets::isComplement(handlers))
+                continue;
+            sets.forEachMember(handlers, [&](ValueFlowObjectID handler) {
+                if (FunctionID function = universe.closureFunction(handler); function && inputs.isReached(function))
+                    getsRequests.quickSet(function.index());
+            });
+        }
+    }
+    BitVector isCalledByHost = getsRequests;
+    for (size_t function : isEnteredByHost) {
+        if (!listsWhatWasSeen || !inputs.hasEscaped(universe.closureOf(FunctionID(static_cast<uint32_t>(function)))))
+            isCalledByHost.quickSet(function);
+    }
+    for (size_t function : isCalledByHost)
+        tables.functions.indirectCalls.append(FlowIndirectCall { .callee = FunctionID(static_cast<uint32_t>(function)), .kind = FlowIndirectCallKind::Host, .times = getsRequests.quickGet(function) ? BuiltinCallbackTimes::PerEvent : BuiltinCallbackTimes::Repeatedly });
+    stampedCalls.functionsEnteredWithoutStamp = isEnteredByHost;
     for (const FlowIndirectCall& call : tables.functions.indirectCalls)
         stampedCalls.functionsEnteredWithoutStamp.quickSet(call.callee.index());
 
@@ -558,7 +817,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
     entries.mayBeIntoAnyFunction = mayBeIntoAnyFunction.load(std::memory_order_relaxed);
     stampedCalls.functionsEnteredWithoutRecord = BitVector(numberOfFunctions);
     auto enterClosuresIn = [&](ValueFlowNodeID covered) {
-        sets.forEachMember(solver.possibleValuesOf(covered), [&](ValueFlowObjectID member) {
+        sets.forEachMemberInLine(solver.possibleValuesOf(covered), [&](ValueFlowObjectID member) {
             if (FunctionID function = universe.closureFunction(member))
                 stampedCalls.functionsEnteredWithoutRecord.quickSet(function.index());
         });
@@ -627,104 +886,9 @@ static BitVector findFunctionsNamedByUnsolvedCode(const ValueFlowResultInputs& i
     return functions;
 }
 
-static constexpr bool looksIntoObject(ValueFlowNameKind kind)
+static bool isOnlyCalled(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
 {
-    switch (kind) {
-    case ValueFlowNameKind::Property:
-    case ValueFlowNameKind::Getter:
-    case ValueFlowNameKind::Setter:
-    case ValueFlowNameKind::Elements:
-    case ValueFlowNameKind::UnknownKey:
-    case ValueFlowNameKind::GetterUnderUnknownKey:
-    case ValueFlowNameKind::SetterUnderUnknownKey:
-    case ValueFlowNameKind::EveryProperty:
-    case ValueFlowNameKind::EveryGetter:
-    case ValueFlowNameKind::EverySetter:
-    case ValueFlowNameKind::PrototypeLink:
-    case ValueFlowNameKind::CopiedFrom:
-    case ValueFlowNameKind::DeletedMember:
-    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
-    case ValueFlowNameKind::RedefinedMember:
-    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
-    case ValueFlowNameKind::PrivateField:
-    case ValueFlowNameKind::OpenedIterators:
-    case ValueFlowNameKind::IteratedValues:
-    case ValueFlowNameKind::IteratorResults:
-    case ValueFlowNameKind::AwaitedValue:
-    case ValueFlowNameKind::MemberWritten:
-    case ValueFlowNameKind::EveryMemberWritten:
-    case ValueFlowNameKind::EveryMemberRead:
-        return true;
-    case ValueFlowNameKind::Slot:
-    case ValueFlowNameKind::HiddenSlot:
-    case ValueFlowNameKind::InternalFields:
-    case ValueFlowNameKind::SteppedValues:
-    case ValueFlowNameKind::ReturnedValue:
-    case ValueFlowNameKind::SentValues:
-    case ValueFlowNameKind::OpenedBy:
-    case ValueFlowNameKind::ResolvedPromises:
-    case ValueFlowNameKind::RejectedPromises:
-    case ValueFlowNameKind::AllocatedAs:
-    case ValueFlowNameKind::RestArgument:
-    case ValueFlowNameKind::AddedNames:
-    case ValueFlowNameKind::FoundThroughEscapedInstances:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
-static ValueSetID findCallablesLookedInto(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
-{
-    struct FoundByWorker {
-        ValueSetsMet seenSets;
-        Vector<ValueSetID> callablesInSets;
-    };
-    constexpr uint32_t nodesPerTask = 4096;
-
-    const ValueFlowSolver& solver = inputs.solver();
-    ValueSetID callables = inputs.universe().callables();
-    uint32_t firstMadeNode = solver.input().numberOfNodes;
-    uint32_t numberOfMadeNodes = solver.graph().numberOfNodes() - firstMadeNode;
-    ValueSetMakers makers(inputs);
-    Vector<FoundByWorker> foundByWorker(inputs.loops().width());
-    forEachIndexInParallel(inputs.loops(), (numberOfMadeNodes + nodesPerTask - 1) / nodesPerTask, [&](unsigned task, unsigned worker) {
-        FoundByWorker& ofWorker = foundByWorker[worker];
-        uint32_t end = std::min(numberOfMadeNodes, (task + 1) * nodesPerTask);
-        for (uint32_t index = task * nodesPerTask; index < end; ++index) {
-            const ValueFlowNodeKey& key = *solver.keyOfMadeNode(ValueFlowNodeID(firstMadeNode + index));
-            switch (key.kind) {
-            case ValueFlowMadeNodeKind::Read:
-            case ValueFlowMadeNodeKind::Lookup:
-            case ValueFlowMadeNodeKind::ReadUnderKind:
-                break;
-            case ValueFlowMadeNodeKind::Constant:
-            case ValueFlowMadeNodeKind::Written:
-            case ValueFlowMadeNodeKind::CallGroup:
-            case ValueFlowMadeNodeKind::Hub:
-            case ValueFlowMadeNodeKind::Masked:
-            case ValueFlowMadeNodeKind::Marked:
-            case ValueFlowMadeNodeKind::WrittenUnderKind:
-            case ValueFlowMadeNodeKind::Instance:
-                continue;
-            }
-            if (key.set == inputs.universe().knownObjects())
-                continue;
-            if (looksIntoObject(key.name().kind) && ofWorker.seenSets.add(key.set) && inputs.sets().meet(key.set, callables))
-                ofWorker.callablesInSets.append(makers.of(worker).intersect(key.set, callables));
-        }
-    });
-    Vector<ValueSetID> callablesInSets;
-    for (FoundByWorker& ofWorker : foundByWorker)
-        callablesInSets.appendVector(WTF::move(ofWorker.callablesInSets));
-    sortAndRemoveDuplicates(inputs.loops(), callablesInSets);
-    return maker.uniteAll(callablesInSets.span());
-}
-
-static bool isOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callablesLookedInto, ValueFlowObjectID object)
-{
-    if (inputs.hasEscaped(object) || inputs.isLost(object) || inputs.isHeldByNativeCode(object))
-        return false;
-    return !inputs.sets().contains(callablesLookedInto, object) && markedMutationsOf(inputs, object).isEmpty();
+    return ClaimsAboutClassesAndClosures::useOfClosure(inputs.classesAndClosures->reachersOf(object).value_or(Reachers { { }, everyActor })) == ClosureUse::CalledOnly;
 }
 
 static bool mayHold(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueFlowObjectID object)
@@ -732,7 +896,7 @@ static bool mayHold(const ValueFlowResultInputs& inputs, const ValueFlowOperand&
     return (operand.constant && inputs.sets().contains(operand.constant, object)) || (operand.node && inputs.sets().contains(inputs.solver().seenValuesOf(operand.node), object));
 }
 
-static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callablesLookedInto)
+static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlowResultInputs& inputs)
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
@@ -770,7 +934,7 @@ static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlow
             if (ValueSets::isComplement(targets))
                 continue;
             ValueFlowObjectID result = universe.siteObject(statement);
-            bool resultIsOnlyCalled = result && isOnlyCalled(inputs, callablesLookedInto, result);
+            bool resultIsOnlyCalled = result && isOnlyCalled(inputs, result);
             uint32_t numberOfBoundArguments = operands.size() > 3 ? operands.size() - 3 : 0;
             add(maker, valuesOfWorker[worker], numberOfBoundArguments, { targets, resultIsOnlyCalled ? ValueSets::nothing : targets });
         }
@@ -897,65 +1061,72 @@ static Vector<FlowBoundFunctionAtSite> findBoundFunctionsAtSites(const ValueFlow
     return result;
 }
 
-static Vector<Witness> findWitnessesOfEscapes(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
+// `on("close", listener)` stores under a parameter, and `emit("close")` calls what it reads under one. Flow follows the first once for each key that its callers spell, so it knows what lies under "close".
+// The call in the second has one stamp for all keys. A copy of it in a caller that spells the key asks here.
+static Vector<FlowClosureStoredUnderKey> findClosuresStoredUnderKeys(const ValueFlowResultInputs& inputs)
 {
     const ValueFlowSolver& solver = inputs.solver();
-    const ValueFlowUniverse& universe = inputs.universe();
-    if (!solver.input().remembersWhoLoggedEachEdge)
+    const ValueFlowInstancedFunctions* instanced = solver.input().instancedFunctions;
+    if (!instanced || instanced->isEmpty())
         return { };
-    Vector<Witness> witnesses(FillWith { }, inputs.program.functions.size(), noWitness);
-
-    using SetOfNode = HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-    ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
-    ValueSetID remaining = maker.intersect(solver.possibleValuesOf(escaped), universe.closures());
-    SetOfNode seen;
-    seen.add(escaped.index(), remaining);
-    Vector<std::pair<uint32_t, ValueSetID>> level { { escaped.index(), remaining } };
-    Vector<ValueFlowNodeID> predecessors;
-    while (!level.isEmpty() && remaining != ValueSets::nothing) {
-        SetOfNode next;
-        for (auto [node, lookedForAtNode] : level) {
-            ValueSetID lookedFor = maker.intersect(lookedForAtNode, remaining);
-            if (lookedFor == ValueSets::nothing)
-                continue;
-            predecessors.shrink(0);
-            solver.graph().forEachPredecessor(ValueFlowNodeID(node), [&](ValueFlowNodeID predecessor) {
-                predecessors.append(predecessor);
-            });
-            AOT::sort(predecessors);
-            for (ValueFlowNodeID predecessor : predecessors) {
-                ValueSetID brought = maker.intersect(solver.possibleValuesOf(predecessor), lookedFor);
-                if (brought == ValueSets::nothing)
-                    continue;
-                Witness witness = noWitness;
-                if (ValueFlowStatementID logger = solver.statementThatLogged({ predecessor, ValueFlowNodeID(node) }))
-                    witness = witnessOfStatement(inputs.program, solver.statementAt(logger));
-                if (hasFunction(witness)) {
-                    inputs.sets().forEachMember(brought, [&](ValueFlowObjectID closure) {
-                        if (FunctionID function = universe.closureFunction(closure))
-                            witnesses[function.index()] = witness;
-                    });
-                    remaining = maker.intersect(remaining, ValueSets::complement(brought));
-                    lookedFor = maker.intersect(lookedFor, ValueSets::complement(brought));
-                    if (lookedFor == ValueSets::nothing)
-                        break;
-                    continue;
-                }
-                auto seenThere = seen.add(predecessor.index(), ValueSets::nothing);
-                ValueSetID fresh = maker.intersect(brought, ValueSets::complement(seenThere.iterator->value));
-                if (fresh == ValueSets::nothing)
-                    continue;
-                seenThere.iterator->value = maker.unite(seenThere.iterator->value, fresh);
-                auto entry = next.add(predecessor.index(), ValueSets::nothing);
-                entry.iterator->value = maker.unite(entry.iterator->value, fresh);
-            }
-        }
-        level.shrink(0);
-        for (auto& [node, lookedFor] : next)
-            level.append({ node, lookedFor });
-        AOT::sort(level, { }, [](const auto& entry) { return entry.first; });
+    const ValueFlowUniverse& universe = inputs.universe();
+    BitVector isSpelled(inputs.program.types.numberOfPropertyKeys());
+    for (uint32_t index = 0; index < inputs.program.functions.size(); ++index) {
+        std::optional<ValueFlowNodeID> markers = instanced->find(FunctionID(index)) && inputs.isReached(FunctionID(index)) ? solver.markersOf(FunctionID(index)) : std::nullopt;
+        if (!markers)
+            continue;
+        inputs.sets().forEachMember(solver.possibleValuesOf(*markers), [&](ValueFlowObjectID marker) {
+            if (universe.kindOf(marker) == ValueFlowObjectKind::Key)
+                isSpelled.set(universe.keyOf(marker).index());
+        });
     }
-    return witnesses;
+    if (isSpelled.isEmpty())
+        return { };
+
+    // A call tests for no more.
+    AOT_THRESHOLD(unsigned, mostClosuresUnderKey, 2);
+    struct Stored {
+        uint32_t key;
+        // None: something that nobody knows, or more than a call tests for.
+        FunctionID function;
+    };
+    uint32_t firstMadeNode = solver.input().numberOfNodes;
+    ValueSetMakers makers(inputs);
+    Vector<Stored> stored = collectWithMakers<Stored>(inputs, makers, solver.graph().numberOfNodes() - firstMadeNode, [&](unsigned position, ValueSetMaker& maker, Vector<Stored>& found) {
+        ValueFlowNodeID node(firstMadeNode + position);
+        const ValueFlowNodeKey* key = solver.keyOfMadeNode(node);
+        if (key->kind != ValueFlowMadeNodeKind::Written || key->name().kind != ValueFlowNameKind::Property || !isSpelled.get(key->name().payload))
+            return;
+        // Which closures stand listed beside the unknown object hangs on the order of the rules.
+        ValueSetID value = solver.seenValuesOf(node);
+        if (ValueSets::isComplement(value) || inputs.sets().contains(value, ValueFlowUniverse::unknownObject())) {
+            found.append({ key->name().payload, { } });
+            return;
+        }
+        unsigned number = 0;
+        inputs.sets().forEachMember(maker.intersect(value, universe.closures()), [&](ValueFlowObjectID closure) {
+            if (++number <= mostClosuresUnderKey + 1)
+                found.append({ key->name().payload, universe.closureFunction(closure) });
+        });
+    });
+    AOT::sort(stored, { }, [](const Stored& entry) {
+        return std::pair(entry.key, entry.function);
+    });
+    Vector<FlowClosureStoredUnderKey> result;
+    for (size_t first = 0; first < stored.size();) {
+        size_t end = first;
+        size_t sizeBefore = result.size();
+        bool isKnown = true;
+        for (; end < stored.size() && stored[end].key == stored[first].key; ++end) {
+            isKnown &= stored[end].function && inputs.build.isEnabled(FlowResultKind::CalleeSets, stored[end].function.index());
+            if (isKnown && (result.size() == sizeBefore || result.last().function != stored[end].function))
+                result.append({ PropertyKeyID(stored[end].key), stored[end].function });
+        }
+        if (!isKnown || result.size() - sizeBefore > mostClosuresUnderKey)
+            result.shrink(sizeBefore);
+        first = end;
+    }
+    return result;
 }
 
 void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampedCalls& calls, FlowResultTables& tables)
@@ -980,27 +1151,31 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
     times.didFinish("functions: unreached, named by unsolved code"_s);
     inputs.build.statistics().count(StatisticID::FlowUnreachedFunctions, std::ranges::count(tables.functions.functions, FunctionReachability::Unreached, &FunctionFlow::reachability));
 
-    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
-    ValueSetMaker& maker = borrowedMaker.get();
-    ValueSetID callablesLookedInto = findCallablesLookedInto(inputs, maker);
-    times.didFinish("functions: callables looked into"_s);
-    tables.functions.boundFunctionUses = findBoundFunctionsOnlyCalled(inputs, callablesLookedInto);
+    tables.functions.boundFunctionUses = findBoundFunctionsOnlyCalled(inputs);
     tables.sites.boundFunctionsAtSites = findBoundFunctionsAtSites(inputs, application.accessSites);
+    tables.sites.closuresStoredUnderKeys = findClosuresStoredUnderKeys(inputs);
 
     BitVector isNamedByTable(numberOfFunctions);
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
-        if (entry.function)
+        if (entry.function && !isEnteredByCallsAlone(program, entry.id))
             isNamedByTable.quickSet(entry.function.index());
     }
-    Vector<Witness> witnessesOfEscapes = findWitnessesOfEscapes(inputs, maker);
     times.didFinish("functions: bound functions, named by table"_s);
 
-    // A read of a name finds a value that was stored, on the closure or above it, or nothing.
+    // A read of a name finds a value that was stored on the closure, or goes on to Function.prototype.
     constexpr OptionSet<ObjectMutation> mutationsThatLetReadsRunCode { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype };
-    bool objectsAboveFunctionsAreReadWithoutCode = std::ranges::none_of(std::array { Builtins::FunctionPrototype, Builtins::ObjectPrototype }, [&](BuiltinID above) {
-        return markedMutationsOf(inputs, universe.objectOf(above)).containsAny(mutationsThatLetReadsRunCode);
-    });
 
+    if (inputs.birthsOfUnknownObject) {
+        tables.functions.otherEscapeOriginsOfFunctions.fill(0, numberOfFunctions);
+        for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+            if (inputs.birthsOfUnknownObject->hasOtherEscapeOrigins(universe.closureOf(FunctionID(index))))
+                tables.functions.functionsWithOtherEscapeOrigins.set(index);
+        }
+    }
+    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+        if (markedMutationsOf(inputs, universe.closureOf(FunctionID(index))).contains(ObjectMutation::ChangeIntegrity))
+            tables.functions.functionsWhoseClosuresChangeIntegrity.set(index);
+    }
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index) {
         FunctionFlow& flow = tables.functions.functions[index];
         ValueFlowObjectID closure = universe.closureOf(FunctionID(index));
@@ -1010,8 +1185,10 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
         }
         if (inputs.hasEscaped(closure)) {
             flow.cause = UnprovenCause::ReachesNativeCode;
-            if (!witnessesOfEscapes.isEmpty())
-                flow.witness = witnessesOfEscapes[index];
+            if (inputs.birthsOfUnknownObject) {
+                flow.witness = inputs.birthsOfUnknownObject->escapeOriginOf(closure);
+                tables.functions.otherEscapeOriginsOfFunctions[index] = inputs.birthsOfUnknownObject->otherEscapeOriginsOf(closure);
+            }
             return;
         }
         if (inputs.isLost(closure)) {
@@ -1025,7 +1202,7 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
         if (entries.mayBeIntoAnyFunction)
             return;
         flow.callers = CallerState::AllKnown;
-        if (inputs.build.isEnabled(FlowResultKind::ObjectUses, index) && isOnlyCalled(inputs, callablesLookedInto, closure))
+        if (inputs.build.isEnabled(FlowResultKind::ObjectUses, index) && isOnlyCalled(inputs, closure))
             flow.closureUse = ClosureUse::CalledOnly;
         OptionSet<FunctionCapabilities>& capabilities = application.signatures[index].provenCapabilities;
         capabilities.add(FunctionCapabilities::IsNeverCalledByHost);
@@ -1033,7 +1210,7 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
             capabilities.add(FunctionCapabilities::HasOnlyDirectCallers);
         const Function& function = inputs.program.functions[index];
         bool inheritsFromFunctionPrototype = !function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }) && (!function.constructedClass || inputs.program.at(function.constructedClass).has(LayoutFlags::IsConstructorFunction));
-        if (objectsAboveFunctionsAreReadWithoutCode && inheritsFromFunctionPrototype && inputs.build.isEnabled(FlowResultKind::HolderMutations, index) && !markedMutationsOf(inputs, closure).containsAny(mutationsThatLetReadsRunCode))
+        if (inheritsFromFunctionPrototype && inputs.build.isEnabled(FlowResultKind::HolderMutations, index) && !markedMutationsOf(inputs, closure).containsAny(mutationsThatLetReadsRunCode))
             capabilities.add(FunctionCapabilities::ClosuresAreReadWithoutCode);
     });
 }
@@ -1092,13 +1269,14 @@ void computeLayoutsNeverHeldWeakly(const ValueFlowResultInputs& inputs, ValueFlo
     }
 }
 
-void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, FlowResultTables& tables)
+ValueSetID computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
     const BuiltinTable& builtins = program.builtins();
     const ParallelLoops& loops = inputs.loops();
-    ValueSetID closures = universe.closures();
+    ValueSetID lists = universe.sureInstancesOf(BuiltinClasses::Array);
+    ValueSetID closures = heap.maker().unite(universe.closures(), lists);
     struct Teller {
         FunctionID function;
         BuiltinID builtin;
@@ -1147,6 +1325,10 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
                     if (right == ValueSets::nothing)
                         continue;
                     auto [low, high] = std::minmax({ left.index(), right.index() });
+                    if (!compared.mayBeFunctions) {
+                        keep(worker, makers.of(worker).intersect(makers.of(worker).intersect(left, right), lists), { compared.function, { }, { } });
+                        continue;
+                    }
                     if (lookers[worker].pairsMet.add(static_cast<uint64_t>(low) << 32 | high).isNewEntry)
                         keep(worker, left == right ? left : makers.of(worker).intersect(left, right), { compared.function, { }, { } });
                 }
@@ -1188,32 +1370,7 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
         }
     });
 
-    auto comparesAccessors = [](BuiltinPropertyActionKind kind) {
-        return kind == BuiltinPropertyActionKind::TakesDescriptor || kind == BuiltinPropertyActionKind::TakesDescriptorMap || kind == BuiltinPropertyActionKind::DefinesGetter || kind == BuiltinPropertyActionKind::DefinesSetter;
-    };
-    BitVector builtinsThatCompareAccessors = builtinsWithOverload(builtins, [&](const BuiltinOverload& overload) {
-        return std::ranges::any_of(overload.flow.propertyActions, comparesAccessors, &BuiltinPropertyAction::kind);
-    });
-    forEachBuiltinApplication(inputs, heap, builtinsThatCompareAccessors, [&](const ValueFlowBuiltinApplication& application) {
-        Teller teller { application.function, application.builtin, { } };
-        for (const BuiltinOverload& overload : builtins.overloadsOf(application.builtin)) {
-            if (overload.mode != application.mode())
-                continue;
-            for (const BuiltinPropertyAction& action : overload.flow.propertyActions) {
-                if (!comparesAccessors(action.kind) || !action.value.operand)
-                    continue;
-                ValueSetID handed = application.valueAt(*action.value.operand, heap.maker());
-                if (action.kind == BuiltinPropertyActionKind::DefinesGetter || action.kind == BuiltinPropertyActionKind::DefinesSetter) {
-                    if (handed != ValueSets::anything)
-                        keep(0, closuresIn(0, handed), teller);
-                    continue;
-                }
-                ValueSetID descriptors = action.kind == BuiltinPropertyActionKind::TakesDescriptor ? handed : ValueSets::anything;
-                for (BuiltinName member : { BuiltinNames::get, BuiltinNames::set, BuiltinNames::value })
-                    keep(0, closuresIn(0, heap.writtenUnder(descriptors, ValueFlowName::property(program.keyOf(member)))), teller);
-            }
-        }
-    });
+    keep(0, inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare)), { { }, builtins.canonicalID(Builtins::ObjectDefineProperty), { } });
 
     for (uint32_t index = 0; index < builtins.slotCount(); ++index) {
         const BuiltinSlot& slot = builtins.at(BuiltinSlotID(index));
@@ -1231,6 +1388,7 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
         tellers.appendVector(WTF::move(looker.tellers));
     }
     ValueSetID compared = heap.maker().uniteAll(parts.span());
+    ValueSetID listsToldApart = heap.maker().intersect(compared, lists);
     BitVector& neverCompared = tables.functions.functionsWhoseClosuresAreNeverCompared;
     neverCompared = BitVector(program.functions.size());
     Vector<uint32_t> functionsNeverCompared = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
@@ -1275,6 +1433,7 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
         }
         dataLogLn("AOT closures compared: functions whose closures are only called ", onlyCalled, " | of them told apart ", toldApart, " | sets of closures that somebody can tell apart ", parts.size());
     }
+    return listsToldApart;
 }
 
 void computeSymbolConstantResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables)
@@ -1298,7 +1457,7 @@ void computeSymbolConstantResults(const ValueFlowResultInputs& inputs, FlowResul
             if (!key || !inputs.symbolsCreatedOnce->get(key.index()))
                 continue;
             const PropertyKey& symbol = program.at(key);
-            if (symbol.kind == PropertyKeyKind::CreatedSymbol && symbol.module == function.module && symbol.position == function.at(statement.site).position)
+            if (symbol.kind == PropertyKeyKind::CreatedSymbol && symbol.module == function.module && symbol.callNumber == function.at(statement.site).callNumber())
                 update.symbolConstants.append(FlowSymbolConstant { statement.site, key });
         }
         if (update.symbolConstants.isEmpty())

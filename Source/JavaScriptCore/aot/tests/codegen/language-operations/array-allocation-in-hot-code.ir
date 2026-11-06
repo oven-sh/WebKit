@@ -3,9 +3,11 @@
 # OPTIONS: heat=EverythingIsHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
 # RUN: generate-code calls
 # CHECK: f1: size=
-# CHECK: stub NewArrayWithLength.Contiguous x2
+# CHECK: stub NewArrayWithLength.Contiguous x1
+# CHECK-NEXT: stub NewEmptyArray.ContiguousCapacity3 x1
 # CHECK: f2: size=
-# CHECK: stub NewArrayWithLength.Contiguous x2
+# CHECK: stub NewArrayWithLength.Contiguous x1
+# CHECK-NEXT: stub NewEmptyArray.ContiguousCapacity3 x1
 # CHECK: operation operationAOTNewArray x1
 # CHECK-NEXT: stub NewArrayWithLength.Contiguous x1
 # PROGRAM-OF: array-allocation-by-shape.ir

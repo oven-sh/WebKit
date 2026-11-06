@@ -64,7 +64,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithIndexingType, JSCell*, (Instanc
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayFromDoubles, JSCell*, (Instance* instance, uint32_t countAndNumberMask, double first, double second, double third, double fourth))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayFromDoubles);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     double elements[] = { first, second, third, fourth };
     unsigned count = countAndNumberMask & ((1u << arrayLiteralWithDoubleIsNumberMaskShift) - 1);
     RELEASE_ASSERT(count <= std::size(elements));
@@ -80,6 +79,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayFromDoubles, JSCell*, (Instance* in
         }
         for (unsigned i = 0; i < count; ++i)
             array->butterfly()->contiguousDouble().atUnsafe(i) = elements[i];
+        instance->findMissingShortArrayAllocator(capacity);
         OPERATION_RETURN(scope, array);
     }
     auto valueAt = [&](uint32_t i) {

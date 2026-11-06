@@ -1,0 +1,147 @@
+# Outside its handler a loop poll lets the back end treat the loop as it would outside a try block. A poll throws the out-of-memory error that an operation has left owed,
+# so a poll that leaves its handler leaves that error owed [leavesOwedError], and polls under a handler throw it soon [throwsOwedError]: on the loop entry, and after what may allocate on a rare path.
+# The poll stays where the likely iterations allocate.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveRedundantHandlers
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="enteredFromOutsideTheHandler" parameters=[{type=int[0, 100]}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2) handler=b4():
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5) handler=b4():
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v8 = CatchValue
+    Return v8
+# CHECK: Jump -> next [[entry]]()
+# CHECK-NEXT: b1(v2: int[0, 100]):
+# CHECK-NEXT: LoopHint [leavesOwedError]
+# CHECK: b2(v5: int[0, 99]):
+# CHECK: role=CatchHandler
+# CHECK: [[entry]]() handler=b4():
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: Jump -> next b1(v1)
+}
+
+function f1 name="enteredUnderTheHandler" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 100], v1: anything) handler=b4():
+    v2 = Call v1
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4) handler=b4():
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7) handler=b4():
+    v8 = Integer integer=1
+    v9 = Add v7, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v10 = CatchValue
+    Return v10
+# CHECK: handler=b4():
+# CHECK-NEXT: = Call v1
+# CHECK: LoopHint [throwsOwedError]
+# CHECK-NEXT: Jump -> next b1(
+# CHECK-NEXT: b1(v4: int[0, 100]):
+# CHECK-NEXT: LoopHint [leavesOwedError]
+# CHECK-NOT: LoopHint
+# CHECK-NOT: handler=
+# CHECK: role=CatchHandler
+}
+
+function f2 name="likelyIterationsAllocate" parameters=[{type=int[0, 100]}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2) handler=b4():
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5) handler=b4():
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = Integer integer=1
+    v8 = Add v5, v7
+    Jump -> next b1(v8)
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v9 = CatchValue
+    Return v9
+# CHECK: b1(v2: {{*}}) handler=b4():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less
+# CHECK: b2(v5: {{*}}) handler=b4():
+# CHECK-NOT: LoopHint
+# CHECK: role=CatchHandler
+}
+
+function f3 name="rarePathCatches" parameters=[{type=int[0, 100]}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 100], v1: boolean, v2: anything) handler=b7():
+    v3 = Integer integer=0
+    v4 = Call v2
+    Jump -> next b1(v3)
+  b1(v5) handler=b7():
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b6()
+  b2(v8) handler=b7():
+    Branch v1 -> taken b3(), notTaken b5()
+  b3() frequency=Rare handler=b4():
+    v9 = Call v2
+    Jump -> next b5()
+  b4() role=CatchHandler frequency=Rare handler=b7():
+    v10 = CatchValue
+    Jump -> next b5()
+  b5() handler=b7():
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12)
+  b6():
+    Return v5
+  b7() role=CatchHandler:
+    v13 = CatchValue
+    Return v13
+# CHECK: b1(v5: int[0, 100]):
+# CHECK-NEXT: LoopHint [leavesOwedError]
+# CHECK: b3() frequency=Rare handler=b4():
+# CHECK-NEXT: = Call v2
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK: b4() role=CatchHandler frequency=Rare handler=b7():
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: LoopHint [throwsOwedError]
+}
+
+function f4 name="handlerReadsWhatTheHeaderDefines" parameters=[{type=int[0, 100]}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2) handler=b4():
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5) handler=b4():
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v8 = CatchValue
+    Return v2
+# An edge from the loop entry to the handler would pass the definition by.
+# CHECK: b1(v2: int[0, 100]) handler=b4():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less
+}

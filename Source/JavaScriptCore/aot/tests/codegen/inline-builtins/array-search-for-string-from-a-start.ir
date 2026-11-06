@@ -1,0 +1,26 @@
+# indexOf() and includes() with a string and a number call the FromStart forms of the ArrayIndexOfString stub. A start that is no whole number from 0 to 2^32 - 1 goes to the miss edge.
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="indexOfInStrings" parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Dense]>}, {type=string}, {type=i32}] results=[{type=anything}] {
+    TryCallInline v0, v1, v2 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done b1(), miss b2()
+  b1(v3):
+    Return v3
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/1
+    Jump -> next b1(v4)
+}
+# CHECK-LABEL: f0: size=
+# CHECK: stub ArrayIndexOfString.StringsFromStart x1
+function f1 name="includesInValues" parameters=[{type=Array<anything, pristine[Storage]>}, {type=string}, {type=number}] results=[{type=anything}] {
+    TryCallInline v0, v1, v2 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/1 -> done b1(), miss b2()
+  b1(v3):
+    Return v3
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeIncludes/1
+    Jump -> next b1(v4)
+}
+# CHECK-LABEL: f1: size=
+# CHECK: stub ArrayIndexOfString.ValuesFromStart x1

@@ -21,7 +21,7 @@ Statistics::Statistics()
 {
 }
 
-void Statistics::count(StatisticID id, uint64_t amount)
+NEVER_INLINE void Statistics::count(StatisticID id, uint64_t amount)
 {
     if (!amount)
         return;

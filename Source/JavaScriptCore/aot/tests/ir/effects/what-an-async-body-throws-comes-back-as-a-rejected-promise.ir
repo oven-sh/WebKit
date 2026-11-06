@@ -24,8 +24,8 @@ function f3 name="returns" role=CoroutineBody flags=[IsAsync] parameters=[{type=
     Return v1
 }
 # CHECK: f1 return: {{*}}writes(ModuleVariables/1, PromiseState, {{*}}collects
-# CHECK: f3 return: none throw: none
+# CHECK: f3 return: throwsForLackOfStack throw: throwsForLackOfStack
 # CHECK-LABEL: function f0
 # CHECK: v1 CallDirect: {{*}}writes(ModuleVariables/1, PromiseState, {{*}}collects
 # CHECK-LABEL: function f2
-# CHECK: v1 CallDirect: none
+# CHECK: v1 CallDirect: throwsForLackOfStack

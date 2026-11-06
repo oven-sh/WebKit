@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTCodeGenerationDriver.h"
+#include "AOTImagesBelow.h"
 
 #if ENABLE(AOT)
 
@@ -19,6 +20,8 @@
 #include "AOTRegExpRequests.h"
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTSlotPlan.h"
+#include "AOTTypeArena.h"
+#include <optional>
 
 namespace JSC { namespace AOT {
 
@@ -40,11 +43,6 @@ struct Candidates {
 struct Batch {
     uint32_t first;
     uint32_t size;
-};
-
-struct HiddenBody {
-    Typed::Function::Blocks::Storage blocks;
-    Typed::Function::Values::Storage values;
 };
 
 } // anonymous namespace
@@ -76,8 +74,24 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
 
             IdentifierNumbering numbering = numberIdentifiers(program, plan.uses.keys, pipeline.slots->keysWithColumn(), context);
             StubPolicy policy = chooseStubPolicy(plan.uses.keys, numbering, context);
+            addExpectedFieldTableEntries(policy, program, *pipeline.slots, numbering);
+            chooseOrderOfFieldTableForms(policy, program, *pipeline.slots, plan.uses.keys);
             addRegExpLiterals(policy, *pipeline.regExpRequests, pipeline.flow->mayReadLegacyRegExpStatics(), context);
-            plan.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(context.recordedOptions(), program, *pipeline.flow), WTF::move(policy));
+            StubOptions stubOptions = StubOptions::from(context.recordedOptions(), program, *pipeline.flow);
+            stubOptions.maxNameInFieldTable = numbering.countWithFieldTableColumn() - 1;
+            if (context.options().sharesRealms()) {
+                stubOptions.sharesRealms = true;
+                stubOptions.imagesBelow = context.imagesBelow() ? context.imagesBelow()->count() : 0;
+                stubOptions.shapesBelow = pipeline.placement->shapes().shapesBelow();
+                stubOptions.lastShape = pipeline.placement->shapes().numberOfShapes();
+                stubOptions.firstStringHeader = numbering.first();
+                Typed::ClosureFunctionRange closures = pipeline.placement->closureFunctions();
+                stubOptions.closureNumbersBelow = closures.numbersBelow;
+                stubOptions.endOfClosureNumbers = closures.numbersBelow + closures.end.index() - closures.first.index();
+                stubOptions.layoutIndicesBelow = context.imagesBelow() ? context.imagesBelow()->layoutIndices() : 0;
+                stubOptions.numberOfLayoutIndices = static_cast<uint32_t>(program.layouts.size());
+            }
+            plan.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(stubOptions, WTF::move(policy));
             context.setIdentifierNumbering(WTF::move(numbering));
 
             plan.stringConstants = numberStringConstants(program, plan.uses.strings, context);
@@ -122,6 +136,12 @@ void LinkedFunctions::grow(size_t newSize, BuildContext& context)
     *this = LinkedFunctions(context.parallelLoops(), safeCast<unsigned>(newSize), [](unsigned) {
         return CompiledCode { };
     });
+}
+
+void LinkedFunctions::makeRoomFor(size_t newSize)
+{
+    RELEASE_ASSERT(isEmpty());
+    static_cast<ParallelArray&>(*this) = ParallelArray::withRoomFor(safeCast<unsigned>(newSize));
 }
 
 void LinkedFunctions::clearOnAllThreads(BuildContext& context)
@@ -200,7 +220,7 @@ static void shrinkToFit(CompiledCode& code)
     };
     auto& body = code.body;
     auto& sites = code.sites;
-    shrink(body.bytes, body.entries, body.localSites, body.relocations, body.returnSites, body.firstReadSites, body.callees, body.stubKeys, body.argumentMoves, body.constants, body.jumpTables);
+    shrink(body.bytes, body.entries, body.localSites, body.relocations, body.returnSites, body.firstReadSites, body.callees, body.stubKeys, body.argumentMoves, body.constants, body.jumpTables, body.smallLoops);
     shrink(code.frame.frameRanges, code.frame.prologueChecks);
     shrink(sites.positions, sites.inlineFrames, sites.flaggedSites, sites.handlers, sites.faultingAccesses, sites.pollSites, sites.frameMapWords);
 }
@@ -266,8 +286,10 @@ struct CodeGenerationJob::State {
     BuildContext& context;
     Vector<Batch> batches;
     Vector<FunctionID> ids;
-    Vector<HiddenBody> hiddenBodies;
+    Vector<Typed::ParkedBody> hiddenBodies;
     GeneratedCode result;
+    std::optional<Typed::TypeInterningPhase> phase;
+    std::optional<Typed::ProgramCaches> caches;
 };
 
 CodeGenerationJob::CodeGenerationJob(const Typed::CodeGenerationInputs& inputs, Typed::Program& program, BuildContext& context, const BitVector* bodiesWithoutCode)
@@ -305,51 +327,52 @@ CodeGenerationJob::CodeGenerationJob(const Typed::CodeGenerationInputs& inputs, 
         willRelease(ids[position]);
         Typed::Function& function = program.at(ids[position]);
         if (function.bodyIsReleased)
-            m_state->hiddenBodies[position] = { function.takeBlocks(), function.takeValues() };
+            m_state->hiddenBodies[position] = Typed::ParkedBody(function.editAllBlocks(), function.editAllValues());
     });
     forEachIndexInParallel(loops, functionsWithoutCode.size(), [&](unsigned index) {
         m_state->release(FunctionID(functionsWithoutCode[index]));
     });
+    m_state->phase.emplace(program.types, static_cast<unsigned>(m_state->batches.size()));
+    m_state->caches.emplace(program, context);
 }
 
-CodeGenerationJob::~CodeGenerationJob() = default;
+CodeGenerationJob::~CodeGenerationJob()
+{
+    m_state->caches.reset();
+    m_state->phase->discard();
+}
 
 GeneratedCode CodeGenerationJob::run()
 {
-    auto& [inputs, program, context, batches, ids, hiddenBodies, result] = *m_state;
+    auto& [inputs, program, context, batches, ids, hiddenBodies, result, phase, caches] = *m_state;
     const ParallelLoops& loops = context.parallelLoops();
-    result.functions.grow(ids.size(), context);
+    // The records of all functions are hundreds of megabytes, and memory is at its highest here: a batch makes its own.
+    result.functions.makeRoomFor(ids.size());
     std::span<CompiledCode> functions = result.functions.mutableSpan();
     Vector<CodeGenerationTotals> totals(context.threadCount());
-    Typed::TypeInterningPhase phase(program.types, batches.size());
-    {
-        Typed::ProgramCaches caches(inputs.program, context);
-        forEachIndexInParallel(loops, batches.size(), [&](unsigned index, unsigned worker) {
-            Batch batch = batches[index];
-            std::span<const FunctionID> idsInBatch = ids.subspan(batch.first, batch.size);
-            std::span<CompiledCode> functionsInBatch = functions.subspan(batch.first, batch.size);
-            for (uint32_t member = 0; member < batch.size; ++member) {
-                Typed::Function& function = program.at(idsInBatch[member]);
-                if (!function.bodyIsReleased)
-                    continue;
-                HiddenBody body = WTF::move(hiddenBodies[batch.first + member]);
-                function.editAllBlocks() = WTF::move(body.blocks);
-                function.editAllValues() = WTF::move(body.values);
-            }
-            Typed::TypeArena arena(phase, index);
-            Typed::compileFunctions({ context, arena, context.backEndScratch(worker) }, inputs, idsInBatch, functionsInBatch, totals[worker]);
-            for (uint32_t member = 0; member < batch.size; ++member) {
-                auto& code = functionsInBatch[member];
-                if (code.body.bytes.isEmpty())
-                    code.function = idsInBatch[member];
-                else
-                    prepareForImage(code, context);
-            }
-            for (FunctionID id : idsInBatch)
-                m_state->release(id);
-        });
-    }
-    phase.discard();
+    forEachIndexInParallel(loops, batches.size(), [&](unsigned index, unsigned worker) {
+        Batch batch = batches[index];
+        std::span<const FunctionID> idsInBatch = ids.subspan(batch.first, batch.size);
+        std::span<CompiledCode> functionsInBatch = functions.subspan(batch.first, batch.size);
+        for (uint32_t member = 0; member < batch.size; ++member) {
+            result.functions.makeAt(batch.first + member);
+            Typed::Function& function = program.at(idsInBatch[member]);
+            if (!function.bodyIsReleased)
+                continue;
+            hiddenBodies[batch.first + member].takeInto(function.editAllBlocks(), function.editAllValues());
+        }
+        Typed::TypeArena arena(*phase, index);
+        Typed::compileFunctions({ context, arena, context.backEndScratch(worker) }, inputs, idsInBatch, functionsInBatch, totals[worker]);
+        for (uint32_t member = 0; member < batch.size; ++member) {
+            auto& code = functionsInBatch[member];
+            if (code.body.bytes.isEmpty())
+                code.function = idsInBatch[member];
+            else
+                prepareForImage(code, context);
+        }
+        for (FunctionID id : idsInBatch)
+            m_state->release(id);
+    });
 
     for (auto& workerTotals : totals)
         result.entriesUsed.merge(workerTotals.entriesUsed);

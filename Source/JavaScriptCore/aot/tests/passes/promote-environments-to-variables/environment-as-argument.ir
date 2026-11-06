@@ -3,13 +3,13 @@
 # RUN: pipeline PromoteEnvironmentsToVariables
 # OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
 # STATISTIC: EnvironmentsPromotedToVariables = 1
-# CHECK: variable g0 name="x.0"
+# CHECK: variable g0 name="x"
 # CHECK-NOT: variable g1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 kind=Environment name="passedAsArgument" fields=[{key=@"x.0" declared={type=anything}}]
-layout L1 kind=Environment name="onlyCaptured" fields=[{key=@"x.0" declared={type=anything}}]
+layout L0 kind=Environment name="passedAsArgument" fields=[{key=@"x.0" declared={type=anything} variableName="x"}]
+layout L1 kind=Environment name="onlyCaptured" fields=[{key=@"x.0" declared={type=anything} variableName="x"}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis

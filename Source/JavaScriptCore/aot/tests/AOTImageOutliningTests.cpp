@@ -302,7 +302,7 @@ static void testJumpTableTargetInMiddle()
 static void testResumePointInMiddle()
 {
     checkNoSiteCrosses(sequenceBodies([](CodeSketch& sketch, uint32_t function) {
-        uint32_t callOffset = sketch.callStub(pollAtPrologue());
+        uint32_t callOffset = sketch.callStub(pollAtPrologue(true));
         changeUnits(sketch.code().body, [](Vector<CodeUnit>& units) {
             units.last().kind = Kind::Pinned;
         });
@@ -397,7 +397,7 @@ static void testOtherMovesAtEnd()
 static void testPrologueCheckCall()
 {
     checkOffsetInNoSite(sequenceBodies([](CodeSketch& sketch, uint32_t function) {
-        uint32_t callOffset = sketch.callStub(pollAtPrologue());
+        uint32_t callOffset = sketch.callStub(pollAtPrologue(true));
         uint32_t resumeOffset = sketch.end();
         sketch.code().frame.prologueChecks.append(PrologueCheck { function, callOffset, resumeOffset });
     }, &CodeSketch::takeUnchecked), sequenceEnd);

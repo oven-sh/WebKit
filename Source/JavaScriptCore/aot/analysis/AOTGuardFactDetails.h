@@ -18,6 +18,9 @@ bool provenLayoutsAreSubsetOf(const Program&, const Function&, const GuardFact&,
 bool provesSlotFilled(const Program&, const Function&, const GuardFact&, PropertyKeyID);
 bool guardProvesSlotFilled(FunctionAnalyses&, const Value& slotOperation);
 bool provesForUser(FunctionAnalyses&, const GuardFact&, Proof, const Value& user);
+bool provesAsMuchAs(const Program&, const Function&, ValueID guard, ValueID other);
+ArrayStorage arrayStorageOfNewArray(const Program&, const Function&, const Value& allocation);
+bool allocatesWritableStorage(const Function&, const Value& allocation);
 
 bool testReadsOnlySubject(const Program&, const Function&, const Value& test);
 ValueID exclusiveSubjectOf(FunctionAnalyses&, const GuardFact&);

@@ -1,0 +1,27 @@
+# if (globalThis.enters) { /* a pass has proven that nothing comes here */ } else print("went on")
+# An end that cannot be reached carries the name of the pass that made it. A validating build, and a build that checks its proofs at run time, report the name where the end is reached after all.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.enters = true;
+# RUN(SAME): run-in-shell globalThis.enters = false;
+# OPTIONS: validate
+# CHECK: AOT validation: UnreachableValue f{{*}} v- cut by EliminateGuards
+# CHECK: crashed with
+# SAME-NOT: AOT validation
+# SAME: went on
+# SAME-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="enters" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = PropGet v0 key="print" [isFreeName]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Unreachable cutBy=EliminateGuards
+  b2():
+    v4 = String string="went on"
+    v5 = Call v3, -, v4
+    Return
+}

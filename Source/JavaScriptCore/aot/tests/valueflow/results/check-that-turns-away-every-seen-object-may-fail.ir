@@ -1,0 +1,50 @@
+# const unknownCode = new Function(input);
+# function read(h: Host) { return h.name; }
+# function readBy(o: Reader, h: Host) { return o.read(h); }
+# const reader = unknownCode({ read }); unknownCode({ name: "host" }); readBy(reader, { more: 1, name: "no" });
+# A check may fail where every object with a layout that the program is seen to bring to it is turned away, also where other code may bring objects that pass.
+# readBy() hands on what its own check turns away, through a receiver that came out of unknown code: only the values seen to arrive at read() tell.
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK-LABEL: function f1 name="read"
+# CHECK: = Check v0 expectedType=L0 cause=MayFail
+# CHECK-LABEL: function f2 name="readBy"
+# CHECK: = Check {{*}}expectedType=L1
+# CHECK-NOT: MayFail
+# CHECK: = Check {{*}}expectedType=L0 cause=MayFail
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Host" fields=[{key="name" declared={type=string}}]
+layout L1 name="Reader" fields=[{key="read" declared={type=anything}}]
+layout L2 fields=[{key="more" declared={type=number}}, {key="name" declared={type=string}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = NewClosure function=f1
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = Call v3, -, v5
+    v7 = String string="host"
+    v8 = NewObject -, v7 layout=L0 fields=[0]
+    v9 = Call v3, -, v8
+    v10 = Integer integer=1
+    v11 = String string="no"
+    v12 = NewObject -, v10, v11 layout=L2 fields=[0, 1]
+    v13 = NewClosure function=f2
+    v14 = Call v13, -, v6, v12
+    Return v14
+}
+function f1 name="read" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=L0
+    v2 = PropGet v1 key="name"
+    Return v2
+}
+function f2 name="readBy" parameters=[{type=L1 flags=[IsExpected]}, {type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=L1
+    v3 = Check v1 expectedType=L0
+    v4 = PropGet v2 key="read"
+    v5 = Call v4, v2, v3
+    Return v5
+}

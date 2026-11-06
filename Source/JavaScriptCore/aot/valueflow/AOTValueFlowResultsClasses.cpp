@@ -11,10 +11,16 @@
 #include "AOTBlockCycles.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTClaimsAboutClassesAndClosures.h"
+#include "AOTFunctionAnalyses.h"
+#include "AOTGrouping.h"
+#include "AOTLedgerOfClassesAndClosures.h"
+#include "AOTLedgerVariables.h"
 #include "AOTNameCreatedSymbols.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
+#include "AOTStronglyConnectedComponents.h"
 #include "AOTUseLists.h"
 #include "AOTValueFlowRulesHeap.h"
 #include "AOTValueIdentity.h"
@@ -23,7 +29,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OptionSet<ObjectMutation> mutationsOfMembers { ObjectMutation::ReachUnknownJavaScript, ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::AddProperty, ObjectMutation::StoreAfterCreation };
+namespace Claims = ClaimsAboutClassesAndClosures;
+
 static constexpr unsigned prototypeSide = static_cast<unsigned>(ClassSide::Prototype);
 static constexpr unsigned staticSide = static_cast<unsigned>(ClassSide::Static);
 
@@ -50,32 +57,29 @@ struct BaseOfClass {
     BaseState state { BaseState::Unknown };
     LayoutID base;
     BuiltinClassID baseClass;
+    Vector<LayoutID> possibleBases;
+    LayoutID commonAncestor;
+    Vector<LayoutID> intermediateClasses;
 
     friend bool operator==(const BaseOfClass&, const BaseOfClass&) = default;
 };
 
 struct AssignedValue {
-    LayoutID classLayout;
     PropertyKeyID key;
     ValueSetID value;
     MethodKind kind { MethodKind::Method };
     bool isWrittenForOtherObjectsToo { false };
-
-    auto order() const { return std::tuple { classLayout, key }; }
+    ValueSetID through;
 };
 
-struct WritesToPrototypeObjects {
-    static constexpr uint8_t isWrittenUnderOtherNamesFlag = 1;
-    static constexpr uint8_t hasOtherPrototypeObjectFlag = 2;
+enum class ReachOfSet : uint8_t { PrototypeObjectsOfOneClass, ObjectsOfOtherKindsToo, PrototypeObjectsOfOtherClassesToo };
 
-    std::span<const AssignedValue> of(LayoutID classLayout) const LIFETIME_BOUND { return std::span(std::ranges::equal_range(underNames, classLayout, { }, &AssignedValue::classLayout)); }
-    std::span<const AssignedValue> under(LayoutID classLayout, PropertyKeyID key) const LIFETIME_BOUND { return std::span(std::ranges::equal_range(underNames, std::tuple { classLayout, key }, { }, &AssignedValue::order)); }
-    bool isWrittenUnderOtherNames(LayoutID classLayout) const { return isAnyObjectWrittenUnderOtherNames || (flagsOfClass[classLayout.index()] & isWrittenUnderOtherNamesFlag); }
-    bool mayHaveOtherPrototypeObject(LayoutID classLayout) const { return isAnyObjectWrittenUnderOtherNames || (flagsOfClass[classLayout.index()] & hasOtherPrototypeObjectFlag); }
-
-    Vector<AssignedValue> underNames;
-    Vector<uint8_t> flagsOfClass;
-    bool isAnyObjectWrittenUnderOtherNames { false };
+struct AnswersAboutSets {
+    UncheckedKeyHashMap<uint32_t, ReachOfSet, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> reaches;
+    // Derived.prototype = new Base(): each object that the program stores as the prototype object of a constructor function, above the class of the function. Made when somebody asks.
+    std::optional<UncheckedKeyHashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> objectsStoredAsPrototypeObjects;
+    // What each store under a name goes through once flow is at rest, above the key. Made when somebody asks.
+    std::optional<UncheckedKeyHashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> storesAtRest;
 };
 
 } // anonymous namespace
@@ -93,11 +97,6 @@ static ValueSetID throughMaskOf(const ValueFlowResultInputs& inputs, const Value
 static ValueSetID possibleValuesOf(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueSetMaker& maker)
 {
     return throughMaskOf(inputs, operand, operand.node ? inputs.solver().possibleValuesOf(operand.node) : ValueSets::nothing, maker);
-}
-
-static ValueSetID seenValuesOf(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueSetMaker& maker)
-{
-    return throughMaskOf(inputs, operand, operand.node ? inputs.solver().seenValuesOf(operand.node) : ValueSets::nothing, maker);
 }
 
 static bool everyUseThroughCasts(const Function& function, const UseLists& useLists, ValueID value, bool mayBeUnused, NOESCAPE const Invocable<bool(const Use&, Opcode, OperandUses)> auto& admits)
@@ -190,7 +189,7 @@ static Vector<ClassDefinition> collectClassDefinitions(const ValueFlowResultInpu
         }
 
         tables.application->bodies[index].keysOfMembers = findKeysOfMembers(inputs, FunctionID(index), maker);
-        const Vector<FlowMemberKey>& keysOfMembers = tables.application->bodies[index].keysOfMembers;
+        const CompactList<FlowMemberKey>& keysOfMembers = tables.application->bodies[index].keysOfMembers;
         CFG cfg(function);
         std::optional<UseLists> useLists;
         std::optional<BlockCycles> cycles;
@@ -207,7 +206,7 @@ static Vector<ClassDefinition> collectClassDefinitions(const ValueFlowResultInpu
                 if (value.opcode != Opcode::DefineMethod)
                     continue;
                 ClassDefinition& definition = classes[value.layout().index()];
-                ValueID closure = sameObjectThroughCasts(function, value.functionOperand());
+                ValueID closure = sameObjectThroughCasts(function, value.functionOperand()).valueInFrontOfFacts();
                 if (function.at(closure).opcode != Opcode::NewClosure) {
                     definition.isFollowed = false;
                     continue;
@@ -260,31 +259,41 @@ static BaseOfClass computeBase(const ValueFlowResultInputs& inputs, LayoutID id,
     const ValueSets& sets = inputs.sets();
     ValueSetID heritage = definition.heritage;
     if (layout.isDerived())
-        return { BaseState::Layout, layout.flow.base, { } };
+        return { .state = BaseState::Layout, .base = layout.flow.base };
     if (!layout.has(LayoutFlags::HasHeritage))
-        return { BaseState::None, { }, { } };
+        return { .state = BaseState::None };
     if (!definition.isFollowed || !inputs.build.isEnabled(FlowResultKind::ClassBases, id.index()) || ValueSets::isComplement(heritage) || sets.isEmpty(heritage))
         return { };
 
     std::optional<BaseOfClass> joined;
+    Vector<LayoutID> compiledClasses;
+    bool isAlwaysCompiledClass = true;
     sets.forEachMember(heritage, [&](ValueFlowObjectID member) {
         if (!universe.isObject(member))
             return;
         BaseOfClass base;
         if (FunctionID function = universe.closureFunction(member)) {
             if (LayoutID constructed = inputs.program.at(function).constructedClass)
-                base = { BaseState::Layout, constructed, { } };
+                base = { .state = BaseState::Layout, .base = constructed };
         } else if (universe.kindOf(member) == ValueFlowObjectKind::Builtin) {
             BuiltinID constructor = builtins.canonicalID(universe.builtinOf(member));
             BuiltinClassID instanceClass = builtins.at(constructor).instanceClass;
             BuiltinID classConstructor = instanceClass ? builtins.at(instanceClass).constructor : BuiltinID();
             if (classConstructor && builtins.canonicalID(classConstructor) == constructor)
-                base = { BaseState::BuiltinClass, { }, instanceClass };
+                base = { .state = BaseState::BuiltinClass, .baseClass = instanceClass };
         }
         joined = !joined || *joined == base ? base : BaseOfClass { };
+        isAlwaysCompiledClass &= base.state == BaseState::Layout;
+        if (base.state == BaseState::Layout)
+            compiledClasses.append(base.base);
     });
     if (sets.contains(heritage, ValueFlowUniverse::primitive(PrimitiveSet::Null)))
-        return joined ? BaseOfClass { } : BaseOfClass { BaseState::None, { }, { } };
+        return joined ? BaseOfClass { } : BaseOfClass { .state = BaseState::None };
+    if (joined && joined->state == BaseState::Unknown && isAlwaysCompiledClass) {
+        AOT::sort(compiledClasses);
+        removeRepeatedElements(compiledClasses);
+        joined->possibleBases = WTF::move(compiledClasses);
+    }
     return joined.value_or(BaseOfClass { });
 }
 
@@ -293,11 +302,16 @@ static LayoutID provenBaseOf(const BaseOfClass& base)
     return base.state == BaseState::Layout ? base.base : LayoutID();
 }
 
+static LayoutID nearestLayoutAlwaysAbove(const BaseOfClass& base)
+{
+    return base.state == BaseState::Layout ? base.base : base.commonAncestor;
+}
+
 static uint64_t countFieldsWithInheritedOnes(const Program& program, std::span<const BaseOfClass> bases, LayoutID id)
 {
     uint64_t numberOfUnnamedFields = 0;
     Vector<PropertyKeyID> keys;
-    for (LayoutID current = id; current; current = provenBaseOf(bases[current.index()])) {
+    for (LayoutID current = id; current; current = nearestLayoutAlwaysAbove(bases[current.index()])) {
         for (const Field& field : program.at(current).fields) {
             if (field.key)
                 keys.append(field.key);
@@ -318,13 +332,13 @@ static void invalidateBasesWhoseFieldsHaveNoRoom(const ValueFlowResultInputs& in
     BitVector isCounted(bases.size());
     Vector<LayoutID, 16> path;
     for (size_t index = 0; index < bases.size(); ++index) {
-        for (LayoutID current(static_cast<uint32_t>(index)); current && !isCounted.quickSet(current.index()); current = provenBaseOf(bases[current.index()]))
+        for (LayoutID current(static_cast<uint32_t>(index)); current && !isCounted.quickSet(current.index()); current = nearestLayoutAlwaysAbove(bases[current.index()]))
             path.append(current);
         while (!path.isEmpty()) {
             LayoutID id = path.takeLast();
             uint64_t& count = fieldCounts[id.index()];
             count = program.at(id).fields.size();
-            LayoutID base = provenBaseOf(bases[id.index()]);
+            LayoutID base = nearestLayoutAlwaysAbove(bases[id.index()]);
             if (!base)
                 continue;
             count += fieldCounts[base.index()];
@@ -336,6 +350,76 @@ static void invalidateBasesWhoseFieldsHaveNoRoom(const ValueFlowResultInputs& in
             bases[id.index()] = BaseOfClass { };
             count = program.at(id).fields.size();
         }
+    }
+}
+
+static void computeCommonAncestors(Vector<BaseOfClass>& bases)
+{
+    bool hasSeveralBasesSomewhere = std::ranges::any_of(bases, [](const BaseOfClass& base) {
+        return !base.possibleBases.isEmpty();
+    });
+    if (!hasSeveralBasesSomewhere)
+        return;
+
+    Vector<Vector<LayoutID, 1>> classesDirectlyAbove(bases.size(), [&](size_t index) {
+        const BaseOfClass& base = bases[index];
+        return base.state == BaseState::Layout ? Vector<LayoutID, 1> { base.base } : Vector<LayoutID, 1>(base.possibleBases.span());
+    });
+    StronglyConnectedComponents components = computeStronglyConnectedComponents(bases.size(), [&](unsigned index) -> const Vector<LayoutID, 1>& {
+        return classesDirectlyAbove[index];
+    });
+
+    // A component is numbered behind all that it leads to, so the components that every way up from it passes are known when it is reached.
+    constexpr uint32_t end = std::numeric_limits<uint32_t>::max();
+    Vector<uint32_t> nextPassed(FillWith { }, components.numberOfComponents, end);
+    Vector<uint32_t> numberPassed(FillWith { }, components.numberOfComponents, 0u);
+    auto numberPassedFrom = [&](uint32_t component) {
+        return component == end ? 0 : numberPassed[component] + 1;
+    };
+    auto firstPassedByBoth = [&](uint32_t a, uint32_t b) {
+        while (a != b) {
+            uint32_t& farther = numberPassedFrom(a) >= numberPassedFrom(b) ? a : b;
+            farther = nextPassed[farther];
+        }
+        return a;
+    };
+    for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
+        std::optional<uint32_t> passed;
+        auto leadsTo = [&](uint32_t other) {
+            passed = passed ? firstPassedByBoth(*passed, other) : other;
+        };
+        for (uint32_t member : components.membersOf(component)) {
+            if (classesDirectlyAbove[member].isEmpty())
+                leadsTo(end);
+            for (LayoutID above : classesDirectlyAbove[member]) {
+                if (components.componentOf[above.index()] != component)
+                    leadsTo(components.componentOf[above.index()]);
+            }
+        }
+        nextPassed[component] = passed.value_or(end);
+        numberPassed[component] = numberPassedFrom(nextPassed[component]);
+    }
+
+    for (size_t index = 0; index < bases.size(); ++index) {
+        if (bases[index].possibleBases.isEmpty())
+            continue;
+        // A class that may stand above itself may stand twice above another, whose objects then hold its private names twice.
+        uint32_t passed = nextPassed[components.componentOf[index]];
+        while (passed != end && components.isInCycle.get(components.membersOf(passed)[0]))
+            passed = nextPassed[passed];
+        if (passed == end)
+            continue;
+        LayoutID ancestor(components.membersOf(passed)[0]);
+        BitVector isBetween(bases.size());
+        Vector<LayoutID, 16> worklist(bases[index].possibleBases.span());
+        while (!worklist.isEmpty()) {
+            LayoutID current = worklist.takeLast();
+            if (current != ancestor && !isBetween.quickSet(current.index()))
+                worklist.appendVector(classesDirectlyAbove[current.index()]);
+        }
+        bases[index].commonAncestor = ancestor;
+        for (size_t between : isBetween)
+            bases[index].intermediateClasses.append(LayoutID(static_cast<uint32_t>(between)));
     }
 }
 
@@ -353,12 +437,15 @@ static void computeBaseResults(const ValueFlowResultInputs& inputs, std::span<co
     }
     for (size_t index : liesOnCycle)
         bases[index] = BaseOfClass { };
+    computeCommonAncestors(bases);
     invalidateBasesWhoseFieldsHaveNoRoom(inputs, bases);
     for (size_t index = 0; index < bases.size(); ++index) {
         LayoutFlow& flow = application.layouts[index].flow;
         flow.baseState = bases[index].state;
         flow.base = bases[index].base;
         flow.baseClass = bases[index].baseClass;
+        flow.commonAncestor = bases[index].commonAncestor;
+        flow.intermediateClasses = WTF::move(bases[index].intermediateClasses);
     }
 }
 
@@ -474,7 +561,7 @@ static Vector<ClassMember> listMembersInDefinitionOrder(Vector<ClassMemberDefini
     auto orderOf = [](const ClassMemberDefinition& definition) {
         return std::tuple { definition.index, memberOrderOf(definition.member) };
     };
-    AOT::sort(definitions, { }, orderOf);
+    AOT::sortInLine(definitions, { }, orderOf);
     definitions.shrink(std::ranges::unique(definitions, { }, orderOf).begin() - definitions.begin());
 
     return Vector<ClassMember>(definitions.size(), [&](size_t position) {
@@ -508,24 +595,213 @@ static void listWhatIsStoredOverMembers(const ValueFlowResultInputs& inputs, std
     AOT::sort(namedMembers, { }, memberOrderOf);
 }
 
-static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID id, ClassDefinition&& definition, ValueSetID closuresTakenOutOfMembers, const WritesToPrototypeObjects& writes)
+static bool isLaidOnEveryClassObject(const Program& program, PropertyKeyID key)
+{
+    return key == program.keyOf(BuiltinNames::prototype) || key == program.keyOf(BuiltinNames::name) || key == program.keyOf(BuiltinNames::length);
+}
+
+static std::optional<MethodKind> kindOfMemberUnder(ValueFlowNameKind kind)
+{
+    ValueFlowNameShape shape = shapeOf(kind);
+    if (shape.reach != ValueFlowNameReach::OneKey || !shape.isValueOrAccessor())
+        return std::nullopt;
+    return shape.sort == ValueFlowNameSort::Value ? MethodKind::Method : shape.sort == ValueFlowNameSort::Getter ? MethodKind::Getter : MethodKind::Setter;
+}
+
+static bool isStoredAsPrototypeObjectOf(const ValueFlowResultInputs& inputs, LayoutID classLayout, ValueFlowObjectID object, AnswersAboutSets& answers)
+{
+    auto numberOf = [](ValueFlowObjectID object, LayoutID classLayout) {
+        return static_cast<uint64_t>(object.index()) << 32 | classLayout.index();
+    };
+    if (!answers.objectsStoredAsPrototypeObjects) {
+        answers.objectsStoredAsPrototypeObjects.emplace();
+        const Program& program = inputs.program;
+        const ValueFlowUniverse& universe = inputs.universe();
+        const auto* written = inputs.heapIndex->findNodesWrittenUnder(ValueFlowName::property(program.keyOf(BuiltinNames::prototype)));
+        for (size_t index = 0; written && index < written->nodes.size(); ++index) {
+            const auto& node = written->nodes[index];
+            if (ValueSets::isComplement(node.objects))
+                continue;
+            for (ValueSetID stored : { node.value, node.seenValue }) {
+                if (ValueSets::isComplement(stored))
+                    continue;
+                inputs.sets().forEachMember(stored, [&](ValueFlowObjectID member) {
+                    // The ledger knows the first two. The unknown object stands for every object that nobody has seen.
+                    ValueFlowObjectKind kind = universe.kindOf(member);
+                    if (kind == ValueFlowObjectKind::Prototype || kind == ValueFlowObjectKind::Site || kind == ValueFlowObjectKind::UnknownObject || kind == ValueFlowObjectKind::Primitive || kind == ValueFlowObjectKind::Key)
+                        return;
+                    inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID holder) {
+                        FunctionID function = universe.closureFunction(holder);
+                        LayoutID constructed = function ? program.at(function).constructedClass : LayoutID();
+                        if (constructed && program.at(constructed).has(LayoutFlags::IsConstructorFunction))
+                            answers.objectsStoredAsPrototypeObjects->add(numberOf(member, constructed));
+                    });
+                });
+            }
+        }
+    }
+    return answers.objectsStoredAsPrototypeObjects->contains(numberOf(object, classLayout));
+}
+
+static bool isWrittenForOtherObjectsToo(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, LayoutID classListed, ValueSetID through, AnswersAboutSets& answers)
+{
+    const ValueFlowUniverse& universe = inputs.universe();
+    auto answer = answers.reaches.add(through.index(), ReachOfSet::PrototypeObjectsOfOneClass);
+    if (answer.isNewEntry) {
+        bool reachesOtherClasses = false;
+        bool reachesOtherKinds = false;
+        LayoutID classWritten;
+        inputs.sets().forEachMember(through, [&](ValueFlowObjectID holder) {
+            ValueFlowObjectKind kind = universe.kindOf(holder);
+            reachesOtherKinds |= kind != ValueFlowObjectKind::Prototype && kind != ValueFlowObjectKind::Site;
+            LayoutID classLayout = universe.classLayoutOf(holder);
+            if (!classLayout)
+                classLayout = ledger.classesOfStoredPrototypeObjects().get(holder.index());
+            if (!classLayout)
+                return;
+            reachesOtherClasses |= classWritten && classWritten != classLayout;
+            classWritten = classLayout;
+        });
+        answer.iterator->value = reachesOtherClasses ? ReachOfSet::PrototypeObjectsOfOtherClassesToo : reachesOtherKinds ? ReachOfSet::ObjectsOfOtherKindsToo : ReachOfSet::PrototypeObjectsOfOneClass;
+    }
+    if (answer.iterator->value != ReachOfSet::ObjectsOfOtherKindsToo)
+        return answer.iterator->value == ReachOfSet::PrototypeObjectsOfOtherClassesToo;
+    // Derived.prototype = new Base(); Derived.prototype.area = ..: the store goes through the instance because it is a prototype object of the class.
+    bool reachesOthers = false;
+    inputs.sets().forEachMember(through, [&](ValueFlowObjectID holder) {
+        ValueFlowObjectKind kind = universe.kindOf(holder);
+        reachesOthers |= kind != ValueFlowObjectKind::Prototype && kind != ValueFlowObjectKind::Site && !isStoredAsPrototypeObjectOf(inputs, classListed, holder, answers);
+    });
+    return reachesOthers;
+}
+
+static bool isWhatStoreGoesThroughAtRest(const ValueFlowResultInputs& inputs, ValueSetID through, PropertyKeyID key, AnswersAboutSets& answers)
+{
+    auto numberOf = [](ValueSetID set, PropertyKeyID key) {
+        return static_cast<uint64_t>(set.index()) << 32 | key.index();
+    };
+    if (!answers.storesAtRest) {
+        answers.storesAtRest.emplace();
+        for (uint32_t index = 0; index < inputs.program.functions.size(); ++index) {
+            if (!inputs.isReached(FunctionID(index)))
+                continue;
+            for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+                if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::PropSet || !statement.key)
+                    continue;
+                std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+                if (!operands.empty() && operands[0].node)
+                    answers.storesAtRest->add(numberOf(inputs.solver().possibleValuesOf(operands[0].node), statement.key));
+            }
+        }
+    }
+    return answers.storesAtRest->contains(numberOf(through, key));
+}
+
+// Point.prototype.norm = .. and Object.defineProperty(Point.prototype, ..): the prototype objects that a statement reads out of one class to store into or to pass on.
+static BitVector collectPrototypeObjectsNamedByStatements(const ValueFlowResultInputs& inputs)
+{
+    const Program& program = inputs.program;
+    PropertyKeyID prototypeKey = program.keyOf(BuiltinNames::prototype);
+    BitVector named;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (!inputs.isReached(FunctionID(index)))
+            continue;
+        const Function& function = program.functions[index];
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::PropSet && statement.opcode != Opcode::Call))
+                continue;
+            size_t position = statement.opcode == Opcode::PropSet ? 0 : OperandIndex::Call::arguments;
+            const Value& value = function.at(statement.site);
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+            if (position >= operands.size() || position >= value.numberOfOperands() || !operands[position].node)
+                continue;
+            const Value& receiver = function.at(sameObjectThroughCasts(function, value.operands()[position]));
+            if (receiver.opcode != Opcode::PropGet || receiver.key() != prototypeKey)
+                continue;
+            ValueSetID possible = inputs.solver().possibleValuesOf(operands[position].node);
+            ValueFlowObjectID only = ValueSets::isComplement(possible) ? ValueFlowObjectID() : inputs.sets().onlyMember(possible);
+            if (only && inputs.universe().kindOf(only) == ValueFlowObjectKind::Prototype)
+                named.set(only.index());
+        }
+    }
+    return named;
+}
+
+// What was seen to be written under names on the prototype object of a class and on the objects that the program stores in its place, by key.
+static Vector<AssignedValue> listWhatIsAssigned(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, LayoutID classLayout, AnswersAboutSets& answers)
+{
+    Vector<AssignedValue> assigned;
+    std::optional<ValueFlowHeapView> heap;
+    // Object.assign(Point.prototype, { norm() { .. } }): the values of the fields of the literal.
+    auto listWhatIsCopied = [&](const Write& write) {
+        if (ValueSets::isComplement(write.arrives))
+            return;
+        if (!heap)
+            heap.emplace(inputs);
+        bool isWrittenForOtherObjectsToo = Typed::isWrittenForOtherObjectsToo(inputs, ledger, classLayout, write.through, answers);
+        inputs.sets().forEachMember(write.arrives, [&](ValueFlowObjectID source) {
+            LayoutID layout = inputs.universe().layoutOf(source);
+            if (!layout)
+                return;
+            ValueSetID sourceAlone = heap->maker().of(source);
+            for (const Field& field : inputs.program.at(layout).fields) {
+                if (!field.key || inputs.program.isIndexLike(field.key) || heap->writtenUnder(sourceAlone, ValueFlowName::getter(field.key)) != ValueSets::nothing)
+                    continue;
+                if (ValueSetID value = heap->writtenUnder(sourceAlone, ValueFlowName::property(field.key)); value != ValueSets::nothing)
+                    assigned.append({ field.key, value, MethodKind::Method, isWrittenForOtherObjectsToo, write.through });
+            }
+        });
+    };
+    auto list = [&](ValueFlowObjectID holder) {
+        for (const Write& write : ledger.writesFiledOn(holder)) {
+            if (std::optional<MethodKind> kind = kindOfMemberUnder(write.under.kind))
+                assigned.append({ PropertyKeyID(write.under.payload), write.arrives, *kind, isWrittenForOtherObjectsToo(inputs, ledger, classLayout, write.through, answers), write.through });
+            else if (write.under.kind == ValueFlowNameKind::CopiedFrom)
+                listWhatIsCopied(write);
+        }
+    };
+    list(inputs.universe().prototypeOf(classLayout));
+    for (ValueFlowObjectID stored : ledger.prototypeObjectsStoredFor(classLayout))
+        list(stored);
+    AOT::stableSortInLine(assigned, { }, &AssignedValue::key);
+    // While flow was finding out what a store goes through, the store wrote through fewer objects, and what it wrote then is still there: which object came first goes by the order of the rules.
+    // So what no store goes through at rest is judged by the most that is written through under the name.
+    for (size_t first = 0, end = 0; first < assigned.size(); first = end) {
+        while (end < assigned.size() && assigned[end].key == assigned[first].key)
+            ++end;
+        std::span<AssignedValue> ofKey = assigned.mutableSpan().subspan(first, end - first);
+        for (AssignedValue& value : ofKey) {
+            if (value.isWrittenForOtherObjectsToo)
+                continue;
+            bool isPartOfWiderWrite = std::ranges::any_of(ofKey, [&](const AssignedValue& other) {
+                return other.isWrittenForOtherObjectsToo && other.kind == value.kind && inputs.sets().isSubset(value.through, other.through);
+            });
+            value.isWrittenForOtherObjectsToo = isPartOfWiderWrite && !isWhatStoreGoesThroughAtRest(inputs, value.through, value.key, answers);
+        }
+    }
+    return assigned;
+}
+
+static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID id, ClassDefinition&& definition, ValueSetID closuresTakenOutOfMembers, const LedgerOfClassesAndClosures& ledger, AnswersAboutSets& answers)
 {
     const Program& program = inputs.program;
     const Layout& layout = program.at(id);
     const ValueFlowUniverse& universe = inputs.universe();
     const ValueSets& sets = inputs.sets();
     BuildContext& build = inputs.build;
-    ValueFlowObjectID prototype = universe.prototypeOf(id);
     PropertyKeyID lengthKey = program.keyOf(BuiltinNames::length);
     PropertyKeyID constructorKey = program.keyOf(BuiltinNames::constructor);
-    OptionSet<ObjectMutation> mutations[2];
-    mutations[prototypeSide] = markedMutationsOf(inputs, prototype);
-    mutations[staticSide] = markedMutationsOf(inputs, universe.closureOf(layout.constructor));
+    ValueFlowObjectID holders[2];
+    holders[prototypeSide] = universe.prototypeOf(id);
+    holders[staticSide] = universe.closureOf(layout.constructor);
+    Writers writersOfEveryOwnProperty[2] { ledger.writersOfEveryOwnProperty(holders[0]), ledger.writersOfEveryOwnProperty(holders[1]) };
     bool sharesNameWithStaticField = std::ranges::any_of(definition.definitions, [&](const ClassMemberDefinition& entry) {
-        return entry.member.side == ClassSide::Static && (!entry.member.key || std::ranges::contains(layout.staticFields, entry.member.key, &StaticField::key));
+        return entry.member.side == ClassSide::Static && (!entry.member.key || layout.findStaticField(entry.member.key));
     });
-    if (!sharesNameWithStaticField && inputs.variablesOnObjects->classObjectsStoredUnderStaticFieldsAlone.quickGet(id.index()))
-        mutations[staticSide].remove({ ObjectMutation::AddProperty, ObjectMutation::StoreAfterCreation });
+    // On a class object only the stores of its static fields are looked through.
+    bool looksThroughStores[2];
+    looksThroughStores[prototypeSide] = true;
+    looksThroughStores[staticSide] = !sharesNameWithStaticField && inputs.ledgerOfVariables->isClassObjectStoredUnderStaticFieldsAlone(id);
     definition.mayHaveUnknownName[staticSide] |= std::ranges::contains(layout.staticFields, PropertyKeyID(), &StaticField::key);
 
     ClassFlow flow;
@@ -534,28 +810,30 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
 
     bool followsMutations = build.isEnabled(FlowResultKind::HolderMutations, id.index());
     bool followsUses = build.isEnabled(FlowResultKind::ObjectUses, id.index());
-    bool isOnlyStoredToUnderNames = mutations[prototypeSide].containsAny(mutationsOfMembers)
-        && !mutations[prototypeSide].containsAny({ ObjectMutation::ReachUnknownJavaScript, ObjectMutation::DeleteField, ObjectMutation::RedefineProperty })
-        && !writes.isWrittenUnderOtherNames(id) && !inputs.hasEscaped(prototype) && !inputs.isLost(prototype);
-    bool listsEveryStoredName = followsMutations && isOnlyStoredToUnderNames;
+    bool isAsMade[2];
+    for (unsigned side : { prototypeSide, staticSide }) {
+        isAsMade[side] = MemberMutability::Fixed == Claims::mutabilityOf(writersOfEveryOwnProperty[side], [](const Write& write) {
+            return write.form == WriteForm::Freeze;
+        });
+    }
+    bool isNeverFrozen[2] { Claims::isNeverFrozen(writersOfEveryOwnProperty[0]), Claims::isNeverFrozen(writersOfEveryOwnProperty[1]) };
     auto keepsMembersUnder = [&](ClassSide side, std::span<const ClassMember> membersUnderOneKey, PropertyKeyID key) {
-        if (!mutations[static_cast<unsigned>(side)].containsAny(mutationsOfMembers))
-            return true;
-        if (side != ClassSide::Prototype || !isOnlyStoredToUnderNames || key == lengthKey)
+        if (!looksThroughStores[static_cast<unsigned>(side)] && !isAsMade[static_cast<unsigned>(side)])
             return false;
-        return std::ranges::all_of(writes.under(id, key), [&](const AssignedValue& written) {
-            return !ValueSets::isComplement(written.value) && !sets.anyMember(written.value, [&](ValueFlowObjectID member) {
+        return MemberMutability::Fixed == Claims::mutabilityOf(ledger.writersOfProperty(holders[static_cast<unsigned>(side)], key), [&](const Write& write) {
+            std::optional<MethodKind> kind = kindOfMemberUnder(write.under.kind);
+            return looksThroughStores[static_cast<unsigned>(side)] && kind && !ValueSets::isComplement(write.arrives) && !sets.anyMember(write.arrives, [&](ValueFlowObjectID member) {
                 FunctionID function = universe.closureFunction(member);
                 return !function || std::ranges::none_of(membersUnderOneKey, [&](const ClassMember& defined) {
-                    return defined.kind == written.kind && defined.function == function;
+                    return defined.kind == *kind && defined.function == function;
                 });
             });
         });
     };
     auto isOnlyCalled = [&](FunctionID function) {
-        ValueFlowObjectID closure = universe.closureOf(function);
-        return !program.at(function).has(FunctionFlags::TakesCallee) && !std::ranges::binary_search(definition.functionsHandedOnAtDefinition, function) && !inputs.hasEscaped(closure) && !inputs.isLost(closure)
-            && !inputs.isHeldByNativeCode(closure) && markedMutationsOf(inputs, closure).isEmpty() && !sets.contains(closuresTakenOutOfMembers, closure);
+        if (program.at(function).has(FunctionFlags::TakesCallee) || std::ranges::binary_search(definition.functionsHandedOnAtDefinition, function))
+            return false;
+        return Claims::useOfClosure(ledger.reachersOf(universe.closureOf(function), closuresTakenOutOfMembers).value_or(Reachers { { }, everyActor })) == ClosureUse::CalledOnly;
     };
 
     Vector<ClassMember> namedMembers;
@@ -563,14 +841,14 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
         if (entry.member.key)
             namedMembers.append(entry.member);
     }
-    AOT::sort(namedMembers, { }, memberOrderOf);
+    AOT::sortInLine(namedMembers, { }, memberOrderOf);
     namedMembers.shrink(std::ranges::unique(namedMembers, { }, memberOrderOf).begin() - namedMembers.begin());
-    if (listsEveryStoredName)
-        listWhatIsStoredOverMembers(inputs, writes.of(id), namedMembers);
+    if (followsMutations && Claims::isStoredToUnderNamesAlone(writersOfEveryOwnProperty[prototypeSide]))
+        listWhatIsStoredOverMembers(inputs, listWhatIsAssigned(inputs, ledger, id, answers).span(), namedMembers);
     Vector<decltype(memberOrderOf(std::declval<const ClassMember&>())), 16> definedMembers(definition.definitions.size(), [&](size_t index) {
         return memberOrderOf(definition.definitions[index].member);
     });
-    AOT::sort(definedMembers);
+    AOT::sortInLine(definedMembers);
     Vector<FunctionID, 16> definedFunctions(definition.definitions.size(), [&](size_t index) {
         return definition.definitions[index].member.function;
     });
@@ -589,172 +867,40 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
         for (ClassMember& member : group) {
             if (holdsWhatWasDefined && isThereFromTheStart && hasOneDefinition)
                 member.mutability = MemberMutability::Fixed;
-            member.isWritableData = holdsWhatWasDefined && isEveryValueData && !mutations[side].contains(ObjectMutation::ChangeIntegrity);
+            member.isWritableData = holdsWhatWasDefined && isEveryValueData && isNeverFrozen[side];
             bool isDefinedByClass = std::ranges::binary_search(definedFunctions, member.function);
             if (followsUses && member.function && isDefinedByClass && isOnlyCalled(member.function))
                 member.closureUse = ClosureUse::CalledOnly;
         }
     }
 
-    if (followsMutations) {
-        bool definesConstructorName = std::ranges::any_of(namedMembers, [&](const ClassMember& member) {
-            return member.side == ClassSide::Prototype && member.key == constructorKey;
+    auto isNamedMember = [&](ClassSide side, PropertyKeyID key) {
+        auto found = std::ranges::lower_bound(namedMembers, std::tuple { side, key }, { }, [](const ClassMember& member) {
+            return std::tuple { member.side, member.key };
         });
-        if (!mutations[prototypeSide].containsAny({ ObjectMutation::ChangePrototype, ObjectMutation::ReachUnknownJavaScript }))
-            flow.prototypeLink = MemberMutability::Fixed;
-        if (!mutations[staticSide].containsAny({ ObjectMutation::ChangePrototype, ObjectMutation::ReachUnknownJavaScript }))
-            flow.staticLink = MemberMutability::Fixed;
+        return found != namedMembers.end() && found->side == side && found->key == key;
+    };
+    if (followsMutations) {
+        flow.prototypeLink = Claims::mutabilityOf(ledger.writersOfPrototypeLink(holders[prototypeSide]));
+        flow.staticLink = Claims::mutabilityOf(ledger.writersOfPrototypeLink(holders[staticSide]));
         ClassMember constructorAsDefined { .key = constructorKey, .side = ClassSide::Prototype, .kind = MethodKind::Method, .function = layout.constructor };
         bool keepsConstructor = keepsMembersUnder(ClassSide::Prototype, singleElementSpan(constructorAsDefined), constructorKey);
-        if (!definesConstructorName && !definition.mayHaveUnknownName[prototypeSide] && keepsConstructor)
+        if (!isNamedMember(ClassSide::Prototype, constructorKey) && !definition.mayHaveUnknownName[prototypeSide] && keepsConstructor)
             flow.constructorProperty = MemberMutability::Fixed;
+        // The language lets nobody write the prototype property of a class.
         flow.prototypeProperty = MemberMutability::Fixed;
     }
     if (build.isEnabled(FlowResultKind::OwnNames, id.index()) && followsMutations) {
-        flow.prototypeNamesAreComplete = !definition.mayHaveUnknownName[prototypeSide] && (!mutations[prototypeSide].containsAny(mutationsOfMembers) || (listsEveryStoredName && writes.under(id, lengthKey).empty() && !mutations[prototypeSide].contains(ObjectMutation::ReachNativeCode)));
-        flow.staticNamesAreComplete = !definition.mayHaveUnknownName[staticSide] && !mutations[staticSide].containsAny(mutationsOfMembers);
+        flow.prototypeNamesAreComplete = !definition.mayHaveUnknownName[prototypeSide] && Claims::namesAreComplete(writersOfEveryOwnProperty[prototypeSide], Claims::Redefinitions::MayAddNames, [&](PropertyKeyID key) {
+            return key != lengthKey && (key == constructorKey || isNamedMember(ClassSide::Prototype, key));
+        });
+        flow.staticNamesAreComplete = !definition.mayHaveUnknownName[staticSide] && Claims::namesAreComplete(writersOfEveryOwnProperty[staticSide], Claims::Redefinitions::MayAddNames, [&](PropertyKeyID key) {
+            return looksThroughStores[staticSide] && (isNamedMember(ClassSide::Static, key) || (key ? layout.findStaticField(key).has_value() : std::ranges::contains(layout.staticFields, key, &StaticField::key)) || isLaidOnEveryClassObject(program, key));
+        });
     }
     flow.members = listMembersInDefinitionOrder(WTF::move(definition.definitions), namedMembers.span());
     flow.namedMembers = WTF::move(namedMembers);
     return flow;
-}
-
-static std::optional<MethodKind> kindOfMemberUnder(ValueFlowNameKind kind)
-{
-    ValueFlowNameShape shape = shapeOf(kind);
-    if (shape.reach != ValueFlowNameReach::OneKey || !shape.isValueOrAccessor())
-        return std::nullopt;
-    return shape.sort == ValueFlowNameSort::Value ? MethodKind::Method : shape.sort == ValueFlowNameSort::Getter ? MethodKind::Getter : MethodKind::Setter;
-}
-
-static LayoutID findClassOfConstructorFunction(const ValueFlowResultInputs& inputs, ValueFlowObjectID closure)
-{
-    FunctionID function = inputs.universe().closureFunction(closure);
-    LayoutID constructed = function ? inputs.program.at(function).constructedClass : LayoutID();
-    return constructed && inputs.program.at(constructed).has(LayoutFlags::IsConstructorFunction) ? constructed : LayoutID();
-}
-
-using HandedToObjectCreate = Vector<std::pair<LayoutID, ValueSetID>>;
-
-static HandedToObjectCreate collectWhatObjectCreateIsHanded(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
-{
-    const Program& program = inputs.program;
-    const ValueFlowUniverse& universe = inputs.universe();
-    HandedToObjectCreate handedToObjectCreate;
-    for (uint32_t index = program.numberOfLayoutsAsRead(); index < program.layouts.size(); ++index) {
-        if (!program.layouts[index].has(LayoutFlags::IsOfCreatedObject))
-            continue;
-        ValueSetID handed = ValueSets::nothing;
-        bool isKnown = false;
-        inputs.sets().forEachMember(universe.objectsWith(LayoutID(index)), [&](ValueFlowObjectID created) {
-            const ValueFlowSite* site = universe.kindOf(created) == ValueFlowObjectKind::Site ? universe.siteOf(created) : nullptr;
-            FunctionID id = site ? universe.functionOf(created) : FunctionID();
-            if (!id || !inputs.isReached(id))
-                return;
-            const Function& function = program.at(id);
-            for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
-                if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::SetLiteralPrototype || function.at(statement.site).objectOperand() != site->value)
-                    continue;
-                handed = maker.unite(handed, seenValuesOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::SetLiteralPrototype::prototype], maker));
-                isKnown = true;
-            }
-        });
-        if (isKnown && !ValueSets::isComplement(handed))
-            handedToObjectCreate.append({ LayoutID(index), handed });
-    }
-    return handedToObjectCreate;
-}
-
-using ClassesOfStoredPrototypeObjects = UncheckedKeyHashMap<uint32_t, LayoutID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-
-static ClassesOfStoredPrototypeObjects collectStoredPrototypeObjects(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex, const HandedToObjectCreate& handedToObjectCreate)
-{
-    const ValueFlowUniverse& universe = inputs.universe();
-    const ValueSets& sets = inputs.sets();
-    ClassesOfStoredPrototypeObjects classes;
-    UncheckedKeyHashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> fewestHandedWith;
-    auto noteObjectsHanded = [&](LayoutID classLayout, ValueSetID handed) {
-        unsigned numberHanded = 0;
-        sets.forEachMember(handed, [&](ValueFlowObjectID stored) {
-            numberHanded += universe.kindOf(stored) == ValueFlowObjectKind::Site;
-        });
-        sets.forEachMember(handed, [&](ValueFlowObjectID stored) {
-            if (universe.kindOf(stored) != ValueFlowObjectKind::Site)
-                return;
-            auto fewest = fewestHandedWith.add(stored.index(), numberHanded);
-            if (fewest.isNewEntry || numberHanded < fewest.iterator->value) {
-                fewest.iterator->value = numberHanded;
-                classes.set(stored.index(), classLayout);
-            } else if (numberHanded == fewest.iterator->value && classes.get(stored.index()) != classLayout)
-                classes.set(stored.index(), LayoutID());
-        });
-    };
-    for (const auto& [layout, handed] : handedToObjectCreate)
-        noteObjectsHanded(layout, handed);
-    const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(ValueFlowName::property(inputs.program.keyOf(BuiltinNames::prototype)));
-    for (const ValueFlowHeapIndex::WrittenNode& node : written ? written->nodes.span() : std::span<const ValueFlowHeapIndex::WrittenNode>()) {
-        if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.seenValue))
-            continue;
-        sets.forEachMember(node.objects, [&](ValueFlowObjectID holder) {
-            noteObjectsHanded(findClassOfConstructorFunction(inputs, holder), node.seenValue);
-        });
-    }
-    return classes;
-}
-
-static WritesToPrototypeObjects collectWritesToPrototypeObjects(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex, const ClassesOfStoredPrototypeObjects& classesOfStoredPrototypeObjects)
-{
-    const ValueFlowUniverse& universe = inputs.universe();
-    const ValueSets& sets = inputs.sets();
-    PropertyKeyID prototypeKey = inputs.program.keyOf(BuiltinNames::prototype);
-    WritesToPrototypeObjects writes;
-    writes.flagsOfClass.fill(0, inputs.program.layouts.size());
-    auto setFlag = [&](LayoutID classLayout, uint8_t flag) {
-        AtomicRef(writes.flagsOfClass[classLayout.index()]).fetch_or(flag, std::memory_order_relaxed);
-    };
-
-    Vector<ValueFlowHeapIndex::Stretch> stretches = heapIndex.stretchesOfNodesWrittenUnder([](ValueFlowName name) {
-        return kindOfMemberUnder(name.kind) || shapeOf(name.kind).mayBeAnyMember() || name.kind == ValueFlowNameKind::Elements;
-    });
-    writes.underNames = collectInParallel<AssignedValue>(inputs.loops(), stretches.size(), [&](unsigned position, Vector<AssignedValue>& found) {
-        ValueFlowName name = stretches[position].name;
-        std::optional<MethodKind> kind = kindOfMemberUnder(name.kind);
-        bool namesElementOrNumberLikeName = name.kind == ValueFlowNameKind::Elements;
-        for (const ValueFlowHeapIndex::WrittenNode& node : stretches[position].nodes) {
-            if (ValueSets::isComplement(node.objects)) {
-                if (!namesElementOrNumberLikeName)
-                    AtomicRef(writes.isAnyObjectWrittenUnderOtherNames).store(true, std::memory_order_relaxed);
-                continue;
-            }
-            Vector<LayoutID, 4> classesWritten;
-            bool isWrittenForOtherObjectsToo = false;
-            sets.forEachMember(node.objects, [&](ValueFlowObjectID holder) {
-                LayoutID constructed = !namesElementOrNumberLikeName && (!kind || PropertyKeyID(name.payload) == prototypeKey) ? findClassOfConstructorFunction(inputs, holder) : LayoutID();
-                bool holdsOther = constructed && (kind != MethodKind::Method || ValueSets::isComplement(node.value) || sets.anyMember(node.value, [&](ValueFlowObjectID stored) {
-                    return stored != universe.prototypeOf(constructed);
-                }));
-                if (holdsOther)
-                    setFlag(constructed, WritesToPrototypeObjects::hasOtherPrototypeObjectFlag);
-                ValueFlowObjectKind kindOfHolder = universe.kindOf(holder);
-                isWrittenForOtherObjectsToo |= kindOfHolder != ValueFlowObjectKind::Prototype && kindOfHolder != ValueFlowObjectKind::Site;
-                LayoutID classLayout = universe.classLayoutOf(holder);
-                if (!classLayout)
-                    classLayout = classesOfStoredPrototypeObjects.get(holder.index());
-                if (classLayout && (classesWritten.isEmpty() || classesWritten.last() != classLayout))
-                    classesWritten.append(classLayout);
-            });
-            for (LayoutID classLayout : classesWritten) {
-                if (kind)
-                    found.append({ classLayout, PropertyKeyID(name.payload), node.value, *kind, isWrittenForOtherObjectsToo || classesWritten.size() > 1 });
-                else
-                    setFlag(classLayout, WritesToPrototypeObjects::isWrittenUnderOtherNamesFlag);
-            }
-        }
-    });
-    parallelSort(inputs.loops(), writes.underNames.mutableSpan(), [](const AssignedValue& a, const AssignedValue& b) {
-        return a.order() < b.order();
-    });
-    return writes;
 }
 
 static std::optional<FunctionID> findFunctionOfAccessorIn(const ValueFlowResultInputs& inputs, ValueSetID value)
@@ -771,6 +917,28 @@ static std::optional<FunctionID> findFunctionOfAccessorIn(const ValueFlowResultI
         function = defined;
     });
     return isKnown ? std::optional(function) : std::nullopt;
+}
+
+// A helper that defines members under its parameter has a copy for each call that writes the name out, and the caller calls the helper as written only where a test has failed.
+// So beside the closure that the copy makes stands the one of the text as written, under every name. The copy's is what is expected.
+static std::optional<FunctionID> findFunctionOfProgramIn(const ValueFlowResultInputs& inputs, ValueSetID value)
+{
+    if (ValueSets::isComplement(value))
+        return std::nullopt;
+    Vector<FunctionID, 2> functions;
+    inputs.sets().forEachMember(value, [&](ValueFlowObjectID member) {
+        if (FunctionID defined = inputs.universe().closureFunction(member); defined && !functions.contains(defined))
+            functions.append(defined);
+    });
+    if (functions.size() == 2) {
+        for (unsigned index = 0; index < 2; ++index) {
+            if (inputs.program.at(functions[index]).derivation.source == functions[1 - index])
+                return functions[index];
+        }
+    }
+    if (functions.size() > 1)
+        return std::nullopt;
+    return functions.isEmpty() ? FunctionID() : functions[0];
 }
 
 enum class StoresUnderAccessors : uint8_t { MayDefineValues, RunSetters };
@@ -815,6 +983,15 @@ static bool listAssignedMembers(const ValueFlowResultInputs& inputs, ValueSetMak
         bool mayBeData = stores == StoresUnderAccessors::MayDefineValues && inputs.sets().meet(values[0], allButUndefined);
         if (mayBeData || !getter || !setter || (!*getter && !*setter)) {
             list(MethodKind::Method, { });
+            // What the program defines under the name is expected there: the member's guard checks the object.
+            std::optional<FunctionID> expectedGetter = findFunctionOfProgramIn(inputs, values[1]);
+            std::optional<FunctionID> expectedSetter = findFunctionOfProgramIn(inputs, values[2]);
+            if (expectedGetter && expectedSetter) {
+                for (auto [kind, function] : { std::pair { MethodKind::Getter, *expectedGetter }, std::pair { MethodKind::Setter, *expectedSetter } }) {
+                    if (function)
+                        flow.members.append({ .key = key, .side = ClassSide::Prototype, .kind = kind, .function = function });
+                }
+            }
             continue;
         }
         if (*getter)
@@ -825,41 +1002,84 @@ static bool listAssignedMembers(const ValueFlowResultInputs& inputs, ValueSetMak
     return listsEveryName;
 }
 
-static void noteWhatConstructorFunctionKeeps(const ValueFlowResultInputs& inputs, LayoutID id, const WritesToPrototypeObjects& writes, bool listsEveryName, ClassFlow& flow)
+// Object.defineProperty(Point.prototype, "norm", { get() { .. } }) and Point.prototype.scale = function () { .. } behind a class declaration: members under names that the class body does not define.
+static void listMembersAssignedToClass(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, LayoutID id, const LedgerOfClassesAndClosures& ledger, std::span<const AssignedValue> assigned, std::optional<BitVector>& namedPrototypeObjects, ClassFlow& flow)
+{
+    bool definesUnknownName = std::ranges::contains(flow.members, PropertyKeyID(), &ClassMember::key);
+    auto isKeyOfClass = [&](PropertyKeyID key) {
+        auto hasKey = [&](const ClassMember& other) { return other.side == ClassSide::Prototype && other.key == key; };
+        return definesUnknownName || key == inputs.program.keyOf(BuiltinNames::constructor) || std::ranges::any_of(flow.namedMembers, hasKey) || std::ranges::any_of(flow.members, hasKey);
+    };
+    auto isNamedByClass = [&](const ClassMember& member) { return isKeyOfClass(member.key); };
+    if (std::ranges::all_of(assigned, [&](const AssignedValue& entry) { return isKeyOfClass(entry.key); }))
+        return;
+    // A helper that defines properties on whatever it is passed says little about this class.
+    if (!namedPrototypeObjects)
+        namedPrototypeObjects = collectPrototypeObjectsNamedByStatements(inputs);
+    if (!namedPrototypeObjects->get(inputs.universe().prototypeOf(id).index()))
+        return;
+    ClassFlow assignedFlow;
+    bool listsEveryName = listAssignedMembers(inputs, maker, assigned, assignedFlow);
+    assignedFlow.members.removeAllMatching(isNamedByClass);
+    assignedFlow.namedMembers.removeAllMatching(isNamedByClass);
+    // Only a compiled function that runs can be called or inlined behind the member's guard.
+    if (std::ranges::none_of(assignedFlow.members, [&](const ClassMember& member) { return inputs.isReached(member.function); }))
+        return;
+    for (Vector<ClassMember>* list : { &assignedFlow.members, &assignedFlow.namedMembers }) {
+        for (ClassMember& member : *list)
+            member.isAssignedByProgram = true;
+    }
+    flow.members.appendVector(assignedFlow.members);
+    flow.namedMembers.appendVector(assignedFlow.namedMembers);
+    AOT::sort(flow.namedMembers, { }, memberOrderOf);
+
+    ValueFlowObjectID prototype = inputs.universe().prototypeOf(id);
+    if (definesUnknownName || !listsEveryName || !inputs.build.isEnabled(FlowResultKind::OwnNames, id.index()) || !inputs.build.isEnabled(FlowResultKind::HolderMutations, id.index()) || !Claims::isInSeenHandsAlone(ledger.handsOpenOn(prototype)))
+        return;
+    flow.prototypeNamesAreComplete = Claims::namesAreComplete(ledger.writersOfEveryOwnProperty(prototype), Claims::Redefinitions::AreListedUnderTheirNames, [](PropertyKeyID) {
+        return true;
+    });
+}
+
+static void noteWhatConstructorFunctionKeeps(const ValueFlowResultInputs& inputs, LayoutID id, const LedgerOfClassesAndClosures& ledger, bool listsEveryName, ClassFlow& flow)
 {
     const Layout& layout = inputs.program.at(id);
     if (!inputs.build.isEnabled(FlowResultKind::HolderMutations, id.index()))
         return;
     bool followsNames = inputs.build.isEnabled(FlowResultKind::OwnNames, id.index());
-    auto isInSeenHandsAlone = [&](ValueFlowObjectID object, OptionSet<ObjectMutation> mutations) {
-        return !mutations.contains(ObjectMutation::ReachUnknownJavaScript) && !inputs.hasEscaped(object) && !inputs.isLost(object);
-    };
 
     ValueFlowObjectID closure = inputs.universe().closureOf(layout.constructor);
-    OptionSet<ObjectMutation> mutationsOfFunction = markedMutationsOf(inputs, closure);
-    if (!isInSeenHandsAlone(closure, mutationsOfFunction))
+    if (!Claims::isInSeenHandsAlone(ledger.handsOpenOn(closure)))
         return;
-    if (!mutationsOfFunction.contains(ObjectMutation::ChangePrototype))
-        flow.staticLink = MemberMutability::Fixed;
-    flow.staticNamesAreComplete = followsNames && !mutationsOfFunction.containsAny(mutationsOfMembers);
+    flow.staticLink = Claims::mutabilityOf(ledger.writersOfPrototypeLink(closure));
+    flow.staticNamesAreComplete = followsNames && Claims::namesAreComplete(ledger.writersOfEveryOwnProperty(closure), Claims::Redefinitions::MayAddNames, [](PropertyKeyID) {
+        return false;
+    });
 
-    if (writes.mayHaveOtherPrototypeObject(id) || mutationsOfFunction.contains(ObjectMutation::RedefineProperty))
+    ValueFlowObjectID prototype = inputs.universe().prototypeOf(id);
+    MemberMutability prototypeProperty = Claims::mutabilityOf(ledger.writersOfProperty(closure, inputs.program.keyOf(BuiltinNames::prototype)), [&](const Write& write) {
+        return write.under.kind == ValueFlowNameKind::Property && !ValueSets::isComplement(write.arrives) && !inputs.sets().anyMember(write.arrives, [&](ValueFlowObjectID stored) {
+            return stored != prototype;
+        });
+    });
+    if (prototypeProperty != MemberMutability::Fixed)
         return;
     if (inputs.program.at(layout.constructor).captures.isEmpty())
         flow.prototypeProperty = MemberMutability::Fixed;
 
-    ValueFlowObjectID prototype = inputs.universe().prototypeOf(id);
-    OptionSet<ObjectMutation> mutations = markedMutationsOf(inputs, prototype);
-    if (!isInSeenHandsAlone(prototype, mutations))
+    if (!Claims::isInSeenHandsAlone(ledger.handsOpenOn(prototype)))
         return;
-    if (!layout.base && !mutations.contains(ObjectMutation::ChangePrototype))
-        flow.prototypeLink = MemberMutability::Fixed;
-    bool mayBeWrittenByNativeCode = mutations.containsAny(mutationsOfMembers) && mutations.contains(ObjectMutation::ReachNativeCode);
-    flow.prototypeNamesAreComplete = followsNames && listsEveryName && !writes.isWrittenUnderOtherNames(id) && !mayBeWrittenByNativeCode;
+    if (!layout.base)
+        flow.prototypeLink = Claims::mutabilityOf(ledger.writersOfPrototypeLink(prototype));
+    flow.prototypeNamesAreComplete = followsNames && listsEveryName && Claims::namesAreComplete(ledger.writersOfEveryOwnProperty(prototype), Claims::Redefinitions::AreListedUnderTheirNames, [](PropertyKeyID) {
+        return true;
+    });
 }
 
-static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, const HandedToObjectCreate& handedToObjectCreate, const ClassesOfStoredPrototypeObjects& holders, const WritesToPrototypeObjects& writes, FlowApplication& application)
+static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, const LedgerOfClassesAndClosures& ledger, AnswersAboutSets& answers, FlowApplication& application)
 {
+    const LedgerOfClassesAndClosures::HandedToObjectCreate& handedToObjectCreate = ledger.handedToObjectCreate();
+    const LedgerOfClassesAndClosures::ClassesOfStoredPrototypeObjects& holders = ledger.classesOfStoredPrototypeObjects();
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
     if (handedToObjectCreate.isEmpty())
@@ -898,7 +1118,7 @@ static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, Val
         ClassFlow& flow = application.layouts[index].classFlow;
         flow.evaluations = ExecutionCount::AtMostOnce;
         flow.prototypeBase = bases[index];
-        listAssignedMembers(inputs, maker, writes.of(LayoutID(index)), flow, StoresUnderAccessors::RunSetters);
+        listAssignedMembers(inputs, maker, listWhatIsAssigned(inputs, ledger, LayoutID(index), answers).span(), flow, StoresUnderAccessors::RunSetters);
     }
     for (const auto& [holder, classLayout] : holders) {
         if (!classLayout || states[classLayout.index()] != State::Known)
@@ -919,68 +1139,95 @@ static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, Val
     }
 }
 
-// `Object.setPrototypeOf(Derived.prototype, Base.prototype)`, where Base is a parameter of a factory, so no type names a base.
-// Returns, by layout of a constructor function, the one other class whose prototype object the program links above its prototype object.
-static Vector<LayoutID> collectBasesLinkedByProgram(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex)
+namespace {
+
+// A write through an object that flow has lost is filed on every holder that has escaped, function objects and prototype objects alike.
+// A helper that links the prototype objects of classes writes through no function object.
+struct HoldersThatLinksGoThrough {
+    bool areKnown(ValueSetID through)
+    {
+        if (ValueSets::isComplement(through))
+            return false;
+        return answersBySet.ensure(through.index(), [&] {
+            return !inputs.sets().meet(through, inputs.universe().closures()) && !inputs.sets().meet(through, inputs.universe().placeholdersAlone());
+        }).iterator->value;
+    }
+
+    const ValueFlowResultInputs& inputs;
+    UncheckedKeyHashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> answersBySet { };
+};
+
+} // anonymous namespace
+
+static std::optional<LayoutID> findBaseLinkedByProgram(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, HoldersThatLinksGoThrough& holders, LayoutID derived)
 {
-    const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
-    Vector<LayoutID> bases(program.layouts.size());
-    const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(prototypeLinkName);
-    if (!written)
-        return bases;
-    auto classOfPrototypeObject = [&](ValueFlowObjectID object) {
-        return universe.kindOf(object) == ValueFlowObjectKind::Prototype ? universe.classLayoutOf(object) : LayoutID();
-    };
-    BitVector hasSeveral(program.layouts.size());
-    for (const ValueFlowHeapIndex::WrittenNode& node : written->nodes) {
-        if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.seenValue))
+    if (!inputs.program.at(derived).has(LayoutFlags::IsConstructorFunction))
+        return LayoutID();
+    LayoutID found;
+    bool hasSeveral = false;
+    bool isNamedThroughKnownHolders = false;
+    for (const Write& write : ledger.writersOfPrototypeLink(universe.prototypeOf(derived)).seen().predicted()) {
+        if (ValueSets::isComplement(write.seenToArrive))
             continue;
-        inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID holder) {
-            LayoutID derived = classOfPrototypeObject(holder);
-            if (!derived || !program.at(derived).has(LayoutFlags::IsConstructorFunction))
+        inputs.sets().forEachMemberInLine(write.seenToArrive, [&](ValueFlowObjectID linked) {
+            LayoutID base = universe.kindOf(linked) == ValueFlowObjectKind::Prototype ? universe.classLayoutOf(linked) : LayoutID();
+            // A factory that is handed its own result links two functions of the same text.
+            if (!base || base == derived)
                 return;
-            inputs.sets().forEachMember(node.seenValue, [&](ValueFlowObjectID linked) {
-                LayoutID base = classOfPrototypeObject(linked);
-                // A factory that is handed its own result links two functions of the same text.
-                if (!base || base == derived)
-                    return;
-                if (bases[derived.index()] && bases[derived.index()] != base)
-                    hasSeveral.quickSet(derived.index());
-                bases[derived.index()] = base;
-            });
+            hasSeveral |= found && found != base;
+            found = base;
+            isNamedThroughKnownHolders |= holders.areKnown(write.through);
         });
     }
-    for (size_t index : hasSeveral)
-        bases[index] = LayoutID();
-    return bases;
+    if (found && (hasSeveral || !isNamedThroughKnownHolders))
+        return std::nullopt;
+    return found;
+}
+
+std::optional<LayoutID> findBaseLinkedByProgram(const ValueFlowResultInputs& inputs, LayoutID derived)
+{
+    HoldersThatLinksGoThrough holders { inputs };
+    return findBaseLinkedByProgram(inputs, *inputs.classesAndClosures, holders, derived);
+}
+
+// `Object.setPrototypeOf(Derived.prototype, Base.prototype)`, where Base is a parameter of a factory, so no type names a base.
+// Returns, by layout of a constructor function, the one other class whose prototype object the program links above its prototype object.
+static Vector<LayoutID> collectBasesLinkedByProgram(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger)
+{
+    HoldersThatLinksGoThrough holders { inputs };
+    return Vector<LayoutID>(inputs.program.layouts.size(), [&](size_t index) {
+        return findBaseLinkedByProgram(inputs, ledger, holders, LayoutID(static_cast<uint32_t>(index))).value_or(LayoutID());
+    });
+}
+
+// The same rule as expectedBaseOf(), on the results that are not applied yet.
+static LayoutID expectedBaseIn(const Program& program, const FlowApplication& application, LayoutID id)
+{
+    const LayoutFlow& flow = application.layouts[id.index()].flow;
+    switch (flow.baseState) {
+    case BaseState::Layout:
+        return flow.base;
+    case BaseState::Unknown:
+        return program.at(id).base;
+    case BaseState::None:
+        return application.layouts[id.index()].classFlow.prototypeBase;
+    case BaseState::BuiltinClass:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // Every walk up the expected bases must end, so a linked base that closes a cycle is dropped.
 static void dropLinkedBasesInCycles(const Program& program, std::span<const LayoutID> basesLinkedByProgram, FlowApplication& application)
 {
-    // The same rule as expectedBaseOf(), on the results that are not applied yet.
-    auto expectedBase = [&](LayoutID id) -> LayoutID {
-        const LayoutFlow& flow = application.layouts[id.index()].flow;
-        switch (flow.baseState) {
-        case BaseState::Layout:
-            return flow.base;
-        case BaseState::Unknown:
-            return program.at(id).base;
-        case BaseState::None:
-            return application.layouts[id.index()].classFlow.prototypeBase;
-        case BaseState::BuiltinClass:
-            return { };
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    };
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         LayoutID linked = basesLinkedByProgram[index];
         if (!linked || program.layouts[index].base || application.layouts[index].classFlow.prototypeBase != linked)
             continue;
         LayoutID current = linked;
         for (size_t steps = 0; current && steps <= program.layouts.size(); ++steps)
-            current = expectedBase(current);
+            current = expectedBaseIn(program, application, current);
         if (current)
             application.layouts[index].classFlow.prototypeBase = LayoutID();
     }
@@ -1033,30 +1280,309 @@ void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& 
     }
     ValueSetID closuresTakenOutOfMembers = findClosuresTakenOutOfMembers(inputs, maker, maker.of(closuresOfMembers.span()));
     times.didFinish("classes: closures taken out of members"_s);
-    HandedToObjectCreate handedToObjectCreate = collectWhatObjectCreateIsHanded(inputs, maker);
-    ClassesOfStoredPrototypeObjects classesOfStoredPrototypeObjects = collectStoredPrototypeObjects(inputs, *inputs.heapIndex, handedToObjectCreate);
-    WritesToPrototypeObjects writes = collectWritesToPrototypeObjects(inputs, *inputs.heapIndex, classesOfStoredPrototypeObjects);
-    times.didFinish("classes: writes to prototype objects"_s);
-    noteClassesOfCreatedObjects(inputs, maker, handedToObjectCreate, classesOfStoredPrototypeObjects, writes, application);
-    Vector<LayoutID> basesLinkedByProgram = collectBasesLinkedByProgram(inputs, *inputs.heapIndex);
+    const LedgerOfClassesAndClosures& ledger = *inputs.classesAndClosures;
+    AnswersAboutSets answers;
+    noteClassesOfCreatedObjects(inputs, maker, ledger, answers, application);
+    Vector<LayoutID> basesLinkedByProgram = collectBasesLinkedByProgram(inputs, ledger);
+    std::optional<BitVector> namedPrototypeObjects;
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
         ClassFlow& flow = application.layouts[index].classFlow;
         if (!layout.constructor)
             continue;
         if (!layout.has(LayoutFlags::IsConstructorFunction)) {
-            if (classes[index].isFollowed)
-                flow = computeClassFlow(inputs, LayoutID(index), WTF::move(classes[index]), closuresTakenOutOfMembers, writes);
+            if (classes[index].isFollowed) {
+                flow = computeClassFlow(inputs, LayoutID(index), WTF::move(classes[index]), closuresTakenOutOfMembers, ledger, answers);
+                if (flow.evaluations == ExecutionCount::AtMostOnce && (layout.base || !layout.has(LayoutFlags::HasHeritage)))
+                    listMembersAssignedToClass(inputs, maker, LayoutID(index), ledger, listWhatIsAssigned(inputs, ledger, LayoutID(index), answers).span(), namedPrototypeObjects, flow);
+            }
             continue;
         }
         flow.prototypeBase = layout.base ? layout.base : basesLinkedByProgram[index];
         if (classes[index].isFollowed && classes[index].isCreatedAtMostOnce() && inputs.build.isEnabled(FlowResultKind::ClassEvaluations, index)) {
             flow.evaluations = ExecutionCount::AtMostOnce;
-            bool listsEveryName = listAssignedMembers(inputs, maker, writes.of(LayoutID(index)), flow);
-            noteWhatConstructorFunctionKeeps(inputs, LayoutID(index), writes, listsEveryName, flow);
+            bool listsEveryName = listAssignedMembers(inputs, maker, listWhatIsAssigned(inputs, ledger, LayoutID(index), answers).span(), flow);
+            noteWhatConstructorFunctionKeeps(inputs, LayoutID(index), ledger, listsEveryName, flow);
         }
     }
     dropLinkedBasesInCycles(program, basesLinkedByProgram.span(), application);
+}
+
+namespace {
+
+struct CallThatNamesPrototype {
+    LayoutID holder;
+    const ValueFlowStatement* statement { nullptr };
+    bool mayFollowConstruction { false };
+};
+
+struct PlaceOfDefinition {
+    FunctionID function;
+    ValueID site;
+    uint32_t definition { 0 };
+};
+
+struct ConstructionBehindCall {
+    LayoutID constructed;
+    ValueID call;
+};
+
+class SoleCallSites {
+public:
+    SoleCallSites(const Program& program, const FlowCallsOfProgram& calls)
+        : m_sites(program.functions.size())
+        , m_hasSeveral(program.functions.size())
+    {
+        for (const FlowCall& call : calls.calls) {
+            std::pair<FunctionID, ValueID>& site = m_sites[call.callee.index()];
+            if (call.caller == calls.host || (site.first && site != std::pair { call.caller, call.site }))
+                m_hasSeveral.quickSet(call.callee.index());
+            site = { call.caller, call.site };
+        }
+        for (const Vector<FunctionID>& callees : calls.calleeLists) {
+            for (FunctionID callee : callees)
+                m_hasSeveral.quickSet(callee.index());
+        }
+    }
+
+    std::optional<std::pair<FunctionID, ValueID>> of(FunctionID function) const
+    {
+        if (m_hasSeveral.quickGet(function.index()) || !m_sites[function.index()].first)
+            return std::nullopt;
+        return m_sites[function.index()];
+    }
+
+private:
+    Vector<std::pair<FunctionID, ValueID>> m_sites;
+    BitVector m_hasSeveral;
+};
+
+} // anonymous namespace
+
+static bool isAccessorDefinedByStatement(const Layout& holder, const ClassMember& member)
+{
+    bool isAccessor = member.kind == MethodKind::Getter || member.kind == MethodKind::Setter;
+    return isAccessor && member.key && member.side == ClassSide::Prototype && (holder.has(LayoutFlags::IsConstructorFunction) || member.isAssignedByProgram);
+}
+
+static bool mayDefineMemberUnder(const ValueFlowResultInputs& inputs, const ValueFlowStatement& call, PropertyKeyID key, ValueSetMaker& maker)
+{
+    const ValueFlowUniverse& universe = inputs.universe();
+    ValueSetID named = possibleValuesOf(inputs, inputs.bodies().operandsOf(call)[OperandIndex::Call::arguments + 1], maker);
+    if (ValueSets::isComplement(named) || named == ValueSets::nothing)
+        return true;
+    return inputs.sets().anyMember(named, [&](ValueFlowObjectID value) {
+        switch (universe.kindOf(value)) {
+        case ValueFlowObjectKind::Key:
+            return universe.keyOf(value) == key;
+        case ValueFlowObjectKind::Builtin:
+        case ValueFlowObjectKind::ModuleBuiltin:
+        case ValueFlowObjectKind::Namespace:
+        case ValueFlowObjectKind::Closure:
+        case ValueFlowObjectKind::FunctionPrototype:
+        case ValueFlowObjectKind::Prototype:
+            return false;
+        default:
+            break;
+        }
+        LayoutID layout = universe.layoutOf(value);
+        return !layout || std::ranges::contains(inputs.program.at(layout).fields, key, &Field::key);
+    });
+}
+
+static Vector<ConstructionBehindCall> findConstructionsBehindCalls(const Program& program, const FlowCallsOfProgram& calls, FunctionID caller, std::span<const ValueID> sites)
+{
+    Vector<ConstructionBehindCall> constructions;
+    BitVector entered(program.functions.size());
+    BitVector listsEntered(calls.calleeLists.size());
+    Vector<FunctionID> worklist;
+    auto enter = [&](FunctionID callee) {
+        if (!entered.quickSet(callee.index()))
+            worklist.append(callee);
+    };
+    auto enterCalleesOf = [&](FunctionID function, ValueID site) {
+        for (const FlowCall& call : recordsWith(calls.calls.span(), function, &FlowCall::caller)) {
+            if (!site || call.site == site)
+                enter(call.callee);
+        }
+        for (const FlowCallOfList& call : recordsWith(calls.callsOfLists.span(), function, &FlowCallOfList::caller)) {
+            if ((site && call.site != site) || listsEntered.quickSet(call.calleeList))
+                continue;
+            for (FunctionID callee : calls.calleeLists[call.calleeList])
+                enter(callee);
+        }
+    };
+    for (ValueID site : sites) {
+        enterCalleesOf(caller, site);
+        while (!worklist.isEmpty()) {
+            FunctionID function = worklist.takeLast();
+            if (LayoutID constructed = program.at(function).constructedClass)
+                constructions.append({ constructed, site });
+            enterCalleesOf(function, { });
+        }
+    }
+    return constructions;
+}
+
+void noteAccessorsDefinedAfterObjectsAreMade(const ValueFlowResultInputs& inputs, const FlowCallsOfProgram& calls, FlowResultTables& tables)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    FlowApplication& application = *tables.application;
+    auto holdsSuchAccessor = [&](uint32_t index) {
+        return std::ranges::any_of(application.layouts[index].classFlow.members, [&](const ClassMember& member) {
+            return isAccessorDefinedByStatement(program.layouts[index], member);
+        });
+    };
+    Vector<uint32_t> holdersOfAccessors = findIndicesInParallel(inputs.loops(), program.layouts.size(), holdsSuchAccessor);
+    if (holdersOfAccessors.isEmpty())
+        return;
+
+    Vector<Vector<LayoutID>> classesBelow(program.layouts.size());
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        if (LayoutID base = program.layouts[index].constructor ? expectedBaseIn(program, application, LayoutID(index)) : LayoutID())
+            classesBelow[base.index()].append(LayoutID(index));
+    }
+    UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classesAtOrBelowHolders;
+    auto classesAtOrBelow = [&](LayoutID holder) -> const BitVector& {
+        auto added = classesAtOrBelowHolders.add(holder.index(), BitVector());
+        if (added.isNewEntry) {
+            BitVector& below = added.iterator->value;
+            below.ensureSize(program.layouts.size());
+            Vector<LayoutID> worklist { holder };
+            while (!worklist.isEmpty()) {
+                LayoutID current = worklist.takeLast();
+                if (!below.quickSet(current.index()))
+                    worklist.appendVector(classesBelow[current.index()]);
+            }
+        }
+        return added.iterator->value;
+    };
+    BitVector holders(program.layouts.size());
+    for (uint32_t index : holdersOfAccessors) {
+        bool hidesField = false;
+        for (size_t storing : classesAtOrBelow(LayoutID(index))) {
+            hidesField |= std::ranges::any_of(application.layouts[index].classFlow.members, [&](const ClassMember& member) {
+                return isAccessorDefinedByStatement(program.layouts[index], member) && std::ranges::contains(program.layouts[storing].fields, member.key, &Field::key);
+            });
+        }
+        if (hidesField)
+            holders.quickSet(index);
+        else
+            classesAtOrBelowHolders.remove(index);
+    }
+    if (holders.isEmpty())
+        return;
+
+    Vector<CallThatNamesPrototype> definitions = collectInParallel<CallThatNamesPrototype>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<CallThatNamesPrototype>& found) {
+        if (!inputs.isReached(FunctionID(index)))
+            return;
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Call)
+                continue;
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+            if (operands.size() < OperandIndex::Call::arguments + 2 || !operands[OperandIndex::Call::arguments].node)
+                continue;
+            ValueSetID possible = inputs.solver().possibleValuesOf(operands[OperandIndex::Call::arguments].node);
+            ValueFlowObjectID only = ValueSets::isComplement(possible) ? ValueFlowObjectID() : inputs.sets().onlyMember(possible);
+            LayoutID holder = only ? universe.classLayoutOf(only) : LayoutID();
+            if (holder && holders.quickGet(holder.index()))
+                found.append({ holder, &statement });
+        }
+    });
+    if (definitions.isEmpty())
+        return;
+
+    SoleCallSites soleCallSites(program, calls);
+    Vector<PlaceOfDefinition> places;
+    for (uint32_t definition = 0; definition < definitions.size(); ++definition) {
+        size_t first = places.size();
+        places.append({ definitions[definition].statement->function, definitions[definition].statement->site, definition });
+        while (auto site = soleCallSites.of(places.last().function)) {
+            if (std::ranges::contains(places.span().subspan(first), site->first, &PlaceOfDefinition::function))
+                break;
+            places.append({ site->first, site->second, definition });
+        }
+    }
+    AOT::sort(places, { }, [](const PlaceOfDefinition& place) {
+        return std::tuple { place.function, place.site, place.definition };
+    });
+
+    for (size_t first = 0, end = 0; first < places.size(); first = end) {
+        FunctionID function = places[first].function;
+        while (end < places.size() && places[end].function == function)
+            ++end;
+        std::span<const PlaceOfDefinition> placesInFunction = places.span().subspan(first, end - first);
+        FunctionAnalyses analyses(AnalysisContext { inputs.build, program, nullptr, nullptr, function }, program.at(function));
+        Vector<BitVector> blocksLeadingToPlaces(placesInFunction.size(), [&](size_t index) {
+            BitVector leading(analyses.cfg().numNodes());
+            ValueLocation location = analyses.useLists().locationOf(placesInFunction[index].site);
+            Vector<BlockID> worklist;
+            if (location.placement == ValuePlacement::InBlock)
+                worklist.append(location.block);
+            while (!worklist.isEmpty()) {
+                for (BlockID predecessor : analyses.cfg().predecessors(worklist.takeLast())) {
+                    if (!leading.quickSet(predecessor.index()))
+                        worklist.append(predecessor);
+                }
+            }
+            return leading;
+        });
+        auto mayComeBefore = [&](ValueID call, const PlaceOfDefinition& place) {
+            ValueLocation location = analyses.useLists().locationOf(place.site);
+            ValueLocation locationOfCall = analyses.useLists().locationOf(call);
+            if (call == place.site || location.placement != ValuePlacement::InBlock || locationOfCall.placement != ValuePlacement::InBlock)
+                return false;
+            bool leadsToPlace = (locationOfCall.block == location.block && locationOfCall.index < location.index) || blocksLeadingToPlaces[&place - placesInFunction.data()].quickGet(locationOfCall.block.index());
+            return leadsToPlace && !analyses.dominates(place.site, ProgramPoint { locationOfCall.block, locationOfCall.index });
+        };
+        Vector<ValueID> callsBefore;
+        auto noteCall = [&](ValueID call) {
+            if (!callsBefore.isEmpty() && callsBefore.last() == call)
+                return;
+            if (std::ranges::any_of(placesInFunction, [&](const PlaceOfDefinition& place) { return mayComeBefore(call, place); }))
+                callsBefore.append(call);
+        };
+        for (const FlowCall& call : recordsWith(calls.calls.span(), function, &FlowCall::caller))
+            noteCall(call.site);
+        for (const FlowCallOfList& call : recordsWith(calls.callsOfLists.span(), function, &FlowCallOfList::caller))
+            noteCall(call.site);
+        if (callsBefore.isEmpty())
+            continue;
+        Vector<ConstructionBehindCall> constructions = findConstructionsBehindCalls(program, calls, function, callsBefore.span());
+        for (const PlaceOfDefinition& place : placesInFunction) {
+            CallThatNamesPrototype& definition = definitions[place.definition];
+            definition.mayFollowConstruction |= std::ranges::any_of(constructions, [&](const ConstructionBehindCall& construction) {
+                return classesAtOrBelow(definition.holder).quickGet(construction.constructed.index()) && mayComeBefore(construction.call, place);
+            });
+        }
+    }
+
+    AOT::stableSortInLine(definitions, { }, &CallThatNamesPrototype::holder);
+    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+    for (std::span<const CallThatNamesPrototype> remaining = definitions.span(); !remaining.empty();) {
+        LayoutID holder = remaining.front().holder;
+        std::span<const CallThatNamesPrototype> ofHolder = recordsWith(remaining, holder, &CallThatNamesPrototype::holder);
+        remaining = remaining.subspan(ofHolder.size());
+        if (std::ranges::none_of(ofHolder, &CallThatNamesPrototype::mayFollowConstruction))
+            continue;
+        ClassFlow& flow = application.layouts[holder.index()].classFlow;
+        auto isDefinedAfterObjectsAreMade = [&](PropertyKeyID key) {
+            bool isDefined = false;
+            for (const CallThatNamesPrototype& definition : ofHolder) {
+                if (!mayDefineMemberUnder(inputs, *definition.statement, key, borrowedMaker.get()))
+                    continue;
+                if (!definition.mayFollowConstruction)
+                    return false;
+                isDefined = true;
+            }
+            return isDefined;
+        };
+        for (Vector<ClassMember>* list : { &flow.members, &flow.namedMembers } ) {
+            for (ClassMember& member : *list)
+                member.isDefinedAfterObjectsAreMade = isAccessorDefinedByStatement(program.at(holder), member) && isDefinedAfterObjectsAreMade(member.key);
+        }
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -117,7 +117,8 @@ static void testDictionaryNeverFlattenedGetsRow(LoadedProgram& program)
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
     object->getPropertySlot(program.realm(), fixture.shared, slot);
     PropertyAnswer first = classifyRead({ program.realm(), object, object->structure(), fixture.shared.impl(), slot });
-    AOT_TEST_CHECK(first.didFlatten && !object->structure()->isDictionary());
+    // Nothing of a cacheable dictionary moves when it is made flat, so the look that makes it flat is answered.
+    AOT_TEST_CHECK(first.kind == PropertyAnswerKind::Value && !first.didFlatten && !object->structure()->isDictionary());
     AOT_TEST_CHECK(holdsOwnValueOf(fixture.readAndFill(object), object));
     AOT_TEST_CHECK(fixture.hasRow(object));
 }
@@ -167,20 +168,22 @@ static void testFailedFillsAreAskedForMoreRarely(LoadedProgram& program)
     unfiled->putDirect(program.vm(), fixture.shared, jsNumber(8));
     AOT_TEST_CHECK(!fixture.isInHashedTable(unfiled) && !fixture.hasRow(unfiled));
 
-    // The stubs count the misses of all empty sites together: how soon an empty site asks again does not depend on how often its fill has failed.
+    // The stubs count the misses of all empty sites together. A site for which nothing was found gets a slot that fits no object, so that it counts its own.
     for (unsigned failures = 0; failures < 3; ++failures) {
+        unsigned refillCount = fixture.caches.siteCaches().refillCountOf(fixture.site);
         fixture.caches.fillSiteCacheFromTables(fixture.site, unfiled, fixture.number, SlotAccess::Read);
-        AOT_TEST_CHECK(fixture.site->get().isEmpty() && missesLeft() == SiteCacheState::missesBeforeRefill(0));
+        AOT_TEST_CHECK(!fixture.site->get().isEmpty() && !fixture.site->get().structureID && missesLeft() == SiteCacheState::missesBeforeRefill(refillCount));
+        AOT_TEST_CHECK(fixture.caches.siteCaches().refillCountOf(fixture.site) == refillCount + 1);
     }
 
     JSObject* filed = createObjectWithSharedName(fixture);
     AOT_TEST_CHECK(filed->structure() != unfiled->structure() && holdsOwnValueOf(fixture.readAndFill(filed), filed));
     for (unsigned failures = 0; failures < SiteCacheState::maxRefillCount + 2; ++failures) {
-        unsigned refillCount = fixture.caches.siteCaches().stateOf(fixture.site).refillCount;
+        unsigned refillCount = fixture.caches.siteCaches().refillCountOf(fixture.site);
         fixture.caches.fillSiteCacheFromTables(fixture.site, unfiled, fixture.number, SlotAccess::Read);
         AOT_TEST_CHECK(holdsOwnValueOf(fixture.site->get(), filed));
         AOT_TEST_CHECK(missesLeft() == SiteCacheState::missesBeforeRefill(refillCount));
-        AOT_TEST_CHECK(fixture.caches.siteCaches().stateOf(fixture.site).refillCount == std::min(refillCount + 1, SiteCacheState::maxRefillCount));
+        AOT_TEST_CHECK(fixture.caches.siteCaches().refillCountOf(fixture.site) == std::min(refillCount + 1, SiteCacheState::maxRefillCount));
     }
     AOT_TEST_CHECK(missesLeft() == SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount));
 }

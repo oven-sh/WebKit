@@ -125,11 +125,14 @@ function f3 name="callInDispatch" parameters=[{type=boolean}, {type=anything}] r
   b6():
     v8 = Integer integer=30
     Return v8
-# CHECK: Jump -> next b3(v2)
+# No edge can skip the call. Both say which state comes, so each gets the block for itself.
+# CHECK: Jump -> next [[copy]](v2)
 # CHECK: Jump -> next b3(v3)
 # CHECK: b3(
 # CHECK-NEXT: = Call v1
 # CHECK-NEXT: Switch v4 cases=[1, 2]
+# CHECK: [[copy]](
+# CHECK-NEXT: = Call v1
 # SIMPLE: Switch
 }
 

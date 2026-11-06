@@ -112,7 +112,7 @@ static void stampOperands(const ValueFlowResultInputs& inputs, TypeTable& types,
             numberOfUnknownOperands += inputs.sets().contains(held, ValueFlowUniverse::unknownObject());
             stamp(StampedOperand { id, function, statement, operand, typeByRules, family, held, seen, arena, positions, maker, application.bodies[index], worker });
         }
-        AOT::sort(application.bodies[index].*stamps, { }, [](const auto& entry) { return entry.value; });
+        AOT::sortInLine(application.bodies[index].*stamps, { }, [](const auto& entry) { return entry.value; });
         inputs.build.statistics().count(statisticOfUnknownOperands, numberOfUnknownOperands);
     });
     TypeRemap remap = phase->finish(StringRemap { }, &inputs.loops());
@@ -121,6 +121,52 @@ static void stampOperands(const ValueFlowResultInputs& inputs, TypeTable& types,
         if (!remap.isIdentityFor(index))
             remapTypes(application.bodies[index], remap);
     });
+}
+
+// n statements that hand over the same set ask about it once.
+using SetsOfOnlyDataFromOutside = UncheckedKeyHashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+
+// Nothing but primitives is no answer. A set of everything, or one that holds what nobody knows, is not such data.
+static bool holdsOnlyDataFromOutside(const ValueFlowResultInputs& inputs, const StampedOperand& stamped, ValueSetID held, SetsOfOnlyDataFromOutside& answers)
+{
+    if (ValueSets::isComplement(held) || held == ValueSets::nothing)
+        return false;
+    return answers.ensure(held.index(), [&] {
+        const ValueSets& sets = inputs.sets();
+        if (sets.contains(held, ValueFlowUniverse::unknownObject()))
+            return false;
+        ValueSetID objects = stamped.maker.intersect(held, inputs.universe().knownObjects());
+        if (objects == ValueSets::nothing)
+            return false;
+        bool isOnlyDataFromOutside = true;
+        sets.forEachMember(objects, [&](ValueFlowObjectID object) {
+            isOnlyDataFromOutside = isOnlyDataFromOutside && stamped.positions.isDataFromOutside(object);
+        });
+        return isOnlyDataFromOutside;
+    }).iterator->value;
+}
+
+static void noteWhetherOnlyDataFromOutsideComesOut(const ValueFlowResultInputs& inputs, FlowResultTables& tables, const StampedOperand& stamped, SetsOfOnlyDataFromOutside& answers)
+{
+    if (stamped.statement.result && holdsOnlyDataFromOutside(inputs, stamped, inputs.solver().possibleValuesOf(stamped.statement.result), answers))
+        tables.sites.sitesThatHandOverOnlyDataFromOutside[tables.application->accessSites.siteOfValue(stamped.id, stamped.statement.site).index()] = true;
+}
+
+static void noteWhetherCallIsHandedOnlyDataFromOutside(const ValueFlowResultInputs& inputs, FlowResultTables& tables, const StampedOperand& callee, SetsOfOnlyDataFromOutside& answers)
+{
+    bool isHandedSuchData = false;
+    for (const ValueFlowOperand& operand : inputs.bodies().operandsOf(callee.statement).subspan(1)) {
+        ValueSetID held = inputs.possibleValuesOf(callee.maker, operand);
+        if (held == ValueSets::nothing)
+            continue;
+        if (!ValueSets::isComplement(held) && !inputs.sets().contains(held, ValueFlowUniverse::unknownObject()) && callee.maker.intersect(held, inputs.universe().knownObjects()) == ValueSets::nothing)
+            continue;
+        if (!holdsOnlyDataFromOutside(inputs, callee, held, answers))
+            return;
+        isHandedSuchData = true;
+    }
+    if (isHandedSuchData)
+        tables.sites.callsHandedOnlyDataFromOutside[tables.application->accessSites.siteOfValue(callee.id, callee.statement.site).index()] = true;
 }
 
 static Vector<uint64_t> findLayoutsWithFieldOfKey(const ValueFlowResultInputs& inputs, const FlowApplication& application)
@@ -185,6 +231,48 @@ static void findOpensOfUndecidedStorage(const ValueFlowResultInputs& inputs, Flo
     });
 }
 
+namespace {
+
+struct ProxyMadeAtSite {
+    ValueFlowObjectID object;
+    ValueSetID handlers;
+    ValueSetID targets;
+};
+
+} // anonymous namespace
+
+// Sorted by object. A call that native code makes, or one with a list for its arguments, has no entry.
+static Vector<ProxyMadeAtSite> findProxiesMadeAtSites(const ValueFlowResultInputs& inputs)
+{
+    const ValueFlowUniverse& universe = inputs.universe();
+    const BuiltinTable& builtins = inputs.program.builtins();
+    if (!builtins.contains(Builtins::Proxy) || !builtins.contains(Builtins::ProxyRevocable))
+        return { };
+    if (inputs.solver().usesOf(Builtins::Proxy).isEmpty() && inputs.solver().usesOf(Builtins::ProxyRevocable).isEmpty())
+        return { };
+    ValueSetMakers makers(inputs);
+    Vector<ProxyMadeAtSite> made = collectWithMakers<ProxyMadeAtSite>(inputs, makers, inputs.program.functions.size(), [&](unsigned function, ValueSetMaker& maker, Vector<ProxyMadeAtSite>& found) {
+        if (!inputs.isReached(FunctionID(function)))
+            return;
+        for (const ValueFlowStatement& call : inputs.bodies().statementsOf(function)) {
+            if (call.kind != ValueFlowStatementKind::Operation || (call.opcode != Opcode::Construct && call.opcode != Opcode::Call))
+                continue;
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(call);
+            constexpr unsigned firstArgument = 2;
+            if (operands.size() < firstArgument + 2)
+                continue;
+            ValueSetID callees = inputs.possibleValuesOf(maker, operands[0]);
+            bool answersProxy = call.opcode == Opcode::Construct;
+            if (ValueSets::isComplement(callees) || !inputs.sets().contains(callees, universe.objectOf(answersProxy ? Builtins::Proxy : Builtins::ProxyRevocable)))
+                continue;
+            if (ValueFlowObjectID object = universe.siteObject(call, answersProxy ? 0 : 1))
+                found.append({ object, inputs.seenValuesOf(maker, operands[firstArgument + 1]), inputs.seenValuesOf(maker, operands[firstArgument]) });
+        }
+    });
+    AOT::sort(made, { }, &ProxyMadeAtSite::object);
+    return made;
+}
+
 void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types, FlowResultTables& tables)
 {
     using ListedReceiversKnownToWorker = HashMap<uint64_t, const ListedReceivers*, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
@@ -193,7 +281,12 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         ListedReceiversKnownToWorker blocks;
         Vector<uint32_t> lastListing;
         uint32_t numberOfListings { 0 };
+        // Many accesses have the same receivers, and many of those the same key.
+        HashMap<uint32_t, FlowSiteLoss, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lossesOfReceivers;
+        HashMap<uint64_t, std::optional<LayoutSet>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> receiversSeenUnderKeys;
+        Vector<FlowProxiesSeenAtSite> proxiesSeenAtSites;
     };
+    AOT_THRESHOLD(uint32_t, fewestMembersToRemember, 32);
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
     const ValueSets& sets = inputs.sets();
@@ -203,6 +296,28 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
     SharedMemo<ListedReceivers> listedBlocks;
     Vector<uint64_t> layoutsWithFieldOfKey = findLayoutsWithFieldOfKey(inputs, application);
     Vector<uint32_t> layoutsOfMembers = findLayoutsOfMembers(inputs);
+    if (inputs.build.isEnabledEverywhere(FlowResultKind::ReceiverSets)) {
+        BitVector privateNamesOfAppendedFields;
+        for (const FlowLayoutUpdate& layout : application.layouts) {
+            for (const FlowAppendedField& field : layout.appendedFields) {
+                if (program.at(field.key).kind == PropertyKeyKind::PrivateName)
+                    privateNamesOfAppendedFields.set(field.key.index());
+            }
+        }
+        for (size_t key : privateNamesOfAppendedFields) {
+            auto begin = std::ranges::lower_bound(layoutsWithFieldOfKey, static_cast<uint64_t>(key) << 32);
+            auto end = std::ranges::lower_bound(begin, layoutsWithFieldOfKey.end(), static_cast<uint64_t>(key + 1) << 32);
+            Vector<LayoutID> allocatedLayouts;
+            for (auto holder = begin; holder != end; ++holder) {
+                LayoutID layout(static_cast<uint32_t>(*holder));
+                if (application.layouts[layout.index()].flow.allocation != AllocationState::NeverAllocated)
+                    allocatedLayouts.append(layout);
+            }
+            if (allocatedLayouts.isEmpty() || allocatedLayouts.size() > inputs.build.limit(LimitID::MaxLayoutsInType))
+                continue;
+            application.layoutsWithPrivateNames.append({ PropertyKeyID(static_cast<uint32_t>(key)), WTF::move(allocatedLayouts) });
+        }
+    }
     constexpr uint16_t noClass = UINT16_MAX;
     static_assert(BuiltinClassID::hashTableDeletedIndex < noClass);
     auto builtinClassesOfMembers = std::make_unique<std::atomic<uint16_t>[]>(universe.numberOfObjects());
@@ -292,6 +407,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             AOT::sort(listed.layouts);
         });
     };
+    // An empty set: no object that was seen to arrive has the name.
     auto receiversSeenToArrive = [&](const StampedOperand& receiver) -> std::optional<LayoutSet> {
         if (!PayloadWord::key(receiver.statement.opcode) || ValueSets::isComplement(receiver.seen))
             return std::nullopt;
@@ -300,7 +416,14 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             return std::nullopt;
         const ListedReceivers& listed = listedReceiversOf(receiver);
         if (listed.layouts.isEmpty())
-            return std::nullopt;
+            return LayoutSet::open({ });
+        std::optional<LayoutSet>* remembered = nullptr;
+        if (listed.layouts.size() >= fewestMembersToRemember) {
+            auto known = listingsOfWorker[receiver.worker].receiversSeenUnderKeys.add(static_cast<uint64_t>(receiver.seen.index()) << 32 | key.index(), std::nullopt);
+            if (!known.isNewEntry)
+                return known.iterator->value;
+            remembered = &known.iterator->value;
+        }
         if (BuiltinMemberName name = builtinMemberNameOf(program, key); name && !name.isPrivateAlias) {
             for (BuiltinClassID builtinClass : listed.builtinClasses) {
                 if (program.builtins().findForInstance(builtinClass, name.name).outcome == BuiltinMemberLookup::Outcome::Found)
@@ -308,13 +431,13 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             }
         }
 
-        LayoutSet receivers;
+        Vector<LayoutID> seen;
         bool areTooMany = false;
         auto add = [&](LayoutID layout) {
-            if (receivers.members.size() == inputs.build.limit(LimitID::MaxLayoutsInType))
+            if (seen.size() == inputs.build.limit(LimitID::MaxLayoutsInType))
                 areTooMany = true;
             else
-                receivers.members.append(layout);
+                seen.append(layout);
         };
         uint64_t firstHolder = static_cast<uint64_t>(key.index()) << 32;
         auto begin = std::ranges::lower_bound(layoutsWithFieldOfKey, firstHolder);
@@ -332,29 +455,120 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
                     add(layout);
             }
         }
-        if (areTooMany || receivers.members.isEmpty())
+        if (areTooMany)
             return std::nullopt;
-        receivers.isComplete = false;
+        LayoutSet receivers = LayoutSet::open(WTF::move(seen));
         canonicalize(receivers);
+        if (remembered)
+            *remembered = receivers;
         return receivers;
     };
 
     ValueSetID arraysThatMustNotBeConverted = inputs.containers ? inputs.containers->arraysThatMustNotBeConverted : ValueSets::nothing;
+    tables.sites.keepsStorageOfListThatMayReadUndefined = inputs.containers && inputs.containers->keepsStorageOfListThatMayReadUndefined;
     if (arraysThatMustNotBeConverted != ValueSets::nothing) {
         tables.sites.receiversThatMayHaveDecidedStorage.fill(true, tables.application->accessSites.numberOfSites());
         findOpensOfUndecidedStorage(inputs, *tables.application, arraysThatMustNotBeConverted);
     }
+    tables.sites.receiversSeenAtSites.fill(0, tables.application->accessSites.numberOfSites());
+    if (tables.sites.sitesThatHandOverOnlyDataFromOutside.isEmpty())
+        tables.sites.sitesThatHandOverOnlyDataFromOutside.fill(false, tables.application->accessSites.numberOfSites());
+    Vector<SetsOfOnlyDataFromOutside> answersOfWorker(inputs.loops().width());
+    Vector<ProxyMadeAtSite> proxiesMade = findProxiesMadeAtSites(inputs);
+    ValueSetID objectsOfProxiesMade = ValueSets::nothing;
+    {
+        ValueSetMakers makers(inputs);
+        for (const ProxyMadeAtSite& made : proxiesMade)
+            objectsOfProxiesMade = makers.of(0).unite(objectsOfProxiesMade, makers.of(0).of(made.object));
+    }
+    // A value that many places hand on to many others brings a proxy wherever it brings everything else. A proxy is the usual receiver where little else is seen to arrive.
+    AOT_THRESHOLD(uint32_t, mostOtherObjectsSeenBesideProxies, 4);
+    auto noteProxiesSeenAt = [&](const StampedOperand& receiver) {
+        if (objectsOfProxiesMade == ValueSets::nothing || ValueSets::isComplement(receiver.seen) || !sets.meet(receiver.seen, objectsOfProxiesMade))
+            return;
+        if (sets.size(receiver.maker.intersect(receiver.seen, receiver.maker.intersect(universe.knownObjects(), ValueSets::complement(objectsOfProxiesMade)))) > mostOtherObjectsSeenBesideProxies)
+            return;
+        ValueSetID handlers = ValueSets::nothing;
+        ValueSetID targets = ValueSets::nothing;
+        sets.forEachMember(receiver.maker.intersect(receiver.seen, objectsOfProxiesMade), [&](ValueFlowObjectID object) {
+            const ProxyMadeAtSite& made = *std::ranges::lower_bound(proxiesMade, object, { }, &ProxyMadeAtSite::object);
+            handlers = receiver.maker.unite(handlers, made.handlers);
+            targets = receiver.maker.unite(targets, made.targets);
+        });
+        bool seesLists = false;
+        auto layoutsIn = [&](ValueSetID objects) {
+            Vector<LayoutID, 4> layouts;
+            seesLists = false;
+            if (ValueSets::isComplement(objects))
+                return layouts;
+            bool areTooMany = false;
+            sets.forEachMember(objects, [&](ValueFlowObjectID object) {
+                uint32_t layout = layoutsOfMembers[object.index()];
+                if (!layout && universe.isObject(object) && !ValueFlowResultInputs::isPlaceholder(object)) {
+                    Type type = receiver.positions.typeOfObject(object);
+                    const ClassPart* part = type.singleBuiltinClass();
+                    // What is neither is not told apart: no list of targets is kept.
+                    if (part && part->builtinClass == BuiltinClasses::Array)
+                        seesLists = true;
+                    else
+                        areTooMany = true;
+                }
+                if (!layout || layouts.contains(LayoutID(layout - 1)))
+                    return;
+                if (layouts.size() == layouts.capacity())
+                    areTooMany = true;
+                else
+                    layouts.append(LayoutID(layout - 1));
+            });
+            if (areTooMany) {
+                layouts.clear();
+                seesLists = false;
+            }
+            AOT::sort(layouts);
+            return layouts;
+        };
+        Vector<LayoutID, 4> layoutsOfHandlers = layoutsIn(handlers);
+        // A handler that is a list has no trap that anybody knows.
+        if (seesLists)
+            layoutsOfHandlers.clear();
+        Vector<LayoutID, 4> layoutsOfTargets = layoutsIn(targets);
+        FlowProxiesSeenAtSite seenAtSite { application.accessSites.siteOfValue(receiver.id, receiver.statement.site), WTF::move(layoutsOfHandlers), WTF::move(layoutsOfTargets) };
+        seenAtSite.seesListsAsTargets = seesLists;
+        listingsOfWorker[receiver.worker].proxiesSeenAtSites.append(WTF::move(seenAtSite));
+    };
+    AOT_THRESHOLD(uint32_t, fewestReceiversToRemember, 32);
+    Vector<UncheckedKeyHashMap<uint32_t, LayoutSetID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> receiversOfWorker(inputs.loops().width());
     stampOperands<hasReceiverStamp, receiverOperandOf, &FlowBodyUpdate::accesses>(inputs, types, tables, FlowResultKind::ReceiverSets, StatisticID::FlowAccessesOfUnknownReceivers, [&](const StampedOperand& receiver) {
         ValueID site = receiver.statement.site;
+        noteProxiesSeenAt(receiver);
+        noteWhetherOnlyDataFromOutsideComesOut(inputs, tables, receiver, answersOfWorker[receiver.worker]);
         if (arraysThatMustNotBeConverted != ValueSets::nothing && receiver.maker.intersect(receiver.held, arraysThatMustNotBeConverted) == ValueSets::nothing)
             tables.sites.receiversThatMayHaveDecidedStorage[tables.application->accessSites.siteOfValue(receiver.id, site).index()] = false;
-        if (std::optional<LayoutSet> receivers = receiver.positions.receiversAt(receiver.family, receiver.held); receivers && receivers->isComplete) {
-            receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
+        // n accesses of a value that may be any of n objects name the same set: its layouts are listed, hashed and interned once for a worker.
+        bool remembersReceivers = !ValueSets::isComplement(receiver.held) && sets.size(receiver.held) >= fewestReceiversToRemember;
+        if (remembersReceivers) {
+            auto& known = receiversOfWorker[receiver.worker];
+            if (auto found = known.find(receiver.held.index()); found != known.end()) {
+                if (std::optional<LayoutSetID> again = receiver.types.useAgain(found->value)) {
+                    receiver.update.accesses.append(FlowAccessStamp { site, *again });
+                    return;
+                }
+            }
+        }
+        if (std::optional<LayoutSet> receivers = receiver.positions.receiversAt(receiver.held)) {
+            LayoutSetID interned = receiver.types.intern(WTF::move(*receivers));
+            if (remembersReceivers)
+                receiversOfWorker[receiver.worker].set(receiver.held.index(), interned);
+            receiver.update.accesses.append(FlowAccessStamp { site, interned });
             return;
         }
-        if (std::optional<LayoutSet> receivers = receiversSeenToArrive(receiver))
-            receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
-        FlowSiteLoss loss = lossOfStampedOperand(receiver, [&](FlowSiteLoss& loss) {
+        if (std::optional<LayoutSet> receivers = receiversSeenToArrive(receiver)) {
+            if (receivers->written().isEmpty())
+                tables.sites.receiversSeenAtSites[application.accessSites.siteOfValue(receiver.id, site).index()] = 1;
+            else
+                receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
+        }
+        auto explain = [&](FlowSiteLoss& loss) {
             loss.cause = UnprovenCause::NonLayoutObject;
             bool mayBeBuiltinObject = false;
             sets.forEachMember(receiver.maker.intersect(receiver.held, universe.knownObjects()), [&](ValueFlowObjectID object) {
@@ -370,16 +584,33 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
                     return;
                 }
                 loss.witness = witness;
-                if (isDataFromOutside(inputs, object))
+                if (receiver.positions.isDataFromOutside(object))
                     loss.cause = UnprovenCause::DataFromOutside;
             });
             // No line of the program makes a built-in object, so the access is the place to show.
             if (mayBeBuiltinObject)
                 loss = { .cause = UnprovenCause::NonLayoutObject, .hasOtherRoots = hasFunction(loss.witness) };
+        };
+        FlowSiteLoss loss = lossOfStampedOperand(receiver, [&](FlowSiteLoss& loss) {
+            if (loss != FlowSiteLoss { } || sets.size(receiver.held) < fewestMembersToRemember) {
+                explain(loss);
+                return;
+            }
+            auto known = listingsOfWorker[receiver.worker].lossesOfReceivers.add(receiver.held.index(), FlowSiteLoss { });
+            if (known.isNewEntry)
+                explain(known.iterator->value);
+            loss = known.iterator->value;
         });
         loss.seesConstructedObject = !ValueSets::isComplement(receiver.seen) && sets.meet(receiver.positions.withoutWhatPlaceholdersCover(receiver.seen), universe.constructedObjects());
         tables.sites.accessSiteLosses[application.accessSites.siteOfValue(receiver.id, site).index()] = loss;
     });
+    forEachIndexInParallel(inputs.loops(), program.functions.size(), [&](unsigned index) {
+        for (const FlowAccessStamp& stamp : application.bodies[index].accesses)
+            tables.sites.receiversSeenAtSites[application.accessSites.siteOfValue(FunctionID(index), stamp.value).index()] = stamp.receivers.index() + 2;
+    });
+    for (Listings& listings : listingsOfWorker)
+        tables.sites.proxiesSeenAtSites.appendVector(WTF::move(listings.proxiesSeenAtSites));
+    AOT::sort(tables.sites.proxiesSeenAtSites, { }, &FlowProxiesSeenAtSite::site);
 }
 
 static bool callsValue(const ValueFlowStatement& statement)
@@ -391,10 +622,52 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
 {
     FlowApplication& application = *tables.application;
     unsigned numberOfFunctions = inputs.program.functions.size();
+    tables.sites.sitesThatHandOverOnlyDataFromOutside.fill(false, application.accessSites.numberOfSites());
+    tables.sites.callsHandedOnlyDataFromOutside.fill(false, application.accessSites.numberOfSites());
+    Vector<SetsOfOnlyDataFromOutside> answersOfWorker(inputs.loops().width());
+    // Where nothing is constructed the callees follow from the two sets of values. n calls of a value that may be any of n functions name the same two sets:
+    // the set of callees is made, hashed and interned once for a worker, and each task takes it again from the storage that its arena holds.
+    AOT_THRESHOLD(uint32_t, fewestMembersToRemember, 32);
+    struct CalleesOfValues {
+        bool isKnown { false };
+        bool listsEveryCallee { false };
+        bool isEmpty { true };
+        CalleeSetID interned;
+    };
+    using CalleesOfWorker = UncheckedKeyHashMap<uint64_t, CalleesOfValues, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    Vector<CalleesOfWorker> calleesOfWorker(inputs.loops().width());
+    auto findCallees = [&](const StampedOperand& callee, bool isConstruction) {
+        std::optional<CalleeSet> found = callee.positions.calleesAt(callee.held, callee.seen, isConstruction ? &callee.operand : nullptr);
+        if (!found)
+            return CalleesOfValues { };
+        CalleesOfValues callees { true, found->listsEveryCallee(), found->written().isEmpty(), { } };
+        if (callees.listsEveryCallee || !callees.isEmpty)
+            callees.interned = callee.types.intern(WTF::move(*found));
+        return callees;
+    };
     auto stampCall = [&](const StampedOperand& callee) {
-        std::optional<CalleeSet> callees = callee.positions.calleesAt(callee.family, callee.held, callee.seen, OperandPosition::newTarget(callee.statement.opcode) ? &callee.operand : nullptr);
+        bool isConstruction = !!OperandPosition::newTarget(callee.statement.opcode);
+        noteWhetherOnlyDataFromOutsideComesOut(inputs, tables, callee, answersOfWorker[callee.worker]);
+        if (!isConstruction)
+            noteWhetherCallIsHandedOnlyDataFromOutside(inputs, tables, callee, answersOfWorker[callee.worker]);
+        CalleesOfValues found;
+        if (isConstruction || ValueSets::isComplement(callee.held) || ValueSets::isComplement(callee.seen) || inputs.sets().size(callee.held) < fewestMembersToRemember)
+            found = findCallees(callee, isConstruction);
+        else {
+            auto added = calleesOfWorker[callee.worker].add(static_cast<uint64_t>(callee.held.index()) << 32 | callee.seen.index(), CalleesOfValues { });
+            CalleesOfValues& known = added.iterator->value;
+            std::optional<CalleeSetID> again;
+            if (!added.isNewEntry && known.interned)
+                again = callee.types.useAgain(known.interned);
+            if (added.isNewEntry || (known.interned && !again))
+                known = findCallees(callee, false);
+            else if (again)
+                known.interned = *again;
+            found = known;
+        }
+        const CalleesOfValues* callees = found.isKnown ? &found : nullptr;
         AccessSiteID site = application.accessSites.siteOfValue(callee.id, callee.statement.site);
-        if (!callees || !callees->isComplete) {
+        if (!callees || !callees->listsEveryCallee) {
             tables.sites.accessSiteLosses[site.index()] = lossOfStampedOperand(callee, [&](FlowSiteLoss& loss) {
                 loss.cause = UnprovenCause::UnknownCallee;
                 inputs.sets().forEachMember(callee.maker.intersect(callee.held, inputs.universe().otherCallables()), [&](ValueFlowObjectID object) {
@@ -403,24 +676,27 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
                 });
             });
         }
-        if (!callees || (!callees->isComplete && callees->functions.isEmpty() && callees->builtins.isEmpty()))
+        if (!callees || (!callees->listsEveryCallee && callees->isEmpty))
             return;
 
         tables.sites.callsOfBoundFunctions[site.index()] = false;
-        callee.update.calls.append(FlowCallStamp { callee.statement.site, callee.types.intern(WTF::move(*callees)) });
+        callee.update.calls.append(FlowCallStamp { callee.statement.site, callees->interned });
     };
     stampOperands<callsValue, [](Opcode) { return 0u; }, &FlowBodyUpdate::calls>(inputs, types, tables, FlowResultKind::CalleeSets, StatisticID::FlowCallsOfUnknownCallees, stampCall);
 
     ValueFlowStampedCalls result;
     result.functionsInStamps = BitVector(numberOfFunctions);
     Vector<BitVector> functionsSeenBy(inputs.loops().width());
+    Vector<BitVector> setsSeenBy(inputs.loops().width());
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index, unsigned worker) {
         if (application.bodies[index].calls.isEmpty())
             return;
         BitVector& functions = functionsSeenBy[worker];
         functions.ensureSize(numberOfFunctions);
         for (const FlowCallStamp& stamp : application.bodies[index].calls) {
-            for (FunctionID function : types.at(stamp.callees).functions)
+            if (setsSeenBy[worker].set(stamp.callees.index()))
+                continue;
+            for (FunctionID function : types.at(stamp.callees).followed().value())
                 functions.quickSet(function.index());
         }
     });

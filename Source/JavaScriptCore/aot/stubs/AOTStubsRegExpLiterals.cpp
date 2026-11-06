@@ -40,6 +40,8 @@ struct LiteralMatchRegisters {
 struct LastIndexUse {
     bool isRead { false };
     bool isReset { false };
+    // Nobody sees the stores, unless the object refuses them.
+    bool isStoredAndPutBack { false };
 };
 
 struct MatchFormTraits {
@@ -86,7 +88,7 @@ static LastIndexUse lastIndexUseOf(RegExpMatchForm form, const RegExpLiteralCons
     case RegExpMatchForm::Exec:
         return useOfExec;
     case RegExpMatchForm::Search:
-        return { };
+        return { .isStoredAndPutBack = constants.usesLastIndex };
     case RegExpMatchForm::Match:
         if (constants.isGlobal)
             return { .isReset = true };
@@ -243,7 +245,7 @@ void generateRegExpMatchLiteral(StubAssembler& jit)
     jit.loadPtr(Address(impl, StringImpl::dataOffset()), characters);
     jit.load32(Address(impl, StringImpl::lengthMemoryOffset()), subjectLength);
 
-    if (lastIndexUse.isReset)
+    if (lastIndexUse.isReset || lastIndexUse.isStoredAndPutBack)
         outOfLine.append(branchIfReadOnlyLastIndex(jit, *regExpObject));
 
     const std::optional<GPRReg> start = loadStart(jit, registers, lastIndexUse, outOfLine);

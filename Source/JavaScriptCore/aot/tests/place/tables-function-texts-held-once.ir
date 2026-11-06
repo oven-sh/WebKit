@@ -1,0 +1,28 @@
+# Functions of two modules with the same text stand on the same bytes. A function with a text of its own comes behind them.
+# RUN: tables function-texts
+# CHECK: f6 0..10 "() => same"
+# CHECK-NEXT: f7 0..10 "() => same"
+# CHECK-NEXT: f8 10..21 "() => other"
+
+module m0 path="/a.js" displayPath="a.js" body=f0 functionText="publish(() => same)"
+module m1 path="/b.js" displayPath="b.js" functionText="() => same; () => other"
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return
+}
+function f1 name="first" module=m0 text={start=8 end=18} kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="second" module=m1 text={start=0 end=10} kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f3 name="third" module=m1 text={start=12 end=23} kind=Arrow results=[{type=anything}] {
+    Return
+}

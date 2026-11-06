@@ -60,6 +60,7 @@
 #include "RenderElementStyleInlines.h"
 #include "FlexFormattingUtils.h"
 #include "RenderFlexibleBox.h"
+#include "RenderGrid.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
 #include "RenderLayerScrollableArea.h"
@@ -368,7 +369,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlockFlow::computeIntrinsicLogicalWidths
     auto resetMinimumWidthForMarqueeIfApplicable = [&] {
         if (style().textWrapMode() != TextWrapMode::NoWrap || !layer())
             return;
-        CheckedPtr scrollableArea = layer()->scrollableArea();
+        auto* scrollableArea = layer()->scrollableArea();
         if (!scrollableArea || !scrollableArea->marquee() || !scrollableArea->marquee()->isHorizontal())
             return;
         // A horizontal marquee has no minimum width.
@@ -411,7 +412,7 @@ void RenderBlockFlow::computeColumnCountAndWidth()
     LayoutUnit desiredColumnWidth = contentBoxLogicalWidth();
 
     // For now, we don't support multi-column layouts when printing, since we have to do a lot of work for proper pagination.
-    if (protect(document())->paginated() || (style().columnCount().isAuto() && style().columnWidth().isAuto()) || !style().hasInlineColumnAxis()) {
+    if (document().paginated() || (style().columnCount().isAuto() && style().columnWidth().isAuto()) || !style().hasInlineColumnAxis()) {
         setComputedColumnCountAndWidth(desiredColumnCount, desiredColumnWidth);
         return;
     }
@@ -753,9 +754,13 @@ static bool formattingContextRootIntrinsicLogicalWidthsDependOnOwnHeight(const R
 {
     ASSERT(formattingContextRoot.createsNewFormattingContext());
 
+    if (auto* grid = dynamicDowncast<RenderGrid>(formattingContextRoot))
+        return grid->intrinsicLogicalWidthsDependOnLogicalHeight();
     if (auto* flexBox = dynamicDowncast<RenderFlexibleBox>(formattingContextRoot)) {
-        // The flex cross-size override that drives this dependency is only applied to a flex item
-        // when hasDefiniteCrossSizeForFlexItem(item) is true, which per
+        if (flexBox->intrinsicLogicalWidthsDependOnLogicalHeight())
+            return true;
+        // Otherwise, the dependency comes from the cross-size override of a stretched aspect-ratio item, which
+        // is only applied to a flex item when hasDefiniteCrossSizeForFlexItem(item) is true, which per
         // https://drafts.csswg.org/css-flexbox/#definite-sizes section 9.8.1 requires a single-line
         // flex container:
         //   "If a single-line flex container has a definite cross size, the automatic preferred outer
@@ -875,7 +880,7 @@ static bool contentFitsWithinMaximumLines(const RenderBlockFlow& lineClampContai
     // The block ellipsis goes on the last formatted line of the block with the clamped line.
     CheckedPtr<const RenderBlockFlow> blockWithClampedLine;
     for (CheckedPtr<const RenderObject> descendant = &lineClampContainer; descendant; descendant = descendant->nextInPreOrder(&lineClampContainer)) {
-        CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(*descendant);
+        auto* blockFlow = dynamicDowncast<RenderBlockFlow>(*descendant);
         if (blockFlow && blockFlow->childrenInline() && blockFlow->inlineLayout() && blockFlow->inlineLayout()->hasEllipsisInBlockDirectionOnLastFormattedLine()) {
             blockWithClampedLine = blockFlow;
             break;
@@ -887,7 +892,7 @@ static bool contentFitsWithinMaximumLines(const RenderBlockFlow& lineClampContai
         CheckedPtr parent = renderer->parent();
         if (parent->isInlineBox())
             continue;
-        if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(*parent); blockFlow && blockFlow->childrenInline()) {
+        if (auto* blockFlow = dynamicDowncast<RenderBlockFlow>(*parent); blockFlow && blockFlow->childrenInline()) {
             if (!blockFlow->inlineLayout() || !blockFlow->inlineLayout()->contentFitsWithinMaximumLines())
                 return false;
             continue;
@@ -3798,8 +3803,7 @@ GapRects RenderBlockFlow::inlineSelectionGaps(RenderBlock& rootBlock, const Layo
             auto blockLevelBox = lineBox->blockLevelBox();
             if (!blockLevelBox || blockLevelBox->selectionState() == RenderObject::HighlightState::None)
                 return { };
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST auto* blockContainer = dynamicDowncast<RenderBlock>(const_cast<RenderObject&>(blockLevelBox->renderer()));
+            auto* blockContainer = dynamicDowncast<RenderBlock>(const_cast<RenderObject&>(blockLevelBox->renderer()));
             if (!blockContainer || blockContainer->shouldPaintSelectionGaps() || blockContainer->canBeSelectionLeaf())
                 return { };
             return blockContainer;
@@ -3973,8 +3977,7 @@ RenderText* RenderBlockFlow::findClosestTextAtAbsolutePoint(const FloatPoint& po
             if (localPoint.y() > *previousRootInlineBoxBottom && localPoint.y() < box.logicalTop()) {
                 if (auto closestBox = closestBoxForHorizontalPosition(box.lineBox(), localPoint.x())) {
                     if (auto* textRenderer = dynamicDowncast<RenderText>(closestBox->renderer())) {
-                        // FIXME: Remove suppression once rdar://189998365 is fixed.
-                        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderText*>(textRenderer);
+                        return const_cast<RenderText*>(textRenderer);
                     }
                 }
             }
@@ -4030,7 +4033,7 @@ PositionWithAffinity RenderBlockFlow::positionForPointWithInlineChildren(const L
         }
     }
 
-    bool moveCaretToBoundary = protect(protect(frame())->editor())->behavior().shouldMoveCaretToHorizontalBoundaryWhenPastTopOrBottom();
+    bool moveCaretToBoundary = protect(frame())->editor().behavior().shouldMoveCaretToHorizontalBoundaryWhenPastTopOrBottom();
 
     if (!moveCaretToBoundary && !closestBox && lastLineBoxWithChildren) {
         // y coordinate is below last root line box, pretend we hit it
@@ -4057,18 +4060,15 @@ PositionWithAffinity RenderBlockFlow::positionForPointWithInlineChildren(const L
         if (!isHorizontalWritingMode())
             point = point.transposedPoint();
         if (closestBox->renderer().isBlockLevelReplacedOrAtomicInline()) {
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST return positionForPointRespectingEditingBoundaries(*this, const_cast<RenderBox&>(downcast<RenderBox>(closestBox->renderer())), point, source);
+            return positionForPointRespectingEditingBoundaries(*this, const_cast<RenderBox&>(downcast<RenderBox>(closestBox->renderer())), point, source);
         }
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderObject&>(closestBox->renderer()).positionForPoint(point, source, nullptr);
+        return const_cast<RenderObject&>(closestBox->renderer()).positionForPoint(point, source, nullptr);
     }
 
     if (lastLineBoxWithChildren) {
         // We hit this case for Mac behavior when the Y coordinate is below the last box.
         if (auto blockBox = lastLineBoxWithChildren->blockLevelBox()) {
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST auto& childBlockRenderer = const_cast<RenderBox&>(downcast<RenderBox>(blockBox->renderer()));
+            auto& childBlockRenderer = const_cast<RenderBox&>(downcast<RenderBox>(blockBox->renderer()));
             return positionForPointRespectingEditingBoundaries(*this, childBlockRenderer, pointInLogicalContents, source);
         }
         ASSERT(moveCaretToBoundary);
@@ -4195,7 +4195,7 @@ void RenderBlockFlow::invalidateLineLayout(InvalidationReason invalidationReason
 
     switch (invalidationReason) {
     case InvalidationReason::InternalMove:
-        if (AXObjectCache* cache = protect(document())->existingAXObjectCache())
+        if (AXObjectCache* cache = document().existingAXObjectCache())
             cache->deferRecomputeIsIgnored(protect(element()).get());
         break;
     case InvalidationReason::ContentChange: {
@@ -4437,7 +4437,7 @@ RenderBlockFlow::InlineContentStatus RenderBlockFlow::markInlineContentDirtyForL
             renderer.clearNeedsLayout();
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-        if (CheckedPtr cache = protect(document())->existingAXObjectCache())
+        if (CheckedPtr cache = document().existingAXObjectCache())
             cache->onTextRunsChanged(renderer);
 #endif
 
@@ -4566,7 +4566,7 @@ void RenderBlockFlow::layoutInlineContent(RelayoutChildren relayoutChildren, Lay
     setLogicalHeight(borderBoxLogicalHeight);
     updateRepaintTopAndBottomAfterLayout(relayoutChildren, partialRepaintRect, oldContentTopAndBottomIncludingInkOverflow, repaintLogicalTop, repaintLogicalBottom);
 
-    if (CheckedPtr cache = protect(document())->existingAXObjectCache())
+    if (CheckedPtr cache = document().existingAXObjectCache())
         cache->onLaidOutInlineContent(*this);
 }
 
@@ -4700,7 +4700,7 @@ void RenderBlockFlow::adjustFontSizes(float size, float visibleWidth)
             lineCount = NO_LINE;
         else {
             auto lineCountIgnoringBlockLevelBoxes = [](const RenderBlockFlow& blockContainer) -> size_t {
-                if (CheckedPtr inlineLayout = blockContainer.inlineLayout())
+                if (auto* inlineLayout = blockContainer.inlineLayout())
                     return inlineLayout->lineCountIgnoringBlockLevelBoxes();
                 return blockContainer.lineCount();
             };
@@ -4808,7 +4808,7 @@ void RenderBlockFlow::checkForPaginationLogicalHeightChange(RelayoutChildren& re
     // We don't actually update any of the variables. We just subclassed to adjust our column height.
     if (RenderMultiColumnFlow* fragmentedFlow = multiColumnFlow()) {
         LayoutUnit newColumnHeight;
-        if (hasDefiniteLogicalHeight() || protect(view().frameView())->pagination().mode != Pagination::Mode::Unpaginated) {
+        if (hasDefiniteLogicalHeight() || view().frameView().pagination().mode != Pagination::Mode::Unpaginated) {
             auto computedValues = computeLogicalHeight(0_lu, logicalTop());
             newColumnHeight = std::max<LayoutUnit>(computedValues.extent - borderAndPaddingLogicalHeight() - scrollbarLogicalHeight(), 0);
             if (fragmentedFlow->columnHeightAvailable() != newColumnHeight)
@@ -5116,8 +5116,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlockFlow::computeInlineIntrinsicLogical
 
     auto minLogicalWidth = LayoutUnit { };
     auto maxLogicalWidth = LayoutUnit { };
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST if (const_cast<RenderBlockFlow&>(*this).tryComputeIntrinsicLogicalWidthsUsingInlinePath(minLogicalWidth, maxLogicalWidth))
+    if (const_cast<RenderBlockFlow&>(*this).tryComputeIntrinsicLogicalWidthsUsingInlinePath(minLogicalWidth, maxLogicalWidth))
         return { minLogicalWidth, maxLogicalWidth };
 
     float inlineMax = 0.f;
@@ -5547,7 +5546,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlockFlow::computeInlineIntrinsicLogical
 
 bool RenderBlockFlow::tryComputeIntrinsicLogicalWidthsUsingInlinePath(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth)
 {
-    if (!firstInFlowChild())
+    if (!firstChild())
         return false;
 
     computeAndSetLineLayoutPath();
@@ -5558,6 +5557,10 @@ bool RenderBlockFlow::tryComputeIntrinsicLogicalWidthsUsingInlinePath(LayoutUnit
     std::tie(minLogicalWidth, maxLogicalWidth) = ensureInlineLayout().computeIntrinsicWidthConstraints();
     for (auto walker = InlineWalker(*this); !walker.atEnd(); walker.advance()) {
         auto* renderer = walker.current();
+        if (renderer->isOutOfFlowPositioned()) {
+            // Out-of-flow boxes take no part in this computation, so their own content widths are still to be computed.
+            continue;
+        }
         renderer->clearContentLogicalWidthsInvalidation();
         if (auto* renderText = dynamicDowncast<RenderText>(renderer))
             renderText->resetMinMaxWidth();

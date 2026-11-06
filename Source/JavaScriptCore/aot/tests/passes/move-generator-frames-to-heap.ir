@@ -1,0 +1,57 @@
+# A body of a generator keeps what lives across a yield in the words of its frame: the body runs up to the first yield, a new function goes on behind each yield
+# FORM: Prepared
+# RUN: pass MoveGeneratorFramesToHeap
+# STATISTIC: GeneratorsWithHeapFrames = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="counts" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f1 promiseParameter=2}
+function f1 name="counts" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=number}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f1 promiseParameter=2} {
+    v3 = Undefined
+    v4 = YieldBySavingFrame v2, v3 @10
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1() frequency=Rare:
+    Throw v5
+  b2() frequency=Rare:
+    Return v5
+  b3():
+    v7 = YieldBySavingFrame v2, v1 @11
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    Switch v9 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+  b4() frequency=Rare:
+    Throw v8
+  b5() frequency=Rare:
+    Return v8
+  b6():
+    v10 = Call v8
+    v11 = YieldBySavingFrame v2, v10 @12
+    v12 = ResultAt v11 index=0
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b7(), case b8(), otherwise b9()
+  b7() frequency=Rare:
+    Throw v12
+  b8() frequency=Rare:
+    Return v12
+  b9():
+    Return v1
+}
+# CHECK: function f1 name="counts"
+# CHECK: [[frame]]: anything = NewHeapFrame v2 function=f2 numberOfWords=2 @10
+# CHECK-NEXT: PutHeapFrameWord [[frame]], v2 @10
+# CHECK-NEXT: PutHeapFrameWord [[frame]], v1 index=1 @10
+# CHECK-NEXT: SuspendInHeapFrame v2, [[frame]] [isFirstRun] @10
+# CHECK-NEXT: Return
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: function f2 name="counts"
+# CHECK: parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}]
+# CHECK-NEXT: b0([[saved]]: anything, [[mode]]: int[0, 2], [[sent]]: anything):
+# CHECK-NEXT: GetResumeIndex [[saved]]
+# CHECK-NEXT: Switch
+# CHECK: GetHeapFrameWord [[saved]] index=1
+# CHECK: SuspendInHeapFrame {{*}} resumeIndex=1 @11
+# CHECK: SuspendInHeapFrame {{*}} resumeIndex=2 @12
+# CHECK-NOT: PutHeapFrameWord
+# CHECK-NOT: YieldBySavingFrame

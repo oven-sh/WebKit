@@ -2,6 +2,7 @@
 #   const parsed = JSON.parse('{"label":"parsed"}') as Holder; print(parsed.label)
 #   await 0
 #   const again = JSON.parse('[{"label":"text"}]') as Holder[]; print(parsed.label, again.length)
+# OPTIONS: heat=EverythingIsHot
 # RUN: pipeline CheckPlacement
 # CHECK: role=CoroutineBody
 # CHECK: = JSONSourceOpen

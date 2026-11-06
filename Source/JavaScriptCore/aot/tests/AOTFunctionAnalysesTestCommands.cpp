@@ -289,7 +289,7 @@ static void forEachSection(PrintStream& out, Session& session, const AnalysisOpt
     }, SectionRequirement::TrackedSuccessors);
     section("value-identity"_s, [&] {
         for (ValueID value : listedValues()) {
-            dumpLine(out, value, " same object: "_s, sameObjectThroughCasts(function, value));
+            dumpLine(out, value, " same object: "_s, sameObjectThroughCasts(function, value).valueInFrontOfFacts());
             dumpLine(out, value, " through upcasts: "_s, definitionThroughUpcasts(function, value));
             dumpLine(out, value, " identity: "_s, analyses.identityOf(value));
             dumpLine(out, value, " constant: "_s, constantThroughCasts(program, function, value).value_or(ValueID()));

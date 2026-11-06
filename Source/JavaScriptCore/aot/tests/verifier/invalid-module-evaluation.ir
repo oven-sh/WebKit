@@ -3,7 +3,7 @@
 # RUN: verify
 # DIAGNOSTIC: InvalidModuleEvaluation 15
 
-variable g0 name="c" module=m0 declared={type=anything} initialization=Undefined
+variable g0 name="c" module=m4 declared={type=anything} initialization=Undefined
 data d0 root=Null
 module m0 path="main" displayPath="main" body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}, {target=m3 kind=Require}, {target=m4 kind=Require}, {target=m5 kind=Require}, {target=m6 completes=true}]
 module m1 path="first" displayPath="first"

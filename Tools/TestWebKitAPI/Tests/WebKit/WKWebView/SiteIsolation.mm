@@ -8273,6 +8273,40 @@ TEST(SiteIsolation, MainFrameRedirectBetweenExistingProcesses)
     EXPECT_EQ([webView _webProcessIdentifier], pidBefore);
 }
 
+TEST(SiteIsolation, MainFrameRedirectBackToCommittedProcessKeepsBackForwardCache)
+{
+    auto firstPageHTML = "<script>"
+        "  window.__pageshowPersisted = null;"
+        "  window.addEventListener('pageshow', (event) => { window.__pageshowPersisted = event.persisted });"
+        "</script>"_s;
+    HTTPServer server({
+        { "/first"_s, { firstPageHTML } },
+        { "/redirect"_s, { 302, { { "Location"_s, "https://example.com/second"_s } }, "redirecting..."_s } },
+        { "/second"_s, { "second"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/first"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView objectByEvaluatingJavaScript:@"window.__marker = true"];
+    auto examplePID = [webView _webProcessIdentifier];
+
+    [webView evaluateJavaScript:@"location.href = 'https://webkit.org/redirect'" completionHandler:nil];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_WK_STREQ([webView URL].absoluteString, "https://example.com/second");
+    EXPECT_EQ([webView _webProcessIdentifier], examplePID);
+    EXPECT_TRUE(Util::waitFor([&] {
+        return countWebPages(webView) == 1u;
+    }));
+
+    [webView goBack];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_WK_STREQ([webView URL].absoluteString, "https://example.com/first");
+    EXPECT_EQ([webView _webProcessIdentifier], examplePID);
+    EXPECT_TRUE([[webView objectByEvaluatingJavaScript:@"window.__marker === true"] boolValue]);
+    EXPECT_TRUE([[webView objectByEvaluatingJavaScript:@"window.__pageshowPersisted === true"] boolValue]);
+}
+
 TEST(SiteIsolation, URLSchemeTask)
 {
     HTTPServer server({
@@ -18876,6 +18910,89 @@ TEST(SiteIsolation, CrossProcessHistoryTraversalSameFrameBackTwice)
     EXPECT_EQ([webView backForwardList].forwardList.count, (NSUInteger)2);
 }
 
+TEST(SiteIsolation, SameDocumentHistoryTraversalsInSeparateTasksAreNotCoalesced)
+{
+    HTTPServer server({
+        { "/page"_s, { "<script>"
+            "let states = [];"
+            "let timer;"
+            "onpopstate = (event) => {"
+            "    states.push(event.state);"
+            "    if (states.length == 1) {"
+            "        timer = setTimeout(() => alert(JSON.stringify(states)), 1000);"
+            "        return;"
+            "    }"
+            "    clearTimeout(timer);"
+            "    alert(JSON.stringify(states));"
+            "};"
+            "</script><iframe src='https://webkit.org/child'></iframe>"_s } },
+        { "/child"_s, { "child"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/page"]]];
+    [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
+
+    [webView objectByEvaluatingJavaScript:@"history.pushState('a', '', '/a'); history.pushState('b', '', '/b')"];
+
+    auto childFrames = [webView mainFrame].childFrames;
+    EXPECT_EQ(childFrames.count, 1u);
+    EXPECT_NE(childFrames[0].info._processIdentifier, [[webView mainFrame] info]._processIdentifier);
+
+    __block bool didEvaluateJavaScript = false;
+    [webView evaluateJavaScript:@"setTimeout(() => { history.back(); setTimeout(() => history.back(), 0) }, 0)" inFrame:childFrames[0].info completionHandler:^(id, NSError *) {
+        sleep(0.5_s);
+        didEvaluateJavaScript = true;
+    }];
+    Util::run(&didEvaluateJavaScript);
+    EXPECT_WK_STREQ("[\"a\",null]", [webView _test_waitForAlert]);
+}
+
+TEST(SiteIsolation, HistoryTraversalSupersedesUncommittedCrossDocumentTraversal)
+{
+    unsigned requestsForB = 0;
+    std::optional<Connection> heldConnectionForB;
+    HTTPServer server(HTTPServer::UseCoroutines::Yes, [&](Connection connection) -> ConnectionTask {
+        while (1) {
+            auto request = co_await connection.awaitableReceiveHTTPRequest();
+            if (HTTPServer::parsePath(request) == "/b"_s && ++requestsForB > 1) {
+                heldConnectionForB = connection;
+                continue;
+            }
+            co_await connection.awaitableSend(HTTPResponse({ { "Cache-Control"_s, "no-store"_s } }, "x"_s).serialize());
+        }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    [configuration setProcessPool:processPoolWithBackForwardCacheDisabled().get()];
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration);
+    for (NSString *url in @[ @"https://example.com/a", @"https://example.com/b", @"https://example.com/c" ]) {
+        [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:url]]];
+        [navigationDelegate waitForDidFinishNavigation];
+    }
+
+    unsigned didFinishCount = 0;
+    navigationDelegate.get().didFinishNavigation = makeBlockPtr([&](WKWebView *, WKNavigation *) {
+        ++didFinishCount;
+    }).get();
+
+    [webView evaluateJavaScript:@"history.back()" completionHandler:nil];
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !!heldConnectionForB;
+    }));
+
+    [webView evaluateJavaScript:@"history.back()" completionHandler:nil];
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !!didFinishCount;
+    }));
+
+    EXPECT_EQ(didFinishCount, 1u);
+    EXPECT_WK_STREQ(@"https://example.com/a", [[webView URL] absoluteString]);
+    EXPECT_EQ([webView backForwardList].backList.count, 0u);
+    EXPECT_EQ([webView backForwardList].forwardList.count, 2u);
+    navigationDelegate.get().didFinishNavigation = nil;
+}
+
 TEST(SiteIsolation, CrossProcessSameDocumentHistoryTraversalDoesNotStall)
 {
     HTTPServer server({
@@ -20285,6 +20402,224 @@ TEST(SiteIsolation, DrawPagesToPDFKeepsGrayAndCMYKImagesInCrossSiteFrames8Bit)
         ASSERT_TRUE(localColor);
         EXPECT_TRUE(pdfPageHasColorAtPoint(remoteData.get(), 1, point, *localColor));
     }
+}
+
+static pid_t printProcessIdentifier(WKWebView *webView)
+{
+    __block pid_t result = 0;
+    __block bool done = false;
+    [webView _printProcessIdentifierForTesting:^(pid_t identifier) {
+        result = identifier;
+        done = true;
+    }];
+    Util::run(&done);
+    return result;
+}
+
+static std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> loadPageForPrintProcess(const HTTPServer& server, bool enablePrintProcess = true, bool enableLockdownMode = false, WKProcessPool *processPool = nil)
+{
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    if (processPool)
+        [configuration setProcessPool:processPool];
+    setFeatureEnabled(configuration.get(), @"RemoteSnapshottingEnabled", true);
+    setFeatureEnabled(configuration.get(), @"RemoteSnapshottingPrintProcessEnabled", enablePrintProcess);
+    if (enableLockdownMode)
+        [configuration defaultWebpagePreferences].lockdownModeEnabled = YES;
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration, CGRectMake(0, 0, 800, 600));
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
+    return { webView, navigationDelegate };
+}
+
+static void computePagesForPrinting(TestWKWebView *webView)
+{
+    __block bool done = false;
+    [webView _computePagesForPrinting:[[webView mainFrame].info _handle] completionHandler:^{
+        done = true;
+    }];
+    Util::run(&done);
+}
+
+static void createPDF(WKWebView *webView)
+{
+    __block bool done = false;
+    [webView createPDFWithConfiguration:nil completionHandler:^(NSData *data, NSError *error) {
+        EXPECT_NULL(error);
+        EXPECT_NOT_NULL(data);
+        done = true;
+    }];
+    Util::run(&done);
+}
+
+TEST(SiteIsolation, PrintProcessIsDedicated)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+    computePagesForPrinting(webView.get());
+    auto printProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(printProcess, 0);
+    EXPECT_NE(printProcess, [webView mainFrame].info._processIdentifier);
+    EXPECT_NE(printProcess, [webView mainFrame].childFrames.firstObject.info._processIdentifier);
+
+    createPDF(webView.get());
+    EXPECT_EQ(printProcessIdentifier(webView.get()), printProcess);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://c.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
+    EXPECT_NE([webView mainFrame].info._processIdentifier, printProcess);
+    EXPECT_NE([webView mainFrame].childFrames.firstObject.info._processIdentifier, printProcess);
+}
+
+TEST(SiteIsolation, PrintProcessIsNotLaunchedWithoutCrossSiteFrames)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://a.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    computePagesForPrinting(webView.get());
+    createPDF(webView.get());
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+}
+
+TEST(SiteIsolation, PrintProcessIsNotLaunchedWithoutPreference)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server, false);
+
+    computePagesForPrinting(webView.get());
+    createPDF(webView.get());
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+}
+
+TEST(SiteIsolation, PrintProcessIsNotLaunchedForDisplaySnapshots)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    __block bool done = false;
+    [webView takeSnapshotWithConfiguration:nil completionHandler:^(Util::PlatformImage *image, NSError *error) {
+        EXPECT_NULL(error);
+        EXPECT_NOT_NULL(image);
+        done = true;
+    }];
+    Util::run(&done);
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+}
+
+TEST(SiteIsolation, PrintProcessExitsWhenIdle)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    [webView _setPrintProcessIdleTimeoutForTesting:3];
+    createPDF(webView.get());
+    auto printProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(printProcess, 0);
+
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !processStillRunning(printProcess);
+    }));
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+
+    createPDF(webView.get());
+    auto newPrintProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(newPrintProcess, 0);
+    EXPECT_NE(newPrintProcess, printProcess);
+}
+
+#if PLATFORM(MAC)
+TEST(SiteIsolation, PrintProcessIsKeptUntilPrintingEnds)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    [webView _setPrintProcessIdleTimeoutForTesting:1];
+    computePagesForPrinting(webView.get());
+    auto printProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(printProcess, 0);
+
+    Util::runFor(3_s);
+    EXPECT_TRUE(processStillRunning(printProcess));
+    EXPECT_EQ(printProcessIdentifier(webView.get()), printProcess);
+
+    __block bool endedPrinting = false;
+    [webView _endPrintingForTesting:^{
+        endedPrinting = true;
+    }];
+    Util::run(&endedPrinting);
+
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !processStillRunning(printProcess);
+    }));
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+}
+#endif
+
+TEST(SiteIsolation, PrintProcessFollowsLockdownMode)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [lockdownWebView, lockdownNavigationDelegate] = loadPageForPrintProcess(server, true, true);
+    computePagesForPrinting(lockdownWebView.get());
+    auto lockdownPrintProcess = printProcessIdentifier(lockdownWebView.get());
+    EXPECT_NE(lockdownPrintProcess, 0);
+
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server, true, false, [lockdownWebView configuration].processPool);
+    computePagesForPrinting(webView.get());
+    auto printProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(printProcess, 0);
+    EXPECT_NE(printProcess, lockdownPrintProcess);
+
+    computePagesForPrinting(lockdownWebView.get());
+    EXPECT_EQ(printProcessIdentifier(lockdownWebView.get()), lockdownPrintProcess);
+    EXPECT_EQ(printProcessIdentifier(webView.get()), printProcess);
+    EXPECT_TRUE(processStillRunning(lockdownPrintProcess));
+    EXPECT_TRUE(processStillRunning(printProcess));
+}
+
+TEST(SiteIsolation, PrintProcessIsRelaunchedAfterCrash)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    createPDF(webView.get());
+    auto printProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(printProcess, 0);
+
+    kill(printProcess, 9);
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !printProcessIdentifier(webView.get());
+    }));
+
+    createPDF(webView.get());
+    auto newPrintProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(newPrintProcess, 0);
+    EXPECT_NE(newPrintProcess, printProcess);
 }
 
 #endif // HAVE(PDFKIT)

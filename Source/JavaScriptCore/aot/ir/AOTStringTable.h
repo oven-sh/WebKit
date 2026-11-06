@@ -91,6 +91,7 @@ private:
     static void insert(Shard&, uint64_t hash, StringID);
     void reserve(Shard&, size_t count) const;
     StringID append(std::span<const uint8_t>, uint64_t hash);
+    StringID append(std::span<const uint8_t>, uint64_t hash, BuiltinName);
     void recordBuiltinName(StringID);
     void appendBuiltinNames();
     std::span<const uint8_t> provisionalAt(StringID) const;

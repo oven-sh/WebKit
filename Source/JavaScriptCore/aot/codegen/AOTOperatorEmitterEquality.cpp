@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
+#include "AOTNumberLiteralStrings.h"
 #include "AOTRepresentationRules.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsValues.h"
@@ -22,11 +23,15 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr uint64_t bitsOfQuietNaN = 0x7ffull << 52 | 1ull << 51;
 static_assert((undefinedDouble & bitsOfQuietNaN) == bitsOfQuietNaN && (nullDouble & bitsOfQuietNaN) == bitsOfQuietNaN);
 
-static bool mayBeStringCell(LiteralStringWord word, const Type& type)
+static bool mayBeStringCell(const LiteralStringTable& literals, LiteralStringWord word, const Type& type)
 {
     if (word.value()->hasInt64())
         return static_cast<uint64_t>(word.value()->asInt64()) >= minCell32;
-    return type.primitives & Primitive::AnyString;
+    if (type.primitives & Primitive::String)
+        return true;
+    return std::ranges::any_of(type.stringLiterals, [&](StringID literal) {
+        return !literals.indexOf(literal);
+    });
 }
 
 namespace {
@@ -59,10 +64,14 @@ public:
         ValueID left = value->leftOperand();
         ValueID right = value->rightOperand();
         switch (representationOf(left)) {
-        case Representation::Int32:
-            return equal(in<Word32>(left), in<Word32>(right));
-        case Representation::Int64:
-            return equal(in<Integer>(left), in<Integer>(right));
+        case Representation::Int32: {
+            Word32 x = in<Word32>(left);
+            return equal(x, in<Word32>(right));
+        }
+        case Representation::Int64: {
+            Integer x = in<Integer>(left);
+            return equal(x, in<Integer>(right));
+        }
         case Representation::Unchosen:
         case Representation::Void:
         case Representation::Boolean:
@@ -125,10 +134,14 @@ public:
         ValueID left = value->leftOperand();
         ValueID right = value->rightOperand();
         switch (representationOf(left)) {
-        case Representation::Cell:
-            return equal(in<CellPointer>(left), in<CellPointer>(right));
-        case Representation::JSValue:
-            return equalityOnBoxedBits(value, in<Boxed>(left), in<Boxed>(right), isStrict);
+        case Representation::Cell: {
+            CellPointer x = in<CellPointer>(left);
+            return equal(x, in<CellPointer>(right));
+        }
+        case Representation::JSValue: {
+            Boxed x = in<Boxed>(left);
+            return equalityOnBoxedBits(value, x, in<Boxed>(right), isStrict);
+        }
         case Representation::Unchosen:
         case Representation::Void:
         case Representation::Boolean:
@@ -152,14 +165,16 @@ public:
         ValueID left = value->leftOperand();
         ValueID right = value->rightOperand();
         switch (representationOf(left)) {
-        case Representation::Cell:
+        case Representation::Cell: {
             // Against a written text the other operand is read in place, as StringEqualsLiteral reads it.
             for (auto [written, other] : { std::pair { right, left }, std::pair { left, right } }) {
                 const Value& definition = m_function.at(definitionThroughUpcasts(m_function, written));
                 if (definition.opcode == Opcode::String)
                     return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::String, in<CellPointer>(other).value(), definition.string(), false, true);
             }
-            return emitter<StringEmitter>().areEqual(value, in<CellPointer>(left), in<CellPointer>(right));
+            CellPointer x = in<CellPointer>(left);
+            return emitter<StringEmitter>().areEqual(value, x, in<CellPointer>(right));
+        }
         case Representation::JSValue:
             return equalityOnNullableStrings(value, isStrict);
         case Representation::LiteralString:
@@ -186,7 +201,8 @@ public:
         auto [typed, boxed] = mixedOperandsOf(value);
         Number number = in<Number>(typed);
         Boxed other = in<Boxed>(boxed);
-        return logicalAnd(isNumber(other), equal(number, numberToDouble(other)));
+        Condition otherIsNumber = isNumber(other);
+        return logicalAnd(otherIsNumber, equal(number, numberToDouble(other)));
     }
 
     Condition equalityOnInt32AndValue(const ValueContext& value)
@@ -210,8 +226,11 @@ public:
         // Zero equals two doubles, 0 and -0. Every other int32 equals one.
         if (expected.value()->hasInt32() && expected.value()->asInt32())
             join.add(equal(other, boxedConstant(JSValue(JSValue::EncodeAsDouble, static_cast<double>(expected.value()->asInt32())))));
-        else
-            join.add(logicalAnd(isNumber(other), equal(unboxDouble(other), toNumber(expected))));
+        else {
+            Condition otherIsNumber = isNumber(other);
+            Number otherNumber = unboxDouble(other);
+            join.add(logicalAnd(otherIsNumber, equal(otherNumber, toNumber(expected))));
+        }
         return join.finish();
     }
 
@@ -317,11 +336,12 @@ private:
         if (std::optional<Condition> isEqual = equalsLiteral(y, x))
             return *isEqual;
         Condition haveEqualWords = equalityOnBoxedBits(value, Boxed(x.value()), Boxed(y.value()), isStrict);
-        if (!mayBeStringCell(x, typeOf(left)) || !mayBeStringCell(y, typeOf(right)))
+        if (!mayBeStringCell(inputs().literalStrings, x, typeOf(left)) || !mayBeStringCell(inputs().literalStrings, y, typeOf(right)))
             return haveEqualWords;
 
         ConversionEmitter& conversions = emitter<ConversionEmitter>();
-        Condition areStringCells = logicalAnd(conversions.isStringCell(x), conversions.isStringCell(y));
+        Condition xIsStringCell = conversions.isStringCell(x);
+        Condition areStringCells = logicalAnd(xIsStringCell, conversions.isStringCell(y));
         return either<Condition>(logicalOr(haveEqualWords, logicalNot(areStringCells)), [&] {
             return haveEqualWords;
         }, [&] {
@@ -353,9 +373,29 @@ private:
         Condition areCells = leftIsString ? (rightIsString ? boolean(true) : isCell(y)) : (rightIsString ? isCell(x) : areBothCells(x, y));
         branch(areCells, { normalEdge(areStrings), normalEdge(oneIsNullish) });
         m_out.appendTo(areStrings);
+        // `a[i] === b[j]`: every code unit up to 255 has one cell, so two cells with 8-bit strings are two characters.
+        auto isCharacterOfString = [&](ValueID operand) {
+            const Value& definition = m_function.at(definitionThroughUpcasts(m_function, operand));
+            if (definition.opcode == Opcode::StringRangeCharacterOrUndefined)
+                return true;
+            return definition.opcode == Opcode::ElemGet && definition.keyIsIntegral() && typeOf(definition.objectOperand()).isString();
+        };
+        if (isCharacterOfString(value->leftOperand()) && isCharacterOfString(value->rightOperand())) {
+            LBasicBlock areOtherCharacters = newBlock();
+            LBasicBlock mayBeSameCharacter = newBlock();
+            branch(emitter<StringEmitter>().areBoth8Bit(unboxCell(x), unboxCell(y)), { normalEdge(areOtherCharacters), unlikelyEdge(mayBeSameCharacter) });
+            m_out.appendTo(areOtherCharacters);
+            join.add(boolean(false));
+            m_out.appendTo(mayBeSameCharacter);
+        }
         join.add(emitter<StringEmitter>().areEqual(value, unboxCell(x), unboxCell(y), StringEmitter::StringIdentity::Distinct));
         m_out.appendTo(oneIsNullish);
-        join.add(isStrict ? boolean(false) : logicalAnd(isNotCell(x), isNotCell(y)));
+        if (isStrict)
+            join.add(boolean(false));
+        else {
+            Condition xIsNullish = isNotCell(x);
+            join.add(logicalAnd(xIsNullish, isNotCell(y)));
+        }
         return join.finish();
     }
 
@@ -421,6 +461,43 @@ private:
 
 } // anonymous namespace
 
+// The operand of a strict equality of two values that is a written text.
+static ValueID writtenTextComparedWithValue(const Function& function, const Value& equality)
+{
+    for (ValueID operand : { equality.rightOperand(), equality.leftOperand() }) {
+        if (function.at(operand).opcode == Opcode::String)
+            return operand;
+    }
+    return { };
+}
+
+// `shape.kind === "circle"` where the branch narrows `shape`: the comparison stays a StrictEq. It has the characters in its code, or hands them to a stub. Nobody asks for the cell of the text, so it is neither made nor tested for.
+bool OperatorEmitter::comparesOnlyTextOf(ValueID string)
+{
+    // Validation reads every operand in front of its operation.
+    if (generator().validates())
+        return false;
+    const UseLists& useLists = analyses().useLists();
+    std::optional<Use> use = useLists.singleUse(string);
+    ValueLocation location = useLists.locationOf(string);
+    if (!use || use->kind != Use::Kind::Operand || location.placement != ValuePlacement::InBlock || use->block != location.block)
+        return false;
+    const Value& user = m_function.at(use->user);
+    if (user.opcode != Opcode::StrictEq)
+        return false;
+    bool isReadByForm = user.form() == OperatorForm::StringAndValue && m_function.at(string).representation == Representation::Cell;
+    if (!isReadByForm && (user.form() != OperatorForm::Generic || writtenTextComparedWithValue(m_function, user) != string))
+        return false;
+    // What is alive across a suspension is saved with the frame.
+    for (ValueID between : m_function.at(location.block).values.span().subspan(location.index + 1)) {
+        if (between == use->user)
+            return true;
+        if (maySuspend(m_function.at(between).opcode))
+            return false;
+    }
+    return false;
+}
+
 void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
 {
     EqualityEmitter equality(generator());
@@ -429,6 +506,16 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
     Condition result;
     switch (value->form()) {
     case OperatorForm::Generic:
+        // One call with the characters takes the place of two: one that makes the cell of the text, one that compares any two values.
+        if (ValueID written = isStrict ? writtenTextComparedWithValue(m_function, value.value()) : ValueID()) {
+            ValueID other = written == left ? right : left;
+            const Type& type = typeOf(other);
+            bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
+            defineTestByBranching(value, [&](BranchTargets targets) {
+                emitter<StringEmitter>().branchOnEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(other).value(), m_function.at(written).string(), targets, false, everyCellIsString);
+            });
+            return;
+        }
         result = equality.equalityOnValues(value, isStrict);
         break;
     case OperatorForm::Integers:
@@ -444,12 +531,16 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
     case OperatorForm::Bits:
         result = equality.equalityOnBits(value, isStrict);
         break;
-    case OperatorForm::Booleans:
-        result = equal(in<Condition>(left), in<Condition>(right));
+    case OperatorForm::Booleans: {
+        Condition x = in<Condition>(left);
+        result = equal(x, in<Condition>(right));
         break;
-    case OperatorForm::BigInts:
-        result = equality.callEqualStub(value, isStrict, boxCell(in<CellPointer>(left)), boxCell(in<CellPointer>(right)));
+    }
+    case OperatorForm::BigInts: {
+        CellPointer x = in<CellPointer>(left);
+        result = equality.callEqualStub(value, isStrict, boxCell(x), boxCell(in<CellPointer>(right)));
         break;
+    }
     case OperatorForm::Strings:
         result = equality.equalityOnStrings(value, true);
         break;

@@ -1,0 +1,9 @@
+# function joins(value) { return value + "" }  register(joins)
+# The lie: sabotage=CallsThatThrowHaveNoSite gives a call of the run time that may throw no site, as a call has none that is said to throw nothing. A handler is found by the site of the call that a
+# throw leaves. In a validating build a mark stands behind every call without a site, and a throw that leaves such a call is reported before it is unwound.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = joins => { try { joins(Symbol()); } catch (error) { print("caught " + error.name); } };
+# OPTIONS: validate sabotage=CallsThatThrowHaveNoSite
+# CHECK: AOT validation: CallThrew f{{*}} v{{*}}
+# CHECK: crashed with
+# PROGRAM-OF: a-call-said-to-throw-may-throw.ir

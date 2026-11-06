@@ -108,6 +108,12 @@ constexpr Effects declaredBoundOf(Entry entry)
         return builder.effects();
 }
 
+// Without those operands a value does the rest of what its row says, and all of it.
+constexpr AbstractHeapSet heapsWrittenForOptionalOperands(Opcode opcode)
+{
+    return opcode == Opcode::NewObject ? AbstractHeapSet { AbstractHeap::MemberGuards } : AbstractHeapSet();
+}
+
 constexpr bool isBoundOf(NamedEffectSet set, const Effects& bound)
 {
     Effects named = declaredBoundOf(set);

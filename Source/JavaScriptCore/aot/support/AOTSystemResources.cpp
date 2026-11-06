@@ -44,6 +44,11 @@ namespace JSC { namespace AOT {
     exitWithError("error: Out of memory while compiling\n"_s);
 }
 
+[[noreturn]] void exitProgramTooLarge()
+{
+    exitWithError("error: The program is too large to compile ahead of time\nnote: Build it as several executables, or without --aot\n"_s);
+}
+
 Ref<Thread> startBuildThread(ASCIILiteral name, Function<void()>&& function)
 {
     RefPtr thread = Thread::tryCreate(name, WTF::move(function), ThreadType::Compiler, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(ParallelLoops::workerStackSize));
@@ -60,9 +65,14 @@ void* allocatePages(size_t bytes)
     return pages;
 }
 
+void* tryReservePages(size_t bytes)
+{
+    return OSAllocator::tryReserveUncommitted(bytes, OSAllocator::FastMallocPages);
+}
+
 void* reservePages(size_t bytes)
 {
-    void* pages = OSAllocator::tryReserveUncommitted(bytes, OSAllocator::FastMallocPages);
+    void* pages = tryReservePages(bytes);
     if (!pages) [[unlikely]]
         exitOutOfMemory();
     return pages;

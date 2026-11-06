@@ -1,4 +1,4 @@
-# A split has at most as many arms as the limit: the parts that are left share the rest, and the next run splits the rest
+# A split has at most as many arms as the limit: the parts that are left share the rest, and the next run splits the rest. Nothing says that they come less often than the others
 # FORM: Prepared
 # OPTIONS: limit=MaxDispatchCases:2
 # RUN: pass SplitUnions
@@ -22,10 +22,10 @@ function f0 name="five-parts" parameters=[{type=string|Array<number>|Float64Arra
 # CHECK-NOT: TypeTest
 # CHECK: ([[list]]: Array<number>):
 # CHECK-NEXT: = PropGet [[list]] key="length"
-# CHECK: ([[views]]: Float64Array|Int8Array|Uint8Array) frequency=Unlikely:
+# CHECK: ([[views]]: Float64Array|Int8Array|Uint8Array):
 # CHECK-NEXT: = PropGet [[views]] key="length"
 # CHECK-NOT: TypeTest
-# AGAIN: ([[viewsAgain]]: Float64Array|Int8Array|Uint8Array) frequency=Unlikely:
+# AGAIN: ([[viewsAgain]]: Float64Array|Int8Array|Uint8Array):
 # AGAIN-NEXT: = TypeTest [[viewsAgain]] testedType=Float64Array
 # AGAIN: ([[doubles]]: Float64Array)
 # AGAIN-NEXT: = PropGet [[doubles]] key="length"

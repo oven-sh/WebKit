@@ -265,7 +265,7 @@ static void printHints(PrintStream& out, const Program& program, const Function&
         forEachOutgoingEdge(function, block, [&](Edge edge, const Target& target) {
             if (edge.isHandlerEdge() || recordedFrequencyUseOf(function, cfg, target.block, ignoresBranchHints) != RecordedFrequencyUse::Applied)
                 return;
-            out.print("\nW\t", pathOf(program, module), "\t", terminator.position, "\t", edge.targetIndex, "\t", nameOf(function.at(target.block).frequency));
+            out.print("\nW\t", pathOf(program, module), "\t", terminator.position, "\t", edge.targetIndex, "\t", nameOf(function.at(target.block).frequency.predicted()));
         });
     }
 }
@@ -296,7 +296,7 @@ static OriginOfTestedValue findOriginOfTestedValue(const Function& function, con
         return origin;
     };
     for (uint32_t steps = 0; steps < 64; ++steps) {
-        value = sameObjectThroughCasts(function, value);
+        value = sameObjectThroughCasts(function, value).valueInFrontOfFacts();
         ValueLocation location = useLists.locationOf(value);
         if (location.placement != ValuePlacement::Parameter) {
             origin.opcode = function.at(value).opcode;
@@ -329,7 +329,7 @@ static OriginOfTestedValue findOriginOfTestedValue(const Function& function, con
                     isSame = false;
                     break;
                 }
-                argument = sameObjectThroughCasts(function, argument);
+                argument = sameObjectThroughCasts(function, argument).valueInFrontOfFacts();
                 if (argument == value)
                     continue;
                 if (only && only != argument)
@@ -357,7 +357,7 @@ static void printTestOfCounters(PrintStream& out, const Program& program, const 
     const Value* test = &function.at(branch.test);
     BlockID targetWhenTrue = terminator.targets[branch.isNegated ? 1 : 0].block;
     BlockID targetWhenFalse = terminator.targets[branch.isNegated ? 0 : 1].block;
-    out.print("\nq\t", trueSide, "\t", nameOf(test->opcode), "\t", nameOf(function.at(targetWhenTrue).frequency), "\t", nameOf(function.at(targetWhenFalse).frequency), "\t", nameOf(function.at(branch.block).frequency));
+    out.print("\nq\t", trueSide, "\t", nameOf(test->opcode), "\t", nameOf(function.at(targetWhenTrue).frequency.predicted()), "\t", nameOf(function.at(targetWhenFalse).frequency.predicted()), "\t", nameOf(function.at(branch.block).frequency.predicted()));
     if (!test->numberOfOperands() || !test->operand(0))
         return;
     OriginOfTestedValue origin = findOriginOfTestedValue(function, cfg, useLists, test->operand(0));

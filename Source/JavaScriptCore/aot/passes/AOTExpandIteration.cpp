@@ -30,20 +30,24 @@
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
 #include "AOTPropertyAccess.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRegionCloner.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRulesInternal.h"
 #include "AOTRuleSupport.h"
 #include "AOTSSARepair.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTSort.h"
 #include "AOTSplitStringWalk.h"
 #include "AOTSplitUnions.h"
 #include "AOTStringArena.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueIdentity.h"
+#include "AOTVirtualObject.h"
 #include "IterationKind.h"
 #include "JSArrayIterator.h"
+#include "JSSetIterator.h"
 #include "TypedArrayType.h"
 #include <algorithm>
 #include <array>
@@ -64,7 +68,7 @@ static_assert(static_cast<uint32_t>(StepArrayIteratorResult::Value) == static_ca
 
 namespace {
 
-enum class IterationForm : uint8_t { Protocol, Array, TypedArray, String, SplitString, OwnEntries, Map, Set, Generator, AsyncGenerator };
+enum class IterationForm : uint8_t { Protocol, Array, Arguments, TypedArray, String, SplitString, OwnEntries, Map, Set, Generator, AsyncGenerator };
 enum class IterationOrigin : uint8_t { Source, Spread, Delegation };
 enum class PatternRead : uint8_t { BySteps, ByIndex, InOneRead };
 // Proven: the plan has one arm, the arm has no test, and closing does nothing.
@@ -86,8 +90,13 @@ struct IterationArm {
     bool bypassesIterator { false };
     // The protocol arm of a value that may be a string nobody expected.
     bool alsoServesStrings { false };
+    bool alsoWalksLists { false };
     // A class arm of an async iteration: it stands for the wrapper around the synchronous iterator.
     bool awaitsEachValue { false };
+    // What the prototype holds under @@iterator where a test run may replace it: the arm serves while nothing has. Its names do not count as proven, whatever is proven of the instance.
+    BuiltinID methodToWatch;
+    bool namesOfInstanceAreProven { false };
+    bool isExpectedByNobody { false };
 
     bool needsNoTest() const { return classIsProven && namesAreProven; }
     bool hasMethodsToCall() const { return form == IterationForm::Protocol || form == IterationForm::Generator || form == IterationForm::AsyncGenerator; }
@@ -117,6 +126,7 @@ struct IterationPlan {
     bool hasProtocolArm() const { return !arms.isEmpty() && arms.last().form == IterationForm::Protocol; }
     bool hasClassArm() const { return !arms.isEmpty() && arms.first().form != IterationForm::Protocol; }
     std::span<const IterationArm> classArms() const LIFETIME_BOUND { return arms.span().first(arms.size() - hasProtocolArm()); }
+    size_t numberOfExpectedClassArms() const { return std::ranges::find_if(classArms(), &IterationArm::isExpectedByNobody) - classArms().begin(); }
     bool isExpandedWithoutTest() const { return arms.size() == 1 && armSources.isEmpty() && arms.first().needsNoTest() && arms.first().closingHasNoEffect(); }
 };
 
@@ -136,6 +146,7 @@ struct PlannedValue {
     IteratorKind kind { IteratorKind::Sync };
     bool isSentValues { false };
     bool isOnlyAskedForNextValue { true };
+    bool isWalkedByLoop { false };
 };
 
 struct BypassedIterator {
@@ -168,6 +179,7 @@ struct OpenedIterator {
     ValueID next;
     ValueID isSteppedWithoutCall;
     bool isOpenedBySharedFunction { false };
+    ValueID walkedList { };
 };
 
 struct StateVariable {
@@ -181,6 +193,7 @@ struct ArmState {
     ValueID subject;
     ValueID nextMethod;
     ValueID isSteppedWithoutCall;
+    ValueID walkedList;
     bool callsSharedFunctions { false };
     bool storageIsUndecided { false };
     std::optional<StateVariable> position;
@@ -218,7 +231,7 @@ struct IterationExpansion {
     ValueID positionBehindStep { };
 
     bool isMakingSharedFunction() const { return !pass; }
-    bool isExpectedToRun() const { return isMakingSharedFunction() || function.at(builder.currentBlock()).frequency == BlockFrequency::Normal; }
+    bool isExpectedToRun() const { return isMakingSharedFunction() || function.at(builder.currentBlock()).frequency.predicted() == BlockFrequency::Normal; }
     StateVariable addVariable(ValueID initialDefinition) { return { repair->addVariable(initialDefinition), initialDefinition }; }
 
     void define(const StateVariable& variable, ValueID definition)
@@ -233,8 +246,11 @@ struct IterationExpansion {
     void finishStep(ValueID done, ValueID value)
     {
         static_assert(!doneResult && valueResult == 1);
+        if (isMakingSharedFunction() && !positionInFrontOfStep) {
+            builder.emitReturn(builder.append(Opcode::Results, { done, value }));
+            return;
+        }
         if (isMakingSharedFunction()) {
-            RELEASE_ASSERT(positionInFrontOfStep);
             builder.emitReturn(builder.append(Opcode::Results, { done, value, std::exchange(positionBehindStep, positionInFrontOfStep) }));
             return;
         }
@@ -272,6 +288,12 @@ struct IterationExpansion {
     ValueID appendIncrement(ValueID integer, int64_t amount) { return builder.append(Opcode::Add, { integer, builder.appendInteger(amount) }); }
     ValueID appendIsEqualToInteger(ValueID value, auto constant) { return builder.append(Opcode::StrictEq, { value, builder.appendInteger(static_cast<int64_t>(constant)) }); }
     ValueID appendBuiltin(BuiltinID id) { return builder.append(makeWith(Opcode::Builtin, { }, &Value::setBuiltin, id)); }
+    // The protocol reads the method here. An arm that needs no method still leaves what the read does to the holder.
+    void appendFirstReadOf(BuiltinID method)
+    {
+        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(program.builtins(), *builder.context().flow, method))
+            builder.append(WTF::move(*initialization));
+    }
     ValueID appendPropGet(ValueID object, auto name) { return builder.append(makeWith(Opcode::PropGet, { object }, &Value::setKey, keyOf(name))); }
     ValueID appendLength(ValueID object) { return builder.append(Opcode::ToLength, { appendPropGet(object, BuiltinNames::length) }); }
     ValueID appendElement(const ArmState& state, ValueID index)
@@ -302,7 +324,7 @@ struct IterationExpansion {
     ValueID appendPair(ValueID first, ValueID second)
     {
         Value pair(Opcode::NewArray);
-        pair.setContents(TypeTable::anything);
+        pair.setContents(builder.types().unionOf(builder.function().at(first).type, builder.function().at(second).type));
         pair.setElementsOperands(std::array { first, second });
         return builder.append(WTF::move(pair));
     }
@@ -314,7 +336,7 @@ struct IterationExpansion {
         return kind == JSC::IterationKind::Keys ? key : value;
     }
 
-    IRBuilder::ProvenBranch branchOnType(ValueID value, TypeID type, BlockFrequency taken = BlockFrequency::Normal, BlockFrequency notTaken = BlockFrequency::Normal)
+    IRBuilder::ProvenBranch branchOnType(ValueID value, TypeID type, Expected<BlockFrequency> taken = BlockFrequency::Normal, Expected<BlockFrequency> notTaken = BlockFrequency::Normal)
     {
         return builder.emitBranchWithProof(builder.appendTypeTest(value, type), 0, taken, notTaken);
     }
@@ -379,7 +401,7 @@ static Vector<BlockID> findLiveRegion(FunctionPassContext& pass, ValueID open)
     const UseLists& useLists = pass.analyses.useLists();
     BlockID blockOfOpen = useLists.blockOf(open);
 
-    Vector<BlockID> region;
+    Vector<BlockID> region { };
     BitVector isLiveAtHead(pass.function.blocks.size());
     Vector<BlockID, 16> worklist;
     for (const Use& use : useLists.usesOf(open))
@@ -391,7 +413,155 @@ static Vector<BlockID> findLiveRegion(FunctionPassContext& pass, ValueID open)
         region.append(block);
         worklist.append(cfg.predecessors(block));
     }
-    AOT::sort(region, { }, [&](BlockID block) { return cfg.reversePostOrderIndex(block); });
+    AOT::sortInLine(region, { }, [&](BlockID block) { return cfg.reversePostOrderIndex(block); });
+    return region;
+}
+
+namespace {
+
+// How the iterations of a round lie in one another. Each has a number, an inner one a lower number than the one around it.
+// A block is taken by the first iteration that finds it: by the innermost in whose region it lies, or by the one whose open ends it.
+struct IterationNest {
+    static constexpr uint32_t nobody = 0;
+
+    explicit IterationNest(const Function& function, size_t numberOfIterations)
+        : takerOfBlock(FillWith { }, function.blocks.size(), nobody)
+        , outer(FillWith { }, numberOfIterations + 1, nobody)
+        , parent(FillWith { }, numberOfIterations + 1, nobody)
+        , head(numberOfIterations + 1)
+        , hasFailed(numberOfIterations + 1)
+        , stampOfBlock(FillWith { }, function.blocks.size(), 0u)
+    {
+    }
+
+    uint32_t outermostAround(uint32_t taker)
+    {
+        uint32_t outermost = taker;
+        while (outer[outermost] != nobody)
+            outermost = outer[outermost];
+        while (outer[taker] != nobody && outer[taker] != outermost)
+            taker = std::exchange(outer[taker], outermost);
+        return outermost;
+    }
+
+    // In the order of a walk that enters an iteration before what lies in it: what lies in an iteration has the numbers from its own to the last one below it.
+    void numberIterations()
+    {
+        size_t count = parent.size();
+        Vector<uint32_t> numberOfNested(FillWith { }, count, 0u);
+        // An inner iteration has the lower number, so each is added to the one around it when it is complete.
+        for (uint32_t taker = 1; taker < count; ++taker) {
+            if (parent[taker] != nobody)
+                numberOfNested[parent[taker]] += numberOfNested[taker] + 1;
+        }
+        first.fill(0, count);
+        last.fill(0, count);
+        Vector<uint32_t> nextBelow(FillWith { }, count, 0u);
+        uint32_t nextAtTop = 1;
+        for (uint32_t taker = count; --taker;) {
+            uint32_t& next = parent[taker] == nobody ? nextAtTop : nextBelow[parent[taker]];
+            first[taker] = next;
+            last[taker] = next + numberOfNested[taker];
+            nextBelow[taker] = next + 1;
+            next = last[taker] + 1;
+        }
+    }
+
+    // Whether the iterator is live at the head of the block, or another one is in whose region this one is live.
+    bool isInRegionOf(uint32_t taker, BlockID block) const
+    {
+        uint32_t takerOfThis = block.index() < takerOfBlock.size() ? takerOfBlock[block.index()] : nobody;
+        return takerOfThis != nobody && block != head[taker] && first[taker] <= first[takerOfThis] && first[takerOfThis] <= last[taker];
+    }
+
+    void didSplitOff(BlockID newBlock, uint32_t taker)
+    {
+        RELEASE_ASSERT(newBlock.index() == takerOfBlock.size());
+        takerOfBlock.append(taker);
+        stampOfBlock.append(0);
+    }
+
+    Vector<uint32_t> takerOfBlock;
+    // What outermostAround() follows. It is shortened as it is followed.
+    Vector<uint32_t> outer;
+    Vector<uint32_t> parent;
+    Vector<BlockID> head;
+    BitVector hasFailed;
+    Vector<uint32_t> first;
+    Vector<uint32_t> last;
+    Vector<uint32_t> stampOfBlock;
+    uint32_t lastStamp { 0 };
+};
+
+struct PlaceInNest {
+    const IterationNest* nest { nullptr };
+    uint32_t number { 0 };
+    // All that the iterations inside do, once they are expanded.
+    Effects effectsInside { Effects::none() };
+};
+
+struct TakenRegion {
+    // Without the blocks of what lies in the iteration. The block that an inner open ends is among them.
+    Vector<BlockID> blocks;
+    Vector<uint32_t, 2> nested;
+};
+
+} // anonymous namespace
+
+// The blocks in which the iterator is live and no iterator opened behind it is. An iteration that was asked about before and lies in this one is stepped over: every way into its region comes through its open.
+// Nothing where the two only overlap: where an operation of this iteration stands in the region of the other.
+static std::optional<TakenRegion> takeLiveRegion(FunctionPassContext& pass, ValueID open, uint32_t taker, IterationNest& nest, bool mayLieAroundOthers)
+{
+    constexpr uint32_t nobody = IterationNest::nobody;
+    RELEASE_ASSERT(taker != nobody);
+    const CFG& cfg = pass.analyses.cfg();
+    const UseLists& useLists = pass.analyses.useLists();
+    BlockID blockOfOpen = useLists.blockOf(open);
+    nest.head[taker] = blockOfOpen;
+    auto fail = [&] {
+        nest.hasFailed.quickSet(taker);
+        return std::nullopt;
+    };
+    if (std::exchange(nest.takerOfBlock[blockOfOpen.index()], taker) != nobody)
+        return fail();
+
+    TakenRegion region;
+    Vector<BlockID, 16> worklist;
+    auto visit = [&](BlockID block, bool holdsOperation) {
+        if (!cfg.isReachable(block))
+            return true;
+        uint32_t formerTaker = nest.takerOfBlock[block.index()];
+        if (formerTaker == taker)
+            return true;
+        if (formerTaker == nobody) {
+            nest.takerOfBlock[block.index()] = taker;
+            region.blocks.append(block);
+            worklist.append(cfg.predecessors(block));
+            return true;
+        }
+        if (!mayLieAroundOthers)
+            return false;
+        uint32_t inner = nest.outermostAround(formerTaker);
+        if (inner == taker)
+            return !holdsOperation || (nest.parent[formerTaker] == taker && nest.head[formerTaker] == block);
+        if (nest.hasFailed.quickGet(inner) || (holdsOperation && block != nest.head[inner]))
+            return false;
+        nest.outer[inner] = taker;
+        nest.parent[inner] = taker;
+        region.nested.append(inner);
+        region.blocks.append(nest.head[inner]);
+        worklist.append(cfg.predecessors(nest.head[inner]));
+        return true;
+    };
+    for (const Use& use : useLists.usesOf(open)) {
+        if (!visit(use.block, true))
+            return fail();
+    }
+    while (!worklist.isEmpty()) {
+        if (!visit(worklist.takeLast(), false))
+            return fail();
+    }
+    AOT::sort(region.blocks, { }, [&](BlockID block) { return cfg.reversePostOrderIndex(block); });
     return region;
 }
 
@@ -438,19 +608,75 @@ static std::optional<IterationForm> formOfClass(const BuiltinTable& builtins, Bu
         return IterationForm::AsyncGenerator;
     if (id == BuiltinClasses::Array)
         return IterationForm::Array;
+    if (kind == IteratorKind::Sync && id == BuiltinClasses::Arguments)
+        return IterationForm::Arguments;
     if (id == BuiltinClasses::Map)
         return IterationForm::Map;
     if (id == BuiltinClasses::Set)
         return IterationForm::Set;
-    if (isTypedView(builtins.at(id).typedArrayType))
+    if (isTypedView(builtins.typedArrayTypeOf(id)))
         return IterationForm::TypedArray;
     return std::nullopt;
+}
+
+// Above an arguments object lies Object.prototype alone. A lookup that finds nothing there finds what the object itself holds, or nothing.
+static bool findsNothingAboveArguments(FunctionPassContext& pass, const Value& lookup)
+{
+    const Program& program = pass.program;
+    if (isNamedAccess(lookup.opcode)) {
+        BuiltinMemberAnswer above = findMemberFrom({ program, pass.inputs.flow }, Builtins::ObjectPrototype, keyOfNamedAccess(program, lookup));
+        return above.outcome == BuiltinMemberLookup::Outcome::Absent && above.proof == LocationProof::Constant;
+    }
+    const Type& key = program.typeOf(pass.function, lookup.propertyOperand());
+    return key.isInteger() && key.integers.minimum >= 0 && key.integers.maximum <= static_cast<int64_t>(MAX_ARRAY_INDEX) && program.builtins().closesIndexKeys(Builtins::ObjectPrototype);
+}
+
+// An arguments object holds its length and Array.prototype.values under @@iterator itself. It holds what it was made with where it stays in its function and the function only reads and walks it.
+// Answers the operation that made it.
+static ValueID findMakerOfUnchangedArguments(FunctionPassContext& pass, ValueID value)
+{
+    constexpr OperandUses usesOfContents { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents };
+
+    const Function& function = pass.function;
+    const EscapeAnalysis& escape = pass.analyses.escape();
+    std::optional<ObjectID> object = escape.gaveUp() ? std::nullopt : escape.singleObject(value);
+    if (!object || escape.at(*object).state == EscapeState::Unknown)
+        return { };
+    const Value& maker = function.at(escape.at(*object).definition);
+    const ClassPart* madeClass = pass.program.at(maker.type).singleBuiltinClass();
+    if (resultRuleOf(maker.opcode) != ResultRule::Allocation || !madeClass || madeClass->builtinClass != BuiltinClasses::Arguments)
+        return { };
+
+    // By what the schema says of the operand. A walk calls the method that the object was made with, and only the walk reads the state that holds the object. An operation that runs no code and keeps the object nowhere hands it to nobody.
+    auto readsOrWalks = [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        OperandBehavior declared = declaredBehaviorOf(user.opcode, use.operandIndex);
+        if (declared.retainedIn == RetainedIn::Result && declared.protocols.contains(Protocol::Iterate))
+            declared.uses.remove(OperandUse::Retains);
+        if (!declared.uses.containsOnly(usesOfContents))
+            return false;
+        Access access = elementAccessOf(user.opcode).value_or(accessOf(user.opcode));
+        if (receiverOf(user.opcode) == use.operandIndex && (access == Access::Read || access == Access::Has))
+            return findsNothingAboveArguments(pass, user);
+        if (declared.protocols.isEmpty())
+            return !pass.analyses.effectsOf(use.user).onAnyEdge().mayRunOtherCode();
+        bool looksForAnotherMethodFirst = user.opcode == Opcode::IteratorOpen && user.iteratorKind() == IteratorKind::Async;
+        return declared.protocols.containsOnly({ Protocol::Iterate }) && !looksForAnotherMethodFirst;
+    };
+    bool isUnchanged = std::ranges::all_of(escape.usesOf(*object), [&](const ObjectUse& objectUse) {
+        return readsOrWalks(objectUse.use) || (!objectUse.isEscape && objectUse.uses.containsOnly(usesOfContents));
+    });
+    return isUnchanged ? escape.at(*object).definition : ValueID();
 }
 
 // Flow proves an instance pristine from what is done to the instance. What its prototypes hold under @@iterator has a proof of its own.
 static bool hasConstantIteratorMethod(FunctionPassContext& pass, const IterationArm& arm)
 {
     const Program& program = pass.program;
+    if (arm.form == IterationForm::Arguments)
+        return arm.namesAreProven;
     auto findMethod = [&](WellKnownSymbol symbol) {
         return findMemberOfInstances({ program, pass.inputs.flow }, arm.form == IterationForm::String ? BuiltinClasses::String : arm.builtinClass, program.keyOf(program.builtins().nameOf(symbol)));
     };
@@ -462,6 +688,34 @@ static bool hasConstantIteratorMethod(FunctionPassContext& pass, const Iteration
             return false;
     }
     return findMethod(WellKnownSymbol::Iterator).isConstant();
+}
+
+// The language reads the method once, where the walk opens.
+static BuiltinID findIteratorMethodToWatch(FunctionPassContext& pass, const IterationArm& arm)
+{
+    const Program& program = pass.program;
+    if ((arm.form != IterationForm::Map && arm.form != IterationForm::Set) || arm.awaitsEachValue)
+        return { };
+    BuiltinMemberAnswer method = findMemberOfInstances({ program, pass.inputs.flow }, arm.builtinClass, program.keyOf(program.builtins().nameOf(WellKnownSymbol::Iterator)));
+    return method.isFound() && !method.isConstant() && program.isUnlocked(method.location) ? method.location : BuiltinID();
+}
+
+// An object whose layout has nothing under @@iterator is not iterated: whoever expects only such objects has looked at what else is done with the value.
+static bool namesOnlyLayoutsWithoutIterator(FunctionPassContext& pass, const Type& expected, IteratorKind kind)
+{
+    const Program& program = pass.program;
+    if (!expected.layouts || expected.anyObject || expected.anyFunction || !expected.classes.isEmpty() || !expected.functions.isEmpty() || !expected.builtins.isEmpty())
+        return false;
+    auto hasMethod = [&](LayoutID layout, WellKnownSymbol symbol) {
+        PropertyKeyID key = program.keyOf(program.builtins().nameOf(symbol));
+        if (hasMemberToFindUnder(program, layout, key))
+            return true;
+        BuiltinClassID builtinBase = builtinBaseClassOf(program, layout);
+        return builtinBase && findMemberOfInstances({ program, pass.inputs.flow }, builtinBase, key).outcome != BuiltinMemberLookup::Outcome::Absent;
+    };
+    return std::ranges::none_of(pass.types.at(expected.layouts).seen().predicted(), [&](LayoutID layout) {
+        return hasMethod(layout, WellKnownSymbol::Iterator) || (kind == IteratorKind::Async && hasMethod(layout, WellKnownSymbol::AsyncIterator));
+    });
 }
 
 static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& planned)
@@ -480,8 +734,8 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
             .form = *form,
             .kind = form == IterationForm::Map ? JSC::IterationKind::Entries : JSC::IterationKind::Values,
             .builtinClass = part.builtinClass,
-            .typedArrayType = builtins.at(part.builtinClass).typedArrayType,
-            .testedType = pass.types.intern(Type::builtinClass(part.builtinClass, part.contents.span())),
+            .typedArrayType = builtins.typedArrayTypeOf(part.builtinClass),
+            .testedType = pass.types.intern(Type::builtinClass(part.builtinClass, part.writtenContents.span())),
             .awaitsEachValue = planned.kind == IteratorKind::Async && form != IterationForm::AsyncGenerator,
         });
     };
@@ -492,15 +746,25 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
     };
 
     const Type& proven = pass.program.typeOf(pass.function, planned.value);
-    const Type& expected = pass.program.expectedOrTypeOf(pass.function, planned.value);
+    const Type& expected = pass.program.expectedOrTypeOf(pass.function, planned.value).predicted();
     for (const Type* type : { &expected, &proven }) {
         for (const ClassPart& part : type->classes)
             addClass(part);
         if (planned.kind == IteratorKind::Sync && type->primitives & Primitive::AnyString && !type->withPrimitives(Primitive::UndefinedOrNull).isAnything())
             add(IterationArm { .form = IterationForm::String, .testedType = TypeTable::string });
     }
+    // A Map hands out pairs: a loop that is expected to take lists out of a list may as well walk a Map.
+    const ClassPart* lists = planned.isWalkedByLoop ? expected.findClassPart(BuiltinClasses::Array) : nullptr;
+    if (lists && pass.types.at(lists->writtenContentsAt(builtins, ContentsSlot::Element)).findClassPart(BuiltinClasses::Array)) {
+        size_t numberOfExpected = candidates.size();
+        addClassWithoutContents(BuiltinClasses::Map);
+        for (IterationArm& arm : candidates.mutableSpan().subspan(numberOfExpected))
+            arm.isExpectedByNobody = true;
+    }
+
     // An iteration over undefined or null throws: whoever expects nothing else says nothing about what is iterated.
-    if (!(expected.isUndefinedOrNull() ? proven : expected).anyObject)
+    bool expectsNothingIterable = expected.isUndefinedOrNull() || namesOnlyLayoutsWithoutIterator(pass, expected, planned.kind);
+    if (!(expectsNothingIterable ? proven : expected).anyObject)
         return candidates;
 
     // What an iterable that nobody knows anything about is tested for. Of the classes with an arm only a generator does anything with what it is sent.
@@ -518,7 +782,7 @@ static bool canServe(FunctionPassContext& pass, const PlannedValue& planned, con
 {
     const Program& program = pass.program;
     auto hasFailedEarlier = [&](const Value& test) { return pass.analyses.findEarlierTest(test, planned.block) == EarlierTest::Failed; };
-    if (!program.typeOf(pass.function, planned.value).overlaps(pass.types.at(arm.testedType), program) || !hasConstantIteratorMethod(pass, arm))
+    if (!program.typeOf(pass.function, planned.value).overlaps(pass.types.at(arm.testedType), program) || (!arm.methodToWatch && !hasConstantIteratorMethod(pass, arm)))
         return false;
     if (!arm.namesAreProven) {
         RELEASE_ASSERT(arm.builtinClass);
@@ -534,8 +798,13 @@ static Arms findClassArms(FunctionPassContext& pass, const PlannedValue& planned
 {
     Arms arms;
     for (IterationArm& arm : collectCandidates(pass, planned)) {
-        arm.namesAreProven = arm.form == IterationForm::String
+        arm.methodToWatch = findIteratorMethodToWatch(pass, arm);
+        arm.namesOfInstanceAreProven = arm.form == IterationForm::String
+            || (arm.form == IterationForm::Arguments && findMakerOfUnchangedArguments(pass, planned.value))
             || pristineAspectsProvenBy(pass.program.typeOf(pass.function, planned.value).intersectWith(pass.types.at(arm.testedType), pass.types), arm.builtinClass).containsAll(planned.aspects);
+        arm.namesAreProven = arm.namesOfInstanceAreProven && !arm.methodToWatch;
+        if (arm.isExpectedByNobody && arms.size() >= pass.limit(LimitID::MaxDispatchCases))
+            continue;
         if (canServe(pass, planned, arm))
             arms.append(arm);
     }
@@ -549,11 +818,20 @@ static IterationPlan planWithClassArms(FunctionPassContext& pass, ValueID value,
     const Program& program = pass.program;
     IterationPlan plan { .source = value };
     Type remaining = program.typeOf(pass.function, value);
+    // No code tells the instances of some classes from other objects. Their arms come last and take what the tests before them leave.
+    auto canBeTested = [&](const IterationArm& arm) {
+        const Type& tested = pass.types.at(arm.testedType);
+        return tested == tested.withoutClassProofs();
+    };
+    std::ranges::stable_partition(classArms, canBeTested);
+    std::ranges::stable_partition(classArms, std::not_fn(&IterationArm::isExpectedByNobody));
     for (IterationArm& arm : classArms) {
         const Type& tested = pass.types.at(arm.testedType);
         if (!remaining.overlaps(tested, program))
             continue;
         arm.classIsProven = remaining.isSubsetOf(tested, program);
+        if (!arm.classIsProven && !canBeTested(arm))
+            continue;
         remaining = remaining.without(tested, pass.types);
         plan.arms.append(arm);
     }
@@ -594,7 +872,7 @@ static std::optional<BypassedIterator> findBypassedIterator(FunctionPassContext&
         .form = *form,
         .kind = static_cast<JSC::IterationKind>(implementation.inlineParameters[0]),
         .builtinClass = part->builtinClass,
-        .typedArrayType = builtins.at(part->builtinClass).typedArrayType,
+        .typedArrayType = builtins.typedArrayTypeOf(part->builtinClass),
         .testedType = pass.function.at(receiver).type,
         .classIsProven = true,
         .namesAreProven = true,
@@ -783,13 +1061,8 @@ static std::optional<IterationPlan> planOwnEntries(FunctionPassContext& pass, co
     if (!hasNothingBetween || !hasConstantIteratorMethod(pass, IterationArm { .form = IterationForm::Array, .builtinClass = BuiltinClasses::Array }))
         return std::nullopt;
 
-    // Where the layouts of the object are known, ExpandOwnKeys reads its slots and calls nothing. That is the cheaper list.
+    // Where the layouts of the object are known, ExpandOwnKeys reads its slots into that list and calls nothing.
     ValueID object = call.argumentsOperands()[0];
-    ValueLocation location = pass.analyses.useLists().locationOf(chain.first());
-    OwnKeyWalkSite site { .walk = OwnKeyWalk::Entries, .block = location.block, .index = location.index, .value = chain.first(), .source = object };
-    UnchangedAllocations unchanged(pass, singleElementSpan(site));
-    if (planOwnKeyWalk(pass, unchanged, site))
-        return std::nullopt;
     return IterationPlan { .source = object, .arms = { IterationArm { .form = IterationForm::OwnEntries, .testedType = function.at(object).type, .classIsProven = true, .namesAreProven = true } }, .replacedValues = chain };
 }
 
@@ -816,6 +1089,20 @@ static FunctionID findGeneratorMethodOpening(FunctionPassContext& pass, ValueID 
     return isUnchangedGenerator && hasConstantIteratorMethod(pass, IterationArm { .form = IterationForm::Generator, .builtinClass = BuiltinClasses::Generator }) ? plan.member.method : FunctionID();
 }
 
+static bool isExpectedToBeArraySubclass(FunctionPassContext& pass, ValueID iterable)
+{
+    const Program& program = pass.program;
+    const Type& expected = program.expectedOrTypeOf(pass.function, iterable).predicted();
+    if (!expected.layouts || !expected.withoutNullish().hasOnlyLayouts())
+        return false;
+    bool isArraySubclass = std::ranges::all_of(membersOf(program, expected), [&](LayoutID member) {
+        return program.at(member).writtenBuiltinBase == BuiltinClasses::Array;
+    });
+    PropertyKeyID next = program.keyOf(BuiltinNames::next);
+    return isArraySubclass && hasConstantIteratorMethod(pass, IterationArm { .form = IterationForm::Array, .builtinClass = BuiltinClasses::Array })
+        && findMemberOfInstances({ program, pass.inputs.flow }, BuiltinClasses::ArrayIterator, next).isConstant();
+}
+
 static IterationPlan planIteration(FunctionPassContext& pass, const Iteration& iteration)
 {
     const Function& function = pass.function;
@@ -823,6 +1110,8 @@ static IterationPlan planIteration(FunctionPassContext& pass, const Iteration& i
     bool isSentValues = std::ranges::any_of(iteration.resumes, [&](ValueID resume) { return !!function.at(resume).sentOperand(); });
     bool isOnlyAskedForNextValue = !isSentValues && std::ranges::all_of(iteration.resumes, [&](ValueID resume) { return function.at(resume).resumeMode() == ResumeMode::Next; });
     PlannedValue planned { function.at(iteration.open).iterableOperand(), useLists.blockOf(iteration.open), { PristineAspects::Names }, iteration.kind, isSentValues, isOnlyAskedForNextValue };
+    planned.isWalkedByLoop = iteration.kind == IteratorKind::Sync && iteration.origin == IterationOrigin::Source && isOnlyAskedForNextValue && !function.at(iteration.open).isDestructuring()
+        && function.at(planned.block).frequency.predicted() == BlockFrequency::Normal;
     if (iteration.kind == IteratorKind::Async)
         return planWithClassArms(pass, planned.value, findClassArms(pass, planned));
 
@@ -840,7 +1129,9 @@ static IterationPlan planIteration(FunctionPassContext& pass, const Iteration& i
 
     // The protocol arm of a value that may be a string nobody expected walks the string itself.
     IterationPlan plan = planWithClassArms(pass, planned.value, findClassArms(pass, planned));
-    if (isOnlyAskedForNextValue && plan.hasProtocolArm() && !plan.arms.containsIf([](const IterationArm& arm) { return arm.form == IterationForm::String; }))
+    if (isOnlyAskedForNextValue && plan.hasProtocolArm() && isExpectedToBeArraySubclass(pass, planned.value))
+        plan.arms.last().alsoWalksLists = true;
+    else if (isOnlyAskedForNextValue && plan.hasProtocolArm() && !plan.arms.containsIf([](const IterationArm& arm) { return arm.form == IterationForm::String; }))
         plan.arms.last().alsoServesStrings = canServe(pass, planned, IterationArm { .form = IterationForm::String, .testedType = TypeTable::string, .namesAreProven = true });
     return plan;
 }
@@ -851,6 +1142,7 @@ static Range positionRangeOf(IterationForm form)
 {
     switch (form) {
     case IterationForm::Array:
+    case IterationForm::Arguments:
     case IterationForm::TypedArray:
         return { 0, maxExactInteger - 1 };
     case IterationForm::OwnEntries:
@@ -971,7 +1263,8 @@ static void emitOwnEntriesStep(IterationExpansion& expansion, const ArmState& st
     ValueID key = expansion.appendElement(state, index);
     ValueID value = expansion.appendElement(state, expansion.appendIncrement(index, 1));
     expansion.define(*state.position, expansion.appendIncrement(index, 2));
-    expansion.finishStep(expansion.builder.appendBoolean(false), expansion.appendPair(key, value));
+    ValueID isDone = expansion.builder.appendBoolean(false);
+    expansion.finishStep(isDone, expansion.appendPair(key, value));
     expansion.finishStepAsDoneIn(branch.notTaken);
 }
 
@@ -1055,6 +1348,11 @@ static ArmState stringStateOf(const ArmState& state, ValueID string)
     return ArmState { .arm = IterationArm { .form = IterationForm::String, .testedType = TypeTable::string, .classIsProven = true, .namesAreProven = true }, .subject = string, .position = state.position };
 }
 
+static ArmState listStateOf(const ArmState& state, ValueID list)
+{
+    return ArmState { .arm = IterationArm { .form = IterationForm::Array, .builtinClass = BuiltinClasses::Array, .classIsProven = true, .namesAreProven = true }, .subject = list, .storageIsUndecided = state.storageIsUndecided, .position = state.position };
+}
+
 static ArmState withSubject(const ArmState& state, ValueID subject)
 {
     ArmState narrowed = state;
@@ -1084,17 +1382,10 @@ static bool isOpenedBySharedFunction(IterationExpansion& expansion, ValueID iter
 
 enum class SyncIteratorUse : uint8_t { Stepped, WrappedForAsyncIteration };
 
-static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID iterable, SyncIteratorUse use = SyncIteratorUse::Stepped)
+static OpenedIterator openWithMethod(IterationExpansion& expansion, ValueID iterable, ValueID method, bool isWrapped)
 {
     IRBuilder& builder = expansion.builder;
-    bool isWrapped = use == SyncIteratorUse::WrappedForAsyncIteration;
-    if (!isWrapped && isOpenedBySharedFunction(expansion, iterable)) {
-        ValueID opened = appendCallOfSharedFunction(expansion, OutlinedIteration::OpenIterator, singleElementSpan(iterable));
-        return { expansion.appendResultAt(opened, 0), expansion.appendResultAt(opened, 1), { }, true };
-    }
-
-    iterable = appendRequireObjectCoercible(expansion, iterable);
-    IRBuilder::ProvenBranch branch = expansion.branchOnType(expansion.appendPropGet(iterable, WellKnownSymbol::Iterator), TypeTable::function, BlockFrequency::Normal, BlockFrequency::Rare);
+    IRBuilder::ProvenBranch branch = expansion.branchOnType(method, TypeTable::function, BlockFrequency::Normal, BlockFrequency::Rare);
 
     builder.moveToEndOf(branch.notTaken);
     if (isWrapped)
@@ -1119,6 +1410,53 @@ static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID it
     }
     ValueID iterator = expansion.appendIteratorMethodCall(branch.provenOnTaken, iterable, isWrapped ? RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject : RuntimeErrorKind::IteratorIsNotAnObject);
     return { iterator, expansion.appendPropGet(iterator, BuiltinNames::next), { } };
+}
+
+static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID iterable, SyncIteratorUse use = SyncIteratorUse::Stepped)
+{
+    bool isWrapped = use == SyncIteratorUse::WrappedForAsyncIteration;
+    if (!isWrapped && isOpenedBySharedFunction(expansion, iterable)) {
+        ValueID opened = appendCallOfSharedFunction(expansion, OutlinedIteration::OpenIterator, singleElementSpan(iterable));
+        return { expansion.appendResultAt(opened, 0), expansion.appendResultAt(opened, 1), { }, true };
+    }
+
+    iterable = appendRequireObjectCoercible(expansion, iterable);
+    return openWithMethod(expansion, iterable, expansion.appendPropGet(iterable, WellKnownSymbol::Iterator), isWrapped);
+}
+
+static OpenedIterator openSyncIteratorOrList(IterationExpansion& expansion, ValueID iterable)
+{
+    IRBuilder& builder = expansion.builder;
+    iterable = appendRequireObjectCoercible(expansion, iterable);
+    ValueID method = expansion.appendPropGet(iterable, WellKnownSymbol::Iterator);
+
+    TypeID listType = expansion.types.intern(expansion.program.typeOf(expansion.function, iterable).intersectWith(Type::builtinClass(BuiltinClasses::Array), expansion.types));
+    BlockID byProtocol = expansion.addSiblingBlock();
+    BlockID merge = expansion.addSiblingBlock();
+    OpenedIterator merged;
+    merged.iterator = builder.addParameter(merge, TypeTable::object);
+    merged.next = builder.addParameter(merge, TypeTable::anything);
+    merged.isSteppedWithoutCall = builder.addParameter(merge, TypeTable::boolean);
+    merged.walkedList = builder.addParameter(merge, listType);
+    if (TypeID expected = expansion.function.at(iterable).expected().predicted()) {
+        expansion.function.edit(merged.walkedList, ValueEdit::Type).setExpected(ExpectedType(expansion.types.intern(expansion.types.at(expected).withoutNullish())));
+        expansion.pass->analyses.didChangeValues();
+    }
+
+    IRBuilder::BranchBlocks isMethodOfLists = builder.emitBranch(builder.appendTypeTest(method, Type::forBuiltin(Builtins::ArrayPrototypeValues)));
+    IRBuilder::ProvenBranch isList = expansion.branchOnType(iterable, listType);
+    builder.emitJump(merge, { isList.provenOnTaken, builder.appendUndefined(), builder.appendBoolean(true), isList.provenOnTaken });
+    builder.moveToEndOf(isList.notTaken);
+    builder.emitJump(byProtocol);
+    builder.moveToEndOf(isMethodOfLists.notTaken);
+    builder.emitJump(byProtocol);
+
+    builder.moveToEndOf(byProtocol);
+    OpenedIterator opened = openWithMethod(expansion, iterable, method, false);
+    builder.emitJump(merge, { opened.iterator, opened.next, builder.appendBoolean(false), builder.append(makeWith(Opcode::Unspecified, { }, &Value::setValueType, listType)) });
+
+    builder.moveToEndOf(merge);
+    return merged;
 }
 
 static ValueID openWrappedIterator(IterationExpansion& expansion, ValueID iterable)
@@ -1169,6 +1507,18 @@ static void emitProtocolOpen(IterationExpansion& expansion, ArmState& state, Ite
     IRBuilder& builder = expansion.builder;
     if (expansion.origin == IterationOrigin::Spread)
         builder.append(Opcode::RequireLengthFitsList, { state.subject });
+    if (state.arm.alsoWalksLists) {
+        RELEASE_ASSERT(kind == IteratorKind::Sync && !state.arm.alsoServesStrings);
+        ArmState walked = listStateOf(state, state.subject);
+        emitIndexedOpen(expansion, walked);
+        state.position = walked.position;
+        OpenedIterator opened = openSyncIteratorOrList(expansion, state.subject);
+        state.subject = opened.iterator;
+        state.nextMethod = opened.next;
+        state.isSteppedWithoutCall = opened.isSteppedWithoutCall;
+        state.walkedList = opened.walkedList;
+        return;
+    }
     if (!state.arm.alsoServesStrings) {
         OpenedIterator opened = kind == IteratorKind::Async ? openAsyncIterator(expansion, state.subject) : openSyncIterator(expansion, state.subject);
         state.subject = opened.iterator;
@@ -1263,7 +1613,12 @@ static void emitProtocolClose(IterationExpansion& expansion, const ArmState& sta
     }
 
     BlockID after = expansion.addSiblingBlock();
-    if (state.arm.alsoServesStrings) {
+    if (state.arm.alsoWalksLists) {
+        IRBuilder::BranchBlocks blocks = builder.emitBranch(state.isSteppedWithoutCall);
+        builder.emitJump(after);
+        builder.moveToEndOf(blocks.notTaken);
+        emitCloseOfIterator(expansion, state, kind, completion, after);
+    } else if (state.arm.alsoServesStrings) {
         IRBuilder::ProvenBranch branch = expansion.branchOnType(state.subject, TypeTable::string);
         builder.emitJump(after);
         builder.moveToEndOf(branch.notTaken);
@@ -1301,12 +1656,25 @@ static ValueID appendResumeCall(IterationExpansion& expansion, const ArmState& s
 
 static void emitStepByCall(IterationExpansion& expansion, const ArmState& state, const StepRequest& request)
 {
+    if (state.callsSharedFunctions && request.kind == IteratorKind::Sync && request.mode == ResumeMode::Next && !request.sent && !request.readsValueWhenDone) {
+        ValueID step = appendCallOfSharedFunction(expansion, OutlinedIteration::StepIterator, std::array { state.subject, state.nextMethod });
+        finishStepWithValueUnlessDone(expansion, expansion.appendResultAt(step, doneResult), false, [&] { return expansion.appendResultAt(step, valueResult); });
+        return;
+    }
     emitIteratorResultReads(expansion, expansion.appendAwaitIfAsync(request.kind, appendResumeCall(expansion, state, request)), request.readsValueWhenDone);
 }
 
 static void emitProtocolStep(IterationExpansion& expansion, const ArmState& state, const StepRequest& request)
 {
     IRBuilder& builder = expansion.builder;
+    if (state.arm.alsoWalksLists) {
+        RELEASE_ASSERT(request.kind == IteratorKind::Sync && request.mode == ResumeMode::Next && !request.sent);
+        IRBuilder::BranchBlocks blocks = builder.emitBranch(state.isSteppedWithoutCall);
+        emitElementStep(expansion, listStateOf(state, state.walkedList));
+        builder.moveToEndOf(blocks.notTaken);
+        emitStepByCall(expansion, state, request);
+        return;
+    }
     if (state.arm.alsoServesStrings) {
         RELEASE_ASSERT(request.mode == ResumeMode::Next && !request.sent);
         bool walksStringBySharedFunction = state.callsSharedFunctions && !expansion.isExpectedToRun();
@@ -1351,6 +1719,8 @@ static ValueID appendStepGenerator(IterationExpansion& expansion, const ArmState
 
 static void emitGeneratorStep(IterationExpansion& expansion, const ArmState& state, const StepRequest& request)
 {
+    if (request.mode != ResumeMode::Next)
+        expansion.appendFirstReadOf(request.mode == ResumeMode::Throw ? Builtins::GeneratorPrototypeThrow : Builtins::GeneratorPrototypeReturn);
     ValueID step = appendStepGenerator(expansion, state, request.mode, request.sent ? request.sent : expansion.builder.appendUndefined());
     ValueID value = expansion.appendResultAt(step, StepGeneratorResult::Value);
     ValueID status = expansion.appendResultAt(step, StepGeneratorResult::Status);
@@ -1385,6 +1755,7 @@ static void emitGeneratorClose(IterationExpansion& expansion, const ArmState& st
         builder.moveToEndOf(attempt);
     }
 
+    expansion.appendFirstReadOf(Builtins::GeneratorPrototypeReturn);
     ValueID step = appendStepGenerator(expansion, state, ResumeMode::Return, builder.appendUndefined());
     IRBuilder::BranchBlocks blocks = expansion.branchOnNotStepped(expansion.appendResultAt(step, StepGeneratorResult::Status));
     emitProtocolClose(expansion, protocolStateOf(expansion, state), IteratorKind::Sync, completion);
@@ -1414,6 +1785,7 @@ static void emitArmStep(IterationExpansion& expansion, const ArmState& state, co
 
     switch (state.arm.form) {
     case IterationForm::Array:
+    case IterationForm::Arguments:
     case IterationForm::TypedArray:
         emitElementStep(expansion, state);
         return;
@@ -1499,6 +1871,42 @@ static Function buildSharedFunction(DerivedFunctionInputs& inputs, ASCIILiteral 
     return function;
 }
 
+static void emitArrayIteratorStep(IterationExpansion&, ValueID iterator);
+static void emitCollectionIteratorStep(IterationExpansion&, ValueID iterator, bool isMap);
+
+// Where the method read from an iterator of the engine is that iterator's own `next`, nobody sees the object that a call of it answers with.
+static void emitStepOfAnyIterator(IterationExpansion& expansion, ValueID iterator, ValueID next)
+{
+    IRBuilder& builder = expansion.builder;
+    BlockID byCall = expansion.addSiblingBlock();
+    auto emitStepWhere = [&](ValueID isOfClass, BuiltinID ownNext, NOESCAPE const Invocable<void()> auto& emitStep) {
+        IRBuilder::BranchBlocks ofClass = builder.emitBranch(isOfClass);
+        IRBuilder::BranchBlocks hasOwnNext = builder.emitBranch(builder.appendTypeTest(next, Type::forBuiltin(ownNext)));
+        emitStep();
+        builder.moveToEndOf(hasOwnNext.notTaken);
+        builder.emitJump(byCall);
+        builder.moveToEndOf(ofClass.notTaken);
+    };
+    auto appendHasCellType = [&](CheckedJSType type) {
+        Value test = makeWith(Opcode::HasJSType, { iterator }, &Value::setFirst, type);
+        test.setLast(type);
+        return builder.append(WTF::move(test));
+    };
+    emitStepWhere(appendHasCellType(CheckedJSType::JSMapIteratorType), Builtins::MapIteratorPrototypeNext, [&] { emitCollectionIteratorStep(expansion, iterator, true); });
+    emitStepWhere(appendHasCellType(CheckedJSType::JSSetIteratorType), Builtins::SetIteratorPrototypeNext, [&] { emitCollectionIteratorStep(expansion, iterator, false); });
+    emitStepWhere(appendHasCellType(CheckedJSType::JSArrayIteratorType), Builtins::ArrayIteratorPrototypeNext, [&] { emitArrayIteratorStep(expansion, iterator); });
+    IRBuilder::ProvenBranch isGenerator = expansion.branchOnType(iterator, expansion.types.intern(Type::builtinClass(BuiltinClasses::Generator)));
+    IRBuilder::BranchBlocks hasOwnNext = builder.emitBranch(builder.appendTypeTest(next, Type::forBuiltin(Builtins::GeneratorPrototypeNext)));
+    emitGeneratorStep(expansion, ArmState { .arm = IterationArm { .form = IterationForm::Generator, .builtinClass = BuiltinClasses::Generator }, .subject = isGenerator.provenOnTaken }, StepRequest { });
+    builder.moveToEndOf(hasOwnNext.notTaken);
+    builder.emitJump(byCall);
+    builder.moveToEndOf(isGenerator.notTaken);
+    builder.emitJump(byCall);
+
+    builder.moveToEndOf(byCall);
+    emitStepByCall(expansion, ArmState { .subject = iterator, .nextMethod = next }, StepRequest { });
+}
+
 Function buildOutlinedIteration(const DerivedFunctionKey& key, DerivedFunctionInputs& inputs)
 {
     using Parameters = std::span<const ValueID>;
@@ -1512,7 +1920,7 @@ Function buildOutlinedIteration(const DerivedFunctionKey& key, DerivedFunctionIn
         });
     };
 
-    switch (static_cast<OutlinedIteration>(key.node)) {
+    switch (kindOfOutlinedBody(key.node)) {
     case OutlinedIteration::AppendIterable:
         return buildSharedFunction(inputs, "appendIterable"_s, { inputs.types.intern(Type::builtinClass(BuiltinClasses::Array)), TypeTable::anything }, { TypeTable::undefined }, [&](IterationExpansion& expansion, Parameters parameters) {
             expansion.function.edit(parameters[1], ValueEdit::Type).setExpected(ExpectedType(inputs.types.intern(iterablesExpectedBy(key, inputs.types))));
@@ -1545,10 +1953,18 @@ Function buildOutlinedIteration(const DerivedFunctionKey& key, DerivedFunctionIn
             emitStringStep(expansion, stringStateOf(ArmState { .position = StateVariable { 0, parameters[1] } }, parameters[0]));
         });
     }
+    case OutlinedIteration::StepIterator:
+        return buildSharedFunction(inputs, "stepIterator"_s, { TypeTable::object, TypeTable::anything }, { TypeTable::boolean, TypeTable::anything }, [&](IterationExpansion& expansion, Parameters parameters) {
+            emitStepOfAnyIterator(expansion, parameters[0], parameters[1]);
+        });
     case OutlinedIteration::CloseStringOrIterator:
         return buildClose("closeStringOrIterator"_s, inputs.types.unionOf(TypeTable::object, TypeTable::string), IteratorCompletion::Normal);
     case OutlinedIteration::CloseStringOrIteratorAfterThrow:
         return buildClose("closeStringOrIteratorAfterThrow"_s, inputs.types.unionOf(TypeTable::object, TypeTable::string), IteratorCompletion::Throw);
+    case OutlinedIteration::CallWithElements:
+        return buildCallWithElements(key, inputs);
+    case OutlinedIteration::CallWithSharedArms:
+        return buildCallWithSharedArms(key, inputs);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -1597,11 +2013,47 @@ static void emitArrayIteratorStep(IterationExpansion& expansion, ValueID iterato
     expansion.finishStepAsDone();
 }
 
+// %SetIteratorPrototype%.next and %MapIteratorPrototype%.next on the state that the iterator keeps. A step follows a table that was replaced to the one that followed it, and finds what JSSetIterator::next finds.
+static void emitCollectionIteratorStep(IterationExpansion& expansion, ValueID iterator, bool isMap)
+{
+    IRBuilder& builder = expansion.builder;
+    auto appendFieldRead = [&](JSSetIterator::Field field) { return builder.append(makeWith(Opcode::GetInternalField, { iterator }, &Value::setIndex, static_cast<uint32_t>(field))); };
+    auto appendFieldStore = [&](JSSetIterator::Field field, ValueID stored) { builder.append(makeWith(Opcode::PutInternalField, { iterator, stored }, &Value::setIndex, static_cast<uint32_t>(field))); };
+
+    ValueID table = builder.append(Opcode::GetCollectionIteratorTable, { iterator });
+    IRBuilder::BranchBlocks closed = builder.emitBranch(builder.append(Opcode::IsCollectionIteratorClosedMark, { table }));
+    expansion.finishStepAsDone();
+
+    builder.moveToEndOf(closed.notTaken);
+    ValueID iterated = convertTo(builder, appendFieldRead(JSSetIterator::Field::IteratedObject), DeclaredType(Proven::byPosition(TypeTable::object)));
+    ValueID position = convertTo(builder, appendFieldRead(JSSetIterator::Field::Entry), DeclaredType(Proven::byPosition(expansion.types.intern(Type::integer(Range { 0, std::numeric_limits<int32_t>::max() })))));
+    ValueID step = builder.append(isMap ? Opcode::MapNext : Opcode::SetNext, { iterated, table, position });
+    ValueID hasEntry = expansion.appendResultAt(step, MapNextResult::HasEntry);
+    ValueID entry = expansion.appendResultAt(step, MapNextResult::Entry);
+    ValueID key = expansion.appendResultAt(step, MapNextResult::Key);
+    ValueID value = isMap ? expansion.appendResultAt(step, MapNextResult::Value) : key;
+    IRBuilder::BranchBlocks found = builder.emitBranch(hasEntry);
+    appendFieldStore(JSSetIterator::Field::Entry, expansion.appendIncrement(entry, 1));
+    builder.append(Opcode::PutCollectionIteratorTable, { iterator, builder.append(Opcode::CollectionTable, { iterated }) });
+    ValueID kind = convertTo(builder, appendFieldRead(JSSetIterator::Field::Kind), DeclaredType(Proven::byPosition(expansion.types.intern(Type::integer(Range { static_cast<int64_t>(JSC::IterationKind::Keys), static_cast<int64_t>(JSC::IterationKind::Entries) })))));
+    IRBuilder::BranchBlocks entries = builder.emitBranch(expansion.appendIsEqualToInteger(kind, JSC::IterationKind::Entries));
+    expansion.finishStep(builder.appendBoolean(false), expansion.appendPair(key, value));
+    builder.moveToEndOf(entries.notTaken);
+    IRBuilder::BranchBlocks keys = builder.emitBranch(expansion.appendIsEqualToInteger(kind, JSC::IterationKind::Keys));
+    expansion.finishStep(builder.appendBoolean(false), key);
+    builder.moveToEndOf(keys.notTaken);
+    expansion.finishStep(builder.appendBoolean(false), value);
+
+    builder.moveToEndOf(found.notTaken);
+    builder.append(Opcode::PutCollectionIteratorTable, { iterator, builder.append(Opcode::CollectionIteratorClosedMark, { }) });
+    expansion.finishStepAsDone();
+}
+
 static PassOutcome expandArrayIteratorSteps(FunctionPassContext& pass, IRBuilder& builder)
 {
     Vector<ProgramPoint, 1> steps;
     Vector<ValueID, 1> producers;
-    forEachValueSite(pass.analyses, pass.function, { Opcode::StepArrayIterator }, [&](const ValueSite& site) {
+    forEachValueSite(pass.analyses, pass.function, { Opcode::StepArrayIterator, Opcode::StepMapIterator, Opcode::StepSetIterator }, [&](const ValueSite& site) {
         steps.append(ProgramPoint { site.block, site.index });
         producers.append(site.value);
     });
@@ -1617,7 +2069,10 @@ static PassOutcome expandArrayIteratorSteps(FunctionPassContext& pass, IRBuilder
         builder.setOrigin(original.origin());
         IRBuilder::Expansion cut = builder.beginExpansion(point, resultReads);
         expansion.operation = &cut;
-        emitArrayIteratorStep(expansion, original.iteratorOperand());
+        if (original.opcode == Opcode::StepArrayIterator)
+            emitArrayIteratorStep(expansion, original.iteratorOperand());
+        else
+            emitCollectionIteratorStep(expansion, original.iteratorOperand(), original.opcode == Opcode::StepMapIterator);
     }
     resultReads.finish();
     builder.setHandler(std::nullopt);
@@ -1696,24 +2151,27 @@ static bool isLandingCode(const Dominators& dominators, const Iteration& iterati
 }
 
 // What may run between the open and the last operation of the pattern, but for those operations themselves and the landing code.
-static bool anyOperationBetweenSteps(FunctionPassContext& pass, const Iteration& iteration, std::span<const BlockID> liveRegion, NOESCAPE const Invocable<bool(ValueID)> auto& matchesValue, NOESCAPE const Invocable<bool(BlockID)> auto& matchesTerminator)
+// With a nest: the region is without the blocks of the iterations that lie in this one. The caller asks about those by their effects.
+static bool anyOperationBetweenSteps(FunctionPassContext& pass, const Iteration& iteration, std::span<const BlockID> liveRegion, const PlaceInNest& place, NOESCAPE const Invocable<bool(ValueID)> auto& matchesValue, NOESCAPE const Invocable<bool(BlockID)> auto& matchesTerminator)
 {
     const Function& function = pass.function;
     auto isOperation = [&](ValueID id) {
         const Value& value = function.at(id);
         return (value.opcode == Opcode::IteratorResume || value.opcode == Opcode::IteratorClose) && value.iteratorOperand() == iteration.open;
     };
-    BitVector liveAtHead = blockSetOf(function, liveRegion);
+    BitVector liveAtHead = place.nest ? BitVector() : blockSetOf(function, liveRegion);
+    auto isLiveAtHeadOf = [&](BlockID block) { return place.nest ? place.nest->isInRegionOf(place.number, block) : liveAtHead.get(block.index()); };
+    auto opensIterationInside = [&](ValueID id) { return place.nest && function.at(id).opcode == Opcode::IteratorOpen; };
     for (BlockID id : liveRegion) {
         if (isLandingCode(pass.analyses.dominators(), iteration, id))
             continue;
 
         // The block of the last close goes on with the code after the pattern, which no step moves across.
         const BlockValues& values = function.at(id).values;
-        bool isLiveAtTail = std::ranges::any_of(pass.analyses.cfg().successors(id), [&](BlockID successor) { return liveAtHead.get(successor.index()); });
+        bool isLiveAtTail = std::ranges::any_of(pass.analyses.cfg().successors(id), isLiveAtHeadOf);
         static_assert(!(notFound + 1));
         for (ValueID value : values.span().first(isLiveAtTail ? values.size() : values.reverseFindIf(isOperation) + 1)) {
-            if (!isOperation(value) && matchesValue(value))
+            if (!isOperation(value) && !opensIterationInside(value) && matchesValue(value))
                 return true;
         }
         if (isLiveAtTail && matchesTerminator(id))
@@ -1723,8 +2181,10 @@ static bool anyOperationBetweenSteps(FunctionPassContext& pass, const Iteration&
 }
 
 // The reads stay where the steps stood, so what stands between them only has to leave alone what they rely on: the length, and what the open tested.
-static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, ValueID array)
+static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, const PlaceInNest& place, ValueID array)
 {
+    if (pass.build.isSabotaged(Sabotage::WalkedArraysStayAsTheyWereOpened))
+        return false;
     FunctionAnalyses& analyses = pass.analyses;
     Vector<GuardDependencies, 2> dependencies;
     auto relyOn = [&](const Value& test) {
@@ -1736,12 +2196,16 @@ static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& ite
     if (!arm.namesAreProven)
         relyOn(makePristineTest(array, arm.builtinClass, { PristineAspects::Storage, PristineAspects::Names }));
 
-    return anyOperationBetweenSteps(pass, iteration, liveRegion, [&](ValueID value) {
+    auto mayEndByEffects = [&](const Effects& effects) {
+        return effects.maySuspend || std::ranges::any_of(dependencies, [&](const GuardDependencies& relied) { return effects.writes.overlaps(relied.masks); });
+    };
+    if (mayEndByEffects(place.effectsInside))
+        return true;
+    return anyOperationBetweenSteps(pass, iteration, liveRegion, place, [&](ValueID value) {
         GuardWriter writer(analyses, value);
         return std::ranges::any_of(dependencies, [&](const GuardDependencies& relied) { return writer.mayEnd(relied); });
     }, [&](BlockID block) {
-        Effects effects = analyses.effectsOfTerminator(block).onAnyEdge();
-        return effects.maySuspend || std::ranges::any_of(dependencies, [&](const GuardDependencies& relied) { return effects.writes.overlaps(relied.masks); });
+        return mayEndByEffects(analyses.effectsOfTerminator(block).onAnyEdge());
     });
 }
 
@@ -1776,7 +2240,7 @@ static bool operationsShareHandler(FunctionPassContext& pass, const Iteration& i
     return std::ranges::all_of(iteration.resumes, hasSharedHandler) && std::ranges::all_of(iteration.closes, hasSharedHandler);
 }
 
-static PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion)
+static PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, const PlaceInNest& place = { })
 {
     const Function& function = pass.function;
     const Value& open = function.at(iteration.open);
@@ -1788,9 +2252,9 @@ static PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration&
         const ClassPart* part = arm.namesAreProven ? pass.program.typeOf(function, open.iterableOperand()).singleBuiltinClass() : nullptr;
         if (arm.kind != JSC::IterationKind::Values || (arm.namesAreProven && (!part || !part->provenPristine.contains(PristineAspects::Storage))))
             return PatternRead::BySteps;
-        return stepsMatchElements(function, iteration, *count) && !regionMayChangeArray(pass, iteration, arm, liveRegion, open.iterableOperand()) ? PatternRead::ByIndex : PatternRead::BySteps;
+        return stepsMatchElements(function, iteration, *count) && !regionMayChangeArray(pass, iteration, arm, liveRegion, place, open.iterableOperand()) ? PatternRead::ByIndex : PatternRead::BySteps;
     }
-    if (arm.form != IterationForm::Protocol || pass.exceeds(LimitID::MaxDestructuredElements, *count, iteration.open) || !stepsMatchElements(function, iteration, *count))
+    if (arm.form != IterationForm::Protocol || arm.alsoWalksLists || pass.exceeds(LimitID::MaxDestructuredElements, *count, iteration.open) || !stepsMatchElements(function, iteration, *count))
         return PatternRead::BySteps;
 
     ValueID first = findFirstStep(function, iteration);
@@ -1801,7 +2265,7 @@ static PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration&
     if (method.isComplete && !method.methods.isEmpty())
         return PatternRead::BySteps;
 
-    bool regionInterferesWithSteps = anyOperationBetweenSteps(pass, iteration, liveRegion, [&](ValueID value) {
+    bool regionInterferesWithSteps = place.effectsInside.interferesWith(Effects::unknownCode()) || anyOperationBetweenSteps(pass, iteration, liveRegion, place, [&](ValueID value) {
         return pass.analyses.effectsOf(value).onAnyEdge().interferesWith(Effects::unknownCode());
     }, [&](BlockID block) {
         return pass.analyses.effectsOfTerminator(block).onAnyEdge().interferesWith(Effects::unknownCode());
@@ -1930,13 +2394,35 @@ static void dropCleanupRegions(FunctionPassContext& pass, IRBuilder& builder, st
         isDropped.quickSet(cleanupBlock.index());
     auto leadsToDroppedBlock = [&](const std::optional<Target>& handler) { return handler && isDropped.quickGet(handler->block.index()); };
 
+    // The cleanup blocks of patterns that lie in one another cover each other, all the way out. Where nothing is passed along, what stands at the end of such a row is found once for all the blocks of the row.
+    Vector<std::optional<std::optional<Target>>> handlerAroundDroppedBlocks(function.blocks.size());
+    auto passesNothing = [&](const std::optional<Target>& handler) { return !handler || handler->arguments.isEmpty(); };
+    Vector<BlockID, 8> row;
+    auto findHandlerAroundDroppedBlocks = [&](std::optional<Target> handler) {
+        row.shrink(0);
+        bool rowPassesNothing = true;
+        while (leadsToDroppedBlock(handler)) {
+            if (rowPassesNothing && passesNothing(handler) && handlerAroundDroppedBlocks[handler->block.index()]) {
+                handler = *handlerAroundDroppedBlocks[handler->block.index()];
+                break;
+            }
+            rowPassesNothing &= passesNothing(handler);
+            if (rowPassesNothing)
+                row.append(handler->block);
+            handler = findHandlerAround(function, *handler);
+        }
+        if (rowPassesNothing && passesNothing(handler)) {
+            for (BlockID dropped : row)
+                handlerAroundDroppedBlocks[dropped.index()] = handler;
+        }
+        return handler;
+    };
+
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
         BlockID coveredBlock(index);
         if (!leadsToDroppedBlock(function.at(coveredBlock).handler))
             continue;
-        std::optional<Target> handler = function.at(coveredBlock).handler;
-        while (leadsToDroppedBlock(handler))
-            handler = findHandlerAround(function, *handler);
+        std::optional<Target> handler = findHandlerAroundDroppedBlocks(function.at(coveredBlock).handler);
         if (handler)
             builder.redirectEdge(Edge::toHandlerOf(coveredBlock), WTF::move(*handler));
         else
@@ -1972,18 +2458,25 @@ static bool isLastUseOfOpen(FunctionAnalyses& analyses, ValueID open, const BitV
     return !isLiveAtTail && std::ranges::none_of(useLists.usesOf(open), [&](const Use& use) { return use.kind == Use::Kind::Operand && use.block == close.block && useLists.locationOf(use.user).index > close.index; });
 }
 
-// Whether every arm gets its own copy of the blocks in which the iterator is live. Where it does not, every operation asks which arm was taken.
-static bool canCopyRegionPerArm(FunctionPassContext& pass, const Iteration& iteration, const IterationPlan& plan, std::span<const BlockID> liveRegion)
+// Every arm before the one answered gets its own copy of the blocks in which the iterator is live. The others run in one copy, where every operation asks which arm was taken.
+// An arm that nobody expects costs the others no copy.
+static size_t chooseFirstArmOfLastCopy(FunctionPassContext& pass, const Iteration& iteration, const IterationPlan& plan, std::span<const BlockID> liveRegion)
 {
-    if (plan.arms.size() == 1 || liveRegion.empty())
-        return true;
-    if (RegionCloner::checkCanDuplicate(pass.analyses, liveRegion) != CloneCheck::CanClone)
-        return false;
-
+    size_t lastArm = plan.arms.size() - 1;
+    if (!lastArm || liveRegion.empty())
+        return lastArm;
+    bool canDuplicate = RegionCloner::checkCanDuplicate(pass.analyses, liveRegion) == CloneCheck::CanClone;
     uint64_t bytes = 0;
     for (BlockID block : liveRegion)
         bytes += estimatedCodeBytes(pass.program, pass.function, pass.function.at(block));
-    return !pass.exceeds(LimitID::MaxVersionedIterationBytes, bytes * (plan.arms.size() - 1), iteration.open);
+    size_t lastExpectedCopy = std::min(plan.numberOfExpectedClassArms(), lastArm);
+    for (size_t firstArm : { lastArm, lastExpectedCopy }) {
+        if (canDuplicate && bytes * firstArm <= pass.limit(LimitID::MaxVersionedIterationBytes))
+            return firstArm;
+    }
+    if (canDuplicate)
+        pass.exceeds(LimitID::MaxVersionedIterationBytes, bytes * lastExpectedCopy, iteration.open);
+    return 0;
 }
 
 namespace {
@@ -2010,7 +2503,14 @@ struct ArmDispatcher {
     Function& function { pass.function };
     FunctionAnalyses& analyses { pass.analyses };
     IterationExpansion expansion { &pass, pass.program, pass.function, pass.types, builder, &repair, iteration.origin };
-    Vector<BlockID> region { findLiveRegion(pass, iteration.open) };
+    Vector<BlockID> region { };
+    // Where other iterations of the round lie in this one, the region is without their blocks.
+    IterationNest* nest { nullptr };
+    uint32_t numberInNest { 0 };
+    Vector<uint32_t, 2> nested { };
+    bool didAskForEffects { false };
+    std::optional<Effects> effectsOnceExpandedAnswer { };
+    std::optional<uint64_t> bytesThatStayAnswer { };
     ValueLocation open { analyses.useLists().locationOf(iteration.open) };
     BlockID head { open.block };
     BlockID tail { function.at(head).terminator.next().block };
@@ -2018,7 +2518,7 @@ struct ArmDispatcher {
     bool storageIsUndecided { false };
     bool mayBeUsedAfterDone { true };
     Vector<ProgramPoint, 2> cutsAfterLastCloses { };
-    bool hasCopyPerArm { true };
+    size_t firstArmOfLastCopy { 0 };
     Vector<PatternRead, 2> patternReads { };
     Vector<ArmCopy, 2> copies { };
     Vector<ValueID> definitionsInRegion { };
@@ -2036,6 +2536,10 @@ struct ArmDispatcher {
         // Flow has answered for the iterable. An arm may walk another object: the receiver of the call that made the iterator.
         const Value& opened = function.at(iteration.open);
         storageIsUndecided = opened.storageIsUndecided() && plan.armSources.isEmpty() && plan.source == opened.iterableOperand();
+        if (!nested.isEmpty()) {
+            planArmsAroundNestedIterations();
+            return;
+        }
         BitVector liveRegion = blockSetOf(function, region.span());
         mayBeUsedAfterDone = findsOperationAfterDone(liveRegion);
         if (plan.arms.size() <= 1)
@@ -2045,6 +2549,48 @@ struct ArmDispatcher {
         for (ValueID close : iteration.closes) {
             ValueLocation location = analyses.useLists().locationOf(close);
             if (location.index + 1 < function.at(location.block).values.size() && isLastUseOfOpen(analyses, iteration.open, liveRegion, location))
+                cutsAfterLastCloses.append(ProgramPoint { location.block, location.index + 1 });
+        }
+    }
+
+    bool isLiveAtHeadOf(BlockID block) const { return nest->isInRegionOf(numberInNest, block); }
+
+    // As planArms(), asking the nest which blocks the iterator is live in. No set of all those blocks is made: the iterations of a nest would make one as deep as the nest each.
+    void planArmsAroundNestedIterations()
+    {
+        const UseLists& useLists = analyses.useLists();
+        Vector<ValueLocation, 8> operations;
+        for (ValueID resume : iteration.resumes)
+            operations.append(useLists.locationOf(resume));
+        for (ValueID close : iteration.closes)
+            operations.append(useLists.locationOf(close));
+        auto holdsOperation = [&](BlockID block) { return operations.containsIf([&](const ValueLocation& operation) { return operation.block == block; }); };
+
+        mayBeUsedAfterDone = false;
+        for (size_t index = 0; index < iteration.resumes.size() && !mayBeUsedAfterDone; ++index) {
+            ValueLocation step = operations[index];
+            mayBeUsedAfterDone = operations.containsIf([&](const ValueLocation& operation) { return operation.block == step.block && operation.index > step.index; });
+            uint32_t stamp = ++nest->lastStamp;
+            Vector<BlockID, 16> worklist { step.block };
+            while (!worklist.isEmpty() && !mayBeUsedAfterDone) {
+                forEachOutgoingEdge(function, worklist.takeLast(), [&](Edge edge, const Target& target) {
+                    if (!isLiveAtHeadOf(target.block) || provesNotDone(function, edge, iteration.resumes[index]) || std::exchange(nest->stampOfBlock[target.block.index()], stamp) == stamp)
+                        return;
+                    mayBeUsedAfterDone |= holdsOperation(target.block);
+                    worklist.append(target.block);
+                });
+            }
+        }
+        if (plan.arms.size() <= 1)
+            return;
+
+        for (ValueID close : iteration.closes) {
+            ValueLocation location = useLists.locationOf(close);
+            if (location.index + 1 >= function.at(location.block).values.size())
+                continue;
+            bool isLiveAtTail = std::ranges::any_of(analyses.cfg().successors(location.block), [&](BlockID successor) { return isLiveAtHeadOf(successor); });
+            bool isUsedBehind = std::ranges::any_of(useLists.usesOf(iteration.open), [&](const Use& use) { return use.kind == Use::Kind::Operand && use.block == location.block && useLists.locationOf(use.user).index > location.index; });
+            if (!isLiveAtTail && !isUsedBehind)
                 cutsAfterLastCloses.append(ProgramPoint { location.block, location.index + 1 });
         }
     }
@@ -2075,17 +2621,118 @@ struct ArmDispatcher {
         return false;
     }
 
-    void splitAfterLastCloses()
+    // What stands behind the cut belongs to the iteration around this one.
+    void splitAfterLastCloses(Vector<std::pair<BlockID, uint32_t>>& blocksForOuterIterations)
     {
         builder.setOrigin(function.at(iteration.open).origin());
-        for (ProgramPoint point : cutsAfterLastCloses)
-            builder.splitBlock(point);
+        for (ProgramPoint point : cutsAfterLastCloses) {
+            BlockID behind = builder.splitBlock(point);
+            uint32_t outer = nest->parent[numberInNest];
+            nest->didSplitOff(behind, outer);
+            if (outer != IterationNest::nobody)
+                blocksForOuterIterations.append({ behind, outer });
+        }
     }
+
+    // What is left of the blocks of the iteration when it is expanded takes at least this much.
+    uint64_t bytesThatStay(const Vector<ArmDispatcher*>& dispatcherInNest)
+    {
+        if (!bytesThatStayAnswer) {
+            uint64_t bytes = 0;
+            for (BlockID block : region) {
+                bytes += estimatedCodeBytes(function.at(block).terminator);
+                for (ValueID id : function.at(block).values) {
+                    if (!isOperationOfNest(id))
+                        bytes += estimatedCodeBytes(pass.program, function, function.at(id));
+                }
+            }
+            for (uint32_t inner : nested)
+                bytes += dispatcherInNest[inner]->bytesThatStay(dispatcherInNest);
+            bytesThatStayAnswer = bytes;
+        }
+        return *bytesThatStayAnswer;
+    }
+
+    // In the blocks of the region: an operation of this iteration, or the open of one that lies in it.
+    bool isOperationOfNest(ValueID id) const
+    {
+        Opcode opcode = function.at(id).opcode;
+        return opcode == Opcode::IteratorOpen || opcode == Opcode::IteratorResume || opcode == Opcode::IteratorClose;
+    }
+
+    // What runs from the open to the last operation once the pattern and all inside it are expanded, where each of them only reads elements of a list that is known to be one. Nothing else is foreseen.
+    std::optional<Effects> effectsOnceExpanded(const Vector<ArmDispatcher*>& dispatcherInNest)
+    {
+        if (!didAskForEffects) {
+            didAskForEffects = true;
+            if (!plan.isExpandedWithoutTest() || !plan.replacedValues.isEmpty() || patternReads.size() != 1 || patternReads.first() != PatternRead::ByIndex)
+                return std::nullopt;
+            // A read of the length or of an element of such a list runs no code and writes nothing.
+            Effects effects = Effects::none();
+            for (uint32_t inner : nested) {
+                std::optional<Effects> effectsOfInner = dispatcherInNest[inner]->effectsOnceExpanded(dispatcherInNest);
+                if (!effectsOfInner)
+                    return std::nullopt;
+                effects.merge(*effectsOfInner);
+            }
+            for (BlockID block : region) {
+                // Closing does nothing, so the blocks that close go.
+                if (isLandingCode(analyses.dominators(), iteration, block))
+                    continue;
+                effects.merge(analyses.effectsOfTerminator(block).onAnyEdge());
+                for (ValueID id : function.at(block).values) {
+                    if (!isOperationOfNest(id))
+                        effects.merge(analyses.effectsOf(id).onAnyEdge());
+                }
+            }
+            effectsOnceExpandedAnswer = effects;
+        }
+        return effectsOnceExpandedAnswer;
+    }
+
+    // Whether the iteration can be expanded beside those that lie in it: whether its form is the one it would get behind them.
+    bool chooseFormsAroundNestedIterations(const Vector<ArmDispatcher*>& dispatcherInNest)
+    {
+        if (!plan.armSources.isEmpty() || !plan.replacedValues.isEmpty() || std::ranges::any_of(nested, [&](uint32_t inner) { return !dispatcherInNest[inner] || !dispatcherInNest[inner]->plan.armSources.isEmpty(); }))
+            return false;
+        // Each asks the ones right below it, which have their answer by now.
+        if (plan.arms.size() > 1) {
+            // Expanding adds code, so blocks that are too many to copy now are too many then.
+            uint64_t bytesOfExpectedCopies = bytesThatStay(dispatcherInNest) * std::min(plan.numberOfExpectedClassArms(), plan.arms.size() - 1);
+            if (bytesOfExpectedCopies <= pass.limit(LimitID::MaxVersionedIterationBytes))
+                return false;
+            RELEASE_ASSERT(pass.exceeds(LimitID::MaxVersionedIterationBytes, bytesOfExpectedCopies, iteration.open));
+            firstArmOfLastCopy = 0;
+            patternReads.fill(PatternRead::BySteps, plan.arms.size());
+            return true;
+        }
+        firstArmOfLastCopy = 0;
+        if (!function.at(iteration.open).isDestructuring()) {
+            patternReads.append(PatternRead::BySteps);
+            return true;
+        }
+        // What a pattern may become goes by what runs between its steps.
+        PlaceInNest place { nest, numberInNest };
+        for (uint32_t inner : nested) {
+            std::optional<Effects> effects = dispatcherInNest[inner]->effectsOnceExpanded(dispatcherInNest);
+            if (!effects)
+                return false;
+            place.effectsInside.merge(*effects);
+        }
+        PatternRead read = choosePatternRead(pass, iteration, plan.arms.first(), region.span(), place);
+        if (read != PatternRead::ByIndex)
+            return false;
+        patternReads.append(read);
+        return true;
+    }
+
+    bool sharesLastCopy() const { return firstArmOfLastCopy + 1 < plan.arms.size(); }
+    bool isShared(unsigned copy) const { return copy == firstArmOfLastCopy && sharesLastCopy(); }
 
     void chooseForms()
     {
-        hasCopyPerArm = canCopyRegionPerArm(pass, iteration, plan, region.span());
-        bool readsPattern = function.at(iteration.open).isDestructuring() && hasCopyPerArm;
+        firstArmOfLastCopy = chooseFirstArmOfLastCopy(pass, iteration, plan, region.span());
+        bool readsPattern = function.at(iteration.open).isDestructuring() && !sharesLastCopy();
         for (const IterationArm& arm : plan.arms)
             patternReads.append(readsPattern ? choosePatternRead(pass, iteration, arm, region.span()) : PatternRead::BySteps);
     }
@@ -2106,21 +2753,19 @@ struct ArmDispatcher {
             emitTestsAndOpens();
         else
             emitOpensByArmSource();
-        if (!hasCopyPerArm) {
-            joinArmsByForm();
-            return;
-        }
-        RELEASE_ASSERT(ends.size() == copies.size());
-        for (size_t arm = 0; arm < ends.size(); ++arm) {
+        RELEASE_ASSERT(ends.size() == plan.arms.size() && copies.size() == firstArmOfLastCopy + 1);
+        for (size_t arm = 0; arm < copies.size() - sharesLastCopy(); ++arm) {
             builder.moveToEndOf(ends[arm]);
             builder.emitJump(copies[arm].entry);
         }
+        if (sharesLastCopy())
+            joinArmsByForm();
     }
 
     void cloneRegionPerArm()
     {
         copies.append(ArmCopy { tail, iteration });
-        if (!hasCopyPerArm || plan.arms.size() == 1)
+        if (!firstArmOfLastCopy)
             return;
 
         for (BlockID block : region) {
@@ -2128,7 +2773,7 @@ struct ArmDispatcher {
             definitionsInRegion.append(function.at(block).values.span());
         }
 
-        for (size_t arm = 1; arm < plan.arms.size(); ++arm) {
+        for (size_t arm = 1; arm <= firstArmOfLastCopy; ++arm) {
             if (region.isEmpty()) {
                 copies.append(ArmCopy { tail, { .open = iteration.open, .kind = iteration.kind, .origin = iteration.origin } });
                 continue;
@@ -2174,6 +2819,7 @@ struct ArmDispatcher {
         ArmState& state = states.last();
         switch (arm.form) {
         case IterationForm::Array:
+        case IterationForm::Arguments:
         case IterationForm::TypedArray:
         case IterationForm::String:
         case IterationForm::SplitString:
@@ -2191,6 +2837,8 @@ struct ArmDispatcher {
             state.position = expansion.addVariable(builder.appendInteger(0));
             break;
         case IterationForm::Generator:
+            expansion.appendFirstReadOf(Builtins::GeneratorPrototypeNext);
+            break;
         case IterationForm::AsyncGenerator:
             break;
         case IterationForm::Protocol:
@@ -2215,7 +2863,11 @@ struct ArmDispatcher {
         ValueID rest = plan.source;
         for (const IterationArm& arm : plan.classArms()) {
             RELEASE_ASSERT(rest);
-            rest = emitClassArm(arm, rest, protocolEntry);
+            // Whoever expects only undefined or null of what is left says nothing about what is iterated.
+            if (arm.isExpectedByNobody)
+                rest = builder.append(makeWith(Opcode::Expect, { rest }, &Value::setExpectedType, ExpectedType(pass.types.intern(pass.program.typeOf(function, rest).withoutNullish().withoutClassProofs()))));
+            bool isFollowedByLoopOfItsOwn = &arm != &plan.classArms().back() && plan.classArms().back().isExpectedByNobody;
+            rest = emitClassArm(arm, rest, protocolEntry, isFollowedByLoopOfItsOwn ? BlockFrequency::Normal : BlockFrequency::Unlikely);
         }
         if (plan.hasClassArm() && rest && protocolEntry)
             builder.emitJump(protocolEntry, { rest });
@@ -2232,20 +2884,28 @@ struct ArmDispatcher {
     }
 
     // Leaves the builder where the test of the class has failed and answers what the value is there.
-    ValueID emitClassArm(const IterationArm& arm, ValueID value, BlockID protocolEntry)
+    ValueID emitClassArm(const IterationArm& arm, ValueID value, BlockID protocolEntry, BlockFrequency whenOfAnotherClass)
     {
         IRBuilder::ProvenBranch classTest { .provenOnTaken = value };
         if (!arm.classIsProven)
-            classTest = builder.emitBranchWithProof(builder.appendTypeTest(value, arm.testedType), 0, BlockFrequency::Normal, BlockFrequency::Unlikely);
+            classTest = builder.emitBranchWithProof(builder.appendTypeTest(value, arm.testedType), 0, BlockFrequency::Normal, whenOfAnotherClass);
         ValueID subject = classTest.provenOnTaken;
 
         if (!arm.namesAreProven) {
             RELEASE_ASSERT(protocolEntry);
+            builder.emitFailureOfPredictions(Target { protocolEntry, { chooseArgumentOfProtocolEntry(pass, protocolEntry, subject, value) }, { } });
+        }
+        if (!arm.namesOfInstanceAreProven && !arm.namesAreProven) {
             OptionSet<PristineAspects> aspects { PristineAspects::Names };
             if (patternReads[states.size()] == PatternRead::ByIndex)
                 aspects.add(PristineAspects::Storage);
-            builder.emitFailureOfPredictions(Target { protocolEntry, { chooseArgumentOfProtocolEntry(pass, protocolEntry, subject, value) }, { } });
             IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.append(makeNamesTest(arm, subject, aspects)), 0, BlockFrequency::Normal, BlockFrequency::Unlikely);
+            builder.moveToEndOf(branch.notTaken);
+            builder.emitJump(protocolEntry, { chooseArgumentOfProtocolEntry(pass, protocolEntry, subject, value) });
+            builder.moveToEndOf(branch.taken);
+        }
+        if (arm.methodToWatch) {
+            IRBuilder::BranchBlocks branch = builder.emitBranch(builder.append(makeWith(Opcode::IsBuiltinLocationUnchanged, { }, &Value::setMember, arm.methodToWatch)), BlockFrequency::Normal, BlockFrequency::Unlikely);
             builder.moveToEndOf(branch.notTaken);
             builder.emitJump(protocolEntry, { chooseArgumentOfProtocolEntry(pass, protocolEntry, subject, value) });
             builder.moveToEndOf(branch.taken);
@@ -2258,10 +2918,10 @@ struct ArmDispatcher {
     }
 
     // One block for each arm, entered by the number of the arm.
-    Vector<BlockID, 4> emitSwitchOverArms(ValueID chosenArm, BlockFrequency frequency)
+    Vector<BlockID, 4> emitSwitchOverArms(ValueID chosenArm, Expected<BlockFrequency> frequency, size_t firstArm = 0)
     {
         Vector<BlockID, 4> blocks;
-        for (const IterationArm& arm : plan.arms)
+        for (const IterationArm& arm : plan.arms.span().subspan(firstArm))
             blocks.append(builder.addBlock(arm.form == IterationForm::Protocol ? rarerOf(frequency, BlockFrequency::Unlikely) : frequency));
 
         Vector<std::pair<int64_t, Target>> cases;
@@ -2314,22 +2974,22 @@ struct ArmDispatcher {
 
     void joinArmsByForm()
     {
-        static constexpr ValueID ArmState::* joinedValues[] { &ArmState::subject, &ArmState::nextMethod, &ArmState::isSteppedWithoutCall };
+        static constexpr ValueID ArmState::* joinedValues[] { &ArmState::subject, &ArmState::nextMethod, &ArmState::isSteppedWithoutCall, &ArmState::walkedList };
         BlockID join = builder.addBlock(function.at(head).frequency);
-        form = builder.addParameter(join, pass.types.intern(Type::integer({ 0, static_cast<int64_t>(states.size()) - 1 })));
+        form = builder.addParameter(join, pass.types.intern(Type::integer({ 0, static_cast<int64_t>(states.size() - firstArmOfLastCopy) - 1 })));
 
         Vector<ArmState, 2> joinedStates = states;
-        for (ArmState& state : joinedStates) {
+        for (ArmState& state : joinedStates.mutableSpan().subspan(firstArmOfLastCopy)) {
             for (auto value : joinedValues) {
                 if (state.*value)
                     state.*value = addParameterLike(pass, builder, join, state.*value);
             }
         }
 
-        for (size_t arm = 0; arm < states.size(); ++arm) {
+        for (size_t arm = firstArmOfLastCopy; arm < states.size(); ++arm) {
             builder.moveToEndOf(ends[arm]);
-            Arguments arguments { builder.appendInteger(static_cast<int64_t>(arm)) };
-            for (size_t other = 0; other < states.size(); ++other) {
+            Arguments arguments { builder.appendInteger(static_cast<int64_t>(arm - firstArmOfLastCopy)) };
+            for (size_t other = firstArmOfLastCopy; other < states.size(); ++other) {
                 const ArmState& state = states[other];
                 for (auto value : joinedValues) {
                     if (state.*value)
@@ -2345,7 +3005,7 @@ struct ArmDispatcher {
 
         states = WTF::move(joinedStates);
         builder.moveToEndOf(join);
-        builder.emitJump(tail);
+        builder.emitJump(copies.last().entry);
     }
 
     void collectPatternsReadAtOnce(Vector<PatternInOneRead>& patterns)
@@ -2379,12 +3039,18 @@ struct ArmDispatcher {
             for (ValueID close : copies[copy].operations.closes)
                 addSite(close, copy);
         }
-        AOT::sort(sites, std::ranges::greater { }, [](const OperationSite& site) { return blockAndIndexOf(site.point); });
+        AOT::sortInLine(sites, std::ranges::greater { }, [](const OperationSite& site) { return blockAndIndexOf(site.point); });
     }
 
-    void expandOperations()
+    // An operation that is expanded ends its block, and what stood behind it stands in another block from then on.
+    void expandOperations(BitVector& blocksThatWereCut)
     {
+        if (sites.containsIf([&](const OperationSite& site) { return blocksThatWereCut.get(site.point.block.index()); })) {
+            sites.shrink(0);
+            collectOperationSites();
+        }
         for (const OperationSite& site : sites) {
+            blocksThatWereCut.set(site.point.block.index());
             RELEASE_ASSERT(function.at(site.point.block).values[site.point.index] == site.value);
             Value original = function.at(site.value);
             bool isStep = original.opcode == Opcode::IteratorResume;
@@ -2394,7 +3060,7 @@ struct ArmDispatcher {
             expansion.operation = &operation;
             expansion.held = heldOperandsOf(original);
 
-            bool tracksDone = done && isStep && (!hasCopyPerArm || states[site.copy].patternRead == PatternRead::BySteps);
+            bool tracksDone = done && isStep && (isShared(site.copy) || states[site.copy].patternRead == PatternRead::BySteps);
             if (tracksDone) {
                 IRBuilder::BranchBlocks blocks = builder.emitBranch(done->anyDefinition);
                 expansion.finishStepAsDone();
@@ -2408,13 +3074,13 @@ struct ArmDispatcher {
                 builder.moveToEndOf(blocks.notTaken);
             }
 
-            if (hasCopyPerArm)
+            if (!isShared(site.copy))
                 emitOperation(original, states[site.copy]);
             else {
-                Vector<BlockID, 4> blocks = emitSwitchOverArms(form, function.at(builder.currentBlock()).frequency);
+                Vector<BlockID, 4> blocks = emitSwitchOverArms(form, function.at(builder.currentBlock()).frequency, firstArmOfLastCopy);
                 for (size_t arm = 0; arm < blocks.size(); ++arm) {
                     builder.moveToEndOf(blocks[arm]);
-                    emitOperation(original, states[arm]);
+                    emitOperation(original, states[firstArmOfLastCopy + arm]);
                 }
             }
 
@@ -2460,7 +3126,7 @@ struct ArmDispatcher {
     // %AsyncFromSyncIteratorPrototype%.next rejects its promise with what the step throws, and the loop awaits that promise: the exception arrives one turn of the job queue later.
     void emitStepOfWrappedIterator(ArmState& state)
     {
-        BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+        Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
         std::optional<Target> outer = builder.handler();
 
         IRBuilder::Expansion step { builder.addBlock(frequency), { }, outer };
@@ -2533,9 +3199,18 @@ struct ArmDispatcher {
     {
         if (copies[copy].isReadAtOnce)
             return true;
-        if (hasCopyPerArm)
+        if (!isShared(copy))
             return plan.arms[copy].closingHasNoEffect();
-        return std::ranges::all_of(plan.arms, &IterationArm::closingHasNoEffect);
+        return std::ranges::all_of(plan.arms.span().subspan(copy), &IterationArm::closingHasNoEffect);
+    }
+
+    void findOpenAgain(const BitVector& blocksThatWereCut)
+    {
+        if (!blocksThatWereCut.get(head.index()))
+            return;
+        open = analyses.useLists().locationOf(iteration.open);
+        RELEASE_ASSERT(open.placement == ValuePlacement::InBlock && plan.replacedValues.isEmpty());
+        head = open.block;
     }
 
     void eraseOpenAndReport()
@@ -2599,6 +3274,7 @@ static void selectByPlans(FunctionPassContext& pass, ArmDispatchers& dispatchers
 {
     constexpr unsigned nobody = 0;
     Vector<unsigned> ownerOfBlock(FillWith { }, pass.function.blocks.size(), nobody);
+    // The block that an inner open ends is also a block of the iteration around it, which comes later and is its owner here.
     for (unsigned index = 0; index < dispatchers.size(); ++index) {
         ownerOfBlock[dispatchers[index]->head.index()] = index + 1;
         for (BlockID block : dispatchers[index]->region)
@@ -2615,7 +3291,14 @@ static void selectByPlans(FunctionPassContext& pass, ArmDispatchers& dispatchers
             continue;
         }
 
-        if (std::ranges::any_of(plan.armSources, [&](const ArmSource& source) { return ownerOfBlock[source.block.index()] != nobody && ownerOfBlock[source.block.index()] != index + 1; })) {
+        auto liesAround = [&](unsigned owner) {
+            const IterationNest& nest = *dispatchers[index]->nest;
+            uint32_t inner = dispatchers[index]->numberInNest;
+            uint32_t outer = dispatchers[owner - 1] ? dispatchers[owner - 1]->numberInNest : inner;
+            return outer != inner && nest.first[outer] <= nest.first[inner] && nest.first[inner] <= nest.last[outer];
+        };
+        // An iteration around this one waits for it: see chooseFormsAroundNestedIterations().
+        if (std::ranges::any_of(plan.armSources, [&](const ArmSource& source) { unsigned owner = ownerOfBlock[source.block.index()]; return owner != nobody && owner != index + 1 && !liesAround(owner); })) {
             isPostponed.quickSet(index);
             continue;
         }
@@ -2632,7 +3315,7 @@ static void selectByPlans(FunctionPassContext& pass, ArmDispatchers& dispatchers
 }
 
 // The iterations of a function that have no block in common are expanded together: the analyses are computed a fixed number of times for all of them, and SSA is repaired once.
-static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builder, std::span<const ValueID> opensOfSpreads, ExpandedIterations expandedIterations, BitVector& separatedOpens, PassOutcome& outcome)
+static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builder, std::span<const ValueID> opensOfSpreads, ExpandedIterations expandedIterations, BitVector& separatedOpens, PassOutcome& outcome, bool expandsNestsAtOnce = true)
 {
     SSARepair repair(builder, pass.analyses);
     Vector<Iteration> iterations = collectIterations(pass);
@@ -2649,15 +3332,19 @@ static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builde
 
     // From the last iteration to the first, so that an iteration is asked after the ones nested in it.
     ArmDispatchers dispatchers;
-    BitVector takenBlocks(pass.function.blocks.size());
+    IterationNest nest(pass.function, iterations.size());
+    uint32_t taker = 0;
     for (const Iteration& iteration : iterations | std::views::reverse) {
-        auto dispatcher = makeUniqueWithoutFastMallocCheck<ArmDispatcher>(pass, builder, repair, iteration);
-        bool sharesBlock = takenBlocks.quickSet(dispatcher->head.index());
-        for (BlockID block : dispatcher->region)
-            sharesBlock |= takenBlocks.quickSet(block.index());
-        if (!sharesBlock)
-            dispatchers.append(WTF::move(dispatcher));
+        std::optional<TakenRegion> region = takeLiveRegion(pass, iteration.open, ++taker, nest, expandsNestsAtOnce);
+        if (!region)
+            continue;
+        dispatchers.append(makeUniqueWithoutFastMallocCheck<ArmDispatcher>(pass, builder, repair, iteration));
+        dispatchers.last()->region = WTF::move(region->blocks);
+        dispatchers.last()->nested = WTF::move(region->nested);
+        dispatchers.last()->nest = &nest;
+        dispatchers.last()->numberInNest = taker;
     }
+    nest.numberIterations();
     auto forEachDispatcher = [&](auto step, auto&... arguments) {
         for (const std::unique_ptr<ArmDispatcher>& dispatcher : dispatchers)
             (dispatcher.get()->*step)(arguments...);
@@ -2670,18 +3357,43 @@ static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builde
     outcome = PassOutcome::Changed;
 
     passParametersOfCleanupBlocksOn(pass, builder);
-    forEachDispatcher(&ArmDispatcher::splitAfterLastCloses);
-    forEachDispatcher(&ArmDispatcher::chooseForms);
+    Vector<ArmDispatcher*> dispatcherInNest(FillWith { }, iterations.size() + 1, nullptr);
+    for (const std::unique_ptr<ArmDispatcher>& dispatcher : dispatchers)
+        dispatcherInNest[dispatcher->numberInNest] = dispatcher.get();
+    Vector<std::pair<BlockID, uint32_t>> blocksForOuterIterations;
+    forEachDispatcher(&ArmDispatcher::splitAfterLastCloses, blocksForOuterIterations);
+    for (auto [block, outer] : blocksForOuterIterations) {
+        if (ArmDispatcher* dispatcher = dispatcherInNest[outer])
+            dispatcher->region.append(block);
+    }
+    // An iteration whose form goes by the code that those inside it become waits for the next round, and so does whatever lies around it.
+    for (std::unique_ptr<ArmDispatcher>& dispatcher : dispatchers) {
+        if (dispatcher->nested.isEmpty())
+            dispatcher->chooseForms();
+        else if (!dispatcher->chooseFormsAroundNestedIterations(dispatcherInNest)) {
+            dispatcherInNest[dispatcher->numberInNest] = nullptr;
+            dispatcher = nullptr;
+        }
+    }
+    dispatchers.removeAllMatching([](const std::unique_ptr<ArmDispatcher>& dispatcher) { return !dispatcher; });
+    // Whatever waited for something inside it that this round left out.
+    if (dispatchers.isEmpty()) {
+        RELEASE_ASSERT(expandsNestsAtOnce);
+        return expandRoundOfIterations(pass, builder, opensOfSpreads, expandedIterations, separatedOpens, outcome, false);
+    }
     forEachDispatcher(&ArmDispatcher::emitOpens);
     forEachDispatcher(&ArmDispatcher::addVariablesOfCopies);
     Vector<PatternInOneRead> patternsReadAtOnce;
     forEachDispatcher(&ArmDispatcher::collectPatternsReadAtOnce, patternsReadAtOnce);
     expandPatternsInOneRead(pass, builder, patternsReadAtOnce.span());
     forEachDispatcher(&ArmDispatcher::collectOperationSites);
-    forEachDispatcher(&ArmDispatcher::expandOperations);
+    BitVector blocksThatWereCut;
+    forEachDispatcher(&ArmDispatcher::expandOperations, blocksThatWereCut);
 
     Vector<BlockID> cleanupBlocksToDrop;
     forEachDispatcher(&ArmDispatcher::finishCleanupBlocks, cleanupBlocksToDrop);
+    // Every open ends a block of its own, so erasing one leaves the others where they are.
+    forEachDispatcher(&ArmDispatcher::findOpenAgain, blocksThatWereCut);
     // An iteration that never opens leaves the ones behind it unreachable, and dropping a region empties every unreachable block.
     forEachDispatcher(&ArmDispatcher::eraseOpenAndReport);
     dropCleanupRegions(pass, builder, cleanupBlocksToDrop.span());
@@ -2689,6 +3401,7 @@ static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builde
     builder.setHandler(std::nullopt);
     repair.run();
     builder.emptyUnreachableBlocks();
+    nameFactsWhereUnspecifiedValuesAreUsed(builder, pass.analyses);
     return true;
 }
 
@@ -2704,7 +3417,7 @@ static PassOutcome expandIterations(FunctionPassContext& pass, IRBuilder& builde
 
 // Where the protocol finds no method of the program in the operand, the effects of a spread say that it runs no code, and tests are placed by them. A call of the function that walks anything
 // counts as running any code, so nothing of such an operand goes there: a string is walked here, and the rest throws. Answers what is left to walk.
-static ValueID emitThrowWhereNoMethodIsFound(FunctionPassContext& pass, IRBuilder& builder, ValueID source, bool hasFailedStringTest, BlockFrequency frequency)
+static ValueID emitThrowWhereNoMethodIsFound(FunctionPassContext& pass, IRBuilder& builder, ValueID source, bool hasFailedStringTest, Expected<BlockFrequency> frequency)
 {
     Type type = pass.program.typeOf(pass.function, source);
     if (type.without(pass.types.at(TypeTable::string), pass.types).isNever() || protocolMayFindMember(pass.program, type, Protocol::Iterate))
@@ -2735,13 +3448,58 @@ struct SpreadSite {
     ProgramPoint point;
     IterationPlan plan;
     bool hasFailedStringTest;
+    ValueID makerOfArguments;
 };
 
 } // anonymous namespace
 
+// The list of the arguments behind the parameters can be appended at once where it still holds what the object copied from it.
+static ValueID findMakerOfArgumentsToTakeApart(FunctionPassContext& pass, ValueID iterable)
+{
+    if (!pass.program.typeOf(pass.function, iterable).findClassPart(BuiltinClasses::Arguments))
+        return { };
+    ValueID maker = findMakerOfUnchangedArguments(pass, iterable);
+    if (!maker)
+        return { };
+    DescribedObject described = describeVirtualObject(pass.analyses, maker);
+    if (described.support != VirtualObjectSupport::Supported || !described.description.restListStaysAsCreated)
+        return { };
+    const Type& list = pass.program.typeOf(pass.function, pass.function.at(maker).restOperand());
+    return pristineAspectsProvenBy(list, BuiltinClasses::Array).containsAll({ PristineAspects::Storage, PristineAspects::Names }) ? maker : ValueID();
+}
+
+// An arguments object as it was made holds the parameters that were passed and, behind them, the other arguments.
+static void appendPartsOfArguments(FunctionPassContext& pass, IRBuilder& builder, const SpreadSite& site)
+{
+    Function& function = pass.function;
+    Value spread = function.at(function.at(site.point.block).values[site.point.index]);
+    Value maker = function.at(site.makerOfArguments);
+    Expected<BlockFrequency> frequency = function.at(site.point.block).frequency;
+    ReplacedEffects replaced;
+    replaced.add(pass.analyses.effectContext(), function, spread);
+
+    builder.setOrigin(spread.origin());
+    IRBuilder::Expansion cut = builder.beginExpansion(site.point);
+    int64_t index = 0;
+    for (ValueID parameter : maker.parametersOperands()) {
+        IRBuilder::BranchBlocks blocks = builder.emitBranch(builder.append(Opcode::Less, { builder.appendInteger(index++), maker.countOperand() }), frequency, frequency);
+        builder.moveToEndOf(blocks.notTaken);
+        builder.endExpansion(cut, std::span<const ValueID> { });
+        builder.moveToEndOf(blocks.taken);
+        builder.append(Opcode::AppendElement, { spread.arrayOperand(), parameter });
+    }
+    BlockID block = builder.currentBlock();
+    ValueID appendElements = builder.append(Opcode::AppendElements, { spread.arrayOperand(), maker.restOperand() });
+    checkReplacement(pass.analyses.effectContext(), function, { pass.id, block, appendElements }, function.at(appendElements), replaced, pass.build.diagnostics());
+    builder.endExpansion(cut, std::span<const ValueID> { });
+}
+
 static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const SpreadSite& site, Vector<SpreadLoop>& loops)
 {
-    const auto& [point, plan, hasFailedStringTest] = site;
+    if (site.makerOfArguments)
+        return appendPartsOfArguments(pass, builder, site);
+
+    const auto& [point, plan, hasFailedStringTest, makerOfArguments] = site;
     Function& function = pass.function;
     ValueID id = function.at(point.block).values[point.index];
     ReplacedEffects replaced;
@@ -2755,7 +3513,7 @@ static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const Sp
         replaced.add(pass.analyses.effectContext(), function, value);
         ValueID array = value.arrayOperand();
         ValueID source = value.iterableOperand();
-        value.become(Opcode::AppendElements);
+        value.become(plan.arms.first().form == IterationForm::Set ? Opcode::AppendMembers : Opcode::AppendElements);
         value.setArrayOperand(array);
         value.setSourceOperand(source);
         pass.analyses.didChangeValues();
@@ -2766,7 +3524,7 @@ static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const Sp
     Value original = function.at(id);
     ValueID iterable = original.iterableOperand();
     replaced.add(pass.analyses.effectContext(), function, original);
-    BlockFrequency loopFrequency = rarerOf(plan.hasClassArm() ? BlockFrequency::Unlikely : BlockFrequency::Normal, function.at(point.block).frequency);
+    Expected<BlockFrequency> loopFrequency = rarerOf(plan.hasClassArm() ? BlockFrequency::Unlikely : BlockFrequency::Normal, function.at(point.block).frequency);
 
     builder.setOrigin(original.origin());
     IRBuilder::Expansion cut = builder.beginExpansion(point);
@@ -2839,7 +3597,7 @@ static void replaceWithCallOfOutlinedLoop(FunctionPassContext& pass, IRBuilder& 
     uint32_t numberOfValues = function.at(loop.entry).values.size();
     RELEASE_ASSERT(numberOfValues && function.at(loop.entry).values.last() == loop.open);
     ValueID source = function.at(loop.open).iterableOperand();
-    BlockFrequency frequency = function.at(loop.entry).frequency;
+    Expected<BlockFrequency> frequency = function.at(loop.entry).frequency;
     builder.beginExpansion(ProgramPoint { loop.entry, numberOfValues - 1 });
 
     if (pass.program.typeOf(function, source).mayBeUndefinedOrNull()) {
@@ -2855,7 +3613,7 @@ static void replaceWithCallOfOutlinedLoop(FunctionPassContext& pass, IRBuilder& 
 
 static void emitLoop(FunctionPassContext& pass, IRBuilder& builder, const SpreadLoop& loop)
 {
-    BlockFrequency frequency = pass.function.at(loop.entry).frequency;
+    Expected<BlockFrequency> frequency = pass.function.at(loop.entry).frequency;
     builder.setOrigin(pass.function.at(loop.open).origin());
     builder.setHandler(loop.handler);
     BlockID header = builder.addBlock(frequency);
@@ -2876,6 +3634,33 @@ static void emitLoop(FunctionPassContext& pass, IRBuilder& builder, const Spread
     builder.emitJump(header);
 }
 
+// Nothing but casts has read the list that the spread appends to, and it stands in the block of the spread.
+static bool isFirstUseOfEmptyLiteral(FunctionPassContext& pass, const ValueSite& site)
+{
+    const Function& function = pass.function;
+    const UseLists& useLists = pass.analyses.useLists();
+    ValueID list = function.at(site.value).arrayOperand();
+    ValueID cast = function.at(list).opcode == Opcode::AssumeType ? list : ValueID();
+    ValueID id = cast ? function.at(cast).valueOperand() : list;
+    const Value& literal = function.at(id);
+    if (literal.opcode != Opcode::NewArray || literal.capacityOperand() || !literal.elementsOperands().empty() || !literal.holes().empty() || literal.storage() != AllocationStorage::Heap)
+        return false;
+    if (useLists.locationOf(id).block != site.block)
+        return false;
+    auto isReadBehindSpreadOnly = [&](ValueID value) {
+        return std::ranges::all_of(useLists.usesOf(value), [&](const Use& use) {
+            // The end of a block stands behind all its values, and its handler is handed only what is there at its head.
+            if (use.kind != Use::Kind::Operand)
+                return true;
+            if (use.user == cast || use.user == site.value)
+                return true;
+            ValueLocation location = useLists.locationOf(use.user);
+            return location.block != site.block || location.index > site.index;
+        });
+    };
+    return isReadBehindSpreadOnly(id) && (!cast || isReadBehindSpreadOnly(cast));
+}
+
 static PassOutcome expandSpreads(FunctionPassContext& pass, IRBuilder& builder, Vector<ValueID>& opensOfSpreads)
 {
     Vector<SpreadSite> sites;
@@ -2883,9 +3668,15 @@ static PassOutcome expandSpreads(FunctionPassContext& pass, IRBuilder& builder, 
         ValueID iterable = pass.function.at(site.value).iterableOperand();
         Arms arms = findClassArms(pass, PlannedValue { iterable, site.block, { PristineAspects::Storage, PristineAspects::Names } });
         // An arm's class is proven relative to the tests in front of it, so the other arms go before that is decided.
-        arms.removeAllMatching([](const IterationArm& arm) { return arm.form != IterationForm::Array; });
+        arms.removeAllMatching([](const IterationArm& arm) { return arm.form != IterationForm::Array && arm.form != IterationForm::Set; });
+        IterationPlan plan = planWithClassArms(pass, iterable, Arms(arms));
+        // `[...set]`: the list is made with the members in it. A list that holds something already has no room for them, and the loop makes room as it goes.
+        if (!plan.hasClassArm() || plan.arms.first().form != IterationForm::Set || !plan.arms.first().needsNoTest() || !isFirstUseOfEmptyLiteral(pass, site)) {
+            arms.removeAllMatching([](const IterationArm& arm) { return arm.form != IterationForm::Array; });
+            plan = planWithClassArms(pass, iterable, WTF::move(arms));
+        }
         bool hasFailedStringTest = pass.analyses.findEarlierTest(makeTypeTest(iterable, TypeTable::string), site.block) == EarlierTest::Failed;
-        sites.append({ ProgramPoint { site.block, site.index }, planWithClassArms(pass, iterable, WTF::move(arms)), hasFailedStringTest });
+        sites.append({ ProgramPoint { site.block, site.index }, WTF::move(plan), hasFailedStringTest, findMakerOfArgumentsToTakeApart(pass, iterable) });
     });
     if (sites.isEmpty())
         return PassOutcome::Unchanged;
@@ -3020,7 +3811,7 @@ void reportEnumeratedKeyTests(TestSiteReporter& reporter)
         return;
     auto isResultRead = [](const Value& value, ForInStepResult result) { return value.opcode == Opcode::ResultAt && value.index() == static_cast<uint32_t>(result); };
 
-    reporter.forEachCandidate([&](const Value& use) {
+    reporter.forEachCandidate({ Opcode::ElemGet, Opcode::ElemHas, Opcode::CallBuiltin }, [&](const Value& use) {
         std::optional<KeyedOperation> operation = keyedOperationOf(reporter.program(), use);
         if (!operation)
             return;
@@ -3028,7 +3819,7 @@ void reportEnumeratedKeyTests(TestSiteReporter& reporter)
         if (!isResultRead(origin, ForInStepResult::Key) || function.at(origin.resultsOperand()).opcode != Opcode::ForInStep || !reporter.typeOf(operation->object).hasObjects())
             return;
         ValueID step = origin.resultsOperand();
-        if (operation->opcodeWhenCurrent == Opcode::EnumeratorGetByVal && (reporter.program().expectedOrTypeOf(function, operation->object).hasOnlyLayouts(reporter.program()) || !reporter.typeOf(reporter.use()).isAnything()))
+        if (operation->opcodeWhenCurrent == Opcode::EnumeratorGetByVal && (reporter.program().expectedOrTypeOf(function, operation->object).predicted().hasOnlyLayouts() || !reporter.typeOf(reporter.use()).isAnything()))
             return;
 
         for (const Use& read : reporter.analyses().useLists().usesOf(step)) {

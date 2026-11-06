@@ -1,0 +1,137 @@
+# A callee set of 16 functions or more is kept once in the call graph. Callees, callers, recursion and ranks are those of a graph that lists each member at each caller
+# FORM: Prepared
+# RUN: pass BuildCallGraph
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="State" fields=[{key="a" declared={type=anything}}] flow={members=[L0]}
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L0
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f1 name="step1" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f2 name="step2" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f3 name="step3" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    v3 = CallDirect v1 function=f21
+    Return v2
+}
+function f4 name="step4" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f5 name="step5" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    v3 = CallDirect v0, v1 function=f7
+    Return v2
+}
+function f6 name="step6" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f7 name="step7" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f8 name="step8" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f9 name="step9" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Boolean boolean=true
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v1
+}
+function f10 name="step10" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f11 name="step11" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    v3 = Call v0, -, v0, v1 callees=[f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, f22]
+    Return v2
+}
+function f12 name="step12" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f13 name="step13" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    v3 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, ..]
+    Return v2
+}
+function f14 name="step14" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f15 name="step15" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f16 name="step16" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f17 name="step17" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    v3 = Call v0, -, v1, v0 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f18 name="step18" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f19 name="step19" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f20 name="step20" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+function f21 name="helper" role=OutlinedBody parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f22 name="outside" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v0, v1 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20]
+    Return v2
+}
+# CHECK: called by unknown code f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22
+# CHECK-NEXT: roots f0
+# CHECK-NEXT: f0: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers | sites 0 | callers Unknown | callees Complete | entries Unknown | Unknown | rank 3 | call sites 0 Unknown
+# CHECK-NEXT: f1: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries Unknown | Unknown | rank 3 | call sites 24 Unknown
+# CHECK-NEXT: f2: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 24 Complete
+# CHECK-NEXT: f3: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f21 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 24 Complete
+# CHECK-NEXT: f4: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f5: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f6: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f7: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 1 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 26 Complete
+# CHECK-NEXT: f8: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f9: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f10: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f11: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f12: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f13: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Unknown | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f14: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f15: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f16: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f17: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f18: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f19: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f20: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f22 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 25 Complete
+# CHECK-NEXT: f21: callees | callers f3 | sites 1 | callers Complete | callees Complete | entries DirectCallers | NotRecursive | rank 0 | call sites 1 Complete
+# CHECK-NEXT: f22: callees f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 | callers f11 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | Unknown | rank 3 | call sites 1 Complete

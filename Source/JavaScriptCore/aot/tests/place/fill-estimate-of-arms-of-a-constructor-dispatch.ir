@@ -1,0 +1,63 @@
+# const Node = allocator.get();   function create(kind) { const node = new Node(kind); return node }   function mark(node) { node.late = 1 }
+# The `new` tests which of two constructors it has. The arms exclude each other and nothing says which one a program takes, so each class counts as made as often as the `new` runs.
+# Counted at half of that, a field stored half as often as objects are made (`late`) passed for one that most objects get.
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,EstimateHeat
+# RUN: plan-slots fill
+# CHECK-LABEL: L0 allocated=
+# CHECK-NEXT: .0 "kind" filled={{*}} likely
+# CHECK-NEXT: .1 "late" filled=
+# CHECK-NOT: likely
+# CHECK-LABEL: L1 allocated=
+# CHECK-NEXT: .0 "kind" filled={{*}} likely
+# CHECK-NEXT: .1 "late" filled=
+# CHECK-NOT: likely
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Plain" constructor=f3 fields=[{key="kind" declared={type=anything}}, {key="late" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Service" constructor=f4 fields=[{key="kind" declared={type=anything}}, {key="late" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = CallDirect v1, v1 function=f1
+    PutModuleVariable v3 variable=g0
+    v5 = CallDirect v3, v2 function=f2
+    Return
+}
+function f1 name="create" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=f3
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    Jump -> next b5(v3)
+  b2():
+    v4 = TypeTest v0 testedType=f4
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    v5 = NewObject -, v1 layout=L1 fields=[0]
+    Jump -> next b5(v5)
+  b4() frequency=Unlikely:
+    v6 = Construct v0, -, v1
+    Jump -> next b5(v6)
+  b5(v7: anything):
+    Return v7
+}
+function f2 name="mark" parameters=[{type=L0|L1 flags=[IsExpected]}, {type=boolean}] results=[{type=undefined}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v0, v1 key="late"
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f3 name="Plain" flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    PropSet v0, v1 key="kind"
+    Return
+}
+function f4 name="Service" flags=[HasThis] thisType={type=L1} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
+    PropSet v0, v1 key="kind"
+    Return
+}

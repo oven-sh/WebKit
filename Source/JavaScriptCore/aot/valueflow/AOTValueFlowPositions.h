@@ -90,8 +90,6 @@ public:
     std::atomic<size_t> bytesOfTypesOfSets { 0 };
     std::once_flag hasFoundLayoutsOfSites;
     ValueFlowLayoutsOfSites layoutsOfSites;
-    std::once_flag hasFoundBirths;
-    std::optional<ValueFlowBirthsOfUnknownObject> births;
 };
 
 class ValueFlowPositions {
@@ -112,18 +110,25 @@ public:
     FlowPositionUpdate updateFrom(const ValueFlowPositionResult&, const Type& family);
     FlowPositionUpdate updateFor(const DeclaredType&, ValueFlowNodeID, DeadZone = DeadZone::MayBeObserved, const ValueFlowNumbers* = nullptr);
     void takeWhatArrives(const DeclaredType&, ValueFlowNodeID, FlowPositionUpdate&);
+    std::optional<Type> typeByLayoutsOfClassesBelowBuiltinClasses(ValueSetID);
 
-    std::optional<LayoutSet> receiversAt(const Type& family, ValueSetID);
-    std::optional<CalleeSet> calleesAt(const Type& family, ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction);
+    std::optional<LayoutSet> receiversAt(ValueSetID);
+    std::optional<CalleeSet> calleesAt(ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction);
 
     bool isSurelyInside(ValueSetID, const Type&, std::optional<TypeID> numberOfType = std::nullopt);
     std::optional<Type> typeWhereNothingPasses(ValueSetID, const Type&);
+    std::optional<Type> typeWhereOnlyInstancesOfBuiltinClassesAreTurnedAway(ValueSetID, const Type&);
     bool holdsObjectThatMayLieOutside(ValueSetID, const Type&);
     bool turnsAwayConstructedObject(ValueSetID, const Type&);
+    bool turnsAwayObjectMadeForOtherClass(ValueSetID, const Type&);
+    bool turnsAwayEveryObject(ValueSetID, const Type&);
+    bool turnsAwayEverySeenObject(ValueSetID seen, const Type&);
+    void addPrototypesThatAreKept(ValueSetID held, Type&);
 
     Type typeOfObject(ValueFlowObjectID);
 
     FlowSiteLoss lossOf(const ValueFlowPositionResult&, ValueFlowNodeID = { });
+    bool isDataFromOutside(ValueFlowObjectID);
 
 private:
     bool isEnabled(FlowResultKind kind) const { return m_inputs.build.isEnabled(kind, m_switchSubject); }
@@ -135,6 +140,8 @@ private:
     Type typeOfMembers(ValueSetID);
     Type typeOf(ValueSetID);
     Type withinLimits(Type&&);
+    TypeID withStringsWithinLimit(TypeID);
+    bool keepContentStringsWithinLimit(ClassParts&);
     ValueFlowObjectID findStranger(ValueSetID, const Type& family);
     std::optional<Type> familyBehindDictionaries(const Type& family);
     template<typename KindOfType> ValueFlowPositionResult decide(KindOfType family, ValueSetID, DeadZone, const ValueFlowNumbers*, ValueFlowNodeID = { });
@@ -146,6 +153,10 @@ private:
     uint32_t m_switchSubject;
     ValueSetMaker* m_maker { nullptr };
     bool m_hasBorrowedMaker { false };
+    // The operations of the function that isDataFromOutside() was asked about last, by (site, position among the statements). Made at the second question about one function.
+    FunctionID m_functionOfOperations;
+    bool m_hasOperationsBySite { false };
+    Vector<std::pair<uint32_t, uint32_t>> m_operationsBySite;
     HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_indexOfSet;
     Vector<Type> m_typesOfSets;
 };

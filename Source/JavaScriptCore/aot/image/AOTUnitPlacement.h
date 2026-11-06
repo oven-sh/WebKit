@@ -24,6 +24,11 @@ struct CopyableUse {
     int64_t reach;
 };
 
+struct RangeInUnit {
+    uint32_t begin;
+    uint32_t end;
+};
+
 enum class CopyPolicy : uint8_t {
     BeforeUser,
     AfterUsers,
@@ -44,6 +49,10 @@ struct UnitPlacementInputs {
     size_t start;
     size_t shiftOfFirstUnit;
     CopyPolicy policy;
+    // What should lie in one line of lineSize bytes, unit by unit, each no longer than a line. A unit is moved up by less than a line for it, unless another unit falls into it.
+    std::span<const RangeInUnit> rangesKeptInLine { };
+    std::span<const uint32_t> firstRangeByUnit { };
+    size_t lineSize { 1 };
 };
 
 struct PlacedCopy {

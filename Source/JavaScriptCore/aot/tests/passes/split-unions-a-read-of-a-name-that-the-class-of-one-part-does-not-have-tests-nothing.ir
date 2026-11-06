@@ -1,0 +1,31 @@
+# `a.value`, where `a` is an instance of a class without that name or an object that the program filled by computed names. Code reads a name to find something: a test for the class, whose answer is `undefined`, would fail at every read.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SplitUnions
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Payload" constructor=f0 fields=[{key="count" declared={type=i32}}] flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce}
+layout L1 name="Empty" flow={impossibleMutations=[AddProperty, ChangePrototype]}
+
+function f0 name="Payload" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+
+function f1 name="nameThatTheClassHasNot" parameters=[{type=L0|Object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="value"
+    Return v1
+# CHECK: b0(v0: L0|Object):
+# CHECK-NEXT: v1: anything = PropGet v0 key="value"
+# CHECK-NEXT: Return v1
+}
+
+function f2 name="nameThatTheClassHas" parameters=[{type=L0|Object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0
+}
+
+function f3 name="nobodyElseCanAnswer" parameters=[{type=L0|L1|boolean}] results=[{type=anything}] {
+    v1 = PropGet v0 key="value"
+    Return v1
+# Whatever else arrives is no object: the arm stays.
+# CHECK: = TypeTest v0 testedType=L0|L1
+}

@@ -1,0 +1,26 @@
+# interface P { x: number } const p: P = JSON.parse(text); print(p.x)
+# FORM: AsRead
+# RUN: pipeline RemoveUnusedParameters
+# STATISTIC: TypedResultsSelected = 0
+# STATISTIC: ParsersCreated = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="P" fields=[{key="x" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = ToString v1
+    v3 = Builtin builtin=JSONParse
+    v4 = Call v3, -, v2
+    v5 = Convert v4 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    v6 = PropGet v5 key="x"
+    v7 = PropGet v0 key="print" [isFreeName]
+    v8 = Call v7, -, v6
+    Return
+}
+# CHECK-NOT: JSONSourceOpen
+# CHECK: = CallBuiltin -, {{*}} overload=JSONParse/0
+# CHECK-NOT: JSONSourceOpen
+# CHECK-NOT: role=Parser

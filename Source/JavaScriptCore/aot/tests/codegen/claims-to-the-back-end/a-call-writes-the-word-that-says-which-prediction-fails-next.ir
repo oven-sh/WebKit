@@ -1,0 +1,34 @@
+# Where predictions fail unasked, one word of the instance says which of them fails next. Every function that has a prediction reads it and writes it.
+# A call that runs code of the program says that it writes the word: what is read behind the call is not taken for what was stored in front of it.
+# FORM: Selected
+# OPTIONS: testing=FailPredictions:2:1
+# RUN: lower-to-b3 optimized f0
+
+module m0 path="main.ts" displayPath="main.ts"
+
+function f0 name="asksAroundCall" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v1 = ShouldFailPrediction
+    Branch v1 -> taken b3(), notTaken b1()
+  b1():
+    v2 = CallDirect v0 function=f1
+    v3 = ShouldFailPrediction
+    Branch v3 -> taken b3(), notTaken b2()
+  b2():
+    Return v2
+  b3() frequency=Unlikely:
+    v4 = Undefined
+    Return v4
+}
+# CHECK: = Load({{*}}Reads:counters, v1:ShouldFailPrediction)
+# CHECK: = Patchpoint({{*}}Writes:{{*}}counters{{*}}, v2:CallDirect)
+# CHECK: = Load({{*}}Reads:counters, v3:ShouldFailPrediction)
+
+function f1 name="asks" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v1 = ShouldFailPrediction
+    Branch v1 -> taken b2(), notTaken b1()
+  b1():
+    Return v0
+  b2() frequency=Unlikely:
+    v2 = Undefined
+    Return v2
+}

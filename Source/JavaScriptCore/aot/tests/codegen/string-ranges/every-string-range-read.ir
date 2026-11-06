@@ -86,6 +86,8 @@ function f7 name="flatIfString" parameters=[{type=undefined|string}, {type=numbe
     Jump -> next b3(v6)
   b3(v7):
     v8 = RequireObjectCoercible v0
-    v9 = StringRangeCodeUnitOrNaN v7, -, -, v1
+    v9 = Specified
+    v10 = AssumeType v7, v9 provenType=flatstring
+    v11 = StringRangeCodeUnitOrNaN v10, -, -, v1
     Return
 }

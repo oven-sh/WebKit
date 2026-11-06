@@ -1,0 +1,37 @@
+# class Kept { constructor(v) { this.a = v; this.sum = v } }  Object.defineProperty(Kept.prototype, "sum", { get: giver });  new Kept(1).a
+# A store creates a property of the object unless an object above has a property under the same name that takes or refuses it. The prototype object has got one, under `sum`, and the program
+# puts nothing else on it. So the store under `sum` may be stopped, and the store under `a` is not: every Kept has that field from its creation.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Kept" {{*}}fields=[{key="a" {{*}}initialization=SetAtCreation} occupancy=AlwaysFilled {{*}}}, {key="sum" {{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead} stability={{*}}constructorOrders=[{fields=[0]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Kept" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="sum" declared={type=anything}}]
+layout L1 name="Descriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = PropGet v2 key="prototype"
+    v6 = String string="sum"
+    v7 = NewClosure function=f2
+    v8 = NewObject -, v7 layout=L1 fields=[0]
+    v9 = Call v4, v3, v5, v6, v8
+    v10 = Integer integer=1
+    v11 = Construct v2, -, v10
+    v12 = PropGet v11 key="a"
+    Return
+}
+function f1 name="Kept" module=m0 kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="a" mode=Strict
+    PropSet v3, v1 key="sum" mode=Strict
+    Return v3
+}
+function f2 name="giver" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}

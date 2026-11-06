@@ -448,7 +448,7 @@ list(APPEND WebCore_SOURCES
     platform/graphics/cg/GradientRendererCG.cpp
     platform/graphics/cg/GraphicsContextCG.cpp
     platform/graphics/cg/GraphicsContextGLCG.cpp
-    platform/graphics/cg/IOSurfacePool.cpp
+    platform/graphics/cg/IOSurfacePool.mm
     platform/graphics/cg/ImageBufferCGBackend.cpp
     platform/graphics/cg/ImageBufferCGBitmapBackend.cpp
     platform/graphics/cg/ImageBufferIOSurfaceBackend.cpp
@@ -478,7 +478,6 @@ list(APPEND WebCore_SOURCES
     platform/graphics/cocoa/GraphicsContextCocoa.mm
     platform/graphics/cocoa/GraphicsContextGLCocoa.mm
     platform/graphics/cocoa/IOSurface.mm
-    platform/graphics/cocoa/IOSurfacePoolCocoa.mm
     platform/graphics/cocoa/IntRectCocoa.mm
     platform/graphics/cocoa/MediaPlayerEnumsCocoa.mm
     platform/graphics/cocoa/TextTransformCocoa.cpp
@@ -1301,7 +1300,6 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/cg/GradientRendererCG.h
     platform/graphics/cg/GraphicsContextCG.h
     platform/graphics/cg/IOSurfacePool.h
-    platform/graphics/cg/IOSurfacePoolIdentifier.h
     platform/graphics/cg/ImageBufferCGBackend.h
     platform/graphics/cg/ImageBufferCGBitmapBackend.h
     platform/graphics/cg/ImageBufferCGPDFDocumentBackend.h
@@ -1332,6 +1330,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/cocoa/ISOBMFFPreParser.h
     platform/graphics/cocoa/ISOBMFFTrackInfoParser.h
     platform/graphics/cocoa/MediaPlayerEnumsCocoa.h
+    platform/graphics/cocoa/NativeImageCocoa.h
     platform/graphics/cocoa/NullPlaybackSessionInterface.h
     platform/graphics/cocoa/NullVideoPresentationInterface.h
     platform/graphics/cocoa/PeriodicSharedTimer.h
@@ -1585,6 +1584,40 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/mac/WebCoreFullScreenWindow.h
     platform/mac/WebCoreNSFontManagerExtras.h
     platform/mac/WebCoreView.h
+
+    page/mac/CorrectionIndicator.h
+
+    page/scrolling/mac/ScrollerMac.h
+    page/scrolling/mac/ScrollerPairMac.h
+    page/scrolling/mac/ScrollingCoordinatorMac.h
+    page/scrolling/mac/ScrollingTreeFrameScrollingNodeMac.h
+    page/scrolling/mac/ScrollingTreeOverflowScrollingNodeMac.h
+    page/scrolling/mac/ScrollingTreePluginScrollingNodeMac.h
+    page/scrolling/mac/ScrollingTreeScrollingNodeDelegateMac.h
+
+    platform/audio/cocoa/PitchShiftAudioUnit.h
+
+    platform/audio/mac/SharedRoutingArbitrator.h
+
+    platform/gamepad/mac/HIDGamepad.h
+    platform/gamepad/mac/HIDGamepadElement.h
+
+    platform/graphics/avfoundation/FormatDescriptionUtilities.h
+
+    platform/graphics/mac/AppKitControlSystemImage.h
+    platform/graphics/mac/GraphicsChecksMac.h
+    platform/graphics/mac/ScrollbarTrackCornerSystemImageMac.h
+
+    platform/mac/DataDetectorHighlight.h
+    platform/mac/HIDDevice.h
+    platform/mac/HIDElement.h
+    platform/mac/LocalDefaultSystemAppearance.h
+    platform/mac/PowerObserverMac.h
+    platform/mac/RevealUtilities.h
+    platform/mac/WebCoreFullScreenPlaceholderView.h
+    platform/mac/WebPlaybackControlsManager.h
+
+    rendering/mac/RenderThemeMac.h
 )
 
 # Used to substitute placeholders in Info.plist.
@@ -1762,42 +1795,6 @@ add_compile_options(
 
 list(APPEND WebCore_USER_AGENT_STYLE_SHEETS
     ${WEBCORE_DIR}/html/shadow/mac/imageControlsMac.css
-)
-
-list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
-    page/mac/CorrectionIndicator.h
-
-    page/scrolling/mac/ScrollerMac.h
-    page/scrolling/mac/ScrollerPairMac.h
-    page/scrolling/mac/ScrollingCoordinatorMac.h
-    page/scrolling/mac/ScrollingTreeFrameScrollingNodeMac.h
-    page/scrolling/mac/ScrollingTreeOverflowScrollingNodeMac.h
-    page/scrolling/mac/ScrollingTreePluginScrollingNodeMac.h
-    page/scrolling/mac/ScrollingTreeScrollingNodeDelegateMac.h
-
-    platform/audio/cocoa/PitchShiftAudioUnit.h
-
-    platform/audio/mac/SharedRoutingArbitrator.h
-
-    platform/gamepad/mac/HIDGamepad.h
-    platform/gamepad/mac/HIDGamepadElement.h
-
-    platform/graphics/avfoundation/FormatDescriptionUtilities.h
-
-    platform/graphics/mac/AppKitControlSystemImage.h
-    platform/graphics/mac/GraphicsChecksMac.h
-    platform/graphics/mac/ScrollbarTrackCornerSystemImageMac.h
-
-    platform/mac/DataDetectorHighlight.h
-    platform/mac/HIDDevice.h
-    platform/mac/HIDElement.h
-    platform/mac/LocalDefaultSystemAppearance.h
-    platform/mac/PowerObserverMac.h
-    platform/mac/RevealUtilities.h
-    platform/mac/WebCoreFullScreenPlaceholderView.h
-    platform/mac/WebPlaybackControlsManager.h
-
-    rendering/mac/RenderThemeMac.h
 )
 
 # CSS codegen scripts only see command-line defines, not PlatformHave.h.

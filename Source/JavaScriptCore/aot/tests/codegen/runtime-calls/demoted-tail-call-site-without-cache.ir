@@ -1,4 +1,4 @@
-# Without a site cache one stub reads the method and calls it, and its one site is recorded as a tail call's when the call is a demoted tail call
+# Without a site cache one stub reads the method and calls it, and the site of the call is recorded as a tail call's when the call is a demoted tail call
 # FORM: Selected
 # OPTIONS: limit=MaxSiteCaches:0
 # LOSS: MaxSiteCaches

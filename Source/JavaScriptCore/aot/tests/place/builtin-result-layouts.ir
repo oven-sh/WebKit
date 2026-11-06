@@ -20,7 +20,7 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
-runtimefunction id=69 function=f1
+runtimefunction id=ArrayIteratorPrototypeNext function=f1
 variable g0 name="stepOfMap" module=m0 declared={type=anything} initialization=Uninitialized
 variable g1 name="stepOfArray" module=m0 declared={type=anything} initialization=Uninitialized
 variable g2 name="counts" module=m0 declared={type=anything} initialization=Uninitialized
@@ -49,7 +49,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v21 = CallDirect function=f2
     Return
 }
-function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=69 results=[{type=anything}] {
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayIteratorPrototypeNext results=[{type=anything}] {
     v1 = Builtin builtin=MathRandom
     v2 = Call v1
     v3 = ToNumber v2

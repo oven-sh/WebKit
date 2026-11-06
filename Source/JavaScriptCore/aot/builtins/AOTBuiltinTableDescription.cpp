@@ -268,7 +268,8 @@ public:
     {
         object("type"_s, result.type, "rangeRule"_s, result.rangeRule, "rangeOperand"_s, result.rangeOperand, "substringOf"_s, result.substringOf, "rangeOf"_s, result.rangeOf,
             "typedResultForm"_s, result.typedResultForm, "typedResultSource"_s, result.typedResultSource, "iteratedOperand"_s, result.iteratedOperand,
-            "iterationKind"_s, result.iteratedOperand ? std::optional(result.iterationKind) : std::nullopt, "prototypeSource"_s, result.prototypeSource);
+            "iterationKind"_s, result.iteratedOperand ? std::optional(result.iterationKind) : std::nullopt, "prototypeSource"_s, result.prototypeSource,
+            "testedOperand"_s, result.testedOperand, "testedType"_s, result.testedOperand ? std::optional(result.testedType) : std::nullopt);
     }
 
     void write(const BuiltinImplementation& implementation)

@@ -42,7 +42,7 @@ function f3 name="calls" parameters=[{type=Arguments}, {type=Array<number>}, {ty
 # CHECK-LABEL: function f3
 # CHECK-NEXT: v5 CallDirect: reads(Elements/2, ArrayStorage) writes(Elements/2)
 # CHECK-NEXT: v6 CallDirect: reads(ArrayStorage) writes(Elements/1)
-# CHECK-NEXT: v7 CallDirect: reads(NamedProperties, Elements, StringStorage, ParserState, AllocatorState) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
+# CHECK-NEXT: v7 CallDirect: reads(NamedProperties, Elements, StringStorage, ParserState, AllocatorState) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) throwsForLackOfStack collects
 function f4 name="fieldAcrossElementStores" parameters=[{type=L0}, {type=Array<number, pristine[Storage, Names]>}, {type=int[0, 10]}, {type=number}, {type=Arguments}, {type=object}] results=[{type=undefined}] {
     v6 = GetSlot v0 key="x" receivers=[L0] level=Proven
     PutArrayElement v1, v2, v3 level=Proven [keyIsIntegral]

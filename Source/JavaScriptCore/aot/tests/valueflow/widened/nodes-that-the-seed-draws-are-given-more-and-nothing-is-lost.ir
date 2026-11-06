@@ -1,0 +1,34 @@
+# function make(x) { return { x } }  function read(o) { return o.x }  read(make(1)); return read(make("text"))
+# flow=widened solves the program twice: as it is, and with more given to nodes that the layout seed draws: the unknown object, a value nobody knows, or what another node of the same body holds.
+# Whatever the first solve finds the second finds too, so there is no diagnostic. The command shows the second solve.
+# OPTIONS: flow=widened layout-seed=25
+# RUN: valueflow-solve given-more
+# CHECK: given-more 4
+# CHECK: given f0:v3 the unknown object
+# CHECK: given f0:v5 a value nobody knows
+# CHECK: given f1 +1 a value nobody knows
+# CHECK: given f1 +2 what +2 holds
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Integer integer=1
+    v3 = Call v0, -, v2
+    v4 = String string="text"
+    v5 = Call v0, -, v4
+    v6 = Call v1, -, v3
+    v7 = Call v1, -, v5
+    Return v7
+}
+function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L0 fields=[]
+    PropSet v1, v0 key="x" mode=Strict
+    Return v1
+}
+function f2 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}

@@ -774,6 +774,12 @@ template<typename Visitor>
 void DecoderStringTable::visitStrongReferences(Visitor& visitor, CollectionScope scope)
 {
     Locker locker { m_cellsLock };
+    // The verifier marks on its own behind didFinishCollection(), so the cursor of the collector stays as it is.
+    if constexpr (!std::is_same_v<Visitor, SlotVisitor>) {
+        for (uint32_t ordinal : m_cellOrdinals)
+            visitor.appendUnbarriered(cell(m_slots[ordinal]));
+        return;
+    }
     // Cells visited in an earlier cycle are old and stay marked (sticky mark bits); an eden collection only needs the
     // ones created since. The constraint can run more than once per cycle, so the cursor only advances, never resets,
     // within a cycle.

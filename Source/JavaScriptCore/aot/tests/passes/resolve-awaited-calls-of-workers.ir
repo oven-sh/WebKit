@@ -71,7 +71,7 @@ function f18 name="awaitsWorker" role=CoroutineBody flags=[IsAsync] parameters=[
 # CHECK-NOT: AwaitCallBySavingFrame
 }
 
-# A number is no thenable: no test, and no promise but the rejected one. What was expected of the await still is
+# A number is no thenable: no test, and no promise but the rejected one, which has an await of its own: the common await takes a number and answers it. What was expected of the await still is
 function f19 name="workerReturnsNumber" role=CoroutineBody flags=[IsAsync] parameters=[{type=number}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f5} creator=Coroutine{kind=AsyncFunction ramp=f5 body=f19 entryWithoutPromise=f19 promiseType=Promise promiseParameter=1} {
     v2 = CallDirect v0 function=f1 @20
     v3 = AwaitBySavingFrame v2, v1 @21
@@ -83,13 +83,17 @@ function f19 name="workerReturnsNumber" role=CoroutineBody flags=[IsAsync] param
 # CHECK-NEXT: Jump -> next [[calling19]]()
 # CHECK-NEXT: [[rest19]](v3: anything ~ number):
 # CHECK: [[rejection19]]() role=CatchHandler frequency=Rare:
-# CHECK: Jump -> next [[awaiting19]](
-# CHECK-NEXT: [[awaiting19]]([[awaited19]]: number|Promise):
-# CHECK-NEXT: [[result19]]: anything ~ number = AwaitBySavingFrame [[awaited19]], v1 @21
-# CHECK-NEXT: Jump -> next [[rest19]]([[result19]])
+# CHECK: RejectPromise [[rejected19]],
+# CHECK-NEXT: [[thrown19]]: anything ~ number = AwaitBySavingFrame [[rejected19]], v1 @21
+# CHECK-NEXT: Jump -> next [[resumed19]]([[thrown19]])
+# CHECK-NEXT: [[awaiting19]]([[awaited19]]: number):
+# CHECK-NEXT: [[result19]]: number = AwaitBySavingFrame [[awaited19]], v1 @21
+# CHECK-NEXT: Jump -> next [[resumed19]]([[result19]])
 # CHECK-NEXT: [[calling19]]() handler=[[rejection19]]():
 # CHECK-NEXT: [[returned19]]: number = CallDirect v0 function=f15 @20
 # CHECK-NEXT: Jump -> next [[awaiting19]]([[returned19]])
+# CHECK-NEXT: [[resumed19]]([[outcome19]]: anything):
+# CHECK-NEXT: Jump -> next [[rest19]]([[outcome19]])
 # CHECK-NOT: IsNotThenable
 # CHECK-NOT: ResolvePromise
 }

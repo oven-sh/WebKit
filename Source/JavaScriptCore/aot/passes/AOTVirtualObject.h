@@ -48,6 +48,8 @@ enum class VirtualObjectKind : uint8_t {
     StringRange,
     ViewRange,
     BuiltinFields,
+    ArrayIterator,
+    CollectionIterator,
     BuiltinPrefix,
 };
 
@@ -68,6 +70,10 @@ enum class VirtualFieldKind : uint8_t {
     RangeStart,
     RangeEnd,
     Operand,
+    // Where an iterator stands in its list or table.
+    Position,
+    // The table a Set or Map iterator stands in.
+    Table,
 };
 
 struct VirtualField {
@@ -133,9 +139,12 @@ struct VirtualObjectContext {
     const Program& program;
     const Function& function;
     const FlowResults* flow { nullptr };
+    // The arena of a pass that rewrites the function. An analysis has none and can only name types that the whole program shares.
+    TypeArena* types { nullptr };
 };
 
-DescribedObject describeVirtualObject(FunctionAnalyses&, ValueID allocation);
+enum class ListedValues : bool { HaveTypesOfFields, MayAlsoBeUndefinedOrNull };
+DescribedObject describeVirtualObject(FunctionAnalyses&, ValueID allocation, ListedValues = ListedValues::HaveTypesOfFields, TypeArena* = nullptr);
 
 using InitialFieldFunctor = ScopedLambda<void(const VirtualField&, ValueID)>;
 void forEachInitialField(const VirtualObjectContext&, const VirtualObjectDescription&, NOESCAPE const InitialFieldFunctor&);
@@ -145,6 +154,8 @@ std::optional<uint32_t> layoutFieldOf(const Program&, const VirtualObjectDescrip
 std::optional<uint32_t> prefixPropertyOf(const VirtualObjectContext&, const VirtualObjectDescription&, PropertyKeyID);
 VirtualField fieldOfLayoutField(const Program&, LayoutID, uint32_t field);
 TypeID typeOfField(const VirtualObjectContext&, const VirtualObjectDescription&, const VirtualField&);
+// The slot of the field has room for undefined and null beside the values of typeOfField().
+bool holdsUndefinedAndNullToo(const VirtualObjectContext&, const VirtualObjectDescription&, const VirtualField&);
 bool isEnumerable(const Program&, const VirtualObjectDescription&, const VirtualField&);
 
 enum class FieldLookup : uint8_t { Unknown, Field, DynamicElement, AbsentEverywhere };
@@ -189,6 +200,9 @@ Value makeFieldStore(const Program&, const VirtualObjectDescription&, const Fiel
 bool canHoldUnprovenValue(const Program&, const VirtualObjectDescription&, const VirtualField& named);
 Value makeFiller(const Program&, const VirtualObjectDescription&, const VirtualField& unprovenNamed);
 Value makeStoreByName(const FieldValue& unprovenNamed, ValueID cell);
+// `list.keys()`, `list.values()`, `list.entries()` and `list[Symbol.iterator]()` of what is proven to be a list.
+bool makesArrayIterator(const Program&, const Function&, const Value& call);
+bool makesCollectionIterator(const Program&, const Function&, const Value& call);
 void setExactReceivers(Value& slotOperation, LayoutID, TypeArena&);
 
 enum class SpeculativeLoad : uint8_t { Unknown, Safe };

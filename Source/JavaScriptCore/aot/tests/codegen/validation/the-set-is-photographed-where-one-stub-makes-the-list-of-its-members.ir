@@ -1,0 +1,15 @@
+# [...set]: the call is emitted for the literal, which has no operand. The set is an operand of the append that the stub does the work of.
+# FORM: Selected
+# OPTIONS: check=Validate
+# RUN: lower-to-b3 optimized f0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="list" parameters=[{type=Set<string, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendMembers v1, v0
+    Return v1
+}
+# CHECK: Patchpoint({{*}}ValidationState{{*}}v1:NewArray)
+# CHECK: Patchpoint({{*}}Writes:{{*}}CollectionStorage{{*}}v1:NewArray)
+# CHECK: Patchpoint({{*}}ValidationState{{*}}v1:NewArray)

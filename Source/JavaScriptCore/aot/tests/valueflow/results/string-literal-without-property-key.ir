@@ -1,0 +1,33 @@
+# takesText("spelledByNoAccess"); takesKey("side"); circle.side
+# The universe has a member for every text that the program spells, whether or not a property is named so: what is known of a text does not hang on what another file names its properties
+# RUN: valueflow-why values=f1:v1 values=f2:v1
+# CHECK: values=f1:v1
+# CHECK: operand 0 {{*}} 1 members: key
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} 1 members: key
+# RUN(APPLY): valueflow-apply
+# APPLY: function f1 name="takesText" {{*}}parameters=[{type="spelledByNoAccess"}]
+# APPLY: function f2 name="takesKey" {{*}}parameters=[{type="side"}]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Circle"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = String string="spelledByNoAccess"
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0
+    v3 = String string="side"
+    v4 = NewClosure function=f2
+    v5 = Call v4, -, v3
+    v6 = NewObject layout=L0 fields=[]
+    v7 = PropGet v6 key="side"
+    Return
+}
+function f1 name="takesText" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return
+}
+function f2 name="takesKey" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return
+}

@@ -38,7 +38,7 @@ function f1 name="sumOfCodes" parameters=[{type=string}, {type=number}] results=
 # CHECK-NOT: form=Generic
 # CHECK: : int|whole = Add v9, {{*}}form=Numbers
 # CHECK-NOT: form=Generic
-# CHECK: ([[sum]]: number):
+# CHECK: ([[sum]]: int|whole):
 # CHECK-NEXT: Return [[sum]]
 # REPRESENTED: b3(v8: int[0, 2147483647] @Int32, v9: int|whole @Double):
 # REPRESENTED-NOT: Box

@@ -194,6 +194,9 @@ public:
 
         RELEASE_ASSERT(m_procedure.variables().isEmpty());
 
+        if (m_procedure.policy().selection.extendsInstructionSelection)
+            findPhisKeptZeroExtended();
+
         // Figure out which blocks are not rare.
         m_fastWorklist.push(m_procedure[0]);
         while (B3::BasicBlock* block = m_fastWorklist.pop()) {
@@ -796,6 +799,8 @@ private:
         // across. But, it's not clear how useful this would be.
         if (value->owner != m_value->owner)
             return true;
+        if (m_procedure.policy().validation.overlooksWritesBetweenLoadsAndTheirUsers) [[unlikely]]
+            return false;
 
         if (m_blockWithNextInterference == m_block) {
             bool result = m_nextInterference[value] < m_index;
@@ -1150,6 +1155,10 @@ private:
         }
 
         Arg result = effectiveAddr(value->lastChild(), offset, width);
+        // Whoever handles the trap finds what was dereferenced in one register: the base, or the index beside a pinned base.
+        bool namesDereferencedValue = !result.isIndex() || (result.base().isReg() && m_code.isPinned(result.base().reg()));
+        if (value->traps() && m_procedure.policy().selection.attributesTrapsToAccesses && !namesDereferencedValue)
+            result = Arg::addr(tmp(value->lastChild()), offset);
         RELEASE_ASSERT(result.isValidForm(Air::Move, width));
 
         return result;
@@ -1322,6 +1331,85 @@ private:
         const auto& tmps = tmpsForTuple(value);
         for (unsigned i = 0; i < tuple.size(); ++i)
             func(tmps[i], tuple[i], i);
+    }
+
+    // Whether the upper half of the Tmp may hold something. What an instruction of 32 bits computes has zeros there.
+    bool mayHaveUpperHalf(Value* value) const
+    {
+        switch (value->opcode()) {
+        case Phi:
+            return !m_phisKeptZeroExtended.contains(value);
+        case Identity:
+        case Opaque:
+            return mayHaveUpperHalf(value->child(0));
+        case Trunc:
+        case ArgumentReg:
+        case Patchpoint:
+        case B3::CCall:
+        case Extract:
+        case Select:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    // The counter of a loop is widened for every address that it is part of. That is a copy on every turn unless every value that the Phi is handed is known to have zeros in its
+    // upper half: then the register allocator gives both one register. So such a Phi is handed its values by moves of 32 bits. A move from a value that has zeros there anyway is no
+    // instruction in the end. One from a value that was cut off 64 bits is, and there is one on each way in, so the Phi must be widened more than twice as often as it is handed such values.
+    void findPhisKeptZeroExtended()
+    {
+        struct Candidate {
+            Value* phi { nullptr };
+            double frequencyOfExtensions { 0 };
+        };
+        Vector<Candidate, 8> candidates;
+        Vector<std::pair<UpsilonValue*, double>, 16> upsilons;
+        IndexMap<Value*, unsigned> candidateOfPhi(m_procedure.values().size());
+        for (B3::BasicBlock* block : m_procedure) {
+            for (Value* value : *block) {
+                if (value->opcode() != ZExt32 || value->child(0)->opcode() != Phi)
+                    continue;
+                unsigned& index = candidateOfPhi[value->child(0)];
+                if (!index) {
+                    candidates.append({ value->child(0), 0 });
+                    index = candidates.size();
+                }
+                candidates[index - 1].frequencyOfExtensions += block->frequency();
+            }
+        }
+        if (candidates.isEmpty())
+            return;
+        for (B3::BasicBlock* block : m_procedure) {
+            for (Value* value : *block) {
+                auto* upsilon = value->as<UpsilonValue>();
+                if (upsilon && candidateOfPhi[upsilon->phi()])
+                    upsilons.append({ upsilon, block->frequency() });
+            }
+        }
+        // Those of one candidate follow one another, in the order of the blocks, so that no candidate goes through the Upsilons of all.
+        std::ranges::stable_sort(upsilons, { }, [&](const auto& upsilon) { return candidateOfPhi[upsilon.first->phi()]; });
+        // A Phi that is kept so hands zeros on to the next.
+        for (bool changed = true; changed;) {
+            changed = false;
+            auto rest = upsilons.span();
+            for (const Candidate& candidate : candidates) {
+                size_t count = std::ranges::find_if(rest, [&](const auto& upsilon) { return upsilon.first->phi() != candidate.phi; }) - rest.begin();
+                auto upsilonsOfCandidate = rest.first(count);
+                rest = rest.subspan(count);
+                if (m_phisKeptZeroExtended.contains(candidate.phi))
+                    continue;
+                double frequencyOfMoves = 0;
+                for (auto [upsilon, frequency] : upsilonsOfCandidate) {
+                    if (upsilon->child(0) != candidate.phi && mayHaveUpperHalf(upsilon->child(0)))
+                        frequencyOfMoves += frequency;
+                }
+                if (candidate.frequencyOfExtensions > 2 * frequencyOfMoves) {
+                    m_phisKeptZeroExtended.add(candidate.phi);
+                    changed = true;
+                }
+            }
+        }
     }
 
     void moveToTmp(Air::Opcode opcode, Air::Arg source, Air::Tmp dest)
@@ -2266,9 +2354,42 @@ private:
         return ensureSpecial(result.iterator->value, key);
     }
 
+    struct MoveToRegister {
+        Value* value;
+        Reg reg;
+    };
+
+    static Reg registerOfParameter(Value* value)
+    {
+        while (value->opcode() == Identity || value->opcode() == Trunc)
+            value = value->child(0);
+        return value->opcode() == ArgumentReg ? value->as<ArgumentRegValue>()->argumentReg() : Reg();
+    }
+
+    // In front of a call that few runs of the function reach, a parameter leaves its register before another operand is moved there. Otherwise the two overlap,
+    // the parameter cannot stay where it arrived, and the entry of the function copies it for every run. A call that most runs reach needs the copy anyway,
+    // and the sooner it is made the sooner the register is free for what the call wants there.
+    void appendMovesToRegisters(Vector<MoveToRegister, 4>& moves)
+    {
+        bool isReachedByFewRuns = 2 * m_block->frequency() <= m_procedure.at(0)->frequency();
+        while (!moves.isEmpty()) {
+            size_t next = !isReachedByFewRuns ? 0 : moves.findIf([&](const MoveToRegister& move) {
+                return std::ranges::none_of(moves, [&](const MoveToRegister& other) {
+                    return &other != &move && registerOfParameter(other.value) == move.reg;
+                });
+            });
+            if (next == notFound)
+                next = 0;
+            Value* value = moves[next].value;
+            moveToTmp(relaxedMoveForType(value->type()), immOrTmpOrZeroReg(value), Tmp(moves[next].reg));
+            moves.removeAt(next);
+        }
+    }
+
     template<size_t argsInlineCapacity>
     void fillStackmap(Vector<Arg, argsInlineCapacity>& args, StackmapValue* stackmap, unsigned numSkipped)
     {
+        Vector<MoveToRegister, 4> movesToRegisters;
         for (unsigned i = numSkipped; i < stackmap->numChildren(); ++i) {
             ConstrainedValue value = stackmap->constrainedChild(i);
 
@@ -2309,7 +2430,10 @@ private:
             case ValueRep::Register: {
                 stackmap->earlyClobbered().remove(value.rep().reg());
                 Tmp dstTmp = Tmp(value.rep().reg());
-                moveToTmp(relaxedMoveForType(value.value()->type()), immOrTmpOrZeroReg(value.value()), dstTmp);
+                if (m_procedure.policy().selection.extendsInstructionSelection)
+                    movesToRegisters.append({ value.value(), value.rep().reg() });
+                else
+                    moveToTmp(relaxedMoveForType(value.value()->type()), immOrTmpOrZeroReg(value.value()), dstTmp);
                 arg = dstTmp;
                 break;
             }
@@ -2323,6 +2447,7 @@ private:
             }
             args.append(arg);
         }
+        appendMovesToRegisters(movesToRegisters);
     }
     
     // Create an Inst to do the comparison specified by the given value.
@@ -2477,6 +2602,12 @@ private:
             
             value = value->child(0);
             inverted = !inverted;
+        }
+
+        // ZExt32(x) and SExt32(x) are zero exactly when x is.
+        if (m_procedure.policy().selection.extendsInstructionSelection && (value->opcode() == ZExt32 || value->opcode() == SExt32) && value != m_value && canCommitInternal && canBeInternal(value)) {
+            commitInternal(value);
+            value = value->child(0);
         }
 
         auto createRelCond = [&] (
@@ -3859,6 +3990,32 @@ private:
                 return Inst();
             },
             inverted);
+    }
+
+    bool tryAppendSelectAsMinOrMax()
+    {
+        if (!isX86() || !m_procedure.policy().selection.extendsInstructionSelection || !m_value->type().isFloat())
+            return false;
+        Value* condition = m_value->child(0);
+        if (condition->opcode() != LessThan && condition->opcode() != GreaterThan)
+            return false;
+        Value* first = m_value->child(1);
+        Value* second = m_value->child(2);
+        auto isSameValue = [](Value* a, Value* b) {
+            return a == b || (a->isConstant() && a->key() == b->key());
+        };
+        bool isMin = condition->opcode() == LessThan;
+        if (isSameValue(condition->child(0), second) && isSameValue(condition->child(1), first))
+            isMin = !isMin;
+        else if (!isSameValue(condition->child(0), first) || !isSameValue(condition->child(1), second))
+            return false;
+        if (canBeInternal(condition))
+            commitInternal(condition);
+        if (isMin)
+            appendBinOp<Air::Oops, Air::Oops, Air::MinOrSecondDouble, Air::MinOrSecondFloat>(first, second);
+        else
+            appendBinOp<Air::Oops, Air::Oops, Air::MaxOrSecondDouble, Air::MaxOrSecondFloat>(first, second);
+        return true;
     }
 
     bool tryAppendSelectOfIncrementedValue()
@@ -6698,6 +6855,8 @@ private:
 
             if (tryAppendSelectOfIncrementedValue())
                 return;
+            if (tryAppendSelectAsMinOrMax())
+                return;
 
             MoveConditionallyConfig config;
             if (m_value->type().isInt()) {
@@ -7153,7 +7312,12 @@ private:
             Value* value = m_value->child(0);
             Value* phi = m_value->as<UpsilonValue>()->phi();
             if (value->type().isNumeric()) {
-                moveToTmp(relaxedMoveForType(value->type()), immOrTmpOrZeroReg(value), m_phiToTmp[phi]);
+                Arg source = immOrTmpOrZeroReg(value);
+                if (source.isTmp() && m_phisKeptZeroExtended.contains(phi) && mayHaveUpperHalf(value)) {
+                    append(Move32, source, m_phiToTmp[phi]);
+                    return;
+                }
+                moveToTmp(relaxedMoveForType(value->type()), source, m_phiToTmp[phi]);
                 return;
             }
 
@@ -7508,6 +7672,7 @@ private:
     IndexSet<Value*> m_locked; // These are values that will have no Tmp in Air.
     IndexMap<Value*, Tmp> m_valueToTmp; // These are values that must have a Tmp in Air. We say that a Value* with a non-null Tmp is "pinned".
     IndexMap<Value*, Tmp> m_phiToTmp; // Each Phi gets its own Tmp.
+    IndexSet<Value*> m_phisKeptZeroExtended;
     UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tupleValueToTmps; // This is the same as m_valueToTmp for Values that are Tuples.
     UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tuplePhiToTmps; // This is the same as m_phiToTmp for Phis that are Tuples.
     IndexMap<B3::BasicBlock*, Air::BasicBlock*> m_blockToBlock;

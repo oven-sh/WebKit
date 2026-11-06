@@ -11,9 +11,9 @@ function f0 name="closes" parameters=[{type=anything}, {type=anything}] results=
     v3 = CallBuiltin v0 overload=IteratorHelperPrototypeReturn/0 builtinCallForm=AnyReceiver
     Return
 }
-function f1 name="return" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+function f1 name="return" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
     v1 = Integer integer=1
     PutModuleVariable v1 variable=g0
     Return v1
 }
-runtimefunction id=87 function=f1
+runtimefunction id=JSIteratorHelperPrototypeReturn function=f1

@@ -1,0 +1,32 @@
+# Copies that a pass made of one read share its site cache when they read off one value or off what one place in the text gives. A copy that reads off another value and a read without a place in the text each have their own
+# FORM: Prepared
+# OPTIONS: disable=rule:PropertyPair
+# RUN: pass Select NumberAndEncode PlaceSiteCaches CheckPlacement
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="copied" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="a" @10
+    v3 = PropGet v0 key="a" @10
+    v4 = PropGet v1 key="a" @10
+    v5 = PropGet v0 key="item" @20
+    v6 = PropGet v0 key="item" @20
+    v7 = PropGet v1 key="item" @20
+    v8 = PropGet v5 key="b" @30
+    v9 = PropGet v6 key="b" @30
+    v10 = PropGet v7 key="b" @30
+    v11 = PropGet v0 key="c"
+    v12 = PropGet v0 key="c"
+    Return v12
+# CHECK: v2:{{*}}= PropGet v0 key="a" siteCache=0 @10
+# CHECK-NEXT: v3:{{*}}= PropGet v0 key="a" siteCache=0 @10
+# CHECK-NEXT: v4:{{*}}= PropGet v1 key="a" siteCache=1 @10
+# CHECK-NEXT: v5:{{*}}= PropGet v0 key="item" siteCache=2 @20
+# CHECK-NEXT: v6:{{*}}= PropGet v0 key="item" siteCache=2 @20
+# CHECK-NEXT: v7:{{*}}= PropGet v1 key="item" siteCache=3 @20
+# CHECK-NEXT: v8:{{*}}= PropGet v5 key="b" siteCache=4 @30
+# CHECK-NEXT: v9:{{*}}= PropGet v6 key="b" siteCache=4 @30
+# CHECK-NEXT: v10:{{*}}= PropGet v7 key="b" siteCache=4 @30
+# CHECK-NEXT: v11:{{*}}= PropGet v0 key="c" siteCache=5
+# CHECK-NEXT: v12:{{*}}= PropGet v0 key="c" siteCache=6
+}

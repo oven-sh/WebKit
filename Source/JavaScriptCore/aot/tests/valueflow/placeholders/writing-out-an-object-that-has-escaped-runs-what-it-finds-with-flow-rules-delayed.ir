@@ -1,0 +1,24 @@
+# const odd = { held: 1 }; somethingNoTableLists.takes(odd); JSON.stringify(odd)
+# JSON.stringify converts what it is handed, and odd finds Object.prototype.toString and valueOf by itself, whether or not it has escaped.
+# Once odd escaped the hub holds the unknown object in its place, and a set with the unknown object lists no object that has escaped.
+# What odd finds counted as run only if the hub saw it listed. Under this order of flow's rules it was both only used. Now the built-ins above whatever has escaped count beside the unknown object.
+# OPTIONS: testing=DelayFlowRules:1
+# RUN: valueflow-solve used
+# CHECK: run JSONStringify
+# CHECK-NEXT: run ObjectPrototypeToString
+# CHECK-NEXT: run ObjectPrototypeValueOf
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Odd" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = PropGet v1 key="takes"
+    v5 = Call v4, v1, v3 calleeKey="takes"
+    v6 = Builtin builtin=JSONStringify
+    v7 = Call v6, -, v3
+    Return
+}

@@ -107,6 +107,10 @@ void LikelyPathAnalysis::computeImmediateDominators(const NaturalLoop& loop)
             for (const FrequentedBlock& successor : block->successors()) {
                 if (!isLikelyInnerEdge(loop, likeliestClass, successor))
                     continue;
+                // The header of an inner loop dominates the source of its back edges, so they change nothing. Meeting them costs a walk up the whole inner loop.
+                const NaturalLoop* innerLoop = m_loops.headerOf(successor.block());
+                if (innerLoop && m_loops.belongsTo(block, *innerLoop))
+                    continue;
                 BasicBlock*& dominator = m_immediateDominator[successor.block()];
                 BasicBlock* candidate = dominator ? nearestCommonDominator(block, dominator) : block;
                 changed |= candidate != dominator;

@@ -65,7 +65,7 @@ static OperatorForm chooseRelationForm(const OperatorTypes& types, CodeShape sha
         return OperatorForm::Generic;
     if (isEither(types, &Type::isNumber))
         return OperatorForm::NumberAndValue;
-    if (shape == CodeShape::Fast && areBoth(types, &Type::isAnyString))
+    if (areBoth(types, &Type::isAnyString))
         return OperatorForm::Strings;
     // A character read beyond the end of a text. undefined is compared as NaN, so no relation holds. (null is compared as 0, which the text of a string may say.)
     if (shape == CodeShape::Fast && areBoth(types, isStringOrUndefined))
@@ -86,12 +86,12 @@ static OperatorForm chooseStrictEqualityForm(const OperatorTypes& types, CodeSha
         return OperatorForm::Bits;
     if (areBoth(types, isBigInt))
         return OperatorForm::BigInts;
+    if (areBoth(types, &Type::isAnyString))
+        return OperatorForm::Strings;
     // Two words are compared in fewer bytes than the call takes.
     if (shape != CodeShape::Fast && !areBoth(types, isLiteralStringWord))
         return OperatorForm::Generic;
 
-    if (areBoth(types, &Type::isAnyString))
-        return OperatorForm::Strings;
     if (areBoth(types, &Type::isAnyStringOrNullish))
         return OperatorForm::NullableStrings;
     if (isEither(types, &Type::isAnyString))

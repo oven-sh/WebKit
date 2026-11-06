@@ -8,21 +8,27 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTBlockFrequencies.h"
 #include "AOTBranchCounterNumbers.h"
 #include "AOTCastEmitter.h"
+#include "AOTCellAllocationEmitter.h"
 #include "AOTCodeRecords.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTEdgeResults.h"
+#include "AOTElementEmitterAllocation.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTGuardAvailability.h"
 #include "AOTOperatorEmitter.h"
 #include "AOTPrimitiveEmitter.h"
 #include "AOTPromisedResults.h"
 #include "AOTRepresentationEmitter.h"
 #include "AOTRepresentationRules.h"
+#include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeValidationEmitter.h"
+#include "AOTSchemaOperationColumns.h"
 #include "AOTSlotAccessEmitter.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTValueIdentity.h"
@@ -123,8 +129,9 @@ GenerationResult CodeGenerator::run()
     createPhis();
     if (std::optional<uint32_t> number = m_inputs.program.branchCounters.counterOfEntries(m_inputs.id)) {
         TypedPointer counter = emitter<StaticsEmitter>().branchCounter(*number);
-        m_out.store64(m_out.add(m_out.load64(counter), m_out.constInt64(1)), counter);
+        m_out.store64(m_out.add(m_out.load64(counter), 1), counter);
     }
+    emitter<StaticsEmitter>().fillVariablesOfEnteredFile();
     m_out.jump(blockFor(entryBlock));
 
     for (BlockID block : analyses().cfg().reversePostOrder()) {
@@ -153,7 +160,7 @@ bool CodeGenerator::recordSitesWithoutCode()
             sites.inlineCallSites.append(0);
             continue;
         }
-        sites.inlineCallSites.append(sites.addSite({ .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction }, .kind = frame.isConstruction ? CallSiteKind::Construct : CallSiteKind::Plain }));
+        sites.inlineCallSites.append(sites.addSite({ .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction }, .kind = frame.isConstruction ? CallSiteKind::Construct : CallSiteKind::Plain, .callsOwnFunctionObject = frame.callsOwnFunctionObject, .keptCalleePlusOne = frame.calleeIsKeptInFrame ? sites.addKeptCallee(function(), frame.callPosition, frame.parent) : 0 }));
     }
     sites.numberOfSitesWithoutCode = sites.positions.size();
 
@@ -238,7 +245,8 @@ void CodeGenerator::generateContentsOf(BlockID id)
         values = values.first(values.size() - 1);
     }
     Vector<ValueID, 2> generatedLast;
-    for (ValueID value : values) {
+    for (size_t index = 0; index < values.size(); ++index) {
+        ValueID value = values[index];
         if (isHandedOnByJumpAlone(id, block, value)) {
             generatedLast.append(value);
             continue;
@@ -251,7 +259,7 @@ void CodeGenerator::generateContentsOf(BlockID id)
                     return;
             }
         }
-        generateValue(id, block, value);
+        generateValue(id, block, value, isAwaitedAtOnce(values, index));
         if (m_hasFailed)
             return;
         if (m_valuesOutliveNoSuspension && maySuspend(function().at(value).opcode))
@@ -273,7 +281,24 @@ void CodeGenerator::generateContentsOf(BlockID id)
     generateTerminator(id, block);
 }
 
-void CodeGenerator::generateValue(BlockID blockID, const Block& block, ValueID id)
+bool CodeGenerator::isAwaitedAtOnce(std::span<const ValueID> values, size_t index) const
+{
+    constexpr OpcodeSet calls { Opcode::Call, Opcode::CallDirect, Opcode::CallMethod };
+    ValueID awaited = values[index];
+    if (!calls.contains(function().at(awaited).opcode))
+        return false;
+    for (ValueID next : values.subspan(index + 1)) {
+        const Value& value = function().at(next);
+        if (value.opcode == Opcode::AwaitBySavingFrame)
+            return value.awaitedOperand() == awaited;
+        if (value.opcode != Opcode::AssumeType || value.valueOperand() != awaited)
+            return false;
+        awaited = next;
+    }
+    return false;
+}
+
+void CodeGenerator::generateValue(BlockID blockID, const Block& block, ValueID id, bool isAwaitedAtOnce)
 {
     // The one user of a deferred closure is a store that writes nothing: the slot already names the function.
     if (isDeferredClosure(function(), id))
@@ -283,19 +308,83 @@ void CodeGenerator::generateValue(BlockID blockID, const Block& block, ValueID i
         return;
     if (function().at(id).opcode == Opcode::Mod && emitter<OperatorEmitter>().leavesRemainderToTest(id))
         return;
+    if ((function().at(id).opcode == Opcode::Strcat || function().at(id).opcode == Opcode::Upcast) && emitter<AccessEmitter>().leavesKeyToRead(id))
+        return;
+    // The one user of such a text has the characters in its code.
+    if (function().at(id).opcode == Opcode::String && emitter<OperatorEmitter>().comparesOnlyTextOf(id))
+        return;
+    if (function().at(id).representation == Representation::Int32 && ArrayAllocationEmitter(*this).isComputedBehindAllocation(id))
+        return;
     ValueContext context(blockID, block, id, function().at(id), analyses());
+    context.m_isAwaitedAtOnce = isAwaitedAtOnce;
     generate(context);
+}
+
+void CodeGenerator::generateValueLeftToUser(const OperationContext& user, ValueID id)
+{
+    const Value& value = function().at(id);
+    if (m_values[id.index()] || !hasRegister(value.representation))
+        return;
+    for (uint32_t i = 0; i < value.numberOfOperands(); ++i) {
+        if (ValueID operand = value.operand(i))
+            generateValueLeftToUser(user, operand);
+    }
+    ValueContext context(user.block(), function().at(user.block()), id, value, analyses());
+    generate(context);
+    setOrigin(m_out, user.valueID());
+}
+
+static constexpr OpcodeSet opcodesRelyingOnElementProofs = [] {
+    OpcodeSet opcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (reliesOf(opcode).intersects({ Proof::ArrayStorage, Proof::InBounds }))
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}();
+
+static_assert(std::ranges::all_of(allMembersOf<Opcode>, [](Opcode opcode) {
+    return !opcodesRelyingOnElementProofs.contains(opcode) || OperandPosition::guard(opcode);
+}));
+
+ValueLocation CodeGenerator::locationOfParameter(ValueID parameter) const
+{
+    BlockID block = m_blockOfParameter[parameter.index()];
+    if (!block)
+        return { };
+    return { ValuePlacement::Parameter, block, static_cast<uint32_t>(function().at(block).parameters.find(parameter)) };
+}
+
+void CodeGenerator::verifyElementGuard(const ValueContext& context)
+{
+    auto locate = [&](ValueID parameter) {
+        return locationOfParameter(parameter);
+    };
+    if (!hasGuardForElementProofs(program(), function(), analyses().cfg(), locate, context.value()))
+        fail(context, InternalErrorKind::InvalidGuard);
+}
+
+bool CodeGenerator::hasGuardForWritableStorage(const ValueContext& store)
+{
+    auto locate = [&](ValueID parameter) {
+        return locationOfParameter(parameter);
+    };
+    return Typed::hasGuardForWritableStorage(program(), function(), analyses().cfg(), locate, store.value());
 }
 
 void CodeGenerator::generate(const ValueContext& context)
 {
     setOrigin(m_out, context.id());
     OperationScope scope(*this, context);
+    if (opcodesRelyingOnElementProofs.contains(context.opcode()))
+        verifyElementGuard(context);
     convertOperandsOf(context, context.value());
     if (m_validates)
         emitter<RuntimeValidationEmitter>().validateOperands(context);
     else if (m_checksProofs)
         emitter<RuntimeValidationEmitter>().checkSlotAccessWithoutGuard(context);
+    if (validatesOrChecksProofs() && maySuspend(context.opcode()) && analyses().maySuspend(context.id()))
+        emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
 
     auto begin = m_heaps.markDecorations();
     size_t numberOfEnclosingExemptions = m_exemptStores.size();
@@ -326,7 +415,7 @@ void CodeGenerator::generateTerminator(BlockID blockID, const Block& block)
     if (m_validates)
         emitter<RuntimeValidationEmitter>().validateExit(context);
     else if (m_checksProofs && context.kind() == TerminatorKind::Unreachable)
-        emitter<RuntimeValidationEmitter>().reportUnreachable({ });
+        emitter<RuntimeValidationEmitter>().reportUnreachable({ }, context->cutBy());
 
     auto begin = m_heaps.markDecorations();
     dispatch(context);
@@ -401,8 +490,12 @@ void CodeGenerator::generateNullishCheckBehindFailedTest(BlockID id, ValueID che
 
 void CodeGenerator::finishProcedure()
 {
+    emitter<ConversionEmitter>().placeExactIntegers();
+    emitter<RuntimeCallEmitter>().stateWhichCallsChangeWhatOnlyGeneratedCodeReads();
     m_heaps.computeRangesAndDecorateInstructions();
-    m_proc.setHeapThatLoadsStayInFrontOf(m_heaps.rangeWrittenByWhateverMayCollect());
+    m_proc.setHeapOfStackSlots(m_heaps.rangeOf(m_heaps.frameSlots));
+    if (!build().recordedOptions().has(TestingSwitch::FoldLoadsPastCollections))
+        m_proc.setHeapThatLoadsStayInFrontOf(m_heaps.rangeWrittenByWhateverMayCollect());
     if (build().recordedOptions().isSabotaged(Sabotage::FieldsNeverChange)) {
         B3::HeapRange fields = m_heaps.rangeOf(m_heaps.entire(AbstractHeap::ObjectFields));
         for (B3::Value* value : m_proc.values()) {
@@ -410,6 +503,7 @@ void CodeGenerator::finishProcedure()
                 load->setReadsMutability(B3::Mutability::Immutable);
         }
     }
+    mergeMutatorFences(m_proc, m_records.mutatorFences);
     m_proc.deleteOrphans();
     m_out.applyBlockOrder();
 }
@@ -482,6 +576,7 @@ void CodeGenerator::passHandlerArguments(const Target& handler)
     // A landing pad is entered from every block that hands the handler these arguments: of what was made in the block that is being generated nothing is known to be there.
     size_t numberOfSharedForms = m_sharedForms.size();
     size_t firstSharedFormInReach = std::exchange(m_firstSharedFormInReach, numberOfSharedForms);
+    bool wasPassingHandlerArguments = std::exchange(m_isPassingHandlerArguments, true);
     std::optional<ConversionEmitter::PlaceOnEdge> outerPlace = emitter<ConversionEmitter>().setPlaceOnEdge(ConversionEmitter::PlaceOnEdge { BlockFrequency::Rare, CodeShape::Compact });
     auto& parameters = function().at(handler.block).parameters;
     RELEASE_ASSERT(handler.arguments.size() == parameters.size());
@@ -491,6 +586,7 @@ void CodeGenerator::passHandlerArguments(const Target& handler)
     }
     dropSharedFormsSince(numberOfSharedForms);
     m_firstSharedFormInReach = firstSharedFormInReach;
+    m_isPassingHandlerArguments = wasPassingHandlerArguments;
     emitter<ConversionEmitter>().setPlaceOnEdge(outerPlace);
 }
 
@@ -554,6 +650,10 @@ Operand CodeGenerator::getIn(ValueID id, Representation wanted)
     return converted;
 }
 
+// Such an operation narrows a reference where it stores it. In front of the operation all the narrow forms would be held at one time, and an object may have more fields than there are registers.
+static bool narrowsReferencesWhereItStoresThem(const Value& operation) { return operation.opcode == Opcode::NewObject; }
+static bool narrowsReferencesWhereItStoresThem(const Terminator&) { return false; }
+
 template<typename Operation>
 void CodeGenerator::convertOperandsOf(const OperationContext& context, const Operation& operation)
 {
@@ -568,6 +668,8 @@ void CodeGenerator::convertOperandsOf(const OperationContext& context, const Ope
         // An operation that takes a double with any NaN computes with it as with any number.
         bool isTakenAsNumber = holdsAnyNaN(wanted);
         if (!hasRegister(wanted) || (defined == wanted && !isTakenAsNumber))
+            continue;
+        if (defined == Representation::Cell && wanted == Representation::Cell32 && narrowsReferencesWhereItStoresThem(operation))
             continue;
         // The operation makes such an operand itself.
         if (hasRegister(defined) && !m_values[operand.index()])
@@ -896,6 +998,11 @@ CodeGenerator::InitializationScope::~InitializationScope()
 {
     --m_generator.m_initializationDepth;
     m_generator.m_exemptStores.append({ m_begin, m_generator.m_heaps.markDecorations() });
+    if constexpr (MutatorFenceRecords::isUsed) {
+        m_generator.m_heaps.forEachWriteDecoratedSince(m_begin, [&](const B3::AbstractHeap&, B3::Value* value) {
+            m_generator.m_records.mutatorFences.initializingStores.set(value->index());
+        });
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

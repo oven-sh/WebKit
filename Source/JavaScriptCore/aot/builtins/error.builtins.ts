@@ -25,10 +25,24 @@ const messageSignature = (className: string) =>
     implementation: b.inline("NewError", { parameters: [className], otherwise: b.hostCall }),
   });
 
+// The constructor defines the message, if it is given one, and then the cause. A program may store anything under either name.
+// `stack` is no slot: the error makes it at the first read.
+const slotsOfNewErrors = (structure: string) => ({
+  message: b.ownSlot(b.any, { structure, after: [] }),
+  cause: b.ownSlot(b.any, { structure, after: ["message"] }),
+});
+
 // The realm creates each prototype with the name of the class and an empty message.
 const textsOnPrototype = { name: b.property(b.string), message: b.property(b.string) };
 
-const errorSubclass = (className: string, signature: b.FunctionField, namesDefinedOnNewInstances: readonly string[] = []) =>
+type ErrorMembers = Pick<b.ClassOptions, "instance" | "proto">;
+
+const errorSubclass = (
+  className: string,
+  signature: b.FunctionField,
+  namesDefinedOnNewInstances: readonly string[] = [],
+  members: ErrorMembers = { proto: textsOnPrototype },
+) =>
   b.class(className, {
     extends: "Error",
     namesDefinedOnNewInstances,
@@ -36,7 +50,14 @@ const errorSubclass = (className: string, signature: b.FunctionField, namesDefin
     types: [b.viewType(className)],
     call: signature,
     construct: signature,
-    proto: textsOnPrototype,
+    ...members,
+  });
+
+// Its constructor defines what the constructor of Error defines, so its instances have the same slots behind a Structure of their own.
+const nativeError = (className: string) =>
+  errorSubclass(className, messageSignature(className), [], {
+    instance: slotsOfNewErrors(`errorStructureWithErrorType<ErrorType::${className}>`),
+    proto: { name: b.property(b.string) },
   });
 
 export default b.declarations(
@@ -56,6 +77,8 @@ export default b.declarations(
     }),
     // The error makes `stack` at the first read: a text, or what Error.prepareStackTrace answers for the error and its call sites.
     namesMadeByStaticMembers: { stack: "prepareStackTrace" },
+    // The text begins with them, and so does what is printed for an error.
+    namesReadToDescribeInstances: ["name", "message"],
     constructorOnlyReadsPrototypeOfNewTarget: true,
     types: [b.viewType("Error")],
     prototypeTable: b.staticTable("runtime/ErrorPrototype.cpp", "errorPrototypeTable"),
@@ -76,18 +99,14 @@ export default b.declarations(
       isError: {
         args: { value: b.any },
         returns: b.bool,
+        answersWhetherInstance: { value: b.instance("Error") },
         capability: "heap",
         uses: { value: b.inspected },
         implementation: b.hostCall,
       },
       stackTraceLimit: b.property(b.f64),
     },
-    // The constructor defines the message, if it is given one, and then the cause. A program may store anything under either name.
-    // `stack` is no slot: the error makes it at the first read.
-    instance: {
-      message: b.ownSlot(b.any, { structure: "errorStructure", after: [] }),
-      cause: b.ownSlot(b.any, { structure: "errorStructure", after: ["message"] }),
-    },
+    instance: slotsOfNewErrors("errorStructure"),
     proto: {
       name: b.property(b.string),
       toString: {
@@ -102,7 +121,7 @@ export default b.declarations(
     },
   }),
 
-  ...nativeErrorNames.map(name => errorSubclass(name, messageSignature(name))),
+  ...nativeErrorNames.map(nativeError),
 
   errorSubclass(
     "AggregateError",

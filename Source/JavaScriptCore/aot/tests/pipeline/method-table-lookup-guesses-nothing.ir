@@ -1,25 +1,31 @@
 # class E0 { m(x: number) { return x * 1.5 } } .. class E5 { m(x: number) { return x * 6.5 } }  function call(o: E0 | .. | E5, x: number) { return o.m(x) }
 # Six classes with a method of one name that nobody can replace: more than a switch on the shape takes, so the call goes through the method table.
 # The table sends a receiver to the lookup of the selector only where it does not find what the class definitions say, so the lookup calls by name and guesses nothing.
-# Then nothing but entrypoints enters a method, each with a tail call and each returning any value: every method returns its result in that form, no entrypoint keeps a frame to box it,
-# and where the locations agree the table names the method itself
+# Every method returns a number and flow says at the call that a number comes back: the lookup, the entrypoints of the table and the methods all return a double in a register, each entrypoint of the table
+# enters its method with a tail call, and nothing is boxed on the way. The entry of a method's function object, which returns any value, calls the method and boxes what comes back.
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: pipeline ChooseCallingConventions
 # STATISTIC: TableCalls = 1
 # STATISTIC: TableEntrypoints = 6
-# STATISTIC: ReturnCallsDemoted = 0
-# CHECK: f3 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
-# CHECK: f5 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
-# CHECK: f7 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
-# CHECK: f9 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
-# CHECK: f11 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
-# CHECK: f13 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
-# CHECK: = CallTable v0, v1 {{*}}key="m" receivers=[L0, L1, L2, L3, L4, L5]
+# STATISTIC: ReturnCallsDemoted = 6
+# CHECK: f3 Direct ({{*}}:Double) -> ({{*}}:Double)
+# CHECK: f5 Direct ({{*}}:Double) -> ({{*}}:Double)
+# CHECK: f7 Direct ({{*}}:Double) -> ({{*}}:Double)
+# CHECK: f9 Direct ({{*}}:Double) -> ({{*}}:Double)
+# CHECK: f11 Direct ({{*}}:Double) -> ({{*}}:Double)
+# CHECK: f13 Direct ({{*}}:Double) -> ({{*}}:Double)
+# CHECK: : number = CallTable v0, v1 {{*}}key="m" receivers=[L0, L1, L2, L3, L4, L5]
 # CHECK-LABEL: role=TableLookup
+# CHECK: results=[{type=number}]
 # CHECK-NOT: TypeTest
 # CHECK-NOT: CallDirect
-# CHECK: Return
+# CHECK: [[found]]: anything = Call
+# CHECK-NEXT: [[number]]: number = AssumeType [[found]] provenType=number
+# CHECK-NEXT: Return [[number]]
+# CHECK-LABEL: role=TableEntrypoint
+# CHECK: results=[{type=number}]
+# CHECK: ReturnCall
 
 layout L0 kind=Instance name="E0" module=m0 position=10 constructor=f2
 layout L1 kind=Instance name="E1" module=m0 position=60 constructor=f4

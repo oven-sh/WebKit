@@ -1,0 +1,23 @@
+# take(function handler(request) { delete request.body; })
+# `handler` is passed to an unknown function, so its parameter is unknown. The delete marks the unknown object, and every escaped object suffers what that object suffers.
+# The call of `take` lets anything happen to what has escaped, so the rule for escapes puts the same mark.
+# RUN: valueflow-why marks=unknown
+# CHECK: marks=unknown
+# CHECK: DeleteField: statements 2, in the program 1, in the library 0, of no function 1
+# CHECK: Escape
+# CHECK: PropDelete f1 v1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="take" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="handler" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropDelete v0 key="body"
+    Return
+}

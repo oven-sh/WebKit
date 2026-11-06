@@ -20,19 +20,32 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// If the first word is zero and every byte equals the one a word in front of it, all are zero. The library compares 32 bytes and more at a step.
+// Read here, 64 bytes at a step, and not by the library's memcmp(): that of musl goes byte by byte, and every collection asks this of whole tables.
 inline bool holdsOnlyZeros(std::span<const uint8_t> bytes)
 {
-    if (bytes.size() < sizeof(uint64_t)) {
-        for (uint8_t byte : bytes) {
-            if (byte)
-                return false;
-        }
-        return true;
+    using Words = uint64_t __attribute__((vector_size(32)));
+    const uint8_t* at = bytes.data();
+    const uint8_t* end = at + bytes.size();
+    for (; end - at >= static_cast<ptrdiff_t>(2 * sizeof(Words)); at += 2 * sizeof(Words)) {
+        Words first;
+        Words second;
+        memcpy(&first, at, sizeof(Words));
+        memcpy(&second, at + sizeof(Words), sizeof(Words));
+        Words either = first | second;
+        if (either[0] | either[1] | either[2] | either[3])
+            return false;
     }
-    uint64_t firstWord;
-    memcpy(&firstWord, bytes.data(), sizeof(firstWord));
-    return !firstWord && !memcmp(bytes.data(), bytes.data() + sizeof(firstWord), bytes.size() - sizeof(firstWord));
+    for (; end - at >= static_cast<ptrdiff_t>(sizeof(uint64_t)); at += sizeof(uint64_t)) {
+        uint64_t word;
+        memcpy(&word, at, sizeof(word));
+        if (word)
+            return false;
+    }
+    for (; at < end; ++at) {
+        if (*at)
+            return false;
+    }
+    return true;
 }
 
 // Whatever the system does with the pages, and whenever it does it, they read as zeros: they hold zeros now.

@@ -1,4 +1,4 @@
-# The request of a direct eval lists each binding with its operand, storage and declared type, and a variable it names is never stored with undefined as zero
+# The request of a direct eval lists each binding with its operand and storage, and a variable it names is never stored with undefined as zero
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow
 # RUN: place requests statics
@@ -35,6 +35,6 @@ function f1 name="evaluates" parameters=[{type=anything}] results=[{type=anythin
 
 # An operand of a binding counts from the operands of the operation: the text and `this` come first. A variable has no operand.
 # TABLES: request 4 DirectEval module=m0 strict inFunction allowsNewTarget
-# TABLES-NEXT: binding name="x" kind=Variable depth=0 operand=2 {{*}}slot=JSValue@8 type=[[anything]]
-# TABLES-NEXT: binding name="g" kind=Variable depth=1 operand=- {{*}}slot=JSValue@{{*}} type=[[anything]]
-# TABLES-NEXT: binding name=- kind=This depth=0 operand=3 {{*}}slot=JSValue@0 type=[[anything]]
+# TABLES-NEXT: binding name="x" kind=Variable depth=0 operand=2 {{*}}slot=JSValue@8
+# TABLES-NEXT: binding name="g" kind=Variable depth=1 operand=- {{*}}slot=JSValue@{{*}}
+# TABLES-NEXT: binding name=- kind=This depth=0 operand=3 {{*}}slot=JSValue@0

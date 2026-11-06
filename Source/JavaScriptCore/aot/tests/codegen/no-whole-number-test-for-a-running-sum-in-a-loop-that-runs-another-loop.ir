@@ -1,0 +1,91 @@
+# for (..) { for (..) count++; sum = (sum + list[i]) | 0; }: an iteration that runs a loop of its own takes longer than the conversions of the sum, so the next one does not wait for them.
+# The element is added and truncated as a double. In the second function the inner loop stands on a rare path, and the element is tested as in a loop that runs no other.
+# FORM: Selected
+# RUN: generate-code ExactIntegersBehindNumbers
+# CHECK: : size=
+# CHECK-NOT: no code
+# CHECK: statistic ExactIntegersBehindNumbers 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="runningSumBehindLoop" parameters=[{type=Array<number>}, {type=i32}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+  b0(v0: Array<number>, v1: i32):
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3: i32, v4: int[0, 127]):
+    LoopHint
+    v6 = Less v4, v1 form=Integers
+    TestAndBranch v6 -> taken b2(), notTaken b8()
+  b2():
+    v7 = Integer integer=0
+    Jump -> next b3(v7)
+  b3(v8: int[0, 127]):
+    LoopHint
+    v10 = Less v8, v4 form=Integers
+    TestAndBranch v10 -> taken b4(), notTaken b5()
+  b4():
+    v11 = Increment v8 form=Integers
+    v12 = Integer integer=127
+    v13 = BitAnd v11, v12 form=Integers
+    Jump -> next b3(v13)
+  b5():
+    v14 = HasArrayStorage v0 arrayStorage=Double
+    TestAndBranch v14 -> taken b6(| 0), notTaken b8()
+  b6(v15: guard):
+    v16 = IsElementPresent v0, v4, v15 arrayStorage=Double [keyIsIntegral]
+    TestAndBranch v16 -> taken b7(| 0), notTaken b8()
+  b7(v17: guard):
+    v18 = AllGuards v15, v17
+    v19 = GetArrayElement v0, v4, v18 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    v20 = Add v3, v19 form=Numbers
+    v21 = Integer integer=0
+    v22 = BitOr v20, v21 form=Numbers
+    v23 = Increment v4 form=Integers
+    v24 = Integer integer=127
+    v25 = BitAnd v23, v24 form=Integers
+    Jump -> next b1(v22, v25)
+  b8():
+    Return v3
+}
+function f1 name="runningSumBehindRareLoop" parameters=[{type=Array<number>}, {type=i32}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+  b0(v0: Array<number>, v1: i32):
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3: i32, v4: int[0, 127]):
+    LoopHint
+    v6 = Less v4, v1 form=Integers
+    TestAndBranch v6 -> taken b2(), notTaken b9()
+  b2():
+    v7 = Integer integer=100
+    v8 = Less v7, v4 form=Integers
+    TestAndBranch v8 -> taken b3(), notTaken b6()
+  b3() frequency=Rare:
+    v9 = Integer integer=0
+    Jump -> next b4(v9)
+  b4(v10: int[0, 127]) frequency=Rare:
+    LoopHint
+    v12 = Less v10, v4 form=Integers
+    TestAndBranch v12 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    v13 = Increment v10 form=Integers
+    v14 = Integer integer=127
+    v15 = BitAnd v13, v14 form=Integers
+    Jump -> next b4(v15)
+  b6():
+    v16 = HasArrayStorage v0 arrayStorage=Double
+    TestAndBranch v16 -> taken b7(| 0), notTaken b9()
+  b7(v17: guard):
+    v18 = IsElementPresent v0, v4, v17 arrayStorage=Double [keyIsIntegral]
+    TestAndBranch v18 -> taken b8(| 0), notTaken b9()
+  b8(v19: guard):
+    v20 = AllGuards v17, v19
+    v21 = GetArrayElement v0, v4, v20 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    v22 = Add v3, v21 form=Numbers
+    v23 = Integer integer=0
+    v24 = BitOr v22, v23 form=Numbers
+    v25 = Increment v4 form=Integers
+    v26 = Integer integer=127
+    v27 = BitAnd v25, v26 form=Integers
+    Jump -> next b1(v24, v27)
+  b9():
+    Return v3
+}

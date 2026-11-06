@@ -32,6 +32,7 @@
 #include "DumpContext.h"
 #include "ImmutablePropertyNames.h"
 #include "JSCInlines.h"
+#include "MarkedBlockCage.h"
 #include "PropertyNameArray.h"
 #include "PropertyRun.h"
 #include "PropertyTable.h"
@@ -877,7 +878,7 @@ Structure* Structure::addPropertyTransition(VM& vm, Structure* structure, Proper
     return addNewPropertyTransition(vm, structure, propertyName, attributes, offset, PutPropertySlot::UnknownContext);
 }
 
-Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset, PutPropertySlot::Context context, DeferredStructureTransitionWatchpointFire* deferred)
+Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset, PutPropertySlot::Context context, DeferredStructureTransitionWatchpointFire* deferred, JSObject* objectThatGetsProperty)
 {
     ASSERT(!structure->isDictionary());
     ASSERT(structure->isObject());
@@ -919,6 +920,16 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
         }
     }
     
+#if !ENABLE(AOT)
+    UNUSED_PARAM(objectThatGetsProperty);
+#else
+    if (objectThatGetsProperty && vm.hasCompiledCode() && AOT::RuntimeHooks::becomesDictionaryByAddition(vm, objectThatGetsProperty, structure, propertyName.uid())) {
+        Structure* transition = toCacheableDictionaryTransition(vm, structure, deferred);
+        offset = transition->add(vm, propertyName, attributes);
+        return transition;
+    }
+#endif
+
     Structure* transition = Structure::create(vm, structure, deferred);
     countStructureMade(vm, structure->mayBePrototype() ? "Structure:a_property_more_of_a_prototype"_s : "Structure:a_property_more"_s, structure->classInfoForCells()->className.characters());
 
@@ -962,6 +973,10 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     }
     transition->checkOffsetConsistency();
     structure->checkOffsetConsistency();
+#if ENABLE(AOT)
+    if (objectThatGetsProperty && vm.hasCompiledCode())
+        AOT::RuntimeHooks::didMakeStructureForAddition(vm, transition);
+#endif
     return transition;
 }
 
@@ -1216,9 +1231,8 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
 Structure* Structure::toDictionaryTransition(VM& vm, Structure* structure, DictionaryKind kind, DeferredStructureTransitionWatchpointFire* deferred)
 {
     ASSERT(!structure->isUncacheableDictionary());
-    DeferGC deferGC(vm);
-    
     Structure* transition = Structure::create(vm, structure, deferred);
+    DeferGC deferGC(vm);
     countStructureMade(vm, "Structure:a_dictionary"_s);
 
     PropertyTable* table = structure->copyPropertyTableForPinning(vm);
@@ -1299,9 +1313,17 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         }
     }
     
+#if USE(BUN_JSC_ADDITIONS)
+    // Allocate before DeferGC: when the Structure heap is at its limit, this allocation has to be able to trigger a GC.
+    Structure* transition = MarkedBlockCage::isRequired() ? Structure::create(vm, structure, deferred) : nullptr;
+    DeferGC deferGC(vm);
+    if (!transition) [[likely]]
+        transition = Structure::create(vm, structure, deferred);
+#else
     DeferGC deferGC(vm);
     
     Structure* transition = Structure::create(vm, structure, deferred);
+#endif
     countStructureMade(vm, transitionKind == TransitionKind::BecomePrototype ? "Structure:becomes_a_prototype"_s : changesIndexingType(transitionKind) ? "Structure:another_indexing_type"_s : "Structure:no_property_changes"_s);
     transition->setTransitionKind(transitionKind);
     transition->m_blob.setIndexingModeIncludingHistory(indexingModeIncludingHistory);
@@ -1811,12 +1833,9 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) {
         AOT::RuntimeHooks::didFlattenStructure(vm, this);
-        if (mayBePrototype()) {
-            if (isUncacheableDictionary())
-                AOT::RuntimeHooks::didChangePrototypeChain(vm, object, nullptr);
-            else
-                AOT::RuntimeHooks::didFlattenObjectOnPrototypeChain(vm, object);
-        }
+        // A cacheable dictionary becomes an ordinary object: every name finds what it found, at the offset where it lay, and the prototype stays. Nothing that was learnt about it is out of date.
+        if (mayBePrototype() && isUncacheableDictionary())
+            AOT::RuntimeHooks::didChangePrototypeChain(vm, object, nullptr);
     }
 #endif
 

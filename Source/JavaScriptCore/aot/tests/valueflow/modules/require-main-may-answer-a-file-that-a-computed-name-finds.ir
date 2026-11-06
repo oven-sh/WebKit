@@ -1,0 +1,34 @@
+# main.cjs: module.exports = exportedByMain; require(globalThis.name); require.main.exports()        found.cjs: module.exports = exportedByFound
+# A Worker may start with found.cjs, and a program may store its path in `Bun.main`: either file may be the main module.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-solve calls
+# CHECK: f0 v8 -> f1 f3
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/app/found.cjs" displayPath="found.cjs" kind=CommonJs flags=[KeepsError, IsFoundByName] requireResult=ModuleExports body=f2 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="name" [isFreeName]
+    v4 = RequireDynamic v3 referrer=m0
+    v5 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v6 = PropGet v5 key="main"
+    v7 = PropGet v6 key="exports"
+    v8 = Call v7, v6
+    Return
+}
+function f1 name="exportedByMain" module=m0 results=[{type=anything}] {
+    Return
+}
+function f2 name="found" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f3 name="exportedByFound" module=m1 results=[{type=anything}] {
+    Return
+}

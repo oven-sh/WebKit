@@ -69,7 +69,7 @@ function f6 name="expected-class" parameters=[{type=f2 flags=[IsExpected]}, {typ
 # CHECK-NEXT: = Construct {{*}}, -, v1
 # NEXT: = IsClosureOf v0 function=f2
 # NEXT: ([[newTarget]]: f2):
-# NEXT: : L0 = CallDirect [[newTarget]], v1 function=f2 [isConstruction]
+# NEXT: : L0 = CallDirect [[newTarget]], v1 function=f2 [isConstruction, calleeIsPredicted]
 # NEXT: frequency=Unlikely:
 # NEXT-NEXT: = Construct {{*}}, -, v1
 }

@@ -1,0 +1,121 @@
+# function make(n) {
+#   return { n };
+# }
+# function use(value) {
+#   globalThis.seen = value;
+# }
+# function beforeCall() {
+#   let x = make(1);
+#   use(x);
+#   use(x);
+#   x = null;
+#   use(2);
+# }
+# function beforeReturn() {
+#   let x = make(1);
+#   use(x);
+#   use(x);
+#   x = null;
+# }
+# beforeCall();
+# beforeReturn();
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 f3
+# RUN(X64): lower-to-air f3 f4
+# REQUIRES(X64): x86_64 unsanitized-code
+
+layout L0 module=m0 position=28 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="make" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="use" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" flags=[KeepsError] body=f0 functionText="function make(n) {\x0a  return { n };\x0a}\x0afunction use(value) {\x0a  globalThis.seen = value;\x0a}\x0afunction beforeCall() {\x0a  let x = make(1);\x0a  use(x);\x0a  use(x);\x0a  x = null;\x0a  use(2);\x0a}\x0afunction beforeReturn() {\x0a  let x = make(1);\x0a  use(x);\x0a  use(x);\x0a  x = null;\x0a}\x0abeforeCall();\x0abeforeReturn();\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f4
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Call v1 calleeName="beforeCall"
+    v5 = Call v3 calleeName="beforeReturn"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="make" module=m0 text={end=36} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L0 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]}
+    Return v4
+}
+function f2 name="use" module=m0 position=37 text={start=37 end=87} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|L0):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="globalThis" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    PropSet v3, v0 key="seen"
+    v5 = Undefined
+    Return v5
+}
+function f3 name="beforeCall" module=m0 position=88 text={start=88 end=174} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g0
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1 calleeName="make"
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4, -, v3 calleeName="use"
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v6, -, v3 calleeName="use"
+    v8 = Null
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[IsExpected]}
+    ReleaseHint v3
+    v11 = GetModuleVariable variable=g1
+    v12 = Integer integer=2
+    v13 = Call v11, -, v12 calleeName="use"
+    v14 = Undefined
+    Return v14
+}
+function f4 name="beforeReturn" module=m0 position=175 text={start=175 end=253} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g0
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1 calleeName="make"
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4, -, v3 calleeName="use"
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v6, -, v3 calleeName="use"
+    v8 = Null
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[IsExpected]}
+    ReleaseHint v3
+    v11 = Undefined
+    Return v11
+}
+entry module=m0
+
+# CHECK-LABEL: name="beforeCall" role=Source
+# CHECK: Void b@{{*}} = Patchpoint({{*}}releasesDeadValues
+
+# The object waits in a stack slot for the second call. The collector reads that slot for as long as the function runs, so it is cleared in front of the third call.
+# X64-LABEL: name="beforeCall" role=Source
+# X64: Move %rax, (%rsp)
+# X64: Move (%rsp), %rdi
+# X64-NEXT: Patch
+# X64-NEXT: Move $0, (%rsp)
+# X64: Patch
+# X64-LABEL: end of function
+# Nothing can collect before the frame is gone.
+# X64-LABEL: name="beforeReturn" role=Source
+# X64-NOT: Move $0,
+# X64-LABEL: end of function

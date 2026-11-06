@@ -1,0 +1,71 @@
+# A variable that holds a closure is read ahead of the loop so that what the closure has captured can be read there too. Where the read ahead of the loop cannot name the fact that says that the variable
+# has been stored, the word may be anything: the capture is read from the cast that names the fact, which stands where the fact does
+# FORM: Prepared
+# RUN: pass SeparateUnlikelyLoopPaths
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="count" declared={type=number}}]
+variable g0 name="closure" declared={type=f2} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+
+function f0 name="readBehindTest" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = IsClosureOf v0 function=f3
+    Branch v2 -> taken b2(), notTaken b4()
+  b2():
+    v3 = Entered function=f3
+    v4 = GetModuleVariable fact=v3 variable=g0
+    v5 = GetCapture v4 function=f2 index=0
+    v6 = GetEnvironmentField v5 layout=L0 field=0
+    v7 = Increment v6
+    PutEnvironmentField v5, v7 layout=L0 field=0
+    v9 = Integer integer=9
+    v10 = Less v7, v9
+    Branch v10 -> taken b1(), notTaken b3()
+  b3():
+    Return v0
+  b4() frequency=Unlikely:
+    v11 = Undefined
+    Return v11
+# CHECK: b0(
+# CHECK-NEXT: [[word0]]: unspecified|f2 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b2():
+# CHECK-NEXT: [[entered0]]: fact = Entered function=f3
+# CHECK-NEXT: [[closure0]]: f2 = AssumeType [[word0]], [[entered0]] provenType=f2
+# CHECK-NEXT: = GetCapture [[closure0]]
+}
+
+# Nothing leaves the first turn in front of the read
+function f1 name="readAtOnce" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = GetModuleVariable variable=g0
+    v3 = GetCapture v2 function=f2 index=0
+    v4 = GetEnvironmentField v3 layout=L0 field=0
+    v5 = Increment v4
+    PutEnvironmentField v3, v5 layout=L0 field=0
+    v7 = Integer integer=9
+    v8 = Less v5, v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b2():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: [[closure1]]: f2 = GetModuleVariable variable=g0
+# CHECK-NEXT: = GetCapture [[closure1]]
+}
+
+function f2 name="counts" captures=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    v1 = Undefined
+    Return v1
+}
+
+function f3 name="callee" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}

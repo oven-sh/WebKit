@@ -1,0 +1,38 @@
+# function Point() { this.size = 0 }; Point.prototype.size = 1; Point.prototype.count = 1; Point.prototype.reset = Point; pick(new Point(), Point.prototype).reset()
+# The store of the constructor goes through the instances and, by one call, through the prototype object. While flow finds that out it goes through one of the two alone, and which one goes by the order of the rules.
+# What it wrote through the prototype object alone says nothing: store-written-for-the-instances-lists-no-member-of-the-prototype-object.ir. Here a statement does store `size` into the prototype object and nothing else, once flow is at rest too: it is listed, in every order.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Point" {{*}}prototypeNamesAreComplete=true {{*}}namedMembers=[{key="size"}, {key="count"}, {key="reset" function=f1}]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1 fields=[{key="size" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Point" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="prototype"
+    v2 = Integer integer=1
+    PropSet v1, v2 key="size" mode=Strict
+    PropSet v1, v2 key="count" mode=Strict
+    PropSet v1, v0 key="reset" mode=Strict
+    v6 = Construct v0
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v6, v1
+    v9 = PropGet v8 key="reset"
+    v10 = Call v9, v8 calleeKey="reset"
+    Return
+}
+function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    PropSet v0, v1 key="size" mode=Strict
+    Return
+}
+function f2 name="pick" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Return v1
+}

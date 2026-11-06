@@ -45,6 +45,7 @@
 #include "B3NaturalLoops.h"
 #include "B3OriginDump.h"
 #include "B3ProcedureInlines.h"
+#include "B3Validate.h"
 #include "B3ValueInlines.h"
 #include "B3Variable.h"
 #include "JITOpaqueByproducts.h"
@@ -99,10 +100,10 @@ void Procedure::createHeaps()
     m_heaps->attachProcedure(*this);
 }
 
-void Procedure::fail(FailureKind kind, Origin origin)
+void Procedure::fail(FailureKind kind, Origin origin, String detail)
 {
     if (!m_report.failure)
-        m_report.failure = Failure { kind, origin };
+        m_report.failure = Failure { kind, origin, WTF::move(detail) };
 }
 
 void Procedure::addRemark(const Remark& remark, uint32_t count)
@@ -170,6 +171,7 @@ Value* Procedure::clone(Value* value)
     m_opcodesEverAdded.set(value->opcode());
     clone->m_index = UINT_MAX;
     clone->owner = nullptr;
+    m_knownInductions.didAddValue();
     Value* result = m_values.add(WTF::move(clone));
     m_knownProperties.copy(value, result);
     m_movedLoadLog.didClone(value, result);
@@ -301,10 +303,12 @@ void Procedure::resetReachability()
         }
     }
     
+    MovedLoadLog::UnreachableCodeIsDeleted unreachableCodeIsDeleted(m_movedLoadLog);
     for (auto& block : m_blocks) {
         if (isBlockDead(block.get())) {
             for (Value* value : *block)
                 deleteValue(value);
+            m_movedLoadLog.willDelete(block.get());
             block = nullptr;
         }
     }
@@ -775,9 +779,10 @@ RegisterAtOffsetList Procedure::calleeSaveRegisterAtOffsetList() const
     return code().calleeSaveRegisterAtOffsetList();
 }
 
-Value* Procedure::addValueImpl(Value* value)
+NEVER_INLINE Value* Procedure::addValueImpl(Value* value)
 {
     m_opcodesEverAdded.set(value->opcode());
+    m_knownInductions.didAddValue();
     return m_values.add(SparseCollection<Value>::Pointer(value));
 }
 
@@ -830,6 +835,7 @@ void Procedure::freeUnneededB3ValuesAfterLowering()
     // We cannot clear m_stackSlots() or m_tuples here, as they are unfortunately modified and read respectively by Air.
     m_variables.clearAll();
     m_blocks.clear();
+    m_validatedForm = nullptr;
     m_cfg = nullptr;
     m_dominators = nullptr;
     m_naturalLoops = nullptr;

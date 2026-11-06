@@ -12,6 +12,7 @@
 #include "AOTBuildContext.h"
 #include "AOTConvention.h"
 #include "AOTFaultTable.h"
+#include "AOTHeaps.h"
 #include "AOTRelocation.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubBodyConvention.h"
@@ -20,6 +21,7 @@
 #include "GPRInfo.h"
 #include "JSCJSValue.h"
 #include "MinimumReservedZoneSize.h"
+#include <cmath>
 #include <limits>
 #include <optional>
 
@@ -119,7 +121,7 @@ static B3::UpstreamPolicy upstreamPolicy()
     upstream.hoistsLoopInvariantValues = true;
     upstream.eliminatesWasmGCAllocations = false;
     upstream.usesWasmFaultSignalHandler = false;
-    upstream.allowsSIMD = false;
+    upstream.allowsSIMD = true;
     upstream.forcesSIMD = false;
     return upstream;
 }
@@ -143,16 +145,21 @@ static B3::OptimizationPolicy optimizationPolicyFor(const FunctionBackEndTraits&
     optimization.sinksValues = true;
     optimization.placesConstantsByFrequency = true;
     optimization.mergesBlocksAfterForwardingJumps = true;
+    optimization.keepsOriginsOfDemotedValues = true;
     return optimization;
 }
 
-static B3::LoopPolicy loopPolicy()
+static B3::LoopPolicy loopPolicyFor(const FunctionBackEndTraits& traits)
 {
     B3::LoopPolicy loops;
     loops.rotates = true;
     loops.foldsComparisonsWithBounds = true;
     loops.versions = true;
     loops.clampsLoopBounds = true;
+    loops.pollsBetweenStretches = true;
+    loops.vectorizes = std::isfinite(traits.leastFrequencyOfWarmCode);
+    loops.unrolls = std::isfinite(traits.leastFrequencyOfWarmCode);
+    loops.minFrequencyOfUnrolledLoop = traits.leastFrequencyOfWarmCode;
     loops.hoistsOnlyFromLikelyPaths = true;
     loops.hoistsImmutableLoadsPastWrites = true;
     return loops;
@@ -168,6 +175,34 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     else
         validation.level = lowestValidationLevel;
     validation.checksKnownPropertiesAtRunTime = build.validates();
+    validation.checksSpillSlots = build.options().checksSpillSlots;
+    validation.checksAllocatedRegisters = build.options().checksAllocatedRegisters;
+    validation.overlooksWritesOnUnlikelyPaths = build.isSabotaged(Sabotage::MergedLoadsOutlastWritesOnUnlikelyPaths);
+    validation.omitsStridedLimitGuard = build.isSabotaged(Sabotage::StridedIndexesStayInRange);
+    validation.overlooksWritesBehindWordsReadAgain = build.isSabotaged(Sabotage::WordsReadAgainOutlastWrites);
+    validation.overlooksWritesToWhatLoopsReadAgain = build.isSabotaged(Sabotage::VariablesReadAgainInLoopsOutlastWrites);
+    validation.overlooksWritesBetweenLoadsAndTheirUsers = build.isSabotaged(Sabotage::LoadsFoldedIntoTheirUsersOutlastWrites);
+    validation.overlooksWritesBetweenPairedLoads = build.isSabotaged(Sabotage::PairedLoadsOutlastWrites);
+    validation.leavesRoomForOneTurnTooFew = build.isSabotaged(Sabotage::WrittenOutTurnsAlwaysFit);
+    validation.overlooksWritesBetweenReadsOfBound = build.isSabotaged(Sabotage::BoundsReadTwiceOutlastWrites);
+    validation.takesAccessesOfVectorTurnsToLieApart = build.isSabotaged(Sabotage::VectorTurnsMeetNoOtherAccess);
+    validation.takesLanesToHoldWholeValues = build.isSabotaged(Sabotage::LanesHoldWhateverIsComputed);
+    validation.takesSumsOfNumbersToBeWhole = build.isSabotaged(Sabotage::SumsOfNumbersAreWhole);
+    validation.comparesAllLanesWithSign = build.isSabotaged(Sabotage::SignsOfComparedLanesDoNotMatter);
+    validation.setsUpFrameBehindWrites = build.isSabotaged(Sabotage::FramesAlwaysFit);
+    validation.overlooksColdUsesOfClustersOverBlocks = build.isSabotaged(Sabotage::LiveRangesSplitTwiceHaveNoColdUses);
+    using MoveLeftOut = B3::MoveLeftOutByRegisterAllocator;
+    static constexpr std::pair<Sabotage, MoveLeftOut> movesLeftOut[] = {
+        { Sabotage::StoresBehindClustersAreNotNeeded, MoveLeftOut::StoreBehindCluster },
+        { Sabotage::LoadsAheadOfClustersAreNotNeeded, MoveLeftOut::LoadAheadOfCluster },
+        { Sabotage::StoresAheadOfCallsAreNotNeeded, MoveLeftOut::StoreAheadOfClobber },
+        { Sabotage::LoadsBehindCallsAreNotNeeded, MoveLeftOut::LoadBehindClobber },
+        { Sabotage::StoresBehindSpilledDefinitionsAreNotNeeded, MoveLeftOut::StoreBehindSpilledDefinition },
+    };
+    for (auto [sabotage, move] : movesLeftOut) {
+        if (build.isSabotaged(sabotage))
+            validation.moveLeftOutByRegisterAllocator = move;
+    }
     return validation;
 }
 
@@ -179,6 +214,7 @@ static B3::Air::RegisterPolicy registerPolicyFor(const FunctionBackEndTraits& tr
     registers.hintsTwoAddressOperands = true;
     registers.usesSecondPreferredRegister = true;
     registers.evictsHolderOfPreferredRegister = true;
+    registers.patchpointsKeepOnlyLowerHalvesOfVectors = true;
     registers.unsavedCalleeSaves = unsavedCalleeSaves();
     switch (traits.convention) {
     case BackEndConvention::Function:
@@ -201,8 +237,12 @@ static B3::Air::LiveRangeSplitPolicy liveRangeSplitPolicy()
 {
     B3::Air::LiveRangeSplitPolicy splitting;
     splitting.splitsAroundClobbersEarly = true;
+    splitting.splitsAroundClobbersThatRead = true;
+    splitting.keepsUnusedTmpsOnStackThroughLoops = true;
+    // Elsewhere nothing but a move reads the stack.
+    splitting.spillsTmpsReadInPlaceFirst = isX86();
     splitting.spansStretchesOfClobbers = true;
-    splitting.limitsClobberSitesPerSplit = true;
+    splitting.leastCostOfSplitAroundClobber = 1.0f / 1024;
     splitting.splitsIntoClustersOverBlocks = true;
     splitting.splitsAroundFrame = true;
     return splitting;
@@ -212,10 +252,11 @@ static B3::Air::FramePolicy framePolicyFor(const BuildContext& build, const Func
 {
     B3::Air::FramePolicy frame;
     frame.emitsFrame = true;
-    // The stack is tested where the frame is set up, and a frame that does not fit is an error at the call in the caller. Behind the entry the function may have done something, and may stand in a try of its own, which the error would pass by.
+    // The stack is tested where the frame is set up, and a frame that does not fit is an error at the call in the caller. Behind the entry the function may stand in a try of its own, which the error would pass by.
     frame.shrinkWraps = !traits.savesFrameOnSuspend;
     frame.setsUpFrameAtEntry = traits.hasHandlers || traits.rejectsOnThrow;
     frame.maxBytesAllocatedBeforeStackCheck = maxBytesAllocatedBeforeStackCheck;
+    frame.smallestFrameTestedAtSetup = traits.smallestFrameTestedAtSetup;
     if constexpr (isARM64())
         frame.registersClobberedByFrameSetup = RegisterSet::macroClobberedGPRs();
     frame.mayPlaceSlotsAboveFrameRecord = !traits.readsCallerFrame && !traits.isAsync && !traits.savesFrameOnSuspend;
@@ -270,8 +311,14 @@ B3::Policy b3PolicyFor(const BuildContext& build, const FunctionBackEndTraits& t
     policy.optimization = optimizationPolicyFor(traits);
     policy.selection.extendsInstructionSelection = true;
     policy.selection.attributesTrapsToAccesses = true;
-    policy.loops = loopPolicy();
+    policy.loops = loopPolicyFor(traits);
+    // Lists are. Views are not.
+    policy.holdsMostlyShortArrays = createSharedTask<bool(B3::Procedure&, const B3::HeapRange&)>([](B3::Procedure& procedure, const B3::HeapRange& range) {
+        AOTHeaps& heaps = AOTHeaps::of(procedure);
+        return !range.overlaps(heaps.rangeOf(heaps.entire(Typed::AbstractHeap::TypedArrayElements)));
+    });
     policy.switchLowering.usesBitTests = true;
+    policy.switchLowering.usesValueTables = true;
     policy.switchLowering.minCasesForJumpTable = minCasesForJumpTableInConstantData;
     policy.knownProperties.trustsKnownRanges = true;
     policy.knownProperties.trustsKnownDereferenceableBytes = true;

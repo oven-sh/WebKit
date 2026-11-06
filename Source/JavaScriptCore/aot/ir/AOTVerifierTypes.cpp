@@ -9,12 +9,15 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTCastsWithoutFacts.h"
 #include "AOTFlowSiteData.h"
 #include "AOTGuardAvailability.h"
 #include "AOTHeldOperands.h"
+#include "AOTMemoryLocation.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTThreads.h"
 #include "AOTTypeClosure.h"
 #include "AOTTypePropagation.h"
@@ -209,6 +212,15 @@ void FunctionVerifier::verifyParameterTypes(BlockID block, const Block& contents
     }
 }
 
+void FunctionVerifier::verifyCastsWithoutFacts()
+{
+    if (!m_inputs.castsNameTheirFacts)
+        return;
+    Vector<CastAwayFromItsValue, 4> found = findCastsAwayFromTheirValues(m_program, m_function);
+    if (!found.isEmpty())
+        fail(InternalErrorKind::CastWithoutFact, found[0].block, found[0].cast);
+}
+
 void FunctionVerifier::verifyOperands(BlockID block, ValueID id, const Value& value)
 {
     if (std::optional<uint32_t> expectedNumber = expectedNumberOfVariadicOperands(m_program, value); expectedNumber && value.numberOfVariadicOperands() != *expectedNumber) {
@@ -225,6 +237,14 @@ void FunctionVerifier::verifyOperands(BlockID block, ValueID id, const Value& va
         }
     }
 
+    bool leansOnEntryOfBody = value.opcode == Opcode::GetEnvironmentField && value.leansOnEntryOfBody();
+    if (holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, value) && value.inlineFrame && !leansOnEntryOfBody && !namesFactOrGivesWordThatMayBeAnything(value)) {
+        fail(InternalErrorKind::InvalidGuard, block, id);
+        return;
+    }
+
+    if (!verifyNoOperandIsUnspecified(block, id, value))
+        return;
     LayoutID layout = Value::opcodesWithLayout.contains(value.opcode) ? value.layout() : LayoutID();
     value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         if (!hasFailed())
@@ -234,20 +254,47 @@ void FunctionVerifier::verifyOperands(BlockID block, ValueID id, const Value& va
 
 void FunctionVerifier::verifyOperands(BlockID block, const Terminator& terminator)
 {
+    if (!verifyNoOperandIsUnspecified(block, terminator))
+        return;
     terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         if (!hasFailed())
             verifyOperandKind(block, { }, operandIndex, operand, terminator.operandKind(operandIndex), { });
     });
 }
 
+// Everything that does not hand the word on would look at it, or put it where somebody may.
+bool FunctionVerifier::verifyNoOperandIsUnspecified(BlockID block, ValueID id, const Value& value)
+{
+    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+        if (!hasFailed() && typeOf(operand).mayBeUnspecified() && !handsOperandOn(m_program, value, operandIndex))
+            fail(InternalErrorKind::UnspecifiedValueInspected, block, id, operand.index());
+    });
+    return !hasFailed();
+}
+
+// A function hands on what its result is declared to hold.
+bool FunctionVerifier::verifyNoOperandIsUnspecified(BlockID block, const Terminator& terminator)
+{
+    bool handsWordOn = terminator.kind == TerminatorKind::Return && m_function.results.size() == 1 && typing().typeOf(m_function.result()).mayBeUnspecified();
+    terminator.forEachOperand([&](ValueID operand, uint32_t) {
+        if (!hasFailed() && typeOf(operand).mayBeUnspecified() && !handsWordOn)
+            fail(InternalErrorKind::UnspecifiedValueInspected, block, { }, operand.index());
+    });
+    return !hasFailed();
+}
+
 void FunctionVerifier::verifyOperandKind(BlockID block, ValueID user, uint32_t, ValueID operand, OperandKind kind, LayoutID layoutPayload)
 {
-    const Type& type = typeOf(operand);
+    // A word that may be anything gets here only where it is handed on. It is of the kind that it has when it has been filled.
+    Type type = typeOf(operand).withoutPrimitives(Primitive::Unspecified);
     auto hasKind = [&] {
         switch (kind) {
         case OperandKind::Any:
             // A pass may ask an environment that may be absent whether it is there.
-            return type.isJavaScriptValue() || (type.environment && user && m_function.at(user).opcode == Opcode::TypeTest && (m_form != IRForm::AsRead || isOptimizing()));
+            // A cast that names a fact says of any word that it has been filled. A parameter that such a word could get to and that is left with one source becomes an Upcast to its type.
+            return type.isJavaScriptValue() || (type.environment && user && m_function.at(user).opcode == Opcode::TypeTest && (m_form != IRForm::AsRead || isOptimizing()))
+                || (user && m_function.at(user).opcode == Opcode::AssumeType && m_function.at(user).factOperand())
+                || (user && m_function.at(user).opcode == Opcode::Upcast && m_program.at(m_function.at(user).castType()).mayBeUnspecified());
         case OperandKind::Boolean:
             return type.hasOnlyPrimitives(Primitive::Boolean);
         case OperandKind::Integer:
@@ -287,6 +334,7 @@ void FunctionVerifier::verifyOperandKind(BlockID block, ValueID user, uint32_t, 
         case OperandKind::StringBuilder:
         case OperandKind::Cursor:
         case OperandKind::KeyOrder:
+        case OperandKind::Fact:
         case OperandKind::FlatString:
         case OperandKind::CodeAddress:
         case OperandKind::JSONHolders:
@@ -318,7 +366,12 @@ void FunctionVerifier::verifyRequiredTypes(BlockID block, ValueID id, const Valu
         const Value& definition = m_function.at(operand);
         if (definition.opcode == Opcode::Check && context.types.at(definition.expectedType().predicted()).isNever())
             return;
-        if (TypeID required = requiredTypeOfOperand(context, value, operandIndex))
+        TypeID required = requiredTypeOfOperand(context, value, operandIndex);
+        if (!required)
+            return;
+        if ((value.opcode == Opcode::PutModuleVariable || value.opcode == Opcode::PutEnvironmentField) && typeOf(operand).mayBeUnspecified())
+            need(InternalErrorKind::StoredTypeMismatch, block, id, operand, context.types.at(required).withPrimitives(Primitive::Unspecified));
+        else
             need(InternalErrorKind::StoredTypeMismatch, block, id, operand, context.types.at(required));
     });
 }
@@ -404,6 +457,8 @@ static bool fillsFieldsInsideTheirTypes(const Program& program, const DataNode::
         if (!field)
             return true;
         const Field& filled = layout.fields[*field];
+        if (filled.form.contains(FieldForm::IsAccessor))
+            return false;
         return filled.declared.isExpected() || includesData(program, program.at(slotTypeOf(program, filled)), member.value);
     });
 }

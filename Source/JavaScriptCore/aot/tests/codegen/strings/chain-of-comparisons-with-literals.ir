@@ -1,0 +1,122 @@
+# function method(name: string): number {
+#   if (name === "GET") return 1;
+#   else if (name === "POST") return 2;
+#   else if (name === "PUT") return 3;
+#   else if (name === "DELETE") return 4;
+#   return 0;
+# }
+# declare const input: any;
+# (globalThis as any).answer = method(input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): generate-code calls
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=16 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=256 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    v9 = Call v1, -, v8 calleeName="method"
+    v10 = Convert v9 declared={type=number site=w2}
+    PropSet v5, v10 key="answer"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="method" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = String string="GET"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    v4 = Integer integer=1
+    v5 = Convert v4 declared={type=number site=w1}
+    Return v5
+  b4(v6):
+    Jump -> next b5()
+  b5():
+    v7 = String string="POST"
+    v8 = StrictEq v6, v7
+    Branch v8 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v9):
+    Jump -> next b7()
+  b7():
+    v10 = Integer integer=2
+    v11 = Convert v10 declared={type=number site=w1}
+    Return v11
+  b8(v12):
+    Jump -> next b9()
+  b9():
+    v13 = String string="PUT"
+    v14 = StrictEq v12, v13
+    Branch v14 -> taken b10(| 0), notTaken b12(| 0)
+  b10(v15):
+    Jump -> next b11()
+  b11():
+    v16 = Integer integer=3
+    v17 = Convert v16 declared={type=number site=w1}
+    Return v17
+  b12(v18):
+    Jump -> next b13()
+  b13():
+    v19 = String string="DELETE"
+    v20 = StrictEq v18, v19
+    Branch v20 -> taken b14(| 0), notTaken b16(| 0)
+  b14(v21):
+    Jump -> next b15()
+  b15():
+    v22 = Integer integer=4
+    v23 = Convert v22 declared={type=number site=w1}
+    Return v23
+  b16(v24):
+    Jump -> next b17()
+  b17():
+    Jump -> next b18()
+  b18():
+    Jump -> next b19()
+  b19():
+    Jump -> next b20()
+  b20():
+    v25 = Integer
+    v26 = Convert v25 declared={type=number site=w1}
+    Return v26
+}
+
+# A chain of `=== "literal"` on one value is a switch: the subject is packed into one 64-bit word by one stub, and integers are compared from there on. Four comparisons of texts have become one call.
+# CHECK-LABEL: name="method" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[name]] = ArgumentReg(
+# CHECK-NEXT: Int64 b@[[word]] = Patchpoint(b@[[name]]:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent|Reads:{argumentBuffer, StringStorage})
+# CHECK: Int32 b@{{*}} = Equal(b@[[word]], $44182075(
+# CHECK: Int32 b@{{*}} = Equal(b@[[word]], $44214915(
+# CHECK: Int32 b@{{*}} = Equal(b@[[word]], $11317967492(
+# CHECK: Int32 b@{{*}} = Equal(b@[[word]], $609825937566246(
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="method" role=Source
+# NONE: Patchpoint(
+# NONE-NOT: Patchpoint(
+# NONE-NOT: Load
+# NONE-LABEL: end of function
+# CALLS-LABEL: f3: size=
+# CALLS-NEXT: stub ShortStringOfValue x1
+# CALLS-NEXT: f4: size=

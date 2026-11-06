@@ -11,19 +11,29 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCallPlan.h"
 #include "AOTCoroutines.h"
+#include "AOTDescriptorLiteral.h"
+#include "AOTEdgeResults.h"
 #include "AOTEffectsCheck.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfRules.h"
+#include "AOTExpandOwnKeysInternal.h"
+#include "AOTFlowApply.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTInlineBuiltinForms.h"
 #include "AOTInt32Conversions.h"
 #include "AOTKnownValue.h"
+#include "AOTNarrowFieldTypes.h"
+#include "AOTProgramPasses.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTResultRules.h"
 #include "AOTSplitUnions.h"
 #include "AOTStringRanges.h"
 #include "AOTThreshold.h"
+#include "AOTTypePropagation.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueIdentity.h"
+#include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -227,31 +237,44 @@ static std::optional<Value> simplifyGeneratorStep(FunctionPassContext& context, 
     return simplified;
 }
 
-static bool mayBeMadeByBuiltinConstructor(const Program& program, LayoutID layout)
+// No class where the program makes the objects itself. Nothing where nobody knows.
+static std::optional<BuiltinClassID> findClassOfBuiltinConstructor(const Program& program, LayoutID layout)
 {
     for (size_t steps = 0; steps < program.layouts.size(); ++steps) {
         const LayoutFlow& flow = program.at(layout).flow;
-        if (flow.baseState == BaseState::None)
-            return false;
-        if (flow.baseState != BaseState::Layout)
-            return true;
-        layout = flow.base;
+        switch (flow.baseState) {
+        case BaseState::None:
+            return BuiltinClassID();
+        case BaseState::BuiltinClass:
+            return flow.baseClass;
+        case BaseState::Unknown:
+            return std::nullopt;
+        case BaseState::Layout:
+            layout = flow.base;
+            continue;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     }
-    return true;
+    return std::nullopt;
+}
+
+static bool mayBeMadeByBuiltinConstructor(const Program& program, LayoutID layout)
+{
+    return findClassOfBuiltinConstructor(program, layout) != BuiltinClassID();
 }
 
 static bool mayBeMadeByBuiltinConstructor(const Program& program, const Type& type)
 {
     if (!type.layouts)
         return false;
-    return std::ranges::any_of(program.at(type.layouts).members, [&](LayoutID layout) {
+    return std::ranges::any_of(program.at(type.layouts).completeMembers(), [&](LayoutID layout) {
         return mayBeMadeByBuiltinConstructor(program, layout);
     });
 }
 
-static bool mayBeProxy(const Program& program, const Type& type)
+static bool mayBeProxy(const Type& type)
 {
-    return type.anyObject || type.anyFunction || type.findClassPart(BuiltinClasses::Proxy) || hasMembersWithoutLayout(program, type);
+    return type.anyObject || type.anyFunction || type.findClassPart(BuiltinClasses::Proxy);
 }
 
 static Type typeOfArraysAmong(FunctionPassContext& context, const Type& operand)
@@ -292,8 +315,15 @@ static std::optional<Value> simplifyIntrinsic(FunctionPassContext& context, cons
     switch (intrinsic.opcode) {
     case Opcode::HasJSType:
         return simplifyTestOfCellKind(context, intrinsic);
-    case Opcode::IsPristineArray:
+    case Opcode::IsPristineArray: {
+        // It asks whether `[...value]` does for `Array.from(value)`. It does for a Set that the built-in iterator walks too: the rule for its known value says so,
+        // and whoever folds constants knows what to do with a branch that hands the proof on.
+        const Type& value = context.program.typeOf(context.function, intrinsic.valueOperand());
+        const ClassPart* part = value.singleBuiltinClass();
+        if (part && part->builtinClass == BuiltinClasses::Set && !value.mayBeUndefinedOrNull() && pristineAspectsProvenBy(value, BuiltinClasses::Set).contains(PristineAspects::Names))
+            return std::nullopt;
         return makePristineTest(intrinsic.valueOperand(), BuiltinClasses::Array, { PristineAspects::Storage, PristineAspects::Names });
+    }
     case Opcode::ToLength:
         return simplifyIntegerConversion(context, intrinsic, integersUnchangedByToLength);
     case Opcode::ToIntegerOrInfinity:
@@ -313,6 +343,48 @@ static std::optional<Value> simplifyIntrinsic(FunctionPassContext& context, cons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A generator is not stepped where it is running, has ended or belongs to another realm.
+static unsigned markNotSteppedArmsRare(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    auto isComparisonWithNotStepped = [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        if (user.opcode != Opcode::StrictEq)
+            return false;
+        const Value& other = function.at(use.operandIndex == OperandIndex::StrictEq::left ? user.rightOperand() : user.leftOperand());
+        return other.opcode == Opcode::Integer && other.integer() == static_cast<int64_t>(GeneratorStepStatus::NotStepped);
+    };
+
+    Vector<BlockID, 2> arms;
+    for (const ValueSite& site : context.sitesIn(SiteList::SimplifiedIntrinsics)) {
+        if (function.at(site.value).opcode != Opcode::StepGenerator)
+            continue;
+        for (const Use& read : useLists.usesOf(site.value)) {
+            if (read.kind != Use::Kind::Operand || function.at(read.user).opcode != Opcode::ResultAt || function.at(read.user).index() != static_cast<uint32_t>(StepGeneratorResult::Status))
+                continue;
+            for (const Use& comparison : useLists.usesOf(read.user)) {
+                if (!isComparisonWithNotStepped(comparison))
+                    continue;
+                for (const Use& use : useLists.usesOf(comparison.user)) {
+                    if (use.kind != Use::Kind::TerminatorOperand || function.at(use.block).terminator.kind != TerminatorKind::Branch)
+                        continue;
+                    BlockID arm = function.at(use.block).terminator.targets[0].block;
+                    if (function.at(arm).frequency.predicted() != BlockFrequency::Rare && context.analyses.cfg().incomingEdges(arm).size() == 1)
+                        arms.append(arm);
+                }
+            }
+        }
+    }
+    for (BlockID arm : arms)
+        function.edit(arm, BlockEdit::Rest).frequency = BlockFrequency::Rare;
+    if (!arms.isEmpty())
+        context.analyses.invalidate(FunctionAnalysis::Frequencies);
+    return arms.size();
+}
+
 unsigned simplifyIntrinsics(FunctionPassContext& context)
 {
     return rewriteValues(context, SiteList::SimplifiedIntrinsics, [&](const Value& value) {
@@ -325,6 +397,7 @@ namespace {
 struct BuiltinOwnPropertyTest {
     ValueID object;
     PropertyKeyID key;
+    BuiltinID builtin;
 };
 
 } // anonymous namespace
@@ -349,16 +422,17 @@ static std::optional<BuiltinOwnPropertyTest> findOwnPropertyTest(FunctionPassCon
     if (!object || !keyOperand)
         return std::nullopt;
 
-    PropertyKeyID key = internKey(context.types, constantKeyOf(program, program.typeOf(context.function, keyOperand)));
+    PropertyKeyID key = internKey(context.types, constantNameOf(program, program.sourceFunctionOf(context.function, value), program.typeOf(context.function, keyOperand)));
     if (!key)
         return std::nullopt;
-    return BuiltinOwnPropertyTest { object, key };
+    return BuiltinOwnPropertyTest { object, key, program.builtins().canonicalID(overload->builtin) };
 }
 
-static Value makeOwnPropertyTest(const Value& call, ValueID object, PropertyKeyID key)
+static Value makeOwnPropertyTest(const Value& call, ValueID object, const BuiltinOwnPropertyTest& found)
 {
     Value test = IRBuilder::make(Opcode::PropHasOwn, { object });
-    test.setKey(key);
+    test.setKey(found.key);
+    test.setCalledBuiltin(found.builtin);
     test.setAccessSite(call.accessSite());
     return test;
 }
@@ -368,7 +442,7 @@ static std::optional<Value> simplifyOwnPropertyTest(FunctionPassContext& context
     std::optional<BuiltinOwnPropertyTest> found = findOwnPropertyTest(context, value);
     if (!found || !context.program.typeOf(context.function, found->object).isObject())
         return std::nullopt;
-    Value test = makeOwnPropertyTest(value, found->object, found->key);
+    Value test = makeOwnPropertyTest(value, found->object, *found);
     if (!keepsEffectsOf(context, value, test))
         return std::nullopt;
     return test;
@@ -393,8 +467,10 @@ static unsigned simplifyOwnPropertyTestsOfWhatMayBeMissing(FunctionPassContext& 
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     for (auto& [site, test] : tests) {
         builder.setOrigin(function.at(site.value).origin());
-        ValueID object = builder.insertBefore(site.point(), IRBuilder::make(Opcode::ToObject, { test.object }));
-        replaceKeepingType(context, site.value, makeOwnPropertyTest(function.at(site.value), object, test.key));
+        Value conversion = IRBuilder::make(Opcode::ToObject, { test.object });
+        conversion.setCalledBuiltin(test.builtin);
+        ValueID object = builder.insertBefore(site.point(), WTF::move(conversion));
+        replaceKeepingType(context, site.value, makeOwnPropertyTest(function.at(site.value), object, test));
     }
     builder.applyInsertions();
     context.analyses.didChangeValues();
@@ -437,42 +513,75 @@ static KnownBoolean evaluateNumberTest(BuiltinID builtin, const Type& operand)
     return operand.integers.intersectWith(safeIntegers).isEmpty() ? KnownBoolean::False : KnownBoolean::Unknown;
 }
 
-static KnownBoolean evaluateQuestionAboutClass(const Program& program, BuiltinID builtin, const Type& operand)
+namespace {
+
+struct AnswersAboutClass {
+    bool holdsForLayouts { false };
+    bool holdsForSomeClass { false };
+    bool failsForSomePart { false };
+};
+
+} // anonymous namespace
+
+// Nothing where it is not known of every part of the type whether the question holds for it.
+static std::optional<AnswersAboutClass> askEveryPartAboutClass(const Program& program, BuiltinID builtin, const Type& operand)
 {
     const BuiltinTable& table = program.builtins();
-    auto isOfKind = [&](BuiltinClassID builtinClass) {
-        for (BuiltinClassID current = builtinClass; current; current = table.at(current).parent) {
-            if (builtin == Builtins::ErrorIsError ? current == BuiltinClasses::Error : current == BuiltinClasses::TypedArray || current == BuiltinClasses::DataView)
-                return true;
-        }
-        return false;
+    auto isAskedFor = [&](BuiltinClassID builtinClass) {
+        if (builtin == Builtins::ErrorIsError)
+            return builtinClass == BuiltinClasses::Error;
+        if (builtin == Builtins::ArrayIsArray)
+            return builtinClass == BuiltinClasses::Array;
+        return builtinClass == BuiltinClasses::TypedArray || builtinClass == BuiltinClasses::DataView;
     };
-    if (builtin != Builtins::ErrorIsError && builtin != Builtins::ArrayBufferIsView)
-        return KnownBoolean::Unknown;
-    if (!operand.hasObjects())
-        return KnownBoolean::False;
+    auto evaluate = [&](BuiltinClassID builtinClass) {
+        for (BuiltinClassID current = builtinClass; current; current = table.at(current).parent) {
+            if (isAskedFor(current))
+                return KnownBoolean::True;
+        }
+        return table.at(builtinClass).origin == BuiltinOrigin::Engine ? KnownBoolean::False : KnownBoolean::Unknown;
+    };
+    if (builtin != Builtins::ErrorIsError && builtin != Builtins::ArrayBufferIsView && builtin != Builtins::ArrayIsArray)
+        return std::nullopt;
+    if (builtin == Builtins::ArrayIsArray && (mayBeProxy(operand) || !operand.builtins.isEmpty()))
+        return std::nullopt;
     if (operand.anyObject)
-        return KnownBoolean::Unknown;
+        return std::nullopt;
+
+    AnswersAboutClass answers;
+    answers.failsForSomePart = operand.primitives || operand.anyFunction || !operand.functions.isEmpty() || !operand.builtins.isEmpty();
     if (operand.layouts) {
-        bool areRecords = std::ranges::all_of(program.at(operand.layouts).members, [&](LayoutID layout) {
-            return program.at(layout).kind == LayoutKind::Record;
-        });
-        if (!areRecords)
-            return KnownBoolean::Unknown;
+        auto all = program.at(operand.layouts).all();
+        if (!all)
+            return std::nullopt;
+        bool failsForSomeLayout = false;
+        for (LayoutID layout : *all) {
+            KnownBoolean answer = KnownBoolean::False;
+            if (program.at(layout).kind != LayoutKind::Record) {
+                std::optional<BuiltinClassID> builtinClass = findClassOfBuiltinConstructor(program, layout);
+                answer = builtinClass && *builtinClass ? evaluate(*builtinClass) : KnownBoolean::Unknown;
+            }
+            if (answer == KnownBoolean::Unknown)
+                return std::nullopt;
+            (answer == KnownBoolean::True ? answers.holdsForLayouts : failsForSomeLayout) = true;
+        }
+        if (answers.holdsForLayouts && failsForSomeLayout)
+            return std::nullopt;
+        answers.failsForSomePart |= failsForSomeLayout;
     }
-    bool hasOthers = operand.primitives || operand.layouts || operand.anyFunction || !operand.functions.isEmpty() || !operand.builtins.isEmpty();
-    bool hasSome = false;
     for (const ClassPart& part : operand.classes) {
-        if (isOfKind(part.builtinClass))
-            hasSome = true;
-        else if (table.at(part.builtinClass).origin == BuiltinOrigin::Engine)
-            hasOthers = true;
-        else
-            return KnownBoolean::Unknown;
+        switch (evaluate(part.builtinClass)) {
+        case KnownBoolean::Unknown:
+            return std::nullopt;
+        case KnownBoolean::False:
+            answers.failsForSomePart = true;
+            break;
+        case KnownBoolean::True:
+            answers.holdsForSomeClass = true;
+            break;
+        }
     }
-    if (hasSome && hasOthers)
-        return KnownBoolean::Unknown;
-    return hasSome ? KnownBoolean::True : KnownBoolean::False;
+    return answers;
 }
 
 static bool isOfNoClassOfHost(const Program& program, const Type& operand)
@@ -480,7 +589,8 @@ static bool isOfNoClassOfHost(const Program& program, const Type& operand)
     if (operand.anyObject || operand.anyFunction || !operand.builtins.isEmpty())
         return false;
     if (operand.layouts) {
-        bool areMadeByProgram = std::ranges::all_of(program.at(operand.layouts).members, [&](LayoutID layout) {
+        auto all = program.at(operand.layouts).all();
+        bool areMadeByProgram = all && std::ranges::all_of(*all, [&](LayoutID layout) {
             return program.at(layout).kind == LayoutKind::Record || !mayBeMadeByBuiltinConstructor(program, layout);
         });
         if (!areMadeByProgram)
@@ -508,6 +618,10 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
     if (!overload)
         return std::nullopt;
 
+    // `iterable[Symbol.iterator]()` of an iterator, valueOf() of a primitive: what is known of the object in front of the call is known of what comes out of it.
+    if (inlineImplementationOf(context.program, value) == InlineBuiltin::ReturnThis)
+        return makeIdentityCast(context.function, builtinCallOf(context.program, value).receiver);
+
     std::span<const ValueID> arguments = value.argumentsOperands();
     if (arguments.empty())
         return makeResultWithoutArguments(overload->builtin);
@@ -521,19 +635,24 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
     // Number(value) and ToNumber differ only for a BigInt.
     if (overload->builtin == Builtins::Number && !operand.isNever() && operand.isNumberLike())
         return IRBuilder::make(Opcode::ToNumber, { arguments[0] });
-    if (overload->builtin == Builtins::ArrayIsArray && !mayBeProxy(context.program, operand) && !mayBeMadeByBuiltinConstructor(context.program, operand))
+    if (overload->builtin == Builtins::ArrayIsArray && !mayBeProxy(operand) && !mayBeMadeByBuiltinConstructor(context.program, operand))
         return makeTypeTest(arguments[0], context.types.intern(typeOfArraysAmong(context, operand)));
 
-    KnownBoolean answer = evaluateNumberTest(overload->builtin, operand);
-    if (answer == KnownBoolean::Unknown)
-        answer = evaluateQuestionAboutClass(context.program, overload->builtin, operand);
-    switch (answer) {
+    switch (evaluateNumberTest(overload->builtin, operand)) {
     case KnownBoolean::Unknown:
         break;
     case KnownBoolean::False:
         return makeBooleanConstant(false);
     case KnownBoolean::True:
         return makeBooleanConstant(true);
+    }
+    if (std::optional<AnswersAboutClass> answers = askEveryPartAboutClass(context.program, overload->builtin, operand)) {
+        if (!answers->holdsForLayouts && !answers->holdsForSomeClass)
+            return makeBooleanConstant(false);
+        if (!answers->failsForSomePart)
+            return makeBooleanConstant(true);
+        if (!answers->holdsForSomeClass)
+            return makeTypeTest(arguments[0], context.types.intern(Type::forLayoutSet(operand.layouts)));
     }
 
     if (mayBeMadeByBuiltinConstructor(context.program, operand))
@@ -545,7 +664,7 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
         Type views = Type::builtinClass(BuiltinClasses::DataView);
         for (uint32_t index = 0; index < table.classCount(); ++index) {
             BuiltinClassID builtinClass(index);
-            if (table.at(builtinClass).origin == BuiltinOrigin::Engine && table.at(builtinClass).typedArrayType != NotTypedArray)
+            if (table.typedArrayClassOf(builtinClass) == builtinClass)
                 views = views.unionWith(Type::builtinClass(builtinClass), context.types);
         }
         return makeTypeTest(arguments[0], context.types.intern(WTF::move(views)));
@@ -756,14 +875,194 @@ static unsigned takeLiteralArgumentsApart(FunctionPassContext& context, const Bu
     return static_cast<unsigned>(matches.size());
 }
 
+struct DefinitionOfPlainProperty {
+    ValueSite call;
+    ValueID object;
+    PropertyKeyID key;
+    ValueID value;
+};
+
+static bool isSeenOnlyByCall(FunctionPassContext& context, ValueID value, ValueID call)
+{
+    const Function& function = context.function;
+    return std::ranges::all_of(context.analyses.useLists().usesOf(value), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        if (handsObjectOn(function.at(use.user).opcode))
+            return isSeenOnlyByCall(context, use.user, call);
+        return use.user == call && std::ranges::count(function.at(call).argumentsOperands(), value) == 1;
+    });
+}
+
+static bool holdsObjectsOfLayoutsAlone(const Type& type)
+{
+    return type.layouts && !type.primitives && !type.anyObject && !type.anyFunction && type.classes.isEmpty() && type.functions.isEmpty() && type.builtins.isEmpty();
+}
+
+static bool everyLayoutTakesValueIntoSlot(const Program& program, const Type& object, PropertyKeyID key, const Type& value)
+{
+    auto all = program.at(object.layouts).all();
+    return all && std::ranges::all_of(*all, [&](LayoutID layout) {
+        std::optional<FieldReference> field = findField(program, layout, key, BaseChain::Proven);
+        if (!field || fieldAt(program, *field).flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsHidden }))
+            return false;
+        return value.isSubsetOf(program.at(slotTypeOf(program, fieldAt(program, *field))), program);
+    });
+}
+
+static std::optional<DefinitionOfPlainProperty> matchDefinitionOfPlainProperty(FunctionPassContext& context, const ValueSite& site)
+{
+    using Flag = PropertyDescriptorFlags;
+    constexpr OptionSet<Flag> flagsOfPlainProperty { Flag::HasValue, Flag::HasWritable, Flag::IsWritable, Flag::HasEnumerable, Flag::IsEnumerable, Flag::HasConfigurable, Flag::IsConfigurable };
+    const Program& program = context.program;
+    const Function& function = context.function;
+    const Value& call = function.at(site.value);
+    if (call.opcode != Opcode::CallBuiltin || call.builtinCallForm() != BuiltinCallForm::Whole || call.receiverOperand())
+        return std::nullopt;
+    const BuiltinTable& builtins = program.builtins();
+    if (builtins.canonicalID(builtins.at(call.overload()).builtin) != Builtins::ObjectDefineProperty || builtins.at(call.overload()).mode != BuiltinCallMode::Call)
+        return std::nullopt;
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    if (arguments.size() != 3 || !holdsObjectsOfLayoutsAlone(program.typeOf(function, arguments[0])))
+        return std::nullopt;
+    PropertyKeyID key = internKey(context.types, constantNameOf(program, program.sourceFunctionOf(function, call), program.typeOf(function, arguments[1])));
+    if (!key || keyLookupOf(program, key) != KeyLookup::Ordinary)
+        return std::nullopt;
+
+    ValueID literal = findObjectHandedOn(function, arguments[2]);
+    if (!listsMembersOfDescriptor(program, function.at(literal)) || !isSeenOnlyByCall(context, literal, site.value))
+        return std::nullopt;
+    std::optional<DescriptorLiteral> descriptor = readDescriptorLiteral(program, function, function.at(literal));
+    if (!descriptor || descriptor->flags != flagsOfPlainProperty || !descriptor->value)
+        return std::nullopt;
+    if (!everyLayoutTakesValueIntoSlot(program, program.typeOf(function, arguments[0]), key, program.typeOf(function, descriptor->value)))
+        return std::nullopt;
+    return DefinitionOfPlainProperty { site, arguments[0], key, descriptor->value };
+}
+
+static unsigned definePlainPropertiesByName(FunctionPassContext& context, const BuiltinCallSites& calls)
+{
+    Function& function = context.function;
+    Vector<DefinitionOfPlainProperty> matches;
+    for (const ValueSite& site : calls) {
+        if (std::optional<DefinitionOfPlainProperty> match = matchDefinitionOfPlainProperty(context, site))
+            matches.append(*match);
+    }
+    if (matches.isEmpty())
+        return 0;
+
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (const DefinitionOfPlainProperty& match : matches) {
+        builder.setOrigin(function.at(match.call.value).origin());
+        Value definition = IRBuilder::make(Opcode::PropDefine, { match.object, match.value });
+        definition.setKey(match.key);
+        builder.insertBefore(match.call.point(), WTF::move(definition));
+    }
+    builder.applyInsertions();
+
+    for (const DefinitionOfPlainProperty& match : matches)
+        replaceKeepingType(context, match.call.value, makeIdentityCast(function, match.object));
+    context.analyses.didChangeValues();
+    return static_cast<unsigned>(matches.size());
+}
+
+static bool mayChangeLists(FunctionPassContext& context, ValueID id)
+{
+    Effects effects = context.analyses.effectsOf(id).onAnyEdge();
+    return effects.mayRunOtherCode() || effects.writes.contains(AbstractHeap::ArrayStorage);
+}
+
+static bool standsBehindTestThatListHoldsSomething(FunctionPassContext& context, const ValueSite& call)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    std::optional<Edge> entry = analyses.cfg().singleIncomingEdge(call.block);
+    if (!entry || entry->isHandlerEdge() || function.at(entry->from).terminator.kind != TerminatorKind::Branch)
+        return false;
+    const Value& condition = function.at(function.at(entry->from).terminator.conditionOperand());
+    if (condition.opcode != Opcode::ToBoolean && !relationalOperators.contains(condition.opcode))
+        return false;
+    ValueID list = analyses.identityOf(function.at(call.value).receiverOperand());
+    const BlockValues& valuesInFront = function.at(entry->from).values;
+    for (uint32_t operandIndex = 0; operandIndex < condition.numberOfOperands(); ++operandIndex) {
+        ValueID length = analyses.identityOf(condition.operand(operandIndex));
+        std::optional<MeasuredStorage> measured = storageMeasuredBy(program, function.at(length));
+        if (!measured || measured->heap != AbstractHeap::ArrayStorage || analyses.identityOf(measured->owner) != list)
+            continue;
+        Type lengthBehindTest = narrowOperandByTest({ program, function, context.types }, condition, operandIndex, entry->targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken);
+        if (!lengthBehindTest.isInteger() || lengthBehindTest.integers.minimum < 1)
+            continue;
+        size_t indexOfLength = std::ranges::find(valuesInFront, length) - valuesInFront.begin();
+        if (indexOfLength == valuesInFront.size())
+            continue;
+        bool isLeftAlone = std::ranges::none_of(valuesInFront.span().subspan(indexOfLength + 1), [&](ValueID id) {
+            return mayChangeLists(context, id);
+        }) && std::ranges::none_of(function.at(call.block).values.span().first(call.index), [&](ValueID id) {
+            return mayChangeLists(context, id);
+        });
+        if (isLeftAlone)
+            return true;
+    }
+    return false;
+}
+
+static unsigned takeElementsOutOfListsThatHoldSome(FunctionPassContext& context, const BuiltinCallSites& calls)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    Vector<ValueSite, 2> matches;
+    for (const ValueSite& site : calls) {
+        const Value& call = function.at(site.value);
+        if (call.opcode != Opcode::CallBuiltin || !call.receiverOperand() || call.needsPristineReceiver() || !(program.at(call.type).primitives & Primitive::Undefined))
+            continue;
+        std::optional<InlineBuiltin> builtin = inlineImplementationOf(program, call);
+        if (builtin != InlineBuiltin::ArrayPop && builtin != InlineBuiltin::ArrayShift)
+            continue;
+        const Type& list = program.typeOf(function, call.receiverOperand());
+        const ClassPart* part = list.singleBuiltinClass();
+        if (!part || list.mayBeUndefinedOrNull() || !part->contentsAreProven || !part->provenPristine.containsAll({ PristineAspects::Storage, PristineAspects::Dense }))
+            continue;
+        if (typeOfContentsRead({ program, function, context.types }, list, ContentsSlot::Element).primitives & Primitive::Undefined)
+            continue;
+        bool isCastAlready = std::ranges::any_of(context.analyses.useLists().usesOf(site.value), [&](const Use& use) {
+            return use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::AssumeType && !(program.typeOf(function, use.user).primitives & Primitive::Undefined);
+        });
+        if (!isCastAlready && standsBehindTestThatListHoldsSomething(context, site))
+            matches.append(site);
+    }
+    if (matches.isEmpty())
+        return 0;
+
+    Vector<Vector<Use, 4>, 2> uses(matches.size(), [&](size_t index) {
+        return Vector<Use, 4>(context.analyses.useLists().usesOf(matches[index].value));
+    });
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    Vector<ValueID, 2> elements;
+    for (const ValueSite& match : matches) {
+        builder.setOrigin(function.at(match.value).origin());
+        elements.append(builder.insertBefore({ match.block, match.index + 1 }, makeAssumeType(match.value, Proven::byConstruction(context.types.withoutPrimitives(function.at(match.value).type, Primitive::Undefined)))));
+    }
+    builder.applyInsertions();
+    for (size_t index = 0; index < matches.size(); ++index) {
+        for (const Use& use : uses[index])
+            replaceUse(function, use, elements[index]);
+    }
+    context.analyses.didChangeValues();
+    narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, elements.span());
+    return static_cast<unsigned>(matches.size());
+}
+
 PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
 {
     unsigned rewrites = 0;
     auto hasSitesIn = [&](SiteList list) {
         return !context.sitesIn(list).empty();
     };
-    if (hasSitesIn(SiteList::SimplifiedIntrinsics))
+    if (hasSitesIn(SiteList::SimplifiedIntrinsics)) {
         rewrites += simplifyIntrinsics(context);
+        rewrites += markNotSteppedArmsRare(context);
+    }
     if (hasSitesIn(SiteList::TemplateObjects))
         rewrites += replaceTemplateObjectsReadByPosition(context);
     if (context.hasConstantListSource() && hasSitesIn(SiteList::ConstantListSpreads))
@@ -772,6 +1071,8 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
         rewrites += simplifyConcatenationsOfLiterals(context);
         rewrites += simplifySearchesOfLiterals(context);
     }
+    if (hasSitesIn(SiteList::ElementReads))
+        rewrites += simplifyCharacterReads(context);
     if (!hasSitesIn(SiteList::BuiltinCalls)) {
         bool hasTruncation = std::ranges::any_of(context.sitesIn(SiteList::SimplifiedIntrinsics), [&](const ValueSite& site) {
             return context.function.at(site.value).opcode == Opcode::ToIntegerOrInfinity;
@@ -797,14 +1098,19 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
         didRewrite(simplifyInt32Conversions(context));
     didRewrite(simplifyStringReads(context, calls));
     didRewrite(simplifyConcatenatingCalls(context, calls));
+    didRewrite(testPartsOfConcatenations(context, calls));
     didRewrite(simplifyMatches(context, calls));
     didRewrite(simplifyLastPiecesOfSplits(context, calls));
     didRewrite(simplifySplitsOfConstants(context, calls));
     didRewrite(simplifyPromiseAllOfLiterals(context, calls));
     didRewrite(simplifyPromiseResolve(context, calls));
     didRewrite(leaveURLsUnbuilt(context));
+    didRewrite(formatFromPatterns(context));
+    didRewrite(leavePairsOfOwnEntriesUnmade(context, calls.span()));
     didRewrite(expandRangesOfViews(context, calls));
+    didRewrite(definePlainPropertiesByName(context, calls));
     didRewrite(takeLiteralArgumentsApart(context, calls));
+    didRewrite(takeElementsOutOfListsThatHoldSome(context, calls));
 
     PassOutcome outcome = rewrites ? PassOutcome::Changed : PassOutcome::Unchanged;
     outcome |= expandStringRanges(context, calls);

@@ -1,0 +1,40 @@
+# Flow counts a function among the callers of whatever it has followed to one of the calls in it. A call that becomes direct says so where its callee is none of those: whoever copies the callee in then knows
+# that what flow says of the callers of the callee need not hold around the copy
+# FORM: Prepared
+# RUN: pass ResolveCalls VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callee" flags=[IsHiddenInStackTraces] results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f1 name="other" flags=[IsHiddenInStackTraces] results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f2 name="followedAmongOthers" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = Call v0, - callees=[f0, ..]
+    Return v1
+}
+# CHECK-LABEL: name="followedAmongOthers"
+# CHECK: = CallDirect function=f0
+# CHECK-NOT: calleeIsPredicted
+function f3 name="followedAlone" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = Call v0, - callees=[f0]
+    Return v1
+}
+# CHECK-LABEL: name="followedAlone"
+# CHECK: = CallDirect function=f0
+# CHECK-NOT: calleeIsPredicted
+function f4 name="anotherWasFollowed" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = Call v0, - callees=[f1, ..]
+    Return v1
+}
+# CHECK-LABEL: name="anotherWasFollowed"
+# CHECK: = CallDirect function=f0 [calleeIsPredicted]
+function f5 name="nothingWasFollowed" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = Call v0, -
+    Return v1
+}
+# CHECK-LABEL: name="nothingWasFollowed"
+# CHECK: = CallDirect function=f0 [calleeIsPredicted]

@@ -27,15 +27,25 @@ enum class StubFrameKind : uint8_t {
     ArgumentList,
     // The caller's site has two positions, and the stub is at the first: the first of two reads, or the making of an Error that it then throws.
     FirstOfTwoReads,
+    // The stub reads the method that the caller's site calls.
+    MethodRead,
     // As Plain, in a frame whose stub has spilled the argument registers.
     BelowSpilledArguments,
+    // As BelowSpilledArguments, in a PlainFunctionConstructFrame whose callee has been entered.
+    PlainFunctionConstruct,
+    // As BelowSpilledArguments, in a PlainFunctionConstructFrame whose callee has not been entered: the stub makes `this`. Bytecode does that in the frame of the callee, so a stack trace lists the callee.
+    PlainFunctionConstructMakesThis,
+    // As ConstructAdapter, before the callee is entered: the adapter makes `this`.
+    ConstructAdapterMakesThis,
     // In a stub that has no frame record and has pushed nothing: its return address is on top of the stack.
     AtStubEntry,
     // The frame is one that emitHostCallFrame() has made, and the stub does in it what the native callee would do. A run of compiled frames ends at it, as at a frame of the engine.
     InHostCallFrame,
+    // Like Plain, in a frame with a record: after the operation it called returns, the stub only returns to its caller.
+    ReturnsAfterOperation,
 };
-inline constexpr unsigned numberOfStubFrameKinds = 14;
-static_assert(static_cast<unsigned>(StubFrameKind::InHostCallFrame) + 1 == numberOfStubFrameKinds);
+inline constexpr unsigned numberOfStubFrameKinds = 19;
+static_assert(static_cast<unsigned>(StubFrameKind::ReturnsAfterOperation) + 1 == numberOfStubFrameKinds);
 
 constexpr bool hasSingleReturnSite(StubFrameKind kind)
 {
@@ -45,14 +55,19 @@ constexpr bool hasSingleReturnSite(StubFrameKind kind)
     case StubFrameKind::SavedFrameAdapter:
     case StubFrameKind::AsyncGeneratorBody:
     case StubFrameKind::ArgumentList:
+    case StubFrameKind::EngineCallee:
         return true;
     case StubFrameKind::Plain:
+    case StubFrameKind::ReturnsAfterOperation:
     case StubFrameKind::HandlerOfJob:
-    case StubFrameKind::EngineCallee:
     case StubFrameKind::HostCall:
     case StubFrameKind::GeneratorBody:
     case StubFrameKind::FirstOfTwoReads:
+    case StubFrameKind::MethodRead:
     case StubFrameKind::BelowSpilledArguments:
+    case StubFrameKind::PlainFunctionConstruct:
+    case StubFrameKind::PlainFunctionConstructMakesThis:
+    case StubFrameKind::ConstructAdapterMakesThis:
     case StubFrameKind::AtStubEntry:
     case StubFrameKind::InHostCallFrame:
         return false;
@@ -66,10 +81,14 @@ constexpr unsigned bytesAboveReturnAddressOf(StubFrameKind kind)
     switch (kind) {
     case StubFrameKind::EngineCallee:
     case StubFrameKind::BelowSpilledArguments:
+    case StubFrameKind::PlainFunctionConstruct:
+    case StubFrameKind::PlainFunctionConstructMakesThis:
         return sizeOfSpilledArgumentRegisters;
     case StubFrameKind::Plain:
+    case StubFrameKind::ReturnsAfterOperation:
     case StubFrameKind::Adapter:
     case StubFrameKind::ConstructAdapter:
+    case StubFrameKind::ConstructAdapterMakesThis:
     case StubFrameKind::SavedFrameAdapter:
     case StubFrameKind::HandlerOfJob:
     case StubFrameKind::HostCall:
@@ -77,12 +96,20 @@ constexpr unsigned bytesAboveReturnAddressOf(StubFrameKind kind)
     case StubFrameKind::AsyncGeneratorBody:
     case StubFrameKind::ArgumentList:
     case StubFrameKind::FirstOfTwoReads:
+    case StubFrameKind::MethodRead:
     case StubFrameKind::AtStubEntry:
     case StubFrameKind::InHostCallFrame:
         return 0;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
+
+struct PlainFunctionConstructFrame {
+    static constexpr ptrdiff_t offsetOfThis = -8;
+    static constexpr ptrdiff_t offsetOfCallee = -16;
+    static constexpr ptrdiff_t offsetOfWord = -24;
+    static constexpr ptrdiff_t offsetOfCount = -32;
+};
 
 struct AdapterFrame {
     struct SavedRegister {

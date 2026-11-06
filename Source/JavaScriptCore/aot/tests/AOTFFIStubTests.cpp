@@ -41,6 +41,17 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
+constexpr ASCIILiteral evaluatesText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = PropGet v0 key="eval" [isFreeName]
+    v3 = Call v2, -, v1
+    Return
+}
+)IR"_s;
+
 constexpr ASCIILiteral scriptStart = R"js(
 const fixture = name => $vm.ffiFixture(name);
 const bind = (name, args, ret) => $vm.ffiFunction({ args, returns: ret }, fixture(name), name);
@@ -185,10 +196,10 @@ static const FFI::StubDirectory& directoryOf(const FFIStubs& stubs)
     return *reinterpret_cast<const FFI::StubDirectory*>(stubs.directory.span().data());
 }
 
-static std::unique_ptr<CompileOutput> compileEmptyProgram(std::initializer_list<ASCIILiteral> optionWords)
+static std::unique_ptr<CompileOutput> compileProgram(ASCIILiteral text, std::initializer_list<ASCIILiteral> optionWords)
 {
     BuildContext build(optionsWith(optionWords));
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(text)), Typed::IRForm::AsRead, build);
     if (!program) {
         build.diagnostics().finish(nullptr);
         Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
@@ -199,6 +210,11 @@ static std::unique_ptr<CompileOutput> compileEmptyProgram(std::initializer_list<
         Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
     AOT_TEST_CHECK(!output->image.isEmpty());
     return output;
+}
+
+static std::unique_ptr<CompileOutput> compileEmptyProgram(std::initializer_list<ASCIILiteral> optionWords)
+{
+    return compileProgram(programText, optionWords);
 }
 
 static const ImageHeader& headerOf(const CompileOutput& output)
@@ -265,6 +281,25 @@ static void testOpenProgramHasStubs()
     AOT_TEST_CHECK(equalSpans(output->image.span().subspan(header.codeOffset + header.code.ffiCodeOffset, header.code.ffiCodeSize), stubs.code.span()));
 }
 
+static void testOpenProgramBuiltWithoutForeignCallsHasNone()
+{
+    std::unique_ptr<CompileOutput> withStubs = compileEmptyProgram({ "admit=Inspector"_s });
+    std::unique_ptr<CompileOutput> output = compileEmptyProgram({ "admit=Inspector"_s, "exclude=ForeignCalls"_s });
+    const ImageHeader& header = headerOf(*output);
+    AOT_TEST_CHECK(!header.code.ffiCodeSize);
+    AOT_TEST_CHECK(header.flags == headerOf(*withStubs).flags && header.has(ImageFlag::AdmitsUnknownJavaScript));
+    AOT_TEST_CHECK(header.executableSize + headerOf(*withStubs).code.ffiCodeSize <= headerOf(*withStubs).executableSize);
+    AOT_TEST_CHECK(static_cast<uint64_t>(header.code.constantsOffset) + header.code.constantsSize == header.codeSize);
+}
+
+static void testUnseenCodeWithoutForeignCalls()
+{
+    AOT_TEST_CHECK(headerOf(*compileProgram(evaluatesText, { })).code.ffiCodeSize);
+    std::unique_ptr<CompileOutput> output = compileProgram(evaluatesText, { "exclude=ForeignCallsOfUnseenCode"_s });
+    AOT_TEST_CHECK(!headerOf(*output).code.ffiCodeSize && headerOf(*output).has(ImageFlag::AdmitsUnknownJavaScript) && !headerOf(*output).has(ImageFlag::AdmitsLibraryText));
+    AOT_TEST_CHECK(headerOf(*compileEmptyProgram({ "admit=Inspector"_s, "exclude=ForeignCallsOfUnseenCode"_s })).code.ffiCodeSize);
+}
+
 static void testDirectoryIsNotExecutable()
 {
     std::unique_ptr<CompileOutput> output = compileEmptyProgram({ "admit=Inspector"_s });
@@ -320,6 +355,8 @@ std::span<const NativeTest> ffiStubTests()
         { "ffi-stubs/same-bytes-every-time"_s, testSameBytesEveryTime },
         { "ffi-stubs/closed-program-has-none"_s, testClosedProgramHasNone },
         { "ffi-stubs/open-program-has-stubs"_s, testOpenProgramHasStubs },
+        { "ffi-stubs/open-program-built-without-foreign-calls-has-none"_s, testOpenProgramBuiltWithoutForeignCallsHasNone },
+        { "ffi-stubs/unseen-code-that-makes-no-foreign-calls-brings-none"_s, testUnseenCodeWithoutForeignCalls },
         { "ffi-stubs/directory-is-not-executable"_s, testDirectoryIsNotExecutable },
         { "ffi-stubs/shell-calls-and-callbacks"_s, testShellCallsAndCallbacks },
         { "ffi-stubs/shell-without-stubs"_s, testShellWithoutStubs },

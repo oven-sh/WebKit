@@ -34,10 +34,10 @@ bool includesData(const Program& program, const Type& type, const DataNode& node
     case DataNode::Kind::BigInt:
         return type.primitives & Primitive::BigInt;
     case DataNode::Kind::Array:
-        return type.anyObject || type.findClassPart(BuiltinClasses::Array) || hasMembersWithoutLayout(program, type);
+        return type.anyObject || type.findClassPart(BuiltinClasses::Array);
     case DataNode::Kind::Object: {
         LayoutID layout = node.as<DataNode::Object>().layout;
-        return type.anyObject || (layout && type.layouts && std::ranges::binary_search(program.at(type.layouts).members, layout));
+        return type.anyObject || (layout && type.layouts && std::ranges::binary_search(program.at(type.layouts).completeMembers(), layout));
     }
     }
     RELEASE_ASSERT_NOT_REACHED();

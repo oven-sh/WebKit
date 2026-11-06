@@ -1,0 +1,21 @@
+# `for (;;) {}`: the loop is its poll and a jump. Where a poll is no load that faults, it loads a word and leaves where the sign of the word is set.
+# One instruction of the target tests one bit and branches, so the loop has three.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN(ARM64): generate-code calls
+# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+# ARM64: f1: size=32 
+# ARM64-NEXT: operation operationAOTPollSlow x1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    Return v0
+}
+function f1 name="spins" results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b1()
+}

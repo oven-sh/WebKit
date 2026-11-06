@@ -83,7 +83,7 @@ static void checkUpstreamPolicy(const B3::UpstreamPolicy& upstream)
     AOT_TEST_CHECK(!upstream.canonicalizesIncrements);
     AOT_TEST_CHECK(!upstream.eliminatesWasmGCAllocations);
     AOT_TEST_CHECK(!upstream.usesWasmFaultSignalHandler);
-    AOT_TEST_CHECK(!upstream.allowsSIMD);
+    AOT_TEST_CHECK(upstream.allowsSIMD);
     AOT_TEST_CHECK(!upstream.forcesSIMD);
 }
 
@@ -106,6 +106,7 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(optimization.sinksValues);
     AOT_TEST_CHECK(optimization.placesConstantsByFrequency);
     AOT_TEST_CHECK(optimization.mergesBlocksAfterForwardingJumps);
+    AOT_TEST_CHECK(optimization.keepsOriginsOfDemotedValues);
 
     AOT_TEST_CHECK(policy.selection.extendsInstructionSelection);
     AOT_TEST_CHECK(policy.selection.attributesTrapsToAccesses);
@@ -114,10 +115,14 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(policy.loops.foldsComparisonsWithBounds);
     AOT_TEST_CHECK(policy.loops.versions);
     AOT_TEST_CHECK(policy.loops.clampsLoopBounds);
+    AOT_TEST_CHECK(policy.loops.pollsBetweenStretches);
+    AOT_TEST_CHECK(!policy.loops.vectorizes);
+    AOT_TEST_CHECK(!policy.loops.unrolls);
     AOT_TEST_CHECK(policy.loops.hoistsOnlyFromLikelyPaths);
     AOT_TEST_CHECK(policy.loops.hoistsImmutableLoadsPastWrites);
 
     AOT_TEST_CHECK(policy.switchLowering.usesBitTests);
+    AOT_TEST_CHECK(policy.switchLowering.usesValueTables);
     AOT_TEST_CHECK(policy.switchLowering.minCasesForJumpTable == 7);
 
     AOT_TEST_CHECK(policy.knownProperties.trustsKnownRanges);
@@ -132,6 +137,7 @@ static void checkRegisterAndSplitPolicy(const B3::Air::Policy& air)
     AOT_TEST_CHECK(air.registers.hintsTwoAddressOperands);
     AOT_TEST_CHECK(air.registers.usesSecondPreferredRegister);
     AOT_TEST_CHECK(air.registers.evictsHolderOfPreferredRegister);
+    AOT_TEST_CHECK(air.registers.patchpointsKeepOnlyLowerHalvesOfVectors);
     AOT_TEST_CHECK(air.registers.unsavedCalleeSaves == unsavedCalleeSaves());
     AOT_TEST_CHECK(air.registers.savedByCallee.isEmpty());
     AOT_TEST_CHECK(air.registers.calleeSavesClobberedAtSuspensions.isEmpty());
@@ -139,8 +145,11 @@ static void checkRegisterAndSplitPolicy(const B3::Air::Policy& air)
 
     const B3::Air::LiveRangeSplitPolicy defaults { };
     AOT_TEST_CHECK(air.splitting.splitsAroundClobbersEarly);
+    AOT_TEST_CHECK(air.splitting.splitsAroundClobbersThatRead);
+    AOT_TEST_CHECK(air.splitting.keepsUnusedTmpsOnStackThroughLoops);
+    AOT_TEST_CHECK(air.splitting.spillsTmpsReadInPlaceFirst == isX86());
     AOT_TEST_CHECK(air.splitting.spansStretchesOfClobbers);
-    AOT_TEST_CHECK(air.splitting.limitsClobberSitesPerSplit);
+    AOT_TEST_CHECK(air.splitting.leastCostOfSplitAroundClobber > 0);
     AOT_TEST_CHECK(air.splitting.splitsIntoClustersOverBlocks);
     AOT_TEST_CHECK(air.splitting.splitsAroundFrame);
     AOT_TEST_CHECK(air.splitting.splitsAroundLoops == defaults.splitsAroundLoops);
@@ -153,6 +162,7 @@ static void checkFrameAndLayoutPolicy(const B3::Air::Policy& air)
     AOT_TEST_CHECK(air.frame.emitsFrame);
     AOT_TEST_CHECK(air.frame.shrinkWraps);
     AOT_TEST_CHECK(air.frame.maxBytesAllocatedBeforeStackCheck == 4096);
+    AOT_TEST_CHECK(!air.frame.smallestFrameTestedAtSetup);
     AOT_TEST_CHECK(air.frame.registersClobberedByFrameSetup == (isARM64() ? RegisterSet::macroClobberedGPRs() : RegisterSet()));
     AOT_TEST_CHECK(air.frame.mayPlaceSlotsAboveFrameRecord);
     AOT_TEST_CHECK(air.frame.mayPushCalleeSaves);
@@ -285,11 +295,27 @@ static void testFunctionTraits()
     AOT_TEST_CHECK(WTF::toString(policyWithHandlers) == description);
 
     traits = traitsFor(7);
+    traits.smallestFrameTestedAtSetup = 241;
+    B3::Policy policyOfCoveredFunction = policyWith({ }, traits, lowering);
+    AOT_TEST_CHECK(policyOfCoveredFunction.air.frame.smallestFrameTestedAtSetup == 241);
+    policyOfCoveredFunction.air.frame.smallestFrameTestedAtSetup = 0;
+    AOT_TEST_CHECK(WTF::toString(policyOfCoveredFunction) == description);
+
+    traits = traitsFor(7);
     traits.returnsAreUnlikely = true;
     B3::Policy unlikelyReturnPolicy = policyWith({ }, traits, lowering);
     AOT_TEST_CHECK(unlikelyReturnPolicy.optimization.returnsAreUnlikely);
     unlikelyReturnPolicy.optimization.returnsAreUnlikely = false;
     AOT_TEST_CHECK(WTF::toString(unlikelyReturnPolicy) == description);
+
+    traits = traitsFor(7);
+    traits.leastFrequencyOfWarmCode = 10;
+    B3::Policy policyWithWarmLoops = policyWith({ }, traits, lowering);
+    AOT_TEST_CHECK(policyWithWarmLoops.loops.vectorizes && policyWithWarmLoops.loops.unrolls && policyWithWarmLoops.loops.minFrequencyOfUnrolledLoop == 10);
+    policyWithWarmLoops.loops.vectorizes = false;
+    policyWithWarmLoops.loops.unrolls = false;
+    policyWithWarmLoops.loops.minFrequencyOfUnrolledLoop = warmPolicy.loops.minFrequencyOfUnrolledLoop;
+    AOT_TEST_CHECK(WTF::toString(policyWithWarmLoops) == description);
 
     AOT_TEST_CHECK(WTF::toString(policyWith({ }, traitsFor(8), lowering)) == description);
 }

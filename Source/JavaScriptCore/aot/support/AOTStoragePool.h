@@ -29,6 +29,8 @@ public:
 
     ~StoragePool()
     {
+        if (isEmpty())
+            return;
         for (auto& slot : m_slots)
             delete slot.load(std::memory_order_relaxed);
     }
@@ -42,8 +44,10 @@ public:
             Storage* storage = slot.load(std::memory_order_acquire);
             if (!storage) {
                 auto created = makeUnique<Storage>(number);
-                if (slot.compare_exchange_strong(storage, created.get(), std::memory_order_release, std::memory_order_acquire))
+                if (slot.compare_exchange_strong(storage, created.get(), std::memory_order_release, std::memory_order_acquire)) {
+                    m_isEmpty.store(false, std::memory_order_release);
                     return *created.release();
+                }
             }
             if (!storage->isLeased.load(std::memory_order_relaxed) && !storage->isLeased.exchange(true, std::memory_order_acquire))
                 return *storage;
@@ -58,8 +62,13 @@ public:
 
     Storage* at(uint32_t number) const { return m_slots[number].load(std::memory_order_acquire); }
 
+    // Nothing was ever leased.
+    bool isEmpty() const { return m_isEmpty.load(std::memory_order_acquire); }
+
     bool hasLeases() const
     {
+        if (isEmpty())
+            return false;
         for (auto& slot : m_slots) {
             Storage* storage = slot.load(std::memory_order_acquire);
             if (storage && storage->isLeased.load(std::memory_order_acquire))
@@ -74,6 +83,7 @@ private:
     static_assert(capacity % 2, "Threads whose numbers differ by less than the capacity start at different slots.");
 
     Vector<std::atomic<Storage*>> m_slots;
+    std::atomic<bool> m_isEmpty { true };
 };
 
 } } // namespace JSC::AOT

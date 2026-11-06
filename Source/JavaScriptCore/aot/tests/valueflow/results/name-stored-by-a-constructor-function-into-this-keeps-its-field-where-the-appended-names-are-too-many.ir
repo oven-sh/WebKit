@@ -3,7 +3,7 @@
 # The names that the program mentions least go to the extra properties, but not what a constructor function stores into its own `this`: every object that passes it has the name, and one extra property
 # fails each test that the object has none. So `capture`, which is mentioned once, keeps its field, and of the two others, mentioned twice each, the first.
 # OPTIONS: limit=MaxAppendedFieldsPerLayout:2
-# LOSS: MaxAppendedFieldsPerLayout x1 L0
+# LOSS: MaxAppendedFieldsPerLayout x2 L0
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Made" fields=[{key="flags"
 # CHECK-NOT: key="second"

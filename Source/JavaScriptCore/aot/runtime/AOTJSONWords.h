@@ -19,6 +19,7 @@ class JSONRuntime;
 
 inline constexpr size_t jsonSourcePadding = 64;
 inline constexpr int64_t stackReservedForJSONParsers = 64 * 1024;
+inline constexpr unsigned numberOfJSONShapeBits = 256;
 
 enum class JSONSourceEncoding : uint8_t {
     Latin1,
@@ -36,6 +37,7 @@ struct JSONWords {
     bool canEndSourceInline;
     // The parser of untyped values has failed in the open source. It would fail again on every value around that place.
     bool valueParserFailed;
+    uint32_t shapesSeenWithExtraMembers[numberOfJSONShapeBits / 32];
 
     ALWAYS_INLINE void didUnwindTo(void* handlerStackPointer)
     {

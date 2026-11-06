@@ -1,0 +1,45 @@
+# A method of a fused chain that is called as a built-in gets the inline frame of that built-in at the place of its own call, so a trace that is taken in its callback names it
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass FuseArrayChains
+# STATISTIC: ArrayChainsFused = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="library.js" displayPath="library.js"
+runtimefunction id=ArrayTraversalTraverseArray function=f0
+function f0 name="traverseArray" module=m1 position=900 role=Library enclosingRuntimeFunction=ArrayTraversalTraverseArray parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v6 = Undefined
+    Return v6
+}
+
+function f1 name="isPositive" module=m0 kind=Arrow parameters=[{type=number}] results=[{type=boolean}] {
+    v1 = Integer integer=0
+    v2 = Less v1, v0
+    Return v2
+}
+
+function f2 name="double" module=m0 kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+
+function f3 name="filterThenLength" module=m0 parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f1
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeFilter/0 @31
+    v3 = AssumeType v2 provenType=Array<number, proven, pristine[Storage, Names]>
+    v4 = GetArrayLength v3 @32
+    Return v4
+# CHECK: inlineFrames=[{}, {callee=f3 callPosition=31 module=m0 calledBuiltin=ArrayPrototypeFilter}, {callee=[[stepOfLength]] callPosition=32 module=m1}]
+# CHECK: = CallDirect v0, {{*}} function={{*}} [isAlwaysInlined] @900:2
+}
+
+function f4 name="filterThenMap" module=m0 parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f1
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeFilter/0 @41
+    v3 = NewClosure function=f2
+    v4 = CallBuiltin v2, v3 overload=ArrayPrototypeMap/0 @42
+    Return v4
+# CHECK: inlineFrames=[{}, {callee=f4 callPosition=42 module=m0 calledBuiltin=ArrayPrototypeMap}, {callee=f4 callPosition=41 module=m0 calledBuiltin=ArrayPrototypeFilter}, {callee=f4 callPosition=42 module=m0 calledBuiltin=ArrayPrototypeMap}, {callee=[[stepOfMap]] callPosition=42 parent=1 module=m1}]
+# CHECK: = CallDirect v0, {{*}} function={{*}} [isAlwaysInlined] @900:4
+}

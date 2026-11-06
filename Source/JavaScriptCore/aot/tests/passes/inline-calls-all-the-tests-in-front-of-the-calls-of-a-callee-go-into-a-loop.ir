@@ -1,0 +1,198 @@
+# `while (isWordCharacter(text.charCodeAt(at))) at++`: the callee sorts a number into six ranges and leaves what is left to calls, so it is too large to be copied whole.
+# A loop of the caller pays for the call at every turn: there all that only reads, tests and returns is copied, as far as the budget of the place goes. Elsewhere the first 48 bytes, as ever.
+# A rope that the copy makes flat is flat when the callee reads it again, so a read of a code unit is no trace either.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# LOSS: MaxInlineHeadBytes x1 f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="isWordCharacter" parameters=[{type=i32}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=48
+    v3 = Less v0, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=36
+    v5 = StrictEq v0, v4
+    Return v5
+  b2():
+    v6 = Integer integer=58
+    v7 = Less v0, v6
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Boolean boolean=true
+    Return v8
+  b4():
+    v9 = Integer integer=65
+    v10 = Less v0, v9
+    Branch v10 -> taken b5(), notTaken b6()
+  b5():
+    v11 = Boolean
+    Return v11
+  b6():
+    v12 = Integer integer=91
+    v13 = Less v0, v12
+    Branch v13 -> taken b3(), notTaken b7()
+  b7():
+    v14 = Integer integer=97
+    v15 = Less v0, v14
+    Branch v15 -> taken b8(), notTaken b9()
+  b8():
+    v16 = Integer integer=95
+    v17 = StrictEq v0, v16
+    Return v17
+  b9():
+    v18 = Integer integer=123
+    v19 = Less v0, v18
+    Branch v19 -> taken b3(), notTaken b10()
+  b10():
+    v20 = PropGet v1 key="a"
+    v21 = PropGet v20 key="b"
+    v22 = PropGet v21 key="c"
+    v23 = PropGet v22 key="d"
+    v24 = PropGet v23 key="e"
+    v25 = PropGet v24 key="f"
+    v26 = PropGet v25 key="g"
+    v27 = PropGet v26 key="h"
+    v28 = PropGet v27 key="i"
+    v29 = PropGet v28 key="j"
+    v30 = PropGet v29 key="k"
+    v31 = PropGet v30 key="l"
+    v32 = PropGet v31 key="m"
+    v33 = PropGet v32 key="n"
+    v34 = PropGet v33 key="o"
+    v35 = PropGet v34 key="p"
+    v36 = PropGet v35 key="q"
+    v37 = PropGet v36 key="r"
+    v38 = PropGet v37 key="s"
+    v39 = PropGet v38 key="t"
+    v40 = PropGet v39 key="u"
+    v41 = PropGet v40 key="v"
+    v42 = PropGet v41 key="w"
+    v43 = PropGet v42 key="x"
+    v44 = PropGet v43 key="y"
+    v45 = PropGet v44 key="z"
+    v46 = PropGet v45 key="a"
+    v47 = PropGet v46 key="b"
+    v48 = PropGet v47 key="c"
+    v49 = PropGet v48 key="d"
+    v50 = PropGet v49 key="e"
+    v51 = PropGet v50 key="f"
+    v52 = PropGet v51 key="g"
+    v53 = PropGet v52 key="h"
+    v54 = PropGet v53 key="i"
+    v55 = PropGet v54 key="j"
+    v56 = PropGet v55 key="k"
+    v57 = PropGet v56 key="l"
+    v58 = PropGet v57 key="m"
+    v59 = PropGet v58 key="n"
+    Return v59
+}
+function f1 name="unitAt" parameters=[{type=string}, {type=i32}, {type=anything}] results=[{type=anything}] {
+    v3 = GetStringLength v0
+    v4 = Integer
+    v5 = URShift v1, v4
+    v6 = Less v5, v3
+    Branch v6 -> taken b1(| 0), notTaken b3()
+  b1(v7):
+    v8 = GetStringCodeUnit v0, v7
+    v9 = Integer integer=55295
+    v10 = LessEq v8, v9
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    Return v8
+  b3():
+    v11 = PropGet v2 key="a"
+    v12 = PropGet v11 key="b"
+    v13 = PropGet v12 key="c"
+    v14 = PropGet v13 key="d"
+    v15 = PropGet v14 key="e"
+    v16 = PropGet v15 key="f"
+    v17 = PropGet v16 key="g"
+    v18 = PropGet v17 key="h"
+    v19 = PropGet v18 key="i"
+    v20 = PropGet v19 key="j"
+    v21 = PropGet v20 key="k"
+    v22 = PropGet v21 key="l"
+    v23 = PropGet v22 key="m"
+    v24 = PropGet v23 key="n"
+    v25 = PropGet v24 key="o"
+    v26 = PropGet v25 key="p"
+    v27 = PropGet v26 key="q"
+    v28 = PropGet v27 key="r"
+    v29 = PropGet v28 key="s"
+    v30 = PropGet v29 key="t"
+    v31 = PropGet v30 key="u"
+    v32 = PropGet v31 key="v"
+    v33 = PropGet v32 key="w"
+    v34 = PropGet v33 key="x"
+    v35 = PropGet v34 key="y"
+    v36 = PropGet v35 key="z"
+    v37 = PropGet v36 key="a"
+    v38 = PropGet v37 key="b"
+    v39 = PropGet v38 key="c"
+    v40 = PropGet v39 key="d"
+    v41 = PropGet v40 key="e"
+    v42 = PropGet v41 key="f"
+    v43 = PropGet v42 key="g"
+    v44 = PropGet v43 key="h"
+    v45 = PropGet v44 key="i"
+    v46 = PropGet v45 key="j"
+    v47 = PropGet v46 key="k"
+    v48 = PropGet v47 key="l"
+    v49 = PropGet v48 key="m"
+    v50 = PropGet v49 key="n"
+    Return v50
+}
+function f2 name="inALoop" parameters=[{type=i32}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = CallDirect v2, v1 function=f0
+    v5 = ToBoolean v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Integer integer=1
+    v7 = BitOr v2, v6
+    Jump -> next b1(v7)
+  b3():
+    Return v4
+# CHECK-NOT: PropGet
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = CallDirect {{*}} function=f0 [isAfterInlinedHead]
+# CHECK-NOT: PropGet
+# CHECK: integer=48
+# CHECK: integer=58
+# CHECK: integer=65
+# CHECK: integer=91
+# CHECK: integer=97
+# CHECK: integer=123
+# CHECK-NOT: PropGet
+}
+
+function f3 name="readsInALoop" parameters=[{type=string}, {type=i32}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = CallDirect v0, v3, v2 function=f1
+    v6 = ToBoolean v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Integer integer=1
+    v8 = BitOr v3, v7
+    Jump -> next b1(v8)
+  b3():
+    Return v5
+# CHECK: = CallDirect {{*}} function=f1 [isAfterInlinedHead]
+# CHECK: GetStringCodeUnit
+# CHECK-NOT: PropGet
+}
+
+function f4 name="outsideALoop" parameters=[{type=i32}, {type=anything}, {type=string}] results=[{type=anything}] {
+    v3 = CallDirect v0, v1 function=f0
+    v4 = CallDirect v2, v0, v1 function=f1
+    v5 = Add v3, v4
+    Return v5
+# CHECK-NOT: integer=123
+# CHECK-NOT: GetStringCodeUnit
+}

@@ -1,0 +1,152 @@
+# `++i < n`, `i++ < n`, `do .. while (++i < n)`: every turn compares the counter with an integer beyond int32, so what the loop hands on is an integer wherever the step stands, which ConvertCountersToIntegers finds out. No operator in the loop gets a test of the counter, or of what is a constant away from it.
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="whatTheTurnHasCountedUpIsCompared" parameters=[{type=int[0, 4294967296]}] results=[{type=i32}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=-1
+    Jump -> next b1(v1, v2)
+  b1(v3: i32, v4: int|whole ~ int[-1, 2147483647]):
+    LoopHint
+    v6: int|whole ~ int[0, 2147483648] = Increment v4
+    v7 = Less v6, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Integer integer=127
+    v9: int[0, 127] = BitAnd v6, v8
+    v10: i32 = BitXor v3, v9
+    Jump -> next b1(v10, v6)
+  b3():
+    Return v3
+# CHECK-NOT: TypeTest
+}
+
+function f1 name="theStepStandsInFrontOfTheComparison" parameters=[{type=int[0, 4294967296]}] results=[{type=i32}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=0
+    Jump -> next b1(v1, v2)
+  b1(v3: i32, v4: int|whole ~ int[0, 2147483647]):
+    LoopHint
+    v6: int|whole ~ int[0, 2147483647] = ToNumeric v4
+    v7: int|whole ~ int[1, 2147483648] = Increment v6
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Integer integer=1
+    v10: int|whole ~ int[0, 2147483647] = Sub v7, v9
+    v11 = Integer integer=127
+    v12: int[0, 127] = BitAnd v10, v11
+    v13: i32 = BitXor v3, v12
+    Jump -> next b1(v13, v7)
+  b3():
+    Return v3
+# CHECK-NOT: TypeTest
+}
+
+function f2 name="comparedAtTheEndOfTheTurn" parameters=[{type=int[0, 4294967296]}] results=[{type=i32}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=0
+    Jump -> next b1(v1, v2)
+  b1(v3: i32, v4: int|whole ~ int[0, 2147483647]):
+    LoopHint
+    v6 = Integer integer=127
+    v7: int[0, 127] = BitAnd v4, v6
+    v8: i32 = BitXor v3, v7
+    v9: int|whole ~ int[1, 2147483648] = Increment v4
+    v10 = Less v9, v0
+    Branch v10 -> taken b1(v8, v9), notTaken b2()
+  b2():
+    Return v8
+# CHECK-NOT: TypeTest
+}
+
+function f3 name="aTurnThatGoesRoundTheComparisonHandsOnAnything" parameters=[{type=int[0, 4294967296]}, {type=boolean}] results=[{type=i32}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=-1
+    Jump -> next b1(v2, v3)
+  b1(v4: i32, v5: int|whole ~ int[-1, 2147483647]):
+    LoopHint
+    v7: int|whole ~ int[0, 2147483648] = Increment v5
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Less v7, v0
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Integer integer=127
+    v10: int[0, 127] = BitAnd v7, v9
+    v11: i32 = BitXor v4, v10
+    Jump -> next b1(v11, v7)
+  b4():
+    Return v4
+# CHECK: TypeTest {{*}} testedType=i32
+}
+
+function f4 name="belowAnyNumber" parameters=[{type=number}] results=[{type=i32}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=-1
+    Jump -> next b1(v1, v2)
+  b1(v3: i32, v4: int|whole ~ int[-1, 2147483647]):
+    LoopHint
+    v6: int|whole ~ int[0, 2147483648] = Increment v4
+    v7 = Less v6, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Integer integer=127
+    v9: int[0, 127] = BitAnd v6, v8
+    v10: i32 = BitXor v3, v9
+    Jump -> next b1(v10, v6)
+  b3():
+    Return v3
+# CHECK: TypeTest {{*}} testedType=i32
+}
+
+function f5 name="whatIsCountedUpFindsAnElementOfAListNobodyHasProven" parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=i32}] {
+  b0(v0: anything ~ undefined|null|Array<number>):
+    v1 = Integer integer=0
+    v2 = Integer integer=-1
+    Jump -> next b1(v1, v2)
+  b1(v3: i32, v4: int|whole ~ int[-1, 2147483647]):
+    LoopHint
+    v6: int|whole ~ int[0, 2147483648] = Increment v4
+    v7 = PropGet v0 key="length"
+    v8: anything ~ number = Upcast v7 castType=anything
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = ElemGet v0, v6 [keyIsIntegral]
+    v11: anything ~ number = Upcast v10 castType=anything
+    v12 = Add v3, v11
+    v13 = Integer integer=0
+    v14 = BitOr v12, v13
+    Jump -> next b1(v14, v6)
+  b3():
+    Return v3
+# The list is asked, and its length is an integer behind that. The counter is asked nothing.
+# CHECK: TypeTest v0 testedType=Array<number>
+# CHECK-NOT: testedType=i32
+}
+
+function f6 name="aStepBehindTheTestKeepsItsOneTestOverAList" parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=i32}] {
+  b0(v0: anything ~ undefined|null|Array<number>):
+    v1 = Integer integer=0
+    v2 = Integer integer=0
+    Jump -> next b1(v1, v2)
+  b1(v3: i32, v4: int|whole ~ int[0, 2147483647]):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7: anything ~ number = Upcast v6 castType=anything
+    v8 = Less v4, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = ElemGet v0, v4 [keyIsIntegral]
+    v10: anything ~ number = Upcast v9 castType=anything
+    v11 = Add v3, v10
+    v12 = Integer integer=0
+    v13 = BitOr v11, v12
+    v14: int|whole ~ int[1, 2147483648] = Increment v4
+    Jump -> next b1(v13, v14)
+  b3():
+    Return v3
+# CHECK: TypeTest {{*}} testedType=i32
+}

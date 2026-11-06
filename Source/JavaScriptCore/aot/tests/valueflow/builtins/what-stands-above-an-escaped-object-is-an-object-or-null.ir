@@ -1,0 +1,19 @@
+# const plain = {}; somethingThatNoTableLists(plain); Object.getPrototypeOf(plain)
+# Unknown code may have given the object another prototype, so its link holds a value nobody knows. What stands above an object is an object or null all the same: the call answers no other primitive.
+# RUN: valueflow-why values=f0:v7
+# CHECK: result {{*}} members: primitive1 unknown ObjectPrototype
+
+layout L0 name="Plain"
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="somethingThatNoTableLists" [isFreeName]
+    v3 = Undefined
+    v4 = Call v2, v3, v0
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectGetPrototypeOf
+    v7 = Call v6, v5, v0
+    Return v7
+}

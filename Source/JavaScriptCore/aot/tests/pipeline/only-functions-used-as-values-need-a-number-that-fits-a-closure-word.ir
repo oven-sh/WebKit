@@ -1,0 +1,25 @@
+# A closure word has 22 bits for the number of its function. Only the entry points that closures name need such a number, and they count from the first of them, so the functions in front of them and behind them take nothing from those bits: the limit is lowered to the number of those entry points, and the program has more functions than that
+# FORM: AsRead
+# OPTIONS: limit=ImageClosureFunctions:3
+# RUN: compile
+# RUN(PLACE): place
+# CHECK-NOT: diagnostic
+# CHECK: image not empty
+# PLACE: closureFunctions first=4 end=7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="first" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="second" kind=Arrow results=[{type=anything}] {
+    Return
+}

@@ -12,6 +12,8 @@
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCellFormat.h"
+#include "AOTCheckedFrameCells.h"
+#include "AOTClosureTestEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTFunctionAnalyses.h"
@@ -32,10 +34,12 @@
 #include "AOTTypeTestPlan.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
+#include "AllowMacroScratchRegisterUsage.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "VM.h"
 #include <algorithm>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -51,10 +55,20 @@ static bool everyReceiverHasInlineSlot(const FieldAccess& field)
     return everyReceiverHasSlot && field.slot.hasStorage() && !field.slot.isOutOfLine();
 }
 
+Condition RuntimeValidationEmitter::hasType(Operand operand, const TypeTestPlan& plan)
+{
+    SetForScope passesChangedClosures(emitter<ClosureTestEmitter>().passesChangedClosures(), true);
+    return OperationEmitter::hasType(operand, plan);
+}
+
 void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
 {
-    if (generator().mayBeUnspecified(id) || operand.representation == Representation::Void || operand.representation == Representation::LiteralString)
+    if (generator().isValidatedWhereLookedAt(id) || operand.representation == Representation::Void)
         return;
+    if (operand.is<LiteralStringWord>()) {
+        checkLiteralStringWord(id, operand.as<LiteralStringWord>());
+        return;
+    }
     const Type& type = typeOf(id);
     if (type.isNever() || type.opaque)
         return;
@@ -62,38 +76,65 @@ void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
         // A deleted member leaves its variable empty, and a read may stand in front of the test that the member is unchanged.
         const Value& definition = m_function.at(id);
         bool readsMemberKeptInVariable = definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).owner;
-        bool mayPrecedeItsStore = definition.opcode == Opcode::GetModuleVariable && definition.mayPrecedeItsStore();
-        checkHasType(id, operand, readsMemberKeptInVariable || mayPrecedeItsStore ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
+        // So is the word of a built-in that the realm lacks.
+        // And what the tables of the run time or a site do not answer, which only the test behind the read looks at.
+        bool mayBeEmpty = readsMemberKeptInVariable || definition.opcode == Opcode::Builtin || definition.opcode == Opcode::ReadAboveFreshObject || (definition.opcode == Opcode::PropGet && definition.asksOnlyTables());
+        if (mayBeEmpty)
+            checkHasType(id, operand, type.withPrimitives(Primitive::Absent), ValidationFailureKind::ValueType, id);
+        else
+            checkHasType(id, operand, definition.type, ValidationFailureKind::ValueType, id);
         return;
     }
     if (operand.is<CellPointer>())
         checkEnvironmentShape(operand.as<CellPointer>(), type.environment, id);
 }
 
+// Comparisons, switches and type tests compare words, so a string that has a literal number is never held as its cell.
+void RuntimeValidationEmitter::checkLiteralStringWord(ValueID id, LiteralStringWord word)
+{
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    Condition isShortest = either<Condition>(logicalNot(conversions.isStringCell(word)), [&] {
+        return boolean(true);
+    }, [&] {
+        return equal(conversions.toLiteralString(CellPointer(word.value())), word);
+    });
+    failUnless(isShortest, ValidationFailureKind::ValueType, { }, id);
+}
+
 // A cell of a frame may have no header. In a validating build only environments live in frames (staysOnHeapForValidation()), so the header of an object or a closure is there to be read.
-void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, const Type& type, ValidationFailureKind kind)
+void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, TypeID type, ValidationFailureKind kind, ValueID tested)
+{
+    checkHasType(id, operand, m_program.at(type), kind, tested, type);
+}
+
+void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, const Type& type, ValidationFailureKind kind, ValueID tested, TypeID numberOfType)
 {
     bool mustBeThere = mayHoldPointer(operand) && !(type.primitives & Primitive::Absent);
     TypeID widest = types().intern(widestTypeOf(operand.representation));
-    const TypeTestPlan& plan = typeTestPlanFor(widest, operand.representation, types().intern(testableTypeOf(type)));
+    TypeID testedType = types().intern(testableTypeOf(type));
+    const TypeTestPlan& plan = typeTestPlanFor(widest, operand.representation, testedType);
     bool needsTest = plan.verdict != TypeTestVerdict::AlwaysPasses;
     if (!mustBeThere && !needsTest)
         return;
 
-    // One report for both: what was found says which of the two failed.
-    LBasicBlock doesNotHold = newBlock();
-    LBasicBlock continuation = newBlock();
-    if (mustBeThere) {
-        LBasicBlock isThere = needsTest ? newBlock() : continuation;
-        m_out.branch(m_out.notZero64(operand.value), normalEdge(isThere), rareEdge(doesNotHold));
-        if (needsTest)
-            m_out.appendTo(isThere);
+    // A result is tested where it is made, where flow says something about it and at each use. Nothing has written to the heap since the value passed the same test, and the test of a union takes dozens of blocks.
+    if (!generator().checksKeptRegisters()) {
+        PassedTypeTest test { tested, testedType, mustBeThere };
+        if (m_passedTypeTests.contains(test))
+            return;
+        if (m_passedTypeTests.size() == m_passedTypeTests.capacity())
+            m_passedTypeTests.removeAt(0);
+        m_passedTypeTests.append(test);
     }
+
+    // Both report the same: what was found says which of the two failed.
+    bool testRefusesEmptyValue = needsTest && operand.is<Boxed>() && plan.failingPrimitives & Primitive::Absent;
+    if (mustBeThere && !testRefusesEmptyValue)
+        failUnless(Condition(m_out.notZero64(operand.value)), kind, operand, id);
+    // The tables of the image hold the same test (encodeTypes()). The run time says no of the empty value, and of a cell that only compiled code sees: such a cell has a type that every cell passes.
+    bool runTimeHasTest = mustBeThere && plan.looksIntoCells() && numberOfType && m_placement.typesNeededAtRunTime().get(numberOfType.index()) && testedType == types().intern(type.withoutClassProofs().withUntestableBuiltinsWidened());
     if (needsTest)
-        m_out.branch(hasType(operand, plan).value(), normalEdge(continuation), rareEdge(doesNotHold));
-    m_out.appendTo(doesNotHold);
-    reportFailure(kind, operand, id);
-    m_out.appendTo(continuation);
+        failUnlessHasType(operand, plan, kind, id, runTimeHasTest ? numberOfType : TypeID());
 }
 
 void RuntimeValidationEmitter::checkIsSpecified(ValueID id)
@@ -108,7 +149,7 @@ void RuntimeValidationEmitter::checkIsSpecified(ValueID id)
 
 bool RuntimeValidationEmitter::hasTestableBits(ValueID id)
 {
-    if (generator().mayBeUnspecified(id) || isDeferredClosure(m_function, id))
+    if (generator().isValidatedWhereLookedAt(id) || isDeferredClosure(m_function, id))
         return false;
     Representation representation = representationOf(id);
     return representation != Representation::Void && representation != Representation::LiteralString;
@@ -119,13 +160,16 @@ void RuntimeValidationEmitter::generateValidateType(const ValueContext& value)
     ValueID source = value->valueOperand();
     const Type& type = m_program.at(value->validatedType());
     if (type.isNever()) {
-        failUnless(boolean(false), ValidationFailureKind::UnreachableValue, hasTestableBits(source) ? get(source) : Operand(), value.id());
+        Condition never = boolean(false);
+        failUnless(never, ValidationFailureKind::UnreachableValue, hasTestableBits(source) ? get(source) : Operand(), value.id());
         return;
     }
     if (!hasTestableBits(source) || type.opaque || type.environment)
         return;
-    checkHasType(value.id(), get(source), type, ValidationFailureKind::AssumedType);
-    checkClassProofs(value.id(), get(source), type);
+    checkHasType(value.id(), get(source), value->validatedType(), ValidationFailureKind::AssumedType, source);
+    // The operands of this operation were validated in front of it.
+    if (value->validatedType() != m_function.at(source).type || !m_checkedClassProofs.contains(source))
+        checkClassProofs(value.id(), get(source), type);
 }
 
 // The shapes ascend, and the layouts of one family have numbers in a row.
@@ -152,8 +196,15 @@ Condition RuntimeValidationEmitter::hasShapeAmong(CellPointer cell, LayoutSetID 
     Word32 shapeWord = shapeTests.shapeWordOf(cell);
     static_assert(AOT::shapeWordOf(2) + 1 == AOT::shapeWordOf(1));
     for (RunOfShapes run : runs)
-        hasShape = logicalOr(hasShape, below(add(shapeWord, word32(run.last)), word32(run.count)));
+        hasShape = logicalOr(hasShape, below(add(shapeWord, run.last), run.count));
     return hasShape;
+}
+
+void RuntimeValidationEmitter::checkIsCompiledObjectOf(CellPointer cell, LayoutSetID layouts)
+{
+    std::span<const uint32_t> shapes = m_placement.shapes().memberShapes(layouts);
+    if (!shapes.empty())
+        failUnless(hasShapeAmong(cell, layouts, shapes), ValidationFailureKind::ReceiverShape, cell, generator().operationBeingGenerated());
 }
 
 // A guard may rely on a guard: whether the fields are in the order of the layout is asked of an object that an earlier test found to have the layout.
@@ -171,7 +222,7 @@ void RuntimeValidationEmitter::checkShapeBehindGuard(const OperationContext& con
     const SlotPlan& slots = m_placement.slots();
     Vector<uint32_t, 8> shapes;
     for (LayoutID layout : layoutsProvenBy(m_program, m_function, *fact)) {
-        if (slots.storageOf(layout) != LayoutStorage::CompiledObject && m_program.at(layout).flow.allocation != AllocationState::NeverAllocated)
+        if (!slots.holdsCompiledObjects(layout) && m_program.at(layout).flow.allocation != AllocationState::NeverAllocated)
             return;
         ShapeRange range = m_placement.shapes().shapesOf(layout);
         for (uint32_t shape = range.first; shape < range.end(); ++shape)
@@ -193,8 +244,8 @@ void RuntimeValidationEmitter::checkReceiverOfSlotAccess(const OperationContext&
     if (!hasTestableBits(object) || !get(object).is<CellPointer>())
         return;
     const SlotPlan& slots = m_placement.slots();
-    bool hasOnlyCompiledObjects = std::ranges::all_of(m_program.at(access.receivers()).members, [&](LayoutID member) {
-        return slots.storageOf(member) == LayoutStorage::CompiledObject || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
+    bool hasOnlyCompiledObjects = std::ranges::all_of(m_program.at(access.receivers()).completeMembers(), [&](LayoutID member) {
+        return slots.holdsCompiledObjects(member) || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
     std::span<const uint32_t> shapes = m_placement.shapes().memberShapes(access.receivers());
     if (!hasOnlyCompiledObjects || shapes.empty())
@@ -269,10 +320,13 @@ void RuntimeValidationEmitter::checkClassProofs(ValueID id, Operand operand, con
 
         LBasicBlock instance = newBlock();
         LBasicBlock continuation = newBlock();
-        Condition isProvenInstance = hasType(operand, isInstance);
-        if (isListedBuiltin)
-            isProvenInstance = logicalAnd(isProvenInstance, logicalNot(hasType(operand, *isListedBuiltin)));
-        m_out.branch(isProvenInstance.value(), normalEdge(instance), normalEdge(continuation));
+        if (isListedBuiltin) {
+            LBasicBlock mayBeListed = newBlock();
+            branchOnType(operand, isInstance, { normalEdge(mayBeListed), normalEdge(continuation) });
+            m_out.appendTo(mayBeListed);
+            branchOnType(operand, *isListedBuiltin, { normalEdge(continuation), normalEdge(instance) });
+        } else
+            branchOnType(operand, isInstance, { normalEdge(instance), normalEdge(continuation) });
         m_out.appendTo(instance);
         checkClassProofs(id, operand.is<CellPointer>() ? operand.as<CellPointer>() : unboxCell(operand.as<Boxed>()), part);
         m_out.jump(continuation);
@@ -298,7 +352,7 @@ void RuntimeValidationEmitter::checkClassProofs(ValueID id, CellPointer cell, co
     if (hasArrayStorageForm(part.arrayStorage))
         failUnless(emitter<ElementAccessEmitter>().hasArrayStorage(cell, part.arrayStorage), ValidationFailureKind::ArrayStorageKind, cell, id);
     for (ContentsSlot slot : allMembersOf<ContentsSlot>) {
-        TypeID contents = part.contentsAt(m_builtins, slot);
+        TypeID contents = part.provenContentsAt(m_builtins, slot).value_or(Proven::byFlowOfContents(TypeTable::anything));
         if (contents == TypeTable::anything || !m_builtins.findSlot(part.builtinClass, slot))
             continue;
         if (!m_placement.typesNeededAtRunTime().get(contents.index()))
@@ -344,7 +398,7 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
         return;
     // A view of a buffer that can be resized has a Structure of its own, which start-up does not mark: the test says no of a view that is pristine.
     const Value& keptOperation = m_function.at(kept);
-    if (keptOperation.opcode == Opcode::IsPristine && m_builtins.at(keptOperation.builtinClass()).typedArrayType != NotTypedArray)
+    if (keptOperation.opcode == Opcode::IsPristine && isTypedArrayTypeIncludingDataView(m_builtins.at(keptOperation.builtinClass()).type))
         return;
     // The test for storage that a store may write says no while another thread holds the lock of the cell. Code relies on its yes alone.
     if (keptOperation.opcode == Opcode::HasArrayStorage && keptOperation.isWritable() && hasArrayStorageForm(keptOperation.arrayStorage()) && get(replacement).is<Condition>()) {
@@ -362,18 +416,26 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
     ValidationFailureKind kind = provesOf(m_function.at(kept).opcode) == Proof::None ? ValidationFailureKind::ReadsDiffer : ValidationFailureKind::GuardNoLongerHolds;
 
     LBasicBlock differ = newBlock();
+    LBasicBlock differAsLiteralStrings = newBlock();
     LBasicBlock areNumbers = newBlock();
     LBasicBlock continuation = newBlock();
     m_out.branch(m_out.equal(keptValue.value(), replacingValue.value()), normalEdge(continuation), rareEdge(differ));
 
+    // A string converted to LiteralString and back is the cell of the literal, which may not be the cell it started as.
     m_out.appendTo(differ);
-    failUnless(logicalAnd(hasType(keptValue, isNumber), hasType(replacingValue, isNumber)), kind, keptValue, value.id());
+    const Type& anything = m_program.at(TypeTable::anything);
+    m_out.branch(equal(conversions.toLiteralString(keptValue, anything), conversions.toLiteralString(replacingValue, anything)).value(), normalEdge(continuation), rareEdge(differAsLiteralStrings));
+
+    m_out.appendTo(differAsLiteralStrings);
+    Condition keptIsNumber = hasType(keptValue, isNumber);
+    failUnless(logicalAnd(keptIsNumber, hasType(replacingValue, isNumber)), kind, keptValue, value.id());
     m_out.jump(areNumbers);
 
     m_out.appendTo(areNumbers);
     Number keptNumber = conversions.unbox(keptValue, m_program.at(TypeTable::number), Representation::Double).as<Number>();
     Number replacingNumber = conversions.unbox(replacingValue, m_program.at(TypeTable::number), Representation::Double).as<Number>();
-    Condition areBothNaN = logicalNot(logicalOr(equal(keptNumber, keptNumber), equal(replacingNumber, replacingNumber)));
+    Condition keptIsNotNaN = equal(keptNumber, keptNumber);
+    Condition areBothNaN = logicalNot(logicalOr(keptIsNotNaN, equal(replacingNumber, replacingNumber)));
     failUnless(logicalOr(equal(keptNumber, replacingNumber), areBothNaN), kind, keptValue, value.id());
     m_out.jump(continuation);
 
@@ -412,7 +474,7 @@ static Type kindsRejectedDespiteWidening(const Type& listed, const BuiltinTable&
 void RuntimeValidationEmitter::generateValidateCallee(const ValueContext& value)
 {
     ValueID callee = value->calleeOperand();
-    if (!hasTestableBits(callee))
+    if (!hasTestableBits(callee) || m_function.at(callee).opcode == Opcode::Builtin)
         return;
 
     Operand operand = get(callee);
@@ -421,7 +483,7 @@ void RuntimeValidationEmitter::generateValidateCallee(const ValueContext& value)
         return typeTestPlanFor(widest, operand.representation, types().intern(type));
     };
     const Type& listed = m_program.at(value->validatedType());
-    if (listed.anyFunction || hasMembersWithoutLayout(m_program, listed))
+    if (listed.anyFunction)
         return;
     Type testable = testableTypeOf(listed);
     bool isWidened = (testable.anyFunction && !listed.anyFunction) || (testable.anyObject && !listed.anyObject);
@@ -465,7 +527,8 @@ void RuntimeValidationEmitter::generateValidateLookup(const ValueContext& value)
         return;
     LBasicBlock areObjects = newBlock();
     LBasicBlock continuation = newBlock();
-    m_out.branch(logicalAnd(hasType(receiver, receiverIsObject), hasType(method, methodIsObject)).value(), normalEdge(areObjects), normalEdge(continuation));
+    Condition isReceiverObject = hasType(receiver, receiverIsObject);
+    m_out.branch(logicalAnd(isReceiverObject, hasType(method, methodIsObject)).value(), normalEdge(areObjects), normalEdge(continuation));
     m_out.appendTo(areObjects);
     Integer findsMethod = callWithoutSite<Integer>(RuntimeOperation::ValidateLookup, { cellOf(receiver), identifierNumber(value->key()), cellOf(method) });
     failUnless(isNotZero(findsMethod), ValidationFailureKind::LookupDiffers, receiver, value.id());
@@ -476,10 +539,6 @@ void RuntimeValidationEmitter::generateValidateLookup(const ValueContext& value)
 Type RuntimeValidationEmitter::testableTypeOf(const Type& type)
 {
     Type testable = type.withoutClassProofs().withUntestableBuiltinsWidened();
-
-    // Functions, objects of the host and ordinary objects were converted to such a family, and nothing lists them.
-    if (hasMembersWithoutLayout(m_program, type))
-        testable = testable.unionWith(Type::object(), types());
 
     // Placement numbers the cells and keys that shipped code names, and validation adds none.
     bool everyBuiltinHasCell = std::ranges::all_of(testable.builtins, [&](BuiltinID builtin) {
@@ -505,7 +564,7 @@ void RuntimeValidationEmitter::checkEnvironmentShape(CellPointer cell, LayoutID 
     static_assert(environmentShapesPerPageShift == 16);
     Word32 lowByte = loadByte(cell, m_heaps.JSCell_indexingTypeAndMisc);
     Word32 highByte = loadByte(cell, m_heaps.JSCell_typeInfoFlags);
-    Condition hasShape = equal(bitOr(lowByte, shiftLeft(highByte, word32(8))), word32(shape & 0xffff));
+    Condition hasShape = equal(bitOr(lowByte, shiftLeft(highByte, 8)), shape & 0xffff);
     if (inputs().frameAllocation.mayBeInFrame(layout))
         hasShape = logicalOr(isInStack(asPointer(cell)), hasShape);
     failUnless(hasShape, ValidationFailureKind::ValueType, { }, id);
@@ -520,14 +579,28 @@ void RuntimeValidationEmitter::checkIsNotReleased(const OperationContext& contex
     failUnless(notEqual(freeCell, environment), ValidationFailureKind::ValueType, { }, context.valueID());
 }
 
-void RuntimeValidationEmitter::checkIsNotFrameCell(const OperationContext& context, Operand operand, std::optional<Operand> retainer)
+void RuntimeValidationEmitter::checkIsNotFrameCell(const OperationContext& context, Operand operand, std::optional<Operand> retainer, FrameCellFilter asked)
 {
     if (!mayHoldPointer(operand))
         return;
     Condition escapes = isInStack(Pointer(operand.value));
     if (retainer && mayHoldPointer(*retainer))
         escapes = logicalAnd(escapes, logicalNot(isInStack(Pointer(retainer->value))));
-    failUnless(logicalNot(escapes), ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
+    if (asked == FrameCellFilter::All) {
+        failUnless(logicalNot(escapes), ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
+        return;
+    }
+
+    // A value of such a type that lives in a frame is a cell with a header.
+    LBasicBlock liesInFrame = newBlock();
+    LBasicBlock continuation = newBlock();
+    m_out.branch(escapes.value(), rareEdge(liesInFrame), normalEdge(continuation));
+    m_out.appendTo(liesInFrame);
+    Word32 type(m_out.load8ZeroExt32(m_out.address(m_heaps.JSCell_header, operand.value, JSCell::typeInfoTypeOffset())));
+    Condition isArray = equal(type, word32(ArrayType));
+    failUnless(asked == FrameCellFilter::Arrays ? logicalNot(isArray) : isArray, ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
 }
 
 bool RuntimeValidationEmitter::isSuspensionPoint(ValueID id)
@@ -576,6 +649,9 @@ void RuntimeValidationEmitter::poisonFrameCells(ProgramPoint point)
             poisonFields(cell, layout, m_program.at(layout).isEnvironment() ? AbstractHeap::EnvironmentFields : AbstractHeap::ObjectFields);
             continue;
         }
+        // A tail call takes borrowed values with it.
+        if (value.isLent())
+            continue;
         switch (value.closureForm()) {
         case ClosureForm::Full:
             storeField(cell, m_heaps.AOTClosure_entry, integer(-1));
@@ -599,7 +675,7 @@ void RuntimeValidationEmitter::poisonFrameArray(CellPointer array)
     LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, array.value(), JSCell::cellStateOffset()));
     m_out.branch(m_out.equal(state, m_out.constInt32(frameCellState)), normalEdge(isInFrame), normalEdge(continuation));
     m_out.appendTo(isInFrame);
-    m_out.storePtr(m_out.constIntPtr(-1), array.value(), m_heaps.JSObject_butterfly);
+    m_out.storePtr(m_out.constIntPtr(-1), array.value(), m_heaps.JSArray_butterfly);
     m_out.jump(continuation);
     m_out.appendTo(continuation);
 }
@@ -624,18 +700,32 @@ void RuntimeValidationEmitter::poisonFields(CellPointer cell, LayoutID layout, A
 
 Condition RuntimeValidationEmitter::isInStack(Pointer pointer)
 {
-    Pointer top(m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), vm().value(), VM::topEntryFrameOffset())));
-    return logicalAnd(aboveOrEqual(pointer, stackPointer()), below(pointer, top));
-}
-
-Pointer RuntimeValidationEmitter::stackPointer()
-{
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Int64);
+    Pointer vm = this->vm();
+    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Int32);
+    patchpoint->append(pointer.value(), B3::ValueRep::SomeRegister);
+    patchpoint->append(vm.value(), B3::ValueRep::SomeRegister);
+    patchpoint->resultConstraints = { B3::ValueRep::SomeEarlyRegister };
+    patchpoint->numGPScratchRegisters = 1;
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     emitter<RuntimeCallEmitter>().applyEffects(patchpoint, Effects::none(), ArgumentBufferAccess::None);
+    m_heaps.decoratePatchpointRead(&m_heaps.entire(AbstractHeap::RuntimeState), patchpoint);
     patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        jit.move(MacroAssembler::stackPointerRegister, params[0].gpr());
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        GPRReg result = params[0].gpr();
+        GPRReg pointer = params[1].gpr();
+        GPRReg vm = params[2].gpr();
+        GPRReg scratch = params.gpScratch(0);
+        jit.move(MacroAssembler::stackPointerRegister, scratch);
+        jit.compare64(CCallHelpers::AboveOrEqual, pointer, scratch, result);
+        jit.loadPtr(CCallHelpers::Address(vm, VM::topEntryFrameOffset()), scratch);
+        jit.compare64(CCallHelpers::Below, pointer, scratch, scratch);
+        jit.and32(scratch, result);
+        // AOTCheckedFrameCells.h
+        jit.urshift64(pointer, CCallHelpers::TrustedImm32(CheckedFrameCells::bitsOfOffsetInRange), scratch);
+        jit.compare64(CCallHelpers::Equal, scratch, CCallHelpers::TrustedImm32(CheckedFrameCells::startOfRange >> CheckedFrameCells::bitsOfOffsetInRange), scratch);
+        jit.or32(scratch, result);
     });
-    return Pointer(patchpoint);
+    return Condition(patchpoint);
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -15,7 +15,10 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramStrings.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTState.h"
+#include "AOTThisAllocationInlines.h"
+#include "AOTThreshold.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
 #include "JSCInlines.h"
@@ -36,9 +39,11 @@ struct ThisPrototype {
 
 static std::optional<FunctionID> functionInInstance(const Instance& instance, const JSCell* callee)
 {
-    if (Instance::of(callee->structure()->realm()) != &instance)
+    // Whichever image runs: new.target and the constructor may be of two.
+    std::optional<uint32_t> number = closureNumberOf(callee);
+    if (!number || callee->structure()->realm() != instance.globalObject || !instance.tables().hasClosureNumber(*number))
         return std::nullopt;
-    return functionOf(callee);
+    return FunctionID(instance.tables().closureFunctionWithNumber(*number));
 }
 
 enum class Ancestry : uint8_t { NotBelow, Unknown, SameOrBelow };
@@ -92,8 +97,13 @@ static std::optional<ThisPrototype> resolveThisPrototype(JSGlobalObject* globalO
             result.layout = targetLayout;
     }
     if (!prototype) {
+        if (JSObject* remembered = classes.tryReadPrototypePropertyAtRememberedPlace(newTarget)) {
+            result.prototype = remembered;
+            return result;
+        }
         prototype = newTarget->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        classes.rememberPrototypeOfClassOfOtherImage(vm, newTarget, prototype);
     }
     if (prototype.isObject()) {
         result.prototype = asObject(prototype);
@@ -109,7 +119,7 @@ static std::optional<ThisPrototype> resolveThisPrototype(JSGlobalObject* globalO
 static Object* createWithoutFields(VM& vm, RuntimeLayoutTable& layouts, Structure* structure, const LayoutData& layout)
 {
     if (const RuntimeLayoutTable::BodyAtBirth* body = layouts.bodyAtBirthIfKnown(layout))
-        return Object::createAsAtBirth(vm, structure, body->bytes.span(), body->isBornUnfinished);
+        return Object::createAsAtBirth(vm, structure, body->span(), body->isBornUnfinished);
     Object* object = Object::create(vm, structure, layout, layout.size, orderWordOf(0, 0));
     layouts.rememberBodyAtBirth(layout, std::span { reinterpret_cast<const uint8_t*>(object) + sizeof(JSCell), layout.size - sizeof(JSCell) }, object->perCellBit());
     return object;
@@ -121,18 +131,13 @@ Object* ClassTable::createClassInstance(VM& vm, const LayoutData& classLayout, J
     return createWithoutFields(vm, m_state.objects->layouts, m_state.objects->structures.objectStructure(vm, classLayout.shape, prototype), classLayout);
 }
 
-// What FunctionRareData::compiledAllocationConstructor() holds for a function that was constructed with itself as new.target. Any other constructor is remembered by its number.
-static constexpr uint32_t constructorIsNewTarget = FunctionRareData::maxCompiledAllocationConstructor;
-static_assert(ClosureWord::functionMask < constructorIsNewTarget);
-
 // What createThis() allocates depends on new.target, on which function is constructed and on the instance of that function.
 static bool isRememberedFor(FunctionRareData& rareData, Structure* remembered, JSObject* constructor, JSObject* newTarget)
 {
     uint32_t rememberedConstructor = rareData.compiledAllocationConstructor();
     if (constructor == newTarget)
-        return rememberedConstructor == constructorIsNewTarget;
-    std::optional<FunctionID> function = functionOf(constructor);
-    return function && rememberedConstructor == function->index() && constructor->structure()->realm() == remembered->realm();
+        return isConstructorThatIsNewTarget(rememberedConstructor);
+    return closureNumberOf(constructor) == rememberedConstructor && constructor->structure()->realm() == remembered->realm();
 }
 
 JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constructor, JSObject* newTarget)
@@ -148,7 +153,7 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
         return constructEmptyObject(vm, remembered);
     }
 
-    std::optional<FunctionID> function = functionOf(constructor);
+    std::optional<FunctionID> function = functionInInstance(m_state.instance, constructor);
     const LayoutData* constructorLayout = function ? classConstructedBy(*function) : nullptr;
     RELEASE_ASSERT(!constructorLayout || !constructorLayout->hasUntypedBase);
 
@@ -161,8 +166,15 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
     JSObject* object = layout && layout->shape
         ? static_cast<JSObject*>(createClassInstance(vm, *layout, prototype))
         : createOrdinaryInstance(globalObject, layout ? layout->numberOfFields : 0, prototype);
-    if (canRemember)
-        target->ensureRareData(vm)->setCompiledAllocation(vm, object->structure(), constructor == newTarget ? constructorIsNewTarget : function->index());
+    if (canRemember) {
+        Structure* structure = object->structure();
+        uint32_t number = m_tables.closureNumberOf(function->index());
+        if (constructor == newTarget) {
+            bool isWholeConstruction = !compiledLayoutOrNull(structure) && structure->inlineCapacity() == JSFinalObject::defaultInlineCapacity && m_tables.closureNumberOnlyReturns(number) && !vm.aotState().validatesRuntime;
+            number = isWholeConstruction ? constructorIsNewTargetAndOnlyReturns : constructorIsNewTarget;
+        }
+        target->ensureRareData(vm)->setCompiledAllocation(vm, structure, number);
+    }
     return object;
 }
 
@@ -181,12 +193,12 @@ JSObject* ClassTable::prototypeForInstancesOf(VM& vm, JSObject* compiledCallee)
 void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSObject* prototype)
 {
     Structure* structure = function->structure();
-    if (structure->isDictionary() || vm.aotState().validatesRuntime)
+    if (!flattenOnce(vm, function) || vm.aotState().validatesRuntime)
         return;
     unsigned attributes = 0;
     PropertyOffset offset = structure->get(vm, vm.propertyNames->prototype, attributes);
     if (!isValidOffset(offset)) {
-        const LayoutData* classLayout = classConstructedBy(function->function());
+        const LayoutData* classLayout = classConstructedBy(functionOfOwnClosure(*function));
         if (classLayout && isDefinedByClass(*classLayout))
             m_prototypesOfClassObjects[indexOfClassObject(function)] = { function, prototype };
         return;
@@ -197,11 +209,22 @@ void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSO
     m_placesOfPrototypeProperties[indexOfPlace(structureID)] = { structureID, offset };
 }
 
+void ClassTable::rememberPrototypeOfClassOfOtherImage(VM& vm, JSObject* newTarget, JSValue prototype)
+{
+    auto* classObject = dynamicDowncast<Closure>(newTarget);
+    if (!classObject || !prototype.isObject() || !classObject->kind().isConstructor || vm.aotState().validatesRuntime)
+        return;
+    if (Instance::owning(classObject) == &m_state.instance)
+        return;
+    m_prototypesOfClassObjects[indexOfClassObject(classObject)] = { classObject, asObject(prototype) };
+}
+
 // The object that the definition of a class made its prototype. What a program stores as the prototype of a constructor function names no class.
 const LayoutData* ClassTable::classWithPrototype(JSObject* prototype) const
 {
+    // The class of another image is none of this table's.
     if (auto* lazyPrototype = dynamicDowncast<ClassPrototype>(prototype))
-        return classWithIndex(lazyPrototype->classIndex());
+        return classOf(*lazyPrototype);
     ClassSide side;
     const LayoutData* held = classHeldBy(prototype, side);
     return held && side == ClassSide::Prototype && isDefinedByClass(*held) ? held : nullptr;
@@ -224,7 +247,7 @@ static JSValue valueForInstance(VM& vm, State& state, const Object& allocated, c
         captured = &instance;
     else if (field.flags & fieldDeferredClosureCapturesEnvironment)
         captured = closureEnvironmentOf(state, allocated, field);
-    return state.objects->closures.createClosureOver(vm, allocated.layout().deferredClosureOf(field), captured);
+    return state.objects->closures.createClosureOver(vm, FunctionID(state.tables.closureFunctionWithNumber(allocated.layout().deferredClosureNumberOf(field))), captured);
 }
 
 static void shareClosureEnvironment(VM& vm, State& state, const Object& allocated, const FieldData& field, Object& instance, const FieldData& target)
@@ -281,19 +304,86 @@ static void defineFieldOnInstance(VM& vm, State& state, const Object& allocated,
         instance.putDirect(vm, name, value, allocated.attributesOf(field));
 }
 
+Object* ClassTable::createInstanceOfClassBelow(VM& vm, size_t indexOfRecord)
+{
+    auto* structure = uncheckedDowncast<CompiledStructure>(std::bit_cast<StructureID>(static_cast<uint32_t>(m_instancesOfClassesBelow[indexOfRecord].header)).decode());
+    return createWithoutFields(vm, m_state.objects->layouts, structure, structure->layout());
+}
+
+static std::array<size_t, 2> placesOf(const InstanceOfClassBelow& record)
+{
+    uintptr_t prototype = std::bit_cast<uintptr_t>(record.prototype);
+    return { firstPlaceOfInstanceOfClassBelow(prototype), secondPlaceOfInstanceOfClassBelow(prototype) };
+}
+
+const InstanceOfClassBelow* ClassTable::findInstanceOfClassBelow(const JSObject* prototype, uint32_t allocation) const
+{
+    for (size_t place : placesOf({ const_cast<JSObject*>(prototype), 0, nullptr, allocation, 0 })) {
+        const InstanceOfClassBelow& record = m_instancesOfClassesBelow[place];
+        if (record.prototype == prototype && record.allocation == allocation)
+            return &record;
+    }
+    return nullptr;
+}
+
+// Where both places are taken, the record at the first one makes room: it moves to its other place, and so does the record that it finds there.
+void ClassTable::rememberInstanceOfClassBelow(InstanceOfClassBelow record)
+{
+    std::array<size_t, 2> places = placesOf(record);
+    for (size_t place : places) {
+        InstanceOfClassBelow& held = m_instancesOfClassesBelow[place];
+        if (!held.prototype || (held.prototype == record.prototype && held.allocation == record.allocation)) {
+            held = record;
+            return;
+        }
+    }
+    AOT_THRESHOLD(unsigned, maxNumberOfMoves, 8);
+    size_t place = places[0];
+    for (unsigned moves = 0; moves < maxNumberOfMoves; ++moves) {
+        std::swap(record, m_instancesOfClassesBelow[place]);
+        if (!record.prototype)
+            return;
+        auto [first, second] = placesOf(record);
+        place = place == first ? second : first;
+    }
+}
+
+// Each evaluation of a class has a prototype object of its own, and the record of the allocation names one of them.
+void ClassTable::rememberInstanceOfOtherEvaluation(VM& vm, const Object& instance, JSObject* prototype, uint32_t allocation)
+{
+    const LayoutData& layout = instance.layout();
+    const AllocationData& site = m_tables.allocations()[allocation];
+    if (layout.size > MarkedSpace::largeCutoff || site.size() != layout.size || site.orderWord() != orderWordOf(0, 0))
+        return;
+    RuntimeLayoutTable& layouts = m_state.objects->layouts;
+    if (!layouts.bodyAtBirthIfKnown(layout))
+        createWithoutFields(vm, layouts, instance.structure(), layout);
+    const RuntimeLayoutTable::BodyAtBirth& body = *layouts.bodyAtBirthIfKnown(layout);
+    if (body.isBornUnfinished != site.isBornUnfinished)
+        return;
+    static_assert(JSCell::typeInfoFlagsOffset() == 6);
+    uint64_t header = cellHeaderFor(instance.structure()) | (body.isBornUnfinished ? static_cast<uint64_t>(TypeInfoPerCellBit) << 48 : 0);
+    rememberInstanceOfClassBelow({ prototype, header, body.cell.span().data(), allocation, static_cast<uint32_t>(body.cell.size() / 2) });
+}
+
 // The prototype object of another class never leaves the object with the allocated shape: what the program does to that object is recorded for the other class.
-JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject* prototype, bool holdsNoField)
+JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject* prototype, bool holdsNoField, std::optional<uint32_t> allocation)
 {
     const LayoutData& allocatedLayout = allocated->layout();
-    InstanceOfClassBelow& recent = m_instancesOfClassesBelow[indexOfInstanceOfClassBelow(prototype)];
     // Where the keys are never enumerated, the order word lists nothing whatever the slots hold: only who allocated the object knows.
     bool listsNoField = holdsNoField || (!allocatedLayout.keysAreNeverEnumerated && allocated->orderWord() == orderWordOf(0, 0));
-    if (recent.prototype == prototype && recent.allocatedLayout == &allocatedLayout && listsNoField)
-        return createWithoutFields(vm, m_state.objects->layouts, recent.structure, recent.structure->layout());
+    if (listsNoField && allocation) {
+        if (const InstanceOfClassBelow* remembered = findInstanceOfClassBelow(prototype, *allocation))
+            return createInstanceOfClassBelow(vm, remembered - m_instancesOfClassesBelow.data());
+    }
     const LayoutData& allocatedClass = classOfInstances(allocatedLayout);
     const LayoutData* requested = isDefinedByClass(allocatedClass) ? classWithPrototype(prototype) : nullptr;
     if (!requested || requested->index == allocatedClass.index) {
         allocated->setPrototypeAtCreation(vm, prototype);
+        // A class of another image that extends this one has one prototype object too, and every `new` of it comes here.
+        auto* lazyPrototype = requested ? nullptr : dynamicDowncast<ClassPrototype>(prototype);
+        if ((requested || (lazyPrototype && !hasClassOf(*lazyPrototype))) && listsNoField && allocation)
+            rememberInstanceOfOtherEvaluation(vm, *allocated, prototype, *allocation);
         return allocated;
     }
 
@@ -301,8 +391,12 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
     bool hasShapeOfRequestedClass = ancestry != Ancestry::NotBelow && requested->shape;
     JSObject* instance = hasShapeOfRequestedClass ? static_cast<JSObject*>(createClassInstance(vm, *requested, prototype)) : createOrdinaryInstance(m_state.instance.globalObject, allocatedLayout.numberOfFields, prototype);
     if (listsNoField) {
-        if (hasShapeOfRequestedClass)
-            recent = { prototype, &allocatedLayout, uncheckedDowncast<CompiledStructure>(instance->structure()) };
+        if (hasShapeOfRequestedClass && allocation && requested->size <= MarkedSpace::largeCutoff) {
+            const RuntimeLayoutTable::BodyAtBirth& body = *m_state.objects->layouts.bodyAtBirthIfKnown(*requested);
+            static_assert(JSCell::typeInfoFlagsOffset() == 6);
+            uint64_t header = cellHeaderFor(instance->structure()) | (body.isBornUnfinished ? static_cast<uint64_t>(TypeInfoPerCellBit) << 48 : 0);
+            rememberInstanceOfClassBelow({ prototype, header, body.cell.span().data(), *allocation, static_cast<uint32_t>(body.cell.size() / 2) });
+        }
         return instance;
     }
     allocated->forEachFieldInKeyOrder(m_state, [&](uint16_t index) {

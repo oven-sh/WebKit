@@ -36,10 +36,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v22 = PropGet v7 key="hot"
     Return
 }
-# "boxed", "cold", "besideCold", "hot" and "besideHot" end at 40, so 8 aligned bytes are free. "cold" is the first row and "hot" has the higher weight. The 4 bytes that "hot" leaves lie beside another slot.
+# "boxed", "cold", "besideCold", "hot" and "besideHot" end at 40, so 8 aligned bytes are free. "cold" is the first row and "hot" has the higher weight. "besideCold" goes to the 4 bytes that "hot" leaves, and "cold" grows over the 4 bytes that "besideCold" leaves.
 # CHECK: L0 CompiledObject size=48
-# CHECK-NEXT: "cold" OptionalInt32 @24
-# CHECK-NEXT: "besideCold" {{*}}Int32 @28
+# CHECK-NEXT: "cold" OptionalInt64 @24
+# CHECK-NEXT: "besideCold" {{*}}Int32 @32
 # CHECK-NEXT: "hot" OptionalInt64 @40
 # CHECK-NEXT: "besideHot" {{*}}Int32 @36
 # CHECK-NEXT: "boxed" JSValue @16

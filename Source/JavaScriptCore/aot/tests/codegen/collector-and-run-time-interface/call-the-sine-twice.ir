@@ -1,0 +1,78 @@
+# function wave(angle: number): number {
+#   return Math.sin(angle) + Math.sin(angle * 2);
+# }
+# declare const input: any;
+# (globalThis as any).answer = wave(+input) + wave(1.5);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=14 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=144 kind=CallResult
+typesite w3 module=m0 position=159 kind=CallResult
+typesite w4 module=m0 position=48 kind=CallResult
+typesite w5 module=m0 position=66 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = ToNumber v8
+    v10 = Call v1, -, v9 calleeName="wave"
+    v11 = Convert v10 declared={type=number site=w2}
+    v12 = Double number=1.5
+    v13 = Call v1, -, v12 calleeName="wave"
+    v14 = Convert v13 declared={type=number site=w3}
+    v15 = Add v11, v14
+    PropSet v5, v15 key="answer"
+    v17 = Undefined
+    Return v17
+}
+function f1 name="wave" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=Math
+    v2 = Builtin builtin=MathSin
+    v3 = Call v2, v1, v0 calleeName="Math.sin"
+    v4 = Convert v3 declared={type=number site=w4} illTypedCause=DeclarationWithoutBody
+    v5 = Builtin builtin=Math
+    v6 = Builtin builtin=MathSin
+    v7 = Integer integer=2
+    v8 = Mul v0, v7
+    v9 = Call v6, v5, v8 calleeName="Math.sin"
+    v10 = Convert v9 declared={type=number site=w5} illTypedCause=DeclarationWithoutBody
+    v11 = Add v4, v10
+    v12 = Convert v11 declared={type=number site=w1}
+    Return v12
+}
+
+# The sine throws nothing, collects nothing and touches no memory of the program: the call has no effects, so it is not marked as one that may leave sideways and nothing stands behind it.
+# CHECK-LABEL: name="wave" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NOT: ExitsSideways
+# CHECK-NOT: Writes:
+# CHECK-NOT: Reads:
+# CHECK-NOT: Branch(
+# CHECK: Double b@[[first]] = Patchpoint(b@[[angle]]:Register({{*}}), resultConstraints = Register({{*}}), pureFunction = {{*}}, ControlDependent, {{*}}:CallInline)
+# CHECK-NOT: ExitsSideways
+# CHECK-NOT: Writes:
+# CHECK-NOT: Reads:
+# CHECK-NOT: Branch(
+# CHECK: Double b@[[second]] = Patchpoint(b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), pureFunction = {{*}}, ControlDependent, {{*}}:CallInline)
+# CHECK-NEXT: Double b@[[sum]] = Add(b@[[first]], b@[[second]], 
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
+# CHECK-NOT: BB#
+# CHECK-LABEL: end of function

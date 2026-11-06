@@ -60,6 +60,7 @@ export default b.declarations(
   ),
   b.excluded("ArrayIteratorPrototype", "arrayIteratorNextHelper"),
   b.excluded("GeneratorPrototype", "generatorResume"),
+  b.excluded("ShadowRealmPrototype", "crossRealmThrow", "evaluate", "importValue", "wrapRemoteValue"),
   b.handwritten(
     "ArrayIteratorPrototype",
     "AsyncDisposableStackPrototype",
@@ -68,8 +69,10 @@ export default b.declarations(
     "GeneratorPrototype",
     "IteratorOperations",
     "JSIteratorHelperPrototype",
+    "MapIteratorPrototype",
     "MapPrototype",
     "ObjectConstructor",
+    "SetIteratorPrototype",
     "SetPrototype",
     "TypedArrayPrototype",
   ),
@@ -78,6 +81,7 @@ export default b.declarations(
   b.intrinsic("nakedConstructor", "Value", { intrinsic: "Directive", directive: "NakedConstructor" }),
 
   b.intrinsic("undefined", "Value", { intrinsic: "Undefined" }),
+  b.intrinsic("arrayProtoValues", "Value", { intrinsic: "Builtin", path: "Array.prototype.values" }),
   b.intrinsic("Infinity", "Value", { intrinsic: "Double", value: Infinity }),
   b.intrinsic("MAX_SAFE_INTEGER", "Value", {
     intrinsic: "Int",
@@ -112,6 +116,7 @@ export default b.declarations(
   operation("CreatePromise", "createPromise"),
   operation("GetByValWithThis", "getByValWithThis"),
   operation("IsConstructor", "isConstructor"),
+  operation("ReadsIteratorOfListUnseen", "readsIteratorOfListUnseen"),
   operation("ToObject", "toObject"),
 
   jsTypeTests({
@@ -125,8 +130,9 @@ export default b.declarations(
     isProxyObject: "ProxyObjectType",
     isRegExpObject: "RegExpObjectType",
     isSet: "JSSetType",
-    isShadowRealm: "ShadowRealmType",
     isWrapForValidIterator: "JSWrapForValidIteratorType",
+    isMapIterator: "JSMapIteratorType",
+    isSetIterator: "JSSetIteratorType",
   }),
   b.intrinsic("isTypedArrayView", "Call", {
     intrinsic: "HasJSType",
@@ -184,10 +190,9 @@ export default b.declarations(
     "wrapForValidIteratorCreate",
   ),
   b.intrinsic("ownKeys", "Call", { intrinsic: "Builtin", path: "Reflect.ownKeys" }),
+  b.intrinsic("functionPrototypeApply", "Value", { intrinsic: "Builtin", path: "Function.prototype.apply" }),
+  b.intrinsic("functionPrototypeCall", "Value", { intrinsic: "Builtin", path: "Function.prototype.call" }),
   intrinsics("Call", { intrinsic: "LinkTimeConstant" }, [
-    "createRemoteFunction",
-    "evalInRealm",
-    "importInRealm",
     "performPromiseThen",
     "rejectPromise",
     "resolvePromise",
@@ -206,17 +211,15 @@ export default b.declarations(
     "getIteratorSync",
     "getOptionsObject",
     "iteratorCloseAllNormal",
-    "iteratorGenericClose",
-    "iteratorGenericNext",
     "iteratorZip",
     "removeFirstFromList",
-    "wrapRemoteValue",
   ]),
+  // The engine emits these two in line, and so does the front end: the call then belongs to the built-in that makes it.
+  b.intrinsic("iteratorGenericClose", "Call", { intrinsic: "LinkedFunction", expansion: "IteratorGenericClose" }),
+  b.intrinsic("iteratorGenericNext", "Call", { intrinsic: "LinkedFunction", expansion: "IteratorGenericNext" }),
   intrinsics("Value", { intrinsic: "LinkedFunction" }, [
-    "crossRealmThrow",
     "defaultAsyncFromAsyncArrayLike",
     "defaultAsyncFromAsyncIterator",
-    "defaultAsyncFromAsyncIteratorWithNext",
   ]),
 
   operation("CollectionTable", "collectionTable"),
@@ -227,6 +230,8 @@ export default b.declarations(
   operation("ResumeGenerator", "resumeGenerator"),
   operation("SetNext", "setNext"),
   operation("StepArrayIterator", "stepArrayIterator"),
+  operation("StepMapIterator", "stepMapIterator"),
+  operation("StepSetIterator", "stepSetIterator"),
   operation("StepGenerator", "stepGenerator"),
 
   enumerators("Typed::ArrayStorage", {

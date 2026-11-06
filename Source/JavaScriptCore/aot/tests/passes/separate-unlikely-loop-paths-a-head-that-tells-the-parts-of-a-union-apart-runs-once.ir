@@ -1,0 +1,164 @@
+# `for (let i = 0; i < queue.length; i++)` where the queue is one of two kinds of object: every turn begins by telling the two apart and reads the length of the one it has found,
+# and the two ways join in front of the comparison. Where no turn writes what they read, they run once, as the beginning of the first turn, and every later turn begins at the join. Nothing is copied.
+# f0: no turn changes the bound. f1: each way also passes the counter on, which is that of the turn. f2: a turn stores the bound. f3: a turn runs other code. f4: the queue is another one in every turn.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot check=VerifyEachPass
+# RUN: pass SeparateUnlikelyLoopPaths VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Queue" fields=[{key="length" declared={type=number} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Stack" fields=[{key="depth" declared={type=number} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+function f0 name="noTurnChangesTheBound" parameters=[{type=L0|L1}] results=[{type=number}] {
+  b0(v0: L0|L1):
+    v1 = Integer
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = TypeTest v0 testedType=L0
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = GetSlot v5 key="length" receivers=[L0] level=Proven
+    Jump -> next b4(v6)
+  b3(v7):
+    v8 = GetSlot v7 key="depth" receivers=[L1] level=Proven
+    Jump -> next b4(v8)
+  b4(v9):
+    v10 = Less v2, v9
+    Branch v10 -> taken b5(), notTaken b6()
+  b5():
+    v11 = Increment v2
+    Jump -> next b1(v11)
+  b6():
+    Return v2
+}
+# CHECK-LABEL: function f0 name="noTurnChangesTheBound"
+# CHECK: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: b4([[counter0]]: int|whole):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less [[counter0]], [[bound0]]
+# CHECK: [[next0]]: int|whole = Increment [[counter0]]
+# CHECK-NEXT: Jump -> next b4([[next0]])
+# CHECK: ([[bound0]]: number):
+# CHECK-NEXT: Jump -> next b4(v1)
+
+function f1 name="eachWayPassesTheCounterOn" parameters=[{type=L0|L1}] results=[{type=number}] {
+  b0(v0: L0|L1):
+    v1 = Integer
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = TypeTest v0 testedType=L0
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = GetSlot v5 key="length" receivers=[L0] level=Proven
+    Jump -> next b4(v6, v2)
+  b3(v7):
+    v8 = GetSlot v7 key="depth" receivers=[L1] level=Proven
+    Jump -> next b4(v8, v2)
+  b4(v9, v10):
+    v11 = Less v10, v9
+    Branch v11 -> taken b5(), notTaken b6()
+  b5():
+    v12 = Increment v10
+    Jump -> next b1(v12)
+  b6():
+    Return v10
+}
+# CHECK-LABEL: function f1 name="eachWayPassesTheCounterOn"
+# CHECK: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: b4([[counter1]]: int|whole):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less [[counter1]], [[bound1]]
+# CHECK: [[next1]]: int|whole = Increment [[counter1]]
+# CHECK-NEXT: Jump -> next b4([[next1]])
+# CHECK: Return [[counter1]]
+# CHECK: ([[bound1]]: number):
+# CHECK-NEXT: Jump -> next b4(v1)
+
+function f2 name="aTurnStoresTheBound" parameters=[{type=L0|L1}, {type=L0}] results=[{type=number}] {
+  b0(v0: L0|L1, v1: L0):
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = TypeTest v0 testedType=L0
+    Branch v5 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v6):
+    v7 = GetSlot v6 key="length" receivers=[L0] level=Proven
+    Jump -> next b4(v7)
+  b3(v8):
+    v9 = GetSlot v8 key="depth" receivers=[L1] level=Proven
+    Jump -> next b4(v9)
+  b4(v10):
+    v11 = Less v3, v10
+    Branch v11 -> taken b5(), notTaken b6()
+  b5():
+    v12 = Increment v3
+    PutSlot v1, -, v12 key="length" receivers=[L0] level=Proven
+    Jump -> next b1(v12)
+  b6():
+    Return v3
+}
+# CHECK-LABEL: function f2 name="aTurnStoresTheBound"
+# CHECK: PutSlot v1, -, v12 key="length"
+# CHECK-NEXT: Jump -> next b1(v12)
+
+function f3 name="aTurnRunsOtherCode" parameters=[{type=L0|L1}, {type=anything}] results=[{type=number}] {
+  b0(v0: L0|L1, v1: anything):
+    v2 = Integer
+    v3 = Undefined
+    Jump -> next b1(v2)
+  b1(v4):
+    LoopHint
+    v6 = TypeTest v0 testedType=L0
+    Branch v6 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v7):
+    v8 = GetSlot v7 key="length" receivers=[L0] level=Proven
+    Jump -> next b4(v8)
+  b3(v9):
+    v10 = GetSlot v9 key="depth" receivers=[L1] level=Proven
+    Jump -> next b4(v10)
+  b4(v11):
+    v12 = Less v4, v11
+    Branch v12 -> taken b5(), notTaken b6()
+  b5():
+    v13 = Call v1, v3
+    v14 = Increment v4
+    Jump -> next b1(v14)
+  b6():
+    Return v4
+}
+# CHECK-LABEL: function f3 name="aTurnRunsOtherCode"
+# CHECK: = Increment v4
+# CHECK-NEXT: Jump -> next b1(v14)
+
+function f4 name="theQueueIsAnotherOneInEveryTurn" parameters=[{type=L0|L1}, {type=L0|L1}] results=[{type=number}] {
+  b0(v0: L0|L1, v1: L0|L1):
+    v2 = Integer
+    Jump -> next b1(v2, v0, v1)
+  b1(v3, v4, v5):
+    LoopHint
+    v7 = TypeTest v4 testedType=L0
+    Branch v7 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v8):
+    v9 = GetSlot v8 key="length" receivers=[L0] level=Proven
+    Jump -> next b4(v9)
+  b3(v10):
+    v11 = GetSlot v10 key="depth" receivers=[L1] level=Proven
+    Jump -> next b4(v11)
+  b4(v12):
+    v13 = Less v3, v12
+    Branch v13 -> taken b5(), notTaken b6()
+  b5():
+    v14 = Increment v3
+    Jump -> next b1(v14, v5, v4)
+  b6():
+    Return v3
+}
+# CHECK-LABEL: function f4 name="theQueueIsAnotherOneInEveryTurn"
+# CHECK: Jump -> next b1(v14, v5, v4)

@@ -28,6 +28,7 @@
 
 #include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
+#include "CodeCache.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
 #include "JSAsyncGeneratorFunction.h"
@@ -44,6 +45,7 @@
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakGCMapInlines.h"
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace JSC {
 
@@ -478,8 +480,15 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
         if (resolution.type != Resolution::Type::Resolved)
             return IterationStatus::Continue;
+#if USE(BUN_JSC_ADDITIONS)
+        // Live exports are looked up by name at runtime. The exporter may have no binding with this name.
+        if (resolution.isLiveExport(vm)) [[unlikely]] {
+            bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), 0, index, true });
+            return IterationStatus::Continue;
+        }
+#endif
         if (auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(resolution.moduleRecord)) {
-            bindings.append({ localName.impl(), sourceTextModule->sourceCode().provider(), resolution.localName.impl(), 0, index });
+            bindings.append({ localName.impl(), sourceTextModule->sourceCode().provider(), resolution.localName.impl(), 0, index, false });
             return IterationStatus::Continue;
         }
         JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironmentMayBeNull();
@@ -491,7 +500,7 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
         ConcurrentJSLocker locker(symbolTable->m_lock);
         auto iterator = symbolTable->find(locker, resolution.localName.impl());
         RELEASE_ASSERT(iterator != symbolTable->end(locker));
-        bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), iterator->value.scopeOffset().offset(), index });
+        bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), iterator->value.scopeOffset().offset(), index, false });
         return IterationStatus::Continue;
     });
     RETURN_IF_EXCEPTION(scope, std::nullopt);
@@ -499,6 +508,28 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
         return std::nullopt;
     return bindings;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+String JSModuleRecord::liveImports(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!vm.codeCache()->hasModuleRecordWithLiveExports()) [[likely]]
+        return { };
+
+    StringBuilder builder;
+    forEachImportSlot([&](unsigned, const Identifier& localName) {
+        Resolution resolution = resolveImport(globalObject, localName);
+        RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
+        if (resolution.isLiveExport(vm))
+            builder.append(StringView(localName.impl()), ',');
+        return IterationStatus::Continue;
+    });
+    RETURN_IF_EXCEPTION(scope, { });
+    return builder.isEmpty() ? String() : builder.toString();
+}
+#endif
 
 bool JSModuleRecord::resolvesImportsLike(JSGlobalObject* globalObject, ModuleProgramExecutable* executable)
 {
@@ -595,7 +626,12 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         }
     }
 
-    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), this, moduleScopeSymbolTables);
+    String liveImports;
+#if USE(BUN_JSC_ADDITIONS)
+    liveImports = this->liveImports(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+#endif
+    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), this, moduleScopeSymbolTables, liveImports);
     RETURN_IF_EXCEPTION(scope, nullptr);
     executable->willBeEvaluatedByAnotherRecord();
     m_moduleProgramExecutable.set(vm, this, executable);

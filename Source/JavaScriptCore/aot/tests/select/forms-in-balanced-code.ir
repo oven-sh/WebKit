@@ -1,4 +1,4 @@
-# Only fast code has the long forms in line. Balanced code calls where compact code calls: equality and order of strings of any text, an empty array literal, concat, shift. What is shorter than the call stays in line
+# Only fast code has the long forms in line. Balanced code calls where compact code calls: an empty array literal, concat, shift. Equality and order of two strings are one call in every code, of the stub for two strings. What is shorter than the call stays in line
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass Select
@@ -11,7 +11,7 @@ function f0 name="haveSameText" parameters=[{type=string}, {type=string}] result
 }
 # SHAPES: f0 b0 Balanced
 # CHECK-LABEL: function f0 name="haveSameText"
-# CHECK: = StrictEq v0, v1 form=Generic
+# CHECK: = StrictEq v0, v1 form=Strings
 
 function f1 name="haveSameTextInALoop" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
     Jump -> next b1()
@@ -37,7 +37,7 @@ function f2 name="haveSameKind" parameters=[{type="circle"|"square"}, {type="cir
 function f3 name="comesFirst" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
     v2 = Less v0, v1
     Return v2
-# CHECK: = Less v0, v1 form=Generic
+# CHECK: = Less v0, v1 form=Strings
 }
 
 function f4 name="emptyLiteral" results=[{type=Array<anything>}] {

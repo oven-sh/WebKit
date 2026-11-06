@@ -136,7 +136,7 @@ static std::span<const LayoutID> membersListedIn(const Program& program, LayoutS
 {
     if (!set)
         return { };
-    return program.at(set).members.span();
+    return program.at(set).written().span();
 }
 
 static LayoutList computeAllocatedMembers(const Program& program, std::span<const LayoutID> members)
@@ -148,6 +148,13 @@ static LayoutList computeAllocatedMembers(const Program& program, std::span<cons
     }
     return allocatedMembers;
 }
+
+// What membersWhoseFieldCannotHold() asks of a member, whatever is read: `node.kind === 7` asks one family for one key once for each number.
+struct FieldOfMember {
+    LayoutID member;
+    TypeID type;
+    bool holdsUndefinedAndNull { false };
+};
 
 struct FamilyTables::Cache {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Cache);
@@ -164,8 +171,8 @@ struct FamilyTables::Cache {
 
     struct Candidates {
         const Family* receiverFamily { nullptr };
-        LayoutList predicted;
-        LayoutList ofExpectedType;
+        Expected<LayoutList> expected;
+        Expected<LayoutList> ofExpectedType;
     };
 
     Cache(uint64_t phase, uint64_t generation)
@@ -202,6 +209,7 @@ struct FamilyTables::Cache {
     ConcurrentCache<Family> families;
     CacheByKey<const Family*, LayoutSetID> familiesBySet;
     CacheByKey<FamilyMember, uint32_t, PropertyKeyID> members;
+    CacheByKey<Vector<FieldOfMember>, uint32_t, PropertyKeyID, TypeLevel> fieldsOfMembers;
     CacheByKey<LayoutSetID, uint32_t, PropertyKeyID, TypeID, TypeLevel> excludedMembers;
     CacheByKey<Candidates, LayoutSetID, LayoutSetID, LayoutSetID> candidates;
     CacheByKey<bool, LayoutSetID, LayoutSetID> subsets;
@@ -245,7 +253,7 @@ std::span<const LayoutID> FamilyTables::allocatedMembersOf(LayoutSetID set) cons
 
 ReceiverState FamilyTables::stateOf(LayoutSetID set) const
 {
-    if (set && m_program.at(set).hasMembersWithoutLayout)
+    if (set && !m_program.at(set).listsEveryLayout())
         return { };
     std::span<const LayoutID> members = membersListedIn(m_program, set);
     if (members.size() < minCachedSetSize)
@@ -276,9 +284,9 @@ static FamilyMember computeMember(const Program& program, const LayoutList& allo
     ScratchTypeArena scratch(program.types);
     TypeArena& types = scratch;
     if (!holders.isEmpty())
-        member.holders = types.intern(LayoutSet { WTF::move(holders), true });
+        member.holders = types.intern(LayoutSet::complete(WTF::move(holders)));
     if (!withoutField.isEmpty())
-        member.withoutField = types.intern(LayoutSet { WTF::move(withoutField), true });
+        member.withoutField = types.intern(LayoutSet::complete(WTF::move(withoutField)));
     return member;
 }
 
@@ -295,34 +303,34 @@ auto FamilyTables::candidatesOf(LayoutSetID receiver, LayoutSetID expected, Layo
 {
     if (expected == receiver)
         expected = { };
-    auto predictedMembers = [&](const LayoutList& proven, const LayoutList& expectedMembers) {
+    auto predictedMembers = [&](const LayoutList& proven, const LayoutList& expectedMembers) -> Expected<LayoutList> {
         const LayoutSet* stamped = stamp ? &m_program.at(stamp) : nullptr;
         LayoutList predicted;
         if (!receiver) {
             if (expected)
                 predicted = expectedMembers;
             if (stamped)
-                predicted.unite(listFromSorted(stamped->members.span()));
+                predicted.unite(listFromSorted(stamped->seen().predicted()));
             return predicted;
         }
 
         predicted = proven;
         if (expected)
             predicted.intersect(expectedMembers);
-        if (stamped && stamped->isComplete)
-            predicted.intersect(listFromSorted(stamped->members.span()));
+        if (stamped && stamped->listsEveryLayout())
+            predicted.intersect(listFromSorted(stamped->completeMembers()));
         if (predicted.size() == proven.size())
             predicted.clear();
         return predicted;
     };
-    auto membersOfExpectedType = [&](const LayoutList& expectedMembers) {
+    auto membersOfExpectedType = [&](const LayoutList& expectedMembers) -> Expected<LayoutList> {
         return receiver || !expected ? LayoutList() : expectedMembers;
     };
 
     if (std::max({ membersListedIn(m_program, receiver).size(), membersListedIn(m_program, expected).size(), membersListedIn(m_program, stamp).size() }) < minCachedSetSize) {
         LayoutList proven = computeAllocatedMembers(m_program, membersListedIn(m_program, receiver));
         LayoutList expectedMembers = computeAllocatedMembers(m_program, membersListedIn(m_program, expected));
-        LayoutList predicted = predictedMembers(proven, expectedMembers);
+        Expected<LayoutList> predicted = predictedMembers(proven, expectedMembers);
         return { WTF::move(proven), WTF::move(predicted), membersOfExpectedType(expectedMembers) };
     }
 
@@ -332,7 +340,7 @@ auto FamilyTables::candidatesOf(LayoutSetID receiver, LayoutSetID expected, Layo
         const LayoutList& expectedMembers = cache.familyOf(m_program, expected).allocatedMembers;
         return Cache::Candidates { &receiverFamily, predictedMembers(receiverFamily.allocatedMembers, expectedMembers), membersOfExpectedType(expectedMembers) };
     });
-    return { known.receiverFamily->allocatedMembers, known.predicted, known.ofExpectedType };
+    return { known.receiverFamily->allocatedMembers, known.expected, known.ofExpectedType };
 }
 
 bool FamilyTables::isSubsetOf(LayoutSetID subset, LayoutSetID superset) const
@@ -345,48 +353,63 @@ bool FamilyTables::isSubsetOf(LayoutSetID subset, LayoutSetID superset) const
     const LayoutSet& first = m_program.at(subset);
     const LayoutSet& second = m_program.at(superset);
     auto compute = [&] {
-        return (!first.hasMembersWithoutLayout || second.hasMembersWithoutLayout) && Typed::isSubsetOf(first, second);
+        return Typed::isSubsetOf(first, second);
     };
-    if (first.members.size() + second.members.size() < minCachedSetSize)
+    if (first.written().size() + second.written().size() < minCachedSetSize)
         return compute();
     return cache().subsets.ensure(computeHash(subset, superset), { subset, superset }, compute);
 }
 
-static LayoutSetID computeMembersWhoseFieldCannotHold(const Program& program, const LayoutList& allocatedMembers, PropertyKeyID key, TypeID read, TypeLevel level)
+static Vector<FieldOfMember> computeFieldsOfMembers(const Program& program, const LayoutList& allocatedMembers, PropertyKeyID key, TypeLevel level)
 {
-    ScratchTypeArena scratch(program.types);
-    TypeArena& types = scratch;
-    const Type& readType = program.at(read);
-    UncheckedKeyHashMap<TypeID, bool> cannotHoldByFieldType;
-    Vector<LayoutID> excluded;
+    Vector<FieldOfMember> fields;
     for (LayoutID layout : allocatedMembers) {
         std::optional<FieldReference> field = findField(program, layout, key, BaseChain::Proven);
         if (!field)
             continue;
-        if (level == TypeLevel::Proven && (!staysFilled(program, *field) || (readType.mayBeUndefinedOrNull() && slotHoldsUndefinedAndNull(program, *field))))
+        if (level != TypeLevel::Proven)
+            fields.append({ layout, fieldAt(program, *field).declared.expected().predicted() });
+        else if (staysFilled(program, *field))
+            fields.append({ layout, slotTypeOf(program, fieldAt(program, *field)), slotHoldsUndefinedAndNull(program, *field) });
+    }
+    return fields;
+}
+
+static LayoutSetID computeMembersWhoseFieldCannotHold(const Program& program, std::span<const FieldOfMember> fields, TypeID read)
+{
+    ScratchTypeArena scratch(program.types);
+    TypeArena& types = scratch;
+    const Type& readType = program.at(read);
+    bool readsUndefinedOrNull = readType.mayBeUndefinedOrNull();
+    UncheckedKeyHashMap<TypeID, bool> cannotHoldByFieldType;
+    Vector<LayoutID> excluded;
+    for (const FieldOfMember& field : fields) {
+        if (readsUndefinedOrNull && field.holdsUndefinedAndNull)
             continue;
-        TypeID fieldType = level == TypeLevel::Proven ? slotTypeOf(program, fieldAt(program, *field)) : fieldAt(program, *field).declared.expected().predicted();
-        bool cannotHold = cannotHoldByFieldType.ensure(fieldType, [&] {
-            return program.at(fieldType).intersectWith(readType, types).isNever();
+        bool cannotHold = cannotHoldByFieldType.ensure(field.type, [&] {
+            return program.at(field.type).intersectWith(readType, types).isNever();
         }).iterator->value;
         if (cannotHold)
-            excluded.append(layout);
+            excluded.append(field.member);
     }
     if (excluded.isEmpty())
         return { };
-    return types.intern(LayoutSet { WTF::move(excluded), true });
+    return types.intern(LayoutSet::complete(WTF::move(excluded)));
 }
 
 LayoutSetID FamilyTables::membersWhoseFieldCannotHold(LayoutSetID set, PropertyKeyID key, TypeID read, TypeLevel level) const
 {
     std::span<const LayoutID> members = membersListedIn(m_program, set);
     if (members.size() < minCachedSetSize)
-        return computeMembersWhoseFieldCannotHold(m_program, computeAllocatedMembers(m_program, members), key, read, level);
+        return computeMembersWhoseFieldCannotHold(m_program, computeFieldsOfMembers(m_program, computeAllocatedMembers(m_program, members), key, level).span(), read);
 
     Cache& cache = this->cache();
     const Cache::Family& family = cache.familyOf(m_program, set);
     return cache.excludedMembers.ensure(computeHash(family.number, key, read, level), { family.number, key, read, level }, [&] {
-        return computeMembersWhoseFieldCannotHold(m_program, family.allocatedMembers, key, read, level);
+        const Vector<FieldOfMember>& fields = cache.fieldsOfMembers.ensure(computeHash(family.number, key, level), { family.number, key, level }, [&] {
+            return computeFieldsOfMembers(m_program, family.allocatedMembers, key, level);
+        });
+        return computeMembersWhoseFieldCannotHold(m_program, fields.span(), read);
     });
 }
 

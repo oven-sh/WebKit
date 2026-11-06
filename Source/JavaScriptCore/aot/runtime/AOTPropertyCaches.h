@@ -17,9 +17,12 @@
 #include "CollectionScope.h"
 #include "Identifier.h"
 #include "RememberedSlot.h"
+#include <array>
 #include <atomic>
+#include <bit>
 #include <span>
 #include <tuple>
+#include <utility>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
@@ -28,7 +31,12 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-namespace JSC { namespace AOT {
+namespace JSC {
+
+class JSObject;
+class Symbol;
+
+namespace AOT {
 
 class CustomAccessorTable;
 class Image;
@@ -59,9 +67,13 @@ public:
         std::span<JSObject* const> changeableObjects;
     };
 
+    uint8_t& refillCountOf(SiteCache site) const { return m_refillCounts[&stateOf(site) - m_states]; }
+
     bool didMissBefore(SiteCache);
     void didMissRepeatedly(SiteCache site) { didMissBefore(site); }
     void didFailToFill(SiteCache);
+    void didFailToFillWithRun(SiteCache);
+    void didFindNothingToFill(SiteCache);
     void fill(SiteCache, const Slot&);
     void fill(SiteCache, const Slot&, const NamedFill&);
     void fill(SiteCache, const Slot&, std::span<const ChainDependence>);
@@ -69,6 +81,7 @@ public:
 
     void dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull) const final;
+    bool keepChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull, const CreatedMembers&) final;
 
     template<typename Visitor> void visitRoots(Visitor&);
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -80,12 +93,15 @@ public:
     }
 
 private:
-    bool tryWrite(SiteCache, const Slot&);
+    bool tryWrite(SiteCache, const Slot&, unsigned mostRefillsThatCount = SiteCacheState::maxRefillCount);
+    void waitLongerForNextFill(SiteCache, unsigned mostRefillsThatCount = SiteCacheState::maxRefillCount);
 
     State& m_state;
     const CustomAccessorTable& m_customAccessors;
     std::span<RememberedSlot<Slot>> m_slots;
     SiteCacheState* m_states { nullptr };
+    // How often the sites of a state were filled again. The stubs do not read it.
+    uint8_t* m_refillCounts { nullptr };
     uint64_t* m_sitesThatMissed { nullptr };
     ChainDependentOwnerID m_ownerID;
     RememberedSlotSet m_writtenRegions;
@@ -231,10 +247,14 @@ public:
     void remove(StructureID, const CachedName&, SlotAccess);
 
     void fileAbsenceFilterForStores(JSGlobalObject*, JSObject*);
+    // For a store to a field that the object lacks. The filter covers all the names of a Structure: it decides this store, and lets the stubs create the fields after this one.
+    bool addFilterAndCheckStoreCreatesOwnField(JSGlobalObject*, Object&, uint32_t identifierNumber);
     void didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull);
     void didStartWatchingReplacements();
     uint32_t absenceFilterGenerationForStores() const { return m_absenceFilterGenerationForStores; }
     bool wasChangedOnSomeChain(uint32_t identifierNumber) const { return m_namesChangedOnChains[identifierNumber / 64] >> identifierNumber % 64 & 1; }
+    // Like the stubs' branchIfChainMayHaveName(): no object on the prototype chain has an accessor or a read-only property with this name, so a store creates the object's own field.
+    bool storeCreatesOwnField(const Object&, uint32_t identifierNumber) const;
     void didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull);
     bool mayBeNameOfObjectPrototype(uint32_t identifierNumber) const { return m_namesOfObjectPrototypes[identifierNumber / 64] >> identifierNumber % 64 & 1; }
     const AbsenceFilter& absenceFilterFor(StructureID id) const { return m_absenceFilters[AbsenceFilter::indexFor(id.bits())]; }
@@ -242,9 +262,12 @@ public:
 
     void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) const final;
+    bool keepChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull, const CreatedMembers&) final;
 
     size_t removeDeadEntries(VM&, CollectionScope);
     void validate(VM&) const;
+    bool describesObjectOfOtherImage(Structure*) const;
+    void validateImageOfSlot(VM&, const Slot&, SlotAccess, UniquedStringImpl*) const;
 
     // An object of some chain that is changed first and reports behind that. A collection may end in between. No compiled code runs there, so validation leaves alone what the report is about to drop.
     class UnreportedChange {
@@ -266,17 +289,36 @@ public:
 private:
     using BitPerName = std::array<uint64_t, (FieldTableEntry::maxName + 1) / 64>;
 
+    void didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull);
+
+    // Pages of the VM: zero-filled, and untouched until first read or written.
+    struct Tables {
+        std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
+        BitPerName namesChangedOnChains;
+        BitPerName namesOfObjectPrototypes;
+        std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
+        std::array<NameOfText, NameOfText::numberOfEntries> namesOfTexts;
+    };
+
+    // The VM has tables like these for each image that it runs, and an instance reads those of its own image.
+    bool serves(const Instance&) const;
+
     VM& m_vm;
+    const Image* m_image;
     CustomAccessorTable m_customAccessors;
     RowDisplacementTable m_front;
     HashedSlotTable m_hashedTable;
     UncheckedKeyHashMap<UniquedStringImpl*, uint16_t, WTF::PtrHash<UniquedStringImpl*>> m_columnsByNameAddress;
-    std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> m_absenceFilters { };
+    Tables& m_tables;
+    std::array<AbsenceFilter, AbsenceFilter::numberOfFilters>& m_absenceFilters { m_tables.absenceFilters };
     uint32_t m_absenceFilterGenerationForStores { 1 };
-    BitPerName m_namesChangedOnChains { };
-    BitPerName m_namesOfObjectPrototypes { };
-    std::array<uint8_t, MissesOfPairs::numberOfCounters> m_missesOfPairs { };
-    std::array<NameOfText, NameOfText::numberOfEntries> m_namesOfTexts { };
+    uint32_t m_changesUnderNamesOnChains { 0 };
+    // The objects that the filters and the Object.prototype name sets describe.
+    ObjectsSeen m_filteredObjects;
+    BitPerName& m_namesChangedOnChains { m_tables.namesChangedOnChains };
+    BitPerName& m_namesOfObjectPrototypes { m_tables.namesOfObjectPrototypes };
+    std::array<uint8_t, MissesOfPairs::numberOfCounters>& m_missesOfPairs { m_tables.missesOfPairs };
+    std::array<NameOfText, NameOfText::numberOfEntries>& m_namesOfTexts { m_tables.namesOfTexts };
     Vector<JSObject*, 2> m_objectsWithUnreportedChange;
     bool m_hasInstance { false };
     bool m_isSharedByInstances { false };
@@ -300,7 +342,6 @@ public:
 
     SiteCaches& siteCaches() { return m_siteCaches; }
     WatchedValues& watchedValues() { return m_watchedValues; }
-    StringKeyCache& stringKeys() { return m_stringKeys; }
     VMPropertyCaches& tables() { return m_tables; }
 
     CachedName nameOf(uint32_t identifierNumber) const;
@@ -308,18 +349,36 @@ public:
 
     void cache(const CachedAccess&, const PropertyAnswer&);
     bool shouldFile(StructureID, UniquedStringImpl*, SlotAccess);
+    // The look that followed the last yes of shouldFile() changed the Structure of the receiver, so nothing is filed under the Structure that it came with. It changes the next object of that Structure too: the misses of the pair count anew.
+    void didFileNothing();
     bool countsNames() const { return !!m_countedFilings; }
     void countNamed(ASCIILiteral what, UniquedStringImpl* name);
     void countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name);
     void dumpNamedCounts(PrintStream&) const;
-    // A store by key is about to give an object of the Structure a name that no object of it has been given. A Structure is made for what comes again: the first such object becomes a dictionary,
-    // and the next one that is given the same name there, and whatever it is given behind that, makes Structures.
-    bool shouldMakeStructureForAdditionByKey(Structure*, UniquedStringImpl*);
-    void didMakeStructureForAdditionByKey(Structure* made) { m_structureMadeForAdditionByKey = made->id(); }
+    void remember(const FieldExit& exit) { placeOf(exit.structureBefore, exit.name) = exit; }
+    void forgetFieldExits() { m_fieldExits.fill({ }); }
+    FieldExit* findFieldExit(StructureID structureID, uint32_t name)
+    {
+        FieldExit& exit = placeOf(structureID, name);
+        return exit.field && exit.structureBefore == structureID && exit.name == name ? &exit : nullptr;
+    }
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
+    // The getter that a read of the name calls on every object with the Structure of this one. Runs no code of the program and allocates no cell.
+    JSValue findGetterAndFillSiteCache(SiteCache, JSCell* base, uint32_t identifierNumber);
+    void fileValueWithoutChangingObject(JSCell* base, uint32_t identifierNumber);
     void cacheFreeName(SiteCache, UniquedStringImpl*, SlotAccess, const PropertyAnswer&);
+    // The cell that a trap of a proxy is handed for the name. A slot names it and does not hold it. For a name of the program there is one, which is kept, so such a slot lasts as long as its Structure.
+    JSCell* keyForTraps(UniquedStringImpl*);
+    // The library keeps a field under the symbol in a form of its own. Whoever looks under the symbol with a key that is a value first calls the function on the compiled object that has the field, which puts the field in the form that every program may see.
+    void prepareHoldersBeforeLookupsUnder(Symbol*, JSObject* function);
+    JSObject* preparationBeforeLookupsUnder(UniquedStringImpl* uid) const { return m_preparationsBeforeLookups.isEmpty() ? nullptr : m_preparationsBeforeLookups.get(uid).function; }
+    bool hasPreparationsBeforeLookups() const { return !m_preparationsBeforeLookups.isEmpty(); }
+    bool isPreparingHolder() const { return m_isPreparingHolder; }
+    void setIsPreparingHolder(bool isPreparing) { m_isPreparingHolder = isPreparing; }
+    JSCell* holderLookedAtByName() const { return m_holderLookedAtByName; }
+    JSCell* exchangeHolderLookedAtByName(JSCell* holder) { return std::exchange(m_holderLookedAtByName, holder); }
 
     template<typename Visitor> void visitRoots(Visitor&);
     void didFinishCollection(VM&, CollectionScope);
@@ -334,8 +393,6 @@ private:
     static constexpr uint32_t bitsOfMissCount = 2;
     static constexpr uint32_t missesBeforeFiling = 2;
     static constexpr uint32_t storeMissesBeforeFiling = 1;
-    static constexpr uint32_t numberOfFirstAdditionsByKey = 1 << 12;
-    static constexpr uint32_t firstAdditionsByKeyPerSet = 8;
 
     void ensureChangesAreReported(std::span<JSObject* const>);
     bool canCache(Structure*, const PropertyAnswer&) const;
@@ -347,18 +404,72 @@ private:
     ChainDependentOwnerID m_tablesOwnerID;
     SiteCaches& m_siteCaches;
     WatchedValues m_watchedValues;
-    StringKeyCache m_stringKeys;
     Vector<Addition> m_additionsSinceCollection;
+    // Written under the lock of the caches.
+    UncheckedKeyHashMap<UniquedStringImpl*, JSCell*> m_keysForTraps;
+    struct PreparationBeforeLookups {
+        Symbol* symbol { nullptr };
+        JSObject* function { nullptr };
+    };
+    UncheckedKeyHashMap<UniquedStringImpl*, PreparationBeforeLookups> m_preparationsBeforeLookups;
+    bool m_isPreparingHolder { false };
+    // Compared, never read through.
+    JSCell* m_holderLookedAtByName { nullptr };
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
-    std::array<uint32_t, numberOfFirstAdditionsByKey> m_firstAdditionsByKey { };
-    uint32_t m_evictionSeed { 0 };
-    StructureID m_structureMadeForAdditionByKey;
+    uint8_t* m_counterOfPairToFile { nullptr };
+    FieldExit& placeOf(StructureID structureID, uint32_t name) { return m_fieldExits[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldExit::numberOfPlaces]; }
+    std::array<FieldExit, FieldExit::numberOfPlaces> m_fieldExits { };
     std::atomic<bool> m_shouldForgetMisses { false };
     std::unique_ptr<UncheckedKeyHashSet<uint64_t>> m_countedFilings;
     UncheckedKeyHashMap<String, uint64_t> m_namedCounts;
 };
 
 static_assert(RowDisplacementTable::maxColumn <= UINT16_MAX);
+
+// Which names objects were given that no object of their Structure had been given before. A State makes it when it is first asked for.
+class FirstAdditions {
+    WTF_MAKE_NONCOPYABLE(FirstAdditions);
+    WTF_MAKE_TZONE_ALLOCATED(FirstAdditions);
+public:
+    explicit FirstAdditions(State&);
+
+    // An object of the Structure is about to be given a name that no object of it has been given. A Structure is made for what comes again: the first such object becomes a dictionary,
+    // and the next one that is given the same name there, and whatever it is given behind that, makes Structures.
+    bool shouldMakeStructure(Structure*, UniquedStringImpl*);
+    void didMakeStructure(Structure* made) { m_structureMade = made->id(); }
+    // The object has become a dictionary for the names that it is given now. It is made flat when as many other objects have followed it as are remembered, when the code that fills it has returned to the event loop,
+    // or when somebody asks what its Structure says.
+    void didBeginToFill(VM&, JSObject*);
+    void finishFilling(VM&);
+    // Whether the object was being filled. It is so no longer.
+    bool forget(JSObject*);
+    // An object that is given a name and loses it, or is looked at between any two names, begins to be filled again and again, and each time its names are copied and Structures are made that nothing finds again.
+    // After a few times it makes Structures as ever, which come again.
+    bool mayBeginToFill(JSObject*) const;
+    size_t removeDeadEntries(VM&, CollectionScope);
+
+private:
+    static constexpr uint32_t numberOfPairs = 1 << 12;
+    static constexpr uint32_t pairsPerSet = 8;
+    static constexpr uint32_t numberOfObjectsBeingFilled = 8;
+
+    // Pages that are zero until they are written.
+    std::span<uint32_t, numberOfPairs> m_pairs;
+    uint32_t m_evictionSeed { 0 };
+    StructureID m_structureMade;
+    std::array<JSObject*, numberOfObjectsBeingFilled> m_objectsBeingFilled { };
+    uint32_t m_numberOfObjectsFilled { 0 };
+    static constexpr uint32_t numberOfObjectsCounted = 64;
+    static constexpr uintptr_t timesMask = 15;
+    static uint32_t placeOfTimes(JSObject* object) { return static_cast<uint32_t>(std::bit_cast<uintptr_t>(object) >> 4) * 0x9e3779b1u >> 26; }
+    // The address of an object, which ends in four zeros, and in their place how often it began to be filled. The addresses are compared and never followed, and a collection forgets them.
+    std::array<uintptr_t, numberOfObjectsCounted> m_timesObjectsBeganToFill { };
+};
+
+FirstAdditions& firstAdditionsOf(State&);
+void didFinishFilling(Structure*);
+// The names that an object has are copied into the table in which it is filled. An object that is given a name between two looks, again and again, is filled again and again: it may be so while it has few names.
+bool hasFewEnoughNamesToBeFilled(Structure*);
 
 } } // namespace JSC::AOT
 

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinLocationWatch.h"
 #include "AOTFlowResults.h"
 #include "AOTIRBuilder.h"
 #include "AOTPropertyAccessCache.h"
@@ -158,6 +159,16 @@ MembersUnderKey::MembersUnderKey(const Program& program, PropertyKeyID key)
     , m_kind(program.at(key).kind)
     , m_isIndexLike(program.isIndexLike(key))
 {
+    if (program.openedNames.isEmpty() || m_kind != PropertyKeyKind::Text) [[likely]]
+        return;
+    // A test run opens hundreds of names, and this is asked for every access by name.
+    StringID text = program.at(key).text;
+    if (!program.isOpenedSomewhere(text)) [[likely]]
+        return;
+    for (const OpenedName& opened : program.openedNames) {
+        if (opened.name == text)
+            m_holdersOpenedForKey.append(opened.holder);
+    }
 }
 
 BuiltinID MembersUnderKey::findOwnMember(BuiltinID holder) const
@@ -167,6 +178,8 @@ BuiltinID MembersUnderKey::findOwnMember(BuiltinID holder) const
 
 bool MembersUnderKey::isClosedKey(BuiltinID holder) const
 {
+    if (m_holdersOpenedForKey.contains(holder)) [[unlikely]]
+        return false;
     if (m_table.at(holder).flags.contains(BuiltinFlag::IsLockedObject))
         return true;
     if (m_isIndexLike)
@@ -250,7 +263,7 @@ static LocationProof proofOfLookup(const BuiltinTable& table, const MemberAnswer
 static BuiltinMemberAnswer answerFor(const BuiltinLookupContext& context, BuiltinID start, PropertyKeyID key, const BuiltinMemberLookup& found, BuiltinMemberName name)
 {
     const BuiltinTable& table = context.program.builtins();
-    BuiltinMemberAnswer answer { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown };
+    BuiltinMemberAnswer answer { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown, found.member };
     if (name.isPrivateAlias) {
         if (!answer.isFound() || !table.at(found.member).flags.contains(BuiltinFlag::HasPrivateAlias))
             return { };
@@ -267,6 +280,11 @@ BuiltinMemberAnswer findMemberFrom(const BuiltinLookupContext& context, BuiltinI
     if (!name)
         return { };
     const BuiltinTable& table = context.program.builtins();
+    // What the host keeps on the global object under a private name of the engine. Only the host stores there.
+    if (name.isPrivateAlias && table.canonicalID(holder) == table.canonicalID(Builtins::GlobalThis)) {
+        if (BuiltinID member = table.findOwnMember(Builtins::PrivateGlobals, name.name))
+            return { BuiltinMemberLookup::Outcome::Found, table.canonicalID(member), LocationProof::Constant, member };
+    }
     return answerFor(context, table.canonicalID(holder), key, table.findMember(holder, name.name), name);
 }
 
@@ -280,22 +298,61 @@ BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext& context, B
     BuiltinMemberLookup found = table.findForInstance(builtinClass, name.name);
     bool isOwnProperty = found.member && table.at(found.member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
     if (isOwnProperty && !name.isPrivateAlias)
-        return { BuiltinMemberLookup::Outcome::Found, table.canonicalID(found.member), LocationProof::Constant };
+        return { BuiltinMemberLookup::Outcome::Found, table.canonicalID(found.member), LocationProof::Constant, found.member };
     if (keyLookupOf(context.program, key) != KeyLookup::Ordinary)
-        return { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown };
+        return { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown, found.member };
     return answerFor(context, table.canonicalID(prototype), key, found, name);
+}
+
+BuiltinOverloadID findOwnSlotOfInstances(const BuiltinTable& table, BuiltinClassID builtinClass, BuiltinName name)
+{
+    BuiltinID member = table.findOwnPropertyOfInstances(builtinClass, name);
+    if (!member || table.receiverClassOf(member) != builtinClass)
+        return { };
+    for (BuiltinOverloadID id : table.overloadIDsOf(member)) {
+        if (table.at(id).code.implementation.kind == BuiltinImplementationKind::OwnSlot)
+            return id;
+    }
+    return { };
+}
+
+bool liesAtSamePlace(const BuiltinTable& table, BuiltinOverloadID ownSlot, BuiltinOverloadID otherOwnSlot)
+{
+    auto placeOf = [&](BuiltinOverloadID id) {
+        const BuiltinOverload& overload = table.at(id);
+        return propertyOffsetOfOwnSlot(table.at(table.receiverClassOf(overload.builtin)).type, overload.code.implementation.ownSlot.offset);
+    };
+    return placeOf(ownSlot) == placeOf(otherOwnSlot);
+}
+
+static bool canBeDeclaredByScript(const Program& program, PropertyKeyID key)
+{
+    return program.at(key).kind == PropertyKeyKind::Text && keyLookupOf(program, key) == KeyLookup::Ordinary;
+}
+
+// The global object has properties under symbols as under names: `globalThis[Symbol.for("registry")]`.
+static bool canHaveGlobalBinding(const Program& program, PropertyKeyID key)
+{
+    switch (program.at(key).kind) {
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
+    case PropertyKeyKind::CreatedSymbol:
+        return keyLookupOf(program, key) == KeyLookup::Ordinary;
+    case PropertyKeyKind::PrivateName:
+    case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static bool canBeShadowedByScript(const BuiltinLookupContext& context, PropertyKeyID key)
 {
-    if (isLockedLocation(context.program, Builtins::GlobalThis, key))
+    // No script can declare a symbol or a private name of the engine.
+    if (!canBeDeclaredByScript(context.program, key) || isLockedLocation(context.program, Builtins::GlobalThis, key))
         return false;
     return !context.flow.hasResults() || context.flow.unseenScriptsCanRun();
-}
-
-static bool canHaveGlobalBinding(const Program& program, PropertyKeyID key)
-{
-    return program.at(key).kind == PropertyKeyKind::Text && keyLookupOf(program, key) == KeyLookup::Ordinary;
 }
 
 FreeNameAnswer freeNameAnswerOf(const BuiltinLookupContext& context, PropertyKeyID key, bool seesScriptBindings)
@@ -328,7 +385,7 @@ Vector<MemberOfClasses, 4> methodsNamed(const BuiltinTable& table, BuiltinName n
         }
         existing->classes.append(builtinClass);
     }
-    AOT::sort(methods, { }, &MemberOfClasses::member);
+    AOT::sortInLine(methods, { }, &MemberOfClasses::member);
     return methods;
 }
 
@@ -385,27 +442,23 @@ std::optional<Value> tryMakeBuiltinConstant(const BuiltinTable& table, BuiltinID
     return constant;
 }
 
-// The first read of a member may add it to its holder, which decides where it stands among the holder's keys.
+// The holder adds the member behind the properties that it has when the member is first read. From the first copy of the holder on, its keys stand in that order.
 bool firstReadChangesListedKeys(const BuiltinTable& table, const FlowResults& flow, BuiltinID member)
 {
-    BuiltinID holder = table.at(member).holder;
-    if (!holder || holder == Builtins::GlobalThis || !flow.listsKeysOf(table.canonicalID(holder)))
-        return false;
-    // What a module exports is filled when the module runs.
-    BuiltinID root = holder;
-    while (BuiltinID above = table.at(root).holder)
-        root = above;
-    return root == Builtins::GlobalThis;
+    return table.at(member).isAddedAtFirstRead && flow.listsKeysOf(table.canonicalID(table.at(member).holder));
 }
 
-std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable& table, const FlowResults& flow, const Value& constant)
+bool onlyAddsMemberToHolder(const BuiltinTable& table, BuiltinID member)
 {
-    if (constant.opcode != Opcode::Builtin)
-        return std::nullopt;
-    if (!isMadeWithCodeOfLibrary(table, constant.builtin()) && !firstReadChangesListedKeys(table, flow, constant.builtin()))
+    return !isMadeWithCodeOfLibrary(table, member);
+}
+
+std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable& table, const FlowResults& flow, BuiltinID member)
+{
+    if (!isMadeWithCodeOfLibrary(table, member) && !firstReadChangesListedKeys(table, flow, member))
         return std::nullopt;
     Value initialization = IRBuilder::make(Opcode::InitializeBuiltin);
-    initialization.setBuiltin(constant.builtin());
+    initialization.setBuiltin(member);
     return initialization;
 }
 

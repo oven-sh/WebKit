@@ -99,7 +99,7 @@ void testStreamPayloads()
         { "TemplateString.raw"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1008), 4), Wire::none, Kind::IdOutOfRange },
         { "PropGet.key"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1009), 4), Wire::none, Kind::IdOutOfRange },
         { "Convert.declared"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1010), 3), fixture.countOf(List::Types), Kind::IdOutOfRange },
-        { "Builtin.builtin"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1011), 2), invalidExternal, Kind::IdOutOfRange },
+        { "Builtin.builtin"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1011), 3), invalidExternal, Kind::IdOutOfRange },
         { "TypeTest.testedType"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1013), 3), fixture.countOf(List::Types), Kind::IdOutOfRange },
         { "Data.data"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1014), 2), fixture.countOf(List::Data), Kind::IdOutOfRange },
         { "NewRegExp.pattern"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1016), 2), fixture.countOf(List::Strings), Kind::IdOutOfRange },

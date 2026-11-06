@@ -21,11 +21,18 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-TypeID ClassPart::contentsAt(unsigned indexInType) const
+TypeID ClassPart::writtenContentsAt(unsigned indexInType) const
 {
-    if (indexInType >= contents.size() || !contents[indexInType])
+    if (indexInType >= writtenContents.size() || !writtenContents[indexInType])
         return TypeTable::anything;
-    return contents[indexInType];
+    return writtenContents[indexInType];
+}
+
+std::optional<ProvenValue<TypeID>> ClassPart::provenContentsAt(unsigned indexInType) const
+{
+    if (!contentsAreProven)
+        return std::nullopt;
+    return Proven::byFlowOfContents(writtenContentsAt(indexInType));
 }
 
 static std::optional<uint8_t> indexInTypeOf(const BuiltinTable& builtins, BuiltinClassID builtinClass, ContentsSlot slot)
@@ -36,10 +43,22 @@ static std::optional<uint8_t> indexInTypeOf(const BuiltinTable& builtins, Builti
     return builtins.at(id).indexInType;
 }
 
-TypeID ClassPart::contentsAt(const BuiltinTable& builtins, ContentsSlot slot) const
+std::optional<ProvenValue<TypeID>> ClassPart::provenContentsAt(const BuiltinTable& builtins, ContentsSlot slot) const
+{
+    if (!contentsAreProven)
+        return std::nullopt;
+    return Proven::byFlowOfContents(writtenContentsAt(builtins, slot));
+}
+
+TypeID ClassPart::writtenContentsAt(const BuiltinTable& builtins, ContentsSlot slot) const
 {
     std::optional<uint8_t> indexInType = indexInTypeOf(builtins, builtinClass, slot);
-    return indexInType ? contentsAt(*indexInType) : TypeTable::anything;
+    return indexInType ? writtenContentsAt(*indexInType) : TypeTable::anything;
+}
+
+ExpectedType ClassPart::expectedContentsAt(const BuiltinTable& builtins, ContentsSlot slot) const
+{
+    return ExpectedType(writtenContentsAt(builtins, slot));
 }
 
 Type Type::fromPrimitives(uint16_t primitives)
@@ -127,7 +146,7 @@ Type Type::builtinClass(BuiltinClassID classID, std::span<const TypeID> contents
 {
     ClassPart part;
     part.builtinClass = classID;
-    part.contents.append(contents);
+    part.writtenContents.append(contents);
     Type type;
     type.classes.append(WTF::move(part));
     return type;
@@ -196,24 +215,9 @@ static bool hasOnlyObjectPart(const Type& type, ObjectPart part)
         && (part == ObjectPart::Builtins || type.builtins.isEmpty());
 }
 
-bool Type::hasOnlyLayouts(const TypeTable& types) const
+bool Type::hasOnlyLayouts() const
 {
-    return hasOnlyObjectPart(*this, ObjectPart::Layouts) && layouts && !types.at(layouts).hasMembersWithoutLayout;
-}
-
-bool Type::hasOnlyLayouts(const Program& program) const
-{
-    return hasOnlyLayouts(program.types);
-}
-
-bool hasMembersWithoutLayout(const TypeTable& types, const Type& type)
-{
-    return type.layouts && types.at(type.layouts).hasMembersWithoutLayout;
-}
-
-bool hasMembersWithoutLayout(const Program& program, const Type& type)
-{
-    return hasMembersWithoutLayout(program.types, type);
+    return hasOnlyObjectPart(*this, ObjectPart::Layouts) && layouts;
 }
 
 bool Type::isSingleValue() const
@@ -244,7 +248,7 @@ bool Type::isSingleValue() const
 
 LayoutID Type::singleLayout(const Program& program) const
 {
-    if (hasOnlyLayouts(program)) {
+    if (hasOnlyLayouts()) {
         std::span<const LayoutID> members = membersOf(program, *this);
         if (members.size() == 1)
             return members[0];
@@ -399,10 +403,11 @@ Type Type::withUntestableBuiltinsWidened() const
 
 static void canonicalizeInternalValue(Type& type)
 {
-    if ((type.opaque && type.environment) || type.hasObjects() || type.primitives & ~Primitive::Absent) {
-        uint16_t absent = type.primitives & Primitive::Absent;
+    constexpr uint16_t markers = Primitive::Absent | Primitive::Unspecified;
+    if ((type.opaque && type.environment) || type.hasObjects() || type.primitives & ~markers) {
+        uint16_t kept = type.primitives & markers;
         type = Type::anything();
-        type.primitives |= absent;
+        type.primitives |= kept;
         return;
     }
     Type canonical;
@@ -452,11 +457,11 @@ static void mergeClassParts(ClassPart& part, const ClassPart& other)
     part.provenPristine = part.provenPristine & other.provenPristine;
     if (part.arrayStorage != other.arrayStorage)
         part.arrayStorage = ArrayStorage::Other;
-    if (part.contents.size() < other.contents.size())
-        part.contents.grow(other.contents.size());
-    for (unsigned i = 0; i < part.contents.size(); ++i) {
-        if (part.contentsAt(i) != other.contentsAt(i))
-            part.contents[i] = TypeTable::anything;
+    if (part.writtenContents.size() < other.writtenContents.size())
+        part.writtenContents.grow(other.writtenContents.size());
+    for (unsigned i = 0; i < part.writtenContents.size(); ++i) {
+        if (part.writtenContentsAt(i) != other.writtenContentsAt(i))
+            part.writtenContents[i] = TypeTable::anything;
     }
 }
 
@@ -482,12 +487,12 @@ static void canonicalizeClasses(ClassParts& classes)
 
 static void canonicalizeContents(ClassPart& part)
 {
-    for (TypeID& contents : part.contents) {
+    for (TypeID& contents : part.writtenContents) {
         if (!contents)
             contents = TypeTable::anything;
     }
-    while (!part.contents.isEmpty() && part.contents.last() == TypeTable::anything)
-        part.contents.removeLast();
+    while (!part.writtenContents.isEmpty() && part.writtenContents.last() == TypeTable::anything)
+        part.writtenContents.removeLast();
 }
 
 static void canonicalizeObjects(Type& type)
@@ -523,8 +528,8 @@ void add(Hasher& hasher, const Type& type)
     add(hasher, type.integers.minimum, type.integers.maximum, type.stringLiterals, type.symbolLiterals, type.layouts, type.environment);
     add(hasher, static_cast<uint32_t>(type.classes.size()));
     for (const ClassPart& part : type.classes) {
-        add(hasher, part.builtinClass, part.contentsAreProven, part.provenPristine.toRaw(), part.arrayStorage, static_cast<uint32_t>(part.contents.size()));
-        for (TypeID contents : part.contents)
+        add(hasher, part.builtinClass, part.contentsAreProven, part.provenPristine.toRaw(), part.arrayStorage, static_cast<uint32_t>(part.writtenContents.size()));
+        for (TypeID contents : part.writtenContents)
             add(hasher, contents);
     }
     add(hasher, type.functions, type.builtins, type.regExpLiteralSet);

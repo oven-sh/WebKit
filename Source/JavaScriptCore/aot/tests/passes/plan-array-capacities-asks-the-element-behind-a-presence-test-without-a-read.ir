@@ -1,0 +1,46 @@
+# A loop asks whether the first element of a list of numbers and undefined is undefined, and then adds the element at its counter. Behind the tests for Double storage and for its position the answer is no, so nothing reads the first element there:
+# only the test of its position is left. The copy for storage that holds any value reads the element behind that test and asks whether it is a number. One that is none leaves where an absent one does
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sum" parameters=[{type=Array<undefined|number, proven>}] results=[{type=anything}] {
+    v1 = Integer
+    v2 = Double number=0.5
+    Jump -> next b1(v2, v1)
+  b1(v3: number, v4: int[0, 4294967295]):
+    LoopHint
+    v6 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b8()
+  b2(v8):
+    v9 = HasArrayStorage v0 arrayStorage=Double
+    Branch v9 -> taken b3(| 0), notTaken b6()
+  b3(v10):
+    v11 = IsElementPresent v0, v1, v10 arrayStorage=Double [keyIsIntegral]
+    Branch v11 -> taken b4(), notTaken b6()
+  b4():
+    v12 = IsElementPresent v0, v8, v10 arrayStorage=Double [keyIsIntegral]
+    Branch v12 -> taken b5(| 0), notTaken b7()
+  b5(v13):
+    v14 = AllGuards v10, v13
+    v15 = GetArrayElement v0, v8, v14 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    v16 = Add v3, v15
+    v17 = Increment v8
+    Jump -> next b1(v16, v17)
+  b6() frequency=Rare:
+    v18 = ElemGet v0, v1 [keyIsIntegral]
+    Return v18
+  b7() frequency=Rare:
+    v19 = ElemGet v0, v8 [keyIsIntegral]
+    Return v19
+  b8():
+    Return v3
+# CHECK: HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK: [[first]]: undefined|number = GetArrayElement v0, v1, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: [[isNumber]]: boolean = TypeTest [[first]] testedType=number
+# CHECK-NEXT: Branch [[isNumber]] -> taken {{*}}, notTaken [[leaves]](| 0)
+# CHECK: [[leaves]](
+# CHECK-NEXT: Jump -> next b6()
+}

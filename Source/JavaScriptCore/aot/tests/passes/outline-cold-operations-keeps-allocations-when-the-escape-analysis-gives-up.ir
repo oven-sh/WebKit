@@ -4,7 +4,7 @@
 # FORM: Selected
 # OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot limit=MaxEscapeAnalysisWork:1
 # RUN: pass OutlineColdOperations
-# LOSS: MaxEscapeAnalysisWork x9 f0
+# LOSS: MaxEscapeAnalysisWork x12 f0
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"

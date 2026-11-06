@@ -95,7 +95,7 @@ function f12 name="construct-under-upcast" parameters=[{type=f3}] results=[{type
     v2 = Construct v1
     Return v2
 # CHECK: [[object]]: L0 = NewObject layout=L0
-# CHECK-NEXT: = CallDirect [[object]], v0 function={{*}} [isConstruction]
+# CHECK-NEXT: = CallDirect [[object]], v0 function={{*}} [isConstruction, calleeIsPredicted]
 # CHECK-NOT: = Construct
 }
 function f13 name="method-read-under-cast" parameters=[{type=L0}] results=[{type=anything}] {

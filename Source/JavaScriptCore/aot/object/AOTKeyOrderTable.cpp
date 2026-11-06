@@ -22,6 +22,7 @@
 #include "JSPropertyNameEnumerator.h"
 #include "SlotVisitorInlines.h"
 #include "StructureChain.h"
+#include "Symbol.h"
 #include <algorithm>
 #include <cstddef>
 #include <wtf/FastMalloc.h>
@@ -46,6 +47,7 @@ static constexpr uint64_t maxTransitionLoadDenominator = 2;
 
 static constexpr uint32_t listsSymbolKeys = orderAndCountMask + 1;
 static_assert(!(listsSymbolKeys & orderAndCountMask));
+static_assert(static_cast<uint64_t>(KeyListKind::Symbols) * listsSymbolKeys + orderAndCountMask <= UINT32_MAX);
 
 namespace {
 
@@ -441,6 +443,7 @@ KeyOrderTable::KeyOrderTable(State& state)
     instance.objects.keyOrderTransitionMask = initialTransitionTableSize - 1;
     instance.objects.keyOrderRuns = static_cast<KeyOrderRun*>(state.pages.allocate(numberOfKeyOrderRuns * sizeof(KeyOrderRun)));
     instance.objects.enumerators = state.tableArena.allocate<EnumeratorCacheEntry>(numberOfCachedEnumerators);
+    instance.objects.keyOrderEntries = static_cast<KeyOrderEntriesCacheEntry*>(state.pages.allocate(numberOfCachedKeyOrderEntries * sizeof(KeyOrderEntriesCacheEntry)));
     state.caches->add(CacheKind::StrongRoots, "key lists"_s, *this);
     state.caches->addClearedEachCollection("published enumerators"_s, asWritableBytes(std::span { instance.objects.enumerators, numberOfCachedEnumerators }));
     state.caches->addClearedEachCollection("places of positioned keys"_s, asWritableBytes(std::span { m_placesOfPositionedKeys }));
@@ -454,6 +457,25 @@ std::span<const uint16_t> KeyOrderTable::entriesInOrder(const LayoutData& layout
     if (order < layout.numberOfOrders)
         return m_tables.keyOrder(layout, order).entries();
     return m_storage->entriesOf(layout, m_storage->ordersOf(layout), order);
+}
+
+const uint16_t* KeyOrderTable::publishEntriesOfFields(const LayoutData& layout, uint32_t orderWord)
+{
+    static constexpr uint16_t emptyEntries[1] { };
+    auto findEntries = [&]() -> const uint16_t* {
+        if (orderWord & (orderWordHasFieldOutsideSlot | orderWordHasExtraProperties) || isOrderStoredOutOfLine(orderWord) || layout.keysAreNeverEnumerated)
+            return nullptr;
+        std::span<const uint16_t> entries = entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord));
+        for (uint16_t index : entries) {
+            if (index >= layout.numberOfFields)
+                return nullptr;
+        }
+        return entries.empty() ? emptyEntries : entries.data();
+    };
+    const uint16_t* entries = findEntries();
+    uint32_t shapeWord = shapeWordOf(layout.shape);
+    m_state.instance.objects.keyOrderEntries[indexOfKeyOrderEntries(shapeWord, orderWord)] = { orderWord, shapeWord, entries };
+    return entries;
 }
 
 std::optional<std::span<const FieldAsProperty>> KeyOrderTable::propertiesInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord, Object::SymbolKeys symbolKeys)
@@ -479,32 +501,45 @@ std::optional<std::span<const FieldAsProperty>> KeyOrderTable::propertiesInOrder
     return created->fields();
 }
 
-JSCellButterfly* KeyOrderTable::keysInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord)
+JSCellButterfly* KeyOrderTable::keysInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord, KeyListKind kind)
 {
     orderWord &= orderAndCountMask;
     auto publish = [&](JSCellButterfly* list) {
-        uint32_t shapeWord = shapeWordOf(layout.shape);
-        m_state.instance.objects.keyLists[indexOfKeyList(shapeWord, orderWord)] = { orderWord, shapeWord, list };
+        uint32_t shapeWord = keyListWordOf(shapeWordOf(layout.shape), kind);
+        if (hasKeyListsInTable(kind, m_tables.numberOfShapes))
+            m_state.instance.objects.keyLists[indexOfKeyList(shapeWord, orderWord)] = { orderWord, shapeWord, list };
         return list;
     };
-    if (auto* known = m_storage->keyLists.find(layout.shape, orderWord))
+    KeyListKind listedKind = kind == KeyListKind::StringsAndSymbols && !layout.hasFieldsWithSymbolKeys ? KeyListKind::Strings : kind;
+    uint32_t key = orderWord + static_cast<uint32_t>(listedKind) * listsSymbolKeys;
+    if (auto* known = m_storage->keyLists.find(layout.shape, key))
         return publish(known->value);
     RuntimeLayoutTable& layouts = m_state.objects->layouts;
+    std::span<const uint16_t> entries = entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord));
     Vector<uint16_t, 16> listed;
-    for (uint16_t index : entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord))) {
+    for (uint16_t index : entries) {
         if (index >= layout.numberOfFields || layout.fields()[index].attributes())
             return nullptr;
-        if (layouts.hasStringKey(layout.fields()[index]))
+        if (listedKind != KeyListKind::Symbols && layouts.hasStringKey(layout.fields()[index]))
             listed.append(index);
+    }
+    size_t numberOfStrings = listed.size();
+    if (listedKind != KeyListKind::Strings) {
+        for (uint16_t index : entries) {
+            if (layouts.hasSymbolKey(layout.fields()[index]))
+                listed.append(index);
+        }
     }
     JSCellButterfly* list = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, listed.size());
     if (!list)
         return nullptr;
-    for (unsigned i = 0; i < listed.size(); ++i)
-        list->setIndex(vm, i, jsOwnedString(vm, String(layouts.nameOf(vm, layout.fields()[listed[i]]))));
+    for (unsigned i = 0; i < listed.size(); ++i) {
+        UniquedStringImpl* name = layouts.nameOf(vm, layout.fields()[listed[i]]);
+        list->setIndex(vm, i, i < numberOfStrings ? JSValue(jsOwnedString(vm, String(name))) : JSValue(Symbol::create(vm, static_cast<SymbolImpl&>(*name))));
+    }
     {
         Locker locker { m_state.caches->lock() };
-        m_storage->keyLists.add({ layout.shape, orderWord, list });
+        m_storage->keyLists.add({ layout.shape, key, list });
         m_writes.recordAll();
     }
     return publish(list);
@@ -565,8 +600,10 @@ const FieldData* KeyOrderTable::fieldAt(const LayoutData& layout, uint32_t slotK
     std::span<const FieldData> fields = layout.fields();
     FieldFoundLast& last = m_fieldsFoundLast[layout.shape % m_fieldsFoundLast.size()];
     size_t first = last.shape == layout.shape && last.next < fields.size() ? last.next : 0;
+    uint32_t offset = slotKey & ~outOfLineSlotKey;
+    bool isOutOfLine = slotKey & outOfLineSlotKey;
     auto hasKey = [&](const FieldData& field) {
-        return slotKeyFor(field.slot.offset, field.isOutOfLine()) == slotKey;
+        return field.slot.offset == offset && field.isOutOfLine() == isOutOfLine;
     };
     AOT_THRESHOLD(size_t, longestWalk, 16);
     auto fieldsBehind = fields.subspan(first, std::min(longestWalk, fields.size() - first));
@@ -594,6 +631,18 @@ size_t KeyOrderTable::indexOfFieldAt(const LayoutData& layout, uint32_t slotKey)
     auto found = std::ranges::lower_bound(keysAndIndexes, static_cast<uint64_t>(slotKey) << 32);
     RELEASE_ASSERT(found != keysAndIndexes.end() && *found >> 32 == slotKey);
     return static_cast<uint32_t>(*found);
+}
+
+std::optional<uint32_t> KeyOrderTable::stepInsideOrderOfImage(const LayoutData& layout, uint32_t orderWord, uint16_t entry) const
+{
+    uint32_t order = orderOf(orderWord);
+    if (orderWord & ~orderAndCountMask || order >= layout.numberOfOrders)
+        return std::nullopt;
+    std::span<const uint16_t> entries = m_tables.keyOrder(layout, order).entries();
+    uint32_t count = countOf(orderWord);
+    if (count >= entries.size() || entries[count] != entry)
+        return std::nullopt;
+    return orderWordOf(order, count + 1);
 }
 
 std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layout, uint32_t orderWord, uint16_t entry, Step step)
@@ -627,6 +676,26 @@ std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layo
     if (!storage.continuations.find(layout.shape, before, entry))
         storage.continuations.add({ layout.shape, before, entry, static_cast<uint16_t>(orderOf(*result)) });
     return publish(*result);
+}
+
+// No order continues another from the end of an added one: orderAfterCreating() and orderStartingWith() both make the added order longer there. So nothing is known or published about this step yet.
+std::optional<uint32_t> KeyOrderTable::tryAppendToAddedOrder(const LayoutData& layout, uint32_t orderWord, const FieldData& field)
+{
+    ASSERT(!(orderWord & ~orderAndCountMask) && !isOrderStoredOutOfLine(orderWord));
+    uint32_t order = orderOf(orderWord);
+    if (order < layout.numberOfOrders)
+        return std::nullopt;
+    Storage& storage = *m_storage;
+    AddedOrder*& added = storage.ordersOf(layout).addedOrders[order - layout.numberOfOrders];
+    uint32_t count = countOf(orderWord);
+    if (count != added->length || count >= runtimeLimitValue(*m_state.instance.vm, LimitID::FieldsInKeyOrder))
+        return std::nullopt;
+    uint16_t entry = static_cast<uint16_t>(layout.indexOf(field));
+    ASSERT(!storage.continuations.find(layout.shape, orderWord, entry));
+    storage.append(added, singleElementSpan(entry));
+    uint32_t after = orderWordOf(order, count + 1);
+    publishTransition(layout, orderWord, field, after);
+    return after;
 }
 
 JSPropertyNameEnumerator* KeyOrderTable::enumerator(const LayoutData& layout, uint32_t orderWord, StructureChain* prototypeChain) const

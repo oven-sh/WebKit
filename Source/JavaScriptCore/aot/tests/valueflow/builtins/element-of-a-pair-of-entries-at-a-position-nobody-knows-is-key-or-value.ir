@@ -1,0 +1,20 @@
+# entries = Object.entries({ x: 1, y: 2.5 }); return entries[0][entries.length]
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|int|fractional|string}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Double number=2.5
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectEntries
+    v5 = Call v4, v3, v2
+    v6 = Integer integer=0
+    v7 = ElemGet v5, v6
+    v8 = PropGet v5 key="length"
+    v9 = ElemGet v7, v8
+    Return v9
+}

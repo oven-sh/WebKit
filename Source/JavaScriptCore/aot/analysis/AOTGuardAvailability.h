@@ -10,6 +10,7 @@
 #include "AOTCFG.h"
 #include "AOTEffects.h"
 #include "AOTEscapeAnalysis.h"
+#include "AOTUseLists.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <memory>
@@ -17,7 +18,9 @@
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/IterationStatus.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -41,6 +44,7 @@ struct GuardFact {
     ValueID subject;
     Vector<MemoryLocation, 2> dependsOn;
     Vector<GuardOrigin, 1> origins;
+    ValueID position;
 
     bool proves(Proof proof) const { return proofs.contains(proof); }
     const GuardOrigin* singleOrigin() const LIFETIME_BOUND { return origins.size() == 1 ? &origins.first() : nullptr; }
@@ -69,6 +73,13 @@ ProofSet proofsOfAllocation(const Program&, const Function&, const Value& alloca
 bool allocationProves(const Program&, const Function&, const Value& allocation, const Value& test);
 ValueID guardedOperandOf(const Value& user);
 ProofSet proofsNeededFromGuard(const Program&, const Function&, const Value& user);
+// What a list of that length must be like to say that it keeps its length. Lists the reads of the length for whoever replaces them.
+bool isTouchedOnlyBelowLength(const Program&, const Function&, const UseLists&, ValueID list, int64_t length, Vector<ValueID, 4>* lengthReads = nullptr);
+using ParameterLocator = ScopedLambda<ValueLocation(ValueID parameter)>;
+using GuardOriginVisitor = ScopedLambda<IterationStatus(Proof, const GuardOrigin&)>;
+void forEachGuardOrigin(const Program&, const Function&, const CFG&, NOESCAPE const ParameterLocator&, ValueID guard, NOESCAPE const GuardOriginVisitor&);
+bool hasGuardForElementProofs(const Program&, const Function&, const CFG&, NOESCAPE const ParameterLocator&, const Value& access);
+bool hasGuardForWritableStorage(const Program&, const Function&, const CFG&, NOESCAPE const ParameterLocator&, const Value& store);
 bool haveSameCondition(FunctionAnalyses&, const Value& test, const Value& otherTest, uint32_t firstComparedOperand = 0);
 Vector<MemoryLocation, 2> locationsReadBy(const Value& test);
 Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof);
@@ -79,10 +90,25 @@ TestedSlotState slotStateTestedBy(const Value& test);
 TestedSlotState slotStateProvenBy(const Function&, const GuardFact&);
 bool leavesSlotsAsTested(const Program&, const Function&, const Value& writer, const Effects& effectsOfWriter, TestedSlotState);
 
+// The form of storage that was found, where that is all that was asked. Other: something else was asked.
+// For whoever asks how long a proof of the form lasts. The answer of the test, and the length, may change where the form stays: dependenciesOfGuardOf() leaves it Other.
+ArrayStorage arrayStorageTestedBy(const Value& test);
+ArrayStorage arrayStorageProvenBy(const Program&, const Function&, const GuardFact&);
+bool leavesArrayStorageAsTested(const Program&, const Function&, const Value& writer, const Effects& effectsOfWriter, ArrayStorage);
+
 // What these say of an object is about the fields of its layout and about the object as a whole, not about the properties it has beside the fields.
 inline constexpr ProofSet proofsLeftByPropertiesBesideFields { Proof::NoFieldOutsideSlot, Proof::NotFrozen };
 constexpr bool areLeftByPropertiesBesideFields(ProofSet proofs) { return !proofs.isEmpty() && (proofs | proofsLeftByPropertiesBesideFields) == proofsLeftByPropertiesBesideFields; }
+// So is the link to its prototype, where the object itself was asked for it: a class that is asked for its prototype answers from its guards.
+inline bool areLeftByPropertiesBesideFields(ProofSet proofs, std::span<const MemoryLocation> dependsOn)
+{
+    if (proofs == ProofSet { Proof::PrototypeLinkUnchanged })
+        return dependsOn.size() == 1 && dependsOn[0] == MemoryLocation(AbstractHeap::PrototypeLinks);
+    return areLeftByPropertiesBesideFields(proofs);
+}
 bool definesPropertyBesideFields(const Program&, const Value& writer, const Effects& effectsOfWriter, const Value& object);
+// `Object.defineProperty(exports, "__esModule", { value: true })`, whichever object it is called on.
+bool definesDataPropertyAsLayoutDeclares(FunctionAnalyses&, const Value& writer, const Value& object);
 
 struct DependedLocations {
     DependedLocations() = default;
@@ -92,6 +118,7 @@ struct DependedLocations {
     Vector<uint64_t, 2> masksOfLocations;
     LocationMasks masks;
     TestedSlotState slotState { TestedSlotState::None };
+    ArrayStorage arrayStorage { ArrayStorage::Other };
     bool isLeftByPropertiesBesideFields { false };
 };
 
@@ -228,7 +255,7 @@ private:
     void collectGuards();
     void computeFacts();
     GuardFacts factsAfterEdge(const GuardFacts& factsBeforeEdge, Edge) const;
-    std::optional<ValueID> subjectBeforeEdge(ValueID subjectAfterEdge, Edge) const;
+    std::optional<ValueID> valueBeforeEdge(ValueID valueAfterEdge, Edge) const;
     bool leavesUnspecified(Edge, ValueID subjectAfterEdge) const;
     GuardFacts meetFactsAfterEdges(std::span<const Edge>, std::span<const GuardFacts> factsAfterEdges) const;
     GuardFacts meetFacts(const GuardFacts&, const GuardFacts&) const;
@@ -238,7 +265,9 @@ private:
     bool originImplies(const GuardOrigin&, const GuardOrigin& implied, ProofSet) const;
     bool isAsStrongAs(const GuardFact&, const GuardFact& other) const;
     bool tryWiden(GuardFact&, const GuardFacts& factsOnOtherWay) const;
-    bool implies(const GuardFact& fact, const GuardFact& implied) const { return fact.subject == implied.subject && isAsStrongAs(fact, implied); }
+    // One number written twice is one position: each block has constants of its own.
+    bool isSamePosition(ValueID, ValueID) const;
+    bool implies(const GuardFact& fact, const GuardFact& implied) const { return fact.subject == implied.subject && isSamePosition(fact.position, implied.position) && isAsStrongAs(fact, implied); }
     bool anyImplies(const GuardFacts&, const GuardFact& implied) const;
     bool hasEquivalentFact(const GuardFacts&, const GuardFact&) const;
 
@@ -267,12 +296,14 @@ private:
     void addKill(BlockID, uint32_t index, BitVector&& killClasses) const;
 
     void applyDefinitions(BitVector& available, const BitVector& guardIndexes, BlockID, uint32_t index) const;
+    void walk(BitVector& available, BlockID, uint32_t firstIndex, uint32_t endIndex) const;
+    const Cursor& cursorAt(ProgramPoint) const LIFETIME_BOUND;
     void applyKills(BitVector& available, BlockID, uint32_t index) const;
     void enterEdge(BitVector& available, const BitVector& guardIndexes, Edge) const;
     enum class KillsOfSolve : bool { No, Yes };
     bool isProvenOnEdge(Edge, const EdgeResult&, const Component&, KillsOfSolve) const;
     bool isAvailableBeforeEdge(const BitVector& available, Edge, ValueID guard, const GuardFact& factAfterEdge) const;
-    bool isAvailableIn(const BitVector& available, ValueID guard, const GuardFact&, ValueID subject) const;
+    bool isAvailableIn(const BitVector& available, ValueID guard, const GuardFact&, ValueID subject, ValueID position) const;
     bool ends(const Kill& kill, uint32_t killClass) const { return m_solution.killSets[kill.killSet].killClasses.get(killClass); }
     std::span<const Kill> killsIn(BlockID block) const LIFETIME_BOUND { return m_solution.killsOfBlock[block.index()].span(); }
     std::span<const Kill> killsAt(ProgramPoint point) const LIFETIME_BOUND { return std::span<const Kill>(std::ranges::equal_range(killsIn(point.block), point.index, { }, &Kill::index)); }
@@ -299,6 +330,8 @@ private:
     Vector<uint32_t> m_killClassesBySubject;
     uint32_t m_numberOfKillClassesOfNamedGuards { 0 };
     mutable Solution m_solution;
+    // Where the last question about one point was asked. Passes ask in the order of the block, so the next question is mostly a few values further on.
+    mutable std::optional<Cursor> m_cursorOfLastQuestion;
 };
 
 enum class EarlierTest : uint8_t { Unknown, Failed };

@@ -27,7 +27,7 @@
 # APPLY: addedKeysAreComplete=true isReachedThroughUnknownReceivers=true}
 # APPLY: layout L4 name="Kept" flow=
 # APPLY-NOT: addedKeys=
-# APPLY: addedKeysAreComplete=true}
+# APPLY: addedKeysAreComplete=true neverEscapes=true}
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

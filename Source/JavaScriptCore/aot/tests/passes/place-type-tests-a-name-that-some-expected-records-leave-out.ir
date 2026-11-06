@@ -1,0 +1,67 @@
+# In the library: function read(options, context) { return [options.encoding, context.limit, options.wide] }  In the program: read({ wide: 1 }, context)  read({ wide: 1, encoding: 2 }, context)  publish(read)
+# Anybody may call read(), so nothing is proven of its options. Both records of the program were seen to arrive, and one of them does not list `encoding`.
+# The read gets an arm for either record in front of the tests, the arms meet again, and `context.limit` and `options.wide` are read from their slots for both.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Narrow" fields=[{key="wide" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Whole" fields=[{key="wide" declared={type=number} flags=[IsRequired]}, {key="encoding" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Context" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Integer integer=5
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = NewObject -, v2 layout=L2 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v4, v8
+    v11 = Call v9, -, v6, v8
+    v12 = NewClosure function=f2
+    v13 = Call v12, -, v4, v8
+    v14 = Call v12, -, v6, v8
+    v15 = Call v1, -, v9, v10, v11, v12, v13, v14
+    Return v15
+}
+function f1 name="read" module=m1 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="encoding"
+    v3 = PropGet v1 key="limit"
+    v4 = PropGet v0 key="wide"
+    v5 = NewArray v2, v3, v4
+    Return v5
+# CHECK: [[holds]]: boolean ~ true = TypeTest v0 testedType=L1
+# CHECK-NEXT: Branch [[holds]] -> taken [[whole]](| 0), notTaken [[other]](| 0)
+# CHECK: [[whole]]({{*}}: L1):
+# CHECK: Jump -> next [[meet]]({{*}})
+# CHECK: [[other]]([[rest]]: anything):
+# CHECK-NEXT: [[lacks]]: boolean = TypeTest [[rest]] testedType=L0
+# CHECK-NEXT: Branch [[lacks]] -> taken [[narrow]](| 0), notTaken [[copy]]()
+# CHECK: = GetSlot {{*}} key="limit" receivers=[L2]
+# CHECK: = GetSlot {{*}} key="wide" receivers=[L0, L1]
+# CHECK: [[narrow]]({{*}}: L0):
+# CHECK-NEXT: [[nothing]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next [[meet]]([[nothing]])
+# CHECK: [[copy]]() frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[rest]] key="encoding"
+}
+
+# The same function written in the program: a test for the record that lists the name, as ever.
+function f2 name="readInProgram" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="encoding"
+    v3 = PropGet v1 key="limit"
+    v4 = PropGet v0 key="wide"
+    v5 = NewArray v2, v3, v4
+    Return v5
+# CHECK: [[listed]]: boolean ~ true = TypeTest v0 testedType=L1
+# CHECK-NEXT: Branch [[listed]] -> taken {{*}}(| 0), notTaken [[leaves]]()
+# CHECK-NOT: = Undefined
+# CHECK: [[leaves]]() frequency=Unlikely:
+}

@@ -1,0 +1,77 @@
+# function on(type, listener) { table[type] = listener }  on("one", first); on("other", second); caller: (which ? table : spare).one()
+# Each way has a read of its own under the key and they meet in front of the call, as they do where the table itself is found on a likely and on a rare way. The call tests for the closure that was stored under that key and enters it.
+# Where the ways read under two keys nothing is expected.
+# FORM: AsRead
+# RUN: pipeline ChooseCallingConventions
+# OPTIONS: check=VerifyEachPass heat=EverythingIsHot
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="table" module=m0 declared={type=anything}
+variable g1 name="spare" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = Call v1
+    PutModuleVariable v2 variable=g0
+    v4 = Call v1
+    PutModuleVariable v4 variable=g1
+    v6 = NewClosure function=f3
+    v7 = NewClosure function=f1
+    v8 = NewClosure function=f2
+    v9 = String string="one"
+    v10 = String string="other"
+    v11 = Call v6, -, v9, v7
+    v12 = Call v6, -, v10, v8
+    v13 = ToBoolean v2
+    v14 = CallDirect v13 function=f4
+    v15 = CallDirect v13 function=f5
+    Return v15
+}
+function f1 name="first" results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="second" results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="on" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v2 = GetModuleVariable variable=g0
+    ElemSet v2, v0, v1
+    Return
+}
+function f4 name="oneKey" parameters=[{type=boolean}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+  b0(v0):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="one"
+    Jump -> next b3(v2)
+  b2():
+    v3 = GetModuleVariable variable=g1
+    v4 = PropGet v3 key="one"
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = Call v5
+    Return v6
+# CHECK: [[isFirst]]: boolean = IsClosureOf {{*}} function=f1
+# CHECK-NEXT: Branch [[isFirst]] -> taken
+# CHECK: = CallDirect function=f1 {{*}}[calleeIsPredicted]
+}
+function f5 name="twoKeys" parameters=[{type=boolean}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+  b0(v0):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="one"
+    Jump -> next b3(v2)
+  b2():
+    v3 = GetModuleVariable variable=g1
+    v4 = PropGet v3 key="other"
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = Call v5
+    Return v6
+# CHECK-NOT: IsClosureOf
+}

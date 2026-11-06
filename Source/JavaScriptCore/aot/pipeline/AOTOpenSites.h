@@ -47,6 +47,7 @@ enum class SiteList : uint8_t {
     GlobalNames,
     CallSites,
     Accesses,
+    ElementReads,
     TypedResultCalls,
 };
 

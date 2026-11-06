@@ -9,18 +9,28 @@ layout L1 name="Point" fields=[{key="x" declared={type=number} flow={location={w
 layout L2 name="Crate" fields=[{key="link" declared={type=L0} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="any" declared={type=anything}}] flow={constructorOrders=[{fields=[0, 1]}]}
 
 # CHECK: function {{*}}creator=Serializer{layout=L0}
-# CHECK-NEXT: b0(v0: object, v1: stringbuilder):
+# CHECK-NEXT: b0(v0: object, v1: stringbuilder, v2: int[0, 105536]):
 # CHECK: [[hasSpace0]]: boolean = JSONHasStackSpace [failsAtWatchedLevels]
 # CHECK-NEXT: Branch [[hasSpace0]] -> taken [[body0]](), notTaken [[asks0]]()
 # CHECK: [[gaveUp0]]() frequency=Rare:
 # CHECK-NEXT: [[zero0]]: 0 = Integer
 # CHECK-NEXT: Return [[zero0]]
+# CHECK-NEXT: {{*}}([[levelsAround0]]: int[0, 40000]):
+# The record opens two levels, itself and its list, so 39,998 may be open around it. The host is told how many are, in the place of a holder.
+# CHECK: = JSONEnterHolder v1, [[levelsAround0]]
+# CHECK-NEXT: = StringBuilderAppendJSON v1,
+# CHECK: [[body0]]():
+# CHECK-NEXT: [[limit0]]: 39999 = Integer integer=39999
+# CHECK-NEXT: [[hasRoom0]]: boolean = Less v2, [[limit0]]
+# CHECK-NEXT: Branch [[hasRoom0]] -> taken {{*}}, notTaken [[tooDeep0]](
 # CHECK: [[asks0]]() frequency=Rare:
 # CHECK-NEXT: [[goesOn0]]: boolean = JSONEnterWatchedLevel v1, v0
 # CHECK-NEXT: Branch [[goesOn0]] -> taken [[yes0]](), notTaken [[no0]]()
 # CHECK: [[yes0]]() frequency=Rare:
 # CHECK-NEXT: Jump -> {{*}}[[body0]]()
 # CHECK: [[no0]]() frequency=Rare:
+# CHECK-NEXT: Jump -> {{*}}[[gaveUp0]]()
+# CHECK: [[tooDeep0]]({{*}}) frequency=Rare:
 # CHECK-NEXT: Jump -> {{*}}[[gaveUp0]]()
 
 # CHECK: function {{*}}creator=Serializer{layout=L1}

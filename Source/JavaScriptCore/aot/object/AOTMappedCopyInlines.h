@@ -24,7 +24,7 @@ namespace JSC { namespace AOT {
 
 // False where the slot holds nothing. The type of what store gets is as wide as the slot of the target. What takes more than loads is left to moveInOtherWay.
 template<typename Store, typename Functor>
-ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move, const uint8_t* slot, const Store& store, const Functor& moveInOtherWay)
+ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move, const uint8_t* slot, const Store& store, const Functor& moveInOtherWay, const uint32_t* literalStrings = nullptr)
 {
     using Kind = MappedCopy::MoveKind;
     auto load = [&]<typename T>(T) ALWAYS_INLINE_LAMBDA {
@@ -53,6 +53,30 @@ ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move,
         return storeUnless(load(uint64_t()), traitsOf(SlotRepresentation::OptionalInt64).absentBits);
     case Kind::OptionalDouble:
         return storeUnless(load(uint64_t()), traitsOf(SlotRepresentation::OptionalDouble).absentBits);
+    case Kind::OptionalInt64UnlessMarker:
+    case Kind::OptionalDoubleUnlessMarker: {
+        static_assert(undefinedInteger < nullInteger && nullInteger < absentInteger && maxSlotInteger < undefinedInteger);
+        static_assert(undefinedDouble < nullDouble && nullDouble < absentDouble && PNaNAsBits < undefinedDouble);
+        static_assert(static_cast<uint64_t>(absentInteger - undefinedInteger) == absentDouble - undefinedDouble);
+        uint64_t bits = load(uint64_t());
+        if (bits - (move.kind == Kind::OptionalInt64UnlessMarker ? static_cast<uint64_t>(undefinedInteger) : undefinedDouble) <= absentDouble - undefinedDouble) [[unlikely]]
+            return moveInOtherWay();
+        return storeAlways(bits);
+    }
+    case Kind::OptionalBooleanUnlessMarker: {
+        static_assert((JSValue::ValueFalse | 1) == JSValue::ValueTrue);
+        uint8_t bits = load(uint8_t());
+        if ((bits | 1) != JSValue::ValueTrue) [[unlikely]]
+            return moveInOtherWay();
+        return storeAlways(bits);
+    }
+    case Kind::JSValueUnlessMarker: {
+        static_assert(JSValue::ValueEmpty < JSValue::ValueUndefined && JSValue::ValueNull < JSValue::ValueUndefined);
+        uint64_t bits = load(uint64_t());
+        if (bits <= JSValue::ValueUndefined) [[unlikely]]
+            return moveInOtherWay();
+        return storeAlways(bits);
+    }
     case Kind::Word:
         return storeAlways(load(uint64_t()));
     case Kind::HalfWord:
@@ -67,6 +91,25 @@ ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move,
         if (integer < minInlineInt32) [[unlikely]]
             return integer != absentInt32 && moveInOtherWay();
         return storeAlways(move.kind == Kind::BoxedOptionalInt32 ? static_cast<uint64_t>(JSValue::encode(jsNumber(integer))) : std::bit_cast<uint64_t>(static_cast<double>(integer)));
+    }
+    case Kind::OptionalInt32AsOptionalInt64: {
+        int32_t integer = load(int32_t());
+        if (integer < minInlineInt32) [[unlikely]]
+            return integer != absentInt32 && moveInOtherWay();
+        return storeAlways(static_cast<uint64_t>(static_cast<int64_t>(integer)));
+    }
+    case Kind::Int32AsInt64:
+        return storeAlways(static_cast<uint64_t>(static_cast<int64_t>(load(int32_t()))));
+    case Kind::BoxedOptionalInt64:
+    case Kind::OptionalInt64AsOptionalInt32:
+    case Kind::OptionalInt64AsDouble: {
+        int64_t wideInteger = load(int64_t());
+        int32_t integer = static_cast<int32_t>(wideInteger);
+        if (integer != wideInteger || integer < minInlineInt32) [[unlikely]]
+            return wideInteger != absentInteger && moveInOtherWay();
+        if (move.kind == Kind::OptionalInt64AsOptionalInt32)
+            return storeAlways(static_cast<uint32_t>(integer));
+        return storeAlways(move.kind == Kind::BoxedOptionalInt64 ? static_cast<uint64_t>(JSValue::encode(jsNumber(integer))) : std::bit_cast<uint64_t>(static_cast<double>(integer)));
     }
     case Kind::BoxedInt32:
         return storeAlways(static_cast<uint64_t>(JSValue::encode(jsNumber(load(int32_t())))));
@@ -89,6 +132,64 @@ ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move,
         if (bits - cellCageBase >= MarkedBlockCage::maxSize) [[unlikely]]
             return bits && moveInOtherWay();
         return storeAlways(static_cast<uint32_t>(bits >> MarkedBlockCage::shift));
+    }
+    case Kind::NarrowLiteralString: {
+        // The word of a literal string names its cell once somebody has made it.
+        uint32_t word = load(uint32_t());
+        if (isLiteralStringWord(word))
+            word = literalStrings[literalStringIndex(word)];
+        if (word <= undefinedCell32) [[unlikely]]
+            return load(uint32_t()) != absentCell32 && moveInOtherWay();
+        return storeAlways(word);
+    }
+    case Kind::WideLiteralString: {
+        uint64_t bits = load(uint64_t());
+        if (isLiteralStringWord(bits)) {
+            uint32_t word = literalStrings ? literalStrings[literalStringIndex(static_cast<uint32_t>(bits))] : 0;
+            if (!word) [[unlikely]]
+                return moveInOtherWay();
+            return storeAlways(std::bit_cast<uint64_t>(MarkedBlockCage::decode(cellCageBase, word)));
+        }
+        if (bits <= JSValue::ValueUndefined) [[unlikely]]
+            return bits != JSValue::ValueEmpty && moveInOtherWay();
+        return storeAlways(bits);
+    }
+    case Kind::BoxedAsInt32:
+    case Kind::BoxedAsInt64:
+    case Kind::BoxedAsDouble: {
+        JSValue value = JSValue::decode(load(uint64_t()));
+        if (value.isInt32()) [[likely]] {
+            int32_t integer = value.asInt32();
+            if (integer < move.leastInt32 || integer > move.greatestInt32) [[unlikely]]
+                return moveInOtherWay();
+            if (move.kind == Kind::BoxedAsInt32)
+                return storeAlways(static_cast<uint32_t>(integer));
+            return storeAlways(move.kind == Kind::BoxedAsInt64 ? static_cast<uint64_t>(static_cast<int64_t>(integer)) : std::bit_cast<uint64_t>(static_cast<double>(integer)));
+        }
+        if (move.kind == Kind::BoxedAsDouble && value.isDouble() && move.acceptedKinds & static_cast<uint8_t>(ValueKind::Double))
+            return storeAlways(std::bit_cast<uint64_t>(withoutPayload(value.asDouble())));
+        return moveInOtherWay();
+    }
+    case Kind::BoxedAsNarrowString: {
+        JSValue value = JSValue::decode(load(uint64_t()));
+        if (!value.isCell() || !value.asCell()->isString()) [[unlikely]]
+            return moveInOtherWay();
+        return storeAlways(static_cast<uint32_t>(load(uint64_t()) >> MarkedBlockCage::shift));
+    }
+    case Kind::BoxedAsJSValue: {
+        JSValue value = JSValue::decode(load(uint64_t()));
+        bool isTaken;
+        if (value.isInt32())
+            isTaken = value.asInt32() >= move.leastInt32 && value.asInt32() <= move.greatestInt32;
+        else if (value.isCell())
+            isTaken = value && value.asCell()->isString() && move.acceptedKinds & static_cast<uint8_t>(ValueKind::String);
+        else if (value.isDouble())
+            isTaken = move.acceptedKinds & static_cast<uint8_t>(ValueKind::Double);
+        else
+            isTaken = value.isBoolean() && move.acceptedKinds & static_cast<uint8_t>(value.isTrue() ? ValueKind::True : ValueKind::False);
+        if (!isTaken) [[unlikely]]
+            return moveInOtherWay();
+        return storeAlways(load(uint64_t()));
     }
     case Kind::OtherForm:
     case Kind::Tested:
@@ -121,7 +222,7 @@ ALWAYS_INLINE bool tryCopyByFieldMapWithoutFrame(Instance& instance, JSCell* tar
     const uint8_t* cellOfSource = reinterpret_cast<const uint8_t*>(source);
     uint64_t targetWords = *reinterpret_cast<const uint64_t*>(cellOfTarget + offsetOfOrderWord);
     uint64_t sourceWords = *reinterpret_cast<const uint64_t*>(cellOfSource + offsetOfOrderWord);
-    const MappedCopy* copy = instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(targetWords, sourceWords, excludedRunNumberPlusOne)];
+    const MappedCopy* copy = instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(targetWords, sourceWords, excludedRunNumberPlusOne)];
     if (!copy || copy->targetWords != targetWords || copy->sourceWords != sourceWords || copy->excludedRunNumberPlusOne != excludedRunNumberPlusOne)
         return false;
     if (copy->structureOfTarget != target->structureID() || copy->structureOfSource != source->structureID())
@@ -131,15 +232,31 @@ ALWAYS_INLINE bool tryCopyByFieldMapWithoutFrame(Instance& instance, JSCell* tar
 
     std::array<const uint8_t*, 2> storagesOfSource { cellOfSource, nullptr };
     if (copy->granuleBitsOfSource) {
-        const uint8_t* word = cellOfSource + copy->offsetOfExtensionWordInSource;
-        if (copy->extensionWordOfSourceIsWide) [[unlikely]] {
-            storagesOfSource[1] = *reinterpret_cast<const uint8_t* const*>(word);
-            if (!storagesOfSource[1])
+        if (copy->readsOrdinaryObject && !copy->granuleBitsFilled) {
+            for (const MappedCopy::Move& move : copy->moves) {
+                uint8_t* slotOfTarget = cellOfTarget + move.to;
+                bool didMove = tryMove(instance.cellCageBase, move, cellOfSource + move.from, [&]<typename T>(T bits) ALWAYS_INLINE_LAMBDA {
+                    *reinterpret_cast<T*>(slotOfTarget) = bits;
+                }, [] {
+                    return false;
+                });
+                if (!didMove) [[unlikely]]
+                    return clearFieldsMovedInVain(*copy, &move, target);
+            }
+            *reinterpret_cast<uint32_t*>(cellOfTarget + offsetOfOrderWord) = copy->orderWordAfter;
+            return true;
+        }
+        if (!copy->readsOrdinaryObject) {
+            const uint8_t* word = cellOfSource + copy->offsetOfExtensionWordInSource;
+            if (copy->extensionWordOfSourceIsWide) [[unlikely]] {
+                storagesOfSource[1] = *reinterpret_cast<const uint8_t* const*>(word);
+                if (!storagesOfSource[1])
+                    return false;
+            } else
+                storagesOfSource[1] = reinterpret_cast<const uint8_t*>(MarkedBlockCage::decode(instance.cellCageBase, *reinterpret_cast<const uint32_t*>(word))) + offsetOfEmptyExtensionInCage;
+            if (*reinterpret_cast<const uint64_t*>(storagesOfSource[1] + offsetOfExtensionGranuleBits) != copy->granuleBitsOfSource)
                 return false;
-        } else
-            storagesOfSource[1] = reinterpret_cast<const uint8_t*>(MarkedBlockCage::decode(instance.cellCageBase, *reinterpret_cast<const uint32_t*>(word))) + offsetOfEmptyExtensionInCage;
-        if (*reinterpret_cast<const uint64_t*>(storagesOfSource[1] + offsetOfExtensionGranuleBits) != copy->granuleBitsOfSource)
-            return false;
+        }
     }
     std::array<uint8_t*, 2> storagesOfTarget { cellOfTarget, nullptr };
     if (copy->granuleBitsFilled) {
@@ -171,7 +288,7 @@ ALWAYS_INLINE bool tryCopyByFieldMapWithoutFrame(Instance& instance, JSCell* tar
             *reinterpret_cast<T*>(slotOfTarget) = bits;
         }, [] {
             return false;
-        });
+        }, instance.runtime.constants.literalStrings);
         if (!didMove) [[unlikely]]
             return clearFieldsMovedInVain(*copy, &move, target);
     }

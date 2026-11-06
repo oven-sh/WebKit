@@ -48,6 +48,13 @@ public:
 
     void didFinish(ASCIILiteral phase);
     static size_t residentMegabytes();
+    static size_t peakResidentMegabytes();
+    static size_t takePeakResidentMegabytesSinceLastTaken();
+    struct PeakResidentMegabytes {
+        size_t ofProcess { 0 };
+        size_t sinceLastTaken { 0 };
+    };
+    static PeakResidentMegabytes takePeakResidentMegabytes();
 
 private:
     PhaseTimes(BuildContext&, ASCIILiteral namePrefix, ASCIILiteral name, std::optional<Stage> timedStage, PassID);

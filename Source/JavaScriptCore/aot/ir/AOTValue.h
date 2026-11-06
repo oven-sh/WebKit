@@ -491,6 +491,27 @@ private:
         if (m_hasOutOfLineWords)
             fastFree(outOfLineWords().storage);
     }
+
+public:
+    void appendWordsTo(BodyWords& stream) const
+    {
+        if (!m_hasOutOfLineWords)
+            return;
+        OutOfLineWords words = outOfLineWords();
+        stream.append(std::span<const uint32_t> { words.storage, outOfLineHeaderSize + static_cast<size_t>(words.numberOfPayloadWords) + words.numberOfOperands() });
+    }
+    // This is a copy, byte for byte, of an instruction that was written with appendWordsTo().
+    void takeWordsFrom(BodyWordsReader& reader)
+    {
+        if (!m_hasOutOfLineWords)
+            return;
+        OutOfLineWords former = outOfLineWords();
+        uint32_t numberOfOperands = reader.peek(1);
+        size_t numberOfWordsBehindHeader = static_cast<size_t>(former.numberOfPayloadWords) + numberOfOperands;
+        OutOfLineWords words = allocateWords(former.numberOfNamedOperands, numberOfOperands, numberOfOperands, former.numberOfPayloadWords);
+        memcpy(words.payload(), reader.take(outOfLineHeaderSize + numberOfWordsBehindHeader).data() + outOfLineHeaderSize, numberOfWordsBehindHeader * sizeof(uint32_t));
+        setOutOfLineWords(words);
+    }
 };
 
 struct Value : Instruction {

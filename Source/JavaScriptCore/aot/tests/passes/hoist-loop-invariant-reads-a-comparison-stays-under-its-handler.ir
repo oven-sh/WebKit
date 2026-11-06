@@ -1,0 +1,69 @@
+# A comparison of two values nobody knows is declared to throw, where it flattens a rope and memory runs out. In a loop inside `try` it does not go in front of the `try`: the error would pass the `catch`. Where the way into the loop stands under the same handler it goes there, and two numbers are compared anywhere.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="loopInsideTry" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b5():
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b4()
+  b2() handler=b5():
+    v4 = StrictEq v0, v1
+    Branch v4 -> taken b1(), notTaken b3()
+  b3() handler=b5():
+    Jump -> next b1()
+  b4():
+    Return v0
+  b5() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b2() handler=b5():
+# CHECK-NEXT: = StrictEq v0, v1
+}
+
+function f1 name="wayInUnderTheSameHandler" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b6():
+    Jump -> next b2()
+  b2() handler=b6():
+    LoopHint
+    Branch v2 -> taken b3(), notTaken b5()
+  b3() handler=b6():
+    v4 = StrictEq v0, v1
+    Branch v4 -> taken b2(), notTaken b4()
+  b4() handler=b6():
+    Jump -> next b2()
+  b5():
+    Return v0
+  b6() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+# CHECK: b1() handler=b6():
+# CHECK-NEXT: v4: boolean = StrictEq v0, v1
+# CHECK: b3() handler=b6():
+# CHECK-NEXT: Branch v4
+}
+
+function f2 name="twoNumbers" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b5():
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b4()
+  b2() handler=b5():
+    v4 = StrictEq v0, v1
+    Branch v4 -> taken b1(), notTaken b3()
+  b3() handler=b5():
+    Jump -> next b1()
+  b4():
+    Return v0
+  b5() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+# CHECK: b0(
+# CHECK-NEXT: v4: boolean = StrictEq v0, v1
+}

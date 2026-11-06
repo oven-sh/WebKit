@@ -67,7 +67,15 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             // A PropertyCallback builder can enter JS; defer termination (like
             // LazyProperty::callFunc) so it can't return with one pending.
             DeferTerminationForAWhile deferScope(vm);
-            reifyStaticProperty(vm, classInfo, propertyName, *entry, *thisObject);
+#if ENABLE(AOT)
+            // Compiled code may hold the object already. The property is that object.
+            JSObject* madeAhead = vm.hasCompiledCode() && !isAccessor ? AOT::RuntimeHooks::takeStaticPropertyMadeAhead(thisObject, propertyName.uid()) : nullptr;
+            if (madeAhead) [[unlikely]] {
+                AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+                thisObject->putDirect(vm, propertyName, madeAhead, attributesForStructure(entry->attributes()));
+            } else
+#endif
+                reifyStaticProperty(vm, classInfo, propertyName, *entry, *thisObject);
         }
         // The builder may still throw a non-termination exception; report the
         // slot as not found so JSValue::get / getOwnPropertyDescriptor's

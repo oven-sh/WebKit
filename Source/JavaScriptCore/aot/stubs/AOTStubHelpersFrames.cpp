@@ -149,6 +149,7 @@ void callNativeFunctionAndReturn(StubAssembler& jit, CodeSpecializationKind kind
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
     Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, Address(scratch, VM::exceptionOffset()));
     jit.emitFunctionEpilogue();
+    jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
 
     exception.link(&jit);

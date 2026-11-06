@@ -8,9 +8,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFormatPatternPlanner.h"
 #include "AOTHeaps.h"
 #include "AOTIR.h"
 #include "AOTIdentifierNumbering.h"
+#include "AOTImagesBelow.h"
 #include "AOTRegExpSummary.h"
 #include "AOTScratchRealm.h"
 #include "AOTVector.h"
@@ -104,10 +106,21 @@ BuildContext::BuildContext(const Wire::CompileOptions& wire, const HostThreadPoo
     , m_backEndScratches(m_options.threadCount)
     , m_regExpSummaries(makeUnique<RegExpSummaries>(static_cast<unsigned>(m_options.limits[LimitID::RegExpNestingDepthWithCode])))
     , m_scratchRealms(makeUniqueWithoutFastMallocCheck<Typed::ScratchRealms>())
+    , m_formatPatternPlans(makeUniqueWithoutFastMallocCheck<Typed::FormatPatternPlans>())
     , m_deferredDestroyer(makeUnique<DeferredDestroyer>())
 {
     if (!m_diagnostics.hasErrors() && wire.threadCount > m_options.threadCount)
         gaveUp(LimitID::MaxWorkers);
+    if (!m_options.imagesBelow.isEmpty()) {
+        m_imagesBelow = ImagesBelow::tryCreate(m_options.imagesBelow.span());
+        if (!m_imagesBelow)
+            m_diagnostics.add(InternalError { .kind = InternalErrorKind::InvalidCompileOptions, .count = static_cast<uint32_t>(offsetof(Wire::CompileOptions, target)) });
+    }
+    if (!m_options.referenceLibraryImage.empty()) {
+        m_referenceLibraryImage = ImagesBelow::tryCreate(std::span { &m_options.referenceLibraryImage, 1 });
+        if (!m_referenceLibraryImage)
+            m_diagnostics.add(InternalError { .kind = InternalErrorKind::InvalidCompileOptions, .count = static_cast<uint32_t>(offsetof(Wire::CompileOptions, target)) });
+    }
 }
 
 BuildContext::~BuildContext()
@@ -119,6 +132,12 @@ BuildContext::~BuildContext()
 void BuildContext::finishDeferredDestruction()
 {
     m_deferredDestroyer->finish();
+}
+
+void BuildContext::giveFreedMemoryBack()
+{
+    m_deferredDestroyer->finish();
+    m_parallelLoops.giveFreeMemoryBack();
 }
 
 namespace {

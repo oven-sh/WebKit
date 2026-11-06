@@ -1,4 +1,4 @@
-# The generic version goes on with the value that a check has turned away and lists it in the allocation that lists the checked one. There it is stored behind the allocation, by a store that tests it.
+# A value of which the type is only expected is listed in an allocation. It is stored behind the allocation, by a store that tests it.
 # Until then something that fits the slot stands in for it. Nothing stands in for a symbol: its field is defined behind the allocation, and so is every field listed behind it, for property order is observable.
 # A method cannot be defined there. So the symbol that is listed in front of a method cannot leave the allocation, and its field is only expected.
 # `false` stands in for a boolean, and behind the last symbol nothing is listed: both fields keep their types.

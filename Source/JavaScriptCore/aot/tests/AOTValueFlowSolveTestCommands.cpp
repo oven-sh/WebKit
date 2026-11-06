@@ -100,7 +100,11 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     bool printsUnreachedFunctions = false;
     bool printsUnseenCode = false;
     bool printsUsedBuiltins = false;
+    bool printsLibraryFunctionsLacked = false;
     bool printsProtocols = false;
+    bool printsNodesGivenMore = false;
+    bool printsCells = false;
+    bool printsWrittenObjects = false;
     ValueFlowSolution::CoveredMembers coveredMembers = ValueFlowSolution::CoveredMembers::StayListed;
     for (const String& word : context.arguments) {
         if (word == "calls"_s)
@@ -113,8 +117,16 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             printsUnseenCode = true;
         else if (word == "used"_s)
             printsUsedBuiltins = true;
+        else if (word == "lacked"_s)
+            printsLibraryFunctionsLacked = true;
         else if (word == "protocols"_s)
             printsProtocols = true;
+        else if (word == "given-more"_s)
+            printsNodesGivenMore = true;
+        else if (word == "cells"_s)
+            printsCells = true;
+        else if (word == "written-objects"_s)
+            printsWrittenObjects = true;
         else if (word == "proofs"_s)
             coveredMembers = ValueFlowSolution::CoveredMembers::AreLeftOut;
         else
@@ -125,10 +137,6 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowBodies& bodies = solution.bodies();
     const ValueFlowSolver::Counters& counters = solver.counters();
-    if (!solution.hasResult()) {
-        context.out.println("stopped at a limit: edges-logged ", counters.edgesLogged, " rounds ", counters.rounds);
-        return;
-    }
     const ValueFlowUniverse& universe = bodies.universe();
 
     uint32_t functionsWithBody = 0;
@@ -206,9 +214,41 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             context.out.println(solution.sets().contains(run, object) ? "run " : "used ", program.builtins().tokenOf(universe.builtinOf(object)));
         });
     }
+    if (printsWrittenObjects) {
+        solution.sets().forEachMember(solver.possibleValuesOf(bodies.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsThatStatementsWrite)), [&](ValueFlowObjectID object) {
+            context.out.println("written-object ", program.builtins().tokenOf(universe.builtinOf(object)));
+        });
+    }
+    if (printsLibraryFunctionsLacked) {
+        for (size_t function : solver.libraryFunctionsLacked())
+            context.out.println("lacked ", function);
+    }
     if (printsProtocols)
         printProtocols(context.out, solution);
-    if (printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsProtocols)
+    if (printsNodesGivenMore) {
+        context.out.println("given-more ", solver.numberOfNodesGivenMore());
+        for (uint32_t index = 0; solver.input().seedOfWidening && index < program.functions.size(); ++index) {
+            if (!solver.isReached(FunctionID(index)) || !isWrittenInProgram(program.functions[index]))
+                continue;
+            for (uint32_t node = bodies.nodes().firstNodeOf(FunctionID(index)); node < bodies.nodes().endOfNodesOf(FunctionID(index)); ++node) {
+                ValueFlowSolver::GivenToNode given = solver.whatIsGivenTo(ValueFlowNodeID(node));
+                if (given == ValueFlowSolver::GivenToNode::Nothing)
+                    continue;
+                context.out.print("given f", index);
+                if (ValueID value = solver.subjectOf(ValueFlowNodeID(node)).value)
+                    context.out.print(":v", value.index());
+                else
+                    context.out.print(" +", node - bodies.nodes().firstNodeOf(FunctionID(index)));
+                if (given == ValueFlowSolver::GivenToNode::WhatAnotherNodeOfBodyHolds)
+                    context.out.println(" what +", solver.nodeWhoseValueIsGivenTo(ValueFlowNodeID(node)).index() - bodies.nodes().firstNodeOf(FunctionID(index)), " holds");
+                else
+                    context.out.println(given == ValueFlowSolver::GivenToNode::UnknownObject ? " the unknown object" : " a value nobody knows");
+            }
+        }
+    }
+    if (printsCells)
+        context.out.println("names-with-several-cells ", counters.namesWithSeveralCells);
+    if (printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsLibraryFunctionsLacked || printsProtocols || printsNodesGivenMore || printsCells || printsWrittenObjects)
         return;
 
     context.out.println("functions ", functionsWithBody, " reached ", functionsReached);

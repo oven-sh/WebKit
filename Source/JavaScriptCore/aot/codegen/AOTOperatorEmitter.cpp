@@ -108,6 +108,7 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
     case OperatorForm::StringAndPrimitive:
     case OperatorForm::NullableStrings:
     case OperatorForm::NullableStringAndPrimitive:
+    case OperatorForm::MayBeString:
         if (op == ArithmeticOperator::Add)
             return addStrings(value);
         break;
@@ -121,7 +122,6 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
     case OperatorForm::NumberByOperation:
     case OperatorForm::NullableString:
     case OperatorForm::NullableNumber:
-    case OperatorForm::MayBeString:
     case OperatorForm::MayBeStringOrNumber:
         break;
     }
@@ -198,7 +198,7 @@ Operand OperatorEmitter::unaryResult(const ValueContext& value, UnaryOperator op
             ArithmeticOperator sum = op == UnaryOperator::Increment ? ArithmeticOperator::Add : ArithmeticOperator::Sub;
             return sumOfBoxedNumbers(sum, get(operand), typeOf(operand), word32(1), typeOf(operand));
         }
-        return unaryOnNumbers(op, asNumericOperand(operand));
+        return unaryOnNumbers(op, operand);
     case OperatorForm::BigInts:
         return unboxCell(callOperation<Boxed>(value, traitsOfOperator(op).onBigInt, { boxCell(in<CellPointer>(operand)) }));
     case OperatorForm::Unselected:
@@ -235,7 +235,7 @@ Operand OperatorEmitter::unaryOnIntegers(const ValueContext& value, UnaryOperato
     case UnaryOperator::Decrement:
         return arithmeticOnIntegers(value, ArithmeticOperator::Sub);
     case UnaryOperator::BitNot:
-        return bitXor(in<Word32>(value->valueOperand()), word32(-1));
+        return bitXor(in<Word32>(value->valueOperand()), -1);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -257,8 +257,9 @@ Operand OperatorEmitter::unaryOnCheckedIntegers(const ValueContext& value, Unary
     return failWithZero(value);
 }
 
-Operand OperatorEmitter::unaryOnNumbers(UnaryOperator op, Number operand)
+Operand OperatorEmitter::unaryOnNumbers(UnaryOperator op, ValueID id)
 {
+    Number operand = asNumericOperand(id);
     switch (op) {
     case UnaryOperator::Negate:
         return neg(operand);
@@ -267,7 +268,7 @@ Operand OperatorEmitter::unaryOnNumbers(UnaryOperator op, Number operand)
     case UnaryOperator::Decrement:
         return sub(operand, number(1));
     case UnaryOperator::BitNot:
-        return bitXor(emitter<ConversionEmitter>().toInt32(operand), word32(-1));
+        return bitXor(emitter<ConversionEmitter>().toInt32(operand, ConversionEmitter::BitsOfInt32::All, id), -1);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -278,8 +279,11 @@ Number OperatorEmitter::asNumberLikeOperand(ValueID id)
         return toNumber(asWord32(in<Condition>(id)));
     Boxed value = in<Boxed>(id);
     Condition isTrue = equal(value, Boxed(m_out.constInt64(JSValue::ValueTrue)));
-    Number convertedPrimitive = select(equal(value, undefined()), number(PNaN), toNumber(asWord32(isTrue)));
-    return select(isNumber(value), numberToDouble(value), convertedPrimitive);
+    Condition isUndefined = equal(value, undefined());
+    Number notANumber = number(PNaN);
+    Number convertedPrimitive = select(isUndefined, notANumber, toNumber(asWord32(isTrue)));
+    Condition valueIsNumber = isNumber(value);
+    return select(valueIsNumber, numberToDouble(value), convertedPrimitive);
 }
 
 template<typename Functor>

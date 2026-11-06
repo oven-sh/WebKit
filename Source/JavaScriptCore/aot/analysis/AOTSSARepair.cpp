@@ -10,35 +10,230 @@
 
 #include "AOTResultRules.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <iterator>
 #include <limits>
 #include <tuple>
-#include <wtf/SSACalculator.h>
+#include <utility>
+#include <wtf/Scope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-class SSARepairAdapter {
+// In most functions the frontiers of all blocks together are about as many as the blocks, and one walk up from the predecessors of each join finds them all. In a deep nest of
+// handlers a block has every handler around it in its frontier: there the frontier of a block is found when it is asked for, from the edges that leave what the block dominates.
+class DominanceFrontiers {
 public:
-    using CFG = Typed::CFG;
-    using Value = ValueID;
-
-    explicit SSARepairAdapter(FunctionAnalyses& analyses)
-        : m_analyses(analyses)
+    DominanceFrontiers(const CFG& cfg, const Dominators& dominators)
+        : m_cfg(cfg)
+        , m_dominators(dominators)
     {
+        AOT_THRESHOLD(size_t, mostPairsForEachBlock, 8);
+        unsigned numberOfBlocks = cfg.numNodes();
+        Vector<std::pair<BlockID, BlockID>> pairs;
+        m_lastJoin.fill(noBlock, numberOfBlocks);
+        m_first.fill(0, numberOfBlocks + 1);
+        for (unsigned index = 0; index < numberOfBlocks; ++index) {
+            BlockID join = cfg.node(index);
+            if (!join || cfg.predecessors(join).size() < 2)
+                continue;
+            BlockID dominator = dominators.idom(join);
+            for (BlockID predecessor : cfg.predecessors(join)) {
+                for (BlockID runner = predecessor; runner && runner != dominator; runner = dominators.idom(runner)) {
+                    if (std::exchange(m_lastJoin[runner.index()], index) == index)
+                        break;
+                    pairs.append({ runner, join });
+                    ++m_first[runner.index() + 1];
+                }
+            }
+            if (pairs.size() > mostPairsForEachBlock * numberOfBlocks) {
+                findFrontiersWhenAsked();
+                return;
+            }
+        }
+        for (unsigned index = 0; index < numberOfBlocks; ++index)
+            m_first[index + 1] += m_first[index];
+        Vector<uint32_t> next(m_first.span().first(numberOfBlocks));
+        m_joins.grow(pairs.size());
+        for (auto [runner, join] : pairs)
+            m_joins[next[runner.index()]++] = join;
     }
 
-    CFG& cfg() const { return m_analyses.cfg(); }
-    Dominators& dominators() { return m_analyses.dominators(); }
-
-    static void dumpValue(PrintStream& out, ValueID value) { out.print("v", value.index()); }
+    std::span<const BlockID> of(BlockID block)
+    {
+        if (!m_blockWithNumber.isEmpty())
+            return findFrontierOf(block);
+        uint32_t begin = m_first[block.index()];
+        return m_joins.span().subspan(begin, m_first[block.index() + 1] - begin);
+    }
 
 private:
-    FunctionAnalyses& m_analyses;
+    static constexpr uint32_t noBlock = std::numeric_limits<uint32_t>::max();
+
+    void findFrontiersWhenAsked()
+    {
+        m_lastJoin.fill(noBlock);
+        m_first.fill(noBlock);
+        m_blockWithNumber.fill(BlockID(), m_cfg.numNodes());
+        for (BlockID block : m_cfg.reversePostOrder())
+            m_blockWithNumber[m_dominators.numberOf(block)] = block;
+    }
+
+    std::span<const BlockID> findFrontierOf(BlockID block)
+    {
+        if (!m_cfg.isReachable(block))
+            return { };
+        if (m_first[block.index()] == noBlock) {
+            m_first[block.index()] = m_ranges.size();
+            uint32_t begin = m_joins.size();
+            for (uint32_t number = m_dominators.numberOf(block); number <= m_dominators.lastNumberBelow(block); ++number) {
+                for (BlockID successor : m_cfg.successors(m_blockWithNumber[number])) {
+                    if (m_dominators.strictlyDominates(block, successor) || m_cfg.predecessors(successor).size() < 2 || std::exchange(m_lastJoin[successor.index()], block.index()) == block.index())
+                        continue;
+                    m_joins.append(successor);
+                }
+            }
+            AOT::sort(m_joins.mutableSpan().subspan(begin));
+            m_ranges.append({ begin, static_cast<uint32_t>(m_joins.size()) });
+        }
+        auto [begin, end] = m_ranges[m_first[block.index()]];
+        return m_joins.span().subspan(begin, end - begin);
+    }
+
+    const CFG& m_cfg;
+    const Dominators& m_dominators;
+    Vector<uint32_t> m_first;
+    Vector<BlockID> m_joins;
+    Vector<uint32_t> m_lastJoin;
+    Vector<BlockID> m_blockWithNumber;
+    Vector<std::pair<uint32_t, uint32_t>> m_ranges;
+};
+
+// The definition of one variable that reaches a place stands in the nearest block above the place in the dominator tree. The blocks that define and the places asked about
+// are walked together in the order of the tree, so an answer costs the same however far above its place it lies.
+class NearestDefinitions {
+public:
+    static constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
+
+    explicit NearestDefinitions(const CFG& cfg, const Dominators& dominators)
+        : m_cfg(cfg)
+        , m_dominators(dominators)
+    {
+        RELEASE_ASSERT(cfg.numNodes() < 1u << (64 - numberShift));
+    }
+
+    void clear()
+    {
+        m_events.shrink(0);
+        m_definitions.shrink(0);
+        m_answers.shrink(0);
+        m_keptDefinitions.shrink(0);
+    }
+
+    void defineAtTail(BlockID block, uint32_t definition)
+    {
+        if (!m_cfg.isReachable(block))
+            return;
+        addEvent(block, Kind::Definition, m_definitions.size());
+        m_definitions.append({ m_dominators.lastNumberBelow(block), definition });
+    }
+
+    uint32_t askAtHead(BlockID block) { return ask(block, Kind::QuestionAtHead); }
+    uint32_t askAtTail(BlockID block) { return ask(block, Kind::QuestionAtTail); }
+
+    void solve()
+    {
+        AOT::sort(m_events);
+        m_stack.shrink(0);
+        for (uint64_t event : m_events) {
+            uint32_t number = static_cast<uint32_t>(event >> numberShift);
+            while (!m_stack.isEmpty() && m_stack.last().lastNumberBelow < number)
+                m_stack.removeLast();
+            uint32_t index = static_cast<uint32_t>(event);
+            if (static_cast<Kind>((event >> kindShift) & 3) == Kind::Definition)
+                m_stack.append(m_definitions[index]);
+            else if (!m_stack.isEmpty())
+                m_answers[index] = m_stack.last().definition;
+        }
+    }
+
+    void solveAndKeepDefinitions()
+    {
+        AOT::sort(m_events);
+        m_keptDefinitions.shrink(0);
+        uint32_t nearest = none;
+        for (uint64_t event : m_events) {
+            uint32_t number = static_cast<uint32_t>(event >> numberShift);
+            while (nearest != none && m_keptDefinitions[nearest].lastNumberBelow < number)
+                nearest = m_keptDefinitions[nearest].nearestAbove;
+            uint32_t index = static_cast<uint32_t>(event);
+            if (static_cast<Kind>((event >> kindShift) & 3) == Kind::Definition) {
+                m_keptDefinitions.append({ number, m_definitions[index].lastNumberBelow, m_definitions[index].definition, nearest });
+                nearest = static_cast<uint32_t>(m_keptDefinitions.size() - 1);
+            } else if (nearest != none)
+                m_answers[index] = m_keptDefinitions[nearest].definition;
+        }
+    }
+
+    uint32_t answerTo(uint32_t question) const { return m_answers[question]; }
+
+    uint32_t findAmongKeptDefinitionsAtHead(BlockID block) const
+    {
+        RELEASE_ASSERT(m_cfg.isReachable(block));
+        uint32_t number = m_dominators.numberOf(block);
+        size_t numberOfDefinitionsInFront = std::ranges::partition_point(m_keptDefinitions, [&](const KeptDefinition& kept) {
+            return kept.number < number;
+        }) - m_keptDefinitions.begin();
+        uint32_t nearest = numberOfDefinitionsInFront ? static_cast<uint32_t>(numberOfDefinitionsInFront - 1) : none;
+        while (nearest != none && m_keptDefinitions[nearest].lastNumberBelow < number)
+            nearest = m_keptDefinitions[nearest].nearestAbove;
+        return nearest == none ? none : m_keptDefinitions[nearest].definition;
+    }
+
+private:
+    enum class Kind : uint8_t { QuestionAtHead, Definition, QuestionAtTail };
+
+    struct DefinitionAtTail {
+        uint32_t lastNumberBelow;
+        uint32_t definition;
+    };
+
+    struct KeptDefinition {
+        uint32_t number;
+        uint32_t lastNumberBelow;
+        uint32_t definition;
+        uint32_t nearestAbove;
+    };
+
+    static constexpr unsigned kindShift = 32;
+    static constexpr unsigned numberShift = 34;
+
+    void addEvent(BlockID block, Kind kind, size_t index)
+    {
+        m_events.append(static_cast<uint64_t>(m_dominators.numberOf(block)) << numberShift | static_cast<uint64_t>(kind) << kindShift | static_cast<uint32_t>(index));
+    }
+
+    uint32_t ask(BlockID block, Kind kind)
+    {
+        RELEASE_ASSERT(m_cfg.isReachable(block));
+        uint32_t question = m_answers.size();
+        addEvent(block, kind, question);
+        m_answers.append(none);
+        return question;
+    }
+
+    const CFG& m_cfg;
+    const Dominators& m_dominators;
+    Vector<uint64_t> m_events;
+    Vector<DefinitionAtTail> m_definitions;
+    Vector<DefinitionAtTail, 16> m_stack;
+    Vector<uint32_t> m_answers;
+    Vector<KeptDefinition> m_keptDefinitions;
 };
 
 } // anonymous namespace
@@ -98,6 +293,21 @@ SSARepair::SSARepair(IRBuilder& builder, FunctionAnalyses& analyses)
     RELEASE_ASSERT(&builder.function() == &analyses.function());
 }
 
+SSARepair::~SSARepair()
+{
+    setIsPending(false);
+}
+
+void SSARepair::setIsPending(bool isPending)
+{
+    if (std::exchange(m_isPending, isPending) == isPending)
+        return;
+    if (isPending)
+        m_analyses.didBeginRepair();
+    else
+        m_analyses.didEndRepair();
+}
+
 SSARepair::Variable SSARepair::addVariable(ValueID definition)
 {
     Variable variable = m_variables.size();
@@ -113,23 +323,35 @@ void SSARepair::addDefinition(Variable variable, ValueID definition)
     bool wasDefinition = m_isDefinition.set(definition.index());
     RELEASE_ASSERT(!wasDefinition);
     m_variables[variable].values.append(definition);
+    m_definitions.append({ definition, variable });
+    if (m_variables[variable].values.size() > 1)
+        setIsPending(true);
 }
 
 std::optional<SSARepair::Variable> SSARepair::findVariable(ValueID definition) const
 {
     if (!m_isDefinition.get(definition.index()))
         return std::nullopt;
-    for (Variable variable = 0; variable < m_variables.size(); ++variable) {
-        if (m_variables[variable].values.contains(definition))
-            return variable;
+    AOT_THRESHOLD(size_t, mostSearchedInOrder, 16);
+    if (m_definitions.size() <= mostSearchedInOrder) {
+        auto found = std::ranges::find(m_definitions, definition, &std::pair<ValueID, Variable>::first);
+        RELEASE_ASSERT(found != m_definitions.end());
+        return found->second;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    for (; m_numberOfIndexedDefinitions < m_definitions.size(); ++m_numberOfIndexedDefinitions)
+        m_variableOfDefinition.add(m_definitions[m_numberOfIndexedDefinitions].first.index(), m_definitions[m_numberOfIndexedDefinitions].second);
+    auto found = m_variableOfDefinition.find(definition.index());
+    RELEASE_ASSERT(found != m_variableOfDefinition.end());
+    return found->value;
 }
 
 void SSARepair::run()
 {
     RELEASE_ASSERT(!m_didRun);
     RELEASE_ASSERT(m_builder.m_insertions.isEmpty());
+    auto endRepair = makeScopeExit([&] {
+        setIsPending(false);
+    });
     Origin savedOrigin = m_builder.origin();
     separateUsesAsGuards();
     m_didRun = true;
@@ -150,7 +372,7 @@ void SSARepair::run()
         }
         if (data.uses.isEmpty())
             continue;
-        AOT::sort(data.uses, [&](const RecordedUse& a, const RecordedUse& b) {
+        AOT::sortInLine(data.uses, [&](const RecordedUse& a, const RecordedUse& b) {
             return useLists.isBefore(a.use, b.use);
         });
 
@@ -206,6 +428,13 @@ void SSARepair::run()
         m_builder.applyInsertions();
     m_analyses.didChangeValuesButNotUses();
     m_builder.setOrigin(savedOrigin);
+
+    // A definition that stands for "no use is reached from here" gives the parameters it gets to its type, and a use is legal where it stood.
+    bool hasUnspecifiedDefinition = std::ranges::any_of(m_variables, [&](const VariableData& data) {
+        return data.type && m_builder.m_types.at(data.type).mayBeUnspecified();
+    });
+    if (hasUnspecifiedDefinition)
+        nameFactsWhereUnspecifiedValuesAreUsed(m_builder, m_analyses);
 }
 
 void SSARepair::separateUsesAsGuards()
@@ -320,7 +549,7 @@ void SSARepair::splitCoveredBlocksAfterDefinitions()
     if (cuts.isEmpty())
         return;
 
-    AOT::sort(cuts, [](const ProgramPoint& a, const ProgramPoint& b) {
+    AOT::sortInLine(cuts, [](const ProgramPoint& a, const ProgramPoint& b) {
         return std::tie(a.block, a.index) < std::tie(b.block, b.index);
     });
     removeRepeatedElements(cuts);
@@ -393,11 +622,9 @@ void SSARepair::rematerializeConstants(std::span<const Variable> variables)
 
 void SSARepair::insertParameters(std::span<const Variable> variables)
 {
-    using Calculator = WTF::SSACalculator<SSARepairAdapter>;
     Function& function = m_builder.function();
     const CFG& cfg = m_analyses.cfg();
-    Vector<unsigned> liveAtHeadStamp(FillWith { }, cfg.numNodes(), 0u);
-    Vector<unsigned> hasDefinitionStamp(FillWith { }, cfg.numNodes(), 0u);
+    const Dominators& dominators = m_analyses.dominators();
     Vector<uint32_t> knownNumberOfParametersForEdgeResults(FillWith { }, cfg.numNodes(), std::numeric_limits<uint32_t>::max());
     auto numberOfParametersForEdgeResults = [&](BlockID block) {
         uint32_t& number = knownNumberOfParametersForEdgeResults[block.index()];
@@ -406,28 +633,39 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
         return number;
     };
 
-    Calculator calculator(m_analyses);
-    for (Variable variable : variables) {
-        Calculator::Variable* calculatorVariable = calculator.newVariable();
-        for (const Definition& definition : m_variables[variable].definitions)
-            calculator.newDef(calculatorVariable, definition.block, definition.value);
-    }
+    DominanceFrontiers frontiers(cfg, dominators);
+    NearestDefinitions nearest(cfg, dominators);
+    auto forEachBlockWithDefinitions = [&](const VariableData& data, const auto& visitLastDefinitionInBlock) {
+        for (size_t index = 0; index < data.definitions.size(); ++index) {
+            if (index + 1 == data.definitions.size() || data.definitions[index + 1].block != data.definitions[index].block)
+                visitLastDefinitionInBlock(data.definitions[index]);
+        }
+    };
 
-    auto computeLiveness = [&](const VariableData& data, unsigned stamp) {
-        for (const Definition& definition : data.definitions)
-            hasDefinitionStamp[definition.block.index()] = stamp;
-
-        Vector<BlockID, 16> worklist;
+    // A join in the iterated dominance frontier of the definitions gets a parameter if the variable is live at its head. There are two ways to find out, and each is
+    // the cheap one where the other costs a walk over the function for each variable: to walk back from the uses through every block in which the variable is live, and
+    // to take every such join for a definition and see which of them reach a use. They take turns until one has ended.
+    Vector<unsigned> hasDefinitionStamp(FillWith { }, cfg.numNodes(), 0u);
+    Vector<unsigned> liveAtHeadStamp(FillWith { }, cfg.numNodes(), 0u);
+    Vector<BlockID, 16> liveBlocksToVisit;
+    auto beginWalkFromUses = [&](const VariableData& data, unsigned stamp) {
+        liveBlocksToVisit.shrink(0);
+        for (const RecordedUse& recorded : data.uses) {
+            if (!findLocalDefinition(data, recorded) && std::exchange(liveAtHeadStamp[recorded.use.block.index()], stamp) != stamp)
+                liveBlocksToVisit.append(recorded.use.block);
+        }
+    };
+    auto continueWalkFromUses = [&](const VariableData& data, unsigned stamp, size_t steps) {
         auto mark = [&](BlockID block) {
             if (std::exchange(liveAtHeadStamp[block.index()], stamp) != stamp)
-                worklist.append(block);
+                liveBlocksToVisit.append(block);
         };
-        for (const RecordedUse& recorded : data.uses) {
-            if (!findLocalDefinition(data, recorded))
-                mark(recorded.use.block);
-        }
-        while (!worklist.isEmpty()) {
-            for (Edge edge : cfg.incomingEdges(worklist.takeLast())) {
+        while (!liveBlocksToVisit.isEmpty()) {
+            if (!steps)
+                return false;
+            auto incomingEdges = cfg.incomingEdges(liveBlocksToVisit.takeLast());
+            steps -= std::min(steps, incomingEdges.size() + 1);
+            for (Edge edge : incomingEdges) {
                 switch (edge.kind) {
                 case EdgeKind::Normal:
                     if (hasDefinitionStamp[edge.from.index()] != stamp)
@@ -440,7 +678,101 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
                 }
             }
         }
+        return true;
     };
+
+    Vector<unsigned> isJoinStamp(FillWith { }, cfg.numNodes(), 0u);
+    Vector<uint32_t> indexOfJoin(FillWith { }, cfg.numNodes(), 0u);
+    Vector<BlockID> joins;
+    Vector<BlockID, 16> definingBlocksToVisit;
+    auto beginWalkOverFrontiers = [&](const VariableData& data) {
+        joins.shrink(0);
+        definingBlocksToVisit.shrink(0);
+        forEachBlockWithDefinitions(data, [&](const Definition& definition) {
+            definingBlocksToVisit.append(definition.block);
+        });
+    };
+    auto continueWalkOverFrontiers = [&](unsigned stamp, size_t steps) {
+        while (!definingBlocksToVisit.isEmpty()) {
+            if (!steps)
+                return false;
+            auto frontier = frontiers.of(definingBlocksToVisit.takeLast());
+            steps -= std::min(steps, frontier.size() + 1);
+            for (BlockID join : frontier) {
+                if (std::exchange(isJoinStamp[join.index()], stamp) == stamp)
+                    continue;
+                indexOfJoin[join.index()] = joins.size();
+                joins.append(join);
+                definingBlocksToVisit.append(join);
+                steps -= std::min(steps, cfg.incomingEdges(join).size());
+            }
+        }
+        return true;
+    };
+
+    struct Source {
+        uint32_t definitionOrQuestion;
+        bool isQuestion;
+    };
+    constexpr uint32_t writtenDefinition = NearestDefinitions::none - 1;
+    BitVector joinReachesUse;
+    Vector<uint32_t> questionsOfUses;
+    Vector<Source> sourcesOfJoins;
+    Vector<uint32_t> firstSourceOfJoin;
+    Vector<uint32_t, 16> joinsToVisit;
+    auto findSourcesOfJoins = [&](const VariableData& data, unsigned stamp) {
+        sourcesOfJoins.shrink(0);
+        firstSourceOfJoin.shrink(0);
+        nearest.clear();
+        forEachBlockWithDefinitions(data, [&](const Definition& definition) {
+            nearest.defineAtTail(definition.block, writtenDefinition);
+        });
+        for (uint32_t index = 0; index < joins.size(); ++index) {
+            if (hasDefinitionStamp[joins[index].index()] != stamp)
+                nearest.defineAtTail(joins[index], index);
+        }
+        auto sourceAtHead = [&](BlockID block) -> Source {
+            if (isJoinStamp[block.index()] == stamp)
+                return { indexOfJoin[block.index()], false };
+            return { nearest.askAtHead(block), true };
+        };
+        for (BlockID join : joins) {
+            firstSourceOfJoin.append(sourcesOfJoins.size());
+            for (Edge edge : cfg.incomingEdges(join)) {
+                switch (edge.kind) {
+                case EdgeKind::Normal:
+                    sourcesOfJoins.append({ nearest.askAtTail(edge.from), true });
+                    break;
+                case EdgeKind::Handler:
+                    sourcesOfJoins.append(findLastDefinitionBefore(data, edge.from, firstValueOrder) ? Source { writtenDefinition, false } : sourceAtHead(edge.from));
+                    break;
+                }
+            }
+        }
+        firstSourceOfJoin.append(sourcesOfJoins.size());
+        nearest.solveAndKeepDefinitions();
+    };
+    auto findJoinsThatReachUses = [&](const VariableData& data, unsigned stampOfJoins) {
+        joinReachesUse.clearAll();
+        joinReachesUse.ensureSize(joins.size());
+        joinsToVisit.shrink(0);
+        auto didReach = [&](uint32_t definition) {
+            if (definition < writtenDefinition && !joinReachesUse.quickSet(definition))
+                joinsToVisit.append(definition);
+        };
+        for (const RecordedUse& recorded : data.uses) {
+            if (findLocalDefinition(data, recorded))
+                continue;
+            BlockID block = recorded.use.block;
+            didReach(isJoinStamp[block.index()] == stampOfJoins ? indexOfJoin[block.index()] : nearest.findAmongKeptDefinitionsAtHead(block));
+        }
+        while (!joinsToVisit.isEmpty()) {
+            uint32_t index = joinsToVisit.takeLast();
+            for (const Source& source : sourcesOfJoins.span().subspan(firstSourceOfJoin[index], firstSourceOfJoin[index + 1] - firstSourceOfJoin[index]))
+                didReach(source.isQuestion ? nearest.answerTo(source.definitionOrQuestion) : source.definitionOrQuestion);
+        }
+    };
+
     auto computeParameterType = [&](VariableData& data) {
         const Program& program = m_analyses.context().program;
         const Value& first = function.at(data.values.first());
@@ -455,39 +787,119 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
         data.expected = expected == data.type ? TypeID() : expected;
     };
 
-    std::optional<Variable> livenessVariable;
-    calculator.computePhis([&](Calculator::Variable* calculatorVariable, BlockID block) -> ValueID {
-        Variable variable = variables[calculatorVariable->index()];
-        VariableData& data = m_variables[variable];
-        if (livenessVariable != variable) {
-            computeLiveness(data, variable + 1);
-            livenessVariable = variable;
+    struct AddedParameter {
+        BlockID block;
+        uint32_t indexOfVariable;
+        uint32_t firstArgument;
+    };
+    Vector<AddedParameter> addedParameters;
+    Vector<uint32_t> firstAddedParameter;
+    Vector<unsigned> wasVisitedStamp(FillWith { }, cfg.numNodes(), 0u);
+    uint32_t numberOfArguments = 0;
+    AOT_THRESHOLD(size_t, stepsOfFirstTurn, 64);
+    unsigned stampOfKeptJoins = 0;
+    Vector<Definition, 2> definitionsOfKeptJoins;
+    for (uint32_t indexOfVariable = 0; indexOfVariable < variables.size(); ++indexOfVariable) {
+        firstAddedParameter.append(addedParameters.size());
+        VariableData& data = m_variables[variables[indexOfVariable]];
+        unsigned stamp = indexOfVariable + 1;
+        bool hasJoinsOfVariableBefore = stampOfKeptJoins && std::ranges::equal(data.definitions, definitionsOfKeptJoins, [](const Definition& a, const Definition& b) {
+            return a.block == b.block && (a.order == headOrder) == (b.order == headOrder);
+        });
+
+        bool didWalkFromUses = false;
+        if (!hasJoinsOfVariableBefore) {
+            stampOfKeptJoins = 0;
+            for (const Definition& definition : data.definitions)
+                hasDefinitionStamp[definition.block.index()] = stamp;
+            beginWalkOverFrontiers(data);
+            for (size_t steps = stepsOfFirstTurn; !continueWalkOverFrontiers(stamp, steps); steps *= 2) {
+                if (steps == stepsOfFirstTurn)
+                    beginWalkFromUses(data, stamp);
+                if ((didWalkFromUses = continueWalkFromUses(data, stamp, steps)))
+                    break;
+            }
+            if (!didWalkFromUses) {
+                stampOfKeptJoins = stamp;
+                definitionsOfKeptJoins = data.definitions;
+                if (!joins.isEmpty())
+                    findSourcesOfJoins(data, stamp);
+            }
         }
-        if (liveAtHeadStamp[block.index()] != variable + 1)
-            return ValueID();
-        if (!data.type)
-            computeParameterType(data);
+        if (!didWalkFromUses) {
+            if (joins.isEmpty())
+                continue;
+            findJoinsThatReachUses(data, stampOfKeptJoins);
+        }
+        auto needsParameter = [&](BlockID block) {
+            if (didWalkFromUses)
+                return liveAtHeadStamp[block.index()] == stamp;
+            return joinReachesUse.quickGet(indexOfJoin[block.index()]);
+        };
 
-        m_builder.setOrigin(function.at(data.values.first()).origin());
-        ValueID parameter = m_builder.addParameter(block, data.type, numberOfParametersForEdgeResults(block));
-        function.edit(parameter, ValueEdit::Type).setExpected(ExpectedType(data.expected));
-        data.definitions.append(Definition { block, headOrder, parameter });
-        return parameter;
-    });
+        definingBlocksToVisit.shrink(0);
+        forEachBlockWithDefinitions(data, [&](const Definition& definition) {
+            definingBlocksToVisit.append(definition.block);
+        });
+        while (!definingBlocksToVisit.isEmpty()) {
+            for (BlockID block : frontiers.of(definingBlocksToVisit.takeLast())) {
+                if (std::exchange(wasVisitedStamp[block.index()], stamp) == stamp || !needsParameter(block))
+                    continue;
+                if (!data.type)
+                    computeParameterType(data);
 
-    for (Variable variable : variables)
-        sortDefinitions(m_variables[variable]);
+                m_builder.setOrigin(function.at(data.values.first()).origin());
+                ValueID parameter = m_builder.addParameter(block, data.type, numberOfParametersForEdgeResults(block));
+                function.edit(parameter, ValueEdit::Type).setExpected(ExpectedType(data.expected));
+                data.definitions.append(Definition { block, headOrder, parameter });
+                addedParameters.append({ block, indexOfVariable, numberOfArguments });
+                numberOfArguments += cfg.incomingEdges(block).size();
+                definingBlocksToVisit.append(block);
+            }
+        }
+    }
+    firstAddedParameter.append(addedParameters.size());
 
-    for (unsigned index = 0; index < variables.size(); ++index) {
-        const VariableData& data = m_variables[variables[index]];
+    Vector<ValueID> arguments(FillWith { }, numberOfArguments, ValueID());
+    Vector<std::pair<uint32_t, uint32_t>> questionsOfArguments;
+    auto definitionThatAnswers = [&](uint32_t question) {
+        uint32_t answer = nearest.answerTo(question);
+        RELEASE_ASSERT(answer != NearestDefinitions::none);
+        return ValueID(answer);
+    };
+    for (uint32_t indexOfVariable = 0; indexOfVariable < variables.size(); ++indexOfVariable) {
+        VariableData& data = m_variables[variables[indexOfVariable]];
+        sortDefinitions(data);
+        nearest.clear();
+        forEachBlockWithDefinitions(data, [&](const Definition& definition) {
+            nearest.defineAtTail(definition.block, definition.value.index());
+        });
+
+        questionsOfUses.shrink(0);
+        for (const RecordedUse& recorded : data.uses) {
+            if (!findLocalDefinition(data, recorded))
+                questionsOfUses.append(nearest.askAtHead(recorded.use.block));
+        }
+        questionsOfArguments.shrink(0);
+        for (const AddedParameter& added : addedParameters.span().subspan(firstAddedParameter[indexOfVariable], firstAddedParameter[indexOfVariable + 1] - firstAddedParameter[indexOfVariable])) {
+            uint32_t argument = added.firstArgument;
+            for (Edge edge : cfg.incomingEdges(added.block)) {
+                const Definition* definitionAtHead = edge.kind == EdgeKind::Handler ? findLastDefinitionBefore(data, edge.from, firstValueOrder) : nullptr;
+                if (definitionAtHead)
+                    arguments[argument] = definitionAtHead->value;
+                else
+                    questionsOfArguments.append({ argument, edge.kind == EdgeKind::Handler ? nearest.askAtHead(edge.from) : nearest.askAtTail(edge.from) });
+                ++argument;
+            }
+        }
+        nearest.solve();
+
+        size_t nextQuestion = 0;
         for (const RecordedUse& recorded : data.uses) {
             const Use& use = recorded.use;
             ValueID definition = findLocalDefinition(data, recorded);
-            if (!definition) {
-                Calculator::Def* reachingDefinition = calculator.reachingDefAtHead(use.block, calculator.variable(index));
-                RELEASE_ASSERT(reachingDefinition);
-                definition = reachingDefinition->value();
-            }
+            if (!definition)
+                definition = definitionThatAnswers(questionsOfUses[nextQuestion++]);
             if (definition == recorded.operand)
                 continue;
             if (std::optional<OperandKind> kind = kindOfOperandNamedBy(function, use); kind && mustBeDefinition(*kind))
@@ -495,36 +907,39 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
             replaceUse(function, use, definition);
             m_analyses.didChangeBlock(use.block);
         }
+        for (auto [argument, question] : questionsOfArguments)
+            arguments[argument] = definitionThatAnswers(question);
     }
 
-    auto reachingDefinitionOnEdge = [&](Calculator::Variable* calculatorVariable, Edge edge) -> ValueID {
-        Calculator::Def* reachingDefinition = nullptr;
-        switch (edge.kind) {
-        case EdgeKind::Normal:
-            reachingDefinition = calculator.reachingDefAtTail(edge.from, calculatorVariable);
-            break;
-        case EdgeKind::Handler:
-            if (const Definition* definition = findLastDefinitionBefore(m_variables[variables[calculatorVariable->index()]], edge.from, firstValueOrder))
-                return definition->value;
-            reachingDefinition = calculator.reachingDefAtHead(edge.from, calculatorVariable);
-            break;
-        }
-        RELEASE_ASSERT(reachingDefinition);
-        return reachingDefinition->value();
+    Vector<uint32_t> firstAddedInBlock(FillWith { }, cfg.numNodes() + 1, 0u);
+    for (const AddedParameter& added : addedParameters)
+        ++firstAddedInBlock[added.block.index() + 1];
+    for (unsigned index = 0; index < cfg.numNodes(); ++index)
+        firstAddedInBlock[index + 1] += firstAddedInBlock[index];
+    Vector<uint32_t> nextAddedInBlock(firstAddedInBlock.span().first(cfg.numNodes()));
+    Vector<uint32_t> addedByBlock(FillWith { }, addedParameters.size(), 0u);
+    for (uint32_t index = 0; index < addedParameters.size(); ++index)
+        addedByBlock[nextAddedInBlock[addedParameters[index].block.index()]++] = index;
+    auto addedIn = [&](BlockID block) {
+        uint32_t begin = firstAddedInBlock[block.index()];
+        return addedByBlock.span().subspan(begin, firstAddedInBlock[block.index() + 1] - begin);
     };
+
     for (BlockID block : cfg.reversePostOrder()) {
-        const Vector<Calculator::Def*>& phis = calculator.phisForBlock(block);
-        if (phis.isEmpty())
+        auto added = addedIn(block);
+        if (added.empty())
             continue;
+        uint32_t indexOfEdge = 0;
         for (Edge edge : cfg.incomingEdges(block)) {
-            for (Calculator::Def* phi : phis)
-                m_builder.appendArgument(edge, reachingDefinitionOnEdge(phi->variable(), edge), numberOfParametersForEdgeResults(block));
+            for (uint32_t index : added)
+                m_builder.appendArgument(edge, arguments[addedParameters[index].firstArgument + indexOfEdge], numberOfParametersForEdgeResults(block));
+            ++indexOfEdge;
         }
     }
     for (Edge edge : m_analyses.edgesFromUnreachableBlocks()) {
         BlockID target = targetOf(function, edge).block;
-        for (Calculator::Def* phi : calculator.phisForBlock(target))
-            m_builder.appendArgument(edge, m_variables[variables[phi->variable()->index()]].values.first(), numberOfParametersForEdgeResults(target));
+        for (uint32_t index : addedIn(target))
+            m_builder.appendArgument(edge, m_variables[variables[addedParameters[index].indexOfVariable]].values.first(), numberOfParametersForEdgeResults(target));
     }
 }
 
@@ -548,7 +963,7 @@ const SSARepair::Definition* SSARepair::findLastDefinitionBefore(const VariableD
 
 void SSARepair::sortDefinitions(VariableData& data)
 {
-    AOT::stableSort(data.definitions, [](const Definition& a, const Definition& b) {
+    AOT::stableSortInLine(data.definitions, [](const Definition& a, const Definition& b) {
         return std::tie(a.block, a.order) < std::tie(b.block, b.order);
     });
 }

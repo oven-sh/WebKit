@@ -160,24 +160,9 @@ void propagateUntilNothingChanges(const Function& function, const auto& blocks, 
     }
 }
 
-// No use of an Unspecified value is reached. Whoever moves a value to where paths run that never reach a use of it, or hands it to another function, asks first.
-// What was found to be specified is not walked again, so the function has to stay as it is between the questions.
-class UnspecifiedValues {
-public:
-    explicit UnspecifiedValues(FunctionAnalyses&);
-
-    bool mayContain(ValueID);
-
-private:
-    FunctionAnalyses& m_analyses;
-    bool m_hasSource;
-    BitVector m_isSpecified;
-    Vector<ValueID, 16> m_visited;
-};
-inline bool mayBeUnspecified(FunctionAnalyses& analyses, ValueID id) { return UnspecifiedValues(analyses).mayContain(id); }
-
 OperandSummary summarizeFramePointerUse(const Program&, const FlowResults*, const Function&, const Value& user, uint32_t operandIndex);
 bool mayLeakFramePointer(const Program&, const FlowResults*, const Function&, const Value& user, uint32_t operandIndex);
+bool mayLeakFramePointer(const Program&, const Function&, const Value& user, uint32_t operandIndex, const OperandSummary& summaryOfFramePointerUse);
 bool mayLeakFramePointer(const Program&, const FlowResults*, const Function&, const Terminator& user, uint32_t operandIndex);
 bool mayLeakContents(const Program&, const FlowResults*, const Function&, const Value& user, uint32_t operandIndex);
 bool mayLeakCapture(const Program&, const FlowResults*, const Value& closure, uint32_t captureIndex);

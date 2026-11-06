@@ -31,10 +31,10 @@ variable g1 name="kLabel" module=m0 declared={type=anything} flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
     v1 = String string="mass"
-    v2 = Call v0, -, v1 @100
+    v2 = Call v0, -, v1 callNumber=100 @100
     PutModuleVariable v2 variable=g0
     v4 = String string="label"
-    v5 = Call v0, -, v4 @120
+    v5 = Call v0, -, v4 callNumber=120 @120
     PutModuleVariable v5 variable=g1
     v7 = NewClosure function=f1
     v8 = NewClosure function=f2

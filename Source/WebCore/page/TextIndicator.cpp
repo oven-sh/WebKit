@@ -26,7 +26,6 @@
 #include "config.h"
 #include "TextIndicator.h"
 
-#include "BitmapImage.h"
 #include "ColorBlending.h"
 #include "ColorHash.h"
 #include "ContainerNodeInlines.h"
@@ -225,13 +224,13 @@ static SnapshotOptions snapshotOptionsForTextIndicatorOptions(OptionSet<TextIndi
     return snapshotOptions;
 }
 
-static RefPtr<BitmapImage> takeSnapshot(LocalFrame& frame, IntRect rect, SnapshotOptions&& options, float& scaleFactor, const Vector<FloatRect>& clipRectsInDocumentCoordinates)
+static RefPtr<NativeImage> takeSnapshot(LocalFrame& frame, IntRect rect, SnapshotOptions&& options, float& scaleFactor, const Vector<FloatRect>& clipRectsInDocumentCoordinates)
 {
     auto buffer = snapshotFrameRectWithClip(frame, rect, clipRectsInDocumentCoordinates, WTF::move(options));
     if (!buffer)
         return nullptr;
     scaleFactor = buffer->resolutionScale();
-    return BitmapImage::create(ImageBuffer::sinkIntoNativeImage(WTF::move(buffer)));
+    return ImageBuffer::sinkIntoNativeImage(WTF::move(buffer));
 }
 
 static bool takeSnapshots(TextIndicatorData& data, LocalFrame& frame, IntRect snapshotRect, const Vector<FloatRect>& clipRectsInDocumentCoordinates)
@@ -370,7 +369,7 @@ static bool initializeIndicator(TextIndicatorData& data, LocalFrame& frame, cons
     // Use the exposedContentRect/viewExposedRect instead of visibleContentRect to avoid creating a huge indicator for a large view inside a scroll view.
     IntRect contentsClipRect;
 #if PLATFORM(IOS_FAMILY)
-    contentsClipRect = enclosingIntRect(frameView->exposedContentRect());
+    contentsClipRect = enclosingIntRect(frameView->exposedContentRect().raw());
 #else
     if (auto viewExposedRect = frameView->viewExposedRect())
         contentsClipRect = enclosingIntRect(*viewExposedRect);

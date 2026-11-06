@@ -13,7 +13,9 @@
 #include "AOTLayout.h"
 #include "AOTPlacement.h"
 #include "AOTShapeTest.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
+#include "BrandedStructure.h"
 #include "MarkedBlock.h"
 #include <algorithm>
 
@@ -35,6 +37,14 @@ Word32 ShapeTestEmitter::shapeWordOf(CellPointer cell)
 
 Word32 ShapeTestEmitter::orderWordOf(CellPointer cell)
 {
+    checkClaim(cell, [&] {
+        return isCompiledObject(cell);
+    });
+    return orderWordOfAnyCell(cell);
+}
+
+Word32 ShapeTestEmitter::orderWordOfAnyCell(CellPointer cell)
+{
     return loadField<Word32>(cell, m_heaps.AOTObject_orderWord);
 }
 
@@ -42,8 +52,8 @@ Word32 ShapeTestEmitter::orderWordOf(CellPointer cell)
 bool ShapeTestEmitter::hasOnlyCompiledObjects(const Type& known) const
 {
     const SlotPlan& slots = m_placement.slots();
-    return known.hasOnlyLayouts(m_program) && std::ranges::all_of(membersOf(m_program, known), [&](LayoutID member) {
-        return slots.storageOf(member) == LayoutStorage::CompiledObject || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
+    return known.hasOnlyLayouts() && std::ranges::all_of(membersOf(m_program, known), [&](LayoutID member) {
+        return slots.holdsCompiledObjects(member) || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
 }
 
@@ -52,11 +62,127 @@ Condition ShapeTestEmitter::hasNoExtraProperties(CellPointer cell)
     return hasNoBits(orderWordOf(cell), orderWordHasExtraProperties);
 }
 
+Condition ShapeTestEmitter::carriesBrandOfClass(CellPointer cell, LayoutID classLayout)
+{
+    static_assert(sizeof(CompactRefPtr<UniquedStringImpl>) == sizeof(void*));
+    std::optional<uint32_t> rank = m_placement.rankOfClass(classLayout);
+    if (!rank)
+        return boolean(false);
+    ptrdiff_t offsetOfBrand = static_cast<ptrdiff_t>(*rank) * sizeof(void*);
+    Pointer structure = loadStructure(cell);
+    Condition isBranded = equal(Word32(m_out.load8ZeroExt32(structure.value(), m_heaps.Structure_variant)), word32(static_cast<uint32_t>(Structure::StructureVariant::Branded)));
+    return selectByBranch<Condition>(isBranded, [&] {
+        Pointer brands = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.brandsOfInstances));
+        LValue brandOfClass = m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), brands.value(), offsetOfBrand));
+
+        // The class's brand is the first one the object got. Code evaluated at run time may have added others on top.
+        LBasicBlock loop = newBlock();
+        LBasicBlock earlierBrand = newBlock();
+        LBasicBlock continuation = newBlock();
+        ValueFromBlock latest = m_out.anchor(structure.value());
+        m_out.jump(loop);
+
+        m_out.appendTo(loop);
+        LValue branded = m_out.phi(B3::pointerType(), latest);
+        ValueFromBlock found = m_out.anchor(boolean(true).value());
+        m_out.branch(m_out.equal(m_out.loadPtr(branded, m_heaps.BrandedStructure_brand), brandOfClass), normalEdge(continuation), normalEdge(earlierBrand));
+
+        m_out.appendTo(earlierBrand);
+        static_assert(sizeof(WriteBarrierStructureID) == sizeof(uint32_t));
+        Word32 earlier(m_out.load32(branded, m_heaps.BrandedStructure_parentBrand));
+        m_out.addIncomingToPhi(branded, m_out.anchor(decodeStructureID(earlier).value()));
+        ValueFromBlock notFound = m_out.anchor(boolean(false).value());
+        m_out.branch(m_out.isZero32(earlier.value()), normalEdge(continuation), unlikelyEdge(loop));
+
+        m_out.appendTo(continuation);
+        return Condition(m_out.phi(B3::Int32, found, notFound));
+    }, [&] {
+        return boolean(false);
+    });
+}
+
+bool ShapeTestEmitter::hasOnlyCellsWithBrands(const Type& type) const
+{
+    AOT_THRESHOLD(size_t, maxClasses, 4);
+    if (!type.hasOnlyLayouts())
+        return false;
+    std::span<const LayoutID> members = membersOf(m_program, type);
+    return !members.empty() && members.size() <= maxClasses && std::ranges::all_of(members, [&](LayoutID member) {
+        return Typed::carriesBrandOfClass(m_program, member) && m_placement.rankOfClass(member);
+    });
+}
+
+bool ShapeTestEmitter::mayBeCellWithBrand(const Type& type) const
+{
+    return type.layouts && std::ranges::any_of(membersOf(m_program, type), [&](LayoutID member) {
+        return Typed::carriesBrandOfClass(m_program, member);
+    });
+}
+
+Condition ShapeTestEmitter::isCompiledObject(CellPointer cell)
+{
+    return hasBits(shapeWordOf(cell), compiledObjectShapeBit);
+}
+
+Condition ShapeTestEmitter::hasPrototypeOfItsClass(CellPointer cell, const Type& cellsWithBrands)
+{
+    Pointer structure = loadStructure(cell);
+    LValue prototype = m_out.load64(structure.value(), m_heaps.Structure_prototype);
+    Pointer prototypes = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.classPrototypes));
+    std::span<const LayoutID> members = membersOf(m_program, cellsWithBrands);
+    if (members.size() == 1) {
+        ptrdiff_t offset = static_cast<ptrdiff_t>(*m_placement.rankOfClass(members[0])) * sizeof(void*);
+        return Condition(m_out.equal(prototype, m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), prototypes.value(), offset))));
+    }
+    Condition result;
+    for (LayoutID member : members) {
+        ptrdiff_t offset = static_cast<ptrdiff_t>(*m_placement.rankOfClass(member)) * sizeof(void*);
+        Condition hasPrototype(m_out.equal(prototype, m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), prototypes.value(), offset))));
+        result = logicalOr(result, logicalAnd(carriesBrandOfClass(cell, member), hasPrototype));
+    }
+    return result;
+}
+
+Condition ShapeTestEmitter::hasNoPropertyOfItsOwn(CellPointer cell)
+{
+    Pointer structure = loadStructure(cell);
+    return equal(Word32(m_out.load16ZeroExt32(structure.value(), m_heaps.Structure_maxOffset)), word32(static_cast<uint32_t>(Structure::greatestMaxOffsetOutsideRareData + 1)));
+}
+
+bool ShapeTestEmitter::hasOnlyCellsCreatedWithoutProperties(const Type& cellsWithBrands) const
+{
+    return std::ranges::none_of(membersOf(m_program, cellsWithBrands), [&](LayoutID member) {
+        return isCreatedWithProperties(m_program, member, m_program.at(member).writtenBuiltinBase);
+    });
+}
+
+// The runtime examines each Structure once between two garbage collections.
+Condition ShapeTestEmitter::hasOnlyClassFieldNames(CellPointer cell)
+{
+    Word32 structureID = loadStructureID(cell);
+    Pointer known = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.structureNameCache));
+    Word32 index = bitAnd(shiftRightUnsigned(structureID, static_cast<int32_t>(structureNameCacheShift)), word32(structureNameCacheSize - 1));
+    LValue place = m_out.add(known.value(), m_out.shl(m_out.zeroExtPtr(index.value()), m_out.constIntPtr(2)));
+    Word32 entry(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), place, 0)));
+    return either<Condition>(equal(entry, structureID), [&] {
+        return boolean(true);
+    }, [&] {
+        return either<Condition>(equal(entry, bitOr(structureID, word32(structureHasOtherNames))), [&] {
+            return boolean(false);
+        }, [&] {
+            return callWithoutSite<Condition>(RuntimeOperation::HasOnlyClassFieldNames, { cell }, { .isOnRarePath = true });
+        });
+    });
+}
+
 Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known)
 {
     const ShapeTable& shapes = m_placement.shapes();
     bool isKnownCompiledObject = hasOnlyCompiledObjects(known);
     const ShapeTest& test = isKnownCompiledObject ? shapes.testOf(tested, known.layouts) : shapes.testOf(tested);
+    // The test tells the tested shapes from the known ones alone.
+    if (isKnownCompiledObject)
+        checkIsCompiledObjectOf(cell, known.layouts);
 
     switch (test.form) {
     case ShapeTestForm::NeverPasses:
@@ -88,6 +214,14 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
     return logicalAnd(hasBits(shapeWord, compiledObjectShapeBit), passesTest);
 }
 
+Condition ShapeTestEmitter::isShapeOf(Word32 shapeWord, LayoutID layout)
+{
+    ShapeRange shapes = m_placement.shapes().shapesOf(layout);
+    if (shapes.isEmpty())
+        return boolean(false);
+    return passesRange(shapeWord, ShapeTest { .form = ShapeTestForm::Range, .first = shapes.first, .count = shapes.count });
+}
+
 void ShapeTestEmitter::branchOnShapeIn(CellPointer cell, LayoutSetID tested, const Type& known, BranchTargets targets)
 {
     branch(hasShapeIn(cell, tested, known), targets);
@@ -113,7 +247,8 @@ Condition ShapeTestEmitter::passes(Word32 shapeWord, LayoutSetID tested, const S
         Word32 shiftedBits = test.count <= 32
             ? shiftRightUnsigned(word32(static_cast<uint32_t>(test.bits)), distanceFromLast)
             : low32(Integer(m_out.lShr(m_out.constInt64(static_cast<int64_t>(test.bits)), distanceFromLast.value())));
-        return logicalAnd(passesRange(shapeWord, test), hasBits(shiftedBits, 1));
+        Condition isInRange = passesRange(shapeWord, test);
+        return logicalAnd(isInRange, hasBits(shiftedBits, 1));
     }
     case ShapeTestForm::BitSet:
         return passesBitSet(shapeWord, tested, test);
@@ -126,7 +261,7 @@ Condition ShapeTestEmitter::passes(Word32 shapeWord, LayoutSetID tested, const S
 
 Condition ShapeTestEmitter::passesRange(Word32 shapeWord, const ShapeTest& test)
 {
-    return below(add(shapeWord, word32(test.last())), word32(test.count));
+    return below(add(shapeWord, test.last()), test.count);
 }
 
 ShapeTestEmitter::BitSetConstant ShapeTestEmitter::bitSetConstant(LayoutSetID tested)
@@ -145,12 +280,12 @@ Condition ShapeTestEmitter::passesBitSet(Word32 shapeWord, LayoutSetID tested, c
     Pointer words(m_out.relocatable(RelocationSpace::Constants, constant.index));
     if (constant.entries == PagedBitSet::Entries::Hashed) {
         // A shape out of reach finds another number in its slot, like any shape that is no member.
-        Word32 slot = shiftRightUnsigned(mul(distanceFromLast, word32(PagedBitSet::multiplierIn(constant.headOfHashedSet))), word32(PagedBitSet::shiftIn(constant.headOfHashedSet)));
+        Word32 slot = shiftRightUnsigned(mul(distanceFromLast, PagedBitSet::multiplierIn(constant.headOfHashedSet)), PagedBitSet::shiftIn(constant.headOfHashedSet));
         static_assert(sizeof(PagedBitSet::Slot) == sizeof(uint16_t));
         Word32 held(m_out.load16ZeroExt32(m_out.address(m_heaps.AOTImage_tables, offsetBy(words, zeroExtended(slot), PagedBitSet::logBytesPerSlot).value(), PagedBitSet::offsetOfSlots)));
         return equal(held, distanceFromLast);
     }
-    Word32 index = select(below(distanceFromLast, word32(test.count)), distanceFromLast, word32(test.count));
+    Word32 index = select(below(distanceFromLast, test.count), distanceFromLast, test.count);
     auto addressOf = [&](Word32 element, unsigned logSize) {
         return m_out.address(m_heaps.AOTImage_tables, offsetBy(words, zeroExtended(element), logSize).value());
     };

@@ -1,4 +1,5 @@
 # An entrypoint that only hands on what it was given is moves, loads of captures and one jump. That code is written down as it stands: it is no procedure of the back end
+# No stack lists the function with captures: one that a stack lists, is made anew and leaves sight records which function object it was entered through
 # FORM: AsRead
 # RUN: generate-code calls FunctionsWithoutFrame
 # RUN(PLACED): pipeline CheckPlacement
@@ -40,7 +41,7 @@ function f2 name="takesThis" flags=[HasThis] thisType={type=anything} parameters
     v4 = Call v2, v0, v3
     Return v4
 }
-function f3 name="takesCaptures" captures=[{type=anything}, {type=anything}] parameters=[{type=anything}] results=[{type=anything}] {
+function f3 name="takesCaptures" flags=[IsHiddenInStackTraces] captures=[{type=anything}, {type=anything}] parameters=[{type=anything}] results=[{type=anything}] {
     v3 = Call v0, -, v1
     v4 = Call v2, -, v3
     Return v4

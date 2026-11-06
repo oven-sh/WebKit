@@ -9,9 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayChains.h"
+#include "AOTBackgroundTask.h"
 #include "AOTBindGlobalNames.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTCastsWithoutFacts.h"
 #include "AOTCurrentWork.h"
 #include "AOTEffectSummaries.h"
 #include "AOTExactBuffer.h"
@@ -76,7 +78,7 @@ struct PassesByContent {
 
 } // anonymous namespace
 
-// A pass without a row may have something to do in any body.
+// A pass without a row may have something to do in any body. A pass over loops asks for LoopHint: every cycle holds one (FunctionVerifier::verifyLoopMarks).
 static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::ListLiveValuesAtSuspensions, { .opcodes = { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::ReadScope } } },
     { PassID::CheckInt32Promises, { .opcodes = { Opcode::Convert }, .terminators = { TerminatorKind::ReturnCall } } },
@@ -99,7 +101,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::EliminateRedundantReads, { .opcodes = opcodesOfRedundantReadElimination } },
     { PassID::EliminateGuards, { .opcodes = opcodesOfGuardElimination } },
     { PassID::SeparateUnlikelyLoopPaths, { .opcodes = { Opcode::LoopHint } } },
-    { PassID::ConvertCountersToIntegers, { .traits = BodyTrait::BlockParameters } },
+    { PassID::ConvertCountersToIntegers, { .traits = BodyTrait::BlockParameters }, { { .opcodes = { Opcode::LoopHint } } } },
     { PassID::RemoveDeadCountedLoops, { .opcodes = { Opcode::LoopHint } } },
     { PassID::UnrollShortLoops, { .opcodes = { Opcode::LoopHint } } },
     { PassID::FuseArrayChains, { .opcodes = arrayMethodCallOpcodes } },
@@ -113,22 +115,23 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::RemoveTrivialParameters, { .traits = BodyTrait::BlockParameters } },
     { PassID::PropagateBranchConditions, { .opcodes = { Opcode::ToBoolean }, .terminators = { TerminatorKind::Branch } } },
     { PassID::HoistTestsIntoPredecessors, { .opcodes = operationsHoistedIntoPredecessors }, { { .traits = BodyTrait::BlockParameters } } },
-    { PassID::TestNarrowerTypesFirst, { .opcodes = { Opcode::TypeTest } } },
+    { PassID::TestNarrowerTypesFirst, { .opcodes = { Opcode::TypeTest, Opcode::StrictEq } } },
     { PassID::ThreadJumps, { .opcodes = { Opcode::TypeTest }, .traits = BodyTrait::BlockParameters } },
     { PassID::RemoveRedundantHandlers, { .traits = BodyTrait::Handlers } },
-    { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .traits = BodyTrait::SeveralBlocks } } },
-    { PassID::SimplifyBuiltinCalls, { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject } | simplifiedIntrinsics | constantListSourceOpcodes }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject } | simplifiedIntrinsics | constantListUserOpcodes } } },
-    { PassID::ReduceIntegerDivisions, { .opcodes = { Opcode::Div } }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin } | int32ConvertingOperations } } },
+    { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .opcodes = { Opcode::LoopHint } } } },
+    { PassID::SimplifyBuiltinCalls, { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject, Opcode::ElemGet } | simplifiedIntrinsics | constantListSourceOpcodes }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject, Opcode::GetStringLength } | simplifiedIntrinsics | constantListUserOpcodes } } },
+    { PassID::ReduceIntegerDivisions, { .opcodes = { Opcode::Div } }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::Mod } | int32ConvertingOperations } } },
     { PassID::PlanArrayCapacities, { .opcodes = arrayCapacityOpcodes } },
     { PassID::PlanCollectionCapacities, { .opcodes = { Opcode::CallBuiltin } }, { { .traits = BodyTrait::SeveralBlocks } } },
     { PassID::FoldConstantRegExps, { .opcodes = { Opcode::CallBuiltin } } },
     { PassID::ShareRegExpLiterals, { .opcodes = { Opcode::NewRegExp } } },
+    { PassID::KeepStringsJoinedInLoops, { .opcodes = joinsOfStrings }, { { .opcodes = { Opcode::LoopHint } } } },
     { PassID::InsertObjectCoercibleChecks, { .opcodes = objectCoercibleCheckOpcodes } },
     { PassID::EliminateTailRecursion, { .terminators = { TerminatorKind::ReturnCall } } },
     { PassID::ResolveAwaitedCalls, { .opcodes = { Opcode::AwaitBySavingFrame, Opcode::PromiseAllOfElements } } },
     { PassID::SinkConstants, { .traits = BodyTrait::SeveralBlocks } },
     { PassID::ExpandLongArrayLiterals, { .opcodes = { Opcode::NewArray } } },
-    { PassID::FinishBirths, { .opcodes = { Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::NewObject }, .traits = BodyTrait::UnfinishedThis } },
+    { PassID::FinishBirths, { .opcodes = { Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::PropSet, Opcode::PropDefine, Opcode::NewObject }, .traits = BodyTrait::UnfinishedThis } },
     { PassID::RemoveRedundantBarriers, { .opcodes = operationsThatMayRunBarrier } },
 };
 
@@ -351,7 +354,7 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context)
     CurrentWorkScope workScope(context.program, run.functionAsRead);
     PassOutcome outcome = runFunctionPass(id, context, run);
     addTotals(run, numberOfValuesAtStart);
-    return outcome;
+    return run.didMakeFacts ? PassOutcome::Changed : outcome;
 }
 
 void PassRunner::prepare(ScheduleRun& run) const
@@ -361,18 +364,22 @@ void PassRunner::prepare(ScheduleRun& run) const
         run.notes.emplace();
 }
 
-static constexpr PassSet optionalPassesOfGenericVersions {
+static constexpr PassSet optionalPassesOfCompactFunctions {
     PassID::BindGlobalNames, PassID::SimplifyBuiltinCalls, PassID::CallThroughMethodTable, PassID::ResolveCalls, PassID::ResolveAccesses, PassID::SimplifyCasts, PassID::FoldConstants, PassID::SimplifyControlFlow,
     PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks, PassID::ResolveAwaitedCalls,
 };
 
-static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfGenericVersions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };
+static constexpr PassSet optionalPassesOfGenericVersions = optionalPassesOfCompactFunctions | PassSet { PassID::InsertObjectCoercibleChecks, PassID::EliminateRedundantReads, PassID::ExpandOwnKeys };
+
+static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfCompactFunctions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths, PassID::ExpandOwnKeys };
 
 // An async function waits between its steps, so what it costs is seldom its own code.
 static const PassSet* optionalPassesOfShortScheduleFor(const Function& function, bool hasNoWarmCode, bool isCompact)
 {
-    if (function.role == FunctionRole::GenericVersion || isCompact)
+    if (function.role == FunctionRole::GenericVersion)
         return &optionalPassesOfGenericVersions;
+    if (isCompact)
+        return &optionalPassesOfCompactFunctions;
     if (hasNoWarmCode && function.has(FunctionFlags::IsAsync))
         return &optionalPassesOfColdAsyncFunctions;
     return nullptr;
@@ -393,10 +400,12 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     run.functionAsRead = context.subject().function;
     CurrentWorkScope workScope(program, run.functionAsRead);
     const bool readsHeat = schedule == FunctionSchedule::Prepare || schedule == FunctionSchedule::Optimize;
-    const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id);
-    run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id));
-    if (run.optionalPassesOfShortSchedule)
+    const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id).predicted();
+    run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id).predicted());
+    if (run.optionalPassesOfShortSchedule) {
         run.maxRounds = maxRoundsOfShortSchedule;
+        context.isShortSchedule = true;
+    }
     if (contents) {
         RELEASE_ASSERT(!m_build.options().verifiesAfterEveryPass || *contents == contentsOf(function));
         run.setContents(*contents, function);
@@ -414,7 +423,7 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     if (schedule == FunctionSchedule::Resolve && entersTyped && !function.valuesAreTypedAsDefined() && !run.isStopped)
         runFunctionPass(PassID::RetypeValues, context, run);
     addTotals(run, numberOfValuesAtStart);
-    return run.numberOfChanges ? PassOutcome::Changed : PassOutcome::Unchanged;
+    return run.numberOfChanges || run.didMakeFacts ? PassOutcome::Changed : PassOutcome::Unchanged;
 }
 
 void PassRunner::didFinishFunctionLoop()
@@ -478,6 +487,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::InlineHeads, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::OutlineColdOperations, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::PlaceTypeTests, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::PlanArrayCapacities, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::RemoveRedundantHandlers, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::RemoveUnreachableFunctions, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
     { PassID::ResolveAccesses, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
@@ -485,10 +495,11 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::ResolveCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::RetypeValues, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
-    { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, true, TakesHandlersAway::No, { } },
     { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
+    { PassID::MoveGeneratorFramesToHeap, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SplitCoroutines, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
     { PassID::SplitFreshResults, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::SplitUnions, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
@@ -496,7 +507,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::CreateStringBuilders, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
     { PassID::DeferClosuresInFields, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Call } },
     { PassID::DeferDefinitions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::DefineMethod, Opcode::NewClass } },
-    { PassID::EliminateRedundantReads, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add, Opcode::AppendElements, Opcode::Call, Opcode::CallBuiltin, Opcode::CallDirect, Opcode::CallList, Opcode::Construct, Opcode::JSONAppendValue, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::RequireObjectCoercible } },
+    { PassID::EliminateRedundantReads, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add, Opcode::AppendElements, Opcode::Call, Opcode::CallBuiltin, Opcode::CallDirect, Opcode::CallList, Opcode::Construct, Opcode::JSONAppendValue, Opcode::PrivateGet, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::RequireObjectCoercible } },
     { PassID::EmbedConstantCollections, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::PropDefine } },
     { PassID::FoldConstants, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::PropHas } },
     { PassID::FuseConcatenations, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
@@ -506,7 +517,8 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::SimplifyBuiltinCalls, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::AwaitBySavingFrame } },
 };
 
-static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationThatWent>& operations)
+// A pass that runs inside another one, on a function that the other has edited, answers for the other one too.
+static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationThatWent>& operations, ReasonsForOperationsThatWent* listenerOutside = nullptr)
 {
     const OperationsThatPassAnswersFor* entry = nullptr;
     for (const OperationsThatPassAnswersFor& candidate : operationsThatPassesAnswerFor) {
@@ -517,6 +529,8 @@ static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationTha
         bool isAnswered = entry && (operation.how == OperationThatWent::How::LostItsHandler ? entry->takesHandlersAway == TakesHandlersAway::Yes : entry->isEveryOperation || entry->opcodes.contains(operation.opcode));
         if (!isAnswered)
             return describe(operation);
+        if (listenerOutside)
+            listenerOutside->addForOperationThatWent(operation.value, entry->reason);
     }
     return { };
 }
@@ -640,8 +654,10 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
     // Not ProgramAnalyses::effects(): summaries cached here would reach later passes, and the output would depend on this option.
     EffectSummaries effects;
     const PassDescriptor& summarizer = descriptorOf(PassID::ComputeEffectSummaries);
-    if (m_verifierInputs.flow && summarizer.accepts(program.form()) && m_build.isEnabled(summarizer.id, FunctionID()))
-        effects = computeEffectSummaries(program, *m_verifierInputs.flow, m_build);
+    // A pass that runs on its own gets summaries computed without flow analysis results, so its output is verified against the same kind of summaries.
+    FlowResults noResults;
+    if (summarizer.accepts(program.form()) && m_build.isEnabled(summarizer.id, FunctionID()))
+        effects = computeEffectSummaries(program, m_verifierInputs.flow ? *m_verifierInputs.flow : noResults, m_build);
 
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
@@ -668,8 +684,16 @@ bool PassRunner::mayRunAnalysesTogether() const
     return !m_stopAfter && !m_build.options().logging.dumpedPass;
 }
 
-void PassRunner::runTogether(NOESCAPE const ScopedLambda<void()>& first, NOESCAPE const ScopedLambda<void()>& second) const
+void PassRunner::runTogether(NOESCAPE const ScopedLambda<void()>& first, NOESCAPE const ScopedLambda<void()>& second, TaskPriority secondPriority) const
 {
+    if (secondPriority != TaskPriority::Foreground) {
+        Ref<BackgroundTask> task = BackgroundTask::start(m_build.parallelLoops(), secondPriority, { }, [&] {
+            second();
+        });
+        first();
+        task->finish();
+        return;
+    }
     forEachIndexInParallel(m_build.parallelLoops(), 2, [&](unsigned index) {
         index ? second() : first();
     });
@@ -713,7 +737,7 @@ static OptionSet<BlockEdit> editsBetween(const Block& before, const Block& after
         if (before.handler)
             compareTargets(*before.handler, *after.handler);
     }
-    if (before.subject != after.subject || before.role != after.role || before.frequency != after.frequency || before.shape != after.shape)
+    if (before.subject != after.subject || before.role != after.role || !before.frequency.isSamePredictionAs(after.frequency) || before.shape != after.shape)
         edits.add(BlockEdit::Rest);
     return edits;
 }
@@ -773,7 +797,9 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context,
     context.changes.settle();
     const bool reachedFixpoint = run.reachedFixpoint.get(index);
     run.reachedFixpoint.clear(index);
-    if (run.passesThatRan.contains(id) && !run.passesWithWork.get(index)) {
+    // No round follows a step outside the rounds.
+    const bool hasWaitedLongEnough = !context.isInRounds && run.isImpatient(id);
+    if (run.passesThatRan.contains(id) && !run.passesWithWork.get(index) && !hasWaitedLongEnough) {
         if (reachedFixpoint || run.passesEnabledByTable.get(index)) {
             // Leave the same state behind as the idle run that this skips.
             ++run.numberOfSkippedRuns;
@@ -827,11 +853,44 @@ static bool isVerifiedElsewhere(const FunctionPassContext& context)
 }
 
 // Apart from the steps that are left out, which are nine in ten and need none of what a run needs.
+// These put operations where the program had none: in front of a loop, on the edges into it, at the head of a web. What they may put there is what names nothing that is defined behind the place.
+// Other passes put values in place of values, cut the code between a value and a cast of it and make casts where values are used, and move no cast: so each cast that stands apart from its value holds where
+// it stands, and is tied there before anything leaves a loop.
+static constexpr PassSet passesThatMoveOperationsOutOfLoops {
+    PassID::HoistLoopInvariantReads, PassID::PlaceTypeTests, PassID::SeparateUnlikelyLoopPaths, PassID::CreateStringBuilders, PassID::PlanArrayCapacities, PassID::PlanCollectionCapacities, PassID::Select,
+};
+
 NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, FunctionPassContext& context, ScheduleRun& run) const
 {
     const PassDescriptor& descriptor = descriptorOf(id);
     const unsigned index = static_cast<unsigned>(id);
 
+    auto tieCasts = [&] {
+        if (run.numberOfChangesWhenCastsWereTied == run.numberOfChanges)
+            return;
+        // A fact gives no pass anything to do, so no round follows for its sake.
+        if (Vector<BlockID, 4> changedBlocks = tieCastsWhereTheyStand(context.program, context.function); !changedBlocks.isEmpty()) {
+            context.analyses.didAddDetachedValue({ });
+            for (BlockID block : changedBlocks)
+                context.analyses.didChangeBlock(block);
+            run.contents = std::nullopt;
+            run.didMakeFacts = true;
+        }
+        run.numberOfChangesWhenCastsWereTied = run.numberOfChanges;
+    };
+    if (passesThatMoveOperationsOutOfLoops.contains(id) && context.program.form() == IRForm::Prepared) {
+        const OpcodeSet& opcodes = run.contentsOf(context.function, context.changes).opcodes;
+        if (opcodes.contains(Opcode::LoopHint) && opcodes.contains(Opcode::AssumeType)) {
+            tieCasts();
+            if (m_build.options().verifiesProgram) [[unlikely]] {
+                if (Vector<CastAwayFromItsValue, 4> found = findCastsAwayFromTheirValues(context.program, context.function); !found.isEmpty()) {
+                    m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::CastWithoutFact, .function = context.id, .block = found[0].block, .value = found[0].cast, .pass = id });
+                    run.isStopped = true;
+                    return PassOutcome::Unchanged;
+                }
+            }
+        }
+    }
     const bool isTimed = m_build.options().logging.logsPhaseTimes;
     size_t numberOfValuesBefore = context.function.values.size();
     const uint32_t weight = isTimed ? numberOfRunsThatTimedRunStandsFor(run.functionAsRead, numberOfValuesBefore) : 0;
@@ -878,7 +937,7 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     if (functionBeforeRun) [[unlikely]] {
         stopWhereThereIsOne(findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun));
         if (outcome == PassOutcome::Changed)
-            stopWhereThereIsOne(findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ context.program, context.inputs.effects }, *functionBeforeRun, context.function, *reasons)));
+            stopWhereThereIsOne(findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ context.program, context.inputs.effects }, *functionBeforeRun, context.function, *reasons), &*reasons));
     }
     if (isTimed) {
         if (outcome == PassOutcome::Unchanged && !context.analyses.computed().containsAll(analysesBefore))
@@ -954,10 +1013,24 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
     // A program pass that is given no summaries simplifies functions which the Optimize loop has left: their guards stand across calls that only the summaries call harmless.
     inputs.cannotJudgeGuards = context.inputs.effects.isEmpty() && m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID());
     inputs.otherFunctionsMayChange = true;
+    const uint32_t numberOfEdits = context.function.numberOfEdits();
+    const bool isAsVerified = run.verified && run.verified->numberOfEdits == numberOfEdits && run.verified->form == form && run.verified->cannotJudgeGuards == inputs.cannotJudgeGuards;
+    if (isAsVerified && run.verified->analyses == context.analyses.computed())
+        return;
+    const bool verifiesFunction = canVerify(form) && !descriptor.isVerifiedAfterNextPass;
     Vector<InternalError> errors;
-    if (canVerify(form) && !descriptor.isVerifiedAfterNextPass)
+    if (verifiesFunction && !isAsVerified) {
         errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, inputs);
-    if (errors.isEmpty() && hasTypedValues(context.function)) {
+        bool hasUnavailableGuard = std::ranges::any_of(errors, [](const InternalError& error) {
+            return error.kind == InternalErrorKind::GuardNotAvailable;
+        });
+        if (hasUnavailableGuard && inputs.effectsByOperandTypes) {
+            VerifierInputs finer = inputs;
+            finer.effects = inputs.effectsByOperandTypes;
+            errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, finer);
+        }
+    }
+    if (errors.isEmpty() && !isAsVerified && hasTypedValues(context.function)) {
         // In an arena of its own: what is interned here must not reach the program, or the output would depend on this option.
         ScratchTypeArena types(context.program.types);
         if (std::optional<BrokenResultRule> broken = findBrokenResultRule(context.program, context.function, types, run.shapesWithMonotoneResult)) {
@@ -965,8 +1038,11 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
         }
     }
     if (errors.isEmpty()) {
+        run.verified = std::nullopt;
         if (!context.analyses.verifyCached())
             run.isStopped = true;
+        else if (verifiesFunction || isAsVerified)
+            run.verified = ScheduleRun::VerifiedState { numberOfEdits, form, inputs.cannotJudgeGuards, context.analyses.computed() };
         return;
     }
 
@@ -1047,7 +1123,7 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, std::span<const S
         WhatFollows whatFollowsStep = index + 1 == steps.size() ? whatFollows : WhatFollows::MoreSteps;
         switch (step.kind) {
         case ScheduleStep::Kind::RunPass:
-            if (!step.isBehindRounds && run.isAtRest(step.pass))
+            if (!step.isBehindRounds && run.isAtRest(step.pass) && (context.isInRounds || !run.isImpatient(step.pass)))
                 break;
             if (step.isBehindRounds) {
                 // It has run in the rounds and changed nothing there, on purpose.
@@ -1089,7 +1165,10 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, std::span<const S
                     break;
                 uint32_t numberOfChangesBefore = run.numberOfChanges;
                 runSteps(body, stepsInside.subspan(index + 1, end - index - 1), context, run);
-                if (run.numberOfChanges == numberOfChangesBefore || run.isStopped)
+                if (run.isStopped)
+                    break;
+                // What an impatient pass finds may start another round.
+                if (run.numberOfChanges == numberOfChangesBefore && (wasInRounds || !run.giveWorkToImpatientPasses(stepsInside[index].passes)))
                     break;
             }
             context.isInRounds = wasInRounds;
@@ -1104,6 +1183,8 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, std::span<const S
 
 void PassRunner::addTotals(const ScheduleRun& run, size_t numberOfValuesAtStart) const
 {
+    if (!m_hasFunctionPassTotals.load(std::memory_order_relaxed))
+        m_hasFunctionPassTotals.store(true, std::memory_order_relaxed);
     if (run.numberOfSkippedRuns)
         m_build.statistics().count(StatisticID::FunctionPassRunsSkipped, run.numberOfSkippedRuns);
     if (m_build.options().logging.logsPhaseTimes) {
@@ -1163,6 +1244,9 @@ void PassRunner::addTotals(const ScheduleRun& run, size_t numberOfValuesAtStart)
 
 void PassRunner::flushFunctionPassTotals()
 {
+    // Most program passes run no schedule of function passes, and the counts are thousands of words.
+    if (!m_hasFunctionPassTotals.exchange(false, std::memory_order_relaxed) && !m_build.options().logging.logsPhaseTimes)
+        return;
     for (PassID id : allMembersOf<PassID>) {
         FunctionPassTotals& totals = m_functionPassTotals[static_cast<unsigned>(id)];
         uint64_t runs = 0;

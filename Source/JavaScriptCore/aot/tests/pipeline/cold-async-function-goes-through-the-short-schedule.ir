@@ -1,10 +1,12 @@
 # An async function none of whose code is expected to run often goes through a short schedule: its tests are placed, its allocations sink, and nothing else is tried on it. Here no call is taken in.
 # The same body takes the call in where the function is not async, and where four functions call the async function. The callee is no larger than its call, so it is taken in where code runs seldom too.
+# The program has two files: the heat that the schedule reads is estimated once the async functions are split.
 # FORM: AsRead
-# OPTIONS: check=VerifyEachPass limit=MaxWarmCodeValues:1 only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
+# OPTIONS: check=VerifyEachPass limit=MaxWarmCodeValues:1
 # RUN: pipeline InlineCalls
 
-module m0 path="main.js" displayPath="main.js" body=f0
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="other.js" displayPath="other.js" body=f9
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -69,6 +71,13 @@ function f7 name="thirdCaller" parameters=[{type=anything}] results=[{type=anyth
 function f8 name="fourthCaller" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = CallDirect v0 function=f3
     Return v1
+}
+
+function f9 name="other" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Call v1, -
+    Return
 }
 # CHECK-LABEL: name="asyncAndSeldomCalled" module=m0 role=CoroutineBody
 # CHECK: = CallDirect {{*}}function=f4

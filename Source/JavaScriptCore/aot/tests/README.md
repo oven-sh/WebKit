@@ -32,6 +32,8 @@ Bun's `test/aot/programs`, and the tests of lowering are in Bun's `test/aot/ir`.
 | `place/` | slots, numbering, shape tests, site caches, program tables |
 | `represent/` | the representations of values |
 | `codegen/` | code generation, type test plans, barriers, frame maps, validation |
+| `runtime/` | programs that run in the shell and count their calls into the run time: the caches, tables and Structures that fill while a program runs |
+| `answers/` | programs that run in the shell and hold what they answer, and nothing else: no count, no shape of code. The shell runs the same text itself and compares. Bun's `test/aot/tools/answers-test-from-source.ts` makes such a file from a program, its `test/aot/engine/answers-in-other-ways.test.ts` runs the folder again under ten option words, and its `test/aot/engine/answers-under-a-sabotage.test.ts` builds programs of the folder with one thing in the compiler broken on purpose: then they fail |
 | `validation/` | a lie per producer: a program in which one thing that typed code relies on is false. The validating build ends the process with the kind that names the lie, or fails at build time |
 | `cliffs/` | the cliffs that no program can cause |
 
@@ -41,8 +43,8 @@ Bun's `test/aot/programs`, and the tests of lowering are in Bun's `test/aot/ir`.
 testaot all <folder>                                              native tests, then every *.ir under the folder, in parallel
 testaot run <file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--option=<option word>].. [--only-diagnostic=<kind>]
 testaot native [<filter>] [--after=<name>] [--single-process]
-testaot list commands|passes|options|limits|statistics|diagnostics
-testaot print <program> [--until=<PassID>] [--function=f<n>].. [--wire] { option word }
+testaot list commands|passes|options|limits|statistics|diagnostics|image-format
+testaot print <program> [--until=<PassID>] [--function=f<n>].. [--wire] [--command="<command> { argument }"] { option word }
 testaot compile <program> --output=<image> { option word }        prints "entry <i> <id>" for each entry point
 testaot write-out <file>                                          prints IR text with REPEAT, PROGRAM-OF and the labels of check lines inside functions written out
 testaot fuzz-reader [--seed=<n>] [--count=<n>] [<program>..]
@@ -66,7 +68,8 @@ diagnostic itself is left out. Together they run a folder in another way than it
 A test that crashes fails alone, because tests run in child processes. `run` starts one child per file. `native` starts one
 child for all its tests, and after a crash another one for the tests that are left. The failure is
 `FAIL <file>:1: crashed with <signal>` or `FAIL <name>: crashed with <signal>`, below the last lines the child printed. A child that
-prints nothing for 100 seconds (300 with ASan or assertions) is killed, and its test fails.
+prints nothing for 100 seconds (300 with ASan or assertions) is killed, and its test fails. On Linux and Windows a child ends with
+the process that started it, however that ends. Elsewhere a child that is killed takes what it has started with it.
 
 Under a debugger, run the test in `testaot` itself: `run` with a single file starts no child, and neither does
 `native --single-process`. `--after=<name>` runs only the native tests listed after that one.
@@ -80,6 +83,13 @@ Any other `--<name>=<value>` is set as a JSC option, as in `jsc`. Without `--fun
 
 ```
 testaot print main.bin --until=<PassID> --aotFunctionToDump=<name>
+```
+
+`print --command=".."` runs one of the commands that run the whole pipeline themselves on the program and prints what the command prints. This is how Bun's tests
+ask about a real program, with the library that the front end sent. `lower-to-b3` and `lower-to-air` print the functions that `aotFunctionToDump` names:
+
+```
+testaot print main.bin --command="lower-to-air loops" --aotFunctionToDump="bench|turn"
 ```
 
 Only `testaot` reads and prints IR text: the lexer, the parser and the printer are sources of `testaot`.
@@ -125,10 +135,11 @@ These are all the directives. `<P>` is `CHECK` for a `RUN:`, and the prefix for 
 ```
 RUN: <command> { argument }
 RUN(<prefix>): <command> { argument }
-REQUIRES: x86_64 | arm64
-REQUIRES(<prefix>): x86_64 | arm64
+REQUIRES: [ x86_64 | arm64 ] { word }
+REQUIRES(<prefix>): [ x86_64 | arm64 ] { word }
 FORM: ( AsRead | Prepared | Selected | Placed ) [ optimizing ]
 OPTIONS: <option word> { option word }
+JSC-OPTIONS: --<name>=<value> { --<name>=<value> }
 <P>: p
 <P>-NEXT: p
 <P>-NOT: p
@@ -144,8 +155,29 @@ END REPEAT
 PROGRAM-OF: <file>
 ```
 
-A directive is a whole comment line: `#`, a name in capitals, then `:`. A comment after IR tokens on the same line is never a
-directive.
+A directive is a whole comment line: `# NAME: value`, with one blank after the `#`, the name in capitals and the colon right after it. A
+comment after IR tokens on the same line is never a directive.
+
+A comment that was meant as a directive is an error, not a comment:
+
+- Its first word is the name of a directive or a check prefix of the file, in capitals, and the line is not written as above
+  (`# CHECK-NEXT v0 = Add`, `#CHECK: x`, `# CHECK : x`).
+- Its first word has a colon after it or a suffix (`-NEXT`), and is such a name in another case (`# check: x`) or in capitals and within two
+  edits of one (`# CHEKC: x`, `# CHECK-NXT x`).
+
+Any other comment is prose. So prose does not begin with `RUN`, `CHECK` or a prefix of the file in capitals.
+
+Three markers say what Bun's `test/aot/tools/update-ir-tests.ts` writes anew. Any other line that begins with `# --` is an error.
+
+```
+# -- source: <file>            the lines down to `# -- end of source` are a program, each behind `# `, and no directives. A further such line begins a further file
+# -- end of source             there is one such block at most, and it ends
+# -- generated: <function> ..  once. Each name (or `f<n>`, or `*`) is a function of the program and has its -LABEL line below. Only check lines follow
+```
+
+List the functions the test is about. A library function (`role=Library`) belongs in the list only if the test is about it: `next` listed in a hundred
+files is a hundred files to regenerate when an iterator compiles differently. In a source, print strings: `console.log` of a value of unknown type keeps
+about 500 library functions reachable, which is 1.6 MB of IR text.
 
 Each `RUN` parses the file again (directives are comments to the parser), sends the wire records through the reader in the form and
 applies the engine-only fields. In form `AsRead` that is all for `print`, `round-trip`, `verify`, `result-types`, `pass`, `pipeline`, `compile` and the commands that run
@@ -164,7 +196,10 @@ built-in, or asks what flow knows about one, writes `# LIBRARY: own` or the `run
 
 `FORM` overrides the command's default form. `FORM: Prepared optimizing` reads and verifies the program as it is in the middle of the
 optimization stage: operations of `AsRead` and of `Prepared` are legal together, and a stored type may be wider than its rule gives.
-`OPTIONS`, `DIAGNOSTIC`, `STATISTIC` and `LOSS` apply to every `RUN` in the file.
+`OPTIONS`, `JSC-OPTIONS`, `DIAGNOSTIC`, `STATISTIC` and `LOSS` apply to every `RUN` in the file.
+
+`JSC-OPTIONS` sets JSC options in the process that runs the commands, as `--<name>=<value>` on the command line of `testaot` does, and only while the
+file runs. It is for a build that must not depend on an option of the process. The shell of `run-in-shell` is another process and takes its own options.
 
 `REQUIRES` is for output that depends on the target architecture, which is the CPU `testaot` was built for. The `RUN` lines with
 its prefix (`REQUIRES:` goes with `RUN:`) run only on that architecture. Their check lines are parsed on every architecture, so a
@@ -177,6 +212,16 @@ malformed one fails everywhere. Check what all targets share under a prefix with
 # REQUIRES(X64): x86_64
 # X64: s22 boolean Boolean 8
 ```
+
+With or without an architecture, `REQUIRES` takes these words, for output that depends on something else about the target:
+
+- `unsanitized-code`: not AddressSanitizer, under which compiled code checks shadow memory before each access.
+- `not-windows`: on Windows, x86-64 code follows another calling convention.
+- `windows`: the other half of `not-windows`. A count of instructions may differ there on either architecture: B3 numbers temporaries in the order in which
+  the arguments of its calls are evaluated, a compiler for Windows evaluates them from the right, and the register allocator breaks ties by those numbers.
+- `faulting-loop-polls`: a loop poll is a load that faults (x86-64 Linux). Elsewhere it is a comparison with a call on its slow path.
+- `no-jscvt`: a number is converted to an int32 by a truncation, a test and a slow path. ARM64 with FEAT_JSCVT (macOS) has one instruction for it.
+- `code-outside-image`: the engine may run code that is not in the image. A hardened engine never does.
 
 A run must report exactly the diagnostic kinds listed. Kinds are compared by name, never by message, and warnings and notes
 count too. A kind listed without a count must be reported at least once. With no `DIAGNOSTIC` line, the run must report no
@@ -192,7 +237,7 @@ A run must give up on exactly the limits listed. A build keeps one loss record p
 subject. `x<count>` is the number of hits, `f<n>`, `v<n>` and `L<n>` are the function, value and layout of the subject. A word that
 is left out is not compared. With no `LOSS` line, the run must hit no limit.
 
-The commands that run the whole pipeline themselves (`pipeline`, `compile`, `run-in-shell`, `generate-code`, `plan-slots`, `place`, `tables`, `check-placement`, `allocation-remarks`,
+The commands that run the whole pipeline themselves (`pipeline`, `compile`, `run-in-shell`, `generate-code`, `lower-to-b3`, `lower-to-air`, `plan-slots`, `place`, `tables`, `check-placement`, `allocation-remarks`,
 `unsupported-conversions`) are the exception: the thresholds of heuristics are limits too, a build of almost any program hits some, and which ones depends on the target. There a listed
 limit must be hit, a limit that is not listed may be, and `LOSS: <LimitID> x0` says that a limit is not hit.
 
@@ -253,19 +298,21 @@ schema is the reference for every keyword, field, operand, payload name and flag
 - An id is a letter and a number: `v` value, `b` block, `f` function, `L` layout, `g` variable, `m` module, `q` module failure,
   `w` type site, `e` eval scope, `x` expected result, `d` data.
 - A flag word is `[A, B]`, a nested record `{field=value ..}`, a variant `Case` or `Case{field=value ..}`, a list `[a, b]`.
-- A property key is `"x"`, `@"x"` (engine private name), `#"x"@L2` (private name of layout 2), `@@iterator`, `symbol@m0:120`.
+- A property key is `"x"`, `@"x"` (engine private name), `#"x"@L2` (private name of layout 2), `@@iterator`, `symbol@m0:120`
+  (the symbols that the call with `callNumber=120` in module 0 makes; with a description, `symbol("x")@m0:120`).
 - A type is parts joined by `|`: `undefined|number`, `i32`, `int[0, 9]`, `"a"|"b"`, `L3|L4`, `Array<number>`, `function`, `f3`, `env L1`,
   `builtin(MathMax)`, `anything`, `never`, `object`, `absent`, an opaque kind in lower case (`guard`, `iteratorstate`). `L3` reads as its
-  family: the layouts below it. `nolayout` beside layouts says that the family also has members without a layout (`L3|nolayout`, in a layout
-  set `[L3, nolayout]`). `f3` names a function, or a function type (a function with `role=Signature`), which reads as the functions
-  converted into it (`functionTypes=[f3]` on a function or on a function type below it) and the built-ins converted into it (`builtinMembers=[MathAbs]` on the function type). The contents of `Array<L3>` are expected. The engine has more parts than the wire: `whole`, `fractional`, `double`, a
+  family: the layouts below it. `f3` names a function, or a function type (a function with `role=Signature`), which reads as the functions
+  converted into it (`functionTypes=[f3]` on a function or on a function type below it) and the built-in functions converted into it (`builtinMembers=[MathAbs]` on the function type). `builtin(..)` names no constant: `Symbol.iterator` is a `symbol` and `Math.PI` a `number`. The contents of `Array<L3>` are expected. The engine has more parts than the wire: `whole`, `fractional`, `double`, a
   symbol key, `Array<L3, proven>` (contents proven), `Array<number, proven, Int32>` (storage kind), `RegExp<"ab+c"[Global]>`.
 - A position is `{type=T site=w0 flags=[..]}`. Every value that enters it is inside `T`, by a conversion that the families cover or by a
   `Check`. With the flag `IsExpected` nothing checks what enters: a read of it proves nothing and expects `T`.
 - A value is `vN = Operation operands.. name=value.. [flag, flag] @position`. Operands come first, in declaration order, separated by
   commas, with `-` for an absent optional operand that another operand follows. An operation without a result has no `vN =` and
   still takes the next id. The position is the offset in the module's text that a stack trace names. A second one, `@position @written`,
-  says where the text has the operation if that is elsewhere: the build report lists an access there.
+  says where the text has the operation if that is elsewhere: the build report lists an access there. `@position @written callers` is an
+  operation that reports its own errors at the first and whatever it calls at the second. `round-trip wire` prints what a front end sends,
+  as `testaot print --wire` does, which is where the second position of such an operation and of a construction shows.
 - A terminator is `Name operands.. name=value.. -> target bK(arguments | proofs), ..`.
 - A block is `bN(parameters) role=.. subject=vK frequency=.. handler=bK(arguments):`.
 - The head of `b0` may be left out. The block then has the parameters that the function's line gives it, `v0` onward: the captures, `this`, the
@@ -363,14 +410,43 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
 - `function-passes <PassID> { <PassID> }` runs the named function passes on one function after the other, all of them with one
   `FunctionPassContext` per function, as a schedule does: what a pass remembers in the context about a function is there for the next.
   It prints `f<n> <PassID>: Changed` or `Unchanged` per run, then the program. Passes that derive functions are refused.
-- `pipeline <PassID>` runs the pipeline from `AsRead` through the first run of that pass, then prints that pass's results, under
-  `OPTIONS: report=Declines` the `decline` lines of all passes that ran, and the program.
+- `pipeline <PassID> [heat]` runs the pipeline from `AsRead` through the first run of that pass, then prints that pass's results, with
+  `heat` the heat as it is then, under `OPTIONS: report=Declines` the `decline` lines of all passes that ran, and the program.
 - `compile` runs the whole build and prints `diagnostic <kind>`, `loss <limit> x<count>`, `image <empty|not empty>` and
   `statistic <name> <value>` lines.
-- `run-in-shell { word }` runs the whole build, then the entry module in `jsc` from the folder of `testaot`. The words are statements of
-  JavaScript, joined by one space, which the shell runs first; `id` is the identity function. It prints what the shell printed, then
+- `run-in-shell { --<option> } { word }` runs the whole build, then the entry module in `jsc` from the folder of `testaot`. The leading words
+  that begin with `--` are options of the shell: with `--aotCountsPath=/dev/null` the statements can ask `aotOperationCount`. The other words are
+  statements of JavaScript, joined by one space, which the shell runs first; `id` is the identity function. It prints what the shell printed, then
   `exited with <code>` or `crashed with <signal>`. A failure of a validating build is the line `AOT validation: <Kind> f<n> v<n> ..` in
   front of `crashed with`.
+- `lower-to-b3 [ optimized | after=<step>[:<n>] ] [ loops ] [ entry-modules ] { f<n> }` generates code for the functions it prints, and prints their B3 procedures: IR in, B3 out. It starts
+  from `AsRead` (the whole pipeline runs first), `Selected` or `Placed`.
+  - With no word it prints each procedure as the code generator built it, before any B3 phase has run. `optimized` prints it after the last B3 phase,
+    right before it is lowered to Air. `after=<step>` prints it after one step of the table in `b3/B3Generate.cpp` and the cleanups that step
+    requested: `after=unrollLoops`. A step that runs more than once is printed after its last run, or after run n with `:<n>`. Where the step
+    did not run, the output is `<step> did not run`.
+  - A procedure stands between the lines `function f<n> name=".." role=<role>` and `end of function f<n>`. Derived functions come right after the
+    function they were derived from, so check lines inside the braces of a function see them too. `-LABEL: name="total" role=Source` and
+    `-LABEL: end of function` select the typed body of a function that also has a copy with `role=EntryChecks` and one with `role=GenericVersion`.
+    `f<n>` prints only that function and what was derived from it, and `entry-modules` the functions of the modules that are entry points. Without either, every
+    function but the library's is printed.
+  - The text is B3's own dump, minus what differs from one build to the next. Blocks are in depth-first order with the likelier successor first, so
+    the hot path reads from top to bottom. An origin is the IR value that the B3 value was emitted for, with its operation:
+    `v18:GetTypedArrayElement`. An abstract heap has its name: `Reads:JSArrayBufferView_length`. Addresses of generators and the policy are
+    left out. Bind the numbers of values and blocks: `b@[[length]]`, `#[[body]]`, `[[read]]:GetTypedArrayElement`.
+  - `loops` prints the innermost natural loops and nothing else. A loop starts with `loop #<header>`, then ` in loop #<header>` if it is nested, then
+    `, b@<phi> steps by <n>` for each Phi of the header that every back edge advances by the same constant. It ends with `end of loop #<header>`.
+    `-LABEL: steps by 8` and `-LABEL: end of loop` select a loop that counts up by one in the source and was unrolled eight times.
+  - B3 is above instruction selection, so one set of check lines serves x86-64 and ARM64. Names of registers differ, and so does what
+    `lowerMacros` and the steps after it do for one target.
+- `lower-to-air [ loops ] [ size ] [ entry-modules ] { f<n> }` is `lower-to-b3` one level down: it prints the Air of each function after register allocation and every other Air
+  phase, in the order the blocks are emitted. This text depends on the target, so its runs have a `REQUIRES`. With `loops`, a loop starts with
+  `loop #<header>, instructions: <n>, patchpoints: <n>`, then `, rare instructions: <n>` if the loop has blocks that only a rare edge leads to, then
+  `, <register> steps by <n>` for each register that one `Add` or `Sub` of a constant defines and nothing else in the loop does. `instructions` counts
+  the Air instructions but `Patch` in the other blocks, the ones an iteration is expected to run. It needs no hardware counter and no run, and it moves
+  when a spill, a copy or an address computation gets into the loop. `, entered rarely` ends the line of a
+  loop whose header only a rare edge of the function leads to: the copy of a loop that keeps its checks. `size` prints the count for the whole function and nothing
+  else, and `size loops` that line and the first line of each loop.
 - `list-passes` prints the pass table: id, scope, necessity, forms.
 - `pass-context` prints what a function pass can ask its context: heat and "runs at most once" per block, the subject of a value.
 - `derived-functions <Role>:<target> ..` asks the table of derived functions for keys and prints, under `OPTIONS: report=Declines` the
@@ -397,7 +473,8 @@ If you write a command:
 testaot list options
 ```
 
-Every test file runs with `check=VerifyEachStage`: the program is verified after each stage. With the option `verifyAOTProgram`, which is on in `testaot` and `jsc`, a build verifies the program it reads and
+Every test file runs with `check=VerifyEachStage,ValidateReferences,FlowFixpoint,UsedValuesAreListed`, the checks that no byte of the output depends on: the program is verified after each stage,
+the finished code is asked about its references, the rules of the flow analysis run once more over the solved sets, and no pass may leave a use of a value that no block lists. With the option `verifyAOTProgram`, which is on in `testaot` and `jsc`, a build verifies the program it reads and
 the program it hands to the back end. Bun turns the option off outside its own tests: there the code generator stops the build at an operation that it has no code for, a call that a
 required pass removes among them. `check=VerifyEachPass` verifies after each stage and each pass.
 
@@ -425,10 +502,21 @@ Every optional pass but the named ones and `AnalyzeFlow` is off.
 
 ## Built-ins in IR text
 
-There is one built-ins table, and `testaot` has all of it, the host's entries included. IR text names an entry, a class, a slot, a
-result layout, a runtime module and an overload by its token (`builtin=MathMax`, `Array<number>`, `overload=MathMax/0`). A test that
-needs a built-in with some attribute (starts an instance, loads a module, runs unseen code, reads `this`) names a real entry that
-has it.
+A program has one built-ins table, and whoever links `testaot` compiles it: the engine's entries (`aot/builtins/*.builtins.ts`) and a
+host's. WebKit's own build links the stand-in host's (`aot/tests/host`), which has few entries. Bun's build links Bun's. IR text names an
+entry, a class, a slot, a result layout, a runtime module, a runtime function and an overload by its token (`builtin=MathMax`,
+`Array<number>`, `runtimefunction id=ArrayPrototypeMap`, `overload=MathMax/0`). A test that needs a built-in with some attribute (starts an instance, loads a module, runs unseen code, reads
+`this`) names a real entry that has it.
+
+A test in this folder says the same under both tables:
+
+- It names entries of the engine and of the stand-in host alone. A token that only Bun's table has (`builtin=QueueMicrotask`) does not
+  parse in WebKit's build. To hand a function to the host, which calls it later and ignores what it returns:
+  `Construct` of `builtin=FinalizationRegistry`.
+- It pins nothing that hangs on what else the table holds: the number of a name or of an object, or how an entry that both hosts
+  declare (`BunServe`) treats an operand the test is not about.
+- A test that needs an entry of Bun lies in Bun's `test/aot/engine-tests`. A native test that does is listed in
+  `AOTNativeTestsOfHostEntries.inc`, and `testaot` with the stand-in host's table leaves it out and counts it.
 
 ## Native tests
 
@@ -492,7 +580,7 @@ testaot compile main.bin --output=main.image validate
 jsc --aotImagePath=main.image -e "runCompiledEntryPoint(1)"
 ```
 
-The shell has eleven functions for compiled code:
+The shell has twelve functions for compiled code:
 
 - `runCompiledEntryPoint(id)` takes an id that `testaot compile` printed, runs that entry point and returns its promise. A
   rejection prints `Exception: ..` and exits with 3.
@@ -500,6 +588,8 @@ The shell has eleven functions for compiled code:
   tells it for `delete require.cache[path]`, `require.cache[path] = entry` and `Module.prototype.require = f`.
 - `aotOperationCount(name)` returns how often a run-time operation ran. It needs `--aotCountsPath=<path>`.
 - `aotRuntimeCounters()` returns the run-time counters as text.
+- `aotInstructionCount()` returns how many instructions the thread has retired in user mode since the first call, by the counter of the hardware,
+  and null where that cannot be read. The difference of two calls around many turns of a loop, by the number of turns, is what a turn takes: no clock, the same at any load.
 - `aotBuiltinEntries()` returns the built-ins table as Bun's `test/aot/builtins` reads it.
 - `storeInSlotWithoutTest(object, name, value)` writes the value into the slot of that field of a compiled object and tests no type: the
   writer that nobody listed, for the tests in `validation/`. It throws where the object has no such slot or the form of the slot cannot
@@ -510,6 +600,11 @@ The shell has eleven functions for compiled code:
   that lock again and again. It returns what the function returns.
 
 The shell has no host: a program that calls a built-in of Bun's compiles, and the call throws when it runs.
+
+A count that only a run can tell (a cache, a table or a Structure that fills while the program runs) is an `.ir` file too: `run-in-shell --aotCountsPath=/dev/null`.
+The program reads free names (`rounds`, `report`), the statements define them, and `report` prints the answer and what was counted since the start or since a mark.
+Print a class (`seldom`, `nothing`), with a bound that follows from the program's own numbers, and no reading: where things lie in the tables follows from addresses.
+`runtime/property-caches/stores-that-replace-a-property-of-a-class-object.ir` is a model, and Bun's `test/aot/engine-tests/runtime` has the others.
 
 The run time refuses what the flow analysis did not see, in the shell too. With an image that admits no unknown JavaScript, `eval`,
 `Function` and the other function constructors throw an EvalError in every realm, also when the script of the shell calls them

@@ -71,15 +71,9 @@ public:
     template<typename Visitor> void visitRoots(Visitor&);
 
 private:
-    // A cell names its record and its flags, so the set holds the cells and nothing else.
-    struct CellHash {
-        static unsigned hash(RegExp*);
-        static bool equal(RegExp* a, RegExp* b) { return a == b; }
-        static constexpr bool safeToCompareToEmptyOrDeleted = false;
-    };
-
+    // By the number of the record in this image and the flags. Where several images run, a cell finds a record by its pattern, which may be that of another image.
     const ImageRegExp* m_records { nullptr };
-    UncheckedKeyHashSet<RegExp*, CellHash> m_cells;
+    UncheckedKeyHashMap<uint64_t, RegExp*, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_cells;
     Vector<RegExp*> m_cellsInOrderOfCreation;
     size_t m_numberOfCellsVisited { 0 };
     uint32_t m_lastFullVisitVersion { 0 };

@@ -30,6 +30,7 @@
 #include "Heap.h"
 #include "HeapAnalyzer.h"
 #include "JSCInlines.h"
+#include "MarkedBlockCage.h"
 #include "WeakHandleOwner.h"
 #include <wtf/FastMalloc.h>
 
@@ -41,7 +42,11 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(WeakBlock);
 
 WeakBlock* WeakBlock::create(JSC::Heap& heap, CellContainer container)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    void* memory = MarkedBlockCage::keepsSpareWeakBlocks() ? heap.cage().allocateWeakBlock(heap.vm()) : WeakBlockMalloc::alignedMalloc(blockSize, blockSize);
+#else
     void* memory = WeakBlockMalloc::alignedMalloc(blockSize, blockSize);
+#endif
     // blockFor() masks a slot address back to its block, so an unaligned block would silently
     // corrupt an unrelated one.
     RELEASE_ASSERT(blockContaining(memory) == memory);

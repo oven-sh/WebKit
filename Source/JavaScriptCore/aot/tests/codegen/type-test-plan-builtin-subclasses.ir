@@ -1,0 +1,48 @@
+# class Registry extends Map {}  class Plain {}  class Late extends Date {}
+# What the constructor of Map makes for `super()` of Registry carries a brand of Registry in its Structure, and the test for Registry asks for that brand. An object of Registry is a Map, so the test for Map asks it nothing.
+# The constructor of Date runs code of the program before it makes its object: an object of Late carries no brand, and no test for Late passes.
+# FORM: Selected
+# RUN: type-test-plan t0 JSValue t1 t2 Cell t1 t3 Cell t1 t3 Cell t4 t1 Cell t2 t1 Cell t5 t0 JSValue t6
+# CHECK: t0 JSValue t1: NeedsTest pass=none fail={{*}} objects=NeedTest
+# CHECK-NEXT: cell CarriesBrandOfClass 0
+# CHECK-NEXT: t2 Cell t1: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# CHECK-NEXT: cell CarriesBrandOfClass 0
+# CHECK-NEXT: t3 Cell t1: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# CHECK-NEXT: cell CarriesBrandOfClass 0
+# CHECK-NEXT: t3 Cell t4: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# CHECK-NEXT: cell ShapeIn 1
+# CHECK-NEXT: t1 Cell t2: AlwaysPasses
+# CHECK-NEXT: t1 Cell t5: NeverPasses
+# CHECK-NEXT: t0 JSValue t6: NeedsTest pass=none fail={{*}} objects=NeedTest
+# CHECK-NEXT: cell ShapeIn 2
+# CHECK-NOT: cell
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Registry" constructor=f1 flags=[HasHeritage] writtenBuiltinBase=Map flow={baseState=BuiltinClass baseClass=Map} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Plain" constructor=f2
+layout L2 kind=Instance name="Late" constructor=f3 flags=[HasHeritage] writtenBuiltinBase=Date flow={baseState=BuiltinClass baseClass=Date} classFlow={evaluations=AtMostOnce}
+variable g0 name="t0" declared={type=anything} initialization=Undefined
+variable g1 name="t1" declared={type=L0} initialization=Undefined
+variable g2 name="t2" declared={type=Map} initialization=Undefined
+variable g3 name="t3" declared={type=L0|L1} initialization=Undefined
+variable g4 name="t4" declared={type=L1} initialization=Undefined
+variable g5 name="t5" declared={type=Set} initialization=Undefined
+variable g6 name="t6" declared={type=L2} initialization=Undefined
+function f0 name="unused" results=[{type=undefined}] {
+    Return
+}
+function f1 name="Registry" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] constructedClass=L0 {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f2 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1 {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f3 name="Late" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] constructedClass=L2 {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}

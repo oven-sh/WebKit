@@ -1,0 +1,26 @@
+# `list.length = n; while (n < list.length)` in a program whose objects keep no length: the reads by name serve arrays and strings as they are, and nothing is expected of the list.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Queue" constructor=f1 fields=[{key="head" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="storedAndRead" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    PropSet v0, v1 key="length"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = PropGet v0 key="length"
+    v5 = Less v1, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="storedAndRead"
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NOT: TypeTest v0
+# CHECK: Return
+
+function f1 name="Queue" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0

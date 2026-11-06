@@ -24,6 +24,8 @@
 #include "AOTIR.h"
 #include "AOTIRBuilder.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTPhaseTimes.h"
+#include "AOTPropertyAccess.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTResultRules.h"
 #include "AOTSort.h"
@@ -181,8 +183,8 @@ static DeferrableLayouts findDeferrableLayouts(const Program& program)
     BitVector isFilledByOthers(size);
     for (size_t index = 0; index < size; ++index) {
         const Layout& layout = program.layouts[index];
-        if (layout.flow.baseState == BaseState::Layout)
-            isBase.quickSet(layout.flow.base.index());
+        if (LayoutID above = nearestLayoutAlwaysAbove(layout.flow))
+            isBase.quickSet(above.index());
         bool isObject = layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance;
         if (!isObject || layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse) || layout.flow.baseState == BaseState::BuiltinClass)
             isFilledByOthers.quickSet(index);
@@ -192,8 +194,8 @@ static DeferrableLayouts findDeferrableLayouts(const Program& program)
         didChange = false;
         for (size_t index : isFilledByOthers) {
             const Layout& layout = program.layouts[index];
-            if (layout.flow.baseState == BaseState::Layout)
-                didChange |= !isFilledByOthers.quickSet(layout.flow.base.index());
+            if (LayoutID above = nearestLayoutAlwaysAbove(layout.flow))
+                didChange |= !isFilledByOthers.quickSet(above.index());
         }
     }
 
@@ -225,6 +227,9 @@ static bool canBeCreatedOnDemand(const Program& program, const Value& closure)
     bool isConstructorOfClass = callee.constructedClass || callee.kind == FunctionKind::BaseConstructor || callee.kind == FunctionKind::DerivedConstructor;
     if (isConstructorOfClass || callee.captures.size() > 1 || namesClosureOfTable(program, closure))
         return false;
+    // A call of a field whose closure is not made yet enters the function through a closure in the frame of the stub, and a frame of such a function is named by the closure that the function was entered through, when the stack is read.
+    if (callee.has(FunctionCapabilities::RecordsCallee) && !callee.has(FunctionCapabilities::RecordsCalleeOnceRenamed))
+        return false;
     if (!callee.captures.isEmpty()) {
         const Type& captured = program.at(callee.captures[0].written());
         if (captured.environment && captured.primitives)
@@ -243,7 +248,7 @@ static ClosureDeferral deferralFor(const Program& program, FunctionID function)
 
 static bool createsValueWithoutRunningCode(const Value& value)
 {
-    if (isRematerializable(value) || isCastWithoutTest(value.opcode) || value.opcode == Opcode::AllGuards)
+    if (isRematerializable(value) || isCastWithoutTest(value.opcode) || value.opcode == Opcode::AllGuards || makesFact(value.opcode))
         return true;
     return interpretedOf(value.opcode) == Interpretation::Allocation && declaredBoundOf(value.opcode).isUnobservable();
 }
@@ -468,8 +473,8 @@ struct WindowScanner {
     {
         if (store.level() != KnowledgeLevel::Proven || (store.guardOperand() && !isObject(store.guardOperand())))
             return { };
-        const LayoutSet& receivers = m_program.at(store.receivers());
-        return receivers.isComplete && receivers.members.size() == 1 ? receivers.members[0] : LayoutID();
+        auto receivers = m_program.at(store.receivers()).all();
+        return receivers && receivers->value().size() == 1 ? receivers->value().front() : LayoutID();
     }
 
     bool passesObjectOnlyAsReceiver(const Value& call) const
@@ -525,11 +530,11 @@ struct WindowScanner {
     {
         if (!isClosure(store.valueOperand()))
             return;
-        const LayoutSet& receivers = m_program.at(store.receivers());
-        if (!receivers.isComplete || receivers.members.isEmpty())
+        auto receivers = m_program.at(store.receivers()).all();
+        if (!receivers || receivers->value().empty())
             return;
         std::optional<FieldReference> declaration;
-        for (LayoutID member : receivers.members) {
+        for (LayoutID member : *receivers) {
             std::optional<uint32_t> field = m_program.at(member).findField(store.key());
             if (!field || !m_layouts.all.quickGet(member.index()))
                 return;
@@ -660,7 +665,7 @@ struct WindowScanner {
 };
 
 struct DeferralAnalysis {
-    enum AccessKind : uint8_t { SlotRead, SlotStore, PresenceTest, NamedAccess, KeyOrderTest, FunctionEntry, Allocation };
+    enum AccessKind : uint8_t { SlotRead, SlotStore, PresenceTest, NamedAccess, KeyOrderTest, FunctionEntry, Allocation, NamedReadExpectedToRun };
 
     struct CandidateWithKey {
         auto operator<=>(const CandidateWithKey&) const = default;
@@ -722,7 +727,7 @@ struct DeferralAnalysis {
         }
         std::span<const LayoutID> members;
         if (Value::opcodesWithFieldAccess.contains(access.opcode) || access.opcode == Opcode::IsSlotFilled)
-            members = program.at(access.receivers()).members.span();
+            members = program.at(access.receivers()).completeMembers().value();
         else if (access.numberOfOperands() && access.operand(0))
             members = membersOf(program, program.typeOf(function, access.operand(0)));
         for (LayoutID member : members) {
@@ -749,7 +754,7 @@ struct DeferralAnalysis {
     // `ifAbsent` is the answer for a receiver without the field.
     bool holdsForFieldInEveryReceiver(const Value& access, bool ifAbsent, const Invocable<bool(FieldReference)> auto& predicate) const
     {
-        return std::ranges::all_of(program.at(access.receivers()).members, [&](LayoutID member) {
+        return std::ranges::all_of(program.at(access.receivers()).completeMembers(), [&](LayoutID member) {
             std::optional<uint32_t> field = program.at(member).findField(access.key());
             return field ? predicate(FieldReference { member, *field }) : ifAbsent;
         });
@@ -809,14 +814,14 @@ struct DeferralAnalysis {
         }
         for (const ClosureStore& store : closureStores)
             places.append({ { store.layout, store.field }, store.closureFunction, { store.function, store.store } });
-        AOT::sort(places);
+        AOT::sortInLine(places);
         removeRepeatedElements(places);
 
         using Maker = std::pair<LayoutID, FunctionID>;
         Vector<Maker> makers = places.map([](const Place& place) {
             return Maker { place.field.layout, place.operation.function };
         });
-        AOT::sort(makers);
+        AOT::sortInLine(makers);
 
         states.fill({ }, firstRows.last());
         keysOfCandidates.ensureSize(program.types.numberOfPropertyKeys());
@@ -851,7 +856,7 @@ struct DeferralAnalysis {
             layoutsWithEnvironmentCandidates.quickSet(field.layout.index());
             state.isRejected |= numberOfFunctions > 1;
         }
-        AOT::sort(candidatesByKey);
+        AOT::sortInLine(candidatesByKey);
         for (const ClosureStore& store : closureStores)
             states[rowOf({ store.layout, store.field })].isGivenWhereLayoutIsExpected |= store.level != KnowledgeLevel::Proven;
 
@@ -892,7 +897,7 @@ struct DeferralAnalysis {
         return callee;
     }
 
-    std::optional<AccessKind> classifyAccess(ValueReference reference) const
+    std::optional<AccessKind> classifyAccess(ValueReference reference, BlockID block) const
     {
         const Value& value = valueAt(reference);
         auto kindIf = [](bool condition, AccessKind kind) {
@@ -911,15 +916,14 @@ struct DeferralAnalysis {
             return kindIf(layoutsWithEnvironmentCandidates.quickGet(value.layout().index()), KeyOrderTest);
         if (value.opcode == Opcode::NewObject)
             return kindIf(layoutsWithCandidates.quickGet(value.layout().index()), Allocation);
-        bool isTestInFrontOfReads = value.opcode == Opcode::IsSlotFilled && !value.accessSite();
-        if (!Value::opcodesWithKey.contains(value.opcode) || isTestInFrontOfReads || value.opcode == Opcode::GetDeferredClosureSlot || value.opcode == Opcode::GetDeferredClosureSlotOrUndefined)
+        if (!Value::opcodesWithKey.contains(value.opcode) || value.opcode == Opcode::GetDeferredClosureSlot || value.opcode == Opcode::GetDeferredClosureSlotOrUndefined)
             return std::nullopt;
 
         PropertyKeyID key = value.key();
         if (!key || TypeTable::isProvisional(key) || !keysOfCandidates.quickGet(key.index()) || !reachesCandidate(reference, false))
             return std::nullopt;
         if (value.opcode == Opcode::IsSlotFilled)
-            return PresenceTest;
+            return kindIf(value.accessSite() || !asksObjectWhereSlotIsEmpty(program.at(reference.function), block, reference.value), PresenceTest);
         if (!Value::opcodesWithFieldAccess.contains(value.opcode))
             return NamedAccess;
         return storedOf(value.opcode) ? SlotStore : SlotRead;
@@ -945,9 +949,14 @@ struct DeferralAnalysis {
                 }
                 RELEASE_ASSERT_NOT_REACHED();
             };
-            forEachListedValueNaming(program, FunctionID(index), classifiedOpcodes, mayBeClassified, [&](BlockID, ValueID id, const Value&) {
-                if (std::optional<AccessKind> kind = classifyAccess({ FunctionID(index), id }))
-                    found.append({ { FunctionID(index), id }, *kind });
+            forEachListedValueNaming(program, FunctionID(index), classifiedOpcodes, mayBeClassified, [&](BlockID block, ValueID id, const Value& value) {
+                std::optional<AccessKind> kind = classifyAccess({ FunctionID(index), id }, block);
+                if (!kind)
+                    return;
+                found.append({ { FunctionID(index), id }, *kind });
+                // The arm that a tested read by slot falls back to is a read by name on an unlikely path.
+                if (*kind == NamedAccess && !storedOf(value.opcode) && program.functions[index].at(block).frequency.predicted() == BlockFrequency::Normal)
+                    found.append({ { FunctionID(index), id }, NamedReadExpectedToRun });
             });
         });
         for (const FoundAccess& access : foundAccesses)
@@ -1045,12 +1054,16 @@ struct DeferralAnalysis {
         for (const ClosureFieldFreshObject& object : objects) {
             describedAllocations.append({ object.function, object.allocation });
             for (const FieldInitializer& initializer : object.initializers) {
-                if (initializer.store)
-                    initializingStores.append(initializer.store);
+                if (!initializer.store)
+                    continue;
+                initializingStores.append(initializer.store);
+                if (!initializer.isInCallee)
+                    storesToFreshObjects.append(initializer.store);
             }
         }
         AOT::sort(initializingStores);
-        AOT::sort(describedAllocations);
+        AOT::sort(storesToFreshObjects);
+        AOT::sortInLine(describedAllocations);
 
         // One summary per key, kept at the index of the first candidate with that key.
         struct AnyObjectStoreSummary {
@@ -1125,7 +1138,7 @@ struct DeferralAnalysis {
 
     bool findsClosureOverReceiver(const Value& read) const
     {
-        return !program.at(read.receivers()).members.isEmpty() && holdsForFieldInEveryReceiver(read, false, [&](FieldReference field) {
+        return !program.at(read.receivers()).completeMembers().value().empty() && holdsForFieldInEveryReceiver(read, false, [&](FieldReference field) {
             const FieldState& state = stateOf(field);
             const LocationFlow& location = flowOf(program, field).location;
             return state.canDefer()
@@ -1231,34 +1244,44 @@ struct DeferralAnalysis {
     }
 
     // A read takes an empty slot for an absent property behind a test that no field of the object lies outside its slot, or without one where the property stays in its slot.
-    // The first read makes the closure in the run time, which costs as much as forty closures made beside the allocation. Where the layout is proven the reads are few. Code that only expects it makes an object for whoever comes, so the closure waits only where no code that is expected to run often asks for it.
-    void rejectFieldsOfExpectedLayoutsReadByWarmCode()
+    // The first read by slot creates the closure as the allocation would have. The first read by name creates it in the runtime, which costs as much as forty closures created with the allocation. With a proven layout such reads are rare. With a layout that is only expected, any code may receive the object, so the closure is only deferred if no warm code reads it by name.
+    void rejectWarmFieldsReadByName()
     {
-        for (AccessKind kind : { SlotRead, NamedAccess }) {
-            for (ValueReference reference : accesses[kind]) {
-                if (storedOf(valueAt(reference).opcode) || isCold(heat.of(program, reference.function)))
-                    continue;
-                forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
-                    if (states[row].isGivenWhereLayoutIsExpected)
-                        reject(row);
-                });
-            }
+        for (ValueReference reference : accesses[NamedReadExpectedToRun]) {
+            if (isCold(heat.of(program, reference.function)).predicted())
+                continue;
+            forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
+                if (states[row].isGivenWhereLayoutIsExpected)
+                    reject(row);
+            });
         }
     }
 
-    void rejectFieldsReadWhereTheyMayHaveLeftTheSlot()
+    bool isStoreToFreshObject(ValueReference store) const
     {
-        for (AccessKind kind : { SlotRead, PresenceTest }) {
+        if (std::ranges::binary_search(storesToFreshObjects, store))
+            return true;
+        auto found = std::ranges::lower_bound(calleeStores, store, { }, &CalleeStoreState::store);
+        return found != calleeStores.end() && found->store == store && found->canLeaveCallee;
+    }
+
+    void rejectFieldsWithUnguardedSlotAccesses()
+    {
+        for (AccessKind kind : { SlotRead, SlotStore, PresenceTest }) {
             for (ValueReference reference : accesses[kind]) {
                 const Value& access = valueAt(reference);
                 // A read that gives any value looks among the extra properties where it finds the slot empty and the object says that a field lies outside its slot.
-                bool looksOutsideSlot = kind == SlotRead && (access.opcode != Opcode::GetSlotOrUndefined || access.type == TypeTable::anything);
-                if (looksOutsideSlot || !reachesCandidate(reference, true))
-                    continue;
-                bool staysInSlot = holdsForFieldInEveryReceiver(access, true, [&](FieldReference field) {
-                    return isNeverMovedOutByStore(program, field) || !slotTakesEveryValue(program, fieldAt(program, declarationOf(program, field)));
+                bool testsSlot = access.opcode == Opcode::GetSlot && !holdsForFieldInEveryReceiver(access, true, [&](FieldReference field) {
+                    return staysFilled(program, field);
                 });
-                if (staysInSlot)
+                bool looksOutsideSlot = testsSlot || (access.opcode == Opcode::GetSlotOrUndefined && access.type == TypeTable::anything);
+                bool isToFreshObject = kind == SlotStore && isStoreToFreshObject(reference);
+                if (looksOutsideSlot || isToFreshObject || !reachesCandidate(reference, true))
+                    continue;
+                bool isValidForNarrowSlot = holdsForFieldInEveryReceiver(access, true, [&](FieldReference field) {
+                    return isNeverMovedOutByStore(program, field) || !staysInSlot(program, field);
+                });
+                if (isValidForNarrowSlot)
                     continue;
                 forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
                     reject(row);
@@ -1391,26 +1414,34 @@ struct DeferralAnalysis {
 
     void run()
     {
+        PhaseTimes times(build, PassID::DeferClosuresInFields);
         firstRows.reserveInitialCapacity(program.layouts.size() + 1);
         firstRows.append(0);
         for (const Layout& layout : program.layouts)
             firstRows.append(firstRows.last() + layout.fields.size());
         findObjects();
+        times.didFinish("findObjects"_s);
         if (objects.isEmpty() && closureStores.isEmpty())
             return;
         findCandidates();
         findEnteredCalls();
+        times.didFinish("findCandidates"_s);
         findAccesses();
+        times.didFinish("findAccesses"_s);
         findCalleeStores();
         rejectFieldsByWhatComesIntoThem();
-        rejectFieldsOfExpectedLayoutsReadByWarmCode();
+        times.didFinish("rejectFieldsByWhatComesIntoThem"_s);
+        rejectWarmFieldsReadByName();
+        times.didFinish("rejectWarmFieldsReadByName"_s);
         for (uint64_t numberOfChangesBefore = numberOfChanges + 1; numberOfChangesBefore != numberOfChanges;) {
             numberOfChangesBefore = numberOfChanges;
             countFolds();
-            rejectFieldsReadWhereTheyMayHaveLeftTheSlot();
+            rejectFieldsWithUnguardedSlotAccesses();
             rejectFieldsOverSeveralEnvironments();
         }
+        times.didFinish("countFolds"_s);
         finish();
+        times.didFinish("finish"_s);
     }
 
     const Program& program;
@@ -1424,6 +1455,7 @@ struct DeferralAnalysis {
     Vector<uint32_t> dataMembersOfFields { };
     Vector<ClosureFieldFreshObject> objects { };
     Vector<ClosureStore> closureStores { };
+    Vector<ValueReference> storesToFreshObjects { };
     Vector<FieldReference> candidates { };
     Vector<CandidateWithKey> candidatesByKey { };
     BitVector keysOfCandidates { };
@@ -1434,7 +1466,7 @@ struct DeferralAnalysis {
     Vector<EnteredCall> callSites { };
     Vector<CalleeState> calleesByFunction { };
     Vector<CalleeStoreState> calleeStores { };
-    std::array<Vector<ValueReference>, 7> accesses { };
+    std::array<Vector<ValueReference>, 8> accesses { };
     Vector<ValueReference> removedStores { };
     Vector<ClosureEnvironmentField> environmentFields { };
     uint64_t numberOfChanges { 0 };
@@ -1521,7 +1553,7 @@ static void rewriteClosureFields(const AnalysisContext& context, const DeferralA
         if (!mayFindSlotEmpty)
             read.setHoldsDeclaredType(previous.opcode == Opcode::GetSlot && previous.holdsDeclaredType());
         setResultType(id, read, previous.type);
-        read.setExpected(ExpectedType(expectedTypeOf(program, function, read, types)));
+        read.setExpected(expectedTypeOf(program, function, read, types));
     };
 
     auto hoist = [&](auto& self, ValueID id) -> void {
@@ -1914,6 +1946,10 @@ struct UnwrittenLiteral {
     ValueID literal;
     DataNode contents;
     DataID data;
+    // One cell may stand for every list that the literal makes.
+    bool isNeverToldApart { false };
+    // The lists inside the literal, and the casts between them and it.
+    Vector<ValueID> deadValues { };
 };
 
 struct DictionaryLiteral {
@@ -1927,13 +1963,19 @@ struct DictionaryLiteral {
     DataID data;
 };
 
+struct DataNeverToldApart {
+    ValueID value;
+    DataID data;
+};
+
 struct ConstantCollectionSites {
-    bool isEmpty() const { return sites.isEmpty() && unwrittenLiterals.isEmpty() && dictionaries.isEmpty(); }
+    bool isEmpty() const { return sites.isEmpty() && unwrittenLiterals.isEmpty() && dictionaries.isEmpty() && dataNeverToldApart.isEmpty(); }
 
     FunctionID function;
     Vector<ConstructionSite> sites;
     Vector<UnwrittenLiteral> unwrittenLiterals;
     Vector<DictionaryLiteral> dictionaries;
+    Vector<DataNeverToldApart> dataNeverToldApart;
 };
 
 using KeyIdentity = std::pair<uint8_t, uint64_t>;
@@ -2093,8 +2135,10 @@ static std::optional<DataNode> constantNodeOf(const Program& program, const Func
 }
 
 // The arrays of a literal of constants that the optimizer has left in the heap, and that no store of the program reaches, are cells around one storage: it lies in the image unless it holds strings.
-static std::optional<DataNode> tryReadUnwrittenLiteral(const AnalysisContext& context, const Function& function, const Value& literal)
+// Where nothing can tell two of them apart either, one cell stands for all, and the literal may hold such lists too.
+static std::optional<UnwrittenLiteral> tryReadUnwrittenLiteral(const AnalysisContext& context, const Function& function, ValueID id, NOESCAPE const Invocable<FunctionAnalyses&()> auto& analyses)
 {
+    const Value& literal = function.at(id);
     if (literal.storage() != AllocationStorage::Heap || literal.capacityOperand() || !literal.holes().empty() || !context.flow)
         return std::nullopt;
     AllocationSiteID site = literal.allocationSite();
@@ -2102,17 +2146,44 @@ static std::optional<DataNode> tryReadUnwrittenLiteral(const AnalysisContext& co
     if (!allocationClass || !context.flow->at(allocationClass).impossibleMutations.contains(ObjectMutation::StoreAfterCreation))
         return std::nullopt;
 
+    UnwrittenLiteral result { id, DataNode(DataNode::Undefined { }), { }, context.flow->identityIsNeverObserved(site) };
+    // Only the literal uses such a list.
+    auto tryReadListInside = [&](ValueID element) -> std::optional<DataNode> {
+        if (!result.isNeverToldApart)
+            return std::nullopt;
+        const UseLists& useLists = analyses().useLists();
+        size_t numberOfDeadValues = result.deadValues.size();
+        for (ValueID inner = element; useLists.useCount(inner) == 1; inner = function.at(inner).operand(0)) {
+            const Value& value = function.at(inner);
+            result.deadValues.append(inner);
+            if (value.opcode == Opcode::NewArray) {
+                std::optional<UnwrittenLiteral> list = tryReadUnwrittenLiteral(context, function, inner, analyses);
+                if (!list || !list->isNeverToldApart)
+                    break;
+                result.deadValues.appendVector(list->deadValues);
+                return WTF::move(list->contents);
+            }
+            if (value.opcode != Opcode::Upcast && (value.opcode != Opcode::AssumeType || value.factOperand()))
+                break;
+        }
+        result.deadValues.shrink(numberOfDeadValues);
+        return std::nullopt;
+    };
+
     DataNode::Array array { literal.contents(), { } };
     array.elements.reserveInitialCapacity(literal.elementsOperands().size());
     for (ValueID element : literal.elementsOperands()) {
         std::optional<DataNode> constant = constantNodeOf(context.program, function, element);
+        if (!constant)
+            constant = tryReadListInside(element);
         if (!constant || constant->is<DataNode::BigInt>())
             return std::nullopt;
         array.elements.append(WTF::move(*constant));
     }
     if (array.elements.isEmpty() || arrayStorageOfData(context.program, array) != arrayStorageAtAllocation(context.program, context.program.at(literal.type)))
         return std::nullopt;
-    return DataNode(WTF::move(array));
+    result.contents = DataNode(WTF::move(array));
+    return result;
 }
 
 static bool namesGuard(const auto& user)
@@ -2136,9 +2207,12 @@ static bool hasToStayLiteral(FunctionAnalyses& analyses, ValueID literal)
     auto isUnderGuard = [&](const Use& use) {
         switch (use.kind) {
         case Use::Kind::Operand: {
-            // A store of the array into another object may stand under a guard on that object.
+            // A store of the array into another object may stand under a guard on that object. A read finds shared storage as it finds storage of the array's own.
             const Value& user = function.at(use.user);
-            return user.operandKind(use.operandIndex) == OperandKind::Guard || (namesGuard(user) && guardedOf(user.opcode) == use.operandIndex);
+            if (user.operandKind(use.operandIndex) == OperandKind::Guard)
+                return true;
+            constexpr OperandUses usesOfReads { OperandUse::Inspects, OperandUse::ReadsContents };
+            return namesGuard(user) && guardedOf(user.opcode) == use.operandIndex && !user.operandUses(use.operandIndex).containsOnly(usesOfReads);
         }
         case Use::Kind::TerminatorOperand:
             return namesGuard(function.at(use.block).terminator);
@@ -2166,7 +2240,7 @@ static std::optional<ObjectID> findPrivateLiteral(FunctionAnalyses& analyses, Va
     const Value& literal = analyses.function().at(escape.at(*object).definition);
     if (literal.opcode != Opcode::NewArray || !literal.holes().empty() || literal.capacityOperand())
         return std::nullopt;
-    std::span<const ObjectUse> uses = escape.usesOf(*object);
+    ObjectUses uses = escape.usesOf(*object);
     if (uses.size() != 1 || uses.front().use.kind != Use::Kind::Operand || uses.front().use.user != user)
         return std::nullopt;
     bool canEraseWhenUnused = std::ranges::all_of(escape.aliasesOf(*object), [&](ValueID alias) {
@@ -2315,6 +2389,8 @@ static std::optional<ConstantCollectionKind> collectionKindOf(const Program& pro
 
     // A private literal of constants is iterated, and its entries are added, through locked prototypes.
     BuiltinID constructor = builtins.canonicalID(overload.builtin);
+    if (program.callsUnlockedMemberThatNoRowNames(constructor))
+        return std::nullopt;
     if (constructor == builtins.at(BuiltinClasses::Set).constructor)
         return ConstantCollectionKind::Set;
     if (constructor == builtins.at(BuiltinClasses::Map).constructor)
@@ -2324,7 +2400,7 @@ static std::optional<ConstantCollectionKind> collectionKindOf(const Program& pro
 
 static void collectSites(const AnalysisContext& context, Vector<ConstantCollectionSites>& found)
 {
-    constexpr OpcodeSet opcodesOfSites { Opcode::NewDictionary, Opcode::NewArray, Opcode::CallBuiltin };
+    constexpr OpcodeSet opcodesOfSites { Opcode::NewDictionary, Opcode::NewArray, Opcode::CallBuiltin, Opcode::Data };
     if (!mayListValueWith(context.program, context.id, opcodesOfSites))
         return;
     const Function& function = context.program.at(context.id);
@@ -2340,15 +2416,18 @@ static void collectSites(const AnalysisContext& context, Vector<ConstantCollecti
         if (value.opcode == Opcode::NewDictionary) {
             if (std::optional<DictionaryLiteral> literal = tryReadDictionary(analyses(), id))
                 inFunction.dictionaries.append(WTF::move(*literal));
+        } else if (value.opcode == Opcode::Data) {
+            if (context.flow && value.allocationSite() && context.flow->identityIsNeverObserved(value.allocationSite()))
+                inFunction.dataNeverToldApart.append({ id, value.data() });
         } else if (value.opcode == Opcode::NewArray) {
-            std::optional<DataNode> contents = tryReadUnwrittenLiteral(context, function, value);
-            if (!contents)
+            std::optional<UnwrittenLiteral> unwritten = tryReadUnwrittenLiteral(context, function, id, analyses);
+            if (!unwritten)
                 return;
             // Storage with cells is made by the first array, for those that follow.
-            if (!isStorageOfArray(*contents->tryAs<DataNode::Array>()) && analyses().executionCountOf(analyses().useLists().blockOf(id)) == ExecutionCount::AtMostOnce)
+            if (!isStorageOfArray(*unwritten->contents.tryAs<DataNode::Array>()) && analyses().executionCountOf(analyses().useLists().blockOf(id)) == ExecutionCount::AtMostOnce)
                 return;
             if (!hasToStayLiteral(analyses(), id))
-                inFunction.unwrittenLiterals.append({ id, WTF::move(*contents), { } });
+                inFunction.unwrittenLiterals.append(WTF::move(*unwritten));
         } else if (std::optional<ConstantCollectionKind> kind = collectionKindOf(context.program, value)) {
             if (std::optional<ConstructionSite> site = tryReadConstruction(analyses(), id, *kind))
                 inFunction.sites.append(WTF::move(*site));
@@ -2359,6 +2438,13 @@ static void collectSites(const AnalysisContext& context, Vector<ConstantCollecti
         return std::ranges::any_of(inFunction.sites, [&](const ConstructionSite& site) {
             return site.deadValues.contains(unwritten.literal);
         });
+    });
+    // So does a list inside a literal that has become one constant.
+    Vector<ValueID> valuesInsideLiterals;
+    for (const UnwrittenLiteral& outer : inFunction.unwrittenLiterals)
+        valuesInsideLiterals.appendVector(outer.deadValues);
+    inFunction.unwrittenLiterals.removeAllMatching([&](const UnwrittenLiteral& unwritten) {
+        return valuesInsideLiterals.contains(unwritten.literal);
     });
     if (!inFunction.isEmpty())
         found.append(WTF::move(inFunction));
@@ -2403,9 +2489,12 @@ static void rewriteFunction(const AnalysisContext& context, Function& function, 
     auto becomeReadOfData = [&](ValueID id, Opcode operation, DataID data) -> Value& {
         Value& value = function.edit(id);
         AllocationSiteID allocationSite = value.allocationSite();
+        ArrayStorage arrayStorage = operation == Opcode::Data ? value.arrayStorage() : ArrayStorage::Other;
         value.become(operation);
         value.setData(data);
         value.setAllocationSite(allocationSite);
+        if (operation == Opcode::Data)
+            value.setArrayStorage(arrayStorage);
         value.type = resultTypeOf(context.program, function, value, types);
         return value;
     };
@@ -2415,9 +2504,16 @@ static void rewriteFunction(const AnalysisContext& context, Function& function, 
         FunctionAnalyses analyses(context, function);
         const UseLists& useLists = analyses.useLists();
         HashMap<ValueID, uint32_t> usesByLiterals;
-        for (const UnwrittenLiteral& unwritten : found.unwrittenLiterals) {
-            for (ValueID element : function.at(unwritten.literal).elementsOperands())
+        auto countElementsOf = [&](ValueID literal) {
+            for (ValueID element : function.at(literal).elementsOperands())
                 ++usesByLiterals.add(element, 0).iterator->value;
+        };
+        for (const UnwrittenLiteral& unwritten : found.unwrittenLiterals) {
+            countElementsOf(unwritten.literal);
+            for (ValueID inner : unwritten.deadValues) {
+                if (function.at(inner).opcode == Opcode::NewArray)
+                    countElementsOf(inner);
+            }
         }
         for (const DictionaryLiteral& dictionary : found.dictionaries) {
             for (ValueID definition : dictionary.deadValues)
@@ -2434,8 +2530,15 @@ static void rewriteFunction(const AnalysisContext& context, Function& function, 
         dictionary.become(Opcode::Data);
         dictionary.setData(literal.data);
     }
-    for (const UnwrittenLiteral& unwritten : found.unwrittenLiterals)
-        becomeReadOfData(unwritten.literal, Opcode::Data, unwritten.data);
+    for (const UnwrittenLiteral& unwritten : found.unwrittenLiterals) {
+        addDeadValues(unwritten.deadValues);
+        becomeReadOfData(unwritten.literal, Opcode::Data, unwritten.data).setIsNeverToldApart(unwritten.isNeverToldApart);
+    }
+    for (const DataNeverToldApart& data : found.dataNeverToldApart) {
+        Value& value = function.edit(data.value);
+        value.setData(data.data);
+        value.setIsNeverToldApart(true);
+    }
     Vector<ValueID> constructions;
     constructions.reserveInitialCapacity(found.sites.size());
     for (const ConstructionSite& site : found.sites) {
@@ -2516,8 +2619,11 @@ ConstantCollections embedConstantCollections(ProgramEditor& editor, const FlowRe
                 site.data = findOrAddData(editor, recordsByHash, WTF::move(site.contents), module);
             collections.m_collections.append(ConstantCollection { site.data, site.kind });
         }
+        // One cell stands for the lists of one record. Flow speaks of the lists of one site, and a list of another site with the same contents may be compared with these.
         for (UnwrittenLiteral& unwritten : entry.unwrittenLiterals)
-            unwritten.data = findOrAddData(editor, recordsByHash, WTF::move(unwritten.contents), module);
+            unwritten.data = unwritten.isNeverToldApart ? editor.addData(Data { WTF::move(unwritten.contents), module }) : findOrAddData(editor, recordsByHash, WTF::move(unwritten.contents), module);
+        for (DataNeverToldApart& data : entry.dataNeverToldApart)
+            data.data = editor.addData(Data { DataNode(program.at(data.data).root), module });
         for (DictionaryLiteral& dictionary : entry.dictionaries)
             dictionary.data = findOrAddData(editor, recordsByHash, DataNode(WTF::move(dictionary.contents)), module);
     }

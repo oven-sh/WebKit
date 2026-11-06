@@ -345,7 +345,7 @@ static void emitRecordProgram(Assembly& assembly, SiteEmitter& sites, RecordLabe
     labels.frameEnd = jit.label();
     emitEnd(assembly);
     labels.prologueCall = jit.label();
-    assembly.calls.call(jit, pollAtPrologue(), OptionalIndex { });
+    assembly.calls.call(jit, pollAtPrologue(true), OptionalIndex { });
     assembly.units.pin(labels.prologueCall, jit.label());
 }
 

@@ -51,11 +51,10 @@ function checkUndeclaredNativeCode(model: TableModel, everyProgram: RuntimeDepen
 
 export function checkDependencies(model: TableModel, problems: Problems): void {
   const closure = new DependencyClosure(model);
-  const undescribedCount = closure.undescribedResults().length;
   const anyHostObject = closure.dependenciesOfAnyHostObject();
   checkLoadsNothing(
     anyHostObject,
-    `an instance of a host class leads to it, so each of the ${undescribedCount} entries with a result that is not described would load the module`,
+    "an instance of a host class leads to it, so every program in which a value may be anything would load the module",
     problems,
   );
   checkHostFunctionCount(anyHostObject, "an instance of any host class", problems);
@@ -80,7 +79,7 @@ export function summarizeUndescribedResults(model: TableModel): string {
   const closure = new DependencyClosure(model);
   const { loads, calls, implementedBy } = closure.dependenciesOfAnyHostObject();
   return (
-    `${closure.undescribedResults().length} host entries have a result that is not described, ` +
-    `and each needs what any host class needs: ${loads.size} modules, ${calls.union(implementedBy).size} functions`
+    `${closure.undescribedResults().length} host entries have a result that is not described; ` +
+    `a program in which a value may be anything holds what any host class needs: ${loads.size} modules, ${calls.union(implementedBy).size} functions`
   );
 }

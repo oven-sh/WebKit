@@ -1,4 +1,4 @@
-# main.cjs: exports.kept = function () {}; process[globalThis.name] = 1; eval(globalThis.text)
+# start.js: require("./main.cjs")   main.cjs: exports.kept = function () {}; process[globalThis.name] = 1; eval(globalThis.text)
 # A store under a key nobody knows names no member, so it is no use of process.mainModule, and what the module exports stays in the program beside evaluated text.
 # main-module-that-the-program-names-is-in-the-hands-of-evaluated-text.ir has the read that names it
 # RUN: valueflow-why used-builtin=ProcessMainModule escaped=f1
@@ -9,7 +9,8 @@
 
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
-entry module=m0
+module m1 path="/app/start.js" displayPath="start.js" body=f2
+entry module=m1
 function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
     v0 = NewDictionary
     PutModuleVariable v0 variable=g0
@@ -26,5 +27,9 @@ function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} r
     Return
 }
 function f1 name="kept" module=m0 results=[{type=anything}] {
+    Return
+}
+function f2 name="start" module=m1 kind=Module results=[{type=anything}] {
+    v0 = RequireModule module=m0 referrer=m1 specifier="./main.cjs"
     Return
 }

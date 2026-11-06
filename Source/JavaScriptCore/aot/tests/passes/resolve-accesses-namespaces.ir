@@ -76,7 +76,7 @@ function f5 name="name-not-exported" results=[{type=anything}] {
     Return v1
 # CHECK: = ModuleNamespace module=m1
 # CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: = PropGet v0 key=@@iterator
 }
 function f6 name="own-export-beside-a-dynamic-star" results=[{type=anything}] {
     v0 = ModuleNamespace module=m3

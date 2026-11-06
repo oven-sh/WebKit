@@ -209,6 +209,42 @@ static bool runsEveryTask(const ParallelLoops& loops)
     });
 }
 
+static bool knowsWhetherThreadIsInsideLoop(const ParallelLoops& loops)
+{
+    constexpr unsigned count = 1000;
+    std::atomic<bool> isRight { true };
+    auto expect = [&](bool isInsideLoop) {
+        if (ParallelLoops::isInsideLoop() != isInsideLoop)
+            isRight = false;
+    };
+    auto expectInLoop = [&](unsigned numberOfIndices, bool isInsideLoop) {
+        forEachIndexInParallel(loops, numberOfIndices, [&](unsigned) {
+            expect(isInsideLoop);
+        });
+    };
+    expect(false);
+    expectInLoop(1, false);
+    expectInLoop(count, true);
+    expect(false);
+    forEachIndexInParallel(loops, count, [&](unsigned) {
+        expectInLoop(1, true);
+        expect(true);
+    });
+    expect(false);
+    runTasksInParallel(loops, {
+        [&] {
+            expectInLoop(count, true);
+            expect(true);
+        },
+        [&] { expect(true); },
+    });
+    expect(false);
+    runTasksInParallel(loops, {
+        [&] { expect(false); },
+    });
+    return isRight;
+}
+
 static bool runsSeriallyOnCaller(const ParallelLoops& loops)
 {
     constexpr unsigned count = 100000;
@@ -423,6 +459,93 @@ static bool restingThreadsTakeTheNextLoop()
     return askedPoolOncePerHelper && numberOfCountedThreads().load() == width - 1;
 }
 
+struct TimesMemoryWasGivenBack {
+    std::atomic<unsigned> byAnyThread { 0 };
+    std::atomic<unsigned> byCaller { 0 };
+    std::atomic<Thread*> caller { nullptr };
+    std::atomic<unsigned> check { 0 };
+};
+
+static TimesMemoryWasGivenBack& timesMemoryWasGivenBack()
+{
+    static NeverDestroyed<TimesMemoryWasGivenBack> times;
+    return times;
+}
+
+// A helper of an earlier check may come late, and whoever is asked is asked in every pool. Only the caller and the threads that this check starts count.
+static thread_local unsigned t_checkThatStartedThread { 0 };
+
+static TimesMemoryWasGivenBack& countMemoryGivenBackFromNowOn()
+{
+    TimesMemoryWasGivenBack& times = timesMemoryWasGivenBack();
+    times.check.fetch_add(1);
+    times.byAnyThread = 0;
+    times.byCaller = 0;
+    times.caller = &Thread::currentSingleton();
+    return times;
+}
+
+static constexpr HostThreadPool poolThatCountsMemoryGivenBack { [](void (*run)(void*), void* argument) {
+    Thread::create("AOT test helper"_s, [run, argument, check = timesMemoryWasGivenBack().check.load()] {
+        t_checkThatStartedThread = check;
+        run(argument);
+    }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(ParallelLoops::workerStackSize))->detach();
+}, [](bool) {
+    TimesMemoryWasGivenBack& times = timesMemoryWasGivenBack();
+    bool isCaller = &Thread::currentSingleton() == times.caller.load();
+    if (!isCaller && t_checkThatStartedThread != times.check.load())
+        return true;
+    times.byAnyThread.fetch_add(1);
+    if (isCaller)
+        times.byCaller.fetch_add(1);
+    return true;
+} };
+
+static bool callerGivesMemoryBackBesideTheOthersWork()
+{
+    constexpr unsigned width = 4;
+    TimesMemoryWasGivenBack& times = countMemoryGivenBackFromNowOn();
+    ParallelLoops loops(width, &poolThatCountsMemoryGivenBack, Seconds::infinity());
+    loops.giveFreeMemoryBack();
+    bool doesItAtOnceWhereNobodyRests = times.byAnyThread.load() == 1 && times.byCaller.load() == 1;
+    runLoopThatNeedsEveryThread(loops);
+    waitForRestingThreads(loops, width - 1);
+    unsigned before = times.byAnyThread.load();
+    loops.giveFreeMemoryBack();
+    bool leavesItForLater = times.byCaller.load() == 1;
+    while (times.byAnyThread.load() < before + width - 1)
+        Thread::yield();
+    bool othersDidItAtOnce = times.byCaller.load() == 1;
+    // A loop that finds one of them still on its way to rest asks the pool for a new thread, which gives memory back as well.
+    waitForRestingThreads(loops, width - 1);
+    runLoopThatNeedsEveryThread(loops);
+    return doesItAtOnceWhereNobodyRests && leavesItForLater && othersDidItAtOnce && times.byCaller.load() == 2 && times.byAnyThread.load() == before + width;
+}
+
+static bool threadAtWorkGivesMemoryBackBeforeItRests()
+{
+    struct Work {
+        std::atomic<bool> hasBegun { false };
+        std::atomic<bool> mayEnd { false };
+    } work;
+    TimesMemoryWasGivenBack& times = countMemoryGivenBackFromNowOn();
+    ParallelLoops loops(2, &poolThatCountsMemoryGivenBack, Seconds::infinity());
+    loops.schedule(TaskPriority::Foreground, [](void* argument) {
+        Work& work = *static_cast<Work*>(argument);
+        work.hasBegun = true;
+        while (!work.mayEnd.load())
+            Thread::yield();
+    }, &work);
+    while (!work.hasBegun.load())
+        Thread::yield();
+    unsigned before = times.byAnyThread.load();
+    loops.giveFreeMemoryBack();
+    bool callerDidItAtOnce = times.byAnyThread.load() == before + 1 && times.byCaller.load() == 1;
+    work.mayEnd = true;
+    waitForRestingThreads(loops, 1);
+    return callerDidItAtOnce && times.byAnyThread.load() == before + 2 && times.byCaller.load() == 1;
+}
+
 static bool restingThreadsGoBackToThePool()
 {
     constexpr unsigned width = 4;
@@ -589,6 +712,7 @@ void runParallelLoopsTestCommand(TestCommandContext& context)
     printCheck(out, "sort"_s, sortsLikeStandardSort(loops, 1000) && sortsLikeStandardSort(loops, 20000) && sortOrderIgnoresWidth(loops, one, 20000) && sortsLikeMergesOfWholeRuns(loops, 20000) && sortsLikeMergesOfWholeRuns(loops, 100003));
     printCheck(out, "sort and remove duplicates"_s, sortsAndRemovesDuplicates(loops, 1000) && sortsAndRemovesDuplicates(loops, 20000));
     printCheck(out, "tasks"_s, runsEveryTask(loops));
+    printCheck(out, "a thread knows whether it is inside a loop"_s, knowsWhetherThreadIsInsideLoop(loops) && knowsWhetherThreadIsInsideLoop(one));
     printCheck(out, "width one is serial"_s, runsSeriallyOnCaller(one));
     printCheck(out, "worker numbers are below the width and unique at one time"_s, handsOutWorkerNumbers(loops));
     printCheck(out, "build thread has the worker stack size"_s, buildThreadHasWorkerStack());
@@ -601,6 +725,8 @@ void runParallelLoopsTestCommand(TestCommandContext& context)
     printCheck(out, "an array creates and destroys each element once"_s, parallelArrayCreatesAndDestroysEachElementOnce(loops));
     printCheck(out, "resting threads take the next loop"_s, restingThreadsTakeTheNextLoop());
     printCheck(out, "resting threads go back to the pool"_s, restingThreadsGoBackToThePool());
+    printCheck(out, "the caller gives memory back beside the others' work"_s, callerGivesMemoryBackBesideTheOthersWork());
+    printCheck(out, "a thread at work gives memory back before it rests"_s, threadAtWorkGivesMemoryBackBeforeItRests());
     printCheck(out, "pending tasks run by priority"_s, pendingTasksRunByPriority());
     printCheck(out, "a background loop yields to foreground loops"_s, backgroundLoopYieldsToForegroundLoop(words->threads));
     printCheck(out, "tasks run after their dependencies"_s, tasksRunAfterTheirDependencies(loops));

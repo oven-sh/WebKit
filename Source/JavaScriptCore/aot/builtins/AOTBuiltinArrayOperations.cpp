@@ -21,10 +21,12 @@
 #include "JSArrayInlines.h"
 #include "JSArrayIterator.h"
 #include "JSCInlines.h"
+#include "JSStringInlines.h"
 #include "JSStringJoiner.h"
 #include <algorithm>
 #include <bit>
 #include <span>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringCommon.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -96,8 +98,15 @@ static ALWAYS_INLINE CharacterType* appendCharacters(CharacterType* destination,
     const SourceCharacterType* source = characters.data();
     size_t length = characters.size();
     if (length <= maxLengthCopiedInPlace) {
-        for (size_t i = 0; i < length; ++i)
-            destination[i] = source[i];
+        if constexpr (sizeof(CharacterType) == 1 && sizeof(SourceCharacterType) == 1) {
+            if (length >= sizeof(uint16_t))
+                WTF::copySmallMemory<sizeof(uint16_t), maxLengthCopiedInPlace>(byteCast<uint8_t>(destination), byteCast<uint8_t>(source), length);
+            else if (length)
+                *destination = *source;
+        } else {
+            for (size_t i = 0; i < length; ++i)
+                destination[i] = source[i];
+        }
     } else
         StringImpl::copyCharacters(std::span { destination, length }, characters);
     return destination + length;
@@ -170,7 +179,7 @@ static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString*
     JSString* between = separatorOrNull ? separatorOrNull : vm.smallStrings.singleCharacterString(',');
     auto view = between->view(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSOnlyStringsAndInt32sJoiner joiner(view);
+    JSExactLengthJoiner joiner(view);
     if (!hasInt32(array->indexingType()) && !hasDouble(array->indexingType()) && !hasContiguous(array->indexingType()))
         return nullptr;
     Butterfly& butterfly = *array->butterfly();
@@ -249,6 +258,74 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayJoinOfAnyReceiver, EncodedJSValue, (In
     OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, JSC::getCallData(function), receiver, arguments)));
 }
 
+static ALWAYS_INLINE bool precedesInDefaultOrder(const StringImpl& first, const StringImpl& second)
+{
+    if (first.is8Bit() && second.is8Bit()) [[likely]]
+        return is_lt(codePointCompare(first.span8(), second.span8()));
+    return is_lt(codePointCompare(StringView { first }, StringView { second }));
+}
+
+// Comparing strings runs no code, so every stable sort finds the order that sortImpl() in ArrayPrototype.cpp finds. False, and nothing that the program can see is done, for any other array.
+static bool trySortStrings(JSGlobalObject* globalObject, JSArray* array)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The host function throws when it stores into a frozen array, also where the order stays the same.
+    if (!hasContiguous(array->indexingType()) || array->structure()->hasImmutableProperties())
+        return false;
+    Butterfly& butterfly = *array->butterfly();
+    unsigned length = butterfly.publicLength();
+    if (length > maxLengthOfInsertionSortedArray)
+        return false;
+
+    const WriteBarrier<Unknown>* elements = butterfly.contiguous().data();
+    std::array<EncodedJSValue, maxLengthOfInsertionSortedArray> sorted;
+    std::array<const StringImpl*, maxLengthOfInsertionSortedArray> impls;
+    bool isSorted = true;
+    for (unsigned i = 0; i < length; ++i) {
+        JSValue element = elements[i].get();
+        if (!element || !element.isString())
+            return false;
+        const StringImpl* impl = asString(element)->tryGetValueImpl();
+        if (!impl) [[unlikely]] {
+            asString(element)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            impl = asString(element)->tryGetValueImpl();
+        }
+        unsigned position = i;
+        if (i && precedesInDefaultOrder(*impl, *impls[i - 1])) {
+            unsigned end = i - 1;
+            position = 0;
+            while (position < end) {
+                unsigned middle = position + (end - position) / 2;
+                if (precedesInDefaultOrder(*impl, *impls[middle]))
+                    end = middle;
+                else
+                    position = middle + 1;
+            }
+            std::copy_backward(sorted.begin() + position, sorted.begin() + i, sorted.begin() + i + 1);
+            std::copy_backward(impls.begin() + position, impls.begin() + i, impls.begin() + i + 1);
+            isSorted = false;
+        }
+        sorted[position] = JSValue::encode(element);
+        impls[position] = impl;
+    }
+    if (isSorted)
+        return true;
+    RELEASE_AND_RETURN(scope, array->appendMemcpy(globalObject, vm, 0, ArrayWithContiguous, std::span<const EncodedJSValue> { sorted }.first(length)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTArraySortInDefaultOrder, EncodedJSValue, (Instance* instance, JSCell* cell))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySortInDefaultOrder);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySortInDefaultOrder);
+    bool isSorted = trySortStrings(globalObject, array);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (isSorted)
+        OPERATION_RETURN(scope, JSValue::encode(array));
+    OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypeSort, array)));
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfDouble, size_t, (Instance*, JSCell* array, double searched))
 {
     Butterfly& butterfly = *cellArgument<JSArray>(array, Entry::operationAOTArrayIndexOfDouble)->butterfly();
@@ -263,6 +340,33 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfInt32, size_t, (Instan
     auto* data = std::bit_cast<const uint64_t*>(butterfly.contiguous().data());
     const uint64_t* found = WTF::find64(data, searched, butterfly.publicLength());
     return found ? found - data : static_cast<size_t>(-1);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTArrayIndexOfString, size_t, (Instance* instance, JSCell* cell, JSCell* searched, uint64_t start))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayIndexOfString);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayIndexOfString);
+    JSString* searchString = cellArgument<JSString>(searched, Entry::operationAOTArrayIndexOfString);
+    constexpr size_t notFound = static_cast<size_t>(-1);
+    const WriteBarrier<Unknown>* elements = hasContiguous(array->indexingType()) ? array->butterfly()->contiguous().data() : nullptr;
+    if (!elements && !hasAnyArrayStorage(array->indexingType()))
+        OPERATION_RETURN(scope, notFound);
+    unsigned searchLength = searchString->length();
+    for (uint64_t index = start, length = array->length(); index < length; ++index) {
+        JSValue element = elements ? elements[index].get() : array->getDirectIndex(globalObject, static_cast<unsigned>(index));
+        if (!element || !element.isString())
+            continue;
+        JSString* string = asString(element);
+        if (string == searchString)
+            OPERATION_RETURN(scope, index);
+        if (string->length() != searchLength)
+            continue;
+        bool isEqual = string->equalInline(globalObject, searchString);
+        OPERATION_RETURN_IF_EXCEPTION(scope, notFound);
+        if (isEqual)
+            OPERATION_RETURN(scope, index);
+    }
+    OPERATION_RETURN(scope, notFound);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTArraySearchOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedReceiver, EncodedJSValue encodedSearched, EncodedJSValue encodedFromIndex, uint32_t answersIndex))

@@ -1,0 +1,41 @@
+# sum = (sum + (list[i] + (i & 7)) * 2) | 0 in a loop: the variable that goes round the loop stands two operations further out than the number that was read.
+# Each turn would wait for the last through the conversions all the same, so the element is tested for a whole int32 and all of it is computed in integers.
+# FORM: Selected
+# RUN: generate-code ExactIntegersBehindNumbers
+# CHECK: : size=
+# CHECK-NOT: no code
+# CHECK: statistic ExactIntegersBehindNumbers 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lowWordOfRunningSumOfProducts" parameters=[{type=Array<number>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: i32):
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3: i32, v4: int[0, 127]):
+    LoopHint
+    v6 = Less v4, v1 form=Integers
+    TestAndBranch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = HasArrayStorage v0 arrayStorage=Double
+    TestAndBranch v7 -> taken b3(| 0), notTaken b5()
+  b3(v8: guard):
+    v9 = IsElementPresent v0, v4, v8 arrayStorage=Double [keyIsIntegral]
+    TestAndBranch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10: guard):
+    v11 = AllGuards v8, v10
+    v12 = GetArrayElement v0, v4, v11 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    v13 = Integer integer=7
+    v14 = BitAnd v4, v13 form=Integers
+    v15 = Add v12, v14 form=Numbers
+    v16 = Integer integer=2
+    v17 = Mul v15, v16 form=Numbers
+    v18 = Add v3, v17 form=Numbers
+    v19 = Integer integer=0
+    v20 = BitOr v18, v19 form=Numbers
+    v21 = Increment v4 form=Integers
+    v22 = Integer integer=127
+    v23 = BitAnd v21, v22 form=Integers
+    Jump -> next b1(v20, v23)
+  b5():
+    Return v3
+}

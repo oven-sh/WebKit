@@ -78,7 +78,8 @@ void ExpandedIterationEmitter::generateRequireAttachedTypedArray(const ValueCont
     CellPointer view = in<CellPointer>(value->viewOperand());
     LBasicBlock mayBeDetached = newBlock();
     LBasicBlock continuation = newBlock();
-    Condition hasVector = notEqual(views.vectorOf(view), pointerConstant(0));
+    Pointer vector = views.vectorOf(view);
+    Condition hasVector = notEqual(vector, pointerConstant(0));
     m_out.branch(logicalAnd(views.hasFixedLength(view), hasVector).value(), normalEdge(continuation), rareEdge(mayBeDetached));
 
     m_out.appendTo(mayBeDetached);
@@ -95,7 +96,7 @@ void ExpandedIterationEmitter::generateRequireLengthFitsList(const ValueContext&
     CellPointer source;
     if (value->lengthOperand()) {
         source = in<CellPointer>(value->sourceOperand());
-        m_out.branch(greaterThan(integerOf(value->lengthOperand()), integer(IndexingHeader::maximumLength)).value(), rareEdge(mayBeTooLong), normalEdge(continuation));
+        m_out.branch(greaterThan(integerOf(value->lengthOperand()), IndexingHeader::maximumLength).value(), rareEdge(mayBeTooLong), normalEdge(continuation));
     } else {
         Boxed boxed = in<Boxed>(value->sourceOperand());
         LBasicBlock isCellCase = newBlock();
@@ -103,7 +104,8 @@ void ExpandedIterationEmitter::generateRequireLengthFitsList(const ValueContext&
 
         m_out.appendTo(isCellCase);
         source = unboxCell(boxed);
-        Condition hasLength = logicalOr(hasCellType(source, StringType), hasCellTypeIn(source, { static_cast<JSType>(FirstTypedArrayType), static_cast<JSType>(LastTypedArrayTypeExcludingDataView) }));
+        Condition isString = hasCellType(source, StringType);
+        Condition hasLength = logicalOr(isString, hasCellTypeIn(source, { static_cast<JSType>(FirstTypedArrayType), static_cast<JSType>(LastTypedArrayTypeExcludingDataView) }));
         m_out.branch(hasLength.value(), rareEdge(mayBeTooLong), normalEdge(continuation));
     }
 

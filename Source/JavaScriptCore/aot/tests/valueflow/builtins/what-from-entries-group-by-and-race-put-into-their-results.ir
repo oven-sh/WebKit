@@ -113,7 +113,7 @@ function f10 name="double" kind=Method flags=[HasThis] thisType={type=anything} 
     v1 = Integer integer=4
     Return v1
 }
-function f11 name="fromEntries" module=m1 kind=Method role=Model length=1 enclosingRuntimeFunction=131082 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f11 name="fromEntries" module=m1 kind=Method role=Model length=1 enclosingRuntimeFunction=ObjectsFromEntries thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
     v1 = Builtin builtin=Object
     v2 = Builtin builtin=ObjectCreate
     v3 = Builtin builtin=ObjectPrototype
@@ -141,7 +141,7 @@ function f11 name="fromEntries" module=m1 kind=Method role=Model length=1 enclos
     IteratorClose v5 completion=Throw
     Rethrow v16
 }
-function f12 name="groupBy" module=m1 kind=Method role=Model length=2 enclosingRuntimeFunction=131084 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f12 name="groupBy" module=m1 kind=Method role=Model length=2 enclosingRuntimeFunction=ObjectsGroupBy thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = Builtin builtin=Object
     v3 = Builtin builtin=ObjectCreate
     v4 = Null
@@ -171,5 +171,5 @@ function f12 name="groupBy" module=m1 kind=Method role=Model length=2 enclosingR
     IteratorClose v7 completion=Throw
     Rethrow v19
 }
-runtimefunction id=131082 function=f11
-runtimefunction id=131084 function=f12
+runtimefunction id=ObjectsFromEntries function=f11
+runtimefunction id=ObjectsGroupBy function=f12

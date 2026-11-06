@@ -43,6 +43,8 @@ ASCIILiteral nameOf(StaticsRegion region)
         return "FilledAtInstanceCreation"_s;
     case StaticsRegion::FilledAtProgramEntry:
         return "FilledAtProgramEntry"_s;
+    case StaticsRegion::FilledWithFile:
+        return "FilledWithFile"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -196,6 +198,9 @@ void printRequestRecord(IRPrinter& printer, const RequestRecord& request)
             printer.print(record.data);
             if (record.hasValues)
                 out.print(" hasValues"_s);
+        },
+        [&](const FormatPatternRecord& record) {
+            out.print("FormatPattern "_s, record.words.size(), " words"_s);
         });
 }
 
@@ -253,11 +258,11 @@ private:
         const LayoutSet& set = m_program.at(id);
         CommaPrinter blank(" "_s);
         m_out.print("{"_s);
-        for (LayoutID member : set.members) {
+        for (LayoutID member : set.written()) {
             m_out.print(blank);
             m_printer.print(member);
         }
-        if (!set.isComplete)
+        if (!set.listsEveryLayout())
             m_out.print(blank, ".."_s);
         m_out.print("}"_s);
     }
@@ -497,6 +502,8 @@ private:
         if (!closureFunctions.first)
             return;
         m_out.print("closureFunctions first="_s, closureFunctions.first.index(), " end="_s, closureFunctions.end.index(), " omittedWords="_s, closureFunctions.omittedWordCount, "\n"_s);
+        for (FunctionID form : m_placement.closureFormsBySource())
+            m_out.print("closureForm f"_s, form.index(), "\n"_s);
     }
 
     void dumpConstants()

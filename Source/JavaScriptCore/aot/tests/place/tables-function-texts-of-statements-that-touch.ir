@@ -1,0 +1,21 @@
+# What touches in the text of the body of a module is kept as one piece, and what failed is looked for in the line of that piece. In a file that a minifier has written
+#   a.b;c.d;e.f;
+# every statement touches the next. Far into a line the front end says now and then where a statement begins, by a piece of no length: here in front of `e.f;`. There the pieces stay apart.
+# RUN: tables function-texts
+# CHECK: piece m0 0..8 line=1 column=1
+# CHECK-NEXT: piece m0 8..12 line=1 column=9
+# CHECK-NOT: piece
+
+module m0 path="/a.js" displayPath="a.js" body=f0 positions={lineStarts=[0] textOfBody="\x00\x04\x00\x04\x00\x00\x00\x04"} functionText="a.b;c.d;e.f;"
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="run" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="nobody" module=m0 results=[{type=anything}] {
+    Return
+}

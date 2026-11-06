@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTThreads.h"
-#include "AOTUnspecifiedValuePaths.h"
 #include "AOTVector.h"
 #include <algorithm>
 
@@ -17,23 +16,22 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void FunctionVerifier::verifyUnspecifiedValues()
 {
-    if (m_form != IRForm::Prepared)
-        return;
-    UsesOfUnspecifiedValues found = findUsesOfUnspecifiedValues(analyses(), 1, m_inputs.otherFunctionsMayChange ? OtherFunctions::MayChange : OtherFunctions::AreAtRest);
-    for (const UseOfUnspecifiedValue& use : found.uses)
-        fail(InternalErrorKind::UnspecifiedValueInspected, use.block, use.user, use.operand.index());
-    if (found.uses.isEmpty() && !found.wasEveryPathFollowed)
-        fail(InternalErrorKind::UnspecifiedValueInspected);
+    for (uint32_t index = 0; index < m_function.blocks.size() && !hasFailed(); ++index) {
+        BlockID block(index);
+        for (ValueID id : m_function.at(block).values)
+            verifyNoOperandIsUnspecified(block, id, m_function.at(id));
+        verifyNoOperandIsUnspecified(block, m_function.at(block).terminator);
+    }
 }
 
 bool verifyUnspecifiedValues(const Program& program, BuildContext& build)
 {
     Vector<InternalError> errors = collectInParallel<InternalError>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<InternalError>& found) {
         const Function& function = program.functions[index];
-        bool makesUnspecifiedValue = function.hasBody() && std::ranges::any_of(function.values, [](const Value& value) {
-            return value.opcode == Opcode::Unspecified;
+        bool hasUnspecifiedValue = function.hasBody() && std::ranges::any_of(function.values, [&](const Value& value) {
+            return value.type && program.at(value.type).mayBeUnspecified();
         });
-        if (!makesUnspecifiedValue)
+        if (!hasUnspecifiedValue)
             return;
         FunctionVerifier verifier(program, FunctionID(index), function, IRForm::Prepared, build, { });
         if (!verifier.runUnspecifiedValues())

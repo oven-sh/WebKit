@@ -1,0 +1,15 @@
+# The library sorts a short list of int32 where it lies. It has asked for the storage, the length and the right to write, and has found every position filled.
+# The upper half of each word is the tag of an int32 and stays, so an integer is read and stored by four bytes: nothing is unboxed or boxed, and no load of eight bytes waits for a store of four.
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: lower-to-b3 f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="movesAnInteger" parameters=[{type=Array<i32>}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=i32}] {
+    v3 = GetOwnInt32Index v0, v1
+    PutOwnInt32Index v0, v2, v3
+    Return v3
+}
+# CHECK: Int32 b@[[integer]] = Load(b@[[from]], ControlDependent|Reads:Elements{{*}}, v3:GetOwnInt32Index)
+# CHECK: Int32 b@[[half]] = Trunc(b@[[wide]], v4:PutOwnInt32Index)
+# CHECK: Void b@[[store]] = Store(b@[[half]], b@[[to]], ControlDependent|Writes:Elements{{*}}, v4:PutOwnInt32Index)

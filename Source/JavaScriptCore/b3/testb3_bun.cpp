@@ -15,12 +15,15 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     addBunKnownPropertyTests(config, tasks);
     addBunReadOnlyDataTests(config, tasks);
     addBunLoopTests(config, tasks);
+    addBunLoopUnrollingTests(config, tasks);
+    addBunLoopVectorizingTests(config, tasks);
     addBunCountedLoopTests(config, tasks);
     addBunComparisonFoldingTests(config, tasks);
     addBunLoopPhaseTests(config, tasks);
     addBunLoopVersioningTests(config, tasks);
     addBunLoopPlanTests(config, tasks);
     addBunCountedLoopVersioningTests(config, tasks);
+    addBunStridedRangeCheckTests(config, tasks);
     addBunPlacementTests(config, tasks);
     addBunHoistingTests(config, tasks);
     addBunNumberingTests(config, tasks);

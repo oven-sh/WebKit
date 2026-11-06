@@ -1,0 +1,78 @@
+# interface O { a: number; b: number; c: number }   const defaults: O = { a: 1, b: 2, c: 3 }   const options: Partial<O> = input ? { b: 5 } : { c: 6 }
+# const merged = { z: 0, ...defaults, ...options }   const assigned = Object.assign({ z: 0 }, defaults, options)
+# O and Partial<O> are one layout, whose literals list different names, so the layout says of no name that it is there. `defaults` is one literal that only followed code holds:
+# it keeps the three names that it lists itself, and so does every copy of it.
+# Not so: a copy of either of two literals holds only what both list, and a copy of a literal that loses a name, or that unknown code holds, holds no name for sure.
+# RUN: valueflow-apply
+# CHECK: layout L1 name="Merged" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="b"{{*}}occupancy=AlwaysFilled{{*}}{key="c"{{*}}occupancy=AlwaysFilled{{*}}{key="z"
+# CHECK: layout L2 name="Assigned" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="b"{{*}}occupancy=AlwaysFilled{{*}}{key="c"{{*}}occupancy=AlwaysFilled{{*}}{key="z"
+# CHECK: layout L3 name="OfEither" fields=[{key="b"{{*}}occupancy=AlwaysFilled{{*}}{key="a"
+# CHECK-NOT: occupancy=AlwaysFilled
+# CHECK: layout L4 name="Shrinking"
+# CHECK: layout L5 name="OfWhatShrinks" fields=[{key="a"
+# CHECK-NOT: occupancy=AlwaysFilled
+# CHECK: layout L6 name="Leaving"
+# CHECK: layout L7 name="OfWhatLeft" fields=[{key="a"
+# CHECK-NOT: occupancy=AlwaysFilled
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
+layout L1 name="Merged" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="z" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Assigned" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="z" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="OfEither" fields=[{key="b" declared={type=anything}}, {key="a" declared={type=anything}}, {key="c" declared={type=anything}}]
+layout L4 name="Shrinking" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+layout L5 name="OfWhatShrinks" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+layout L6 name="Leaving" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+layout L7 name="OfWhatLeft" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=2}}, {key="c" value=Number{value=3}}]}
+data d1 root=Object{layout=L2 members=[{key="z" value=Number{value=0}}]}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectAssign
+    v1 = Integer integer=5
+    v2 = Data data=d0
+    v3 = NewObject -, v1 layout=L0 fields=[1]
+    v4 = NewObject -, v1 layout=L0 fields=[2]
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="input" [isFreeName]
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3, v2)
+  b2():
+    Jump -> next b3(v4, v3)
+  b3(v8: anything, v9: anything):
+    v10 = NewObject -, v1 layout=L1 fields=[3]
+    CopyDataProperties v10, v2
+    CopyDataProperties v10, v8
+    v13 = FinishObject v10
+    v14 = Data data=d1
+    v15 = Call v0, -, v14, v2, v8
+    v16 = NewObject layout=L3
+    CopyDataProperties v16, v9
+    v18 = FinishObject v16
+    v19 = NewObject -, v1, v1 layout=L4 fields=[0, 1]
+    v20 = NewObject -, v1 layout=L4 fields=[1]
+    v21 = NewObject layout=L5
+    CopyDataProperties v21, v19
+    v23 = FinishObject v21
+    v24 = PropDelete v19 key="a"
+    v25 = NewObject -, v1, v1 layout=L6 fields=[0, 1]
+    v26 = NewObject -, v1 layout=L6 fields=[1]
+    v27 = PropGet v5 key="unknown" [isFreeName]
+    v28 = Call v27, -, v25
+    v29 = NewObject layout=L7
+    CopyDataProperties v29, v25
+    v31 = FinishObject v29
+    v32 = PropGet v13 key="a"
+    v33 = PropGet v15 key="a"
+    v34 = PropGet v18 key="a"
+    v35 = PropGet v23 key="a"
+    v36 = PropGet v31 key="a"
+    v37 = PropGet v20 key="b"
+    v38 = PropGet v26 key="b"
+    Return
+}

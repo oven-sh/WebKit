@@ -10,14 +10,14 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=131091 function=f1
+runtimefunction id=ArrayTraversalTraverseArray function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = NewArray
     v1 = Builtin builtin=ArrayPrototypeSlice
     v2 = Call v1, v0
     Return
 }
-function f1 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="traverseArray" role=Library enclosingRuntimeFunction=ArrayTraversalTraverseArray parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = Builtin builtin=JSONStringify
     v3 = NewDictionary
     v4 = ToPropertyKey v1

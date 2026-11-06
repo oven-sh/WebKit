@@ -1016,6 +1016,26 @@ static void testKeyedStoresToObjectsWithIntegrityLevels()
     }
 }
 
+static void testKeyedStoresUnderSymbolsWhoseHoldersArePrepared()
+{
+    PropertyStores stores;
+    const uint64_t number = bitsOf(jsNumber(42));
+    FakeObject<sizeof(Symbol)> key;
+    key.setHeader(0, SymbolType);
+    key.at<uint8_t>(JSCell::typeInfoFlagsOffset()) = TypeInfoPerCellBit;
+    key.at<uint64_t>(Symbol::offsetOfSymbolImpl()) = stores.uidOf(PropertyStores::unboundName);
+
+    for (PutMode mode : allPutModes) {
+        StubKey stub = mode == PutMode::Define ? defineByValCached() : putByValCached(mode);
+        Entry cachingOperation = mode == PutMode::Define ? Entry::operationAOTDefineField : mode == PutMode::Strict ? Entry::operationAOTPutByValAndCache : Entry::operationAOTPutByValAndCacheSloppy;
+        for (Slot::Kind kind : { Slot::Kind::Field, Slot::Kind::FieldCreation }) {
+            stores.file({ mode, FiledIn::HashedTable, false }, createFieldSlot(kind, SlotRepresentation::JSValue, PropertyStores::typeOfAnything));
+            FakeTypedObject object(JSValue::ValueUndefined);
+            checkKeyedStoreLeftTo(stores, stub, cachingOperation, object, key.address(), number);
+        }
+    }
+}
+
 namespace {
 
 struct CreatedFieldOrders {
@@ -1110,6 +1130,10 @@ static void testCreatedFieldsWithoutStorage()
     constexpr uint64_t granuleBit = granuleBitOf(offsetInExtension);
     using FakeExtension = FakeObject<extensionCellSizeFor(2)>;
     PropertyStores stores;
+    stores.structure.at<uint32_t>(CompiledStructure::offsetOfExtensionSlot()) = SlotData::create(offsetOfExtensionWord, SlotRepresentation::Cell32).encoded();
+    // A space without allocators: the stub that grows an Extension leaves it to the operation.
+    FakeObject<sizeof(CompleteSubspace)> spaceWithoutAllocators;
+    stores.runner.instance().allocation.cagedAuxiliarySpace = std::bit_cast<void*>(spaceWithoutAllocators.address());
     CreatedFieldOrders orders(stores.runner.instance(), slotKeyFor(offsetInExtension, true));
     const uintptr_t cageBase = stores.runner.instance().cellCageBase;
     const uint64_t number = bitsOf(jsNumber(42));
@@ -1435,6 +1459,7 @@ class Chains {
     WTF_MAKE_NONCOPYABLE(Chains);
 public:
     static constexpr uint32_t generation = 7;
+    static constexpr uint32_t changesUnderNames = 3;
 
     explicit Chains(PropertyStores& stores)
         : m_stores(stores)
@@ -1442,6 +1467,7 @@ public:
         PropertyCacheWords& words = stores.runner.instance().propertyCaches;
         words.absenceFilters = m_filters.data();
         words.absenceFilterGenerationForStores = generation;
+        words.changesUnderNamesOnChains = changesUnderNames;
         words.namesOfObjectPrototypes = &namesOfObjectPrototypes;
         words.namesChangedOnChains = &namesChangedOnChains;
         letEveryStorePass();
@@ -1453,7 +1479,7 @@ public:
     }
 
     AbsenceFilter& filter() { return m_filters[AbsenceFilter::indexFor(PropertyStores::structureID)]; }
-    void letEveryStorePass() { filter() = { PropertyStores::structureID, generation, { }, 0 }; }
+    void letEveryStorePass() { filter() = { PropertyStores::structureID, generation, { }, changesUnderNames, 0 }; }
     void setFlags(uint8_t flags) { m_stores.structure.at<uint8_t>(CompiledStructure::offsetOfFlags()) = flags; }
 
     uint64_t namesOfObjectPrototypes { 0 };
@@ -1684,10 +1710,14 @@ static void testFieldsCreatedByTheirRecords()
         chains.filter().structureID = PropertyStores::structureID + (AbsenceFilter::numberOfFilters << StructureRowWords::granuleShift);
         AOT_TEST_CHECK(isCreatedInEveryShape() == !asksChain);
         chains.filter().structureID = PropertyStores::structureID;
+        // A filter built after every change reflects the name's current state.
         chains.namesChangedOnChains = uint64_t { 1 } << name;
+        AOT_TEST_CHECK(isCreatedInEveryShape());
+        chains.filter().changesUnderNames = Chains::changesUnderNames - 1;
         AOT_TEST_CHECK(isCreatedInEveryShape() == !asksChain);
         chains.namesChangedOnChains = ~(uint64_t { 1 } << name);
         AOT_TEST_CHECK(isCreatedInEveryShape());
+        chains.filter().changesUnderNames = Chains::changesUnderNames;
 
         // The guard that compiled code has for the stores under the name holds once the run time has looked: one store in 16 goes there.
         uint8_t& storesToGuardedFields = stores.runner.instance().propertyCaches.storesToGuardedFields;
@@ -1844,14 +1874,17 @@ static void testFieldsCreatedOutsideTheCellByTheirRecords()
             AOT_TEST_CHECK(extension.at<uint64_t>(offsetOfThirdGranule) == number && !extension.at<uint64_t>(offsetOfFirstExtensionSlot) && !extension.at<uint64_t>(offsetOfFirstExtensionSlot + extensionGranuleSize));
             record.slot = slotBefore;
         }
-        // Where the key order alone says that the field exists, the run time knows whether undefined asks for a granule.
+        // Where the key order alone says that the field exists, undefined asks for no granule: the key is listed and nothing is stored.
         {
             FieldData& record = stores.fieldRecord(FieldTable::recordOf(FieldTable::shapeWithOutOfLineValue, PropertyStores::nameOf(storeCase)));
             record.flags |= fieldMayExistWithoutStorage;
             FakeExtension extension(FakeExtension::bitOfSlot >> 1, bitsOf(jsNumber(1)));
             FakeObjectWithShape object(FieldTable::shapeWithOutOfLineValue, extension.encode(cageBase), CreatedFieldOrders::orderBefore);
-            AOT_TEST_CHECK(stores.store(storeCase, object.address(), bitsOf(jsUndefined())).calledOperation);
-            AOT_TEST_CHECK(extension.granule() == bitsOf(jsNumber(1)) && extension.at<uint64_t>(offsetOfExtensionGranuleBits) == FakeExtension::bitOfSlot >> 1 && object.at<uint32_t>(offsetOfOrderWord) == CreatedFieldOrders::orderBefore);
+            stores.runner.recordCallsOf(Entry::operationAOTDidCreateFieldAt);
+            StubRun run = stores.store(storeCase, object.address(), bitsOf(jsUndefined()));
+            stores.runner.countCallsOf(Entry::operationAOTDidCreateFieldAt);
+            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == object.address() && static_cast<uint32_t>(run.recordedArguments[1]) == slotKeyFor(FieldTable::offsetInExtension, true));
+            AOT_TEST_CHECK(extension.granule() == bitsOf(jsNumber(1)) && extension.at<uint64_t>(offsetOfExtensionGranuleBits) == FakeExtension::bitOfSlot >> 1);
             record.flags &= ~fieldMayExistWithoutStorage;
         }
     });
@@ -1886,6 +1919,7 @@ std::span<const NativeTest> stubPropertyStoreTests()
         { "stubs/put-by-id/fields-that-take-any-value-stored-by-their-records"_s, ImageTests::whenExecutable<testFieldsThatTakeAnyValueStoredByTheirRecords> },
         { "stubs/put-by-id/fields-created-outside-the-cell-by-their-records"_s, ImageTests::whenExecutable<testFieldsCreatedOutsideTheCellByTheirRecords> },
         { "stubs/put-by-val/integrity-levels"_s, ImageTests::whenExecutable<testKeyedStoresToObjectsWithIntegrityLevels> },
+        { "stubs/put-by-val/symbols-whose-holders-are-prepared"_s, ImageTests::whenExecutable<testKeyedStoresUnderSymbolsWhoseHoldersArePrepared> },
     };
     return tests;
 }

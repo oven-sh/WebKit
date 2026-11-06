@@ -1,19 +1,34 @@
 # `this.late = value`, where the slot may be empty: the store creates the field while nothing of that name lies above the object, which the guards of the class say.
-# The guards of a constructor function that may be created again describe its first closure. They hold for the objects that have its prototype object, so the store tests the object and the guards
+# The guards of a constructor function that is made once and captures something hold for all its objects, so the store tests the object and the guards.
+# Those of a function that may be made again describe its first closure alone: the store fills a slot that is filled and else goes by name, with no copy that only those objects would take.
 # FORM: Prepared
 # RUN: pass PlaceTypeTests
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Many" constructor=f0 fields=[{key="late" declared={type=anything} flags=[IsAddedLate, IsEnforced]}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={staticLink=Fixed}
+layout L1 kind=Instance name="Once" constructor=f2 fields=[{key="late" declared={type=anything} flags=[IsAddedLate, IsEnforced]}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce staticLink=Fixed}
 function f0 name="Many" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
     Return
 }
-function f1 name="stores" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
+function f1 name="storesIntoMany" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
   b0(v0: anything, v1: anything):
     PropSet v0, v1 key="late"
     Return
-# CHECK: PutSlotOrAdd {{*}} key="late" receivers=[L0]
+# CHECK-NOT: PutSlotOrAdd
+# CHECK: PutSlot {{*}} key="late" receivers=[L0]
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: = IsSlotFilled {{*}} key="late" receivers=[L0]
+# CHECK-NOT: AreMembersUnchanged
+}
+function f2 name="Once" flags=[HasThis] captures=[{type=string}] thisType={type=L1} results=[{type=undefined}] {
+    Return
+}
+function f3 name="storesIntoOnce" parameters=[{type=L1 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="late"
+    Return
+# CHECK: PutSlotOrAdd {{*}} key="late" receivers=[L1]
 # CHECK: = HasLayoutPrototype
-# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="late"}, {kind=PrototypeLinkUnchanged layout=L0}]
+# CHECK: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}, {kind=MemberPassedByStores layout=L1 key="late"}]
 }

@@ -249,6 +249,8 @@ function dumpResult(result: ModelResult): DumpedResult {
     iteratedOperand: dumpOptionalOperand(result.iteratedOperand),
     iterationKind: result.iterationKind,
     prototypeSource: dumpOptionalOperand(result.prototypeSource),
+    testedOperand: dumpOptionalOperand(result.testedOperand),
+    testedType: result.testedType === null ? null : dumpType(result.testedType),
     properties: result.properties.map(({ name, type }) => ({ name: spellingOf(name), type: dumpType(type) })),
   };
 }
@@ -329,6 +331,8 @@ function dumpEntry(builtin: ModelBuiltin): DumpedEntry {
     mutability: builtin.mutability,
     platforms: inListOrder(targetPlatforms, builtin.platforms),
     flags: inListOrder(builtinFlags, builtin.flags),
+    isAddedAtFirstRead: builtin.isAddedAtFirstRead,
+    isAddedAsEnumerable: builtin.isAddedAsEnumerable,
     holder: tokenOrNull(builtin.holder),
     name: builtin.name.text,
     isSymbolName: builtin.name.kind !== "Text",

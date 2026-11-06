@@ -1,6 +1,6 @@
 # function mod8(i: number) { return i % 8 }   function mod10(i: number) { return i % 10 }   function isEven(i: number) { return i % 2 === 0 }
 # A remainder works on integers where the dividend, made an int64 and a number again, is itself. Beyond int64 x86-64 answers that conversion with the least int64.
-# ARM64 answers with the nearest one: from 2^63 on 2^63 - 1, which made a number again rounds to 2^63
+# arm64 answers with the nearest one: from 2^63 on 2^63 - 1, which made a number again rounds to 2^63
 # FORM: AsRead
 # RUN: run-in-shell globalThis.register = (mod8, mod10, isEven) => { for (const i of [2 ** 63, -(2 ** 63), 2 ** 63 + 2048, 2 ** 64, 2 ** 62, 2 ** 53 + 2, 1e300, 13]) print(mod8(i), mod10(i), isEven(i)); };
 # CHECK: 0 8 true

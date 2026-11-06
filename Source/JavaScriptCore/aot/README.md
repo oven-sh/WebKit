@@ -31,12 +31,12 @@ minutes where a round of CI takes 35. `node .github/scripts/lanes.mjs build <lab
 | `-DENABLE_AOT=0` among the compiler's flags, `-O0` | Every lane without `-aot` in its label. What the rest of JavaScriptCore calls outside `ENABLE(AOT)` has to be in `JavaScriptCore_AOT_SOURCES_WITHOUT_AOT` (`AOT.cmake`), or twenty lanes fail at the link | three minutes from nothing |
 | x64 glibc with ThinLTO, then the checks behind the link | `Tools/Scripts/check-classinfo-uniqueness.py`, `Tools/Scripts/aot/find-structures-decoded-behind-calls.py`, symbols newer than `GLIBC_2.31` | four minutes with a warm ThinLTO cache |
 
-Without any build, in seconds: `Tools/Scripts/aot/check-unified-sources.py` (names that two sources of one bundle declare) and `check-includes.py`.
+Without a whole build, in about a minute: `Tools/Scripts/aot/check-includes.py`.
 
 ## Things that have bitten
 
 - **`aot/` is compiled in unified bundles.** A `static` function, a type, or anything in an unnamed namespace needs a name that no other source of `aot/` uses.
-- **A new source goes into `Sources.txt`** (or `SourcesCompiledForSize.txt`). Bun reads the same lists when it builds this folder itself.
+- **A new source goes into `Sources.txt`** (or, if builds spend no time in it, `SourcesCompiledForSize.txt` or `SourcesCompiledForMinimumSize.txt`: `AOT.cmake` says which). Bun reads the same lists when it builds this folder itself.
 - **Nothing that a generator writes is checked in.** A new generated header that Bun's build reads must also be copied into the release by every Dockerfile's pack step, or Bun cannot be built against the prebuilt engine.
 - **No static initializers.**
 - **A change to the IR's schema (`ir/schema/*.def`) changes both repositories.** They land together.

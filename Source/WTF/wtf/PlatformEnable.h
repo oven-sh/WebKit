@@ -67,6 +67,31 @@
 #endif
 #endif
 
+#ifndef BACKTRACE_DISABLED
+#define BACKTRACE_DISABLED !ASSERT_ENABLED
+#endif
+
+#ifndef ASSERT_MSG_DISABLED
+#define ASSERT_MSG_DISABLED !ASSERT_ENABLED
+#endif
+
+#ifndef ASSERT_ARG_DISABLED
+#define ASSERT_ARG_DISABLED !ASSERT_ENABLED
+#endif
+
+#ifndef FATAL_DISABLED
+#define FATAL_DISABLED !ASSERT_ENABLED
+#endif
+
+#ifndef ERROR_DISABLED
+#define ERROR_DISABLED !ASSERT_ENABLED
+#endif
+
+#ifndef LOG_DISABLED
+#define LOG_DISABLED !ASSERT_ENABLED
+#endif
+
+
 /* ==== Platform additions: additions to PlatformEnable.h from outside the main repository ==== */
 
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/AdditionalFeatureDefines.h>)
@@ -1075,6 +1100,21 @@
 #define ENABLE_JIT_SIGN_ASSEMBLER_BUFFER 1
 #endif
 
+/* LLInt and the code that the JITs generate sign the return address at the places where they do for CPU(ARM64E), and with the same key,
+   but nothing else of that ABI: no other pointer is signed. Every instruction is a hint, which a processor without pointer
+   authentication ignores. C++ is signed by the compiler (-mbranch-protection=pac-ret), with the other key. */
+#if !defined(ENABLE_RETURN_ADDRESS_SIGNING)
+#define ENABLE_RETURN_ADDRESS_SIGNING 0
+#endif
+
+#if ENABLE(RETURN_ADDRESS_SIGNING) && (!CPU(ARM64) || CPU(ARM64E) || !OS(LINUX))
+#error "ENABLE(RETURN_ADDRESS_SIGNING) is for ARM64 Linux"
+#endif
+
+#if ENABLE(RETURN_ADDRESS_SIGNING) && ENABLE(AOT)
+#error "The run time of compiled programs is not ready for ENABLE(RETURN_ADDRESS_SIGNING)"
+#endif
+
 #if !defined(ENABLE_JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES) && CPU(X86_64) && PLATFORM(MAC)
 #define ENABLE_JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES 1
 #endif
@@ -1203,11 +1243,6 @@
 #define ENABLE_TLS_1_2_DEFAULT_MINIMUM 1
 #endif
 
-#if !defined(ENABLE_IPC_TESTING_SWIFT) \
-    && (PLATFORM(MAC) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 260500)
-#define ENABLE_IPC_TESTING_SWIFT 1
-#endif
-
 #if PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 270000
 #define ENABLE_SCROLL_POCKET_IN_FULLSCREEN 1
 #endif
@@ -1219,6 +1254,10 @@
     || (PLATFORM(WATCHOS) && __WATCH_OS_VERSION_MAX_ALLOWED >= 270000) \
     || (PLATFORM(APPLETV) && __TV_OS_VERSION_MAX_ALLOWED >= 270000))
 #define ENABLE_BACK_FORWARD_LIST_SWIFT 1
+#endif
+
+#if !defined(ENABLE_IPC_TESTING_SWIFT) && ENABLE(BACK_FORWARD_LIST_SWIFT)
+#define ENABLE_IPC_TESTING_SWIFT 1
 #endif
 
 // Non-Cocoa ports set this from CMake, based on the Swift compiler version.

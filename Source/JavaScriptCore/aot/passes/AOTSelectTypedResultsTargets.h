@@ -16,8 +16,14 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
 
+class BuildContext;
+
+namespace Typed {
+
+class FlowResults;
+class Heat;
 class UseLists;
 
 struct TypedResultTarget {
@@ -44,8 +50,9 @@ private:
 };
 
 TypeID findTypeOfTypedResultTarget(const Program&, const Function&, const UseLists&, ValueID call);
-TypedResultTarget findTypedResultTarget(const Program&, const Function&, const UseLists&, ValueID call, size_t maxNumberOfLayouts, const HeadLayoutsOfFamilies*);
+TypedResultTarget findTypedResultTarget(const Program&, const Function&, const UseLists&, ValueID call, const HeadLayoutsOfFamilies*);
 void forEachLayoutReachedBy(const Program&, TypeID, const HeadLayoutsOfFamilies*, const ScopedLambda<IterationStatus(LayoutID)>&);
+void markUnprofitableTypedResults(const Program&, FlowResults&, const Heat&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed
 

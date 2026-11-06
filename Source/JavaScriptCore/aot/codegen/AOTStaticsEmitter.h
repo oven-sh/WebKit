@@ -24,6 +24,7 @@ public:
     TypedPointer guardByteOf(GuardBitID);
     uint8_t guardMaskOf(GuardBitID) const;
     TypedPointer branchCounter(uint32_t number);
+    void fillVariablesOfEnteredFile();
 };
 
 } } } // namespace JSC::AOT::Typed

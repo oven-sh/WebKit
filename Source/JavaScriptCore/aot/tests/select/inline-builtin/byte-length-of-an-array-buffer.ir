@@ -1,0 +1,18 @@
+# The length of an ArrayBuffer stands in the buffer that the cell owns, whether it is of a fixed length, resizable or detached: two loads and no other way. A SharedArrayBuffer that grows keeps its length elsewhere: a call.
+# FORM: Prepared
+# RUN: pass Select
+# RUN(FORMS): inline-forms
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="byteLengths" parameters=[{type=ArrayBuffer}, {type=SharedArrayBuffer}] results=[{type=anything}] {
+    v2 = CallBuiltin v0 overload=ArrayBufferPrototypeByteLength/0
+    v3 = CallBuiltin v1 overload=SharedArrayBufferPrototypeByteLength/0
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+# FORMS: function f0
+# FORMS-NEXT: v2 {{*}} ArrayBufferByteLength {{*}} Whole
+# CHECK-LABEL: function f0 name="byteLengths"
+# CHECK: v2: {{*}} = CallInline v0 inlineBuiltin=ArrayBufferByteLength overload=ArrayBufferPrototypeByteLength/0
+# CHECK-NEXT: v3: {{*}} = CallBuiltin v1 overload=SharedArrayBufferPrototypeByteLength/0

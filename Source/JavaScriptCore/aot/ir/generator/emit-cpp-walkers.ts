@@ -8,6 +8,7 @@ import {
 } from "./cpp-types.ts";
 import {
   blocks,
+  constexprSwitch,
   cppHeader,
   groupedCases,
   inNamespace,
@@ -57,6 +58,7 @@ function walkersHeader(schema: Schema): string[] {
       ),
       "template<typename Subject, typename Functor> void forEachFunctionReference(const Subject&, const Functor&);",
       "template<typename Subject, typename Functor> void forEachModuleReference(const Subject&, const Functor&);",
+      "template<typename Subject, typename Visitor> void forEachReferenceWithRole(const Subject&, Visitor&&);",
     ],
     [
       "template<typename Visitor> void forEachPlacedWord(const Value&, Visitor&&);",
@@ -306,8 +308,26 @@ function entryWalker(
   enumName: string,
   bodyOf: (entry: Entry) => Lines,
 ): string[] {
-  const cases = entries.map(entry => ({ label: entry.name, body: bodyOf(entry) }));
-  return walker(name, "subject", exhaustiveSwitch(`subject.${tag}`, enumName, cases));
+  const groups = [...Map.groupBy(entries, entry => bodyOf(entry).join("\n")).values()];
+  if (groups.length > 256) throw new Error(`${name} has more cases than a byte can number`);
+  const caseOf = `caseOf${name[0].toUpperCase()}${name.slice(1)}`;
+  const cases = groups.flatMap((group, index) => group.map(entry => ({ label: entry.name, value: String(index) })));
+  const signature = `uint8_t ${caseOf}(${enumName} ${tag})`;
+  return [
+    ...constexprSwitch({ signature, subject: tag, enumName, cases, defaultValue: null }),
+    "",
+    ...walker(
+      name,
+      "subject",
+      indent([
+        `switch (CaseTable<${enumName}, ${caseOf}>::at(subject.${tag})) {`,
+        ...groups.flatMap((group, index) => [`case ${index}:`, ...indent(bodyOf(group[0]))]),
+        "default:",
+        ...indent(["WTF_UNREACHABLE();"]),
+        "}",
+      ]),
+    ),
+  ];
 }
 
 function filteredWalk(name: string, idKind: string): string[] {
@@ -336,6 +356,10 @@ function walkersInlines(schema: Schema): string[] {
     bothConstnesses("Terminator", "walkTerminator"),
     referenceKindsWithoutRoles(schema).flatMap(kind => filteredWalk(`forEach${kind.name}`, kind.name)),
     [...filteredWalk("forEachFunctionReference", "Function"), ...filteredWalk("forEachModuleReference", "Module")],
+    [
+      "template<typename Subject, typename Visitor>",
+      "void forEachReferenceWithRole(const Subject& subject, Visitor&& visitor) { walkReferences(subject, visitor); }",
+    ],
     entryWalker("walkPlacedWordsOfValue", schema.operations, "opcode", "Opcode", placedWordsOfEntry),
     entryWalker("walkPlacedWordsOfTerminator", schema.terminators, "kind", "TerminatorKind", placedWordsOfEntry),
     [

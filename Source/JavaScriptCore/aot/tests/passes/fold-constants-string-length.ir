@@ -47,6 +47,6 @@ function f4 name="unknownText" parameters=[{type=string}] results=[{type=number}
 function f5 name="oneOfTwoTexts" parameters=[{type="a"|"bc"}] results=[{type=number}] {
     v1 = GetStringLength v0
     Return v1
-# CHECK: v1: int[0, 2147483647] = GetStringLength v0
+# CHECK: v1: int[1, 2] = GetStringLength v0
 # CHECK-NEXT: Return v1
 }

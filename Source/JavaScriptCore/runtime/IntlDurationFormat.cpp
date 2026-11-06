@@ -27,6 +27,7 @@
 #include "config.h"
 #include "IntlDurationFormat.h"
 
+#include "AOTRemovableFeature.h"
 #include "IntlNumberFormatInlines.h"
 #include "IntlObjectInlines.h"
 #include "IntlPartObject.h"
@@ -60,6 +61,12 @@ static constexpr unsigned fractionalDigitsUndefinedValue = std::numeric_limits<u
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IntlDurationFormat::FormatterCache);
 
 const ClassInfo IntlDurationFormat::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlDurationFormat) };
+
+NEVER_INLINE void IntlDurationFormat::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(IntlNumberFormat, &IntlDurationFormat::destroy);
+    static_cast<IntlDurationFormat*>(cell)->IntlDurationFormat::~IntlDurationFormat();
+}
 
 IntlDurationFormat* IntlDurationFormat::create(VM& vm, Structure* structure)
 {

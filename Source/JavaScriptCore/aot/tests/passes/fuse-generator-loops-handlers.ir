@@ -46,6 +46,8 @@ function f0 name="throwReachesHandlerOfSite" parameters=[{type=anything}] result
 # CHECK: () handler=[[failed0]]([[placeAtEnter0]]
 # CHECK-NEXT: = Call v0 @11:1
 # CHECK: () handler=[[failed0]]([[placeAtEnter0]]
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, [[filled1]] provenType=anything
 # CHECK-NEXT: Throw {{*}} @13:1
 # CHECK: [[finished0]]() frequency=Unlikely:
 # CHECK-NEXT: Switch [[mode0]] cases=[1, 2] -> case {{*}}, case {{*}}, otherwise [[stepped0]]()

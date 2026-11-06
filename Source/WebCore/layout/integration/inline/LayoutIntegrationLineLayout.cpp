@@ -124,8 +124,7 @@ static bool shouldInvalidateLineLayoutAfterChangeFor(const RenderBlockFlow& root
             auto hasStrongDirectionalityContent = textRenderer->hasStrongDirectionalityContent();
             if (!hasStrongDirectionalityContent) {
                 hasStrongDirectionalityContent = Layout::TextUtil::containsStrongDirectionalityText(textRenderer->text());
-                // FIXME: Remove suppression once rdar://189998365 is fixed.
-                SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderText*>(textRenderer)->setHasStrongDirectionalityContent(*hasStrongDirectionalityContent);
+                const_cast<RenderText*>(textRenderer)->setHasStrongDirectionalityContent(*hasStrongDirectionalityContent);
             }
             return *hasStrongDirectionalityContent;
         }
@@ -442,11 +441,10 @@ std::pair<LayoutUnit, LayoutUnit> LineLayout::computeIntrinsicWidthConstraints()
     auto& inlineContentCache = ensureInlineContentCache();
     auto inlineFormattingContext = Layout::InlineFormattingContext { rootLayoutBox(), layoutState(), parentBlockLayoutState };
     if (m_lineDamage || flow().hasInvalidContentLogicalWidths()) {
-        // Content inside a block level box on a line does not damage the lines around it, but it does invalidate the width this box contributes to them.
+        // Content inside a box on a line (atomic inline, float or block level box) does not damage the lines around it, but it does invalidate the width this box contributes to them.
         inlineContentCache.resetMinimumMaximumContentSizes();
     }
-    // FIXME: This is where we need to switch between minimum and maximum box geometries.
-    // Currently we only support content where min == max.
+    // The box geometry holds the min-content widths only. Boxes whose width changes with the constraint have it taken from the render tree (see InlineFormattingUtils::intrinsicMarginBoxWidth).
     m_boxGeometryUpdater.setFormattingContextContentGeometry({ }, Layout::IntrinsicWidthMode::Minimum);
     auto [minimumContentSize, maximumContentSize] = inlineFormattingContext.minimumMaximumContentSize(m_lineDamage.get());
     return { minimumContentSize, maximumContentSize };
@@ -1242,6 +1240,10 @@ std::optional<LayoutUnit> LineLayout::lastLineBaseline() const
         if (auto* blockLevelBox = m_inlineContent->blockLevelBoxForLine(line)) {
             // For block-in-inline look for the baseline of the child box.
             CheckedRef blockRenderer = downcast<RenderBox>(*blockLevelBox->layoutBox().rendererForIntegration());
+            // CSS Align §9.1: for legacy reasons a block container that is a block-axis scroll container has its last baseline at its block-end margin edge.
+            auto isBlockAxisScrollContainer = is<RenderBlockFlow>(blockRenderer) && !blockRenderer->isWritingModeRoot() && (blockRenderer->isHorizontalWritingMode() ? blockRenderer->isScrollContainerY() : blockRenderer->isScrollContainerX());
+            if (isBlockAxisScrollContainer)
+                return blockRenderer->logicalTop() + blockRenderer->logicalHeight() + blockRenderer->marginAfter(flow().writingMode());
             if (auto baseline = blockRenderer->lastLineBaseline())
                 return blockRenderer->logicalTop() + *baseline;
             return { };

@@ -1,0 +1,55 @@
+# A closure that another closure captures only to be taken apart there is not made: the environment that it is stored in goes in its place. The copy of that other function in its caller begins with a fact, which names
+# the function as a test of a callee does. Neither takes anything from a closure, so neither stands in the way
+# FORM: Prepared
+# RUN: pass ReadCapturesFromEnvironments RemoveUnreadFields VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="takenApart" fields=[{key="first" declared={type=f1}}, {key="second" declared={type=f2}}]
+
+function f0 name="takenApart" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = NewClosure v1, v0 function=f1
+    PutEnvironmentField v1, v2 layout=L0 field=0
+    v4 = NewClosure v1, v2 function=f2
+    PutEnvironmentField v1, v4 layout=L0 field=1
+    v6 = CallDirect v1 function=f3
+    Return v6
+# CHECK-NOT: NewClosure
+# CHECK: [[scope]]: env L0 = NewObject layout=L0
+# CHECK-NEXT: PutEnvironmentField [[scope]], v0 layout=L0
+# CHECK-NEXT: = CallDirect [[scope]] function=f3
+}
+
+function f1 name="first" captures=[{type=env L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number):
+    v2 = Add v1, v1
+    Return v2
+}
+
+function f2 name="second" captures=[{type=env L0}, {type=f1}] results=[{type=anything}] {
+  b0(v0: env L0, v1: f1):
+    v2 = GetCapture v1 function=f1
+    v3 = GetCapture v1 function=f1 index=1
+    v4 = CallDirect v2, v3 function=f1
+    Return v4
+# CHECK-NOT: GetCapture
+# CHECK: b0(v0: env L0, v1: env L0):
+# CHECK-NEXT: [[captured]]: number = GetEnvironmentField v1 layout=L0
+# CHECK-NEXT: = CallDirect v1, [[captured]] function=f1
+}
+
+function f3 name="holdsCopyOfSecond" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    v2 = GetCapture v1 function=f2
+    v3 = GetCapture v1 function=f2 index=1
+    v4 = Entered function=f2
+    v5 = GetCapture v3 function=f1
+    v6 = GetCapture v3 function=f1 index=1
+    v7 = CallDirect v5, v6 function=f1
+    Return v7
+# CHECK-NOT: GetCapture
+# CHECK: = Entered function=f2
+# CHECK: [[number]]: number = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: = CallDirect v0, [[number]] function=f1
+}

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCoroutines.h"
 #include "AOTEdgeResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
@@ -72,6 +73,7 @@ static bool canCopyInsideFunction(CloneCheck check)
     case CloneCheck::Unknown:
     case CloneCheck::OperandMustBeDefinition:
     case CloneCheck::BoundToFrame:
+    case CloneCheck::UniqueInFunction:
     case CloneCheck::HandlerOutsideRegion:
         return false;
     }
@@ -107,7 +109,7 @@ static void forEachValueFedBy(const Function& function, const Use& use, NOESCAPE
     }
 }
 
-Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt)
+Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt, const BitVector* requestedBlocks)
 {
     const Program& program = analyses.program();
     const Function& function = analyses.function();
@@ -125,6 +127,8 @@ Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const
 
     Vector<uint32_t, 32> endOfEarlierReads;
     for (BlockID block : cfg.reversePostOrder()) {
+        if (requestedBlocks && !requestedBlocks->get(block.index()))
+            continue;
         const Block& contents = function.at(block);
         if (contents.isHandlerBlock() || (loops && loops->headerOf(block)))
             addHead(block);
@@ -166,7 +170,7 @@ Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const
         }
     }
 
-    AOT::sort(points, { }, [&](ProgramPoint point) {
+    AOT::sortInLine(points, { }, [&](ProgramPoint point) {
         return std::pair { cfg.reversePostOrderIndex(point.block), point.index };
     });
     return points;
@@ -191,7 +195,7 @@ void GenericCopy::computeBlocksReachingNonRareCode()
             if (m_reachesNonRareCode.get(block.index()))
                 continue;
             m_function.at(block).forEachTarget([&](const Target& target) {
-                if (!isRare(target.block) || m_reachesNonRareCode.get(target.block.index()))
+                if (!isRare(target.block).predicted() || m_reachesNonRareCode.get(target.block.index()))
                     changed |= m_reachesNonRareCode.add(block.index());
             });
         }
@@ -274,7 +278,7 @@ bool GenericCopy::hasValueAtHead(BlockID block, const BitVector& values, Answers
     auto isAmongValues = [&](ValueID value) {
         return values.get(value.index());
     };
-    bool answer = std::ranges::any_of(m_function.at(block).parameters, isAmongValues) || std::ranges::any_of(m_analyses.liveness().liveAtHead(block), isAmongValues);
+    bool answer = std::ranges::any_of(m_function.at(block).parameters, isAmongValues) || m_analyses.liveness().isAnyLiveAtHead(block, values, answers.aboutLiveValues);
     answers.isKnown.set(block.index());
     answers.answer.set(block.index(), answer);
     return answer;
@@ -308,9 +312,9 @@ void GenericCopy::computeRegion(Extent extent)
 
     bool comesBack = extent == Extent::ToWaysBack;
     bool comesBackWithoutTests = comesBack && !m_isRejoinBlockWithoutTests.isEmpty();
-    BlockFrequency frequencyOfStarts = BlockFrequency::Rare;
+    Expected<BlockFrequency> frequencyOfStarts = BlockFrequency::Rare;
     for (BlockID block : m_starts)
-        frequencyOfStarts = std::min(frequencyOfStarts, m_function.at(block).frequency);
+        frequencyOfStarts = moreFrequentOf(frequencyOfStarts, m_function.at(block).frequency);
     BitVector isExit(numberOfBlocks);
     while (!worklist.isEmpty()) {
         m_function.at(worklist.takeLast()).forEachTarget([&](const Target& target) {
@@ -323,9 +327,9 @@ void GenericCopy::computeRegion(Extent extent)
                 m_untestedRejoins.append(block);
                 return;
             }
-            bool isRarerRejoinBlock = m_leavesAtRarerRejoinBlocks && m_isRejoinBlock.get(block.index()) && m_function.at(block).frequency > frequencyOfStarts;
+            bool isRarerRejoinBlock = m_leavesAtRarerRejoinBlocks && m_isRejoinBlock.get(block.index()) && (m_function.at(block).frequency > frequencyOfStarts).predicted();
             bool isRejoinBlock = isRarerRejoinBlock || (comesBack && m_isRejoinBlock.get(block.index()));
-            bool endsInRareCode = isRare(block) && !m_reachesNonRareCode.get(block.index());
+            bool endsInRareCode = isRare(block).predicted() && !m_reachesNonRareCode.get(block.index());
             if ((isRejoinBlock || endsInRareCode) && !m_mustBeCopied.get(block.index()) && (isRarerRejoinBlock || !hasValueAtHead(block, m_mayBeNarrowed, m_hasNarrowedValueAtHead))) {
                 isExit.set(block.index());
                 m_exits.append(block);
@@ -358,10 +362,52 @@ void GenericCopy::computeRegion(Extent extent)
     m_untestedRejoins.removeAllMatching(isCopied);
 }
 
+BitVector GenericCopy::computeBlocksReachingBackEdges() const
+{
+    const CFG& cfg = m_analyses.cfg();
+    const NaturalLoops& loops = m_analyses.naturalLoops();
+    BitVector reachesBackEdge(m_function.blocks.size());
+    BitVector isVisited(m_function.blocks.size());
+    Vector<BlockID, 16> visited;
+    Vector<BlockID, 16> worklist;
+    for (BlockID header : m_entries) {
+        const NaturalLoop* loop = loops.headerOf(header);
+        if (!loop)
+            continue;
+        worklist.append(header);
+        while (!worklist.isEmpty()) {
+            for (Edge edge : cfg.incomingEdges(worklist.takeLast())) {
+                if (edge.from == header || !loops.belongsTo(edge.from, *loop))
+                    continue;
+                if (!edge.isHandlerEdge() && std::ranges::binary_search(m_redirectedEdges, std::pair { edge.from.index(), edge.targetIndex }))
+                    continue;
+                if (!isVisited.add(edge.from.index()))
+                    continue;
+                visited.append(edge.from);
+                worklist.append(edge.from);
+            }
+        }
+        for (BlockID block : visited) {
+            isVisited.quickClear(block.index());
+            const Block& contents = m_function.at(block);
+            bool isOnBackEdge = contents.values.isEmpty() && contents.terminator.kind == TerminatorKind::Jump && contents.terminator.next().block == header;
+            if (!isOnBackEdge || m_isRejoinBlock.get(header.index()))
+                reachesBackEdge.quickSet(block.index());
+        }
+        visited.shrink(0);
+    }
+    return reachesBackEdge;
+}
+
 bool GenericCopy::addsLoopEntry(BlockID block) const
 {
     if (!m_analyses.isInCycle(block))
         return false;
+    // The copy is entered at the header's copy, so leaving it here would make the loop irreducible.
+    if (!m_reachesBackEdge)
+        m_reachesBackEdge = computeBlocksReachingBackEdges();
+    if (m_reachesBackEdge->get(block.index()))
+        return true;
     const CFG& cfg = m_analyses.cfg();
     const NaturalLoops& loops = m_analyses.naturalLoops();
     const Block& contents = m_function.at(block);
@@ -414,9 +460,33 @@ bool GenericCopy::mergesAllocationThatSinksWithItsCopyAt(BlockID block) const
     });
 }
 
+// A loop is only fused with a generator that has one creation. The call of a ramp becomes a creation once it is inlined.
+bool GenericCopy::mergesGeneratorWithItsCopyAt(BlockID block) const
+{
+    const UseLists& useLists = m_analyses.useLists();
+    auto createsGenerator = [&](const Value& value) {
+        if (value.opcode == Opcode::NewGenerator)
+            return true;
+        if (value.opcode != Opcode::CallDirect)
+            return false;
+        const Function& callee = m_context.program.at(value.function());
+        const CreatorRecord::Coroutine* record = coroutineOf(callee);
+        return callee.role == FunctionRole::CoroutineRamp && record && record->kind == CoroutineKind::Generator;
+    };
+    return std::ranges::any_of(m_analyses.liveness().liveAtHead(block), [&](ValueID value) {
+        ValueID identity = m_analyses.identityOf(value);
+        if (!createsGenerator(m_function.at(identity)))
+            return false;
+        BlockID definingBlock = useLists.blockOf(identity);
+        return definingBlock && isInRegion(definingBlock);
+    });
+}
+
 bool GenericCopy::canLeaveCopyAt(BlockID block) const
 {
     if (m_keepsAllocationsApart.get(block.index()) && mergesAllocationWithItsCopyAt(block))
+        return false;
+    if (mergesGeneratorWithItsCopyAt(block))
         return false;
     return !addsLoopEntry(block) && RegionCloner::canMergeAt(m_analyses, m_isInRegion, block);
 }
@@ -479,7 +549,6 @@ void GenericCopy::recordTestedRejoins()
     if (m_testedRejoinBlocks.isEmpty())
         return;
     const Liveness& liveness = m_analyses.liveness();
-    UnspecifiedValues unspecifiedValues(m_analyses);
     for (BlockID block : m_testedRejoinBlocks) {
         if (!canLeaveCopyAt(block) || mergesAllocationThatSinksWithItsCopyAt(block))
             continue;
@@ -497,11 +566,11 @@ void GenericCopy::recordTestedRejoins()
                 rejoin.narrowedLiveValues.append(value);
         }
         for (ValueID parameter : m_function.at(block).parameters) {
-            if (unspecifiedValues.mayContain(parameter))
+            if (m_analyses.program().typeOf(m_function, parameter).mayBeUnspecified())
                 rejoin.valuesThatMayBeUnspecified.append(parameter);
         }
         for (ValueID value : rejoin.narrowedLiveValues) {
-            if (unspecifiedValues.mayContain(value))
+            if (m_analyses.program().typeOf(m_function, value).mayBeUnspecified())
                 rejoin.valuesThatMayBeUnspecified.append(value);
         }
         m_testedRejoins.append(WTF::move(rejoin));
@@ -518,6 +587,7 @@ auto GenericCopy::plan(uint64_t maxBlocks) -> Extent
 auto GenericCopy::plan(uint64_t maxBlocks, NOESCAPE const RegionCloner::LivenessSource& livenessInsideCopiedBlocks) -> Extent
 {
     RELEASE_ASSERT(!m_cloner);
+    AOT::sortInLine(m_redirectedEdges);
     if (m_starts.isEmpty()) {
         if (tryPlan(Extent::OnlyCopiedBlocks, maxBlocks, livenessInsideCopiedBlocks))
             return Extent::OnlyCopiedBlocks;
@@ -542,7 +612,7 @@ auto GenericCopy::plan(uint64_t maxBlocks, NOESCAPE const RegionCloner::Liveness
     return Extent::NotCopied;
 }
 
-void GenericCopy::clone(BlockFrequency (*frequencyOfCopy)(BlockFrequency))
+void GenericCopy::clone(Expected<BlockFrequency> (*frequencyOfCopy)(Expected<BlockFrequency>))
 {
     RELEASE_ASSERT(!m_cloner && !m_region.isEmpty());
     Origin savedOrigin = m_builder.origin();
@@ -849,7 +919,7 @@ void GenericCopy::addWaysBack(std::span<const ValueID> changedValues, TypesTeste
 
     for (const RejoinPlan& plan : rejoins) {
         BlockID copy = copyOf(plan.block);
-        BlockFrequency frequency = m_function.at(copy).frequency;
+        Expected<BlockFrequency> frequency = m_function.at(copy).frequency;
         m_builder.setOrigin(m_function.at(plan.block).terminator.origin());
         for (Edge edge : plan.edges)
             m_builder.redirectEdge(edge, plan.testBlock, Arguments(targetOf(m_function, edge).arguments));
@@ -913,7 +983,7 @@ void GenericCopy::addVariablesTo(SSARepair& repair)
     AOT::sort(values);
     removeRepeatedElements(values);
 
-    AOT::stableSort(m_otherDefinitions, { }, &OtherDefinition::inTypedCode);
+    AOT::stableSortInLine(m_otherDefinitions, { }, &OtherDefinition::inTypedCode);
     std::span<const OtherDefinition> remaining = m_otherDefinitions.span();
     for (ValueID value : values) {
         std::optional<SSARepair::Variable> variable = repair.findVariable(value);
@@ -950,13 +1020,13 @@ Vector<TypeID, 4> typesOfCountersOnWayBack(FunctionAnalyses& analyses, TypeArena
     return tested;
 }
 
-bool isClosedOnlyByWaysBack(FunctionAnalyses& analyses, const NaturalLoop& loop)
+Expected<bool> isClosedOnlyByWaysBack(FunctionAnalyses& analyses, const NaturalLoop& loop)
 {
     const NaturalLoops& loops = analyses.naturalLoops();
     const Function& function = analyses.function();
-    BlockFrequency frequencyOfHeader = function.at(loop.header()).frequency;
+    Expected<BlockFrequency> frequencyOfHeader = function.at(loop.header()).frequency;
     return std::ranges::all_of(analyses.cfg().incomingEdges(loop.header()), [&](Edge edge) {
-        return !loops.belongsTo(edge.from, loop) || isRarerThan(function.at(edge.from).frequency, frequencyOfHeader);
+        return !loops.belongsTo(edge.from, loop) || isRarerThan(function.at(edge.from).frequency, frequencyOfHeader).predicted();
     });
 }
 

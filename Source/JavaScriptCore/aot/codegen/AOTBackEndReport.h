@@ -26,6 +26,7 @@ struct Function;
 }
 
 struct FrameAddressViolation;
+struct InnerPointerViolation;
 struct NarrowReferenceViolation;
 
 JS_EXPORT_PRIVATE LimitID limitIDOf(B3::Limit);
@@ -59,6 +60,7 @@ struct BackEndReport {
 
 JS_EXPORT_PRIVATE BackEndReport collectBackEndReport(const B3::CompilationReport&, std::span<const FrameAddressViolation>, bool collectsDeclines);
 JS_EXPORT_PRIVATE void appendFindings(BackEndReport&, std::span<const NarrowReferenceViolation>);
+void appendFindings(BackEndReport&, std::span<const InnerPointerViolation>);
 JS_EXPORT_PRIVATE bool reportBackEnd(BuildContext&, Typed::FunctionID, const Typed::Function&, const BackEndReport&, const B3::CompilationReport&);
 
 } } // namespace JSC::AOT

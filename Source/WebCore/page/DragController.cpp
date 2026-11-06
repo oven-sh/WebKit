@@ -26,9 +26,19 @@
 #include "config.h"
 #include "DragController.h"
 
+#include "FrameSnapshotting.h"
 #include "HTMLAnchorElement.h"
+#include "ImageBuffer.h"
+#include "LocalFrameInlines.h"
+#include "LocalFrameView.h"
+#include "NativeImage.h"
+#include "Position.h"
+#include "RenderElement.h"
+#include "RenderSelection.h"
+#include "RenderView.h"
 #include "SVGAElement.h"
 #include "SVGElementTypeHelpers.h"
+#include "TextIndicator.h"
 
 #if ENABLE(DRAG_SUPPORT)
 #include "BoundaryPointInlines.h"
@@ -76,8 +86,6 @@
 #include "Image.h"
 #include "ImageOrientation.h"
 #include "ImageOverlay.h"
-#include "LocalFrameInlines.h"
-#include "LocalFrameView.h"
 #include "Model.h"
 #include "MoveSelectionCommand.h"
 #include "MutableStyleProperties.h"
@@ -95,7 +103,6 @@
 #include "RenderAttachment.h"
 #include "RenderFileUploadControl.h"
 #include "RenderImage.h"
-#include "RenderView.h"
 #include "ReplaceSelectionCommand.h"
 #include "ResourceRequest.h"
 #include "SecurityOrigin.h"
@@ -1022,6 +1029,8 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
     m_sourceDragOperationMask = sourceOperationMask;
 
     DragImage dragImage;
+    RefPtr<TextIndicator> dragImageTextIndicator;
+    std::optional<Path> dragImageVisiblePath;
     IntPoint dragLoc(0, 0);
     IntPoint dragImageOffset(0, 0);
 
@@ -1029,7 +1038,7 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
 
     Ref dataTransfer = *state.dataTransfer;
     if (state.type == DragSourceAction::DHTML) {
-        dragImage = DragImage { dataTransfer->createDragImage(protect(src.document()).get(), dragImageOffset) };
+        std::tie(dragImage, dragImageOffset) = dataTransfer->createDragImage(protect(src.document()).get());
         // We allow DHTML/JS to set the drag image, even if its a link, image or text we're dragging.
         // This is in the spirit of the IE API, which allows overriding of pasteboard data and DragOp.
         if (dragImage) {
@@ -1098,10 +1107,11 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
         }
         client().willPerformDragSourceAction(DragSourceAction::Selection, dragOrigin, dataTransfer);
         if (!dragImage) {
-            auto [dragImageRef, textIndicator] = createDragImageForSelection(src);
-            dragImage = DragImage { dissolveDragImageToFraction(dragImageRef, DragImageAlpha) };
+            auto [selectionDragImage, textIndicator] = dragImageAndTextIndicatorForSelection(src);
+            dragImage = WTF::move(selectionDragImage);
+            dragImage.dissolveToFraction(DragImageAlpha);
             if (textIndicator && textIndicator->contentImage())
-                dragImage.setTextIndicator(textIndicator);
+                dragImageTextIndicator = textIndicator;
             dragLoc = dragLocForSelectionDrag(src);
             m_dragOffset = IntPoint(dragOrigin.x() - dragLoc.x(), dragOrigin.y() - dragLoc.y());
         }
@@ -1110,13 +1120,14 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
             return false;
 
         if (mustUseLegacyDragClient) {
-            doSystemDrag(WTF::move(dragImage), dragLoc, dragOrigin, src, state, { }, rootFrameID);
+            doSystemDrag(WTF::move(dragImage), WTF::move(dragImageTextIndicator), WTF::move(dragImageVisiblePath), dragLoc, dragOrigin, src, state, { }, rootFrameID);
             return true;
         }
 
         DragItem dragItem;
         dragItem.imageAnchorPoint = dragImageAnchorPointForSelectionDrag(src, mouseDraggedPoint);
         dragItem.image = WTF::move(dragImage);
+        dragItem.textIndicator = WTF::move(dragImageTextIndicator);
         dragItem.data = WTF::move(pasteboardWriterData);
         dragItem.containsSelection = true;
 
@@ -1157,7 +1168,7 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
             doImageDrag(*renderImage, *cachedImage, dragOrigin, hitTestResult->imageRect(), src, m_dragOffset, state, WTF::move(attachmentInfo));
         else {
             // DHTML defined drag image
-            doSystemDrag(WTF::move(dragImage), dragLoc, dragOrigin, src, state, WTF::move(attachmentInfo), rootFrameID);
+            doSystemDrag(WTF::move(dragImage), WTF::move(dragImageTextIndicator), WTF::move(dragImageVisiblePath), dragLoc, dragOrigin, src, state, WTF::move(attachmentInfo), rootFrameID);
         }
 
         return true;
@@ -1203,25 +1214,26 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
 
         client().willPerformDragSourceAction(DragSourceAction::Link, dragOrigin, dataTransfer);
         if (!dragImage) {
-            auto [dragImageRef, textIndicator] = createDragImageForLink(element, linkURL, textContentWithSimplifiedWhiteSpace, m_page->deviceScaleFactor());
-            dragImage = DragImage { dragImageRef };
+            auto [linkDragImage, textIndicator] = dragImageAndTextIndicatorForLink(element, linkURL, textContentWithSimplifiedWhiteSpace, m_page->deviceScaleFactor());
+            dragImage = WTF::move(linkDragImage);
             if (dragImage) {
-                m_dragOffset = dragOffsetForLinkDragImage(dragImage.get());
+                m_dragOffset = dragImage.dragOffsetForLink();
                 dragLoc = IntPoint(dragOrigin.x() + m_dragOffset.x(), dragOrigin.y() + m_dragOffset.y());
-                dragImage = DragImage { platformAdjustDragImageForDeviceScaleFactor(dragImage.get(), m_page->deviceScaleFactor()) };
+                dragImage.adjustForDeviceScaleFactor(m_page->deviceScaleFactor());
                 if (textIndicator && textIndicator->contentImage())
-                    dragImage.setTextIndicator(textIndicator);
+                    dragImageTextIndicator = textIndicator;
             }
         }
 
         if (mustUseLegacyDragClient) {
-            doSystemDrag(WTF::move(dragImage), dragLoc, dragOrigin, src, state, { }, rootFrameID);
+            doSystemDrag(WTF::move(dragImage), WTF::move(dragImageTextIndicator), WTF::move(dragImageVisiblePath), dragLoc, dragOrigin, src, state, { }, rootFrameID);
             return true;
         }
 
         DragItem dragItem;
-        dragItem.imageAnchorPoint = dragImage ? anchorPointForLinkDragImage(dragImage.get()) : FloatPoint();
+        dragItem.imageAnchorPoint = dragImage ? dragImage.anchorPointForLink() : FloatPoint();
         dragItem.image = WTF::move(dragImage);
+        dragItem.textIndicator = WTF::move(dragImageTextIndicator);
         dragItem.data = WTF::move(pasteboardWriterData);
         dragItem.containsSelection = true;
 
@@ -1247,12 +1259,13 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
             CheckedPtr attachmentRenderer = dynamicDowncast<RenderAttachment>(attachment->renderer());
             if (attachmentRenderer)
                 attachmentRenderer->setShouldDrawBorder(false);
-            auto [dragImageRef, textIndicator] = createDragImageForSelection(src);
-            dragImage = DragImage { dissolveDragImageToFraction(dragImageRef, DragImageAlpha) };
+            auto [selectionDragImage, textIndicator] = dragImageAndTextIndicatorForSelection(src);
+            dragImage = WTF::move(selectionDragImage);
+            dragImage.dissolveToFraction(DragImageAlpha);
             if (attachmentRenderer)
                 attachmentRenderer->setShouldDrawBorder(true);
             if (textIndicator && textIndicator->contentImage())
-                dragImage.setTextIndicator(textIndicator);
+                dragImageTextIndicator = textIndicator;
             dragLoc = dragLocForSelectionDrag(src);
             m_dragOffset = IntPoint { dragOrigin - dragLoc };
         }
@@ -1276,7 +1289,7 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
         
         client().willPerformDragSourceAction(DragSourceAction::Attachment, dragOrigin, dataTransfer);
         
-        doSystemDrag(WTF::move(dragImage), dragLoc, dragOrigin, src, state, WTF::move(promisedAttachment), rootFrameID);
+        doSystemDrag(WTF::move(dragImage), WTF::move(dragImageTextIndicator), WTF::move(dragImageVisiblePath), dragLoc, dragOrigin, src, state, WTF::move(promisedAttachment), rootFrameID);
         return true;
     }
 #endif
@@ -1287,20 +1300,20 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
         auto color = input->valueAsColor();
 
         Path visiblePath;
-        dragImage = DragImage { createDragImageForColor(color, input->boundsInRootViewSpace(), input->document().page()->pageScaleFactor(), visiblePath) };
-        dragImage.setVisiblePath(visiblePath);
+        dragImage = DragImage::createForColor(color, input->boundsInRootViewSpace(), input->document().page()->pageScaleFactor(), visiblePath);
+        dragImageVisiblePath = visiblePath;
         dataTransfer->pasteboard().write(color);
-        dragImageOffset = IntPoint { dragImageSize(dragImage.get()) };
+        dragImageOffset = IntPoint { dragImage.size() };
         dragLoc = dragLocForDHTMLDrag(mouseDraggedPoint, dragOrigin, dragImageOffset, false);
 
         client().willPerformDragSourceAction(DragSourceAction::Color, dragOrigin, dataTransfer);
-        doSystemDrag(WTF::move(dragImage), dragLoc, dragOrigin, src, state, { }, rootFrameID);
+        doSystemDrag(WTF::move(dragImage), WTF::move(dragImageTextIndicator), WTF::move(dragImageVisiblePath), dragLoc, dragOrigin, src, state, { }, rootFrameID);
         return true;
     }
 
 #if ENABLE(MODEL_ELEMENT) && !ENABLE(GPU_PROCESS_MODEL)
     if (RefPtr modelElement = dynamicDowncast<HTMLModelElement>(state.source); modelElement && m_dragSourceAction.contains(DragSourceAction::Model)) {
-        dragImage = DragImage { createDragImageForNode(src, *modelElement) };
+        dragImage = dragImageForNode(src, *modelElement);
 
         PasteboardImage pasteboardImage;
 #if PLATFORM(IOS_FAMILY)
@@ -1310,11 +1323,11 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
         pasteboardImage.resourceData = modelElement->model()->data();
         dataTransfer->pasteboard().write(WTF::move(pasteboardImage));
 
-        dragImageOffset = IntPoint { dragImageSize(dragImage.get()) };
+        dragImageOffset = IntPoint { dragImage.size() };
         dragLoc = dragLocForDHTMLDrag(mouseDraggedPoint, dragOrigin, dragImageOffset, false);
 
         client().willPerformDragSourceAction(DragSourceAction::Model, dragOrigin, dataTransfer);
-        doSystemDrag(WTF::move(dragImage), dragLoc, dragOrigin, src, state, { }, rootFrameID);
+        doSystemDrag(WTF::move(dragImage), WTF::move(dragImageTextIndicator), WTF::move(dragImageVisiblePath), dragLoc, dragOrigin, src, state, { }, rootFrameID);
         return true;
     }
 #endif
@@ -1322,23 +1335,23 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
     if (state.type == DragSourceAction::DHTML && dragImage) {
         ASSERT(m_dragSourceAction.contains(DragSourceAction::DHTML));
         client().willPerformDragSourceAction(DragSourceAction::DHTML, dragOrigin, dataTransfer);
-        doSystemDrag(WTF::move(dragImage), dragLoc, dragOrigin, src, state, { }, rootFrameID);
+        doSystemDrag(WTF::move(dragImage), WTF::move(dragImageTextIndicator), WTF::move(dragImageVisiblePath), dragLoc, dragOrigin, src, state, { }, rootFrameID);
         return true;
     }
 
     return false;
 }
 
-DragImageRef DragController::createDragImageForElementImage(RenderImage& renderImage, const IntRect& layoutRect, Page& page, float deviceScaleFactor)
+DragImage DragController::createDragImageForElementImage(RenderImage& renderImage, const IntRect& layoutRect, Page& page, float deviceScaleFactor)
 {
     if (layoutRect.isEmpty() || shouldUseFileIconForDragImage(renderImage))
-        return nullptr;
+        return { };
 
     RefPtr nativeImage = renderImage.createNativeImageAsPainted(deviceScaleFactor, maxDragImageSize());
     if (!nativeImage)
-        return nullptr;
+        return { };
 
-    return createDragImageFromImage(*nativeImage, &page.chrome(), 1);
+    return DragImage::create(*nativeImage, &page.chrome(), 1);
 }
 
 void DragController::doImageDrag(RenderImage& renderImage, CachedImage& cachedImage, const IntPoint& dragOrigin, const IntRect& layoutRect, LocalFrame& frame, IntPoint& dragImageOffset, const DragState& state, PromisedAttachmentInfo&& attachmentInfo)
@@ -1349,12 +1362,12 @@ void DragController::doImageDrag(RenderImage& renderImage, CachedImage& cachedIm
 
     auto deviceScaleFactor = m_page->deviceScaleFactor();
 
-    if ((dragImage = DragImage { createDragImageForElementImage(renderImage, layoutRect, protect(m_page), deviceScaleFactor) })) {
-        dragImage = DragImage { fitDragImageToMaxSize(dragImage.get(), layoutRect.size(), maxDragImageSize()) };
-        auto fittedSize = dragImageSize(dragImage.get());
+    if ((dragImage = createDragImageForElementImage(renderImage, layoutRect, protect(m_page), deviceScaleFactor))) {
+        dragImage.fitToMaxSize(layoutRect.size(), maxDragImageSize());
+        auto fittedSize = dragImage.size();
 
-        dragImage = DragImage { platformAdjustDragImageForDeviceScaleFactor(dragImage.get(), deviceScaleFactor) };
-        dragImage = DragImage { dissolveDragImageToFraction(dragImage.get(), DragImageAlpha) };
+        dragImage.adjustForDeviceScaleFactor(deviceScaleFactor);
+        dragImage.dissolveToFraction(DragImageAlpha);
 
         // Properly orient the drag image and orient it differently if it's smaller than the original.
         float scale = fittedSize.width() / (float)layoutRect.width();
@@ -1366,16 +1379,16 @@ void DragController::doImageDrag(RenderImage& renderImage, CachedImage& cachedIm
 #endif
         float dy = scale * (originY - mouseDownPoint.y());
         scaledOrigin = IntPoint((int)(dx + 0.5), (int)(dy + 0.5));
-    } else if ((dragImage = DragImage { createDragImageIconForCachedImageFilename(cachedImage.response().suggestedFilename()) })) {
-        dragImage = DragImage { platformAdjustDragImageForDeviceScaleFactor(dragImage.get(), deviceScaleFactor) };
-        scaledOrigin = IntPoint(DragIconRightInset - dragImageSize(dragImage.get()).width(), DragIconBottomInset);
+    } else if ((dragImage = DragImage::createIconForCachedImageFilename(cachedImage.response().suggestedFilename()))) {
+        dragImage.adjustForDeviceScaleFactor(deviceScaleFactor);
+        scaledOrigin = IntPoint(DragIconRightInset - dragImage.size().width(), DragIconBottomInset);
     }
 
     if (!dragImage)
         return;
 
     dragImageOffset = mouseDownPoint + scaledOrigin;
-    doSystemDrag(WTF::move(dragImage), dragImageOffset, dragOrigin, frame, state, WTF::move(attachmentInfo), frame.rootFrame().frameID());
+    doSystemDrag(WTF::move(dragImage), nullptr, std::nullopt, dragImageOffset, dragOrigin, frame, state, WTF::move(attachmentInfo), frame.rootFrame().frameID());
 }
 
 void DragController::beginDrag(DragItem dragItem, LocalFrame& frame, const IntPoint& mouseDownPoint, const IntPoint& mouseDraggedPoint, DataTransfer& dataTransfer, DragSourceAction dragSourceAction)
@@ -1405,7 +1418,7 @@ static RefPtr<Element> LEGACY_NODELETE containingLinkElement(Element& element)
     return nullptr;
 }
 
-void DragController::doSystemDrag(DragImage image, const IntPoint& dragLoc, const IntPoint& eventPos, LocalFrame& frame, const DragState& state, PromisedAttachmentInfo&& promisedAttachmentInfo, const std::optional<FrameIdentifier>& rootFrameID)
+void DragController::doSystemDrag(DragImage image, RefPtr<TextIndicator>&& textIndicator, std::optional<Path>&& visiblePath, const IntPoint& dragLoc, const IntPoint& eventPos, LocalFrame& frame, const DragState& state, PromisedAttachmentInfo&& promisedAttachmentInfo, const std::optional<FrameIdentifier>& rootFrameID)
 {
     m_didInitiateDrag = true;
     m_dragInitiator = frame.document();
@@ -1416,6 +1429,8 @@ void DragController::doSystemDrag(DragImage image, const IntPoint& dragLoc, cons
 
     DragItem item;
     item.image = WTF::move(image);
+    item.textIndicator = WTF::move(textIndicator);
+    item.visiblePath = WTF::move(visiblePath);
     ASSERT(state.type.hasExactlyOneBitSet());
     item.sourceAction = state.type.toSingleValue();
     item.promisedAttachmentInfo = WTF::move(promisedAttachmentInfo);
@@ -1438,7 +1453,7 @@ void DragController::doSystemDrag(DragImage image, const IntPoint& dragLoc, cons
             if (dataTransferImageElement)
                 dragPreviewSize = dataTransferImageElement->boundsInRootViewSpace().size();
             else {
-                dragPreviewSize = dragImageSize(item.image.get());
+                dragPreviewSize = item.image.size();
                 if (auto* page = frame.page())
                     dragPreviewSize.scale(1 / page->deviceScaleFactor());
             }
@@ -1634,5 +1649,157 @@ bool DragController::shouldUseFileIconForDragImage(const RenderImage& renderImag
 }
 
 #endif // ENABLE(DRAG_SUPPORT)
+
+struct ScopedNodeDragEnabler {
+    ScopedNodeDragEnabler(LocalFrame& frame, Node& node)
+        : element(dynamicDowncast<Element>(node))
+    {
+        if (element)
+            protect(element)->setBeingDragged(true);
+        protect(frame.document())->updateLayout();
+    }
+
+    ~ScopedNodeDragEnabler()
+    {
+        if (element)
+            protect(element)->setBeingDragged(false);
+    }
+
+    RefPtr<Element> element;
+};
+
+struct ScopedFrameSelectionState {
+    ScopedFrameSelectionState(LocalFrame& frame)
+        : frame(frame)
+    {
+        if (CheckedPtr renderView = frame.contentRenderer())
+            selection = renderView->selection().get();
+    }
+
+    ~ScopedFrameSelectionState()
+    {
+        if (CheckedPtr renderView = frame->contentRenderer()) {
+            ASSERT(selection);
+            renderView->selection().set(selection.value(), RenderSelection::RepaintMode::Nothing);
+        }
+    }
+
+    const WeakRef<LocalFrame> frame;
+    std::optional<RenderRange> selection;
+};
+
+static DragImage createDragImageFromSnapshot(RefPtr<ImageBuffer> snapshot, Node* node)
+{
+    if (!snapshot)
+        return { };
+
+    if (node && !is<RenderElement>(node->renderer()))
+        return { };
+
+    RefPtr image = ImageBuffer::sinkIntoNativeImage(WTF::move(snapshot));
+    if (!image)
+        return { };
+    return DragImage::create(*image);
+}
+
+DragImage DragController::dragImageForImage(LocalFrame& frame, Node& node, IntRect& imageRect, IntRect& elementRect)
+{
+    ScopedNodeDragEnabler enableDrag(frame, node);
+
+    if (!node.renderer())
+        return { };
+
+    SnapshotOptions options { { SnapshotFlags::DraggableElement }, PixelFormat::BGRA8, ColorSpace::SRGB() };
+
+    RefPtr snapshot = snapshotNode(frame, node, WTF::move(options), &imageRect, &elementRect);
+    if (imageRect.isEmpty())
+        return { };
+
+    return createDragImageFromSnapshot(WTF::move(snapshot), &node);
+}
+
+DragImage DragController::dragImageForNode(LocalFrame& frame, Node& node)
+{
+    ScopedNodeDragEnabler enableDrag(frame, node);
+
+    SnapshotOptions options { { SnapshotFlags::DraggableElement }, PixelFormat::BGRA8, ColorSpace::SRGB() };
+
+    return createDragImageFromSnapshot(snapshotNode(frame, node, WTF::move(options)), &node);
+}
+
+#if !PLATFORM(IOS_FAMILY)
+
+DragImage DragController::dragImageForRange(LocalFrame& frame, const SimpleRange& range, bool forceBlackText)
+{
+    protect(frame.document())->updateLayout();
+    CheckedPtr view = frame.contentRenderer();
+    if (!view)
+        return { };
+
+    // To snapshot the range, temporarily select it and take selection snapshot.
+    Position start = makeDeprecatedLegacyPosition(range.start);
+    Position candidate = start.downstream();
+    if (candidate.deprecatedNode() && candidate.deprecatedNode()->renderer())
+        start = candidate;
+
+    Position end = makeDeprecatedLegacyPosition(range.end);
+    candidate = end.upstream();
+    if (candidate.deprecatedNode() && candidate.deprecatedNode()->renderer())
+        end = candidate;
+
+    if (start.isNull() || end.isNull() || start == end)
+        return { };
+
+    const ScopedFrameSelectionState selectionState(frame);
+
+    CheckedPtr startRenderer = start.deprecatedNode()->renderer();
+    CheckedPtr endRenderer = end.deprecatedNode()->renderer();
+    if (!startRenderer || !endRenderer)
+        return { };
+
+    SnapshotOptions options { { SnapshotFlags::PaintSelectionOnly }, PixelFormat::BGRA8, ColorSpace::SRGB() };
+    if (forceBlackText)
+        options.flags.add(SnapshotFlags::ForceBlackText);
+
+    int startOffset = start.deprecatedEditingOffset();
+    int endOffset = end.deprecatedEditingOffset();
+    ASSERT(startOffset >= 0 && endOffset >= 0);
+    view->selection().set({ startRenderer, endRenderer, static_cast<unsigned>(startOffset), static_cast<unsigned>(endOffset) }, RenderSelection::RepaintMode::Nothing);
+    // We capture using snapshotFrameRect() because we fake up the selection using
+    // FrameView but snapshotSelection() uses the selection from the Frame itself.
+    return createDragImageFromSnapshot(snapshotFrameRect(frame, view->selection().boundsClippedToVisibleContent(), WTF::move(options)), nullptr);
+}
+
+#endif
+
+#if PLATFORM(IOS_FAMILY) && !ENABLE(DRAG_SUPPORT)
+
+DragImage DragController::dragImageForRange(LocalFrame&, const SimpleRange&, bool)
+{
+    return { };
+}
+
+#endif
+
+#if !PLATFORM(IOS_FAMILY) || !ENABLE(DRAG_SUPPORT)
+
+std::pair<DragImage, RefPtr<TextIndicator>> DragController::dragImageAndTextIndicatorForSelection(LocalFrame& frame, bool forceBlackText)
+{
+    SnapshotOptions options { { }, PixelFormat::BGRA8, ColorSpace::SRGB() };
+    if (forceBlackText)
+        options.flags.add(SnapshotFlags::ForceBlackText);
+    return { createDragImageFromSnapshot(snapshotSelection(frame, WTF::move(options)), nullptr), nullptr };
+}
+
+#endif
+
+#if !PLATFORM(COCOA) && !(PLATFORM(WIN) && USE(CAIRO))
+
+std::pair<DragImage, RefPtr<TextIndicator>> DragController::dragImageAndTextIndicatorForLink(Element&, URL&, const String&, float)
+{
+    return { };
+}
+
+#endif
 
 } // namespace WebCore

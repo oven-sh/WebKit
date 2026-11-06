@@ -1,0 +1,174 @@
+# A test of a value that may be any function for one function may refuse a closure that has got a property, because nothing is left out of the type of the value. Its refusal decides a test like itself and no test of a cast of the value whose type lists its functions: that one passes such a closure. What passes either test passes the other, and what the test of the listed functions refuses the other refuses
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="listedFunctionsBehindTheRefusalOfAnyFunction" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=f7
+    Branch v2 -> taken b4(), notTaken b1()
+  b1():
+    v3 = AssumeType v0 provenType=number|f7
+    v4 = TypeTest v3 testedType=f7
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = Call v5
+    Return v6
+  b3(v7):
+    v8 = Negate v7
+    Return v8
+  b4():
+    Return v1
+# CHECK: Branch v2 -> taken b4(), notTaken b1()
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+}
+
+function f1 name="anyFunctionBehindTheRefusalOfAnyFunction" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=f7
+    Branch v2 -> taken b4(), notTaken b1()
+  b1():
+    v3 = Call v1
+    v4 = TypeTest v0 testedType=f7
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Call v5
+    Return v6
+  b3():
+    v7 = Call v0
+    Return v7
+  b4():
+    Return v1
+# CHECK: Branch v2 -> taken b4(), notTaken b1()
+# CHECK-NOT: Branch
+# CHECK: = Call v0
+}
+
+function f2 name="listedFunctionsBehindTheRefusalOfListedFunctions" parameters=[{type=number|f7}, {type=function}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=f7
+    Branch v2 -> taken b4(), notTaken b1()
+  b1():
+    v3 = Call v1
+    v4 = TypeTest v0 testedType=f7
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = Call v5
+    Return v6
+  b3(v7):
+    v8 = Negate v7
+    Return v8
+  b4():
+    Return v1
+# CHECK: Branch v2 -> taken b4(), notTaken b1()
+# CHECK-NOT: Branch
+# CHECK: = Negate
+}
+
+function f3 name="anyFunctionBehindTheRefusalOfListedFunctions" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = AssumeType v0 provenType=number|f7
+    v3 = TypeTest v2 testedType=f7
+    Branch v3 -> taken b4(), notTaken b1()
+  b1():
+    v4 = Call v1
+    v5 = TypeTest v0 testedType=f7
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Call v6
+    Return v7
+  b3():
+    v8 = Call v1, -, v0
+    Return v8
+  b4():
+    Return v1
+# CHECK: Branch v3 -> taken b4(), notTaken b1()
+# CHECK-NOT: Branch
+# CHECK: = Call v1, -, v0
+}
+
+function f4 name="listedFunctionsBehindAnyFunctionThatPassed" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=f7
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    v3 = AssumeType v0 provenType=number|f7
+    v4 = TypeTest v3 testedType=f7
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = Call v5
+    Return v6
+  b3(v7):
+    v8 = Negate v7
+    Return v8
+  b4():
+    Return v1
+# CHECK: Branch v2 -> taken b1(), notTaken b4()
+# CHECK-NOT: Branch
+# CHECK-NOT: Negate
+}
+
+function f5 name="listedFunctionsWhereEveryWayLeavesARefusalOfAnyFunction" parameters=[{type=anything}, {type=function}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = TypeTest v0 testedType=f7
+    Branch v3 -> taken b6(), notTaken b3()
+  b2():
+    v4 = TypeTest v0 testedType=f7
+    Branch v4 -> taken b6(), notTaken b3()
+  b3():
+    v5 = AssumeType v0 provenType=number|f7
+    v6 = TypeTest v5 testedType=f7
+    Branch v6 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v7):
+    v8 = Call v7
+    Return v8
+  b5(v9):
+    v10 = Negate v9
+    Return v10
+  b6():
+    Return v1
+# CHECK: Branch v6 -> taken b4(| 0), notTaken b5(| 0)
+}
+
+function f6 name="manyTestsOfOneValue" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = AssumeType v0 provenType=number|f7
+    v3 = TypeTest v0 testedType=f7
+    Branch v3 -> taken b11(), notTaken b1()
+  b1():
+    v4 = TypeTest v2 testedType=f7
+    Branch v4 -> taken b11(), notTaken b2()
+  b2():
+    v5 = TypeTest v2 testedType=f7
+    Branch v5 -> taken b11(), notTaken b3()
+  b3():
+    v6 = TypeTest v2 testedType=f7
+    Branch v6 -> taken b11(), notTaken b4()
+  b4():
+    v7 = TypeTest v2 testedType=f7
+    Branch v7 -> taken b11(), notTaken b5()
+  b5():
+    v8 = TypeTest v2 testedType=f7
+    Branch v8 -> taken b11(), notTaken b6()
+  b6():
+    v9 = TypeTest v2 testedType=f7
+    Branch v9 -> taken b11(), notTaken b7()
+  b7():
+    v10 = TypeTest v2 testedType=f7
+    Branch v10 -> taken b11(), notTaken b8()
+  b8():
+    v11 = TypeTest v2 testedType=f7
+    Branch v11 -> taken b11(), notTaken b9()
+  b9():
+    v12 = TypeTest v0 testedType=f7
+    Branch v12 -> taken b11(), notTaken b10()
+  b10():
+    v13 = Call v1
+    Return v13
+  b11():
+    Return v1
+# CHECK: Branch v3 -> taken
+# CHECK: Branch v4 -> taken
+# CHECK-NOT: Branch
+# CHECK: = Call v1
+}
+
+function f7 name="callee" results=[{type=anything}] {
+    Return
+}

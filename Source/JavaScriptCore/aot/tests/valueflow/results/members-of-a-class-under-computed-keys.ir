@@ -19,10 +19,10 @@ variable g0 name="k" module=m0 declared={type=anything} initialization=Uninitial
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
     v1 = String string="k"
-    v2 = Call v0, -, v1 @100
+    v2 = Call v0, -, v1 callNumber=100 @100
     PutModuleVariable v2 variable=g0
     v4 = String string="g"
-    v5 = Call v0, -, v4 @200
+    v5 = Call v0, -, v4 callNumber=200 @200
     v6 = Builtin builtin=SymbolFor
     v7 = String string="s"
     v8 = Call v6, v0, v7 @300
@@ -98,7 +98,7 @@ function f8 name="named" module=m0 kind=Method results=[{type=anything}] {
 function f9 name="makeFresh" module=m0 results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
     v1 = String string="fresh"
-    v2 = Call v0, -, v1 @400
+    v2 = Call v0, -, v1 callNumber=400 @400
     v3 = NewClosure function=f10
     v4 = NewClass v3 layout=L2
     v5 = ToPropertyKey v2

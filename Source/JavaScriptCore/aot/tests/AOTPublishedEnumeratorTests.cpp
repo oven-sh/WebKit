@@ -154,6 +154,31 @@ static void testEnumeratorIsPublishedWhereTheStructureNamesTheExtraProperties(Lo
     ensureStillAliveHere(withThird);
 }
 
+// Below endStructurePropertyIndex() a read of the name loads a value. With an accessor among them the names are still the object's own, and none is read by a load.
+static void testAccessorAmongOwnNamesLeavesNoNameThatIsLoaded(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    Object* withAccessor = createPair(program, { 0, 1 });
+    PropertyDescriptor getter;
+    getter.setGetter(realm->objectConstructor());
+    getter.setEnumerable(true);
+    getter.setConfigurable(true);
+    AOT_TEST_CHECK(withAccessor->methodTable()->defineOwnProperty(withAccessor, realm, Identifier::fromString(vm, "third"_s), getter, false));
+    withAccessor->ensureStructureForExtraProperties(vm);
+    AOT_TEST_CHECK(withAccessor->compiledStructure().listsEveryExtraProperty());
+
+    JSPropertyNameEnumerator* enumerator = withAccessor->propertyNameEnumerator(realm);
+    AOT_TEST_CHECK(enumerator && enumerator->isCurrentFor(withAccessor) && enumerator->sizeOfPropertyNames() == 3);
+    AOT_TEST_CHECK(!enumerator->endStructurePropertyIndex() && enumerator->endOwnPropertyIndex() == 3);
+    AOT_TEST_CHECK(publishedFor(program, withAccessor) == enumerator);
+
+    PropertyDescriptor value(jsNumber(3), 0);
+    AOT_TEST_CHECK(withAccessor->methodTable()->defineOwnProperty(withAccessor, realm, Identifier::fromString(vm, "third"_s), value, false));
+    withAccessor->ensureStructureForExtraProperties(vm);
+    AOT_TEST_CHECK(!enumerator->isCurrentFor(withAccessor));
+}
+
 static void testChangeOnPrototypeChainWithdrawsEnumerators(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -207,6 +232,7 @@ std::span<const NativeTest> publishedEnumeratorTests()
         { "published-enumerators/by-structure-and-order-word"_s, withPairs<testEnumeratorIsPublishedByStructureAndOrderWord> },
         { "published-enumerators/none-with-extra-properties"_s, withPairs<testObjectWithExtraPropertiesHasNoPublishedEnumerator> },
         { "published-enumerators/with-extra-properties-that-the-structure-names"_s, withPairs<testEnumeratorIsPublishedWhereTheStructureNamesTheExtraProperties> },
+        { "published-enumerators/an-accessor-leaves-no-name-that-is-loaded"_s, withPairs<testAccessorAmongOwnNamesLeavesNoNameThatIsLoaded> },
         { "published-enumerators/change-on-prototype-chain-withdraws"_s, withPairs<testChangeOnPrototypeChainWithdrawsEnumerators> },
         { "published-enumerators/none-under-prototype-that-can-get-indexes"_s, withPairs<testNothingIsPublishedUnderPrototypeThatCanGetIndexes> },
         { "published-enumerators/collection-withdraws"_s, withPairs<testCollectionWithdrawsEnumerators> },

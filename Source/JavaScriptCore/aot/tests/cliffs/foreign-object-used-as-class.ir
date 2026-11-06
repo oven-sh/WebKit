@@ -1,5 +1,6 @@
 # An object nobody knows is converted to a class at one site. The loss stays with the positions that it reaches: a parameter that only instances reach is proven, so the reads on it have no test, and so are the constructor's own stores.
-# A parameter that it reaches, alone or beside an instance, is tested once at the entry. Behind the test the body reads a slot without a test, and the read by name stands in the generic version that a failed test calls
+# A parameter that it reaches beside an instance is tested once at the entry. Behind the test the body reads a slot without a test, and the read by name stands in the generic version that a failed test calls
+# No instance was handed out, so the object is none. A parameter that it alone reaches is not tested: the function stays one function and reads by name
 # FORM: AsRead
 # Hot, because a cold function stays one function: it is not split into tests, a typed body and a fallback.
 # OPTIONS: heat=EverythingIsHot
@@ -11,19 +12,16 @@
 # CHECK: : L0 = GetSlot {{*}} key="next" receivers=[L0] level=Proven
 # CHECK: : number = GetSlot {{*}} key="weight" receivers=[L0] level=Proven
 # CHECK-NOT: PropGet
-# CHECK-LABEL: function f3 name="readsForeignObject" module=m0 role=EntryChecks
-# CHECK: = TypeTest v0 testedType=L0
-# CHECK-NOT: key="weight"
+# CHECK-LABEL: function f3 name="readsForeignObject" module=m0 thisType
+# CHECK-NOT: TypeTest
+# CHECK: = PropGet {{*}} key="weight"
 # CHECK-LABEL: function f4 name="readsBoth" module=m0 role=EntryChecks
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK-NOT: key="weight"
 # CHECK-LABEL: function f5 name="passesForeignObject"
-# CHECK: name="readsForeignObject" module=m0 thisType={type=anything} parameters=[{type=L0}]
-# CHECK: : number = GetSlot v0 key="weight" receivers=[L0] level=Proven
 # CHECK: name="readsBoth" module=m0 thisType={type=anything} parameters=[{type=L0}]
 # CHECK: : number = GetSlot v0 key="weight" receivers=[L0] level=Proven
-# CHECK: name="readsForeignObject" module=m0 role=GenericVersion
-# CHECK: = PropGet {{*}} key="weight"
+# CHECK-NOT: name="readsForeignObject"
 # CHECK: name="readsBoth" module=m0 role=GenericVersion
 # CHECK: = PropGet {{*}} key="weight"
 

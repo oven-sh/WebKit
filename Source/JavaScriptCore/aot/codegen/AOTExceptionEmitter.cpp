@@ -11,9 +11,11 @@
 #include "AOTBuildContext.h"
 #include "AOTCallSiteTable.h"
 #include "AOTCodeRecords.h"
+#include "AOTFrameMapEmitter.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTSavedFrame.h"
 #include "AOTVector.h"
 #include "AirStackSlot.h"
 #include "AirCode.h"
@@ -75,7 +77,7 @@ void ExceptionEmitter::findValuesCaughtByCleanups()
                 edges.append({ target.arguments[i], parameters[i] });
         });
     }
-    AOT::sort(edges, { }, [](const Edge& edge) { return edge.argument.index(); });
+    AOT::sortInLine(edges, { }, [](const Edge& edge) { return edge.argument.index(); });
     while (!worklist.isEmpty()) {
         Caught caught = worklist.takeLast();
         auto added = m_valuesCaughtByCleanups.add(caught.value, caught.cleanup);
@@ -205,6 +207,9 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, B3::Pat
             notCompared.exclude(params.code().calleeSaveRegisters());
             notCompared.filter(params.code().mutableRegs());
             notCompared.merge(clobbered);
+            // A suspension clears it after the stores below.
+            if (FrameMapEmitter::savesDeadPreservedRegister(params))
+                notCompared.add(SavedFrame::preservedRegister, IgnoreVectors);
             check = KeptRegisterCheck { notCompared, params.code().addressInFrame(registerStorage->offsetFromFP()), function, ValueID().index() };
             emitStoresOfKeptRegisters(jit, *check);
         }
@@ -327,6 +332,8 @@ LValue ExceptionEmitter::keptBy(ValueID thrown)
 LValue ExceptionEmitter::caughtWord(const ValueContext& value)
 {
     BlockID handler = value.block();
+    // The landing pad of a handler leaves what was thrown to the head of that handler and to nobody else.
+    RELEASE_ASSERT(m_function.at(handler).isHandlerBlock());
     if (LValue caught = m_caughtWords.get(handler))
         return caught;
 

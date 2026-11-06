@@ -1,0 +1,29 @@
+# a slot that leaves its closure unmade holds objects alone: a read that takes it for filled without a test names a field that no store takes out of its slot
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Holder" fields=[{key="stays" declared={type=function flags=[IsExpected]} flow={location={deferral=CapturesNothing deferredFunction=f0} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="leaves" declared={type=function flags=[IsExpected]} flow={location={deferral=CapturesNothing deferredFunction=f0} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}]
+function f0 name="method" results=[{type=undefined}]
+function f1 name="goodFieldStaysInSlot" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetDeferredClosureSlot v0 key="stays" receivers=[L0] level=Proven
+    Return v1
+}
+function f2 name="badFieldMayLeaveSlot" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetDeferredClosureSlot v0 key="leaves" receivers=[L0] level=Proven
+    Return v1
+}
+function f3 name="goodReadBehindTest" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = IsSlotFilled v0 key="leaves" receivers=[L0] level=Proven
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetDeferredClosureSlot v0, v2 key="leaves" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    Return
+}
+function f4 name="goodReadThatTakesAnEmptySlot" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetDeferredClosureSlotOrUndefined v0 key="leaves" receivers=[L0] level=Proven
+    Return v1
+}

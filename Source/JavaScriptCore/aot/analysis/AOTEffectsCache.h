@@ -40,6 +40,7 @@ struct OpcodeEffectFacts {
 };
 
 const OpcodeEffectFacts& effectFactsOf(Opcode);
+const OpcodeEffectFacts& effectFactsOf(const Value&);
 
 class EffectsCache {
     WTF_MAKE_NONCOPYABLE(EffectsCache);

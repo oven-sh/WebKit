@@ -9,22 +9,31 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeGenerator.h"
+#include "AOTHeaps.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "B3BasicBlockInlines.h"
 #include "B3Const32Value.h"
 #include "B3DominatingConditions.h"
 #include "B3Dominators.h"
+#include "B3FixSSA.h"
 #include "B3InsertionSetInlines.h"
 #include "B3IntRange.h"
 #include "B3MemoryValue.h"
+#include "B3MovedLoadCheck.h"
+#include "B3NaturalLoops.h"
 #include "B3Procedure.h"
 #include "B3ValueInlines.h"
+#include "B3VariableValue.h"
+#include "IndexingHeader.h"
+#include <algorithm>
 #include <cstdlib>
 #include <limits>
 #include <optional>
+#include <ranges>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/SharedTask.h>
 
 namespace JSC { namespace AOT {
@@ -532,6 +541,55 @@ static void apply(B3::Procedure& proc, const Update& update)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A load of a whole slot cannot take its value from a store to the low word of the slot: it waits until that store has reached the cache, which costs a turn of a small loop
+// five times over. So the low word is for a slot that nothing reads whole soon after the update: not in the loop of the update, and not on the way out of it, unless that way is rare.
+static void rejectLowWordUpdatesThatWholeReadsFollow(B3::Procedure& proc, const Vector<Update, 4>& updates, const HashSet<B3::Value*>& loadsThatStay, BitVector& isRejected)
+{
+    HashMap<B3::Value*, Vector<unsigned, 1>> lowWordUpdatesOfBase;
+    HashSet<B3::Value*> loadsOfLowWordUpdates;
+    for (unsigned index = 0; index < updates.size(); ++index) {
+        const Update& update = updates[index];
+        if (update.kind != UpdateKind::AddToLowWordThenBranchOnCarry || isRejected.quickGet(index))
+            continue;
+        lowWordUpdatesOfBase.add(update.store->lastChild(), Vector<unsigned, 1> { }).iterator->value.append(index);
+        if (!loadsThatStay.contains(update.load))
+            loadsOfLowWordUpdates.add(update.load);
+    }
+    if (lowWordUpdatesOfBase.isEmpty())
+        return;
+
+    constexpr double readsPerUpdateThatCostLessThanTheLowWordSaves = 1.0 / 32;
+    B3::Dominators& dominators = proc.dominators();
+    B3::NaturalLoops& loops = proc.naturalLoops();
+    auto readFollows = [&](const Update& update, B3::BasicBlock* reader) {
+        B3::BasicBlock* writer = update.store->owner;
+        if (reader->frequency() < writer->frequency() * readsPerUpdateThatCostLessThanTheLowWordSaves)
+            return false;
+        if (const B3::NaturalLoop* loop = loops.innerMostLoopOf(writer))
+            return loops.belongsTo(reader, *loop) || dominators.dominates(writer, reader);
+        return dominators.dominates(writer, reader);
+    };
+    for (B3::BasicBlock* block : proc) {
+        for (B3::Value* value : *block) {
+            auto* read = value->as<B3::MemoryValue>();
+            if (!read || read->opcode() != B3::Load || read->type() != B3::Int64 || loadsOfLowWordUpdates.contains(read))
+                continue;
+            auto found = lowWordUpdatesOfBase.find(read->lastChild());
+            if (found == lowWordUpdatesOfBase.end())
+                continue;
+            bool isFollowed = std::ranges::any_of(found->value, [&](unsigned index) {
+                return updates[index].store->offset() == read->offset() && readFollows(updates[index], block);
+            });
+            if (!isFollowed)
+                continue;
+            for (unsigned index : found->value) {
+                if (updates[index].store->offset() == read->offset())
+                    isRejected.quickSet(index);
+            }
+        }
+    }
+}
+
 static bool updateIntegersInMemory(B3::Procedure& proc, const Source& source)
 {
     if (!isX86_64())
@@ -549,6 +607,7 @@ static bool updateIntegersInMemory(B3::Procedure& proc, const Source& source)
         return false;
 
     BitVector isRejected(updates.size());
+    HashSet<B3::Value*> loadsThatStay;
     HashMap<B3::Value*, unsigned> updateForValue;
     for (unsigned index = 0; index < updates.size(); ++index) {
         const Update& update = updates[index];
@@ -574,8 +633,10 @@ static bool updateIntegersInMemory(B3::Procedure& proc, const Source& source)
                     || (child == update.biasedSum && user == update.comparison);
                 if (isInternalUse)
                     continue;
-                if (update.kind != UpdateKind::CompareThenAdd && (child == update.load || child == update.extended))
+                if (update.kind != UpdateKind::CompareThenAdd && (child == update.load || child == update.extended)) {
+                    loadsThatStay.add(update.load);
                     continue;
+                }
                 if (child == update.sum && findExitDominating(proc, update, user))
                     update.sumUsersOnExits.appendIfNotContains(user);
                 else
@@ -583,6 +644,8 @@ static bool updateIntegersInMemory(B3::Procedure& proc, const Source& source)
             }
         }
     }
+
+    rejectLowWordUpdatesThatWholeReadsFollow(proc, updates, loadsThatStay, isRejected);
 
     bool changed = false;
     for (unsigned index = 0; index < updates.size(); ++index) {
@@ -606,6 +669,311 @@ B3::ClientPhase updateIntegersInMemoryAfterOptimization(const Typed::Program& pr
         "updateIntegersInMemory"_s,
         createSharedTask<bool(B3::Procedure&)>([&program, &function](B3::Procedure& proc) {
             return updateIntegersInMemory(proc, { &program, &function });
+        })
+    };
+}
+
+namespace {
+
+// The part of a loop that is reached without a rare edge reads and writes a variable. Memory is right wherever that part is left, and is read again wherever it is entered,
+// so the rest of the loop and of the function finds what it found before.
+class ListLengthPromotion {
+public:
+    explicit ListLengthPromotion(B3::Procedure& proc)
+        : m_proc(proc)
+        , m_heaps(AOTHeaps::of(proc))
+        , m_lengths(m_heaps.rangeOf(m_heaps.Butterfly_publicLength))
+    {
+    }
+
+    bool run()
+    {
+        Vector<B3::BasicBlock*, 4> blocksThatStore;
+        for (B3::BasicBlock* block : m_proc) {
+            for (B3::Value* value : *block) {
+                if (value->opcode() == B3::Store && isLengthAccess(value)) {
+                    blocksThatStore.append(block);
+                    break;
+                }
+            }
+        }
+        if (blocksThatStore.isEmpty() || !m_proc.hasCycle())
+            return false;
+
+        m_proc.resetValueOwners();
+        B3::NaturalLoops& loops = m_proc.naturalLoops();
+        Vector<Promotion, 2> promotions;
+        BitVector isDecided;
+        BitVector isPromoted;
+        for (B3::BasicBlock* block : blocksThatStore) {
+            Vector<const B3::NaturalLoop*, 4> enclosing;
+            for (const B3::NaturalLoop* loop = loops.innerMostLoopOf(block); loop; loop = loops.innerMostOuterLoop(*loop))
+                enclosing.append(loop);
+            for (const B3::NaturalLoop* loop : enclosing | std::views::reverse) {
+                if (isPromoted.get(loop->index()))
+                    break;
+                if (isDecided.set(loop->index()))
+                    continue;
+                std::optional<Promotion> promotion = plan(*loop);
+                if (!promotion)
+                    continue;
+                isPromoted.set(loop->index());
+                promotions.append(WTF::move(*promotion));
+                break;
+            }
+        }
+        if (promotions.isEmpty())
+            return false;
+
+        EdgeBlocks edges(m_proc);
+        for (Promotion& promotion : promotions) {
+            promotion.length = m_proc.addVariable(B3::Int32);
+            rewriteAccesses(promotion);
+            storeOnWaysOut(promotion, edges);
+        }
+        // Behind the stores: a way out of one loop may be the way into another.
+        for (Promotion& promotion : promotions)
+            loadOnWaysIn(promotion, edges);
+        edges.connect(promotions.first().origin);
+
+        m_proc.resetReachability();
+        m_proc.invalidateCFG();
+        B3::fixSSA(m_proc);
+        return true;
+    }
+
+private:
+    struct Promotion {
+        Vector<B3::BasicBlock*, 8> blocks;
+        BitVector contains;
+        B3::Value* storage { nullptr };
+        B3::Value::OffsetType offset { 0 };
+        B3::Origin origin;
+        B3::Variable* length { nullptr };
+        Vector<B3::BasicBlock*, 2> blocksThatStore;
+    };
+
+    // Blocks on edges. The edges change when all of them are filled.
+    class EdgeBlocks {
+    public:
+        explicit EdgeBlocks(B3::Procedure& proc)
+            : m_proc(proc)
+        {
+        }
+
+        B3::BasicBlock*& tailOn(B3::BasicBlock* from, B3::BasicBlock* to)
+        {
+            uint64_t key = (static_cast<uint64_t>(from->index()) << 32 | to->index()) + 1;
+            auto added = m_indices.add(key, m_edges.size());
+            if (added.isNewEntry) {
+                B3::BasicBlock* block = m_proc.addBlock(std::min(from->frequency(), to->frequency()));
+                m_edges.append({ from, to, block, block });
+            }
+            return m_edges[added.iterator->value].tail;
+        }
+
+        void connect(B3::Origin origin)
+        {
+            for (const Edge& edge : m_edges) {
+                edge.tail->appendNew<B3::Value>(m_proc, B3::Jump, origin);
+                edge.tail->setSuccessors(B3::FrequentedBlock(edge.to));
+                edge.from->replaceSuccessor(edge.to, edge.head);
+            }
+        }
+
+    private:
+        struct Edge {
+            B3::BasicBlock* from;
+            B3::BasicBlock* to;
+            B3::BasicBlock* head;
+            B3::BasicBlock* tail;
+        };
+
+        B3::Procedure& m_proc;
+        Vector<Edge, 8> m_edges;
+        HashMap<uint64_t, unsigned> m_indices;
+    };
+
+    bool isLengthAccess(B3::Value* value) const
+    {
+        auto* memory = value->as<B3::MemoryValue>();
+        if (!memory || memory->range() != m_lengths || memory->isExotic() || memory->traps())
+            return false;
+        if (memory->opcode() == B3::Load)
+            return memory->type() == B3::Int32;
+        return memory->opcode() == B3::Store && memory->child(0)->type() == B3::Int32;
+    }
+
+    // The collector marks the elements below the length.
+    bool maySeeLength(const B3::Effects& effects) const
+    {
+        return effects.reads.overlaps(m_lengths) || effects.writes.overlaps(m_lengths) || effects.exitsSideways || effects.fence || m_heaps.mayCollect(effects);
+    }
+
+    // By the edges: the frequencies of blocks are not current here.
+    void findBlocksReachedOften(const B3::NaturalLoop& loop, Promotion& promotion)
+    {
+        B3::NaturalLoops& loops = m_proc.naturalLoops();
+        promotion.blocks.append(loop.header());
+        promotion.contains.set(loop.header()->index());
+        for (unsigned next = 0; next < promotion.blocks.size(); ++next) {
+            for (const B3::FrequentedBlock& successor : promotion.blocks[next]->successors()) {
+                if (successor.frequency() == B3::FrequencyClass::Rare || !loops.belongsTo(successor.block(), loop))
+                    continue;
+                if (!promotion.contains.set(successor.block()->index()))
+                    promotion.blocks.append(successor.block());
+            }
+        }
+    }
+
+    // The read in front of the loop reads what the loop is going to read or write anyway, or lies in a word of which the function has read the other half.
+    bool mayReadInFrontOf(B3::BasicBlock* header, const Promotion& promotion)
+    {
+        for (B3::Value* value : *header) {
+            if (isLengthAccess(value))
+                return true;
+            B3::Effects effects = value->effects();
+            if (effects.exitsSideways || effects.terminal)
+                break;
+        }
+        static_assert(!(sizeof(IndexingHeader) % 8));
+        B3::Dominators& dominators = m_proc.dominators();
+        for (B3::BasicBlock* block = dominators.idom(header); block; block = dominators.idom(block)) {
+            for (B3::Value* value : *block) {
+                auto* memory = value->as<B3::MemoryValue>();
+                if (memory && memory->lastChild() == promotion.storage && (memory->offset() & ~7) == (promotion.offset & ~7))
+                    return true;
+            }
+            if (block == promotion.storage->owner)
+                break;
+        }
+        return false;
+    }
+
+    std::optional<Promotion> plan(const B3::NaturalLoop& loop)
+    {
+        if (loop.header() == m_proc.at(0))
+            return std::nullopt;
+        Promotion promotion;
+        findBlocksReachedOften(loop, promotion);
+        for (B3::BasicBlock* block : promotion.blocks) {
+            bool stores = false;
+            for (B3::Value* value : *block) {
+                if (!maySeeLength(value->effects()))
+                    continue;
+                if (!isLengthAccess(value))
+                    return std::nullopt;
+                auto* memory = value->as<B3::MemoryValue>();
+                if (!promotion.storage) {
+                    promotion.storage = memory->lastChild();
+                    promotion.offset = memory->offset();
+                    promotion.origin = memory->origin();
+                    if (m_proc.naturalLoops().belongsTo(promotion.storage->owner, loop))
+                        return std::nullopt;
+                } else if (memory->lastChild() != promotion.storage || memory->offset() != promotion.offset)
+                    return std::nullopt;
+                stores |= memory->isStore();
+            }
+            if (stores)
+                promotion.blocksThatStore.append(block);
+        }
+        if (promotion.blocksThatStore.isEmpty() || !mayReadInFrontOf(loop.header(), promotion))
+            return std::nullopt;
+        return promotion;
+    }
+
+    B3::Value* appendStore(const Promotion& promotion, B3::BasicBlock* block, B3::Value* length)
+    {
+        return block->appendNew<B3::MemoryValue>(m_proc, B3::Store, promotion.origin, length, promotion.storage, promotion.offset, m_lengths);
+    }
+
+    B3::Value* appendLoad(const Promotion& promotion, B3::BasicBlock* block)
+    {
+        return block->appendNew<B3::MemoryValue>(m_proc, B3::Load, B3::Int32, promotion.origin, promotion.storage, promotion.offset, m_lengths);
+    }
+
+    void rewriteAccesses(const Promotion& promotion)
+    {
+        B3::InsertionSet insertionSet(m_proc);
+        for (B3::BasicBlock* block : promotion.blocks) {
+            for (unsigned index = 0; index < block->size(); ++index) {
+                B3::Value* value = block->at(index);
+                if (!isLengthAccess(value))
+                    continue;
+                if (value->opcode() == B3::Load) {
+                    value->replaceWithIdentity(insertionSet.insert<B3::VariableValue>(index, B3::Get, value->origin(), promotion.length));
+                    continue;
+                }
+                m_proc.movedLoadLog().willMove(value);
+                insertionSet.insert<B3::VariableValue>(index, B3::Set, value->origin(), promotion.length, value->child(0));
+                value->replaceWithNop();
+            }
+            insertionSet.execute(block);
+        }
+    }
+
+    void storeOnWaysOut(const Promotion& promotion, EdgeBlocks& edges)
+    {
+        B3::Dominators& dominators = m_proc.dominators();
+        for (B3::BasicBlock* block : promotion.blocks) {
+            bool hasStored = std::ranges::any_of(promotion.blocksThatStore, [&](B3::BasicBlock* storing) {
+                return dominators.dominates(storing, block);
+            });
+            for (unsigned successorIndex = 0; successorIndex < block->numSuccessors(); ++successorIndex) {
+                B3::BasicBlock* successor = block->successorBlock(successorIndex);
+                if (promotion.contains.get(successor->index()))
+                    continue;
+                bool isRepeated = false;
+                for (unsigned earlier = 0; earlier < successorIndex; ++earlier)
+                    isRepeated |= block->successorBlock(earlier) == successor;
+                if (isRepeated)
+                    continue;
+
+                B3::BasicBlock*& tail = edges.tailOn(block, successor);
+                B3::Value* length = tail->appendNew<B3::VariableValue>(m_proc, B3::Get, promotion.origin, promotion.length);
+                if (hasStored) {
+                    appendStore(promotion, tail, length);
+                    continue;
+                }
+                // The loop may have stored nothing so far, and then the storage may be one that nobody may write to.
+                B3::BasicBlock* stores = m_proc.addBlock(tail->frequency());
+                B3::BasicBlock* next = m_proc.addBlock(tail->frequency());
+                tail->appendNew<B3::Value>(m_proc, B3::Branch, promotion.origin, tail->appendNew<B3::Value>(m_proc, B3::NotEqual, promotion.origin, length, appendLoad(promotion, tail)));
+                tail->setSuccessors(B3::FrequentedBlock(stores), B3::FrequentedBlock(next));
+                appendStore(promotion, stores, length);
+                stores->appendNew<B3::Value>(m_proc, B3::Jump, promotion.origin);
+                stores->setSuccessors(B3::FrequentedBlock(next));
+                tail = next;
+            }
+        }
+    }
+
+    void loadOnWaysIn(const Promotion& promotion, EdgeBlocks& edges)
+    {
+        for (B3::BasicBlock* block : promotion.blocks) {
+            for (B3::BasicBlock* predecessor : block->predecessors()) {
+                if (promotion.contains.get(predecessor->index()))
+                    continue;
+                B3::BasicBlock* tail = edges.tailOn(predecessor, block);
+                tail->appendNew<B3::VariableValue>(m_proc, B3::Set, promotion.origin, promotion.length, appendLoad(promotion, tail));
+            }
+        }
+    }
+
+    B3::Procedure& m_proc;
+    const AOTHeaps& m_heaps;
+    B3::HeapRange m_lengths;
+};
+
+} // anonymous namespace
+
+B3::ClientPhase keepListLengthsInRegistersAfterOptimization()
+{
+    return {
+        B3::ClientPhase::Point::AfterOptimization,
+        "keepListLengthsInRegisters"_s,
+        createSharedTask<bool(B3::Procedure&)>([](B3::Procedure& proc) {
+            return ListLengthPromotion(proc).run();
         })
     };
 }

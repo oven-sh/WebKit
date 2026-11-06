@@ -14,8 +14,8 @@ layout L5 name="Node" fields=[{key="value" declared={type=number} flow={stabilit
 layout L6 name="NoOrder" fields=[{key="x" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}]
 layout L7 name="OuterOfTypedField" fields=[{key="inner" declared={type=L4}}, {key="after" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1]}]}
 
-# CHECK: function {{*}}role=Serializer length=2 {{*}}parameters=[{type=object}, {type=stringbuilder}] results=[{type=int[0, 2]}] {{*}}creator=Serializer{layout=L0}
-# CHECK-NEXT: b0(v0: object, v1: stringbuilder):
+# CHECK: function {{*}}role=Serializer length=3 {{*}}parameters=[{type=object}, {type=stringbuilder}, {type=int[0, 105536]}] results=[{type=int[0, 2]}] {{*}}creator=Serializer{layout=L0}
+# CHECK-NEXT: b0(v0: object, v1: stringbuilder, v2: int[0, 105536]):
 # CHECK: [[unknown0]]() frequency=Rare:
 # CHECK-NEXT: [[zero0]]: 0 = Integer
 # CHECK-NEXT: Return [[zero0]]
@@ -118,7 +118,9 @@ layout L7 name="OuterOfTypedField" fields=[{key="inner" declared={type=L4}}, {ke
 # CHECK-NEXT: [[keyCursor]]: buildercursor = StringBuilderReserve v1
 # CHECK-NEXT: [[keyWritten]]: buildercursor = JSONAppendKey v1, [[keyCursor]] string="inner" @
 # CHECK-NEXT: StringBuilderCommit v1, [[keyWritten]]
-# CHECK-NEXT: [[outcome3]]: int[0, 2] = CallDirect [[innerObject]], v1 function=[[serializerOfInner]]
+# CHECK-NEXT: [[opened3]]: 1 = Integer integer=1
+# CHECK-NEXT: [[levels3]]:{{*}}= Add {{*}}, [[opened3]]
+# CHECK-NEXT: [[outcome3]]: int[0, 2] = CallDirect [[innerObject]], v1, [[levels3]] function=[[serializerOfInner]]
 # CHECK-NEXT: Switch [[outcome3]] cases=[1] -> case [[written3]](), otherwise [[unknown3]]()
 # CHECK: [[otherShape]]() frequency=Rare:
 # CHECK-NEXT: Jump -> next [[generic3]]()
@@ -134,7 +136,7 @@ layout L7 name="OuterOfTypedField" fields=[{key="inner" declared={type=L4}}, {ke
 # CHECK: [[next]]: anything ~ null|L5 = GetSlot v0, {{*}} key="next" receivers=[L5] level=Expected
 # CHECK: ([[nextObject]]: object ~ L5):
 # CHECK: = ShapeTest [[nextObject]] layouts=[L5]
-# CHECK: = CallDirect [[nextObject]], v1 function=[[serializerOfNode]]
+# CHECK: = CallDirect [[nextObject]], v1, {{*}} function=[[serializerOfNode]]
 
 # CHECK: function {{*}}creator=Serializer{layout=L6}
 # CHECK-NOT: HasKeyOrder
@@ -156,4 +158,6 @@ layout L7 name="OuterOfTypedField" fields=[{key="inner" declared={type=L4}}, {ke
 # CHECK-NEXT: [[typedKeyCursor]]: buildercursor = StringBuilderReserve v1
 # CHECK-NEXT: [[typedKeyWritten]]: buildercursor = JSONAppendKey v1, [[typedKeyCursor]] string="inner" @
 # CHECK-NEXT: StringBuilderCommit v1, [[typedKeyWritten]]
-# CHECK-NEXT: = CallDirect [[typedInner]], v1 function=[[serializerOfInner]]
+# CHECK-NEXT: [[openedTyped]]: 1 = Integer integer=1
+# CHECK-NEXT: [[levelsTyped]]:{{*}}= Add {{*}}, [[openedTyped]]
+# CHECK-NEXT: = CallDirect [[typedInner]], v1, [[levelsTyped]] function=[[serializerOfInner]]

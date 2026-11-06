@@ -311,11 +311,16 @@ void StringTable::reserve(Shard& shard, size_t count) const
 
 StringID StringTable::append(std::span<const uint8_t> bytes, uint64_t hash)
 {
+    return append(bytes, hash, m_builtins->nameOf(bytes));
+}
+
+StringID StringTable::append(std::span<const uint8_t> bytes, uint64_t hash, BuiltinName name)
+{
     RELEASE_ASSERT(m_strings.size() < provisionalBit);
     StringID id(m_strings.size());
     m_strings.constructAndAppend(bytes);
     m_nameClasses.append(classifyName(bytes));
-    m_builtinNames.append(m_builtins->nameOf(bytes));
+    m_builtinNames.append(name);
     recordBuiltinName(id);
     Shard& shard = m_shards[shardIndexOf(hash)];
     reserve(shard, static_cast<size_t>(shard.count) + 1);
@@ -332,12 +337,30 @@ void StringTable::recordBuiltinName(StringID id)
 
 void StringTable::appendBuiltinNames()
 {
+    struct NameToAppend {
+        BuiltinName name;
+        uint64_t hash;
+    };
     unsigned nameCount = m_builtins->nameCount();
+    Vector<NameToAppend> names;
+    names.reserveInitialCapacity(nameCount);
+    std::array<uint32_t, numberOfShards> countInShard { };
     for (unsigned index = 0; index < nameCount; ++index) {
         BuiltinName name(index);
         if (m_builtins->isSymbolName(name) || m_builtins->isRegisteredSymbolName(name) || stringOf(name))
             continue;
-        StringID id = intern(m_builtins->textOf(name));
+        uint64_t hash = hashOf(m_builtins->textOf(name));
+        names.append({ name, hash });
+        ++countInShard[shardIndexOf(hash)];
+    }
+    for (unsigned shardIndex = 0; shardIndex < numberOfShards; ++shardIndex)
+        reserve(m_shards[shardIndex], static_cast<size_t>(m_shards[shardIndex].count) + countInShard[shardIndex]);
+    // The table outlives the strings, and its names are canonical.
+    for (auto [name, hash] : names) {
+        std::span<const uint8_t> text = m_builtins->textOf(name);
+        ASSERT(isCanonicalProgramString(text));
+        RELEASE_ASSERT(!find(m_shards[shardIndexOf(hash)], hash, text));
+        StringID id = append(text, hash, name);
         RELEASE_ASSERT(stringOf(name) == id);
     }
 }

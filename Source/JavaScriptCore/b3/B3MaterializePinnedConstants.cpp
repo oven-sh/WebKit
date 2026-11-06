@@ -132,10 +132,13 @@ private:
     Value* replacementFor(Value* user, unsigned index, Value* constant, const PinnedConstant& pinned)
     {
         Value* base = registerValue(pinned.reg, user, index);
-        ASSERT(base->type() == (pinned.offset ? pointerType() : constant->type()));
-        if (!pinned.offset)
-            return base;
+        if (!pinned.offset) {
+            if (base->type() == constant->type())
+                return base;
+            return m_insertionSet.insert<Value>(index, BitwiseCast, user->origin(), base);
+        }
 
+        ASSERT(base->type() == pointerType());
         MemoryValue* load = m_insertionSet.insert<MemoryValue>(index, Load, constant->type(), user->origin(), base, *pinned.offset, HeapRange());
         load->setControlDependent(false);
         load->setReadsMutability(Mutability::Immutable);

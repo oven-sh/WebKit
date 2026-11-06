@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTDescriptorLiteral.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
@@ -40,11 +41,7 @@ struct DescriptorMatch {
     SelectionGroup group;
     ValueID object;
     ValueID key;
-    ValueID value;
-    ValueID getter;
-    ValueID setter;
-    ValueID closureEnvironment;
-    OptionSet<PropertyDescriptorFlags> descriptorFlags;
+    DescriptorLiteral descriptor;
 };
 
 // A descriptor that reaches its call as a parameter of the block: on every way in it is a literal of one layout, made for this call alone.
@@ -67,9 +64,6 @@ struct AccessorMatch {
 } // anonymous namespace
 
 static constexpr unsigned numberOfDescriptorCallArguments = 3;
-
-static constexpr OptionSet<PropertyDescriptorFlags> dataDescriptorFlags { PropertyDescriptorFlags::HasValue, PropertyDescriptorFlags::HasWritable };
-static constexpr OptionSet<PropertyDescriptorFlags> accessorDescriptorFlags { PropertyDescriptorFlags::HasGet, PropertyDescriptorFlags::HasSet };
 
 AOT_THRESHOLD(size_t, minMembersInAccessorGroup, 2);
 static constexpr uint64_t maxKeysInAccessorMasks = std::numeric_limits<uint32_t>::digits;
@@ -115,60 +109,6 @@ static std::optional<DescriptorCallOperands> descriptorCallOperandsOf(const Prog
     return DescriptorCallOperands { arguments[*object], arguments[*key], arguments[*descriptor] };
 }
 
-static bool isDescriptorLiteral(const Program& program, const Value& literal)
-{
-    if (literal.opcode != Opcode::NewObject || literal.prototypeOperand())
-        return false;
-    return program.at(literal.layout()).kind == LayoutKind::Record && literal.fields().size() == literal.valuesOperands().size();
-}
-
-static BuiltinName propertyNameAt(const Program& program, const Value& literal, size_t index)
-{
-    PropertyKeyID key = program.at(literal.layout()).fields[literal.fields()[index]].key;
-    return key ? program.builtinNameOf(key) : BuiltinName();
-}
-
-static std::optional<bool> constantBooleanOf(const Program& program, const Function& function, ValueID id)
-{
-    std::optional<ValueID> constant = constantThroughCasts(program, function, id);
-    if (!constant || function.at(*constant).opcode != Opcode::Boolean)
-        return std::nullopt;
-    return function.at(*constant).boolean();
-}
-
-static bool addBooleanAttribute(const Program& program, const Function& function, ValueID value, PropertyDescriptorFlags isPresent, PropertyDescriptorFlags isSet, DescriptorMatch& match)
-{
-    std::optional<bool> flag = constantBooleanOf(program, function, value);
-    if (!flag)
-        return false;
-    match.descriptorFlags.add(isPresent);
-    match.descriptorFlags.set(isSet, *flag);
-    return true;
-}
-
-static bool addAttribute(const Program& program, const Function& function, BuiltinName name, ValueID value, DescriptorMatch& match)
-{
-    if (name == BuiltinNames::writable)
-        return addBooleanAttribute(program, function, value, PropertyDescriptorFlags::HasWritable, PropertyDescriptorFlags::IsWritable, match);
-    if (name == BuiltinNames::enumerable)
-        return addBooleanAttribute(program, function, value, PropertyDescriptorFlags::HasEnumerable, PropertyDescriptorFlags::IsEnumerable, match);
-    if (name == BuiltinNames::configurable)
-        return addBooleanAttribute(program, function, value, PropertyDescriptorFlags::HasConfigurable, PropertyDescriptorFlags::IsConfigurable, match);
-
-    if (name == BuiltinNames::value) {
-        match.descriptorFlags.add(PropertyDescriptorFlags::HasValue);
-        match.value = value;
-    } else if (name == BuiltinNames::get) {
-        match.descriptorFlags.add(PropertyDescriptorFlags::HasGet);
-        match.getter = value;
-    } else if (name == BuiltinNames::set) {
-        match.descriptorFlags.add(PropertyDescriptorFlags::HasSet);
-        match.setter = value;
-    } else
-        return false;
-    return true;
-}
-
 static ValueID findClosureMadeOnDemand(const Function& function, ValueID value)
 {
     if (!value)
@@ -182,30 +122,32 @@ static bool canCreateClosuresAtDefinition(SelectionContext& context, const Descr
 {
     const Program& program = context.program();
     const Function& function = context.function();
-    return std::ranges::all_of(std::array { match.value, match.getter, match.setter }, [&](ValueID value) {
+    const DescriptorLiteral& descriptor = match.descriptor;
+    return std::ranges::all_of(std::array { descriptor.value, descriptor.getter, descriptor.setter }, [&](ValueID value) {
         ValueID closure = findClosureMadeOnDemand(function, value);
         if (!closure)
             return true;
         const Function& callee = program.at(function.at(closure).function());
         if (callee.captures.isEmpty())
             return true;
-        if (!match.closureEnvironment || !program.at(callee.captures[0].written()).environment)
+        if (!descriptor.closureEnvironment || !program.at(callee.captures[0].written()).environment)
             return false;
         FunctionAnalyses& analyses = context.analyses();
-        return analyses.dominates(match.closureEnvironment, analyses.useLists().pointOf(closure));
+        return analyses.dominates(descriptor.closureEnvironment, analyses.useLists().pointOf(closure));
     });
 }
 
 static void createClosuresAtDefinition(const Program& program, Function& function, const DescriptorMatch& match)
 {
-    for (ValueID value : { match.value, match.getter, match.setter }) {
+    const DescriptorLiteral& descriptor = match.descriptor;
+    for (ValueID value : { descriptor.value, descriptor.getter, descriptor.setter }) {
         ValueID id = findClosureMadeOnDemand(function, value);
         if (!id)
             continue;
         Value& closure = function.edit(id);
         closure.setIsMadeOnDemand(false);
         if (!program.at(closure.function()).captures.isEmpty())
-            closure.setCapturesOperands(singleElementSpan(match.closureEnvironment));
+            closure.setCapturesOperands(singleElementSpan(descriptor.closureEnvironment));
     }
 }
 
@@ -213,10 +155,15 @@ static void setDefinitionOperands(Value& definition, const DescriptorMatch& matc
 {
     definition.setOperand(OperandIndex::DefineOwnProperty::object, match.object);
     definition.setOperand(OperandIndex::DefineOwnProperty::computedKey, match.key);
-    definition.setOperand(OperandIndex::DefineOwnProperty::value, match.value);
-    definition.setOperand(OperandIndex::DefineOwnProperty::getter, match.getter);
-    definition.setOperand(OperandIndex::DefineOwnProperty::setter, match.setter);
-    definition.setDescriptorFlags(match.descriptorFlags);
+    definition.setOperand(OperandIndex::DefineOwnProperty::value, match.descriptor.value);
+    definition.setOperand(OperandIndex::DefineOwnProperty::getter, match.descriptor.getter);
+    definition.setOperand(OperandIndex::DefineOwnProperty::setter, match.descriptor.setter);
+    definition.setDescriptorFlags(match.descriptor.flags);
+}
+
+static bool isPropertyKey(SelectionContext& context, ValueID key)
+{
+    return context.typeOf(key).hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol);
 }
 
 static bool hasEffectsOfDefinition(SelectionContext& context, ValueID call, const DescriptorMatch& match)
@@ -224,7 +171,28 @@ static bool hasEffectsOfDefinition(SelectionContext& context, ValueID call, cons
     FunctionAnalyses& analyses = context.analyses();
     Value definition = IRBuilder::make(Opcode::DefineOwnProperty);
     setDefinitionOperands(definition, match);
-    return effectsOf(analyses.effectContext(), context.function(), definition).isSubsetOf(analyses.effectsOf(call));
+    if (!effectsOf(analyses.effectContext(), context.function(), definition).isSubsetOf(analyses.effectsOf(call)))
+        return false;
+    return isPropertyKey(context, match.key) || effectsOf(analyses.effectContext(), context.function(), IRBuilder::make(Opcode::ToPropertyKey, { match.key })).isSubsetOf(analyses.effectsOf(call));
+}
+
+// `__proto__: null` in the literal: nothing is looked for above it, so its own members are all that the built-in reads.
+static ValueID findNullPrototypeOfLiteral(SelectionContext& context, ValueID literal, ValueID finish)
+{
+    const Function& function = context.function();
+    std::span<const Use> uses = context.analyses().useLists().usesOf(literal);
+    if (uses.size() != 2)
+        return { };
+    ValueID link;
+    for (const Use& use : uses) {
+        if (use.kind != Use::Kind::Operand)
+            return { };
+        if (use.user != finish)
+            link = use.user;
+    }
+    if (!link || function.at(link).opcode != Opcode::SetLiteralPrototype || function.at(link).objectOperand() != literal)
+        return { };
+    return function.at(definitionThroughUpcasts(function, function.at(link).prototypeOperand())).opcode == Opcode::Null ? link : ValueID();
 }
 
 static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& context, ValueID id)
@@ -232,11 +200,16 @@ static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& cont
     const Program& program = context.program();
     const Function& function = context.function();
     const Value& call = function.at(id);
-    if (context.isOnSlowPath(id) || call.builtinCallForm() != BuiltinCallForm::Whole)
+    if (context.isOnSlowPath(id) || (call.builtinCallForm() != BuiltinCallForm::Whole && call.builtinCallForm() != BuiltinCallForm::AnyReceiver))
         return std::nullopt;
 
     std::optional<DescriptorCallOperands> operands = descriptorCallOperandsOf(program, call);
-    if (!operands || !context.typeOf(operands->object).isObject() || !context.typeOf(operands->key).hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol))
+    // A key that is no object becomes a name without running anybody's code.
+    if (!operands || !context.typeOf(operands->key).isJavaScriptValue() || context.typeOf(operands->key).hasObjects())
+        return std::nullopt;
+    // The operation hands what is no object to the built-in, which refuses it.
+    const Type& typeOfObject = context.typeOf(operands->object);
+    if (!typeOfObject.hasObjects() || !typeOfObject.isJavaScriptValue())
         return std::nullopt;
 
     ValueID finishID = operands->descriptor;
@@ -244,24 +217,14 @@ static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& cont
     if (finish.opcode != Opcode::FinishObject || context.singleUser(finishID) != id)
         return std::nullopt;
     ValueID literalID = finish.objectOperand();
-    const Value& literal = function.at(literalID);
-    if (context.singleUser(literalID) != finishID || !isDescriptorLiteral(program, literal))
+    ValueID linkID = findNullPrototypeOfLiteral(context, literalID, finishID);
+    if (!linkID && context.singleUser(literalID) != finishID)
+        return std::nullopt;
+    std::optional<DescriptorLiteral> descriptor = readDescriptorLiteral(program, function, function.at(literalID));
+    if (!descriptor)
         return std::nullopt;
 
-    DescriptorMatch match { .group = groupOf({ literalID, finishID, id }), .object = operands->object, .key = operands->key };
-    std::optional<uint32_t> closureEnvironmentField = program.at(literal.layout()).flow.closureEnvironmentField;
-    std::span<const ValueID> values = literal.valuesOperands();
-    for (size_t index = 0; index < values.size(); ++index) {
-        if (literal.fields()[index] == closureEnvironmentField) {
-            match.closureEnvironment = values[index];
-            continue;
-        }
-        if (!addAttribute(program, function, propertyNameAt(program, literal, index), values[index], match))
-            return std::nullopt;
-    }
-
-    if (match.descriptorFlags.containsAny(dataDescriptorFlags) && match.descriptorFlags.containsAny(accessorDescriptorFlags))
-        return std::nullopt;
+    DescriptorMatch match { .group = linkID ? groupOf({ literalID, linkID, finishID, id }) : groupOf({ literalID, finishID, id }), .object = operands->object, .key = operands->key, .descriptor = *descriptor };
     if (!canCreateClosuresAtDefinition(context, match) || !hasEffectsOfDefinition(context, id, match))
         return std::nullopt;
     return match;
@@ -308,7 +271,7 @@ static std::optional<DescriptorsMeetingInParameter> findDescriptorsMeetingInPara
             return std::nullopt;
         ValueID literalID = finish.objectOperand();
         const Value& literal = function.at(literalID);
-        if (uses.useCount(literalID) != 1 || !isDescriptorLiteral(program, literal) || uses.blockOf(finishID) == location.block || uses.blockOf(literalID) == location.block)
+        if (uses.useCount(literalID) != 1 || !listsMembersOfDescriptor(program, literal) || uses.blockOf(finishID) == location.block || uses.blockOf(literalID) == location.block)
             return std::nullopt;
         if (!found.literals.isEmpty()) {
             const Value& first = function.at(found.literals[0]);
@@ -419,7 +382,10 @@ void selectDescriptorLiteral(SelectionContext& context)
 
     context.rewriteGroups(SelectionRuleID::DescriptorLiteral, matches, [&](GroupRewriter& rewriter, const DescriptorMatch& match) {
         createClosuresAtDefinition(context.program(), rewriter.function(), match);
-        setDefinitionOperands(rewriter.replaceRoot(Opcode::DefineOwnProperty), match);
+        ValueID key = isPropertyKey(context, match.key) ? match.key : rewriter.insert(IRBuilder::make(Opcode::ToPropertyKey, { match.key }));
+        Value& definition = rewriter.replaceRoot(Opcode::DefineOwnProperty);
+        setDefinitionOperands(definition, match);
+        definition.setOperand(OperandIndex::DefineOwnProperty::computedKey, key);
     });
 }
 

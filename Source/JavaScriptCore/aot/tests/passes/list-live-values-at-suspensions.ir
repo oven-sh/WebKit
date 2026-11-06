@@ -1,4 +1,5 @@
-# A suspension lists what the function as it is written reads behind it, beside what it listed when it was read. A value that is read only in front of the
+# A suspension lists what the function as it is written reads after it and after no later suspension, beside what it listed when it was read: the last
+# suspension that a value lives across lists it, and that keeps it live across the earlier ones. A value that is read only in front of the
 # suspension is not listed, and nothing is listed twice.
 # FORM: AsRead
 # RUN: pass ListLiveValuesAtSuspensions
@@ -16,7 +17,7 @@ function f0 name="awaitsTwice" flags=[IsAsync] thisType={type=anything} paramete
     Return v9
 }
 # CHECK-LABEL: function f0 name="awaitsTwice"
-# CHECK: Await v5, v0, v3, v1, v4 @10
+# CHECK: Await v5, v0, v3 @10
 # CHECK: Await v7, v0, v1, v4 @20
 
 function f1 name="walksAList" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=object}] results=[{type=Promise}] {
@@ -71,8 +72,29 @@ function f4 name="readsAScope" flags=[IsAsync] thisType={type=anything} paramete
 }
 # A read of a scope reads what it lists, so every suspension in front of it lists that. The pass leaves no read of a scope.
 # CHECK-LABEL: function f4 name="readsAScope"
-# CHECK: Await v0, v0, v1, v2, v3 @60
+# CHECK: Await v0, v0, v1, v2 @60
 # CHECK-NOT: ReadScope
 # CHECK: Await v0 @65
 # CHECK: Await v0, v3 @70
 # CHECK-NOT: ReadScope
+
+function f5 name="awaitsInALoop" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=boolean}] results=[{type=Promise}] {
+  b0(v0: object, v1: boolean):
+    v2 = NewArray contents=number
+    v3 = NewArray contents=number
+    Jump -> next b1()
+  b1():
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v4 = Await v0 @75
+    v5 = ElemGet v3, v4
+    Jump -> next b1()
+  b3():
+    v6 = Await v0 @80
+    v7 = ElemGet v2, v6
+    Return v7
+}
+# What lives through a loop and is listed after it is not listed in the loop. What only the loop reads is.
+# CHECK-LABEL: function f5 name="awaitsInALoop"
+# CHECK: Await v0, v0, v1, v3 @75
+# CHECK: Await v0, v2 @80

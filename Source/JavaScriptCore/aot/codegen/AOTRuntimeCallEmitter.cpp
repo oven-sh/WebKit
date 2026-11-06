@@ -39,6 +39,7 @@ struct CallGenerator {
     ArgumentMoves moveArguments(CCallHelpers&, const B3::StackmapGenerationParams&) const;
     void emitCallInstruction(CCallHelpers&, StubKey, const ArgumentMoves&) const;
     void emitBranchOnFlags(CCallHelpers&, const B3::StackmapGenerationParams&) const;
+    void emitMark(CCallHelpers&) const;
 
     CodeRecords* records;
     StubKey key;
@@ -51,6 +52,7 @@ struct CallGenerator {
     OptionalIndex firstRead;
     std::optional<ThrowSite> throwSite;
     std::optional<OperationCall> preservingCall;
+    std::optional<MarkOfCallWithoutSite> mark;
 };
 
 struct ReturnTraits {
@@ -76,7 +78,7 @@ ArgumentMoves CallGenerator::moveArguments(CCallHelpers& jit, const B3::Stackmap
         B3::Type childType = call->child(i)->type();
         if (childType == B3::Double)
             continue;
-        GPRReg destination = operationArgumentGPR(destinationIndex++);
+        GPRReg destination = argumentGPROfPreservingCall(*preservingCall, entryAtOffset(*immediate), destinationIndex++);
         const B3::ValueRep& rep = params[firstRep + i];
         if (rep.isGPR()) {
             if (rep.gpr() != destination)
@@ -147,6 +149,23 @@ void CallGenerator::emitBranchOnFlags(CCallHelpers& jit, const B3::StackmapGener
     });
 }
 
+void CallGenerator::emitMark(CCallHelpers& jit) const
+{
+    for (uint32_t payload : { mark->value.index(), static_cast<uint32_t>(mark->callee) }) {
+        uint64_t word = MarkOfCallWithoutSite::wordFor(payload);
+#if CPU(X86_64)
+        jit.m_assembler.movq_i64r(static_cast<int64_t>(word), CCallHelpers::s_scratchRegister);
+#elif CPU(ARM64)
+        jit.m_assembler.movz<64>(ARM64Registers::zr, static_cast<uint16_t>(word));
+        jit.m_assembler.movk<64>(ARM64Registers::zr, static_cast<uint16_t>(word >> 16), 16);
+        jit.m_assembler.movk<64>(ARM64Registers::zr, static_cast<uint16_t>(word >> 32), 32);
+#else
+        UNUSED_PARAM(jit);
+        UNUSED_VARIABLE(word);
+#endif
+    }
+}
+
 void CallGenerator::generate(CCallHelpers& jit, const B3::StackmapGenerationParams& params) const
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -172,6 +191,8 @@ void CallGenerator::generate(CCallHelpers& jit, const B3::StackmapGenerationPara
             jit.move(receiver, signature.operands[0].gpr());
     }
     emitCallInstruction(jit, called, moves);
+    if (mark)
+        emitMark(jit);
     if (neverReturns)
         jit.breakpoint();
     else if (branchesOnFlags)
@@ -409,7 +430,7 @@ StubCallResult RuntimeCallEmitter::callOperationReturningPair(const OperationCon
 Operand RuntimeCallEmitter::callWithoutSite(RuntimeOperation operation, std::span<const Operand> arguments, Representation result, const CallOptions& options)
 {
     Effects effects = AOT::effectsOf(entryOf(operation));
-    RELEASE_ASSERT(!isLeaf(operation) && !effects.mayExitSideways() && !effects.mayCollect);
+    RELEASE_ASSERT(!isLeaf(operation) && !effects.mayExitSideways() && (!effects.mayCollect || options.followsThrow));
     return callChecked(nullptr, operation, arguments, result, options);
 }
 
@@ -466,7 +487,7 @@ RuntimeCallEmitter::CallRequest RuntimeCallEmitter::createEntryRequest(AOT::Entr
         && numberOfGPRArgumentsOf(signature, first) <= GPRInfo::numberOfArgumentRegisters
         && (first != OperationCall::FirstArgument::None || !checksException);
     if (callerOptions.isOnRarePath && canPreserveRegisters) {
-        request.preservingCall = OperationCall { .returns = returns, .firstArgument = first, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = checksException };
+        request.preservingCall = OperationCall { .returns = returns, .firstArgument = first, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = checksException, .pollsBeforeReturning = mayFailToAllocate(entry, first) };
         request.key = callOperationPreservingRegisters(*request.preservingCall);
     } else
         request.key = callOperationFor(entry, returns, first);
@@ -484,11 +505,11 @@ void RuntimeCallEmitter::placeArguments(CallRequest& request, std::span<const LV
             continue;
         }
         RELEASE_ASSERT(nextGPR < numberOfOperationArgumentGPRs);
-        GPRReg destination = operationArgumentGPR(nextGPR++);
         if (!request.preservingCall) {
-            request.operands.append({ argument, B3::ValueRep::reg(destination) });
+            request.operands.append({ argument, B3::ValueRep::reg(operationArgumentGPR(nextGPR++)) });
             continue;
         }
+        GPRReg destination = argumentGPROfPreservingCall(*request.preservingCall, *request.entry, nextGPR++);
         LValue widened = argument->hasInt32() ? m_out.constInt64(static_cast<uint32_t>(argument->asInt32())) : argument;
         request.operands.append({ widened, B3::ValueRep::ColdAny });
         request.additionalClobbers.add(destination, IgnoreVectors);
@@ -516,6 +537,13 @@ StubCallResult RuntimeCallEmitter::callDirectFunctionReturningFields(const Opera
     memoryAlone.writes = request.effectsOfCallee.writes;
     request.effectsOfCallee = memoryAlone;
     return emitCall(&context, request);
+}
+
+LValue RuntimeCallEmitter::callDirectFunctionReturningNumber(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive)
+{
+    Effects effects = context.effects().onAnyEdge();
+    RELEASE_ASSERT(!effects.mayThrow && !effects.mayCollect && !effects.mayCallUnknownCode);
+    return emitCall(&context, requestOfDirectFunction(DirectFunctionCall::LeafReturningNumber, number, arguments, keptAlive)).first;
 }
 
 // A double takes a register of its own kind.
@@ -588,23 +616,35 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     RELEASE_ASSERT(!branchesOnFlags || signature.result == StubResult::Flags);
 
     Effects effects = context ? effectsOfCall(*context, request.effectsOfCallee) : request.effectsOfCallee;
+    if (options.alsoPerforms) {
+        Effects effectsOfOther = effectsOfCall(analyses().effectsOf(options.alsoPerforms), request.effectsOfCallee);
+        effects.reads.merge(effectsOfOther.reads);
+        effects.writes.merge(effectsOfOther.writes);
+    }
     if (options.pureFunction)
         effects.reads = { };
     // A site says where in the source a frame stands and which handler is in force there.
-    bool hasSite = effects.mayExitSideways() || options.capturesStackTrace;
-    RELEASE_ASSERT(context || (!hasSite && !effects.mayCollect));
+    // An operation whose allocation fails throws when it returns. In a function with handlers, its site records which handler, if any, is active there.
+    bool mayFailToAllocate = context && returns && request.effectsOfCallee.mayCollect && !options.pureFunction && !options.followsThrow && analyses().cfg().hasHandlers();
+    bool hasSite = effects.mayExitSideways() || options.capturesStackTrace || mayFailToAllocate;
+    if (m_options.recorded.isSabotaged(Sabotage::CallsThatThrowHaveNoSite) && returns && context && !effects.mayRunOtherCode() && !options.capturesStackTrace && !options.throwSite && !request.firstRead) [[unlikely]]
+        hasSite = false;
+    RELEASE_ASSERT(context || (!hasSite && (!effects.mayCollect || options.followsThrow)));
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
-    if (effects.mayCollect)
+    if (effects.mayCollect && context)
         emitter<BarrierEmitter>().validateBeforeCollection(*context);
 
-    bool validates = generator().validates() && context;
+    // The operation's operands are not known to be available either.
+    bool validates = generator().validates() && context && !generator().isPassingHandlerArguments();
     RuntimeValidationEmitter::OperandCells cellsBeforeCall;
-    if (validates && returns && !mayConvertCells(effects) && !options.runsCodeOfHost)
-        cellsBeforeCall = emitter<RuntimeValidationEmitter>().captureOperandCells(*context);
+    if (validates && returns && !options.runsCodeOfHost && !mayConvertCells(effects))
+        cellsBeforeCall = emitter<RuntimeValidationEmitter>().captureOperandCells(*context, RuntimeValidationEmitter::ComparedCells::Objects);
+    else if (validates && returns && !options.runsCodeOfHost && !AOTHeaps::mayReplaceStorageOfArrays(effects))
+        cellsBeforeCall = emitter<RuntimeValidationEmitter>().captureOperandCells(*context, RuntimeValidationEmitter::ComparedCells::Arrays);
     RuntimeValidationEmitter::PhotographedOperands photographedOperands;
     bool comesBack = returns || (branchesOnFlags && !effects.mayThrow);
     if (validates && comesBack && !effects.mayRunOtherCode() && !options.runsCodeOfHost && !generator().isInitializingCell())
-        photographedOperands = emitter<RuntimeValidationEmitter>().photographOperands(*context, effects);
+        photographedOperands = emitter<RuntimeValidationEmitter>().photographOperands(*context, effects, options.alsoPerforms);
     uint32_t calleeNumber = request.entry ? static_cast<uint32_t>(*request.entry) : static_cast<uint32_t>(key.family());
     uint32_t photographedCallee = request.entry ? calleeNumber : PhotographedCall::calleeIsStub | calleeNumber;
     std::optional<Integer> stopsBeforeCall;
@@ -617,6 +657,8 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     B3::PatchpointValue* patchpoint = m_out.patchpoint(patchpointTypeOf(m_proc, signature.result));
     patchpoint->effects.terminal = !returns;
+    if (MutatorFenceRecords::isUsed && returns && request.effectsOfCallee.writes.containsOnly(bookkeepingHeaps) && request.effectsOfCallee.alwaysCompletes())
+        m_records.mutatorFences.allocations.set(patchpoint->index());
     patchpoint->setNeedsFrameRecord(readsFrameRecordOfCaller(key.family()));
     patchpoint->setRunsWithoutFrame(!hasSite && !generator().validates() && returns && leavesCallerWithoutFrame(key));
 
@@ -632,7 +674,11 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     Effects effectsSinceThrow = effects;
     effectsSinceThrow.mayCollect |= options.followsThrow;
-    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay);
+    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay, options.pureFunction ? SlotsOfSites::StayAsTheyAre : slotsOfSitesBehindStub(context, effects, !request.entry && key.family() == StubFamily::ClosureOfTable));
+    // The lookup records where it found the name. The effects of a read say nothing of that.
+    static constexpr OpcodeSet lookupsOfPrivateNames { Opcode::PrivateGet, Opcode::PrivateHas };
+    if (context && context->valueID() && lookupsOfPrivateNames.contains(m_function.at(context->valueID()).opcode))
+        m_callsThatLookForPrivateNames.append(patchpoint);
     if (options.pureFunction) {
         RELEASE_ASSERT(!effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState);
         patchpoint->effects.exitsSideways = false;
@@ -647,7 +693,10 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         site = { addSite(*context, options) };
     }
 
-    CallGenerator callGenerator { &m_records, key, signature, receiverIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, site, firstRead, options.throwSite, request.preservingCall };
+    std::optional<MarkOfCallWithoutSite> mark;
+    if (generator().validates() && !hasSite)
+        mark = MarkOfCallWithoutSite { context ? context->valueID() : ValueID(), CalledCode::encode(request.entry ? CalledCode::Kind::Operation : CalledCode::Kind::Stub, calleeNumber) };
+    CallGenerator callGenerator { &m_records, key, signature, receiverIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, site, firstRead, options.throwSite, request.preservingCall, mark };
     patchpoint->setGenerator([callGenerator = WTF::move(callGenerator)](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         callGenerator.generate(jit, params);
     });
@@ -668,7 +717,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         }
         return { };
     }
-    if (effects.mayThrow)
+    if ((effects.mayThrow || mayFailToAllocate) && site)
         emitter<ExceptionEmitter>().attachLandingPad(*context, patchpoint, *site, returns);
     if (neverReturns) {
         m_out.appendTo(newBlock());
@@ -726,13 +775,16 @@ StubCallResult RuntimeCallEmitter::callStubForTwoReads(const OperationContext& c
 B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationContext& context, const CallPatchpointRequest& request)
 {
     Effects effects = effectsOfCall(context, request.effects);
+    // If no handler of the function catches it, a stack overflow in the callee ends the function: none of its code runs after that call.
+    if (!effects.mayThrowOtherThanStackOverflow() && !emitter<ExceptionEmitter>().unwindsWithinFunction(context))
+        effects.mayThrow = false;
     if (effects.mayCollect)
         emitter<BarrierEmitter>().validateBeforeCollection(context);
 
     B3::PatchpointValue* patchpoint = request.holdsUniqueRecord ? m_out.patchpointWithUniqueRecord(request.resultType) : m_out.patchpoint(request.resultType);
     patchpoint->clobberEarly(request.earlyClobbered);
     patchpoint->clobberLate(request.lateClobbered);
-    applyEffects(patchpoint, effects, request.argumentBufferAccess);
+    applyEffects(patchpoint, effects, request.argumentBufferAccess, false, CellConversions::AsEffectsSay, request.callsStub ? slotsOfSitesBehindStub(&context, effects) : SlotsOfSites::MayChange);
     patchpoint->setRunsWithoutFrame(request.runsWithoutFrame);
     patchpoint->effects.terminal = request.neverReturns;
     return patchpoint;
@@ -740,7 +792,7 @@ B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationCon
 
 void RuntimeCallEmitter::finishCallPatchpoint(const OperationContext& context, B3::PatchpointValue* patchpoint, uint32_t site, const CallPatchpointRequest& request)
 {
-    if (request.effects.mayThrow)
+    if (request.effects.mayThrow || request.effects.mayCollect)
         emitter<ExceptionEmitter>().attachLandingPad(context, patchpoint, site, !request.neverReturns);
     if (request.neverReturns)
         m_out.appendTo(newBlock());
@@ -771,12 +823,21 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     BuiltinID calledBuiltin = options.calledBuiltin;
     if (!calledBuiltin && value && Value::opcodesWithCalledBuiltin.contains(value->opcode))
         calledBuiltin = value->calledBuiltin();
-    bool standsForCallee = origin.isTailCall && !options.isTailCall && !options.constructs;
+    // Steps of a built-in function that were expanded into its caller record the caller's site and name the function.
+    if (BuiltinID builtinOfFrame = origin.inlineFrame ? m_function.inlineFrames[origin.inlineFrame].calledBuiltin : BuiltinID()) {
+        const auto& frame = m_function.inlineFrames[origin.inlineFrame];
+        calledBuiltin = builtinOfFrame;
+        origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isTailCall = frame.isTailCall, .isPartOfConstruction = frame.callIsPartOfConstruction };
+    }
+    // No stack trace lists a function that only built-in code can name.
+    if (calledBuiltin && BuiltinBindings::linkTimeConstantOf(calledBuiltin))
+        calledBuiltin = { };
+    bool standsForCallee = calledBuiltin ? (origin.isTailCall || options.isTailCall) && !options.constructs : origin.isTailCall && !options.isTailCall && !options.constructs;
     // A call, and the read of the method that it calls, can throw before the callee begins.
     bool isInsideCallee = standsForCallee && (calledBuiltin || !value || !runsBeforeCalleeOf(value->opcode));
     std::optional<CallSiteKind> kind = findCallSiteKind({ .isConstruct = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall, .isInsideCallee = isInsideCallee, .namesBuiltin = !!calledBuiltin });
     RELEASE_ASSERT(kind);
-    return { .origin = origin, .kind = *kind, .calledBuiltin = calledBuiltin };
+    return { .origin = origin, .kind = *kind, .calledBuiltin = calledBuiltin, .constructedCallee = options.constructedCallee, .callsOwnFunctionObject = options.callsOwnFunctionObject, .keptCalleePlusOne = options.keptCalleePlusOne };
 }
 
 uint32_t RuntimeCallEmitter::addSite(const OperationContext& context, const CallOptions& options)
@@ -814,7 +875,12 @@ Pointer RuntimeCallEmitter::uninitializedArgumentBuffer(unsigned numberOfWords)
 
 Effects RuntimeCallEmitter::effectsOfCall(const OperationContext& context, const Effects& effectsOfCallee) const
 {
-    Effects effects = context.effects().onAnyEdge().intersectedWith(effectsOfCallee);
+    return effectsOfCall(context.effects(), effectsOfCallee);
+}
+
+Effects RuntimeCallEmitter::effectsOfCall(const EffectsOnEdges& effectsOfOperation, const Effects& effectsOfCallee) const
+{
+    Effects effects = effectsOfOperation.onAnyEdge().intersectedWith(effectsOfCallee);
     if (m_options.recorded.isSabotaged(Sabotage::NoCallCollects))
         effects.mayCollect = false;
     if (m_options.recorded.isSabotaged(Sabotage::NoCallWrites))
@@ -827,7 +893,29 @@ bool RuntimeCallEmitter::mayConvertCells(const Effects& effects)
     return AOTHeaps::mayConvertCells(effects) && !build().recordedOptions().has(TestingSwitch::NoCallConvertsCells);
 }
 
-void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions)
+// A slot says what a lookup found. It changes where the operation that it belongs to finds no answer in it, where code of the program runs, and where something is written that a lookup may come by.
+// A collection empties the slot of a Structure that has died, and whatever makes a cell may make a Structure where that one lay: it would pass for the old one by its number.
+RuntimeCallEmitter::SlotsOfSites RuntimeCallEmitter::slotsOfSitesBehindStub(const OperationContext* context, const Effects& effects, bool makesClosureOfTable) const
+{
+    bool hasSlotOfItsOwn = context && context->valueID() && siteCachesOf(m_function.at(context->valueID()).opcode);
+    return hasSlotOfItsOwn || makesClosureOfTable || effects.mayCollect || !effects.writes.containsOnly(heapsWhoseWritesNobodySees) ? SlotsOfSites::MayChange : SlotsOfSites::StayAsTheyAre;
+}
+
+void RuntimeCallEmitter::stateWhichCallsChangeWhatOnlyGeneratedCodeReads()
+{
+    for (const B3::AbstractHeap* heap : { &m_heaps.AOTInstance_siteCaches, &m_heaps.AOTInstance_closureCells, &m_heaps.counters }) {
+        if (!m_heaps.isNamedByMemoryAccess(*heap))
+            continue;
+        for (B3::PatchpointValue* patchpoint : m_callsThatMayChangeSlotsOfSites)
+            m_heaps.decoratePatchpointWrite(heap, patchpoint);
+    }
+    if (m_heaps.isNamedByMemoryAccess(m_heaps.AOTClassToken_records)) {
+        for (B3::PatchpointValue* patchpoint : m_callsThatLookForPrivateNames)
+            m_heaps.decoratePatchpointWrite(&m_heaps.AOTClassToken_records, patchpoint);
+    }
+}
+
+void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions, SlotsOfSites slotsOfSites)
 {
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
 
@@ -835,6 +923,8 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
     patchpoint->effects = B3::Effects::none();
     patchpoint->effects.terminal = isTerminal;
     patchpoint->effects.controlDependent = true;
+    if (slotsOfSites == SlotsOfSites::MayChange && !m_options.recorded.isSabotaged(Sabotage::SlotsOfSitesStayAsTheyAre))
+        m_callsThatMayChangeSlotsOfSites.append(patchpoint);
     bool convertsCells = conversions == CellConversions::WhateverEffectsSay ? !build().recordedOptions().has(TestingSwitch::NoCallConvertsCells) : conversions == CellConversions::AsEffectsSay && mayConvertCells(effects);
     if (effects.isPure() && access == ArgumentBufferAccess::None && !accessesCollectorState && !convertsCells)
         return;
@@ -842,10 +932,17 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
     bool exitsSideways = effects.mayExitSideways();
     B3HeapList reads;
     B3HeapList writes;
+    bool replacesStorageOfArrays = conversions == CellConversions::WhateverEffectsSay || AOTHeaps::mayReplaceStorageOfArrays(effects);
+    bool underreportsWrites = m_options.recorded.isSabotaged(Sabotage::CallsGiveNoArrayOtherStorage) && !effects.writes.isTop();
     m_heaps.appendHeaps(effects.reads, reads);
-    m_heaps.appendHeaps(effects.writes, writes);
+    m_heaps.appendHeaps(underreportsWrites ? effects.writes.without(AbstractHeap::ArrayStorage) : effects.writes, writes);
+    if (m_callsOnlyMoveTables) {
+        writes.removeAll(&m_heaps.entire(AbstractHeap::CollectionStorage));
+        writes.append(&m_heaps.JSMap_storage);
+        writes.append(&m_heaps.JSSet_storage);
+    }
     if (convertsCells)
-        m_heaps.appendHeapsOfConvertedCells(writes);
+        m_heaps.appendHeapsOfConvertedCells(writes, replacesStorageOfArrays && !underreportsWrites ? AOTHeaps::ConvertedCells::All : AOTHeaps::ConvertedCells::AllButArrays);
     if (effects.mayCollect)
         m_heaps.appendHeapsWrittenByCollection(writes);
     else if (accessesCollectorState)

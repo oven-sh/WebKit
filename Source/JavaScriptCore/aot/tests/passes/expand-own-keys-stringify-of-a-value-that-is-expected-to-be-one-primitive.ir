@@ -1,0 +1,39 @@
+# JSON.stringify(texts[i]), where anything may lie in the list and strings are expected. A string builder for one string, number, boolean or null costs more than the call, whether
+# the value is proven to be one or only expected to be: the call stays. Beside it, a value that is expected to be an object, which is expanded.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" module=m0 position=10 fields=[{key="x" declared={type=number}}]
+
+function f0 name="expectedString" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="expectedString"
+# CHECK-NOT: StringBuilderBegin
+# CHECK: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/0
+# CHECK-NEXT: Return v2
+
+function f1 name="expectedNumber" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ number):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="expectedNumber"
+# CHECK-NOT: StringBuilderBegin
+# CHECK: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/0
+
+function f2 name="expectedObject" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="expectedObject"
+# CHECK: = StringBuilderBegin

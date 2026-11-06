@@ -283,6 +283,8 @@ void PreciseAllocation::sweep()
         if (isLowerTierPrecise())
             static_cast<IsoSubspace*>(m_subspace)->clearIsoCellSetBit(this);
         m_hasValidCell = false;
+        if (Options::useZombieMode()) [[unlikely]]
+            scribble(cell(), m_cellSize);
     }
 }
 

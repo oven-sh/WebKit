@@ -378,10 +378,11 @@ static bool tryFileRead(const BindingAccess& access, const PropertySlot& slot, J
     if (!canCachePropertiesOf(globalObject) || slot.isTaintedByOpaqueObject() || slot.slotBase() != globalObject || !value || !slot.isValue())
         return false;
     int64_t location;
+    const bool filesConstants = !access.bindings.filesLocationAlone(access.number);
     if (slot.isCacheableValue()) {
-        if (isFixed(slot, access.name) || globalObject->structure()->isImmutablePropertyForReader(access.uid()))
+        if (filesConstants && (isFixed(slot, access.name) || globalObject->structure()->isImmutablePropertyForReader(access.uid())))
             return access.bindings.fileConstant(access.vm, access.number, nullptr, value);
-        if (access.bindings.fileConstant(access.vm, access.number, globalObject, value))
+        if (filesConstants && access.bindings.fileConstant(access.vm, access.number, globalObject, value))
             return true;
         if (!structureSaysWherePropertiesAre(access))
             return false;
@@ -390,7 +391,7 @@ static bool tryFileRead(const BindingAccess& access, const PropertySlot& slot, J
         SymbolTableEntry::Fast entry = globalObject->symbolTable()->get(access.uid());
         if (entry.isNull())
             return false;
-        if (isConstantVariable(entry, access.name))
+        if (filesConstants && isConstantVariable(entry, access.name))
             return access.bindings.fileConstant(access.vm, access.number, nullptr, value);
         location = locationOfVariable(globalObject, entry);
     }
@@ -429,7 +430,7 @@ static ALWAYS_INLINE JSValue getGlobalBinding(Instance* instance, uint32_t numbe
             JSValue value = lexical->variableAt(entry.scopeOffset()).get();
             if (!value)
                 throwException(globalObject, scope, createTDZError(globalObject, identifier));
-            else if (entry.isReadOnly() && vm.globalConstRedeclarationShouldThrow() && !vm.allowRedeclaringSymbols())
+            else if (entry.isReadOnly() && vm.globalConstRedeclarationShouldThrow() && !vm.allowRedeclaringSymbols() && !access.bindings.filesLocationAlone(number))
                 access.bindings.fileConstant(vm, number, nullptr, value);
             else
                 access.bindings.fileLocation(number, globalObject->structure(), locationOfVariable(lexical, entry));
@@ -652,6 +653,9 @@ void GlobalBindings::fileAbsence(VM& vm, uint32_t number, std::span<JSObject* co
     m_state.chainDependents->add(objects.span(), { nameOf(number).impl(), number, m_chainDependentOwner });
     m_watches.remove(number);
     setConstant(number, jsUndefined(), true);
+    // A read that looks at the location alone finds the answer in the record: any new property changes the Structure, and a change above the global object empties the word.
+    if (filesLocationAlone(number))
+        fileLocation(number, m_state.instance.globalObject->structure(), std::bit_cast<int64_t>(&at(number).constant));
 }
 
 void GlobalBindings::dropChainDependent(VM&, uint32_t number, UniquedStringImpl*)

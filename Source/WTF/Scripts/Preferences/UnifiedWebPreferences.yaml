@@ -1649,6 +1649,16 @@ ContentSecurityPolicyExtensionModeAppliesToAllSchemesForTesting:
   humanReadableDescription: "Apply the extension Content Security Policy mode to documents regardless of their scheme"
   defaultValue: false
 
+ContentSizeCategoryTextScaleEnabled:
+  type: bool
+  status: embedder
+  humanReadableName: "Text scale from the content size category"
+  humanReadableDescription: "Scale font sizes with the user's content size category in pages with <meta name=text-scale content=scale>"
+  webcoreOnChange: setNeedsRecalcStyleInAllFrames
+  defaultValue:
+    "PLATFORM(IOS) || PLATFORM(VISION)": true
+    default: false
+
 ContextMenuQRCodeDetectionEnabled:
   type: bool
   status: embedder
@@ -2747,14 +2757,6 @@ HTMLEnhancedSelectMultipleSelectedContentEnabled:
   humanReadableName: "Enhanced HTML select element selectedcontent for multiple"
   humanReadableDescription: "Clone every option of a select element with the multiple attribute into its selectedcontent elements"
   defaultValue: false
-
-HTMLEnhancedSelectParsingEnabled:
-  type: bool
-  status: stable
-  category: dom
-  humanReadableName: "Enhanced HTML select element parsing"
-  humanReadableDescription: "Enable enhanced HTML select element parsing"
-  defaultValue: true
 
 HTMLEnhancedSelectParsingQuirkEnabled:
   type: bool
@@ -5146,6 +5148,14 @@ RemoteSnapshottingEnabled:
     default: false
   sharedPreferenceForWebProcess: true
 
+RemoteSnapshottingPrintProcessEnabled:
+  type: bool
+  status: internal
+  category: media
+  humanReadableName: "Remote Snapshotting Print Process"
+  humanReadableDescription: "Draw remote snapshot PDFs in a dedicated print process"
+  defaultValue: false
+
 RemoveBackgroundEnabled:
   type: bool
   # FIXME: Change to "embedder" when there is a way to enable/disable embedder features from API tests.
@@ -5298,13 +5308,6 @@ SKAttributionEnabled:
   status: embedder
   humanReadableName: "SKAttribution"
   humanReadableDescription: "SKAttribution"
-  defaultValue: true
-
-SVG2TextLayoutAlgorithmEnabled:
-  type: bool
-  status: internal
-  humanReadableName: "SVG 2 text layout algorithm"
-  humanReadableDescription: "Use the SVG 2 text layout algorithm for SVG text"
   defaultValue: true
 
 SVGExternalResourcesEnabled:
@@ -6393,12 +6396,12 @@ ThreadedScrollingEnabled:
 
 ThreadedTimeBasedAnimationsAtHighFrameRateEnabled:
   type: bool
-  status: unstable
+  status: stable
   category: animation
   humanReadableName: "Threaded Time-based Animations at High Frame Rate"
   humanReadableDescription: "Run qualifying time-based animations on a separate thread at a high frame rate"
   condition: ENABLE(THREADED_ANIMATIONS) && PLATFORM(IOS_FAMILY)
-  defaultValue: false
+  defaultValue: true
 
 ThreadedTimeBasedAnimationsEnabled:
   type: bool
@@ -7136,6 +7139,15 @@ WebAuthenticationASEnabled:
   defaultValue:
     default: true
     WebKitLegacy: false
+
+WebAuthenticationCrossDeviceFallbackURLEnabled:
+  type: bool
+  status: testable
+  category: dom
+  humanReadableName: "Web Authentication cross-device fallback URL"
+  humanReadableDescription: "Enable the Web Authentication crossDeviceFallbackUrl extension"
+  condition: ENABLE(WEB_AUTHN)
+  defaultValue: false
 
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
 WebAuthenticationEnabled:

@@ -1,0 +1,59 @@
+# main.mjs: import * as ns from "./leaf.cjs"; Object.values(ns).map(each => ..); Object.values({ ...ns }).map(each => ..)        leaf.cjs: module.exports = function () {}
+# The namespace object of a CommonJS file has a member for every own name of what the file exports, enumerable or not, and each of them is enumerable there.
+# So a function's `prototype`, `length` and `name` are among the values of the namespace object, and among those of a copy of it.
+# The callbacks call `each.constructor()`: on the object under `prototype` that is the exported function.
+# FORM: AsRead
+# RUN: flow
+# CHECK: function f4 parameter 0 type=anything proven
+# CHECK: function f5 parameter 0 type=anything proven
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f4 v2 -> {{*}}f2
+# CALLS: f5 v2 -> {{*}}f2
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="default" module=m1 declared={type=anything|absent}
+layout L0 name="Copy" fields=[]
+module m0 path="/app/leaf.cjs" displayPath="leaf.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="#1" displayPath="leaf.cjs" flags=[KeepsError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1 isKnownMember=true}]
+module m2 path="/app/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f3 requests=[{target=m1 completes=true}]
+entry module=m2
+function f0 name="leaf" module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f1 name="names of leaf" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    EvaluateModule module=m0 referrer=m1 [isBare]
+    Return
+}
+function f2 name="exported" module=m0 flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f3 name="main" module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectValues
+    v2 = ModuleNamespace module=m1
+    v3 = Call v1, v0, v2
+    v4 = PropGet v3 key="map"
+    v5 = NewClosure function=f4
+    v6 = Call v4, v3, v5 calleeKey="map"
+    v7 = NewObject layout=L0
+    CopyDataProperties v7, v2
+    v9 = Call v1, v0, v7
+    v10 = PropGet v9 key="map"
+    v11 = NewClosure function=f5
+    v12 = Call v10, v9, v11 calleeKey="map"
+    Return
+}
+function f4 name="ofNamespace" module=m2 kind=Arrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="constructor"
+    v2 = Call v1, v0 calleeKey="constructor"
+    Return v0
+}
+function f5 name="ofCopy" module=m2 kind=Arrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="constructor"
+    v2 = Call v1, v0 calleeKey="constructor"
+    Return v0
+}

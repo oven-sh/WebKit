@@ -1463,7 +1463,43 @@ class Instruction
         when "break"
             $asm.puts "brk \#\" STRINGIZE_VALUE_OF(WTF_FATAL_CRASH_CODE) \""
         when "ret"
+            $asm.puts "hint #31" if $currentSettings["RETURN_ADDRESS_SIGNING"] # AUTIBSP
             $asm.puts "ret"
+        when "tagReturnAddress", "untagReturnAddress"
+            # What arm64e.rb does, in hints. The ones that take a modifier other than sp have it in x16 and the pointer in
+            # x17, which hold nothing between two instructions (ARM64_EXTRA_GPRS).
+            if $currentSettings["RETURN_ADDRESS_SIGNING"]
+                raise unless operands.size == 1 and operands[0].is_a? RegisterID
+                sign = opcode == "tagReturnAddress"
+                if operands[0].name == "sp"
+                    $asm.puts "hint ##{sign ? 27 : 31}" # PACIBSP, AUTIBSP
+                else
+                    $asm.puts "mov x16, #{operands[0].arm64Operand(:quad)}"
+                    $asm.puts "mov x17, x30"
+                    $asm.puts "hint ##{sign ? 10 : 14}" # PACIB1716, AUTIB1716
+                    $asm.puts "mov x30, x17"
+                end
+                # See MacroAssemblerARM64::validateUntaggedPtr().
+                $asm.puts "ldrb wzr, [x30]" unless sign
+            end
+        when "tagCodePtr"
+            # With a register for the modifier it signs a return address that is not in lr.
+            if $currentSettings["RETURN_ADDRESS_SIGNING"]
+                raise unless operands.size == 2 and operands.all? { |operand| operand.is_a? RegisterID }
+                $asm.puts "mov x16, #{operands[1].arm64Operand(:quad)}"
+                $asm.puts "mov x17, #{operands[0].arm64Operand(:quad)}"
+                $asm.puts "hint #10" # PACIB1716
+                $asm.puts "mov #{operands[0].arm64Operand(:quad)}, x17"
+            end
+        when "removeCodePtrTag"
+            if $currentSettings["RETURN_ADDRESS_SIGNING"]
+                raise unless operands.size == 1 and operands[0].is_a? RegisterID
+                $asm.puts "mov x17, x30"
+                $asm.puts "mov x30, #{operands[0].arm64Operand(:quad)}"
+                $asm.puts "hint #7" # XPACLRI
+                $asm.puts "mov #{operands[0].arm64Operand(:quad)}, x30"
+                $asm.puts "mov x30, x17"
+            end
         when "cieq", "cbeq"
             emitARM64Compare(operands, :word, "ne")
         when "cpeq"

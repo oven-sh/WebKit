@@ -21,6 +21,9 @@ struct ImageFile {
 // The image becomes the one of the calling thread: a VM that the thread creates from here on runs its program. An executable with several images, which lie in allImages, says so with the first.
 JS_EXPORT_PRIVATE Wire::ImageVerdict useImage(std::span<const uint8_t> image, std::optional<ImageFile>, const std::array<uint8_t, 16>& identity, std::span<const uint8_t> allImages = { });
 
+// Whether useImage() takes an image for a thread that has one already, as a program above it. A build of several programs for one realm asks first.
+JS_EXPORT_PRIVATE bool takesImagesAboveOthers();
+
 // Puts a copy-on-write clone of whole pages of the image in use at the target, read-only, in the place of what is mapped there.
 bool mapPrivateCloneOfImagePages(std::span<const uint8_t> pagesOfImage, void* target);
 

@@ -75,7 +75,7 @@ function f4 name="inCompactCode" parameters=[{type=string}, {type=boolean}] resu
 # CHECK-LABEL: f4: size=
 # CHECK: stub StringEqualsLiteralOfLength{{*}} x1
 
-# A text of 33 units, a text with a unit above 0xFF, and the empty text, which a string equals if its length is 0
+# A text of 33 units, a text with a unit above 0xFF, and the empty text, of which there is one cell
 function f5 name="otherTextsInFastCode" parameters=[{type=string}, {type=anything}] results=[{type=boolean}] {
     Jump -> next b1()
   b1():
@@ -98,5 +98,5 @@ function f5 name="otherTextsInFastCode" parameters=[{type=string}, {type=anythin
 # CHECK: stub StringEqualsLiteral x
 # CHECK-NOT: stub ValueEqualsLiteral
 
-# The two of f0, one each of f1 and f2, and the value of f5 that is asked for the length zero
-# CHECK: statistic StringLiteralsComparedInPlace 5
+# The two of f0, one each of f1 and f2
+# CHECK: statistic StringLiteralsComparedInPlace 4

@@ -1,0 +1,43 @@
+# if (bytes[at]) where the position may lie outside: the integer or the marker is tested for zero as it is, and nothing becomes a double. A number or undefined is tested as a double
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(B3): lower-to-b3 f0
+# RUN(WIDE): lower-to-b3 f1
+# RUN(NUMBER): lower-to-b3 f2
+# REQUIRES(NUMBER): x86_64
+# RUN(ARM64): lower-to-b3 f2
+# REQUIRES(ARM64): arm64
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="byteOrUndefined" parameters=[{type=undefined|int[0, 255]}] results=[{type=boolean}] {
+    v1 = ToBoolean v0 form=Numbers
+    Return v1
+}
+# CHECK-LABEL: function f0 name="byteOrUndefined"
+# CHECK: b0(v0: undefined|int[0, 255] @OptionalInt64):
+# CHECK-NEXT: boolean @Boolean = ToBoolean v0 form=Numbers
+# B3-NOT: IToD
+# B3: Int32 b@[[low]] = Trunc(b@[[word]], v1:ToBoolean)
+# B3-NEXT: = NotEqual(b@[[low]], $0
+
+function f1 name="wideIntegerOrNull" parameters=[{type=undefined|null|int}] results=[{type=boolean}] {
+    v1 = ToBoolean v0 form=Numbers
+    Return v1
+}
+# CHECK-LABEL: function f1 name="wideIntegerOrNull"
+# CHECK: b0(v0: undefined|null|int @OptionalInt64):
+# CHECK-NEXT: boolean @Boolean = ToBoolean v0 form=Numbers
+# WIDE-NOT: IToD
+# WIDE: = Equal(b@[[word]], $0
+
+function f2 name="numberOrUndefined" parameters=[{type=undefined|number}] results=[{type=boolean}] {
+    v1 = ToBoolean v0 form=Numbers
+    Return v1
+}
+# CHECK-LABEL: function f2 name="numberOrUndefined"
+# CHECK: b0(v0: undefined|number @OptionalDouble):
+# CHECK-NEXT: boolean @Boolean = ToBoolean v0 form=Numbers
+# NUMBER: = EqualOrUnordered(b@[[number]], $0.000000
+# ARM64: = Abs(b@[[number]], 
+# ARM64-NEXT: = GreaterThan({{*}}, $0.000000

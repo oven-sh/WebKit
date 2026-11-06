@@ -17,10 +17,12 @@
 #include "AOTFlowResults.h"
 #include "AOTFlowSinkEquations.h"
 #include "AOTFrameAllocationPointers.h"
+#include "AOTFrameMapEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTStubBodyConvention.h"
 #include "AOTStubCatalog.h"
+#include "AOTStubRegisters.h"
 #include "AOTStubsCalls.h"
 #include "AOTThreshold.h"
 #include "AOTThrowEmitter.h"
@@ -68,11 +70,18 @@ Boxed CallEmitter::thisOrUndefined(ValueID id)
     return id ? in<Boxed>(id) : undefined();
 }
 
+static bool readsCalleeFromReceiver(const ValueContext& call)
+{
+    if (PayloadWord::calleeKey(call->opcode))
+        return !!call->calleeKey();
+    return call->opcode == Opcode::CallMethod;
+}
+
 std::optional<ThrowSite> CallEmitter::siteThatNamesCallee(const ValueContext& value)
 {
     if (!value->calleeName())
         return std::nullopt;
-    return ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
+    return ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt, readsCalleeFromReceiver(value) };
 }
 
 Vector<Boxed, 8> CallEmitter::boxedOperands(std::span<const ValueID> ids)
@@ -88,7 +97,7 @@ Vector<Operand, 8> CallEmitter::operandsOf(std::span<const ValueID> ids, const A
     RELEASE_ASSERT(ids.size() == locations.parameters.size());
     Vector<Operand, 8> operands;
     for (size_t i = 0; i < ids.size(); ++i) {
-        RELEASE_ASSERT(representationOf(ids[i]) == locations.parameters[i].representation);
+        RELEASE_ASSERT(isPassedAs(representationOf(ids[i]), locations.parameters[i].representation));
         operands.append(get(ids[i]));
     }
     return operands;
@@ -118,6 +127,30 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
     return placed;
 }
 
+void CallEmitter::markArgumentsLetGoByCallee(B3::PatchpointValue* call, const PlacedArguments& placed)
+{
+    if (placed.letGoByCallee.isEmpty())
+        return;
+    BitVector children;
+    for (unsigned index = 0; index < call->numChildren(); ++index) {
+        if (placed.letGoByCallee.contains(call->child(index)))
+            children.set(index);
+    }
+    call->setChildrenLetGoByCallee(WTF::move(children));
+    m_proc.setReleasesDeadValues(true);
+}
+
+// StackmapValue::childrenLetGoByCallee().
+void CallEmitter::emitClearOfReleasedRegisters(CCallHelpers& jit, const B3::StackmapGenerationParams& params, const RegisterSet& among)
+{
+    RegisterSet released = params.value()->registersToRelease();
+    released.filter(among);
+    released.exclude(params.usedRegisters());
+    released.forEach([&](Reg reg) {
+        jit.move(CCallHelpers::TrustedImm32(0), reg.gpr());
+    });
+}
+
 B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, const CallTarget& target, const PlacedArguments& placed, std::span<const ArgumentLocation> results, const CallOptions& options)
 {
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
@@ -138,14 +171,19 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
     case TargetKind::Stub:
         request.lateClobbered.merge(catalog.summaryOf(target.calledStub).clobbered);
         request.effects = catalog.effectsOf(target.calledStub);
+        request.callsStub = true;
         break;
     }
+    if (options.callerSuspendsAtReturn)
+        request.lateClobbered.merge(calleeSavesClobberedAtSuspensions());
 
     std::optional<Integer> stopsBeforeCall;
     if (generator().validates() && request.effects.mayCollect && !calls.effectsOfCall(context, request.effects).mayCollect)
         stopsBeforeCall = emitter<RuntimeValidationEmitter>().countStopsForCollector();
 
     B3::PatchpointValue* patchpoint = calls.createCallPatchpoint(context, request);
+    if (options.callerSuspendsAtReturn)
+        patchpoint->setNeedsFrameRecord(true);
     for (const B3::ConstrainedValue& argument : placed.inRegisters)
         patchpoint->append(argument);
     for (size_t stackIndex = 0; stackIndex < placed.onStack.size(); ++stackIndex) {
@@ -154,6 +192,7 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
     }
     if (target.kind == TargetKind::Address)
         patchpoint->append(B3::ConstrainedValue(target.calledAddress, B3::ValueRep::reg(valueEntryGPR)));
+    markArgumentsLetGoByCallee(patchpoint, placed);
 
     uint32_t stackWordsToReserve = placed.stackWordsToReserve;
     WTF::Vector<B3::ValueRep, 1> resultConstraints;
@@ -176,6 +215,10 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
     if (stackWordsToReserve)
         m_proc.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(stackWordsToReserve * sizeOfStackWord));
 
+    RELEASE_ASSERT(!options.readBeforeCall || (target.kind == TargetKind::Stub && target.immediate));
+    OptionalIndex firstReadSite;
+    if (options.readBeforeCall)
+        firstReadSite = { calls.addSite(context, { .origin = options.readBeforeCall }) };
     uint32_t site = calls.addSite(context, options);
     B3::Air::StackSlot* keptRegisterStorage = generator().checksKeptRegisters() ? calls.keptRegisterStorage() : nullptr;
     RegisterSet clobbered = request.lateClobbered;
@@ -184,8 +227,11 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
     Vector<uint32_t, 3> wordsOfThrowSite;
     if (options.throwSite)
         wordsOfThrowSite = throwSiteWords(*options.throwSite, Representation::Void, 0);
-    patchpoint->setGenerator([records = &m_records, wordsOfThrowSite = WTF::move(wordsOfThrowSite), stubCalls = &m_records.stubCalls, kind = target.kind, calledFunction = target.calledFunction, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, expectation = target.expectation, passesCallee = target.passesCallee, site = OptionalIndex { site }, keptRegisterStorage, clobbered, caller = m_id, value = context.valueID().index()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    patchpoint->setGenerator([records = &m_records, wordsOfThrowSite = WTF::move(wordsOfThrowSite), stubCalls = &m_records.stubCalls, kind = target.kind, calledFunction = target.calledFunction, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, expectation = target.expectation, passesCallee = target.passesCallee, site = OptionalIndex { site }, firstReadSite, keptRegisterStorage, clobbered, caller = m_id, value = context.valueID().index(), callerSuspendsAtReturn = options.callerSuspendsAtReturn](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
+        emitClearOfReleasedRegisters(jit, params, RegisterSet::allGPRs());
+        if (callerSuspendsAtReturn)
+            FrameMapEmitter::releaseSavedRegisters(jit, params);
         std::optional<KeptRegisterCheck> check;
         if (keptRegisterStorage)
             check = KeptRegisterCheck { clobbered, params.code().addressInFrame(keptRegisterStorage->offsetFromFP()), caller, value, true };
@@ -217,12 +263,12 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
         case TargetKind::Stub:
             if (wordsOfThrowSite.isEmpty()) {
                 if (immediate)
-                    stubCalls->call(jit, calledStub, *immediate, site, keptRegisters);
+                    stubCalls->call(jit, calledStub, *immediate, site, keptRegisters, firstReadSite);
                 else
                     stubCalls->call(jit, calledStub, site, keptRegisters);
             } else {
                 CCallHelpers::Label begin = jit.label();
-                uint32_t returnSite = immediate ? stubCalls->call(jit, calledStub, *immediate, site, keptRegisters) : stubCalls->call(jit, calledStub, site, keptRegisters);
+                uint32_t returnSite = immediate ? stubCalls->call(jit, calledStub, *immediate, site, keptRegisters, firstReadSite) : stubCalls->call(jit, calledStub, site, keptRegisters);
                 records->units.pin(begin, jit.label());
                 records->traps.callThrowSites.append({ returnSite, wordsOfThrowSite });
             }
@@ -231,8 +277,11 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
         RELEASE_ASSERT_NOT_REACHED();
     });
     calls.finishCallPatchpoint(context, patchpoint, site, request);
-    if (options.hasLandingOfMisfit)
+    if (options.hasLandingOfMisfit) {
         m_landingOfLastCall = emitter<ExceptionEmitter>().attachLandingOfMisfit(patchpoint, site);
+        // Whoever comes to the landing has left there what it would have returned. No summary of a callee says so: only the landing reads it.
+        m_heaps.decoratePatchpointWrite(&m_heaps.AOTInstance_misfit, patchpoint);
+    }
     if (stopsBeforeCall) {
         RuntimeValidationEmitter& validation = emitter<RuntimeValidationEmitter>();
         switch (target.kind) {
@@ -363,7 +412,8 @@ NativeCallExpectation CallEmitter::expectationOf(const OperationContext& context
         if (context.valueID()) {
             const Value& call = m_function.at(context.valueID());
             const BuiltinTable& table = m_program.builtins();
-            for (BuiltinID callee : calleesOfCall(m_program, call).builtins)
+            CalleeList callees = calleesOfCall(m_program, call);
+            for (BuiltinID callee : callees.listed().builtins)
                 expectation.name(table.canonicalID(callee));
             call.forEachOperand([&](ValueID operand, uint32_t) {
                 for (BuiltinID handed : typeOf(operand).builtins) {
@@ -410,9 +460,11 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
     LValue countOperand = nullptr;
     if (call.lentArguments) {
         RELEASE_ASSERT(count <= numberOfArgumentGPRs && !(call.lentArguments >> count));
-        conventionCall.stub = callValueLending(count, call.lentArguments);
-    } else
+        conventionCall.stub = callValueLending(count, call.lentArguments, positionOf(context, options));
+    } else {
         chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);
+        conventionCall.stub = conventionCall.stub.withForm(static_cast<uint8_t>(positionOf(context, options)));
+    }
     return callByConvention(context, conventionCall, options);
 }
 
@@ -438,7 +490,10 @@ void CallEmitter::generateCall(const ValueContext& value)
         tailCallValue(value, call);
         return;
     }
-    define(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value) }));
+    // The tail call of an inlined function. A stack trace leaves that function out once the callee is entered, as it does after a real tail call.
+    if (value->isTailCall && mayForwardCallToReceiver(value))
+        requireCallableBeforeTailCall(value, call.callee, call.thisValue);
+    define(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value), .callerSuspendsAtReturn = value.isAwaitedAtOnce() }));
 }
 
 } } } // namespace JSC::AOT::Typed

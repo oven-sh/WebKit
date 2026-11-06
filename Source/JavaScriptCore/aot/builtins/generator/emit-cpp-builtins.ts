@@ -193,6 +193,8 @@ function formatBuiltin(builtin: ModelBuiltin): string {
     ["firstOverload", formatId("BuiltinOverloadID", overloads.length === 0 ? null : overloads[0])],
     ["overloadCount", formatUnlessZero(overloads.length)],
     ["isNamedByText", builtin.hostNumber === noHostNumber ? null : "true"],
+    ["isAddedAtFirstRead", builtin.isAddedAtFirstRead ? "true" : null],
+    ["isAddedAsEnumerable", builtin.isAddedAsEnumerable ? "true" : null],
   ]);
 }
 
@@ -216,7 +218,6 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
     ["constructor", formatId("BuiltinID", builtinClass.constructor)],
     ["prototype", formatId("BuiltinID", builtinClass.prototype)],
     ["type", formatUnlessDefault("JSType", builtinClass.jsType, "CellType")],
-    ["typedArrayType", formatUnlessDefault("TypedArrayType", builtinClass.typedArrayType, "NotTypedArray")],
     ["instanceTest", formatUnlessDefault("BuiltinInstanceTest", builtinClass.instanceTest, "None")],
     ["sharingMode", formatUnlessDefault("ArrayBufferSharingMode", builtinClass.sharingMode ?? "Default", "Default")],
     ["isPrimitiveWrapper", formatUnlessFalse(builtinClass.isPrimitiveWrapper)],
@@ -250,6 +251,7 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
         ),
       ),
     ],
+    ["namesReadToDescribeInstances", classNames.add(builtinClass.namesReadToDescribeInstances.map(name => formatName(name)))],
     [
       "constructorOnlyReadsPrototypeOfNewTarget",
       formatUnlessFalse(builtinClass.constructorOnlyReadsPrototypeOfNewTarget),

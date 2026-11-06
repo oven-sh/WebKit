@@ -23,8 +23,8 @@ function f2 name="logsBeforeThrow" parameters=[{type=boolean}] results=[{type=un
     v3 = Call v2, -, v0
     Throw v0
 }
-# CHECK: f0 return: none throw: none
-# CHECK: f1 return: writes(ModuleVariables/1) throw: none
+# CHECK: f0 return: throwsForLackOfStack throw: throwsForLackOfStack
+# CHECK: f1 return: writes(ModuleVariables/1) throwsForLackOfStack throw: throwsForLackOfStack
 # CHECK: f2 return: throws collects terminates throw: reads(all) writes({{*}}) throws collects callsUnknownCode terminates
 function f3 name="callsWithoutHandler" parameters=[{type=number}, {type=boolean}] results=[{type=undefined}] {
     v2 = CallDirect v0 function=f0
@@ -33,15 +33,16 @@ function f3 name="callsWithoutHandler" parameters=[{type=number}, {type=boolean}
     Return
 }
 # CHECK-LABEL: function f3
-# CHECK-NEXT: v2 CallDirect: none
-# CHECK-NEXT: v3 CallDirect: writes(ModuleVariables/1)
+# CHECK-NEXT: v2 CallDirect: throwsForLackOfStack
+# CHECK-NEXT: v3 CallDirect: writes(ModuleVariables/1) throwsForLackOfStack
 # CHECK-NEXT: v4 CallDirect: throws collects terminates | on throw: reads(all) writes({{*}}) throws collects callsUnknownCode terminates
 # PLAIN-LABEL: function f3
 # PLAIN-NEXT: v2 CallDirect: unknownCode
 # PLAIN-NEXT: v3 CallDirect: unknownCode
 # PLAIN-NEXT: v4 CallDirect: unknownCode
 # ONLY-LABEL: function f3
-# ONLY-NOT: v3 CallDirect:{{*}}throw
+# ONLY: v3 CallDirect: writes(ModuleVariables/1) throwsForLackOfStack
+# ONLY-NOT: v3 CallDirect:{{*}}on throw
 function f4 name="callsUnderHandler" parameters=[{type=number}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: number, v1: boolean) handler=b1():
     v2 = CallDirect v0 function=f1

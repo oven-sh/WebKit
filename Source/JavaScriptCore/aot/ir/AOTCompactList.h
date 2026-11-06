@@ -20,6 +20,29 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+// What the tables of a body point to, written one part behind the other, for a body that is put away (ParkedBody).
+using BodyWords = Vector<uint32_t, 2048>;
+
+class BodyWordsReader {
+public:
+    explicit BodyWordsReader(std::span<const uint32_t> words)
+        : m_words(words)
+    {
+    }
+
+    uint32_t peek(size_t index) const { return m_words[index]; }
+    std::span<const uint32_t> take(size_t numberOfWords)
+    {
+        auto taken = m_words.first(numberOfWords);
+        m_words = m_words.subspan(numberOfWords);
+        return taken;
+    }
+    bool isAtEnd() const { return m_words.empty(); }
+
+private:
+    std::span<const uint32_t> m_words;
+};
+
 struct CompactListHeader {
     uint32_t size;
     uint32_t capacity;
@@ -148,6 +171,24 @@ public:
         }
         setStorage(static_cast<Storage*>(fastRealloc(storage(), sizeof(Storage) + size() * sizeof(T))));
         storage()->capacity = storage()->size;
+    }
+
+    void appendStorageTo(BodyWords& words) const
+    {
+        static_assert(sizeof(T) == sizeof(uint32_t));
+        if (isInline() || storage() == emptyStorage())
+            return;
+        words.append(static_cast<uint32_t>(size()));
+        words.append(std::span { reinterpret_cast<const uint32_t*>(begin()), size() });
+    }
+    // This is a copy, byte for byte, of a list that was written with appendStorageTo().
+    void takeStorageFrom(BodyWordsReader& reader)
+    {
+        if (isInline() || storage() == emptyStorage())
+            return;
+        setStorage(emptyStorage());
+        size_t size = reader.take(1)[0];
+        append(std::span { reinterpret_cast<const T*>(reader.take(size).data()), size });
     }
 
     void append(T element)
@@ -426,6 +467,29 @@ public:
         m_isOutOfLine = false;
         relocate(inlineElements(), elements, m_size);
         fastFree(elements);
+    }
+
+    // Not what the elements point to.
+    void appendStorageTo(BodyWords& words) const
+    {
+        static_assert(alignof(T) <= alignof(uint32_t) && !(sizeof(T) % sizeof(uint32_t)));
+        if (m_isOutOfLine)
+            words.append(std::span { reinterpret_cast<const uint32_t*>(outOfLineElements()), m_size * sizeof(T) / sizeof(uint32_t) });
+    }
+    // This is a copy, byte for byte, of a list that was written with appendStorageTo().
+    void takeStorageFrom(BodyWordsReader& reader)
+    {
+        if (!m_isOutOfLine)
+            return;
+        const T* source = reinterpret_cast<const T*>(reader.take(m_size * sizeof(T) / sizeof(uint32_t)).data());
+        if (m_size <= inlineCapacity) {
+            m_isOutOfLine = false;
+            relocate(inlineElements(), source, m_size);
+            return;
+        }
+        T* elements = static_cast<T*>(fastMalloc(m_size * sizeof(T)));
+        relocate(elements, source, m_size);
+        setOutOfLine(elements, m_size);
     }
 
     void append(T element)
@@ -759,6 +823,23 @@ public:
         m_words = { };
     }
 
+    // Not what the value points to.
+    void appendStorageTo(BodyWords& words) const
+    {
+        static_assert(alignof(T) <= alignof(uint32_t) && !(sizeof(T) % sizeof(uint32_t)) && canMoveWithMemcpy<T>);
+        if (get())
+            words.append(std::span { reinterpret_cast<const uint32_t*>(get()), sizeof(T) / sizeof(uint32_t) });
+    }
+    // This is a copy, byte for byte, of an optional that was written with appendStorageTo().
+    void takeStorageFrom(BodyWordsReader& reader)
+    {
+        if (!get())
+            return;
+        T* value = static_cast<T*>(fastMalloc(sizeof(T)));
+        memcpy(static_cast<void*>(value), reader.take(sizeof(T) / sizeof(uint32_t)).data(), sizeof(T));
+        set(value);
+    }
+
     friend bool operator==(const OutOfLineOptional& a, const OutOfLineOptional& b) { return a && b ? *a == *b : !a == !b; }
     friend bool operator==(const OutOfLineOptional& a, const std::optional<T>& b) { return a && b ? *a == *b : !a == !b; }
     friend bool operator==(const OutOfLineOptional& a, std::nullopt_t) { return !a; }
@@ -775,5 +856,13 @@ private:
 template<typename T> inline constexpr bool canMoveWithMemcpy<OutOfLineOptional<T>> = true;
 
 } } } // namespace JSC::AOT::Typed
+
+namespace JSC { namespace AOT {
+
+template<typename T> inline constexpr bool movesAsBytes<Typed::CompactList<T>> = true;
+template<typename T, unsigned inlineCapacity> inline constexpr bool movesAsBytes<Typed::InlineList<T, inlineCapacity>> = true;
+template<typename T> inline constexpr bool movesAsBytes<Typed::OutOfLineOptional<T>> = true;
+
+} } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

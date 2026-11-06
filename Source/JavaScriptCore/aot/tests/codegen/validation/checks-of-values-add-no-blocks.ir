@@ -1,0 +1,24 @@
+# function same(value) { return value }  with value: Point, and with value: null | string | Point
+# FORM: Selected
+# OPTIONS: validate
+# RUN(ONE): lower-to-b3 f0
+# RUN(UNION): lower-to-b3 f1
+# ONE: Check(
+# ONE-NOT: Branch(
+# UNION: Branch(
+# UNION-NOT: Phi(
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+function f0 name="ofOneLayout" parameters=[{type=L0}] results=[{type=L0}] {
+    Return v0
+}
+function f1 name="ofThreeKinds" parameters=[{type=null|string|L0}] results=[{type=null|string|L0}] {
+    Return v0
+}
+function f2 name="makes" results=[{type=L0}] {
+    v0 = Undefined
+    v1 = Upcast v0 castType=anything
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    Return v2
+}

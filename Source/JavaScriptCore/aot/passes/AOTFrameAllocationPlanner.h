@@ -77,6 +77,7 @@ bool mayPutSomeArrayInFrame(const Program&, const FlowResults&, const BuildConte
 FramePlan planFrame(FunctionAnalyses&, const Heat&);
 // Of a closure or an object: whatever the analyses say of its uses, planFrame() leaves it on the heap and records no more than that and what isLikeEveryClosureOfItsFunction() says.
 bool staysOnHeapByForm(const Program&, const FlowResults&, const BuildContext&, const Function& maker, const Value& allocation);
+bool mayCreateFieldsLater(const Layout&, size_t numberOfFieldsAtAllocation);
 bool isLikeEveryClosureOfItsFunction(const Program&, const FlowResults*, const Function& maker, const Value& closure);
 
 // A closure of the frame in whose place this use is going to take a closure of the heap, which is made in front of it.

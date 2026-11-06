@@ -1,0 +1,15 @@
+# super(...list) goes through the stub that loads the elements of a short list into the registers of the convention. The stub leaves the other lists to the run time.
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code calls
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: operation operationAOTSuperConstructList x
+# CHECK: stub SuperConstructWithArray x1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Derived" constructor=f0 flags=[HasHeritage]
+function f0 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L0
+    Return v4
+}

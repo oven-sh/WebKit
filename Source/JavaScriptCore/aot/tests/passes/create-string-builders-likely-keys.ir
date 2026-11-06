@@ -111,3 +111,19 @@ function f8 name="onlyPassedOnOffTheUsualPath" parameters=[{type=Map}, {type=str
 }
 # CHECK-LABEL: name="onlyPassedOnOffTheUsualPath"
 # CHECK-NOT: isLikelyKey
+
+function f9 name="keyOfWhatIsDeleted" parameters=[{type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Add v1, v2
+    v4 = ElemDelete v0, v3
+    Return v4
+}
+# CHECK-LABEL: name="keyOfWhatIsDeleted"
+# CHECK: v3: string = Strcat v1, v2 [isLikelyKey]
+
+function f10 name="keyOfWhatIsDefined" parameters=[{type=object}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Add v1, v2
+    ElemDefine v0, v3, v2
+    Return v0
+}
+# CHECK-LABEL: name="keyOfWhatIsDefined"
+# CHECK: v3: string = Strcat v1, v2 [isLikelyKey]

@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTEffectSummaries.h"
+#include "AOTFlowResults.h"
 #include "AOTProgramCaches.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
@@ -30,6 +32,9 @@ constexpr OptionSet<FunctionCapabilities> capabilitiesAddedByPasses {
     FunctionCapabilities::RecordsCallee,
     FunctionCapabilities::RecordsCalleeOnceRenamed,
     FunctionCapabilities::NotesLooksForName,
+    FunctionCapabilities::IsLongConstructor,
+    FunctionCapabilities::MakesNoTailCall,
+    FunctionCapabilities::MakesNoTailCallIfConstructed,
 };
 
 bool isSentByFrontEnd(FunctionRole role)
@@ -93,15 +98,18 @@ std::optional<InternalError> findHeaderError(const Program& program, IRForm form
         return InternalError { .kind = InternalErrorKind::ListOutOfBounds, .function = id, .limit = LimitID::MaxCaptures, .count = id.index() };
 
     bool isAsRead = form == IRForm::AsRead && id.index() < program.numberOfFunctionsAsRead();
-    if (hasValidSignature(function)
+    bool hasValidHeader = hasValidSignature(function)
         && hasOnlyTypesThatCrossCalls(program, function)
         && nameOf(function.creator.kind()) == recordOf(function.role)
         && (!isAsRead || isSentByFrontEnd(function.role) || function.role == FunctionRole::EntryChecks)
         && function.capabilities.containsOnly(capabilitiesOf(function.role) | capabilitiesAddedByPasses)
         && hasValidConstructedClass(program, id, function)
-        && (!function.enclosingRuntimeFunction || findRuntimeFunction(program, function.enclosingRuntimeFunction)))
-        return std::nullopt;
-    return InternalError { .kind = InternalErrorKind::InvalidCreatorRecord, .function = id };
+        && (!function.enclosingRuntimeFunction || findRuntimeFunction(program, function.enclosingRuntimeFunction));
+    if (!hasValidHeader)
+        return InternalError { .kind = InternalErrorKind::InvalidCreatorRecord, .function = id };
+    if (!function.blocks.isEmpty() && function.at(entryBlock).parameters.size() != function.numberOfEntryParameters())
+        return InternalError { .kind = InternalErrorKind::EntryParametersMismatch, .function = id };
+    return std::nullopt;
 }
 
 bool hasRole(const Program& program, FunctionID id, FunctionRole role)
@@ -248,6 +256,30 @@ void ProgramVerifier::verifyDerivationChains()
         fail({ .kind = InternalErrorKind::InvalidCreatorRecord, .function = *cyclicFunction });
 }
 
+// The passes removed a guard based on the summaries of the time. Since then a call may have replaced operations in the callee's own body, and its summary may cover more than they did.
+void ProgramVerifier::recheckUnavailableGuards(Vector<InternalError>& errors)
+{
+    auto isAboutGuard = [](const InternalError& error) {
+        return error.kind == InternalErrorKind::GuardNotAvailable;
+    };
+    if (!m_inputs.effects || m_inputs.effects->isEmpty() || !std::ranges::any_of(errors, isAboutGuard))
+        return;
+    FlowResults noResults;
+    EffectSummaries summaries = computeEffectSummariesByOperandTypes(m_program, m_inputs.flow ? *m_inputs.flow : noResults, m_build);
+    VerifierInputs inputs = m_inputs;
+    inputs.effects = &summaries;
+    Vector<FunctionID> functions;
+    for (const InternalError& error : errors) {
+        if (isAboutGuard(error) && !functions.contains(error.function))
+            functions.append(error.function);
+    }
+    errors.removeAllMatching([&](const InternalError& error) {
+        return functions.contains(error.function);
+    });
+    for (FunctionID id : functions)
+        errors.appendVector(findErrorsInFunction(m_program, id, m_program.at(id), m_form, m_build, inputs));
+}
+
 void ProgramVerifier::verifyFunctionBodies()
 {
     std::optional<TypeInterningPhase> scratch;
@@ -274,6 +306,8 @@ void ProgramVerifier::verifyFunctionBodies()
                 found.appendVector(verifier.takeErrors());
         });
     }
+
+    recheckUnavailableGuards(errors);
 
     if (scratch)
         scratch->discard();

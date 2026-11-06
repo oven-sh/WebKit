@@ -20,19 +20,19 @@ static LayoutSetID allocatedMembersExcluding(const TypingContext& context, Layou
 {
     const LayoutSet& familySet = context.types.at(family);
     std::span<const LayoutID> allocatedMembers = context.program.familyTables().allocatedMembersOf(family);
-    if (!excluded && allocatedMembers.size() == familySet.members.size())
+    if (!excluded && allocatedMembers.size() == familySet.written().size())
         return family;
 
     std::span<const LayoutID> excludedMembers;
     if (excluded)
-        excludedMembers = context.types.at(excluded).members.span();
+        excludedMembers = context.types.at(excluded).completeMembers().value();
 
     Vector<LayoutID> remaining;
     remaining.grow(allocatedMembers.size());
     remaining.shrink(std::ranges::set_difference(allocatedMembers, excludedMembers, remaining.begin()).out - remaining.begin());
-    if (remaining.isEmpty() && !familySet.hasMembersWithoutLayout)
+    if (remaining.isEmpty())
         return { };
-    return context.types.intern(LayoutSet { WTF::move(remaining), true, familySet.hasMembersWithoutLayout });
+    return context.types.intern(LayoutSet::complete(WTF::move(remaining)));
 }
 
 static LayoutSetID membersThatCanHold(const TypingContext& context, LayoutSetID family, PropertyKeyID key, const Type& read)
@@ -63,6 +63,11 @@ bool narrowsHolderToNothing(const TypingContext& context, const Type& holder, Pr
         return false;
     result.layouts = membersThatCanHold(context, result.layouts, key, read);
     return result.isNever();
+}
+
+bool narrowsHolderToNothing(const TypingContext& context, const Value& value)
+{
+    return value.opcode == Opcode::NarrowByField && narrowsHolderToNothing(context, context.typeOf(value.valueOperand()), value.key(), context.typeOf(value.readOperand()));
 }
 
 } } } // namespace JSC::AOT::Typed

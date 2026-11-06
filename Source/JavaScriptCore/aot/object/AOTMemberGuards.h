@@ -85,6 +85,9 @@ public:
     }
     bool beginSpeakingOf(uint32_t classSide) { return !m_classSidesSpokenOf.set(classSide); }
     bool beginDisarming(const LayoutData& classLayout) { return !m_disarmedClasses.set(classLayout.index); }
+    // Disarmed, and no guard of the class or of a class below can be set again.
+    bool hasNoGuardLeft(const LayoutData& classLayout) const { return m_classesWithoutGuardsLeft.get(classLayout.index); }
+    void didLeaveNoGuard(const LayoutData& classLayout) { m_classesWithoutGuardsLeft.set(classLayout.index); }
 
     const ImplicitMemberKeys& implicitMemberKeys();
 
@@ -158,6 +161,7 @@ private:
     Vector<uint64_t> m_guardWordsOfExistingClasses;
     BitVector m_classSidesSpokenOf;
     BitVector m_disarmedClasses;
+    BitVector m_classesWithoutGuardsLeft;
     BitVector m_classesWithMembersLeftUnarmed;
     std::optional<ImplicitMemberKeys> m_implicitMemberKeys;
     UncheckedKeyHashMap<uint32_t, NamesOnHolder, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_namesLookedUpBelowClass;

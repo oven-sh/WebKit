@@ -4,12 +4,12 @@
 # RUN(PLACED): pipeline CheckPlacement
 # OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations
 # PLACED: function f4 name="awaits" {{*}}role=CoroutineBody
-# PLACED: function f5 name="yields" {{*}}role=CoroutineBody
+# PLACED: function f10 name="yields" {{*}}role=CoroutineBody
 # CHECK: f4: size={{*}} frame={{*}}@{{*}} prologueChecks=1
 # CHECK-NOT: enteredWithoutStackCheck
-# CHECK: f5: size={{*}} frame={{*}}@{{*}} prologueChecks=1
-# CHECK-NOT: enteredWithoutStackCheck
 # CHECK: f6: size=
+# CHECK: f10: size={{*}} frame={{*}}@{{*}} prologueChecks=1
+# CHECK-NOT: enteredWithoutStackCheck
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

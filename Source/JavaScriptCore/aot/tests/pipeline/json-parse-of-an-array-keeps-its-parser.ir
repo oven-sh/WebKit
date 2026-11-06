@@ -1,0 +1,24 @@
+# const list: P[] = JSON.parse(text); print(list.length)
+# FORM: AsRead
+# RUN: pipeline RemoveUnusedParameters
+# STATISTIC: TypedResultsSelected = 1
+# STATISTIC: ParsersCreated = 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="P" fields=[{key="x" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = ToString v1
+    v3 = Builtin builtin=JSONParse
+    v4 = Call v3, -, v2
+    v5 = Convert v4 declared={type=undefined|null|Array<L0>} illTypedCause=FromLooseType
+    v6 = PropGet v5 key="length"
+    v7 = PropGet v0 key="print" [isFreeName]
+    v8 = Call v7, -, v6
+    Return
+}
+# CHECK: = JSONSourceOpen
+# CHECK: function {{*}}role=Parser

@@ -35,7 +35,7 @@ protected:
         , m_valueID(valueID)
         , m_instruction(instruction)
         , m_analyses(analyses)
-        , m_handler(block.handler && effects().mayThrow() ? &*block.handler : nullptr)
+        , m_handler(block.handler ? &*block.handler : nullptr)
         , m_shape(block.shape)
     {
     }
@@ -87,6 +87,7 @@ public:
     }
 
     const TerminatorContext* returnCall() const { return m_returnCall; }
+    bool isAwaitedAtOnce() const { return m_isAwaitedAtOnce; }
 
 private:
     friend class CodeGenerator;
@@ -100,6 +101,7 @@ private:
     const Value& m_value;
     std::optional<BranchTargets> m_branchTargets;
     const TerminatorContext* m_returnCall { nullptr };
+    bool m_isAwaitedAtOnce { false };
 };
 
 } } } // namespace JSC::AOT::Typed

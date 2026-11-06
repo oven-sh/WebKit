@@ -1,0 +1,37 @@
+# A mock stores into the exports of its module by the module's path: no namespace object is made where flow could see it. The module beside it keeps every proof.
+# RUN: valueflow-apply
+# CHECK: variable g0 {{*}}declared={type=anything} {{*}}flags=[IsReplaceable] flow={cause=ReachesNativeCode}
+# CHECK: variable g1 {{*}}declared={type=f4} {{*}}flow={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled isUnchangedDuringActivation=true}
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f0 v2 -> unknown f3
+# CALLS: f0 v4 -> f4
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="mocked.js" displayPath="mocked.js" flags=[MayBeMocked] body=f1 exports=[{name="add" variable=g0}]
+module m2 path="kept.js" displayPath="kept.js" body=f2 exports=[{name="twice" variable=g1}]
+entry module=m0
+variable g0 name="add" module=m1 declared={type=anything} initialization=Function function=f3 flags=[IsReplaceable]
+variable g1 name="twice" module=m2 declared={type=anything} initialization=Function function=f4
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v3, -, v1
+    Return v4
+}
+function f1 name="mocked" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="kept" module=m2 kind=Module results=[{type=anything}] {
+    Return
+}
+function f3 name="add" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="twice" module=m2 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Add v0, v0
+    Return v1
+}

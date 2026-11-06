@@ -1,0 +1,93 @@
+# A parameter that has one value goes although the body reads it, where nobody enters the function by value: the reduced function makes the value, and no caller passes it
+# FORM: Prepared
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="scale" parameters=[{type=number}, {type=3}] results=[{type=number}] {
+    v2 = Mul v0, v1
+    Return v2
+# CHECK: b0(v0: number, v1: 3):
+# CHECK-NEXT: [[forwarded]]: number = CallDirect v0 function=f7
+# CHECK-NEXT: ReturnCall [[forwarded]] requirement=Allowed
+}
+
+function f1 name="choose" parameters=[{type=true}, {type=undefined}, {type=null}, {type=number}] results=[{type=anything}] {
+    v4 = NewArray v0, v1, v2, v3 contents=anything
+    Return v4
+}
+
+# The callee reads what is passed on, so this function makes it. What it passes on to `scale` goes with the parameter of `scale`.
+function f2 name="passesOn" parameters=[{type=number}, {type=7}, {type=3}] results=[{type=number}] {
+    v3 = CallDirect v0, v1 function=f3
+    v4 = CallDirect v3, v2 function=f0
+    Return v4
+}
+
+function f3 name="add" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Add v0, v1
+    Return v2
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: = Add v0, v1
+}
+
+# Making a string may cost a call.
+function f4 name="greet" parameters=[{type=string}, {type="hello "}] results=[{type=string}] {
+    v2 = Add v1, v0
+    Return v2
+# CHECK-NEXT: b0(v0: string, v1: "hello "):
+# CHECK-NEXT: = Add v1, v0
+}
+
+# A value among the operations of the first block does not reach the handler of that block.
+function f5 name="caught" parameters=[{type=anything}, {type=5}] results=[{type=anything}] {
+  b0(v0: anything, v1: 5) handler=b1(v1):
+    v2 = Call v0, -, v1
+    Return v2
+  b1(v3) role=CatchHandler:
+    v4 = CatchValue
+    Return v3
+# CHECK-NEXT: b0(v0: anything, v1: 5)
+}
+
+function f6 name="callsEach" parameters=[{type=number}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = Integer integer=3
+    v4 = CallDirect v0, v3 function=f0
+    v5 = Boolean boolean=true
+    v6 = Undefined
+    v7 = Null
+    v8 = CallDirect v5, v6, v7, v4 function=f1
+    v9 = Integer integer=7
+    v10 = CallDirect v4, v9, v3 function=f2
+    v11 = CallDirect v10, v4 function=f3
+    v12 = String string="hello "
+    v13 = CallDirect v1, v12 function=f4
+    v14 = Integer integer=5
+    v15 = CallDirect v2, v14 function=f5
+    v16 = NewArray v8, v11, v13, v15 contents=anything
+    Return v16
+# CHECK: [[scaled]]: number = CallDirect v0 function=f7
+# CHECK: = CallDirect [[scaled]] function=f8
+# CHECK: [[passed]]: number = CallDirect [[scaled]] function=f9
+# CHECK: = CallDirect [[passed]], [[scaled]] function=f3
+# CHECK: = CallDirect v1, {{*}} function=f4
+# CHECK: = CallDirect v2, {{*}} function=f5
+}
+
+# CHECK-LABEL: function f7 name="scale"{{*}}parameters=[{type=number}] results=[{type=number}]{{*}}HasOnlyDirectCallers{{*}}derivation={source=f0 parameterMap=[{original=0}]}
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: 3 = Integer integer=3
+# CHECK-NEXT: = Mul v0, v1
+# CHECK-LABEL: function f8 name="choose"{{*}}parameters=[{type=number}]{{*}}derivation={source=f1 parameterMap=[{original=3}]}
+# CHECK-NEXT: b0(v3: number):
+# CHECK-NEXT: v0: true = Boolean boolean=true
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: null = Null
+# CHECK-NEXT: = NewArray v0, v1, v2, v3
+# CHECK-LABEL: function f9 name="passesOn"{{*}}parameters=[{type=number}]{{*}}derivation={source=f2 parameterMap=[{original=0}]}
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: 7 = Integer integer=7
+# CHECK-NEXT: [[sum]]: number = CallDirect v0, v1 function=f3
+# CHECK-NEXT: = CallDirect [[sum]] function=f7
+# CHECK-NOT: function f10

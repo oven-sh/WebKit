@@ -7,8 +7,7 @@
 # ORDER: variable g5 module=m0 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
 # ORDER: variable g6 module=m0 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
 # CHECK: variable g4 module=m0 declared={type=i32
-# "c" is no property key of the program, so flow has no member for it: it is a string like any other
-# CHECK: variable g5 module=m0 declared={type=string}
+# CHECK: variable g5 module=m0 declared={type="c"}
 # CHECK: variable g6 module=m0 declared={type=i32
 
 module m0 path="main.js" displayPath="main.js" body=f0

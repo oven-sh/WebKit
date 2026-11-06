@@ -1,0 +1,60 @@
+# Below a block that edges skip, every join merges its parameters again. In a row of such blocks the values of all of them come together,
+# so the block at which more of them would meet than the limit allows keeps its test, and the next row begins below it
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxValuesMergedAgainBelowThreadedJumps:2
+# RUN: pass ThreadJumps VerifyProgram
+# LOSS: MaxValuesMergedAgainBelowThreadedJumps x1 f0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="valuesOfThreeBlocksAreReadAtTheEnd" parameters=[{type=boolean}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=number}] {
+    v5 = Boolean boolean=true
+    v6 = Boolean
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v5, v1)
+  b2():
+    Jump -> next b3(v6, v2)
+  b3(v7, v8):
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b6(v5, v3)
+  b5():
+    Jump -> next b6(v6, v4)
+  b6(v9, v10):
+    Branch v9 -> taken b7(), notTaken b8()
+  b7():
+    Jump -> next b9(v5, v1)
+  b8():
+    Jump -> next b9(v6, v3)
+  b9(v11, v12):
+    Branch v11 -> taken b10(), notTaken b11()
+  b10():
+    Jump -> next b12(v5, v2)
+  b11():
+    Jump -> next b12(v6, v4)
+  b12(v13, v14):
+    Branch v13 -> taken b13(), notTaken b14()
+  b13():
+    Jump -> next b15(v1)
+  b14():
+    Jump -> next b15(v2)
+  b15(v15):
+    v16 = Add v8, v10
+    v17 = Add v16, v12
+    v18 = Add v17, v14
+    v19 = Add v18, v15
+    Return v19
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next [[first]](v5, v1)
+# CHECK: b4():
+# CHECK-NEXT: Jump -> next [[second]](v5, v3)
+# CHECK: b7():
+# CHECK-NEXT: Jump -> next b9(v5, v1{{*}})
+# CHECK: b8():
+# CHECK-NEXT: Jump -> next b9(v6, v3{{*}})
+# CHECK: b9(v11: boolean, v12: number{{*}}):
+# CHECK-NEXT: Branch v11 -> taken b10(), notTaken b11()
+# CHECK: b10():
+# CHECK-NEXT: Jump -> next [[fourth]](v5, v2)
+}

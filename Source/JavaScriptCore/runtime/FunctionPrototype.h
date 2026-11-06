@@ -53,4 +53,6 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(FunctionPrototype, InternalFunction);
 
+JSC_DECLARE_HOST_FUNCTION(functionProtoFuncToString);
+
 } // namespace JSC

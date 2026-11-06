@@ -2,6 +2,7 @@
 //@ runDefault("--useConcurrentGC=0", "--poisonDecommittedMarkedBlockPages=1")
 //@ runDefault("--poisonDecommittedMarkedBlockPages=1", "--collectContinuously=1")
 //@ runDefault("--poisonDecommittedMarkedBlockPages=1", "--scribbleFreeCells=1")
+//@ runDefault("--poisonDecommittedMarkedBlockPages=1", "--useZombieMode=1")
 
 // Pages of a MarkedBlock that hold no live cell are given back to the OS after a full collection's sweep. Nothing may
 // read them until the block is swept to a free list again: not the next sweeps of a block whose cells have destructors,

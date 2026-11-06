@@ -1,0 +1,9 @@
+# testing=FoldLoadsPastCollections lets instruction selection fold a load into the instruction that uses it although a call that can run the collector stands between them.
+# The read through the pointer then stands behind the call, and behind the last read of the cell: the check of the finished code stops the build. x86-64 alone has instructions that load one of their operands themselves
+# FORM: AsRead
+# OPTIONS: testing=FoldLoadsPastCollections
+# REQUIRES: x86_64 unsanitized-code
+# RUN: compile InnerPointersAcrossSafepoints
+# DIAGNOSTIC: InnerPointerWithoutOwner
+# CHECK: image empty
+# PROGRAM-OF: a-word-read-in-front-of-a-call-that-makes-a-text-is-used-behind-it.ir

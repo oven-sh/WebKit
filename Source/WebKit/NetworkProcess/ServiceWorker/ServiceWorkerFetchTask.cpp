@@ -280,7 +280,7 @@ void ServiceWorkerFetchTask::processRedirectResponse(ResourceResponse&& response
     loader->willSendServiceWorkerRedirectedRequest(ResourceRequest(m_currentRequest), WTF::move(newRequest), WTF::move(response));
 }
 
-void ServiceWorkerFetchTask::didReceiveResponse(WebCore::ResourceResponse&& response, bool needsContinueDidReceiveResponseMessage)
+void ServiceWorkerFetchTask::didReceiveResponse(WebCore::ResourceResponse&& response, const URL& firstResponseURL, bool needsContinueDidReceiveResponseMessage)
 {
     if (m_preloader && !m_preloader->isServiceWorkerNavigationPreloadEnabled())
         cancelPreloadIfNecessary();
@@ -288,10 +288,10 @@ void ServiceWorkerFetchTask::didReceiveResponse(WebCore::ResourceResponse&& resp
     if (auto* loader = m_loader.get())
         loader->setWorkerFinalRouterSource(RouterSourceEnum::FetchEvent);
 
-    processResponse(WTF::move(response), needsContinueDidReceiveResponseMessage, ShouldSetSource::Yes);
+    processResponse(WTF::move(response), firstResponseURL, needsContinueDidReceiveResponseMessage, ShouldSetSource::Yes);
 }
 
-void ServiceWorkerFetchTask::processResponse(ResourceResponse&& response, bool needsContinueDidReceiveResponseMessage, ShouldSetSource shouldSetSource)
+void ServiceWorkerFetchTask::processResponse(ResourceResponse&& response, const URL& firstResponseURL, bool needsContinueDidReceiveResponseMessage, ShouldSetSource shouldSetSource)
 {
     if (m_isDone)
         return;
@@ -318,7 +318,8 @@ void ServiceWorkerFetchTask::processResponse(ResourceResponse&& response, bool n
     }
     if (loader->parameters().options.mode == FetchOptions::Mode::NoCors) {
         Ref sourceOrigin = *loader->parameters().sourceOrigin;
-        if (auto error = validateCrossOriginResourcePolicy(loader->parameters().crossOriginEmbedderPolicy.value, loader->parameters().documentIsolationPolicy.value, sourceOrigin, m_currentRequest.url(), response, ForNavigation::No, loader->connectionToWebProcess().originAccessPatterns())) {
+        CORPViolationReportContext reportContext { loader.get(), loader->contextURLForReport(), loader->parameters().options.destination, firstResponseURL };
+        if (auto error = performCrossOriginResourcePolicyCheck(loader->parameters().crossOriginEmbedderPolicy, loader->parameters().documentIsolationPolicy, sourceOrigin, m_currentRequest.url(), response, ForNavigation::No, loader->connectionToWebProcess().originAccessPatterns(), &reportContext)) {
             didFail(*error);
             return;
         }
@@ -596,7 +597,7 @@ void ServiceWorkerFetchTask::processPreloadResponse()
     }
 
     bool needsContinueDidReceiveResponseMessage = m_currentRequest.requester() == ResourceRequestRequester::Main;
-    processResponse(WTF::move(response), needsContinueDidReceiveResponseMessage, ShouldSetSource::No);
+    processResponse(WTF::move(response), m_currentRequest.url(), needsContinueDidReceiveResponseMessage, ShouldSetSource::No);
     if (needsContinueDidReceiveResponseMessage)
         return;
 
@@ -742,7 +743,7 @@ void ServiceWorkerFetchTask::respondWithCacheResponse(std::optional<DOMCacheEngi
         response.setURL(URL { m_currentRequest.url() });
 
     bool needsContinueDidReceiveResponseMessage = m_currentRequest.requester() == ResourceRequestRequester::Main;
-    processResponse(WTF::move(response), needsContinueDidReceiveResponseMessage, ShouldSetSource::No);
+    processResponse(WTF::move(response), m_currentRequest.url(), needsContinueDidReceiveResponseMessage, ShouldSetSource::No);
     if (needsContinueDidReceiveResponseMessage) {
         m_cacheRecord = WTF::move(*record);
         return;

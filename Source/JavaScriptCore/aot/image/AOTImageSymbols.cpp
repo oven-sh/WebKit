@@ -27,6 +27,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/ProcessID.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringHash.h>
@@ -291,7 +292,8 @@ static unsigned countDescribedTypes(std::span<const uint8_t> tableBytes)
 void writeMapFile(const UTF8CString& path, std::span<const ImageSymbol> symbols, const ImageSymbolInputs& inputs, std::span<const uint8_t> image, const BuildContext& context)
 {
     // A build with several entry points compiles an image for each: the first map has the name that was asked for, the next ones that name and ".1", ".2" ..
-    String name = String::fromUTF8(path.span());
+    // The layers and the pieces of a test run are built by a process each, which all get the one name from their environment: "%p" stands for the number of the process.
+    String name = makeStringByReplacingAll(String::fromUTF8(path.span()), "%p"_s, String::number(getCurrentProcessID()));
     unsigned number = [&] {
         static Lock lock;
         static NeverDestroyed<HashMap<String, unsigned>> mapsWritten;

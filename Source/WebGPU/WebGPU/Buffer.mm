@@ -40,7 +40,6 @@
 #if ENABLE(WEBGPU_SWIFT)
 #import "CxxBridging.h"
 #import <WebGPU/CxxBridgingPublic.h>
-#import <WebGPU/WGPUTextureImpl.h>
 #import <WebGPU/WebGPU.h>
 #import "WebGPUSwift-Generated.h"
 #endif
@@ -739,6 +738,12 @@ void wgpuBufferUnmap(WGPUBuffer buffer)
 void wgpuBufferSetLabel(WGPUBuffer buffer, WGPUStringView label)
 {
     protect(WebGPU::Metal::fromAPI(buffer))->setLabel(WebGPU::Metal::fromAPI(label));
+}
+
+// The size of the descriptor of the buffer.
+uint64_t wgpuBufferGetSize(WGPUBuffer buffer)
+{
+    return WebGPU::Metal::fromAPI(buffer).initialSize();
 }
 
 WGPUBufferUsage wgpuBufferGetUsage(WGPUBuffer buffer)

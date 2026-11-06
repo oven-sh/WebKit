@@ -1,0 +1,19 @@
+# bun test --aot --coverage: function f() { if (a) {} ; if (a) {} }
+# A count is what the report is made of. Nothing reads it in the program, and the same place may count twice in a row.
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="f" results=[{type=undefined}] {
+    CountExecution module=m0 description="main.js" counter=1
+    CountExecution module=m0 description="main.js" counter=2
+    CountExecution module=m0 description="main.js" counter=2
+    Return
+}
+# CHECK-LABEL: function f0 name="f"
+# CHECK: b0(
+# CHECK-NEXT: CountExecution module=m0 description="main.js" counter=1
+# CHECK-NEXT: CountExecution module=m0 description="main.js" counter=2
+# CHECK-NEXT: CountExecution module=m0 description="main.js" counter=2
+# CHECK-NEXT: Return

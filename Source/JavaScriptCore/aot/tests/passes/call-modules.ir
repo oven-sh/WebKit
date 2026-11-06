@@ -4,7 +4,7 @@
 # FORM: Prepared
 # RUN: pass CallModules
 # STATISTIC: ModulesWithState = 2
-# STATISTIC: ModulesWithoutState = 4
+# STATISTIC: ModulesWithoutState = 5
 # CHECK: outcome: Changed
 
 variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
@@ -25,7 +25,7 @@ entry module=m0
 # CHECK: module m3 path="/b.js" displayPath="b.js" requests=
 # CHECK: module m4 path="/c.cjs" displayPath="c.cjs" kind=CommonJs flags=[EvaluatesItself] requireResult=ModuleExports body=f4
 # CHECK: module m5 {{*}}kind=Data exports=
-# CHECK: module m6 path="/empty.js" displayPath="empty.js" body=f6
+# CHECK: module m6 path="/empty.js" displayPath="empty.js" namespaceLayout=
 
 # The CommonJS module stands first among the requests of the entry point, where the front end has put it: it runs before the entry point begins. The run time also calls the start while it loads the entry point:
 # the file runs, and the start returns where the file has queued a job or where the entry point would begin. So the file has a state, and a body that the loader can call.

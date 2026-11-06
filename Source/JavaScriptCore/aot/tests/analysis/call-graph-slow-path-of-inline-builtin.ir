@@ -5,8 +5,8 @@
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="count" declared={type=number} initialization=Undefined
-runtimefunction id=4 function=f5
-runtimefunction id=8 function=f4
+runtimefunction id=FunctionPrototypeApply function=f5
+runtimefunction id=ArrayPrototypeAt function=f4
 
 function f0 name="slowPathInLibrary" role=OutlinedBody parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
@@ -24,13 +24,13 @@ function f3 name="calledByValue" role=OutlinedBody parameters=[{type=builtin(Fun
     v2 = Call v0, v1 callees=[builtin(FunctionPrototypeApply)]
     Return v2
 }
-function f4 name="at" role=Library flags=[HasThis] enclosingRuntimeFunction=8 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f4 name="at" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeAt thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
     v2 = Integer integer=1
     PutModuleVariable v2 variable=g0
     v4 = ElemGet v0, v1
     Return v4
 }
-function f5 name="apply" role=Library flags=[HasThis] enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f5 name="apply" role=Library flags=[HasThis] enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Call v0, v1
     Return v3
 }

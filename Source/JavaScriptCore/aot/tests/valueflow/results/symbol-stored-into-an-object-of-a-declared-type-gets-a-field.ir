@@ -20,7 +20,7 @@ layout L2 name="Untyped" fields=[{key="a" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
     v1 = String string="state"
-    v2 = Call v0, -, v1 @100
+    v2 = Call v0, -, v1 callNumber=100 @100
     v3 = Integer integer=1
     v4 = NewObject -, v3 layout=L0 fields=[0]
     v5 = Integer integer=2

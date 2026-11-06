@@ -25,10 +25,11 @@ function f0 name="fractionsOrWhatIsChosen" parameters=[{type=boolean}, {type=fra
 # CHECK-LABEL: function f0 name="fractionsOrWhatIsChosen" module=m0 role=ResultWrapper
 # CHECK: [[call]]:{{*}}= CallDirect v0, v1 function=[[worker]]
 # CHECK-NEXT: [[tag]]: i32 = ResultAt [[call]]
-# CHECK-NEXT: [[cell]]: Array<fractional> = ResultAt [[call]] index=1
-# CHECK-NEXT: [[element]]: fractional = ResultAt [[call]] index=2
-# CHECK: = NewArray [[element]] contents=fractional
-# CHECK: function [[worker]] name="fractionsOrWhatIsChosen" module=m0 role=ResultWorker{{*}}results=[{type=i32}, {type=Array<fractional>}, {type=fractional}]
+# CHECK-NEXT: [[cell]]: unspecified|Array<fractional> = ResultAt [[call]] index=1
+# CHECK-NEXT: [[element]]: fractional|unspecified = ResultAt [[call]] index=2
+# CHECK: [[elementThere]]: fractional = AssumeType [[element]], [[filled1]] provenType=fractional
+# CHECK-NEXT: = NewArray [[elementThere]] contents=fractional
+# CHECK: function [[worker]] name="fractionsOrWhatIsChosen" module=m0 role=ResultWorker{{*}}results=[{type=i32}, {type=unspecified|Array<fractional>}, {type=fractional|unspecified}]
 
 function f1 name="readsTheFirst" parameters=[{type=boolean}, {type=fractional}] results=[{type=anything}] {
     v2 = CallDirect v0, v1 function=f0

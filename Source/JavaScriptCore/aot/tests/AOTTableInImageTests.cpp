@@ -110,7 +110,7 @@ static void checkTableOf(unsigned count, CompactTable::SlotKind expectedSlotKind
     AOT_TEST_CHECK(table.capacity >= count && table.capacity >= 2 && !(table.capacity % 2) && table.capacity <= count + 1);
     AOT_TEST_CHECK(CompactTable::slotKindFor(table.capacity) == expectedSlotKind);
     AOT_TEST_CHECK(!table.hasValues);
-    AOT_TEST_CHECK(reinterpret_cast<const uint8_t*>(table.strings() + table.capacity) == reinterpret_cast<const uint8_t*>(&table) + encoded.size());
+    AOT_TEST_CHECK(reinterpret_cast<const uint8_t*>(table.stringConstants() + table.capacity) == reinterpret_cast<const uint8_t*>(&table) + encoded.size());
     AOT_TEST_CHECK(table.index() == reinterpret_cast<const uint8_t*>(&table) + sizeof(CompactTable));
     if (expectedSlotKind != CompactTable::SlotKind::Tag)
         AOT_TEST_CHECK(4 * static_cast<uint64_t>(count) <= 3 * (static_cast<uint64_t>(1) << table.indexBits));

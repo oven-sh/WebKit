@@ -22,6 +22,7 @@
 #include <limits>
 #include <utility>
 #include <wtf/DataLog.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
@@ -83,21 +84,26 @@ static EffectInputs inputsOfRule(Opcode opcode)
     return EffectInputs::Operands;
 }
 
-static OpcodeEffectFacts computeEffectFactsOf(Opcode opcode)
+enum class OptionalOperands : uint8_t { MayBeGiven, AreOmitted };
+
+static OpcodeEffectFacts computeEffectFactsOf(Opcode opcode, OptionalOperands operands = OptionalOperands::MayBeGiven)
 {
     OpcodeEffectFacts facts { .inputs = inputsOfRule(opcode) };
     if (effectRuleOf(opcode) != EffectRule::Declared)
         return facts;
 
     Effects bound = declaredBoundOf(opcode);
+    AbstractHeapSet heapsLeftAlone = operands == OptionalOperands::AreOmitted ? heapsWrittenForOptionalOperands(opcode) : AbstractHeapSet();
+    bound.writes.remove(heapsLeftAlone);
     bool runsNoOperandCode = !mayRunOperandCode(opcode);
     facts.staysWithinDeclaredBound = runsNoOperandCode && !bound.mayCallUnknownCode;
     if (facts.staysWithinDeclaredBound)
         facts.traits.atMost = EffectTraits(bound);
-    if (isRefinedByValue(opcode, bound))
+    if (isRefinedByValue(opcode, bound) && heapsLeftAlone.isEmpty())
         return facts;
 
     DeclaredRowScan scan = scanDeclaredRow(opcode);
+    scan.writtenHeaps.remove(heapsLeftAlone);
     if (!bound.mayCallUnknownCode) {
         Effects least = bound;
         least.reads = LocationMasks(scan.readHeaps);
@@ -115,13 +121,21 @@ static OpcodeEffectFacts computeEffectFactsOf(Opcode opcode)
 
 const OpcodeEffectFacts& effectFactsOf(Opcode opcode)
 {
-    static const std::array<OpcodeEffectFacts, numberOfOpcodes> factsOfOpcodes = [] {
-        std::array<OpcodeEffectFacts, numberOfOpcodes> result { };
+    static const std::array<OpcodeEffectFacts, numberOfOpcodes>& factsOfOpcodes = *[] {
+        auto result = makeUniqueWithoutFastMallocCheck<std::array<OpcodeEffectFacts, numberOfOpcodes>>();
         for (Opcode member : allMembersOf<Opcode>)
-            result[static_cast<unsigned>(member)] = computeEffectFactsOf(member);
-        return result;
+            (*result)[static_cast<unsigned>(member)] = computeEffectFactsOf(member);
+        return result.release();
     }();
     return factsOfOpcodes[static_cast<unsigned>(opcode)];
+}
+
+const OpcodeEffectFacts& effectFactsOf(const Value& value)
+{
+    static const OpcodeEffectFacts factsOfObjectWithPrototypeOfLayout = computeEffectFactsOf(Opcode::NewObject, OptionalOperands::AreOmitted);
+    if (value.opcode == Opcode::NewObject && !value.prototypeOperand())
+        return factsOfObjectWithPrototypeOfLayout;
+    return effectFactsOf(value.opcode);
 }
 
 static EffectInputs effectInputsOf(TerminatorKind kind)
@@ -137,19 +151,21 @@ static EffectInputs effectInputsOf(TerminatorKind kind)
     return inputsOfKinds[static_cast<unsigned>(kind)];
 }
 
-static EffectInputs effectInputsOf(const Value& value) { return effectFactsOf(value.opcode).inputs; }
+static EffectInputs effectInputsOf(const Value& value) { return effectFactsOf(value).inputs; }
 static EffectInputs effectInputsOf(const Terminator& terminator) { return effectInputsOf(terminator.kind); }
 
-static void addPayload(AnalysisWordHasher& hasher, const Instruction& instruction)
+static void addPayload(AnalysisWordHasher& hasher, const Instruction& instruction, std::optional<unsigned> wordLeftOut = std::nullopt)
 {
     static_assert(numberOfInlinePayloadWords == 3);
     std::array<uint32_t, numberOfInlinePayloadWords> inlinePayload = instruction.inlinePayload();
+    if (wordLeftOut && *wordLeftOut < numberOfInlinePayloadWords)
+        inlinePayload[*wordLeftOut] = 0;
     hasher.add(instruction.flags, inlinePayload[0]);
     hasher.add(inlinePayload[1], inlinePayload[2]);
     std::span<const uint32_t> outOfLinePayload = instruction.outOfLinePayload();
     hasher.add(outOfLinePayload.size());
-    for (uint32_t word : outOfLinePayload)
-        hasher.add(word);
+    for (size_t index = 0; index < outOfLinePayload.size(); ++index)
+        hasher.add(wordLeftOut == index + numberOfInlinePayloadWords ? 0 : outOfLinePayload[index]);
 }
 
 static bool addDefinitionBehindCasts(AnalysisWordHasher& hasher, const Function& function, ValueID id)
@@ -198,7 +214,7 @@ static bool addOperands(AnalysisWordHasher& hasher, const Function& function, co
     return true;
 }
 
-static uint64_t finishStamp(AnalysisWordHasher& hasher, const Function& function, const Instruction& instruction, EffectInputs inputs)
+static uint64_t finishStamp(AnalysisWordHasher& hasher, const Function& function, const Instruction& instruction, EffectInputs inputs, std::optional<unsigned> payloadWordLeftOut = std::nullopt)
 {
     switch (inputs) {
     case EffectInputs::Row:
@@ -209,7 +225,7 @@ static uint64_t finishStamp(AnalysisWordHasher& hasher, const Function& function
     case EffectInputs::DefinitionsBehindCasts:
         break;
     }
-    addPayload(hasher, instruction);
+    addPayload(hasher, instruction, payloadWordLeftOut);
     if (inputs != EffectInputs::Payload && !addOperands(hasher, function, instruction, inputs))
         return 0;
     return hasher.hash && hasher.hash < std::numeric_limits<uint64_t>::max() - 1 ? hasher.hash : 1;
@@ -221,7 +237,9 @@ static uint64_t stampOf(const Function& function, const Value& value, EffectInpu
     hasher.add(static_cast<uint32_t>(value.opcode));
     if (inputs != EffectInputs::Payload)
         hasher.add(value.type.index(), value.expected().predicted().index());
-    return finishStamp(hasher, function, value, inputs);
+    // What a call does follows from its callees and operands. Its site tells it from every other call, and a thousand calls of one set of callees have one answer.
+    std::optional<unsigned> site = effectRuleOf(value.opcode) == EffectRule::Call ? PayloadWord::accessSite(value.opcode) : std::nullopt;
+    return finishStamp(hasher, function, value, inputs, site);
 }
 
 static uint64_t stampOf(const Function& function, const Terminator& terminator, EffectInputs inputs)
@@ -237,7 +255,7 @@ static uint32_t hashOf(const EffectsOnEdges& effectsOnEdges)
     for (const Effects* effects : { &effectsOnEdges.normal, &effectsOnEdges.handler }) {
         hasher.add(effects->reads.mixedWords());
         hasher.add(effects->writes.mixedWords());
-        hasher.add(WTF::packBools(static_cast<bool>(effects->mayThrow), effects->mayThrowByRule(), effects->mayCollect, effects->mayCallUnknownCode, effects->maySuspend, effects->mayBeTerminated));
+        hasher.add(WTF::packBools(static_cast<bool>(effects->mayThrow), effects->mayThrowOtherThanStackOverflow(), effects->mayThrowByRule(), effects->mayCollect, effects->mayCallUnknownCode, effects->maySuspend, effects->mayBeTerminated));
     }
     return static_cast<uint32_t>(hasher.hash);
 }
@@ -482,6 +500,12 @@ FunctionAnalyses::~FunctionAnalyses()
         statistics.count(StatisticID::EffectsKept, numberOfKeptAnswers);
 }
 
+void FunctionAnalyses::reportQuestionBeforeRepair() const
+{
+    if (m_context.build.options().verifiesProgram)
+        m_context.build.diagnostics().add(InternalError { .kind = InternalErrorKind::QuestionBeforeRepair, .function = m_context.id, .pass = currentWork().pass.load(std::memory_order_relaxed) });
+}
+
 Subject FunctionAnalyses::subject(ValueID value) const
 {
     if (!m_context.id)
@@ -522,6 +546,8 @@ static constinit std::atomic<uint64_t> numberOfFormerFrequencies { 0 };
 static constinit CountsByPass useListUpdatesByChangingPass { };
 static constinit std::atomic<uint64_t> valuesOfFunctionsWithUpdatedUseLists { 0 };
 static constinit std::atomic<uint64_t> valuesReadByUseListUpdates { 0 };
+static constinit std::array<std::atomic<uint64_t>, UseLists::numberOfReasonsToMakeAnew> useListsMadeAnewByReason { };
+static constinit std::array<std::atomic<uint64_t>, UseLists::numberOfReasonsToMakeAnew> valuesOfUseListsMadeAnewByReason { };
 
 void FunctionAnalyses::didBuild(FunctionAnalysis analysis)
 {
@@ -536,8 +562,12 @@ void FunctionAnalyses::didBuild(FunctionAnalysis analysis)
 
 void FunctionAnalyses::didBringUseListsUpToDate(const UseLists::Update& update)
 {
-    if (update.hasMadeAnew) {
+    if (update.madeAnewFor != UseLists::ReasonToMakeAnew::None) {
         didBuild(FunctionAnalysis::UseLists);
+        if (m_countsBuilds) [[unlikely]] {
+            useListsMadeAnewByReason[static_cast<unsigned>(update.madeAnewFor)].fetch_add(1, std::memory_order_relaxed);
+            valuesOfUseListsMadeAnewByReason[static_cast<unsigned>(update.madeAnewFor)].fetch_add(update.numberOfValuesRead, std::memory_order_relaxed);
+        }
         return;
     }
     if (m_verifiesUpdates) [[unlikely]]
@@ -631,6 +661,15 @@ void FunctionAnalyses::logBuilds()
     uint64_t valuesRead = valuesReadByUseListUpdates.exchange(0, std::memory_order_relaxed);
     if (updates)
         dataLogLn("AOT analyses: use-lists | brought up to date ", updates, " | behind", changingPasses.toString(), " | in functions of ", valuesHeld, " values | ", valuesRead, " of them read again");
+    static constexpr std::array<ASCIILiteral, UseLists::numberOfReasonsToMakeAnew> reasons { ""_s, "no log"_s, "nothing was kept for an update"_s, "changes forgotten"_s, "much has changed"_s, "much is gone"_s, "a change that the log does not have"_s };
+    StringPrintStream madeAnew;
+    for (unsigned reason = 0; reason < UseLists::numberOfReasonsToMakeAnew; ++reason) {
+        uint64_t values = valuesOfUseListsMadeAnewByReason[reason].exchange(0, std::memory_order_relaxed);
+        if (uint64_t count = useListsMadeAnewByReason[reason].exchange(0, std::memory_order_relaxed))
+            madeAnew.print(" | ", reasons[reason], " ", count, " over ", values, " values");
+    }
+    if (madeAnew.length())
+        dataLogLn("AOT analyses: use-lists | made anew where they were held", madeAnew.toString());
 }
 
 void FunctionAnalyses::dropResultsOfFormerGraph()
@@ -683,6 +722,7 @@ CFG& FunctionAnalyses::cfg()
     dropResultsOfFormerGraph();
     if (!m_controlFlow.cfg) {
         m_controlFlow.cfg.emplace(m_function);
+        m_controlFlow.isReadByUseLists = false;
         m_controlFlow.numberOfBlocks = m_function.blocks.size();
         didBuild(FunctionAnalysis::ControlFlow);
     }
@@ -751,12 +791,14 @@ const UseLists& FunctionAnalyses::useLists()
     }
     if (!m_values.useLists) {
         willComputeValueAnalysis();
-        m_values.useLists.emplace(m_function, cfg());
+        m_values.useLists.emplace(m_function, cfg(), m_changes);
+        m_controlFlow.isReadByUseLists = true;
         m_values.didDropBesideUseLists = false;
         didBuild(FunctionAnalysis::UseLists);
     } else if (!m_values.useLists->isUpToDate()) {
         willComputeValueAnalysis();
-        UseLists::Update update = m_values.useLists->bringUpToDate(cfg());
+        const CFG& graph = cfg();
+        UseLists::Update update = m_values.useLists->bringUpToDate(graph, std::exchange(m_controlFlow.isReadByUseLists, true));
         m_values.didDropBesideUseLists = false;
         didBringUseListsUpToDate(update);
     } else if (m_values.didDropBesideUseLists) [[unlikely]] {
@@ -780,24 +822,28 @@ UseLists* FunctionAnalyses::updatingUseLists()
     return &*m_values.useLists;
 }
 
-static constexpr bool asksForIdentitiesOnlyBeforeEditing(PassID pass) { return pass == PassID::SimplifyControlFlow || pass == PassID::RemoveTrivialParameters; }
+static constexpr EnumeratorBitSet<PassID, numberOfPasses> passesThatAskForIdentitiesOnlyBeforeEditing {
+    PassID::SimplifyControlFlow, PassID::RemoveTrivialParameters, PassID::PropagateBranchConditions, PassID::RemoveRedundantBarriers,
+};
+
+static constexpr bool asksForIdentitiesOnlyBeforeEditing(PassID pass) { return passesThatAskForIdentitiesOnlyBeforeEditing.contains(pass); }
 
 static constexpr EnumeratorBitSet<PassID, numberOfPasses> passesThatMayCompleteIdentitiesLate {
     PassID::FoldConstants, PassID::PropagateBranchConditions, PassID::HoistTestsIntoPredecessors, PassID::ThreadJumps, PassID::EliminateDeadCode,
     PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::CompactBlocks,
 };
 
-void FunctionAnalyses::completeIdentitiesBeforePass()
+void FunctionAnalyses::dropIncompleteIdentitiesBeforePass()
 {
     if (asksForIdentitiesOnlyBeforeEditing(m_runningPass) || passesThatMayCompleteIdentitiesLate.contains(m_runningPass))
         return;
-    m_values.identities->setGraph(&cfg());
-    m_values.identities->complete();
+    willDrop(FunctionAnalysis::Identities);
+    m_values.identities.reset();
 }
 
 const ValueIdentities& FunctionAnalyses::identities()
 {
-    auto evaluation = asksForIdentitiesOnlyBeforeEditing(m_runningPass) ? ValueIdentities::Evaluation::OnDemand : ValueIdentities::Evaluation::Complete;
+    auto evaluation = !m_changes || asksForIdentitiesOnlyBeforeEditing(m_runningPass) ? ValueIdentities::Evaluation::OnDemand : ValueIdentities::Evaluation::Complete;
     if (!m_values.identities) {
         willComputeValueAnalysis();
         m_values.identities.emplace(m_function, cfg(), ValueIdentities::RepeatedWalks::StartAtFirstChangedBlock, &opcodesOfValues(), evaluation);
@@ -1019,7 +1065,7 @@ AnalysisSet FunctionAnalyses::tellUseLists(void (UseLists::*didChange)(Arguments
 
 void FunctionAnalyses::didAddDetachedValue(ValueID)
 {
-    invalidate(valueAnalyses, tellUseLists(&UseLists::didAddValues));
+    invalidate(valueAnalyses, tellUseLists(&UseLists::didChangeWhatTheLogSays));
     m_values.numberOfValues = m_function.values.size();
 }
 
@@ -1041,9 +1087,9 @@ void FunctionAnalyses::didChangeBlock(BlockID block)
     invalidate(valueAnalyses, tellUseLists(&UseLists::didChangeBlock, block));
 }
 
-void FunctionAnalyses::didReplaceUses(ValueID from, ValueID to)
+void FunctionAnalyses::didReplaceUses(ValueID, ValueID)
 {
-    invalidate(valueAnalyses, tellUseLists(&UseLists::didReplaceUses, from, to));
+    invalidate(valueAnalyses, tellUseLists(&UseLists::didChangeWhatTheLogSays));
 }
 
 void FunctionAnalyses::didChangeValuesButNotUses()
@@ -1057,7 +1103,7 @@ void FunctionAnalyses::didChangeControlFlow(std::span<const BlockID> changedBloc
     if (UseLists* useLists = updatingUseLists()) {
         for (BlockID block : changedBlocks)
             useLists->didChangeBlock(block);
-        useLists->didChangeControlFlow();
+        useLists->didChangeWhatTheLogSays();
         broughtUpToDate.add(FunctionAnalysis::UseLists);
     }
     invalidate(allAnalyses, broughtUpToDate);
@@ -1106,7 +1152,7 @@ void FunctionAnalyses::drop(AnalysisSet set)
     if (set.contains(FunctionAnalysis::Identities))
         m_values.identities.reset();
     if (set.contains(FunctionAnalysis::UseLists) && m_values.useLists)
-        m_values.useLists->didChangeEverything();
+        m_values.useLists->didChangeWhatTheLogSays();
     if (set.contains(FunctionAnalysis::NaturalLoops))
         m_controlFlow.naturalLoops.reset();
     if (set.contains(FunctionAnalysis::Dominators))

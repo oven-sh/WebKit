@@ -7,25 +7,48 @@
 #include "MarkedBlockCage.h"
 
 #include "AOTCellFormat.h"
+#include "AOTHeapHooks.h"
 #include "AddressSpaceBudget.h"
+#include "HeapAnalyzer.h"
+#include "HeapIterationScope.h"
+#include "HeapProfiler.h"
+#include "JSArray.h"
+#include "JSCInlines.h"
 #include "MarkedBlock.h"
+#include "MarkedSpaceInlines.h"
 #include "Options.h"
 #include "OwedOutOfMemoryError.h"
 #include "ReservedRangeHeap.h"
 #include "ResourceExhaustion.h"
 #include "StructureAlignedMemoryAllocator.h"
+#include "WeakBlock.h"
+#include "WeakInlines.h"
+#include <algorithm>
+#include <array>
+#include <cstring>
 #include <mutex>
 #include <optional>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/DataLog.h>
+#include <wtf/Deque.h>
+#include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StackPointer.h>
+#include <wtf/Threading.h>
 #include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
+
+#if OS(LINUX) || OS(FREEBSD)
+#include <link.h>
+#endif
+#if OS(UNIX)
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace JSC {
 
@@ -45,6 +68,15 @@ static constexpr size_t reserveChunkSize = MarkedBlock::blockSize;
 // Kept beside the reserve, in one piece, for one cell that is larger than a block.
 static constexpr size_t largeCellReserveSize = MB;
 static constexpr size_t lastReserveDivisor = 4;
+// A VM that has taken no more blocks than this has only just been created.
+static constexpr unsigned numberOfBlocksOfNewVM = 24;
+// The most pieces of the size of a block that a VM of this process has taken until the first statement of the program ran: its blocks, and the chunks it keeps beside them.
+static std::atomic<unsigned> s_numberOfBlocksOfStartedVM { numberOfBlocksOfNewVM };
+// Any of the VMs that share a range can fill it, however few cells another has and wherever they lie. Then all of them find no room at about the same time.
+// So each keeps, from its first blocks on, what a thread usually takes until it has ended alone. They lie in the pages that its first blocks have taken from the range anyway.
+static constexpr unsigned numberOfChunksOfNewVM = 3;
+// What a thread takes beyond that is kept once, for all of them. It is as large as the last of the smallest reserve of a VM.
+static constexpr size_t sharedReserveSize = smallestReserveSize / lastReserveDivisor;
 // A full collection is barren if the program can allocate less than 1/64 of the heap before there is no room again.
 static constexpr size_t barrenCollectionDivisor = 64;
 // After this many barren collections in a row, with no out-of-memory error in between, the error is owed.
@@ -52,8 +84,6 @@ static constexpr unsigned barrenCollectionsUntilError = 4;
 // While the error finds no place to be thrown: after this many a thread that can end alone is asked to, and after this many the process ends.
 static constexpr unsigned barrenCollectionsUntilThreadEnds = 8;
 static constexpr unsigned barrenCollectionsUntilProcessEnds = 16;
-// Creating the error, collections and the frame of a signal reach this far below where the error is thrown, at most.
-static constexpr size_t stackBelowErrorToClear = 64 * KB;
 
 static_assert(smallestUsableSize == smallestCellRangeSize);
 static_assert(!(randomPrefixGranule % MarkedBlock::blockSize));
@@ -72,6 +102,88 @@ static std::once_flag s_initializeOnce;
 static std::optional<MarkedBlockCage::Error> s_initializationError;
 static MarkedBlockCage::ReservationFailure s_reservationFailure;
 static bool s_isGrowable;
+static Lock s_sharedReserveLock;
+static LazyNeverDestroyed<Vector<void*>> s_sharedReserve WTF_GUARDED_BY_LOCK(s_sharedReserveLock);
+
+// Beside the shared reserve, for cells that are larger than a block: one piece of the range, given out in runs of chunks, so that it serves several VMs at once.
+// What is freed goes back to the piece and not to the range: the piece is whole again when the cells are gone.
+class SharedLargeCellReserve {
+public:
+    bool tryKeep(ReservedRangeHeap& range)
+    {
+        Locker locker { m_lock };
+        if (m_start.load(std::memory_order_relaxed))
+            return true;
+        void* piece = range.tryAllocateAligned(MarkedBlock::blockSize, largeCellReserveSize);
+        m_start.store(std::bit_cast<uintptr_t>(piece), std::memory_order_relaxed);
+        return piece;
+    }
+
+    bool contains(const void* pointer) const { return std::bit_cast<uintptr_t>(pointer) - m_start.load(std::memory_order_relaxed) < largeCellReserveSize; }
+
+    bool hasRoom()
+    {
+        Locker locker { m_lock };
+        return m_start.load(std::memory_order_relaxed) && std::ranges::find(m_runs, 0) != m_runs.end();
+    }
+
+    void* tryAllocate(size_t size)
+    {
+        size_t count = (size + reserveChunkSize - 1) / reserveChunkSize;
+        Locker locker { m_lock };
+        uintptr_t start = m_start.load(std::memory_order_relaxed);
+        if (!start || !count || count > numberOfChunks)
+            return nullptr;
+        size_t numberOfFreeChunks = 0;
+        for (size_t index = 0; index < numberOfChunks; ++index) {
+            numberOfFreeChunks = m_runs[index] ? 0 : numberOfFreeChunks + 1;
+            if (numberOfFreeChunks < count)
+                continue;
+            size_t first = index + 1 - count;
+            std::fill_n(m_runs.begin() + first, count, insideRun);
+            m_runs[first] = static_cast<uint8_t>(count);
+            return std::bit_cast<void*>(start + first * reserveChunkSize);
+        }
+        return nullptr;
+    }
+
+    size_t sizeOf(const void* pointer)
+    {
+        Locker locker { m_lock };
+        return numberOfChunksOfRunAt(pointer) * reserveChunkSize;
+    }
+
+    void free(void* pointer)
+    {
+        Locker locker { m_lock };
+        std::fill_n(m_runs.begin() + indexOf(pointer), numberOfChunksOfRunAt(pointer), 0);
+    }
+
+private:
+    static constexpr size_t numberOfChunks = largeCellReserveSize / reserveChunkSize;
+    static constexpr uint8_t insideRun = std::numeric_limits<uint8_t>::max();
+    static_assert(numberOfChunks < insideRun);
+
+    size_t indexOf(const void* pointer) const
+    {
+        uintptr_t offset = std::bit_cast<uintptr_t>(pointer) - m_start.load(std::memory_order_relaxed);
+        RELEASE_ASSERT(offset < largeCellReserveSize && !(offset % reserveChunkSize), offset);
+        return offset / reserveChunkSize;
+    }
+
+    size_t numberOfChunksOfRunAt(const void* pointer) WTF_REQUIRES_LOCK(m_lock)
+    {
+        uint8_t count = m_runs[indexOf(pointer)];
+        RELEASE_ASSERT(count && count != insideRun, count);
+        return count;
+    }
+
+    Lock m_lock;
+    std::atomic<uintptr_t> m_start { 0 };
+    // For the first chunk of a run the number of its chunks, for a free chunk 0.
+    std::array<uint8_t, numberOfChunks> m_runs WTF_GUARDED_BY_LOCK(m_lock) { };
+};
+static constinit SharedLargeCellReserve s_sharedLargeCellReserve;
 
 #if ENABLE(AOT)
 static void makeEmptyExtensionReadable(uintptr_t start)
@@ -83,9 +195,57 @@ static void makeEmptyExtensionReadable(uintptr_t start)
 #if OS(UNIX) && !PLATFORM(PLAYSTATION)
     OSAllocator::protect(page, pageSize(), true, false);
 #endif
+#if !OS(LINUX)
     OSAllocator::commit(page, pageSize(), false, false);
+#endif
 }
 #endif
+
+// 0 where no address in the image fits in 32 bits.
+static uintptr_t endOfImageBelow4GB()
+{
+    uintptr_t start = std::numeric_limits<uintptr_t>::max();
+    uintptr_t end = 0;
+#if OS(LINUX) || OS(FREEBSD)
+    struct Bounds {
+        uintptr_t& start;
+        uintptr_t& end;
+    } bounds { start, end };
+    dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* data) {
+        // The executable is the object that contains this code. Its position in the iteration order depends on the C library.
+        static constexpr uint8_t byteInExecutable { };
+        bool isExecutable = false;
+        uintptr_t start = std::numeric_limits<uintptr_t>::max();
+        uintptr_t end = 0;
+        for (unsigned index = 0; index < info->dlpi_phnum; ++index) {
+            const auto& header = info->dlpi_phdr[index];
+            if (header.p_type != PT_LOAD)
+                continue;
+            uintptr_t address = info->dlpi_addr + header.p_vaddr;
+            isExecutable |= std::bit_cast<uintptr_t>(&byteInExecutable) - address < header.p_memsz;
+            start = std::min(start, address);
+            end = std::max<uintptr_t>(end, address + header.p_memsz);
+        }
+        if (!isExecutable)
+            return 0;
+        auto& bounds = *static_cast<Bounds*>(data);
+        bounds.start = start;
+        bounds.end = end;
+        return 1;
+    }, &bounds);
+#endif
+    return start <= std::numeric_limits<uint32_t>::max() ? end : 0;
+}
+
+size_t MarkedBlockCage::distanceOfStartFromBase()
+{
+    static const size_t result = [] {
+        constexpr size_t granule = 32 * MB;
+        uint64_t endOfImage = endOfImageBelow4GB();
+        return static_cast<size_t>(std::min<uint64_t>(roundUpToMultipleOf<granule>(endOfImage << shift), maxSize / 2));
+    }();
+    return result;
+}
 
 static size_t remainingAddressSpace() WTF_REQUIRES_LOCK(s_poolLock)
 {
@@ -95,6 +255,9 @@ static size_t remainingAddressSpace() WTF_REQUIRES_LOCK(s_poolLock)
 
 static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t randomPrefixRange, size_t initialSegmentSize = 0) WTF_REQUIRES_LOCK(s_poolLock)
 {
+    size_t distanceFromBase = MarkedBlockCage::distanceOfStartFromBase();
+    size = std::min(size, static_cast<size_t>(MarkedBlockCage::maxSize) - distanceFromBase);
+    minSize = std::min(minSize, size);
     RELEASE_ASSERT(minSize >= smallestUsableSize && minSize <= size, minSize, size);
     RELEASE_ASSERT(randomPrefixRange >= randomPrefixGranule && unusedPrefixSize + randomPrefixRange < minSize, randomPrefixRange, minSize);
 
@@ -106,7 +269,7 @@ static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t ran
     uint64_t random = Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber<uint64_t>();
     size_t prefixSize = unusedPrefixSize + random % (randomPrefixRange / randomPrefixGranule) * randomPrefixGranule;
 
-    ReservedRangeHeap* range = ReservedRangeHeap::tryCreate({
+    ReservedRangeHeap::Request request {
         .name = "Cell Cage"_s,
         .size = size,
         .minSize = minSize,
@@ -117,14 +280,39 @@ static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t ran
         .usage = OSAllocator::FastMallocPages,
         .placement = ReservedRangeHeap::Placement::RandomWindow,
         .initialAccess = ReservedRangeHeap::InitialAccess::None,
-    });
+        .firstSegmentSize = GB,
+    };
+    ReservedRangeHeap* range = nullptr;
+    bool reservesAllAboveBase = !distanceFromBase || !hasAddressSpaceLimit();
+    if (reservesAllAboveBase) {
+        request.reservedSizeBelowStart = distanceFromBase;
+        range = ReservedRangeHeap::tryCreate(request);
+    }
+#if OS(UNIX)
+    // Under a limit on address space nothing is reserved between what lies at the base and the range.
+    constexpr unsigned maxPlacements = 4;
+    for (unsigned attempt = 0; !reservesAllAboveBase && !range && attempt < maxPlacements; ++attempt) {
+        void* base = ReservedRangeHeap::tryReserveRandomWindow(unusedPrefixSize, MarkedBlockCage::maxSize, request.usage, false);
+        if (!base)
+            base = OSAllocator::tryReserveUncommittedAligned(unusedPrefixSize, MarkedBlockCage::maxSize, request.usage, nullptr, false);
+        if (!base)
+            return nullptr;
+        RELEASE_ASSERT(!mprotect(base, unusedPrefixSize, PROT_NONE));
+        request.placement = ReservedRangeHeap::Placement::AtStart;
+        request.start = std::bit_cast<uintptr_t>(base) + distanceFromBase;
+        request.unreservedPrefixSize = unusedPrefixSize;
+        range = ReservedRangeHeap::tryCreate(request);
+        if (!range)
+            OSAllocator::releaseDecommitted(base, unusedPrefixSize, 0);
+    }
+#endif
     if (!range)
         return nullptr;
 
-    RELEASE_ASSERT(!(range->start() & (MarkedBlockCage::maxSize - 1)), range->start(), range->size());
+    RELEASE_ASSERT(!((range->start() - distanceFromBase) & (MarkedBlockCage::maxSize - 1)), range->start(), range->size());
     s_totalReservedSize += range->reservedSize();
 #if ENABLE(AOT)
-    makeEmptyExtensionReadable(range->start());
+    makeEmptyExtensionReadable(range->start() - distanceFromBase);
 #endif
     return range;
 }
@@ -141,6 +329,10 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
             return;
         }
 
+        {
+            Locker locker { s_sharedReserveLock };
+            s_sharedReserve.construct();
+        }
         Locker locker { s_poolLock };
         s_freeRanges.construct();
         if (size < smallestUsableSize) {
@@ -168,41 +360,46 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
     return { };
 }
 
+// The pieces are handed to the VM that needs them as they are: a piece that a thread gives back lies in a page of the thread that took it, where no other thread finds it.
+static bool tryKeepSharedReserve(ReservedRangeHeap& range, size_t maxNumberOfChunksToTake = std::numeric_limits<size_t>::max())
+{
+    if (!s_sharedLargeCellReserve.tryKeep(range))
+        return false;
+    Locker locker { s_sharedReserveLock };
+    while (s_sharedReserve->size() < sharedReserveSize / reserveChunkSize) {
+        void* chunk = maxNumberOfChunksToTake-- ? range.tryAllocateAligned(MarkedBlock::blockSize, reserveChunkSize) : nullptr;
+        if (!chunk)
+            return false;
+        s_sharedReserve->append(chunk);
+    }
+    return true;
+}
+
 bool MarkedBlockCage::tryEnsureRoomForNewVMs(unsigned count)
 {
-    struct Pieces {
-        size_t size;
-        unsigned count;
-    };
-    // The range keeps pieces of different sizes in pages of different sizes, and a thread shares no page with another thread.
-    // These fill the pages that a VM takes until the first statement of a small program runs: 2 of 512 KB for blocks, 12 of 64 KB for cells outside blocks.
-    static constexpr Pieces piecesOfVM[] = { { std::max<size_t>(MarkedBlock::blockSize, 64 * KB), 14 }, { 8 * KB, 84 } };
+    // The range keeps pieces of different sizes in pages of different sizes. These fill the pages that a VM takes until the first statement of a small program runs:
+    // 12 of 64 KB for cells outside blocks, and those of its blocks. The large ones come last: by then the small ones have divided what is free.
+    ReservedRangeHeap::Pieces piecesOfVM[] = { { 8 * KB, 84 }, { MarkedBlock::blockSize, s_numberOfBlocksOfStartedVM.load(std::memory_order_relaxed) } };
     ReservedRangeHeap* range;
+    bool isTaken;
     {
         Locker locker { s_poolLock };
         if (!s_firstRange || !s_isGrowable)
             return true;
         range = s_firstRange;
+        isTaken = s_freeRanges->isEmpty();
     }
-    struct Piece {
-        Piece* next;
-    };
-    Piece* taken = nullptr;
-    bool hasRoom = true;
-    for (unsigned i = 0; i < count; ++i) {
-        for (auto [size, countOfSize] : piecesOfVM) {
-            for (unsigned j = 0; hasRoom && j < countOfSize; ++j) {
-                void* piece = range->tryAllocate(size);
-                hasRoom = !!piece;
-                if (hasRoom)
-                    taken = new (NotNull, piece) Piece { taken };
-            }
-        }
-    }
-    while (taken)
-        range->free(std::exchange(taken, taken->next));
-    range->releaseFreeMemory();
-    return hasRoom;
+    if (isTaken && !tryKeepSharedReserve(*range))
+        return false;
+    // One more: the threads that run take from the range meanwhile.
+    return range->tryEnsureRoomForNewThreads(count + 1, piecesOfVM);
+}
+
+void MarkedBlockCage::willRunProgram()
+{
+    unsigned taken = m_numberOfBlocksTaken.load(std::memory_order_relaxed) + m_reserve.size();
+    unsigned most = s_numberOfBlocksOfStartedVM.load(std::memory_order_relaxed);
+    while (taken > most && !s_numberOfBlocksOfStartedVM.compare_exchange_weak(most, taken, std::memory_order_relaxed)) { }
 }
 
 MarkedBlockCage::MarkedBlockCage()
@@ -210,26 +407,37 @@ MarkedBlockCage::MarkedBlockCage()
     if (!isEnabled())
         return;
 
-    Locker locker { s_poolLock };
-    if (!s_firstRange)
-        return;
+    {
+        Locker locker { s_poolLock };
+        if (!s_firstRange)
+            return;
 
-    // A range that takes address space as it needs it serves every thread: what one of them gives back, another can take.
-    if (!s_freeRanges->isEmpty())
-        m_range = s_freeRanges->takeLast();
-    else if (!s_isGrowable)
-        m_range = tryCreateRange(g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize / randomPrefixDivisor);
-    if (!m_range) {
-        m_range = s_firstRange;
-        m_sharesRange = true;
+        // A range that takes address space as it needs it serves every thread: what one of them gives back, another can take.
+        if (!s_freeRanges->isEmpty())
+            m_range = s_freeRanges->takeLast();
+        else if (!s_isGrowable)
+            m_range = tryCreateRange(g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize / randomPrefixDivisor);
+        if (!m_range) {
+            m_range = s_firstRange;
+            m_sharesRange = true;
+        }
+        m_isInFirstRange = m_range == s_firstRange;
+        m_start = m_range->start();
+        m_base = m_start - distanceOfStartFromBase();
+        m_size = m_range->size();
     }
-    m_base = m_range->start();
-    m_size = m_range->size();
+    if (m_sharesRange)
+        tryKeepSharedReserve(*m_range);
 }
 
 MarkedBlockCage::~MarkedBlockCage()
 {
-    releaseLastReserve();
+    for (void* block : std::exchange(m_spareWeakBlocks, { }))
+        WeakBlockMalloc::free(block);
+    releaseOwnLastReserve();
+    // The blocks of this VM have gone back to the range.
+    if (m_owesSharedReserve)
+        tryKeepSharedReserve(*m_range);
     if (!m_range || m_sharesRange)
         return;
 
@@ -243,8 +451,26 @@ void* MarkedBlockCage::tryAllocateAligned(size_t alignment, size_t size)
     if (!m_range)
         return nullptr;
     void* result = m_range->tryAllocateAligned(alignment, size);
-    if (result)
+    if (result) {
         didAllocate(result, size);
+        m_numberOfBlocksTaken.fetch_add(1, std::memory_order_relaxed);
+    }
+    return result;
+}
+
+void* MarkedBlockCage::tryAllocateAlignedFromSharedReserve(size_t alignment, size_t size)
+{
+    if (!m_usesSharedReserve || alignment > MarkedBlock::blockSize || size > reserveChunkSize)
+        return nullptr;
+    void* result;
+    {
+        Locker locker { s_sharedReserveLock };
+        if (s_sharedReserve->isEmpty())
+            return nullptr;
+        result = s_sharedReserve->takeLast();
+    }
+    m_owesSharedReserve = true;
+    didAllocate(result, size);
     return result;
 }
 
@@ -255,6 +481,8 @@ void* MarkedBlockCage::tryAllocate(size_t size)
     void* result = m_range->tryAllocate(size);
     if (!result && m_hasReleasedReserve && size <= largeCellReserveSize)
         result = std::exchange(m_largeCellReserve, nullptr);
+    if (!result && m_usesSharedReserve)
+        result = s_sharedLargeCellReserve.tryAllocate(size);
     if (result)
         didAllocate(result, size);
     return result;
@@ -264,15 +492,37 @@ void* MarkedBlockCage::tryReallocate(void* pointer, size_t size)
 {
     if (!m_range)
         return nullptr;
+    if (s_sharedLargeCellReserve.contains(pointer)) [[unlikely]] {
+        size_t oldSize = s_sharedLargeCellReserve.sizeOf(pointer);
+        if (size <= oldSize)
+            return pointer;
+        void* result = tryAllocate(size);
+        if (result) {
+            memcpy(result, pointer, oldSize);
+            s_sharedLargeCellReserve.free(pointer);
+        }
+        return result;
+    }
     void* result = m_range->tryReallocate(pointer, size);
-    if (result)
+    if (result) {
         didAllocate(result, size);
+        return result;
+    }
+    // The range has no room. What a new cell of this size gets, this one gets too.
+    result = tryAllocate(size);
+    if (result) {
+        memcpy(result, pointer, std::min(size, m_range->sizeOf(pointer)));
+        m_range->free(pointer);
+    }
     return result;
 }
 
 void MarkedBlockCage::free(void* pointer)
 {
-    m_range->free(pointer);
+    if (s_sharedLargeCellReserve.contains(pointer)) [[unlikely]]
+        s_sharedLargeCellReserve.free(pointer);
+    else
+        m_range->free(pointer);
 }
 
 size_t MarkedBlockCage::reserveSize() const
@@ -283,12 +533,19 @@ size_t MarkedBlockCage::reserveSize() const
 void MarkedBlockCage::keepReserveOnceHalfFull()
 {
 #if CPU(X86_64) || CPU(ARM64)
-    if (!m_range || m_hasReleasedReserve)
+    if (!m_range)
+        return;
+    // What this VM took from the shared reserve goes back once the range has room again, a chunk for each block that the VM takes.
+    if (m_owesSharedReserve) [[unlikely]]
+        m_owesSharedReserve = !tryKeepSharedReserve(*m_range, 1);
+    if (m_hasReleasedReserve)
         return;
     size_t size = std::clamp(m_range->reservedSize() / reserveDivisor, smallestReserveSize, largestReserveSize);
-    if (m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_base + m_range->initialSegmentSize() / 2)
-        return;
-    if (!m_largeCellReserve && std::exchange(m_shouldKeepLargeCellReserve, false))
+    if (m_numberOfBlocksTaken.load(std::memory_order_relaxed) <= numberOfBlocksOfNewVM || m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_start + m_range->initialSegmentSize() / 2) {
+        if (!s_isGrowable && !m_sharesRange)
+            return;
+        size = numberOfChunksOfNewVM * reserveChunkSize;
+    } else if (!m_largeCellReserve && std::exchange(m_shouldKeepLargeCellReserve, false))
         m_largeCellReserve = m_range->tryAllocateAligned(MarkedBlock::blockSize, largeCellReserveSize);
     if (reserveSize() >= size)
         return;
@@ -312,9 +569,39 @@ bool MarkedBlockCage::releaseReserve()
     return true;
 }
 
-bool MarkedBlockCage::tryKeepReleasedReserveAgain()
+bool MarkedBlockCage::hasHeapThatReleasedReserve() const
 {
-    if (!m_hasReleasedReserve || !m_numberOfChunksReleased || m_exhaustedHeap != ExhaustedHeap::Cells)
+    return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Tables, ExhaustedHeap::WeakBlocks });
+}
+
+bool MarkedBlockCage::tryRestoreReleasedReserves(VM& vm)
+{
+    if (!hasHeapThatReleasedReserve())
+        return false;
+    if (m_exhaustedHeaps.contains(ExhaustedHeap::Structures)) {
+        if (!StructureAlignedMemoryAllocator::tryRestoreReleasedReserve())
+            return false;
+        m_exhaustedHeaps.remove(ExhaustedHeap::Structures);
+    }
+    if (m_exhaustedHeaps.contains(ExhaustedHeap::Tables)) {
+        if (!vm.symbolImplToSymbolMap.tryGrowEarly())
+            return false;
+        m_exhaustedHeaps.remove(ExhaustedHeap::Tables);
+    }
+    if (m_exhaustedHeaps.contains(ExhaustedHeap::WeakBlocks)) {
+        if (!tryFillSpareWeakBlocks())
+            return false;
+        m_exhaustedHeaps.remove(ExhaustedHeap::WeakBlocks);
+    }
+    if (m_hasReleasedReserve && !tryRestoreOwnReserve())
+        return false;
+    m_exhaustedHeaps = { };
+    return true;
+}
+
+bool MarkedBlockCage::tryRestoreOwnReserve()
+{
+    if (!m_hasReleasedReserve || !m_numberOfChunksReleased)
         return false;
     size_t numberOfChunksKept = m_reserve.size();
     while (m_reserve.size() < numberOfChunksKept + m_numberOfChunksReleased) {
@@ -332,56 +619,258 @@ bool MarkedBlockCage::tryKeepReleasedReserveAgain()
     return true;
 }
 
+void MarkedBlockCage::didCollectForStructureReserve()
+{
+    bool isFirst = std::exchange(m_pollFillsStructureReserve, false);
+    if (!isFirst && !m_owesStructureReserve)
+        return;
+    m_owesStructureReserve = !StructureAlignedMemoryAllocator::tryFillReserve() && isFirst;
+}
+
 bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
 {
     if (!m_owesCollection || vm.heap.isDeferred())
         return false;
     m_owesCollection = false;
     vm.heap.collectForExhaustedCage();
-    if (!vm.traps().needsOutOfMemoryError() || !tryKeepReleasedReserveAgain())
+    didCollectForStructureReserve();
+    if (!vm.traps().needsOutOfMemoryError())
+        return false;
+    if (!tryRestoreReleasedReserves(vm))
         return false;
     vm.traps().setNeedsOutOfMemoryError(false);
     return true;
 }
 
+static constexpr size_t numberOfWordsCopiedUnderPoll = 2048;
+static constexpr size_t numberOfWordsCopied = 32768;
+static uintptr_t* s_copiedWords;
+static uintptr_t* s_originOfStack;
+static uintptr_t* s_endOfStack;
+static uintptr_t* s_lowestCopiedWord;
+static uintptr_t* s_stackPointerAtPoll;
+static size_t s_numberOfCopiedWords;
+
+static NEVER_INLINE void prepareToCopyWordsOfStack()
+{
+    const StackBounds& bounds = Thread::currentSingleton().stack();
+    s_originOfStack = static_cast<uintptr_t*>(bounds.origin());
+    s_endOfStack = static_cast<uintptr_t*>(bounds.end());
+    s_copiedWords = static_cast<uintptr_t*>(fastMalloc(numberOfWordsCopied * sizeof(uintptr_t)));
+}
+
+#if ASAN_ENABLED
+// Inlined, its loads would be checked as those of its caller are.
+SUPPRESS_ASAN static NEVER_INLINE void copyWordsOfStack(void* stackPointer)
+#else
+static ALWAYS_INLINE void copyWordsOfStack(void* stackPointer)
+#endif
+{
+    s_stackPointerAtPoll = std::bit_cast<uintptr_t*>(std::bit_cast<uintptr_t>(stackPointer) & ~(sizeof(uintptr_t) - 1));
+    s_lowestCopiedWord = static_cast<size_t>(s_stackPointerAtPoll - s_endOfStack) > numberOfWordsCopiedUnderPoll ? s_stackPointerAtPoll - numberOfWordsCopiedUnderPoll : s_endOfStack;
+    s_numberOfCopiedWords = std::min<size_t>(numberOfWordsCopied, s_originOfStack - s_lowestCopiedWord);
+    // From the top down: Windows commits the stack one page at a time.
+    for (size_t index = s_numberOfCopiedWords; index--;)
+        s_copiedWords[index] = s_lowestCopiedWord[index];
+}
+
+namespace {
+
+class HoldersOfLists final : public HeapAnalyzer {
+public:
+    void analyzeNode(JSCell*) final { }
+    void analyzeEdge(JSCell* from, JSCell* to, RootMarkReason reason) final { add(from, to, reason, nullptr); }
+    void analyzePropertyNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* name) final { add(from, to, RootMarkReason::None, name); }
+    void analyzeVariableNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* name) final { add(from, to, RootMarkReason::None, name); }
+    void analyzeIndexEdge(JSCell*, JSCell*, uint32_t) final { }
+    void setOpaqueRootReachabilityReasonForCell(JSCell*, ASCIILiteral) final { }
+    void setWrappedObjectForCell(JSCell*, void*) final { }
+    void setLabelForCell(JSCell*, const String&) final { }
+
+    void didCollect()
+    {
+        std::ranges::sort(m_references, { }, &Reference::to);
+    }
+
+    JSCell* logPathTo(JSCell* target) const
+    {
+        HashMap<JSCell*, const Reference*> stepToward;
+        Deque<JSCell*> queue;
+        stepToward.add(target, nullptr);
+        queue.append(target);
+        while (!queue.isEmpty()) {
+            JSCell* cell = queue.takeFirst();
+            std::span<const Reference> references = referencesTo(cell);
+            auto root = std::ranges::find(references, nullptr, &Reference::from);
+            if (references.empty() || root != references.end()) {
+                if (references.empty())
+                    dataLogLn("AOT full heap |   no cell and no root with a name refers to this ", cell->classInfo()->className, ": the scan of the stack, the registers or a scratch buffer found it");
+                else
+                    dataLogLn("AOT full heap |   a root refers to this ", cell->classInfo()->className, ": ", root->reason);
+                for (JSCell* from = cell; from != target;) {
+                    const Reference* step = stepToward.get(from);
+                    UniquedStringImpl* name = nullptr;
+                    for (const Reference& other : referencesTo(step->to)) {
+                        if (other.from == from && other.name)
+                            name = other.name;
+                    }
+                    dataLogLn("AOT full heap |   ", from->classInfo()->className, name ? " ." : "", name ? String(name) : String(), " > ", step->to->classInfo()->className);
+                    from = step->to;
+                }
+                return cell;
+            }
+            for (const Reference& reference : references) {
+                if (stepToward.add(reference.from, &reference).isNewEntry)
+                    queue.append(reference.from);
+            }
+        }
+        return nullptr;
+    }
+
+private:
+    struct Reference {
+        JSCell* from;
+        JSCell* to;
+        UniquedStringImpl* name;
+        RootMarkReason reason;
+    };
+
+    void add(JSCell* from, JSCell* to, RootMarkReason reason, UniquedStringImpl* name)
+    {
+        if (to->type() == StructureType)
+            return;
+        Locker locker { m_lock };
+        m_references.append(Reference { from, to, name, reason });
+    }
+
+    std::span<const Reference> referencesTo(JSCell* cell) const
+    {
+        auto range = std::ranges::equal_range(m_references, cell, { }, &Reference::to);
+        return { range.begin(), range.end() };
+    }
+
+    Lock m_lock;
+    Vector<Reference> m_references;
+};
+
+} // anonymous namespace
+
+static void logCopiedWordsThatName(VM& vm, JSCell* cell, ASCIILiteral className)
+{
+    auto bytesOverPoll = [](const void* address) {
+        return static_cast<intptr_t>(std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(s_stackPointerAtPoll));
+    };
+    unsigned numberOfWords = 0;
+    for (size_t index = 0; index < s_numberOfCopiedWords; ++index) {
+        if (s_copiedWords[index] != std::bit_cast<uintptr_t>(cell))
+            continue;
+        ++numberOfWords;
+        dataLogLn("AOT full heap |   a word of the stack names this ", className, ": ", bytesOverPoll(s_lowestCopiedWord + index), " bytes over the stack pointer of the function that collects at a poll");
+    }
+    dataLogLn("AOT full heap |   ", numberOfWords, " of the ", s_numberOfCopiedWords, " words copied name it | under 0: frames of the collection, which have returned and may have put it there themselves | the caller's frame is at ", bytesOverPoll(vm.topCallFrame), ", the entry frame at ", bytesOverPoll(vm.topEntryFrame), ", the stack begins at ", bytesOverPoll(s_originOfStack));
+}
+
+static NEVER_INLINE void logHoldersOfLongLists(VM& vm)
+{
+    Vector<std::pair<JSArray*, unsigned>, 8> lists;
+    {
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind))
+                return IterationStatus::Continue;
+            auto* array = dynamicDowncast<JSArray>(static_cast<JSCell*>(cell));
+            if (array && array->length() >= Options::logHoldersOfListsThisLongWhenCageIsFull() && lists.size() < lists.capacity())
+                lists.append({ array, array->length() });
+            return IterationStatus::Continue;
+        });
+    }
+    dataLogLn("AOT full heap | the collection at a poll freed too little | lists of ", Options::logHoldersOfListsThisLongWhenCageIsFull(), " elements and more that outlived it: ", lists.size());
+
+    HoldersOfLists holders;
+    HeapProfiler& profiler = vm.ensureHeapProfiler();
+    profiler.setActiveHeapAnalyzer(&holders);
+    vm.heap.collectForExhaustedCage();
+    profiler.setActiveHeapAnalyzer(nullptr);
+    holders.didCollect();
+
+    for (auto [list, length] : lists) {
+        bool isAlive = vm.heap.isMarked(list);
+        dataLogLn("AOT full heap | a list of ", length, " elements | a second collection from the same place ", isAlive ? "keeps it too" : "lets go of it");
+        logCopiedWordsThatName(vm, list, "list"_s);
+        if (!isAlive)
+            continue;
+        JSCell* first = holders.logPathTo(list);
+        if (first && first != list)
+            logCopiedWordsThatName(vm, first, first->classInfo()->className);
+    }
+}
+
 bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
 {
+    if (m_pollFillsStructureReserve && m_exhaustedHeaps.isEmpty()) {
+        if (vm.heap.isDeferred())
+            return true;
+        m_errorWaitsForPoll = false;
+        m_owesCollection = false;
+        vm.heap.collectForExhaustedCage();
+        didCollectForStructureReserve();
+        vm.traps().setNeedsOutOfMemoryError(false);
+        return true;
+    }
     m_errorWaitsForPoll = false;
+    // A collection takes its own memory from malloc, and malloc has none.
+    if (m_exhaustedHeaps == ExhaustedHeap::ListOfArrayBuffers)
+        return false;
     if (vm.heap.isDeferred() || (m_hasCollectedAtPoll && !m_owesCollection))
         return false;
     m_owesCollection = false;
     m_hasCollectedAtPoll = true;
-    clearDeadStack(vm);
+    bool logsHolders = Options::logHoldersOfListsThisLongWhenCageIsFull();
+    if (logsHolders && !s_copiedWords) [[unlikely]]
+        prepareToCopyWordsOfStack();
     vm.heap.collectForExhaustedCage();
+    if (logsHolders) [[unlikely]]
+        copyWordsOfStack(currentStackPointer());
+    didCollectForStructureReserve();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
-    if (m_hasReleasedReserve) {
-        if (!tryKeepReleasedReserveAgain())
+    if (hasHeapThatReleasedReserve()) {
+        if (!tryRestoreReleasedReserves(vm)) {
+            if (logsHolders) [[unlikely]]
+                logHoldersOfLongLists(vm);
             return false;
-    } else if (m_exhaustedHeap != ExhaustedHeap::Cells)
-        return false;
-    else {
+        }
+    } else {
         // How much the program can allocate now says whether this collection was barren too.
         m_numberOfBarrenCollections = barrenCollectionsUntilError - 1;
+        m_exhaustedHeaps = { };
     }
     vm.traps().setNeedsOutOfMemoryError(false);
     return true;
 }
 
-void* MarkedBlockCage::takeLowestAddressOfDeadStack(VM& vm)
-{
-    uintptr_t lowest = std::bit_cast<uintptr_t>(currentStackPointer());
-    if (void* stackPointerAtError = std::exchange(m_stackPointerAtError, nullptr))
-        lowest = std::min(lowest, std::bit_cast<uintptr_t>(stackPointerAtError));
-    return std::bit_cast<void*>(std::max(lowest - stackBelowErrorToClear, std::bit_cast<uintptr_t>(vm.softStackLimit())));
-}
-
-void MarkedBlockCage::clearDeadStack(VM& vm)
-{
-    sanitizeStackForVMFrom(vm, takeLowestAddressOfDeadStack(vm));
-}
-
 bool MarkedBlockCage::releaseLastReserve()
+{
+    // Both at once: the chunks of this VM are no room for a cell that is larger than a block.
+    bool hasReleased = releaseOwnLastReserve();
+    return tryUseSharedReserve() || hasReleased;
+}
+
+bool MarkedBlockCage::tryUseSharedReserve()
+{
+    if (!m_isInFirstRange || m_usesSharedReserve)
+        return false;
+    {
+        Locker locker { s_sharedReserveLock };
+        if (s_sharedReserve->isEmpty() && !s_sharedLargeCellReserve.hasRoom())
+            return false;
+    }
+    m_usesSharedReserve = true;
+    m_hasReleasedReserve = true;
+    return true;
+}
+
+bool MarkedBlockCage::releaseOwnLastReserve()
 {
     void* largeCellReserve = std::exchange(m_largeCellReserve, nullptr);
     if (largeCellReserve)
@@ -443,7 +932,7 @@ String describeLimitOfMarkedBlockCage()
         return noRoomUnderLimitOnAddressSpace;
     size_t size = g_jscConfig.markedBlockCageSize;
     bool isInGB = !(size % GB);
-    if (size < static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB)
+    if (size < std::min(static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB, static_cast<size_t>(MarkedBlockCage::maxSize) - MarkedBlockCage::distanceOfStartFromBase()))
         return makeString("The limit on address space (ulimit -v) leaves the threads of this executable "_s, size / MB, " MB for JavaScript objects. Raise the limit, or build with --aot-huge-heap."_s);
     return makeString("Each thread of a compiled executable can use "_s, size / (isInGB ? GB : MB), isInGB ? " GB"_s : " MB"_s, " for JavaScript objects. Build with --aot-huge-heap to remove the limit. The executable then uses more memory and runs slower."_s);
 }
@@ -458,23 +947,46 @@ static String describeLimitOfStructureHeap()
 
 String MarkedBlockCage::describeExhaustedLimit() const
 {
-    return m_exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage();
+    return m_exhaustedHeaps.contains(ExhaustedHeap::Structures) ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage();
 }
 
 void MarkedBlockCage::didThrowOutOfMemoryError()
 {
     m_hasReleasedReserve = false;
+    m_usesSharedReserve = false;
     m_shouldKeepLargeCellReserve = true;
     m_errorWaitsForPoll = false;
-    if (std::exchange(m_exhaustedHeap, ExhaustedHeap::Cells) == ExhaustedHeap::Structures)
+    if (std::exchange(m_exhaustedHeaps, { }).contains(ExhaustedHeap::Structures))
         StructureAlignedMemoryAllocator::didThrowOutOfMemoryError();
+}
+
+void MarkedBlockCage::didThrowOutOfMemoryError(VM& vm)
+{
+    bool wasForStructures = m_exhaustedHeaps.contains(ExhaustedHeap::Structures);
+    didThrowOutOfMemoryError();
+    if (!wasForStructures)
+        return;
+    m_owesStructureReserve = false;
+    // No error is owed: whoever looks for one waits for the poll.
+    m_pollFillsStructureReserve = true;
+    m_errorWaitsForPoll = true;
+    vm.traps().setNeedsOutOfMemoryError(true);
 }
 
 void MarkedBlockCage::didCreateOutOfMemoryError()
 {
     m_numberOfBarrenCollections = 0;
     m_hasCollectedAtPoll = false;
-    m_stackPointerAtError = currentStackPointer();
+}
+
+void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
+{
+    didCreateOutOfMemoryError();
+    // A range that grows takes its room from where storage takes it.
+    if (!m_exhaustedHeaps.containsAny({ ExhaustedHeap::Tables, ExhaustedHeap::ListOfArrayBuffers, ExhaustedHeap::WeakBlocks }) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
+        return;
+    vm.traps().setNeedsOutOfMemoryError(false);
+    didThrowOutOfMemoryError(vm);
 }
 
 void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
@@ -494,7 +1006,7 @@ void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
         return;
     m_errorWaitsForPoll = false;
     if (!vm.traps().needsOutOfMemoryError()) {
-        setExhaustedHeap(exhaustedHeap);
+        addExhaustedHeap(exhaustedHeap);
         m_errorWaitsForPoll = !m_hasCollectedAtPoll;
         vm.traps().setNeedsOutOfMemoryError(true);
     }
@@ -510,11 +1022,18 @@ void MarkedBlockCage::logExhaustion(ExhaustedHeap exhaustedHeap)
 {
     if (!isRequired())
         return;
-    // Under a limit on address space nothing may be left to make a String of.
-    if (exhaustedHeap == ExhaustedHeap::Cells && s_isGrowable)
+#if OS(LINUX)
+    // Under a limit on address space nothing may be left to make a String of, or for the host to write a crash report with.
+    if (exhaustedHeap == ExhaustedHeap::Cells && s_isGrowable) {
+        // The threads of a collection get here together. One of them says so and ends the process.
+        static std::atomic_flag isEnding = ATOMIC_FLAG_INIT;
+        while (isEnding.test_and_set())
+            pause();
         dataLogLn("FATAL: out of memory. ", noRoomUnderLimitOnAddressSpace);
-    else
-        dataLogLn("FATAL: out of memory. ", exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage());
+        _exit(EXIT_FAILURE);
+    }
+#endif
+    dataLogLn("FATAL: out of memory. ", exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage());
     if (ExhaustionHandler handler = s_exhaustionHandler.load(std::memory_order_relaxed))
         handler();
 }
@@ -523,6 +1042,11 @@ void logExhaustedAddressSpace()
 {
     if (s_isGrowable)
         MarkedBlockCage::logExhaustion(MarkedBlockCage::ExhaustedHeap::Cells);
+}
+
+void MarkedBlockCage::setCommitsOnDemand(bool commitsOnDemand)
+{
+    ReservedRangeHeap::setCommitsOnDemand(commitsOnDemand);
 }
 
 void MarkedBlockCage::setExhaustionHandler(ExhaustionHandler handler)
@@ -534,6 +1058,66 @@ void MarkedBlockCage::willUseLastReserve(VM& vm)
 {
     if (LastReserveHandler handler = s_lastReserveHandler.load(std::memory_order_relaxed))
         handler(vm);
+    // Loops of the run time that make many cells look for the error that is owed, not for a termination. A thread that is to end leaves them at once.
+    if (vm.hasPendingTermination())
+        vm.traps().setNeedsOutOfMemoryError(true);
+}
+
+void MarkedBlockCage::willAddSymbol(VM& vm)
+{
+    if (!s_isGrowable || vm.symbolImplToSymbolMap.tryGrowEarly()) [[likely]]
+        return;
+    if (vm.traps().needsOutOfMemoryError())
+        return;
+    // A collection takes dead Symbols out of the table. The caller is about to allocate a cell, so it collects here if it may collect at all.
+    if (vm.heap.tryCollectForExhaustedCage(nullptr, nullptr) && vm.symbolImplToSymbolMap.tryGrowEarly())
+        return;
+    vm.heap.cage().addExhaustedHeap(ExhaustedHeap::Tables);
+    vm.traps().setNeedsOutOfMemoryError(true);
+}
+
+void MarkedBlockCage::willAddArrayBuffer(VM& vm)
+{
+    if (!s_isGrowable || vm.heap.tryGrowListOfArrayBuffersEarly()) [[likely]]
+        return;
+    if (vm.traps().needsOutOfMemoryError())
+        return;
+    addExhaustedHeap(ExhaustedHeap::ListOfArrayBuffers);
+    vm.traps().setNeedsOutOfMemoryError(true);
+#if ENABLE(AOT)
+    // The heap counts the bytes of the buffer next and may collect there.
+    if (vm.hasCompiledCode() && !vm.heap.isDeferred())
+        AOT::HeapHooks::didFindNoRoomWhereCollectionMayRun(vm);
+#endif
+}
+
+bool MarkedBlockCage::keepsSpareWeakBlocks()
+{
+    return s_isGrowable;
+}
+
+bool MarkedBlockCage::tryFillSpareWeakBlocks()
+{
+    while (m_spareWeakBlocks.size() < numberOfSpareWeakBlocks) {
+        void* block = WeakBlockMalloc::tryAlignedMalloc(WeakBlock::blockSize, WeakBlock::blockSize);
+        if (!block)
+            return false;
+        m_spareWeakBlocks.append(block);
+    }
+    return true;
+}
+
+void* MarkedBlockCage::allocateWeakBlock(VM& vm)
+{
+    if (!tryFillSpareWeakBlocks() && !vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+        addExhaustedHeap(ExhaustedHeap::WeakBlocks);
+        vm.traps().setNeedsOutOfMemoryError(true);
+    }
+    if (m_spareWeakBlocks.isEmpty()) [[unlikely]] {
+        logExhaustion(ExhaustedHeap::Cells);
+        RELEASE_ASSERT_RESOURCE_AVAILABLE(false, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+    }
+    return m_spareWeakBlocks.takeLast();
 }
 
 void MarkedBlockCage::setLastReserveHandler(LastReserveHandler handler)

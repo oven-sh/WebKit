@@ -123,7 +123,7 @@ function formatEnumeratorValue(numbering: Numbering, position: number): string {
 const isDeclaredHere = ({ cppEnum }: WordList): boolean => cppEnum.startsWith("Builtin");
 
 function emitEnum({ cppEnum, numbering, enumerators }: WordList): string {
-  const underlying = numbering === "Flags" && enumerators.length > 8 ? "uint16_t" : "uint8_t";
+  const underlying = numbering !== "Flags" || enumerators.length <= 8 ? "uint8_t" : enumerators.length <= 16 ? "uint16_t" : "uint32_t";
   const members = enumerators.map((name, position) => (numbering === "Flags" ? `${name} = 1 << ${position}` : name));
   return `enum class ${cppEnum} : ${underlying} { ${members.join(", ")} };`;
 }

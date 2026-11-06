@@ -1,0 +1,41 @@
+# Where the program lets go of a variable, the word of the frame that held it is cleared there and not at the next yield. A word whose value lives on stays
+# FORM: Prepared
+# RUN: pass MoveGeneratorFramesToHeap
+# STATISTIC: GeneratorsWithHeapFrames = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="holds" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f1 promiseParameter=3}
+function f1 name="holds" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f1 promiseParameter=3} {
+    v4 = Undefined
+    v5 = YieldBySavingFrame v3, v4 @10
+    v6 = ResultAt v5 index=0
+    v7 = ResultAt v5 index=1
+    Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1() frequency=Rare:
+    Throw v6
+  b2() frequency=Rare:
+    Return v6
+  b3():
+    v8 = Call v1
+    ReleaseHint v1 @11
+    v10 = Call v2
+    v11 = YieldBySavingFrame v3, v10 @12
+    v12 = ResultAt v11 index=0
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+  b4() frequency=Rare:
+    Throw v12
+  b5() frequency=Rare:
+    Return v12
+  b6():
+    Return v2
+}
+# CHECK: function f2 name="holds"
+# CHECK: b0([[saved]]: anything,
+# CHECK: [[first]]: anything = GetHeapFrameWord [[saved]] index=[[word]]
+# CHECK: Call [[first]]
+# CHECK-NEXT: [[absent]]: absent = Absent @11
+# CHECK-NEXT: PutHeapFrameWord [[saved]], [[absent]] index=[[word]] @11
+# CHECK-NEXT: ReleaseHint [[first]] @11
+# CHECK: SuspendInHeapFrame {{*}} resumeIndex=1 @12

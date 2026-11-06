@@ -37,7 +37,7 @@
 
 #include "WebProcessDataStoreParameters.h"
 #include <WebCore/CrossOriginMode.h>
-#include <WebCore/RuntimeQuirkTable.h>
+#include <WebCore/QuirkTable.h>
 #include <wtf/HashMap.h>
 #include <wtf/Markable.h>
 #include <wtf/OptionSet.h>
@@ -199,6 +199,10 @@ struct WebProcessCreationParameters {
     bool useOverlayScrollbars { true };
 #endif
 
+#if HAVE(TEXT_SCALE_FACTOR)
+    std::optional<float> textScaleFactor;
+#endif
+
 #if USE(WPE_RENDERER)
     bool isServiceWorkerProcess { false };
     UnixFileDescriptor hostClientFileDescriptor;
@@ -206,6 +210,7 @@ struct WebProcessCreationParameters {
 #endif
 
     std::optional<WebProcessDataStoreParameters> websiteDataStoreParameters;
+    bool isPrintProcess { false };
 
 #if (PLATFORM(MAC) || PLATFORM(MACCATALYST)) && !ENABLE(LAUNCHSERVICES_SANDBOX_EXTENSION_BLOCKING)
     std::optional<SandboxExtension::Handle> launchServicesExtensionHandle;
@@ -286,7 +291,7 @@ struct WebProcessCreationParameters {
     HashMap<WebCore::RegistrableDomain, String> storageAccessUserAgentStringQuirksData;
     HashSet<WebCore::RegistrableDomain> storageAccessPromptQuirksDomains;
     ScriptTrackingPrivacyRules scriptTrackingPrivacyRules;
-    WebCore::RuntimeQuirkTable quirkTable;
+    WebCore::QuirkTable quirkTable;
 
     Seconds hiddenPageDOMTimerThrottlingIncreaseLimit;
     Seconds memoryFootprintPollIntervalForTesting;

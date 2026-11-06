@@ -84,6 +84,8 @@ private:
     Vector<Field> m_fields;
     Vector<uint32_t> m_firstField;
     Vector<uint32_t> m_bases;
+    // From each layout up, itself included: the first that has such a field.
+    Vector<uint32_t> m_nearestWithFields;
 };
 
 class Reader {
@@ -118,6 +120,7 @@ private:
     };
 
     bool readHeader();
+    bool readReplaceableBuiltins();
     bool readNamesAndFamilies();
     bool readStrings();
     bool readPropertyKeys();
@@ -139,12 +142,13 @@ private:
     Failure readType(uint32_t index, TypeAsRead&) const;
     TypeID internType(uint32_t index, TypeAsRead&&);
     bool readsAsAnything(std::span<const LayoutID> named) const;
-    void addLayouts(TypeAsRead&, std::span<const LayoutID> named, bool hasMembersWithoutLayout) const;
+    void addLayouts(TypeAsRead&, std::span<const LayoutID> named) const;
     void addFunctions(Type&, std::span<const FunctionID> named) const;
     Failure readClassPart(RecordChecker&, uint32_t typeIndex, const Wire::ClassPart&, ClassPart&) const;
     struct SeenInBody {
         bool namesObjectCreate { false };
         Vector<FunctionID, 4> directCallees;
+        Vector<Program::DeclaredCallback, 2> declaredCallbacks;
     };
     Failure readFunction(uint32_t index, Function&, SeenInBody&) const;
     bool checkTypesAgainstLayouts();
@@ -225,6 +229,7 @@ public:
 
     template<typename Record> void didRead(Record&) { }
     void didRead(DeclaredType&);
+    void didRead(DeclaredCapture& capture) { didRead(static_cast<DeclaredType&>(capture)); }
     void didRead(PropertyKey&);
     void didRead(FunctionRecord&);
     void didRead(LayoutRecord&);

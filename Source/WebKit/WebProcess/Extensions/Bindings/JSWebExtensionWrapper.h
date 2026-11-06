@@ -31,6 +31,7 @@
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/JSCJSValuePropertyInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
+#include <JavaScriptCore/JSContextRefPrivate.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSRetainPtr.h>
 #include <JavaScriptCore/JSStringRefCPP.h>
@@ -155,13 +156,22 @@ JSValueRef callObjectWithArguments(JSValueRef callbackFunction, JSContextRef con
     if (!callbackObject)
         return nullptr;
 
-    auto* globalObject = toJS(JSContextGetGlobalContext(context));
+    JSGlobalContextRef globalContext = JSContextGetGlobalContext(context);
+    auto* globalObject = toJS(globalContext);
     RefPtr executionContext = globalObject ? downcast<WebCore::JSDOMGlobalObject>(globalObject)->scriptExecutionContext() : nullptr;
     if (!executionContext || executionContext->activeDOMObjectsAreStopped())
         return nullptr;
 
+    bool includesNativeCallStack = JSGlobalContextGetIncludesNativeCallStackWhenReportingExceptions(globalContext);
+    if (!reportException)
+        JSGlobalContextSetIncludesNativeCallStackWhenReportingExceptions(globalContext, false);
+
     JSValueRef internalException = nullptr;
     JSValueRef result = JSObjectCallAsFunction(context, callbackObject, nullptr, ArgumentCount, arguments.data(), &internalException);
+
+    if (!reportException)
+        JSGlobalContextSetIncludesNativeCallStackWhenReportingExceptions(globalContext, includesNativeCallStack);
+
     if (internalException && reportException) {
         JSC::JSLockHolder lock(globalObject->vm());
         auto exceptionValue = toJS(globalObject, internalException);
@@ -209,7 +219,7 @@ JSValueRef toJSValueRef(JSContextRef, URL, NullOrEmptyString = NullOrEmptyString
 JSValueRef toWindowObject(JSContextRef, WebFrame&);
 JSValueRef toWindowObject(JSContextRef, WebPage&);
 
-RefPtr<JSON::Value> fromJSValue(JSContextRef, JSValueRef);
+RefPtr<JSON::Value> fromJSValue(JSContextRef, JSValueRef, NullValuePolicy = NullValuePolicy::NotAllowed, ValuePolicy = ValuePolicy::Recursive);
 RefPtr<JSON::Value> toJSONValue(JSContextRef, JSValueRef, NullValuePolicy = NullValuePolicy::NotAllowed, ValuePolicy = ValuePolicy::Recursive);
 inline JSValueRef toJSValueRefOrJSNull(JSContextRef context, RefPtr<JSON::Object> value)
 {

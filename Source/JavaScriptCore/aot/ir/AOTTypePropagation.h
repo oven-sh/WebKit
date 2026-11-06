@@ -40,6 +40,9 @@ struct TypePropagationInputs {
     BuildContext& build;
     TypingMemo* memo { nullptr };
     const KnownPositionTypes* knownPositions { nullptr };
+    // Parameters are typed as if no edge came from these blocks.
+    const BitVector* blocksThatPassNothing { nullptr };
+    Renumbering* renumbering { nullptr };
 };
 
 struct TypePropagationOutcome {
@@ -119,6 +122,14 @@ private:
         TypeID expected() const { return expectedForTyping.index() ? expectedForTyping : TypeID(); }
     };
 
+    struct MarksOfValue {
+        uint32_t isQueued : 1 { 0 };
+        uint32_t hasUserThatWasTakenFirst : 1 { 0 };
+        uint32_t isRemembered : 1 { 0 };
+        uint32_t lastWalkThatTookIt : 29 { 0 };
+    };
+    static_assert(sizeof(MarksOfValue) == sizeof(uint32_t));
+
     enum class SweepFlag : uint8_t {
         IsChangedValue = 1 << 0,
         IsTyped = 1 << 1,
@@ -132,6 +143,7 @@ private:
         uint32_t index;
     };
 
+    bool passesNothing(BlockID from) const { return m_inputs.blocksThatPassNothing && m_inputs.blocksThatPassNothing->get(from.index()); }
     void forEachSourceOf(ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor) const { forEachSourceOf(m_inputs.function.at(id), functor); }
     void forEachSourceOfParameter(BlockID, uint32_t index, NOESCAPE const Invocable<void(ValueID)> auto&) const;
     void forEachSourceOf(const Instruction&, NOESCAPE const Invocable<void(ValueID)> auto&) const;
@@ -153,7 +165,7 @@ private:
     const UseLists& uses();
     ValueLocation locationForRule(ValueID) const;
     void rememberState(ValueID);
-    bool isRemembered(ValueID id) const { return !m_rememberedValues.isEmpty() && m_isRemembered.quickGet(id.index()); }
+    bool isRemembered(ValueID id) const { return !m_rememberedValues.isEmpty() && m_marks[id.index()].isRemembered; }
     ALWAYS_INLINE Value& editTypeOf(ValueID id)
     {
         if (isRemembered(id)) [[likely]]
@@ -178,7 +190,9 @@ private:
     TypeID compute(const TypingContext&, ValueID, const ValueLocation&);
     TypeID computeValue(const TypingContext&, ValueID);
     TypeID computeParameter(const TypingContext&, ValueID, BlockID, uint32_t index);
+    TypeID computeIncomingType(const TypingContext&, Edge, uint32_t index);
     TypeID computeTypeOnEdge(const TypingContext&, EdgeResultPosition, const EdgeResult&);
+    bool growsOnBackEdge(TypeLevel, ValueID parameter, TypeID old, TypeID grown);
     TypeID meetWithPreviousExpectation(ValueID, TypeID computed);
     TypeID joinIntoParameter(const TypingContext&, ValueID parameter, TypeID current, TypeID incoming);
     TypeID widenGrownParameter(ValueID parameter, TypeID old, TypeID grown);
@@ -202,15 +216,13 @@ private:
     TypingMemo m_ownMemo;
 
     Vector<ValueID, 64> m_worklist;
-    BitVector m_isQueued;
+    Vector<MarksOfValue, 64> m_marks;
+    uint32_t m_numberOfWalks { 0 };
     QueuedValues m_queuedValues { QueuedValues::All };
     const BitVector* m_listedValues { nullptr };
-    BitVector m_wasTakenFromWorklist;
-    BitVector m_hasUserThatWasTakenFirst;
     Vector<ValueID, 16> m_valuesAboveTheirRules;
     Vector<OptionSet<SweepFlag>, 64> m_sweepFlags;
 
-    BitVector m_isRemembered;
     Vector<StateBeforeRestart, 64> m_statesBeforeRestart;
     Vector<ValueID, 64> m_rememberedValues;
     size_t m_numberOfReportedValues { 0 };
@@ -228,6 +240,9 @@ private:
     Vector<PlaceOfParameter> m_placesOfParameters;
     Vector<uint32_t> m_componentOfValue;
     BitVector m_isSearchedCycle;
+    // In reverse post order.
+    Vector<uint32_t> m_firstBlockOfCycle;
+    Vector<BlockID> m_blocksOfCycles;
     Vector<ValueID, 32> m_membersOfComponents;
     Vector<uint32_t, 8> m_firstMemberOfComponent;
     Vector<uint32_t, 8> m_waitingComponents;
@@ -250,6 +265,8 @@ void TypePropagation::forEachSourceOf(const Instruction& user, NOESCAPE const In
 void TypePropagation::forEachSourceOfParameter(BlockID block, uint32_t index, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
 {
     for (Edge edge : m_cfg.incomingEdges(block)) {
+        if (passesNothing(edge.from))
+            continue;
         const Target& target = targetOf(m_inputs.function, edge);
         if (index < target.arguments.size())
             functor(target.arguments[index]);

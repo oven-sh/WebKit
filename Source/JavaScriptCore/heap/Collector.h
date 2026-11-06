@@ -120,6 +120,9 @@ public:
     size_t LEGACY_NODELETE totalMaxEdenSize();
 
     bool hasStartedHelpers() const { return m_hasStartedHelpers.load(std::memory_order_relaxed); }
+    // Between the two calls, a collection that starts its helpers lazily starts none: the thread that conducts it marks alone.
+    void willCollectWithoutHelpers() { m_collectionsWithoutHelpers.fetch_add(1, std::memory_order_relaxed); }
+    void didCollectWithoutHelpers() { m_collectionsWithoutHelpers.fetch_sub(1, std::memory_order_relaxed); }
 
     void dump(PrintStream&) const;
 
@@ -167,6 +170,8 @@ private:
     CollectionScope decideCollectionScope();
     void collectInCollectorThread();
     void collectInMutatorThread(Heap& conductor);
+    // A mutator gives the conn only to a thread that is there. False where there is work and the system refuses the thread.
+    bool tryEnsureThreadForWork();
 
     void startCollectingContinuously();
     void stopCollectingContinuously();
@@ -238,6 +243,7 @@ private:
     Lock m_parallelSlotVisitorLock;
     Lock m_raceMarkStackLock;
     std::atomic<bool> m_hasStartedHelpers { false };
+    std::atomic<unsigned> m_collectionsWithoutHelpers { 0 };
     RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask WTF_GUARDED_BY_LOCK(m_markingMutex);
     std::unique_ptr<MarkStackArray> m_sharedCollectorMarkStack;
     std::unique_ptr<MarkStackArray> m_sharedMutatorMarkStack;
@@ -292,6 +298,8 @@ private:
     CurrentThreadState* m_conductingMutatorState { nullptr };
     // The heap whose mutator is conducting. Set by collectInMutatorThread() while it conducts, and null otherwise.
     Heap* m_conductingHeap { nullptr };
+    // The conducting mutator has nothing else to do, and no collector thread to hand the conn to: it marks through the concurrent phase too.
+    bool m_conductorMarksInConcurrentPhase { false };
 
     MonotonicTime m_beforeGC;
     MonotonicTime m_afterGC;

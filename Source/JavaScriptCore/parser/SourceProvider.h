@@ -167,6 +167,11 @@ public:
     virtual std::optional<uint32_t> builtinFunctionAt(unsigned) const { return std::nullopt; }
 
     SourceProvenance provenance() const { return m_provenance; }
+
+    // The module record created from this provider gets live exports. See AbstractModuleRecord::hasLiveExports().
+    // For a SyntheticSourceProvider, use createWithLazyExports(): the object the generator returns becomes liveExportsSource().
+    bool moduleHasLiveExports() const { return m_moduleHasLiveExports; }
+    void setModuleHasLiveExports() { m_moduleHasLiveExports = true; }
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND
@@ -313,6 +318,7 @@ private:
     SourceTaintedness m_taintedness;
 #if USE(BUN_JSC_ADDITIONS)
     SourceProvenance m_provenance { SourceProvenance::GeneratedAtRuntime };
+    bool m_moduleHasLiveExports { false };
 #endif
 
     std::atomic<bool> m_sourceCodeDumped { false };

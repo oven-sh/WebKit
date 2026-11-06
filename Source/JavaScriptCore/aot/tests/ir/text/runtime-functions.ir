@@ -7,13 +7,13 @@
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
 # CHECK-NEXT: function f1 name="first" module=m1 role=Library thisType={type=anything} results=[{type=anything}]
-# CHECK-NEXT: function f2 name="inner" module=m1 role=Library enclosingRuntimeFunction=1 thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: function f2 name="inner" module=m1 role=Library enclosingRuntimeFunction=DisposableStackPrototypeAddDisposableResource thisType={type=anything} results=[{type=anything}]
 # CHECK-NEXT: function f3 name="model" module=m1 role=Model thisType={type=anything} results=[{type=anything}]
 # CHECK-NEXT: entry module=m0
-# CHECK-NEXT: runtimefunction id=0 function=f1
-# CHECK-NEXT: runtimefunction id=1 function=f1 visibility=Private
-# CHECK-NEXT: runtimefunction id=4 function=f2 visibility=PrivateRecursive
-# CHECK-NEXT: runtimefunction id=131074 function=f3
+# CHECK-NEXT: runtimefunction id=PromiseConstructorPromise function=f1
+# CHECK-NEXT: runtimefunction id=DisposableStackPrototypeAddDisposableResource function=f1 visibility=Private
+# CHECK-NEXT: runtimefunction id=FunctionPrototypeApply function=f2 visibility=PrivateRecursive
+# CHECK-NEXT: runtimefunction id=ArraysFlat function=f3
 # CHECK-NEXT: round trip: same
 # RUN(V): verify
 # V: valid
@@ -24,10 +24,10 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return
 }
 function f1 name="first" module=m1 role=Library thisType={type=anything} results=[{type=anything}]
-function f2 name="inner" module=m1 role=Library enclosingRuntimeFunction=1 thisType={type=anything} results=[{type=anything}]
+function f2 name="inner" module=m1 role=Library enclosingRuntimeFunction=DisposableStackPrototypeAddDisposableResource thisType={type=anything} results=[{type=anything}]
 function f3 name="model" module=m1 role=Model thisType={type=anything} results=[{type=anything}]
 entry module=m0
-runtimefunction id=0 function=f1
-runtimefunction id=1 function=f1 visibility=Private
-runtimefunction id=4 function=f2 visibility=PrivateRecursive
-runtimefunction id=131074 function=f3
+runtimefunction id=PromiseConstructorPromise function=f1
+runtimefunction id=DisposableStackPrototypeAddDisposableResource function=f1 visibility=Private
+runtimefunction id=FunctionPrototypeApply function=f2 visibility=PrivateRecursive
+runtimefunction id=ArraysFlat function=f3

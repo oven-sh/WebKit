@@ -1,5 +1,5 @@
 # The record of a global binding holds a constant, or the place of a value that the program replaces. The constant is tested in line everywhere. The place is tested in line only in fast code: 50 bytes a read or a store.
-# Behind the constant, balanced and compact code call: a read a stub that makes the same test and keeps the registers, a store the operation, which makes it in front of everything else
+# Behind the constant, balanced and compact code call a stub that makes the same test and keeps the registers, for a read and for a store
 # FORM: Selected
 # OPTIONS: heat=OnlyLoopsAreHot check=ValidateBackEnd
 # RUN: generate-code calls
@@ -33,7 +33,7 @@ function f2 name="storesInBalancedCode" parameters=[{type=anything}] results=[{t
     Return
 }
 # CHECK-NEXT: f2: size=
-# CHECK-NEXT: operation operationAOTSetGlobalBinding x1
+# CHECK-NEXT: stub SetGlobalBinding.ScriptsAndGlobalObject x1
 # CHECK-NEXT: f3: size=
 function f3 name="inFastCode" parameters=[{type=boolean}] results=[{type=undefined}] {
     Jump -> next b1()

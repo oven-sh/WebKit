@@ -579,6 +579,59 @@ static void testPureFunctionWriteClobbersHeap()
     CHECK_EQ(numberOfValues(proc, Patchpoint), 1u);
 }
 
+static void testStoreOfValueThatStackSlotHoldsIsRemoved()
+{
+    enum class Between : uint8_t { Nothing, ReaderOfSlot, StoreOfOtherValue, WriterOfSlot, Suspension };
+    struct Case {
+        Between between;
+        bool isStackSlot;
+        unsigned remainingStores;
+    };
+    const Case cases[] = {
+        { Between::Nothing, true, 1 },
+        { Between::ReaderOfSlot, true, 1 },
+        { Between::StoreOfOtherValue, true, 3 },
+        { Between::WriterOfSlot, true, 2 },
+        { Between::Suspension, true, 2 },
+        // Another thread, or the collector, may write what is no slot of the frame.
+        { Between::ReaderOfSlot, false, 2 },
+    };
+    for (const Case& testCase : cases) {
+        Procedure proc(strengthReductionPolicy());
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t*, int64_t>(proc, root);
+        Air::StackSlot* slot = proc.addStackSlot(sizeof(int64_t));
+        auto address = [&]() -> Value* {
+            return testCase.isStackSlot ? root->appendNew<SlotBaseValue>(proc, Origin(), slot) : arguments[0];
+        };
+        graph.store(root, arguments[1], address(), 0, firstHeap);
+        switch (testCase.between) {
+        case Between::Nothing:
+            break;
+        case Between::ReaderOfSlot:
+            graph.emptyPatchpoint(root, Void)->effects.reads = firstHeap;
+            break;
+        case Between::StoreOfOtherValue:
+            graph.store(root, graph.int64(root, 7), address(), 0, firstHeap);
+            break;
+        case Between::WriterOfSlot:
+            graph.emptyPatchpoint(root, Void)->effects.writes = firstHeap;
+            break;
+        case Between::Suspension: {
+            PatchpointValue* suspension = graph.emptyPatchpoint(root, Void);
+            suspension->effects.writesLocalState = true;
+            suspension->setIsSuspension(true);
+            break;
+        }
+        }
+        graph.store(root, arguments[1], address(), 0, firstHeap);
+        graph.ret(root, arguments[1]);
+        reduceStrengthOnce(proc);
+        CHECK_EQ(numberOfValues(proc, Store), testCase.remainingStores);
+    }
+}
+
 static void testReduceStrengthMergesBlockChain()
 {
     for (bool usesPolicy : { true, false }) {
@@ -853,6 +906,7 @@ void addBunNumberingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testBranchDominatedByCheckOnSameConditionIsFolded());
     RUN(testPurePatchpointsAreValueNumbered());
     RUN(testPureFunctionWriteClobbersHeap());
+    RUN(testStoreOfValueThatStackSlotHoldsIsRemoved());
     RUN(testReduceStrengthMergesBlockChain());
     RUN(testReduceStrengthEliminatesSingleValuePhi());
     RUN(testMemoryNumberingWhenEdgeIntoJoinIsRemoved());

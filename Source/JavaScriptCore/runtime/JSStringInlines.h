@@ -405,6 +405,81 @@ inline void JSRopeString::resolveSubstringBySharing(StringImpl& impl) const
     ASSERT(impl.is8Bit() || !is8Bit());
     convertToNonRope(String { impl });
 }
+
+template<typename CharactersOf>
+ALWAYS_INLINE bool JSRopeString::tryResolveLatin1Parts(VM& vm, NOESCAPE const CharactersOf& charactersOf) const
+{
+    std::span<Latin1Character> buffer;
+    RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(length(), buffer);
+    if (!impl)
+        return false;
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    Latin1Character* cursor = buffer.data();
+    for (JSString* part : { fiber0(), fiber1(), fiber2() }) {
+        if (!part)
+            break;
+        std::span<const Latin1Character> characters = charactersOf(part);
+        size_t size = characters.size();
+        const Latin1Character* source = characters.data();
+        if (size > 16)
+            memcpy(cursor, source, size);
+        else if (size >= 8) {
+            uint64_t head = WTF::unalignedLoad<uint64_t>(source);
+            uint64_t tail = WTF::unalignedLoad<uint64_t>(source + size - 8);
+            WTF::unalignedStore<uint64_t>(cursor, head);
+            WTF::unalignedStore<uint64_t>(cursor + size - 8, tail);
+        } else if (size >= 4) {
+            uint32_t head = WTF::unalignedLoad<uint32_t>(source);
+            uint32_t tail = WTF::unalignedLoad<uint32_t>(source + size - 4);
+            WTF::unalignedStore<uint32_t>(cursor, head);
+            WTF::unalignedStore<uint32_t>(cursor + size - 4, tail);
+        } else {
+            for (size_t position = 0; position < size; ++position)
+                cursor[position] = source[position];
+        }
+        cursor += size;
+    }
+    ASSERT(cursor == buffer.data() + buffer.size());
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    size_t cost = impl->cost();
+    convertToNonRope(String { impl.releaseNonNull() });
+    vm.heap.reportExtraMemoryAllocated(this, cost);
+    return true;
+}
+
+// Most ropes that are read were joined of two or three short flat strings or slices a moment ago.
+// A part that was narrow when it was joined may be wide by now: a string that becomes a key takes the characters of the name, whatever their width.
+ALWAYS_INLINE bool JSRopeString::tryResolveFlatLatin1Parts(VM& vm) const
+{
+    ASSERT(isRope());
+    if (isSubstring() || !is8Bit())
+        return false;
+    bool hasSlice = false;
+    for (JSString* part : { fiber0(), fiber1(), fiber2() }) {
+        if (!part)
+            break;
+        JSString* flat = part;
+        if (part->isRope()) {
+            if (!part->isSubstring())
+                return false;
+            flat = static_cast<const JSRopeString*>(part)->substringBase();
+            hasSlice = true;
+        }
+        if (!flat->valueInternal().impl()->is8Bit())
+            return false;
+    }
+    auto charactersOfFlat = [](JSString* part) {
+        return part->valueInternal().impl()->span8();
+    };
+    if (!hasSlice) [[likely]]
+        return tryResolveLatin1Parts(vm, charactersOfFlat);
+    return tryResolveLatin1Parts(vm, [&](JSString* part) {
+        if (!part->isRope())
+            return charactersOfFlat(part);
+        auto* slice = static_cast<const JSRopeString*>(part);
+        return charactersOfFlat(slice->substringBase()).subspan(slice->substringOffset(), slice->length());
+    });
+}
 #endif
 
 // Overview: These functions convert a JSString from holding a string in rope form

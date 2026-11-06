@@ -28,6 +28,7 @@
 #include <WebCore/PlatformVideoColorSpace.h>
 #include <WebCore/ProcessIdentity.h>
 #include <WebCore/VideoEncodedData.h>
+#include <WebCore/VideoFrame.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/NativePromise.h>
 
@@ -41,7 +42,6 @@ public:
 
     enum class HardwareAcceleration : bool { No, Yes };
     enum class HardwareBuffer : bool { No, Yes };
-    enum class TreatNoOutputAsError : bool { No, Yes };
     struct Config {
         Vector<uint8_t> description;
         uint64_t width { 0 };
@@ -49,8 +49,9 @@ public:
         std::optional<PlatformVideoColorSpace> colorSpace;
         HardwareAcceleration decoding { HardwareAcceleration::No };
         HardwareBuffer pixelBuffer { HardwareBuffer::No };
-        TreatNoOutputAsError noOutputAsError { TreatNoOutputAsError::Yes };
         ProcessIdentity resourceOwner { };
+        VideoFrameRotation rotation { VideoFrameRotation::None };
+        bool isMirrored { false };
     };
 
     struct DecodedFrame {

@@ -114,6 +114,19 @@ public:
         return m_blocks.span().subspan(cursor.m_blocks);
     }
 
+    // An entry in front of this cursor takes up no later edit. A reader that shows nothing goes on from here, and reads again what stands behind it.
+    Cursor endOfShownEntries() const { return { m_generation, static_cast<uint32_t>(m_numberOfShownValues), static_cast<uint32_t>(m_numberOfShownBlocks) }; }
+    std::span<const ValueChange> valuesSinceWithoutShowing(const Cursor& cursor) const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(!hasForgottenSince(cursor));
+        return m_values.span().subspan(cursor.m_values);
+    }
+    std::span<const BlockChange> blocksSinceWithoutShowing(const Cursor& cursor) const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(!hasForgottenSince(cursor));
+        return m_blocks.span().subspan(cursor.m_blocks);
+    }
+
     bool wasAddedAndShownToNobody(BlockID block) const { return block.index() >= m_firstBlockShownToNobody; }
 
     // A pass wrote this value's type, and its users have not been retyped yet.

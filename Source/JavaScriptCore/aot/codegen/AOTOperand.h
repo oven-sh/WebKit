@@ -76,6 +76,12 @@ using Boxed = Lowered<Representation::JSValue>;
 using LiteralStringWord = Lowered<Representation::LiteralString>;
 using Pointer = Lowered<Representation::RawWord>;
 
+template<typename T> struct ImmediateOfLowered;
+template<> struct ImmediateOfLowered<Word32> { using Type = int32_t; };
+template<> struct ImmediateOfLowered<Integer> { using Type = int64_t; };
+template<> struct ImmediateOfLowered<Number> { using Type = double; };
+template<typename T> using Immediate = typename ImmediateOfLowered<T>::Type;
+
 struct Operand {
     Operand() = default;
     Operand(Representation representation, LValue value)

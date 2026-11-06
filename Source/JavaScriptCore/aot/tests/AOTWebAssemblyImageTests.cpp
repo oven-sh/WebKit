@@ -564,11 +564,6 @@ static void testSectionWithDifferentModules()
 
 static void testImportAndJSEntrypointStubs()
 {
-    if (Gigacage::isEnabled(Gigacage::Primitive)) {
-        AOT_TEST_CHECK(compileDeclinedModule(importAndExportModule) == Wasm::ImageDeclineReason::ProcessAddressInCode);
-        return;
-    }
-
     Wasm::ModuleForImage module = compileValidModule(importAndExportModule);
     AOT_TEST_CHECK(module.importStubs.size() == 1);
     AOT_TEST_CHECK(module.jsEntrypoints.size() == 1);
@@ -605,6 +600,10 @@ static void testPointerTableSlots()
 #undef APPEND_SLOT
     slots.append(Wasm::ImagePointerTable::genericJSEntrypoint);
     slots.append(Wasm::ImagePointerTable::interpreterEntrypoint);
+#if GIGACAGE_ENABLED
+    slots.append(Wasm::ImagePointerTable::primitiveGigacageDisableRequest);
+    slots.append(Wasm::ImagePointerTable::primitiveGigacageBase);
+#endif
     for (uint32_t function = 0; function < table.numberOfFunctions; ++function)
         slots.append(table.callee(Wasm::FunctionCodeIndex(function)));
     for (uint32_t type = 0; type < table.numberOfTypes; ++type)

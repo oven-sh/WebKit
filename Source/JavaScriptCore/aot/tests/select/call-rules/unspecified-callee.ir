@@ -19,14 +19,16 @@ function f0 name="unspecifiedOnOneEdge" parameters=[{type=anything}, {type=boole
     LoopHint
     Switch v6 cases=[0] -> case b6(), otherwise b5()
   b5():
-    v9 = Call v7, -
+    v9 = Specified
+    v10 = AssumeType v7, v9 provenType=anything
+    v11 = Call v10, -
     Jump -> next b6()
   b6():
     Branch v2 -> taken b4(), notTaken b7()
   b7():
     Return
 # CHECK-NOT: ResolveCallTarget
-# CHECK: anything = Call v7
+# CHECK: anything = Call v10
 }
 
 function f1 name="unspecifiedUnderCast" parameters=[{type=function}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
@@ -45,14 +47,16 @@ function f1 name="unspecifiedUnderCast" parameters=[{type=function}, {type=boole
     LoopHint
     Switch v6 cases=[0] -> case b6(), otherwise b5()
   b5():
-    v10 = Call v8, -
+    v10 = Specified
+    v11 = AssumeType v8, v10 provenType=anything
+    v12 = Call v11, -
     Jump -> next b6()
   b6():
     Branch v2 -> taken b4(), notTaken b7()
   b7():
     Return
 # CHECK-NOT: ResolveCallTarget
-# CHECK: anything = Call v8
+# CHECK: anything = Call v11
 }
 
 function f2 name="specifiedOnEveryEdge" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {

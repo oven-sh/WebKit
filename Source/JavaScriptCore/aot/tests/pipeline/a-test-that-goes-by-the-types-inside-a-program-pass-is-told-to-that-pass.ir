@@ -1,0 +1,89 @@
+# let manager = null, lastCount = 0   async function create() { return { count() { return 7 } } }   function stop() { manager = null }
+# async function start() { manager = await create(); return lastCount = manager.count() }   if ("abc".length > 10) await start()   stop()   return [manager, (await create()).count()]
+# Flow follows the call of `start`. Folding the comparison leaves `start` without a caller, so the Optimize schedule passes it by, and it is there until RemoveUnreachableFunctions.
+# Nobody reads `lastCount`: with RemoveUnreadExports off, RemoveUnreadFields takes the store out of `start` and simplifies what it has edited. There the read of `manager` is answered by the store right in front of it,
+# which stores an object: the test that `manager` is neither null nor undefined has nothing left to throw for, nobody uses what it hands on, and it goes.
+# Each of those runs is verified by itself. RemoveUnreadFields began to listen while the read was typed null or an object, and hears that the test went by the types of its operand.
+# RUN: pipeline RemoveUnreadFields
+# OPTIONS: check=VerifyEachPass disable=pass:RemoveUnreadExports
+# CHECK-LABEL: name="start" module=m0 role=CoroutineBody
+# CHECK: PutModuleVariable {{*}} variable=g0
+# CHECK-NOT: GetModuleVariable
+# CHECK-NOT: RequireObjectCoercible
+# CHECK-NOT: variable=g1
+# CHECK: = ReturnAsyncResult
+
+typesite w0 module=m0 position=1 kind=Variable
+typesite w1 module=m0 position=2 kind=Variable
+typesite w2 module=m0 position=3 kind=PromiseValue
+typesite w3 module=m0 position=4 kind=PromiseValue
+typesite w4 module=m0 position=5 kind=CallResult
+layout L0 name="Manager" module=m0 fields=[{key="count" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+variable g0 name="manager" module=m0 declared={type=undefined|null|absent|L0 site=w0}
+variable g1 name="lastCount" module=m0 declared={type=number|absent site=w1}
+module m0 path="main.ts" displayPath="main.ts" flags=[HasTopLevelAwait] body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsAsync, IsChecked] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = Null
+    PutModuleVariable v3 variable=g0
+    v5 = Integer
+    PutModuleVariable v5 variable=g1
+    v7 = String string="abc"
+    v8 = PropGet v7 key="length"
+    v9 = Integer integer=10
+    v10 = Greater v8, v9
+    Branch v10 -> taken b1(), notTaken b2()
+  b1():
+    v11 = Call v0
+    v12 = Await v11
+    Jump -> next b2()
+  b2():
+    v13 = Call v2
+    v14 = GetModuleVariable variable=g0
+    v15 = Call v1
+    v16 = Await v15
+    v17 = Convert v16 declared={type=undefined|null|L0 site=w2} illTypedCause=ContainerWriterUnseen
+    v18 = PropGet v17 key="count"
+    v19 = Call v18, v17 calleeKey="count"
+    v20 = NewArray v14, v19
+    Return v20
+}
+function f1 name="create" module=m0 flags=[IsAsync, HasThis, IsChecked] results=[{type=undefined|null|Promise<undefined|null|L0> flags=[IsExpected]}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="stop" module=m0 flags=[IsChecked] results=[{type=anything}] {
+  b0():
+    v0 = Null
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f3 name="start" module=m0 flags=[IsAsync, HasThis, IsChecked] results=[{type=undefined|null|Promise flags=[IsExpected]}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f1
+    v2 = Call v1
+    v3 = Await v2
+    v4 = Convert v3 declared={type=undefined|null|L0 site=w3} illTypedCause=ContainerWriterUnseen
+    PutModuleVariable v4 variable=g0
+    v6 = GetModuleVariable variable=g0
+    v7 = PropGet v6 key="count"
+    v8 = Call v7, v6 calleeKey="count"
+    v9 = Convert v8 declared={type=number site=w4}
+    v10 = GetModuleVariable variable=g1
+    v11 = CheckInitialized v10 name="lastCount"
+    PutModuleVariable v9 variable=g1
+    Return v9
+}
+function f4 name="count" module=m0 kind=Method flags=[IsChecked] results=[{type=number}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

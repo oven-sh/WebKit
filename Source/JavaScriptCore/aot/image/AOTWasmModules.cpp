@@ -94,6 +94,8 @@ static Wasm::ImageDeclineReason declineReasonFor(B3::FailureKind kind)
     case B3::FailureKind::RelocationNotLowered:
         return Wasm::ImageDeclineReason::CallsUnlistedOperation;
     case B3::FailureKind::VariableReadBeforeSet:
+    case B3::FailureKind::SpillSlotLacksItsValue:
+    case B3::FailureKind::RegisterLacksItsValue:
         return Wasm::ImageDeclineReason::CodeGeneratorFailed;
     }
     RELEASE_ASSERT_NOT_REACHED();

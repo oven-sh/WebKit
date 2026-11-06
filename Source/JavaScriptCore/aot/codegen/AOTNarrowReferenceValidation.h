@@ -12,6 +12,7 @@
 #include "B3Origin.h"
 #include "B3Policy.h"
 #include "JSExportMacros.h"
+#include <array>
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/text/WTFString.h>
@@ -39,19 +40,18 @@ struct NarrowReferenceFindings {
     uint32_t numberOfReferencesStoredInFrame { 0 };
 };
 
-// A value that may collect writes the first two and reads the third. A word loaded from the last is a root for as long as the program runs.
+// A value that may collect writes the first two and reads the third. A word loaded from one of the last is a root for as long as the program runs.
 struct HeapsOfCollection {
     B3::HeapRange collectorState;
     B3::HeapRange weakTableStorage;
     B3::HeapRange frameSlots;
-    B3::HeapRange permanentCells;
+    std::array<B3::HeapRange, 2> permanentCells;
 };
 
 // By the index of the operation that is the origin of a B3 value.
 struct NarrowReferenceOrigins {
     // A 32-bit load, a 32-bit Phi or a shift of a pointer with one of these origins is a narrow reference, whether or not the function decodes it.
     BitVector references;
-    BitVector suspensions;
     // More such origins, found while the procedure is made.
     const BitVector* laterReferences { nullptr };
     // For the test of what notices a missing guard: of the references with these origins, the one with this ordinal among those that would get a pointer gets none.

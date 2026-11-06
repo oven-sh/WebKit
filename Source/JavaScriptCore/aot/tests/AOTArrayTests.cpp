@@ -161,6 +161,12 @@ static void testChainShapeRoundTrip()
     }
     AOT_TEST_CHECK(words.size() == 15 * std::size(chainEnds) * 2);
     AOT_TEST_CHECK(!ChainShape { }.encode() && !ChainShape { }.numberOfLinks());
+
+    ChainShape everyElement { { ChainLinkKind::Map, ChainLinkKind::None, ChainLinkKind::None }, ChainEndKind::Find };
+    uint32_t wordThatStopsEarly = everyElement.encode();
+    everyElement.runsLinksOnEveryElement = true;
+    AOT_TEST_CHECK(everyElement.encode() == (wordThatStopsEarly | 1u << 12) && !words.contains(everyElement.encode()));
+    AOT_TEST_CHECK(ChainShape::decode(everyElement.encode()) == everyElement && !ChainShape::decode(wordThatStopsEarly).runsLinksOnEveryElement);
 }
 
 static void testChainEndOperands()

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAnalysisTestCommands.h"
 #include "AOTCodeSites.h"
 #include "AOTNativeTest.h"
 #include "AOTRuntimeTable.h"
@@ -15,6 +16,7 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <initializer_list>
+#include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
@@ -87,6 +89,17 @@ static void testRequiresSelectsRuns()
     expectRunLines(codeOfOtherSystems, Architecture::X86_64, { 1, 2 });
 #endif
 
+    static constexpr ASCIILiteral codeOfWindows =
+        "# RUN: print\n"
+        "# RUN(ARM): print\n"
+        "# REQUIRES(ARM): arm64 windows\n"
+        "# ARM: a\n"_s;
+#if OS(WINDOWS)
+    expectRunLines(codeOfWindows, Architecture::ARM64, { 1, 2 });
+#else
+    expectRunLines(codeOfWindows, Architecture::ARM64, { 1 });
+#endif
+
     static constexpr ASCIILiteral codeWithFaultingPolls =
         "# RUN: print\n"
         "# RUN(X64): print\n"
@@ -106,6 +119,16 @@ static void testRequiresSelectsRuns()
         expectRunLines(loadsCodeOutsideImage, Architecture::X86_64, { 1 });
     else
         expectRunLines(loadsCodeOutsideImage, Architecture::X86_64, { 1, 2 });
+
+    static constexpr ASCIILiteral convertsWithSlowPath =
+        "# RUN: print\n"
+        "# RUN(SLOW): print\n"
+        "# REQUIRES(SLOW): no-jscvt\n"
+        "# SLOW: a\n"_s;
+    if (targetHasJSCVT)
+        expectRunLines(convertsWithSlowPath, Architecture::ARM64, { 1 });
+    else
+        expectRunLines(convertsWithSlowPath, Architecture::ARM64, { 1, 2 });
 }
 
 static void testRequiresMalformed()
@@ -117,6 +140,7 @@ static void testRequiresMalformed()
     expectErrorLines("# RUN: print\n# REQUIRES: not-windows not-windows\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: faulting-loop-polls faulting-loop-polls\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: code-outside-image code-outside-image\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# REQUIRES: no-jscvt no-jscvt\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES(OTHER): arm64\n"_s, { 2 });
     expectErrorLines("# RUN(ONLY): print\n# ONLY: x\n# REQUIRES: arm64\n"_s, { 3 });
     expectErrorLines("# RUN: print\n# REQUIRES: arm64\n# REQUIRES: x86_64\n"_s, { 3 });
@@ -124,6 +148,76 @@ static void testRequiresMalformed()
 
     expectErrorLines("# RUN(ONLY): print\n# REQUIRES(ONLY): arm64\n# ONLY-NXT: x\n"_s, { 3 });
     expectErrorLines("# RUN(ONLY): print\n# REQUIRES(ONLY): arm64\n"_s, { 1 });
+}
+
+static void expectErrorInThirdLine(ASCIILiteral line, bool isError = true)
+{
+    String text = makeString("# RUN: print\n# CHECK: a\n"_s, line, '\n');
+    TestFile file = parseTestFile(WTF::move(text), Architecture::X86_64);
+    if (file.errors.size() != isError || (isError && file.errors[0].line != 3))
+        dataLogLn(line, ": ", file.errors.size(), " errors", file.errors.isEmpty() ? ""_s : ": "_s, file.errors.isEmpty() ? String() : file.errors[0].message);
+    AOT_TEST_CHECK(file.errors.size() == isError && (!isError || file.errors[0].line == 3));
+}
+
+static void testDirectiveThatWentWrong()
+{
+    for (ASCIILiteral line : {
+        "# CHECK-NEXT v0 = Add"_s, "# CHECK v0 = Add"_s, "# RUN print"_s, "# STATISTIC AllocationsSunk = 1"_s, "# CHECK"_s,
+        "# check: a"_s, "# Check-Next: a"_s, "# check-next a"_s, "# Options: x"_s,
+        "#CHECK: a"_s, "#  CHECK: a"_s, "#\tCHECK: a"_s, "# CHECK : a"_s, "# CHECK-NOT : a"_s, "    #CHECK: a"_s,
+        "# CHEKC: a"_s, "# CHCK: a"_s, "# CHECK-NXT: a"_s, "# CHECK-NEX a"_s, "# CHECKNEXT: a"_s, "# STATISTC: AllocationsSunk = 1"_s, "# OPTION: x"_s, "# FROM: AsRead"_s,
+        "# NOSUCH: a"_s, "# NOSUCH : a"_s,
+    })
+        expectErrorInThirdLine(line);
+}
+
+static void testProseIsNoDirective()
+{
+    for (ASCIILiteral line : {
+        "# Check that the sum is there"_s, "# Run it twice"_s, "# check the sum"_s, "# Options are none"_s, "# form of the value"_s,
+        "# JSON text"_s, "# IR text"_s, "# NOTE a word in capitals"_s, "# A sum"_s, "# CHEKC without a colon or a suffix"_s, "# Note: a word with a colon"_s,
+        "#"_s, "# "_s, "# 3 values"_s, "# -1 is the sum"_s, "v2 = Add v0, v1   # CHECK NoSuchText"_s,
+    })
+        expectErrorInThirdLine(line, false);
+}
+
+static void testMarkers()
+{
+    auto file = [](ASCIILiteral comments, ASCIILiteral below = ""_s) {
+        return makeString("# RUN: print\n"_s, comments, sampleProgram, below);
+    };
+    auto expectLines = [](const String& text, std::initializer_list<unsigned> lines) {
+        TestFile file = parseTestFile(String(text), Architecture::X86_64);
+        if (!std::ranges::equal(file.errors, lines, { }, &TestFileError::line)) {
+            for (const TestFileError& error : file.errors)
+                dataLogLn(error.line, ": ", error.message);
+        }
+        AOT_TEST_CHECK(std::ranges::equal(file.errors, lines, { }, &TestFileError::line));
+    };
+    constexpr ASCIILiteral labelOfSum = "# CHECK-LABEL: function {{*}}name=\"sum\"\n# CHECK-NEXT: b0\n"_s;
+
+    // Whole, and a line of a source is no directive whatever it looks like.
+    expectLines(file("# -- source: main.ts\n# CHECK without a colon\n# -- source: other.ts\n# check: x\n# -- end of source\n# CHECK: Add\n"_s), { });
+    expectLines(makeString(file(""_s, "# -- generated: sum\n"_s), labelOfSum), { });
+    expectLines(makeString(file(""_s, "# -- generated: f0\n"_s), "# CHECK-LABEL: function f0 name=\n"_s), { });
+    expectLines(makeString(file(""_s, "# -- generated: *\n"_s), labelOfSum), { });
+
+    expectLines(file("# CHECK: Add\n# -- sorce: main.ts\n"_s), { 3 });
+    expectLines(file("# CHECK: Add\n# --source: main.ts\n"_s), { 3 });
+    expectLines(file("# CHECK: Add\n# -- source:\n"_s), { 3 });
+    expectLines(file("# CHECK: Add\n# -- source: two words\n"_s), { 3 });
+    expectLines(file("# CHECK: Add\n# -- end\n"_s), { 3 });
+    expectLines(file("# CHECK: Add\n# -- generated:\n"_s), { 3 });
+    expectLines(file("# CHECK: Add\n# -- source: main.ts\n# 1;\n"_s), { 3 });
+    expectLines(file("# CHECK: Add\n# -- end of source\n"_s), { 3 });
+    expectLines(file("# CHECK: Add\n# -- source: a.ts\n# -- end of source\n# -- source: b.ts\n# -- end of source\n"_s), { 5 });
+    expectLines(file("# CHECK: Add\n# -- source: a.ts\n# -- generated: sum\n# -- end of source\n"_s), { 4 });
+    expectLines(makeString(file(""_s, "# -- generated: sum\n"_s), labelOfSum, "# -- generated: sum\n"_s), { 11 });
+    expectLines(makeString(file(""_s, "# -- generated: sum\n"_s), labelOfSum, "# -- source: a.ts\n# -- end of source\n"_s), { 11 });
+    expectLines(makeString(file(""_s, "# -- generated: sum product\n"_s), labelOfSum), { 8 });
+    expectLines(file("# CHECK: Add\n"_s, "# -- generated: sum\n"_s), { 9 });
+    expectLines(makeString(file(""_s, "# -- generated: sum\n"_s), labelOfSum, "# written by hand\n"_s), { 11 });
+    expectLines(makeString(file(""_s, "# -- generated: sum\n"_s), labelOfSum, "module m1 path=\"/b.ts\" displayPath=\"b.ts\"\n"_s), { 11 });
 }
 
 static void testRunnerSkipsOtherArchitecture()
@@ -181,15 +275,44 @@ static void testRepeatMalformed()
     expectErrorLines("# RUN: print\n# CHECK: x\n# PROGRAM-OF: a-text-has-no-folder.ir\n"_s, { 3 });
 }
 
+static void testWordsOfCommands()
+{
+    Vector<String> words = String("3 f0 v3 f0:v3 f4:v0 b0:2 f0 v3:f0 f:v3 f0:"_s).split(' ');
+
+    AOT_TEST_CHECK(parseIndexBelow(words[0], 4) == 3u);
+    AOT_TEST_CHECK(!parseIndexBelow(words[0], 3));
+    AOT_TEST_CHECK(parseIndexBelow(words[0], UINT32_MAX) == 3u);
+
+    AOT_TEST_CHECK(idParser<FunctionID>('f', 1)(words[1]) == FunctionID(0u));
+    AOT_TEST_CHECK(idParser<FunctionID>('f', UINT32_MAX)(words[1]) == FunctionID(0u));
+    AOT_TEST_CHECK(idParser<ValueID>('v', UINT32_MAX)(words[2]) == ValueID(3u));
+    AOT_TEST_CHECK(!idParser<ValueID>('v', UINT32_MAX)(words[1]));
+
+    AOT_TEST_CHECK(pairParser(':', idParser<FunctionID>('f', 1), idParser<ValueID>('v', 4))(words[3]) == std::pair(FunctionID(0u), ValueID(3u)));
+    AOT_TEST_CHECK(pairParser(':', idParser<BlockID>('b', 1), indexParser(UINT32_MAX))(words[5]) == std::pair(BlockID(0u), 2u));
+
+    auto parseValueOfFunction = pairParser(':', idParser<FunctionID>('f', UINT32_MAX), idParser<ValueID>('v', UINT32_MAX));
+    AOT_TEST_CHECK(parseValueOfFunction(words[3]) == std::pair(FunctionID(0u), ValueID(3u)));
+    AOT_TEST_CHECK(parseValueOfFunction(words[4]) == std::pair(FunctionID(4u), ValueID(0u)));
+    unsigned taken = 0;
+    for (const String& word : words)
+        taken += !!parseValueOfFunction(word);
+    AOT_TEST_CHECK(taken == 2);
+}
+
 std::span<const NativeTest> testFileTests()
 {
     static constexpr NativeTest tests[] = {
         { "test-file/requires-selects-runs"_s, testRequiresSelectsRuns },
         { "test-file/requires-malformed"_s, testRequiresMalformed },
+        { "test-file/directive-that-went-wrong"_s, testDirectiveThatWentWrong },
+        { "test-file/prose-is-no-directive"_s, testProseIsNoDirective },
+        { "test-file/markers"_s, testMarkers },
         { "test-file/repeat-is-written-out"_s, testRepeatIsWrittenOut },
         { "test-file/repeat-malformed"_s, testRepeatMalformed },
         { "test-file/check-lines-inside-function-have-label"_s, testCheckLinesInsideFunctionHaveLabel },
         { "runner/skips-other-architecture"_s, testRunnerSkipsOtherArchitecture },
+        { "test-commands/words"_s, testWordsOfCommands },
     };
     return tests;
 }

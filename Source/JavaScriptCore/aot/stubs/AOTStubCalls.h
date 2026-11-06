@@ -81,7 +81,7 @@ public:
 
     // Returns the index of the call in CodeBody::returnSites. Under validation no label beside the call is its address or its return address.
     uint32_t call(CCallHelpers&, StubKey, OptionalIndex site, const KeptRegisterCheck* = nullptr);
-    uint32_t call(CCallHelpers&, StubKey, uint32_t immediate, OptionalIndex site, const KeptRegisterCheck* = nullptr);
+    uint32_t call(CCallHelpers&, StubKey, uint32_t immediate, OptionalIndex site, const KeptRegisterCheck* = nullptr, OptionalIndex firstReadSite = { });
     void call(CCallHelpers&, StubKey, std::optional<uint32_t> immediate, OptionalIndex site, const ArgumentMoves&, OptionalIndex firstReadSite = { });
     void callForTwoReads(CCallHelpers&, StubKey, OptionalIndex firstRead, OptionalIndex secondRead);
     void tailCall(CCallHelpers&, StubKey);
@@ -89,6 +89,8 @@ public:
     void callFunction(CCallHelpers&, FunctionID callee, uint16_t entry, OptionalIndex site, const KeptRegisterCheck* = nullptr);
     void callRegister(CCallHelpers&, GPRReg address, OptionalIndex site, const KeptRegisterCheck* = nullptr);
     void jumpToFunction(CCallHelpers&, FunctionID callee, uint16_t entry);
+    void moveAddressOfFunction(FunctionID callee, uint16_t entry, GPRReg destination);
+    void moveAddressOfStub(CCallHelpers&, StubKey, std::optional<uint32_t> immediate, GPRReg destination);
 
     // Under validation: calls the operation that reports a failure, with its arguments in place.
     void reportChangedRegister(CCallHelpers&);

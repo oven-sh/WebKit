@@ -72,6 +72,8 @@ constexpr size_t sizeOfArrayWithStorage(unsigned capacity, unsigned propertyRoom
 JSArray* tryCreateArrayWithStorage(VM&, Structure*, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom = 0);
 // In the count that NewArray takes: the storage is an allocation of its own.
 inline constexpr uint32_t storageOfItsOwnInArrayLiteralCount = 1u << 26;
+// In the same count: each value is an int32 in the low half of its word, and the array has Int32 storage.
+inline constexpr uint32_t int32ValuesInArrayLiteralCount = 1u << 25;
 
 // Makes room for `additional` more elements, unless the next step of the usual growth does. Changes nothing a program can see.
 void reserveArrayCapacity(VM&, JSArray*, uint64_t additional);

@@ -1240,7 +1240,7 @@ macro prepareForTailCall(temp1, temp2, temp3, temp4, storeCodeBlock)
         storep temp3, [sp]
     end
 
-    if ARM64E
+    if ARM64E or RETURN_ADDRESS_SIGNING
         addp 16, cfr, temp4
     end
 
@@ -1272,6 +1272,9 @@ macro invokeForTailCall(opcodeName, size, opcodeStruct, valueProfileName, dstVir
         leap _g_config, a5
         jmp JSCConfigGateMapOffset + (constexpr Gate::tailCall%callPtrTag%) * PtrSize[a5], NativeToJITGatePtrTag # %callPtrTag%
     else
+        if RETURN_ADDRESS_SIGNING
+            untagReturnAddress maybeOldCFR
+        end
         jmp callee, callPtrTag
     end
 end
@@ -1518,6 +1521,9 @@ macro prologue(osrSlowPath, traceSlowPath)
         # pop the callerFrame since we will jump to a function that wants to save it
         if ARM64 or RISCV64
             pop lr, cfr
+            if RETURN_ADDRESS_SIGNING
+                untagReturnAddress sp
+            end
         elsif ARM64E
             # untagReturnAddress will be performed in Gate::entryOSREntry.
             pop lr, cfr
@@ -2093,7 +2099,9 @@ if ARM64E
     global _returnFromLLIntTrampoline
     _returnFromLLIntTrampoline:
         ret
+end
 
+if ARM64E or RETURN_ADDRESS_SIGNING
     global _jsTrampolineProgramPrologue
     _jsTrampolineProgramPrologue:
         tagReturnAddress sp

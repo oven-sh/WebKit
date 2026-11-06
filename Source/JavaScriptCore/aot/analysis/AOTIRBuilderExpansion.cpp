@@ -13,6 +13,7 @@
 #include "AOTResultRules.h"
 #include "AOTSort.h"
 #include "AOTTypeArena.h"
+#include "AOTTypePropagation.h"
 #include <algorithm>
 #include <array>
 
@@ -230,7 +231,7 @@ IRBuilder::DeferredResultReads::DeferredResultReads(IRBuilder& builder, std::spa
                 m_reads.append(Read { producer, use.user });
         }
     }
-    AOT::stableSort(m_reads, { }, &Read::producer);
+    AOT::stableSortInLine(m_reads, { }, &Read::producer);
 }
 
 void IRBuilder::DeferredResultReads::finish()
@@ -294,7 +295,8 @@ void IRBuilder::endExpansion(const Expansion& expansion, std::span<const ValueID
     bool neverCompletes = std::ranges::any_of(results, [&](ValueID result) {
         return m_function.at(result).type == TypeTable::never;
     });
-    if (neverCompletes) {
+    // While a check stands, a value may have no type left only because the check turns away what arrives.
+    if (neverCompletes && !waitsForGenericVersion(m_context.program, m_function)) {
         emitUnreachable();
         return;
     }

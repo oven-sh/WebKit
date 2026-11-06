@@ -21,7 +21,7 @@
 # RUN(TOSTRINGTAG): member-lookup layout=L(m0) key=@@toStringTag
 # TOSTRINGTAG: Unknown level=Unknown cause=Unknown
 # RUN(OTHERSYMBOL): member-lookup layout=L(m0) key=@@iterator
-# OTHERSYMBOL: Absent level=Proven
+# OTHERSYMBOL: Unknown level=Unknown cause=PropertyAdded
 # RUN(REQUIREMARK): member-lookup layout=L(m0) key="__esModule"
 # REQUIREMARK: Unknown level=Unknown cause=PropertyAdded
 # RUN(EXPORTEDREQUIREMARK): member-lookup layout=L(m1) key="__esModule"
@@ -35,7 +35,7 @@
 # RUN(OWNEXPORTBESIDEDYNAMICSTAR): member-lookup layout=L(m2) key="b"
 # OWNEXPORTBESIDEDYNAMICSTAR: Variable level=Proven holder=L{{*}} variable=V5
 # RUN(SYMBOLBESIDEDYNAMICSTAR): member-lookup layout=L(m2) key=@@iterator
-# SYMBOLBESIDEDYNAMICSTAR: Absent level=Proven
+# SYMBOLBESIDEDYNAMICSTAR: Unknown level=Unknown cause=PropertyAdded
 # RUN(INDIRECT): member-lookup layout=L(m2) key="c"
 # INDIRECT: Unknown level=Unknown
 # RUN: property-access

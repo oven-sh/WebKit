@@ -1,0 +1,29 @@
+# Object.defineProperty(String.prototype, "doubled", { get() { return 1 } });   read("ab");   function read(text) { return text.doubled }
+# The getter has escaped, as all that is laid on String.prototype. The read of a string still enters it, whatever the order of flow's rules: the final state climbs from the prototype of the receiver's kind.
+# RUN: valueflow-results
+# CHECK: indirect f1 {{*}} -> f2 Accessor
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="get" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ObjectDefineProperty
+    v1 = Builtin builtin=StringPrototype
+    v2 = String string="doubled"
+    v3 = NewClosure function=f2
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = Call v0, -, v1, v2, v4
+    v6 = NewClosure function=f1
+    v7 = String string="ab"
+    v8 = Call v6, -, v7
+    Return
+}
+function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="doubled"
+    Return v1
+}
+function f2 name="get" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=1
+    Return v1
+}

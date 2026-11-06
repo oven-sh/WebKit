@@ -1,5 +1,6 @@
 # A function with a typed result that ends in a call of a function without types jumps to it. The callee returns its argument boxed and gets objects and numbers, so nothing proves what comes back:
-# the result is only expected, it stays boxed, and the caller tests it. That holds for a function that returns an object and for one that returns a number, so neither has a frame
+# the result is only expected, it stays boxed, and the caller tests it where it relies on it: the object in front of the read of its field, the number, which goes into a list of any values, nowhere.
+# That holds for a function that returns an object and for one that returns a number, so neither has a frame
 # FORM: AsRead
 # RUN: generate-code
 # RUN(PLACED): pipeline CheckPlacement
@@ -14,9 +15,9 @@
 # PLACED-NEXT: ReturnCall [[boxedNumber]] casts=[{declared={type=number site=w1 flags=[IsExpected]} resolution=Nothing}]
 # PLACED-LABEL: function f4 name="driver"
 # PLACED: [[object]]: anything = CallDirect {{*}} function=f1
-# PLACED: = TypeTest {{*}} testedType=L0
 # PLACED: [[number]]: anything = CallDirect {{*}} function=f2
-# PLACED: = TypeTest {{*}} testedType=number
+# PLACED: = TypeTest {{*}} testedType=L0
+# PLACED-NOT: testedType=number
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

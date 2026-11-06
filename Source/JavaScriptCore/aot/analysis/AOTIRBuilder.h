@@ -43,8 +43,8 @@ public:
     void moveToEndOf(BlockID);
     BlockID currentBlock() const { return m_block; }
 
-    BlockID addBlock(BlockFrequency = BlockFrequency::Normal);
-    BlockID addHandlerBlock(BlockRole, ValueID subject, BlockFrequency = BlockFrequency::Rare);
+    BlockID addBlock(Expected<BlockFrequency> = BlockFrequency::Normal);
+    BlockID addHandlerBlock(BlockRole, ValueID subject, Expected<BlockFrequency> = BlockFrequency::Rare);
 
     ValueID addParameter(BlockID block, TypeID type) { return addParameter(block, type, numberOfParametersForEdgeResults(block)); }
     void appendArgument(Edge edge, ValueID value) { appendArgument(edge, value, numberOfParametersForEdgeResults(targetOf(m_function, edge).block)); }
@@ -82,7 +82,7 @@ public:
         BlockID taken;
         BlockID notTaken;
     };
-    BranchBlocks emitBranch(ValueID condition, BlockFrequency taken = BlockFrequency::Normal, BlockFrequency notTaken = BlockFrequency::Normal);
+    BranchBlocks emitBranch(ValueID condition, Expected<BlockFrequency> taken = BlockFrequency::Normal, Expected<BlockFrequency> notTaken = BlockFrequency::Normal);
 
     struct ProvenBranch {
         BlockID taken;
@@ -90,12 +90,12 @@ public:
         ValueID provenOnTaken;
         ValueID provenOnNotTaken;
     };
-    ProvenBranch emitBranchWithProof(ValueID test, uint32_t provenOperand = 0, BlockFrequency taken = BlockFrequency::Normal, BlockFrequency notTaken = BlockFrequency::Normal);
+    ProvenBranch emitBranchWithProof(ValueID test, uint32_t provenOperand = 0, Expected<BlockFrequency> taken = BlockFrequency::Normal, Expected<BlockFrequency> notTaken = BlockFrequency::Normal);
     struct ProvenBranchTargets {
         BlockID enteredOnlyWhenTaken;
         std::optional<Target> whenNotTaken;
     };
-    ProvenBranch emitBranchWithProof(ValueID test, uint32_t provenOperand, BlockFrequency taken, BlockFrequency notTaken, ProvenBranchTargets&&);
+    ProvenBranch emitBranchWithProof(ValueID test, uint32_t provenOperand, Expected<BlockFrequency> taken, Expected<BlockFrequency> notTaken, ProvenBranchTargets&&);
     void appendValidationOfTestedValue(ValueID test);
     bool failsPredictions() const;
     void emitFailureOfPredictions(Target&& whenFailed);
@@ -112,7 +112,7 @@ public:
     void emitUnreachable();
     void emitTerminator(Terminator&&);
 
-    BlockID splitEdge(Edge);
+    BlockID splitEdge(Edge, std::optional<Target> newBlockHandler = std::nullopt);
     BlockID splitBlock(ProgramPoint point) { return splitBlock(point.block, singleElementSpan(point.index)).first(); }
     Vector<BlockID> splitBlock(BlockID, std::span<const uint32_t> ascendingIndexes);
     void redirectEdge(Edge, BlockID target, Arguments&&);
@@ -190,6 +190,9 @@ private:
     };
     Vector<QueuedInsertion, 8> m_insertions;
 };
+
+// The expected type of a value is a strict subset of its type. Returns nothing if no such subset remains.
+TypeID partInside(const Program&, TypeArena&, TypeID narrower, TypeID);
 
 } } } // namespace JSC::AOT::Typed
 

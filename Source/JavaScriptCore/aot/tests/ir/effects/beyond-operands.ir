@@ -20,8 +20,8 @@ function f2 name="counts" kind=Arrow captures=[{type=env L1}] parameters=[{type=
     PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
     Return
 }
-# CHECK: f1 return: writes(ModuleVariables/1) throw: none p0: [Inspects] writes(ObjectFields/1)
-# CHECK: f2 return: none throw: none p0: [Inspects] writes(EnvironmentFields/1) p1: [Inspects] writes(ObjectFields/1)
+# CHECK: f1 return: writes(ModuleVariables/1) throwsForLackOfStack throw: throwsForLackOfStack p0: [Inspects] writes(ObjectFields/1)
+# CHECK: f2 return: throwsForLackOfStack throw: throwsForLackOfStack p0: [Inspects] writes(EnvironmentFields/1) p1: [Inspects] writes(ObjectFields/1)
 function f3 name="rows" parameters=[{type=L0}, {type=number}, {type=function}, {type=function}, {type=object}] results=[{type=undefined}] {
     PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
     PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
@@ -47,5 +47,5 @@ function f4 name="calls" parameters=[{type=L0}, {type=number}, {type=f2}] result
     Return
 }
 # CHECK-LABEL: function f4
-# CHECK-NEXT: v3 CallDirect: writes(ModuleVariables/1, ObjectFields/1) | beyond operands: writes(ModuleVariables/1)
-# CHECK-NEXT: v4 Call: writes(EnvironmentFields/1, ObjectFields/1) | beyond operands: writes(EnvironmentFields/1)
+# CHECK-NEXT: v3 CallDirect: writes(ModuleVariables/1, ObjectFields/1) throwsForLackOfStack | beyond operands: writes(ModuleVariables/1) throwsForLackOfStack
+# CHECK-NEXT: v4 Call: writes(EnvironmentFields/1, ObjectFields/1) throwsForLackOfStack | beyond operands: writes(EnvironmentFields/1) throwsForLackOfStack

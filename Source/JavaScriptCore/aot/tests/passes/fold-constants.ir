@@ -8,7 +8,7 @@ layout L0 kind=Environment name="scope" fields=[{key="three" declared={type=3}}]
 layout L1 name="Open" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 layout L2 name="Stable" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="written" module=m0 declared={type=anything} initialization=Undefined
-runtimefunction id=0 function=f11
+runtimefunction id=PromiseConstructorPromise function=f11
 
 function f0 name="knownOperands" results=[{type=number}] {
     v0 = Integer integer=2
@@ -147,7 +147,7 @@ function f10 name="valueUnderHandler" results=[{type=anything}] {
 # CHECK-NEXT: Jump -> next b2()
 }
 
-function f11 name="storageKinds" role=Library enclosingRuntimeFunction=0 parameters=[{type=Array<string, proven>}, {type=Array<number, proven>}, {type=Array<string>}] results=[{type=anything}] {
+function f11 name="storageKinds" role=Library enclosingRuntimeFunction=PromiseConstructorPromise parameters=[{type=Array<string, proven>}, {type=Array<number, proven>}, {type=Array<string>}] results=[{type=anything}] {
     v3 = ArrayStorageKind v0
     v4 = Integer integer=2
     v5 = StrictEq v3, v4

@@ -32,8 +32,14 @@ constexpr StubKey getByIdOfSilentSlot() { return StubKey(StubFamily::GetByIdOfSi
 constexpr StubKey getByIdOfNarrowCellInExtension() { return StubKey(StubFamily::GetByIdOfNarrowCellInExtension); }
 constexpr StubKey getByIdOfEmptySlot() { return StubKey(StubFamily::GetByIdOfEmptySlot); }
 constexpr StubKey getByIdBehindFieldTable() { return StubKey(StubFamily::GetByIdBehindFieldTable); }
+// For a name that has a column in the front tables: RowDisplacementTable::hasColumn(). So is getLengthAtSite().
 constexpr StubKey getByIdAtSite() { return StubKey(StubFamily::GetByIdAtSite); }
+// getByIdAtSite() behind its test for a cell.
+constexpr StubKey getByIdOfObjectAtSite() { return StubKey(StubFamily::GetByIdOfObjectAtSite); }
+constexpr StubKey getByIdAtSiteHashed() { return StubKey(StubFamily::GetByIdAtSiteHashed); }
 constexpr StubKey getLengthAtSite() { return StubKey(StubFamily::GetLengthAtSite); }
+// The operands: the proxy, the key as its trap takes it, and of a store the value and whether the code is strict.
+constexpr StubKey throughProxy(TrapOfProxy trap) { return StubKey(StubFamily::ThroughProxy).withForm(static_cast<uint8_t>(trap)); }
 constexpr StubKey inById(PresenceQuestion question) { return StubKey(StubFamily::InById).withForm(static_cast<uint8_t>(question)); }
 constexpr StubKey getByIdChain() { return StubKey(StubFamily::GetByIdChain); }
 constexpr StubKey getByIdPair(SecondReceiver receiver) { return StubKey(StubFamily::GetByIdPair).withForm(static_cast<uint8_t>(receiver)); }
@@ -47,18 +53,29 @@ constexpr StubKey instanceOf(InstanceOfOperand operand) { return StubKey(StubFam
 
 // The operands: the object and the token of the evaluation of the class. The immediate: the index of the field in the record of the layout that declares it.
 constexpr StubKey privateGet() { return StubKey(StubFamily::PrivateGet); }
+// For a caller that knows where an object of the declaring layout keeps the field: in the cell, in this representation, in a class that is evaluated once. The upper half of the immediate is the offset of the slot.
+constexpr unsigned bitsOfFieldInPrivateGet = 16;
+static_assert(descriptorOf(StubFamily::PrivateGet).maxCount == numberOfEnumerators<SlotRepresentation>);
+constexpr StubKey privateGetFromSlot(SlotRepresentation representation) { return privateGet().withCount(static_cast<unsigned>(representation) + 1); }
+constexpr std::optional<SlotRepresentation> representationKnownTo(StubKey privateGet) { return privateGet.count() ? std::optional(static_cast<SlotRepresentation>(privateGet.count() - 1)) : std::nullopt; }
 
+constexpr StubKey storeElementOfCompiledObject(PutMode mode) { return StubKey(StubFamily::StoreElementOfCompiledObject).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putById(PutMode mode) { return StubKey(StubFamily::PutById).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdAfterFrontProbe(PutMode mode) { return StubKey(StubFamily::PutByIdAfterFrontProbe).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdHashed(PutMode mode) { return StubKey(StubFamily::PutByIdHashed).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdBehindFieldTable(PutMode mode) { return StubKey(StubFamily::PutByIdBehindFieldTable).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdAtSite(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)); }
+constexpr StubKey putByIdAtSiteBehindFieldTable(PutMode mode) { return StubKey(StubFamily::PutByIdAtSiteBehindFieldTable).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putKnownField(PutMode mode) { return StubKey(StubFamily::PutKnownField).withForm(static_cast<uint8_t>(mode)); }
 // For a caller that knows that the slot lies in the cell and holds any value as it is, and that the type of the field is that of any value.
 constexpr StubKey putKnownFieldThatTakesAnyValue(PutMode mode) { return putKnownField(mode).withCount(1); }
+// For a caller that knows the slot is inline and holds a double, and that the field's type accepts any number.
+constexpr StubKey putKnownFieldAcceptingAnyNumber(PutMode mode) { return putKnownField(mode).withCount(2); }
 constexpr StubKey putByIdOnce(PutMode mode) { return StubKey(StubFamily::PutByIdOnce).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey createKnownField(PutMode mode) { return StubKey(StubFamily::CreateKnownField).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putBooleanOrDoubleField(PutMode mode) { return StubKey(StubFamily::PutBooleanOrDoubleField).withForm(static_cast<uint8_t>(mode)); }
+constexpr unsigned numberOfPutModes = 3;
+constexpr StubKey putValueThatSlotRefuses(PutMode mode, bool isAtSite) { return StubKey(StubFamily::PutValueThatSlotRefuses).withForm(static_cast<uint8_t>(mode) + (isAtSite ? numberOfPutModes : 0)); }
 constexpr StubKey setFreeName(PutMode mode)
 {
     ASSERT_UNDER_CONSTEXPR_CONTEXT(mode != PutMode::Define);
@@ -69,8 +86,18 @@ constexpr StubKey didCreateField(CreatedFields fields) { return StubKey(StubFami
 constexpr StubKey didCreateFieldAtPlace(CreatedFieldsAtPlace fields) { return StubKey(StubFamily::DidCreateFieldAtPlace).withForm(static_cast<uint8_t>(fields)); }
 constexpr StubKey rememberKeyOrderStep() { return StubKey(StubFamily::RememberKeyOrderStep); }
 
-constexpr StubKey getByValCached() { return StubKey(StubFamily::GetByValCached); }
-constexpr StubKey getByValCachedCells() { return StubKey(StubFamily::GetByValCachedCells); }
+// AreKept: a second copy of the read by a key, which saves the registers of the caller around whatever it calls. GetByValOfKeyOfPair leaves for it, so a loop around such a read keeps its numbers in registers.
+enum class RegistersOfCaller : bool { AreLost, AreKept };
+constexpr StubKey getByValCached(RegistersOfCaller registers = RegistersOfCaller::AreLost) { return StubKey(registers == RegistersOfCaller::AreKept ? StubFamily::GetByValCachedKeepingRegisters : StubFamily::GetByValCached); }
+constexpr StubKey getByValCachedCells(RegistersOfCaller registers = RegistersOfCaller::AreLost) { return StubKey(registers == RegistersOfCaller::AreKept ? StubFamily::GetByValCachedCellsKeepingRegisters : StubFamily::GetByValCachedCells); }
+// The base and the key are cells, the StructureID of the base is loaded, and the KeyedValuePlace of the two is located and is of the key.
+constexpr StubKey getByValCachedAtPlace(RegistersOfCaller registers = RegistersOfCaller::AreLost) { return StubKey(registers == RegistersOfCaller::AreKept ? StubFamily::GetByValCachedAtPlaceKeepingRegisters : StubFamily::GetByValCachedAtPlace); }
+// The base and the key are cells, the StructureID of the base is loaded, and no KeyedValuePlace is of the key.
+constexpr StubKey getByValCachedBehindPlaces(RegistersOfCaller registers = RegistersOfCaller::AreLost) { return StubKey(registers == RegistersOfCaller::AreKept ? StubFamily::GetByValCachedBehindPlacesKeepingRegisters : StubFamily::GetByValCachedBehindPlaces); }
+// The operands: the base and the two parts of the key, as ConcatenateKeyOfPair takes them.
+enum class BaseOfKeyedRead : uint8_t { IsCell, IsAnyValue };
+constexpr StubKey getByValOfKeyOfPair(BaseOfKeyedRead base) { return StubKey(StubFamily::GetByValOfKeyOfPair).withForm(static_cast<uint8_t>(base)); }
+constexpr StubKey getSuperByVal() { return StubKey(StubFamily::GetSuperByVal); }
 constexpr StubKey inByValCached(PresenceQuestion question) { return StubKey(StubFamily::InByValCached).withForm(static_cast<uint8_t>(question)); }
 constexpr StubKey deleteByIdCached(PutMode mode) { return StubKey(StubFamily::DeleteByIdCached).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey deleteByValCached(PutMode mode) { return StubKey(StubFamily::DeleteByValCached).withForm(static_cast<uint8_t>(mode)); }
@@ -183,13 +210,13 @@ static_assert(!static_cast<uint8_t>(PutMode::Strict) && static_cast<uint8_t>(Put
 static_assert(PackedSlot::maxName == (1u << secondNameShift) - 1);
 static_assert([] {
     for (StubKey lastFormKey : {
-        getById(), getByIdAfterFrontProbe(), getByIdHashed(), getByIdOfSilentSlot(), getByIdOfEmptySlot(), getByIdOfNarrowCellInExtension(), getByIdBehindFieldTable(), getByIdAtSite(), getLengthAtSite(), inById(PresenceQuestion::HasOwn),
+        getById(), getByIdAfterFrontProbe(), getByIdHashed(), getByIdOfSilentSlot(), getByIdOfEmptySlot(), getByIdOfNarrowCellInExtension(), getByIdBehindFieldTable(), getByIdAtSite(), getByIdOfObjectAtSite(), getByIdAtSiteHashed(), getLengthAtSite(), inById(PresenceQuestion::HasOwn),
         getByIdChain(), getByIdPair(SecondReceiver::Other), getByIdIsTruthy(), getByIdEqualsLiteral(1),
         callMethodById(0), tryGetSuperById(), getSuperBaseOfClass(),
         getFreeName(FreeNameRead::TypeOf), setFreeName(PutMode::Sloppy), instanceOf(InstanceOfOperand::Prototype),
-        putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdBehindFieldTable(PutMode::Define), putByIdAtSite(PutMode::Define), putKnownField(PutMode::Define), putByIdOnce(PutMode::Define), createKnownField(PutMode::Define), putBooleanOrDoubleField(PutMode::Define),
+        putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdBehindFieldTable(PutMode::Define), putByIdAtSite(PutMode::Define), putKnownField(PutMode::Define), putByIdOnce(PutMode::Define), createKnownField(PutMode::Define), putBooleanOrDoubleField(PutMode::Define), putValueThatSlotRefuses(PutMode::Define, true), putByIdAtSiteBehindFieldTable(PutMode::Define),
         didCreateField(CreatedFields::Run), didCreateFieldAtPlace(CreatedFieldsAtPlace::Run),
-        getByValCached(), getByValCachedCells(), inByValCached(PresenceQuestion::HasOwn), deleteByIdCached(PutMode::Sloppy), deleteByValCached(PutMode::Sloppy), putByValCached(PutMode::Sloppy), defineByValCached(), toPropertyKey(),
+        getByValCached(), getByValCachedCells(), getByValCachedAtPlace(), getByValCachedBehindPlaces(), getByValCached(RegistersOfCaller::AreKept), getByValCachedCells(RegistersOfCaller::AreKept), getByValCachedAtPlace(RegistersOfCaller::AreKept), getByValCachedBehindPlaces(RegistersOfCaller::AreKept), getByValOfKeyOfPair(BaseOfKeyedRead::IsAnyValue), getSuperByVal(), inByValCached(PresenceQuestion::HasOwn), deleteByIdCached(PutMode::Sloppy), deleteByValCached(PutMode::Sloppy), putByValCached(PutMode::Sloppy), defineByValCached(), toPropertyKey(),
     }) {
         if (!exists(lastFormKey) || lastFormKey.form() + 1u != descriptorOf(lastFormKey.family()).numberOfForms)
             return false;

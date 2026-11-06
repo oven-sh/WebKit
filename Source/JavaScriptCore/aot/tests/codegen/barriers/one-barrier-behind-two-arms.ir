@@ -1,0 +1,23 @@
+# The stores of two arms are marked as covered, and the operation where the arms meet runs the one barrier.
+# FORM: Selected
+# RUN: generate-code
+# STATISTIC: BarriersEmitted = 1
+# STATISTIC: BarriersCoveredLater = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}] flow={members=[L0]}
+layout L1 fields=[{key="w" declared={type=anything}}, {key="x" declared={type=anything}}] flow={members=[L1]}
+function f0 name="twoArms" parameters=[{type=L0|L1}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0|L1, v1: anything):
+    v2 = TypeTest v0 testedType=L0
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3: L0):
+    PutSlot v3, -, v1 key="x" receivers=[L0] level=Proven
+    Jump -> next b3()
+  b2(v5: L1):
+    PutSlot v5, -, v1 key="x" receivers=[L1] level=Proven
+    Jump -> next b3()
+  b3():
+    v7 = Undefined
+    Return v7
+}

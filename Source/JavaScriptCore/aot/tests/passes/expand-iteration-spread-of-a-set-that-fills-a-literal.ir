@@ -1,0 +1,47 @@
+# `[...set]` of a Set that is walked as the built-in iterator walks it: the members are appended at once, so that the list can be made with them in it.
+# A list that holds something already, or that somebody has read, gets the loop.
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="fillsAnEmptyLiteral" parameters=[{type=Set<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="fillsAnEmptyLiteral"
+# CHECK: v1: Array = NewArray contents=anything
+# CHECK-NEXT: AppendMembers v1, v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+
+function f1 name="standsBehindAnElement" parameters=[{type=Set<number, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
+    v2 = NewArray v1 contents=anything
+    AppendSpread v2, v0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="standsBehindAnElement"
+# CHECK-NOT: AppendMembers
+# CHECK: SetNext
+# CHECK: AppendElement
+
+function f2 name="standsBehindAnotherSpread" parameters=[{type=Set<number, pristine[Storage, Names]>}, {type=Set<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    AppendSpread v2, v0
+    AppendSpread v2, v1
+    Return v2
+}
+# CHECK-LABEL: function f2 name="standsBehindAnotherSpread"
+# CHECK: AppendMembers v2, v0
+# CHECK-NOT: AppendMembers
+# CHECK: SetNext
+# CHECK: AppendElement
+
+function f3 name="mayHaveAWalkOfItsOwn" parameters=[{type=Set<number>}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="mayHaveAWalkOfItsOwn"
+# CHECK-NOT: AppendMembers

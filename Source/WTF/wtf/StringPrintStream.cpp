@@ -33,7 +33,7 @@
 
 namespace WTF {
 
-StringPrintStream::StringPrintStream()
+NEVER_INLINE StringPrintStream::StringPrintStream()
 {
     m_buffer = std::span { m_inlineBuffer };
     m_buffer[0] = 0; // Make sure that we always have a null terminator.

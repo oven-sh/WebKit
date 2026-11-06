@@ -42,6 +42,7 @@ enum class SelectionRuleKind : uint8_t { Optional, Required };
     v(ResolvedCallTarget, Optional) \
     v(RegExpLiteralMatch, Optional) \
     v(ThrowNewError, Optional) \
+    v(MoveLookupTablesToHeap, Optional) \
     v(KeyPartsLookup, Optional) \
     v(InlineBuiltin, Required) \
     v(StringBuilderParts, Required) \

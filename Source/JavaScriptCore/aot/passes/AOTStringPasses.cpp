@@ -42,12 +42,14 @@
 #include "AOTSlotPlan.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTSplitStringWalk.h"
 #include "AOTStringArena.h"
 #include "AOTStringRanges.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTValueSubstitution.h"
 #include "YarrFlags.h"
 #include <algorithm>
 #include <array>
@@ -56,6 +58,7 @@
 #include <wtf/FastBitVector.h>
 #include <wtf/PrintStream.h>
 #include <wtf/UnionFind.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -64,11 +67,15 @@ static constexpr uint32_t stateOperandIndex = 0;
 static_assert(OperandIndex::Add::left == stateOperandIndex);
 static_assert(OperandIndex::Strcat::parts == stateOperandIndex);
 
-static constexpr OpcodeSet keyedAccesses { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
 static constexpr OpcodeSet equalityComparisonsOfStrings { Opcode::StrictEq, Opcode::Eq };
 static constexpr OpcodeSet closingOperations { Opcode::StringBuilderFinish, Opcode::StringBuilderDiscard };
 static constexpr OpcodeSet redirectableOperations = closingOperations | OpcodeSet {
-    Opcode::StringBuilderAppend, Opcode::StringBuilderAppendJSON, Opcode::StringBuilderAppendJSONMembers, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::CallDirect,
+    Opcode::StringBuilderAppend, Opcode::StringBuilderAppendJSON, Opcode::StringBuilderAppendJSONMembers, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::StringBuilderCheckLength,
+    Opcode::CallDirect,
+};
+// Any other operation may write into room that it reserved and leave the text longer than a string can be.
+static constexpr OpcodeSet operationsThatKeepLengthOfString = closingOperations | OpcodeSet {
+    Opcode::StringBuilderAppend, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::StringBuilderCheckLength,
 };
 static constexpr AbstractHeapSet stringCreationHeaps = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage };
 
@@ -149,6 +156,8 @@ struct StringBuilderPlan {
 // One step of the pass. The builder gets no FunctionAnalyses: the graph and the use lists have to outlive split edges and queued insertions.
 struct StringBuilderStep {
     FunctionPassContext& context;
+    // The parameters that are typed as plain strings while the pass runs and that some way leaves unfilled.
+    const BitVector& statesReadAsStrings;
     const Program& program { context.program };
     Function& function { context.function };
     const CFG& cfg { context.analyses.cfg() };
@@ -164,8 +173,14 @@ struct StringBuilderStep {
     PassOutcome joinNestedBuilders();
 
     const Type& typeOf(ValueID id) const { return program.typeOf(function, id); }
-    bool isPart(ValueID id) const { return isStringBuilderPart(typeOf(id)); }
+    // Nobody reads what is Unspecified, so nothing is appended for it. It is asked what it stands in for.
+    bool isPart(ValueID id) const { return isStringBuilderPart(function.at(id).opcode == Opcode::Unspecified ? typeOf(id).withoutPrimitives(Primitive::Unspecified) : typeOf(id)); }
     bool isEmptyString(ValueID id) const { return stringConstantOf(program, function, id) == program.strings.emptyString(); }
+    // As a state of a web such a word is never read where it is unfilled. As the text that a web begins with it would be.
+    bool mayBeUnfilled(ValueID id) const
+    {
+        return function.at(id).opcode != Opcode::Unspecified && (typeOf(id).mayBeUnspecified() || statesReadAsStrings.get(sameObjectThroughCasts(function, id).valueInFrontOfFacts().index()));
+    }
 
     void retype(Value& value)
     {
@@ -713,10 +728,23 @@ StringBuilderPlan StringBuilderStep::findWebs()
         });
         // The builder is begun on the edge with an append of the first state: a read in front of whatever says whether that state is there.
         bool wouldReadUnspecifiedFirstState = std::ranges::any_of(web.entries, [&](const StringWebEntry& entry) {
-            return entry.edge && function.at(entry.value).opcode != Opcode::Unspecified && mayBeUnspecified(context.analyses, entry.value);
+            return entry.edge && mayBeUnfilled(entry.value);
         });
+        // A builder copies the characters at once. Where each iteration of a loop makes a new string and none reads it, that is a copy per iteration for nothing.
+        auto isBegunInLoopThatDoesNotRead = [&](const StringWebEntry& entry) {
+            BlockID block = entry.edge ? entry.edge->from : useLists.blockOf(entry.concatenation);
+            return cycles.isInCycle(block) && std::ranges::none_of(web.reads, [&](const StringStateRead& read) {
+                return read.kind == StringStateUse::Read && cycles.areInSameCycle(read.use.block, block);
+            });
+        };
+        bool beginsInLoopThatDoesNotRead = false;
+        if (std::ranges::any_of(web.entries, isBegunInLoopThatDoesNotRead) && !isPartOfOtherWeb(static_cast<uint32_t>(&web - webs.span().data()))) {
+            if (!textCycles)
+                findTextCycles();
+            beginsInLoopThatDoesNotRead = std::ranges::none_of(web.members, [&](ValueID member) { return textCycles->isInCycle.get(member.index()); });
+        }
         if (!wouldReadUnspecifiedFirstState)
-            web.decision = web.hasTooFewAppends ? StringBuilderDeclineReason::TooFewAppends : StringBuilderDeclineReason::Created;
+            web.decision = web.hasTooFewAppends || beginsInLoopThatDoesNotRead ? StringBuilderDeclineReason::TooFewAppends : StringBuilderDeclineReason::Created;
         if (web.decision != StringBuilderDeclineReason::Created)
             web.decidedAt = web.members.first();
     }
@@ -776,6 +804,12 @@ PassOutcome StringBuilderStep::mergeNestedWebs(const StringBuilderPlan& plan)
         if (nested.web->reads.size() != 1 || nested.web->entries.isEmpty())
             return std::nullopt;
         if (nested.web->reads.first().use != nested.readOfLastState || !nested.web->reads.first().endsWeb)
+            return std::nullopt;
+        // The front is joined to each first state where the web is entered: a read in front of whatever says whether that state is there.
+        bool wouldReadEmptyFirstState = std::ranges::any_of(nested.web->entries, [&](const StringWebEntry& entry) {
+            return mayBeUnfilled(entry.value);
+        });
+        if (wouldReadEmptyFirstState)
             return std::nullopt;
         return nested;
     };
@@ -1215,7 +1249,7 @@ Vector<ValueID, 8> StringBuilderStep::rewriteWebs(const StringBuilderPlan& plan)
         InsertionSite site = siteOfUse(use);
         switch (read.kind) {
         case StringStateUse::Length:
-            if (equalityComparisonsOfStrings.contains(function.at(use.user).opcode)) {
+            if (use.kind == Use::Kind::Operand && equalityComparisonsOfStrings.contains(function.at(use.user).opcode)) {
                 ValueID length = insert(site, IRBuilder::make(Opcode::StringBuilderLength, { handle }));
                 ValueID lengthOfEmptyString = insert(site, makeInteger(0));
                 Value& comparison = function.edit(use.user);
@@ -1454,7 +1488,7 @@ PassOutcome StringBuilderStep::joinNestedBuilders()
         ProgramPoint start = useLists.pointAfter(begin);
         BitVector closingBlocks;
         for (const Use& use : useLists.usesOf(begin)) {
-            if (closingOperations.contains(function.at(use.user).opcode))
+            if (use.kind == Use::Kind::Operand && closingOperations.contains(function.at(use.user).opcode))
                 closingBlocks.set(use.block.index());
         }
 
@@ -1540,6 +1574,8 @@ PassOutcome StringBuilderStep::joinNestedBuilders()
 
         ProgramPoint start = useLists.pointOf(begin);
         builder.setOrigin(function.at(begin).origin());
+        bool outerGoesOn = !!outer;
+        bool mayBecomeTooLong = false;
         if (!outer)
             outer = builder.insertBefore(start, IRBuilder::make(Opcode::StringBuilderBegin));
         for (ValueID& part : earlierParts) {
@@ -1549,13 +1585,16 @@ PassOutcome StringBuilderStep::joinNestedBuilders()
         if (!earlierParts.isEmpty())
             builder.insertBefore(start, makeAppend(outer, earlierParts.span()));
 
+        ValueID nestedFinish;
         for (const Use& use : useLists.usesOf(begin)) {
             Value& user = function.edit(use.user);
+            mayBecomeTooLong |= !operationsThatKeepLengthOfString.contains(user.opcode);
             if (!closingOperations.contains(user.opcode)) {
                 user.setOperand(use.operandIndex, outer);
                 continue;
             }
             if (user.opcode == Opcode::StringBuilderFinish) {
+                nestedFinish = use.user;
                 user.become(Opcode::String);
                 user.setString(program.strings.emptyString());
             } else {
@@ -1566,6 +1605,11 @@ PassOutcome StringBuilderStep::joinNestedBuilders()
             retype(user);
         }
         retype(becomeBuilderOperation(begin, Opcode::StringBuilderCheckpoint, outer));
+        // Finishing the nested builder throws for a text that is too long. The outer builder stays open, so it checks in its place.
+        if (outerGoesOn && mayBecomeTooLong) {
+            builder.setOrigin(function.at(concatenation).origin());
+            builder.insertBefore(useLists.pointOf(nestedFinish), IRBuilder::make(Opcode::StringBuilderCheckLength, { outer }));
+        }
 
         if (function.at(concatenation).opcode == Opcode::StringBuilderAppend) {
             function.edit(concatenation, ValueEdit::Definition).setPartsOperands(laterParts.span());
@@ -1610,12 +1654,35 @@ bool isKeyOperand(const Program& program, const Function& function, const Use& u
     if (use.kind != Use::Kind::Operand)
         return false;
     const Value& user = function.at(use.user);
-    if (keyedAccesses.contains(user.opcode))
-        return use.operandIndex == OperandPosition::property(user.opcode);
+    if (std::optional<unsigned> property = OperandPosition::property(user.opcode))
+        return use.operandIndex == *property;
     if (user.opcode != Opcode::CallBuiltin || builtinOperandAt(user, use.operandIndex) != BuiltinOperand::argument(0))
         return false;
     std::optional<InlineBuiltin> builtin = program.builtins().at(user.overload()).code.implementation.inlineBuiltin;
     return builtin && familyOf(*builtin) == InlineBuiltinFamily::HashTableBuiltin;
+}
+
+bool isOnlyKeyOfProperties(const Function& function, const UseLists& useLists, ValueID string)
+{
+    BitVector visitedValues;
+    visitedValues.set(string.index());
+    Vector<ValueID, 8> worklist { string };
+    while (!worklist.isEmpty()) {
+        for (const Use& use : useLists.usesOf(worklist.takeLast())) {
+            ValueID sameString;
+            if (use.kind == Use::Kind::EdgeArgument)
+                sameString = function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex];
+            else if (use.kind == Use::Kind::Operand && OperandPosition::property(function.at(use.user).opcode) == use.operandIndex)
+                continue;
+            else if (use.kind == Use::Kind::Operand && isCast(function.at(use.user).opcode))
+                sameString = use.user;
+            else if (function.at(use.block).frequency.predicted() == BlockFrequency::Normal)
+                return false;
+            if (sameString && !visitedValues.set(sameString.index()))
+                worklist.append(sameString);
+        }
+    }
+    return true;
 }
 
 static bool markLikelyKeys(FunctionPassContext& context)
@@ -1640,7 +1707,7 @@ static bool markLikelyKeys(FunctionPassContext& context)
                     continue;
                 }
                 // As the call by name that stands in where a Map is not what its type says.
-                if (function.at(use.block).frequency != BlockFrequency::Normal)
+                if (function.at(use.block).frequency.predicted() != BlockFrequency::Normal)
                     continue;
 
                 ValueID sameString;
@@ -1671,12 +1738,12 @@ static bool markLikelyKeys(FunctionPassContext& context)
     return didChange;
 }
 
-static StringBuilderPlan analyzeStringBuilders(FunctionPassContext& context)
+static StringBuilderPlan analyzeStringBuilders(FunctionPassContext& context, const BitVector& statesReadAsStrings)
 {
     bool hasConcatenation = std::ranges::any_of(context.function.blocks.span(), [&](const Block& block) {
         return std::ranges::any_of(block.values, [&](ValueID id) { return isStringConcatenation(context.program, context.function, context.function.at(id)); });
     });
-    return hasConcatenation ? StringBuilderStep { context }.findWebs() : StringBuilderPlan { };
+    return hasConcatenation ? StringBuilderStep { context, statesReadAsStrings }.findWebs() : StringBuilderPlan { };
 }
 
 // The parts of an append are written one after the other, and each of them may find that the text gets too long. A handler that goes on with the builder wants the text as it was in front of the append.
@@ -1744,13 +1811,107 @@ static PassOutcome rollBackAppendsUnderHandlers(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
-static PassOutcome createAndJoinBuilders(FunctionPassContext& context)
+// `let out = ""; .. return out + text.slice(start, end)`: where nothing was appended on the way there, the last part is the text.
+static PassOutcome takeOnlyPartsOutOfBuilders(FunctionPassContext& context, std::span<const ValueID> appends)
+{
+    static constexpr OpcodeSet operationsThatAppendNothing { Opcode::StringBuilderFinish, Opcode::StringBuilderDiscard, Opcode::StringBuilderLength, Opcode::StringBuilderToString, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack };
+    Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    const UseLists& useLists = context.analyses.useLists();
+    struct LastAppend {
+        ValueLocation location;
+        ValueID append;
+        ValueID finish;
+    };
+    // A builder goes from block to block as a parameter.
+    auto followsAnotherAppend = [&](ValueID append, ProgramPoint point) {
+        Vector<ValueID, 8> names { function.at(append).builderOperand() };
+        auto add = [&](ValueID name) {
+            if (name && !names.contains(name))
+                names.append(name);
+        };
+        for (size_t position = 0; position < names.size(); ++position) {
+            ValueID name = names[position];
+            ValueLocation location = useLists.locationOf(name);
+            if (location.placement == ValuePlacement::Parameter) {
+                for (Edge edge : cfg.incomingEdges(location.block))
+                    add(valuePassedOn(function, edge, location.index));
+            }
+            for (const Use& use : useLists.usesOf(name)) {
+                if (use.isEdgeUse()) {
+                    add(function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex]);
+                    continue;
+                }
+                if (use.kind == Use::Kind::Operand && use.user != append && !operationsThatAppendNothing.contains(function.at(use.user).opcode) && context.analyses.dominates(use.user, point))
+                    return true;
+            }
+        }
+        return false;
+    };
+    Vector<LastAppend, 2> lastAppends;
+    for (ValueID id : appends) {
+        const Value& append = function.at(id);
+        if (append.opcode != Opcode::StringBuilderAppend || append.partsOperands().size() != 1 || !context.program.typeOf(function, append.partsOperands()[0]).isString())
+            continue;
+        ValueLocation location = useLists.locationOf(id);
+        if (location.placement != ValuePlacement::InBlock)
+            continue;
+        const Block& block = function.at(location.block);
+        if (block.handler || location.index + 1 >= block.values.size())
+            continue;
+        ValueID handle = append.builderOperand();
+        ValueID finishID = block.values[location.index + 1];
+        const Value& finish = function.at(finishID);
+        if (finish.opcode != Opcode::StringBuilderFinish || finish.builderOperand() != handle || finish.isLikelyKey())
+            continue;
+        if (!followsAnotherAppend(id, { location.block, location.index }))
+            lastAppends.append({ location, id, finishID });
+    }
+    if (lastAppends.isEmpty())
+        return PassOutcome::Unchanged;
+
+    // Of the appends of a block the last one is cut out first, so each is still where it was found.
+    AOT::sort(lastAppends, std::greater { }, [](const LastAppend& last) {
+        return last.location.index;
+    });
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (const LastAppend& last : lastAppends) {
+        BlockID block = last.location.block;
+        Value finish = function.at(last.finish);
+        ValueID handle = finish.builderOperand();
+        ValueID part = function.at(last.append).partsOperands()[0];
+        // A slice made for the append alone is made on either side: behind other text its characters are copied and no string is made.
+        bool isMadeForAppend = function.at(part).opcode == Opcode::Substring && useLists.usesOf(part).size() == 1 && useLists.locationOf(part).placement == ValuePlacement::InBlock && useLists.blockOf(part) == block;
+        BlockValues moved;
+        BlockValues remaining;
+        for (ValueID id : function.at(block).values)
+            (id == last.append || (isMadeForAppend && id == part) ? moved : remaining).append(id);
+        function.edit(block).values = WTF::move(remaining);
+        context.analyses.didChangeValues();
+
+        builder.setOrigin(finish.origin());
+        Expected<BlockFrequency> frequency = function.at(block).frequency;
+        IRBuilder::Expansion expansion = builder.beginExpansion({ block, static_cast<uint32_t>(function.at(block).values.find(last.finish)) });
+        ValueID length = builder.append(Opcode::StringBuilderLength, { handle });
+        IRBuilder::BranchBlocks isEmpty = builder.emitBranch(builder.append(Opcode::StrictEq, { length, builder.appendInteger(0) }), frequency, frequency);
+        builder.append(Opcode::StringBuilderDiscard, { handle });
+        builder.endExpansion(expansion, isMadeForAppend ? builder.append(Value(function.at(part))) : part);
+        function.edit(isEmpty.notTaken).values.appendVector(moved);
+        context.analyses.didChangeValues();
+        builder.moveToEndOf(isEmpty.notTaken);
+        builder.endExpansion(expansion, builder.append(WTF::move(finish)));
+    }
+    context.analyses.didChangeControlFlow();
+    return PassOutcome::Changed;
+}
+
+static PassOutcome createAndJoinBuilders(FunctionPassContext& context, const BitVector& statesReadAsStrings)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
-    StringBuilderPlan plan = analyzeStringBuilders(context);
-    while (StringBuilderStep { context }.mergeNestedWebs(plan) == PassOutcome::Changed || splitInFrontOfCoveredBlocks(context, plan)) {
+    StringBuilderPlan plan = analyzeStringBuilders(context, statesReadAsStrings);
+    while (StringBuilderStep { context, statesReadAsStrings }.mergeNestedWebs(plan) == PassOutcome::Changed || splitInFrontOfCoveredBlocks(context, plan)) {
         context.analyses.didChangeControlFlow();
-        plan = analyzeStringBuilders(context);
+        plan = analyzeStringBuilders(context, statesReadAsStrings);
         outcome = PassOutcome::Changed;
     }
     if (plan.webs.isEmpty())
@@ -1774,21 +1935,132 @@ static PassOutcome createAndJoinBuilders(FunctionPassContext& context)
             break;
         }
     }
+    Vector<ValueID, 8> appends;
     if (!plan.createdWebs().empty()) {
-        Vector<ValueID, 8> appends = StringBuilderStep { context }.rewriteWebs(plan);
-        StringBuilderStep { context }.foldConversionsInto(appends.span());
+        appends = StringBuilderStep { context, statesReadAsStrings }.rewriteWebs(plan);
+        StringBuilderStep { context, statesReadAsStrings }.foldConversionsInto(appends.span());
         outcome = PassOutcome::Changed;
     }
-    outcome |= StringBuilderStep { context }.joinNestedBuilders();
+    outcome |= StringBuilderStep { context, statesReadAsStrings }.joinNestedBuilders();
     if (markLikelyKeys(context))
         outcome = PassOutcome::Changed;
     outcome |= expandAppendedStringRanges(context);
+    outcome |= takeOnlyPartsOutOfBuilders(context, appends.span());
     return outcome | rollBackAppendsUnderHandlers(context);
+}
+
+// A text that grows may begin as Unspecified on a way that never reads it: a builder begins empty there, and then nothing is left unfilled.
+// While the pass looks for such texts their states are plain strings. What stays a string gets its facts again behind the pass, where its uses stand. Where the pass makes nothing, all is put back as it was.
+struct StatesReadAsStrings {
+    struct State {
+        ValueID parameter;
+        TypeID type;
+    };
+    struct ReplacedUse {
+        Use use;
+        ValueID cast;
+    };
+    Vector<State, 8> states;
+    BitVector parameters;
+    Vector<std::pair<ValueID, Value>, 8> casts;
+    Vector<ReplacedUse, 8> uses;
+
+    bool isEmpty() const { return states.isEmpty(); }
+};
+
+static StatesReadAsStrings readStatesThatBeginUnspecifiedAsStrings(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::Unspecified))
+        return { };
+    const CFG& cfg = context.analyses.cfg();
+    const UseLists& useLists = context.analyses.useLists();
+    auto typeOf = [&](ValueID id) -> const Type& { return context.types.at(function.at(id).type); };
+
+    BitVector isState(function.values.size());
+    Vector<std::pair<BlockID, uint32_t>, 8> states;
+    for (BlockID block : cfg.reversePostOrder()) {
+        const CompactList<ValueID>& parameters = function.at(block).parameters;
+        for (uint32_t index = 0; block != cfg.root() && index < parameters.size(); ++index) {
+            const Type& type = typeOf(parameters[index]);
+            if (!type.mayBeUnspecified() || !type.withoutPrimitives(Primitive::Unspecified).isString())
+                continue;
+            states.append({ block, index });
+            isState.quickSet(parameters[index].index());
+        }
+    }
+    auto isCastBehindFact = [&](const Use& use) {
+        return use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::AssumeType && use.operandIndex == OperandIndex::AssumeType::value && function.at(use.user).factOperand();
+    };
+    for (bool didRemove = true; didRemove;) {
+        didRemove = states.removeAllMatching([&](auto state) {
+            ValueID parameter = function.at(state.first).parameters[state.second];
+            bool beginsUnspecified = std::ranges::all_of(cfg.incomingEdges(state.first), [&](Edge edge) {
+                ValueID passed = valuePassedOn(function, edge, state.second);
+                return passed && (!typeOf(passed).mayBeUnspecified() || function.at(passed).opcode == Opcode::Unspecified || isState.quickGet(passed.index()));
+            });
+            bool isOnlyCastOrPassedOn = std::ranges::all_of(useLists.usesOf(parameter), [&](const Use& use) {
+                if (use.isEdgeUse())
+                    return isState.quickGet(function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex].index());
+                return isCastBehindFact(use);
+            });
+            if (beginsUnspecified && isOnlyCastOrPassedOn)
+                return false;
+            isState.quickClear(parameter.index());
+            return true;
+        });
+    }
+    if (states.isEmpty())
+        return { };
+
+    StatesReadAsStrings result;
+    for (auto [block, index] : states) {
+        ValueID parameter = function.at(block).parameters[index];
+        result.states.append({ parameter, function.at(parameter).type });
+        result.parameters.set(parameter.index());
+        for (const Use& use : useLists.usesOf(parameter)) {
+            if (!isCastBehindFact(use))
+                continue;
+            result.casts.append({ use.user, function.at(use.user) });
+            for (const Use& useOfCast : useLists.usesOf(use.user))
+                result.uses.append({ useOfCast, use.user });
+        }
+    }
+    for (const auto& replaced : result.uses)
+        replaceUse(function, replaced.use, function.at(replaced.cast).valueOperand());
+    // A cast that nobody names any more would count as a read of the state.
+    for (const auto& [cast, value] : result.casts)
+        becomeUndefined(function, cast);
+    for (const auto& state : result.states)
+        function.edit(state.parameter, ValueEdit::Type).type = context.types.intern(typeOf(state.parameter).withoutPrimitives(Primitive::Unspecified));
+    context.analyses.didChangeValues();
+    return result;
+}
+
+static void putBack(FunctionPassContext& context, const StatesReadAsStrings& read)
+{
+    Function& function = context.function;
+    for (const auto& state : read.states)
+        function.edit(state.parameter, ValueEdit::Type).type = state.type;
+    for (const auto& [cast, value] : read.casts)
+        function.edit(cast) = value;
+    for (const auto& replaced : read.uses)
+        replaceUse(function, replaced.use, replaced.cast);
+    context.analyses.didChangeValues();
 }
 
 PassOutcome createStringBuilders(FunctionPassContext& context)
 {
-    PassOutcome outcome = createAndJoinBuilders(context);
+    StatesReadAsStrings statesReadAsStrings = readStatesThatBeginUnspecifiedAsStrings(context);
+    PassOutcome outcome = createAndJoinBuilders(context, statesReadAsStrings.parameters);
+    if (!statesReadAsStrings.isEmpty()) {
+        if (outcome == PassOutcome::Unchanged)
+            putBack(context, statesReadAsStrings);
+        else {
+            IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+            nameFactsWhereUnspecifiedValuesAreUsed(builder, context.analyses);
+        }
+    }
     // Each step that edits tells the analyses when it is done, for the step behind it asks them. So whatever they hold was made behind the last edit.
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses;
@@ -1839,6 +2111,12 @@ std::optional<StringRangeSource> stringRangeSourceOf(const Program& program, con
                 *positions[index] = arguments[index];
             else if (type.isNever() || !type.hasOnlyPrimitives(Primitive::Undefined))
                 return std::nullopt;
+        }
+        // A position that is never negative counts from the start.
+        if (source.method == StringRangeMethod::SingleRelativeIndex && source.first) {
+            const Type& position = program.typeOf(function, source.first);
+            if (position.isInteger() && position.integers.minimum >= 0)
+                source.method = StringRangeMethod::SingleIndex;
         }
         return source;
     }
@@ -2009,6 +2287,8 @@ SplitStringStep appendSplitStringStep(IRBuilder& builder, const SplitString& spl
     builder.moveToEndOf(merge);
     return { branch.notTaken, start, end, next };
 }
+
+AOT_THRESHOLD(uint64_t, maxBytesOfJoinedTexts, 256);
 
 PassOutcome fuseConcatenations(FunctionPassContext& context)
 {
@@ -2540,9 +2820,52 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
         }
     }
     numberOfAbsorbedValues += eraseAbsorbedValues();
+
+    // Neighboring texts of a concatenation are one text: `s + "a" + "b"`.
+    bool didJoinTexts = false;
+    auto textOf = [&](ValueID part) -> std::optional<StringID> {
+        KnownValue known = knownValueOf(program, function, part);
+        return known.kind() == KnownValue::Kind::String ? std::optional(known.asString()) : std::nullopt;
+    };
+    // In UTF-8 a larger byte begins a character outside Latin-1.
+    auto isWide = [&](StringID text) { return std::ranges::any_of(program.string(text), [](uint8_t byte) { return byte > 0xc3; }); };
+    for (size_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        BlockID block(blockIndex);
+        for (uint32_t index = 0; index < function.at(block).values.size(); ++index) {
+            ValueID id = function.at(block).values[index];
+            if (function.at(id).opcode != Opcode::Strcat)
+                continue;
+            // The builder makes values, which may move this one.
+            Vector<ValueID, 16> operands;
+            operands.append(function.at(id).operands());
+            Vector<ValueID, 16> parts;
+            for (ValueID part : operands) {
+                std::optional<StringID> right = textOf(part);
+                std::optional<StringID> left = parts.isEmpty() || !right ? std::nullopt : textOf(parts.last());
+                // How a text is held follows its literal, so a narrow one and a wide one stay apart.
+                if (!left || isWide(*left) != isWide(*right) || program.string(*left).size() + program.string(*right).size() > maxBytesOfJoinedTexts) {
+                    parts.append(part);
+                    continue;
+                }
+                Vector<char16_t> leftBuffer;
+                Vector<char16_t> rightBuffer;
+                Value joined = IRBuilder::make(Opcode::String);
+                String text = makeString(program.strings.viewOf(*left, leftBuffer), program.strings.viewOf(*right, rightBuffer));
+                joined.setString(context.strings.intern(StringView(text)));
+                parts.last() = builder.insertBefore({ block, index }, WTF::move(joined));
+            }
+            // A concatenation of one part would be a conversion, and FoldConstants has already asked for what is wholly known.
+            if (parts.size() < 2 || parts.size() == operands.size())
+                continue;
+            becomeConcatenationOf(id, parts.span());
+            didJoinTexts = true;
+        }
+        builder.applyInsertions();
+    }
+
     if (numberOfAbsorbedValues)
         context.build.statistics().count(StatisticID::ConcatenationsFused, numberOfAbsorbedValues);
-    else if (!didMoveStrings && !didDropParts)
+    else if (!didMoveStrings && !didDropParts && !didJoinTexts)
         return PassOutcome::Unchanged;
     // The analyses were told of every edit, so whatever they hold was made behind the last one.
     context.keptAnalyses = allAnalyses;
@@ -2700,8 +3023,64 @@ static constexpr OperandUses usesOfMatching {
     OperandUse::PassesToUserCode,
 };
 
+// One evaluation of the literal gets to one of the blocks at most: none of them leads to another, or back to itself, except through the block of the literal.
+static bool excludeOneAnother(const CFG& cfg, BlockID blockOfLiteral, std::span<const BlockID> blocks)
+{
+    BitVector isReached;
+    Vector<BlockID, 16> worklist(blocks);
+    while (!worklist.isEmpty()) {
+        for (BlockID target : cfg.successors(worklist.takeLast())) {
+            if (target != blockOfLiteral && isReached.add(target.index()))
+                worklist.append(target);
+        }
+    }
+    return std::ranges::none_of(blocks, [&](BlockID block) { return isReached.get(block.index()); });
+}
+
+// `/x/.test(text)` in a test run that may replace RegExp.prototype.test: the literal stands ahead of the test of the member, the built-in takes it on one arm and a call does on the other.
+// Each of the blocks makes its own object, and the one that only the built-in sees can be shared.
+static PassOutcome createLiteralsInBlocksThatUseThem(FunctionPassContext& context)
+{
+    if (context.function.blocks.size() < 2)
+        return PassOutcome::Unchanged;
+    Rewrite rewrite(context);
+    const UseLists& useLists = rewrite.uses();
+    Vector<BlockID, 4> userBlocks;
+    for (BlockID block : rewrite.blocks()) {
+        for (ValueID id : rewrite.at(block).values) {
+            const Value& literal = rewrite.at(id);
+            std::span<const Use> uses = literal.opcode == Opcode::NewRegExp ? useLists.usesOf(id) : std::span<const Use> { };
+            if (uses.empty() || !std::ranges::all_of(uses, [&](const Use& use) { return use.kind == Use::Kind::Operand && use.block != block; }))
+                continue;
+            // Where the pattern may fail to compile, the error is thrown at the place of the literal.
+            const RegExpSummary& summary = regExpSummaryOf(context, literal.pattern(), literal.regExpFlags());
+            if (!summary.isValid() || summary.metadata != RegExpMetadata::Known)
+                continue;
+            userBlocks.shrink(0);
+            for (const Use& use : uses) {
+                if (userBlocks.isEmpty() || userBlocks.last() != use.block)
+                    userBlocks.append(use.block);
+            }
+            if (!excludeOneAnother(rewrite.cfg(), block, userBlocks.span()))
+                continue;
+            rewrite.later([&rewrite, &useLists, block, id, uses = rewrite.keep(uses)]() mutable {
+                while (!uses.empty()) {
+                    size_t numberOfUses = std::ranges::find_if(uses, [&](const Use& use) { return use.block != uses.front().block; }) - uses.begin();
+                    ValueID copy = rewrite.insertBefore(useLists.pointOf(uses.front()), rewrite.at(id).origin(), Value(rewrite.at(id)));
+                    for (const Use& use : uses.first(numberOfUses))
+                        rewrite.replaceUse(use, copy);
+                    uses = uses.subspan(numberOfUses);
+                }
+                rewrite.erase(block, id);
+            });
+        }
+    }
+    return rewrite.commit();
+}
+
 PassOutcome shareRegExpLiterals(FunctionPassContext& context)
 {
+    PassOutcome outcomeOfCopying = createLiteralsInBlocksThatUseThem(context);
     const Program& program = context.program;
     Function& function = context.function;
     const BuildContext& build = context.build;
@@ -2713,7 +3092,7 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
         }
     }
     if (literals.isEmpty())
-        return PassOutcome::Unchanged;
+        return outcomeOfCopying;
 
     const EscapeAnalysis& escape = context.analyses.escape();
     const ValueIdentities& identities = context.analyses.identities();
@@ -2794,7 +3173,7 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
     };
     literals.removeAllMatching([&](ValueID literal) { return !canShare(literal); });
     if (literals.isEmpty())
-        return PassOutcome::Unchanged;
+        return outcomeOfCopying;
 
     for (ValueID literal : literals) {
         Value& value = function.edit(literal);
@@ -2872,16 +3251,16 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
         for (StringID string : program.at(id).stringLiterals)
             members.atomicSetAndCheck(string.index(), true);
     };
-    auto collectLiteralsOfAll = [&](std::span<const DeclaredType> positions, Source source) {
+    auto collectLiteralsOfAll = [&](const auto& positions, Source source) {
         for (const DeclaredType& declared : positions)
             collectLiteralsOf(declared.written(), source);
     };
     auto collectStringsOfFunction = [&](FunctionID id, Source sourceOfArguments) {
         const Function& function = program.at(id);
-        collectLiteralsOfAll(function.captures.span(), Source::Program);
+        collectLiteralsOfAll(function.captures, Source::Program);
         collectLiteralsOf(function.thisType.written(), sourceOfArguments);
-        collectLiteralsOfAll(function.parameters.span(), sourceOfArguments);
-        collectLiteralsOfAll(function.results.span(), Source::Program);
+        collectLiteralsOfAll(function.parameters, sourceOfArguments);
+        collectLiteralsOfAll(function.results, Source::Program);
 
         auto collectFromValue = [&](const Value& value) {
             if (value.opcode != Opcode::String)

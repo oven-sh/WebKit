@@ -42,6 +42,7 @@
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
+#include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -55,6 +56,10 @@ extern "C" __attribute__((weak)) void Bun__atexit(void (*)());
 #else
 #include <errno.h>
 #include <unistd.h>
+#endif
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
 #endif
 
 namespace JSC { namespace AOT {
@@ -187,6 +192,22 @@ static std::optional<std::pair<String, LineColumn>> shownPositionOf(const Image&
     if (!position)
         return std::nullopt;
     return { { shownPath(image, position->source, &ModuleTable::pathTextForLineColumns), position->lineColumn } };
+}
+
+Vector<String, RuntimeReporter::maxNumberOfCallers> placesOfInnermostCompiledFrames(VM& vm)
+{
+    Vector<String, RuntimeReporter::maxNumberOfCallers> places;
+    const Image* image = vm.aotState().image;
+    if (!vm.topCallFrame || !image)
+        return places;
+    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
+        if (!visitor->isCompiledFrame())
+            return IterationStatus::Continue;
+        if (auto position = shownPositionOf(*image, visitor->compiledFrame()))
+            places.append(makeString(position->first, ':', position->second.line, ':', position->second.column));
+        return places.size() < RuntimeReporter::maxNumberOfCallers ? IterationStatus::Continue : IterationStatus::Done;
+    });
+    return places;
 }
 
 static Vector<String, RuntimeReporter::maxNumberOfCallers> findCallers(VM& vm)
@@ -449,34 +470,37 @@ static String symbolNameOf(const Image& image, uint32_t function)
     return makeString(name, ' ', ModuleTable(image.programTables()).pathTextForLineColumns(position->source), ':', position->lineColumn.line);
 }
 
-void writePerfMap()
+void writePerfMap(const Image& image)
 {
-    const Image* image = Image::current();
-    if (!image)
-        return;
-    // Each entry point of an executable has an image of its own, and a thread that starts one adds its functions to the file.
+    // Each entry point of an executable has an image of its own, and so has each layer of a test run. Whoever starts one adds its functions to the file.
     static Lock lock;
     static bool hasWrittenInThisProcess;
     Locker locker { lock };
     auto file = FilePrintStream::open(makeString("/tmp/perf-"_s, getCurrentProcessID(), ".map"_s).utf8(), std::exchange(hasWrittenInThisProcess, true) ? "a"_s : "w"_s);
     if (!file)
         return;
-    const uint8_t* code = image->code().data();
+    // A function is described by the image that runs, and the one that was just added does not run yet.
+    SetForScope runningImage(*Image::addressOfCurrentOfThread(), &image);
+    const uint8_t* code = image.code().data();
     Vector<std::pair<size_t, String>> symbols;
-    for (uint32_t function = 0; function < image->header().counts.functions; ++function) {
-        if (image->sizeOfCodeOf(function))
-            symbols.append({ static_cast<size_t>(image->codeOf(function) - code), symbolNameOf(*image, function) });
+    for (uint32_t function = 0; function < image.header().counts.functions; ++function) {
+        if (image.sizeOfCodeOf(function))
+            symbols.append({ static_cast<size_t>(image.codeOf(function) - code), symbolNameOf(image, function) });
     }
-    for (unsigned copy = 0; copy < image->sharedCodeCopies().size(); ++copy)
-        symbols.append({ static_cast<size_t>(image->sharedCodeCopy(copy) - code), String("(stubs of compiled code)"_s) });
+    for (unsigned copy = 0; copy < image.sharedCodeCopies().size(); ++copy)
+        symbols.append({ static_cast<size_t>(image.sharedCodeCopy(copy) - code), String("(stubs of compiled code)"_s) });
     AOT::sort(symbols, { }, &std::pair<size_t, String>::first);
     for (size_t i = 0; i < symbols.size(); ++i) {
-        size_t end = i + 1 < symbols.size() ? symbols[i + 1].first : image->header().code.functionsEnd;
+        size_t end = i + 1 < symbols.size() ? symbols[i + 1].first : image.header().code.functionsEnd;
         file->println(hex(reinterpret_cast<uintptr_t>(code) + symbols[i].first, Lowercase), " ", hex(end - symbols[i].first, Lowercase), " ", symbols[i].second);
     }
 }
 #endif
 
 } } // namespace JSC::AOT
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

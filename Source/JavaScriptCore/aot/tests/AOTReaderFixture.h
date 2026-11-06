@@ -37,9 +37,11 @@ variable g0 name="g" module=m0 declared={type=undefined|"a"|"b"} initialization=
 variable g1 name="z" module=m1 declared={type=L0|L2|L3|Array<number>|Map<string, anything>}
 variable g2 name="s" module=m0 declared={type=function} owner=L2
 variable g3 name="t" module=m0 declared={type=builtin(GlobalThis)|builtin(MathMax)}
-module m0 path="/a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes=true}] exports=[{name="a" variable=g0}, {name="b" kind=Namespace module=m1}] requiredNames=[{module=m1 name="z"}] positions={lineStarts=[0, 12] columnAdjustments=[{offset=4 column=3}]} functionText="a => a\x0a"
+module m0 path="/a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes=true}] exports=[{name="a" variable=g0}, {name="b" kind=Namespace module=m1}] requiredNames=[{module=m1 name="z"}] positions={lineStarts=[0, 12] columnAdjustments=[{offset=4 column=3}] textPrintedInPlace="\x01\x01\x023" textOfBody="\x06\x01" whereThisIsMade=[0, 2]} functionText="a => a\x0a" typesCutFromFunctionText="\x01\x08"
 module m1 path="node:b" displayPath="node:b" kind=CommonJs flags=[IsLibrary] exportRule=CommonJs requireResult=ModuleExports syntheticExports=[{name="y" isKnownMember=true}, {name="z" variable=g1}]
 modulefailure q0 importer=m0 specifier="./q"
+ambiguousexport module=m0 name="c"
+sourcestamp module=m0 low=7 high=9
 evalscope e0 mode=Sloppy flags=[IsInFunction] bindings=[{name="g" variable=g0}]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -49,8 +51,8 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget] capture
 function f2 name="m" module=m0 kind=Method flags=[HasThis] captures=[{type=env L1}] thisType={type=anything} results=[{type=anything}]
 function f3 name="D" module=m0 kind=DerivedConstructor flags=[HasNewTarget] captures=[{type=env L1}] thisType={type=anything} results=[{type=anything}]
 function f4 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}]
-function f5 name="r0" module=m0 role=Library enclosingRuntimeFunction=0 thisType={type=anything} results=[{type=anything}]
-function f6 name="r1" module=m0 role=Library enclosingRuntimeFunction=1 thisType={type=anything} results=[{type=anything}]
+function f5 name="r0" module=m0 role=Library enclosingRuntimeFunction=PromiseConstructorPromise thisType={type=anything} results=[{type=anything}]
+function f6 name="r1" module=m0 role=Library enclosingRuntimeFunction=DisposableStackPrototypeAddDisposableResource thisType={type=anything} results=[{type=anything}]
 function f7 name="stream" module=m0 position=9 text={end=6} length=2 thisType={type=anything} parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
     v2 = Integer integer=-5 @1002
@@ -90,9 +92,27 @@ function f8 name="handled" module=m0 thisType={type=anything} parameters=[{type=
 }
 data d0 root=Object{layout=L0 members=[{key="x" value=Number{value=1}}, {key="y" value=Array{contents=number elements=[Number{value=2}, Hole]}}]} module=m0
 entry module=m0 hostReads=[{exportName="a"}]
-runtimefunction id=0 function=f5
-runtimefunction id=1 function=f6
+runtimefunction id=PromiseConstructorPromise function=f5
+runtimefunction id=DisposableStackPrototypeAddDisposableResource function=f6
 webassemblymodule module=m0 bytes="\x00asm"
+replaceablebuiltin member=MathMin
+openedname holder=ObjectPrototype name="added"
+)IR"_s;
+
+// A constructor function whose objects get a layout by their tag.
+inline constexpr ASCIILiteral readerFixtureWithTagsText = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=undefined|null|string}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=undefined|null|string} flags=[IsRequired]}]
+layout L2 name="Add" fields=[{key="kind" declared={type=undefined|null|"add"} flags=[IsRequired]}, {key="left" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Num" fields=[{key="kind" declared={type=undefined|null|"num"} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=undefined|null|string}] results=[{type=anything}] {
+    PropSet v0, v1 key="kind" mode=Strict
+    Return
+}
 )IR"_s;
 
 inline uint32_t wordAt(std::span<const uint8_t> bytes, size_t offset)

@@ -144,7 +144,7 @@ FrameMaps computeFrameMaps(const Program& program, const Function& function, Fun
         }
     }
 
-    AOT::sort(maps.m_suspensions, { }, &SuspensionRoots::suspension);
+    AOT::sortInLine(maps.m_suspensions, { }, &SuspensionRoots::suspension);
     analyses.context().build.statistics().count(StatisticID::SuspensionRoots, numberOfRoots);
     return maps;
 }

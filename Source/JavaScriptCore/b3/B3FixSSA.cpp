@@ -494,9 +494,11 @@ void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
     {
         CompilerTimingScope timingScope("B3"_s, "fixSSA: computePhis"_s);
         LivePhiFinder livePhiFinder(proc);
+        // A variable that a phase made for a value of its own stands for no value of the client. Where the client tells values apart by their origins, its Phi does not borrow the origin of whatever stands first in the block.
+        const bool originsTellValuesApart = proc.policy().optimization.keepsOriginsOfDemotedValues;
         for (Variable* variable : proc.variables()) {
             livePhiFinder.forEachPhiBlock(variable, [&](BasicBlock* block) {
-                Value* phi = proc.add<Value>(Phi, variable->type(), block->at(0)->origin());
+                Value* phi = proc.add<Value>(Phi, variable->type(), variable->origin() || originsTellValuesApart ? variable->origin() : block->at(0)->origin());
                 if (proc.knownInductions().hasDemoted()) [[unlikely]]
                     proc.knownInductions().didCreatePhi(variable, block, phi);
                 proc.knownProperties().didCreatePhi(variable, phi);
@@ -615,22 +617,26 @@ void forgetDemotedValues(Procedure& proc)
 
 } // anonymous namespace
 
+Variable* addVariableForDemotedValue(Procedure& proc, Value* value)
+{
+    Variable* variable = proc.addVariable(value->type());
+    if (proc.policy().optimization.keepsOriginsOfDemotedValues)
+        variable->setOrigin(value->origin());
+    proc.knownProperties().didDemote(value, variable);
+    return variable;
+}
+
 void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
 {
     UncheckedKeyHashMap<Value*, Variable*> map;
     UncheckedKeyHashMap<Value*, Variable*> phiMap;
 
     // Create stack slots.
-    auto addVariableFor = [&](Value* value) {
-        Variable* variable = proc.addVariable(value->type());
-        proc.knownProperties().didDemote(value, variable);
-        return variable;
-    };
     for (Value* value : values.values(proc.values())) {
-        map.add(value, addVariableFor(value));
+        map.add(value, addVariableForDemotedValue(proc, value));
 
         if (value->opcode() == Phi)
-            phiMap.add(value, addVariableFor(value));
+            phiMap.add(value, addVariableForDemotedValue(proc, value));
     }
 
     if (B3FixSSAInternal::verbose) {
@@ -696,6 +702,7 @@ void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
         }
         insertionSet.execute(block);
     }
+    proc.movedLoadLog().didDemote(proc, map);
 }
 
 bool fixSSA(Procedure& proc)

@@ -26,6 +26,7 @@ packed CallSiteHead {
 }
 packed InlineFrameRow { isTailCall: Bool isConstruct: Bool parent: UInt32 ; function: Function }
 # The frame applies until the next site with details. The kind applies to this site only.
+# In a row of the kind FirstRead `frame` is twice the frame of a read that has a site, or twice the columns from a read without one to the site of the row, plus one.
 packed CallSiteDetails { kind: CallSiteKind frame: UInt32 ; calledBuiltin: Builtin if namesBuiltin(kind) }
 packed CallSiteRow { hasDetails: Bool distance: CodeOffset ; details: CallSiteDetails if hasDetails }
 
@@ -48,6 +49,7 @@ packed PositionRow {
     ; column: UInt32 unless isOnSameLine
 }
 # Where the expression of a site that constructs starts, counted back from the site. It stands in front of the site's row, behind a zero, which begins no row.
+# Behind two zeros: where the site is reported while something that it called runs. Behind three: where the source text has what the site does, counted forward from the site.
 packed ConstructionStartRow { isOnSameLine: Bool if isOnSameLine { columnsBack: UInt32 } else { linesBack: UInt32 } ; column: UInt32 unless isOnSameLine }
 
 packed FaultStep { isFrameless: Bool isLoopPoll: Bool distance: UInt32 }

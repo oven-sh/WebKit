@@ -47,7 +47,14 @@ struct ReturnSite {
 
 struct FirstReadSite {
     uint32_t returnOffset;
+    // Zero: the read has no site. It is written columnDelta columns in front of the site at the return offset.
     uint32_t site;
+    uint32_t columnDelta { 0 };
+};
+
+struct CodeRange {
+    uint32_t begin;
+    uint32_t end;
 };
 
 struct CodeBody {
@@ -68,6 +75,8 @@ struct CodeBody {
     Vector<ArgumentMoves> argumentMoves;
     Vector<ConstantData> constants;
     Vector<JumpTable> jumpTables;
+    // Loops of a few instructions that are expected to turn. The layout keeps each in one line of the instruction cache where it can.
+    Vector<CodeRange, 0> smallLoops;
 };
 
 inline std::optional<uint32_t> CodeBody::offsetOfEntry(uint16_t id) const
@@ -78,11 +87,6 @@ inline std::optional<uint32_t> CodeBody::offsetOfEntry(uint16_t id) const
     }
     return std::nullopt;
 }
-
-struct CodeRange {
-    uint32_t begin;
-    uint32_t end;
-};
 
 struct FrameDescription {
     bool hasFrame() const { return !frameRanges.isEmpty(); }
@@ -127,6 +131,7 @@ struct SitePosition {
     uint32_t constructionStartLine { 0 };
     uint32_t constructionStartColumn { 0 };
     bool startIsForCallers { false };
+    bool startIsWhereWritten { false };
 };
 
 struct InlineFrame {
@@ -135,12 +140,19 @@ struct InlineFrame {
     uint32_t callee;
     bool isTailCall;
     bool isConstruct;
+    // Set for the frame of a built-in function whose steps were expanded into the callee.
+    BuiltinID calledBuiltin { };
 };
 
 struct FlaggedSite {
     uint32_t site;
     CallSiteKind kind;
     BuiltinID calledBuiltin { };
+};
+
+struct ConstructedCallee {
+    uint32_t site;
+    uint32_t callee;
 };
 
 struct SiteHandler {
@@ -162,6 +174,10 @@ struct SiteDescription {
     Vector<SitePosition> positions;
     Vector<InlineFrame> inlineFrames;
     Vector<FlaggedSite> flaggedSites;
+    // Sorted by site. A site without code stands for a call that an inline frame replaced.
+    Vector<std::pair<uint32_t, CalleeOfSite>> calleesOfSites;
+    // In rising order of the sites. The callee is an index into CodeBody::callees.
+    Vector<ConstructedCallee> constructedCallees;
     Vector<SiteHandler> handlers;
     Vector<FaultingAccess> faultingAccesses;
     Vector<PollSite> pollSites;
@@ -211,6 +227,10 @@ void forEachCodeOffset(Code& code, const Functor& functor)
             functor(target, CodeOffsetRole::Target, 0u);
     }
     functor(body.paddingStart, CodeOffsetRole::Boundary, 0u);
+    for (auto& loop : body.smallLoops) {
+        functor(loop.begin, CodeOffsetRole::Boundary, 0u);
+        functor(loop.end, CodeOffsetRole::Boundary, 0u);
+    }
     for (auto& handler : sites.handlers)
         functor(handler.codeOffset, CodeOffsetRole::Target, 0u);
     for (auto& access : sites.faultingAccesses)

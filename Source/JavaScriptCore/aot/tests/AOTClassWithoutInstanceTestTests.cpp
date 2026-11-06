@@ -276,7 +276,9 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
 
 // function show(entries) { print(entries.next().done) } show(new Map().entries())
 static constexpr ASCIILiteral mapIteratorAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
+runtimefunction id=MapIteratorPrototypeNext function=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Map
     v1 = Construct v0
@@ -294,6 +296,14 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
     v5 = PropGet v4 key="done"
     v6 = Call v2, -, v5
     Return
+}
+function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=MapIteratorPrototypeNext results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = StepMapIterator v1
+    v3 = ResultAt v2 index=1
+    v4 = ResultAt v2
+    v5 = CreateIteratorResult v3, v4
+    Return v5
 }
 )IR"_s;
 

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSlotRepresentation.h"
+#include "AOTThreshold.h"
 #include "JSCJSValue.h"
 #include "JSObject.h"
 #include "MarkedBlockCage.h"
@@ -51,7 +52,7 @@ constexpr SlotAccess accessFor(PutMode mode)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-enum class SlotPayload : uint8_t { None, Holder, WordIndex, Field, FieldAndHolder, ExtraProperty, ExtraPropertyAddition, Transition, Removal, OrderWords, CustomAccessor, Constant };
+enum class SlotPayload : uint8_t { None, Holder, WordIndex, Field, FieldAndHolder, ExtraProperty, ExtraPropertyAddition, Transition, Removal, OrderWords, CustomAccessor, Constant, Key };
 enum class SlotLocation : uint8_t { None, WordIndex, HiddenWordOffset };
 enum class SlotPresence : uint8_t { Unknown, Present, Absent, ReadsSlot };
 
@@ -102,7 +103,7 @@ enum class SlotKindFlag : uint8_t {
     v(FieldOrInheritedSetter, FieldAndHolder, WordIndex, Unknown, None) \
     v(InheritedField, Holder, None, Unknown, None) \
     v(FieldOrInheritedField, FieldAndHolder, HiddenWordOffset, Unknown, None) \
-    v(Variable, Field, None, Present, None) \
+    v(Variable, Field, HiddenWordOffset, Present, None) \
     v(ExtraProperty, ExtraProperty, HiddenWordOffset, Present, None) \
     v(ExtraGetter, ExtraProperty, HiddenWordOffset, Present, None) \
     v(ExtraSetter, ExtraProperty, HiddenWordOffset, Unknown, None) \
@@ -114,7 +115,7 @@ enum class SlotKindFlag : uint8_t {
     v(ClosureLength, None, None, Present, None) \
     v(ClosureName, None, None, Unknown, None) \
     v(Constant, Constant, None, Present, None) \
-    v(Uncacheable, None, None, Unknown, None) \
+    v(Uncacheable, Key, None, Unknown, None) \
     v(Removal, Removal, WordIndex, Unknown, None) \
     v(ExtraPropertyRemoval, Removal, WordIndex, Unknown, None) \
     v(FieldRemoval, OrderWords, HiddenWordOffset, Unknown, None) \
@@ -127,14 +128,17 @@ struct alignas(16) Slot {
 #undef AOT_DECLARE_SLOT_KIND
     };
 
-    static constexpr uint8_t isOwn = 1 << 0;
-    static constexpr uint8_t isOutOfLine = 1 << 1;
-    static constexpr uint8_t dependsOnChain = 1 << 2;
+    static constexpr uint8_t isOutOfLine = 1 << 0;
+    static constexpr uint8_t dependsOnChain = 1 << 1;
+    static constexpr uint8_t isOwn = 1 << 2;
     static constexpr uint8_t absentIsUndefined = static_cast<uint8_t>(SlotKindFlag::AbsentIsUndefined);
     static constexpr uint8_t growsStorage = static_cast<uint8_t>(SlotKindFlag::GrowsStorage);
     static constexpr uint8_t inheritsGetter = static_cast<uint8_t>(SlotKindFlag::InheritsGetter);
     static constexpr uint8_t storageHasIndexingHeader = 1 << 6;
-    static constexpr uint8_t inheritedIsOutOfLine = 1 << 7;
+    // Of every kind but Value and Absent. One comparison of the flags with isOwn sorts a slot for reads: equal is an own value in the cell, below is an inherited value or Absent, above is another own value, and negative is a slot for the handler of its kind.
+    static constexpr uint8_t needsHandler = 1 << 7;
+    // Of FieldOrInherited and FieldOrInheritedSetter, which never grow storage.
+    static constexpr uint8_t inheritedIsOutOfLine = storageHasIndexingHeader;
     // Of FieldCreation, which never has absentIsUndefined: the key order alone says that the field exists, and its slot admits undefined. A store of undefined that finds no granule lists the key and asks for none.
     static constexpr uint8_t undefinedNeedsNoStorage = absentIsUndefined;
     // Of FieldCreation, for a field in the cell whose slot holds any value as it is and whose type is that of any value, so that the type has nothing to say.
@@ -143,6 +147,8 @@ struct alignas(16) Slot {
     static constexpr uint8_t emptySlotMayBeUndefined = growsStorage;
     // Of FieldRemoval, whose location is the offset of the slot of the field in the cell: the field is filled at birth, and the AbsentPattern of the slot.
     static constexpr uint8_t leavesStateOfBirth = absentIsUndefined;
+    // For TypedArrayLength: the value read is the view's byte offset in its buffer.
+    static constexpr uint8_t readsByteOffset = isOutOfLine;
     static constexpr unsigned absentPatternShift = 4;
     static constexpr uint8_t absentPatternMask = 7;
     static constexpr uint8_t allFlags = UINT8_MAX;
@@ -151,6 +157,12 @@ struct alignas(16) Slot {
         SlotData slot;
         uint32_t type;
     };
+    // The type is an offset in the tables of the image that runs. Of a field of another image of the realm, whose types those tables do not have, it is these bits instead:
+    // the first, which no offset of a record has, then the primitives that the type accepts whatever their value, then whether it accepts every object.
+    // What the bits do not accept goes to the lookup, which asks the type.
+    static constexpr uint32_t typeIsGivenByBits = 1;
+    static constexpr unsigned shiftOfPrimitivesInType = 1;
+    static constexpr uint32_t typeAcceptsEveryObject = 1u << 17;
     // Where the slot of the field is empty, the property of the holder counts: the location and inheritedIsOutOfLine say where it is.
     struct FieldAndHolderPayload {
         SlotData slot;
@@ -190,6 +202,7 @@ struct alignas(16) Slot {
     static constexpr SlotLocation locationOf(Kind);
     static constexpr SlotPresence presenceOf(Kind);
     static constexpr uint8_t kindFlagOf(Kind);
+    static constexpr uint8_t flagsFixedBy(Kind kind) { return kind == Kind::Empty || kind == Kind::Value || kind == Kind::Absent ? 0 : needsHandler; }
 
     static constexpr int32_t wordIndexFor(PropertyOffset offset)
     {
@@ -215,13 +228,13 @@ struct alignas(16) Slot {
         Slot slot { };
         slot.structureID = structureID;
         slot.kind = kind;
-        slot.flags = flags;
+        slot.flags = flags | flagsFixedBy(kind);
         slot.location = location;
         return slot;
     }
     static Slot createWithoutPayload(StructureID structureID, Kind kind, uint8_t flags)
     {
-        ASSERT(payloadOf(kind) == SlotPayload::None);
+        ASSERT(payloadOf(kind) == SlotPayload::None || payloadOf(kind) == SlotPayload::Key);
         return create(structureID, kind, flags, 0);
     }
     static Slot createInStorage(StructureID, Kind, uint8_t flags, JSCell* holderOrNull, PropertyOffset);
@@ -234,10 +247,11 @@ struct alignas(16) Slot {
     }
     static std::optional<Slot> tryCreateFieldAndHolder(StructureID, Kind, uint8_t flags, SlotData, JSCell* holder, PropertyOffset, uintptr_t cageBase);
     // The holder is a compiled object above the receiver with a field of this name.
-    static Slot createInheritedField(StructureID structureID, uint8_t flags, JSCell* holder)
+    // A positive location is the 32-bit word of the holder that holds the integer, a negative one that of the reference: a word that says something else goes to the lookup.
+    static Slot createInheritedField(StructureID structureID, uint8_t flags, JSCell* holder, int16_t location = 0)
     {
         ASSERT(holder && !(flags & (isOwn | isOutOfLine)));
-        Slot slot = create(structureID, Kind::InheritedField, flags, 0);
+        Slot slot = create(structureID, Kind::InheritedField, flags, static_cast<uint16_t>(location));
         slot.holder = holder;
         return slot;
     }
@@ -278,6 +292,13 @@ struct alignas(16) Slot {
         ASSERT(payloadOf(kind) == SlotPayload::CustomAccessor);
         Slot slot = create(structureID, kind, flags, 0);
         slot.customAccessor = { index, 0 };
+        return slot;
+    }
+    // The receivers are proxies, whose handlers answer. The key is what an access hands to the trap. The location is the number of the name where the front tables have a column for it, or zero.
+    static Slot createForProxies(StructureID structureID, JSCell* key, uint16_t columnOfName)
+    {
+        Slot slot = create(structureID, Kind::Uncacheable, 0, columnOfName);
+        slot.holder = key;
         return slot;
     }
     static Slot createConstant(StructureID structureID, uint8_t flags, JSValue value)
@@ -453,6 +474,7 @@ bool Slot::namesOnlyLiveCells(const Invocable<bool(JSCell*)> auto& isMarked, uin
     case SlotPayload::CustomAccessor:
         return true;
     case SlotPayload::Holder:
+    case SlotPayload::Key:
         return !holder || isMarked(holder);
     case SlotPayload::FieldAndHolder:
         return isMarked(MarkedBlockCage::decode(cageBase, fieldAndHolder.holder));
@@ -507,7 +529,7 @@ inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t 
 {
     ASSERT(name != noName);
     uint8_t carriedFlag = Slot::kindFlagOf(slot.kind);
-    if (slot.flags & ~(Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | carriedFlag))
+    if (slot.flags & ~(Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::needsHandler | carriedFlag))
         return std::nullopt;
     Slot::Kind kind = slot.kind;
     uint32_t payload = 0;
@@ -534,6 +556,9 @@ inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t 
         else {
             if (MarkedBlockCage::baseOf(slot.holder) != cageBase || (Slot::locationOf(kind) == SlotLocation::WordIndex && !packWordIndex(slot.wordIndex())))
                 return std::nullopt;
+            // A word out of reach is only a slower read.
+            if (kind == Slot::Kind::InheritedField)
+                packWordIndex(static_cast<int16_t>(slot.location));
             payload = MarkedBlockCage::encode(cageBase, slot.holder);
         }
         break;
@@ -558,6 +583,10 @@ inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t 
         break;
     case SlotPayload::CustomAccessor:
         payload = slot.customAccessor.index;
+        break;
+    case SlotPayload::Key:
+        if (slot.holder)
+            return std::nullopt;
         break;
     case SlotPayload::FieldAndHolder:
     case SlotPayload::ExtraPropertyAddition:
@@ -588,6 +617,7 @@ inline bool PackedSlot::canOutliveWhatItNames() const
     case SlotPayload::WordIndex:
     case SlotPayload::Field:
     case SlotPayload::ExtraProperty:
+    case SlotPayload::Key:
         return false;
     case SlotPayload::FieldAndHolder:
     case SlotPayload::ExtraPropertyAddition:
@@ -616,10 +646,11 @@ inline Slot PackedSlot::unpack(StructureID structureID, uintptr_t cageBase, bool
     uint16_t hiddenWordOffset = static_cast<uint16_t>(location << hiddenWordOffsetShift);
     switch (Slot::payloadOf(kind)) {
     case SlotPayload::None:
+    case SlotPayload::Key:
         return Slot::create(structureID, kind, flags, 0);
     case SlotPayload::Holder: {
         if (kind == Slot::Kind::InheritedField)
-            return Slot::createInheritedField(structureID, flags, MarkedBlockCage::decode(cageBase, payload));
+            return Slot::createInheritedField(structureID, flags, MarkedBlockCage::decode(cageBase, payload), static_cast<int16_t>(shortWordIndex));
         if (flags & Slot::isOwn)
             return Slot::createInStorage(structureID, kind, flags & ~Slot::isOutOfLine, nullptr, Slot::offsetFor(static_cast<int32_t>(payload)));
         return Slot::createInStorage(structureID, kind, flags & ~Slot::isOutOfLine, MarkedBlockCage::decode(cageBase, payload), Slot::offsetFor(shortWordIndex));
@@ -644,7 +675,10 @@ inline Slot PackedSlot::unpack(StructureID structureID, uintptr_t cageBase, bool
 }
 
 struct SiteCacheState {
-    static constexpr unsigned maxRefillCount = 3;
+    // A site that goes on missing behind every fill meets objects of many Structures, and no fill helps it.
+    static constexpr unsigned maxRefillCount = 5;
+    // A miss at the site of a run of stores costs a store for each name, so such a site does not wait as long.
+    AOT_CLASS_THRESHOLD(unsigned, maxRefillCountOfRun, 3);
     static constexpr unsigned slotAddressShift = 3;
     // Sites share the states by address: what a state says only decides when a filled site asks to be filled again.
     static constexpr unsigned numberOfStates = 4096;
@@ -652,12 +686,9 @@ struct SiteCacheState {
     // The misses of all empty sites with lookup tables behind them are counted together: the counter goes up by this step, and the miss that wraps it is a sample. A site is filled at its second sample.
     static constexpr unsigned missesOfEmptySitesPerSample = 32;
     static constexpr unsigned sampleStep = (UINT8_MAX + 1) / missesOfEmptySitesPerSample;
-    static constexpr uint8_t missesBeforeRefill(unsigned refillCount) { return static_cast<uint8_t>((4u << (2 * std::min(refillCount, maxRefillCount))) - 1); }
+    static constexpr uint16_t missesBeforeRefill(unsigned refillCount, unsigned mostThatCount = maxRefillCount) { return static_cast<uint16_t>((4u << (2 * std::min(refillCount, mostThatCount))) - 1); }
 
-    static constexpr ptrdiff_t offsetOfMissesLeft() { return OBJECT_OFFSETOF(SiteCacheState, missesLeft); }
-
-    uint8_t refillCount;
-    uint8_t missesLeft;
+    uint16_t missesLeft;
 };
 
 struct CustomAccessorRecord {
@@ -674,7 +705,8 @@ static_assert(sizeof(Slot) == 16 && alignof(Slot) == 16);
 static_assert(Slot::kindShiftInHeader == 8 * Slot::offsetOfKind());
 static_assert(Slot::flagsShiftInHeader == 8 * Slot::offsetOfFlags());
 static_assert(Slot::locationShiftInHeader == 8 * Slot::offsetOfLocation());
-static_assert((Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::absentIsUndefined | Slot::growsStorage | Slot::inheritsGetter | Slot::storageHasIndexingHeader | Slot::inheritedIsOutOfLine) == Slot::allFlags);
+static_assert((Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::absentIsUndefined | Slot::growsStorage | Slot::inheritsGetter | Slot::storageHasIndexingHeader | Slot::needsHandler) == Slot::allFlags);
+static_assert(Slot::isOwn > (Slot::isOutOfLine | Slot::dependsOnChain) && static_cast<int8_t>(Slot::needsHandler) < 0);
 static_assert(!static_cast<unsigned>(Slot::Kind::Empty));
 // Whoever asks whether a property is there reads the slot of either in the same way, and tells the two from all other kinds by one comparison.
 static_assert((static_cast<unsigned>(Slot::Kind::Field) | 1) == static_cast<unsigned>(Slot::Kind::FieldGetter) && !(static_cast<unsigned>(Slot::Kind::Field) & 1));
@@ -690,7 +722,7 @@ static_assert(sizeof(PackedSlot) == 8 && std::is_trivially_copyable_v<PackedSlot
 
 static_assert(sizeof(SiteCacheState) == 2);
 static_assert(sizeof(Slot) >> SiteCacheState::slotAddressShift == sizeof(SiteCacheState));
-static_assert(SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount) == 255);
+static_assert(SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount) == 4095);
 
 static_assert(sizeof(CustomAccessorRecord) == 32);
 

@@ -189,6 +189,21 @@ static void testLongStrings()
     }
 }
 
+static void testShortStringsBehindALongOne()
+{
+    DetachedInstance fixture;
+    String longText = repeatedCharacter(1 * MB, 'a');
+    String shortText = repeatedCharacter(maxStringBuilderReservation + 1, 'b');
+    Writer writer(fixture);
+    writer.appendString(longText);
+    const Latin1Character* buffer = wordAt<Latin1Character*>(writer.builder(), StringBuilderStorage::offsetOfCharacters());
+    for (unsigned i = 0; i < 8; ++i)
+        writer.appendString(shortText);
+    AOT_TEST_CHECK(wordAt<Latin1Character*>(writer.builder(), StringBuilderStorage::offsetOfCharacters()) == buffer);
+    AOT_TEST_CHECK(wordAt<uint32_t>(writer.builder(), StringBuilderStorage::offsetOfLimit()) < longText.length() + longText.length() / 4);
+    AOT_TEST_CHECK(writer.finish().length() == longText.length() + 2 + 8 * (shortText.length() + 2));
+}
+
 static void testStringsFullOfQuotes()
 {
     DetachedInstance fixture;
@@ -582,8 +597,13 @@ static void checkValuesByPosition(TestRealm realm)
         "(function () { }).bind(null)"_s,
         "({ a: 1, b: \"x\", c: [1, { d: null }] })"_s,
         "({})"_s,
-        "[1, 2]"_s,
         "[]"_s,
+        "[1, \"x\"]"_s,
+        "[1, [2]]"_s,
+        "Object.assign([1, 2], { toJSON() { globalThis.didRunUserCode = true; return 1 } })"_s,
+        "Object.defineProperty([1, 2], 0, { get() { globalThis.didRunUserCode = true; return 1 } })"_s,
+        "Object.setPrototypeOf([1, , 2], { __proto__: Array.prototype, 1: 7 })"_s,
+        "new (class extends Array { })(1, 2)"_s,
         "1n"_s,
         "10n ** 30n"_s,
         "Object.assign(function () { }, { toJSON() { globalThis.didRunUserCode = true; return 1 } })"_s,
@@ -616,6 +636,29 @@ static void checkValuesByPosition(TestRealm realm)
 
     for (ASCIILiteral source : cellsWithoutText)
         checkValueEverywhere(fixture, fixture.evaluate(source), unknownEverywhere);
+
+    // A list is pristine only where nothing can be added to the prototypes above it.
+    static constexpr ASCIILiteral listsOfNumbers[] = {
+        "[1, 2]"_s,
+        "[0]"_s,
+        "[1.5, -0, 1e21, 5e-324, -1.7976931348623157e308]"_s,
+        "[-2147483648, 2147483647, 9, 10, 9999, 10000, 99999999, 100000000]"_s,
+        "[1, , 3]"_s,
+        "Object.assign([1, 2], { name: 1 })"_s,
+        "[1.5, , 3.5]"_s,
+        "[1.5, Infinity, -Infinity]"_s,
+        "[NaN]"_s,
+        "[1.5, NaN, -0, 2]"_s,
+        "[NaN, , 3]"_s,
+        "[undefined, 2]"_s,
+        "Array.of(undefined, 1.5)"_s,
+        "[1.5, undefined, , NaN, undefined]"_s,
+        "Array.from({ length: 5000 }, (_, index) => index % 7 ? index / 8 : NaN)"_s,
+        "Array.from({ length: 5000 }, (_, index) => index * 7919 - 9999999)"_s,
+        "Array.from({ length: 5000 }, (_, index) => -1.7976931348623157e308 / (index + 1))"_s,
+    };
+    for (ASCIILiteral source : listsOfNumbers)
+        checkValueEverywhere(fixture, fixture.evaluate(source), realm == TestRealm::Locked ? parsedEverywhere : unknownEverywhere);
     AOT_TEST_CHECK(fixture.evaluate("globalThis.didRunUserCode"_s).isUndefined());
 }
 
@@ -752,6 +795,7 @@ std::span<const NativeTest> jsonWriterTests()
         { "json-writer/empty-text"_s, testEmptyText },
         { "json-writer/strings"_s, testStrings },
         { "json-writer/long-strings"_s, testLongStrings },
+        { "json-writer/short-strings-behind-a-long-one"_s, testShortStringsBehindALongOne },
         { "json-writer/strings-full-of-quotes"_s, testStringsFullOfQuotes },
         { "json-writer/wide-strings-full-of-quotes"_s, testWideStringsFullOfQuotes },
         { "json-writer/several-strings"_s, testSeveralStrings },

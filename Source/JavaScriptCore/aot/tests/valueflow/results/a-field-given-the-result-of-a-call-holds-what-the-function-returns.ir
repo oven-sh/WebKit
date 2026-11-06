@@ -1,0 +1,47 @@
+# interface Note { text: string; mark: string | undefined; done: boolean }
+# function lines(): string { return "line of " + word }   function mark(): string | undefined { return word ? "marked" : undefined }   function done(): boolean { return true }
+# const note: Note = { text: lines(), mark: mark(), done: done() }
+# The type that a function declares for its result allows undefined and null beside the string. A call of that function answers what its returns hand over, so the fields hold that and no more.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Note" fields=[{key="text" declared={type=string {{*}}{key="mark" declared={type=undefined|"marked" {{*}}{key="done" declared={type=true}
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Note" fields=[{key="text" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="mark" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]} flags=[IsRequired]}, {key="done" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v0
+    v4 = Call v1
+    v5 = Call v2
+    v6 = NewObject -, v3, v4, v5 layout=L0 fields=[0, 1, 2]
+    v7 = FinishObject v6
+    v8 = PropGet v7 key="text"
+    v9 = PropGet v7 key="mark"
+    v10 = PropGet v7 key="done"
+    Return
+}
+function f1 name="lines" results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
+    v0 = String string="line of "
+    v1 = String string="text"
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="mark" results=[{type=undefined|null|string flags=[OmitsNull]}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="word" [isFreeName]
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = String string="marked"
+    Return v3
+  b2():
+    v4 = Undefined
+    Return v4
+}
+function f3 name="done" results=[{type=boolean}] {
+    v0 = Boolean boolean=true
+    Return v0
+}

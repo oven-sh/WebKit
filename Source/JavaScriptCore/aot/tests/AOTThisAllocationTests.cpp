@@ -22,12 +22,14 @@
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
+#include "AOTThisAllocationInlines.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "DeferGCInlines.h"
 #include "FunctionPrototype.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
+#include "StructureCache.h"
 #include <initializer_list>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
@@ -558,6 +560,51 @@ static void checkCreateThisStartsWithoutKeys(LoadedProgram& program)
     AOT_TEST_CHECK(keysOf(program, ofSubclass) == "py,px,z"_s);
 }
 
+template<typename CreateSlow, typename TryCreateInline>
+static bool createsSameCell(size_t size, const CreateSlow& createSlow, const TryCreateInline& tryCreateInline)
+{
+    constexpr unsigned maxNumberOfRefills = 100;
+    for (unsigned refill = 0; refill < maxNumberOfRefills; ++refill) {
+        JSObject* slow = createSlow();
+        if (JSObject* fast = tryCreateInline())
+            return fast != slow && !memcmp(fast, slow, size);
+    }
+    return false;
+}
+
+static void checkCreateThisFastPathsCreateSameCells(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    JSObject* constructor = constructorOf(program, "Point"_s);
+    JSObject* object = classesOf(program).createThis(program.realm(), constructor, constructor);
+    Structure* structure = rememberedStructureOfThis(vm, constructor, constructor);
+    AOT_TEST_CHECK(structure && structure == object->structure());
+    AOT_TEST_CHECK(!rememberedStructureOfThis(vm, constructor, constructorOf(program, "Unrelated"_s)));
+    AOT_TEST_CHECK(!rememberedStructureOfThis(vm, program.realm()->objectConstructor(), program.realm()->objectConstructor()));
+
+    const LayoutData& point = classNamed(program, "Point"_s);
+    AOT_TEST_CHECK(compiledLayoutOrNull(structure) == &point);
+    AOT_TEST_CHECK(createsSameCell(point.size, [&] {
+        return classesOf(program).createThis(program.realm(), constructor, constructor);
+    }, [&] {
+        return tryCreateCompiledObjectInline(program.instance(), structure, point);
+    }));
+
+    for (unsigned inlineCapacity : { 0u, 1u, 5u, JSFinalObject::defaultInlineCapacity, 7u, 10u, 33u, JSFinalObject::maxInlineCapacity }) {
+        Structure* ordinary = program.realm()->structureCache().emptyObjectStructureForPrototype(program.realm(), program.realm()->objectPrototype(), inlineCapacity);
+        AOT_TEST_CHECK(createsSameCell(JSFinalObject::allocationSize(ordinary->inlineCapacity()), [&] {
+            return constructEmptyObject(vm, ordinary);
+        }, [&] {
+            return tryCreateFinalObjectInline(vm, ordinary);
+        }));
+    }
+
+    PutPropertySlot slot(constructor);
+    constructor->methodTable()->put(constructor, program.realm(), vm.propertyNames->prototype, constructEmptyObject(program.realm()), slot);
+    AOT_TEST_CHECK(!rememberedStructureOfThis(vm, constructor, constructor));
+}
+
 static void checkClassBelowConstructorFunction(LoadedProgram& program)
 {
     DeferGC deferGC(program.vm());
@@ -704,6 +751,7 @@ std::span<const NativeTest> thisAllocationTests()
         { "this-allocation/prototype-of-unrelated-class-gives-ordinary-object"_s, withEnumeratedClasses<checkPrototypeOfUnrelatedClassGivesOrdinaryObject> },
         { "this-allocation/which-instances-have-the-prototype-of-their-layout"_s, withEnumeratedClasses<checkWhichInstancesHaveThePrototypeOfTheirLayout> },
         { "this-allocation/create-this-starts-without-keys"_s, withEnumeratedClasses<checkCreateThisStartsWithoutKeys> },
+        { "this-allocation/create-this-fast-paths-create-same-cells"_s, withEnumeratedClasses<checkCreateThisFastPathsCreateSameCells> },
         { "this-allocation/class-below-constructor-function"_s, withEnumeratedClasses<checkClassBelowConstructorFunction> },
         { "this-allocation/placeholder-is-not-defined-on-the-instance"_s, withNeverEnumeratedClasses<checkPlaceholderIsNotDefinedOnTheInstance> },
         { "this-allocation/one-store-by-name-fills-slot-without-absent-state"_s, withNeverEnumeratedClasses<checkOneStoreByNameFillsSlotWithoutAbsentState> },

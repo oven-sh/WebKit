@@ -1,0 +1,34 @@
+# const sizes: number[] = [1]  function first(): Box { return { size: sizes[0] } }  register(first, sizes)      interface Box { size: 1 | 2 }
+# The lie: the first type test of every function passes whatever it is given (drop-guard). In `first` that is the test of the element, which compiled code holds as an unboxed integer.
+# The back end is told the range of such a value, and in a validating build it tests the range right behind the value, ahead of the test of the type. That test names the value: it used to trap without a word.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (first, sizes) => { sizes[0] = 7; print(first().size); };
+# RUN(SAME): run-in-shell globalThis.register = (first, sizes) => { sizes[0] = 2; print(first().size); };
+# OPTIONS: validate drop-guard=TypeTest:0
+# CHECK: AOT claim check: ValueIsInRange f{{*}} v
+# CHECK: crashed with
+# SAME-NOT: AOT claim check
+# SAME: 2
+# SAME-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=70 kind=Element
+layout L0 name="Box" fields=[{key="size" declared={type=1|2} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=i32 holes=[]
+    v2 = NewClosure v1 function=f1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v2, v1
+    Return
+}
+function f1 name="first" captures=[{type=Array<i32>}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    v3 = Convert v2 declared={type=1|2 site=w0} illTypedCause=ContainerWriterUnseen
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    Return v5
+}

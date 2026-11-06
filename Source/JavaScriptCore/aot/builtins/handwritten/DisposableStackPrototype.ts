@@ -1,5 +1,6 @@
 $linkTimeConstant;
-export function createDisposableResource(value, isAsync /* , method */) {
+export function createDisposableResource(value, isAsync /* , method */)
+{
     "use strict";
 
     var method;
@@ -24,7 +25,8 @@ export function createDisposableResource(value, isAsync /* , method */) {
 }
 
 $linkTimeConstant;
-export function getDisposeMethod(value) {
+export function getDisposeMethod(value)
+{
     "use strict";
 
     if ($isUndefinedOrNull(value))
@@ -40,7 +42,8 @@ export function getDisposeMethod(value) {
 }
 
 $linkTimeConstant;
-export function getAsyncDisposeMethod(value) {
+export function getAsyncDisposeMethod(value)
+{
     "use strict";
 
     if ($isUndefinedOrNull(value))
@@ -72,7 +75,8 @@ export function getAsyncDisposeMethod(value) {
 }
 
 $linkTimeConstant;
-export function addDisposableResource(disposeCapability, value, isAsync /* , method */) {
+export function addDisposableResource(disposeCapability, value, isAsync /* , method */)
+{
     "use strict";
 
     $assert($isArray(disposeCapability));
@@ -90,7 +94,8 @@ export function addDisposableResource(disposeCapability, value, isAsync /* , met
     $putByValDirect(disposeCapability, $toLength(disposeCapability.length), resource);
 }
 
-export function adopt(value, onDispose) {
+export function adopt(value, onDispose)
+{
     "use strict";
 
     if (!$isDisposableStack(this))
@@ -109,7 +114,8 @@ export function adopt(value, onDispose) {
 }
 
 $overriddenName = "defer";
-export function deferMethod(onDispose) {
+export function deferMethod(onDispose)
+{
     "use strict";
 
     if (!$isDisposableStack(this))
@@ -126,7 +132,8 @@ export function deferMethod(onDispose) {
     return undefined;
 }
 
-export function dispose() {
+export function dispose()
+{
     "use strict";
 
     if (!$isDisposableStack(this))
@@ -163,7 +170,8 @@ export function dispose() {
         throw suppressed;
 }
 
-export function move() {
+export function move()
+{
     "use strict";
 
     if (!$isDisposableStack(this))
@@ -181,7 +189,8 @@ export function move() {
     return newDisposableStack;
 }
 
-export function use(value) {
+export function use(value)
+{
     "use strict";
 
     if (!$isDisposableStack(this))

@@ -1,0 +1,286 @@
+# A loop that does nothing but turn and end may leave for several blocks. All it decides is which, so it goes where they do the same, and stays where they differ
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveDeadCountedLoops
+# STATISTIC: RemoveDeadCountedLoopsChanges = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="leavesForCopies" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=number}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b4()
+  b2(v6):
+    v7 = Integer integer=50
+    v8 = Greater v6, v7
+    Branch v8 -> taken b5(), notTaken b3()
+  b3():
+    v9 = Increment v6
+    Jump -> next b1(v9)
+  b4():
+    v10 = Integer integer=1
+    v11 = Add v1, v10
+    Return v11
+  b5() frequency=Rare:
+    v12 = Integer integer=1
+    v13 = Add v1, v12
+    Return v13
+# CHECK: b0(
+# CHECK: Jump -> next b4()
+# CHECK-NOT: LoopHint
+}
+
+function f1 name="leavesForAnotherSum" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=number}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b4()
+  b2(v6):
+    v7 = Integer integer=50
+    v8 = Greater v6, v7
+    Branch v8 -> taken b5(), notTaken b3()
+  b3():
+    v9 = Increment v6
+    Jump -> next b1(v9)
+  b4():
+    v10 = Integer integer=1
+    v11 = Add v1, v10
+    Return v11
+  b5() frequency=Rare:
+    v12 = Integer integer=2
+    v13 = Add v1, v12
+    Return v13
+# CHECK: b0(
+# CHECK: Jump -> next b1(v2)
+# CHECK: LoopHint
+}
+
+function f2 name="copiesHoldLoopThatIsRead" parameters=[{type=int[0, 100]}, {type=int[1, 100]}] results=[{type=int|whole}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b4()
+  b2(v6):
+    v7 = Integer integer=50
+    v8 = Greater v6, v7
+    Branch v8 -> taken b8(), notTaken b3()
+  b3():
+    v9 = Increment v6
+    Jump -> next b1(v9)
+  b4():
+    v10 = Integer integer=0
+    v11 = Integer integer=0
+    v12 = Upcast v10 castType=int|whole
+    Jump -> next b5(v12, v11)
+  b5(v13: int|whole, v14: int[0, 100]):
+    LoopHint
+    v16 = Less v14, v1
+    Branch v16 -> taken b6(| 0), notTaken b7()
+  b6(v17):
+    v18 = Add v13, v17
+    v19 = Increment v17
+    Jump -> next b5(v18, v19)
+  b7():
+    Return v13
+  b8() frequency=Rare:
+    v20 = Integer integer=0
+    v21 = Integer integer=0
+    Jump -> next b9(v20, v21)
+  b9(v22: int|whole, v23: int[0, 100]) frequency=Rare:
+    LoopHint
+    v25 = Less v23, v1
+    Branch v25 -> taken b10(| 0), notTaken b11()
+  b10(v26) frequency=Rare:
+    v27 = Add v22, v26
+    v28 = Increment v26
+    Jump -> next b9(v27, v28)
+  b11() frequency=Rare:
+    Return v22
+# CHECK: b0(
+# CHECK: Jump -> next b4()
+# CHECK-COUNT-1: LoopHint
+# CHECK-NOT: LoopHint
+}
+
+function f3 name="copiesMeetAgain" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=number}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b4()
+  b2(v6):
+    v7 = Integer integer=50
+    v8 = Greater v6, v7
+    Branch v8 -> taken b5(), notTaken b3()
+  b3():
+    v9 = Increment v6
+    Jump -> next b1(v9)
+  b4():
+    v10 = Integer integer=1
+    v11 = Add v1, v10
+    Jump -> next b6(v11)
+  b5() frequency=Rare:
+    v12 = Integer integer=1
+    v13 = Add v1, v12
+    Jump -> next b6(v13)
+  b6(v14):
+    Return v14
+# CHECK: b0(
+# CHECK: Jump -> next b4()
+# CHECK-NOT: LoopHint
+}
+
+function f4 name="copiesMeetWithOtherValues" parameters=[{type=int[0, 100]}, {type=number}, {type=number}] results=[{type=number}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b4()
+  b2(v7):
+    v8 = Integer integer=50
+    v9 = Greater v7, v8
+    Branch v9 -> taken b5(), notTaken b3()
+  b3():
+    v10 = Increment v7
+    Jump -> next b1(v10)
+  b4():
+    Jump -> next b6(v1)
+  b5() frequency=Rare:
+    Jump -> next b6(v2)
+  b6(v11):
+    Return v11
+# CHECK: b0(
+# CHECK: Jump -> next b1(v3)
+# CHECK: LoopHint
+}
+
+function f5 name="copiesMakeSameCalls" parameters=[{type=int[0, 100]}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b4()
+  b2(v7):
+    v8 = Integer integer=50
+    v9 = Greater v7, v8
+    Branch v9 -> taken b5(), notTaken b3()
+  b3():
+    v10 = Increment v7
+    Jump -> next b1(v10)
+  b4():
+    v11 = Call v1
+    v12 = Call v2
+    Return v12
+  b5() frequency=Rare:
+    v13 = Call v1
+    v14 = Call v2
+    Return v14
+# CHECK: b0(
+# CHECK: Jump -> next b4()
+# CHECK-NOT: LoopHint
+}
+
+function f6 name="copiesCallInAnotherOrder" parameters=[{type=int[0, 100]}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b4()
+  b2(v7):
+    v8 = Integer integer=50
+    v9 = Greater v7, v8
+    Branch v9 -> taken b5(), notTaken b3()
+  b3():
+    v10 = Increment v7
+    Jump -> next b1(v10)
+  b4():
+    v11 = Call v1
+    v12 = Call v2
+    Return
+  b5() frequency=Rare:
+    v13 = Call v2
+    v14 = Call v1
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b1(v3)
+# CHECK: LoopHint
+}
+
+# The loop around comes by b1 or by its copy b6. Behind b6, b7 returns what an earlier turn got in b1.
+function f7 name="oneCopyIsReadWhereTheyMeet" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Call v1
+    v4 = ToBoolean v3
+    Branch v4 -> taken b2(), notTaken b7()
+  b2():
+    v5 = Integer integer=0
+    Jump -> next b3(v5)
+  b3(v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b4(| 0), notTaken b1()
+  b4(v9):
+    v10 = Integer integer=50
+    v11 = Greater v9, v10
+    Branch v11 -> taken b6(), notTaken b5()
+  b5():
+    v12 = Increment v9
+    Jump -> next b3(v12)
+  b6():
+    LoopHint
+    v14 = Call v1
+    v15 = ToBoolean v14
+    Branch v15 -> taken b2(), notTaken b7()
+  b7():
+    Return v3
+# CHECK: b1():
+# CHECK-NEXT: LoopHint
+# CHECK: Jump -> next b3(v5)
+# CHECK-COUNT-2: LoopHint
+}
+
+# What else leads into the copy has not come by its first block.
+function f8 name="anotherWayLeadsIntoCopy" parameters=[{type=int[0, 100]}, {type=number}, {type=boolean}] results=[{type=number}] {
+    v3 = Integer integer=0
+    Branch v2 -> taken b1(v3), notTaken b8()
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b4()
+  b2(v7):
+    v8 = Integer integer=50
+    v9 = Greater v7, v8
+    Branch v9 -> taken b6(), notTaken b3()
+  b3():
+    v10 = Increment v7
+    Jump -> next b1(v10)
+  b4():
+    Jump -> next b5()
+  b5():
+    v11 = Integer integer=1
+    v12 = Add v1, v11
+    Return v12
+  b6() frequency=Rare:
+    Jump -> next b7()
+  b7() frequency=Rare:
+    v13 = Integer integer=1
+    v14 = Add v1, v13
+    Return v14
+  b8():
+    Jump -> next b7()
+# CHECK: b0(
+# CHECK: taken b1(v3)
+# CHECK: LoopHint
+}

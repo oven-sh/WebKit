@@ -1,0 +1,117 @@
+# `while (stack.length) { const top = stack.pop(); .. }`: behind the test the list holds something, and a list without holes that never holds undefined hands out an element.
+# A list that may have holes, a list that something has changed since the test, another list than the one that was asked and a test that says nothing of an empty list hand out undefined as ever.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="poppedWhileItHoldsSomething" parameters=[{type=Array<number, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names, Dense]>):
+    v1 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: name="poppedWhileItHoldsSomething"
+# CHECK: [[popped]]: undefined|number = CallBuiltin v0 overload=ArrayPrototypePop/0
+# CHECK-NEXT: [[element]]: number = AssumeType [[popped]] provenType=number
+# CHECK-NEXT: Return [[element]]
+
+function f1 name="shiftedBehindAComparison" parameters=[{type=Array<number, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names, Dense]>):
+    v1 = Integer integer=1
+    v2 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v3 = Less v2, v1
+    Branch v3 -> taken b2(), notTaken b1()
+  b1():
+    v4 = CallBuiltin v0 overload=ArrayPrototypeShift/0
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: name="shiftedBehindAComparison"
+# CHECK: [[shifted]]: undefined|number = CallBuiltin v0 overload=ArrayPrototypeShift/0
+# CHECK-NEXT: [[first]]: number = AssumeType [[shifted]] provenType=number
+# CHECK-NEXT: Return [[first]]
+
+function f2 name="mayHaveHoles" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>):
+    v1 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: name="mayHaveHoles"
+# CHECK: v3: undefined|number = CallBuiltin v0 overload=ArrayPrototypePop/0
+# CHECK-NEXT: Return v3
+
+function f3 name="secondOneBehindOneTest" parameters=[{type=Array<number, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names, Dense]>):
+    v1 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    v4 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: name="secondOneBehindOneTest"
+# CHECK: v4: undefined|number = CallBuiltin v0 overload=ArrayPrototypePop/0
+# CHECK-NEXT: Return v4
+
+function f4 name="anotherListWasAsked" parameters=[{type=Array<number, proven, pristine[Storage, Names, Dense]>}, {type=Array<number, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names, Dense]>, v1: Array<number, proven, pristine[Storage, Names, Dense]>):
+    v2 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallBuiltin v1 overload=ArrayPrototypePop/0
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: name="anotherListWasAsked"
+# CHECK: v4: undefined|number = CallBuiltin v1 overload=ArrayPrototypePop/0
+# CHECK-NEXT: Return v4
+
+function f5 name="theTestLetsAnEmptyListBy" parameters=[{type=Array<number, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names, Dense]>):
+    v1 = Integer integer=5
+    v2 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v3 = Less v2, v1
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: name="theTestLetsAnEmptyListBy"
+# CHECK: v4: undefined|number = CallBuiltin v0 overload=ArrayPrototypePop/0
+# CHECK-NEXT: Return v4
+
+function f6 name="holdsUndefined" parameters=[{type=Array<undefined|number, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+  b0(v0: Array<undefined|number, proven, pristine[Storage, Names, Dense]>):
+    v1 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: name="holdsUndefined"
+# CHECK: v3: undefined|number = CallBuiltin v0 overload=ArrayPrototypePop/0
+# CHECK-NEXT: Return v3

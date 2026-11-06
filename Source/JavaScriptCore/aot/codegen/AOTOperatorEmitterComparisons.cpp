@@ -123,7 +123,8 @@ void OperatorEmitter::generateComparisonOfNumbers(const ValueContext& value, std
         return;
     }
     if (!mayBeInt32(left, leftType) || !mayBeInt32(right, rightType)) {
-        defineTest(value, compare(relation, asNumber(left, leftType), asNumber(right, rightType)));
+        Number leftNumber = asNumber(left, leftType);
+        defineTest(value, compare(relation, leftNumber, asNumber(right, rightType)));
         return;
     }
 
@@ -135,9 +136,11 @@ void OperatorEmitter::generateComparisonOfNumbers(const ValueContext& value, std
         LBasicBlock numberCase = newBlock();
         m_out.branch(isInt32(tested).value(), normalEdge(int32Case), unlikelyEdge(numberCase));
         m_out.appendTo(int32Case);
-        branch(compare(relation, int32Of(left), int32Of(right)), targets);
+        Word32 leftInt32 = int32Of(left);
+        branch(compare(relation, leftInt32, int32Of(right)), targets);
         m_out.appendTo(numberCase);
-        branch(compare(relation, asNumber(left, leftType), asNumber(right, rightType)), targets);
+        Number leftNumber = asNumber(left, leftType);
+        branch(compare(relation, leftNumber, asNumber(right, rightType)), targets);
     });
 }
 
@@ -165,7 +168,8 @@ void OperatorEmitter::generateRelation(const ValueContext& value, Relation relat
         result = callOperation<Condition>(value, traitsOfOperator(relation).operation, { boxCell(in<CellPointer>(left)), boxCell(in<CellPointer>(right)) });
         break;
     case OperatorForm::Strings: {
-        Word32 order = emitter<StringEmitter>().order(value, in<CellPointer>(left), in<CellPointer>(right));
+        CellPointer leftString = in<CellPointer>(left);
+        Word32 order = emitter<StringEmitter>().order(value, leftString, in<CellPointer>(right));
         result = compare(relation, order, word32(0));
         break;
     }
@@ -242,8 +246,10 @@ bool OperatorEmitter::tryGenerateComparisonOfWholeRemainder(const ValueContext& 
     Vector<Condition, 3> conditions;
     if (leftOperand.is<Word32>() && rightOperand.is<Word32>())
         conditions.append(compare(relation, leftOperand.as<Word32>(), rightOperand.as<Word32>()));
-    else
-        conditions.append(compare(relation, widened(leftOperand), widened(rightOperand)));
+    else {
+        Integer wideLeft = widened(leftOperand);
+        conditions.append(compare(relation, wideLeft, widened(rightOperand)));
+    }
     for (const WholeRemainder* remainder : { left, right }) {
         if (remainder && remainder->isNumber)
             conditions.append(remainder->isNumber);
@@ -274,11 +280,16 @@ Condition OperatorEmitter::relationOnStringCells(const ValueContext& value, Rela
         String text = strings.textOf(definition.string());
         return text.length() == 1 ? std::optional(text[0]) : std::nullopt;
     };
-    if (std::optional<char16_t> character = characterOf(value->rightOperand()))
-        return compare(relation, strings.orderToCharacter(strings.viewOfString(value, left), *character), word32(0));
-    if (std::optional<char16_t> character = characterOf(value->leftOperand()))
-        return compare(traitsOfOperator(relation).mirrored, strings.orderToCharacter(strings.viewOfString(value, right), *character), word32(0));
-    return compare(relation, strings.order(value, left, right), word32(0));
+    if (std::optional<char16_t> character = characterOf(value->rightOperand())) {
+        Word32 order = strings.orderToCharacter(strings.viewOfString(value, left), *character);
+        return compare(relation, order, word32(0));
+    }
+    if (std::optional<char16_t> character = characterOf(value->leftOperand())) {
+        Word32 order = strings.orderToCharacter(strings.viewOfString(value, right), *character);
+        return compare(traitsOfOperator(relation).mirrored, order, word32(0));
+    }
+    Word32 order = strings.order(value, left, right);
+    return compare(relation, order, word32(0));
 }
 
 Condition OperatorEmitter::relationOnNullableStrings(const ValueContext& value, Relation relation)

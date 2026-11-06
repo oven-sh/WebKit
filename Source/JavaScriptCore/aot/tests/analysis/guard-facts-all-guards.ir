@@ -43,17 +43,19 @@ function f2 name="unknownOperand" parameters=[{type=object}] results=[{type=anyt
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
     v3 = Unspecified valueType=guard
-    v4 = AllGuards v3
-    v5 = AllGuards v2, v3
-    v6 = AllGuards v2
-    v7 = AllGuards
+    v4 = Specified
+    v5 = AssumeType v3, v4 provenType=guard
+    v6 = AllGuards v5
+    v7 = AllGuards v2, v5
+    v8 = AllGuards v2
+    v9 = AllGuards
     Return v0
   b2():
     Return
 }
 # CHECK-LABEL: function f2
-# CHECK: v3 facts: unknown
-# CHECK-NEXT: v4 facts: unknown
-# CHECK-NEXT: v5 facts: unknown
-# CHECK-NEXT: v6 facts: [Shape of v0 by v1 reads -]
-# CHECK-NEXT: v7 facts: []
+# CHECK: v5 facts: unknown
+# CHECK-NEXT: v6 facts: unknown
+# CHECK-NEXT: v7 facts: unknown
+# CHECK-NEXT: v8 facts: [Shape of v0 by v1 reads -]
+# CHECK-NEXT: v9 facts: []

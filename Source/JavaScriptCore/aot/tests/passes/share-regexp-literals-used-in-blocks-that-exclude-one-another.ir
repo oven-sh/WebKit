@@ -1,0 +1,100 @@
+# `/a/.test(text)` where a test run may replace RegExp.prototype.test: the literal stands ahead of the test of the member. Each arm makes its own, and the built-in's is shared.
+# Where one evaluation can get to two of the blocks, or to one of them twice, they name one object, and it stays where it is.
+# FORM: Prepared
+# RUN: pass ShareRegExpLiterals
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+replaceablebuiltin member=RegExpPrototypeTest
+function f0 name="twoArms" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0):
+    v1 = NewRegExp pattern="a"
+    v2 = IsBuiltinLocationUnchanged member=RegExpPrototypeTest
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v1, v0 overload=RegExpPrototypeTest/0
+    Return v3
+  b2() frequency=Unlikely:
+    v4 = PropGet v1 key="test"
+    v5 = Call v4, v1, v0
+    Return v5
+}
+# CHECK-LABEL: function f0 name="twoArms"
+# CHECK: b0(
+# CHECK-NOT: RegExp pattern
+# CHECK: b1():
+# CHECK-NEXT: SharedRegExpLiteral pattern="a"
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: NewRegExp pattern="a"
+
+function f1 name="usedBehindTheArms" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0):
+    v1 = NewRegExp pattern="b"
+    v2 = IsBuiltinLocationUnchanged member=RegExpPrototypeTest
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v1, v0 overload=RegExpPrototypeTest/0
+    Jump -> next b3()
+  b2() frequency=Unlikely:
+    v4 = PropGet v1 key="test"
+    v5 = Call v4, v1, v0
+    Jump -> next b3()
+  b3():
+    v6 = CallBuiltin v1, v0 overload=RegExpPrototypeTest/0
+    Return v6
+}
+# CHECK-LABEL: function f1 name="usedBehindTheArms"
+# CHECK: b0(
+# CHECK-NEXT: NewRegExp pattern="b"
+# CHECK-NOT: RegExpLiteral
+
+function f2 name="madeAheadOfALoop" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0):
+    v1 = NewRegExp pattern="c"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IsBuiltinLocationUnchanged member=RegExpPrototypeTest
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallBuiltin v1, v0 overload=RegExpPrototypeTest/0
+    Branch v4 -> taken b1(), notTaken b4()
+  b3() frequency=Unlikely:
+    v5 = PropGet v1 key="test"
+    v6 = Call v5, v1, v0
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(), notTaken b4()
+  b4():
+    v8 = Undefined
+    Return v8
+}
+# CHECK-LABEL: function f2 name="madeAheadOfALoop"
+# CHECK: b0(
+# CHECK-NEXT: NewRegExp pattern="c"
+# CHECK-NOT: RegExpLiteral
+
+function f3 name="madeInEveryTurn" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = NewRegExp pattern="d"
+    v3 = IsBuiltinLocationUnchanged member=RegExpPrototypeTest
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallBuiltin v2, v0 overload=RegExpPrototypeTest/0
+    Branch v4 -> taken b1(), notTaken b4()
+  b3() frequency=Unlikely:
+    v5 = PropGet v2 key="test"
+    v6 = Call v5, v2, v0
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(), notTaken b4()
+  b4():
+    v8 = Undefined
+    Return v8
+}
+# CHECK-LABEL: function f3 name="madeInEveryTurn"
+# CHECK: b2():
+# CHECK-NEXT: SharedRegExpLiteral pattern="d"
+# CHECK: b3() frequency=Unlikely:
+# CHECK-NEXT: NewRegExp pattern="d"

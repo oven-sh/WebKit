@@ -30,7 +30,7 @@ enum class EntryShape : uint8_t { AtStart, AfterPrefix, TwoEntries };
 static constexpr std::array<unsigned, 3> threadCounts { 1, 2, 16 };
 static constexpr unsigned mostThreads = threadCounts.back();
 static constexpr uint32_t numberOfChainedBodies = 300;
-static constexpr uint32_t numberOfLargeBodies = 64;
+static constexpr uint32_t numberOfLargeBodies = 64 * scaleOfSharedCode;
 static constexpr unsigned pinnedUnitsInLargeBody = 16;
 static constexpr std::array entryShapes { EntryShape::AtStart, EntryShape::AfterPrefix, EntryShape::TwoEntries };
 static constexpr uint32_t prefixWord = 0x0105;
@@ -123,6 +123,9 @@ static void copyHeaderMembers(ImageHeader& copy, const ImageHeader& header)
     copy.code = header.code;
     copy.flags = header.flags;
     std::ranges::copy(header.entriesUsed, copy.entriesUsed);
+    std::ranges::copy(header.singleReturnSites, copy.singleReturnSites);
+    copy.numberOfStubsFoundByKey = header.numberOfStubsFoundByKey;
+    copy.numbers = header.numbers;
 }
 
 static void testGapsAreZero()
@@ -142,7 +145,7 @@ static void testGapsAreZero()
     AOT_TEST_CHECK(isAllZero(bytes.subspan(endOfCode, header.size - endOfCode)));
 
     for (const StubAddressInImage& address : image.image->section<StubAddressInImage>(ImageSection::StubAddresses))
-        AOT_TEST_CHECK(!address.reserved);
+        AOT_TEST_CHECK(address.usesCallConvention <= 1);
 
     alignas(ImageHeader) std::array<uint8_t, sizeof(ImageHeader)> storage { };
     copyHeaderMembers(*reinterpret_cast<ImageHeader*>(storage.data()), header);

@@ -55,6 +55,7 @@ struct FieldArmState {
     bool isAddedLate { true };
     bool isFilledByCreator { true };
     bool admitsUndefined { false };
+    bool isWrittenAsOptional { true };
     bool isAddedLateInSomeMember { false };
     bool isLeftOutAtConstruction { false };
     bool hasConstructor { false };
@@ -81,6 +82,10 @@ struct FieldArmState {
     ReceiverState receivers;
     SortedSet<TypeID, 2> slotTypes;
 };
+
+bool mayBeEmptyInSlot(const Program&, LayoutID, FieldReference);
+bool mayBeEmptyBelowAccessor(const Program&, LayoutID, FieldReference);
+bool isEmptyBelowAccessor(const PropertyAccessContext&, LayoutID, PropertyKeyID);
 
 PropertyAccessPlan planMemberArm(const PropertyAccessContext&, const PropertyAccessQuery&, const MemberArm&);
 void planFieldArm(const PropertyAccessContext&, const PropertyAccessQuery&, const MemberArm&, PropertyAccessPlan&);

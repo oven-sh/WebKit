@@ -252,6 +252,8 @@ GCRequest::Ticket Collector::requestCollection(Heap& requester, GCRequest reques
     // right now. This is an optimization that prevents the collector thread from ever starting in most
     // cases.
     ASSERT(m_lastServedTicket <= m_lastGrantedTicket);
+    ASSERT(requester.hasHeapAccess());
+    ASSERT(!(requester.m_worldState.load() & Heap::stoppedBit));
     // It's okay for a heap to request a GC while its membership is pending, but it can't be the conductor yet.
     if ((m_lastServedTicket == m_lastGrantedTicket) && !m_threadIsWorking && hasHeap(requester)) {
         dataLogLnIf(CollectorInternal::verbose, "Taking the conn.");
@@ -304,6 +306,18 @@ void Collector::collectInCollectorThread()
             break;
         }
     }
+}
+
+bool Collector::tryEnsureThreadForWork()
+{
+#if ENABLE(AOT)
+    if (!Thread::survivesFailedCreation())
+        return true;
+    Locker locker { *m_threadLock };
+    return !hasWorkWithLock() || m_thread->tryEnsureUnderlyingThread(locker);
+#else
+    return true;
+#endif
 }
 
 void Collector::collectInMutatorThread(Heap& conductor)
@@ -506,6 +520,8 @@ void Collector::beginCollectionInEachHeap(CollectionScope scope, MonotonicTime s
 #endif
         if (!Options::seedOfVMRandomForFuzzer())
             heap.vm().random().setSeed(cryptographicallyRandomNumber<uint32_t>());
+        // The previous collection's epilogue must have run before starting the next collection.
+        RELEASE_ASSERT(!heap.needCollectionEpilogue());
         heap.willStartCollection(scope);
         heap.beginMarking();
     });
@@ -550,6 +566,8 @@ bool Collector::canSkipMarking()
 
 void Collector::startHelpers()
 {
+    if (startsHelpersLazily() && m_collectionsWithoutHelpers.load(std::memory_order_relaxed))
+        return;
     if (m_hasStartedHelpers.exchange(true))
         return;
     RELEASE_ASSERT(!m_parallelMarkersShouldExit);
@@ -669,6 +687,14 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
 
     switch (conn) {
     case GCConductor::Mutator: {
+        if (m_conductorMarksInConcurrentPhase) [[unlikely]] {
+            {
+                ParallelModeEnabler enabler(visitor);
+                visitor.drainInParallel(m_scheduler->timeToStop());
+            }
+            return changePhase(conn, CollectorPhase::Reloop);
+        }
+
         // When the mutator has the conn, we poll runConcurrentPhase() on every time someone says
         // stopIfNecessary(), so on every allocation slow path. When that happens we poll if it's time
         // to stop and do some work.
@@ -715,6 +741,11 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
         m_markingConditionVariable.notifyAll();
     }
     m_helperClient.finish();
+#if ENABLE(AOT)
+    // Let the threads this collection started finish their first-time allocations before it ends.
+    if (startsHelpersLazily() && hasStartedHelpers())
+        m_helperClient.pool().waitUntilThreadsAreUp();
+#endif
 
     assertMarkStacksEmpty();
     RELEASE_ASSERT(m_raceMarkStack->isEmpty());
@@ -820,6 +851,8 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
     if (suspendedBefore != suspendedAfter) {
         if (suspendedBefore) {
             RELEASE_ASSERT(!suspendedAfter);
+            // End sets the epilogue bit just before resuming into NotRunning, and nothing else sets it during a collection.
+            RELEASE_ASSERT(heap().needCollectionEpilogue() == (m_currentPhase == CollectorPhase::End));
 
             resumeThePeriphery();
             if (conn == GCConductor::Collector)
@@ -840,7 +873,8 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
                 }
             } else {
                 sanitizeStackForVM(heap().vm());
-                heap().handleNeedCollectionEpilogue();
+                // A mutator runs any pending epilogue before it starts conducting, and only End sets the bit.
+                RELEASE_ASSERT(!heap().needCollectionEpilogue());
             }
             stopThePeriphery();
         }
@@ -853,7 +887,12 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
 void Collector::stopThePeriphery()
 {
     m_isCompilerThreadsSuspended = suspendCompilerThreads();
-    forEachHeap([](Heap& heap) {
+    forEachHeap([&](Heap& heap) {
+        unsigned worldState = heap.m_worldState.load();
+        if (&heap == m_conductingHeap)
+            RELEASE_ASSERT(worldState & Heap::mutatorHasConnBit, worldState);
+        else
+            RELEASE_ASSERT(worldState & Heap::stoppedBit, worldState);
         heap.stopThePeriphery();
     });
     m_collectorSlotVisitor->setMutatorsAreStopped(true);
@@ -1195,6 +1234,12 @@ void Collector::startCollectingContinuously()
         [this] () {
             MonotonicTime initialTime = MonotonicTime::now();
             Seconds period = Seconds::fromMilliseconds(Options::collectContinuouslyPeriodMS());
+#if OS(WINDOWS)
+            // ThreadCondition::timedWait() rounds its timeout down to whole milliseconds and returns at once for zero, so no wait is shorter than 1 ms.
+            constexpr Seconds shortestWait = 1_ms;
+#else
+            constexpr Seconds shortestWait = 0_s;
+#endif
             while (true) {
                 Locker locker { m_collectContinuouslyLock };
                 {
@@ -1209,9 +1254,10 @@ void Collector::startCollectingContinuously()
 
                 Seconds elapsed = MonotonicTime::now() - initialTime;
                 Seconds elapsedInPeriod = elapsed % period;
-                MonotonicTime timeToWakeUp =
-                    initialTime + elapsed - elapsedInPeriod + period;
-                while (!hasElapsed(timeToWakeUp) && !m_shouldStopCollectingContinuously) {
+                MonotonicTime timeToWakeUp = std::max(
+                    initialTime + elapsed - elapsedInPeriod + period,
+                    initialTime + elapsed + 2 * shortestWait);
+                while (!hasElapsed(timeToWakeUp - shortestWait) && !m_shouldStopCollectingContinuously) {
                     m_collectContinuouslyCondition.waitUntil(
                         m_collectContinuouslyLock, timeToWakeUp);
                 }

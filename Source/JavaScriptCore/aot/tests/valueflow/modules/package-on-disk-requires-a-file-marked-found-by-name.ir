@@ -1,0 +1,28 @@
+# main.cjs: require("package"); require("./inner.cjs") with --external package        inner.cjs: exports.kept = function () {}
+# The package may require inner.cjs first: the loader of the host begins the file and reads what it exports.
+# RUN: pipeline CallModules
+# CHECK: variable g1 name="exports" module=m2 declared={type=undefined|Object} initialization=Undefined flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}
+# CHECK: BeginModuleEvaluation module=m2
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="package" displayPath="package" kind=External referrer=m0
+module m2 path="/app/inner.cjs" displayPath="inner.cjs" kind=CommonJs flags=[KeepsError, IsFoundByName] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m0 specifier="package"
+    EvaluateModule module=m2 referrer=m0
+    v2 = GetModuleVariable variable=g1
+    Return
+}
+function f1 name="inner" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f2
+    PropSet v0, v2 key="kept"
+    Return
+}
+function f2 name="kept" module=m2 results=[{type=anything}] {
+    Return
+}

@@ -20,11 +20,11 @@
 # CHECK: v22: int[0, 7]
 # CHECK: v23: int[0, 7]
 # CHECK: v24: int[-6, -3]
-# CHECK: v25: i32
+# CHECK: v25: int[4, 40]
 # CHECK: v26: int[1, 2]
-# CHECK: v27: int[0, 5]
-# CHECK: v28: int[0, 5]
-# CHECK: v29: int[0, 4294967295]
+# CHECK: v27: int[0, 2]
+# CHECK: v28: int[0, 2]
+# CHECK: v29: int[0, 2147483647]
 # CHECK: v30: number
 # CHECK: v31: number
 # CHECK-LABEL: function f1

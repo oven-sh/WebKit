@@ -32,7 +32,7 @@ struct OverloadQuery {
     BuiltinID builtin;
     BuiltinCallMode mode { BuiltinCallMode::Call };
     const BuiltinOperandTypes& proven;
-    const BuiltinOperandTypes& expected;
+    Expected<const BuiltinOperandTypes&> expected;
 };
 
 struct OverloadMatch {
@@ -87,6 +87,8 @@ struct BuiltinCallStamps {
     ExpectedResultID expectedResult;
     AccessSiteID accessSite;
     AllocationSiteID allocationSite;
+    // What was called, as written. Kept where the built-in function calls its receiver, which may refuse.
+    StringID calleeName { };
 };
 
 struct NullishCheck {

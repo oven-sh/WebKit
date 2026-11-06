@@ -1,0 +1,79 @@
+# for (i ..) for (k ..) marks[k] = (marks[k] + i) & 1023: the result is stored, so no iteration waits for the truncation in the one before.
+# The element is added and truncated as a double. Testing it for a whole int32 first would only add three conversions, a comparison and a branch.
+# FORM: Selected
+# RUN: generate-code ExactIntegersBehindNumbers
+# CHECK: : size=
+# CHECK-NOT: no code
+# CHECK: statistic ExactIntegersBehindNumbers 0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="addOuterCounterToEachElement" parameters=[{type=Array<number, proven, pristine[Storage, Dense]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Dense]>, v1: i32):
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int[0, 127]):
+    LoopHint
+    v5 = Less v3, v1 form=Integers
+    TestAndBranch v5 -> taken b2(), notTaken b8()
+  b2():
+    v6 = Integer integer=0
+    v7 = Upcast v3 castType=int|whole
+    Jump -> next b3(v6)
+  b3(v8: int[0, 127]):
+    LoopHint
+    v10 = Less v8, v1 form=Integers
+    TestAndBranch v10 -> taken b4(), notTaken b7()
+  b4():
+    v11 = HasArrayStorage v0 arrayStorage=Double [isWritable]
+    TestAndBranch v11 -> taken b5(| 0), notTaken b8()
+  b5(v12: guard):
+    v13 = IsInBounds v0, v8
+    TestAndBranch v13 -> taken b6(| 0), notTaken b8()
+  b6(v14: guard):
+    v15 = AllGuards v12, v14
+    v16 = GetArrayElement v0, v8, v15 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
+    v17 = Add v16, v7 form=Numbers
+    v18 = Integer integer=1023
+    v19 = BitAnd v17, v18 form=Numbers
+    PutArrayElement v0, v8, v19, v15 arrayStorage=Double mode=Strict level=Expected [keyIsIntegral, isInBounds]
+    v21 = Increment v8 form=Integers
+    v22 = Integer integer=127
+    v23 = BitAnd v21, v22 form=Integers
+    Jump -> next b3(v23)
+  b7():
+    v24 = Increment v3 form=Integers
+    v25 = Integer integer=127
+    v26 = BitAnd v24, v25 form=Integers
+    Jump -> next b1(v26)
+  b8():
+    Return v1
+}
+function f1 name="firstElementWhoseSumWithItsIndexIsLarge" parameters=[{type=Array<number>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: i32):
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int[0, 127]):
+    LoopHint
+    v5 = HasArrayStorage v0 arrayStorage=Double
+    TestAndBranch v5 -> taken b2(| 0), notTaken b5()
+  b2(v6: guard):
+    v7 = IsElementPresent v0, v3, v6 arrayStorage=Double [keyIsIntegral]
+    TestAndBranch v7 -> taken b3(| 0), notTaken b5()
+  b3(v8: guard):
+    v9 = AllGuards v6, v8
+    v10 = GetArrayElement v0, v3, v9 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    v11 = Add v10, v3 form=Numbers
+    v12 = Integer integer=0
+    v13 = BitOr v11, v12 form=Numbers
+    v14 = Less v13, v1 form=Integers
+    TestAndBranch v14 -> taken b4(), notTaken b6(v13)
+  b4():
+    v15 = Increment v3 form=Integers
+    v16 = Integer integer=127
+    v17 = BitAnd v15, v16 form=Integers
+    Jump -> next b1(v17)
+  b5():
+    Return v1
+  b6(v18: i32):
+    Return v18
+}

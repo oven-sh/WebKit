@@ -1,0 +1,32 @@
+# register(readsValue, makeResult)   function readsValue(item) { return item.value }   and in a module of the library: function makeResult() { return { done: false, value: 1 } }
+# `value` is also an accessor of WebAssembly.Global, which the program never reads. No class and no literal of the program has a `value`: the one layout that does is a record that the library makes.
+# That one name says too little to expect such a record in a function of the program. A test would turn every other object away, and what stands behind the test would run in the copy.
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="/application.js" displayPath="application.js" body=f0
+module m1 path="/library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m1 fields=[{key="done" declared={type=anything}}, {key="value" declared={type=anything}}]
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+
+function f1 name="readsValue" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="value"
+    Return v1
+}
+
+function f2 name="makeResult" module=m1 results=[{type=anything}] {
+    v0 = Boolean boolean=false
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+# CHECK-LABEL: name="readsValue"
+# CHECK-NOT: = TypeTest

@@ -30,7 +30,6 @@ class CallGraph;
 class EnvironmentReuse;
 class FlowResults;
 class FrameAllocation;
-class Heat;
 class SlotAgreementMemo;
 
 using FieldIndex = uint32_t;
@@ -87,14 +86,20 @@ struct ReservedBytes {
 
 struct PlannedLayout {
     bool hasSlots() const { return storage == LayoutStorage::CompiledObject || storage == LayoutStorage::Environment; }
+    bool holdsCompiledObjects() const { return storage == LayoutStorage::CompiledObject && !isRecordAlone; }
     unsigned numberOfFields() const { return slots.isEmpty() ? 0 : slots.size() - numberOfHiddenWords; }
     FieldIndex extensionWordIndex() const { return numberOfFields(); }
     FieldIndex extraPropertiesWordIndex() const { return numberOfFields() + 1; }
     bool hasExtension() const { return !slots.isEmpty() && slots[extensionWordIndex()].hasStorage(); }
     bool hasExtraPropertiesWord() const { return !slots.isEmpty() && slots[extraPropertiesWordIndex()].hasStorage(); }
     JS_EXPORT_PRIVATE bool keepsZero(uint32_t offset, uint32_t width) const;
+    // A bit for each byte of the cell in which nothing is kept. Whoever makes a cell leaves those bytes as they are.
+    JS_EXPORT_PRIVATE BitVector padding() const;
 
     LayoutStorage storage { LayoutStorage::None };
+    // A class below a built-in class that declares a private name has a record, where the generic operations find the name.
+    // Its instances are cells of the built-in class: they have no slots, no shape word and no order word.
+    bool isRecordAlone { false };
     bool holdsWideReferences { false };
     bool keysAreNeverEnumerated { false };
     uint16_t numberOfRecordFields { 0 };
@@ -166,7 +171,6 @@ struct ClassCreationPlan {
 struct SlotPlanInputs {
     const FlowResults& flow;
     const CallGraph& callGraph;
-    const Heat& heat;
     const FrameAllocation& frameAllocation;
     const EnvironmentReuse& environmentReuse;
 };
@@ -184,6 +188,7 @@ public:
 
     const PlannedLayout& layout(LayoutID id) const { return id.index() < m_layouts.size() ? m_layouts[id.index()] : m_unplannedLayout; }
     LayoutStorage storageOf(LayoutID id) const { return layout(id).storage; }
+    bool holdsCompiledObjects(LayoutID id) const { return layout(id).holdsCompiledObjects(); }
 
     const PlacedSlot& slot(LayoutID id, FieldIndex field) const
     {
@@ -206,6 +211,8 @@ public:
     JS_EXPORT_PRIVATE MemberCreation creationOf(const Program&, LayoutID classLayout, FunctionID member) const;
 
     bool hasColumn(PropertyKeyID key) const { return m_keysWithColumn.get(key.index()); }
+    // Somewhere the text gives an object an accessor under the name, or a property by a descriptor, or a class declares an accessor: a store under it may meet a setter.
+    bool isDefinedByDescriptor(PropertyKeyID key) const { return m_keysDefinedByDescriptor.get(key.index()); }
     const BitVector& keysWithColumn() const { return m_keysWithColumn; }
 
     unsigned numberOfLayouts() const { return m_layouts.size(); }
@@ -221,6 +228,7 @@ private:
     Vector<ClosureForm> m_closureForms;
     Vector<ClassCreationPlan> m_classCreation;
     BitVector m_keysWithColumn;
+    BitVector m_keysDefinedByDescriptor;
     PlannedLayout m_unplannedLayout;
     PlacedSlot m_unplannedSlot;
     ClassCreationPlan m_unplannedClass;

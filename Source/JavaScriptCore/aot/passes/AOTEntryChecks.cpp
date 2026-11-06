@@ -14,6 +14,8 @@
 #include "AOTCheckTypesAtEntry.h"
 #include "AOTCreateEntrypointsInternal.h"
 #include "AOTDerivedFunctions.h"
+#include "AOTArrayChains.h"
+#include "AOTEffectSummaries.h"
 #include "AOTEffectsCheck.h"
 #include "AOTErrorMessages.h"
 #include "AOTFlowApply.h"
@@ -22,6 +24,7 @@
 #include "AOTFunctionEditing.h"
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
+#include "AOTPass.h"
 #include "AOTPredictedValues.h"
 #include "AOTProgramPasses.h"
 #include "AOTResolveCallsDirectCall.h"
@@ -34,8 +37,10 @@
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
+#include "AOTWrittenFunction.h"
 #include <algorithm>
 #include <optional>
+#include <ranges>
 #include <wtf/BitVector.h>
 #include <wtf/text/MakeString.h>
 
@@ -138,7 +143,7 @@ void appendChecksAtEntry(const Program& program, BuildContext& build, Function& 
     for (unsigned index : checkedParameters) {
         DeclaredType& declared = *function.declaredEntryParameter(index);
         Value convert = IRBuilder::make(Opcode::Convert, { function.at(entryBlock).parameters[index] });
-        convert.setDeclared(DeclaredType(Proven::byPosition(declared.expected().predicted()), declared.site));
+        convert.setDeclared(DeclaredType(Proven::byConversion(declared.expected()), declared.site));
         convert.setIllTypedCause(IllTypedCause::UnseenCaller);
         convert.setOrigin({ declared.site ? program.at(declared.site).position : function.position, 0 });
         declared.expect(declared.expected());
@@ -298,7 +303,7 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
         return checks;
     for (ValueID id : entry.values) {
         const Value& value = function.at(id);
-        if (value.opcode == Opcode::ValidateType)
+        if (value.opcode == Opcode::ValidateType || makesFact(value.opcode))
             continue;
         if (value.opcode != Opcode::Check && !narrowsWithoutTest(value.opcode))
             break;
@@ -317,6 +322,8 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
             continue;
         if (!given.overlaps(checked, program))
             return { };
+        if (!changesCodeWhereProven(checked))
+            continue;
         checks.append(EntryCheck { id, static_cast<unsigned>(entryParameter), value.expectedType().predicted(), value.site() });
     }
     if (checks.isEmpty())
@@ -415,7 +422,7 @@ static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& progra
             continue;
         const Type& given = program.typeOf(function, entry.parameters[entryValue.entryParameter]);
         const Type& checked = program.at(entryValue.type);
-        if (given.isSubsetOf(checked, program) || !given.overlaps(checked, program))
+        if (given.isSubsetOf(checked, program) || !given.overlaps(checked, program) || !changesCodeWhereProven(checked))
             continue;
         if (entryValue.entryCheck && !checked.isSubsetOf(program.at(entryChecks[*entryValue.entryCheck].type), program))
             continue;
@@ -482,7 +489,7 @@ static void keepWhereEveryKnownArrivalFits(const Program& program, const Paralle
             if (!call.callees())
                 return;
             uint32_t numberOfArguments = call.numberOfOperands() - OperandIndex::Call::arguments;
-            for (FunctionID callee : program.at(call.callees()).functions) {
+            for (FunctionID callee : program.at(call.callees()).seen().predicted().functions) {
                 if (!hasCheckedEntryValue.get(callee.index()))
                     continue;
                 unsigned first = program.at(callee).firstParameterIndex();
@@ -493,7 +500,7 @@ static void keepWhereEveryKnownArrivalFits(const Program& program, const Paralle
             }
         });
     });
-    AOT::sort(misfits);
+    AOT::sortInLine(misfits);
     for (Split& split : splits) {
         split.checkedEntryValues.removeAllMatching([&](const CheckedEntryValue& checked) {
             return std::ranges::binary_search(misfits, Misfit { split.id, checked.entryParameter });
@@ -530,9 +537,29 @@ static Function createTypedBody(const Program& program, Function&& body, std::sp
         proven.type = provenType;
     }
     settleProofsBehindAnsweredChecks(body);
-    body.results[0].establish(Proven::byPosition(body.results[0].expected().predicted()));
+    body.results[0].establish(Proven::asCandidate(body.results[0].expected()));
     body.capabilities = initialCapabilitiesOf(body) | capabilitiesBehindEntrance;
     return WTF::move(body);
+}
+
+// A cast between a parameter and its check holds what is left of the type that the parameter has behind the tests.
+static void typeCastsAheadOfChecks(const Program& program, Function& body, TypeArena& types, std::span<const EntryCheck> checks)
+{
+    TypingContext typing { program, body, types };
+    for (const EntryCheck& check : checks) {
+        ValueID parameter = body.at(entryBlock).parameters[check.entryParameter];
+        Vector<ValueID, 4> casts;
+        for (ValueID cast = body.at(check.check).valueOperand(); cast != parameter; cast = body.at(cast).valueOperand())
+            casts.append(cast);
+        for (ValueID cast : casts | std::views::reverse) {
+            Value& value = body.edit(cast);
+            value.type = computeResultTypeID(typing, value);
+            // An expected type is set where it says more than the type does.
+            TypeID expected = value.expected().predicted();
+            if (expected && (types.at(expected) == types.at(value.type) || !types.at(expected).isSubsetOf(types.at(value.type), program)))
+                value.setExpected({ });
+        }
+    }
 }
 
 static Derivation derivationWithSameParameters(FunctionID source, const Function& function)
@@ -560,7 +587,7 @@ static Function createFallback(const Function& original, FunctionID typedBody)
     fallback.creator = CreatorRecord::Version { .provenVersion = typedBody };
     fallback.capabilities = initialCapabilitiesOf(fallback) | capabilitiesBehindEntrance;
     for (Block& block : fallback.editAllBlocks())
-        block.frequency = block.frequency == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
+        block.frequency = block.frequency.predicted() == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
     return fallback;
 }
 
@@ -636,7 +663,7 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
     Vector<Split> splits = collectInParallel<Split>(loops, program.functions.size(), [&](unsigned index, Vector<Split>& found) {
         FunctionID id(index);
         // Tests, a typed body and a fallback are three functions for one. They pay where callers that have proven their arguments enter the typed body often.
-        if (!mayListValueWith(program, id, { Opcode::Check }) || !canBeSplit(program, build, id) || (heat && isCold(heat->of(program, id))))
+        if (!mayListValueWith(program, id, { Opcode::Check }) || !canBeSplit(program, build, id) || (heat && isCold(heat->of(program, id)).predicted()))
             return;
         Vector<EntryCheck, 4> checks = findEntryChecksThatMayFail(program, program.at(id));
         Vector<CheckedEntryValue, 2> checkedEntryValues;
@@ -648,7 +675,7 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
         if (!checks.isEmpty() || !checkedEntryValues.isEmpty())
             found.append(Split { id, WTF::move(checks), WTF::move(checkedEntryValues) });
     });
-    AOT::sort(splits, { }, &Split::id);
+    AOT::sortInLine(splits, { }, &Split::id);
     keepWhereEveryKnownArrivalFits(program, loops, splits);
     // The test at the entrance is for the type that the body checks for. The typed body holds the value proven, hands it on proven, and enters its callees behind their own tests.
     for (Split& split : splits) {
@@ -715,7 +742,8 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
         if (!splits[index].checkedEntryValues.isEmpty()) {
             FunctionAnalyses analyses(context, body);
             typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
-        }
+        } else
+            typeCastsAheadOfChecks(program, body, arenas.types, splits[index].checks.span());
         // While the tests at its head were checks, the function waited for its generic version and kept what stands behind a value of type never. A body without a check waits for nothing.
         if (!waitsForGenericVersion(program, body)) {
             FunctionAnalyses analyses(context, body);
@@ -792,6 +820,230 @@ static std::optional<Entrance> readEntrance(const Function& function)
     return entrance;
 }
 
+namespace {
+
+// Thrown out of a version that gives up, to the handler in the caller of the callback.
+struct WhatCanBeSeen {
+    Vector<std::pair<BlockID, uint32_t>> cuts;
+    Vector<ValueID> callsOfVersions;
+    bool inCommonBlock { false };
+    bool underHandler { false };
+};
+
+}
+
+struct VersionsThatGiveUp {
+    AnalysisContext contextOf(FunctionID id) const { return { build, program, &inputs.flow, &inputs.effects, id }; }
+
+    const Program& program;
+    const OptimizationInputs& inputs;
+    TypeArena& types;
+    StringArena& strings;
+    BuildContext& build;
+    Vector<FunctionID> entered { };
+    // Each function is read once, however many calls lead to it.
+    HashMap<FunctionID, std::unique_ptr<FunctionSummary>> answers { };
+};
+
+static bool canBeSeen(const Effects& effects)
+{
+    return effects.writes.containsAny(observableHeaps) || effects.mayRunOtherCode() || !effects.alwaysCompletes();
+}
+
+// A body stands here as it was when the schedule began: what it expects of its values is not tested yet, and each of its operations may still do whatever the language allows.
+// With the tests that it gets when its own turn comes, all of that lies behind a test that seldom fails.
+static Function copyWithTests(VersionsThatGiveUp& versions, FunctionID id)
+{
+    Function copy = versions.program.at(id);
+    FunctionAnalyses analyses(versions.contextOf(id), copy);
+    FunctionPassContext context { versions.program, versions.inputs, id, copy, analyses, versions.types, versions.strings, versions.build };
+    analyses.setTypingMemo(&context.typingMemo);
+    context.isInRounds = true;
+    context.versionsBeingRead = &versions;
+    if (copy.valuesAreTypedAsDefined())
+        context.pendingTyping.didEnterScheduleTyped(context.changes);
+    for (auto* pass : { placeTypeTests, retypeValues, foldConstants, simplifyControlFlow }) {
+        context.keptAnalyses = { };
+        if (pass(context) == PassOutcome::Changed)
+            analyses.invalidate(allAnalyses - context.keptAnalyses);
+    }
+    return copy;
+}
+
+// Nothing reaches an object made in this body but through what the body has done with it, and all that would show it to older code is seen by itself.
+static bool writesOnlyWhatItMade(FunctionAnalyses& analyses, const Value& value, const Effects& effects)
+{
+    static constexpr OpcodeSet writesOfObjects { Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::FinishObject };
+    if (!writesOfObjects.contains(value.opcode) || !effects.alwaysCompletes())
+        return false;
+    LocationMasks elsewhere = effects.writes;
+    elsewhere.remove(perObjectHeaps);
+    if (elsewhere.containsAny(observableHeaps))
+        return false;
+    bool isOwn = true;
+    forEachBaseObject(analyses, value.operand(0), [&](const BaseObject& object) {
+        isOwn &= object.kind == BaseObject::Kind::OwnAllocation;
+    });
+    return isOwn;
+}
+
+enum class StopsAtFirstObstacle : bool { No, Yes };
+
+static WhatCanBeSeen findWhatCanBeSeen(const AnalysisContext& context, const Function& function, StopsAtFirstObstacle stopsAtFirstObstacle, NOESCAPE const ScopedLambda<bool(FunctionID)>& calleeHasVersion)
+{
+    WhatCanBeSeen found;
+    FunctionAnalyses analyses(context, function);
+    for (BlockID id : analyses.cfg().reversePostOrder()) {
+        const Block& block = function.at(id);
+        std::optional<uint32_t> cut;
+        for (uint32_t index = 0; index < block.values.size() && !cut; ++index) {
+            const Value& value = function.at(block.values[index]);
+            Effects effects = analyses.effectsOf(block.values[index]).onAnyEdge();
+            if (!canBeSeen(effects) || writesOnlyWhatItMade(analyses, value, effects))
+                continue;
+            if (value.opcode == Opcode::CallDirect && !block.handler && calleeHasVersion(value.function())) {
+                found.callsOfVersions.append(block.values[index]);
+                continue;
+            }
+            cut = index;
+        }
+        if (!cut && block.terminator.kind != TerminatorKind::ReturnCall && canBeSeen(analyses.effectsOfTerminator(id).onAnyEdge()))
+            cut = block.values.size();
+        if (!cut)
+            continue;
+        found.cuts.append({ id, *cut });
+        found.inCommonBlock |= block.frequency.predicted() == BlockFrequency::Normal;
+        found.underHandler |= !!block.handler;
+        if (stopsAtFirstObstacle == StopsAtFirstObstacle::Yes && (found.inCommonBlock || found.underHandler))
+            break;
+    }
+    return found;
+}
+
+static void throwInsteadOf(const AnalysisContext& context, TypeArena& types, Function& function, const WhatCanBeSeen& found)
+{
+    IRBuilder builder(context, function, types);
+    for (auto [block, index] : found.cuts) {
+        const BlockValues& values = function.at(block).values;
+        Origin origin = index < values.size() ? function.at(values[index]).origin() : function.at(block).terminator.origin();
+        Block& cut = function.edit(block);
+        cut.values.shrink(index);
+        cut.terminator.become(TerminatorKind::Unreachable);
+        builder.moveToEndOf(block);
+        builder.setOrigin(origin);
+        builder.emitTerminator(IRBuilder::makeTerminator(TerminatorKind::Throw, { builder.appendUndefined() }));
+    }
+    compactFunction(function);
+}
+
+static std::optional<FunctionSummary> readVersion(VersionsThatGiveUp&, FunctionID);
+
+static const FunctionSummary* summaryOfVersion(VersionsThatGiveUp& versions, FunctionID id)
+{
+    if (auto known = versions.answers.find(id); known != versions.answers.end())
+        return known->value.get();
+    // What calls itself has no answer yet.
+    if (versions.entered.contains(id))
+        return nullptr;
+    versions.entered.append(id);
+    std::optional<FunctionSummary> answer = readVersion(versions, id);
+    versions.entered.removeLast();
+    return versions.answers.add(id, answer ? makeUniqueWithoutFastMallocCheck<FunctionSummary>(WTF::move(*answer)) : nullptr).iterator->value.get();
+}
+
+static std::optional<FunctionSummary> readVersion(VersionsThatGiveUp& versions, FunctionID id)
+{
+    const Program& program = versions.program;
+    if (!program.at(id).hasBody() || program.at(id).hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }))
+        return std::nullopt;
+    EffectContext effects { program, versions.inputs.effects };
+    FunctionSummary asWritten = CalleeSummary(effects, id)->expanded();
+    if (!canBeSeen(asWritten.onCall().onAnyEdge()))
+        return asWritten;
+    // Until it has a summary of its own the version is read as the function is, which then has to say that something may be thrown.
+    if (!asWritten.onCall().onAnyEdge().mayThrowOtherThanStackOverflow())
+        return std::nullopt;
+
+    AnalysisContext context = versions.contextOf(id);
+    Function version = copyWithTests(versions, id);
+    Vector<std::pair<FunctionID, FunctionSummary>, 2> ofCallees;
+    WhatCanBeSeen found = findWhatCanBeSeen(context, version, StopsAtFirstObstacle::Yes, [&](FunctionID callee) {
+        if (std::ranges::find(ofCallees, callee, &std::pair<FunctionID, FunctionSummary>::first) != ofCallees.end())
+            return true;
+        const FunctionSummary* summary = summaryOfVersion(versions, callee);
+        if (summary)
+            ofCallees.append({ callee, *summary });
+        return !!summary;
+    });
+    if (found.inCommonBlock || found.underHandler)
+        return std::nullopt;
+    // It would do nothing but throw, as the general version of a function would, which has no tests.
+    if (found.cuts.containsIf([](const auto& cut) { return cut.first == entryBlock; }))
+        return std::nullopt;
+    throwInsteadOf(context, versions.types, version, found);
+    FunctionAnalyses analyses(context, version);
+    FunctionSummary summary = summarizeBody(effects, id, analyses, ofCallees.span());
+    if (canBeSeen(summary.onCall().onAnyEdge()))
+        return std::nullopt;
+    return summary;
+}
+
+std::optional<Effects> effectsOfVersionThatGivesUp(FunctionPassContext& context, FunctionID id)
+{
+    VersionsThatGiveUp versions { context.program, context.inputs, context.types, context.strings, context.build };
+    const FunctionSummary* summary = summaryOfVersion(context.versionsBeingRead ? *context.versionsBeingRead : versions, id);
+    if (!summary)
+        return std::nullopt;
+    return summary->onCall().onAnyEdge();
+}
+
+// The function with its tests, where all that the program could see, and whatever may not end, throws instead: to the caller, whose handler runs the program as it is written. Nothing has been seen by then.
+Function buildChecksThatGiveUp(const DerivedFunctionKey& key, DerivedFunctionInputs& inputs)
+{
+    RELEASE_ASSERT(inputs.optimization);
+    VersionsThatGiveUp versions { inputs.program, *inputs.optimization, inputs.types, inputs.strings, inputs.build };
+    AnalysisContext context = versions.contextOf(key.target);
+    Function version = copyWithTests(versions, key.target);
+    OptionSet<FunctionCapabilities> capabilitiesOfSource = version.capabilities;
+    WhatCanBeSeen found = findWhatCanBeSeen(context, version, StopsAtFirstObstacle::No, [&](FunctionID callee) {
+        return !!summaryOfVersion(versions, callee);
+    });
+
+    if (found.underHandler) {
+        Function header;
+        static_cast<FunctionRecord&>(header) = version;
+        version = WTF::move(header);
+    }
+    version.role = FunctionRole::ChecksThatGiveUp;
+    version.creator = CreatorRecord::Version { .provenVersion = key.target };
+    version.derivation = derivationWithSameParameters(key.target, version);
+    // A trace that is taken in it and kept shows it as it shows the function.
+    version.capabilities = initialCapabilitiesOf(version) | (capabilitiesOfSource & OptionSet<FunctionCapabilities> { FunctionCapabilities::RecordsCalleeOnceRenamed, FunctionCapabilities::IsHiddenInStackTraces });
+    if (found.underHandler) {
+        // A handler of its own would catch what is thrown. Failing at once is what is always allowed.
+        version.inlineFrames.clear();
+        IRBuilder builder(context, version, inputs.types);
+        builder.setOrigin({ version.position, 0 });
+        BlockID entry = builder.addBlock();
+        builder.moveToEndOf(entry);
+        TypingContext typing { inputs.program, version, inputs.types };
+        for (unsigned index = 0; index < version.numberOfEntryParameters(); ++index)
+            builder.addParameter(entry, declaredEntryTypeOf(typing, version, index));
+        builder.emitTerminator(IRBuilder::makeTerminator(TerminatorKind::Throw, { builder.appendUndefined() }));
+        return version;
+    }
+    for (ValueID call : found.callsOfVersions) {
+        FunctionID callee = version.at(call).function();
+        Value& edited = version.edit(call, ValueEdit::Definition);
+        edited.setFunction(inputs.derivedFunctions.ensure(derivedFunctionKey(FunctionRole::ChecksThatGiveUp, callee)));
+        // The body behind the tests of a function, or the worker behind its wrapper, is a part of that function. Its version has this one caller, so it moves and nothing is copied.
+        if (inputs.program.at(callee).derivation.source == key.target)
+            edited.setIsAlwaysInlined(true);
+    }
+    throwInsteadOf(context, inputs.types, version, found);
+    return version;
+}
+
 static uint32_t testsAnsweredBy(const Program& program, const Function& caller, const Value& call, const Entrance& entrance)
 {
     uint32_t answered = 0;
@@ -820,9 +1072,11 @@ static Function createShorterEntrance(const AnalysisContext& context, TypeArena&
     Entrance shorter { { }, entrance.operandsOfBody, entrance.operandsOfFallback };
     for (uint32_t index = 0; index < entrance.tests.size(); ++index) {
         const EntryTest& test = entrance.tests[index];
-        if (key.answered & 1u << index)
-            *tests.declaredEntryParameter(test.entryParameter) = DeclaredType(Proven::byPosition(test.type));
-        else
+        if (key.answered & 1u << index) {
+            // The fallback takes the parameter as the entrance declares it.
+            DeclaredType& parameter = *tests.declaredEntryParameter(test.entryParameter);
+            parameter = DeclaredType(Proven::byPosition(types.intersectionOf(context.program.provenTypeOf(parameter), test.type)));
+        } else
             shorter.tests.append(test);
     }
     emitEntrance(context, types, tests, shorter, record.body, record.fallback);
@@ -852,13 +1106,13 @@ void skipAnsweredEntryChecks(ProgramEditor& editor, const Heat& heat, BuildConte
     Vector<AnsweredCall> calls = collectInParallel<AnsweredCall>(loops, program.functions.size(), [&](unsigned index, Vector<AnsweredCall>& found) {
         FunctionID id(index);
         const Function& caller = program.functions[index];
-        if (!mayListValueWith(program, id, { Opcode::CallDirect }) || isCold(heat.of(program, id)))
+        if (!mayListValueWith(program, id, { Opcode::CallDirect }) || isCold(heat.of(program, id)).predicted())
             return;
         auto isEntrance = [&](NameKind kind, uint32_t callee) {
             return kind == NameKind::Function && entranceOf(FunctionID(callee));
         };
         forEachListedValueNaming(program, id, { Opcode::CallDirect }, isEntrance, [&](BlockID block, ValueID value, const Value& call) {
-            if (caller.at(block).frequency != BlockFrequency::Normal || isCold(heat.of(program, call.function())))
+            if (caller.at(block).frequency.predicted() != BlockFrequency::Normal || isCold(heat.of(program, call.function())).predicted())
                 return;
             // The typed body promises another result than its entrance, so a call that named it would have another type, and so would all that is computed from it.
             if (uint32_t answered = testsAnsweredBy(program, caller, call, *entranceOf(call.function())))
@@ -871,7 +1125,7 @@ void skipAnsweredEntryChecks(ProgramEditor& editor, const Heat& heat, BuildConte
     Vector<ShorterEntrance> keys = WTF::map(calls, [](const AnsweredCall& call) {
         return call.entered;
     });
-    AOT::sort(keys);
+    AOT::sortInLine(keys);
     removeRepeatedElements(keys);
 
     unsigned count = static_cast<unsigned>(keys.size());
@@ -913,9 +1167,11 @@ static bool runsAsCoroutine(const Function& target)
 
 bool hasAllocatingConstructEntrypoint(const Program& program, const Function& target)
 {
-    // A second entrypoint keeps the body out of the first. A long constructor spends its time in the body, and gains little by an object that is made in line. The length of the source never changes.
-    AOT_THRESHOLD(uint32_t, mostCharactersOfShortConstructor, 1000);
-    if (target.text.end - target.text.start > mostCharactersOfShortConstructor)
+    // A second entrypoint keeps the body out of the first. A long constructor spends its time in the body, and gains little by an object that is made in line.
+    if (target.has(FunctionCapabilities::IsLongConstructor))
+        return false;
+    // Only a construction whose new.target is the function itself enters such an entrypoint.
+    if (target.has(FunctionCapabilities::MakesNoTailCallIfConstructed))
         return false;
     // The constructor functions of the runtime's own modules are constructed by name.
     if (target.role == FunctionRole::Library || target.enclosingRuntimeFunction || (target.module && program.at(target.module).kind == ModuleKind::RuntimeSource))
@@ -927,8 +1183,10 @@ bool hasAllocatingConstructEntrypoint(const Program& program, const Function& ta
 
 EntrypointVariants entrypointVariantsOf(const Program& program, const Function& target)
 {
-    if (!target.has(FunctionFlags::HasNewTarget))
-        return hasAllocatingConstructEntrypoint(program, target) ? EntrypointVariants::Both : EntrypointVariants::WithoutNewTarget;
+    if (!target.has(FunctionFlags::HasNewTarget)) {
+        bool keepsFrame = target.has(FunctionCapabilities::MakesNoTailCallIfConstructed) && !runsAsCoroutine(target);
+        return keepsFrame || hasAllocatingConstructEntrypoint(program, target) ? EntrypointVariants::Both : EntrypointVariants::WithoutNewTarget;
+    }
     switch (target.kind) {
     case FunctionKind::BaseConstructor:
     case FunctionKind::DerivedConstructor:
@@ -1069,12 +1327,16 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
     if (object && typing.typeOf(object).castTo(typing.typeOf(target.thisType), types).isNever())
         emitEntryThatNothingEnters(builder, target, closure, strings);
     else {
-        if (target.capabilities.contains(FunctionCapabilities::RecordsCallee) && !target.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed)) {
+        bool isSeenToBeRenamed = target.capabilities.contains(FunctionCapabilities::RecordsCallee) && !target.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed);
+        // A stack that is taken before the first name is given out of sight is read behind it.
+        if (isSeenToBeRenamed || recordsCalleeOnlyOnceRenamed(context.program, request.target)) {
             Value record = IRBuilder::make(Opcode::RecordCallee);
             record.setClosureOperand(closure);
             builder.append(WTF::move(record));
         }
         Vector<ValueID, 8> captures = appendCaptures(builder, request.target, closure);
+        // The copy of the body in the construct entrypoint makes no tail calls.
+        bool copiesBody = request.takesNewTarget && target.has(FunctionCapabilities::MakesNoTailCallIfConstructed) && entrypointVariantsOf(context.program, target) == EntrypointVariants::Both;
         ValueID call = appendDirectCall(builder, {
             .callee = request.target,
             .captures = captures.span(),
@@ -1085,11 +1347,14 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
             .restArray = restArray,
             .argumentCount = argumentCount,
             .hiddenRest = hiddenRest,
-            .isConstruction = !!object,
+            .isConstruction = object || copiesBody,
             .isNeverInlined = object && target.values.size() > mostValuesOfCopiedConstructor,
+            .isAlwaysInlined = copiesBody,
         });
         if (object)
             emitReturnOfConstruction(builder, call, object);
+        else if (copiesBody)
+            emitReturnOfCall(builder, call);
         else
             emitReturnOfEntrypointCall(builder, call);
     }

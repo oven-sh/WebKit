@@ -15,7 +15,7 @@ function f0 name="badTestInFrontOfTheSwitchBesideManyFlags" parameters=[{type=bo
     v21 = Integer integer=1
     v22 = Unspecified valueType=null|L0
     Jump -> next b4(v21, v22)
-  b4(v23: int[1, 2], v24: null|L0):
+  b4(v23: int[1, 2], v24: null|unspecified|L0):
     v25 = TypeTest v24 testedType=L0
     Switch v23 cases=[2] -> case b5(), otherwise b5()
   b5():

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCallGraph.h"
 #include "AOTFlowResults.h"
 #include "AOTIRParser.h"
 #include "AOTIdentifierNumbering.h"
@@ -156,7 +157,7 @@ CompiledRequests::CompiledRequests(const Vector<PatternUse>& uses, const TestOpt
 {
     Typed::FlowResults flow;
     Typed::StringArena strings(parsed.program->strings);
-    requests = collectRegExpRequests(*parsed.program, flow, strings, parsed.context);
+    requests = collectRegExpRequests(*parsed.program, flow, Typed::CallGraph(), strings, parsed.context);
     regExps = compileRegExps(*parsed.program, requests, parsed.context);
     AOT_TEST_CHECK(requests.candidates().empty());
     AOT_TEST_CHECK(regExps.results.size() == requests.all().size());
@@ -514,6 +515,47 @@ static BuiltImage buildWholeProgram(ParsedProgram& parsed)
     return built;
 }
 
+static void testCachesOfProgramLastAsLongAsCodeGenerationJob()
+{
+    ParsedProgram parsed(programUsingSymbolSpaces(), { .heat = Wire::HeatOverride::EverythingIsHot });
+    BuildContext& context = parsed.context;
+    std::unique_ptr<Typed::PipelineOutput> pipeline = Typed::runPipeline(WTF::move(parsed.program), context);
+    AOT_TEST_CHECK(pipeline && pipeline->isComplete);
+    const Typed::Program& program = *pipeline->program;
+    CodeGenerationPlan plan = prepareCodeGeneration(*pipeline, context);
+    Typed::CodeGenerationInputs inputs = createCodeGenerationInputs(*pipeline, plan);
+    auto hasCachesAndOpenPhase = [&] {
+        return program.propertyAccessCache() && program.sharedFieldTypes() && program.types.hasOpenPhase();
+    };
+    auto hasNeither = [&] {
+        return !program.propertyAccessCache() && !program.sharedFieldTypes() && !program.types.hasOpenPhase();
+    };
+    AOT_TEST_CHECK(hasNeither());
+    {
+        CodeGenerationJob job(inputs, *pipeline->program, context);
+        AOT_TEST_CHECK(hasCachesAndOpenPhase());
+        GeneratedCode generated = job.run();
+        AOT_TEST_CHECK(!generated.functions.isEmpty());
+        AOT_TEST_CHECK(hasCachesAndOpenPhase());
+    }
+    AOT_TEST_CHECK(hasNeither());
+}
+
+static void testRunThatIsEndedLeavesProgramAsRead()
+{
+    ParsedProgram parsed(programUsingSymbolSpaces());
+    unsigned timesAsked = 0;
+    std::unique_ptr<Typed::PipelineOutput> pipeline = Typed::runPipeline(WTF::move(parsed.program), parsed.context, [](const Typed::PipelineOutput&) { }, std::nullopt, [&](const Typed::FlowReport& usesOfLibraryCode) {
+        ++timesAsked;
+        AOT_TEST_CHECK(!usesOfLibraryCode.builtinsUsed.isEmpty());
+        return false;
+    });
+    AOT_TEST_CHECK(timesAsked == 1);
+    AOT_TEST_CHECK(pipeline && pipeline->endedBehindFlowAnalysis && !pipeline->isComplete);
+    AOT_TEST_CHECK(!pipeline->usesOfLibraryCode.builtinsUsed.isEmpty());
+    AOT_TEST_CHECK(pipeline->program->form() == Typed::IRForm::AsRead);
+}
+
 static void testSymbolSpacesOfProgram()
 {
     using enum SymbolSpace;
@@ -597,6 +639,18 @@ static void testRealmAfterCollectedRealm(LoadedProgram& program)
     vm->heap.collectNow(Sync, CollectionScope::Full);
     AOT_TEST_CHECK(Instance::of(createRealmWithHostOf(program, *vm)));
     vm = nullptr;
+}
+
+static void testRealmAfterRetiredRealm(LoadedProgram& program)
+{
+    AOT_TEST_CHECK(!(Image::current()->programTables().flags & ProgramTables::mayRunInMultipleInstances));
+    program.realm()->setMicrotaskRunnability(QueuedTaskResult::Discard);
+    Instance* second = Instance::of(createRealmWithHostOf(program));
+    AOT_TEST_CHECK(second);
+    AOT_TEST_CHECK(second != &program.instance());
+    AOT_TEST_CHECK(second->state);
+    AOT_TEST_CHECK(second->state != program.instance().state);
+    AOT_TEST_CHECK(!Instance::of(createRealmWithHostOf(program)));
 }
 
 static void testTwoRealmsHaveInstances(LoadedProgram& program)
@@ -692,8 +746,11 @@ std::span<const NativeTest> programInputTests()
         { "image/regexp-queue/no-unicode-properties"_s, testNoUnicodeProperties },
         { "image/regexp-queue/none"_s, testNoRegExps },
         { "image/programs/symbol-spaces"_s, testSymbolSpacesOfProgram },
+        { "image/programs/caches-last-as-long-as-code-generation-job"_s, testCachesOfProgramLastAsLongAsCodeGenerationJob },
+        { "image/programs/run-that-is-ended-leaves-program-as-read"_s, testRunThatIsEndedLeavesProgramAsRead },
         { "image/instances/second-realm-has-no-instance"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testSecondRealmHasNoInstance> },
         { "image/instances/realm-after-collected-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterCollectedRealm> },
+        { "image/instances/realm-after-retired-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterRetiredRealm> },
         { "image/instances/two-realms-have-instances"_s, runNativeTestWithLoadedProgram<programInputTests, programForManyInstances, testTwoRealmsHaveInstances> },
 #if OS(LINUX)
         { "image/loading/loaded-image-has-no-writable-page"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testLoadedImageHasNoWritablePage> },

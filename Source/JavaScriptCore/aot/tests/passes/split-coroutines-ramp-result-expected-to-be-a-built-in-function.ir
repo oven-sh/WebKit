@@ -1,0 +1,23 @@
+# What is expected of the result of an async function names a built-in function, which is an object as a promise is. The ramp returns the promise that it allocates, and that alone is proven of its result.
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="isExpectedToReturnBuiltinFunction" flags=[IsAsync] parameters=[{type=anything}] results=[{type=undefined|null|function|builtin(ArrayFrom) flags=[IsExpected]}] {
+    v1 = Await v0
+    Return v1
+# CHECK: role=CoroutineRamp
+# CHECK: results=[{type=Promise}]
+# CHECK: [[promise]]: Promise = NewPromise
+# CHECK-NEXT: [[result]]: anything = CallDirect v0, [[promise]] function=f2
+# CHECK-NEXT: [[returned]]: Promise = AssumeType [[result]] provenType=Promise
+# CHECK: Return [[returned]]
+}
+function f1 name="callsRamp" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="callsRamp"
+# CHECK: v1: Promise = CallDirect v0 function=f0

@@ -1,0 +1,29 @@
+# A Map or a WeakMap made from entries iterates over the operand and reads elements 0 and 1 of each entry. What it finds there it stores: to make the Map is no call of a function that lies in an entry. An entry that is itself a function may be called.
+# FORM: Prepared
+# RUN: heat-graph
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f1 name="storesWhatEntriesHold" parameters=[{type=Array<Array<undefined|string|f3, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    v1 = CallBuiltin -, v0 overload=Map/2
+    v2 = CallBuiltin -, v0 overload=WeakMap/2
+    Return
+}
+function f2 name="readsElementsOfFunction" parameters=[{type=Array<f4, proven, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    v1 = CallBuiltin -, v0 overload=Map/2
+    Return
+}
+function f3 name="liesInEntry" results=[{type=undefined}] {
+    Return
+}
+function f4 name="isEntry" results=[{type=undefined}] {
+    Return
+}
+# CHECK: f0 size 2 mass 2.000000:
+# CHECK-NOT: f3*
+# CHECK: f2 size 2 mass 2.000000: f4*1.000000

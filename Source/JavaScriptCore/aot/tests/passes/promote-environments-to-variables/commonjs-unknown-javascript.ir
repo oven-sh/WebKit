@@ -3,15 +3,15 @@
 # RUN: pipeline PromoteEnvironmentsToVariables
 # OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
 # STATISTIC: EnvironmentsPromotedToVariables = 2
-# CHECK: variable g0 name="count.0" module=m0
-# CHECK: variable g1 name="count.0" module=m1
+# CHECK: variable g0 name="count" module=m0
+# CHECK: variable g1 name="count" module=m1
 # CHECK-NOT: variable g2
 
 module m0 path="main.js" displayPath="main.js" flags=[KeepsError] body=f0 requests=[{target=m1 kind=Require completes=true}]
 module m1 path="required.cjs" displayPath="required.cjs" kind=CommonJs flags=[KeepsError] body=f2
 entry module=m0
-layout L0 kind=Environment name="main" module=m0 fields=[{key=@"count.0" declared={type=anything}}]
-layout L1 kind=Environment name="required" module=m1 fields=[{key=@"count.0" declared={type=anything}}]
+layout L0 kind=Environment name="main" module=m0 fields=[{key=@"count.0" declared={type=anything} variableName="count"}]
+layout L1 kind=Environment name="required" module=m1 fields=[{key=@"count.0" declared={type=anything} variableName="count"}]
 evalscope e0 bindings=[]
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {

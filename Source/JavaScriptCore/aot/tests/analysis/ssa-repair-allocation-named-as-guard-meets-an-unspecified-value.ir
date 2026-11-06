@@ -27,7 +27,7 @@ function f0 name="oneWayBringsNoObject" parameters=[{type=boolean}, {type=number
 # CHECK: v2: L0 = NewObject layout=L0
 # CHECK-NEXT: [[proof]]: guard = AllGuards v2
 # CHECK: Jump -> next b3(v3, v2, [[proof]])
-# CHECK: v4: L0 = Unspecified valueType=L0
+# CHECK: v4: unspecified|L0 = Unspecified valueType=L0
 # CHECK-NEXT: [[nothing]]: guard = AllGuards
 # CHECK-NEXT: v5: 0 = Integer
 # CHECK-NEXT: Jump -> next b3(v5, v4, [[nothing]])

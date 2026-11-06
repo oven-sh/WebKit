@@ -109,6 +109,7 @@ set(TestWTF_SOURCES
     Tests/WTF/Liveness.cpp
     Tests/WTF/Lock.cpp
     Tests/WTF/Logger.cpp
+    Tests/WTF/LoggingHashMap.cpp
     Tests/WTF/Markable.cpp
     Tests/WTF/MathExtras.cpp
     Tests/WTF/MediaTime.cpp
@@ -130,6 +131,7 @@ set(TestWTF_SOURCES
     Tests/WTF/PlainGregorianDateTime.cpp
     Tests/WTF/PreciseSum.cpp
     Tests/WTF/PriorityQueue.cpp
+    Tests/WTF/PtrTag.cpp
     Tests/WTF/RapidHash.cpp
     Tests/WTF/ReadWriteLock.cpp
     Tests/WTF/RedBlackTree.cpp
@@ -619,13 +621,7 @@ if (ENABLE_WEBKIT)
             Tests/WebKit/WKPage/DOMWindowExtensionBasic_Bundle.cpp
 
             Helpers/cocoa/UtilitiesCocoa.mm
-            InjectedBundle/mac/InjectedBundleControllerMac.mm
         )
-        if (NOT WEBKIT_SDK_IS_IOS_FAMILY)
-            list(APPEND TestWebKitAPIInjectedBundle_SOURCES
-                Helpers/mac/PlatformUtilitiesMac.mm
-            )
-        endif ()
     endif ()
     # macOS: MODULE + BUNDLE TRUE (PlatformMac) emits a CFBundle matching Xcode's MH_BUNDLE.
     # Other ports: SHARED dylib/so.

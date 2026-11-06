@@ -1,5 +1,4 @@
-# A value that is strictly equal to "" is a string of length zero. Fast code asks for the cell, the type and the length in place. Other code calls the stub for a text of length zero that lies in a register.
-# Neither calls the stub that looks the text up in the tables of the image: the empty text has no header there, and that stub hands it to an operation.
+# There is one empty text, so a value that is strictly equal to "" is that cell. Every code compares the two words in place and calls nothing.
 # FORM: Selected
 # OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
 # RUN: generate-code calls StringLiteralsComparedInPlace
@@ -26,9 +25,7 @@ function f1 name="valueInBalancedCode" parameters=[{type=anything}] results=[{ty
 }
 # S: f1 b0 Balanced
 # CHECK-LABEL: f1: size=
-# CHECK-NOT: stub ValueEqualsLiteral x
-# CHECK: stub ValueEqualsLiteralOfLength{{*}} x1
-# CHECK-NOT: stub ValueEqualsLiteral x
+# CHECK-NOT: stub ValueEqualsLiteral
 
 function f2 name="stringInBalancedCode" parameters=[{type=string}] results=[{type=boolean}] {
     v1 = StringEqualsLiteral v0 literal=""
@@ -37,4 +34,4 @@ function f2 name="stringInBalancedCode" parameters=[{type=string}] results=[{typ
 # S: f2 b0 Balanced
 # CHECK-LABEL: f2: size=
 # CHECK-NOT: stub StringEqualsLiteral
-# CHECK: statistic StringLiteralsComparedInPlace 1
+# CHECK: statistic StringLiteralsComparedInPlace 0

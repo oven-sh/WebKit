@@ -113,6 +113,14 @@ public:
     const UseLists* useListsIfUpToDate() const LIFETIME_BOUND { return m_values.useLists && m_values.useLists->isUpToDate() && !m_values.didDropBesideUseLists ? &*m_values.useLists : nullptr; }
     UseLists* updatingUseLists() LIFETIME_BOUND;
     void setEveryChangeIsReported(bool isReported) { m_everyChangeIsReported = isReported; }
+    // While an SSARepair holds two definitions of a variable and has not run, a use may name a value that does not reach it.
+    void didBeginRepair() { ++m_numberOfPendingRepairs; }
+    void didEndRepair() { --m_numberOfPendingRepairs; }
+    void willFollowValuesThroughParameters() const
+    {
+        if (m_numberOfPendingRepairs) [[unlikely]]
+            reportQuestionBeforeRepair();
+    }
     const ValueIdentities& identities() LIFETIME_BOUND;
     const Liveness& liveness() LIFETIME_BOUND;
     const EscapeAnalysis& escape() LIFETIME_BOUND;
@@ -132,6 +140,7 @@ public:
     bool mayCallUnknownCode(ValueID id) { return answerFromTraits<&EffectTraits::mayCallUnknownCode, &EffectTraitsOnEdges::normal>(id); }
     bool maySuspendOnAnyEdge(ValueID id) { return answerFromTraits<&EffectTraits::maySuspend, &EffectTraitsOnEdges::anyEdge>(id); }
     bool mayRunOtherCodeOnAnyEdge(ValueID id) { return answerFromTraits<&EffectTraits::mayRunOtherCode, &EffectTraitsOnEdges::anyEdge>(id); }
+    bool mayExitSidewaysOnAnyEdge(ValueID id) { return answerFromTraits<&EffectTraits::mayExitSideways, &EffectTraitsOnEdges::anyEdge>(id); }
     bool mayWriteWhatIsSeen(ValueID id) { return answerFromTraits<&EffectTraits::mayWriteWhatIsSeen, &EffectTraitsOnEdges::anyEdge>(id); }
     bool hasNoEffects(ValueID id) { return answerFromTraits<&EffectTraits::isPure, &EffectTraitsOnEdges::anyEdge>(id); }
     bool isRemovableWhenUnused(ValueID id) { return answerFromTraits<&EffectTraits::isRemovableWhenUnused, &EffectTraitsOnEdges::anyEdge>(id); }
@@ -150,7 +159,7 @@ public:
     bool isInCycle(BlockID block) { return cfg().hasCycle() && blockCycles().isInCycle(block); }
 
     ValueID identityOf(ValueID);
-    ValueID sameObjectThroughCasts(ValueID id) const { return Typed::sameObjectThroughCasts(m_function, id); }
+    RootThroughCasts sameObjectThroughCasts(ValueID id) const { return Typed::sameObjectThroughCasts(m_function, id); }
     ValueID definitionThroughUpcasts(ValueID id) const { return Typed::definitionThroughUpcasts(m_function, id); }
 
     bool dominates(ValueID definition, ProgramPoint);
@@ -182,7 +191,7 @@ public:
     {
         m_runningPass = pass;
         if (m_values.identities && !m_values.identities->isComplete())
-            completeIdentitiesBeforePass();
+            dropIncompleteIdentitiesBeforePass();
     }
     void didRunPass()
     {
@@ -204,7 +213,7 @@ private:
     template<bool (EffectTraits::*question)() const, EffectTraits EffectTraitsOnEdges::*edge>
     bool answerFromTraits(ValueID id)
     {
-        const EffectTraitBounds& bounds = effectFactsOf(m_function.at(id).opcode).traits;
+        const EffectTraitBounds& bounds = effectFactsOf(m_function.at(id)).traits;
         bool answer = (bounds.atLeast.*question)();
         if (answer == (bounds.atMost.*question)())
             return answer;
@@ -216,6 +225,7 @@ private:
     struct ControlFlowResults {
         size_t numberOfBlocks { 0 };
         bool mayDescribeFormerGraph { false };
+        bool isReadByUseLists { false };
         std::optional<CFG> cfg;
         std::optional<Vector<Edge>> edgesFromUnreachableBlocks;
         std::optional<Dominators> dominators;
@@ -256,11 +266,12 @@ private:
     void didBuild(FunctionAnalysis);
     void didBringUseListsUpToDate(const UseLists::Update&);
     void verifyUseLists() const;
-    void completeIdentitiesBeforePass();
+    void dropIncompleteIdentitiesBeforePass();
     void verifyIdentities(const CFG&) const;
     void verifyLiveness() const;
     void verifyFrequencies();
     void willDrop(AnalysisSet);
+    void reportQuestionBeforeRepair() const;
 
     const AnalysisContext m_context;
     const Function& m_function;
@@ -277,6 +288,7 @@ private:
     const bool m_verifiesUpdates;
     PassID m_runningPass { PassID::None };
     bool m_everyChangeIsReported { false };
+    unsigned m_numberOfPendingRepairs { 0 };
     std::array<PassID, numberOfFunctionAnalyses> m_passesThatDropped { };
 };
 

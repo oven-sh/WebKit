@@ -28,6 +28,7 @@
 #include "config.h"
 #include "IntlRelativeTimeFormat.h"
 
+#include "AOTRemovableFeature.h"
 #include "IntlNumberFormatInlines.h"
 #include "IntlObjectInlines.h"
 #include "IntlPartObject.h"
@@ -40,6 +41,12 @@
 namespace JSC {
 
 const ClassInfo IntlRelativeTimeFormat::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlRelativeTimeFormat) };
+
+NEVER_INLINE void IntlRelativeTimeFormat::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(IntlOther, &IntlRelativeTimeFormat::destroy);
+    static_cast<IntlRelativeTimeFormat*>(cell)->IntlRelativeTimeFormat::~IntlRelativeTimeFormat();
+}
 
 namespace IntlRelativeTimeFormatInternal {
 }

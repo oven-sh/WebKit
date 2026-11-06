@@ -1,0 +1,55 @@
+# The serializer of a record is made while the functions that write the record are optimized, behind the estimate of heat, and derives from no function.
+# It is entered as often as the blocks that call it run: hot for a record written in a loop, not for one written twice where the program starts
+# FORM: AsRead
+# RUN: pipeline RemoveUnusedParameters heat
+# STATISTIC: SerializersCreated = 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="User" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}]
+layout L1 name="Settings" fields=[{key="port" declared={type=number} flags=[IsRequired]}, {key="host" declared={type=string} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = ToString v1
+    v3 = PropGet v0 key="sink" [isFreeName]
+    v4 = Integer integer=1
+    v5 = NewObject -, v4, v2 layout=L0 fields=[0, 1]
+    v6 = NewObject -, v4, v2 layout=L1 fields=[0, 1]
+    v7 = CallDirect v6 function=f2
+    v8 = Call v3, -, v7
+    v9 = CallDirect v6 function=f2
+    v10 = Call v3, -, v9
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v12 = CallDirect v5 function=f1
+    v13 = Call v3, -, v12
+    v14 = ToBoolean v13
+    Branch v14 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="writeUser" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONStringify
+    v2 = Call v1, -, v0
+    v3 = Call v1, -, v0
+    v4 = Add v2, v3
+    Return v4
+}
+
+function f2 name="writeSettings" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONStringify
+    v2 = Call v1, -, v0
+    v3 = Call v1, -, v0
+    v4 = Add v2, v3
+    Return v4
+}
+# CHECK: f1 Hot
+# CHECK-NEXT: f2 Warm
+# CHECK: f5 Hot
+# CHECK-NEXT: f6 Warm
+# CHECK: function f5 {{*}}role=Serializer {{*}}creator=Serializer{layout=L0}
+# CHECK: function f6 {{*}}role=Serializer {{*}}creator=Serializer{layout=L1}

@@ -125,7 +125,9 @@ struct X86JumpShortener {
             newSize = compactCode();
             finalizeJumps();
         }
-        std::ranges::sort(jumps, { }, &X86LinkedJump::from);
+        // The candidates are in order.
+        std::ranges::sort(jumps.mutableSpan().subspan(count), { }, &X86LinkedJump::from);
+        std::ranges::inplace_merge(jumps.begin(), jumps.begin() + count, jumps.end(), { }, &X86LinkedJump::from);
         return newSize;
     }
 
@@ -142,7 +144,9 @@ struct X86JumpShortener {
             jumps[i] = jumps[count];
             jumps[count++] = jump;
         }
-        std::ranges::sort(jumps.mutableSpan().first(count), { }, &X86LinkedJump::from);
+        // They stand in the order in which they stood among all.
+        if (!std::ranges::is_sorted(jumps.span().first(count), { }, &X86LinkedJump::from))
+            std::ranges::sort(jumps.mutableSpan().first(count), { }, &X86LinkedJump::from);
         numberOfJumpsUpToTarget.fill(0, count);
         shiftBefore.fill(0, count + 1);
         undecided.fill(0, count);

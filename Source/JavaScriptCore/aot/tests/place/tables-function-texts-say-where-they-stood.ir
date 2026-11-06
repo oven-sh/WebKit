@@ -1,0 +1,42 @@
+# The text of functions is pieces of files without their types. Each piece says at which line and column of its file it starts, and what was cut out of it, so that a line and a column of the file lead into the text.
+#   publish((a: T) => a.x,
+#     function two(b: {
+#       x: U
+#     }) { return b.x });
+# The same text in another file stands on the same bytes and has a place of its own. A module that has no lines says nothing.
+# RUN: tables function-texts
+# CHECK: 0..10 "(a) => a.x"
+# CHECK: piece m0 0..10 line=1 column=9
+# CHECK-NEXT: cut 2 lines=0 columns=3
+# CHECK-NEXT: piece m0 10..40 line=2 column=3
+# CHECK-NEXT: cut 24 lines=2 columns=3
+# CHECK-NEXT: piece m1 0..10 line=3 column=3
+# CHECK-NOT: piece
+
+module m0 path="/a.ts" displayPath="a.ts" body=f0 positions={lineStarts=[0, 23, 43, 52]} functionText="publish((a) => a.x,\x0a  function two(b) { return b.x });" typesCutFromFunctionText="\x0a\x03\x1a\x10"
+module m1 path="/b.js" displayPath="b.js" positions={lineStarts=[0, 1, 2]} functionText="\x0a\x0a  (a) => a.x"
+module m2 path="/c.js" displayPath="c.js" functionText="() => other"
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return
+}
+function f1 name="one" module=m0 text={start=8 end=18} kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="two" module=m0 text={start=22 end=52} results=[{type=anything}] {
+    Return
+}
+function f3 name="again" module=m1 text={start=4 end=14} kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f4 name="other" module=m2 text={start=0 end=11} kind=Arrow results=[{type=anything}] {
+    Return
+}

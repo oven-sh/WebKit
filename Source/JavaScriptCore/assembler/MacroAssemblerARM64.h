@@ -4191,9 +4191,9 @@ public:
         m_assembler.str<32>(src, address.base, memoryTempRegister);
     }
 
+    // Bun: the three forms of storeVector() have no ASSERT(Options::useWasmSIMD()). A compile may use SIMD where WebAssembly may not: B3::UpstreamPolicy::allowsSIMD.
     void storeVector(FPRegisterID src, Address address)
     {
-        ASSERT(Options::useWasmSIMD());
         if (tryStoreWithOffset<128>(src, address.base, address.offset))
             return;
 
@@ -4203,14 +4203,12 @@ public:
 
     void storeVector(FPRegisterID src, TrustedImmPtr address)
     {
-        ASSERT(Options::useWasmSIMD());
         moveToCachedReg(address, cachedMemoryTempRegister());
         m_assembler.str<128>(src, memoryTempRegister, ARM64Registers::zr);
     }
 
     void storeVector(FPRegisterID src, BaseIndex address)
     {
-        ASSERT(Options::useWasmSIMD());
         if (address.scale == TimesOne || address.scale == TimesEight) {
             if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
                 m_assembler.str<128>(src, baseGPR.value(), address.index, indexExtendType(address), address.scale);
@@ -5656,8 +5654,82 @@ public:
         return Call(label, Call::LinkableNearTail);
     }
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    // What MacroAssemblerARM64E does to a return address, in hints. A tag other than NoPtrTag is for the pointers that only
+    // CPU(ARM64E) signs.
+    ALWAYS_INLINE void tagReturnAddress()
+    {
+        m_assembler.hint(27); // PACIBSP
+    }
+
+    ALWAYS_INLINE void untagReturnAddress(RegisterID = InvalidGPRReg)
+    {
+        m_assembler.hint(31); // AUTIBSP
+        validateUntaggedPtr(ARM64Registers::lr);
+    }
+
+    ALWAYS_INLINE void tagPtr(PtrTag tag, RegisterID target)
+    {
+        if (tag)
+            return;
+        RELEASE_ASSERT(target == ARM64Registers::lr);
+        m_assembler.hint(26); // PACIBZ
+    }
+
+    ALWAYS_INLINE void untagPtr(PtrTag tag, RegisterID target)
+    {
+        if (tag)
+            return;
+        RELEASE_ASSERT(target == ARM64Registers::lr);
+        m_assembler.hint(30); // AUTIBZ
+    }
+
+    ALWAYS_INLINE void tagPtr(RegisterID tag, RegisterID target)
+    {
+        signOrAuthenticateWithRegisters(tag, target, 10); // PACIB1716
+    }
+
+    ALWAYS_INLINE void untagPtr(RegisterID tag, RegisterID target)
+    {
+        signOrAuthenticateWithRegisters(tag, target, 14); // AUTIB1716
+    }
+
+    // The only hints that take a modifier other than sp or zero have the pointer in x17 and the modifier in x16.
+    void signOrAuthenticateWithRegisters(RegisterID modifier, RegisterID pointer, int hint)
+    {
+        static_assert(dataTempRegister == ARM64Registers::x16 && memoryTempRegister == ARM64Registers::x17);
+        RELEASE_ASSERT(modifier != memoryTempRegister && pointer != dataTempRegister);
+        move(modifier, getCachedDataTempRegisterIDAndInvalidate());
+        move(pointer, getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.hint(hint);
+        move(memoryTempRegister, pointer);
+    }
+
+    ALWAYS_INLINE void removePtrTag(RegisterID target)
+    {
+        // XPACLRI has its operand in the link register.
+        RELEASE_ASSERT(target != memoryTempRegister && target != ARM64Registers::lr);
+        RegisterID savedLinkRegister = getCachedMemoryTempRegisterIDAndInvalidate();
+        move(ARM64Registers::lr, savedLinkRegister);
+        move(target, ARM64Registers::lr);
+        m_assembler.hint(7);
+        move(ARM64Registers::lr, target);
+        move(savedLinkRegister, ARM64Registers::lr);
+    }
+
+    // Not every processor faults where it fails to authenticate. The others leave an address that nothing is mapped at, and
+    // whoever signs that again gives away most of the signature of the address it was made from. So it is read from first.
+    ALWAYS_INLINE void validateUntaggedPtr(RegisterID target, RegisterID = InvalidGPRReg)
+    {
+        m_assembler.ldrb(ARM64Registers::zr, target, 0);
+    }
+#endif
+
     ALWAYS_INLINE void ret()
     {
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        m_assembler.hint(31); // AUTIBSP
+#endif
         m_assembler.ret();
     }
 

@@ -48,7 +48,7 @@ auto StringBuilderPartEmitter::builderOf(const ValueContext& value) -> Builder
 void StringBuilderPartEmitter::appendString(const OperationContext& context, Builder builder, CellPointer string)
 {
     if (builder.onStack) {
-        builders().setCursor(*builder.onStack, Pointer(callStub(context, stackStringBuilderAppendString(), { builders().addressOf(*builder.onStack).value(), builders().cursorOf(*builder.onStack).value(), string.value() }).first));
+        builders().setCursorBehindCall(*builder.onStack, Pointer(callStub(context, stackStringBuilderAppendString(), { builders().addressOf(*builder.onStack).value(), builders().cursorOf(*builder.onStack).value(), string.value() }).first));
         return;
     }
     callStub(context, stringBuilderAppendString(), { builder.storage.value(), string.value() });
@@ -98,14 +98,15 @@ void StringBuilderPartEmitter::appendNullish(const OperationContext& context, Bu
         end.add(builders().writeBytes(cursor, "null"_s.span8()));
         return end.finish();
     }, [&] {
-        return Boxed(m_out.select(isUndefined.value(), undefined().value(), boxedConstant(jsNull()).value()));
+        Boxed whenUndefined = undefined();
+        return select(isUndefined, whenUndefined, boxedConstant(jsNull()));
     });
 }
 
 void StringBuilderPartEmitter::appendPrimitive(const OperationContext& context, Builder builder, Boxed primitive, bool isOnRarePath)
 {
     if (builder.onStack) {
-        builders().setCursor(*builder.onStack, callOperation<Pointer>(context, RuntimeOperation::StackStringBuilderAppend, { builders().addressOf(*builder.onStack), builders().cursorOf(*builder.onStack), primitive }, { .isOnRarePath = isOnRarePath }));
+        builders().setCursorBehindCall(*builder.onStack, callOperation<Pointer>(context, RuntimeOperation::StackStringBuilderAppend, { builders().addressOf(*builder.onStack), builders().cursorOf(*builder.onStack), primitive }, { .isOnRarePath = isOnRarePath }));
         return;
     }
     callVoidOperation(context, RuntimeOperation::StringBuilderAppend, { builder.storage, word32(1), argumentBuffer(singleElementSpan(primitive)) }, { .isOnRarePath = isOnRarePath });
@@ -153,7 +154,8 @@ void StringBuilderPartEmitter::generateStringBuilderAppendNumber(const ValueCont
     }
     Number appended = in<Number>(value->valueOperand());
     Integer truncated = emitter<ConversionEmitter>().toInteger(appended);
-    Condition hasFewDigits = logicalAnd(equal(toNumber(truncated), appended), below(truncated, integer(StringBuilderEmitter::firstIntegerWrittenByCall)));
+    Condition isWhole = equal(toNumber(truncated), appended);
+    Condition hasFewDigits = logicalAnd(isWhole, below(truncated, StringBuilderEmitter::firstIntegerWrittenByCall));
     emitDiamond(m_out, hasFewDigits, B3::FrequencyClass::Normal, [&] {
         appendDigits(value, builder, low32(truncated));
     }, [&] {
@@ -169,10 +171,12 @@ void StringBuilderPartEmitter::generateStringBuilderAppendBoolean(const ValueCon
     Builder builder = builderOf(value);
     Condition isTrue = in<Condition>(value->valueOperand());
     appendInWordsOrByCall(value, builder, bytesReservedForBoolean, [&](Pointer cursor) {
-        Word32 firstFourBytes = select(isTrue, word32('t' | 'r' << 8 | 'u' << 16 | 'e' << 24), word32('f' | 'a' << 8 | 'l' << 16 | 's' << 24));
+        Word32 firstFourBytes = select<Word32>(isTrue, 't' | 'r' << 8 | 'u' << 16 | 'e' << 24, 'f' | 'a' << 8 | 'l' << 16 | 's' << 24);
         m_out.store32(firstFourBytes.value(), builders().bytesAt(cursor));
-        m_out.store32As8(m_out.constInt32('e'), builders().bytesAt(cursor, 4));
-        return Pointer(m_out.sub(offsetBy(cursor, 5).value(), zeroExtended(isTrue).value()));
+        LValue lastByteOfFalse = m_out.constInt32('e');
+        m_out.store32As8(lastByteOfFalse, builders().bytesAt(cursor, 4));
+        Pointer endOfFalse = offsetBy(cursor, 5);
+        return Pointer(m_out.sub(endOfFalse.value(), zeroExtended(isTrue).value()));
     }, [&] {
         return boxBoolean(isTrue);
     });
@@ -180,7 +184,11 @@ void StringBuilderPartEmitter::generateStringBuilderAppendBoolean(const ValueCon
 
 void StringBuilderPartEmitter::generateStringBuilderAppendString(const ValueContext& value)
 {
-    appendString(value, builderOf(value), in<CellPointer>(value->valueOperand()));
+    Builder builder = builderOf(value);
+    CellPointer string = in<CellPointer>(value->valueOperand());
+    appendString(value, builder, string);
+    if (builder.onStack && builder.onStack->firstPart)
+        builders().didAppendString(*builder.onStack, value.id(), string);
 }
 
 void StringBuilderPartEmitter::generateStringBuilderAppendStringRange(const ValueContext& value)
@@ -197,7 +205,8 @@ void StringBuilderPartEmitter::generateStringBuilderAppendStringRange(const Valu
     branchUnless(below(view.length, word32(static_cast<int32_t>(build().limit(LimitID::MinLengthAppendedByReference)))), byCall);
     if (builder.onStack) {
         Pointer cursor = builders().cursorOf(*builder.onStack);
-        branchUnless(belowOrEqual(offsetBy(cursor, zeroExtended(view.length), 0), builders().limitOf(*builder.onStack)), byCall);
+        Pointer end = offsetBy(cursor, zeroExtended(view.length), 0);
+        branchUnless(belowOrEqual(end, builders().limitOf(*builder.onStack)), byCall);
         builders().setCursor(*builder.onStack, builders().copyLatin1Characters(cursor, view.characters, view.length));
     } else {
         Pointer cursor = builders().tryReserve(builder.storage, view.length, byCall);
@@ -208,7 +217,7 @@ void StringBuilderPartEmitter::generateStringBuilderAppendStringRange(const Valu
 
     m_out.appendTo(byCall);
     if (builder.onStack)
-        builders().setCursor(*builder.onStack, callOperation<Pointer>(value, RuntimeOperation::StackStringBuilderAppendStringRange, { builders().addressOf(*builder.onStack), builders().cursorOf(*builder.onStack), string, range.start, range.end }, { .isOnRarePath = true }));
+        builders().setCursorBehindCall(*builder.onStack, callOperation<Pointer>(value, RuntimeOperation::StackStringBuilderAppendStringRange, { builders().addressOf(*builder.onStack), builders().cursorOf(*builder.onStack), string, range.start, range.end }, { .isOnRarePath = true }));
     else
         callVoidOperation(value, RuntimeOperation::StringBuilderAppendStringRange, { builder.storage, string, range.start, range.end }, { .isOnRarePath = true });
     m_out.jump(done);
@@ -229,7 +238,8 @@ void StringBuilderPartEmitter::generateStringBuilderAppendStringOrNullish(const 
 
 void StringBuilderPartEmitter::generateStringBuilderAppendValue(const ValueContext& value)
 {
-    appendPrimitive(value, builderOf(value), in<Boxed>(value->valueOperand()));
+    Builder builder = builderOf(value);
+    appendPrimitive(value, builder, in<Boxed>(value->valueOperand()));
 }
 
 } } } // namespace JSC::AOT::Typed

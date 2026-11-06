@@ -303,7 +303,7 @@ void testFlagNotDeclared()
         copy.edit(v2).flags = 1;
     });
     expectFailure(Kind::FlagNotDeclared, [](Typed::Function& copy) {
-        copy.edit(v9).flags = 1 << 2;
+        copy.edit(v9).flags = 1 << 3;
     });
     expectFailure(Kind::FlagNotDeclared, [](Typed::Function& copy) {
         copy.edit(b0).terminator.flags = 1;
@@ -535,7 +535,7 @@ Typed::Function createPlacedFunction(Program& program)
     Value& read = function.edit(placedRead);
     read.setOperand(0, placedObject);
     read.setKey(program.at(L0).fields[0].key);
-    read.setReceivers(program.types.intern(LayoutSet { { L0 }, true }));
+    read.setReceivers(program.types.intern(LayoutSet::complete({ L0 })));
     read.setFieldAccess(FieldAccessID(placedID));
     return function;
 }

@@ -24,11 +24,11 @@
 # CHECK-NEXT: }
 # CHECK-NEXT: function f9 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}]
 # CHECK-NEXT: function f10 name="g" module=m0 flags=[IsGenerator, HasRestParameter, TakesCallee] thisType={type=anything} parameters=[{type=Array}] results=[{type=anything}]
-# CHECK-NEXT: function f11 name="apply" module=m2 position=8 kind=Method role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: function f11 name="apply" module=m2 position=8 kind=Method role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
 # CHECK-NEXT: function f12 name="model" module=m2 role=Model thisType={type=anything} results=[{type=anything}]
 # CHECK-NEXT: function f13 name="callback" module=m0 role=Signature length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}]
 # CHECK-NEXT: entry module=m0
-# CHECK-NEXT: runtimefunction id=4 function=f11
+# CHECK-NEXT: runtimefunction id=FunctionPrototypeApply function=f11
 # CHECK-NEXT: round trip: same
 # RUN(V): verify
 # V: valid
@@ -56,8 +56,8 @@ function f8 name="every" module=m0 position=95 flags=[IsSloppy, HasThis, HasNewT
 }
 function f9 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}]
 function f10 name="g" module=m0 flags=[IsGenerator, HasRestParameter, TakesCallee] thisType={type=anything} parameters=[{type=Array}] results=[{type=anything}]
-function f11 name="apply" module=m2 position=8 kind=Method role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+function f11 name="apply" module=m2 position=8 kind=Method role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
 function f12 name="model" module=m2 role=Model thisType={type=anything} results=[{type=anything}]
 function f13 name="callback" module=m0 role=Signature length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}]
 entry module=m0
-runtimefunction id=4 function=f11
+runtimefunction id=FunctionPrototypeApply function=f11

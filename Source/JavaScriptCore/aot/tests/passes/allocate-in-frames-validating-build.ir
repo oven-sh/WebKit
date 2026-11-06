@@ -1,4 +1,4 @@
-# In a validating build objects and closures are on the heap: a check reads the header of the cell that a proof names, and a cell of a frame may have none. Environments stay in frames, and so do arrays, which have their header wherever they lie
+# A validating build keeps in frames what every other build keeps there: objects, closures, environments and arrays.
 # FORM: Prepared
 # OPTIONS: validate
 # RUN: frame-plan
@@ -13,7 +13,7 @@ function f0 name="record" parameters=[{type=anything}] results=[{type=anything}]
     Return v2
 }
 # CHECK-LABEL: function f0
-# CHECK-NEXT: v1: Heap
+# CHECK-NEXT: v1: Frame
 
 function f1 name="closure" results=[{type=anything}] {
     v0 = NewClosure function=f3
@@ -21,7 +21,7 @@ function f1 name="closure" results=[{type=anything}] {
     Return v1
 }
 # CHECK-LABEL: function f1
-# CHECK-NEXT: v0: Heap
+# CHECK-NEXT: v0: Frame
 
 function f2 name="environment" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = NewObject -, v0 layout=L1 fields=[0]

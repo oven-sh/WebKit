@@ -87,7 +87,7 @@ Vector<CodeUnitRange, 16> RegExpBuiltinEmitter::loadMatchedRanges(CellPointer re
     ranges.append(loadRange(integer(0)));
     for (unsigned group = 1; group < count; ++group) {
         Condition exists = lessThanOrEqual(integer(group), numberOfGroups);
-        CodeUnitRange range = loadRange(select(exists, integer(group), integer(0)));
+        CodeUnitRange range = loadRange(select<Integer>(exists, group, 0));
         ranges.append(CodeUnitRange { select(exists, range.start, word32(absentBound)), select(exists, range.end, word32(absentBound)) });
     }
     return ranges;
@@ -103,7 +103,7 @@ RegExpBuiltinEmitter::Results RegExpBuiltinEmitter::execBoundsByOperation(const 
     };
 
     Condition isPresent = notEqual(length, word32(static_cast<int32_t>(noMatchPrefixLength)));
-    Results results { isPresent, zeroExtended(select(isPresent, length, word32(0))), select(isPresent, boundAt(0), word32(0)), string };
+    Results results { isPresent, zeroExtended(select(isPresent, length, word32(0))), select(isPresent, boundAt(0), 0), string };
     for (unsigned i = 0; i < 2 * count; ++i)
         results.append(boundAt(i));
     return results;

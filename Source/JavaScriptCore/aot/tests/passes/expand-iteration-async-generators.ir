@@ -9,7 +9,7 @@
 # STATISTIC: IterationsExpandedGenerically = 2
 # ABSENT-NOT: IteratorOpen
 # ABSENT-NOT: IteratorResume
-# ABSENT-NOT: IteratorClose
+# ABSENT-NOT: IteratorClose v
 
 module m0 path="main.js" displayPath="main.js"
 

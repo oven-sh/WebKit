@@ -69,7 +69,7 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
     jit.load32(Address(getter, offsetOfClosureEntry), scratch);
 
     hasOffsetOfCode.link(&jit);
-    isNotCommonCase.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::limitOfCallsByValue()));
+    isNotCommonCase.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::trapAwareSoftStackLimitWord()));
     jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true }, [&] {
         RELEASE_ASSERT(noOverlap(scratch, thisGPR, calleeGPR, countGPR));
         jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });
@@ -99,7 +99,7 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
     isNotCommonCase.append(jit.branch64(CCallHelpers::LessThan, scratch, minWord));
 
     hasWord.link(&jit);
-    isNotCommonCase.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::limitOfCallsByValue()));
+    isNotCommonCase.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::trapAwareSoftStackLimitWord()));
     jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true }, [&] {
         RELEASE_ASSERT(noOverlap(scratch, thisGPR, calleeGPR, countGPR));
         jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });
@@ -141,9 +141,9 @@ static void loadCustomAccessorRecord(StubAssembler& jit, GPRReg accessorIndexAnd
 }
 
 // A0 is set last: on ARM64 it is the receiver's register.
-static void callRecordedAccessorAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg record, GPRReg uid, std::optional<GPRReg> storedValue)
+static void callRecordedAccessorAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg record, GPRReg uid, std::optional<GPRReg> storedValue, std::optional<GPRReg> keyCell)
 {
-    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::HostFunction, .returnsValue = !storedValue, .checksException = true }, [&] {
+    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::HostFunction, .returnsValue = !storedValue, .checksException = true, .cellToKeep = keyCell }, [&] {
         const GPRReg A0 = jit.reuseScratch(StubRegister::A0);
         const GPRReg A1 = jit.reuseScratch(StubRegister::A1);
         const GPRReg A2 = jit.reuseScratch(StubRegister::A2);
@@ -166,7 +166,7 @@ static void callRecordedAccessorAndReturn(StubAssembler& jit, GPRReg receiver, G
     });
 }
 
-void callCustomGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg accessorIndex, GPRReg uid)
+void callCustomGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg accessorIndex, GPRReg uid, std::optional<GPRReg> keyCell)
 {
     const GPRReg cachedValue = jit.reuseScratch(StubRegister::T11);
     const GPRReg record = jit.clobberRegister(accessorIndex);
@@ -182,15 +182,15 @@ void callCustomGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg acces
 
     hasNoCachedValue.link(&jit);
     isEmpty.link(&jit);
-    callRecordedAccessorAndReturn(jit, receiver, record, uid, std::nullopt);
+    callRecordedAccessorAndReturn(jit, receiver, record, uid, std::nullopt, keyCell);
 }
 
-void callCustomSetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg value, GPRReg accessorIndex, GPRReg uid)
+void callCustomSetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg value, GPRReg accessorIndex, GPRReg uid, std::optional<GPRReg> keyCell)
 {
     const GPRReg record = jit.clobberRegister(accessorIndex);
     RELEASE_ASSERT(noOverlap(receiver, value, record, uid));
     loadCustomAccessorRecord(jit, record);
-    callRecordedAccessorAndReturn(jit, receiver, record, uid, value);
+    callRecordedAccessorAndReturn(jit, receiver, record, uid, value, keyCell);
 }
 
 // functionNames has no "get ", "set " or "bound ". A look that stack frames tell of is noted in the function object.
@@ -242,6 +242,7 @@ static void noteLookForNameReadFromTable(StubAssembler& jit, GPRReg closure, GPR
     needsNoNote.link(&jit);
 }
 
+// Its closure number.
 static void loadClosureFunction(StubAssembler& jit, GPRReg value, GPRReg function, JumpList& isNotClosure)
 {
     isNotClosure.append(jit.branchIfNotCell(value));
@@ -253,6 +254,7 @@ static void loadClosureFunction(StubAssembler& jit, GPRReg value, GPRReg functio
     jit.load64(Address(value, offsetOfSlimClosureWord), function);
     hasWord.link(&jit);
     extractBits(jit, function, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, function);
+    branchUnlessClosureNumberOfThisImage(jit, function, isNotClosure);
 }
 
 void readClosureLengthAndReturn(StubAssembler& jit, GPRReg closure, JumpList& miss)
@@ -263,8 +265,9 @@ void readClosureLengthAndReturn(StubAssembler& jit, GPRReg closure, JumpList& mi
     RELEASE_ASSERT(noOverlap(closure, index, tables, scratch));
 
     loadClosureFunction(jit, closure, index, miss);
+    if (jit.options().closureNumbersBelow)
+        jit.sub32(TrustedImm32(static_cast<int32_t>(jit.options().closureNumbersBelow)), index);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    jit.sub32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), index);
     miss.append(jit.branch32(CCallHelpers::AboveOrEqual, index, programTableCount(tables, ProgramTableIndex::functionLengths)));
     loadProgramTable(jit, tables, ProgramTableIndex::functionLengths, scratch);
     jit.load8(BaseIndex(scratch, index, CCallHelpers::TimesOne), scratch);
@@ -305,14 +308,16 @@ void readClosureNameAndReturn(StubAssembler& jit, GPRReg closure, JumpList& miss
         jit.load32(programTableCount(tables, ProgramTableIndex::functionRecordNumbers), scratch);
         jit.sub32(programTableCount(tables, ProgramTableIndex::functionSources), scratch);
     };
+    // A function that closures are made of is a form of another.
+    jit.add32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), function);
+    if (jit.options().closureNumbersBelow)
+        jit.sub32(TrustedImm32(static_cast<int32_t>(jit.options().closureNumbersBelow)), function);
     loadNumberOfFunctionsInFrontOfForms();
-    Jump isListed = jit.branch32(CCallHelpers::Below, function, scratch);
     jit.sub32(scratch, function);
     loadProgramTable(jit, tables, ProgramTableIndex::functionSources, scratch);
     loadNumber24(jit, scratch, function, function);
     loadNumberOfFunctionsInFrontOfForms();
     miss.append(jit.branch32(CCallHelpers::AboveOrEqual, function, scratch));
-    isListed.link(&jit);
     loadProgramTable(jit, tables, ProgramTableIndex::functionNameGroups, scratch);
     const GPRReg haveName = tables;
     jit.urshift32(function, TrustedImm32(5), haveName);

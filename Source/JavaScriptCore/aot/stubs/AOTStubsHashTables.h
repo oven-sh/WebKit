@@ -22,7 +22,8 @@ struct HashTableRegisterPlan {
     StubRegister keys;
     StubRegister entry;
     StubRegister candidate;
-    std::optional<StubRegister> copyOfOwner;
+    // Where the owner arrives and stays, if not in the register of a receiver: on x86-64 a multiplication writes that one.
+    std::optional<StubRegister> owner;
 };
 
 inline constexpr HashTableRegisterPlan hashTableRegisterPlan =
@@ -31,6 +32,8 @@ inline constexpr HashTableRegisterPlan hashTableRegisterPlan =
 #else
     { StubRegister::T13, StubRegister::T11, StubRegister::T12, StubRegister::T15, StubRegister::T14, StubRegister::T9, std::nullopt };
 #endif
+
+inline constexpr GPRReg ownerOfHashTableGPR = hashTableRegisterPlan.owner ? gprOf(*hashTableRegisterPlan.owner) : thisGPR;
 
 struct HashTableRegisters {
     // The emitters preserve owner and key.
@@ -57,9 +60,8 @@ struct HashTableLookup {
 struct InsertionPointExits {
     // hash: the hash of the key.
     JumpList amongTags;
-    // cursor: address of the free slot. hash: the tag of the key, at its position in a slot.
-    JumpList atShortSlot;
-    JumpList atLongSlot;
+    // cursor: the number of the free slot. hash: its low byte is the tag of the key.
+    JumpList atSlot;
 };
 
 // owner and key are intact at every exit.
@@ -68,6 +70,8 @@ struct HashTableExits {
     JumpList foundInCompactTable;
     // The same, where the search has found out that the keys are narrow.
     JumpList foundAmongNarrowKeys;
+    // The same, where it has found out that they are wide.
+    JumpList foundAmongWideKeys;
     // Empty when findsInsertionPoint.
     JumpList absent;
     // The next two are empty unless findsInsertionPoint. hash: the hash of the key.
@@ -79,10 +83,14 @@ struct HashTableExits {
 ptrdiff_t offsetOfHashTableStorage();
 // Never falls through.
 void emitFindInHashTable(StubAssembler&, const HashTableRegisters&, HashTableLookup, HashTableExits&);
+// hash = CompactTable::tagOfSlot(hash).
+void emitLoadTagOfSlot(StubAssembler&, GPRReg hash);
+// A key that has this slot for its home goes elsewhere.
+void emitMarkThatKeyLeftHomeSlot(StubAssembler&, BaseIndex tagAtHome);
 // hash = rapidHashMix64(key). On x86-64 hash is rax and scratch is rdx.
 void emitHashOfBits(StubAssembler&, GPRReg key, GPRReg hash, GPRReg scratch, GPRReg scratch2);
-// Only at a found exit of a compact table or a table in the image. values may be keys. Overwrites cursor. Whoever knows that the keys are narrow comes in behind the test.
-void emitLoadValuesOfCompactTable(StubAssembler&, const HashTableRegisters&, GPRReg values, JumpList* keysAreNarrow = nullptr);
+// Only at a found exit of a compact table or a table in the image. values may be keys. Overwrites cursor. Whoever knows that the keys are narrow comes in behind the test, which is left out where nobody falls in from above.
+void emitLoadValuesOfCompactTable(StubAssembler&, const HashTableRegisters&, GPRReg values, JumpList* keysAreNarrow = nullptr, JumpList* keysAreWide = nullptr, bool everyoneKnowsTheWidth = false);
 
 } } // namespace JSC::AOT
 

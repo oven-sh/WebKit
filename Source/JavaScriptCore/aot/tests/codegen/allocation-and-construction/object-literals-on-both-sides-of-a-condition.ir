@@ -1,0 +1,111 @@
+# type Point = { x: number };
+# type Line = { start: Point; label: string; end: Point };
+# function line(a: number, b: number, up: string, down: string): Line {
+#   return { start: { x: a }, label: a < b ? up : down, end: { x: b } };
+# }
+# declare const input: any;
+# const made = line(+input, +input, String(input), String(input));
+# (globalThis as any).answer = [made, made.start.x + made.end.x, made.label];
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:SplitFreshResults
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(FENCES): lower-to-b3 optimized f1
+# REQUIRES(FENCES): arm64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=99 kind=Parameter function=f1
+typesite w1 module=m0 position=110 kind=Parameter function=f1
+typesite w2 module=m0 position=121 kind=Parameter function=f1
+typesite w3 module=m0 position=133 kind=Parameter function=f1
+typesite w4 module=m0 position=85 kind=Result
+typesite w5 module=m0 position=288 kind=CallResult
+typesite w6 module=m0 position=303 kind=CallResult
+typesite w7 module=m0 position=267 kind=CallResult
+layout L0 name="Line" module=m0 position=33 fields=[{key="end" declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="start" declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[2, 1, 0] ownFieldCount=3
+layout L1 name="Point" module=m0 position=5 fields=[{key="x" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = ToNumber v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = ToNumber v8
+    v10 = Builtin builtin=String
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="input" [isFreeName]
+    v13 = Call v10, -, v12 calleeName="String"
+    v14 = Convert v13 declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v15 = Builtin builtin=String
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="input" [isFreeName]
+    v18 = Call v15, -, v17 calleeName="String"
+    v19 = Convert v18 declared={type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v20 = Call v1, -, v5, v9, v14, v19 calleeName="line"
+    v21 = Convert v20 declared={type=undefined|null|L0 site=w7 flags=[OmitsNull, OmitsUndefined]}
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="globalThis" [isFreeName]
+    v24 = Convert v23 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v25 = Convert v24 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v26 = PropGet v21 key="start"
+    v27 = PropGet v26 key="x"
+    v28 = PropGet v21 key="end"
+    v29 = PropGet v28 key="x"
+    v30 = Add v27, v29
+    v31 = PropGet v21 key="label"
+    v32 = NewArray v21, v30, v31 contents=anything
+    PropSet v25, v32 key="answer"
+    v34 = Undefined
+    Return v34
+}
+function f1 name="line" module=m0 position=85 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}, {type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number, v2: undefined|null|string, v3: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v4 = Convert v0 declared={type=number}
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    v7 = Convert v6 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v8 = Less v0, v1
+    Branch v8 -> taken b2(| 0, 1), notTaken b4(| 0, 1)
+  b2(v9, v10):
+    Jump -> next b3()
+  b3():
+    Jump -> next b6(v2, v10)
+  b4(v11, v12):
+    Jump -> next b5()
+  b5():
+    Jump -> next b6(v3, v12)
+  b6(v13, v14: number):
+    v15 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v16 = Convert v14 declared={type=number}
+    v17 = NewObject -, v16 layout=L1 fields=[0]
+    v18 = FinishObject v17
+    v19 = Convert v18 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v20 = NewObject -, v7, v15, v19 layout=L0 fields=[2, 1, 0]
+    v21 = FinishObject v20
+    v22 = Convert v21 declared={type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}
+    Return v22
+}
+
+# Three allocations, with a choice between two strings behind the first.
+# CHECK-LABEL: name="line" role=Source
+# CHECK-COUNT-3: Patchpoint(
+# CHECK-NOT: Patchpoint(
+# CHECK-LABEL: end of function
+# Neither side of the choice stores anything: arm64 tests once, behind the last store, whether the collector is marking.
+# FENCES-LABEL: name="line" role=Source
+# FENCES-COUNT-1: Fence(
+# FENCES-NOT: Fence(
+# FENCES-LABEL: end of function
+# ARM64: instructions: 17, patchpoints: 3, rare instructions: 2

@@ -12,6 +12,7 @@
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
 #include <memory>
 #include <wtf/HashMap.h>
@@ -116,9 +117,10 @@ public:
         for (size_t next = 0; next < m_frames.size(); ++next) {
             FlowScopeFrame* caller = m_frames[next].get();
             for (const FlowFunctionMention& mention : m_index.mentionsIn(caller->function)) {
-                bool runsOnlyDuringCall = m_index.calls.soleCallSites[mention.function.index()] == FlowCallSite { caller->function, mention.value };
-                if (runsOnlyDuringCall && pointOf(*caller, mention.value))
-                    appendFrame(mention.function, caller, mention.value);
+                FlowCallSite site = m_index.calls.soleCallSites[mention.function.index()];
+                bool runsOnlyDuringCall = site.second && site.first == caller->function && (site.second == mention.value || mention.kind == FunctionReferenceKind::Closure);
+                if (runsOnlyDuringCall && pointOf(*caller, site.second))
+                    appendFrame(mention.function, caller, site.second);
             }
         }
     }
@@ -171,7 +173,7 @@ public:
                     return;
                 }
                 if (function.module != m_owner.module)
-                    lower(reader, m_index.moduleOrder.completesBefore(m_owner.module, function.module) ? exit : unknownScopeEntry);
+                    lower(reader, m_index.moduleOrder.completesBefore(m_owner.module, function.module) && !m_index.functionsThatFilesOfCyclesMayEnter.quickGet(reader.index()) ? exit : unknownScopeEntry);
             };
             for (VariableID variable : m_owner.variables) {
                 for (const FlowScopeLocationAccess& read : operationsOn(m_index.reads, variable.index()))
@@ -336,16 +338,57 @@ private:
     FlowScopeEntry entryOf(FunctionID function) { return m_entries.get(function); }
     FlowScopeEntry entryByUseOf(FunctionID function) { return m_entriesByUse.get(function); }
 
+    FlowScopeEntry entryAtCall(FunctionID caller, ValueID site, VariableID subject)
+    {
+        FlowScopeFrame* frame = findFrame(caller);
+        return frame ? entryAt(*frame, site) : laterOf(entryOf(caller), subject ? entryByStoresTo(subject) : unknownScopeEntry);
+    }
+
+    FlowScopeEntry meetOfCallsOfList(uint32_t list)
+    {
+        FlowScopeEntry entry = neverScopeEntry;
+        for (uint32_t position : entriesOfGroup(m_index.calls.firstCallOfList, m_index.calls.callsOfListsByList, list)) {
+            const FlowScopeCallOfList& call = m_index.calls.callsOfLists[position];
+            entry = meet(entry, entryAtCall(call.caller, call.site, call.subject));
+            if (entry.state == FlowScopeEntryState::Unknown)
+                break;
+        }
+        return entry;
+    }
+
+    // The calls of a list of many callees say the same of each member. Their meet is kept, and didLowerEntryOf() lowers it with the callers: an entry is only ever lowered, so what it was before adds nothing to the meet.
+    FlowScopeEntry entryByCallsOfList(uint32_t list)
+    {
+        auto known = m_entriesByCallsOfLists.find(list);
+        if (known == m_entriesByCallsOfLists.end())
+            return m_entriesByCallsOfLists.add(list, meetOfCallsOfList(list)).iterator->value;
+        RELEASE_ASSERT(!m_index.inputs.build.options().verifiesAfterEveryPass || known->value == meetOfCallsOfList(list));
+        return known->value;
+    }
+
+    void didLowerEntryOf(FunctionID caller)
+    {
+        for (const FlowScopeCallOfList& call : entriesOfGroup(m_index.calls.firstCallOfListByCaller, m_index.calls.callsOfLists, caller.index())) {
+            auto known = m_entriesByCallsOfLists.find(call.calleeList);
+            if (known != m_entriesByCallsOfLists.end())
+                known->value = meet(known->value, entryAtCall(call.caller, call.site, call.subject));
+        }
+    }
+
     FlowScopeEntry entryByCallsOf(FunctionID function)
     {
         if (m_index.calls.functionsEnteredByHost.get(function.index()))
             return unknownScopeEntry;
         FlowScopeEntry entry = neverScopeEntry;
-        for (const FlowScopeCall& call : m_index.calls.callsOf(function)) {
-            FlowScopeFrame* frame = findFrame(call.caller);
-            entry = meet(entry, frame ? entryAt(*frame, call.site) : laterOf(entryOf(call.caller), call.subject ? entryByStoresTo(call.subject) : unknownScopeEntry));
+        for (const FlowScopeCall& call : entriesOfGroup(m_index.calls.firstByCallee, m_index.calls.byCallee, function.index())) {
+            entry = meet(entry, entryAtCall(call.caller, call.site, call.subject));
             if (entry.state == FlowScopeEntryState::Unknown)
-                break;
+                return entry;
+        }
+        for (uint32_t list : entriesOfGroup(m_index.calls.firstListByCallee, m_index.calls.listsByCallee, function.index())) {
+            entry = meet(entry, entryByCallsOfList(list));
+            if (entry.state == FlowScopeEntryState::Unknown)
+                return entry;
         }
         return entry;
     }
@@ -562,7 +605,7 @@ private:
 
     void recordReadsOfStoredFunctions()
     {
-        AOT::sort(m_storedFunctions, { }, &StoredFunction::location);
+        AOT::sortInLine(m_storedFunctions, { }, &StoredFunction::location);
         m_functionsTakenOut = m_storedFunctions;
         auto recordReader = [&](const FlowScopeLocationAccess& read, uint32_t first, uint32_t count) {
             FlowScopeFrame* frame = findFrame(read.function);
@@ -606,7 +649,7 @@ private:
             for (const FlowModuleValueRead& read : operationsOn(m_index.moduleValueReads, exporter))
                 recordReader(FlowScopeLocationAccess { m_functionsTakenOut[first].location, read.function, read.value }, first, count);
         }
-        AOT::sort(m_storedFunctionReaders, { }, [](const StoredFunctionReader& read) {
+        AOT::sortInLine(m_storedFunctionReaders, { }, [](const StoredFunctionReader& read) {
             return std::tuple(read.reader, read.first);
         });
     }
@@ -641,13 +684,23 @@ private:
             entry.value = neverScopeEntry;
             m_queue.append(entry.key);
         }
-        AOT::sort(m_queue, std::greater { });
+        AOT::sortInLine(m_queue, std::greater { });
         HashSet<FunctionID> waiting;
         for (FunctionID function : m_queue)
             waiting.add(function);
+        const FlowScopeCalls& calls = m_index.calls;
+        // The members of each list of many callees that have left the queue since a caller of the list last looked. All others wait, or have no entry.
+        HashMap<uint32_t, Vector<FunctionID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> membersThatLeftQueue;
+        auto queueAgain = [&](FunctionID function) {
+            auto callee = m_entries.find(function);
+            if (callee != m_entries.end() && callee->value != unknownScopeEntry && waiting.add(function).isNewEntry)
+                m_queue.append(function);
+        };
         for (size_t next = 0; next < m_queue.size(); ++next) {
             FunctionID function = m_queue[next];
             waiting.remove(function);
+            for (uint32_t list : entriesOfGroup(calls.firstListByCallee, calls.listsByCallee, function.index()))
+                membersThatLeftQueue.add(list, Vector<FunctionID>()).iterator->value.append(function);
             FlowScopeEntry current = entryOf(function);
             if (current == unknownScopeEntry)
                 continue;
@@ -655,13 +708,18 @@ private:
             if (refined == current)
                 continue;
             m_entries.set(function, refined);
-            for (const FlowScopeCall& call : m_index.calls.callsBy(function)) {
-                auto callee = m_entries.find(call.callee);
-                if (callee != m_entries.end() && callee->value != unknownScopeEntry && waiting.add(call.callee).isNewEntry)
-                    m_queue.append(call.callee);
+            didLowerEntryOf(function);
+            for (const FlowScopeCall& call : entriesOfGroup(calls.firstByCaller, calls.byCaller, function.index()))
+                queueAgain(call.callee);
+            for (const FlowScopeCallOfList& call : entriesOfGroup(calls.firstCallOfListByCaller, calls.callsOfLists, function.index())) {
+                Vector<FunctionID> members = membersThatLeftQueue.take(call.calleeList);
+                AOT::sort(members);
+                for (FunctionID member : members)
+                    queueAgain(member);
             }
         }
         m_queue.shrink(0);
+        m_entriesByCallsOfLists.clear();
     }
 
     bool completesBeforeReturn(FlowScopeFrame& frame, ValueID value)
@@ -781,13 +839,23 @@ private:
             FunctionID function = followed[next];
             if (followed.size() > mostCallersToFollow || m_index.calls.functionsEnteredByHost.get(function.index()) || !anyPrecedes(stores, entryOf(function)))
                 return false;
-            for (const FlowScopeCall& call : m_index.calls.callsOf(function)) {
+            bool precedesCallsInFrames = true;
+            m_index.calls.forEachCallOf(function, [&](const FlowScopeCall& call) {
                 if (FlowScopeFrame* frame = findFrame(call.caller)) {
-                    if (!anyPrecedes(stores, entryAt(*frame, call.site)))
-                        return false;
-                } else if (!followed.contains(call.caller))
+                    if (!anyPrecedes(stores, entryAt(*frame, call.site))) {
+                        precedesCallsInFrames = false;
+                        return IterationStatus::Done;
+                    }
+                } else if (!followed.contains(call.caller)) {
                     followed.append(call.caller);
-            }
+                    // The next turn gives up.
+                    if (followed.size() > mostCallersToFollow)
+                        return IterationStatus::Done;
+                }
+                return IterationStatus::Continue;
+            });
+            if (!precedesCallsInFrames)
+                return false;
         }
         return true;
     }
@@ -800,6 +868,61 @@ private:
             result = result && (findFrame(read.function) || anyPrecedesCallersOf(stores, read.function));
         });
         return result;
+    }
+
+    // Where the first of the functions that capture an environment of the layout may be entered.
+    FlowScopeEntry entryOfFirstCapturer(LayoutID layout)
+    {
+        const Program& program = m_index.program();
+        auto captures = [&](FunctionID function) {
+            return std::ranges::any_of(program.at(function).captures, [&](const DeclaredType& capture) {
+                return program.at(capture.written()).environment == layout;
+            });
+        };
+        Vector<FunctionID> capturers;
+        for (FunctionID function : m_entriesByUse.keys()) {
+            if (captures(function))
+                capturers.append(function);
+        }
+        AOT::sort(capturers);
+        FlowScopeEntry entry = neverScopeEntry;
+        for (FunctionID function : capturers)
+            entry = meet(entry, entryByUseOf(function));
+        for (auto& frame : m_frames) {
+            if (frame->caller && captures(frame->function))
+                entry = meet(entry, entryAt(*frame->caller, frame->call));
+        }
+        return entry;
+    }
+
+    // Every store puts a new closure there that captures the environment it is stored in, and no other environment of that layout.
+    bool holdsClosureOverOwnEnvironment(FlowScopeLocation location, LayoutID layout)
+    {
+        const Program& program = m_index.program();
+        auto stores = operationsOn(m_index.stores, location);
+        return !stores.empty() && std::ranges::all_of(stores, [&](const FlowScopeLocationAccess& access) {
+            const Function& function = program.at(access.function);
+            const Value& store = function.at(access.value);
+            if (store.opcode != Opcode::PutEnvironmentField)
+                return false;
+            const Value& closure = function.at(sameObjectThroughCasts(function, store.valueOperand()));
+            if (closure.opcode != Opcode::NewClosure)
+                return false;
+            auto declared = program.at(closure.function()).captures;
+            auto captured = closure.variadicOperands();
+            if (declared.size() != captured.size())
+                return false;
+            RootThroughCasts environment = sameObjectThroughCasts(function, store.environmentOperand());
+            unsigned numberOfCaptures = 0;
+            for (size_t index = 0; index < declared.size(); ++index) {
+                if (program.at(declared[index].written()).environment != layout)
+                    continue;
+                if (sameObjectThroughCasts(function, captured[index]) != environment)
+                    return false;
+                ++numberOfCaptures;
+            }
+            return numberOfCaptures == 1;
+        });
     }
 
     StoreCount storeCountOf(FlowScopeLocation location, bool isSetAtCreation, NOESCAPE const Invocable<bool(const FlowScopeLocationAccess&)> auto& canRunTwice)
@@ -897,6 +1020,14 @@ private:
             bool startsAbsent = m_index.program().at(fields[field].declared.written()).primitives & Primitive::Absent;
             orders[location] = { initializationOf(location, isSetAtCreation, startsAbsent), storeCountOf(location, isSetAtCreation, canRunTwicePerInstance) };
         }
+        FlowScopeEntry firstCapturer = entryOfFirstCapturer(layout);
+        for (uint32_t field = 0; field < numberOfFields; ++field) {
+            FlowScopeLocation location = *m_index.numbering.locationOf(layout, field);
+            if (m_index.opaqueLocations.get(location))
+                continue;
+            orders[location].isStoredBeforeCapturersRun = orders[location].initialization == InitializationState::StoredBeforeEveryRead && anyPrecedes(initializingStoresOf(location), firstCapturer);
+            orders[location].holdsClosureOverOwnEnvironment = !allocationsListing[field] && holdsClosureOverOwnEnvironment(location, layout);
+        }
     }
 
     const FlowScopeIndex& m_index;
@@ -906,6 +1037,7 @@ private:
     HashMap<FunctionID, FlowScopeEntry> m_entries;
     HashMap<FunctionID, FlowScopeEntry> m_entriesByUse;
     HashMap<VariableID, FlowScopeEntry> m_entriesByStores;
+    HashMap<uint32_t, FlowScopeEntry, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_entriesByCallsOfLists;
     Vector<FunctionID> m_queue;
     Vector<StoredFunction> m_storedFunctions;
     HashMap<std::pair<FlowScopeFrame*, ValueID>, std::unique_ptr<Vector<ReachedUse>>> m_usesReachedFromConstructors;
@@ -921,14 +1053,15 @@ private:
 static bool runsAfterCompletion(const FlowScopeIndex& index, FunctionID function, ModuleID completed)
 {
     ModuleID module = index.program().at(function).module;
-    return module && index.moduleOrder.completesBefore(completed, module);
+    return module && !index.functionsEnteredWithoutMention.quickGet(function.index()) && index.moduleOrder.completesBefore(completed, module);
 }
 
-static bool canObserveUnfinishedModule(const Program& program, const FlowModuleValueRead& read)
+static bool canObserveUnfinishedModule(const FlowScopeIndex& index, const FlowModuleValueRead& read)
 {
+    const Program& program = index.program();
     Opcode opcode = program.at(read.function).at(read.value).opcode;
     if (opcode == Opcode::ImportModule)
-        return false;
+        return index.moduleOrder.modulesThatJobsMayInterrupt.get(read.subject.index());
     if (opcode == Opcode::RequireModule)
         return program.at(read.subject).requireResult != RequireResult::ModuleExports;
     return true;
@@ -946,7 +1079,7 @@ static BitVector findVariablesReadEarly(const FlowScopeIndex& index)
     };
 
     for (const FlowModuleValueRead& read : index.moduleValueReads) {
-        if (canObserveUnfinishedModule(program, read) && !runsAfterCompletion(index, read.function, read.subject))
+        if (canObserveUnfinishedModule(index, read) && !runsAfterCompletion(index, read.function, read.subject))
             visit(read.subject);
     }
     for (size_t module : index.inputs.modulesLoadedByHost)

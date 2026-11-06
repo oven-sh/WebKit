@@ -265,7 +265,7 @@ void addErrorInfo(JSGlobalObject* globalObject, JSObject* obj, bool useCurrentFr
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && useCurrentFrame) [[unlikely]] {
         Vector<StackFrame> stackTrace;
-        if (auto stackTraceLimit = obj->realm()->stackTraceLimit(); stackTraceLimit && AOT::tryGetStackTrace(vm, obj, *stackTraceLimit, stackTrace)) {
+        if (auto stackTraceLimit = obj->realm()->stackTraceLimit(); stackTraceLimit && AOT::tryGetStackTrace(vm, obj, stackTrace, 0, *stackTraceLimit)) {
             addErrorInfo(vm, &stackTrace, obj);
             return;
         }
@@ -481,7 +481,7 @@ JSObject* createOutOfMemoryError(JSGlobalObject* globalObject)
     auto* error = createRangeError(globalObject, "Out of memory"_s, nullptr);
     uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
     if (MarkedBlockCage::isRequired())
-        globalObject->vm().heap.cage().didCreateOutOfMemoryError();
+        globalObject->vm().heap.cage().didCreateOutOfMemoryError(globalObject->vm());
     return error;
 }
 
@@ -492,7 +492,7 @@ JSObject* createOutOfMemoryError(JSGlobalObject* globalObject, const String& mes
     auto* error = createRangeError(globalObject, makeString("Out of memory: "_s, message), nullptr);
     uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
     if (MarkedBlockCage::isRequired())
-        globalObject->vm().heap.cage().didCreateOutOfMemoryError();
+        globalObject->vm().heap.cage().didCreateOutOfMemoryError(globalObject->vm());
     return error;
 }
 

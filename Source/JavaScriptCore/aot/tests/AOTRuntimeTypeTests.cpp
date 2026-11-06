@@ -74,9 +74,15 @@ public:
     TypeRecord(Primitives primitives, std::initializer_list<RuntimeCellTest> tests = { }, std::initializer_list<uint32_t> literalStrings = { }, std::optional<IntegerRange> range = std::nullopt, std::optional<uint32_t> contents = std::nullopt, std::optional<uint32_t> layoutSet = std::nullopt)
     {
         uint8_t flags = (range ? RuntimeType::hasIntegerRange : 0) | (contents ? RuntimeType::hasContents : 0) | (layoutSet ? RuntimeType::hasLayoutSet : 0);
-        m_words.append(primitives.toRaw() | static_cast<uint32_t>(flags) << 16);
+        // As the encoder of the tables writes them: the tests of one function each stand behind all others, by rising number.
+        Vector<RuntimeCellTest> ordered(tests);
+        std::ranges::stable_sort(ordered, { }, [](const RuntimeCellTest& test) -> int64_t {
+            return test.kind == CellTestKind::IsClosureOf ? static_cast<int64_t>(test.operand) : -1;
+        });
+        size_t numberInFront = std::ranges::count_if(ordered, [](const RuntimeCellTest& test) { return test.kind != CellTestKind::IsClosureOf; });
+        m_words.append(primitives.toRaw() | static_cast<uint32_t>(flags) << 16 | static_cast<uint32_t>(std::min<size_t>(numberInFront, RuntimeType::hasManyTestsOfMoreThanOneFunction)) << 24);
         m_words.append(static_cast<uint32_t>(tests.size()) | static_cast<uint32_t>(literalStrings.size()) << 16);
-        for (const RuntimeCellTest& test : tests) {
+        for (const RuntimeCellTest& test : ordered) {
             auto words = std::bit_cast<std::array<uint32_t, 2>>(test);
             m_words.append(words[0]);
             m_words.append(words[1]);
@@ -500,7 +506,7 @@ static void testIsClosureOf(LoadedProgram& program)
     FunctionID area = closureFunctionNamed(program, "area"_s);
     FunctionID perimeter = closureFunctionNamed(program, "perimeter"_s);
     ClosureTable& closures = program.state().objects->closures;
-    TypeRecord closuresOfArea({ }, { RuntimeCellTest::isClosureOf(area) });
+    TypeRecord closuresOfArea({ }, { RuntimeCellTest::isClosureOf(closureNumberOf(area)) });
     AOT_TEST_CHECK(values.hasType(closuresOfArea, closures.closure(vm, area)));
     AOT_TEST_CHECK(values.hasType(closuresOfArea, closures.createClosure(vm, area, { }, 0)));
     AOT_TEST_CHECK(!values.hasType(closuresOfArea, closures.closure(vm, perimeter)));
@@ -568,7 +574,7 @@ static void testShapeHasType(LoadedProgram& program)
         RuntimeCellTest::inheritsClassInfo(BuiltinClasses::WeakRef),
         RuntimeCellTest::isPristine(BuiltinClasses::Array),
         RuntimeCellTest::isBuiltinCell(builtinCellNumberOf(program, Builtins::ArrayPrototype)),
-        RuntimeCellTest::isClosureOf(closureFunctionNamed(program, "area"_s)),
+        RuntimeCellTest::isClosureOf(closureNumberOf(closureFunctionNamed(program, "area"_s))),
         RuntimeCellTest::isSymbol(numberOfWellKnownSymbol(WellKnownSymbol::Iterator)),
     };
     for (const RuntimeCellTest& test : testsOfOtherCells)

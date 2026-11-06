@@ -14,6 +14,7 @@
 #include "AOTNativeTest.h"
 #include "AOTResultRules.h"
 #include "AOTRuntimeDescription.h"
+#include "AOTStubsConstruct.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include "IdentifierInlines.h"
@@ -115,14 +116,9 @@ static void testNamedListsTranslate()
 
 static void testMarks()
 {
-#if ENABLE(SHADOW_REALM)
-    AOT_TEST_CHECK(table().has(BuiltinMark::EvaluatesTextInGlobalScope, Builtins::ShadowRealmPrototypeEvaluate) && !table().has(BuiltinMark::EvaluatesTextInGlobalScope, Builtins::ArrayPrototypePush));
-#endif
     AOT_TEST_CHECK(table().has(BuiltinMark::IsSpy, hostBuiltin("BunTestSpyOn"_s)) && !table().has(BuiltinMark::HoldsLoader, hostBuiltin("BunTestSpyOn"_s)) && !table().has(BuiltinMark::IsSpy, BuiltinID()));
     AOT_TEST_CHECK(table().marked(BuiltinMark::IsNotEnumerable).size() == 2 && table().has(BuiltinMark::IsNotEnumerable, hostBuiltin("Console_stdout"_s)));
-#if ENABLE(SHADOW_REALM)
-    AOT_TEST_CHECK(table().has(BuiltinMark::MayBeAbsent, Builtins::ShadowRealm) && !table().has(BuiltinMark::MayBeAbsent, Builtins::ArrayBuffer));
-#endif
+    AOT_TEST_CHECK(table().has(BuiltinMark::MayBeAbsent, Builtins::SharedArrayBuffer) && !table().has(BuiltinMark::MayBeAbsent, Builtins::ArrayBuffer));
     for (BuiltinMark mark : { BuiltinMark::IsAddedByOption, BuiltinMark::MayBeAbsent, BuiltinMark::EvaluatesTextInGlobalScope, BuiltinMark::HoldsLoader, BuiltinMark::IsSpy, BuiltinMark::IsNotEnumerable }) {
         std::span<const BuiltinMarkedEntry> marked = table().marked(mark);
         AOT_TEST_CHECK(!marked.empty() && std::ranges::is_sorted(marked, { }, &BuiltinMarkedEntry::builtin));
@@ -134,10 +130,12 @@ static void testMarks()
             return loader.callee == callee && loader.named == named;
         });
     };
-    AOT_TEST_CHECK(table().loadersOfMachineCode().size() == 5 && isReportedAs(Builtins::ProcessDlopen, Builtins::ProcessDlopen));
+    AOT_TEST_CHECK(table().loadersOfMachineCode().size() == 8 && isReportedAs(Builtins::ProcessDlopen, Builtins::ProcessDlopen));
     AOT_TEST_CHECK(isReportedAs(hostBuiltin("NativeFunctionsFfiBindTsCc"_s), hostBuiltin("BunFfiCc"_s)));
     AOT_TEST_CHECK(isReportedAs(hostBuiltin("BunFFIDlopen"_s), hostBuiltin("BunFfiDlopen"_s)) && isReportedAs(hostBuiltin("BunFFILinkSymbols"_s), hostBuiltin("BunFfiLinkSymbols"_s)));
     AOT_TEST_CHECK(isReportedAs(hostBuiltin("BunFFICfunction"_s), hostBuiltin("BunFfiCFunction"_s)));
+    AOT_TEST_CHECK(isReportedAs(hostBuiltin("NativeFunctionsFfiBindTsOpenLibrary"_s), hostBuiltin("BunFfiDlopen"_s)) && isReportedAs(hostBuiltin("NativeFunctionsFfiBindTsLinkLibrary"_s), hostBuiltin("BunFfiLinkSymbols"_s)));
+    AOT_TEST_CHECK(isReportedAs(hostBuiltin("NativeFunctionsFfiBindTsMakeFunction"_s), hostBuiltin("BunFfiCFunction"_s)));
 }
 
 static void testGlobalThisIsFirst()
@@ -388,6 +386,23 @@ static void testUndeclaredOverloadClaimsNothing()
         AOT_TEST_CHECK(!overload.isUndeclared());
 }
 
+// A constructor that throws nothing is entered without a test of the stack.
+static void testConstructorsThatThrowNothingTakeFewArguments()
+{
+    unsigned numberOfConstructors = 0;
+    forEachID<BuiltinOverloadID>(table().overloadCount(), [&](BuiltinOverloadID id) {
+        const BuiltinOverload& overload = table().at(id);
+        if (overload.mode != BuiltinCallMode::Construct || overload.throws())
+            return;
+        ++numberOfConstructors;
+        AOT_TEST_CHECK(overload.parameters.size() <= maxArgumentCountOfUntestedHostFrame);
+        AOT_TEST_CHECK(std::ranges::none_of(overload.parameters, [](const BuiltinParameter& parameter) {
+            return parameter.mode == BuiltinParameterMode::Rest;
+        }));
+    });
+    AOT_TEST_CHECK(numberOfConstructors);
+}
+
 static void testParameterFor()
 {
     for (const BuiltinOverload& overload : table().overloadsOf(Builtins::ArrayPrototypePush)) {
@@ -444,8 +459,9 @@ static void testClassRelations()
     AOT_TEST_CHECK(!table().isSameOrSubclassOf(BuiltinClasses::Uint8Array, BuiltinClasses::Buffer) && !table().isSameOrSubclassOf(BuiltinClasses::Map, BuiltinClasses::Set));
     AOT_TEST_CHECK(!table().isSameOrSubclassOf(BuiltinClasses::Map, BuiltinClassID()));
 
-    AOT_TEST_CHECK(table().typedArrayClassOf(BuiltinClasses::Int8Array) == BuiltinClasses::Int8Array && table().at(BuiltinClasses::Int8Array).typedArrayType == TypeInt8);
-    AOT_TEST_CHECK(table().at(table().typedArrayClassOf(BuiltinClasses::Buffer)).typedArrayType == TypeUint8);
+    AOT_TEST_CHECK(table().typedArrayClassOf(BuiltinClasses::Int8Array) == BuiltinClasses::Int8Array && table().typedArrayTypeOf(BuiltinClasses::Int8Array) == TypeInt8);
+    AOT_TEST_CHECK(table().typedArrayClassOf(BuiltinClasses::Buffer) == BuiltinClasses::Uint8Array && table().typedArrayTypeOf(BuiltinClasses::Buffer) == TypeUint8);
+    AOT_TEST_CHECK(table().typedArrayTypeOf(BuiltinClasses::DataView) == NotTypedArray && table().typedArrayTypeOf(BuiltinClasses::TypedArray) == NotTypedArray && !table().typedArrayClassOf(BuiltinClasses::Array));
     AOT_TEST_CHECK(!table().typedArrayClassOf(BuiltinClasses::TypedArray) && !table().typedArrayClassOf(BuiltinClasses::Map) && !table().typedArrayClassOf(BuiltinClasses::Array));
 
     AOT_TEST_CHECK(table().at(BuiltinClasses::Array).constructor == Builtins::Array && table().at(BuiltinClasses::Array).prototype == Builtins::ArrayPrototype);
@@ -815,9 +831,6 @@ static void testAttributesReadByPasses()
     };
     // Nothing of Bun's makes a second realm that runs the compiled program in the VM of its caller: a Worker has a VM of its own. The column stays for a host that does.
     AOT_TEST_CHECK(!has(hostBuiltin("Worker"_s), BuiltinFlag::StartsInstance) && !has(Builtins::Map, BuiltinFlag::StartsInstance));
-#if ENABLE(SHADOW_REALM)
-    AOT_TEST_CHECK(!has(Builtins::ShadowRealm, BuiltinFlag::StartsInstance));
-#endif
     AOT_TEST_CHECK(has(Builtins::Eval, BuiltinFlag::EvaluatesText) && has(Builtins::Function, BuiltinFlag::EvaluatesText) && !has(Builtins::ParseInt, BuiltinFlag::EvaluatesText));
     AOT_TEST_CHECK(has(Builtins::ArrayOf, BuiltinFlag::RequiresHolderAsThis) && has(Builtins::PromiseResolve, BuiltinFlag::RequiresHolderAsThis) && !has(Builtins::MathMax, BuiltinFlag::RequiresHolderAsThis));
     AOT_TEST_CHECK(has(Builtins::MathAbs, BuiltinFlag::IsDeterministic) && !has(Builtins::MathRandom, BuiltinFlag::IsDeterministic));
@@ -1032,6 +1045,8 @@ static void testHostUsesNameWhatIsThere()
             AOT_TEST_CHECK((!field.name || table().contains(field.name)) && field.value.kind != BuiltinPlaceKind::None);
             checkHostValue(field.value, writtenCells);
         }
+        for (BuiltinName name : object.nativeAccessors)
+            AOT_TEST_CHECK(table().contains(name) && !std::ranges::contains(object.fields, name, &BuiltinHostObjectField::name));
         // What keeps a string of whatever is stored holds strings from the start, under whatever name.
         if (object.keepsStringsOfStoredValues) {
             AOT_TEST_CHECK(!object.function && !object.fields.empty());
@@ -1091,22 +1106,41 @@ static void testHostUsesOfLibraryFunctions()
     auto drainMicrotasks = std::ranges::find(table().hostObjects(), call->arguments[2].nativeCell, &BuiltinHostObject::nativeCell);
     AOT_TEST_CHECK(drainMicrotasks != table().hostObjects().end() && drainMicrotasks->function && table().at(drainMicrotasks->function).kind == BuiltinKind::Function && table().at(drainMicrotasks->function).holder == Builtins::NativeFunctions);
 
-    // The stream is the first element of what getStdioWriteStream answers.
+    // The result of getLightStdioWriteStreams holds both streams. Each property's cell keeps its stream, and the member of `console` holds it too.
+    // Printing a warning calls `write` on the second stream, with the stream as the receiver, and drops the result.
     for (BuiltinID stream : std::initializer_list<BuiltinID> { hostBuiltin("ProcessStdout"_s), hostBuiltin("ProcessStderr"_s) }) {
-        const BuiltinHostCall* creation = findCallOfOnlyFunction(stream, 2);
-        AOT_TEST_CHECK(creation && creation->arguments.size() == 4 && creation->result.list.size() == (stream == hostBuiltin("ProcessStdout"_s) ? 2 : 4));
+        std::span<const BuiltinCalledFunction> makers = table().calledFunctionsOf(stream);
+        AOT_TEST_CHECK(makers.size() == 2);
+        const BuiltinCalledFunction& light = makers[makers[0].condition ? 1 : 0];
+        const BuiltinCalledFunction& whole = makers[makers[0].condition ? 0 : 1];
+        AOT_TEST_CHECK(!light.condition && light.uses.areListed && light.uses.list.size() == 1 && light.uses.list[0].use == BuiltinHostReadUse::Called);
+        AOT_TEST_CHECK(whole.condition && whole.condition->testsReplaceBuiltins && whole.uses.areListed && whole.uses.list.size() == 2);
+        const BuiltinHostCall* creation = light.uses.list[0].call;
+        AOT_TEST_CHECK(creation && creation->arguments.size() == 7 && creation->result.list.size() == 6);
+        std::span<const BuiltinHostUse> uses = creation->result.list;
+        for (size_t index : { 0, 2 }) {
+            BuiltinName holder = nameOf(index ? "stderr"_s : "stdout"_s);
+            AOT_TEST_CHECK(uses[index].use == BuiltinHostReadUse::Kept && uses[index].memberPath.size() == 1 && uses[index].memberPath[0] == holder);
+            AOT_TEST_CHECK(uses[index + 1].use == BuiltinHostReadUse::IsValueOf && uses[index + 1].builtin == hostBuiltin(index ? "Console_stderr"_s : "Console_stdout"_s));
+            AOT_TEST_CHECK(uses[index + 1].memberPath.size() == 1 && uses[index + 1].memberPath[0] == holder);
+        }
+        const BuiltinHostUse& write = uses[4];
+        AOT_TEST_CHECK(write.use == BuiltinHostReadUse::Called && write.memberPath.size() == 2 && write.memberPath[0] == nameOf("stderr"_s) && write.memberPath[1] == nameOf("write"_s));
+        AOT_TEST_CHECK(write.call->thisValue.nativeCell == uses[2].nativeCell && write.call->arguments.size() == 1 && write.call->result.areListed && write.call->result.list.empty());
+    }
+
+    // The stream is the first element of getStdioWriteStream's result. That function is reached through the function that the light stream's traps call, once per descriptor.
+    std::span<const BuiltinCalledFunction> makersOfWholeStreams = table().calledFunctionsOf(hostBuiltin("NativeFunctionsBunProcessCppProcess_functionNeedsWholeOutputStream"_s));
+    AOT_TEST_CHECK(makersOfWholeStreams.size() == 1 && makersOfWholeStreams[0].uses.areListed && makersOfWholeStreams[0].uses.list.size() == 2);
+    for (const BuiltinHostUse& use : makersOfWholeStreams[0].uses.list) {
+        AOT_TEST_CHECK(use.use == BuiltinHostReadUse::Called && use.memberPath.empty());
+        const BuiltinHostCall* creation = use.call;
+        AOT_TEST_CHECK(creation && creation->arguments.size() == 4);
         const BuiltinHostUse& first = creation->result.list[0];
-        AOT_TEST_CHECK(first.use == BuiltinHostReadUse::IsValueOf && first.builtin == stream && first.memberPath.size() == 1 && first.memberPath[0] == nameOf("0"_s));
+        AOT_TEST_CHECK(first.use == BuiltinHostReadUse::Kept && first.memberPath.size() == 1 && first.memberPath[0] == nameOf("0"_s));
         const BuiltinHostUse& last = creation->result.list.back();
         AOT_TEST_CHECK(last.use == BuiltinHostReadUse::Inspected && last.memberPath.size() == 1 && last.memberPath[0] == nameOf("1"_s));
     }
-
-    // Whoever prints a warning calls `write` of the stream, with the stream as the receiver, and drops what that answers.
-    std::span<const BuiltinHostUse> usesOfStandardError = findCallOfOnlyFunction(hostBuiltin("ProcessStderr"_s), 2)->result.list;
-    const BuiltinHostUse& write = usesOfStandardError[2];
-    AOT_TEST_CHECK(usesOfStandardError[1].use == BuiltinHostReadUse::Kept && write.use == BuiltinHostReadUse::Called);
-    AOT_TEST_CHECK(write.memberPath.size() == 2 && write.memberPath[0] == nameOf("0"_s) && write.memberPath[1] == nameOf("write"_s));
-    AOT_TEST_CHECK(write.call->thisValue.nativeCell == usesOfStandardError[1].nativeCell && write.call->arguments.size() == 1 && write.call->result.areListed && write.call->result.list.empty());
 
     // A row that says nothing leaves everything open.
     for (const BuiltinCalledFunction& called : table().calledFunctionsOf(hostBuiltin("BunBuild"_s)))
@@ -1238,6 +1272,7 @@ std::span<const NativeTest> builtinTableTests()
         { "builtin-table/overloads-are-one-run-in-mode-order"_s, testOverloadsAreOneRunInModeOrder },
         { "builtin-table/dispatch-is-total"_s, testDispatchIsTotal },
         { "builtin-table/undeclared-overload-claims-nothing"_s, testUndeclaredOverloadClaimsNothing },
+        { "builtin-table/constructors-that-throw-nothing-take-few-arguments"_s, testConstructorsThatThrowNothingTakeFewArguments },
         { "builtin-table/parameter-for"_s, testParameterFor },
         { "builtin-table/classes-and-slots"_s, testClassesAndSlots },
         { "builtin-table/class-relations"_s, testClassRelations },

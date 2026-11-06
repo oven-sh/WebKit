@@ -1,10 +1,11 @@
 # An object is born with the mark that the fields which every constructor fills are not all stored. The pass takes the mark off behind the store by slot that fills the last of them,
 # where no other code has run since somebody else could reach the object. Otherwise the run time looks at the slots: there, before other code may see the object, and where the object leaves
+# It is not asked to look where some field of birth has been stored on no path and nobody else has seen the object: it would find the object unfinished.
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass FinishBirths
 # STATISTIC: BirthsFinished = 7
-# STATISTIC: BirthsLeftToRunTime = 8
+# STATISTIC: BirthsLeftToRunTime = 5
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -57,7 +58,7 @@ function f4 name="somebodyHasSeenTheObject" parameters=[{type=anything}] results
     Return v1
 }
 # CHECK-LABEL: name="somebodyHasSeenTheObject"
-# CHECK: TryFinishBirth v1
+# CHECK: PutSlotOrAdd v1, v1, v0 key="x"
 # CHECK-NEXT: = Call v0, -, v1
 # CHECK-NEXT: PutSlotOrAdd v1, v1, v0 key="y"
 # CHECK-NEXT: TryFinishBirth v1

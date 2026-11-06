@@ -11,6 +11,8 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowRecords.h"
+#include "AOTLedgerOfClassesAndClosures.h"
+#include "AOTLedgerVariables.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSort.h"
 #include "AOTValueFlowPositions.h"
@@ -30,7 +32,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OptionSet<ObjectMutation> mutationsOfBuiltinInstancesWithoutMark { ObjectMutation::ChangePrototype, ObjectMutation::BecomePrototype, ObjectMutation::StoreOfOtherType };
 
-static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, FlowResultTables& tables)
+static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, ValueSetID listsToldApart, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
@@ -84,8 +86,11 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
                 tables.sites.allocationClasses.append(WTF::move(instances));
             }
             tables.sites.allocationClasses[allocationClass.index()].impossibleMutations.remove(instance.markedMutations);
-            if (instance.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, instance.builtinClass.index()))
+            if (instance.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, instance.builtinClass.index())) {
                 tables.sites.sitesOfObjectsThatNeverChange.set(numberOfSites);
+                if (instance.builtinClass == BuiltinClasses::Array && isNeverToldApart(inputs, instance.object, listsToldApart))
+                    tables.sites.sitesOfListsNeverToldApart.set(numberOfSites);
+            }
             ++numberOfSites;
         }
     }
@@ -93,7 +98,7 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
     forEachIndexInParallel(inputs.loops(), functionsWithInstances.size(), [&](unsigned position) {
         uint32_t index = functionsWithInstances[position];
         const Function& function = program.functions[index];
-        Vector<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
+        CompactList<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
         uint32_t nextSite = firstSiteOfFunction[position];
         for (const Instance& instance : instancesOfFunction[index]) {
             ValueID operation = instance.operation;
@@ -102,9 +107,9 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
             AllocationSiteID site(nextSite++);
             tables.sites.allocationSites[site.index()] = AllocationSite { FunctionID(index), { }, instance.builtinClass, allocationClass, function.locationOf(operation) };
             bool hasElements = facts && function.at(operation).opcode == Opcode::NewArray && indexOfElements < facts->contents.size();
-            stamps.append(FlowAllocationStamp { .value = operation, .site = site, .allocationClass = allocationClass, .elements = hasElements ? facts->contents[indexOfElements] : TypeID(), .arrayStorage = hasElements ? facts->arrayStorageToldToCreator : ArrayStorage::Other });
+            stamps.append(FlowAllocationStamp { .value = operation, .site = site, .allocationClass = allocationClass, .elements = hasElements ? facts->contents[indexOfElements] : TypeID(), .elementsAreProven = hasElements && facts->contentsAreProven, .arrayStorage = hasElements ? facts->arrayStorage : ArrayStorage::Other });
         }
-        AOT::sort(stamps, { }, &FlowAllocationStamp::value);
+        AOT::sortInLine(stamps, { }, &FlowAllocationStamp::value);
     });
 
     classOfBuiltinClass.append(classOfUnwrittenArrays);
@@ -130,7 +135,7 @@ static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& t
     };
     Vector<FlowBodyUpdate>& bodies = tables.application->bodies;
     Vector<AllocationSiteID> sitesOfStamps = collectInParallel<AllocationSiteID>(loops, bodies.size(), [&](unsigned index, Vector<AllocationSiteID>& found) {
-        AOT::sort(bodies[index].allocations, { }, &FlowAllocationStamp::value);
+        AOT::sortInLine(bodies[index].allocations, { }, &FlowAllocationStamp::value);
         for (const FlowAllocationStamp& stamp : bodies[index].allocations)
             found.append(stamp.site);
     });
@@ -147,6 +152,10 @@ static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& t
     for (size_t index : tables.sites.sitesOfObjectsThatNeverChange)
         orderedSitesOfObjectsThatNeverChange.set(orderedSiteOf[index].index());
     tables.sites.sitesOfObjectsThatNeverChange = WTF::move(orderedSitesOfObjectsThatNeverChange);
+    BitVector orderedSitesOfListsNeverToldApart;
+    for (size_t index : tables.sites.sitesOfListsNeverToldApart)
+        orderedSitesOfListsNeverToldApart.set(orderedSiteOf[index].index());
+    tables.sites.sitesOfListsNeverToldApart = WTF::move(orderedSitesOfListsNeverToldApart);
 
     auto renumber = [&](AllocationSiteID& site) {
         if (site)
@@ -162,7 +171,7 @@ static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& t
         renumber(node.rootSite);
         renumber(node.stamp.site);
     }
-    AOT::sort(tables.sites.dataNodes, { }, [](const FlowDataNode& node) {
+    AOT::sortInLine(tables.sites.dataNodes, { }, [](const FlowDataNode& node) {
         return std::tuple(node.rootSite, node.ordinal);
     });
 }
@@ -327,41 +336,69 @@ private:
 
 } // anonymous namespace
 
-FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& build, const ListenerForSetsOutsideTypes* setsOutsideTypes)
+FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& build, const ListenerForSetsOutsideTypes* setsOutsideTypes, const JudgeOfUsesOfLibraryCode* goesOn)
 {
     RELEASE_ASSERT(&types == &program.types);
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
 
     PhaseTimes times(build, PassID::AnalyzeFlow);
-    if (build.options().admitsUnseenCode())
-        return FlowResults(createUnknownResultTables(program, build));
+    if (build.options().admitsUnseenCode()) {
+        FlowResults results(createUnknownResultTables(program, build));
+        if (goesOn)
+            (*goesOn)(reportUsesOfLibraryCode(results));
+        return results;
+    }
 
     bool runsEveryRuleOnceMore = build.options().verifiesAfterEveryStage || build.options().checksFlowFixpoint;
     ReportSet reports = build.options().reports;
     bool showsCauses = setsOutsideTypes || hasFlag(reports, ReportSet::Flow) || hasFlag(reports, ReportSet::Functions) || hasFlag(reports, ReportSet::Arrivals);
-    auto solution = makeUnique<ValueFlowSolution>(program, build, runsEveryRuleOnceMore ? ValueFlowSolver::Rounds::Due : ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
-        showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor, ValueFlowSolution::CoveredMembers::AreLeftOut);
+    auto solve = [&](ValueFlowSolver::Rounds rounds, ValueFlowSolution::Reports reports) {
+        return makeUnique<ValueFlowSolution>(program, build, rounds, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
+            showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor, ValueFlowSolution::CoveredMembers::AreLeftOut, reports);
+    };
+    // The rounds of the check run every rule again without what it remembers, and leave other requests behind than a build has. So the check has a solution of its own,
+    // and what is built is what is built without the check.
+    if (runsEveryRuleOnceMore) {
+        auto checked = solve(ValueFlowSolver::Rounds::Due, ValueFlowSolution::Reports::AreLeftOut);
+        if (build.options().checksFlowFixpoint)
+            reportRulesThatWereNotDue(checked->solver(), build);
+        times.didFinish("solve: the check that every rule is at rest"_s);
+    }
+    auto solution = solve(ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Reports::GoToBuild);
     times.didFinish("solve"_s);
-    RELEASE_ASSERT(solution->hasResult());
-    if (build.options().checksFlowFixpoint)
-        reportRulesThatWereNotDue(solution->solver(), build);
 
     FlowResultTables tables;
     ValueFlowResultInputs inputs { program, *solution, build };
+    ValueFlowUsesOfLibraryCode usesOfLibraryCode = findUsesOfLibraryCode(inputs);
+    if (goesOn && !(*goesOn)(reportUsesOfLibraryCode(usesOfLibraryCode.unseenCode.span(), usesOfLibraryCode.loadsOfMachineCode.span(), usesOfLibraryCode.builtinUses.span(), usesOfLibraryCode.libraryFunctionsLacked.span(), usesOfLibraryCode.exportsThatSpiesReplace.span(), usesOfLibraryCode.builtinsThatTestsReplace.span(), usesOfLibraryCode.namesThatTestsAdd.span()))) {
+        build.destroyLater(WTF::move(solution));
+        return FlowResults(createUnknownResultTables(program, build));
+    }
+    times.didFinish("uses of library code"_s);
+    std::unique_ptr<ValueFlowBirthsOfUnknownObject> birthsOfUnknownObject;
+    if (solution->solver().input().remembersWhoLoggedEachEdge) {
+        birthsOfUnknownObject = makeUnique<ValueFlowBirthsOfUnknownObject>(inputs);
+        inputs.birthsOfUnknownObject = birthsOfUnknownObject.get();
+        times.didFinish("where values of unknown type begin"_s);
+    }
     ValueFlowLayoutsOfSites layoutsOfSites;
     ValueFlowClassesOfBuiltinResults classesOfBuiltinResults;
     std::unique_ptr<ValueFlowHeapIndex> heapIndex;
     std::unique_ptr<ValueFlowNodesAskedFor> nodesAskedFor;
+    std::unique_ptr<LedgerOfClassesAndClosures> classesAndClosures;
 
     Vector<ValueFlowWriteUnderNewName> writesUnderNewNames;
     ValueFlowStampedCalls calls;
     BitVector symbolsCreatedOnce;
     std::unique_ptr<ValueFlowUsesOfHeap, ValueFlowUsesOfHeapDeleter> usesOfHeap;
-    std::unique_ptr<ValueFlowAccessesThroughObjects, ValueFlowAccessesThroughObjectsDeleter> accessesThroughObjects;
-    std::unique_ptr<ValueFlowOperationsOnLocations, ValueFlowOperationsOnLocationsDeleter> operationsOnLocations;
-    ValueFlowVariablesOnObjects variablesOnObjects;
+    Ledger ledger(inputs);
+    std::unique_ptr<LedgerOfVariables> ledgerOfVariables = makeUnique<LedgerOfVariables>(program);
+    std::unique_ptr<LedgerPart> ledgerOfBuiltinObjects;
+    inputs.ledger = &ledger;
+    inputs.ledgerOfVariables = ledgerOfVariables.get();
     std::unique_ptr<ValueFlowNumbersOfValues> numbersOfValues;
     ValueFlowConstructions constructions;
+    FlowCallsOfProgram callsOfProgram;
     ValueFlowFieldContents fieldContents;
     std::unique_ptr<ValueFlowWritesToContainers, ValueFlowWritesToContainersDeleter> writesToContainers;
     BitVector layoutsOfDictionaries;
@@ -391,8 +428,8 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         tables = createUnknownResultTables(program, build);
         tables.sites.accessSiteLosses.grow(tables.application->accessSites.numberOfSites());
     });
-    auto classesOfResults = add("classes of what built-ins answer"_s, { }, [&](PhaseTimes&) {
-        classesOfBuiltinResults = computeClassesOfBuiltinResults(inputs);
+    auto classesOfResults = add("classes of what built-ins answer"_s, { indexOfHeap }, [&](PhaseTimes&) {
+        classesOfBuiltinResults = computeClassesOfBuiltinResults(inputs, *heapIndex);
     });
     auto layoutsPicked = add("layouts that allocations pick"_s, { }, [&](PhaseTimes&) {
         layoutsOfSites = findLayoutsOfSites(inputs);
@@ -400,8 +437,24 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto firstResults = steps->add({ indexOfHeap, askedFor, unknownResults, classesOfResults, layoutsPicked }, [&] {
         inputs.heapIndex = heapIndex.get();
         inputs.nodesAskedFor = nodesAskedFor.get();
+        solution->letGoOfRecordsAskedFor();
         inputs.classesOfBuiltinResults = &classesOfBuiltinResults;
+        Vector<ValueFlowObjectID> madeForSuperCalls;
+        for (auto [object, builtinClass] : classesOfBuiltinResults) {
+            if (builtinClass && !program.builtins().at(builtinClass).hasClosureInstances && inputs.universe().layoutOf(ValueFlowObjectID(object)))
+                madeForSuperCalls.append(ValueFlowObjectID(object));
+        }
+        BorrowedValueSetMaker maker(inputs.makerPool());
+        inputs.objectsMadeForSuperCalls = maker.get().of(madeForSuperCalls.span());
         inputs.layoutsOfSites = &layoutsOfSites;
+    });
+    auto ledgerOfClosures = add("ledger: classes and closures"_s, { firstResults }, [&](PhaseTimes&) {
+        classesAndClosures = makeUnique<LedgerOfClassesAndClosures>(inputs);
+        inputs.classesAndClosures = classesAndClosures.get();
+        ledger.install(LedgerPartKind::ClassesAndClosures, *classesAndClosures);
+    });
+    add("operations without a value"_s, { firstResults }, [&](PhaseTimes&) {
+        reportOperationsWithoutValue(inputs);
     });
     auto stampedCalls = add("calls"_s, { firstResults }, [&](PhaseTimes&) {
         calls = computeCallResults(inputs, types, tables);
@@ -409,8 +462,9 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto usesOfTheHeap = add("uses of the heap"_s, { stampedCalls }, [&](PhaseTimes&) {
         usesOfHeap = computeUsesOfHeap(inputs);
     });
-    auto executions = add("executions"_s, { stampedCalls }, [&](PhaseTimes& timesOfStep) {
+    auto executions = add("executions"_s, { stampedCalls, ledgerOfClosures }, [&](PhaseTimes& timesOfStep) {
         computeFunctionResults(inputs, calls, tables);
+        inputs.functionsNamedByUnsolvedCode = &calls.functionsNamedByUnsolvedCode;
         computeSinkOperandResults(inputs, calls, tables);
         timesOfStep.didFinish("functions"_s);
         computeExecutionResults(inputs, calls, tables);
@@ -423,25 +477,26 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         }
     });
     auto accessesCollected = add("variables on objects: accesses"_s, { executions }, [&](PhaseTimes&) {
-        accessesThroughObjects = collectAccessesThroughObjects(inputs, calls);
+        collectAccessesThroughHolders(inputs, *ledgerOfVariables);
     });
     auto operationsNoted = add("locations: operations"_s, { executions }, [&](PhaseTimes&) {
-        operationsOnLocations = noteOperationsOnLocations(inputs, tables);
+        reportOperationsOnVariables(inputs, tables, *ledgerOfVariables);
     });
     auto variables = add("variables on objects"_s, { accessesCollected, usesOfTheHeap }, [&](PhaseTimes&) {
-        variablesOnObjects = computeVariablesOnObjects(inputs, *accessesThroughObjects, *usesOfHeap);
-        accessesThroughObjects = nullptr;
-        inputs.variablesOnObjects = &variablesOnObjects;
+        reportAccessesThroughHolders(inputs, *usesOfHeap, *ledgerOfVariables);
     });
     auto locations = add("locations"_s, { variables, operationsNoted }, [&](PhaseTimes&) {
-        computeLocationResults(inputs, *operationsOnLocations, tables);
-        operationsOnLocations = nullptr;
+        computeLocationResults(inputs, ledger, *ledgerOfVariables, tables);
     });
     auto numbersPrepared = add("numbers: prepared"_s, { executions }, [&](PhaseTimes&) {
         ValueFlowHeapView heap(inputs);
         numbersOfValues = prepareNumbersOfPositions(inputs, heap, tables);
     });
-    auto numbers = add("numbers"_s, { numbersPrepared, locations }, [&](PhaseTimes&) {
+    auto order = add("order"_s, { locations }, [&](PhaseTimes&) {
+        callsOfProgram = computeOrderResults(inputs, calls, tables);
+    });
+    // A static field is a place to follow only where every read comes behind its store.
+    auto numbers = add("numbers"_s, { numbersPrepared, locations, order }, [&](PhaseTimes&) {
         computeNumbersOfPositions(*numbersOfValues, tables);
         inputs.numbersOfValues = numbersOfValues.get();
     });
@@ -458,20 +513,32 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto classes = add("classes"_s, { locations }, [&](PhaseTimes&) {
         computeClassResults(inputs, tables);
     });
-    auto order = add("order"_s, { locations }, [&](PhaseTimes&) {
-        computeOrderResults(inputs, calls, tables);
-    }, TaskPriority::Background);
+    auto accessorsDefinedLate = add("classes: accessors defined late"_s, { order, classes }, [&](PhaseTimes&) {
+        noteAccessorsDefinedAfterObjectsAreMade(inputs, callsOfProgram, tables);
+        build.destroyLater(WTF::move(callsOfProgram));
+    });
     auto builtins = add("built-ins"_s, { stampedCalls }, [&](PhaseTimes&) {
-        writesUnderNewNames = computeBuiltinResults(inputs, tables);
+        writesUnderNewNames = computeBuiltinResults(inputs, WTF::move(usesOfLibraryCode), tables, ledgerOfBuiltinObjects);
+        ledger.install(LedgerPartKind::BuiltinLocations, *ledgerOfBuiltinObjects);
     }, TaskPriority::Background);
+    ValueSetID listsToldApart = ValueSets::anything;
     auto closuresNeverCompared = add("closures never compared"_s, { storesListed }, [&](PhaseTimes&) {
         ValueFlowHeapView heap(inputs);
-        computeClosuresNeverCompared(inputs, heap, tables);
+        listsToldApart = computeClosuresNeverCompared(inputs, heap, tables);
         computeLayoutsNeverHeldWeakly(inputs, heap, *usesOfHeap, tables);
     }, TaskPriority::Background);
-    auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, storesListed, builtins }, [&](PhaseTimes&) {
+    auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, accessorsDefinedLate, storesListed, builtins }, [&](PhaseTimes&) {
+        // From here on the ledger is asked about variables and fields alone.
+        ledger.remove(LedgerPartKind::ClassesAndClosures);
+        inputs.classesAndClosures = nullptr;
+        build.destroyLater(WTF::move(classesAndClosures));
+        ledger.remove(LedgerPartKind::BuiltinLocations);
+        build.destroyLater(WTF::move(ledgerOfBuiltinObjects));
+        solution->letGoOfNumbersOfUsers();
         findHoldersWithListedKeys(inputs, *usesOfHeap, tables.builtins);
         fieldContents = computeFieldResults(inputs, *usesOfHeap, constructions, tables);
+        build.destroyLater(WTF::move(constructions));
+        ledger.install(LedgerPartKind::Fields, ledgerOfFieldsIn(*usesOfHeap));
         kindsOfKeys = Vector<PropertyKeyKind>(program.types.numberOfPropertyKeys(), [&](size_t index) {
             return program.at(PropertyKeyID(static_cast<uint32_t>(index))).kind;
         });
@@ -492,15 +559,16 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         writesToContainers = nullptr;
         timesOfStep.didFinish("contents: types of contents"_s);
         inputs.containers = &containers;
-        stampAllocationsOfBuiltinInstances(inputs, containers, tables);
-        computeDataNodeResults(inputs, containers, types, tables);
+        stampAllocationsOfBuiltinInstances(inputs, containers, listsToldApart, tables);
+        computeDataNodeResults(inputs, containers, listsToldApart, types, tables);
         computeTypedResultResults(inputs, tables);
         orderAllocationSites(inputs.loops(), tables);
     });
     auto stampsOfAccesses = add("accesses: stamps"_s, { contents }, [&](PhaseTimes& timesOfStep) {
-        computeTypeResults(inputs, fieldContents, types, tables, setsOutsideTypes);
+        computeTypeResults(inputs, fieldContents, ledgerOfFieldsIn(*usesOfHeap), types, tables, setsOutsideTypes);
         timesOfStep.didFinish("types: positions"_s);
         computeLayoutsNeverStoredOtherTypes(inputs, fieldContents, types, tables);
+        replaceUnobservedDefinitions(inputs, types, tables);
         computeSymbolConstantResults(inputs, tables);
         timesOfStep.didFinish("types"_s);
         computeAccessResults(inputs, types, tables);
@@ -511,10 +579,14 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     });
     steps->run();
     tables.application->accessSites.valueOfSite = { };
+    if (birthsOfUnknownObject)
+        tables.sites.otherOrigins = birthsOfUnknownObject->takeOtherOrigins();
     inputs.heapIndex = nullptr;
     build.destroyLater(WTF::move(heapIndex));
     inputs.nodesAskedFor = nullptr;
     build.destroyLater(WTF::move(nodesAskedFor));
+    inputs.classesAndClosures = nullptr;
+    build.destroyLater(WTF::move(classesAndClosures));
     times.didFinish("the results behind the rounds"_s);
     recordLockedWritesUnderNewNames(program, types, writesUnderNewNames.span(), tables);
 
@@ -523,7 +595,10 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     build.destroyLater(WTF::move(containers));
     build.destroyLater(WTF::move(fieldContents));
     build.destroyLater(WTF::move(constructions));
-    build.destroyLater(WTF::move(variablesOnObjects));
+    inputs.ledger = nullptr;
+    inputs.ledgerOfVariables = nullptr;
+    build.destroyLater(WTF::move(ledgerOfVariables));
+    build.destroyLater(WTF::move(ledgerOfBuiltinObjects));
     build.destroyLater(WTF::move(solution));
     return FlowResults(WTF::move(tables));
 }

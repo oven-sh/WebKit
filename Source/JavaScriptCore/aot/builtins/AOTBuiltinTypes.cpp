@@ -95,7 +95,7 @@ static ClassPart closedInstancePartOf(const Program& program, const BuiltinTypeP
     if (!contentsArena || part.contents.empty())
         return result;
 
-    result.contents = contentsOfInstancePart(program.builtins(), part, [&](const BuiltinSlotContents& declared) {
+    result.writtenContents = contentsOfInstancePart(program.builtins(), part, [&](const BuiltinSlotContents& declared) {
         return contentsArena->intern(closedTypeOf(program, declared.type, contentsArena));
     });
     return result;
@@ -111,7 +111,7 @@ static ClassPart closedTuplePartOf(const Program& program, const BuiltinLayout& 
     Type element = Type::never();
     for (const BuiltinLayoutField& field : tuple.fields)
         element = element.unionWith(closedTypeOf(program, field.type, contentsArena), *contentsArena);
-    result.contents.append(contentsArena->intern(element));
+    result.writtenContents.append(contentsArena->intern(element));
     return result;
 }
 
@@ -368,6 +368,7 @@ public:
 
     TypeFit run();
     bool needsPristineProof() const { return m_needsPristineProof; }
+    bool fitsIfPristine() const { return m_fitsIfPristine; }
 
 private:
     bool has(BuiltinTypeFlag flag) const { return m_tested.flags.contains(flag); }
@@ -386,6 +387,15 @@ private:
     {
         m_isInside &= fit == TypeFit::Inside;
         m_isOutside &= fit == TypeFit::Outside;
+        m_fitsIfPristine &= fit == TypeFit::Inside;
+    }
+
+    void add(LayoutID layout)
+    {
+        TypeFit fit = fitOfLayout(layout);
+        m_isInside &= fit == TypeFit::Inside;
+        m_isOutside &= fit == TypeFit::Outside;
+        m_fitsIfPristine &= fit == TypeFit::Inside || isNeverPristineInstance(layout);
     }
 
     TypeFit fitOfMember(BuiltinPrimitive member) const { return has(member) ? TypeFit::Inside : TypeFit::Outside; }
@@ -395,6 +405,7 @@ private:
     TypeFit fitOfFunctions() const;
     TypeFit fitOfBuiltin(BuiltinID) const;
     TypeFit fitOfLayout(LayoutID) const;
+    bool isNeverPristineInstance(LayoutID) const;
     TypeFit fitOfClassPart(const ClassPart&);
     TypeFit fitOfContents(const ClassPart&, const BuiltinTypePart& admitting) const;
 
@@ -406,11 +417,13 @@ private:
     bool m_isInside { true };
     bool m_isOutside { true };
     bool m_needsPristineProof { false };
+    bool m_fitsIfPristine { true };
 };
 
 struct FitWithoutProofs {
     TypeFit fit { TypeFit::Unknown };
     bool needsPristineProof { false };
+    bool fitsIfPristine { false };
 };
 
 } // anonymous namespace
@@ -472,7 +485,7 @@ TypeFit FitWalk::run()
     for (BuiltinID builtin : m_operand.builtins)
         add(fitOfBuiltin(builtin));
     for (LayoutID layout : membersOf(m_program, m_operand))
-        add(fitOfLayout(layout));
+        add(layout);
     for (const ClassPart& part : m_operand.classes)
         add(fitOfClassPart(part));
 
@@ -506,6 +519,7 @@ TypeFit FitWalk::fitOfPrimitive(PrimitiveSet primitive) const
     case PrimitiveSet::BigInt:
         return fitOfMember(BuiltinPrimitive::BigInt);
     case PrimitiveSet::Absent:
+    case PrimitiveSet::Unspecified:
         return TypeFit::Outside;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -575,13 +589,20 @@ TypeFit FitWalk::fitOfLayout(LayoutID layout) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool FitWalk::isNeverPristineInstance(LayoutID layout) const
+{
+    BuiltinClassID builtinClass = m_program.at(layout).writtenBuiltinBase;
+    const BuiltinTypePart* admitting = builtinClass ? findPartAdmitting(m_table, m_tested, builtinClass) : nullptr;
+    return admitting && !admitting->pristine.isEmpty() && admitting->contents.empty();
+}
+
 TypeFit FitWalk::fitOfContents(const ClassPart& part, const BuiltinTypePart& admitting) const
 {
     bool areInside = std::ranges::all_of(admitting.contents, [&](const BuiltinSlotContents& tested) {
         std::optional<uint8_t> index = m_table.at(tested.slot).indexInType;
         if (!index || !part.contentsAreProven)
             return false;
-        OperandFit fit = fitOf(m_context, part.contentsAt(*index), tested.type);
+        OperandFit fit = fitOf(m_context, *part.provenContentsAt(*index), tested.type);
         return fit.fit == TypeFit::Inside && !fit.unprovenPristine;
     });
     return areInside ? TypeFit::Inside : TypeFit::Unknown;
@@ -615,25 +636,25 @@ static FitWithoutProofs fitWithoutProofs(const TypingContext& context, TypeID op
 {
     const BuiltinTable& table = context.program.builtins();
     if (!testedID || table.at(testedID).isAnything())
-        return { TypeFit::Inside, false };
+        return { TypeFit::Inside, false, true };
 
     const BuiltinType& tested = table.at(testedID);
     if (std::ranges::any_of(tested.parts, isRelativeToOperands))
         return { TypeFit::Unknown, false };
     if (!operandOrNotPassed) {
         bool takesOmittedOperand = tested.primitives.containsAny({ BuiltinPrimitive::NotPassed, BuiltinPrimitive::Undefined });
-        return { takesOmittedOperand ? TypeFit::Inside : TypeFit::Outside, false };
+        return { takesOmittedOperand ? TypeFit::Inside : TypeFit::Outside, false, takesOmittedOperand };
     }
 
     const Type& operand = context.types.at(operandOrNotPassed);
     if (operand.isNever())
-        return { TypeFit::Inside, false };
+        return { TypeFit::Inside, false, true };
     if (!operand.isJavaScriptValue())
         return { TypeFit::Unknown, false };
 
     FitWalk walk(context, operand, tested);
     TypeFit fit = walk.run();
-    return { fit, fit == TypeFit::Inside && walk.needsPristineProof() };
+    return { fit, fit == TypeFit::Inside && walk.needsPristineProof(), walk.fitsIfPristine() };
 }
 
 OperandFit fitOf(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested)
@@ -649,7 +670,7 @@ OperandFit fitOf(const TypingContext& context, TypeID operandOrNotPassed, Builti
 
 bool fitsIfPristine(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested)
 {
-    return fitWithoutProofs(context, operandOrNotPassed, tested).fit == TypeFit::Inside;
+    return fitWithoutProofs(context, operandOrNotPassed, tested).fitsIfPristine;
 }
 
 Type typeOfBuiltinConstant(const BuiltinTable& table, BuiltinID id)
@@ -668,9 +689,30 @@ Type typeOfBuiltinConstant(const BuiltinTable& table, BuiltinID id)
 
 TypedArrayType typedArrayTypeOf(const BuiltinTable& table, const Type& type)
 {
-    const ClassPart* part = type.singleBuiltinClass();
-    BuiltinClassID typedArrayClass = part ? table.typedArrayClassOf(part->builtinClass) : BuiltinClassID();
-    return typedArrayClass ? table.at(typedArrayClass).typedArrayType : NotTypedArray;
+    if (type.primitives & ~Primitive::UndefinedOrNull || !type.hasOnlyClassObjects() || type.classes.isEmpty())
+        return NotTypedArray;
+    TypedArrayType common = table.typedArrayTypeOf(type.classes[0].builtinClass);
+    for (const ClassPart& part : type.classes) {
+        if (table.typedArrayTypeOf(part.builtinClass) != common)
+            return NotTypedArray;
+    }
+    return common;
+}
+
+bool hasOnlyMapsAndSets(const Program& program, const Type& type)
+{
+    auto isMapOrSet = [](BuiltinClassID builtinClass) {
+        return builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set;
+    };
+    if (!type.isObject() || type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty())
+        return false;
+    for (const ClassPart& part : type.classes) {
+        if (!isMapOrSet(part.builtinClass))
+            return false;
+    }
+    return std::ranges::all_of(membersOf(program, type), [&](LayoutID layout) {
+        return isMapOrSet(builtinBaseClassOf(program, layout));
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

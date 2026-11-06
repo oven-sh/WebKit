@@ -103,7 +103,7 @@ static OperandCode describeCodeOf(const Program& program, const BuiltinOverload&
         description.addOwn(heapCapabilityEffects);
         description.addThrow();
     }
-    if (overload.isUndeclared()) {
+    if (overload.isUndeclared() || program.callsUnlockedMemberThatNoRowNames(overload.builtin)) {
         description.addUnknownCode();
         return OperandCode::IsDescribed;
     }
@@ -241,7 +241,7 @@ static const Type& provenElementTypeOf(const Program& program, const Type& list)
     const ClassPart* part = list.singleBuiltinClass();
     if (!part || !part->contentsAreProven)
         return program.at(TypeTable::anything);
-    return program.at(part->contentsAt(program.builtins(), ContentsSlot::Element));
+    return program.at(*part->provenContentsAt(program.builtins(), ContentsSlot::Element));
 }
 
 static void describeListElements(const Program& program, const BuiltinOverload& overload, std::span<const TypeID> arguments, EffectDescription& description)
@@ -343,6 +343,33 @@ void describeBuiltinCall(const Program& program, const Function& function, const
     describeTypedResult(program, call.overload, value.expectedResult(), description);
 }
 
+// The operands matched no overload when the call was resolved, so the call counts as one that may be passed anything. Here it is judged by its operands' current types.
+EffectDescription describeUnmatchedCallByOperandTypes(const Program& program, const Function& function, const Value& value)
+{
+    BuiltinCall call = builtinCallOf(program, value);
+    RELEASE_ASSERT(call.form == BuiltinCallForm::AnyReceiver);
+    BuiltinOperandTypes types = provenOperandTypesOf(function, call);
+    const BuiltinTable& table = program.builtins();
+    const BuiltinOverload& named = table.at(call.overload);
+    EffectDescription description;
+    for (const BuiltinOverload& overload : table.overloadsOf(table.canonicalID(named.builtin))) {
+        if (overload.mode == named.mode)
+            describeCodeOf(program, overload, description);
+    }
+    description.addThrow();
+    describeOperandsOfCall(program, named.builtin, named.mode, BuiltinCallForm::Whole, types.receiver ? types.receiver : TypeTable::undefined, types.arguments.span(), description);
+    if (value.needsPristineReceiver())
+        description.addOwn(dependencyReadsOf(program, Proof::Pristine));
+    describeTypedResult(program, call.overload, value.expectedResult(), description);
+    return description;
+}
+
+static bool isArraySearchForNonString(const Program& program, InlineBuiltin builtin, std::span<const TypeID> arguments)
+{
+    bool isArraySearch = builtin == InlineBuiltin::ArrayIndexOf || builtin == InlineBuiltin::ArrayIncludes;
+    return isArraySearch && !arguments.empty() && !(program.at(arguments[0]).primitives & Primitive::AnyString);
+}
+
 static void describeInline(const Program& program, const Function& function, const BuiltinCall& call, InlineBuiltin builtin, EffectDescription& description)
 {
     BuiltinOperandTypes types = provenOperandTypesOf(function, call);
@@ -354,6 +381,8 @@ static void describeInline(const Program& program, const Function& function, con
 
     const BuiltinOverload& overload = program.builtins().at(call.overload);
     Effects bound = declaredBoundOf(builtin);
+    if (isArraySearchForNonString(program, builtin, types.arguments.span()))
+        bound = declaredBoundOf(InlineBuiltin::ArrayAt);
     if (bound.mayThrow && overload.onlyPropagatesErrors())
         bound.mayThrow = ThrowEffect::onlyForLackOfMemory();
     describeBound(bound, description);

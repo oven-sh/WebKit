@@ -1,4 +1,4 @@
-# A test of a position is answered on a virtual array where the type of the position says on which side of the end it lies. A read that is kept on the cell has the allocation for its guard, which proves nothing about a position, so the array is not sunk
+# A test of a position is answered on a virtual array where the type of the position says on which side of the end it lies. An access that is kept on the cell has the allocation for its guard, which proves nothing about a position, so the array is not sunk
 # FORM: Prepared optimizing
 # OPTIONS: check=VerifyEachPass
 # RUN: pass SinkAllocations
@@ -92,7 +92,7 @@ function f2 name="insideTheLongerLiteralAlone" parameters=[{type=boolean}, {type
 # CHECK: Switch v10 cases=[0] -> case [[join2]]([[first2]]), otherwise [[join2]]([[second2]])
 }
 
-# The read says more of its answer than is known of the elements, so it is kept on the cell.
+# The read says more of its answer than the elements do by themselves. What is proven of the contents holds of each of them.
 function f3 name="oneLiteralOfElementsThatMayBeAnything" parameters=[{type=anything}, {type=anything}, {type=int[1, 9]}] results=[{type=anything}] {
     v3 = NewArray v0, v1 contents=string
     v4 = AssumeType v3 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
@@ -110,8 +110,30 @@ function f3 name="oneLiteralOfElementsThatMayBeAnything" parameters=[{type=anyth
     Return v11
   b4():
     Return
-# CHECK: [[test3]]: boolean = IsInBounds [[array3]], [[position3]]
-# CHECK-NEXT: Branch [[test3]] -> taken [[inside3]](| 0), notTaken
-# CHECK: [[inside3]]([[guard3]]: guard):
-# CHECK-NEXT: = GetArrayElement [[array3]], [[position3]], [[guard3]] arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NOT: NewArray
+# CHECK-NOT: IsInBounds
+# CHECK: [[first3]]: string = AssumeType v0 provenType=string
+# CHECK-NEXT: [[second3]]: string = AssumeType v1 provenType=string
+# CHECK-NEXT: Switch v7 cases=[0] -> case [[join3]]([[first3]]), otherwise [[join3]]([[second3]])
+}
+
+# A store at a position that only its type tells is kept on the cell.
+function f4 name="storeAtThePosition" parameters=[{type=string}, {type=string}, {type=int[1, 9]}] results=[{type=anything}] {
+    v3 = NewArray v0, v1 contents=string
+    v4 = AssumeType v3 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+    v5 = Integer
+    v6 = Less v5, v2
+    Branch v6 -> taken b1(| 0), notTaken b3()
+  b1(v7):
+    v8 = IsInBounds v4, v7
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9):
+    PutArrayElement v4, v7, v1, v9 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+    Return v4
+  b3():
+    Return
+# CHECK: [[test4]]: boolean = IsInBounds [[array4]], [[position4]]
+# CHECK-NEXT: Branch [[test4]] -> taken [[inside4]](| 0), notTaken
+# CHECK: [[inside4]]([[guard4]]: guard):
+# CHECK-NEXT: PutArrayElement [[array4]], [[position4]], v1, [[guard4]] arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
 }

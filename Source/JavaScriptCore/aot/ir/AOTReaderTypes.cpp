@@ -11,6 +11,7 @@
 #include "AOTOrderedInterning.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
+#include "AOTTypeRelations.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
@@ -235,6 +236,26 @@ static void forEachGroupInParallel(const ParallelLoops& loops, std::span<const u
 
 static constexpr uint64_t pairOf(uint32_t first, uint32_t second) { return static_cast<uint64_t>(first) << 32 | second; }
 
+template<typename Listed>
+static void listSecondsByFirst(std::span<const Vector<uint64_t>> pairsInOrderOfSeconds, Vector<Vector<Listed>>& lists)
+{
+    Vector<uint32_t> sizes(FillWith { }, lists.size(), 0u);
+    for (const Vector<uint64_t>& pairs : pairsInOrderOfSeconds) {
+        for (uint64_t pair : pairs)
+            ++sizes[pair >> 32];
+    }
+    for (size_t first = 0; first < lists.size(); ++first) {
+        if (!sizes[first])
+            continue;
+        lists[first] = { };
+        lists[first].reserveInitialCapacity(sizes[first]);
+    }
+    for (const Vector<uint64_t>& pairs : pairsInOrderOfSeconds) {
+        for (uint64_t pair : pairs)
+            lists[pair >> 32].append(Listed(static_cast<uint32_t>(pair)));
+    }
+}
+
 AOT_THRESHOLD(size_t, maxLayoutsMetByNames, 128);
 
 static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, const Wire::Sections& checkedSections, const TellingFields& tellingFields)
@@ -254,12 +275,7 @@ static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, 
                 found.append(pairOf(name, index));
         }
     });
-    parallelSort(loops, layoutsByName.mutableSpan(), std::less<uint64_t> { });
-    forEachGroupInParallel(loops, layoutsByName.span(), [&](uint32_t name, std::span<const uint64_t> group) {
-        layoutsWithName[name] = Vector<uint32_t>(group.size(), [&](size_t index) {
-            return static_cast<uint32_t>(group[index]);
-        });
-    });
+    listSecondsByFirst(singleElementSpan(layoutsByName), layoutsWithName);
 
     Vector<WireTypeConversion> met = collectInParallel<WireTypeConversion>(loops, numberOfLayouts, [&](unsigned type, Vector<WireTypeConversion>& found) {
         if (!isStructuralType(layouts[type]))
@@ -334,12 +350,12 @@ static DeclaredFamilies collectDeclaredMembers(const ParallelLoops& loops, const
     uint32_t numberOfLayouts = static_cast<uint32_t>(layouts.size());
     DeclaredFamilies families { Vector<Vector<LayoutID>>(layouts.size()), BitVector(layouts.size()) };
     Vector<Vector<uint32_t>> stampsOfWorkers(loops.width());
-    Vector<Vector<uint64_t>> foundByWorkers(loops.width());
-    forEachIndexInParallel(loops, (numberOfLayouts + layoutsPerTask - 1) / layoutsPerTask, [&](unsigned task, unsigned worker) {
+    Vector<Vector<uint64_t>> foundByTasks((numberOfLayouts + layoutsPerTask - 1) / layoutsPerTask);
+    forEachIndexInParallel(loops, static_cast<unsigned>(foundByTasks.size()), [&](unsigned task, unsigned worker) {
         Vector<uint32_t>& stamps = stampsOfWorkers[worker];
         if (stamps.isEmpty())
             stamps.fill(0u, layouts.size());
-        Vector<uint64_t>& found = foundByWorkers[worker];
+        Vector<uint64_t>& found = foundByTasks[task];
         Vector<uint32_t, 16> worklist;
         for (uint32_t index = task * layoutsPerTask, end = std::min(numberOfLayouts, index + layoutsPerTask); index < end; ++index) {
             if (isEnvironment(layouts[index])) {
@@ -366,22 +382,13 @@ static DeclaredFamilies collectDeclaredMembers(const ParallelLoops& loops, const
             }
         }
     });
-    ParallelArray<uint64_t> reachedByMember = ParallelArray<uint64_t>::concatenationOf(loops, WTF::move(foundByWorkers));
-    parallelSort(loops, reachedByMember.mutableSpan(), std::less<uint64_t> { });
-    Vector<uint8_t> hasMembersWithoutLayout(FillWith { }, layouts.size(), static_cast<uint8_t>(0));
-    forEachGroupInParallel(loops, reachedByMember.span(), [&](uint32_t reached, std::span<const uint64_t> group) {
-        Vector<LayoutID>& members = families.members[reached];
-        members.reserveInitialCapacity(group.size());
-        for (uint64_t pair : group) {
+    listSecondsByFirst(foundByTasks.span(), families.members);
+    for (const Vector<uint64_t>& found : foundByTasks) {
+        for (uint64_t pair : found) {
             uint32_t member = static_cast<uint32_t>(pair);
-            members.append(LayoutID(member));
             if (!isEnvironment(layouts[member]) && has(layouts[member], LayoutFlags::HasMembersWithoutLayout))
-                hasMembersWithoutLayout[reached] = 1;
+                families.hasMembersWithoutLayout.quickSet(pair >> 32);
         }
-    });
-    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        if (hasMembersWithoutLayout[index])
-            families.hasMembersWithoutLayout.quickSet(index);
     }
     return families;
 }
@@ -511,7 +518,7 @@ bool Reader::computeDeclaredMembers()
         m_typeParametersWithoutFamily = BitVector(numberOfLayouts);
         m_viewsWithoutLayouts = BitVector(numberOfLayouts);
         for (size_t index = 0; index < numberOfRecords<LayoutID>(); ++index)
-            m_declaredMembers.append(m_program.types.intern(LayoutSet { { LayoutID(index) }, true }));
+            m_declaredMembers.append(m_program.types.intern(LayoutSet::complete({ LayoutID(index) })));
         return true;
     }
 
@@ -540,7 +547,7 @@ bool Reader::computeDeclaredMembers()
     Vector<uint8_t> isViewWithoutLayouts(FillWith { }, numberOfLayouts, static_cast<uint8_t>(0));
     forEachIndexInParallel(m_build.parallelLoops(), static_cast<unsigned>(numberOfLayoutIDs), [&](unsigned index) {
         if (index >= numberOfLayouts) {
-            sets[index] = LayoutSet { { LayoutID(index) }, true };
+            sets[index] = LayoutSet::complete({ LayoutID(index) });
             return;
         }
         Vector<LayoutID>& members = families.members[index];
@@ -551,7 +558,7 @@ bool Reader::computeDeclaredMembers()
             isViewWithoutLayouts[index] = 1;
             members.append(LayoutID(index));
         }
-        sets[index] = LayoutSet { WTF::move(members), true };
+        sets[index] = LayoutSet::complete(WTF::move(members));
         canonicalize(sets[index]);
     });
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
@@ -606,10 +613,10 @@ static Vector<Vector<FunctionID>> collectFunctionFamilies(const ParallelLoops& l
     uint32_t numberOfFunctions = static_cast<uint32_t>(functions.size());
     Vector<Vector<FunctionID>> families(functions.size());
     Vector<Vector<uint32_t>> stampsOfWorkers(loops.width());
-    Vector<Vector<uint64_t>> foundByWorkers(loops.width());
-    forEachIndexInParallel(loops, (numberOfFunctions + functionsPerTask - 1) / functionsPerTask, [&](unsigned task, unsigned worker) {
+    Vector<Vector<uint64_t>> foundByTasks((numberOfFunctions + functionsPerTask - 1) / functionsPerTask);
+    forEachIndexInParallel(loops, static_cast<unsigned>(foundByTasks.size()), [&](unsigned task, unsigned worker) {
         Vector<uint32_t>& stamps = stampsOfWorkers[worker];
-        Vector<uint64_t>& found = foundByWorkers[worker];
+        Vector<uint64_t>& found = foundByTasks[task];
         for (uint32_t index = task * functionsPerTask, end = std::min(numberOfFunctions, index + functionsPerTask); index < end; ++index) {
             if (isSignature(functions[index]))
                 continue;
@@ -624,13 +631,7 @@ static Vector<Vector<FunctionID>> collectFunctionFamilies(const ParallelLoops& l
             });
         }
     });
-    ParallelArray<uint64_t> membersByType = ParallelArray<uint64_t>::concatenationOf(loops, WTF::move(foundByWorkers));
-    parallelSort(loops, membersByType.mutableSpan(), std::less<uint64_t> { });
-    forEachGroupInParallel(loops, membersByType.span(), [&](uint32_t type, std::span<const uint64_t> group) {
-        families[type] = Vector<FunctionID>(group.size(), [&](size_t index) {
-            return FunctionID(static_cast<uint32_t>(group[index]));
-        });
-    });
+    listSecondsByFirst(foundByTasks.span(), families);
     return families;
 }
 
@@ -680,6 +681,8 @@ Failure Reader::computeFunctionFamilies()
     Failure failureInBuiltins = firstOf(readInChunks(loops, numberOfFunctions, functionsPerChunk, [&](uint32_t index) -> Failure {
         RecordChecker checker(*this, { .kind = InternalErrorKind::Unknown, .function = FunctionID(index), .count = index });
         convertedBuiltins[index] = readBuiltins(checker, m_sections.functions[index].builtinMembers);
+        for (BuiltinID member : convertedBuiltins[index])
+            checker.require(isCallableBuiltin(m_builtins, member), InternalErrorKind::IdOutOfRange);
         return checker.takeFailure();
     }));
     if (failureInBuiltins)
@@ -692,7 +695,7 @@ Failure Reader::computeFunctionFamilies()
         for (size_t index = chunk * functionsPerChunk, end = std::min<size_t>(numberOfFunctions, index + functionsPerChunk); index < end; ++index) {
             if (isSignature(m_sections.functions[index]))
                 m_build.statistics().count(statisticForFamilyOf(families[index].size() + builtinMembers[index].size(), m_build.limit(LimitID::MaxDispatchCases)), 1);
-            sets[index] = CalleeSet { WTF::move(families[index]), WTF::move(builtinMembers[index]), true };
+            sets[index] = CalleeSet::complete(WTF::move(families[index]), WTF::move(builtinMembers[index]));
             canonicalize(sets[index]);
         }
     });
@@ -765,6 +768,8 @@ static SortedSet<BuiltinID> readBuiltins(RecordChecker& checker, Wire::Span span
         if (previous)
             checker.requireAscending(previous, builtin);
         previous = builtin;
+        // A constant is a primitive value. A type says which kind of primitive.
+        checker.require(builtins.at(builtin).kind != BuiltinKind::Constant, InternalErrorKind::IdOutOfRange);
         canonicalIDs.append(builtins.canonicalID(builtin));
     }
     return SortedSet<BuiltinID>(canonicalIDs.span());
@@ -777,29 +782,26 @@ bool Reader::readsAsAnything(std::span<const LayoutID> named) const
     });
 }
 
-void Reader::addLayouts(TypeAsRead& result, std::span<const LayoutID> named, bool hasMembersWithoutLayout) const
+void Reader::addLayouts(TypeAsRead& result, std::span<const LayoutID> named) const
 {
-    if (result.type.anyObject || (named.empty() && !hasMembersWithoutLayout))
+    if (result.type.anyObject || named.empty())
         return;
     if (m_form != IRForm::AsRead) {
-        result.layoutsToIntern = LayoutSet { Vector<LayoutID>(named), true, hasMembersWithoutLayout };
+        result.layoutsToIntern = LayoutSet::complete(Vector<LayoutID>(named));
         return;
     }
 
     if (named.size() == 1) {
-        LayoutSetID family = m_declaredMembers[named[0].index()];
-        if (!hasMembersWithoutLayout || m_program.at(family).hasMembersWithoutLayout) {
-            result.type.layouts = family;
-            return;
-        }
+        result.type.layouts = m_declaredMembers[named[0].index()];
+        return;
     }
 
-    LayoutSet families { { }, true, hasMembersWithoutLayout };
+    Vector<LayoutID> members;
     for (LayoutID layout : named) {
         const LayoutSet& family = m_program.at(m_declaredMembers[layout.index()]);
-        families.members.appendVector(family.members);
-        families.hasMembersWithoutLayout |= family.hasMembersWithoutLayout;
+        members.append(family.completeMembers().value());
     }
+    LayoutSet families = LayoutSet::complete(WTF::move(members));
     canonicalize(families);
     result.layoutsToIntern = WTF::move(families);
 }
@@ -812,22 +814,20 @@ void Reader::addFunctions(Type& type, std::span<const FunctionID> named) const
         type.functions = SortedSet<FunctionID>(named);
         return;
     }
-    if (type.anyFunction)
-        return;
 
     Vector<FunctionID, 8> members;
     Vector<BuiltinID, 4> builtinMembers(type.builtins.span());
     for (FunctionID function : named) {
         type.anyFunction |= isSignature(m_sections.functions[function.index()]);
-        const CalleeSet& family = m_program.at(m_functionFamilies[function.index()]);
-        if (family.functions.isEmpty() && family.builtins.isEmpty()) {
+        Callees family = *m_program.at(m_functionFamilies[function.index()]).all();
+        if (family.isEmpty()) {
             type.anyFunction = true;
             return;
         }
-        members.appendVector(family.functions);
-        builtinMembers.appendVector(family.builtins);
+        members.append(family.functions);
+        builtinMembers.append(family.builtins);
     }
-    if (members.size() > m_build.limit(LimitID::MaxFunctionsInType) || builtinMembers.size() > m_build.limit(LimitID::MaxBuiltinsInType)) {
+    if (members.size() > m_build.limit(LimitID::MaxFunctionsInType)) {
         type.anyFunction = true;
         return;
     }
@@ -912,7 +912,7 @@ bool Reader::readTypes()
                 uint32_t index = typesAtDepth[position];
                 Type& type = types[index];
                 for (size_t classIndex = 0; classIndex < type.classes.size(); ++classIndex) {
-                    auto& contents = type.classes[classIndex].contents;
+                    auto& contents = type.classes[classIndex].writtenContents;
                     std::span<const uint32_t> earlierTypes = contentsOf(index, classIndex);
                     contents.reserveInitialCapacity(earlierTypes.size());
                     for (uint32_t earlierType : earlierTypes) {
@@ -932,7 +932,7 @@ bool Reader::readTypes()
             return;
         bool hasChanged = false;
         for (ClassPart& part : types[index].classes) {
-            for (TypeID& contents : part.contents) {
+            for (TypeID& contents : part.writtenContents) {
                 if (!TypeTable::isProvisional(contents))
                     continue;
                 contents = interning.idAt(contents.index() & ~TypeTable::provisionalBit);
@@ -1020,7 +1020,7 @@ Failure Reader::readType(uint32_t index, TypeAsRead& result) const
     }
     if (m_form == IRForm::AsRead && std::ranges::any_of(layouts, [&](LayoutID layout) { return m_viewsWithoutLayouts.get(layout.index()); }))
         type.anyObject = true;
-    addLayouts(result, layouts.span(), flags.contains(TypeFlags::HasMembersWithoutLayout));
+    addLayouts(result, layouts.span());
     addFunctions(type, functions.span());
     if (result.layoutsToIntern) {
         canonicalize(*result.layoutsToIntern);
@@ -1062,7 +1062,7 @@ TypeID Reader::internType(uint32_t index, TypeAsRead&& read)
     Wire::Span checkedClasses = m_sections.types[index].classes;
     for (size_t position = 0; position < type.classes.size(); ++position) {
         Wire::Span checkedContents = m_sections.classParts[checkedClasses.start + position].contents;
-        auto& contents = type.classes[position].contents;
+        auto& contents = type.classes[position].writtenContents;
         contents.reserveInitialCapacity(checkedContents.count);
         for (uint32_t earlierType : m_sections.words.subspan(checkedContents.start, checkedContents.count))
             contents.append(m_types[earlierType]);
@@ -1150,7 +1150,7 @@ bool Reader::checkTypesAgainstLayouts()
         for (size_t index = chunk * recordsPerChunk, end = std::min<size_t>(isNamedByType.size(), index + recordsPerChunk); index < end; ++index) {
             if (!isNamedByType[index])
                 continue;
-            for (LayoutID layout : m_program.at(LayoutSetID(static_cast<uint32_t>(index))).members) {
+            for (LayoutID layout : m_program.at(LayoutSetID(static_cast<uint32_t>(index))).written()) {
                 if (m_program.at(layout).isEnvironment()) {
                     environmentInSet[index] = layout;
                     break;

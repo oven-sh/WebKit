@@ -178,7 +178,7 @@ export default b.declarations(
           uses: { target: [b.assignedFrom("sources")], sources: b.inspected },
           reads: inheritedProperties,
           writes: memberGuards,
-          implementation: b.hostCall,
+          implementation: b.inline("ObjectAssign", { otherwise: b.hostCall }),
         },
         ...wrapperOverloads((primitive, wrapper) => ({
           args: { target: primitive, sources: b.any.rest },

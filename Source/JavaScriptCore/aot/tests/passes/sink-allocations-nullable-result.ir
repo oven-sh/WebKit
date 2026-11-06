@@ -38,7 +38,7 @@ function f1 name="truthinessTest" parameters=[{type=number}] results=[{type=anyt
 # CHECK: b2():
 # CHECK: [[absent1]]: 2 = Integer integer=2
 # CHECK: Jump -> next b3([[absent1]], 
-# CHECK: b3([[tag1]]: i32, [[a1]]: number, {{*}}: number):
+# CHECK: b3([[tag1]]: i32, [[a1]]: number|unspecified, {{*}}: number|unspecified):
 # CHECK-NEXT: [[mask1]]: 1 = Integer integer=1
 # CHECK-NEXT: [[masked1]]:{{*}}= BitAnd [[tag1]], [[mask1]]
 # CHECK-NEXT: [[isPresent1]]: boolean = ToBoolean [[masked1]]
@@ -70,7 +70,7 @@ function f2 name="comparedWithNull" parameters=[{type=number}] results=[{type=an
     v10 = PropGet v7 key="b" receivers=[L0]
     Return v10
 # CHECK-NOT: NewObject
-# CHECK: b3([[tag2]]: i32, {{*}}: number, [[b2]]: number):
+# CHECK: b3([[tag2]]: i32, {{*}}: number|unspecified, [[b2]]: number|unspecified):
 # CHECK-NOT: StrictEq
 # CHECK: [[mask2]]: 2 = Integer integer=2
 # CHECK-NEXT: [[masked2]]:{{*}}= BitAnd [[tag2]], [[mask2]]
@@ -103,7 +103,7 @@ function f3 name="notUndefined" parameters=[{type=number}] results=[{type=anythi
     v10 = PropGet v7 key="a" receivers=[L0]
     Return v10
 # CHECK-NOT: NewObject
-# CHECK: b3([[tag3]]: i32, [[a3]]: number, {{*}}: number):
+# CHECK: b3([[tag3]]: i32, [[a3]]: number|unspecified, {{*}}: number|unspecified):
 # CHECK-NOT: StrictEq
 # CHECK: [[mask3]]: 2 = Integer integer=2
 # CHECK-NEXT: [[masked3]]:{{*}}= BitAnd [[tag3]], [[mask3]]
@@ -183,7 +183,7 @@ function f6 name="requiredWithoutTest" parameters=[{type=number}] results=[{type
     v9 = PropGet v8 key="a" receivers=[L0]
     Return v9
 # CHECK-NOT: NewObject
-# CHECK: b3([[tag6]]: i32, [[a6]]: number, {{*}}: number):
+# CHECK: b3([[tag6]]: i32, [[a6]]: number|unspecified, {{*}}: number|unspecified):
 # CHECK-NEXT: [[mask6]]: 2 = Integer integer=2
 # CHECK-NEXT: [[masked6]]:{{*}}= BitAnd [[tag6]], [[mask6]]
 # CHECK-NEXT: [[isNull6]]: boolean = ToBoolean [[masked6]]
@@ -239,9 +239,12 @@ function f8 name="returnedWhenPresent" parameters=[{type=number}] results=[{type
     Return
 # CHECK: b1():
 # CHECK-NOT: NewObject
-# CHECK: b3([[tag8]]: i32, [[a8]]: number, [[b8]]: number):
+# CHECK: b3([[tag8]]: i32, [[a8]]: number|unspecified, [[b8]]: number|unspecified):
 # CHECK: b4():
-# CHECK-NEXT: [[cell8]]:{{*}}= NewObject -, [[a8]], [[b8]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: [[a8There]]: number = AssumeType [[a8]], [[filled1]] provenType=number
+# CHECK-NEXT: [[b8There]]: number = AssumeType [[b8]], [[filled1]] provenType=number
+# CHECK-NEXT: [[cell8]]:{{*}}= NewObject -, [[a8There]], [[b8There]] layout=L0 fields=[0, 1]
 # CHECK-NEXT: Return [[cell8]]
 # CHECK-NOT: NewObject
 }
@@ -268,13 +271,16 @@ function f9 name="storedOnOnePath" parameters=[{type=number}] results=[{type=any
     Return
 # CHECK: b1():
 # CHECK-NOT: NewObject
-# CHECK: b3([[tag9]]: i32, [[a9]]: number, [[b9]]: number):
+# CHECK: b3([[tag9]]: i32, [[a9]]: number|unspecified, [[b9]]: number|unspecified):
 # CHECK: b4():
 # CHECK-NEXT: Switch [[tag9]] cases=[1] -> case [[present9]](), otherwise [[absent9]]()
 # CHECK: [[continuation9]]([[value9]]: null|L0):
 # CHECK-NEXT: PutModuleVariable [[value9]] variable=g0
 # CHECK: [[present9]]():
-# CHECK-NEXT: [[cell9]]:{{*}}= NewObject -, [[a9]], [[b9]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: [[filled2]]: fact = Specified
+# CHECK-NEXT: [[a9There]]: number = AssumeType [[a9]], [[filled2]] provenType=number
+# CHECK-NEXT: [[b9There]]: number = AssumeType [[b9]], [[filled2]] provenType=number
+# CHECK-NEXT: [[cell9]]:{{*}}= NewObject -, [[a9There]], [[b9There]] layout=L0 fields=[0, 1]
 # CHECK-NEXT: Jump -> next [[continuation9]]([[cell9]])
 # CHECK: [[absent9]]():
 # CHECK-NEXT: [[null9]]: null = Null
@@ -357,7 +363,7 @@ function f12 name="pairOrUndefinedDestructured" parameters=[{type=number}] resul
     Return
 # CHECK-NOT: NewArray
 # CHECK-NOT: DestructureIterable
-# CHECK: b3([[tag12]]: i32, [[first12]]: number, [[second12]]: number, 
+# CHECK: b3([[tag12]]: i32, [[first12]]: number|unspecified, [[second12]]: number|unspecified, 
 # CHECK: = BitAnd [[tag12]], 
 # CHECK: b4():
 # CHECK-NEXT: v11:{{*}}= Upcast [[first12]] castType=
@@ -395,6 +401,9 @@ function f14 name="narrowedValueUsedAfterOnePathBuiltIt" parameters=[{type=anyth
 # CHECK: b1():
 # CHECK-NOT: NewObject
 # CHECK: b5():
+# CHECK-NEXT: [[filled3]]: fact = Specified
+# CHECK-NEXT: {{*}}: number = AssumeType {{*}}, [[filled3]] provenType=number
+# CHECK-NEXT: {{*}}: number = AssumeType {{*}}, [[filled3]] provenType=number
 # CHECK-NEXT: [[early14]]: L0 = NewObject -, {{*}} layout=L0 fields=[0, 1]
 # CHECK-NEXT: = Call v0, -, [[early14]]
 # CHECK: [[cell14]]: L0 = 

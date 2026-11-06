@@ -14,6 +14,7 @@
 #include "AOTClaimChecks.h"
 #include "AOTCodeDescription.h"
 #include "AOTCodeSizeMap.h"
+#include "AOTEffectSummaries.h"
 #include "AOTElideStackChecks.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFrameMaps.h"
@@ -54,6 +55,27 @@ static_assert(B3::AirLimits::maxBytesAboveFrameRecord / stackAlignmentBytes() <=
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionCodeGenerator);
 
+// A loop is seldom reached on every way through its function: the test in front of it alone halves what is estimated for it. So the answer is not rounded up to a whole depth of loops.
+static double leastFrequencyOfWarmCode(const CodeGenerationInputs& inputs, FunctionID id)
+{
+    auto isWarmAt = [&](double frequency) {
+        return !isCold(inputs.heat.classOf(inputs.program, id, frequency)).predicted();
+    };
+    for (double warm = 1; warm <= 1000; warm *= frequencyConstants.iterationsPerLoop) {
+        if (!isWarmAt(warm))
+            continue;
+        if (warm == 1)
+            return warm;
+        double cold = warm / frequencyConstants.iterationsPerLoop;
+        for (unsigned step = 0; step < 8; ++step) {
+            double middle = (cold + warm) / 2;
+            (isWarmAt(middle) ? warm : cold) = middle;
+        }
+        return warm;
+    }
+    return std::numeric_limits<double>::infinity();
+}
+
 FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, FunctionID id, const Function& function, const FrameMaps& frameMaps)
 {
     bool savesFrameOnSuspend = frameMaps.numberOfSuspensions() || function.role == FunctionRole::CoroutineBody;
@@ -67,10 +89,12 @@ FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, F
         .isAsync = function.has(FunctionFlags::IsAsync),
         .rejectsOnThrow = rejectsOnThrow(inputs.program, function),
         .hasHandlers = std::ranges::any_of(function.blocks, [](const Block& block) { return !!block.handler; }),
-        .isCold = isCold(inputs.heat.of(inputs.program, id)),
-        .runsOnce = inputs.heat.of(inputs.program, id) == HeatClass::RunsOnce,
-        .isHot = isHot(inputs.heat.of(inputs.program, id)),
+        .smallestFrameTestedAtSetup = smallestFrameTestedAtSetup(inputs.stackChecks.of(id)),
+        .isCold = isCold(inputs.heat.of(inputs.program, id)).predicted(),
+        .runsOnce = inputs.heat.of(inputs.program, id).predicted() == HeatClass::RunsOnce,
+        .isHot = isHot(inputs.heat.of(inputs.program, id)).predicted(),
         .returnsAreUnlikely = !savesFrameOnSuspend && !function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }),
+        .leastFrequencyOfWarmCode = leastFrequencyOfWarmCode(inputs, id),
     };
 }
 
@@ -132,22 +156,22 @@ static BitVector findRareAirBlocks(const B3::Air::Code& code)
 BlockColdnessRule::BlockColdnessRule(const CodeGenerationInputs& inputs, FunctionID id)
     : m_inputs(inputs)
     , m_id(id)
-    , m_activations(inputs.heat.activationsOf(inputs.program, id))
+    , m_activations(inputs.heat.activationsOf(inputs.program, id).predicted())
     // Nothing says that a compact function runs, and a failed test at an entrance is expected of no call.
-    , m_isExpectedNotToBeEntered(inputs.heat.isCompact(inputs.program, id) || inputs.program.at(id).runsOnlyBehindFailedTest())
+    , m_isExpectedNotToBeEntered(inputs.heat.isCompact(inputs.program, id).predicted() || inputs.program.at(id).runsOnlyBehindFailedTest())
 {
 }
 
 BlockColdness BlockColdnessRule::of(double frequency, bool isRare) const
 {
     double heat = m_activations * frequency;
-    HeatClass heatClass = m_inputs.heat.classOf(m_inputs.program, m_id, frequency);
+    Expected<HeatClass> heatClass = m_inputs.heat.classOf(m_inputs.program, m_id, frequency);
     // A shared sequence costs a call and a return each time it runs.
-    bool isExpectedNotToRun = isCold(heatClass) && !m_inputs.heat.isColdByLimitAlone(heat);
+    bool isExpectedNotToRun = isCold(heatClass).predicted() && !m_inputs.heat.isColdByLimitAlone(heat).predicted();
     return {
-        .isCold = isExpectedNotToRun || (isRare && !isHot(heatClass)),
+        .isCold = isExpectedNotToRun || (isRare && !isHot(heatClass).predicted()),
         // In a function that is expected to run, what lies behind a rare edge is rare by an estimate only: a test that rests on a guess fails at every call or at none.
-        .isRarelyRun = (isRare && isExpectedNotToRun) || heatClass == HeatClass::RunsOnce || m_isExpectedNotToBeEntered,
+        .isRarelyRun = (isRare && isExpectedNotToRun) || heatClass.predicted() == HeatClass::RunsOnce || m_isExpectedNotToBeEntered,
     };
 }
 
@@ -191,7 +215,9 @@ static BitVector findParametersWithoutObjects(const Program& program, const Func
 
 static void appendClientPhases(B3::Policy& policy, const Program& program, const Function& function, const FunctionBackEndTraits& traits)
 {
+    policy.clientPhases.append(carryWholeNumbersAsIntegersBeforeOptimization());
     policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
+    policy.clientPhases.append(keepListLengthsInRegistersAfterOptimization());
     policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());
     policy.clientPhases.append(updateIntegersInMemoryAfterOptimization(program, function));
     if (traits.savesFrameOnSuspend)
@@ -238,7 +264,7 @@ bool FunctionCodeGenerator::generateB3()
     if (traits.savesFrameOnSuspend && options.verifiesProgram)
         policy.clientPhases.append(validateFrameAddresses(m_frameAddressViolations, frameMaps.suspensionValues(), findParametersWithoutObjects(program, m_function)));
     if (!options.recorded.useWideReferences() && !options.recorded.has(TestingSwitch::DropReferenceGuards)) {
-        NarrowReferenceOrigins origins { findNarrowReferences(m_function), frameMaps.suspensionValues(), &m_records.operationsWithCompressedOperand };
+        NarrowReferenceOrigins origins { findNarrowReferences(m_function), &m_records.operationsWithCompressedOperand };
         if (std::optional<DroppedGuard> dropped = droppedGuardIn(options.recorded, m_id)) {
             origins.ordinalOfDroppedGuard = dropped->ordinal;
             for (uint32_t index = 0; index < m_function.values.size(); ++index) {
@@ -248,14 +274,15 @@ bool FunctionCodeGenerator::generateB3()
         }
         policy.clientPhases.append(guardNarrowReferences(m_numberOfLateReferenceGuards, WTF::move(origins)));
     }
+    policy.validation.keepsOriginsOfAccessesThatTakeTraps = options.validatesReferences;
     if (options.validatesReferences && !options.recorded.useWideReferences())
-        policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), frameMaps.suspensionValues(), &m_records.operationsWithCompressedOperand }));
+        policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), &m_records.operationsWithCompressedOperand }));
     if (options.checksClaimsToBackEnd) {
-        checkClaimsAtRunTime(policy, m_id, m_records.slotsOfFrameCells, !traits.savesFrameOnSuspend);
+        checkClaimsAtRunTime(policy, m_id, m_records.slotsOfFrameCells);
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
-    if (options.checksMovedLoads) {
-        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests);
+    if (options.checksMovedLoads || options.checksDecidedComparisons) {
+        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests, { .loads = options.checksMovedLoads, .decidedComparisons = options.checksDecidedComparisons });
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
@@ -263,8 +290,11 @@ bool FunctionCodeGenerator::generateB3()
 #endif
     m_records.stubCalls.setCaller(m_id);
     m_records.stubCalls.setChecksPreservedRegisters(options.validatesBackEnd);
-    if (build.validates())
+    if (build.validates()) {
+        reportBrokenKnownProperties(policy, m_id);
+        m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportValidationFailure));
+    }
 
     m_procedure = makeUnique<B3::Procedure>(policy, &m_worker.scratch);
     B3::Procedure& proc = *m_procedure;
@@ -274,6 +304,8 @@ bool FunctionCodeGenerator::generateB3()
     if (options.writesCodeSizeMap()) [[unlikely]]
         proc.setNeedsPCToOriginMap();
     setStackCheckGenerator(proc, m_inputs.stackChecks.of(m_id), m_records.frame, m_stackChecks);
+    EffectsOnEdges effectsOnCall = m_inputs.effects.of(m_id).onCall();
+    m_stackChecks.functionMayCollect = effectsOnCall.normal.mayCollect || effectsOnCall.handler.mayCollect;
 
     m_records.frame.readsCallerFrame = traits.readsCallerFrame;
     CodeGenerator generator(FunctionInputs { build, m_worker.types, m_inputs, m_id, m_function, analyses, frameMaps }, proc, m_records);
@@ -304,6 +336,13 @@ CompiledCode FunctionCodeGenerator::emitCode()
     BuildContext& build = m_worker.build;
     const AOT::CompileOptions& options = build.options();
     B3::Procedure& proc = *m_procedure;
+
+    if (options.recorded.has(TestingSwitch::OverwriteDeadValuesAtCollections))
+        overwriteDeadValuesAtSafepoints(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()));
+    // Checks that a build adds to the generated code read addresses in ways that no product does.
+    bool isCodeOfProduct = !AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE && !options.checksClaimsToBackEnd && !options.checksMovedLoads && !options.checksDecidedComparisons;
+    if (options.validatesReferences && isX86_64() && isCodeOfProduct)
+        findInnerPointerViolations(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()), m_innerPointerFindings);
 
     ColdAirBlocks coldBlocks = findColdAirBlocks(m_inputs, m_id, proc.code());
     m_records.units.setColdBlocks(WTF::move(coldBlocks.cold), WTF::move(coldBlocks.rarelyRun));
@@ -383,9 +422,18 @@ bool FunctionCodeGenerator::reportBackEnd()
         });
     }
     appendFindings(collected, m_narrowReferenceFindings.violations.span());
+    appendFindings(collected, m_innerPointerFindings.violations.span());
+    build.statistics().count(StatisticID::InnerPointersAcrossSafepoints, m_innerPointerFindings.numberOfPointersAcrossSafepoints);
     build.statistics().count(StatisticID::NarrowReferencesAcrossSafepoints, m_narrowReferenceFindings.numberOfReferencesAcrossSafepoints);
     build.statistics().count(StatisticID::NarrowReferenceGuards, m_numberOfLateReferenceGuards);
     build.statistics().count(StatisticID::NarrowReferencesStoredInFrames, m_narrowReferenceFindings.numberOfReferencesStoredInFrame);
+    if (uint32_t kept = report.countOf(B3::Counter::ColdUsesKeptThroughSecondSplit); kept && Options::airDumpPhaseStats()) [[unlikely]] {
+        const Program& program = m_inputs.program;
+        // The body of a module has no name.
+        auto textOf = [&](StringID id) { return id ? byteCast<char8_t>(program.strings[id]) : std::span<const char8_t>(); };
+        dataLogLn("cold uses kept through a second split: ", kept, ", between two defs: ", report.countOf(B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs), ", in f", m_id.index(), " ",
+            textOf(m_function.name), " (", textOf(program.pathForLineColumns(m_function.module)), ":", program.lineColumnFor(m_function.module, m_function.position).line, ")");
+    }
     return AOT::reportBackEnd(build, m_id, m_function, collected, report);
 }
 

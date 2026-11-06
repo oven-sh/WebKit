@@ -9,8 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinPristine.h"
+#include "AOTCallGraph.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTThreads.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRulesModules.h"
@@ -140,8 +142,20 @@ static ValueSetID membersSurelyOf(const Program& program, const ValueFlowUnivers
     return maker.uniteAll(parts.span());
 }
 
-ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uint64_t mostObjectsOfTypedResult)
-    : m_mostObjectsOfTypedResult(mostObjectsOfTypedResult)
+bool mayBeInstanceOf(const BuiltinTable& builtins, BuiltinClassID madeAs, BuiltinClassID tested)
+{
+    if (builtins.isSameOrSubclassOf(tested, madeAs))
+        return true;
+    const BuiltinClass& testedClass = builtins.at(tested);
+    for (BuiltinClassID current = madeAs; current; current = builtins.at(current).parent) {
+        const BuiltinClass& above = builtins.at(current);
+        if (current == tested || (above.instanceTest == BuiltinInstanceTest::JSTypeEquals && testedClass.instanceTest == BuiltinInstanceTest::JSTypeEquals && above.type == testedClass.type))
+            return true;
+    }
+    return false;
+}
+
+ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins)
 {
     m_classesAtOrBelow.grow(builtins.classCount());
     for (uint32_t index = 0; index < builtins.classCount(); ++index) {
@@ -151,7 +165,7 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uin
 
     auto intern = [&](const ValueFlowBehavior& behavior) {
         auto found = std::ranges::find_if(m_behaviors, [&](const ValueFlowBehavior& other) {
-            return other.protocols == behavior.protocols && other.isTransitive == behavior.isTransitive && other.describesRefusedOperands == behavior.describesRefusedOperands
+            return other.protocols == behavior.protocols && other.isTransitive == behavior.isTransitive && other.describesRefusedOperands == behavior.describesRefusedOperands && other.namesFunctionsOnly == behavior.namesFunctionsOnly && other.convertsOnlyBoxedPrimitives == behavior.convertsOnlyBoxedPrimitives && other.printsTargetsOfProxies == behavior.printsTargetsOfProxies
                 && std::ranges::equal(other.namedMembers, behavior.namedMembers) && std::ranges::equal(other.calledMembers, behavior.calledMembers);
         });
         if (found == m_behaviors.end()) {
@@ -162,21 +176,28 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uin
     };
     m_conversionToPrimitive = intern({ Protocol::ToPrimitive, false, { }, { } });
     m_descriptionOfRefusedOperands = intern({ Protocol::Named, false, m_namesReadFromRefusedOperands, { }, true });
-    auto behaviorFor = [&](OperandUses uses, Protocols declaredProtocols, std::span<const BuiltinName> namedMembers, std::span<const BuiltinName> calledMembers) -> ValueFlowBehaviorID {
+    auto behaviorFor = [&](OperandUses uses, Protocols declaredProtocols, std::span<const BuiltinName> namedMembers, std::span<const BuiltinName> calledMembers, bool namesFunctionsOnly = false, bool convertsOnlyBoxedPrimitives = false, bool printsTargetsOfProxies = false) -> ValueFlowBehaviorID {
         Protocols protocols = declaredProtocols - protocolsWithoutHub;
         if (uses == OperandUses::all() || protocols.isEmpty())
             return { };
         bool isTransitive = uses.containsAny({ OperandUse::AppliesTransitively, OperandUse::AppliesToContents });
         if (isTransitive && declaredProtocols.containsAll({ Protocol::OwnValues, Protocol::PrototypeChain }))
             protocols.add(Protocol::PrototypeChain);
-        return intern({ protocols, isTransitive, namedMembers, calledMembers });
+        return intern({ protocols, isTransitive, namedMembers, calledMembers, false, namesFunctionsOnly, convertsOnlyBoxedPrimitives, printsTargetsOfProxies });
     };
     auto add = [&](const BuiltinParameter& parameter) {
         Protocols protocols = parameter.protocols;
         if (parameter.roles.contains(BuiltinOperandRole::OwnValuesAreReadByKeyOnly))
             protocols.remove(Protocol::OwnValues);
-        if (ValueFlowBehaviorID behavior = behaviorFor(parameter.uses, protocols, parameter.namedMembers, parameter.calledMembers))
-            m_behaviorOfParameter.add(&parameter, behavior);
+        bool namesFunctionsOnly = parameter.roles.contains(BuiltinOperandRole::FunctionsAreOnlyNamed);
+        bool convertsOnlyBoxedPrimitives = parameter.roles.contains(BuiltinOperandRole::OnlyBoxedPrimitivesAreConverted);
+        bool printsTargetsOfProxies = parameter.roles.contains(BuiltinOperandRole::ProxiesArePrintedAsTheirTargets);
+        ValueFlowBehaviorID behavior = behaviorFor(parameter.uses, protocols, parameter.namedMembers, parameter.calledMembers, namesFunctionsOnly, convertsOnlyBoxedPrimitives, printsTargetsOfProxies);
+        if (!behavior)
+            return;
+        m_behaviorOfParameter.add(&parameter, behavior);
+        if (printsTargetsOfProxies)
+            m_behaviorsThatAskProxies.add(behavior.index(), behaviorFor(parameter.uses, protocols, parameter.namedMembers, parameter.calledMembers, namesFunctionsOnly, convertsOnlyBoxedPrimitives));
     };
     for (uint32_t index = 0; index < builtins.overloadCount(); ++index) {
         const BuiltinOverload& overload = builtins.at(BuiltinOverloadID(index));
@@ -206,6 +227,17 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uin
                 m_behaviorOfOperand.add(&info, behavior);
         }
     }
+    // The engine reads what a trap answers as it reads the list that Reflect.apply is handed and the descriptor that Reflect.defineProperty is handed.
+    auto behaviorOfThirdArgument = [&](BuiltinID builtin) {
+        for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(builtin))) {
+            if (auto parameter = std::ranges::find(overload.parameters, BuiltinOperand::argument(2), &BuiltinParameter::operand); parameter != overload.parameters.end())
+                return m_behaviorOfParameter.get(&*parameter);
+        }
+        return ValueFlowBehaviorID();
+    };
+    m_listOfKeysThatTrapAnswers = behaviorOfThirdArgument(Builtins::ReflectApply);
+    m_descriptorThatTrapAnswers = behaviorOfThirdArgument(Builtins::ReflectDefineProperty);
+    RELEASE_ASSERT(m_listOfKeysThatTrapAnswers && m_descriptorThatTrapAnswers);
 }
 
 static bool usesPutValueInto(const BuiltinTable& builtins, const BuiltinHostUses& uses, BuiltinID entry)
@@ -260,7 +292,63 @@ BuiltinID ValueFlowBuiltinTables::entryDescribing(ValueFlowObjectID closure) con
     return { };
 }
 
-static BitVector findCodeThatRecordsDescribe(const Program& program)
+// No realm holds a function that the files of the engine link by name. Unless a row says that native code calls it, it runs only where a statement calls it directly, on the operands of that statement.
+static void addLinkedFunctionsCalledOnlyBy(BitVector& code, const Program& program, const ParallelLoops& loops)
+{
+    const BuiltinTable& builtins = program.builtins();
+    BitVector isCalledByNativeCode;
+    for (const BuiltinCalledFunction& row : builtins.startupCalledFunctions())
+        isCalledByNativeCode.set(row.function.index());
+    for (RuntimeFunctionID function : builtins.functionsCalledWithStartupLoads())
+        isCalledByNativeCode.set(function.index());
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        if (builtins.canonicalID(BuiltinID(index)) != BuiltinID(index))
+            continue;
+        for (const BuiltinCalledFunction& row : builtins.calledFunctionsOf(BuiltinID(index)))
+            isCalledByNativeCode.set(row.function.index());
+    }
+    auto linkedFunctionAround = [&](const Function& function) {
+        RuntimeFunctionID id = function.enclosingRuntimeFunction;
+        bool isLinked = function.role == FunctionRole::Library && id && builtins.contains(id) && builtins.at(id).role == RuntimeFunctionRole::EngineBuiltin && builtins.at(id).implements.empty();
+        return isLinked && !isCalledByNativeCode.get(id.index()) ? id : RuntimeFunctionID();
+    };
+
+    struct Naming {
+        uint32_t function;
+        RuntimeFunctionID linked;
+        bool isDirectCall;
+    };
+    Vector<Naming> namings = collectInParallel<Naming>(loops, program.functions.size(), [&](unsigned index, Vector<Naming>& found) {
+        const Function& function = program.functions[index];
+        forEachFunctionReference(program, function, [&](FunctionID named, FunctionReferenceKind kind) {
+            RuntimeFunctionID linked = linkedFunctionAround(program.at(named));
+            if (linked && linked != function.enclosingRuntimeFunction)
+                found.append({ index, linked, kind == FunctionReferenceKind::Call });
+        });
+    });
+    Vector<uint32_t> functionsOfLinkedCode = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
+        return !!linkedFunctionAround(program.functions[index]);
+    });
+
+    BitVector isCalled;
+    BitVector isNamedElsewhere;
+    for (bool hasGrown = true; hasGrown;) {
+        hasGrown = false;
+        isCalled.clearAll();
+        isNamedElsewhere.clearAll();
+        for (const Naming& naming : namings)
+            (naming.isDirectCall && code.quickGet(naming.function) ? isCalled : isNamedElsewhere).set(naming.linked.index());
+        for (uint32_t index : functionsOfLinkedCode) {
+            uint32_t linked = program.functions[index].enclosingRuntimeFunction.index();
+            if (code.quickGet(index) || !isCalled.get(linked) || isNamedElsewhere.get(linked))
+                continue;
+            code.quickSet(index);
+            hasGrown = true;
+        }
+    }
+}
+
+static BitVector findCodeThatRecordsDescribe(const Program& program, const ParallelLoops& loops)
 {
     enum class NamedFunctions : uint8_t { None, AllDescribed, SomeNotDescribed };
     Vector<NamedFunctions> namedFunctionsOfModule(FillWith { }, program.modules.size(), NamedFunctions::None);
@@ -288,14 +376,52 @@ static BitVector findCodeThatRecordsDescribe(const Program& program)
         if (standsBehindDescribedBuiltins(program, FunctionID(index)) || (isNamedOnlyInItsFile && namedFunctionsOfModule[function.module.index()] == NamedFunctions::AllDescribed))
             code.quickSet(index);
     }
+    addLinkedFunctionsCalledOnlyBy(code, program, loops);
     return code;
+}
+
+static BitVector findFunctionsCalledForDeclaredEntriesAlone(const BuiltinTable& builtins)
+{
+    BitVector called;
+    BitVector calledOtherwise;
+    for (const BuiltinCalledFunction& row : builtins.startupCalledFunctions())
+        calledOtherwise.set(row.function.index());
+    for (RuntimeFunctionID function : builtins.functionsCalledWithStartupLoads())
+        calledOtherwise.set(function.index());
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        BuiltinID entry(index);
+        if (builtins.canonicalID(entry) != entry)
+            continue;
+        bool isDeclared = false;
+        bool hasUndeclaredOverload = false;
+        for (const BuiltinOverload& overload : builtins.overloadsOf(entry)) {
+            isDeclared = true;
+            hasUndeclaredOverload |= overload.isUndeclared();
+        }
+        for (const BuiltinCalledFunction& row : builtins.calledFunctionsOf(entry))
+            (isDeclared && !hasUndeclaredOverload ? called : calledOtherwise).set(row.function.index());
+    }
+    called.exclude(calledOtherwise);
+    return called;
 }
 
 void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUniverse& universe, ValueSets& sets, const ParallelLoops& loops, NOESCAPE const ScopedLambda<void()>& runBesideSets)
 {
     ValueSetMaker maker(sets);
     const BuiltinTable& builtins = program.builtins();
-    m_codeThatRecordsDescribe = findCodeThatRecordsDescribe(program);
+    m_codeThatRecordsDescribe = findCodeThatRecordsDescribe(program, loops);
+    m_functionsCalledForDeclaredEntriesAlone = findFunctionsCalledForDeclaredEntriesAlone(builtins);
+    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
+        if (!entry.function || !Typed::isEnteredByCallsAlone(program, entry.id))
+            continue;
+        for (BuiltinID implemented : builtins.at(entry.id).implements) {
+            bool doRecordsAnswer = std::ranges::any_of(builtins.overloadsOf(builtins.canonicalID(implemented)), [&](const BuiltinOverload& overload) {
+                return doRecordsDescribe(builtins, overload);
+            });
+            if (!doRecordsAnswer)
+                m_entriesDescribedByCodeAlone.set(implemented.index());
+        }
+    }
     Vector<ValueFlowObjectID, 8> describedClosures;
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         BuiltinID entry(index);
@@ -323,9 +449,12 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
         for (const BuiltinCalledFunction& called : builtins.calledFunctionsOf(entry)) {
             if (!usesPutValueInto(builtins, called.uses, entry))
                 continue;
+            bool isDecidedByBuild = called.condition && called.condition->testsReplaceBuiltins;
+            if (isDecidedByBuild && !program.testsReplaceBuiltins())
+                continue;
             const RuntimeFunctionEntry* function = findRuntimeFunction(program, called.function);
             hasValue = true;
-            hasEveryValue &= !called.condition && function && function->function;
+            hasEveryValue &= (!called.condition || isDecidedByBuild) && function && function->function;
         }
         if (hasValue && hasEveryValue)
             m_entriesHoldingValueFromLibrary.set(index);
@@ -341,13 +470,56 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
         BuiltinID prototype = builtins.at(BuiltinClassID(static_cast<uint32_t>(index))).prototype;
         return prototype && classesWithPrototype.get(builtins.canonicalID(prototype).index()) == 1 ? universe.objectOf(prototype) : ValueFlowObjectID();
     });
+    // Many types name one class, so what follows from the class alone is worked out once for the class.
+    Vector<std::optional<ValueSetID>> setStandingForClassAndThoseBelow(builtins.classCount());
     auto standingForClassAndThoseBelow = [&](BuiltinClassID builtinClass) {
+        std::optional<ValueSetID>& known = setStandingForClassAndThoseBelow[builtinClass.index()];
+        if (known)
+            return *known;
         Vector<ValueFlowObjectID, 8> standing;
         for (BuiltinClassID other : classesAtOrBelow(builtinClass)) {
             if (m_objectStandingForClass[other.index()])
                 standing.append(m_objectStandingForClass[other.index()]);
         }
-        return maker.of(standing.span());
+        known = maker.of(standing.span());
+        return *known;
+    };
+    Vector<ValueFlowObjectID, 64> standingForClasses;
+    for (ValueFlowObjectID standing : m_objectStandingForClass) {
+        if (standing)
+            standingForClasses.append(standing);
+    }
+    m_objectsStandingForClasses = maker.of(standingForClasses.span());
+    Vector<std::optional<BitVector>> classesThatMayPassTestFor(builtins.classCount());
+    auto madeAsThatMayPassTestFor = [&](BuiltinClassID tested) -> const BitVector& {
+        std::optional<BitVector>& known = classesThatMayPassTestFor[tested.index()];
+        if (!known) {
+            known.emplace(builtins.classCount());
+            for (uint32_t madeAs = 0; madeAs < builtins.classCount(); ++madeAs) {
+                if (m_objectStandingForClass[madeAs] && mayBeInstanceOf(builtins, BuiltinClassID(madeAs), tested))
+                    known->quickSet(madeAs);
+            }
+        }
+        return *known;
+    };
+    BitVector madeAsThatMayPass(builtins.classCount());
+    auto classesThatMayBeOf = [&](const BuiltinType& type) {
+        if (type.isAnything() || type.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction, BuiltinTypeFlag::HasPlainData }))
+            return ValueSets::anything;
+        bool classDecides = std::ranges::all_of(type.parts, [&](const BuiltinTypePart& part) {
+            return part.kind == BuiltinTypePartKind::Builtin || (part.kind == BuiltinTypePartKind::Instance && builtins.at(part.builtinClass).instanceTest != BuiltinInstanceTest::None);
+        });
+        if (!classDecides || !std::ranges::contains(type.parts, BuiltinTypePartKind::Instance, &BuiltinTypePart::kind))
+            return ValueSets::anything;
+        madeAsThatMayPass.clearAll();
+        for (const BuiltinTypePart& part : type.parts) {
+            if (part.kind == BuiltinTypePartKind::Instance)
+                madeAsThatMayPass.merge(madeAsThatMayPassTestFor(part.builtinClass));
+        }
+        standingForClasses.shrink(0);
+        for (size_t madeAs : madeAsThatMayPass)
+            standingForClasses.append(m_objectStandingForClass[madeAs]);
+        return maker.of(standingForClasses.span());
     };
 
     for (uint32_t index = 0; builtins.contains(BuiltinTypeID(index)); ++index) {
@@ -371,6 +543,7 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
         m_membersOfTypeWhilePristine.append(whilePristine);
         m_classesSurelyOfType.append(classesSurelyOfType);
         m_classesOfTypeWhilePristine.append(classesWhilePristine);
+        m_classesThatMayBeOfType.append(classesThatMayBeOf(type));
 
         BuiltinType typeWithoutParts = type;
         typeWithoutParts.parts = { };

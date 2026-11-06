@@ -48,9 +48,11 @@ struct DataRecord {
     std::optional<uint32_t> sharedStorageOffset;
     // Where the node of an array that is its own storage begins in the table of the image.
     std::optional<uint32_t> node;
+    // The word of the statics for the one cell that every evaluation hands out. Only the code reads it.
+    std::optional<uint32_t> cellOffset { };
 
     friend bool operator==(const DataRecord&, const DataRecord&) = default;
-    friend void add(Hasher& hasher, const DataRecord& record) { add(hasher, record.data, record.sharedStorageOffset, record.node); }
+    friend void add(Hasher& hasher, const DataRecord& record) { add(hasher, record.data, record.sharedStorageOffset, record.node, record.cellOffset); }
 };
 
 // How the elements of an array of constants are stored, in the table of the image and in the array that is made of it.
@@ -64,7 +66,14 @@ struct CollectionDataRecord {
     friend void add(Hasher& hasher, const CollectionDataRecord& record) { add(hasher, record.data, record.hasValues); }
 };
 
-using RequestRecord = Variant<NewClassRecord, TemplateObjectRecord, DirectEvalRecord, DataRecord, CollectionDataRecord>;
+struct FormatPatternRecord {
+    Vector<uint32_t> words;
+
+    friend bool operator==(const FormatPatternRecord&, const FormatPatternRecord&) = default;
+    friend void add(Hasher& hasher, const FormatPatternRecord& record) { add(hasher, record.words); }
+};
+
+using RequestRecord = Variant<NewClassRecord, TemplateObjectRecord, DirectEvalRecord, DataRecord, CollectionDataRecord, FormatPatternRecord>;
 
 JS_EXPORT_PRIVATE uint32_t sizeInBytesOf(const Program&, const RequestRecord&);
 

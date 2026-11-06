@@ -16,8 +16,9 @@ void callGetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg getterSetter, J
 // getter is T11.
 void callGetterFunctionAndReturn(StubAssembler&, GPRReg receiver, GPRReg getter, JumpList& cannot);
 void callSetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg value, GPRReg getterSetter, JumpList& cannot);
-void callCustomGetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg accessorIndex, GPRReg uid);
-void callCustomSetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg value, GPRReg accessorIndex, GPRReg uid);
+// The name of a key belongs to the cell of the key.
+void callCustomGetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg accessorIndex, GPRReg uid, std::optional<GPRReg> keyCell);
+void callCustomSetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg value, GPRReg accessorIndex, GPRReg uid, std::optional<GPRReg> keyCell);
 void readClosureLengthAndReturn(StubAssembler&, GPRReg closure, JumpList& miss);
 void readClosureNameAndReturn(StubAssembler&, GPRReg closure, JumpList& miss);
 

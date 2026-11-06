@@ -189,6 +189,8 @@ struct ShapeTableParts {
     Vector<uint32_t> firstMemberShape;
     Vector<uint32_t> memberShapes;
     Vector<uint32_t> shapeCountPrefixSums;
+    // The numbers up to this one are shapes of images that share their realms with this one. They count as given out.
+    uint32_t shapesBelow { 0 };
     Vector<uint64_t> shapeSetWords;
     Vector<ShapeSetRange> shapeSetRanges;
 };
@@ -203,6 +205,7 @@ public:
 
     uint32_t numberOfShapes() const { return m_parts.shapes.isEmpty() ? 0 : m_parts.shapes.size() - 1; }
     uint32_t firstEnvironmentShape() const { return m_parts.firstEnvironmentShape; }
+    uint32_t shapesBelow() const { return m_parts.shapesBelow; }
     const PlacedShape& shape(uint32_t number) const { return m_parts.shapes[number]; }
     bool isAssigned(uint32_t number) const { return number < m_parts.shapes.size() && m_parts.shapes[number].layout; }
 

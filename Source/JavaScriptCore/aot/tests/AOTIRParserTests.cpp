@@ -539,20 +539,21 @@ static void parserFillsUntypedThis()
     AOT_TEST_CHECK(program->at(program->functions[1].thisType.written()).singleStringLiteral() && program->functions[1].thisType.writtenFlags() == OptionSet<PositionFlags> { PositionFlags::IsExpected });
 }
 
-static void parserChecksRuntimeFunctionNumbers()
+static void parserFindsRuntimeFunctionsByToken()
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     AOT_TEST_CHECK(!table.runtimeFunctions().empty());
-    RuntimeFunctionID id = table.runtimeFunctions().front().id;
+    AOT_TEST_CHECK(builtinTableRuntimeFunctionTokens.size() == table.runtimeFunctions().size());
+    RuntimeFunctionID id = table.runtimeFunctions().back().id;
+    StringView token(byteCast<Latin1Character>(builtinTableRuntimeFunctionTokens[table.runtimeFunctions().size() - 1]));
     BuildContext build(makeDefaultCompileOptions());
-    auto program = parseProgram(makeString(moduleLine, "function f0 role=Library enclosingRuntimeFunction="_s, id.index(), " results=[{type=anything}]\nruntimefunction id="_s, id.index(), " function=f0\n"_s), IRForm::AsRead, build);
+    auto program = parseProgram(makeString(moduleLine, "function f0 role=Library enclosingRuntimeFunction="_s, token, " results=[{type=anything}]\nruntimefunction id="_s, token, " function=f0\n"_s), IRForm::AsRead, build);
     AOT_TEST_CHECK(program);
     AOT_TEST_CHECK(program->functions[0].role == FunctionRole::Library && program->functions[0].enclosingRuntimeFunction == id);
     const RuntimeFunctionEntry* entry = findRuntimeFunction(*program, id);
     AOT_TEST_CHECK(entry && entry->function == FunctionID(0u) && entry->visibility == FunctionVisibility::Public);
 
-    AOT_TEST_CHECK(!table.contains(RuntimeFunctionID(4000000000u)));
-    checkFailure("function f0 role=Library enclosingRuntimeFunction=4000000000\n"_s, InternalErrorKind::IRTextError, { 1, 51 });
+    checkFailure("function f0 role=Library enclosingRuntimeFunction=NoSuchFunction\n"_s, InternalErrorKind::IRTextError, { 1, 51 });
 }
 
 static void parserGoesThroughTheReader()
@@ -624,7 +625,7 @@ static void parserLetsStatedTypeWinOverRule()
     v(parserReportsPositionInBodies) v(parserReportsPositionInBlocksAndTerminators) v(parserPutsTextPositionInMessage) \
     v(parserLeavesIDsOfListsToTheReader) v(parserGivesNoPositionToErrorsOfTheReader) v(parserLeavesCaptureLimitToTheReader) \
     v(parserSurvivesDeepData) v(parserOwnsFunctionText) v(parserRejectsCharacterEscapesInBytes) \
-    v(parserFillsUntypedThis) v(parserChecksRuntimeFunctionNumbers) v(parserGoesThroughTheReader) \
+    v(parserFillsUntypedThis) v(parserFindsRuntimeFunctionsByToken) v(parserGoesThroughTheReader) \
     v(parserAppliesEngineFieldsAfterTheRead) v(parserLetsStatedTypeWinOverRule)
 
 std::span<const NativeTest> irParserTests()

@@ -58,8 +58,8 @@ static Vector<SharedOrder> findSharedOrders(SelectionContext& context)
                 continue;
             if (context.isOnSlowPath(id) || context.isConditionWithProofs(id))
                 continue;
-            ValueID left = analyses.sameObjectThroughCasts(value.leftOperand());
-            ValueID right = analyses.sameObjectThroughCasts(value.rightOperand());
+            ValueID left = analyses.sameObjectThroughCasts(value.leftOperand()).valueInFrontOfFacts();
+            ValueID right = analyses.sameObjectThroughCasts(value.rightOperand()).valueInFrontOfFacts();
             if (left != right)
                 comparisons.append(StringComparison { id, left, right, analyses.useLists().pointOf(id) });
         }

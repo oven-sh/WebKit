@@ -1,0 +1,34 @@
+# A text that is one of the written ones is held as a number. Its length is the length that most of them have, unless the number is that of a text of another length.
+# Up to three such texts are compared, however many texts the type lists. With more of them the cell is looked up and says its length.
+# FORM: Placed
+# OPTIONS: check=validate-back-end heat=EverythingIsHot
+# RUN: generate-code calls
+# RUN(X64): lower-to-air size
+# REQUIRES(X64): x86_64 unsanitized-code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoOfTwelveAreLonger" parameters=[{type="name0"|"name1"|"name10"|"name11"|"name2"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9"}] results=[{type=i32}] {
+    v1 = GetStringLength v0
+    Return v1
+}
+
+function f1 name="allOfOneLength" parameters=[{type="aa"|"bb"|"cc"|"dd"|"ee"|"ff"|"gg"}] results=[{type=i32}] {
+    v1 = GetStringLength v0
+    Return v1
+}
+
+function f2 name="fiveLengths" parameters=[{type="a"|"bb"|"ccc"|"dddd"|"eeeee"}] results=[{type=i32}] {
+    v1 = GetStringLength v0
+    Return v1
+}
+# CHECK: f0:
+# CHECK-NOT: operation
+# CHECK: f1:
+# CHECK-NOT: operation
+# CHECK: f2:
+# CHECK-NEXT: operation operationAOTLiteralStringToString x1
+# CHECK-NOT: diagnostic
+# X64-LABEL: name="twoOfTwelveAreLonger"
+# X64-NEXT: instructions: 7, patchpoints: 0
+# X64-LABEL: name="allOfOneLength"
+# X64-NEXT: instructions: 2, patchpoints: 0

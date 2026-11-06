@@ -57,5 +57,5 @@ function f1 name="loop" parameters=[{type=anything}, {type=anything}] results=[{
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

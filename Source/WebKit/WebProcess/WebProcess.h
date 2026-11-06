@@ -644,6 +644,9 @@ private:
 #if ENABLE(GPU_PROCESS)
     void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect&, RemoteSnapshotIdentifier, WebCore::RenderingMode);
 #endif
+#if ENABLE(GPU_PROCESS) && PLATFORM(COCOA)
+    void prepareForPrinting(CompletionHandler<void(bool)>&&);
+#endif
 
     void startMemorySampler(SandboxExtension::Handle&&, const String&, const double);
     void stopMemorySampler();
@@ -749,6 +752,10 @@ private:
 
 #if PLATFORM(MAC)
     void scrollerStylePreferenceChanged(bool useOverlayScrollbars);
+#endif
+
+#if HAVE(TEXT_SCALE_FACTOR)
+    void setTextScaleFactor(std::optional<float>);
 #endif
 
 #if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
@@ -959,6 +966,8 @@ private:
     // Prewarmed WebProcesses do not have an associated sessionID yet, which is why this is an optional.
     // By the time the WebProcess gets a WebPage, it is guaranteed to have a sessionID.
     std::optional<PAL::SessionID> m_sessionID;
+
+    bool m_isPrintProcess { false };
 
     WebCore::ThirdPartyCookieBlockingMode m_thirdPartyCookieBlockingMode { WebCore::ThirdPartyCookieBlockingMode::All };
 

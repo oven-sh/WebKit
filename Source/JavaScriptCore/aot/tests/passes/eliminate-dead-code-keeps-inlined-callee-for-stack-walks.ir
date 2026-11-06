@@ -1,0 +1,53 @@
+# Only who lists the frames asks which function object a call has entered, and from a copy of the callee that can be done only where an operation may throw or run other code.
+# A copy without such an operation keeps nothing. Where they all stand off the ordinary way, the function object is kept in front of them. In front of a call it stays.
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# RUN(TWICE): pass EliminateDeadCode EliminateDeadCode
+# TWICE: outcome: Changed
+# TWICE-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callee" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee, RecordsCalleeOnceRenamed] {
+    Return v0
+}
+
+function f1 name="copyThatRunsToItsEnd" parameters=[{type=f0}, {type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f0 callPosition=7 calleeIsKeptInFrame=true module=m0}] {
+    KeepCalleeInFrame v0 @7
+    v3 = Add v1, v1 @20:1
+    Return v3
+# CHECK-NOT: KeepCalleeInFrame
+# CHECK: Return
+}
+
+function f2 name="copyThatMayThrowOnItsWay" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=7 calleeIsKeptInFrame=true module=m0}] {
+    KeepCalleeInFrame v0 @7
+    v3 = PropGet v1 key="first" @20:1
+    Return v3
+# CHECK: b0(
+# CHECK-NEXT: KeepCalleeInFrame v0 @7
+# CHECK-NEXT: = PropGet v1 key="first"
+}
+
+function f3 name="copyThatMayThrowOffItsWay" parameters=[{type=f0}, {type=anything}, {type=boolean}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=7 calleeIsKeptInFrame=true module=m0}] {
+    KeepCalleeInFrame v0 @7
+    Branch v2 -> taken b1(), notTaken b2() @21:1
+  b1():
+    Return v1
+  b2() frequency=Rare:
+    v4 = Undefined @22:1
+    v5 = PropGet v1 key="first" @23:1
+    Return v5
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: KeepCalleeInFrame v0 @7
+# CHECK-NEXT: = PropGet v1 key="first"
+}
+
+function f4 name="call" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+    KeepCalleeInFrame v0 @7
+    v3 = CallDirect v1 function=f0 [calleeIsKeptInFrame] @7
+    Return v3
+# CHECK: KeepCalleeInFrame v0 @7
+# CHECK-NEXT: = CallDirect v1 function=f0 [calleeIsKeptInFrame
+}

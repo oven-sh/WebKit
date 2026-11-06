@@ -1,0 +1,9 @@
+# function-objects-of-top-level-functions.ir where all code counts as hot: the same stub creates the function objects.
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls heat=EverythingIsHot
+# RUN: generate-code calls
+# REQUIRES: unsanitized-code
+# PROGRAM-OF: function-objects-of-top-level-functions.ir
+# CHECK-NOT: operationAOTSingletonClosure
+# CHECK: stub ClosureOfTable x2
+# CHECK-NOT: operationAOTSingletonClosure

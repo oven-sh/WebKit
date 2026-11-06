@@ -1,0 +1,49 @@
+# `[a, b][key]` with a key that is a boolean, undefined or null: it names "true", "false", "undefined" or "null". A list that is not built holds no property of those names, and its prototypes are
+# built-ins, which are read-only in an executable and hold none either: the read gives undefined and the list is never made. A key that may be a string needs the list
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="underBoolean" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewArray v0, v1
+    v4 = ElemGet v3, v2
+    Return v4
+# CHECK-NOT: NewArray
+# CHECK-NOT: ElemGet
+# CHECK: [[nothing]]: undefined = Undefined
+# CHECK-NEXT: [[read]]: anything = Upcast [[nothing]] castType=anything
+# CHECK-NEXT: Return [[read]]
+}
+function f1 name="underUndefinedOrNull" parameters=[{type=anything}, {type=anything}, {type=undefined|null}] results=[{type=anything}] {
+    v3 = NewArray v0, v1
+    v4 = ElemGet v3, v2
+    Return v4
+# CHECK-NOT: NewArray
+# CHECK-NOT: ElemGet
+# CHECK: [[nothing]]: undefined = Undefined
+# CHECK-NEXT: [[read]]: anything = Upcast [[nothing]] castType=anything
+# CHECK-NEXT: Return [[read]]
+}
+function f2 name="underAnyOfThem" parameters=[{type=anything}, {type=undefined|null|boolean}] results=[{type=anything}] {
+    v2 = NewArray v0
+    v3 = ElemGet v2, v1
+    Return v3
+# CHECK-NOT: NewArray
+# CHECK: Return
+}
+function f3 name="underBooleanOrString" parameters=[{type=anything}, {type=boolean|string}] results=[{type=anything}] {
+    v2 = NewArray v0
+    v3 = ElemGet v2, v1
+    Return v3
+# CHECK: = NewArray v0
+# CHECK: = ElemGet
+}
+function f4 name="storedUnderBoolean" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewArray v0
+    ElemSet v2, v1, v0
+    v4 = ElemGet v2, v1
+    Return v4
+# CHECK: = NewArray v0
+# CHECK: = ElemGet
+}

@@ -71,6 +71,19 @@ static void emitLargeFrameCheck(CCallHelpers& jit, PendingStackCheck& check, con
     check.doesNotFit.append(jit.branchPtr(CCallHelpers::Below, newStackPointer, CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit())));
 }
 
+unsigned smallestFrameTestedAtSetup(StackCheck stackCheck)
+{
+    switch (stackCheck) {
+    case StackCheck::Required:
+        return 0;
+    case StackCheck::CoveredByCallers:
+        return maxFrameSizeWithoutStackCheck + 1;
+    case StackCheck::DeferredToCallee:
+        return maxUncheckedFrameSize + 1;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void setStackCheckGenerator(B3::Procedure& proc, StackCheck stackCheck, const FrameRequirements& frame, StackCheckState& state)
 {
     proc.code().setStackCheckGenerator(createSharedTask<B3::Air::StackCheckGeneratorFunction>([stackCheck, &frame, &state](CCallHelpers& jit, B3::Air::GenerationContext& context, const B3::Air::StackCheckSite& site) {
@@ -78,7 +91,7 @@ void setStackCheckGenerator(B3::Procedure& proc, StackCheck stackCheck, const Fr
         unsigned frameSize = code.frameSize();
         bool fitsByProof = stackCheck == StackCheck::CoveredByCallers && frameSize <= maxFrameSizeWithoutStackCheck;
         state.isProvenToFitOnStack |= fitsByProof;
-        bool checksStack = (stackCheck != StackCheck::DeferredToCallee && !fitsByProof) || frame.needsStackCheckForTailCalls || frameSize > maxUncheckedFrameSize;
+        bool checksStack = frameSize >= smallestFrameTestedAtSetup(stackCheck) || frame.needsStackCheckForTailCalls;
         if (!checksStack)
             return;
 
@@ -124,7 +137,7 @@ void emitStackOverflowPaths(CCallHelpers& jit, CodeRecords& records, StackCheckS
         case StackLimit::TrapAwareSoft: {
             // The stub returns to the resume offset of the PrologueCheck, never to the address after the call.
             CCallHelpers::Label call = jit.label();
-            records.stubCalls.call(jit, pollAtPrologue(), OptionalIndex { });
+            records.stubCalls.call(jit, pollAtPrologue(state.functionMayCollect), OptionalIndex { });
             records.units.pin(call, jit.label());
             records.traps.stackChecks.append({ call, check.resume });
             break;
@@ -140,7 +153,7 @@ Vector<PrologueCheck, 1> linkStackChecks(LinkBuffer& linkBuffer, FunctionID id, 
         RELEASE_ASSERT(labels.call.isSet() && labels.resume.isSet());
         checks.append({ id.index(), linkBuffer.offsetOf(labels.call), linkBuffer.offsetOf(labels.resume) });
     }
-    AOT::sort(checks, { }, &PrologueCheck::callOffset);
+    AOT::sortInLine(checks, { }, &PrologueCheck::callOffset);
     return checks;
 }
 

@@ -1,9 +1,7 @@
-# The pass runs behind AddGenericVersion, so a typed function whose fields are checked reaches it with its generic copy in place
-# TODO: nobody: with a check between two reads of the bag, the generic copy reads the bag too and the function is not promoted
+# The pass runs behind AddGenericVersion, so a typed function whose fields are checked reaches it with guards in place of its checks
 # FORM: Prepared
 # OPTIONS: heat=NothingIsHottest
 # RUN: pass AddGenericVersion PromoteAggregateParameters
-# STATISTIC: GenericVersionsCreated = 2
 # STATISTIC: AggregateParametersPromoted = 2
 
 module m0 path="main.ts" displayPath="main.ts"

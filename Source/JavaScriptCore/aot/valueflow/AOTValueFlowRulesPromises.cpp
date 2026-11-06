@@ -12,10 +12,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr ValueFlowName promiseValue = nameOf(BuiltinSlots::PromiseValue);
-static constexpr ValueFlowName promiseReason = nameOf(BuiltinSlots::PromiseReason);
-static constexpr ValueFlowName resolvedPromises = ValueFlowName::of(ValueFlowNameKind::ResolvedPromises);
-static constexpr ValueFlowName rejectedPromises = ValueFlowName::of(ValueFlowNameKind::RejectedPromises);
+static constexpr ValueFlowCellName promiseValue = nameOf(BuiltinSlots::PromiseValue);
+static constexpr ValueFlowCellName promiseReason = nameOf(BuiltinSlots::PromiseReason);
+static constexpr ValueFlowCellName resolvedPromises { ValueFlowNameKind::ResolvedPromises };
+static constexpr ValueFlowCellName rejectedPromises { ValueFlowNameKind::RejectedPromises };
 
 void adoptRejectionOf(ValueFlowRuleContext& context, ClimbingSet values, ValueFlowNodeID reason)
 {
@@ -60,7 +60,7 @@ void rejectPromises(ValueFlowRuleContext& context, ClimbingSet promises, const V
     forEachNodeOfSlotWrittenThrough(context, promises, promiseReason, [&](ValueFlowNodeID held) {
         context.connect(reasons, held);
     });
-    context.connect(reasons, ValueFlowProgramNodes::escaped());
+    carryOut(context, reasons);
 }
 
 void runAwait(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
@@ -87,15 +87,15 @@ static bool mayLackBuiltinThen(ValueFlowRuleContext& context, ClimbingSet promis
     ClimbingSet untrackedObject(context.universe().untrackedObjectAlone());
     PropertyKeyID then = context.program().keyOf(BuiltinNames::then);
     for (ValueFlowName name : { ValueFlowName::property(then), ValueFlowName::getter(then), ValueFlowName::of(ValueFlowNameKind::CopiedFrom) }) {
-        if (holdsSomething(context, context.valueOf(context.read(promises, name))))
+        if (holdsSomething(context, context.valueOf(context.readWhatWasWritten(promises, name))))
             return true;
-        if (mayBeUntracked && holdsSomething(context, context.valueOf(context.read(untrackedObject, name))))
+        if (mayBeUntracked && holdsSomething(context, context.valueOf(context.readWhatWasWritten(untrackedObject, name))))
             return true;
     }
     ValueSetID otherPrototypes = ValueSets::complement(context.maker().of(context.universe().objectOf(Builtins::PromisePrototype)));
-    if (context.meet(context.valueOf(context.read(promises, prototypeLinkName)), otherPrototypes))
+    if (context.meet(context.valueOf(context.readWhatWasWritten(promises, prototypeLinkName)), otherPrototypes))
         return true;
-    return mayBeUntracked && context.meet(context.valueOf(context.read(untrackedObject, prototypeLinkName)), otherPrototypes);
+    return mayBeUntracked && context.meet(context.valueOf(context.readWhatWasWritten(untrackedObject, prototypeLinkName)), otherPrototypes);
 }
 
 static ClimbingSet instancesFindingBuiltinThen(ValueFlowRuleContext& context, ClimbingSet instances)
@@ -143,8 +143,8 @@ void runAwaitedValue(const ValueFlowStatement& statement, ValueFlowRuleContext& 
         ClimbingSet methods = without(context, found, builtinThen);
         if (!context.meet(methods, universe.callables()))
             return;
-        callInProtocol(context, { .callees = methods, .thisValue = thenables, .otherArguments = unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult) });
-        context.add(result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+        callInProtocol(context, { .callees = methods, .thisValue = thenables, .otherArguments = undescribedValueThatIsNoBuffer(context) });
+        context.add(result, undescribedValueThatIsNoBuffer(context));
     });
     ClimbingSet promises = context.restrict(without(context, values, ValueFlowUniverse::unknownObject()), universe.instancesOf(BuiltinClasses::Promise));
     ValueSetID instancesOfProgram = universe.placeholders().objectsWithLayoutOfProgram;
@@ -163,7 +163,7 @@ void runAwaitedValue(const ValueFlowStatement& statement, ValueFlowRuleContext& 
         forEachPartOfCallees(context, constructed, [&](ClimbingSet part) {
             ValueFlowCallGroup group = context.group(part, ValueFlowCallKind::ConstructByNativeCode, ValueFlowCalleeOrigin::MemberFoundUnderName);
             context.add(group.newTarget, part);
-            context.add(group.otherArguments, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+            context.add(group.otherArguments, undescribedValueThatIsNoBuffer(context));
             context.connect(group.result, escaped);
             context.connect(group.thrown, escaped);
         });
@@ -228,7 +228,7 @@ void settlePromisesThrough(ClimbingSet functions, const ValueFlowBuiltinCall& ca
 void letNativeCodeSettlePromises(ValueFlowRuleContext& context, ClimbingSet escaped)
 {
     ValueSetID passedByNativeCode = unknownValue(context, ValueFlowUnknownSource::ParameterOfEscapedFunction);
-    auto settle = [&](ValueFlowName settledPromises, ValueFlowName slot) {
+    auto settle = [&](ValueFlowCellName settledPromises, ValueFlowCellName slot) {
         forEachNodeOfSlotWrittenThrough(context, context.valueOf(context.read(escaped, settledPromises)), slot, [&](ValueFlowNodeID held) {
             context.add(held, passedByNativeCode);
         });

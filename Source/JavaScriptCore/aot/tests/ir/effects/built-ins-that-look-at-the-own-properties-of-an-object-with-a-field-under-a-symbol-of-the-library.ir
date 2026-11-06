@@ -1,0 +1,28 @@
+# library.js: const kState = Symbol("state")  function Holder() { this[kState] = null }   main.js: Object.freeze(holder), Object.keys(holder), Object.isFrozen(holder)
+# The library may keep what lies under a symbol of its own in a form of its own, and the run time calls a function of the library on the object before native code looks at its own properties.
+# A built-in that runs code only through the own properties of its operand may run code on such an object. A symbol that the program creates changes nothing.
+# FORM: Prepared
+# RUN: effects f0 f1
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+layout L0 name="Holder" fields=[{key="plain" declared={type=number}}, {key=symbol("state")@m1:100 declared={type=anything}}]
+layout L1 name="OfProgram" fields=[{key="plain" declared={type=number}}, {key=symbol("own")@m0:100 declared={type=anything}}]
+function f0 name="holderOfLibrary" parameters=[{type=L0}] results=[{type=undefined}] {
+    v1 = CallBuiltin -, v0 overload=ObjectFreeze/0
+    v2 = CallBuiltin -, v0 overload=ObjectKeys/0
+    v3 = CallBuiltin -, v0 overload=ObjectIsFrozen/0
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v1 CallBuiltin: unknownCode
+# CHECK-NEXT: v2 CallBuiltin: unknownCode
+# CHECK-NEXT: v3 CallBuiltin: unknownCode
+function f1 name="objectOfProgram" parameters=[{type=L1}] results=[{type=undefined}] {
+    v1 = CallBuiltin -, v0 overload=ObjectFreeze/0
+    v2 = CallBuiltin -, v0 overload=ObjectKeys/0
+    v3 = CallBuiltin -, v0 overload=ObjectIsFrozen/0
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: unknownCode

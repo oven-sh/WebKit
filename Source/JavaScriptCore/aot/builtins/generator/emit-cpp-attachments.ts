@@ -96,6 +96,8 @@ function formatCondition(context: AttachmentContext, condition: ModelCondition |
       ["buildAdmitsRuntimeCode", condition.buildAdmitsRuntimeCode ? "true" : null],
       ["callRunsOtherCode", condition.callRunsOtherCode ? "true" : null],
       ["objectNobodyKnowsIsWritten", condition.objectNobodyKnowsIsWritten ? "true" : null],
+      ["testsReplaceBuiltins", condition.testsReplaceBuiltins ? "true" : null],
+      ["programStores", formatId("BuiltinID", condition.programStores)],
     ]),
   );
 }
@@ -240,6 +242,14 @@ function formatHostObject(context: AttachmentContext, object: ModelHostObject): 
       ),
     ],
     ["keepsStringsOfStoredValues", object.keepsStringsOfStoredValues ? "true" : null],
+    ["nativeAccessors", formatNames(context, object.nativeAccessors)],
+    [
+      "platforms",
+      formatOptionSet(
+        "BuiltinPlatform",
+        targetPlatforms.filter(platform => object.platforms.includes(platform)),
+      ),
+    ],
   ]);
 }
 

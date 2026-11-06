@@ -5,10 +5,10 @@
 # RUN: tables types
 # CHECK-NOT: type L0
 # CHECK-NOT: type int[0, 255]
-# CHECK: type string
+# CHECK: type L1 {{*}}tests=[ShapeIn({{*}})]
 # CHECK-NOT: type L0
 # CHECK-NOT: type int[0, 255]
-# CHECK: type L1 {{*}}tests=[ShapeIn({{*}})]
+# CHECK: type "kept"
 # CHECK-NOT: type L0
 # CHECK-NOT: type int[0, 255]
 

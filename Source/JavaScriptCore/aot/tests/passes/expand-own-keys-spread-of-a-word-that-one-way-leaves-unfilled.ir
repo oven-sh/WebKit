@@ -1,0 +1,44 @@
+# The source of a spread is a parameter of a merge. One edge hands in a literal that is made for the spread alone, one an object that somebody made elsewhere, and one leaves the position unfilled:
+# the spread stands behind a test of a tag, and takes the word through a cast that names the fact. What comes through the merge in place of the literal is looked at behind the same fact
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Made" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}, {key="c" declared={type=number}}]
+
+function f0 name="literalOrObjectOrNothing" parameters=[{type=i32}, {type=number}, {type=object}] results=[{type=anything}] {
+    Switch v0 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v3 = NewObject -, v1 layout=L0 fields=[2]
+    v4 = FinishObject v3
+    Jump -> next b4(v4)
+  b2():
+    Jump -> next b4(v2)
+  b3():
+    v5 = Unspecified valueType=object
+    Jump -> next b4(v5)
+  b4(v6: object|unspecified):
+    v7 = NewObject -, v1 layout=L0 fields=[0]
+    Switch v0 cases=[1, 2] -> case b5(), case b5(), otherwise b6()
+  b5():
+    v8 = Specified
+    v9 = AssumeType v6, v8 provenType=object
+    CopyDataProperties v7, v9
+    Jump -> next b6()
+  b6():
+    v11 = FinishObject v7
+    Return v11
+# CHECK: b4([[which]]: i32, [[c]]: undefined|number, [[other]]: undefined|object|unspecified):
+# CHECK: b5():
+# CHECK-NEXT: v8: fact = Specified
+# CHECK: Switch [[which]] cases=[1, 2] -> case [[defines]](), case [[copies]](), otherwise
+# CHECK: [[defines]]():
+# CHECK-NEXT: [[held]]: number = AssumeType [[c]] provenType=number
+# CHECK-NEXT: PropDefine v7, [[held]] key="c"
+# CHECK: [[copies]]():
+# CHECK-NEXT: [[filled]]: undefined|object = AssumeType [[other]], v8 provenType=undefined|object
+# CHECK-NEXT: = TypeTest [[filled]]
+# CHECK: CopyDataProperties v7, [[filled]]
+}

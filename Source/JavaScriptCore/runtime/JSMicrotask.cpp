@@ -82,6 +82,7 @@ extern "C" __attribute__((weak)) void Bun__reportUnhandledError(JSC::JSGlobalObj
 #include "WebAssemblyCompileOptions.h"
 #endif
 #include <wtf/NoTailCalls.h>
+#include <wtf/Scope.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -650,7 +651,7 @@ void reportErrorOfMicrotask(JSGlobalObject* globalObject, JSValue exceptionOrVal
 }
 
 // https://tc39.es/ecma262/#sec-asyncgeneratorresume (then AsyncGeneratorStart's completion handling).
-static ALWAYS_INLINE void asyncGeneratorBodyCallImpl(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache, [[maybe_unused]] bool hasCompiledCode)
+static void asyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -663,7 +664,8 @@ static ALWAYS_INLINE void asyncGeneratorBodyCallImpl(JSGlobalObject* globalObjec
     JSValue generatorFrame = generator->frame();
 #if ENABLE(AOT)
     AOT::AsyncGeneratorBodyEntry compiledEntry;
-    if (hasCompiledCode)
+    bool hasCompiledCode = vm.hasCompiledCode();
+    if (hasCompiledCode) [[unlikely]]
         compiledEntry = AOT::willEnterAsyncGeneratorBody(generator, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
 #endif
 
@@ -680,7 +682,7 @@ static ALWAYS_INLINE void asyncGeneratorBodyCallImpl(JSGlobalObject* globalObjec
         }
     }
 #if ENABLE(AOT)
-    if (hasCompiledCode) {
+    if (hasCompiledCode) [[unlikely]] {
         generator = AOT::didReturnFromAsyncGeneratorBody(compiledEntry, generator, value, error, isTerminated);
         if (!generator)
             return;
@@ -690,31 +692,6 @@ static ALWAYS_INLINE void asyncGeneratorBodyCallImpl(JSGlobalObject* globalObjec
         return;
 
     RELEASE_AND_RETURN(scope, finishAsyncGeneratorBodyCall(globalObject, generator, value, error, microtaskCallCache));
-}
-
-#if ENABLE(AOT)
-static NEVER_INLINE void asyncGeneratorBodyCallOnClearedStack(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache)
-{
-    asyncGeneratorBodyCallImpl(globalObject, generator, resumeValue, resumeMode, microtaskCallCache, true);
-}
-
-static NEVER_INLINE void asyncGeneratorBodyCallBesideCompiledCode(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache)
-{
-    NO_TAIL_CALLS();
-    AOT::clearStackBelowCaller();
-    asyncGeneratorBodyCallOnClearedStack(globalObject, generator, resumeValue, resumeMode, microtaskCallCache);
-}
-#endif
-
-static void asyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache)
-{
-#if ENABLE(AOT)
-    if (globalObject->vm().hasCompiledCode()) [[unlikely]] {
-        asyncGeneratorBodyCallBesideCompiledCode(globalObject, generator, resumeValue, resumeMode, microtaskCallCache);
-        return;
-    }
-#endif
-    asyncGeneratorBodyCallImpl(globalObject, generator, resumeValue, resumeMode, microtaskCallCache, false);
 }
 
 void finishAsyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue value, JSValue error, MicrotaskCallCache* microtaskCallCache)
@@ -1144,8 +1121,13 @@ static void moduleRegistryModuleSettled(JSGlobalObject* globalObject, VM& vm, st
     // the normal microtask queue — would otherwise re-enter fetchComplete
     // and trip its "m_status == Fetching" assertion. Match the same
     // pending-modulePromise guard used in moduleRegistryFetchSettled.
-    if (modulePromise->status() != JSPromise::Status::Pending)
+    if (modulePromise->status() != JSPromise::Status::Pending) {
+#if ENABLE(AOT)
+        if (status == JSPromise::Status::Rejected && vm.hasCompiledCode())
+            AOT::ModuleRecord::didLoseErrorOfModule(globalObject, entry->key());
+#endif
         return;
+    }
 #endif
     if (status == JSPromise::Status::Fulfilled) {
         auto* moduleRecord = downcast<AbstractModuleRecord>(arguments[1]);
@@ -1172,7 +1154,10 @@ static void moduleGraphLoadingError(JSGlobalObject* globalObject, VM& vm, ThrowS
             RETURN_IF_EXCEPTION(scope, void());
         }
 #if ENABLE(AOT)
-        AOT::ModuleRecord::didFailToLoad(*state);
+        if (vm.hasCompiledCode()) {
+            AOT::ModuleRecord::didFailToLoad(globalObject, *state);
+            scope.assertNoExceptionExceptTermination();
+        }
 #endif
         state->promise()->reject(vm, errorValue);
     }
@@ -1187,12 +1172,39 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
     auto* loadPromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
 
+#if ENABLE(AOT)
+    // hostLoadImportedModule() may have left another promise in the entry, for whoever asked for the entry point while its graph was loaded. However a step ends the load, that promise ends with it.
+    auto settleLoadPromiseInEntry = makeScopeExit([&] {
+        if (loadPromise->status() == JSPromise::Status::Pending || context->step() == ModuleLoadingContext::Step::Cached || !vm.hasCompiledCode())
+            return;
+        JSPromise* promiseInEntry = context->entry()->loadPromise();
+        if (promiseInEntry == loadPromise || promiseInEntry->status() != JSPromise::Status::Pending)
+            return;
+        if (loadPromise->status() == JSPromise::Status::Fulfilled)
+            promiseInEntry->fulfill(vm, loadPromise->result());
+        else
+            promiseInEntry->reject(vm, loadPromise->result());
+    });
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+    // A rejected load never reaches finishLoadingImportedModule(), so drop the cached key here.
+    if (status == JSPromise::Status::Rejected) {
+        if (CyclicModuleRecord* referrer = context->referrer().getModule())
+            referrer->removeResolvedRequest(context->moduleRequest());
+    }
+#endif
+
     switch (context->step()) {
     case ModuleLoadingContext::Step::Main: {
         // modulePromise settled: on fulfillment, call loadRequestedModules and chain next step
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = downcast<AbstractModuleRecord>(arguments[1]);
             context->module(vm, module);
+#if ENABLE(AOT)
+            if (auto* compiled = context->payload()->inherits<ModuleGraphLoadingState>() ? nullptr : dynamicDowncast<AOT::ModuleRecord>(module))
+                compiled->willBeLoadedByImport();
+#endif
             JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
@@ -1200,8 +1212,13 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             }
             context->setStep(ModuleLoadingContext::Step::Requested);
             requestedPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
-        } else
+        } else {
             loadPromise->reject(vm, arguments[1]);
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode())
+                RELEASE_AND_RETURN(scope, AOT::ModuleRecord::didFailToMakeModule(globalObject, context->entry()->key()));
+#endif
+        }
         return;
     }
     case ModuleLoadingContext::Step::Requested: {
@@ -1217,15 +1234,18 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
                 return;
             }
             if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module); compiled && context->referrer().isRealm() && compiled->takeStepOfMainModule()) {
-                // The entry point is loaded from here on, for whoever asks the loader for it. Who asked for the program hears of it in the next step.
+                // The entry point is loaded from here on, for whoever asks the loader for it or has asked. Who asked for the program hears of it in the next step.
                 JSPromise* loadedBelowMainModule = JSPromise::create(vm, globalObject->promiseStructure());
                 loadedBelowMainModule->markAsHandled();
                 loadedBelowMainModule->fulfill(vm, module);
                 auto* entry = context->entry();
                 entry->setRecord(vm, module);
                 entry->setStatus(ModuleRegistryEntry::Status::Fetched);
-                entry->setLoadPromise(vm, loadedBelowMainModule);
                 loadedBelowMainModule->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
+                if (entry->loadPromise() == loadPromise)
+                    entry->setLoadPromise(vm, loadedBelowMainModule);
+                else
+                    entry->loadPromise()->fulfill(vm, module);
                 return;
             }
 #endif
@@ -1517,6 +1537,15 @@ static void moduleLoadLinkEvaluateSettled(JSGlobalObject* globalObject, VM& vm, 
                 resultPromise->rejectWithCaughtException(vm, scope);
                 return;
             }
+#if ENABLE(AOT)
+            if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(record)) {
+                evaluatePromise = compiled->evaluateMainModule(evaluatePromise);
+                if (scope.exception()) {
+                    resultPromise->rejectWithCaughtException(vm, scope);
+                    return;
+                }
+            }
+#endif
             // Chain: when evaluation completes, resolve resultPromise with record
             evaluatePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadReturnRecord, resultPromise, record);
         } else
@@ -1949,6 +1978,18 @@ static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue bareStep
 #endif
 }
 
+#if ENABLE(AOT)
+// Compiled code runs the jobs after this one before it returns. The frame of runInternalMicrotask() holds this job's arguments, so it ends here.
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+#define LEAVE_FOR_COMPILED_JOB(call) do { call; return; } while (false)
+#elif OS(WINDOWS) && COMPILER(CLANG)
+// MUST_TAIL_CALL is empty on Windows. With the parameters of a job function the compiler makes the tail call there too.
+#define LEAVE_FOR_COMPILED_JOB(call) [[clang::musttail]] return call
+#else
+#define LEAVE_FOR_COMPILED_JOB(call) MUST_TAIL_CALL return call
+#endif
+#endif
+
 #if USE(BUN_JSC_ADDITIONS)
 void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, MicrotaskCallCache* microtaskCallCache)
 #else
@@ -2104,13 +2145,13 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             userContext = argument3;
             asyncContext = AsyncContextSwapScope::unwrapContextTuple(userContext);
         }
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
-#endif
 #if ENABLE(AOT)
-        if (vm.hasCompiledCode() && (userContext.isEmpty() || userContext.isUndefinedOrNull()) && AOT::tryRunHandlerOfJob(globalObject, vm, promiseOrCapability, handler, argument2, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop())) {
+        if (vm.hasCompiledCode() && (userContext.isEmpty() || userContext.isUndefinedOrNull()) && AOT::canRunHandlerOfJob(globalObject, vm, promiseOrCapability, handler)) {
             scope.release();
-            return;
+            LEAVE_FOR_COMPILED_JOB(AOT::runHandlerJob(globalObject, vm, task, payload, promiseOrCapability, handler, argument2, asyncContext, microtaskCallCache));
         }
+#endif
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
 #endif
 
         JSValue result;
@@ -2209,12 +2250,8 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #if ENABLE(AOT)
     case InternalMicrotask::CompiledModuleBodyResume:
     case InternalMicrotask::CompiledAsyncFunctionResume: {
-#if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
-#endif
         scope.release();
-        AOT::resumeAsyncFunction(globalObject, vm, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
-        return;
+        LEAVE_FOR_COMPILED_JOB(AOT::runAsyncFunctionResumeJob(globalObject, vm, task, payload, argument0, argument1, argument2, argument3, microtaskCallCache));
     }
 
     case InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn: {
@@ -2250,6 +2287,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::AsyncGeneratorBodyCallNormal: {
         JSValue contextArg = argument2;
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && AOT::hasCompiledBody(uncheckedDowncast<JSAsyncGenerator>(contextArg))) {
+            scope.release();
+            LEAVE_FOR_COMPILED_JOB(AOT::runAsyncGeneratorBodyJob(globalObject, vm, task, payload, argument0, argument1, argument2, argument3, microtaskCallCache));
+        }
+#endif
 #if USE(BUN_JSC_ADDITIONS)
         AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
@@ -2261,6 +2304,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::AsyncGeneratorBodyCallReturn: {
         JSValue contextArg = argument2;
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && AOT::hasCompiledBody(uncheckedDowncast<JSAsyncGenerator>(contextArg))) {
+            scope.release();
+            LEAVE_FOR_COMPILED_JOB(AOT::runAsyncGeneratorBodyJob(globalObject, vm, task, payload, argument0, argument1, argument2, argument3, microtaskCallCache));
+        }
+#endif
 #if USE(BUN_JSC_ADDITIONS)
         AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
@@ -2341,20 +2390,10 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             return;
 
 #if ENABLE(AOT)
-        if (vm.hasCompiledCode() && argument2.isEmpty() && argument3.isEmpty() && argument1.isUndefined()) {
-            bool endsJob = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
-            if (!vm.isAsyncContextTrackingEnabled()) {
-                if (AOT::tryRunFunctionOfJob(globalObject, vm, job, endsJob)) {
-                    scope.release();
-                    return;
-                }
-            } else if (AsyncContextSwapScope::current(vm, globalObject).isUndefined()) {
-                AsyncContextSwapScope asyncContextScope(vm, globalObject, jsUndefined());
-                if (AOT::tryRunFunctionOfJob(globalObject, vm, job, endsJob)) {
-                    scope.release();
-                    return;
-                }
-            }
+        if (vm.hasCompiledCode() && argument2.isEmpty() && argument3.isEmpty() && argument1.isUndefined() && AOT::canEnterFunctionOfJob(globalObject, vm, job)
+            && (!vm.isAsyncContextTrackingEnabled() || AsyncContextSwapScope::current(vm, globalObject).isUndefined())) {
+            scope.release();
+            LEAVE_FOR_COMPILED_JOB(AOT::runFunctionJob(globalObject, vm, task, payload, job, argument1, argument2, argument3, microtaskCallCache));
         }
 #endif
 
@@ -2432,7 +2471,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportSettled(globalObject, argument0, argument1, argument2, static_cast<JSPromise::Status>(payload)));
 
     case InternalMicrotask::CompiledModuleImportStep:
-        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportStep(argument0, argument1, payload));
+        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportStep(argument0, argument1, argument2, payload));
 #endif
 
     case InternalMicrotask::AsyncModuleExecutionResume: {

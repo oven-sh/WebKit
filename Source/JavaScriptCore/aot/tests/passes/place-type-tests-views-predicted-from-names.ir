@@ -1,0 +1,63 @@
+# An object that nobody could follow is asked for two names, no layout has them, and of the built-in classes only the views of a buffer answer both: it is expected to hold bytes.
+# One name predicts nothing, nor do names that a class of another kind answers too, nor a name that is stored under.
+# place-type-tests-views-predicted-from-names-in-warm-code.ir has the same reads where they do not run often.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="whereItBeginsAndHowLongItIs" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="byteOffset"
+    v2 = PropGet v0 key="byteLength"
+    v3 = Add v1, v2
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ Uint8Array):
+# CHECK-NEXT: = TypeTest v0 testedType=Uint8Array
+# CHECK: = CallBuiltin {{*}} overload=TypedArrayPrototypeByteOffset/0
+# CHECK: = CallBuiltin {{*}} overload=TypedArrayPrototypeByteLength/0
+}
+
+function f1 name="oneName" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="byteOffset"
+    v2 = PropGet v0 key="byteOffset"
+    v3 = Add v1, v2
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ object):
+# CHECK-NEXT: = PropGet v0 key="byteOffset"
+# CHECK-NOT: TypeTest
+}
+
+function f2 name="namesOfTwoKindsOfClasses" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="byteLength"
+    v2 = PropGet v0 key="maxByteLength"
+    v3 = Add v1, v2
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ object):
+# CHECK-NEXT: = PropGet v0 key="byteLength"
+# CHECK-NOT: testedType=Uint8Array
+}
+
+function f3 name="namesThatNoClassAnswersTogether" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="byteOffset"
+    v2 = PropGet v0 key="size"
+    v3 = Add v1, v2
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ object):
+# CHECK-NEXT: = PropGet v0 key="byteOffset"
+# CHECK-NOT: TypeTest
+}
+
+function f4 name="oneNameIsStoredUnder" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="byteOffset"
+    PropSet v0, v1 key="byteLength"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ object):
+# CHECK-NEXT: = PropGet v0 key="byteOffset"
+# CHECK-NOT: TypeTest
+}

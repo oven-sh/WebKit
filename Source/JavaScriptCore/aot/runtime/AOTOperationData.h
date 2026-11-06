@@ -35,6 +35,16 @@ struct StaticsRun {
 };
 static_assert(sizeof(StaticsRun) == 16 && isImageRecord<StaticsRun>);
 
+// A group of files that the first entry point does not bring along. Their variables get their first words when code is entered that can name them: that of a file of the group, or of a file that imports one.
+// The words of the groups lie in the order of the records, one group behind the other: a group ends where the next begins. A group that only imports such groups has no words.
+// The last record ends the lists. Behind the last word lies one byte for each group, in their order: whether its words are filled.
+struct StaticsOfFiles {
+    uint32_t firstWord;
+    // In ProgramTables::staticsOfImportedFiles(): the groups of this table that its files import.
+    uint32_t firstImportedGroup;
+};
+static_assert(sizeof(StaticsOfFiles) == 8 && isImageRecord<StaticsOfFiles>);
+
 struct StaticsRange {
     uint32_t offset;
     uint32_t size;
@@ -207,6 +217,11 @@ struct TemplateObjectRequest {
 };
 static_assert(sizeof(TemplateObjectRequest) == 4);
 
+constexpr bool isAssignableBinding(EvalBindingKind kind)
+{
+    return kind == EvalBindingKind::Variable || kind == EvalBindingKind::Arguments || kind == EvalBindingKind::MappedArgument || kind == EvalBindingKind::SimpleCatchParameter;
+}
+
 struct EvalBindingData {
     static constexpr uint32_t noOperand = UINT32_MAX;
 
@@ -219,9 +234,8 @@ struct EvalBindingData {
     // The identifier number of the private symbol that instances hold: the field's key, or the brand of a method or an accessor. 0 for a static name.
     uint32_t privateKey;
     SlotData slot;
-    uint32_t type;
 };
-static_assert(sizeof(EvalBindingData) == 32 && isImageRecord<EvalBindingData>);
+static_assert(sizeof(EvalBindingData) == 28 && isImageRecord<EvalBindingData>);
 
 struct DirectEvalRequest {
     // The bindings are followed by their indexes, sorted by the identifier number of the name. Among bindings with the same name the inner one, which has the lower index, comes first.
@@ -252,9 +266,7 @@ struct PropertyDescriptorBits {
     uint32_t isConfigurable : 1;
     uint32_t hasGet : 1;
     uint32_t hasSet : 1;
-    // The descriptor literal has no prototype: a member that it does not list is absent, whatever Object.prototype holds.
-    uint32_t inheritsNothing : 1;
-    uint32_t unused : 22;
+    uint32_t unused : 23;
 };
 static_assert(sizeof(PropertyDescriptorBits) == 4);
 
@@ -300,6 +312,7 @@ enum class ThrowKind : uint8_t {
     UninitializedBinding,
     NotAFunction,
     ErrorWithMessage,
+    NullishUpdate,
 };
 
 enum class ThrowSiteSource : uint32_t {
@@ -313,6 +326,7 @@ struct ThrowSiteWord {
     static constexpr uint32_t narrowNone = (1u << 17) - 1;
     static constexpr uint32_t maxNarrowA = narrowNone - 1;
     static constexpr unsigned numberOfRegistersPerBank = 32;
+    static constexpr unsigned maxMethodReadColumnDelta = numberOfRegistersPerBank - 2;
 #if CPU(X86_64)
     // Behind a call each word is the immediate of a `test eax, imm32` that nothing executes: whoever decodes the code in order finds instructions alone, and the next one where it begins.
     static constexpr uint8_t opcodeInFrontOfWordBehindCall = 0xa9;
@@ -322,21 +336,32 @@ struct ThrowSiteWord {
 #endif
 
     uint32_t narrowA() const { return a == narrowNone ? none : a; }
+    // Such a site has no operand. Its registerNumber is one more than the number of columns from the read of the method to the call, or zero.
+    bool isCallSite() const { return static_cast<ThrowKind>(kind) == ThrowKind::NotAFunction && static_cast<Typed::Representation>(representation) == Typed::Representation::Void; }
+    bool differsOnlyInRegisterNumber(ThrowSiteWord other) const
+    {
+        other.registerNumber = registerNumber;
+        return std::bit_cast<uint32_t>(other) == std::bit_cast<uint32_t>(*this);
+    }
 
+    // The lowest bits: words that differ in nothing else are neighbors by value.
+    uint32_t registerNumber : 5;
     uint32_t kind : 3;
     uint32_t representation : 4;
-    uint32_t registerNumber : 5;
     uint32_t hasWideA : 1;
     uint32_t hasB : 1;
-    uint32_t unused : 1;
+    // Of a call site: the callee is a member of the receiver, read at the site. Function.prototype.call and apply, entered from there, refuse the receiver under the name of the site.
+    uint32_t calleeIsReadFromReceiver : 1;
     uint32_t a : 17;
 };
 static_assert(sizeof(ThrowSiteWord) == 4);
-static_assert(static_cast<unsigned>(ThrowKind::ErrorWithMessage) < 1u << 3 && numberOfEnumerators<Typed::Representation> <= 1u << 4);
+static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numberOfEnumerators<Typed::Representation> <= 1u << 4);
 
 #define FOR_EACH_AOT_OPERATION_PROGRAM_TABLE(v) \
     v(staticsLayout, StaticsLayout) \
     v(staticsRuns, StaticsRun) \
+    v(staticsOfFiles, StaticsOfFiles) \
+    v(staticsOfImportedFiles, uint32_t) \
     v(staticsRoots, StaticsRange) \
     v(staticsNarrowRoots, StaticsRange) \
     v(staticsClearedEachCollection, StaticsRange) \
@@ -353,7 +378,7 @@ static_assert(static_cast<unsigned>(ThrowKind::ErrorWithMessage) < 1u << 3 && nu
     v(requests, uint32_t) \
     v(builtinCells, uint32_t) \
     v(eagerBuiltinCells, uint32_t) \
-    v(constantBuiltinMembers, uint32_t) \
+    v(constantAndUnlockedBuiltinMembers, uint32_t) \
     v(globalBindings, uint32_t) \
     v(entryPoints, uint32_t)
 
