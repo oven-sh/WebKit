@@ -1509,11 +1509,9 @@ static JSValue numberOfItems(JSGlobalObject* globalObject, JSObject* object)
     if (object->isCallable())
         return { };
     JSType type = object->type();
-    // What the engine goes through without calling anything is counted as it is: that is what iteration gives, whatever `size` says. (But for a Set that has
-    // been given a get() and a keys(), which make a mapping by its methods of it. To tell would take three reads, and its `size` says the same.)
-    if (isSetAsTheEngineMadeIt(object))
-        return jsNumber(uncheckedDowncast<JSSet>(object)->size());
-    if (type == JSMapType || type == JSSetType) {
+    // What the engine goes through without calling anything is counted as it is: that is what iteration gives, whatever `size` says.
+    bool isSetToGoThrough = isSetAsTheEngineMadeIt(object);
+    if (!isSetToGoThrough && (type == JSMapType || type == JSSetType)) {
         // One of a derived class, or of another realm: what Python goes through it with is the engine's own. (It is looked at: to be counted so, no getter is called.)
         bool isMap = type == JSMapType;
         JSValue method;
@@ -1522,9 +1520,15 @@ static JSValue numberOfItems(JSGlobalObject* globalObject, JSObject* object)
         if (auto* function = result == Inquiry::Value ? dynamicDowncast<JSFunction>(method) : nullptr; function && !hasIterOfPython(object)) {
             if (isMap && function->intrinsic() == JSMapKeysIntrinsic && function->realm()->isMapPrototypeIteratorProtocolFastAndNonObservable())
                 return jsNumber(uncheckedDowncast<JSMap>(object)->size());
-            if (!isMap && function->intrinsic() == JSSetValuesIntrinsic && function->realm()->isSetPrototypeIteratorProtocolFastAndNonObservable())
-                return jsNumber(uncheckedDowncast<JSSet>(object)->size());
+            isSetToGoThrough = !isMap && function->intrinsic() == JSSetValuesIntrinsic && function->realm()->isSetPrototypeIteratorProtocolFastAndNonObservable();
         }
+    }
+    if (isSetToGoThrough) {
+        // Unless it is a mapping by its methods, which iteration goes through by its keys(): what iteration asks.
+        ItemsOfJS items = itemsOfIterable(globalObject, object);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (items == ItemsOfJS::Iterated)
+            return jsNumber(uncheckedDowncast<JSSet>(object)->size());
     }
     if (type != JSMapType) {
         JSValue iterates = methodOfIteration(globalObject, object);
