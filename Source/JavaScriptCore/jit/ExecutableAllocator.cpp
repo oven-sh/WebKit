@@ -62,6 +62,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include <windows.h>
 #endif
 
+#if ENABLE(JIT_PROTECTION_KEY)
+#include <sys/syscall.h>
+#include <sys/utsname.h>
+#endif
+
 #if HAVE(IOS_JIT_RESTRICTIONS) || HAVE(MAC_JIT_RESTRICTIONS)
 #include <wtf/cocoa/Entitlements.h>
 #endif
@@ -569,6 +574,75 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
 
 #endif // OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 
+#if ENABLE(JIT_PROTECTION_KEY)
+
+static bool kernelKeepsPKRUAcrossContextSwitches()
+{
+    // Before Linux 5.13 a thread could come back from a context switch with the PKRU of another. 5.4.182 and 5.10.103 have
+    // the fix too ("x86/fpu: Correct pkru/xstate inconsistency"). V8 asks the same of the kernel.
+    struct utsname name;
+    unsigned major = 0, minor = 0, patch = 0;
+    if (uname(&name) || sscanf(name.release, "%u.%u.%u", &major, &minor, &patch) < 2)
+        return false;
+    if (major != 5)
+        return major > 5;
+    return minor >= 13 || (minor == 10 && patch >= 103) || (minor == 4 && patch >= 182);
+}
+
+static bool mayBeUnderSeccompFilter()
+{
+    // Not prctl(PR_GET_SECCOMP): a filter can tell it from the calls of prctl() that the process makes anyway, and kill for it.
+    // It cannot tell one path from another. Where this says nothing, there may be a filter.
+    int file = open("/proc/thread-self/status", O_RDONLY | O_CLOEXEC);
+    if (file < 0)
+        return true;
+    std::array<char, 4096> status;
+    ssize_t length = read(file, status.data(), status.size());
+    close(file);
+    // The whole line, so that one cut short by the end of the buffer does not read as a zero.
+    return length <= 0 || !WTF::contains(std::span { status }.first(length), "\nSeccomp:\t0\n"_span);
+}
+
+static void giveJITRegionAProtectionKey(void* base, size_t size)
+{
+    constexpr unsigned operatingSystemHasEnabledProtectionKeys = 1 << 4;
+    if (!Options::useJITProtectionKey() || !(MacroAssembler::getCPUID(0x7)[2] & operatingSystemHasEnabledProtectionKeys) || !kernelKeepsPKRUAcrossContextSwitches())
+        return;
+
+    // A seccomp filter may kill the process for a system call that it does not list, and nothing tells what it would do.
+    // systemd's @system-service does not list these; Docker's default profile does. So it takes someone who knows the filter.
+    if (!Options::useJITProtectionKeyUnderSeccompFilter() && mayBeUnderSeccompFilter())
+        return;
+
+    // syscall(), because pkey_alloc() is newer than the oldest glibc that Bun runs on. Fails where all 15 keys are taken.
+    long key = syscall(SYS_pkey_alloc, 0UL, 0UL);
+    if (key < 0)
+        return;
+    if (syscall(SYS_pkey_mprotect, base, size, static_cast<unsigned long>(PROT_READ | PROT_WRITE | PROT_EXEC), key)) {
+        syscall(SYS_pkey_free, key);
+        return;
+    }
+    g_jscConfig.jitProtectionKeyBits = 3u << (2 * key);
+    dataLogLnIf(Options::verboseExecutablePoolAllocation(), getpid(), ": Gave executable pool reservation protection key ", key);
+}
+
+NEVER_INLINE void setJITRegionWritableForCurrentThread(bool writable)
+{
+    // PKRU has two bits for each of the 16 keys: access disable, and above it write disable. Neither stops an instruction fetch.
+    constexpr uint32_t writeDisableBits = 0xaaaaaaaa;
+    uint32_t bits = g_jscConfig.jitProtectionKeyBits;
+    if (!bits)
+        return;
+    uint32_t current;
+    uint32_t zero;
+    __asm__ volatile("rdpkru" : "=a"(current), "=d"(zero) : "c"(0));
+    uint32_t wanted = (current & ~bits) | (writable ? 0 : bits & writeDisableBits);
+    if (wanted != current)
+        __asm__ volatile("wrpkru" : : "a"(wanted), "c"(0), "d"(0) : "memory");
+}
+
+#endif // ENABLE(JIT_PROTECTION_KEY)
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 static ALWAYS_INLINE JITReservation initializeJITPageReservation()
@@ -625,6 +699,9 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
     if (reservation.pageReservation) {
         ASSERT(reservation.pageReservation.size() == reservation.size);
         reservation.base = reservation.pageReservation.base();
+#if ENABLE(JIT_PROTECTION_KEY)
+        giveJITRegionAProtectionKey(reservation.base, reservation.size);
+#endif
         g_jscConfig.useFastJITPermissions = threadSelfRestrictSupported<MemoryRestriction::kRwxToRw>();
 
         if (g_jscConfig.useFastJITPermissions)
