@@ -8,6 +8,7 @@
 
 #include "CApiType.h"
 #include "JSCInlines.h"
+#include "MarkedVector.h"
 #include "PyAbstract.h"
 #include "PyInternals.h"
 
@@ -353,21 +354,24 @@ static ALWAYS_INLINE bool nobodyHasIt(Interpreter& current, Body* body)
     return (body->isAliveOrCleared() || body->life() == Body::Life::ToBeCleared) && !body->face() && !current.counts.find(body);
 }
 
-// Those that this thread is about to destroy: a tp_dealloc that gives back the last reference to another does not call the other's, however long the chain. (A collection that comes in
-// between keeps them, as it keeps every body that has something to destroy, and queues them. Whoever comes second finds nothing to do.)
-static constinit thread_local Vector<Body*>* t_toDestroyNext = nullptr;
+// Those that this thread is about to destroy: a tp_dealloc that gives back the last reference to another does not call the other's, however long the chain. A collection that comes in
+// between may queue them as well, for the threads that made them, and whoever comes second finds nothing to do. He has to find the cell, though: what has been destroyed is kept by nobody else. So
+// the list is one that the collector marks.
+using ListOfBodies = MarkedVector<Body*>;
+static constinit thread_local ListOfBodies* t_toDestroyNext = nullptr;
 
 static void destroyItAndWhatGoesWithIt(JSGlobalObject* globalObject, Body* first)
 {
     Interpreter& current = interpreter();
-    Vector<Body*> next;
+    ListOfBodies next;
     SetForScope toDestroyNext(t_toDestroyNext, &next);
     next.append(first);
     IndicatorSetAside indicator;
     // (In the order in which they were let go of.)
     for (size_t i = 0; i < next.size(); ++i) {
         // The host is ending what runs here: nothing of C's is begun. What is left is found again by the next collection.
-        if (current.vm.hasPendingTerminationException()) [[unlikely]]
+        // (In whichever form: code of Python's that a tp_dealloc has called has been cut short, and whoever called it for C has put the exception away.)
+        if (current.vm.hasPendingTermination()) [[unlikely]]
             break;
         Body* body = next[i];
         if (!nobodyHasIt(current, body))
@@ -418,7 +422,7 @@ static void serve(JSGlobalObject* globalObject, Body* body)
             PyType* type = body->type();
             IndicatorSetAside indicator;
             // What it lets go of, and nobody else has, goes when this has returned.
-            Vector<Body*> next;
+            ListOfBodies next;
             {
                 SetForScope toDestroyNext(t_toDestroyNext, &next);
                 madeByExtension(type)->slot<ClearFunction>(tp_clear)(toC(body));
@@ -430,8 +434,8 @@ static void serve(JSGlobalObject* globalObject, Body* body)
                 watch(current, body, true);
             }
             reportWhatCRaised(globalObject, type, "tp_clear"_s);
-            for (Body* other : next)
-                destroyItAndWhatGoesWithIt(globalObject, other);
+            for (size_t i = 0; i < next.size(); ++i)
+                destroyItAndWhatGoesWithIt(globalObject, next[i]);
         }
     }
     if (nobodyHasIt(current, body))
