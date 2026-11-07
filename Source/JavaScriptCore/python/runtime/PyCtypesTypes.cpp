@@ -206,10 +206,17 @@ static JSValue typeFromBufferCopy(JSGlobalObject* globalObject, JSValue self, JS
         return { };
     audit(globalObject, "ctypes.cdata/buffer"_s, intFromPointer(globalObject, buffer.data), makeInt(globalObject, buffer.length), makeInt(globalObject, offset));
     RETURN_IF_EXCEPTION(scope, { });
-    // An audit hook may have run anything.
-    if (failed(scope, refreshBuffer(globalObject, buffer)) || failed(scope, checkRoomFor(globalObject, info, buffer.length, offset)))
+    PyCData* data = newData(globalObject, PyType::from(self));
+    RETURN_IF_EXCEPTION(scope, { });
+    // An audit hook may have run anything, and so may the making of the instance: the class may have been given its fields, the memory may have moved.
+    if (failed(scope, refreshBuffer(globalObject, buffer)))
         return { };
-    RELEASE_AND_RETURN(scope, dataFromCopy(globalObject, PyType::from(self), buffer.data + offset, info->size));
+    if (data->size > buffer.length - offset)
+        return raiseValueError(globalObject, scope, "Buffer size too small ("_s, buffer.length, " instead of at least "_s, data->size + offset, " bytes)"_s);
+    auto memory = Place { data }.resolve(globalObject, data->size);
+    RETURN_IF_EXCEPTION(scope, { });
+    memcpy(memory.data(), buffer.data + offset, memory.size());
+    return data;
 }
 
 static JSValue typeInDll(JSGlobalObject* globalObject, JSValue self, JSValue dll, JSValue nameValue)
@@ -803,12 +810,12 @@ static PyCArg* pointerArgument(JSGlobalObject* globalObject, char tag, PyCData* 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint8_t* memory = Place { holder }.resolve(globalObject, sizeof(void*));
+    auto memory = Place { holder }.resolve(globalObject, sizeof(void*));
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyCArg* argument = PyCArg::create(globalObject);
     argument->foreignKind = ForeignKind::Pointer;
     argument->tag = tag;
-    memcpy(argument->value, memory, sizeof(void*));
+    memcpy(argument->value, memory.data(), sizeof(void*));
     argument->object.set(vm, argument, holder);
     return argument;
 }

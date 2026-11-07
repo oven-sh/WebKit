@@ -897,6 +897,7 @@ public:
         PinningView(JSCell* view, ArrayBuffer& pinned); // It takes the pin over.
         PinningView(PinningView&&);
         ~PinningView();
+        std::span<uint8_t> memory() const; // As it is now.
         JSCell* view;
 
     private:

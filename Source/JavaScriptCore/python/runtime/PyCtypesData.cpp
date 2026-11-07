@@ -27,6 +27,8 @@ uint8_t* PyCData::memoryOfView(JSGlobalObject* globalObject) const
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* view = uncheckedDowncast<PyMemoryView>(m_owner.get());
     if (view->isReleased()) {
+        if (uint8_t* memory = memoryBehindReleasedView(globalObject))
+            return memory;
         raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s);
         return nullptr;
     }
@@ -39,6 +41,18 @@ uint8_t* PyCData::memoryOfView(JSGlobalObject* globalObject) const
     return data + m_address;
 }
 
+uint8_t* PyCData::memoryBehindReleasedView(JSGlobalObject* globalObject) const
+{
+    ASSERT(m_isView);
+    std::span<uint8_t> pinned = uncheckedDowncast<PyMemoryView>(m_owner.get())->memoryOfJSThatIsPinned(globalObject);
+    uintptr_t begin = std::bit_cast<uintptr_t>(pinned.data());
+    // (The address is kept as a double. From 2^53 on that is not exact.)
+    uintptr_t address = whereViewWas();
+    if (address >= (1ull << 53) || address < begin || address - begin > pinned.size() || static_cast<uint64_t>(size) > pinned.size() - (address - begin))
+        return nullptr;
+    return std::bit_cast<uint8_t*>(address);
+}
+
 void PyCData::setStorage(VM& vm, PyByteStorage* storage, size_t offset)
 {
     m_owner.set(vm, this, storage);
@@ -46,11 +60,12 @@ void PyCData::setStorage(VM& vm, PyByteStorage* storage, size_t offset)
     m_isView = false;
 }
 
-void PyCData::setView(VM& vm, PyMemoryView* view, int64_t offset)
+void PyCData::setView(VM& vm, PyMemoryView* view, int64_t offset, const uint8_t* memory)
 {
     m_owner.set(vm, this, view);
     m_address = static_cast<uintptr_t>(offset);
     m_isView = true;
+    m_past.setWithoutWriteBarrier(jsNumber(static_cast<double>(std::bit_cast<uintptr_t>(memory))));
 }
 
 void PyCData::setAddress(const void* address)
@@ -65,26 +80,8 @@ void PyCData::setMemoryOf(VM& vm, const PyCData* other, int64_t offset)
     m_owner.setMayBeNull(vm, this, other->m_owner.get());
     m_address = other->m_address + static_cast<uintptr_t>(offset);
     m_isView = other->m_isView;
-}
-
-uint8_t* Place::resolve(JSGlobalObject* globalObject, int64_t size) const
-{
-    if (address)
-        return address;
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // A CField can be asked about an instance of any ctypes type.
-    if (offset < 0 || size < 0 || offset > object->size || size > object->size - offset) {
-        raiseValueError(globalObject, scope, "the memory of the instance is too small"_s);
-        return nullptr;
-    }
-    uint8_t* memory = object->memory(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!memory) {
-        raiseValueError(globalObject, scope, "NULL pointer access"_s);
-        return nullptr;
-    }
-    return memory + offset;
+    if (m_isView)
+        m_past.setWithoutWriteBarrier(jsNumber(static_cast<double>(other->whereViewWas() + static_cast<uintptr_t>(offset))));
 }
 
 // ---- Making instances ----
@@ -104,6 +101,7 @@ static PyCData* allocateData(JSGlobalObject* globalObject, PyType* type, PyCType
     PyCData* data = layout == state.functionType.get() ? PyCFuncPtr::create(vm, state.functionStructure.get(), type) : PyCData::create(vm, state.dataStructure.get(), type);
     data->length = info->length;
     data->size = info->size;
+    // (This may run code of the program: a key in the dict of a class that is no str is asked whether it is '__del__'.)
     if (type->isHeapType() && type->lookup(Special::Del)) [[unlikely]]
         runtime(globalObject).registerFinalizable(data);
     return data;
@@ -159,40 +157,63 @@ PyCData* newData(JSGlobalObject* globalObject, PyType* type)
 }
 
 // What a pointer points to is, as a rule, the memory of an instance that the pointer keeps alive. Then it is known how far that
-// memory goes, and who owns it.
+// memory goes, and who owns it. (What it keeps alive is in _objects, which the program can get at: this helps against accidents, it is no wall.)
 struct Provenance {
     JSCell* owner { nullptr }; // A PyByteStorage or a PyMemoryView. Null: nothing is known.
     const uint8_t* begin { nullptr };
     const uint8_t* end { nullptr };
+    bool isInWhatIsGone { false }; // It points to where something that is kept alive was, and is no more: a view has been released, JS has detached or shrunk the memory, or it has moved.
+    bool isNotAllSeen { false }; // More is kept alive than is looked through.
 };
 
 static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uint8_t* address, Provenance& result, unsigned depth = 0)
 {
-    if (!kept || !kept.isCell() || depth > 4)
+    if (!kept || !kept.isCell())
         return false;
+    if (depth > 4) {
+        result.isNotAllSeen = true;
+        return false;
+    }
     if (auto* other = PyCData::tryFrom(kept)) {
         if (!other->owner())
             return false;
         const uint8_t* begin;
         size_t size;
         if (other->isView()) {
-            auto* view = uncheckedDowncast<PyMemoryView>(other->owner());
-            if (view->isReleased())
+            auto isGone = [&] {
+                // (Wraps around below it.)
+                result.isInWhatIsGone |= std::bit_cast<uintptr_t>(address) - other->whereViewWas() <= static_cast<uintptr_t>(other->size);
                 return false;
+            };
+            auto* view = uncheckedDowncast<PyMemoryView>(other->owner());
+            if (view->isReleased()) {
+                begin = other->memoryBehindReleasedView(globalObject);
+                if (!begin)
+                    return isGone();
+                // Whoever is made to lie in there has to hold the cell of the view as well.
+                if (address < begin || address > begin + other->size)
+                    return false;
+                result = { view, begin, begin + other->size };
+                return true;
+            }
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
             begin = view->data(globalObject);
             if (scope.exception()) {
                 dropPendingException(globalObject, scope);
-                return false;
+                return isGone();
             }
             size = static_cast<size_t>(view->length);
+            // As a rule what is exported does not move. The bytes of a small typed array of JS do, when its buffer is first asked for; so does a bytearray under a view of a view of it whose
+            // first has been released.
+            if (!begin || address < begin || address > begin + size)
+                return isGone();
         } else {
             auto* storage = uncheckedDowncast<PyByteStorage>(other->owner());
             begin = storage->data();
             size = storage->capacity();
+            if (address < begin || address > begin + size)
+                return false;
         }
-        if (!begin || address < begin || address > begin + size)
-            return false;
         result = { other->owner(), begin, begin + size };
         return true;
     }
@@ -207,7 +228,11 @@ static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uin
         JSValue key;
         JSValue value;
         unsigned seen = 0;
-        for (unsigned position = 0; dict->next(position, key, value) && seen < 32; ++seen) {
+        for (unsigned position = 0; dict->next(position, key, value); ++seen) {
+            if (seen == 32) {
+                result.isNotAllSeen = true;
+                break;
+            }
             if (findProvenance(globalObject, value, address, result, depth + 1))
                 return true;
         }
@@ -215,21 +240,115 @@ static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uin
     return false;
 }
 
-// `pointer` holds `target`, and `size` bytes at `address` are about to be used. If it is known what the pointer points into, they
-// have to be within that: the type of a pointer need not be that of what it was made to point to. False: an exception.
-static bool checkPointerAccess(JSGlobalObject* globalObject, PyCData* pointer, const uint8_t* target, const uint8_t* address, int64_t size, Provenance& provenance)
+// What is kept for a part lies in the _objects of the whole under the way to the part (keyOfPart()). If something that the part is in was stored whole, what lies under the way
+// to that are the _objects of what was stored, and the rest of the way is a key in them. `way` is from the outside in.
+static bool findProvenanceUnder(JSGlobalObject* globalObject, PyDict* kept, std::span<const int64_t> way, const uint8_t* address, Provenance& result, unsigned& looksLeft)
 {
+    Runtime& rt = runtime(globalObject);
+    for (size_t taken = 1; taken <= way.size(); ++taken) {
+        if (!looksLeft)
+            return false;
+        --looksLeft;
+        StringBuilder key;
+        for (size_t i = taken; i--;)
+            key.append(hex(static_cast<uint32_t>(way[i]), Lowercase), i ? ":"_s : ""_s);
+        JSValue value = kept->get(makeStr(rt.vm(), key.toString()));
+        if (taken == way.size())
+            return findProvenance(globalObject, value, address, result);
+        if (auto* inner = PyDict::tryFrom(value); inner && inner->type() == rt.dictType() && findProvenanceUnder(globalObject, inner, way.subspan(taken), address, result, looksLeft))
+            return true;
+    }
+    return false;
+}
+
+static bool findProvenanceOfPart(JSGlobalObject* globalObject, PyDict* kept, PyCData* pointer, const uint8_t* address, Provenance& result)
+{
+    Vector<int64_t, 16> way;
+    for (PyCData* part = pointer; part->base; part = part->base.get())
+        way.append(part->index);
+    way.reverse();
+    unsigned looksLeft = 64;
+    // Under its own place, if a pointer was stored there; under those of its own two parts, if its contents were set.
+    if (findProvenanceUnder(globalObject, kept, way.span(), address, result, looksLeft))
+        return true;
+    for (int64_t index : { 1, 0 }) {
+        way.append(index);
+        if (findProvenanceUnder(globalObject, kept, way.span(), address, result, looksLeft))
+            return true;
+        way.removeLast();
+    }
+    return false;
+}
+
+// What the pointer holds. False: an exception; a null pointer is one.
+static bool pointerTarget(JSGlobalObject* globalObject, PyCData* pointer, uint8_t*& target)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto memory = Place { pointer }.resolve(globalObject, sizeof(void*));
+    RETURN_IF_EXCEPTION(scope, false);
+    memcpy(&target, memory.data(), sizeof(void*));
+    if (!target) {
+        raiseValueError(globalObject, scope, "NULL pointer access"_s);
+        return false;
+    }
+    return true;
+}
+
+// `size` bytes, `offset` bytes from where the pointer points now. If it is known what it points into, they have to be within that: the type of a pointer need
+// not be that of what it was made to point to. Null: an exception.
+static uint8_t* lookThroughPointer(JSGlobalObject* globalObject, PyCData* pointer, int64_t offset, int64_t size, Provenance& provenance)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint8_t* target;
+    if (failed(scope, pointerTarget(globalObject, pointer, target)))
+        return nullptr;
+    uint8_t* address = std::bit_cast<uint8_t*>(std::bit_cast<uintptr_t>(target) + static_cast<uintptr_t>(offset));
     PyCData* root = pointer;
     while (root->base)
         root = root->base.get();
-    if (!findProvenance(globalObject, root->objects.get(), target, provenance))
-        return true;
+    JSValue kept = root->objects.get();
+    bool isFound = findProvenance(globalObject, kept, target, provenance);
+    if (!isFound && provenance.isNotAllSeen && root != pointer) [[unlikely]] {
+        // It is a part of something larger, which keeps more alive for its parts than is looked through.
+        if (auto* dict = PyDict::tryFrom(kept); dict && dict->type() == runtime(globalObject).dictType())
+            isFound = findProvenanceOfPart(globalObject, dict, pointer, target, provenance);
+    }
+    if (!isFound) {
+        if (!provenance.isInWhatIsGone) [[likely]]
+            return address;
+        raiseValueError(globalObject, scope, "the memory that the pointer was made to point into is no longer there"_s);
+        return nullptr;
+    }
     if (address >= provenance.begin && address <= provenance.end && size <= provenance.end - address)
-        return true;
+        return address;
+    raiseValueError(globalObject, scope, "access through a pointer beyond the memory of the object it points into"_s);
+    return nullptr;
+}
+
+std::span<uint8_t> Place::resolve(JSGlobalObject* globalObject, int64_t size) const
+{
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    raiseValueError(globalObject, scope, "access through a pointer beyond the memory of the object it points into"_s);
-    return false;
+    // A CField can be asked about an instance of any ctypes type, and an instance can be given a class that takes it for more than it is.
+    if (size < 0 || (!isThroughPointer && (offset < 0 || offset > object->size || size > object->size - offset))) {
+        raiseValueError(globalObject, scope, "the memory of the instance is too small"_s);
+        return { };
+    }
+    if (isThroughPointer) {
+        Provenance provenance;
+        uint8_t* address = lookThroughPointer(globalObject, object, offset, size, provenance);
+        RETURN_IF_EXCEPTION(scope, { });
+        return { address, static_cast<size_t>(size) };
+    }
+    uint8_t* memory = object->memory(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!memory) {
+        raiseValueError(globalObject, scope, "NULL pointer access"_s);
+        return { };
+    }
+    return { memory + offset, static_cast<size_t>(size) };
 }
 
 PyCData* dataAt(JSGlobalObject* globalObject, PyType* type, const Place& place, int64_t index)
@@ -238,28 +357,36 @@ PyCData* dataAt(JSGlobalObject* globalObject, PyType* type, const Place& place, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCTypeInfo* info = concreteInfoOf(globalObject, type);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!place.address && (place.offset < 0 || place.offset > place.object->size || info->size > place.object->size - place.offset)) {
+    auto fits = [&](int64_t size) {
+        if (place.offset >= 0 && place.offset <= place.object->size && size <= place.object->size - place.offset)
+            return true;
         raiseValueError(globalObject, scope, "the memory of the instance is too small"_s);
+        return false;
+    };
+    // So that, as a rule, no instance is made in vain.
+    if (uint8_t* target; place.isThroughPointer ? failed(scope, pointerTarget(globalObject, place.object, target)) : !fits(info->size))
         return nullptr;
-    }
+    // To make one may run code of the program (allocateData()): where the memory is, and how far it goes, is looked at behind that.
     PyCData* data = allocateData(globalObject, type, info);
     RETURN_IF_EXCEPTION(scope, nullptr);
     data->base.set(vm, data, place.object);
     data->index = index;
-    if (!place.address)
-        data->setMemoryOf(vm, place.object, place.offset);
-    else {
-        // The pointer may be made to point elsewhere while this instance is in use: it holds on to the memory itself.
-        Provenance provenance;
-        if (failed(scope, checkPointerAccess(globalObject, place.object, place.address, place.address, info->size, provenance)))
+    if (!place.isThroughPointer) {
+        if (!fits(data->size))
             return nullptr;
-        if (!provenance.owner)
-            data->setAddress(place.address);
-        else if (auto* view = dynamicDowncast<PyMemoryView>(provenance.owner))
-            data->setView(vm, view, place.address - provenance.begin);
-        else
-            data->setStorage(vm, uncheckedDowncast<PyByteStorage>(provenance.owner), place.address - provenance.begin);
+        data->setMemoryOf(vm, place.object, place.offset);
+        return data;
     }
+    // The pointer may be made to point elsewhere while this instance is in use: it holds on to the memory itself.
+    Provenance provenance;
+    uint8_t* address = lookThroughPointer(globalObject, place.object, place.offset, data->size, provenance);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!provenance.owner)
+        data->setAddress(address);
+    else if (auto* view = dynamicDowncast<PyMemoryView>(provenance.owner))
+        data->setView(vm, view, address - provenance.begin, address);
+    else
+        data->setStorage(vm, uncheckedDowncast<PyByteStorage>(provenance.owner), address - provenance.begin);
     return data;
 }
 
@@ -292,7 +419,15 @@ PyCData* dataInView(JSGlobalObject* globalObject, PyType* type, PyMemoryView* vi
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint8_t* memory = view->data(globalObject);
+    // A hook has run since the view was made, and more run here: each may have found the view and released it.
+    auto located = [&]() -> uint8_t* {
+        if (view->isReleased()) {
+            raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s);
+            return nullptr;
+        }
+        return view->data(globalObject);
+    };
+    uint8_t* memory = located();
     RETURN_IF_EXCEPTION(scope, nullptr);
     bool ok = audit(globalObject, "ctypes.cdata"_s, intFromPointer(globalObject, memory + offset));
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -303,17 +438,26 @@ PyCData* dataInView(JSGlobalObject* globalObject, PyType* type, PyMemoryView* vi
         return nullptr;
     PyCData* data = allocateData(globalObject, type, info);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    data->setView(vm, view, offset);
+    // The caller has looked, but the hooks have run since, and the class may have been given its fields by one.
+    if (data->size > view->length - offset) {
+        raiseValueError(globalObject, scope, "Buffer size too small ("_s, view->length, " instead of at least "_s, data->size + offset, " bytes)"_s);
+        return nullptr;
+    }
+    memory = located();
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    data->setView(vm, view, offset, memory + offset);
     return data;
 }
 
-PyCData* dataFromCopy(JSGlobalObject* globalObject, PyType* type, const void* source, int64_t size)
+PyCData* dataFromCopy(JSGlobalObject* globalObject, PyType* type, std::span<const uint8_t> source)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCData* data = newData(globalObject, type);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    memcpy(data->memory(globalObject), source, static_cast<size_t>(std::min(size, data->size)));
+    auto memory = Place { data }.resolve(globalObject, std::min<int64_t>(source.size(), data->size));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    memcpy(memory.data(), source.data(), memory.size());
     return data;
 }
 
@@ -421,10 +565,10 @@ JSValue getData(JSGlobalObject* globalObject, PyType* type, Accessor accessor, c
     }
     if (!accessor)
         RELEASE_AND_RETURN(scope, dataAt(globalObject, type, place, index));
-    uint8_t* memory = place.resolve(globalObject, size);
+    auto memory = place.resolve(globalObject, size);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue hint = accessor.code == Code::Object ? keptFor(globalObject, place.object, index) : JSValue();
-    RELEASE_AND_RETURN(scope, load(globalObject, accessor, memory, size, bits, hint));
+    RELEASE_AND_RETURN(scope, load(globalObject, accessor, memory, bits, hint));
 }
 
 // What has to be kept alive for the part from now on. Empty: an exception.
@@ -438,9 +582,9 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
         bool ok = pack(globalObject, accessor, value, size, packed);
         RETURN_IF_EXCEPTION(scope, { });
         ASSERT_UNUSED(ok, ok);
-        uint8_t* memory = place.resolve(globalObject, size);
+        auto memory = place.resolve(globalObject, size);
         RETURN_IF_EXCEPTION(scope, { });
-        store(memory, accessor, packed, size, bits);
+        store(memory, accessor, packed, bits);
         ensureStillAliveHere(value);
         return packed.keep;
     };
@@ -466,9 +610,9 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
             RELEASE_AND_RETURN(scope, storeData(globalObject, type, accessor, place, object, size, bits));
         }
         if (isNone(value) && info && info->kind == TypeKind::Pointer) {
-            uint8_t* memory = place.resolve(globalObject, sizeof(void*));
+            auto memory = place.resolve(globalObject, sizeof(void*));
             RETURN_IF_EXCEPTION(scope, { });
-            memset(memory, 0, sizeof(void*));
+            memset(memory.data(), 0, memory.size());
             return none();
         }
         return raiseTypeError(globalObject, scope, "expected "_s, type->nameInMessages(), " instance, got "_s, typeName(globalObject, value));
@@ -480,11 +624,11 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
         // __instancecheck__ may say anything.
         if (source->size < size)
             return raiseValueError(globalObject, scope, "the memory of the instance is too small"_s);
-        uint8_t* from = Place { source }.resolve(globalObject, size);
+        auto from = Place { source }.resolve(globalObject, size);
         RETURN_IF_EXCEPTION(scope, { });
-        uint8_t* to = place.resolve(globalObject, size);
+        auto to = place.resolve(globalObject, size);
         RETURN_IF_EXCEPTION(scope, { });
-        memmove(to, from, static_cast<size_t>(size));
+        memmove(to.data(), from.data(), to.size());
         return keptObjects(globalObject, source);
     }
 
@@ -493,9 +637,9 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
         if (arrayInfo && arrayInfo->kind == TypeKind::Array && arrayInfo->proto.get() == pointerInfo->proto.get()) {
             uint8_t* from = source->memory(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
-            uint8_t* to = place.resolve(globalObject, sizeof(void*));
+            auto to = place.resolve(globalObject, sizeof(void*));
             RETURN_IF_EXCEPTION(scope, { });
-            memcpy(to, &from, sizeof(void*));
+            memcpy(to.data(), &from, to.size());
             // The array itself has to live, not only what it keeps alive.
             return PyTuple::create(globalObject, { keptObjects(globalObject, source), source });
         }
@@ -606,11 +750,11 @@ static JSValue dataReduce(JSGlobalObject* globalObject, JSValue self)
         return raiseValueError(globalObject, scope, "ctypes objects containing pointers cannot be pickled"_s);
     JSValue dict = getAttr(globalObject, self, rt.names.dDict());
     RETURN_IF_EXCEPTION(scope, { });
-    uint8_t* memory = Place { data }.resolve(globalObject, data->size);
+    auto memory = Place { data }.resolve(globalObject, data->size);
     RETURN_IF_EXCEPTION(scope, { });
-    PyBytes* bytes = newBytes(globalObject, static_cast<size_t>(data->size));
+    PyBytes* bytes = newBytes(globalObject, memory.size());
     RETURN_IF_EXCEPTION(scope, { });
-    memcpy(bytes->mutableData(), memory, static_cast<size_t>(data->size));
+    memcpy(bytes->mutableData(), memory.data(), memory.size());
     JSValue state = PyTuple::create(globalObject, { dict, bytes });
     JSValue arguments = PyTuple::create(globalObject, { data->type(), state });
     return PyTuple::create(globalObject, { info->state->unpickle.get(), arguments });
@@ -645,9 +789,9 @@ static JSValue dataSetState(JSGlobalObject* globalObject, JSValue self, JSValue 
             source = holder.buffer.span();
         }
         size_t count = std::min(source.size(), static_cast<size_t>(data->size));
-        uint8_t* memory = Place { data }.resolve(globalObject, count);
+        auto memory = Place { data }.resolve(globalObject, count);
         RETURN_IF_EXCEPTION(scope, { });
-        memmove(memory, source.data(), count);
+        memmove(memory.data(), source.data(), memory.size());
     }
     JSValue own = getAttr(globalObject, self, rt.names.dDict());
     RETURN_IF_EXCEPTION(scope, { });
@@ -700,10 +844,10 @@ static JSValue simpleGetValue(JSGlobalObject* globalObject, JSValue self)
     PyCTypeInfo* info = infoOfInstance(globalObject, self);
     if (!info || !info->accessor)
         return raiseTypeError(globalObject, scope, "abstract class"_s);
-    uint8_t* memory = Place { data }.resolve(globalObject, info->size);
+    auto memory = Place { data }.resolve(globalObject, info->size);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue hint = info->accessor.code == Code::Object ? keptFor(globalObject, data, 0) : JSValue();
-    RELEASE_AND_RETURN(scope, load(globalObject, info->accessor, memory, info->size, { }, hint));
+    RELEASE_AND_RETURN(scope, load(globalObject, info->accessor, memory, { }, hint));
 }
 
 static void simpleSetValue(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -724,9 +868,9 @@ static void simpleSetValue(JSGlobalObject* globalObject, JSValue self, JSValue v
     bool ok = pack(globalObject, info->accessor, value, info->size, packed);
     RETURN_IF_EXCEPTION(scope, void());
     ASSERT_UNUSED(ok, ok);
-    uint8_t* memory = Place { data }.resolve(globalObject, info->size);
+    auto memory = Place { data }.resolve(globalObject, info->size);
     RETURN_IF_EXCEPTION(scope, void());
-    store(memory, info->accessor, packed, info->size);
+    store(memory, info->accessor, packed);
     RELEASE_AND_RETURN(scope, void(keepAlive(globalObject, data, 0, packed.keep)));
 }
 
@@ -755,10 +899,10 @@ static JSValue dataIsNonZero(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCData* data = PyCData::from(self);
-    uint8_t* memory = Place { data }.resolve(globalObject, data->size);
+    auto memory = Place { data }.resolve(globalObject, data->size);
     RETURN_IF_EXCEPTION(scope, { });
-    for (int64_t i = 0; i < data->size; ++i) {
-        if (memory[i])
+    for (uint8_t byte : memory) {
+        if (byte)
             return jsBoolean(true);
     }
     return jsBoolean(false);
@@ -894,14 +1038,25 @@ static JSValue arrayItem(JSGlobalObject* globalObject, PyCData* array, int64_t i
     RELEASE_AND_RETURN(scope, getData(globalObject, PyType::from(info->proto.get()), { }, { array, index * size }, index, size));
 }
 
-// The characters a slice selects, as bytes or str. `memory` is where item 0 is.
-static JSValue sliceOfCharacters(JSGlobalObject* globalObject, Code code, const uint8_t* memory, int64_t start, int64_t step, int64_t count)
+// The characters a slice selects, as bytes or str. `base`, with offset 0, is where item 0 is.
+static JSValue sliceOfCharacters(JSGlobalObject* globalObject, Code code, Place base, int64_t start, int64_t step, int64_t count)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (count <= 0)
+        return code == Code::Char ? JSValue(runtime(globalObject).emptyBytes()) : JSValue(jsEmptyString(vm));
+    // From the first of them in memory to the last. (The arithmetic is that of C: what it comes to is looked at.)
+    uint64_t itemSize = code == Code::Char ? 1 : sizeof(wchar_t);
+    int64_t first = std::min(start, start + (count - 1) * step);
+    int64_t last = std::max(start, start + (count - 1) * step);
+    base.offset = static_cast<int64_t>(static_cast<uint64_t>(first) * itemSize);
+    if (static_cast<uint64_t>(last - first) >= std::numeric_limits<int64_t>::max() / itemSize)
+        return raiseMemoryError(globalObject, scope, String());
+    auto granted = base.resolve(globalObject, static_cast<int64_t>((static_cast<uint64_t>(last - first) + 1) * itemSize));
+    RETURN_IF_EXCEPTION(scope, { });
+    const uint8_t* memory = granted.data();
+    start -= first;
     if (code == Code::Char) {
-        if (count <= 0)
-            return runtime(globalObject).emptyBytes();
         PyBytes* result = newBytes(globalObject, static_cast<size_t>(count));
         RETURN_IF_EXCEPTION(scope, { });
         uint8_t* out = result->mutableData();
@@ -909,8 +1064,6 @@ static JSValue sliceOfCharacters(JSGlobalObject* globalObject, Code code, const 
             out[i] = memory[current];
         return result;
     }
-    if (count <= 0)
-        return jsEmptyString(vm);
     auto* text = reinterpret_cast<const wchar_t*>(memory);
     if (step == 1)
         RELEASE_AND_RETURN(scope, strFromWideCharacters(globalObject, text + start, static_cast<size_t>(count)));
@@ -946,11 +1099,8 @@ static JSValue arrayGetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
     PyCTypeInfo* itemInfo = info ? infoOf(globalObject, info->proto.get()) : nullptr;
     if (!itemInfo)
         return raiseTypeError(globalObject, scope, "abstract class"_s);
-    if (itemInfo->accessor == Accessor { Code::Char } || itemInfo->accessor == Accessor { Code::WChar }) {
-        uint8_t* memory = Place { array }.resolve(globalObject, info->size);
-        RETURN_IF_EXCEPTION(scope, { });
-        RELEASE_AND_RETURN(scope, sliceOfCharacters(globalObject, itemInfo->accessor.code, memory, indices.start, indices.step, indices.length));
-    }
+    if (info->kind == TypeKind::Array && (itemInfo->accessor == Accessor { Code::Char } || itemInfo->accessor == Accessor { Code::WChar }))
+        RELEASE_AND_RETURN(scope, sliceOfCharacters(globalObject, itemInfo->accessor.code, { array }, indices.start, indices.step, indices.length));
     JSArray* result = newList(globalObject, static_cast<unsigned>(indices.length));
     RETURN_IF_EXCEPTION(scope, { });
     for (int64_t i = 0, current = indices.start; i < indices.length; ++i, current += indices.step) {
@@ -1041,11 +1191,11 @@ static JSValue charArrayGetRaw(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCData* array = PyCData::from(self);
-    uint8_t* memory = Place { array }.resolve(globalObject, array->size);
+    auto memory = Place { array }.resolve(globalObject, array->size);
     RETURN_IF_EXCEPTION(scope, { });
-    PyBytes* result = newBytes(globalObject, static_cast<size_t>(array->size));
+    PyBytes* result = newBytes(globalObject, memory.size());
     RETURN_IF_EXCEPTION(scope, { });
-    memcpy(result->mutableData(), memory, static_cast<size_t>(array->size));
+    memcpy(result->mutableData(), memory.data(), memory.size());
     return result;
 }
 
@@ -1066,9 +1216,9 @@ static void charArraySetRaw(JSGlobalObject* globalObject, JSValue self, JSValue 
         raiseValueError(globalObject, scope, "byte string too long"_s);
         return;
     }
-    uint8_t* memory = Place { array }.resolve(globalObject, holder.buffer.length);
+    auto memory = Place { array }.resolve(globalObject, holder.buffer.length);
     RETURN_IF_EXCEPTION(scope, void());
-    memmove(memory, holder.buffer.data, static_cast<size_t>(holder.buffer.length));
+    memmove(memory.data(), holder.buffer.data, memory.size());
 }
 
 static JSValue charArrayGetValue(JSGlobalObject* globalObject, JSValue self)
@@ -1076,9 +1226,9 @@ static JSValue charArrayGetValue(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCData* array = PyCData::from(self);
-    uint8_t* memory = Place { array }.resolve(globalObject, array->size);
+    auto memory = Place { array }.resolve(globalObject, array->size);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, load(globalObject, { Code::CharArray }, memory, array->size));
+    RELEASE_AND_RETURN(scope, load(globalObject, { Code::CharArray }, memory));
 }
 
 static void charArraySetValue(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -1095,15 +1245,15 @@ static void charArraySetValue(JSGlobalObject* globalObject, JSValue self, JSValu
         raiseTypeError(globalObject, scope, "bytes expected instead of "_s, typeName(globalObject, value), " instance"_s);
         return;
     }
-    int64_t size = static_cast<int64_t>(bytes->length());
-    if (size > array->size) {
+    size_t size = bytes->length();
+    if (size > static_cast<uint64_t>(array->size)) {
         raiseValueError(globalObject, scope, "byte string too long"_s);
         return;
     }
-    uint8_t* memory = Place { array }.resolve(globalObject, array->size);
+    auto memory = Place { array }.resolve(globalObject, array->size);
     RETURN_IF_EXCEPTION(scope, void());
-    memcpy(memory, bytes->data(), static_cast<size_t>(size));
-    if (size < array->size)
+    memcpy(memory.data(), bytes->data(), size);
+    if (size < memory.size())
         memory[size] = 0;
 }
 
@@ -1112,9 +1262,9 @@ static JSValue wcharArrayGetValue(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCData* array = PyCData::from(self);
-    uint8_t* memory = Place { array }.resolve(globalObject, array->size);
+    auto memory = Place { array }.resolve(globalObject, array->size);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, load(globalObject, { Code::WCharArray }, memory, array->size));
+    RELEASE_AND_RETURN(scope, load(globalObject, { Code::WCharArray }, memory));
 }
 
 static void wcharArraySetValue(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -1138,9 +1288,9 @@ static void wcharArraySetValue(JSGlobalObject* globalObject, JSValue self, JSVal
         raiseValueError(globalObject, scope, "string too long"_s);
         return;
     }
-    uint8_t* memory = Place { array }.resolve(globalObject, array->size);
+    auto memory = Place { array }.resolve(globalObject, array->size);
     RETURN_IF_EXCEPTION(scope, void());
-    memcpy(memory, storage->data(), (length < room ? length + 1 : length) * sizeof(wchar_t));
+    memcpy(memory.data(), storage->data(), (length < room ? length + 1 : length) * sizeof(wchar_t));
     ensureStillAliveHere(storage);
 }
 
@@ -1158,21 +1308,6 @@ std::span<const NativeGetSet> wcharArrayGetSets() { return wcharArrayGetSetTable
 
 // ---- _Pointer ----
 
-// What the pointer holds. False: an exception; a null pointer is one.
-static bool pointerTarget(JSGlobalObject* globalObject, PyCData* pointer, uint8_t*& target)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    uint8_t* memory = Place { pointer }.resolve(globalObject, sizeof(void*));
-    RETURN_IF_EXCEPTION(scope, false);
-    memcpy(&target, memory, sizeof(void*));
-    if (!target) {
-        raiseValueError(globalObject, scope, "NULL pointer access"_s);
-        return false;
-    }
-    return true;
-}
-
 // The type of what it points to, with what that knows. False: an exception.
 static bool pointerItemType(JSGlobalObject* globalObject, PyCData* pointer, PyType*& type, PyCTypeInfo*& itemInfo)
 {
@@ -1182,25 +1317,30 @@ static bool pointerItemType(JSGlobalObject* globalObject, PyCData* pointer, PyTy
     type = info ? PyType::tryFrom(info->proto.get()) : nullptr;
     itemInfo = type ? infoOf(globalObject, type) : nullptr;
     if (!itemInfo) {
-        raiseTypeError(globalObject, scope, "abstract class"_s);
+        // (CPython looks at the pointer first.)
+        uint8_t* target;
+        if (!failed(scope, pointerTarget(globalObject, pointer, target)))
+            raiseTypeError(globalObject, scope, "abstract class"_s);
         return false;
     }
     return true;
+}
+
+// (The arithmetic is that of C: what it comes to is looked at when the place is asked for.)
+static ALWAYS_INLINE Place placeOfItem(PyCData* pointer, int64_t index, PyCTypeInfo* itemInfo)
+{
+    return { pointer, static_cast<int64_t>(static_cast<uint64_t>(index) * static_cast<uint64_t>(itemInfo->size)), true };
 }
 
 static JSValue pointerItem(JSGlobalObject* globalObject, PyCData* pointer, int64_t index)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint8_t* target;
     PyType* type;
     PyCTypeInfo* itemInfo;
-    if (failed(scope, pointerTarget(globalObject, pointer, target)) || failed(scope, pointerItemType(globalObject, pointer, type, itemInfo)))
+    if (failed(scope, pointerItemType(globalObject, pointer, type, itemInfo)))
         return { };
-    Provenance provenance;
-    if (failed(scope, checkPointerAccess(globalObject, pointer, target, target + index * itemInfo->size, itemInfo->size, provenance)))
-        return { };
-    RELEASE_AND_RETURN(scope, getData(globalObject, type, { }, { pointer, 0, target + index * itemInfo->size }, index, itemInfo->size));
+    RELEASE_AND_RETURN(scope, getData(globalObject, type, { }, placeOfItem(pointer, index, itemInfo), index, itemInfo->size));
 }
 
 static JSValue pointerGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
@@ -1249,19 +1389,8 @@ static JSValue pointerGetItem(JSGlobalObject* globalObject, JSValue self, JSValu
     PyCTypeInfo* itemInfo;
     if (failed(scope, pointerItemType(globalObject, pointer, type, itemInfo)))
         return { };
-    if (itemInfo->accessor == Accessor { Code::Char } || itemInfo->accessor == Accessor { Code::WChar }) {
-        uint8_t* target = nullptr;
-        if (count > 0 && failed(scope, pointerTarget(globalObject, pointer, target)))
-            return { };
-        if (count > 0) {
-            int64_t first = std::min(start, start + (count - 1) * step);
-            int64_t last = std::max(start, start + (count - 1) * step);
-            Provenance provenance;
-            if (failed(scope, checkPointerAccess(globalObject, pointer, target, target + first * itemInfo->size, (last - first + 1) * itemInfo->size, provenance)))
-                return { };
-        }
-        RELEASE_AND_RETURN(scope, sliceOfCharacters(globalObject, itemInfo->accessor.code, target, start, step, count));
-    }
+    if (itemInfo->accessor == Accessor { Code::Char } || itemInfo->accessor == Accessor { Code::WChar })
+        RELEASE_AND_RETURN(scope, sliceOfCharacters(globalObject, itemInfo->accessor.code, { pointer, 0, true }, start, step, count));
     if (count > std::numeric_limits<int32_t>::max())
         return raiseMemoryError(globalObject, scope, String());
     JSArray* result = newList(globalObject, static_cast<unsigned>(count));
@@ -1288,12 +1417,8 @@ static JSValue pointerSetItem(JSGlobalObject* globalObject, JSValue self, JSValu
     PyCTypeInfo* itemInfo;
     if (failed(scope, pointerTarget(globalObject, pointer, target)) || failed(scope, pointerItemType(globalObject, pointer, type, itemInfo)))
         return { };
-    Provenance provenance;
-    if (failed(scope, checkPointerAccess(globalObject, pointer, target, target + index * itemInfo->size, itemInfo->size, provenance)))
-        return { };
-    setData(globalObject, type, { }, { pointer, 0, target + index * itemInfo->size }, value, index, itemInfo->size);
-    // Converting the value may have run code that made the pointer point elsewhere.
-    ensureStillAliveHere(provenance.owner);
+    // Converting the value may run code that makes the pointer point elsewhere, or frees what it points to: where the value goes is looked at behind that.
+    setData(globalObject, type, { }, placeOfItem(pointer, index, itemInfo), value, index, itemInfo->size);
     RETURN_IF_EXCEPTION(scope, { });
     return none();
 }
@@ -1310,12 +1435,11 @@ static JSValue pointerGetContents(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCData* pointer = PyCData::from(self);
-    uint8_t* target;
     PyType* type;
     PyCTypeInfo* itemInfo;
-    if (failed(scope, pointerTarget(globalObject, pointer, target)) || failed(scope, pointerItemType(globalObject, pointer, type, itemInfo)))
+    if (failed(scope, pointerItemType(globalObject, pointer, type, itemInfo)))
         return { };
-    RELEASE_AND_RETURN(scope, dataAt(globalObject, type, { pointer, 0, target }, 0));
+    RELEASE_AND_RETURN(scope, dataAt(globalObject, type, { pointer, 0, true }, 0));
 }
 
 static void pointerSetContents(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -1336,9 +1460,9 @@ static void pointerSetContents(JSGlobalObject* globalObject, JSValue self, JSVal
     }
     uint8_t* address = target->memory(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
-    uint8_t* memory = Place { pointer }.resolve(globalObject, sizeof(void*));
+    auto memory = Place { pointer }.resolve(globalObject, sizeof(void*));
     RETURN_IF_EXCEPTION(scope, void());
-    memcpy(memory, &address, sizeof(void*));
+    memcpy(memory.data(), &address, memory.size());
     // What it points to has to live, and so has what that keeps alive.
     if (failed(scope, keepAlive(globalObject, pointer, 1, value)))
         return;
@@ -1372,10 +1496,10 @@ static JSValue pointerIsNotNull(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint8_t* memory = Place { PyCData::from(self) }.resolve(globalObject, sizeof(void*));
+    auto memory = Place { PyCData::from(self) }.resolve(globalObject, sizeof(void*));
     RETURN_IF_EXCEPTION(scope, { });
     void* target;
-    memcpy(&target, memory, sizeof(void*));
+    memcpy(&target, memory.data(), sizeof(void*));
     return jsBoolean(!!target);
 }
 

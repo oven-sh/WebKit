@@ -289,6 +289,9 @@ public:
     // JS is held by a pin, which a view does not have: from now on this one pins it, until it is collected, released or not.
     // (Not memory of WebAssembly: see above.)
     void pinMemoryOfJS(JSGlobalObject*);
+    // What it pins, as that is now, released or not. Empty: it pins nothing, or the memory has gone in spite of the pin. (A pin holds against JS. An mmap has its memory in an ArrayBuffer
+    // as well, and what holds that is the export: close() and resize() do not ask about pins.) It looks through all the views that pin: for a view that has been released.
+    std::span<uint8_t> memoryOfJSThatIsPinned(JSGlobalObject*) const;
 
     // Where the first item is now. Null with an exception if JS took the memory away; null without if there is no memory.
     uint8_t* data(JSGlobalObject*) const;
@@ -334,6 +337,7 @@ private:
     unsigned m_dimensions;
     char m_formatCode { 'B' };
     char m_formatSubcode { 0 };
+    bool m_isPinningMemoryOfJS { false };
 };
 
 // memoryview(object)

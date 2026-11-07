@@ -286,6 +286,60 @@ static bool packCharacter(JSGlobalObject* globalObject, JSValue value, Packed& r
     return false;
 }
 
+// How many bytes are in the other order at a time, and how many such parts there are.
+static ALWAYS_INLINE std::pair<size_t, size_t> partsOf(Code code)
+{
+    switch (code) {
+    case Code::Float:
+        return { sizeof(float), 1 };
+    case Code::Double:
+        return { sizeof(double), 1 };
+    case Code::LongDouble:
+        return { sizeof(long double), 1 };
+    case Code::ComplexFloat:
+        return { sizeof(float), 2 };
+    case Code::ComplexDouble:
+        return { sizeof(double), 2 };
+    case Code::ComplexLongDouble:
+        return { sizeof(long double), 2 };
+    case Code::Bool:
+    case Code::Char:
+        return { 1, 1 };
+    case Code::VariantBool:
+        return { sizeof(short), 1 };
+    case Code::WChar:
+        return { sizeof(wchar_t), 1 };
+    default:
+        return { sizeof(void*), 1 };
+    }
+}
+
+// Whether so many bytes are what load() and store() touch for that code. They are, whenever accessor and size are those of one info.
+static ALWAYS_INLINE bool hasRoomFor(Code code, size_t size)
+{
+    switch (code) {
+    case Code::None:
+        return false;
+    case Code::SignedInt:
+    case Code::UnsignedInt:
+        return size >= 1 && size <= 8;
+    case Code::CharArray:
+    case Code::WCharArray:
+        return true;
+    default: {
+        auto [partSize, count] = partsOf(code);
+        return size >= partSize * count;
+    }
+    }
+}
+
+static NEVER_INLINE void raiseNoRoom(JSGlobalObject* globalObject)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    raiseValueError(globalObject, scope, "the memory of the instance is too small"_s);
+}
+
 bool pack(JSGlobalObject* globalObject, Accessor accessor, JSValue value, int64_t size, Packed& result)
 {
     VM& vm = getVM(globalObject);
@@ -293,6 +347,11 @@ bool pack(JSGlobalObject* globalObject, Accessor accessor, JSValue value, int64_
     memset(result.bytes, 0, sizeof(result.bytes));
     result.keep = none();
     result.text = { };
+    if (size < 0 || !hasRoomFor(accessor.code, static_cast<size_t>(size))) [[unlikely]] {
+        scope.release();
+        raiseNoRoom(globalObject);
+        return false;
+    }
 
     auto packComplex = [&]<typename T>(T) {
         double real;
@@ -464,57 +523,31 @@ static ALWAYS_INLINE void copyReversed(uint8_t* destination, const uint8_t* sour
         destination[i] = source[size - 1 - i];
 }
 
-static ALWAYS_INLINE uint64_t loadInteger(const uint8_t* source, int64_t size, bool isSwapped)
+static ALWAYS_INLINE uint64_t loadInteger(std::span<const uint8_t> source, bool isSwapped)
 {
     uint64_t bits = 0;
-    ASSERT(size >= 1 && size <= 8);
+    ASSERT(source.size() >= 1 && source.size() <= 8);
     if (isSwapped)
-        copyReversed(reinterpret_cast<uint8_t*>(&bits), source, size);
+        copyReversed(reinterpret_cast<uint8_t*>(&bits), source.data(), source.size());
     else
-        memcpy(&bits, source, size);
+        memcpy(&bits, source.data(), source.size());
     return bits;
 }
 
-static ALWAYS_INLINE void storeInteger(uint8_t* destination, int64_t size, bool isSwapped, uint64_t bits)
+static ALWAYS_INLINE void storeInteger(std::span<uint8_t> destination, bool isSwapped, uint64_t bits)
 {
     if (isSwapped)
-        copyReversed(destination, reinterpret_cast<const uint8_t*>(&bits), size);
+        copyReversed(destination.data(), reinterpret_cast<const uint8_t*>(&bits), destination.size());
     else
-        memcpy(destination, &bits, size);
+        memcpy(destination.data(), &bits, destination.size());
 }
 
 static_assert(std::endian::native == std::endian::little);
 
-// How many bytes are in the other order at a time, and how many such parts there are.
-static ALWAYS_INLINE std::pair<size_t, size_t> partsOf(Code code)
+void store(std::span<uint8_t> destination, Accessor accessor, const Packed& value, Bits bits)
 {
-    switch (code) {
-    case Code::Float:
-        return { sizeof(float), 1 };
-    case Code::Double:
-        return { sizeof(double), 1 };
-    case Code::LongDouble:
-        return { sizeof(long double), 1 };
-    case Code::ComplexFloat:
-        return { sizeof(float), 2 };
-    case Code::ComplexDouble:
-        return { sizeof(double), 2 };
-    case Code::ComplexLongDouble:
-        return { sizeof(long double), 2 };
-    case Code::Bool:
-    case Code::Char:
-        return { 1, 1 };
-    case Code::VariantBool:
-        return { sizeof(short), 1 };
-    case Code::WChar:
-        return { sizeof(wchar_t), 1 };
-    default:
-        return { sizeof(void*), 1 };
-    }
-}
-
-void store(uint8_t* destination, Accessor accessor, const Packed& value, int64_t size, Bits bits)
-{
+    // pack() has looked, for the same size.
+    RELEASE_ASSERT(hasRoomFor(accessor.code, destination.size()) && value.text.size() <= destination.size());
     switch (accessor.code) {
     case Code::None:
         RELEASE_ASSERT_NOT_REACHED();
@@ -524,25 +557,25 @@ void store(uint8_t* destination, Accessor accessor, const Packed& value, int64_t
         memcpy(&number, value.bytes, sizeof(number));
         if (bits.size) {
             uint64_t mask = bits.size >= 64 ? ~0ull : (1ull << bits.size) - 1;
-            uint64_t old = loadInteger(destination, size, accessor.isSwapped);
+            uint64_t old = loadInteger(destination, accessor.isSwapped);
             number = (old & ~(mask << bits.offset)) | ((number & mask) << bits.offset);
         }
-        storeInteger(destination, size, accessor.isSwapped, number);
+        storeInteger(destination, accessor.isSwapped, number);
         return;
     }
     case Code::CharArray:
     case Code::WCharArray:
-        memcpy(destination, value.text.data(), value.text.size());
+        memcpy(destination.data(), value.text.data(), value.text.size());
         ensureStillAliveHere(value.holder);
         return;
     default: {
         auto [partSize, count] = partsOf(accessor.code);
         if (!accessor.isSwapped) {
-            memcpy(destination, value.bytes, partSize * count);
+            memcpy(destination.data(), value.bytes, partSize * count);
             return;
         }
         for (size_t i = 0; i < count; ++i)
-            copyReversed(destination + i * partSize, value.bytes + i * partSize, partSize);
+            copyReversed(destination.data() + i * partSize, value.bytes + i * partSize, partSize);
         return;
     }
     }
@@ -550,10 +583,17 @@ void store(uint8_t* destination, Accessor accessor, const Packed& value, int64_t
 
 // ---- Bytes into values ----
 
-JSValue load(JSGlobalObject* globalObject, Accessor accessor, const uint8_t* source, int64_t size, Bits bits, JSValue hint)
+JSValue load(JSGlobalObject* globalObject, Accessor accessor, std::span<const uint8_t> bytesOfSource, Bits bits, JSValue hint)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!hasRoomFor(accessor.code, bytesOfSource.size())) [[unlikely]] {
+        scope.release();
+        raiseNoRoom(globalObject);
+        return { };
+    }
+    const uint8_t* source = bytesOfSource.data();
+    size_t size = bytesOfSource.size();
 
     alignas(16) uint8_t bytes[32];
     auto read = [&]<typename T>(T) {
@@ -574,14 +614,14 @@ JSValue load(JSGlobalObject* globalObject, Accessor accessor, const uint8_t* sou
     case Code::None:
         RELEASE_ASSERT_NOT_REACHED();
     case Code::SignedInt: {
-        uint64_t number = loadInteger(source, size, accessor.isSwapped);
-        unsigned width = bits.size ? bits.size : size * 8;
+        uint64_t number = loadInteger(bytesOfSource, accessor.isSwapped);
+        unsigned width = bits.size ? bits.size : static_cast<unsigned>(size * 8);
         unsigned low = bits.size ? bits.offset : 0;
         int64_t result = static_cast<int64_t>(number << (64 - low - width)) >> (64 - width);
         return makeInt(globalObject, result);
     }
     case Code::UnsignedInt: {
-        uint64_t number = loadInteger(source, size, accessor.isSwapped);
+        uint64_t number = loadInteger(bytesOfSource, accessor.isSwapped);
         if (bits.size)
             number = (number << (64 - bits.offset - bits.size)) >> (64 - bits.size);
         return makeInt(globalObject, number);
@@ -652,7 +692,7 @@ JSValue load(JSGlobalObject* globalObject, Accessor accessor, const uint8_t* sou
     }
     case Code::WCharArray: {
         auto* text = reinterpret_cast<const wchar_t*>(source);
-        size_t room = static_cast<size_t>(size) / sizeof(wchar_t);
+        size_t room = size / sizeof(wchar_t);
         size_t length = 0;
         while (length < room && text[length])
             ++length;

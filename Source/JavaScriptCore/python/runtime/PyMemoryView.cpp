@@ -1226,8 +1226,26 @@ void PyMemoryView::pinMemoryOfJS(JSGlobalObject* globalObject)
     JSCell* owner = m_managedBuffer->owner();
     if (!owner || !bufferIsJSExporter(owner))
         return;
-    if (ArrayBuffer* memory = bufferPinMemoryOfJS(owner))
+    if (ArrayBuffer* memory = bufferPinMemoryOfJS(owner)) {
         runtime(globalObject).pinningViews.append(Runtime::PinningView { this, *memory });
+        m_isPinningMemoryOfJS = true;
+    }
+}
+
+std::span<uint8_t> PyMemoryView::memoryOfJSThatIsPinned(JSGlobalObject* globalObject) const
+{
+    if (!m_isPinningMemoryOfJS)
+        return { };
+    for (auto& entry : runtime(globalObject).pinningViews) {
+        if (entry.view == this)
+            return entry.memory();
+    }
+    return { };
+}
+
+std::span<uint8_t> Runtime::PinningView::memory() const
+{
+    return m_memory->mutableSpan();
 }
 
 Runtime::PinningView::PinningView(JSCell* view, ArrayBuffer& pinned)

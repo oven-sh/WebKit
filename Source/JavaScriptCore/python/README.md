@@ -1562,6 +1562,7 @@ none is abstract. The layout of a structure is worked out in Python, by `ctypes.
   (`PyMemoryView::pinMemoryOfJS()`), because pointers and the arguments of foreign functions are addresses: until a collection finds
   that nothing at all refers to the view, released or not (`Runtime::pinningViews`, gone through when marking is over). That is no
   finalizer of Python's: it has no order, and what code written in C++ holds or a `__del__()` brings back to life is still pinned.
+  So if the program releases such a view by hand, the memory is still where it was, and the instance, which holds the cell of the view, goes on by that address (`whereViewWas()`).
 - An address about which nothing is known: `from_address`, `in_dll`, what a pointer points to. Where a pointer points into the memory
   of something that it keeps alive, which is the rule, the instance made from it holds on to that memory instead.
 
@@ -1591,6 +1592,15 @@ What that rests on, each kept at one place:
   it does in CPython (`cast()`, an 'out' parameter); how many bytes are touched and what is read from an info never does. `proto` is read behind the kind that promises it, or by what takes anything.
 - **The cell of an instance goes by `layoutBase()`** (`hasDataForInstances()`), as do the methods that it is handed to. For the natives of the built-in types that is kept by what keeps it everywhere: what an `mro()` may name,
   what `X.__new__(Y)` takes, what `__class__` may be assigned. `raw` and `value` are added to classes of the program's: only to those whose instances are a `PyCData`.
+- **No byte is touched but in a span that `Place::resolve(n)` has returned**, with the number that the access then goes by, and asked for behind the last thing that can run code of the program: the conversion of a value,
+  an audit hook, the making of an instance (a key that is no str in the dict of a class is asked whether it is `__del__`). The size and the length of a cell and those that its class knows are numbers of their own: `__class__` can be
+  assigned, `resize()` called, and a hook can give a class its `_fields_` between a look and what the look was for. So a slice of characters asks for what its indices come to, `from_buffer()` compares the size of the cell that it has made, the buffer of an
+  instance that its type has outgrown is its bytes and no more (`dataBuffer()`), and the result of a call is filled from the room that was made for it before the call, whatever its type has learnt since. `load()` and `pack()` refuse a span that is too short for the code.
+  A place through a pointer holds no address: `resolve()` reads what the pointer holds then, and finds what that points into then, among all that the whole keeps alive (32 things of a dict; for a part of something
+  that keeps more, under the part's own place: `findProvenanceOfPart()`). An instance over a view knows where the memory was when the view was taken (`whereViewWas()`). If the view has been released since, or the memory
+  has gone (WebAssembly's, when it grows), or it has moved under a view that is good (as a rule what is exported does not: a bytearray does, under a view of a view of it whose first has been released), a pointer to there is a
+  `ValueError`. Not if the view pins memory of JS (`from_buffer()`): that stays where it was while the cell of the view lives, released or not. The instance goes on by that address, and the pointer keeps its bounds, after a look at what is pinned, whether the bytes are still in it (`memoryBehindReleasedView()`): a pin holds against JS, and an `mmap`, whose memory is an `ArrayBuffer` too, lets go of it when nothing is exported. In every other case the address is compared, never followed. (Of a pointer made behind such a move nothing is known once the view has gone: DEFERRED.md.)
+  One address is still taken early: that of an argument (an array, `byref(x)`), when it is converted, and the conversion of a later argument runs behind that (DEFERRED.md).
 
 **`py_object`.** The eight bytes are a `PyObject*` as the C API has it (see there): what `id()` returns, for every object but a str, and 0 is NULL. The object is kept alive by `_objects`. Bits read from memory are handed out as an object if they are those of
 what `_objects` holds for that place; otherwise only after the heap has confirmed that they are those of a live cell of a kind that programs

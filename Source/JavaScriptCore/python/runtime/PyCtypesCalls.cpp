@@ -123,7 +123,7 @@ PyCArg* argumentFor(JSGlobalObject* globalObject, PyCData* data)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCTypeInfo* info = infoOfInstance(globalObject, data);
     ASSERT(info);
-    uint8_t* memory = Place { data }.resolve(globalObject, info->size);
+    auto memory = Place { data }.resolve(globalObject, info->size);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyCArg* argument = PyCArg::create(globalObject);
     argument->object.set(vm, argument, data);
@@ -135,30 +135,30 @@ PyCArg* argumentFor(JSGlobalObject* globalObject, PyCData* data)
         argument->tag = code[0];
         argument->tag2 = code.length() > 1 ? code[1] : 0;
         argument->foreignKind = info->foreignKind;
-        memcpy(argument->value, memory, std::min<size_t>(info->size, sizeof(argument->value)));
+        memcpy(argument->value, memory.data(), std::min(memory.size(), sizeof(argument->value)));
         break;
     }
     case TypeKind::Pointer:
     case TypeKind::Function:
         argument->tag = 'P';
         argument->foreignKind = ForeignKind::Pointer;
-        memcpy(argument->value, memory, sizeof(void*));
+        memcpy(argument->value, memory.data(), std::min(memory.size(), sizeof(void*)));
         break;
     case TypeKind::Array:
         argument->tag = 'P';
         argument->foreignKind = ForeignKind::Pointer;
-        argument->setPointer(memory);
+        argument->setPointer(memory.data());
         break;
     case TypeKind::Structure:
     case TypeKind::Union: {
         // By value: what is passed is what the instance holds now. The copy is bytes, not an instance: no __del__ is owed for it.
         Runtime& rt = runtime(globalObject);
-        PyByteStorage* copy = PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), static_cast<size_t>(info->size));
+        PyByteStorage* copy = PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), memory.size());
         if (!copy) {
             raiseMemoryError(globalObject, scope, String());
             return nullptr;
         }
-        memcpy(copy->data(), memory, static_cast<size_t>(info->size));
+        memcpy(copy->data(), memory.data(), memory.size());
         PyRecord* holder = PyRecord::create(globalObject, rt.typeFor(structParamTypeDef), 2);
         holder->set(vm, 0, copy);
         holder->set(vm, 1, data);
@@ -280,9 +280,9 @@ static JSValue castTo(JSGlobalObject* globalObject, void* pointer, JSValue sourc
             RETURN_IF_EXCEPTION(scope, { });
         }
     }
-    uint8_t* memory = Place { result }.resolve(globalObject, sizeof(void*));
+    auto memory = Place { result }.resolve(globalObject, sizeof(void*));
     RETURN_IF_EXCEPTION(scope, { });
-    memcpy(memory, &pointer, sizeof(void*));
+    memcpy(memory.data(), &pointer, memory.size());
     return result;
 }
 
@@ -412,13 +412,13 @@ static void takeOverReferenceIn(const uint8_t* memory, bool programGetsObject)
     CApi::takeOverReference(bits, programGetsObject);
 }
 
-// `size`: so much room was made for a result that is an instance. (The type may have been given its fields during the call.)
-static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, int64_t size, JSValue checker, JSValue hint, bool comesWithReference, bool isDropped)
+// `memory`: the room that there is. `size`: so much of it was made for a result that is an instance. (The type may have been given its fields during the call.)
+static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, std::span<const uint8_t> memory, size_t size, JSValue checker, JSValue hint, bool comesWithReference, bool isDropped)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int number;
-    memcpy(&number, memory, sizeof(number));
+    memcpy(&number, memory.data(), sizeof(number));
     if (!resultType)
         return jsNumber(number);
     if (isNone(resultType))
@@ -428,12 +428,12 @@ static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue res
         RELEASE_AND_RETURN(scope, call(globalObject, resultType, jsNumber(number)));
     JSValue result;
     if (info->accessor && isSimpleInstanceType(*info->state.get(), PyType::from(resultType))) {
-        result = load(globalObject, info->accessor, memory, info->size, { }, hint);
+        result = load(globalObject, info->accessor, memory.first(std::min<size_t>(info->size, memory.size())), { }, hint);
         // (Also if the bits are not those of an object that the program may have.)
         if (comesWithReference)
-            takeOverReferenceIn(memory, result && !isDropped);
+            takeOverReferenceIn(memory.data(), result && !isDropped);
     } else
-        result = dataFromCopy(globalObject, PyType::from(resultType), memory, size);
+        result = dataFromCopy(globalObject, PyType::from(resultType), memory.first(size));
     RETURN_IF_EXCEPTION(scope, { });
     if (!checker)
         return result;
@@ -610,7 +610,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
     }
     // In memory of the collector if it is large: a structure may be of any size.
     alignas(16) uint8_t smallResult[64] { };
-    uint8_t* resultMemory = smallResult;
+    std::span<uint8_t> resultMemory { smallResult };
     int64_t resultSize = resultInfo ? resultInfo->size : 0;
     if (resultSize > static_cast<int64_t>(sizeof(smallResult))) {
         Runtime& rt = runtime(globalObject);
@@ -618,15 +618,15 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
         if (!storage)
             RELEASE_AND_RETURN(scope, raiseNoMemoryForResult(globalObject));
         keeps.append(storage);
-        resultMemory = storage->data();
-        memset(resultMemory, 0, static_cast<size_t>(resultSize));
+        resultMemory = { storage->data(), static_cast<size_t>(resultSize) };
+        memset(resultMemory.data(), 0, resultMemory.size());
     }
-    result.memory = resultMemory;
+    result.memory = resultMemory.data();
 
     JSValue ownResult;
     bool returnsReference = false;
     if (isOwnFunction(std::bit_cast<uintptr_t>(function))) {
-        callOwnFunction(globalObject, std::bit_cast<uintptr_t>(function), converted, resultMemory, ownResult);
+        callOwnFunction(globalObject, std::bit_cast<uintptr_t>(function), converted, resultMemory.data(), ownResult);
         RETURN_IF_EXCEPTION(scope, { });
     } else {
         RoomForArguments<ForeignValue> roomForValues;
@@ -661,11 +661,11 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
             CApi::forgetWhatCRaised();
         if (isEnded || (isServed && failed(scope, CApi::throwWhatCRaised(globalObject)))) [[unlikely]] {
             if (returnsReference)
-                takeOverReferenceIn(resultMemory, false);
+                takeOverReferenceIn(resultMemory.data(), false);
             return { };
         }
     }
-    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, resultSize, checker, ownResult, returnsReference, resultIsDropped));
+    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, static_cast<size_t>(resultSize), checker, ownResult, returnsReference, resultIsDropped));
 }
 
 // ---- Callbacks ----
@@ -723,8 +723,10 @@ void runCallback(PyCThunk* thunk, void** arguments, void* resultMemory)
         JSValue type = argTypes->at(i);
         PyCTypeInfo* info = infoOf(globalObject, type);
         JSValue value;
+        // What C passes is a register's worth at most: an array comes as the pointer to it.
+        std::span<const uint8_t> passed { static_cast<const uint8_t*>(arguments[i]), info ? std::min<size_t>(info->size, sizeof(uint64_t)) : 0 };
         if (info && info->accessor && isSimpleInstanceType(*info->state.get(), PyType::from(type)))
-            value = load(globalObject, info->accessor, static_cast<const uint8_t*>(arguments[i]), info->size);
+            value = load(globalObject, info->accessor, passed);
         else if (info) {
             value = call(globalObject, type);
             if (!scope.exception()) {
@@ -733,8 +735,8 @@ void runCallback(PyCThunk* thunk, void** arguments, void* resultMemory)
                     String text = reprForMessage(globalObject, type);
                     if (!scope.exception())
                         raiseTypeError(globalObject, scope, text, " returned unexpected result of type "_s, typeNameForMessage(globalObject, typeOf(globalObject, value)));
-                } else if (uint8_t* memory = Place { data }.resolve(globalObject, info->size))
-                    memcpy(memory, arguments[i], static_cast<size_t>(info->size));
+                } else if (auto memory = Place { data }.resolve(globalObject, passed.size()); memory.data())
+                    memcpy(memory.data(), passed.data(), memory.size());
             }
         } else {
             String text = reprForMessage(globalObject, type);
@@ -774,7 +776,7 @@ void runCallback(PyCThunk* thunk, void** arguments, void* resultMemory)
         reportCallbackError(globalObject, "converting result of"_s, callable);
         return;
     }
-    store(static_cast<uint8_t*>(resultMemory), info->accessor, packed, info->size);
+    store({ static_cast<uint8_t*>(resultMemory), static_cast<size_t>(info->size) }, info->accessor, packed);
     if (thunk->givesReference && CApi::tryEnsure(globalObject)) {
         uint64_t bits;
         memcpy(&bits, resultMemory, sizeof(bits));
@@ -868,10 +870,10 @@ static bool validateParamFlags(JSGlobalObject* globalObject, PyType* type, JSVal
 
 static bool setFunctionPointer(JSGlobalObject* globalObject, PyCData* function, const void* address)
 {
-    uint8_t* memory = Place { function }.resolve(globalObject, sizeof(void*));
-    if (!memory)
+    auto memory = Place { function }.resolve(globalObject, sizeof(void*));
+    if (!memory.data())
         return false;
-    memcpy(memory, &address, sizeof(void*));
+    memcpy(memory.data(), &address, memory.size());
     return true;
 }
 
@@ -1138,10 +1140,10 @@ static JSValue functionCall(JSGlobalObject* globalObject, JSValue self, const Ca
     JSValue argTypes = choose(function->argTypes.get(), info->argTypes.get());
     JSValue errorCheck = function->errorCheck.get();
 
-    uint8_t* memory = Place { function }.resolve(globalObject, sizeof(void*));
+    auto memory = Place { function }.resolve(globalObject, sizeof(void*));
     RETURN_IF_EXCEPTION(scope, { });
     void* address;
-    memcpy(&address, memory, sizeof(void*));
+    memcpy(&address, memory.data(), sizeof(void*));
 
     OutputArguments outputs;
     PyTuple* arguments = buildCallArguments(globalObject, function, argTypes, args, outputs);
@@ -1181,10 +1183,10 @@ static JSValue functionIsNotNull(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint8_t* memory = Place { PyCData::from(self) }.resolve(globalObject, sizeof(void*));
+    auto memory = Place { PyCData::from(self) }.resolve(globalObject, sizeof(void*));
     RETURN_IF_EXCEPTION(scope, { });
     void* address;
-    memcpy(&address, memory, sizeof(void*));
+    memcpy(&address, memory.data(), sizeof(void*));
     return jsBoolean(!!address);
 }
 

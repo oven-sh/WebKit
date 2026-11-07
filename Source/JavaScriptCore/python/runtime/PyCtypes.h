@@ -107,11 +107,11 @@ struct Bits {
 };
 
 // In two steps, because the first may run anything (__index__, __float__, __bool__), and that may move the memory.
-// `size`: of the field. False: an exception.
+// `size`: of the field, which is how many bytes store() will be given. False: an exception.
 bool pack(JSGlobalObject*, Accessor, JSValue, int64_t size, Packed&);
-void store(uint8_t* destination, Accessor, const Packed&, int64_t size, Bits = { });
+void store(std::span<uint8_t> destination, Accessor, const Packed&, Bits = { });
 // `hint`: for a py_object, what the memory is believed to refer to. Empty: an exception.
-JSValue load(JSGlobalObject*, Accessor, const uint8_t* source, int64_t size, Bits = { }, JSValue hint = { });
+JSValue load(JSGlobalObject*, Accessor, std::span<const uint8_t> source, Bits = { }, JSValue hint = { });
 
 // The 64 low bits of an int, in two's complement.
 uint64_t lowBitsOfInt(JSValue exactInt);
@@ -223,7 +223,13 @@ public:
     int64_t offsetInView() const { return static_cast<int64_t>(m_address); }
 
     void setStorage(VM&, PyByteStorage*, size_t offset);
-    void setView(VM&, PyMemoryView*, int64_t offset);
+    // `memory`: where that is now.
+    void setView(VM&, PyMemoryView*, int64_t offset, const uint8_t* memory);
+    // Where the memory was when the view was taken. It tells what points there once the memory is there no more: the view is gone, or, which is rare, the memory has moved under
+    // a view that is good. It is compared, and followed in one case only:
+    uintptr_t whereViewWas() const { return static_cast<uintptr_t>(m_past.get().asNumber()); }
+    // The view has been released. What it pins of the memory of JS stays where it was all the same, for as long as the cell of the view lives, and this holds the cell. Null: it is gone.
+    uint8_t* memoryBehindReleasedView(JSGlobalObject*) const;
     void setAddress(const void*);
     // The same memory as the other's, from that offset on.
     void setMemoryOf(VM&, const PyCData*, int64_t offset);
@@ -231,9 +237,9 @@ public:
     int64_t size { 0 }; // b_size
     int64_t length { 0 }; // b_length
     int64_t index { 0 }; // b_index: which part of the base it is.
-    bool ownsMemory { false }; // b_needsfree
     WriteBarrier<PyCData> base; // b_base
     WriteBarrier<Unknown> objects; // b_objects. Empty: not made yet.
+    bool ownsMemory { false }; // b_needsfree
 
 protected:
     PyCData(VM&, Structure*, PyType*);
@@ -241,9 +247,10 @@ protected:
 private:
     uint8_t* memoryOfView(JSGlobalObject*) const;
 
+    bool m_isView { false };
     WriteBarrier<JSCell> m_owner;
     uintptr_t m_address { 0 }; // For a view: the offset into it.
-    bool m_isView { false };
+    WriteBarrier<Unknown> m_past; // For a view: whereViewWas(), a number.
 };
 
 class PyCFuncPtr final : public PyCData {
@@ -448,14 +455,16 @@ ALWAYS_INLINE bool isInstanceOfData(JSValue value, PyType* type)
 
 // ---- Instances: PyCtypesData.cpp ----
 
-// Where a value is: in the memory of an instance, or at an address that the instance (a pointer) holds.
+// Where a value is: in the memory of an instance, or in what the instance (a pointer) points to.
 struct Place {
     PyCData* object;
     int64_t offset { 0 };
-    uint8_t* address { nullptr }; // Not null: there, and the offset does not count.
+    bool isThroughPointer { false }; // The offset counts from where the pointer points at the time that it is asked.
 
-    // `size` bytes from there. Null: an exception.
-    uint8_t* resolve(JSGlobalObject*, int64_t size) const;
+    // `size` bytes from there, and no byte of an instance is touched but in what this has returned. No data: an exception.
+    // They are good until code of the program runs, which may free the memory, move it or make the pointer point elsewhere. So this is asked behind the last thing
+    // that can run such code (converting a value, making an instance, an audit hook), and with the very number that the access goes by.
+    std::span<uint8_t> resolve(JSGlobalObject*, int64_t size) const;
 };
 
 // An instance with zeroed memory of its own. __init__ is not called. Null: an exception ("abstract class", MemoryError).
@@ -464,8 +473,8 @@ PyCData* newData(JSGlobalObject*, PyType*);
 PyCData* dataAt(JSGlobalObject*, PyType*, const Place&, int64_t index);
 // An instance for memory that nothing is known about.
 PyCData* dataAtAddress(JSGlobalObject*, PyType*, const void*);
-// An instance with a copy of that memory.
-PyCData* dataFromCopy(JSGlobalObject*, PyType*, const void*, int64_t size);
+// An instance with a copy of that memory, or of as much of it as the instance has room for.
+PyCData* dataFromCopy(JSGlobalObject*, PyType*, std::span<const uint8_t>);
 // The __buffer__() of them all.
 JSValue dataBuffer(JSGlobalObject*, JSValue self, JSValue flags);
 // Whether an instance fits into so many bytes, from the offset on. If not, a ValueError. A structure may be given its fields until there is an instance of it, so
