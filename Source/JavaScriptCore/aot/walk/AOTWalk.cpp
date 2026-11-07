@@ -3659,11 +3659,15 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         if (!m_openLoops.isEmpty() && proven && !isNeverType(proven)) {
             std::optional<uint32_t> loop = findLoopToBuildInFrontOf(draft, effects);
             if (loop && leavesOutWordThatVariableIsBornWith(draft, proven)) {
-                if (Reference asked = askVariableInFrontOfTypedCopy(draft, *loop))
-                    return asked;
-                if (m_hasFailed || isUnreachable())
-                    return { };
-                loop = std::nullopt;
+                std::optional<uint32_t> ofOwnFrame = findLoopThatReaderVouchesFor(draft, *loop);
+                if (ofOwnFrame != loop) {
+                    if (Reference asked = askVariableInFrontOfTypedCopy(draft, *loop))
+                        return asked;
+                    if (m_hasFailed || isUnreachable())
+                        return { };
+                }
+                count(ofOwnFrame ? StatisticID::ReadsOfVariablesThatTheirReaderVouchesFor : StatisticID::ReadsOfVariablesThatStayInTheTurn);
+                loop = ofOwnFrame;
             }
             if (loop) {
             BlockID inside = std::exchange(m_block, m_openLoops[*loop].blockInFront);

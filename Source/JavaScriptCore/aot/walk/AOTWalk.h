@@ -2106,6 +2106,7 @@ private:
     std::optional<uint32_t> findLoopToBuildInFrontOf(const Draft&, const Effects&) const;
     bool leavesOutWordThatVariableIsBornWith(const Draft&, TypeID proven) const;
     Reference askVariableInFrontOfTypedCopy(const Draft&, uint32_t outermostLoopThatMayBeLeft);
+    std::optional<uint32_t> findLoopThatReaderVouchesFor(const Draft&, uint32_t outermostLoopThatMayBeLeft) const;
     struct HoistPoint {
         size_t frameIndex;
         BlockID inputBlock;

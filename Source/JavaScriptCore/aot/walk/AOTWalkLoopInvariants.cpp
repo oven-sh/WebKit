@@ -418,6 +418,21 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
     return outermost;
 }
 
+std::optional<uint32_t> Walker::findLoopThatReaderVouchesFor(const Draft& draft, uint32_t outermostLoopThatMayBeLeft) const
+{
+    VariableID variable = draft.variable();
+    if (!facts().linked().variables[variable.index()].isFilledAtEveryRead || program().at(variable).module != program().at(currentFunction()).module)
+        return std::nullopt;
+    std::optional<uint32_t> outermost;
+    forEachOpenLoopAround(std::min<uint32_t>(m_openLoops.size(), m_numberOfLoopsThatMayBeLeft), m_frames.size() - 1, [&](uint32_t index) {
+        if (index < outermostLoopThatMayBeLeft)
+            return IterationStatus::Done;
+        outermost = index;
+        return IterationStatus::Continue;
+    });
+    return outermost;
+}
+
 std::optional<uint32_t> Walker::innermostOpenLoop() const
 {
     if (m_numberOfCopiesBuiltForSize)

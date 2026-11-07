@@ -1554,11 +1554,9 @@ bool StateOfLinkReach::enterLibraryInReach()
         m_flow.arrive(watched, LinkType::anything());
         holdersThatAreWatchedHaveComeOutOfSight = true;
     }
-    if (m_flow.testRuns().isTestRun()) {
-        for (BuiltinID cameIntoReach : m_builtinsThatCameIntoReach)
-            m_flow.testRuns().noteCameIntoReach(cameIntoReach);
-        m_flow.testRuns().lookAtWhatHasSettled();
-    }
+    for (BuiltinID cameIntoReach : m_builtinsThatCameIntoReach)
+        m_flow.testRuns().noteCameIntoReach(cameIntoReach);
+    m_flow.testRuns().lookAtWhatHasSettled();
     for (BuiltinID waiting : std::exchange(m_builtinsWaitingOnConditions, { }))
         enterLibraryBehind(waiting);
     bool entriesHaveComeToBeAskedForMore = false;

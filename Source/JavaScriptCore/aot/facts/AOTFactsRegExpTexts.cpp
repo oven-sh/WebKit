@@ -57,6 +57,7 @@ static constexpr uint64_t operationsForCharacterOfPatternThatIsMade = 2;
 static constexpr uint8_t timesThroughBlockWhileGoingBothWays = 4;
 static constexpr uint32_t operationsForBuiltinHandedRegExp = 1 << 10;
 static constexpr size_t mostBytesMade = 256 * MB;
+static constexpr PropertyOffset placeOfMarkOfWhatNobodyKnows = 0;
 
 enum class GrowthOfWork : uint16_t {
     WithWhatIsHanded = 1 << 0,
@@ -264,7 +265,7 @@ private:
         JSArray* captures { nullptr };
     };
 
-    bool isKnown(JSValue value) const { return !value || !value.isObject() || asObject(value)->structure() != m_unknown->structure(); }
+    bool isKnown(JSValue value) const { return !value || !value.isObject() || !asObject(value)->hasInlineStorage() || asObject(value)->getDirect(placeOfMarkOfWhatNobodyKnows) != JSValue(m_whatMarksWhatNobodyKnows.get()); }
     bool isNumberThatNobodyKnows(JSValue value) const { return !isKnown(value) && value != JSValue(m_unknown.get()); }
     bool isNumberKnownOrNot(JSValue value) const { return value.isNumber() || isNumberThatNobodyKnows(value); }
     JSValue makeNumberThatNobodyKnows();
@@ -435,6 +436,7 @@ private:
     Strong<JSGlobalObject> m_realm;
     Strong<JSObject> m_unknown;
     Strong<JSObject> m_absent;
+    Strong<JSObject> m_whatMarksWhatNobodyKnows;
     JSValue m_regExpConstructor;
     JSValue m_objectAssign;
     UncheckedKeyHashSet<JSCell*> m_functionsThatAskTheWorld;
@@ -463,6 +465,7 @@ private:
     Identifier m_numberOfFunction;
     Identifier m_capturesOfFunction;
     Identifier m_markOfPatternMadeHere;
+    Identifier m_markOfWhatNobodyKnows;
     Identifier m_laidUnderNumbersThatNobodyKnows;
     UncheckedKeyHashMap<uint64_t, Identifier> m_privateNames;
     UncheckedKeyHashMap<uint32_t, Vector<BlockID>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_joins;
@@ -504,7 +507,10 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
     realm->setWebAssemblyEnabled(false, "the rehearsal compiles no module"_s);
     realm->weakRandom().setSeed(0);
 
+    m_whatMarksWhatNobodyKnows.set(vm, constructEmptyObject(vm, realm->nullPrototypeObjectStructure()));
+    m_markOfWhatNobodyKnows = Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, "unknown"_s));
     m_unknown.set(vm, constructEmptyObject(vm, realm->nullPrototypeObjectStructure()));
+    m_unknown->putDirect(vm, m_markOfWhatNobodyKnows, m_whatMarksWhatNobodyKnows.get());
     m_unknown->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSNativeStdFunction::create(vm, realm, 0, String(), [](JSGlobalObject* realm, CallFrame*) {
         VM& vm = realm->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1028,6 +1034,7 @@ JSValue RehearsalOfRegExpTexts::makeNumberThatNobodyKnows()
 {
     VM& vm = *m_vm;
     JSObject* number = constructEmptyObject(vm, m_realm->nullPrototypeObjectStructure());
+    number->putDirect(vm, m_markOfWhatNobodyKnows, m_whatMarksWhatNobodyKnows.get());
     number->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, m_unknown->getDirect(vm, vm.propertyNames->toPrimitiveSymbol));
     return number;
 }

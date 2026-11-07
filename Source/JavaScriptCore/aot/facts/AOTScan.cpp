@@ -3857,6 +3857,8 @@ void ScanOfBody::readIteration(const BodyValue& value, const OperandInfo& info, 
         return;
     }
     if (info.kind == OperandKind::IteratorState && !stepsSynchronousIteratorInScan(value)) {
+        if (opcode == Opcode::IteratorResume && value.as<Opcode::IteratorResume>().resumeMode() == ResumeMode::Throw)
+            callMember(site, listOfNode(0), BuiltinNames::throwKeyword, { listOfNode(0) }, block);
         handToCodeThatRuns(list);
         addNode(0);
         return;

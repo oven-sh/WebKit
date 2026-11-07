@@ -26,8 +26,6 @@ TestRunsInLink::TestRunsInLink(LinkFlow& flow)
     , m_isTestRun(flow.program.admitsReplacedBuiltins)
     , m_mocks(findMocksOfProgram(flow.program))
 {
-    if (!m_isTestRun)
-        return;
     const Program& program = flow.program;
     const BuiltinTable& builtins = program.builtins();
     for (BuiltinMark mark : { BuiltinMark::FakesTimers, BuiltinMark::ExtendsMatchers }) {
@@ -36,6 +34,8 @@ TestRunsInLink::TestRunsInLink(LinkFlow& flow)
             m_writersOfRunner.append(WriterOfRunner { builtins.canonicalID(marked.builtin), name ? program.keyOf(name) : PropertyKeyID() });
         }
     }
+    if (!m_isTestRun)
+        return;
     for (const Module& module : program.modules) {
         BuiltinID object = module.runtimeModule ? builtins.namespaceOf(module.runtimeModule) : BuiltinID();
         if (!object)
@@ -132,7 +132,7 @@ void TestRunsInLink::lookAtWhatHasSettled()
 {
     bool hasNoted = false;
     for (WriterOfRunner& writer : m_writersOfRunner) {
-        if (writer.hasWritten || !writer.isInReach || !writer.isNamed)
+        if (writer.hasWritten || !writer.isInReach || (m_isTestRun && !writer.isNamed))
             continue;
         writer.hasWritten = true;
         hasNoted |= writeWhatRunnerWrites(writer.function);

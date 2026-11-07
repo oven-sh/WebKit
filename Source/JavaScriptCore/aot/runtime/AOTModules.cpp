@@ -1464,15 +1464,15 @@ auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData&
     BitVector modulesWithMock = m_modulesWithMockInPlace;
     for (ModuleID mocked : m_endedMocks.keys())
         modulesWithMock.set(mocked.index());
-    auto mockSeenOf = [&](ModuleID mocked) -> JSObject* {
+    auto mockSeenOf = [&](ModuleID mocked, ModuleID holder) -> JSObject* {
         if (mocked != passingOn && moduleWithExportsOf(mocked) != passingOn)
-            return mockSeenBy(mocked, passingOn);
+            return mockSeenBy(mocked, holder);
         JSObject* standing = ofPassingOn == MockOfModule::IsReadPast ? nullptr : mockInPlace(mocked);
         return standing && seesMockOf(mocked, passingOn) ? standing : nullptr;
     };
-    auto mockedModuleFor = [&](ModuleID module) -> std::optional<ModuleID> {
+    auto mockedModuleFor = [&](ModuleID module, ModuleID holder) -> std::optional<ModuleID> {
         for (size_t index : modulesWithMock) {
-            if ((ModuleID(index) == module || moduleWithExportsOf(ModuleID(index)) == module) && mockSeenOf(ModuleID(index)))
+            if ((ModuleID(index) == module || moduleWithExportsOf(ModuleID(index)) == module) && mockSeenOf(ModuleID(index), holder))
                 return ModuleID(index);
         }
         return std::nullopt;
@@ -1489,16 +1489,17 @@ auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData&
         ModuleID module;
         uint32_t name;
         bool isAskedByStar;
+        ModuleID holder;
     };
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> seen;
-    Vector<Asked, 8> toAsk { Asked { passingOn, passedOn.name, false } };
+    UncheckedKeyHashSet<std::pair<uint64_t, uint32_t>, DefaultHash<std::pair<uint64_t, uint32_t>>, PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> seen;
+    Vector<Asked, 8> toAsk { Asked { passingOn, passedOn.name, false, passingOn } };
     std::optional<AnswerOfMock> mockThatLacksName;
     while (!toAsk.isEmpty()) {
         Asked asked = toAsk.takeLast();
-        if (!seen.add(static_cast<uint64_t>(asked.module.index()) << 32 | asked.name).isNewEntry)
+        if (!seen.add({ static_cast<uint64_t>(asked.module.index()) << 32 | asked.name, asked.holder.index() }).isNewEntry)
             continue;
-        if (std::optional<ModuleID> mocked = mockedModuleFor(asked.module)) {
-            AnswerOfMock answer { mockSeenOf(*mocked), identifier(asked.name), *mocked };
+        if (std::optional<ModuleID> mocked = mockedModuleFor(asked.module, asked.holder)) {
+            AnswerOfMock answer { mockSeenOf(*mocked, asked.holder), identifier(asked.name), *mocked };
             if (!asked.isAskedByStar || !wasLeftOutByMock(asked.module, asked.name))
                 return answer;
             if (!mockThatLacksName)
@@ -1512,7 +1513,7 @@ auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData&
         for (const RequiredNameData& requiredName : m_table.requiredNames(asked.module)) {
             const ExportStatementData* statement = m_table.findExportStatement(requiredName);
             if (statement && ProgramStrings::text(m_table.programTables(), statement->exportNameString()) == exportName)
-                toAsk.append(Asked { requiredName.exporterModule(), requiredName.name, hasNameByStar });
+                toAsk.append(Asked { requiredName.exporterModule(), requiredName.name, hasNameByStar, asked.module });
         }
         if (toAsk.size() == countBefore) {
             mockThatLacksName = std::nullopt;
@@ -1525,7 +1526,7 @@ auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData&
     if (passedOn.kind() != ModuleExportKind::Variable)
         return std::nullopt;
     for (size_t index : modulesWithMock) {
-        JSObject* mock = mockSeenOf(ModuleID(index));
+        JSObject* mock = mockSeenOf(ModuleID(index), passingOn);
         if (!mock)
             continue;
         for (const SyntheticExportData& entry : m_table.syntheticExports(moduleWithExportsOf(ModuleID(index)))) {
