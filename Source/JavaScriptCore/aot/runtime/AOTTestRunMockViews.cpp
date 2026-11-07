@@ -413,6 +413,11 @@ void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, 
         }
     }
     MomentMockWasLaid laid = waiting && !stoodInPlace ? *waiting : momentOfNow();
+    if (stoodInPlace && !leavesEarlierMockToItsImporters) {
+        auto standing = m_momentsStandingMocksWereLaid.find(fileOrModule);
+        if (standing != m_momentsStandingMocksWereLaid.end() && !standing->value.isInPreload && standing->value.momentOfTestFile == laid.momentOfTestFile)
+            laid.moment = standing->value.moment;
+    }
     LoadedModule& held = ensureLoaded(fileOrModule);
     JSObject* ofPreload = held.mockLaidInPreload.get();
     bool liesOverMockOfPreload = mockInPlace(fileOrModule) == ofPreload ? m_loadedInPreload.get(moduleWithExportsOf(fileOrModule).index()) : m_modulesWhoseMockOfPreloadIsPatched.get(fileOrModule.index());

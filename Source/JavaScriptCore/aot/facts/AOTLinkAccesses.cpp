@@ -917,6 +917,8 @@ void AccessInLinkAccesses::giveExport(ModuleID module, uint32_t index)
             giveAnything();
             return;
         }
+        if (entry.isDroppedWhileEmpty)
+            break;
         if (isNamed() && entry.isFromStarExport && m_program.at(module).requests.containsIf([](const ModuleRequest& request) { return request.isDynamicStarExport; }))
             givePrimitives(Primitive::Undefined);
         switch (entry.kind) {
