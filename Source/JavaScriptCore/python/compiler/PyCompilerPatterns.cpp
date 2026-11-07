@@ -525,7 +525,8 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         context.captures.clear();
         if (matchCase->guard) {
             SetForScope branchTarget(m_branchTarget, failingGoesOnWithLoop ? BranchTarget { next.ptr(), { }, nullptr, isLast.loop, nullptr }
-                : context.failsByLine ? BranchTarget { next.ptr(), { }, context.failsByLine, { }, nullptr } : m_branchTarget);
+                : context.failsByLine ? BranchTarget { next.ptr(), { }, context.failsByLine, { }, nullptr }
+                : isLastCase && isLast.kind == Last::BeforeJump && isLast.jumpIs < JumpIs::ToldOf && !failingBranchesToTarget ? BranchTarget { .label = context.fail, .jumpOfConstantGoesOn = jumpOfConstantGoesOn(isLast) } : m_branchTarget);
             jumpIf(matchCase->guard, *context.fail, false);
         }
         popBlock();

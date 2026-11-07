@@ -48,6 +48,7 @@
 #include "JSTemplateObjectDescriptor.h"
 #include "MarkedBlockCage.h"
 #include "Options.h"
+#include "PreciseJumpTargetsInlines.h"
 #include "PrivateFieldPutKind.h"
 #include "PyCodeNode.h"
 #include "PyRuntime.h"
@@ -1230,6 +1231,31 @@ bool BytecodeGenerator::pythonStatementBeginsSince(unsigned position) const
     return false;
 }
 #endif
+
+// If the jump there leads to a jump, one at which no line begins that anybody is told of, it is made to go where that goes.
+void BytecodeGenerator::threadPythonJump(unsigned offset)
+{
+    auto targetOf = [&](unsigned jump) {
+        ASSERT(instructions().at(jump)->opcodeID() == op_jmp);
+        int relative = 0;
+        extractStoredJumpTargetsForInstruction(m_codeBlock.get(), instructions().at(jump), [&](int32_t target) { relative = target; });
+        return jump + relative;
+    };
+    unsigned next = targetOf(offset);
+    if (instructions().at(next)->opcodeID() != op_jmp)
+        return;
+    for (auto& mark : m_codeBlock->pythonMarks() | std::views::reverse) {
+        if (mark.offset < next)
+            break;
+        if (mark.offset == next && mark.kind() == PythonMark::Line && !Python::isSilentLine(mark.value()))
+            return;
+    }
+    int target = targetOf(next) - offset;
+    m_writer.ref(offset)->cast<OpJmp>()->setTargetLabel(BoundLabel(target), [&] {
+        m_codeBlock->addOutOfLineJumpTarget(offset, target);
+        return BoundLabel();
+    });
+}
 
 void BytecodeGenerator::settlePythonLineMark()
 {

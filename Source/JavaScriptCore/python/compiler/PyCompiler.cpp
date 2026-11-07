@@ -358,6 +358,7 @@ UnlinkedFunctionExecutable* Compiler::compileCodeAnew(Unit* parent, const CodeSp
             auto unit = makeUnique<Unit>(*this, parent, spec, generator, info.get(), source, Unit::Part::Whole);
             unit->emitPrologue();
             emitBody(*unit);
+            unit->finishJumps();
             unit->finishConstants();
             unit->finishVariables();
         });
@@ -371,6 +372,7 @@ UnlinkedFunctionExecutable* Compiler::compileCodeAnew(Unit* parent, const CodeSp
             auto unit = makeUnique<Unit>(*this, parent, spec, bodyGenerator, info.get(), source, Unit::Part::GeneratorBody);
             unit->emitPrologue();
             emitBody(*unit);
+            unit->finishJumps();
             unit->finishConstants();
             unit->finishVariables();
         }, &slotCount);
@@ -533,7 +535,8 @@ void Unit::jump(Label& target, JumpIs jumpIs, bool takesInMore)
     // A jump that came of a constant is still a branch when CPython's compiler takes in what jumps lead to and first works out the lines. Later it goes where
     // this one goes, if this is still nothing but a jump, and the lines are worked out again; by then the jumps that lead nowhere have been dropped.
     bool isLedToByConstant = jumpOfConstantLeadsHere();
-    auto lineno = m_targetsOfJumpsStillJumpedTo.contains(&target) || (isLedToByConstant && (takesInMore || jumpIs == JumpIs::Hidden)) ? std::nullopt : lineOfOnlyWayHere(JumpsHere::AreTakenIn);
+    // (Alone it is not the only way: what it jumps over came here too.)
+    auto lineno = m_targetsOfJumpsStillJumpedTo.contains(&target) || (isLedToByConstant && (takesInMore || jumpIs == JumpIs::Hidden || !g.branchesToLastPythonLabel().count)) ? std::nullopt : lineOfOnlyWayHere(JumpsHere::AreTakenIn);
     if (lineno) {
         silentLine(*lineno);
         if (!isLedToByConstant)
@@ -826,12 +829,23 @@ void Unit::jumpIfOrLeave(Expr* test, Label& target, const Last& isLast, ReturnsB
     // Of a jump of the kind that tools are told of whichever way it goes, and what is run before it, each way there has a copy. At one of the other kind the ways meet.
     if (isLast.kind == Last::BeforeJump && canBranchTo(isLast))
         return jumpIf(test, *isLast.target, condition);
-    if (isLast.kind == Last::BeforeJump && isLast.jumpIs < JumpIs::ToldOf)
+    if (isLast.kind == Last::BeforeJump && isLast.jumpIs < JumpIs::ToldOf) {
+        SetForScope branchTarget(m_branchTarget, jumpOfConstantGoesOn(isLast) ? BranchTarget { .label = &target, .jumpOfConstantGoesOn = true } : m_branchTarget);
         return jumpIf(test, target, condition);
+    }
     if (!isLast || (isLast.kind == Last::OfFunction && test->range.lineno == test->range.endLineno))
         return jumpIf(test, target, condition);
     SetForScope branchTarget(m_branchTarget, BranchTarget { &target, { }, &returns, { }, nullptr, isLast.kind != Last::OfFunction });
     jumpIf(test, target, condition);
+}
+
+// Where the ways out of a test meet in front of a jump. A jump to a jump goes where that goes and is still of its own line, in CPython too, and what came of a constant is a jump
+// (`if a and 0:`): finishJumps(). Not if something is run first. Nor if that jump leads to a jump itself: then CPython's compiler has taken that one in by the time it looks,
+// and something that does nothing comes first.
+bool Unit::jumpOfConstantGoesOn(const Last& isLast)
+{
+    ASSERT(isLast.kind == Last::BeforeJump);
+    return isLast.jumpsBefore <= (isLast.isInPlaceOfJump ? 0u : 1u) && nothingRunsBeforeJump(isLast) && !isReplacedByCopy(isLast);
 }
 
 Label& Unit::labelForLine(ReturnsByLine& labels, int lineno, const Range& place)
@@ -1076,6 +1090,13 @@ void Unit::noteConstantMade(JSValue value)
     m_foldedConstants.append({ constant(value)->virtualRegister(), 0, true });
 }
 
+
+// CPython's compiler finds out late that the branch on a constant is a jump, and then makes it go where a jump goes that it leads to. So here, when all the code is there.
+void Unit::finishJumps()
+{
+    for (unsigned offset : m_jumpsOfConstantsThatGoOn)
+        g.threadPythonJump(offset);
+}
 
 void Unit::finishConstants()
 {

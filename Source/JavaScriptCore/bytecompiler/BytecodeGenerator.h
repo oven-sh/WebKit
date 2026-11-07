@@ -467,6 +467,7 @@ namespace JSC {
         const WaysToPythonLabel& jumpsToLastPythonLabel() const { return m_jumpsToLastPythonLabel; }
         const WaysToPythonLabel& branchesToLastPythonLabel() const { return m_branchesToLastPythonLabel; }
         int pythonLineAt(unsigned position) const;
+        void threadPythonJump(unsigned offset);
 #if ASSERT_ENABLED
         bool pythonStatementBeginsSince(unsigned position) const;
 #endif

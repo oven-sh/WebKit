@@ -298,6 +298,7 @@ private:
     void jump(Label&, JumpIs, bool takesInMore = false);
     // The last jump that came of a test of a constant. CPython's compiler finds out late that it is a jump: see jump().
     RefPtr<Label> m_targetOfJumpOfConstant;
+    bool m_jumpOfConstantGoesOn { false }; // In the test that is being compiled: jumpOfConstantGoesOn().
     size_t m_whereBranchOfConstantLeads { notFound };
     bool jumpOfConstantLeadsHere()
     {
@@ -316,6 +317,7 @@ private:
     // Jumps that lead to a jump and stay what they are: isReplacedByCopy() has found one that they stay in front of. Where they are; or, of one that goes further
     // here than it does in CPython, where the jump leads that it stays in front of there.
     Vector<unsigned, 4> m_jumpsThatStay;
+    Vector<unsigned, 4> m_jumpsOfConstantsThatGoOn; // finishJumps()
     Vector<Label*, 4> m_targetsOfJumpsStillJumpedTo;
     Label* targetReplacedByCopy(Label& end, const Last&);
     Label* m_targetReplacedByCopy { nullptr };
@@ -340,7 +342,9 @@ private:
         std::optional<unsigned> loop { }; // to where this loop, one of m_blocks, goes on,
         Label* loopOfComprehension { nullptr }; // or here.
         bool returnsAreJumps { false }; // `returns`: by its place as well, which the jump is of.
+        bool jumpOfConstantGoesOn { false };
     };
+    bool jumpOfConstantGoesOn(const Last&);
     BranchTarget m_branchTarget;
     Last m_leavingAs { }; // Blocks are being left by a `return` or a `continue`, or as if by one. OfFunction:
     RegisterID* m_valueToReturn { nullptr }; // with this. Null: None.
@@ -378,6 +382,7 @@ private:
     void noteFoldedConstant(AST::Expr*, JSValue);
     void noteWhatConstantIsMadeOf(AST::Expr*);
     void noteConstantMade(JSValue);
+    void finishJumps();
     void finishConstants();
     RegisterID* stringConstant(const String&);
     RegisterID* load(RegisterID* dst, JSValue);

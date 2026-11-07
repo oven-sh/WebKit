@@ -1490,6 +1490,7 @@ void Unit::jumpIf(Expr* node, Label& target, bool condition)
     if (auto truth = constantTruth(node); truth && *truth != condition)
         return jumpIfTo(node, target, condition);
     BranchTarget branchTarget = std::exchange(m_branchTarget, { });
+    SetForScope jumpOfConstantGoesOn(m_jumpOfConstantGoesOn, branchTarget.jumpOfConstantGoesOn);
     if (branchTarget.loop) {
         Ref<Label> goesOn = g.newLabel();
         jumpIfTo(node, goesOn.get(), !condition, true);
@@ -1534,6 +1535,13 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition, bool isTurnedRoun
             // (Where something leads here, what CPython's compiler makes of the constant stays for its line.)
             if (g.positionOfLastPythonLabel() == g.instructions().size())
                 g.addPythonMark(PythonMark::NoLine, jumpHasLineToItselfMark);
+            if (!cannotGetHere()) {
+                // (Where it does not go on: it is a branch still when what jumps to a jump is given a copy of that.)
+                if (m_jumpOfConstantGoesOn)
+                    m_jumpsOfConstantsThatGoOn.append(g.instructions().size());
+                else
+                    m_jumpsThatStay.append(g.instructions().size());
+            }
             jump(target, JumpIs::ToldOf);
             if (!m_cannotBeReached)
                 m_targetOfJumpOfConstant = &target;
