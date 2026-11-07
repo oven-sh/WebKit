@@ -80,6 +80,8 @@ public:
 
     bool includeSymbolProperties() const;
     bool includeStringProperties() const;
+    // For a loop that adds one key for each element an object holds. False in the NonIndexStrings modes.
+    bool includeIndexedProperties() const;
 
     PropertyNameMode propertyNameMode() const { return m_propertyNameMode; }
     PrivateSymbolMode privateSymbolMode() const { return m_privateSymbolMode; }
@@ -155,7 +157,14 @@ ALWAYS_INLINE bool PropertyNameArrayBuilder::includeSymbolProperties() const
 
 ALWAYS_INLINE bool PropertyNameArrayBuilder::includeStringProperties() const
 {
-    return static_cast<std::underlying_type<PropertyNameMode>::type>(m_propertyNameMode) & static_cast<std::underlying_type<PropertyNameMode>::type>(PropertyNameMode::Strings);
+    return static_cast<std::underlying_type<PropertyNameMode>::type>(m_propertyNameMode) & static_cast<std::underlying_type<PropertyNameMode>::type>(PropertyNameMode::NonIndexStrings);
+}
+
+ALWAYS_INLINE bool PropertyNameArrayBuilder::includeIndexedProperties() const
+{
+    using Bits = std::underlying_type<PropertyNameMode>::type;
+    constexpr Bits indexStrings = static_cast<Bits>(PropertyNameMode::Strings) & ~static_cast<Bits>(PropertyNameMode::NonIndexStrings);
+    return static_cast<Bits>(m_propertyNameMode) & indexStrings;
 }
 
 } // namespace JSC

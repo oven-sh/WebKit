@@ -154,6 +154,7 @@ JS_EXPORT_PRIVATE JSObject* objectConstructorFreeze(JSGlobalObject*, JSObject*);
 JS_EXPORT_PRIVATE JSObject* objectConstructorSeal(JSGlobalObject*, JSObject*);
 JSValue objectConstructorGetOwnPropertyDescriptor(JSGlobalObject*, JSObject*, const Identifier&);
 JSValue objectConstructorGetOwnPropertyDescriptors(JSGlobalObject*, JSObject*);
+// These two take Symbols, Strings or StringsAndSymbols, not a NonIndexStrings mode.
 JSArray* ownPropertyKeys(JSGlobalObject*, JSObject*, PropertyNameMode, DontEnumPropertiesMode);
 JSArray* allPropertyKeys(JSGlobalObject*, JSObject*, PropertyNameMode, DontEnumPropertiesMode);
 bool toPropertyDescriptor(JSGlobalObject*, JSValue, PropertyDescriptor&);
