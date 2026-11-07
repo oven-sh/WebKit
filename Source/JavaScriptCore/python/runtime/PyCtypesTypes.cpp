@@ -581,6 +581,7 @@ static bool setPointerProto(JSGlobalObject* globalObject, PyType* self, PyCTypeI
             if (i)
                 format.append(',');
             format.append(intToString(globalObject, shape->at(i)));
+            RETURN_IF_EXCEPTION(scope, false);
         }
         format.append(')');
     }
@@ -697,7 +698,6 @@ static JSValue arrayMetaInit(JSGlobalObject* globalObject, JSValue self, const C
     PyCTypeInfo* itemInfo = infoOf(globalObject, itemType);
     if (!itemInfo)
         return raiseTypeError(globalObject, scope, "_type_ must have storage info"_s);
-    info->kind = TypeKind::Array;
     info->foreignKind = ForeignKind::Pointer;
     info->format.setMayBeNull(vm, info, itemInfo->format.get());
     unsigned itemDimensions = itemInfo->shape ? itemInfo->shape->length() : 0;
@@ -714,6 +714,7 @@ static JSValue arrayMetaInit(JSGlobalObject* globalObject, JSValue self, const C
     info->alignment = itemInfo->alignment;
     info->length = *length;
     info->proto.set(vm, info, itemType);
+    info->kind = TypeKind::Array;
     // Arrays of characters are strings as well.
     if (itemInfo->accessor == Accessor { Code::Char })
         type->addGetSets(globalObject, charArrayGetSets());

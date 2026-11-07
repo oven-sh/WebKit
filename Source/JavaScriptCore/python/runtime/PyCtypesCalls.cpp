@@ -128,6 +128,8 @@ PyCArg* argumentFor(JSGlobalObject* globalObject, PyCData* data)
     PyCArg* argument = PyCArg::create(globalObject);
     argument->object.set(vm, argument, data);
     switch (info->kind) {
+    case TypeKind::None:
+        RELEASE_ASSERT_NOT_REACHED();
     case TypeKind::Simple: {
         String code = stringOf(strValue(info->proto.get()));
         argument->tag = code[0];

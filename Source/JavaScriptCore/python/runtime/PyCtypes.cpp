@@ -334,7 +334,8 @@ PyCTypeInfo* infoOf(JSGlobalObject* globalObject, JSValue type)
 {
     if (!PyType::is(type))
         return nullptr;
-    return PyCTypeInfo::tryFrom(hiddenField(globalObject, type, 0));
+    PyCTypeInfo* info = PyCTypeInfo::tryFrom(hiddenField(globalObject, type, 0));
+    return info && info->kind != TypeKind::None ? info : nullptr;
 }
 
 PyCTypeInfo* infoOfInstance(JSGlobalObject* globalObject, JSValue object)
@@ -352,10 +353,8 @@ PyCTypeInfo* createInfo(JSGlobalObject* globalObject, PyType* type)
         raiseSystemError(globalObject, scope, '\'', type->nameInMessages(), "' is not a ctypes class."_s);
         return nullptr;
     }
-    if (infoOf(globalObject, type)) {
-        String text = reprForMessage(globalObject, type);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        raiseSystemError(globalObject, scope, "StgInfo of "_s, text, " is already initialized"_s);
+    if (PyCTypeInfo::is(hiddenField(globalObject, type, 0))) {
+        raiseSystemError(globalObject, scope, "StgInfo of '"_s, type->nameInMessages(), "' is already initialized."_s);
         return nullptr;
     }
     PyCTypeInfo* info = PyCTypeInfo::create(vm, stateOf(globalObject));

@@ -128,6 +128,7 @@ JSValue capsuleForMemory(JSGlobalObject*, PyByteStorage*);
 // ---- What a ctypes type knows (StgInfo) ----
 
 enum class TypeKind : uint8_t {
+    None, // The __init__ of the metaclass has not got as far as what a kind promises, or has raised before: infoOf() does not hand it out.
     Simple,
     Structure,
     Union,
@@ -161,7 +162,7 @@ public:
     // All but what belongs to the one type: whether it is final, its pointer type.
     void copyFrom(VM&, const PyCTypeInfo&);
 
-    TypeKind kind { TypeKind::Simple };
+    TypeKind kind { TypeKind::None };
     Accessor accessor;
     ForeignKind foreignKind { ForeignKind::Aggregate };
     char letter { 0 }; // The first character of _type_.
@@ -186,7 +187,9 @@ private:
     PyCTypeInfo(VM&, Structure*, PyType*);
 };
 
-// Null, without an exception: not a ctypes type, or an abstract one.
+// Null, without an exception: not a ctypes type, or an abstract one. What it returns has all that its kind promises:
+// Simple: proto is a str that describeCode() knows, and accessor, size and alignment are that code's. Array: proto is a type that had an info, and size, length and
+// shape agree. Pointer, Function: size is that of a pointer; proto is a type that had an info, or empty. Structure, Union: fields is null or a tuple of PyCField.
 PyCTypeInfo* infoOf(JSGlobalObject*, JSValue type);
 PyCTypeInfo* infoOfInstance(JSGlobalObject*, JSValue object);
 // Null: a SystemError, it has one.

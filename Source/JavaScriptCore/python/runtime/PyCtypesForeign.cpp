@@ -94,6 +94,8 @@ static bool flatten(JSGlobalObject* globalObject, PyCTypeInfo* info, int64_t off
     if (result.size() > 64)
         return false;
     switch (info->kind) {
+    case TypeKind::None:
+        RELEASE_ASSERT_NOT_REACHED();
     case TypeKind::Structure:
     case TypeKind::Union: {
         PyTuple* fields = info->fields.get();

@@ -1583,6 +1583,11 @@ checked and cannot be: `from_address`, `in_dll`, `string_at` and the like, an in
 elsewhere (a union, `memmove`, `from_buffer_copy`, a foreign function), and foreign calls themselves. These can crash the process, as in CPython. So
 can changing `_objects`, whose docstring says not to.
 
+What that rests on, each kept at one place:
+- **What `infoOf()` hands out is whole.** A `PyCTypeInfo` has the kind `None` until the `__init__` of the metaclass has written all that a kind promises (the comment on `infoOf()` says what), and
+  `infoOf()`, through which everybody gets at it, does not hand out such a one. So a class whose `__init__` raised, which `__subclasses__()` of its base still has, is abstract; `createInfo()` sees that it
+  has been begun, so a second `__init__` is the SystemError that CPython has.
+
 **`py_object`.** The eight bytes are a `PyObject*` as the C API has it (see there): what `id()` returns, for every object but a str, and 0 is NULL. The object is kept alive by `_objects`. Bits read from memory are handed out as an object if they are those of
 what `_objects` holds for that place; otherwise only after the heap has confirmed that they are those of a live cell of a kind that programs
 see (`objectFromBits()`). `Py_INCREF` and `Py_DECREF` count as C's do (see "The C API"). `ctypes.pythonapi` would be the
