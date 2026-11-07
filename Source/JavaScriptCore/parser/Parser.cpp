@@ -3189,6 +3189,7 @@ template <class TreeBuilder> TreeClassExpression Parser<LexerType>::parseClass(T
 
         JSTokenLocation methodLocation(tokenLocation());
         unsigned functionStart = tokenStart();
+        int staticBlockEndOffset = 0;
 
         // For backwards compatibility, "static" is a non-reserved keyword in non-strict mode.
         ClassElementTag tag = ClassElementTag::Instance;
@@ -3377,6 +3378,7 @@ parseMethod:
             DepthManager statementDepth(&m_statementDepth);
             m_statementDepth = 0;
             failIfFalse(parseBlockStatement(context, BlockType::StaticBlock), "Cannot parse class static block");
+            staticBlockEndOffset = lastTokenEndPosition().offset;
             auto* symbolImpl = std::bit_cast<SymbolImpl*>(m_vm.propertyNames->builtinNames().staticInitializerBlockPrivateName().impl());
             ident = &m_parserArena.identifierArena().makeIdentifier(const_cast<VM&>(m_vm), symbolImpl);
             property = context.createProperty(ident, type, SuperBinding::Needed, tag);
@@ -3411,6 +3413,10 @@ parseMethod:
             classElementsTail = context.createPropertyList(methodLocation, property, classElementsTail);
         else
             classElements = classElementsTail = context.createPropertyList(methodLocation, property);
+
+        // The evaluation of the class declares the basic block of a static block, from `static` to its closing brace.
+        if (parseMode == SourceParseMode::ClassStaticBlockMode)
+            context.setEndOffset(classElementsTail, staticBlockEndOffset);
     }
 
     info.endOffset = tokenLocation().endOffset - 1;

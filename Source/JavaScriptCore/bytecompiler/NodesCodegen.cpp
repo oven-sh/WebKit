@@ -786,14 +786,26 @@ RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, Registe
     };
 
     // Evaluating the class declares the basic block of a field without running it. DefineFieldNode runs it.
+    // The same for a static block, which StaticBlockFunctionCallNode runs: the function that calls the block is
+    // not made when a static field in front of it throws, and then nothing else knows the block.
     auto emitProfileControlFlowOverField = [&](const PropertyListNode* p) {
-        ExpressionNode* initializer = p->m_node->m_assign;
-        if (!initializer || !generator.shouldEmitControlFlowProfilerHooks())
+        if (!generator.shouldEmitControlFlowProfilerHooks())
             return;
-        Ref<Label> afterField = generator.newLabel();
-        generator.emitJump(afterField.get());
-        generator.emitProfileControlFlow(p->m_node->hasComputedName() ? startOffsetOfBasicBlock(initializer) : p->startOffset(), initializer->endOffset());
-        generator.emitLabel(afterField.get());
+        int startOffset;
+        int endOffset;
+        if (p->m_node->isStaticClassBlock()) {
+            startOffset = p->startOffset();
+            endOffset = p->endOffset();
+            ASSERT(startOffset < endOffset);
+        } else if (ExpressionNode* initializer = p->m_node->m_assign) {
+            startOffset = p->m_node->hasComputedName() ? startOffsetOfBasicBlock(initializer) : p->startOffset();
+            endOffset = initializer->endOffset();
+        } else
+            return;
+        Ref<Label> afterElement = generator.newLabel();
+        generator.emitJump(afterElement.get());
+        generator.emitProfileControlFlow(startOffset, endOffset);
+        generator.emitLabel(afterElement.get());
     };
 
     using GetterSetterPair = std::pair<PropertyNode*, PropertyNode*>;
@@ -1549,6 +1561,14 @@ RegisterID* StaticBlockFunctionCallNode::emitBytecode(BytecodeGenerator& generat
 {
     // There are two possible optimizations in this implementation.
     // https://bugs.webkit.org/show_bug.cgi?id=245925
+#if USE(BUN_JSC_ADDITIONS)
+    // V8 runs a static block inside the class's static initializer function. Here the block is a function of its own,
+    // so its frame takes that name.
+    ASSERT(m_expr->isFuncExprNode());
+    static_cast<FuncExprNode*>(m_expr)->metadata()->setEcmaName(generator.propertyNames().staticInitializerFrameName);
+#endif
+    // The basic block that the evaluation of the class declared for this block, from `static` to the closing brace.
+    generator.emitProfileControlFlow(divotStart().offset, divotEnd().offset);
     RefPtr homeObject = emitHomeObjectForCallee(generator);
     RefPtr function = generator.emitNode(m_expr);
     emitPutHomeObject(generator, function.get(), homeObject.get()); 
@@ -5921,6 +5941,9 @@ void DefineFieldNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
     switch (m_type) {
     case DefineFieldNode::Type::Name: {
         StrictModeScope strictModeScope(generator);
+        // The define throws if the receiver is not extensible or holds the name as a non-configurable property.
+        // Report that at the field, as the other two cases do.
+        generator.emitExpressionInfo(position(), position(), position() + m_ident.length());
         if (auto index = parseIndex(m_ident)) {
             RefPtr<RegisterID> propertyName = generator.emitLoad(nullptr, jsNumber(index.value()));
             generator.emitDirectPutByVal(generator.thisRegister(), propertyName.get(), value.get());
@@ -6052,7 +6075,7 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         Vector<UnlinkedFunctionExecutable::ClassElementDefinition> instanceElementDefinitions;
         generator.emitDefineClassElements(m_classElements, constructor.get(), prototype.get(), instanceElementDefinitions, staticElementDefinitions);
         if (!instanceElementDefinitions.isEmpty()) {
-            RefPtr<RegisterID> instanceFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(instanceElementDefinitions), m_classHeritage);
+            RefPtr<RegisterID> instanceFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(instanceElementDefinitions), m_classHeritage, BytecodeGenerator::ClassFieldInitializerKind::Instance);
 
             // FIXME: Skip this if the initializer function isn't going to need a home object (no eval or super properties)
             // https://bugs.webkit.org/show_bug.cgi?id=196867
@@ -6070,14 +6093,44 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
     }
 
     if (!staticElementDefinitions.isEmpty()) {
-        RefPtr<RegisterID> staticFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(staticElementDefinitions), m_classHeritage);
-        // FIXME: Skip this if the initializer function isn't going to need a home object (no eval or super properties)
-        // https://bugs.webkit.org/show_bug.cgi?id=196867
-        emitPutHomeObject(generator, staticFieldInitializer.get(), constructor.get());
+        using ElementDefinition = UnlinkedFunctionExecutable::ClassElementDefinition;
+        using InitializerKind = BytecodeGenerator::ClassFieldInitializerKind;
+        auto emitStaticInitializer = [&](Vector<ElementDefinition>&& definitions, InitializerKind kind) {
+            RefPtr<RegisterID> staticFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(definitions), m_classHeritage, kind);
+            // FIXME: Skip this if the initializer function isn't going to need a home object (no eval or super properties)
+            // https://bugs.webkit.org/show_bug.cgi?id=196867
+            emitPutHomeObject(generator, staticFieldInitializer.get(), constructor.get());
 
-        CallArguments args(generator, nullptr);
-        generator.move(args.thisRegister(), constructor.get());
-        generator.emitCallIgnoreResult(generator.newTemporary(), staticFieldInitializer.get(), NoExpectedFunction, args, position(), position(), position(), DebuggableCall::No);
+            CallArguments args(generator, nullptr);
+            generator.move(args.thisRegister(), constructor.get());
+            generator.emitCallIgnoreResult(generator.newTemporary(), staticFieldInitializer.get(), NoExpectedFunction, args, position(), position(), position(), DebuggableCall::No);
+        };
+#if USE(BUN_JSC_ADDITIONS)
+        // One function for each run of fields and for each run of blocks, called in source order. The function of a
+        // run of fields is a frame of its own in a stack trace. The function of a run of blocks is not, because the
+        // frame of a block is the block's own function: one function for both would put a second frame under each block.
+        auto isBlock = [](const ElementDefinition& definition) {
+            return definition.kind == ElementDefinition::Kind::StaticInitializationBlock;
+        };
+        auto kindOfRunAt = [&](size_t index) {
+            return isBlock(staticElementDefinitions[index]) ? InitializerKind::StaticBlocks : InitializerKind::Static;
+        };
+        size_t runStart = 0;
+        for (size_t index = 1; index < staticElementDefinitions.size(); ++index) {
+            if (isBlock(staticElementDefinitions[index]) == isBlock(staticElementDefinitions[runStart]))
+                continue;
+            Vector<ElementDefinition> run;
+            run.appendRange(staticElementDefinitions.begin() + runStart, staticElementDefinitions.begin() + index);
+            emitStaticInitializer(WTF::move(run), kindOfRunAt(runStart));
+            runStart = index;
+        }
+        InitializerKind lastKind = kindOfRunAt(runStart);
+        if (runStart)
+            staticElementDefinitions.removeAt(0, runStart);
+        emitStaticInitializer(WTF::move(staticElementDefinitions), lastKind);
+#else
+        emitStaticInitializer(WTF::move(staticElementDefinitions), InitializerKind::Static);
+#endif
     }
 
     if (hasPrivateNames)
