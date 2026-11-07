@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <unicode/uchar.h>
 #include <wtf/HexNumber.h>
+#include <wtf/unicode/CharacterNames.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -203,12 +204,13 @@ static bool isBeingEnded(Runtime& rt)
 // JS lets anything be the `name` of a function. Not this long, since the class is made where nothing can be ended.
 static constexpr unsigned longestNameOfMirror = 1000;
 
-// What type() takes for the name of a class without asking anybody, and a traceback can show on its line. One that has no UTF-8 goes to the
+// What type() takes for the name of a class without asking anybody, and a traceback can show on its line, with something in it that is seen. One that has no UTF-8 goes to the
 // codec's handler of errors, and a program can put its own in the place of 'strict'.
 static bool canNameClass(StringView name)
 {
     if (name.length() > longestNameOfMirror)
         return false;
+    bool hasWhatIsSeen = false;
     for (unsigned i = 0; i < name.length(); ++i) {
         char16_t unit = name[i];
         // Control characters, and what ends a line.
@@ -220,11 +222,13 @@ static bool canNameClass(StringView name)
                 return false;
             character = U16_GET_SUPPLEMENTARY(unit, name[++i]);
         }
-        // What is not seen and changes what is: the marks that turn the direction of the text, those of no width.
-        if (character >= 0x80 && u_charType(character) == U_FORMAT_CHAR)
+        // What is not seen and changes what is: the marks that turn the direction of the text, those of no width. But for the two joiners, which
+        // the grammar of JS takes within a name: Persian and the scripts of India are written with them.
+        if (character >= 0x80 && u_charType(character) == U_FORMAT_CHAR && character != zeroWidthNonJoiner && character != zeroWidthJoiner)
             return false;
+        hasWhatIsSeen |= !u_hasBinaryProperty(character, UCHAR_WHITE_SPACE) && !u_hasBinaryProperty(character, UCHAR_DEFAULT_IGNORABLE_CODE_POINT);
     }
-    return true;
+    return hasWhatIsSeen;
 }
 
 // class name(*bases), in _js, which stands for the prototype. Null: it cannot be made. There may be next to no stack left, or memory. If it is
@@ -576,6 +580,25 @@ PyType* exceptionClassForClassOfJS(JSGlobalObject* globalObject, JSObject* cls, 
     return exceptionClassForPrototypeOfJS(globalObject, prototype, otherwise);
 }
 
+// TypeError, OSError and what is under it, told when this is compiled: of the 71 names a name is compared with these.
+static constexpr bool goesWithClassOfJS(std::string_view name)
+{
+    constexpr std::pair<std::string_view, std::string_view> bases[] = {
+#define PY_NAME_AND_BASE(id, base) { #id, #base },
+        FOR_EACH_PY_EXCEPTION(PY_NAME_AND_BASE)
+#undef PY_NAME_AND_BASE
+    };
+    if (name == "TypeError")
+        return true;
+    while (name != "OSError") {
+        auto* found = std::ranges::find(bases, name, &std::pair<std::string_view, std::string_view>::first);
+        if (found == std::end(bases))
+            return false;
+        name = found->second;
+    }
+    return true;
+}
+
 // What `_js.name` is in every process and in every thread, whatever the program has done to the globals: JSFileNotFoundError, and JSRangeError
 // for the RangeError that the engine throws. (The classes that go with those of Python's come first.) Null: there is none.
 static PyType* exceptionClassNamedEverywhere(JSGlobalObject* globalObject, const String& name, IfClassCannotBeMade otherwise)
@@ -588,14 +611,13 @@ static PyType* exceptionClassNamedEverywhere(JSGlobalObject* globalObject, const
         return rt.JSError();
     if (rest == "ThrownValue"_s)
         return jsThrownValueType(globalObject, otherwise);
-    PyType* base = nullptr;
 #define PY_FIND_EXCEPTION(id, unused) \
-    if (rest == #id ""_s) \
-        base = rt.id();
+    if constexpr (goesWithClassOfJS(#id)) { \
+        if (rest == #id ""_s) \
+            return jsErrorTypeFor(globalObject, rt.id(), otherwise); \
+    }
     FOR_EACH_PY_EXCEPTION(PY_FIND_EXCEPTION)
 #undef PY_FIND_EXCEPTION
-    if (base && (base == rt.TypeError() || base->isSubtypeOf(rt.OSError())))
-        return jsErrorTypeFor(globalObject, base, otherwise);
     for (unsigned i = 0; i < NumberOfErrorType; ++i) {
         if (rest == errorTypeName(static_cast<ErrorType>(i)))
             return exceptionClassForPrototypeOfJS(globalObject, globalObject->errorStructure(static_cast<ErrorType>(i))->storedPrototypeObject(), otherwise);
