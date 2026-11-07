@@ -12,6 +12,11 @@ const links = [
     ["CST6CDT", "America/Chicago", 300],
     ["MST7MDT", "America/Denver", 360],
     ["PST8PDT", "America/Los_Angeles", 420],
+    // Not part of that issue: tzdata before 2024b has these as zones too, and they are links from 2024b on.
+    ["CET", "Europe/Brussels", -120],
+    ["EET", "Europe/Athens", -180],
+    ["MET", "Europe/Brussels", -120],
+    ["WET", "Europe/Lisbon", -60],
 ];
 
 const supported = Intl.supportedValuesOf("timeZone");

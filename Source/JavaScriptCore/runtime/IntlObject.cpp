@@ -2009,6 +2009,14 @@ static std::optional<ASCIILiteral> mapPOSIXStyleTimeZoneToPrimary(StringView tim
         return "America/Denver"_s;
     if (timeZone == "PST8PDT"_s)
         return "America/Los_Angeles"_s;
+    // Not part of that issue: tzdata before 2024b has these four as zones too, and links them to these zones from
+    // 2024b on. The system ICU of a Mac can have the older data (macOS 15.7.7 has tzdata 2024a).
+    if (timeZone == "CET"_s || timeZone == "MET"_s)
+        return "Europe/Brussels"_s;
+    if (timeZone == "EET"_s)
+        return "Europe/Athens"_s;
+    if (timeZone == "WET"_s)
+        return "Europe/Lisbon"_s;
     return std::nullopt;
 }
 
