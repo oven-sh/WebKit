@@ -471,15 +471,15 @@ bool callForeignFunction(JSGlobalObject* globalObject, void* function, std::span
             out.integers[out.integersUsed++] = std::bit_cast<uintptr_t>(result.memory);
 #else
         if (resultPassing.way == Passing::InMemory && resultSize > 4096)
-            return raiseUnsupported(globalObject, "results of more than 4096 bytes are"_s);
+            RELEASE_AND_RETURN(scope, raiseUnsupported(globalObject, "results of more than 4096 bytes are"_s));
 #endif
     }
 #if CPU(ARM64)
     if (resultKind == ForeignKind::LongDouble || resultKind == ForeignKind::ComplexLongDouble)
-        return raiseUnsupported(globalObject, "long double results are"_s);
+        RELEASE_AND_RETURN(scope, raiseUnsupported(globalObject, "long double results are"_s));
 #else
     if (resultKind == ForeignKind::ComplexLongDouble)
-        return raiseUnsupported(globalObject, "complex long double results are"_s);
+        RELEASE_AND_RETURN(scope, raiseUnsupported(globalObject, "complex long double results are"_s));
 #endif
 
     for (unsigned i = 0; i < arguments.size(); ++i) {
@@ -487,7 +487,7 @@ bool callForeignFunction(JSGlobalObject* globalObject, void* function, std::span
             return false;
     }
     if (out.overflowed)
-        return raiseUnsupported(globalObject, "so many arguments are"_s);
+        RELEASE_AND_RETURN(scope, raiseUnsupported(globalObject, "so many arguments are"_s));
 
     auto* memory = static_cast<uint8_t*>(result.memory);
     auto store = [&](size_t offset, const void* bytes, size_t size) { memcpy(memory + offset, bytes, size); };
@@ -740,18 +740,18 @@ bool allocateCallbackCode(JSGlobalObject* globalObject, PyCThunk* thunk)
     unsigned vectors = 0;
     for (unsigned i = 0; i < argTypes->length(); ++i) {
         PyCTypeInfo* info = infoOf(globalObject, argTypes->at(i));
-        // What is not a ctypes type is found out when the callback is called, as in CPython: it is taken for an int.
+        // FIXME: In CPython what is not a ctypes type is found out when the callback is called.
         if (!info)
-            return raiseUnsupported(globalObject, "callback parameters that are not ctypes types are"_s);
+            RELEASE_AND_RETURN(scope, raiseUnsupported(globalObject, "callback parameters that are not ctypes types are"_s));
         if (!isSupported(info))
-            return raiseUnsupported(globalObject, "callback parameters that are structures, complex numbers or long doubles are"_s);
+            RELEASE_AND_RETURN(scope, raiseUnsupported(globalObject, "callback parameters that are structures, complex numbers or long doubles are"_s));
         ++(info->foreignKind == ForeignKind::Float || info->foreignKind == ForeignKind::Double || info->foreignKind == ForeignKind::LongDouble ? vectors : integers);
     }
     unsigned onStack = (integers > integerRegisterCount ? integers - integerRegisterCount : 0) + (vectors > vectorRegisterCount ? vectors - vectorRegisterCount : 0);
     if (onStack > incomingStackSlots)
-        return raiseUnsupported(globalObject, "callbacks with so many parameters are"_s);
+        RELEASE_AND_RETURN(scope, raiseUnsupported(globalObject, "callbacks with so many parameters are"_s));
     if (thunk->resultType && !isSupported(infoOf(globalObject, thunk->resultType.get())))
-        return raiseUnsupported(globalObject, "callback results that are structures, complex numbers or long doubles are"_s);
+        RELEASE_AND_RETURN(scope, raiseUnsupported(globalObject, "callback results that are structures, complex numbers or long doubles are"_s));
 
     bool isFloat = returnsFloat(globalObject, thunk);
     auto& table = isFloat ? floatCallbacks : integerCallbacks;
