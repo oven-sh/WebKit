@@ -187,7 +187,7 @@ static bool isErrorOfJS(JSValue value)
 // ---- The classes of what JS threw ----
 
 // The hidden fields of a class that stands for a prototype of JS's.
-static constexpr unsigned prototypeOfJSField = 0; // The prototype. null: the class stands for what is no Error.
+static constexpr unsigned prototypeOfJSField = 0; // The prototype. null: JSThrownValue, which stands for none.
 static constexpr unsigned prototypeForInstancesField = 1; // See prototypeForInstancesOfExceptionClass().
 static constexpr unsigned osErrorClassesField = 2; // dict: see osErrorClassFor().
 
@@ -350,9 +350,9 @@ static JSValue ownValueOfJS(JSGlobalObject* globalObject, JSObject* object, Prop
     return value;
 }
 
-// "JS" and the name of the class whose prototype it is, or what it says itself (`Mine.prototype = new Error; Mine.prototype.name = "Mine"`).
+// The prefix and the name of the class whose prototype it is, or what it says itself (`Mine.prototype = new Error; Mine.prototype.name = "Mine"`).
 // Null: it has none, or none that a class can have.
-static String nameOfClassForPrototype(JSGlobalObject* globalObject, JSObject* prototype, CouldNotTell& couldNotTell)
+static String nameOfClassForPrototype(JSGlobalObject* globalObject, JSObject* prototype, ASCIILiteral prefix, CouldNotTell& couldNotTell)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -377,9 +377,10 @@ static String nameOfClassForPrototype(JSGlobalObject* globalObject, JSObject* pr
             return { };
         }
     }
-    if (!canNameClass(text))
+    // (The limit is for what comes behind "JS".)
+    if (!canNameClass(text) || text.length() + prefix.length() - 2 > longestNameOfMirror)
         return { };
-    String result = tryMakeString("JS"_s, text);
+    String result = tryMakeString(prefix, text);
     couldNotTell.lackedMeans |= result.isNull();
     return result;
 }
@@ -392,13 +393,30 @@ static JSValue prototypeOfJSIn(JSGlobalObject* globalObject, PyType* type)
     return type->type() == runtime(globalObject).typeType() ? hiddenField(globalObject, type, prototypeOfJSField) : JSValue();
 }
 
-// The class of the exceptions that stand for the objects with this prototype, which is an Error.prototype or inherits from one. The classes
+// Of JSError or a class under it: whether it is of Errors, and not JSThrownValue or under that.
+static bool standsForError(JSGlobalObject* globalObject, PyType* type)
+{
+    Runtime& rt = runtime(globalObject);
+    PyTuple* mro = type->mro();
+    for (unsigned i = 0; i < mro->length(); ++i) {
+        PyType* next = PyType::from(mro->at(i));
+        if (!next->isSubtypeOf(rt.JSError()))
+            continue;
+        if (JSValue prototype = prototypeOfJSIn(globalObject, next); prototype && prototype.isNull())
+            return false;
+    }
+    return true;
+}
+
+// The class of the exceptions that stand for the objects with this prototype. The classes
 // mirror the chain of prototypes, that is `extends`: class JSRangeError(JSError), and class JSValidationError(JSRangeError) for
 // `class ValidationError extends RangeError`. So what goes by type(e) sees what was thrown: contextlib.suppress(), assertRaises(),
 // pytest.raises(), a traceback. They are made when something of the kind is first thrown or asked for, without running code of the
 // program's, and live as long as the prototype.
+// JS throws anything. Where no Error is on the chain it is mirrored to its end, under JSThrownValue: class JSThrownObject(JSThrownValue) for
+// Object.prototype, class JSThrownResponse(JSThrownObject) for `throw new Response()`.
 // Every class has an MRO of its own, so what a chain of n prototypes costs grows with the square of n, where to JS it is n objects
-// (Object.create() in a loop). So a chain is mirrored this far down from Error.prototype, which is further than anybody writes `extends`. The
+// (Object.create() in a loop). So a chain is mirrored this far down from its upper end, which is further than anybody writes `extends`. The
 // prototypes below have the class of the last that is mirrored.
 static constexpr unsigned longestMROOfMirror = 256;
 
@@ -441,10 +459,17 @@ static PyType* exceptionClassForPrototypeOfJS(JSGlobalObject* globalObject, JSOb
         if (isErrorPrototypeOfJS(object))
             break;
         JSValue parent = object->getPrototypeDirect();
-        if (!parent.isObject()) [[unlikely]]
-            return rt.JSError();
+        if (!parent.isObject()) {
+            // No Error is on the chain.
+            type = jsThrownValueType(globalObject, otherwise);
+            if (!type || type == rt.JSError())
+                return forLackOfMeans(type);
+            break;
+        }
         object = asObject(parent);
     }
+    // (_js.JSObject, _js.JSMap and _js.JSPromise are the types of the objects.)
+    ASCIILiteral prefix = standsForError(globalObject, type) ? "JS"_s : "JSThrown"_s;
     auto forLackOfMemoryOrStack = [&](bool lackedStack) {
         if (otherwise == IfClassCannotBeMade::Raise)
             raiseForLackOfMeans(globalObject, lackedStack);
@@ -464,7 +489,7 @@ static PyType* exceptionClassForPrototypeOfJS(JSGlobalObject* globalObject, JSOb
             return forLackOfMeans(type);
         JSObject* object = asObject(withoutClass.takeLast());
         CouldNotTell couldNotTell;
-        String name = nameOfClassForPrototype(globalObject, object, couldNotTell);
+        String name = nameOfClassForPrototype(globalObject, object, prefix, couldNotTell);
         // A class is named once.
         if (couldNotTell.lackedMeans) [[unlikely]]
             return forLackOfMemoryOrStack(couldNotTell.lackedStack);
@@ -507,7 +532,7 @@ static PyType* exceptionClassForPrototypeOfJS(JSGlobalObject* globalObject, JSOb
     return exceptionClassForPrototypeOfJS(globalObject, prototype, otherwise, lackedMeans);
 }
 
-// The first class in the MRO that stands for a prototype says what the instances are. Empty: none does. null: they are no Errors.
+// The first class in the MRO that stands for a prototype says what the instances are. Empty: none does. null: it is JSThrownValue.
 static JSValue prototypeOfJSFor(JSGlobalObject* globalObject, PyType* type, PyType** standsFor = nullptr)
 {
     Runtime& rt = runtime(globalObject);
@@ -575,23 +600,33 @@ static JSObject* prototypeForInstancesOfExceptionClass(JSGlobalObject* globalObj
         return nullptr;
     if (JSValue known = hiddenField(globalObject, standsFor, prototypeForInstancesField))
         return asObject(known);
+    // (JSThrownResponse('x') is no Response: an Error, as JSThrownValue('x').)
+    if (!standsForError(globalObject, standsFor))
+        return nullptr;
     JSObject* made = makePrototypeOfExceptionsForJS(globalObject, asObject(prototype));
     setHiddenField(globalObject, standsFor, prototypeForInstancesField, made);
     return made;
 }
 
-// The class for a class: js.RangeError, or a class of Python's that derives from it. Null: it is not Error, and does not extend it.
-PyType* exceptionClassForClassOfJS(JSGlobalObject* globalObject, JSObject* cls, IfClassCannotBeMade otherwise)
+// The class for a class: js.RangeError, or a class of Python's that derives from it. Null: it is no class, or, if only those are wanted, it is not
+// Error and does not extend it.
+PyType* exceptionClassForClassOfJS(JSGlobalObject* globalObject, JSObject* cls, IfClassCannotBeMade otherwise, bool onlyOfErrors)
 {
     JSObject* prototype;
     CouldNotTell couldNotTell;
-    if (PyType* type = PyType::tryFrom(cls))
-        prototype = type->has(TypeFlag::AttributesAreProperties) ? prototypeForJS(globalObject, type) : nullptr;
-    else
+    if (PyType* type = PyType::tryFrom(cls)) {
+        // (_js.JSObject and _js.JSMap are the types of the objects: they stand for no class, and nothing has their `prototype`. A class that is being made has no MRO yet, and the
+        // mro() of its metaclass may ask.)
+        PyTuple* mro = type->mro();
+        bool derivesFromClassOfJS = false;
+        for (unsigned i = 0; mro && type->has(TypeFlag::AttributesAreProperties) && i < mro->length() && !derivesFromClassOfJS; ++i)
+            derivesFromClassOfJS = prototypeOfClassOfJS(PyType::from(mro->at(i)));
+        prototype = derivesFromClassOfJS ? prototypeForJS(globalObject, type) : nullptr;
+    } else
         prototype = !isPyObject(cls) && cls->isCallable() ? prototypeOfClassOfJSToCatch(globalObject, cls, couldNotTell) : nullptr;
     if (!prototype && !raiseIfCouldNotTell(globalObject, couldNotTell, otherwise))
         return nullptr;
-    if (!prototype || (!isErrorPrototypeOfJS(prototype) && !isErrorOfJS(prototype)))
+    if (!prototype || (onlyOfErrors && !isErrorPrototypeOfJS(prototype) && !isErrorOfJS(prototype)))
         return nullptr;
     return exceptionClassForPrototypeOfJS(globalObject, prototype, otherwise);
 }
@@ -661,7 +696,7 @@ PyType* exceptionClassNamed(JSGlobalObject* globalObject, const String& name, If
         return nullptr;
     if (!global || !global.isObject() || isPyObject(global))
         return nullptr;
-    RELEASE_AND_RETURN(scope, exceptionClassForClassOfJS(globalObject, asObject(global), otherwise));
+    RELEASE_AND_RETURN(scope, exceptionClassForClassOfJS(globalObject, asObject(global), otherwise, true));
 }
 
 // What stands for an error of the system whose class extends Error: class JSFileNotFoundError(JSDiskError, FileNotFoundError). JSError: it
@@ -827,11 +862,12 @@ static JSValue exceptionWithoutCauseFromThrownValue(JSGlobalObject* globalObject
     else {
         // What it is, is asked before anything of the program's runs, which may change it. (To ask runs nothing that would have to be ended.)
         bool isError = isErrorOfJS(thrown);
-        JSValue prototype = isError ? asObject(thrown)->getPrototypeDirect() : jsNull();
+        // (A Proxy has none but what its handler says.)
+        JSValue prototype = thrown.isObject() ? asObject(thrown)->getPrototypeDirect() : jsNull();
         // Where there is no stack, memory or time to make it what it should be, here or below, this is an exception for now. Who asks later gets another.
         // (Not so where a thread cannot see what the class is called: it never will, and what it catches, changes and raises again is to stay what it is.)
         bool lackedMeans = false;
-        PyType* type = isError ? exceptionClassForPrototypeOfJS(globalObject, asObject(prototype), IfClassCannotBeMade::NearestStandsIn, lackedMeans) : jsThrownValueType(globalObject);
+        PyType* type = prototype.isObject() ? exceptionClassForPrototypeOfJS(globalObject, asObject(prototype), IfClassCannotBeMade::NearestStandsIn, lackedMeans) : jsThrownValueType(globalObject);
         lackedMeans |= !isError && type == rt.JSError();
         String message;
         {

@@ -659,9 +659,9 @@ PyType* jsTypeErrorType(JSGlobalObject*, IfClassCannotBeMade = IfClassCannotBeMa
 PyType* jsErrorTypeFor(JSGlobalObject*, PyType* base, IfClassCannotBeMade = IfClassCannotBeMade::NearestStandsIn);
 // _js.JSThrownValue: of what stands for something that JS threw and that is no Error.
 PyType* jsThrownValueType(JSGlobalObject*, IfClassCannotBeMade = IfClassCannotBeMade::NearestStandsIn);
-// _js.JSRangeError for js.RangeError, or for a class of Python's that derives from it. Null, and no exception: the class is not Error and
-// does not extend it. None of these runs code of the program's.
-PyType* exceptionClassForClassOfJS(JSGlobalObject*, JSObject* cls, IfClassCannotBeMade = IfClassCannotBeMade::NearestStandsIn);
+// _js.JSRangeError for js.RangeError, or for a class of Python's that derives from it, and _js.JSThrownResponse for js.Response. Null, and no exception:
+// it is no class, or, with `onlyOfErrors`, the class is not Error and does not extend it. None of these runs code of the program's.
+PyType* exceptionClassForClassOfJS(JSGlobalObject*, JSObject* cls, IfClassCannotBeMade, bool onlyOfErrors);
 // _js.JSRangeError for "JSRangeError". Null, and no exception: there is no such class.
 PyType* exceptionClassNamed(JSGlobalObject*, const String& name, IfClassCannotBeMade = IfClassCannotBeMade::NearestStandsIn);
 // object.name, if the object has it itself, it is a value, and a thread other than the main one can see that. `needsMainThread` is set where it

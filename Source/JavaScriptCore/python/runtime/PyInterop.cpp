@@ -3069,15 +3069,15 @@ static JSValue jsSpecialMethod(JSGlobalObject* globalObject, JSValue object, JSV
 }
 
 // _js.exception_class(js.RangeError) is _js.JSRangeError, the class of the exceptions that stand for its instances: for what wants a class of
-// Python's, as assertRaises() and pytest.raises() do.
+// Python's, as assertRaises() and pytest.raises() do. JS throws anything, so for any class: _js.exception_class(js.Response).
 static JSValue jsExceptionClass(JSGlobalObject* globalObject, JSValue cls)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PyType* type = cls.isObject() ? exceptionClassForClassOfJS(globalObject, asObject(cls), IfClassCannotBeMade::Raise) : nullptr;
+    PyType* type = cls.isObject() ? exceptionClassForClassOfJS(globalObject, asObject(cls), IfClassCannotBeMade::Raise, false) : nullptr;
     RETURN_IF_EXCEPTION(scope, { });
     if (!type)
-        return raiseTypeError(globalObject, scope, "exception_class() argument must be the Error of JavaScript or a class that extends it, not "_s, typeName(globalObject, cls));
+        return raiseTypeError(globalObject, scope, "exception_class() argument must be a class of JavaScript, not "_s, typeName(globalObject, cls));
     return type;
 }
 
