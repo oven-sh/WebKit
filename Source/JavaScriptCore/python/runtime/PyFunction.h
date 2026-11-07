@@ -144,7 +144,6 @@ public:
     JSValue typeParams() const { return m_typeParams.get(); } // Empty: ().
     // What __code__ was set to. Null: it was not. For the body of generators: what the generator function had before it was set.
     PyCode* assignedCode() const { return m_code.get(); }
-    bool isIterableCoroutine() const { return m_code && m_code->flags().contains(CodeFlag::IterableCoroutine); }
 
     void setClosure(VM& vm, PyTuple* value) { m_closure.setMayBeNull(vm, this, value); }
     void setDefaults(VM& vm, PyTuple* value) { m_defaults.setMayBeNull(vm, this, value); }
@@ -208,7 +207,7 @@ PyCode* codeOf(JSGlobalObject*, CallFrame*);
 PyCode* codeOf(JSGlobalObject*, PyFunction*, FunctionExecutable*);
 
 // Puts the arguments of a call in the parameters of the function that is starting in the frame. False: an exception.
-bool bindArguments(JSGlobalObject*, CallFrame*, PyFunction*);
+bool bindArguments(JSGlobalObject*, CallFrame*, PyFunction*, const CodeInfo&);
 
 // Whether an instruction can call it by itself, in a frame with room for so many parameters ("Calls that instructions make" in
 // LowLevelInterpreter64.asm). Not before it has been called once, in the way that makes its code.

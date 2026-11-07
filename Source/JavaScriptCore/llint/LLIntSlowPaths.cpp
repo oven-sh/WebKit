@@ -298,14 +298,15 @@ LLINT_SLOW_PATH_DECL(trace_prologue)
     LLINT_END_IMPL();
 }
 
-static void traceFunctionPrologue(CallFrame* callFrame, const char* comment, CodeSpecializationKind kind)
+static void traceFunctionPrologue(CallFrame* callFrame, const char* comment, CodeSpecializationKind)
 {
     if (!Options::traceLLIntExecution())
         return;
 
+    // What has been entered, which the callee need not have any more: see entryOSR().
     JSFunction* callee = uncheckedDowncast<JSFunction>(callFrame->jsCallee());
-    FunctionExecutable* executable = callee->jsExecutable();
-    CodeBlock* codeBlock = executable->codeBlockFor(kind);
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    ScriptExecutable* executable = codeBlock->ownerExecutable();
     dataLogF("<%p> %p / %p: in %s of ", &Thread::currentSingleton(), codeBlock, callFrame, comment);
     dataLog(codeBlock);
     dataLogF(" function %p, executable %p; numVars = %u, numParameters = %u, numCalleeLocals = %u, caller = %p.\n",

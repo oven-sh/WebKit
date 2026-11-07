@@ -261,8 +261,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_bind_args)
         call->entryFrame = vm.topEntryFrame;
     PyFunction* callee = calleeOf(callFrame);
     // By the code that has been entered. It need not be the function's any more: see PyFunction::setCode().
-    if (!codeInfoOf(callFrame).takesNamespace) {
-        bindArguments(globalObject, callFrame, callee);
+    if (const CodeInfo& info = codeInfoOf(callFrame); !info.takesNamespace) {
+        bindArguments(globalObject, callFrame, callee, info);
         CHECK_EXCEPTION();
     } else if (!callFrame->argumentCount()) [[unlikely]] {
         // types.FunctionType(code of a module, globals)()

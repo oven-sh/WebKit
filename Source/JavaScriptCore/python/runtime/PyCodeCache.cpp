@@ -332,7 +332,7 @@ PyCode* readMarshalledCode(JSGlobalObject* globalObject, const MarshalledCodeHea
         return nullptr;
     FunctionExecutable* executable = unlinked->link(vm, nullptr, parentSource);
     auto flags = OptionSet<CodeFlag>::fromRaw(header.codeFlags);
-    return flags == info->flags ? PyCode::of(globalObject, executable) : PyCode::createWithFlags(globalObject, executable, flags);
+    return flags == info->flags ? PyCode::of(globalObject, executable) : PyCode::ofWithFlags(globalObject, executable, flags);
 }
 
 static void setFilenameOfAllCode(VM& vm, UnlinkedFunctionExecutable& executable, const String& path)

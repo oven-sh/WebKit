@@ -273,8 +273,11 @@ DEFINE_VISIT_CHILDREN(PyFunction);
 // - code from the optimizing compilers that has the function for a constant may call the executable it had then: it is thrown away.
 //   (They never look into code written in Python, so that is all they can know about it.)
 // - a CachedCall is linked as a call site is, and takes what the function runs when it links itself again: CachedCall::relink();
+// - a MicrotaskCall is found by the executable that the function has when the microtask runs;
 // - a CallData says what the function ran when it was asked for, and a loop of the engine's may ask once for all its calls
-//   (JSON.stringify(o, f), `new Map(iterable)` for map.set). Such a loop goes on in the old code, as a call in progress does.
+//   (JSON.stringify(o, f), `new Map(iterable)` for map.set). Such a loop goes on in the old code, as a call in progress does;
+// - `length` is a property of the function's own from when JS first asks for it: it is made anew. (That of f.bind(...) is made when it is first
+//   asked for, from what the function has then.)
 // So what is about a call is asked of the code that has been entered, from its first instruction on, and before: the interpreter's prologue counts the
 // entrances of the CodeBlock in the frame (entry_osr_function_for_call).
 // A call in progress goes on in the old code, which its frame keeps: see executableOf(). So do the generators there are.
@@ -299,6 +302,9 @@ void PyFunction::setCode(VM& vm, PyCode* code)
     ASSERT(functionExecutable() == next);
     m_info = next->unlinkedExecutable()->pythonCodeInfo();
     m_generatorBody.clear();
+    // (Nothing of the program's reaches that property: what JS defines, deletes or freezes goes to the attributes of Python's.)
+    if (FunctionRareData* rareData = this->rareData(); rareData && rareData->hasReifiedLength())
+        putDirect(vm, vm.propertyNames->length, jsNumber(originalLength(vm)), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 
     if (CodeBlock* codeBlock = previous->codeBlockForCall())
         codeBlock->unlinkOrUpgradeIncomingCalls(vm, nullptr);
@@ -628,9 +634,9 @@ static NEVER_INLINE bool bindKeywordOnlyDefaults(JSGlobalObject* globalObject, P
     return false;
 }
 
-static bool bindKeywords(JSGlobalObject*, CallFrame*, PyFunction*, unsigned positionalCount, PyTuple* keywordNames, const JSValue* keywordValues);
+static bool bindKeywords(JSGlobalObject*, CallFrame*, PyFunction*, const CodeInfo&, unsigned positionalCount, PyTuple* keywordNames, const JSValue* keywordValues);
 
-static NEVER_INLINE bool bindManyKeywords(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, unsigned positionalCount, PyTuple* keywordNames, const JSValue* keywordValues)
+static NEVER_INLINE bool bindManyKeywords(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, const CodeInfo& info, unsigned positionalCount, PyTuple* keywordNames, const JSValue* keywordValues)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     MarkedArgumentBuffer values;
@@ -641,17 +647,15 @@ static NEVER_INLINE bool bindManyKeywords(JSGlobalObject* globalObject, CallFram
     }
     for (unsigned k = 0; k < keywordNames->length(); ++k)
         values.append(keywordValues[k]);
-    RELEASE_AND_RETURN(scope, bindKeywords(globalObject, callFrame, function, positionalCount, keywordNames, valuesOf(values)));
+    RELEASE_AND_RETURN(scope, bindKeywords(globalObject, callFrame, function, info, positionalCount, keywordNames, valuesOf(values)));
 }
 
 // `keywordValues`: the values that go with the names. They follow the positional arguments in the frame, or are somewhere else.
-static NEVER_INLINE bool bindKeywords(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, unsigned positionalCount, PyTuple* keywordNames, const JSValue* keywordValues)
+static NEVER_INLINE bool bindKeywords(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, const CodeInfo& info, unsigned positionalCount, PyTuple* keywordNames, const JSValue* keywordValues)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // (Not the function's: what has run since the call began may have given it other code.)
-    const CodeInfo& info = codeInfoOf(callFrame);
     const unsigned argCount = info.argCount;
     const unsigned namedCount = argCount + info.kwOnlyCount;
     const bool hasVarArgs = info.flags.contains(CodeFlag::VarArgs);
@@ -682,7 +686,7 @@ static NEVER_INLINE bool bindKeywords(JSGlobalObject* globalObject, CallFrame* c
     JSValue setAside[fewKeywords];
     if (firstKeyword < keywordCount && keywordValuesAreInFrame) {
         if (keywordCount > fewKeywords) [[unlikely]]
-            RELEASE_AND_RETURN(scope, bindManyKeywords(globalObject, callFrame, function, positionalCount, keywordNames, keywordValues));
+            RELEASE_AND_RETURN(scope, bindManyKeywords(globalObject, callFrame, function, info, positionalCount, keywordNames, keywordValues));
         for (unsigned k = firstKeyword; k < keywordCount; ++k)
             setAside[k] = keywordValues[k];
         keywordValues = setAside;
@@ -747,12 +751,10 @@ static NEVER_INLINE bool bindKeywords(JSGlobalObject* globalObject, CallFrame* c
 }
 
 // Nothing was passed by name.
-static NEVER_INLINE bool bindPositional(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, unsigned count)
+static NEVER_INLINE bool bindPositional(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, const CodeInfo& info, unsigned count)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(rt.vm());
-    // (Not the function's: see slow_path_py_bind_args.)
-    const CodeInfo& info = codeInfoOf(callFrame);
     const unsigned argCount = info.argCount;
     const unsigned namedCount = argCount + info.kwOnlyCount;
     JSValue* slots = reinterpret_cast<JSValue*>(callFrame->addressOfArgumentsStart());
@@ -788,28 +790,29 @@ static NEVER_INLINE bool bindPositional(JSGlobalObject* globalObject, CallFrame*
 }
 
 // From JS: f(1, kwargs({ a: 2 })).
-static NEVER_INLINE bool bindKeywordsOfMarker(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, unsigned count)
+static NEVER_INLINE bool bindKeywordsOfMarker(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, const CodeInfo& info, unsigned count)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     PyTuple* keywordNames = nullptr;
     MarkedArgumentBuffer values;
     if (failed(scope, keywordsOfMarker(globalObject, callFrame->uncheckedArgument(count - 1), keywordNames, values)))
         return false;
-    RELEASE_AND_RETURN(scope, bindKeywords(globalObject, callFrame, function, count - 1, keywordNames, valuesOf(values)));
+    RELEASE_AND_RETURN(scope, bindKeywords(globalObject, callFrame, function, info, count - 1, keywordNames, valuesOf(values)));
 }
 
-bool bindArguments(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function)
+// `info`: of the code that has been entered, which need not be the function's any more: see PyFunction::setCode().
+bool bindArguments(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, const CodeInfo& info)
 {
     unsigned count = callFrame->argumentCount();
     JSValue thisValue = callFrame->thisValue();
     if (thisValue.isCell() && thisValue.asCell()->type() == PyKwNamesType) {
         auto* keywordNames = uncheckedDowncast<PyTuple>(thisValue.asCell());
         count -= keywordNames->length();
-        return bindKeywords(globalObject, callFrame, function, count, keywordNames, reinterpret_cast<const JSValue*>(callFrame->addressOfArgumentsStart()) + count);
+        return bindKeywords(globalObject, callFrame, function, info, count, keywordNames, reinterpret_cast<const JSValue*>(callFrame->addressOfArgumentsStart()) + count);
     }
     if (hasKeywordMarker(globalObject, callFrame)) [[unlikely]]
-        return bindKeywordsOfMarker(globalObject, callFrame, function, count);
-    return bindPositional(globalObject, callFrame, function, count);
+        return bindKeywordsOfMarker(globalObject, callFrame, function, info, count);
+    return bindPositional(globalObject, callFrame, function, info, count);
 }
 
 // ---- The type of functions ----
@@ -1310,15 +1313,22 @@ PyCode* PyCode::of(JSGlobalObject* globalObject, FunctionExecutable* executable)
     return code;
 }
 
+// Another code object with the same instructions. It has an executable of its own, as every code object has: a frame has its executable, and by that
+// it says which code object it runs (f_code, gi_code, the flag that types.coroutine() sets), whatever the function has been given since.
 PyCode* PyCode::createWithFlags(JSGlobalObject* globalObject, FunctionExecutable* executable, OptionSet<CodeFlag> flags)
 {
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    auto* code = new (NotNull, allocateCell<PyCode>(vm)) PyCode(vm, rt.structure<PyCode>(), rt.codeType());
-    code->finishCreation(vm);
-    code->m_executable.set(vm, code, executable);
-    code->m_codeFlags = flags;
-    return code;
+    VM& vm = getVM(globalObject);
+    FunctionExecutable* own = FunctionExecutable::create(vm, executable->topLevelExecutable(), executable->source(), executable->unlinkedExecutable(), executable->intrinsic(), executable->isInsideOrdinaryFunction());
+    // As UnlinkedFunctionExecutable::link() has it for code of Python's.
+    own->setNeverInline(true);
+    own->setNeverOptimize(true);
+    if (auto line = executable->overrideLineNumber())
+        own->setOverrideLineNumber(*line);
+    // What is nested in it is the same: the code objects in co_consts, of which replace(co_consts=...) may have put in others; the body of a generator.
+    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedExecutable()->codeBlocksDecodingCached(vm).first;
+    for (unsigned i = 0, count = codeBlock->numberOfFunctionExprs(); i < count; ++i)
+        own->setPythonFunctionExpression(vm, i, count, executable->pythonFunctionExpression(vm, i, count, codeBlock->functionExpr(i)));
+    return ofWithFlags(globalObject, own, flags);
 }
 
 PyCode* PyCode::ofWithFlags(JSGlobalObject* globalObject, FunctionExecutable* executable, OptionSet<CodeFlag> flags)
