@@ -304,7 +304,7 @@ static JSValue boundMethod(JSGlobalObject* globalObject, JSObject* object, JSObj
 }
 
 // What the items of an object of JS's are. Iteration, len(), bool(), `in`, keys() and the like go by this: by itemsOf(), or, where not all of the
-// questions it is made of need an answer, by those: is it a Map, methodOfIteration(), itemsOfIterable(). (What is to run nothing asks
+// questions it is made of need an answer, by those: is it a Map, objectOfPythonBehindProxy(), methodOfIteration(), itemsOfIterable(). (What is to run nothing asks
 // the same by looking only: itemsAreProperties() for __dict__ and `match`, givesWayToGetOfMappings() for what `o.get` is.)
 enum class ItemsOfJS : uint8_t {
     ByMethods, // It is a mapping by its methods: iteration gives what keys() gives, has() and get() answer for them.
@@ -1153,9 +1153,11 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
             return jsBoolean(isIn);
         }
     }
-    // What that gives is what is in an instance then, as for a class without a __contains__(), unless the object says itself what is in it.
+    // A class of Python's that derives from one of JS's may have an __iter__() of its own: what that gives is what is in an instance, as for a class
+    // without a __contains__(). (The object has not said itself what is in it.)
     bool iteratesInPython = hasIterOfPython(object);
-    // (A symbol is no item, here or below: `js.Symbol.iterator in o` is the `in` of JS, as o[js.Symbol.iterator] is its read.)
+    // (A symbol is no item, here or below: `js.Symbol.iterator in o` is the `in` of JS, as o[js.Symbol.iterator] is its read. Not so above: a Map may
+    // have one for a key, and so may a dict behind a Proxy.)
     if (iteratesInPython && !key.isSymbol()) [[unlikely]] {
         JSValue iterator = getIter(globalObject, self);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1504,6 +1506,28 @@ PyDict* dictOfJSProperties(JSGlobalObject* globalObject, JSValue value, JSObject
     return dict ? PyDict::from(dict) : nullptr;
 }
 
+// Whether the method is the engine's own way through the Map or the Set, iterator and all: then it gives what is in the cell, and nothing of the
+// program's is called.
+static bool isWayOfTheEngineThrough(JSObject* object, JSValue method)
+{
+    auto* function = dynamicDowncast<JSFunction>(method);
+    if (!function)
+        return false;
+    if (object->type() == JSMapType)
+        return function->intrinsic() == JSMapKeysIntrinsic && function->realm()->isMapPrototypeIteratorProtocolFastAndNonObservable();
+    return function->intrinsic() == JSSetValuesIntrinsic && function->realm()->isSetPrototypeIteratorProtocolFastAndNonObservable();
+}
+
+// The same of what it has under the name. That is looked at, not asked for: no getter for it is called.
+static bool hasWayOfTheEngineThrough(JSGlobalObject* globalObject, JSObject* object, PropertyName name)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue method;
+    Inquiry result = inquirePropertyOfHost(globalObject, object, name, method);
+    RETURN_IF_EXCEPTION(scope, false);
+    return result == Inquiry::Value && isWayOfTheEngineThrough(object, method);
+}
+
 // len() is how many items iteration gives, for what is a container to Python: what JS iterates over and says how many that gives, a mapping
 // by its methods, and a plain object, which is one of its properties. Empty, and no exception: it is none.
 // Where JS says what the items are, the object says how many, by its `size` or its `length`. Where the items are the properties, these two are
@@ -1516,39 +1540,17 @@ static JSValue numberOfItems(JSGlobalObject* globalObject, JSObject* object)
     if (object->isCallable())
         return { };
     JSType type = object->type();
-    // What the engine goes through without calling anything is counted as it is: that is what iteration gives, whatever `size` says.
-    bool isSetToGoThrough = isSetAsTheEngineMadeIt(object);
-    if (!isSetToGoThrough && (type == JSMapType || type == JSSetType)) {
-        // One of a derived class, or of another realm: what Python goes through it with is the engine's own. (That method is looked at, not asked for: no getter for it is called.)
-        bool isMap = type == JSMapType;
-        JSValue method;
-        Inquiry result = inquirePropertyOfHost(globalObject, object, isMap ? PropertyName(vm.propertyNames->keys) : PropertyName(vm.propertyNames->iteratorSymbol), method);
+    // What the engine goes through without calling anything is counted as it is: that is what iteration gives, whatever `size` says. So one of
+    // a derived class, or of another realm, if what Python goes through it with is the engine's own.
+    bool isSetAsMade = isSetAsTheEngineMadeIt(object);
+    JSValue iterates;
+    if (type == JSMapType) {
+        bool isAsItIs = !hasIterOfPython(object) && hasWayOfTheEngineThrough(globalObject, object, vm.propertyNames->keys);
         RETURN_IF_EXCEPTION(scope, { });
-        if (auto* function = result == Inquiry::Value ? dynamicDowncast<JSFunction>(method) : nullptr; function && !hasIterOfPython(object)) {
-            if (isMap && function->intrinsic() == JSMapKeysIntrinsic && function->realm()->isMapPrototypeIteratorProtocolFastAndNonObservable())
-                return jsNumber(uncheckedDowncast<JSMap>(object)->size());
-            isSetToGoThrough = !isMap && function->intrinsic() == JSSetValuesIntrinsic && function->realm()->isSetPrototypeIteratorProtocolFastAndNonObservable();
-        }
-    }
-    std::optional<ItemsOfJS> items;
-    if (isSetToGoThrough) {
-        // Unless it is a mapping by its methods, which iteration goes through by its keys(): what iteration asks, getters for `get`, `has` and
-        // `keys` and all.
-        items = itemsOfIterable(globalObject, object);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (*items == ItemsOfJS::Iterated)
-            return jsNumber(uncheckedDowncast<JSSet>(object)->size());
-        // One whose keys() is the engine's own is gone through as it is all the same, as a Map.
-        if (*items == ItemsOfJS::ByMethods) {
-            JSValue keys;
-            Inquiry result = inquirePropertyOfHost(globalObject, object, vm.propertyNames->keys, keys);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (auto* function = result == Inquiry::Value ? dynamicDowncast<JSFunction>(keys) : nullptr; function && function->intrinsic() == JSSetValuesIntrinsic && function->realm()->isSetPrototypeIteratorProtocolFastAndNonObservable())
-                return jsNumber(uncheckedDowncast<JSSet>(object)->size());
-        }
-    }
-    if (type != JSMapType) {
-        JSValue iterates = methodOfIteration(globalObject, object);
+        if (isAsItIs)
+            return jsNumber(uncheckedDowncast<JSMap>(object)->size());
+    } else if (!isSetAsMade) {
+        iterates = methodOfIteration(globalObject, object);
         RETURN_IF_EXCEPTION(scope, { });
         if (!iterates) {
             if (typeOf(globalObject, object) != runtime(globalObject).jsPlainObjectType())
@@ -1557,6 +1559,24 @@ static JSValue numberOfItems(JSGlobalObject* globalObject, JSObject* object)
             RETURN_IF_EXCEPTION(scope, { });
             return jsNumber(listLength(names));
         }
+    }
+    std::optional<ItemsOfJS> items;
+    if (type == JSSetType && (isSetAsMade || !hasIterOfPython(object))) {
+        // A Set may be a mapping by its methods, which iteration goes through by its keys(). So it is asked what iteration asks, in that order (itemsOf()),
+        // getters for `get`, `has` and `keys` and all, and the way that iteration takes then is what counts: the Symbol.iterator that it has been given
+        // above, or, of a Set that need not be asked for it, the one it has when the getters have run; or the keys() that it has then.
+        items = itemsOfIterable(globalObject, object);
+        RETURN_IF_EXCEPTION(scope, { });
+        bool isAsItIs;
+        if (*items == ItemsOfJS::ByMethods)
+            isAsItIs = hasWayOfTheEngineThrough(globalObject, object, vm.propertyNames->keys);
+        else if (isSetAsMade)
+            isAsItIs = isSetAsTheEngineMadeIt(object) || hasWayOfTheEngineThrough(globalObject, object, vm.propertyNames->iteratorSymbol);
+        else
+            isAsItIs = isWayOfTheEngineThrough(object, iterates);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isAsItIs)
+            return jsNumber(uncheckedDowncast<JSSet>(object)->size());
     }
     // (What the engine itself makes like an array has a `length`, whatever has been put on it.)
     bool isLikeArray = type == DirectArgumentsType || type == ScopedArgumentsType || type == ClonedArgumentsType || type == StringObjectType || type == DerivedStringObjectType;
