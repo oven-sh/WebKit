@@ -89,12 +89,11 @@ uint8_t* Place::resolve(JSGlobalObject* globalObject, int64_t size) const
 
 // ---- Making instances ----
 
-// The kind of cell goes by the built-in type that __base__ leads to, as the methods that the instance will be handed to do. Not by info->kind: that is
-// what the __init__ of a metaclass wrote, which a metaclass derived from two of them, or type.__new__() and a call of the __init__, gets to run on any class.
 static PyCData* allocateData(JSGlobalObject* globalObject, PyType* type, PyCTypeInfo* info)
 {
     VM& vm = getVM(globalObject);
     State& state = *info->state.get();
+    // hasDataForInstances(), and which of the two.
     PyType* layout = type->layoutBase();
     if (layout != state.dataType.get() && layout != state.functionType.get()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);

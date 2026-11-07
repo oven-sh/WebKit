@@ -715,7 +715,10 @@ static JSValue arrayMetaInit(JSGlobalObject* globalObject, JSValue self, const C
     info->length = *length;
     info->proto.set(vm, info, itemType);
     info->kind = TypeKind::Array;
-    // Arrays of characters are strings as well.
+    // Arrays of characters are strings as well. (The metaclass can be given to a class that is not derived from Array, nor from any class of ctypes: its instances
+    // are not what these take them for.)
+    if (!hasDataForInstances(state, type))
+        return none();
     if (itemInfo->accessor == Accessor { Code::Char })
         type->addGetSets(globalObject, charArrayGetSets());
     else if (itemInfo->accessor == Accessor { Code::WChar })

@@ -433,6 +433,13 @@ extern const TypeDef fieldTypeDef;
 extern const TypeDef argTypeDef;
 extern const TypeDef thunkTypeDef;
 
+// Whether an instance of the class is a PyCData. That goes by the built-in type that __base__ leads to, as do the methods that the instance will be handed to. Not by
+// info->kind: that is what the __init__ of a metaclass wrote, which a metaclass derived from two of them, or type.__new__() and a call of the __init__, gets to run on any class.
+ALWAYS_INLINE bool hasDataForInstances(State& state, PyType* type)
+{
+    PyType* layout = type->layoutBase();
+    return layout == state.dataType.get() || layout == state.functionType.get();
+}
 ALWAYS_INLINE bool isInstanceOfData(JSValue value, PyType* type)
 {
     PyCData* data = PyCData::tryFrom(value);
