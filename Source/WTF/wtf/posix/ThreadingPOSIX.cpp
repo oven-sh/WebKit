@@ -232,6 +232,8 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
     // waits for the post() below before it publishes anything else.
     Thread* thread = targetThread.load();
     clearSuspendResumeRequest();
+    // (Nobody but this thread writes it, here, or reads it, behind the call that the signal has interrupted.)
+    thread->m_timesStoppedBySignal.store(thread->m_timesStoppedBySignal.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
 
     // The registers are published only when the signal interrupted code on the thread's own stack.
     // The interrupted stack pointer comes from the context: the handler's own stack pointer says

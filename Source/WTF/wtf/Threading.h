@@ -304,6 +304,18 @@ public:
 #endif
 
     bool isCompilationThread() const { return m_isCompilationThread; }
+
+    // How often a signal has stopped this thread for suspend(). For the thread itself to ask: a signal ends a system call that is under way, or
+    // cuts a transfer short, and the kernel does not say which signal it was. One that compares this before and after the call knows that it
+    // has been stopped meanwhile. Always 0 where a thread is suspended without a signal: no call is cut short there.
+    unsigned timesStoppedBySignal() const
+    {
+#if USE(PTHREADS) && !OS(WINDOWS) && !OS(DARWIN)
+        return m_timesStoppedBySignal.load(std::memory_order_relaxed);
+#else
+        return 0;
+#endif
+    }
     bool isJSThread() const { return m_isJSThread; }
     GCThreadType gcThreadType() const { return static_cast<GCThreadType>(m_gcThreadType); }
 
@@ -435,6 +447,7 @@ protected:
 #endif
     PlatformRegisters* m_platformRegisters { nullptr };
     unsigned m_suspendCount { 0 };
+    std::atomic<unsigned> m_timesStoppedBySignal { 0 };
 #endif
 
 #if OS(WINDOWS)
