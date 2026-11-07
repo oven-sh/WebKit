@@ -3281,9 +3281,10 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         m_filesWhoseOriginalRuns.set(target.index());
         evaluateCommonJS(target);
         m_filesWhoseOriginalRuns.clear(target.index());
-        if (scope.exception()) [[unlikely]]
+        if (scope.exception()) [[unlikely]] {
             forgetRunThatThrew(target);
-        RETURN_IF_EXCEPTION(scope, { });
+            return { };
+        }
         return commonJSExports(target);
     }
     bool isRequiredByProgram = requiredBy == RequiredBy::Program || (referrer && !data(referrer).isOfLibrary());

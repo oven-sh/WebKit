@@ -1050,6 +1050,11 @@ static TypeID typeHeldOfFieldForSlotPlan(const Program& program, const Facts& fa
     if (!slotMayGoByTypeOfFieldForSlotPlan(program, facts, reference))
         return { };
     FieldFacts enforced = facts.field(reference);
+    bool namesOrdinaryObjects = enforced.slotType && std::ranges::any_of(membersOf(types, types.at(enforced.slotType)), [&](LayoutID member) {
+        return program.at(member).holdsOrdinaryObjects;
+    });
+    if (namesOrdinaryObjects)
+        return { };
     return contentsOfEnforcedSlot(types, enforced.slotType, enforced.facts.contains(FieldFact::SlotHoldsUndefinedAndNull));
 }
 
