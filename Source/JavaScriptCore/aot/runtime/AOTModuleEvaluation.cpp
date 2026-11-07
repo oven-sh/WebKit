@@ -201,10 +201,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             RELEASE_AND_RETURN(scope, throwEvaluationError(root));
         if (record->status() != CyclicModuleRecord::Status::Linked)
             return;
-        {
-            Locker locker { m_state.caches->lock() };
-            m_records.remove(root);
-        }
+        takeOutRecord(root);
         setStoredStatus(root, StoredModuleStatus::Linked);
         record->setStatus(CyclicModuleRecord::Status::Evaluated);
         record->setCycleRoot(vm, record);
@@ -3284,6 +3281,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         m_filesWhoseOriginalRuns.set(target.index());
         evaluateCommonJS(target);
         m_filesWhoseOriginalRuns.clear(target.index());
+        if (scope.exception()) [[unlikely]]
+            forgetRunThatThrew(target);
         RETURN_IF_EXCEPTION(scope, { });
         return commonJSExports(target);
     }
