@@ -11,6 +11,7 @@
 #include "PyAbstract.h"
 #include "PyDescriptors.h"
 #include "PyErrors.h"
+#include "PyException.h"
 #include "PyFunction.h"
 #include "PyHooks.h"
 #include "PyInternals.h"
@@ -549,6 +550,11 @@ Structure* PyType::createInstanceStructure(VM& vm)
 {
     ASSERT(!has(TypeFlag::InstancesHaveDataOfC));
     JSGlobalObject* globalObject = realm();
+    if (has(TypeFlag::ExceptionSubclass)) {
+        Structure* structure = PyException::createStructureOfInstances(globalObject, this);
+        m_instanceStructure.set(vm, this, structure);
+        return structure;
+    }
     // What __slots__ names has its place in the object. Storage on the side costs an allocation, and an assignment that the
     // interpreter cannot do by itself, for every instance.
     unsigned slotCount = 0;
@@ -607,6 +613,9 @@ void PyType::forgetWhatIsRemembered(Change change)
     m_version = 0;
     takeNewLookupKey();
     m_construction = Construction::Unknown;
+    // (It goes by the bases.)
+    if (has(TypeFlag::ExceptionSubclass))
+        m_instanceStructure.clear();
     if (change == Change::HowAttributesAreRead)
         m_hasGivenUpGetAttr = false;
     // What the caches held must not be kept alive by them: it may be what was just taken out of the class.

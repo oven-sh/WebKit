@@ -323,7 +323,7 @@ public:
     static constexpr uint8_t specialIsOfNoParticularKind = 1;
     static constexpr uint8_t specialIsFunction = 2;
 
-    // Of an instance without attributes, for a type whose instances are PyInstances.
+    // Of an instance without attributes, for a type whose instances are PyInstances, or PyExceptions.
     Structure* instanceStructure(VM& vm)
     {
         if (Structure* structure = m_instanceStructure.get()) [[likely]]

@@ -285,7 +285,7 @@ enum class JSViewObject : uint8_t {
     ObjectPrototype, // Of every PyObject.
     FunctionPrototype, // Of functions and types.
     ExceptionPrototype,
-    TypeErrorPrototype, // Of the instances of TypeError: see PyException::getPrototype().
+    TypeErrorPrototype, // Of the instances of TypeError: see PyException::createStructureOfInstances().
     IteratorPrototype, // Of what [Symbol.iterator]() returns.
     AsyncIteratorPrototype,
     Namespace, // importModuleFromJS("__python__")

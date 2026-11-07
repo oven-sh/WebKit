@@ -567,6 +567,21 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
         return;
     }
     JSCell* cell = self.asCell();
+    if (auto* exception = PyException::tryFrom(self)) {
+        // What it is an instance of to JS goes with the class: see PyException::createStructureOfInstances(). (JS cannot give an object of Python's another
+        // prototype, nor keep it from being given one: Object.setPrototypeOf() is not the way.)
+        JSValue wanted = newType->instanceStructure(vm)->storedPrototype();
+        if (exception->getPrototypeDirect() != wanted) {
+            // No circle, as JSObject::setPrototypeWithCycleCheck() has it: JS may have put the exception above that prototype.
+            for (JSValue next = wanted; next.isObject() && asObject(next)->type() != ProxyObjectType; next = asObject(next)->getPrototypeDirect()) {
+                if (next == JSValue(exception)) {
+                    raiseTypeError(globalObject, scope, "__class__ assignment: cyclic __proto__ value"_s);
+                    return;
+                }
+            }
+            exception->setPrototypeDirect(vm, wanted);
+        }
+    }
     if (isPyObject(cell)) {
         uncheckedDowncast<PyObject>(cell)->setType(vm, newType);
         if (newType->has(TypeFlag::InstancesHaveDataOfC)) [[unlikely]]

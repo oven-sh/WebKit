@@ -125,7 +125,7 @@ static JSValue groupNew(JSGlobalObject* globalObject, JSValue clsValue, const Ca
             return raiseTypeError(globalObject, scope, "Cannot nest BaseExceptions in '"_s, cls->name(), '\'');
     }
 
-    PyException* group = PyException::create(vm, rt.structure<PyException>(), cls);
+    PyException* group = PyException::create(vm, cls->instanceStructure(vm), cls);
     group->setArgs(vm, PyTuple::create(globalObject, args.positional()));
     group->setField(vm, ExceptionField::exceptionGroupMessage, message);
     group->setField(vm, ExceptionField::exceptionGroupExceptions, exceptions);

@@ -48,6 +48,7 @@ PyException::PyException(VM& vm, Structure* structure, PyType* type)
 
 PyException* PyException::create(VM& vm, Structure* structure, PyType* type)
 {
+    ASSERT(structure->typeInfo().type() == PyExceptionType);
     auto* exception = new (NotNull, allocateCell<PyException>(vm)) PyException(vm, structure, type);
     exception->finishCreation(vm);
     return exception;
@@ -55,17 +56,23 @@ PyException* PyException::create(VM& vm, Structure* structure, PyType* type)
 
 static JSObject* prototypeForInstancesOfExceptionClass(JSGlobalObject*, PyType*);
 
-JSValue PyException::getPrototype(JSObject* object, JSGlobalObject*)
+// Most classes have the one Structure of the runtime's. The others have it with another prototype, which the engine keeps among its transitions: so
+// classes with one prototype have one Structure, TypeError and all that derives from it.
+Structure* PyException::createStructureOfInstances(JSGlobalObject* globalObject, PyType* type)
 {
-    auto* exception = uncheckedDowncast<PyException>(object);
-    Runtime& rt = runtime(exception->realm());
-    if (exception->type()->isSubtypeOf(rt.JSError())) [[unlikely]] {
-        if (JSObject* prototype = prototypeForInstancesOfExceptionClass(exception->realm(), exception->type()))
-            return prototype;
-    }
-    if (exception->type()->isSubtypeOf(rt.TypeError()))
-        return rt.jsViewObject(JSViewObject::TypeErrorPrototype);
-    return exception->getPrototypeDirect();
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    Structure* structure = rt.structure<PyException>();
+    JSObject* prototype = nullptr;
+    if (type->isSubtypeOf(rt.JSError())) [[unlikely]]
+        prototype = prototypeForInstancesOfExceptionClass(globalObject, type);
+    if (!prototype && type->isSubtypeOf(rt.TypeError()))
+        prototype = rt.jsViewObject(JSViewObject::TypeErrorPrototype);
+    if (!prototype)
+        return structure;
+    prototype->didBecomePrototype(vm);
+    DeferredStructureTransitionWatchpointFire deferred(vm, structure);
+    return Structure::changePrototypeTransition(vm, structure, prototype, deferred);
 }
 
 template<typename Visitor>
@@ -125,7 +132,7 @@ PyException* newException(JSGlobalObject* globalObject, PyType* type, std::span<
     // find that out in its turn, and raise another.)
     Runtime& rt = runtime(globalObject);
     if (type->type() == rt.typeType() && type->isMadeBy(baseExceptionNew) && isInitializedByBaseException(type)) [[likely]] {
-        PyException* exception = PyException::create(rt.vm(), rt.structure<PyException>(), type);
+        PyException* exception = PyException::create(rt.vm(), type->instanceStructure(rt.vm()), type);
         exception->setArgs(rt.vm(), PyTuple::create(globalObject, args));
         return exception;
     }
@@ -1167,7 +1174,7 @@ static JSValue baseExceptionNew(JSGlobalObject* globalObject, JSValue cls, const
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    PyException* exception = PyException::create(vm, rt.structure<PyException>(), PyType::from(cls));
+    PyException* exception = PyException::create(vm, PyType::from(cls)->instanceStructure(vm), PyType::from(cls));
     exception->setArgs(vm, PyTuple::create(globalObject, args.positional()));
     return exception;
 }
@@ -1723,7 +1730,7 @@ static JSValue osErrorNew(JSGlobalObject* globalObject, JSValue cls, const CallA
                 type = subclass;
         }
     }
-    PyException* exception = PyException::create(vm, rt.structure<PyException>(), type);
+    PyException* exception = PyException::create(vm, type->instanceStructure(vm), type);
     if (usesInit)
         exception->setArgs(vm, rt.emptyTuple());
     else if (failed(scope, osErrorInitialize(globalObject, exception, args)))
