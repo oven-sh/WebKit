@@ -171,15 +171,22 @@ void scavengeThisThread(bool force)
 // it still uses, and hands the arena purge to mimalloc's scavenger thread. The vendored mimalloc
 // does not have it, so it is declared here and not in mimalloc.h.
 extern "C" void mi_on_thread_idle(void) noexcept;
+// Whether that call left the free blocks of a large page of this thread, one that the thread
+// allocated from a moment ago. Nothing comes back for those but another call.
+// mi_on_thread_idle_pending() is not the question here: it is also true for the pages that other
+// threads use, and a thread that comes back for those takes their buffers from them.
+extern "C" bool mi_on_thread_idle_pending_own(void) noexcept;
 #endif
 
-void scavengeThisThreadOnIdle()
+bool scavengeThisThreadOnIdle()
 {
 #if BUSE(EXTERNAL_MIMALLOC)
     mi_on_thread_idle();
+    return mi_on_thread_idle_pending_own();
 #else
     // Not forced: that would also purge what every other thread just freed.
     scavengeThisThread(/* force */ false);
+    return false;
 #endif
 }
 
