@@ -75,7 +75,7 @@ public:
 
     static const constexpr int MetaPropertyBit = 0x80000000;
     enum : int { NoneExpr = 0,
-        ResolveEvalExpr, ResolveExpr, IntegerExpr, DoubleExpr, StringExpr, BigIntExpr,
+        ResolveEvalExpr, ResolveExpr, IntegerExpr, DoubleExpr, StringExpr, BigIntExpr, DecimalExpr,
         ThisExpr, NullExpr, BoolExpr, RegExpExpr, ObjectLiteralExpr,
         FunctionExpr, ClassExpr, SuperExpr, ImportExpr, BracketExpr, DotExpr, CallExpr,
         NewExpr, PreExpr, PostExpr, UnaryExpr, BinaryExpr, OptionalChain, PrivateDotExpr,
@@ -183,6 +183,7 @@ public:
     ExpressionType createDoubleExpr(const JSTokenLocation&, double) { return DoubleExpr; }
     ExpressionType createIntegerExpr(const JSTokenLocation&, double) { return IntegerExpr; }
     ExpressionType createBigInt(const JSTokenLocation&, const Identifier*, int) { return BigIntExpr; }
+    ExpressionType createDecimal(const JSTokenLocation&, const Identifier&, int, int) { return DecimalExpr; }
     ExpressionType createString(const JSTokenLocation&, const Identifier*) { return StringExpr; }
     ExpressionType createBoolean(const JSTokenLocation&, bool) { return BoolExpr; }
     ExpressionType createNull(const JSTokenLocation&) { return NullExpr; }

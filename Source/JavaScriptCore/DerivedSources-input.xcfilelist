@@ -158,6 +158,7 @@ $(PROJECT_DIR)/runtime/BigIntPrototype.cpp
 $(PROJECT_DIR)/runtime/BooleanPrototype.cpp
 $(PROJECT_DIR)/runtime/DateConstructor.cpp
 $(PROJECT_DIR)/runtime/DatePrototype.cpp
+$(PROJECT_DIR)/runtime/DecimalPrototype.cpp
 $(PROJECT_DIR)/runtime/ErrorPrototype.cpp
 $(PROJECT_DIR)/runtime/GeneratorPrototype.cpp
 $(PROJECT_DIR)/runtime/IntlCollatorConstructor.cpp

@@ -168,6 +168,12 @@ namespace JSC {
     {
     }
 
+    inline DecimalNode::DecimalNode(const JSTokenLocation& location, const Identifier& value)
+        : ExpressionNode(location)
+        , m_value(value)
+    {
+    }
+
     inline ThisNode::ThisNode(const JSTokenLocation& location)
         : ExpressionNode(location)
     {

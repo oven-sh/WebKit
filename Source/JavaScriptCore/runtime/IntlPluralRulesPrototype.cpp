@@ -78,6 +78,14 @@ void IntlPluralRulesPrototype::finishCreation(VM& vm, JSGlobalObject* globalObje
     UNUSED_PARAM(globalObject);
 }
 
+// https://tc39.es/proposal-decimal/#sec-resolveplural: the category of a Decimal is that of its Number value.
+static IntlMathematicalValue toPluralOperand(JSGlobalObject* globalObject, JSValue value)
+{
+    if (auto* decimal = DecimalObject::tryCast(value)) [[unlikely]]
+        return IntlMathematicalValue { decimal->toNumberValue() };
+    return toIntlMathematicalValue(globalObject, value);
+}
+
 JSC_DEFINE_HOST_FUNCTION(intlPluralRulesPrototypeFuncSelect, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -90,7 +98,7 @@ JSC_DEFINE_HOST_FUNCTION(intlPluralRulesPrototypeFuncSelect, (JSGlobalObject* gl
     if (!pluralRules) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.PluralRules.prototype.select called on value that's not a PluralRules"_s));
 
-    auto value = toIntlMathematicalValue(globalObject, callFrame->argument(0));
+    auto value = toPluralOperand(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     auto number = value.tryGetDouble();
@@ -116,10 +124,10 @@ JSC_DEFINE_HOST_FUNCTION(intlPluralRulesPrototypeFuncSelectRange, (JSGlobalObjec
     if (startValue.isUndefined() || endValue.isUndefined())
         return throwVMTypeError(globalObject, scope, "start or end is undefined"_s);
 
-    auto start = toIntlMathematicalValue(globalObject, startValue);
+    auto start = toPluralOperand(globalObject, startValue);
     RETURN_IF_EXCEPTION(scope, { });
 
-    auto end = toIntlMathematicalValue(globalObject, endValue);
+    auto end = toPluralOperand(globalObject, endValue);
     RETURN_IF_EXCEPTION(scope, { });
 
     auto startNumber = start.tryGetDouble();

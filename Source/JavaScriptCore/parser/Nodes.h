@@ -578,6 +578,17 @@ namespace JSC {
         const Identifier& m_flags;
     };
 
+    // 1.5m. Every evaluation makes a new Decimal object.
+    class DecimalNode final : public ExpressionNode, public ThrowableExpressionData {
+    public:
+        DecimalNode(const JSTokenLocation&, const Identifier& value);
+
+    private:
+        RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+
+        const Identifier& m_value;
+    };
+
     class ThisNode final : public ExpressionNode {
     public:
         ThisNode(const JSTokenLocation&);

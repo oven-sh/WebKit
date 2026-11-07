@@ -79,6 +79,9 @@
 #include "DatePrototypeInlines.h"
 #include "Debugger.h"
 #include "DebuggerScope.h"
+#include "DecimalConstructor.h"
+#include "DecimalObject.h"
+#include "DecimalPrototype.h"
 #include "DeferTermination.h"
 #include "DirectArguments.h"
 #include "DisposableStackConstructor.h"
@@ -1857,6 +1860,17 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     IntlObject* intl = IntlObject::create(vm, this, IntlObject::createStructure(vm, this, m_objectPrototype.get()));
     putDirectWithoutTransition(vm, vm.propertyNames->Intl, intl, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
+    // Without the option too: cached bytecode may hold a Decimal literal.
+    m_decimalStructure.initLater(
+        [] (LazyClassStructure::Initializer& init) {
+            auto* prototype = DecimalPrototype::create(init.vm, DecimalPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            init.setPrototype(prototype);
+            init.setStructure(DecimalObject::createStructure(init.vm, init.global, prototype));
+            init.setConstructor(DecimalConstructor::create(init.vm, DecimalConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype));
+        });
+    if (Options::useDecimal())
+        putDirectWithoutTransition(vm, vm.propertyNames->builtinNames().DecimalPublicName(), m_decimalStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
+
     if (Options::useTemporal()) {
         m_durationStructure.initLater(
             [] (LazyClassStructure::Initializer& init) {
@@ -2150,6 +2164,10 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::SuppressedError)].initLater([] (const Initializer<JSCell>& init) {
         JSGlobalObject* globalObject = init.owner;
         init.set(globalObject->m_suppressedErrorStructure.constructor(globalObject));
+    });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Decimal)].initLater([] (const Initializer<JSCell>& init) {
+        JSGlobalObject* globalObject = init.owner;
+        init.set(globalObject->m_decimalStructure.constructor(globalObject));
     });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::DisposableStack)].initLater([] (const Initializer<JSCell>& init) {
         JSGlobalObject* globalObject = init.owner;
@@ -3325,6 +3343,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_dateTimeFormatStructure.visit(visitor);
     thisObject->m_numberFormatStructure.visit(visitor);
 
+    thisObject->m_decimalStructure.visit(visitor);
     thisObject->m_durationStructure.visit(visitor);
     thisObject->m_instantStructure.visit(visitor);
     thisObject->m_plainDateStructure.visit(visitor);

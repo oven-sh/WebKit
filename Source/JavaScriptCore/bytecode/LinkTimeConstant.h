@@ -158,6 +158,7 @@ class JSGlobalObject;
     v(ownKeys, nullptr) \
     v(ReferenceError, nullptr) \
     v(SuppressedError, nullptr) \
+    v(Decimal, nullptr) \
     v(DisposableStack, nullptr) \
     v(AsyncDisposableStack, nullptr) \
     v(enqueueJob, nullptr) \

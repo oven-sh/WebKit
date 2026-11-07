@@ -197,6 +197,20 @@ RegisterID* RegExpNode::emit(BytecodeGenerator& generator, RegisterID* dst, cons
     return generator.emitNewRegExp(dst, regExp);
 }
 
+// ------------------------------ DecimalNode ---------------------------------
+
+RegisterID* DecimalNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
+{
+    if (dst == generator.ignoredResult())
+        return nullptr;
+
+    RefPtr<RegisterID> result = generator.finalDestination(dst);
+    RefPtr<RegisterID> constructor = generator.moveLinkTimeConstant(generator.newTemporary(), LinkTimeConstant::Decimal);
+    CallArguments arguments(generator, nullptr, 1);
+    generator.emitLoad(arguments.argumentRegister(0), m_value);
+    return generator.emitConstruct(result.get(), constructor.get(), constructor.get(), NoExpectedFunction, arguments, divot(), divotStart(), divotEnd());
+}
+
 // ------------------------------ ThisNode -------------------------------------
 
 RegisterID* ThisNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
