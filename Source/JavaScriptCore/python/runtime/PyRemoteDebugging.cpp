@@ -130,7 +130,7 @@ void initializeRemoteDebuggingModule(JSGlobalObject* globalObject, PyModule* mod
 {
     module->addFunctions(globalObject, remoteFunctions);
     for (auto& record : remoteRecords)
-        module->add(globalObject, ASCIILiteral::fromLiteralUnsafe(record.name.characters() + strlen("_remote_debugging.")), cachedStructSeqType(globalObject, record));
+        module->add(globalObject, ASCIILiteral::fromLiteralUnsafe(record.name.characters() + strlen("_remote_debugging.")), structSeqTypeFor(globalObject, record));
     module->add(globalObject, "RemoteUnwinder"_s, runtime(globalObject).typeFor(remoteUnwinderTypeDef));
     module->add(globalObject, "PROCESS_VM_READV_SUPPORTED"_s, jsNumber(0));
     module->add(globalObject, "THREAD_STATUS_HAS_GIL"_s, jsNumber(1));

@@ -457,9 +457,8 @@ static PyType* posixSchedParamType(JSGlobalObject* globalObject)
 {
     if (PyType* type = runtime(globalObject).typeIfMadeFor(posixSchedParamDef))
         return type;
-    PyType* type = cachedStructSeqType(globalObject, posixSchedParamDef);
+    PyType* type = structSeqTypeFor(globalObject, posixSchedParamDef);
     type->addMethods(globalObject, posixSchedParamMethods);
-    type->didChange(getVM(globalObject));
     return type;
 }
 
@@ -1404,7 +1403,7 @@ static constexpr StructSeqDef posixRusageDef { "resource.struct_rusage"_s, posix
 
 PyType* posixRusageType(JSGlobalObject* globalObject)
 {
-    return cachedStructSeqType(globalObject, posixRusageDef);
+    return structSeqTypeFor(globalObject, posixRusageDef);
 }
 
 static JSValue posixRusage(JSGlobalObject* globalObject, const struct rusage& usage)
@@ -1531,7 +1530,7 @@ static JSValue posixWaitid(JSGlobalObject* globalObject, JSValue typeValue, JSVa
     if (!info.si_pid)
         return jsUndefined();
     scope.release();
-    return makeStructSeq(globalObject, cachedStructSeqType(globalObject, posixWaitidResultDef), {
+    return makeStructSeq(globalObject, structSeqTypeFor(globalObject, posixWaitidResultDef), {
         jsNumber(info.si_pid), posixFromUid(globalObject, info.si_uid), jsNumber(info.si_signo), jsNumber(info.si_status), jsNumber(info.si_code) });
 }
 
@@ -1665,7 +1664,7 @@ static constexpr NativeDef posixProcessFunctions[] = {
 void addPosixProcessFunctions(JSGlobalObject* globalObject, PyModule* module)
 {
     module->addFunctions(globalObject, posixProcessFunctions);
-    module->add(globalObject, "waitid_result"_s, cachedStructSeqType(globalObject, posixWaitidResultDef));
+    module->add(globalObject, "waitid_result"_s, structSeqTypeFor(globalObject, posixWaitidResultDef));
 #if OS(LINUX)
     module->add(globalObject, "sched_param"_s, posixSchedParamType(globalObject));
 #endif

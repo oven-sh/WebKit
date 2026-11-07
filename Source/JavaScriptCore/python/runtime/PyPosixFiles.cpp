@@ -78,9 +78,8 @@ PyType* posixStatResultType(JSGlobalObject* globalObject)
 {
     if (PyType* type = runtime(globalObject).typeIfMadeFor(posixStatResultDef))
         return type;
-    PyType* type = cachedStructSeqType(globalObject, posixStatResultDef);
+    PyType* type = structSeqTypeFor(globalObject, posixStatResultDef);
     type->addMethods(globalObject, posixStatResultConstructor);
-    type->didChange(getVM(globalObject));
     return type;
 }
 
@@ -1004,7 +1003,7 @@ static int posixFileSystemStatusOf(int fd, PosixFileSystemStatus& status) { retu
 static JSValue posixStatvfsResult(JSGlobalObject* globalObject, const PosixFileSystemStatus& status)
 {
     long flags = (status.f_flags & MNT_RDONLY ? ST_RDONLY : 0) | (status.f_flags & MNT_NOSUID ? ST_NOSUID : 0);
-    return makeStructSeq(globalObject, cachedStructSeqType(globalObject, posixStatvfsResultDef), {
+    return makeStructSeq(globalObject, structSeqTypeFor(globalObject, posixStatvfsResultDef), {
         posixMakeInt(globalObject, static_cast<long>(status.f_iosize)), posixMakeInt(globalObject, static_cast<long>(status.f_bsize)),
         makeInt(globalObject, static_cast<int64_t>(status.f_blocks)), makeInt(globalObject, static_cast<int64_t>(status.f_bfree)),
         makeInt(globalObject, static_cast<int64_t>(status.f_bavail)), makeInt(globalObject, static_cast<int64_t>(status.f_files)),
@@ -1020,7 +1019,7 @@ static int posixFileSystemStatusOf(int fd, PosixFileSystemStatus& status) { retu
 static JSValue posixStatvfsResult(JSGlobalObject* globalObject, const PosixFileSystemStatus& status)
 {
     auto number = [&](auto value) { return makeInt(globalObject, static_cast<int64_t>(value)); };
-    return makeStructSeq(globalObject, cachedStructSeqType(globalObject, posixStatvfsResultDef), {
+    return makeStructSeq(globalObject, structSeqTypeFor(globalObject, posixStatvfsResultDef), {
         number(status.f_bsize), number(status.f_frsize), number(status.f_blocks), number(status.f_bfree), number(status.f_bavail),
         number(status.f_files), number(status.f_ffree), number(status.f_favail), number(status.f_flag), number(status.f_namemax),
         makeInt(globalObject, static_cast<uint64_t>(status.f_fsid)) });
@@ -1666,7 +1665,7 @@ void addPosixFileFunctions(JSGlobalObject* globalObject, PyModule* module)
 {
     module->addFunctions(globalObject, posixFileFunctions);
     module->add(globalObject, "DirEntry"_s, runtime(globalObject).typeFor(posixDirEntryTypeDef));
-    module->add(globalObject, "statvfs_result"_s, cachedStructSeqType(globalObject, posixStatvfsResultDef));
+    module->add(globalObject, "statvfs_result"_s, structSeqTypeFor(globalObject, posixStatvfsResultDef));
 #if OS(LINUX)
     module->add(globalObject, "statx_result"_s, runtime(globalObject).typeFor(posixStatxResultTypeDef));
 #endif

@@ -309,8 +309,6 @@ bool posixToTimespec(JSGlobalObject*, JSValue, time_t& seconds, long& nanosecond
 
 // ---- Types ----
 
-// The type made from the definition, the same one each time.
-PyType* cachedStructSeqType(JSGlobalObject*, const StructSeqDef&);
 // Values the modules keep for themselves, by name.
 PyDict* posixState(JSGlobalObject*);
 

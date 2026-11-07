@@ -651,8 +651,6 @@ PyDict* posixState(JSGlobalObject* globalObject)
     return runtime(globalObject).typeFor(posixStateTypeDef)->dict();
 }
 
-PyType* cachedStructSeqType(JSGlobalObject* globalObject, const StructSeqDef& def) { return structSeqTypeFor(globalObject, def); }
-
 // ---- File descriptors ----
 
 bool posixSetInheritable(int fd, bool inheritable)
@@ -1109,7 +1107,7 @@ static JSValue posixUname(JSGlobalObject* globalObject)
     struct utsname names;
     if (uname(&names) < 0)
         return posixError(globalObject);
-    return makeStructSeq(globalObject, cachedStructSeqType(globalObject, posixUnameResultDef), {
+    return makeStructSeq(globalObject, structSeqTypeFor(globalObject, posixUnameResultDef), {
         posixDecode(globalObject, names.sysname), posixDecode(globalObject, names.nodename), posixDecode(globalObject, names.release),
         posixDecode(globalObject, names.version), posixDecode(globalObject, names.machine) });
 }
@@ -1126,7 +1124,7 @@ static JSValue posixTimes(JSGlobalObject* globalObject)
         return posixError(globalObject);
     double ticksPerSecond = static_cast<double>(sysconf(_SC_CLK_TCK));
     auto inSeconds = [&](clock_t ticks) { return makeFloat(globalObject, static_cast<double>(ticks) / ticksPerSecond); };
-    return makeStructSeq(globalObject, cachedStructSeqType(globalObject, posixTimesResultDef), {
+    return makeStructSeq(globalObject, structSeqTypeFor(globalObject, posixTimesResultDef), {
         inSeconds(process.tms_utime), inSeconds(process.tms_stime), inSeconds(process.tms_cutime), inSeconds(process.tms_cstime), inSeconds(elapsed) });
 }
 
@@ -1145,7 +1143,7 @@ static JSValue posixGetTerminalSize(JSGlobalObject* globalObject, JSValue fdValu
     struct winsize size;
     if (ioctl(fd, TIOCGWINSZ, &size))
         RELEASE_AND_RETURN(scope, posixError(globalObject));
-    RELEASE_AND_RETURN(scope, makeStructSeq(globalObject, cachedStructSeqType(globalObject, posixTerminalSizeDef), { jsNumber(size.ws_col), jsNumber(size.ws_row) }));
+    RELEASE_AND_RETURN(scope, makeStructSeq(globalObject, structSeqTypeFor(globalObject, posixTerminalSizeDef), { jsNumber(size.ws_col), jsNumber(size.ws_row) }));
 }
 
 // The name of a limit, for sysconf() and its like: an int, or a key of the table of that name.
@@ -1452,9 +1450,9 @@ void initializePosixModule(JSGlobalObject* globalObject, PyModule* module)
     RETURN_IF_EXCEPTION(scope, void());
     module->add(globalObject, "error"_s, rt.OSError());
     module->add(globalObject, "stat_result"_s, posixStatResultType(globalObject));
-    module->add(globalObject, "uname_result"_s, cachedStructSeqType(globalObject, posixUnameResultDef));
-    module->add(globalObject, "times_result"_s, cachedStructSeqType(globalObject, posixTimesResultDef));
-    module->add(globalObject, "terminal_size"_s, cachedStructSeqType(globalObject, posixTerminalSizeDef));
+    module->add(globalObject, "uname_result"_s, structSeqTypeFor(globalObject, posixUnameResultDef));
+    module->add(globalObject, "times_result"_s, structSeqTypeFor(globalObject, posixTimesResultDef));
+    module->add(globalObject, "terminal_size"_s, structSeqTypeFor(globalObject, posixTerminalSizeDef));
     RETURN_IF_EXCEPTION(scope, void());
 
     JSArray* have = newList(globalObject);

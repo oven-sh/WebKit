@@ -463,8 +463,8 @@ static JSValue profilerGetStats(JSGlobalObject* globalObject, JSValue self, cons
     ProfilerState& state = profilerState(self);
     JSArray* userObjects = asArray(PyRecord::from(self)->get(ProfilerUserObjects));
     double factor = PyRecord::from(self)->get(ProfilerTimer) && state.externalTimerUnit ? state.externalTimerUnit : 1e-9;
-    PyType* entryType = cachedStructSeqType(globalObject, profilerEntryDef);
-    PyType* subentryType = cachedStructSeqType(globalObject, profilerSubentryDef);
+    PyType* entryType = structSeqTypeFor(globalObject, profilerEntryDef);
+    PyType* subentryType = structSeqTypeFor(globalObject, profilerSubentryDef);
     JSArray* result = newList(globalObject);
     for (ProfilerEntry* entry : state.entriesInOrder) {
         if (!entry->callCount)
@@ -506,8 +506,8 @@ static constexpr TypeDef profilerTypeDef { "_lsprof.Profiler"_s, { TypeFlag::Bas
 void initializeLsprofModule(JSGlobalObject* globalObject, PyModule* module)
 {
     module->add(globalObject, "Profiler"_s, runtime(globalObject).typeFor(profilerTypeDef));
-    module->add(globalObject, "profiler_entry"_s, cachedStructSeqType(globalObject, profilerEntryDef));
-    module->add(globalObject, "profiler_subentry"_s, cachedStructSeqType(globalObject, profilerSubentryDef));
+    module->add(globalObject, "profiler_entry"_s, structSeqTypeFor(globalObject, profilerEntryDef));
+    module->add(globalObject, "profiler_subentry"_s, structSeqTypeFor(globalObject, profilerSubentryDef));
 }
 
 // ---- _tracemalloc ----

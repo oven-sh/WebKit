@@ -71,7 +71,7 @@ static constexpr StructSeqDef pwdPasswdDef { "pwd.struct_passwd"_s, pwdPasswdFie
 
 static JSValue pwdMakeEntry(JSGlobalObject* globalObject, const struct passwd& entry)
 {
-    return makeStructSeq(globalObject, cachedStructSeqType(globalObject, pwdPasswdDef), {
+    return makeStructSeq(globalObject, structSeqTypeFor(globalObject, pwdPasswdDef), {
         pwdOptionalText(globalObject, entry.pw_name), pwdOptionalText(globalObject, entry.pw_passwd),
         posixFromUid(globalObject, entry.pw_uid), posixFromGid(globalObject, entry.pw_gid),
         pwdOptionalText(globalObject, entry.pw_gecos), pwdOptionalText(globalObject, entry.pw_dir), pwdOptionalText(globalObject, entry.pw_shell) });
@@ -148,7 +148,7 @@ static constexpr NativeDef pwdFunctions[] = {
 void initializePwdModule(JSGlobalObject* globalObject, PyModule* module)
 {
     module->addFunctions(globalObject, pwdFunctions);
-    module->add(globalObject, "struct_passwd"_s, cachedStructSeqType(globalObject, pwdPasswdDef));
+    module->add(globalObject, "struct_passwd"_s, structSeqTypeFor(globalObject, pwdPasswdDef));
 }
 
 // ---- grp ----
@@ -173,7 +173,7 @@ static JSValue grpMakeEntry(JSGlobalObject* globalObject, const struct group& en
     RETURN_IF_EXCEPTION(scope, { });
     JSValue gid = posixFromGid(globalObject, entry.gr_gid);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, makeStructSeq(globalObject, cachedStructSeqType(globalObject, grpGroupDef), { name, password, gid, members }));
+    RELEASE_AND_RETURN(scope, makeStructSeq(globalObject, structSeqTypeFor(globalObject, grpGroupDef), { name, password, gid, members }));
 }
 
 static JSValue grpGetgrgid(JSGlobalObject* globalObject, JSValue idValue)
@@ -243,7 +243,7 @@ static constexpr NativeDef grpFunctions[] = {
 void initializeGrpModule(JSGlobalObject* globalObject, PyModule* module)
 {
     module->addFunctions(globalObject, grpFunctions);
-    module->add(globalObject, "struct_group"_s, cachedStructSeqType(globalObject, grpGroupDef));
+    module->add(globalObject, "struct_group"_s, structSeqTypeFor(globalObject, grpGroupDef));
 }
 
 } // namespace Python
