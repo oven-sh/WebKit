@@ -957,10 +957,16 @@ ALWAYS_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::nextMaybeId
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
+NEVER_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::nextOutOfLine()
+{
+    return next();
+}
+
+template<typename CharType, JSONReviverMode reviverMode>
 ALWAYS_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::nextAfterValue()
 {
     if constexpr (reviverMode == JSONReviverMode::Enabled)
-        return next();
+        return nextOutOfLine();
     if (m_ptr < m_end) [[likely]] {
         TokenType type;
         switch (*m_ptr) {
@@ -974,7 +980,7 @@ ALWAYS_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::nextAfterVa
             type = TokRBracket;
             break;
         default:
-            return next();
+            return nextOutOfLine();
         }
         ++m_ptr;
 #if ASSERT_ENABLED
@@ -983,7 +989,7 @@ ALWAYS_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::nextAfterVa
         m_currentToken.type = type;
         return type;
     }
-    return next();
+    return nextOutOfLine();
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
@@ -1016,12 +1022,12 @@ template<typename CharType, JSONReviverMode reviverMode>
 ALWAYS_INLINE bool LiteralParser<CharType, reviverMode>::Lexer::consumeColon()
 {
     if constexpr (reviverMode == JSONReviverMode::Enabled)
-        return next() == TokColon;
+        return nextOutOfLine() == TokColon;
     if (m_ptr < m_end && *m_ptr == ':') [[likely]] {
         ++m_ptr;
         return true;
     }
-    return next() == TokColon;
+    return nextOutOfLine() == TokColon;
 }
 
 static ALWAYS_INLINE simde_uint8x16_t lessThanOrNotASCII(simde_uint8x16_t input, simde_uint8x16_t limit)

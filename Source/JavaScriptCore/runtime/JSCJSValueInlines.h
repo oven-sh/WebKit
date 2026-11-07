@@ -182,6 +182,9 @@ template <typename Base> String HandleConverter<Base, Unknown>::getString(JSGlob
     return jsValue().getString(globalObject);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+Identifier toPropertyKeySlow(JSGlobalObject*, JSValue);
+#endif
 ALWAYS_INLINE Identifier JSValue::toPropertyKey(JSGlobalObject* globalObject) const
 {
     VM& vm = getVM(globalObject);
@@ -190,8 +193,20 @@ ALWAYS_INLINE Identifier JSValue::toPropertyKey(JSGlobalObject* globalObject) co
     if (isString())
         RELEASE_AND_RETURN(scope, asString(*this)->toIdentifier(globalObject));
 
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_AND_RETURN(scope, toPropertyKeySlow(globalObject, *this));
+}
+
+NEVER_INLINE inline Identifier toPropertyKeySlow(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue primitive = value.toPrimitive(globalObject, PreferString);
+    RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+#else
     JSValue primitive = toPrimitive(globalObject, PreferString);
     RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+#endif
     if (primitive.isSymbol())
         RELEASE_AND_RETURN(scope, Identifier::fromUid(asSymbol(primitive)->privateName()));
 
