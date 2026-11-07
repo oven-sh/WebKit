@@ -384,6 +384,14 @@ static String nameOfClassForPrototype(JSGlobalObject* globalObject, JSObject* pr
     return result;
 }
 
+// What makeClassOfJSErrors() has put there. Empty: nothing, the class is the program's. The hidden fields of an object are its type's to use, so those
+// of a class its metaclass's. The classes made here are made by `type`, and a program can put one with another metaclass under JSError: those of
+// ctypes keep what they know of a type in the same field.
+static JSValue prototypeOfJSIn(JSGlobalObject* globalObject, PyType* type)
+{
+    return type->type() == runtime(globalObject).typeType() ? hiddenField(globalObject, type, prototypeOfJSField) : JSValue();
+}
+
 // The class of the exceptions that stand for the objects with this prototype, which is an Error.prototype or inherits from one. The classes
 // mirror the chain of prototypes, that is `extends`: class JSRangeError(JSError), and class JSValidationError(JSRangeError) for
 // `class ValidationError extends RangeError`. So what goes by type(e) sees what was thrown: contextlib.suppress(), assertRaises(),
@@ -508,7 +516,7 @@ static JSValue prototypeOfJSFor(JSGlobalObject* globalObject, PyType* type, PyTy
         PyType* next = PyType::from(mro->at(i));
         if (!next->isSubtypeOf(rt.JSError()))
             continue;
-        JSValue prototype = next == rt.JSError() ? JSValue(globalObject->errorPrototype()) : hiddenField(globalObject, next, prototypeOfJSField);
+        JSValue prototype = next == rt.JSError() ? JSValue(globalObject->errorPrototype()) : prototypeOfJSIn(globalObject, next);
         if (!prototype)
             continue;
         if (standsFor)
@@ -670,7 +678,7 @@ static PyType* osErrorClassFor(JSGlobalObject* globalObject, PyType* standsFor, 
     }
     if (JSValue type = PyDict::from(classes)->get(base->nameString()))
         return PyType::from(type);
-    PyType* type = makeClassOfJSErrors(globalObject, makeString("JS"_s, base->name()), { standsFor, base }, hiddenField(globalObject, standsFor, prototypeOfJSField), IfClassCannotBeMade::NearestStandsIn);
+    PyType* type = makeClassOfJSErrors(globalObject, makeString("JS"_s, base->name()), { standsFor, base }, prototypeOfJSIn(globalObject, standsFor), IfClassCannotBeMade::NearestStandsIn);
     if (!type)
         return rt.JSError();
     PyDict::from(classes)->set(rt.vm(), base->nameString(), type);
@@ -683,7 +691,7 @@ static PyType* classToPickleAs(JSGlobalObject* globalObject, PyType* type)
 {
     Runtime& rt = runtime(globalObject);
     // (A class of the program's is the program's to find.)
-    if (type == rt.JSError() || !hiddenField(globalObject, type, prototypeOfJSField))
+    if (type == rt.JSError() || !prototypeOfJSIn(globalObject, type))
         return type;
     PyTuple* mro = type->mro();
     bool isOSError = type->isSubtypeOf(rt.OSError());
