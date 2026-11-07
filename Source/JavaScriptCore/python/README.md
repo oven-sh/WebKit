@@ -1801,6 +1801,9 @@ answer; a `tp_dealloc` is the end of what C keeps in the object.
 - **C is never entered with a destroyed instance as `self`, and never handed the data of one.** The state is in the body: alive, let go, to be cleared, cleared, being destroyed, destroyed.
   `PyObject_GetTypeData()` gives NULL and a `SystemError` for a destroyed one, and `tp_traverse` is not called from the moment `tp_dealloc` is entered (what it still holds
   counts as held from elsewhere until it has been given back). A `tp_dealloc` that hands `self` to the program hands it a face made for the occasion, which leads to a destroyed body if it is kept.
+  Nor is an instance destroyed under a `tp_clear` of its own that has not returned, or cleared a second time beside the first: whoever calls `tp_clear` or `tp_finalize` owns a reference for as long as the call
+  lasts, so the instance is a root. (C may let other threads run, and two may serve one queue, the thread that owes and a caller of `gc.collect()`: the second clears what holds the instance, and that gives back
+  what would have been the last reference.) The reference is in the books and nowhere else: nobody is seen to take anything, and when it is given back the caller looks whether anybody is left.
 - While the collection that has let go of a body goes on beside the program, C may come by it (`didSeeSomebodyTake()`). Then the body is alive again, with a write barrier, so that the marker comes
   again and goes on to the face. That is what `WeakRef.prototype.deref()` does. What the body holds follows at B.
 - No turn begins while a termination is pending (the runtime's queue sees to that), and no `tp_dealloc` of those that go with another.

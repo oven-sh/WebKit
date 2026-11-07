@@ -411,6 +411,27 @@ void didGiveBackLastReferenceToBodyWithoutFace(Body* body)
         current.runtime.queueToFinalize(body, body->thread, Runtime::TellsThread::Now);
 }
 
+// AN INSTANCE IS HELD WHILE C IS IN IT. C may let other threads run, and one of them may serve the same queue, or collect. It clears what holds this one, that gives back the last reference, and this one's
+// tp_dealloc would begin, and return, under a call that goes on; or the collection finds it dead once more, and the call is made a second time beside the first. With a reference of the caller's the
+// instance is what it is: held from outside the instances, so a root.
+// (In the books and nowhere else: nobody is seen to take anything, and nothing is begun when it is given back. Whoever has made the call looks at what is left.)
+class HeldForCall {
+    WTF_MAKE_NONCOPYABLE(HeldForCall);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    HeldForCall(Interpreter& current, Body* body)
+        : m_current(current)
+        , m_body(body)
+    {
+        m_current.counts.add(m_body);
+    }
+    ~HeldForCall() { m_current.counts.remove(m_body, s_interpreterThatLetsGo.load(std::memory_order_relaxed)); }
+
+private:
+    Interpreter& m_current;
+    Body* m_body;
+};
+
 static void serve(JSGlobalObject* globalObject, Body* body)
 {
     Interpreter& current = interpreter();
@@ -424,14 +445,17 @@ static void serve(JSGlobalObject* globalObject, Body* body)
             // What it lets go of, and nobody else has, goes when this has returned.
             ListOfBodies next;
             {
-                SetForScope toDestroyNext(t_toDestroyNext, &next);
-                madeByExtension(type)->slot<ClearFunction>(tp_clear)(toC(body));
-            }
-            // What has been cleared is still a valid object. It is not asked again, unless somebody is seen to take hold of it: then it may get into another cycle.
-            if (body->life() == Body::Life::Alive) {
-                body->isCleared = true;
-                body->setLife(Body::Life::Cleared);
-                watch(current, body, true);
+                HeldForCall held(current, body);
+                {
+                    SetForScope toDestroyNext(t_toDestroyNext, &next);
+                    madeByExtension(type)->slot<ClearFunction>(tp_clear)(toC(body));
+                }
+                // What has been cleared is still a valid object. It is not asked again, unless somebody is seen to take hold of it: then it may get into another cycle.
+                if (body->life() == Body::Life::Alive) {
+                    body->isCleared = true;
+                    body->setLife(Body::Life::Cleared);
+                    watch(current, body, true);
+                }
             }
             reportWhatCRaised(globalObject, type, "tp_clear"_s);
             for (size_t i = 0; i < next.size(); ++i)
@@ -469,6 +493,7 @@ void TurnInQueue::begin(JSGlobalObject* globalObject, JSCell* cell)
         return;
     m_isOver = true;
     IndicatorSetAside indicator;
+    HeldForCall held(interpreter(), body);
     finalize(toC(body));
     reportWhatCRaised(globalObject, face->type(), "tp_finalize"_s);
 }
