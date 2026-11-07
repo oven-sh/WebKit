@@ -126,9 +126,10 @@ JSValue raiseExceptionThrownIntoGenerator(JSGlobalObject* globalObject, ThrowSco
 }
 
 // What came of calling `type`. A __new__ of the program's may have handed back an exception of another type, one that it has had for long.
+// (The __new__ of OSError makes a FileNotFoundError: that one is new.)
 static JSValue raiseResultOfCalling(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, PyException* exception)
 {
-    if (exception->type() != type) [[unlikely]]
+    if (exception->type() != type && !isMadeWithoutCodeOfTheProgram(globalObject, type)) [[unlikely]]
         return raiseException(globalObject, scope, exception);
     return raiseNewException(globalObject, scope, exception);
 }
