@@ -43,14 +43,16 @@ bool waitsInHost(JSGlobalObject* globalObject)
     return s_hostWaitFunction && runtime(globalObject).threads().isMainThread();
 }
 
-int64_t monotonicNanoseconds()
+// (Not to be made part of a function that waits: that would have room for `now` on the ways on which it does not ask for the time, too.)
+NEVER_INLINE int64_t monotonicNanoseconds()
 {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return static_cast<int64_t>(now.tv_sec) * waitNanosecondsPerSecond + now.tv_nsec;
 }
 
-static int waitWithTimeout(WaitRequest& request, int64_t timeout)
+// In a frame of its own: the time that it hands to the system is written as the frame is made, not in a frame that has been there since before the GIL was let go of.
+static NEVER_INLINE int waitWithTimeout(WaitRequest& request, int64_t timeout)
 {
     switch (request.kind) {
     case WaitRequest::Kind::Poll: {

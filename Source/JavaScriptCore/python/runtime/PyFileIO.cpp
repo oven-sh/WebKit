@@ -92,18 +92,13 @@ static NEVER_INLINE ssize_t fileIOReadWithoutGIL(JSGlobalObject* globalObject, i
     return read(fd, buffer, count);
 }
 
-// `locate` says where the memory is, right before each call of the system: all that comes before may run code of the program, the handler of a signal for one, and the memory may be that
-// of JS, which takes it away whenever it runs. False: an exception.
+// What follows the wait for something to read, in a frame of its own too: what it needs room for is not to lie, unwritten, in the frame under which the thread waits for that.
+// (Where poll() does not speak for the descriptor, it is read() that waits, under this one.)
+// `locate`: see fileIOSystemRead().
 template<typename Locate>
-static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState& state, size_t count, const Locate& locate)
+static NEVER_INLINE int64_t fileIOReadWhatThereIs(JSGlobalObject* globalObject, int fd, size_t count, const Locate& locate)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    writeOutPendingOutput(globalObject);
-    int fd = state.fd;
-#if !OS(WINDOWS)
-    if (count && !(state.hasStat && S_ISREG(state.statMode)) && failed(scope, waitUntilReadable(globalObject, fd)))
-        return -1;
-#endif
     ssize_t result;
     do {
         uint8_t* buffer;
@@ -120,6 +115,21 @@ static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState&
     scope.release();
     fileIORaiseErrno(globalObject, error);
     return -1;
+}
+
+// `locate` says where the memory is, right before each call of the system: all that comes before may run code of the program, the handler of a signal for one, and the memory may be that
+// of JS, which takes it away whenever it runs. False: an exception.
+template<typename Locate>
+static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState& state, size_t count, const Locate& locate)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    writeOutPendingOutput(globalObject);
+    int fd = state.fd;
+#if !OS(WINDOWS)
+    if (count && !(state.hasStat && S_ISREG(state.statMode)) && failed(scope, waitUntilReadable(globalObject, fd)))
+        return -1;
+#endif
+    RELEASE_AND_RETURN(scope, fileIOReadWhatThereIs(globalObject, fd, count, locate));
 }
 
 // That of a bytes that nobody else has yet, or of C++.

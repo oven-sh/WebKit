@@ -42,7 +42,8 @@ namespace Python {
 
 #if OS(LINUX)
 
-bool Sleeper::sleep(int64_t deadline)
+// In a frame of its own: whoever calls it has let go of the GIL before, and `time` would lie in that frame, unwritten, from then on.
+NEVER_INLINE bool Sleeper::sleep(int64_t deadline)
 {
     struct timespec time;
     if (deadline >= 0) {

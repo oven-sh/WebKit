@@ -404,14 +404,16 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
         int error;
         int64_t piece = idle.nextPiece(timeout);
         {
-            AllowThreads allow(globalObject, AllowThreads::LosesNothing);
+            // Written before the GIL is let go of: from then on a collection may look at this frame, and at what earlier frames left where nothing has been written yet.
 #if OS(LINUX)
             struct timespec until = timeToTimespec(piece == timeout ? deadline : now + piece);
+            AllowThreads allow(globalObject, AllowThreads::LosesNothing);
             do {
                 error = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &until, nullptr);
             } while (error == EINTR && allow.wasInterruptedForNothing());
 #else
             struct timespec remaining = timeToTimespec(piece);
+            AllowThreads allow(globalObject, AllowThreads::LosesNothing);
             do {
                 error = nanosleep(&remaining, &remaining) ? errno : 0;
             } while (error == EINTR && allow.wasInterruptedForNothing());
