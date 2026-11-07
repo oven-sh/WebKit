@@ -240,8 +240,8 @@ bool PyType::updateMaker()
 void PyType::updateMakers()
 {
     // What is left to do is in a list, not on the stack: classes derive from one another to any depth. The last is next: all that derives from a class comes
-    // before the class beside it, as in CPython. Each is seen to once, however many ways lead to it. (Not those that only have this one in an MRO of their own
-    // making.)
+    // before the class beside it, as in CPython. Each is seen to once, however many ways lead to it, unless a key has been asked. (Not those that only have this
+    // one in an MRO of their own making.)
     updateMaker();
     if (!m_subclasses)
         return;
@@ -250,12 +250,15 @@ void PyType::updateMakers()
     UncheckedKeyHashSet<PyType*> seen;
     // CPython comes to a class by every way that leads to it. That shows where a key has been asked: by the next way it is asked again, and may say something else.
     UncheckedKeyHashSet<PyType*> askedInVain;
+    // A key may let go of a class that has been seen to, collect, and make classes: one in the cell of that class would count as seen to.
+    MarkedArgumentBuffer keptAlive;
     JSString* name = runtime(realm()).name(Special::New);
     while (!left.isEmpty()) {
         PyType* type = PyType::from(left.takeLast());
         bool isFirstTime = seen.add(type).isNewEntry;
         if (!isFirstTime && !askedInVain.remove(type))
             continue;
+        keptAlive.append(type);
         PyDict* dict = type->dict();
         bool hasRaised = false;
         JSValue own = dict->hasOnlyStringKeys() ? dict->get(name) : type->getAskingKeys(dict, name, hasRaised);
