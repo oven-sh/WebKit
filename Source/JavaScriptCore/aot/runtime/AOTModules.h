@@ -196,6 +196,7 @@ public:
         return mock && loadedIfExists(module)->mockLaidInPreload.get() == mock;
     }
     bool someMockStandsInPlace() const { return m_numberOfMocksInPlace; }
+    bool someRetainedRecordHasLeft() const { return m_someRetainedRecordHasLeft; }
     bool someMockIsSeen() const { return m_numberOfMocksInPlace || !m_endedMocks.isEmpty(); }
     bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters = false);
     bool setMockInPlaceOfLibraryModule(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
@@ -987,6 +988,8 @@ private:
     ModuleTable m_table;
     std::span<uint8_t> m_storedStatuses;
     UncheckedKeyHashMap<ModuleID, ModuleRecord*> m_records;
+    bool m_someRetainedRecordHasLeft { false };
+    void takeOutRecord(ModuleID);
     UncheckedKeyHashMap<ModuleID, std::unique_ptr<LoadedModule>> m_loaded;
     struct FormAnsweredFirst {
         Identifier name;

@@ -197,7 +197,8 @@ static std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(
         auto typeBehindTest = [&](ValueID input) {
             return input == read.as<Opcode::PropGet>().objectOperand() ? tested : walker.typeOf(walker.referenceOf(input));
         };
-        readOfEveryOtherReceiverIsConstant &= !findField(walker.program(), member, read.as<Opcode::PropGet>().key()) && typedFormOf(walker, read, TypesOfInputs(typeBehindTest)) == TypedForm::Built;
+        bool holdsNameItself = findField(walker.program(), member, read.as<Opcode::PropGet>().key()) || plan.slots().findField(walker.program(), member, read.as<Opcode::PropGet>().key());
+        readOfEveryOtherReceiverIsConstant &= !holdsNameItself && typedFormOf(walker, read, TypesOfInputs(typeBehindTest)) == TypedForm::Built;
     }
     bool someReceiverHasNoRow = !receivers.withoutRows.isEmpty();
     if (armsMayTakeCall == ArmsMayTakeCallInUnionTableCalls::Yes && receivers.someCopyWouldLearnOfThis && receivers.numberInUse <= mostReceiversToldApartByArmsInUnionTableCalls && walker.isInLoop() && walker.has(Mechanism::Guesses) && walker.opensGuesses() && !walker.standsInArmOfRowOfShapeTests())

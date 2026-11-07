@@ -265,6 +265,15 @@ static void putToSlimClosureAndCache(const NamedAccess& access, SlimClosure& clo
     access.caches().cache({ structureOfSlimClosures, access.name(), accessFor(mode) }, PropertyAnswer::uncacheable(accessFor(mode)));
 }
 
+static bool orderGainedFieldAlone(State& state, const LayoutData& layout, uint32_t orderWordBefore, uint32_t orderWordAfter, const FieldData& field)
+{
+    if (isOrderStoredOutOfLine(orderWordBefore) || isOrderStoredOutOfLine(orderWordAfter) || countOf(orderWordAfter) != countOf(orderWordBefore) + 1)
+        return false;
+    std::span<const uint16_t> before = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderWordBefore)).first(countOf(orderWordBefore));
+    std::span<const uint16_t> after = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderWordAfter)).first(countOf(orderWordAfter));
+    return std::ranges::equal(before, after.first(before.size())) && after.back() == layout.indexOf(field);
+}
+
 void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode mode)
 {
     VM& vm = *access.instance->vm;
@@ -329,7 +338,7 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
 
     PropertyAnswer answer = classifyStore({ globalObject, asObject(cell), structureBefore, uid, slot, mode });
     if (object && answer.kind == PropertyAnswerKind::FieldCreation) {
-        if (cell->structure() == structureBefore && !structureBefore->mayBePrototype() && takesAnyValue(*access.instance->image.tables, object->layout(), *answer.field))
+        if (cell->structure() == structureBefore && !structureBefore->mayBePrototype() && takesAnyValue(*access.instance->image.tables, object->layout(), *answer.field) && orderGainedFieldAlone(object->state(), object->layout(), orderWordBefore, object->orderWord(), *answer.field))
             answer.orderWords = std::pair { orderWordBefore, object->orderWord() };
     }
     access.caches().cache({ structureBefore, access.name(), accessFor(mode) }, answer);

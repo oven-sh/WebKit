@@ -62,6 +62,7 @@ public:
 
     bool isRetained() const { return m_isRetained || m_isHeldByLoader; }
     void retain() { m_isRetained = true; }
+    using AbstractModuleRecord::forgetCachedResolutions;
     void setIsHeldByLoader(bool isHeldByLoader) { m_isHeldByLoader = isHeldByLoader; }
 
     unsigned innerModuleEvaluation(JSGlobalObject*, ModuleEvaluationStack&, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
@@ -121,6 +122,7 @@ public:
 
     Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&);
     bool someMockStandsInPlace() const;
+    bool mayOutlive(AbstractModuleRecord*) const;
     bool standsForMock() const;
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);

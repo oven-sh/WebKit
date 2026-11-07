@@ -287,7 +287,7 @@ static void listModulesOfChunkForModuleTables(const TableInputs& inputs, const A
         if (!Typed::answersToPath(program, module) || (isFoundOnlyWithCode && !answers.has(id, AnswerAboutModule::HasCompiledBody)))
             continue;
         if (module.kind == ModuleKind::RuntimeSource && module.runtimeModule)
-            listed.runtimeModules.append(CompiledRuntimeModuleData { module.runtimeModule.index(), index, inputs.facts.linked().modulesWhoseValueStaysIn.get(index) });
+            listed.runtimeModules.append(CompiledRuntimeModuleData { module.runtimeModule.index(), index, inputs.facts.linked().modulesWhoseValueStaysIn.get(index), inputs.facts.linked().modulesWhoseRecordIsHandedOutFrozen.get(index) });
         if (answers.has(id, AnswerAboutModule::IsNeverEvaluated))
             continue;
         if (Typed::isBundlerHelperModule(program, module) && !module.flags.contains(ModuleFlags::MayBeMocked) && !Typed::isBundlerHelperNamedByProgram(program, id))

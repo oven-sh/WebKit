@@ -480,6 +480,9 @@ static Reference makeSourceInSightAgainInWalkCopies(Walker& walker, const Source
 {
     if (!source.isInSight || !source.order.keys.layout || !walker.currentBodyIndex().hasOneUse(source.inBody) || !isLayoutOfPlainLiteralInWalkCopies(walker.program(), source.order.keys.layout))
         return { };
+    ValueID cell = source.built && source.built.isValue() ? rootOfCellInSweptCode(walker.code(), source.built.id()) : ValueID();
+    if (!cell || walker.code().isConstant(cell) || !walker.state().isFresh(Reference::value(cell)))
+        return { };
     PropertiesInWalkCopies held;
     held.layout = source.order.keys.layout;
     if (source.order.keys.created.size() != source.order.fields.size())
@@ -554,6 +557,10 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
         Vector<Reference, 4> operands;
         operands.append(object);
         operands.append(operandsAsWritten.span().subspan(1 + firstSource));
+        for (size_t place = 1 + firstSource; place < arguments.size(); ++place) {
+            if (literal->names.contains(arguments[place]))
+                operands[place - firstSource] = object;
+        }
         for (size_t later = firstSource; later < planned.size(); ++later) {
             if (Reference madeAgain = makeSourceInSightAgainInWalkCopies(walker, planned[later], origin))
                 operands[1 + later - firstSource] = madeAgain;

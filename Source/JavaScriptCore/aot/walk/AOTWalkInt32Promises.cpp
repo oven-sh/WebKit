@@ -150,6 +150,7 @@ private:
     TypeAsWritten known(ValueAtPlace) const;
     TypeAsWritten asWalkHasIt(ValueID) const;
     TypeAsWritten typeWrittenOf(ValueID) const;
+    bool restsOnWordThatIsOnlyExpected(ValueID) const;
     TypeID typeStatedByCastsOf(ValueID) const;
     void forEachRelationInFront(ValueAtPlace, const BodyIncomingEdge* comesRoundOn, const Invocable<void(const BodyEdgeResult&, BlockID)> auto&) const;
     Parts otherSidesOfRelationsInFront(ValueAtPlace, const BodyIncomingEdge* comesRoundOn = nullptr) const;
@@ -214,6 +215,44 @@ TypeAsWritten TypesAsWritten::asWalkHasIt(ValueID value) const
     return walked;
 }
 
+bool TypesAsWritten::restsOnWordThatIsOnlyExpected(ValueID value) const
+{
+    const Program& program = m_walker.program();
+    while (value) {
+        if (m_input.isParameter(value)) {
+            value = m_input.valueNarrowedInto(value);
+            continue;
+        }
+        BodyValue written = m_input.value(value);
+        Opcode opcode = written.opcode();
+        if (opcode == Opcode::Convert) {
+            DeclaredType declared = written.as<Opcode::Convert>().declared();
+            if (declared.written() && !declared.isExpected())
+                return false;
+            value = written.operand(0);
+        } else if (opcode == Opcode::GetModuleVariable)
+            return program.at(written.variable()).declared.isExpected();
+        else if (opcode == Opcode::GetEnvironmentField) {
+            const Layout& layout = program.at(written.layout());
+            return written.field() < layout.fields.size() && layout.fields[written.field()].declared.isExpected();
+        } else if (opcode == Opcode::ElemGet)
+            value = written.objectOperand();
+        else if (opcode == Opcode::ResultAt) {
+            ValueID step = written.as<Opcode::ResultAt>().resultsOperand();
+            if (m_input.isParameter(step) || m_input.opcodeOf(step) != Opcode::IteratorResume)
+                return false;
+            ValueID open = m_input.value(step).as<Opcode::IteratorResume>().iteratorOperand();
+            if (m_input.isParameter(open) || m_input.opcodeOf(open) != Opcode::IteratorOpen)
+                return false;
+            value = m_input.value(open).as<Opcode::IteratorOpen>().iterableOperand();
+        } else if (opcode == Opcode::CheckInitialized || opcode == Opcode::NarrowByTest || opcodesThatGiveSameValue.contains(opcode))
+            value = written.operand(0);
+        else
+            return false;
+    }
+    return false;
+}
+
 TypeAsWritten TypesAsWritten::typeWrittenOf(ValueID value) const
 {
     if (m_input.isParameter(value))
@@ -221,8 +260,13 @@ TypeAsWritten TypesAsWritten::typeWrittenOf(ValueID value) const
     if (primitiveConstants.contains(m_input.opcodeOf(value)))
         return { typeOfConstant(typingForInt32Promises(m_walker), m_input.value(value)) };
     ExpectationOfValue expectation = findExpectation(m_walker, value);
-    if (expectation.type && expectation.isDeclared)
+    if (expectation.type && expectation.isDeclared) {
+        TypeAsWritten walked = asWalkHasIt(value);
+        bool proofKeepsWhatWordDoesNot = walked.type && writtenTypeKeepsInt32Promise(m_walker, walked.type) && !writtenTypeKeepsInt32Promise(m_walker, expectation.type);
+        if (proofKeepsWhatWordDoesNot && restsOnWordThatIsOnlyExpected(value))
+            return walked;
         return { .type = expectation.type, .restsOnWrittenType = true, .restsOnCastAlone = true, .countsInItsAskingAlone = true };
+    }
     return asWalkHasIt(value);
 }
 
@@ -631,8 +675,14 @@ TypeAsWritten TypesAsWritten::typeBehindConvertOf(BodyValue convert, TypeAsWritt
         return { stated, true, entering.leavesOutWhoCalls, true };
     if (isPromise)
         entering.restsOnCastAlone = false;
-    if (statesNothing)
+    if (statesNothing) {
+        if (declared.isExpected() && !writtenTypeKeepsInt32Promise(m_walker, entering.type)) {
+            TypeAsWritten walked = asWalkHasIt(convert.id());
+            if (walked.type && writtenTypeKeepsInt32Promise(m_walker, walked.type) && restsOnWordThatIsOnlyExpected(convert.id()))
+                return walked;
+        }
         return entering;
+    }
     TypeID both = m_walker.types().intersectionOf(entering.type, stated);
     entering.type = isNeverType(both) ? stated : both;
     return entering;
