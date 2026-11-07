@@ -966,6 +966,7 @@ private:
     bool m_checkedObjectPrototype { false };
     bool m_checkedArrayPrototype { false };
     bool m_hasSeenWideString { false };
+    bool m_hasGrownBig { false }; // The dynamic buffer has grown past lengthOfBigResult in this stringifier.
 #if ENABLE(AOT)
     // These two take the place of padding: the members behind them are where they are without compiled code.
     bool m_hasCompiledStructureWithoutToJSON { false };
@@ -1143,6 +1144,11 @@ inline FastStringifier<CharType, bufferMode>::FastStringifier(JSGlobalObject& gl
             m_dynamicBuffer.grow(dynamicBufferInlineCapacity);
         m_capacity = m_dynamicBuffer.size();
         m_stackLimit = std::bit_cast<uint8_t*>(m_vm.softStackLimit());
+#if ENABLE(AOT)
+        // A watch begins where the buffer grows. A buffer that begins at the length of the results before it has not grown to that size, so the watch begins with it.
+        if (initialSize != dynamicBufferInlineCapacity && m_watchedLevels.isWatchingAfterGrowthTo(m_capacity))
+            m_stackLimit = std::bit_cast<uint8_t*>(std::numeric_limits<uintptr_t>::max());
+#endif
     }
 }
 
@@ -1209,7 +1215,8 @@ inline String FastStringifier<CharType, bufferMode>::result()
     if constexpr (bufferMode == BufferMode::DynamicBuffer) {
         stringifyHints.isWide = sizeof(CharType) == 2 && m_hasSeenWideString;
         stringifyHints.isWideInStaticBuffer = stringifyHints.isWide;
-        if (m_dynamicBuffer.size() > lengthOfBigResult)
+        // Not the size of the buffer: that begins at the length of the results before this one. A text that is long, or a buffer that has grown big here.
+        if (m_length > lengthOfBigResult || m_hasGrownBig)
             stringifyHints.lengthOfBigResult = m_length;
         if constexpr (sizeof(CharType) == 2) {
             if (!m_hasSeenWideString)
@@ -1290,6 +1297,7 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
             m_stackLimit = std::bit_cast<uint8_t*>(std::numeric_limits<uintptr_t>::max());
 #endif
         if (newSize > lengthOfBigResult) {
+            m_hasGrownBig = true;
             size_t lengthOfLast = stringifyHints.lengthOfBigResult;
             size_t sizeForResultLikeLast = lengthOfLast + lengthOfLast / 8 + pieceOfLongString * 6;
             if (sizeForResultLikeLast > newSize) {
@@ -2439,6 +2447,17 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                     recordFailure("!canGetIndexQuickly"_s);
                     return;
                 }
+#if ENABLE(AOT)
+                // A watch learns of a holder in append() alone, and it takes the frame of that call for the level of the holder: the elements of one array are shown from one frame.
+                if constexpr (bufferMode == BufferMode::DynamicBuffer) {
+                    if (m_watchedLevels.isWatching()) [[unlikely]] {
+                        append<hasGap>(element.isUndefined() ? jsNull() : element);
+                        if (haveFailure()) [[unlikely]]
+                            return;
+                        continue;
+                    }
+                }
+#endif
                 if (element.isCell()) [[likely]] {
                     JSCell* elementCell = element.asCell();
                     StructureID structureID = elementCell->structureID();
@@ -3459,11 +3478,22 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
                 return result;
             dynamicBufferLengths<Latin1Character>(vm) = 0;
         }
+        std::optional<FailureReason> whyLatin1DynamicBufferFailed = failureReason;
+#if ENABLE(AOT)
+        ASCIILiteral reasonOfLatin1DynamicBuffer = reasonOfLastFailure;
+#endif
         failureReason = std::nullopt;
         if (stringifyHints.isWideInStaticBuffer)
             failureReason = FailureReason::Found16BitEarly;
         else if (String result = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
             return result;
+        // The static buffer was full before it came to what stopped the dynamic one. That decides what follows: a 16-bit string goes on to 16-bit characters in a dynamic buffer.
+        if (triedLatin1DynamicBuffer && failureReason == FailureReason::BufferFull) {
+            failureReason = whyLatin1DynamicBufferFailed;
+#if ENABLE(AOT)
+            reasonOfLastFailure = reasonOfLatin1DynamicBuffer;
+#endif
+        }
         if (String result = stringifyAfterFirstFastCaseFailed(globalObject, value, replacer, space, failureReason, 0, triedLatin1DynamicBuffer); !result.isNull())
             return result;
     }

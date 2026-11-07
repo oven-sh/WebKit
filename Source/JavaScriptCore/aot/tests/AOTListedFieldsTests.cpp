@@ -435,6 +435,46 @@ static void checkLongTextsTakeTheirOwnLengthInABuilder(LoadedProgram& program)
     }
 }
 
+// Two long results of 8-bit characters, and the next call begins in a dynamic buffer of 8-bit characters (325490@main). A 16-bit string behind more text than the
+// static buffer holds stops that buffer, and the static one that follows is full before it comes to the string. The value still goes on to 16-bit characters.
+static void checkWideStringBehindLongNarrowTexts(LoadedProgram& program)
+{
+    Realms& realms = program.realms();
+    JSGlobalObject* realm = program.realm();
+    String narrowText { Vector<Latin1Character>(FillWith { }, 9000, static_cast<Latin1Character>('n')).span() };
+    JSValue narrow = realms.evaluate(realm, "['n'.repeat(9000)]"_s);
+    JSValue wideAtTheEnd = realms.evaluate(realm, "['n'.repeat(9000), '\\u2713']"_s);
+    String expectedNarrow = makeString("[\""_s, narrowText, "\"]"_s);
+    String expectedWide = makeString("[\""_s, narrowText, "\",\""_s, String::fromUTF8("\xe2\x9c\x93"), "\"]"_s);
+    for (unsigned round = 0; round < 2; ++round) {
+        // Three: behind a result with a 16-bit string the first of them is written with 16-bit characters, and its length is not kept.
+        for (unsigned call = 0; call < 3; ++call)
+            checkStringify(program, narrow, Path::Fast, expectedNarrow);
+        checkStringify(program, wideAtTheEnd, Path::Fast, expectedWide);
+    }
+}
+
+// While its buffer grows, the writer looks for an object inside itself among the holders that append() shows it. The array here is an element, and it is held by a
+// later element whose Structure was written before (325490@main writes such an element without append()): it is in two places and inside nothing.
+static void checkValueInTwoPlacesBesideAnObjectOfASeenShape(LoadedProgram& program)
+{
+    Realms& realms = program.realms();
+    JSGlobalObject* realm = program.realm();
+    String longText { Vector<Latin1Character>(FillWith { }, 200000, static_cast<Latin1Character>('x')).span() };
+    JSValue value = realms.evaluate(realm, "(() => { const make = value => ({ a: value }); const shared = [1]; return [make(0), 'x'.repeat(200000), shared, make(shared)]; })()"_s);
+    checkStringify(program, value, Path::Fast, makeString("[{\"a\":0},\""_s, longText, "\",[1],{\"a\":[1]}]"_s));
+
+    // An object of a seen shape that is inside itself is still found, and the general Stringifier says so.
+    VM& vm = program.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue cyclic = realms.evaluate(realm, "(() => { const make = value => ({ a: value }); const list = [make(0), 'x'.repeat(200000)]; list.push(make(list)); return list; })()"_s);
+    String text = JSONStringify(realm, cyclic, 0);
+    AOT_TEST_CHECK(text.isNull() && scope.exception());
+    JSValue thrown = scope.exception()->value();
+    scope.clearException();
+    AOT_TEST_CHECK(thrown.toWTFString(realm).startsWith("TypeError: JSON.stringify cannot serialize cyclic structures."_s));
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<listedFieldsTests, programText, body>;
 
@@ -451,6 +491,8 @@ std::span<const NativeTest> listedFieldsTests()
         { "listed-fields/stringify-cycles-and-depth"_s, withProgram<checkCyclesAndDepth> },
         { "listed-fields/inline-walk-matches-walk-by-callbacks"_s, withProgram<checkInlineWalkMatchesTheWalkByCallbacks> },
         { "listed-fields/long-texts-take-their-own-length-in-a-builder"_s, withProgram<checkLongTextsTakeTheirOwnLengthInABuilder> },
+        { "listed-fields/stringify-wide-string-behind-long-narrow-texts"_s, withProgram<checkWideStringBehindLongNarrowTexts> },
+        { "listed-fields/stringify-value-in-two-places-beside-an-object-of-a-seen-shape"_s, withProgram<checkValueInTwoPlacesBesideAnObjectOfASeenShape> },
     };
     return tests;
 }
