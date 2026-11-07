@@ -4557,7 +4557,7 @@ JSC_DEFINE_JIT_OPERATION(operationStringProtoFuncReplaceAllGeneric, JSCell*, (JS
     JSValue decodedSearchValue = JSValue::decode(searchValue);
     if (decodedSearchValue.inherits<RegExpObject>()) [[unlikely]] {
         if (!uncheckedDowncast<RegExpObject>(decodedSearchValue)->regExp()->global()) {
-            throwTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
+            throwTypeError(globalObject, scope, "String.prototype.replaceAll argument must contain the global (g) flag"_s);
             OPERATION_RETURN(scope, nullptr);
         }
     }
@@ -4604,7 +4604,7 @@ JSC_DEFINE_JIT_OPERATION(operationStringProtoFuncReplaceAllRegExpEmptyStr, JSCel
     RegExp* regExp = searchValue->regExp();
 
     if (!regExp->global()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
+        throwTypeError(globalObject, scope, "String.prototype.replaceAll argument must contain the global (g) flag"_s);
         OPERATION_RETURN(scope, nullptr);
     }
 
@@ -4638,7 +4638,7 @@ JSC_DEFINE_JIT_OPERATION(operationStringProtoFuncReplaceAllRegExpString, JSCell*
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!searchValue->regExp()->global()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
+        throwTypeError(globalObject, scope, "String.prototype.replaceAll argument must contain the global (g) flag"_s);
         OPERATION_RETURN(scope, nullptr);
     }
 
