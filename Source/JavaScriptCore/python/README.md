@@ -1609,7 +1609,8 @@ asks for no interpreter: a type has been told its symbol when its interpreter ma
 the way back (`objectOfSymbol()`) gives each interpreter its own type. So the `id()` of `int` is `&PyLong_Type`, as it is in CPython, in every interpreter, from the start; and to write a type
 into memory takes no API. No cell can have such an `id()`: the section is part of the executable. (An `id()` is unique within an interpreter: the `int` of another realm of the VM is another
 cell with the same `id()`. A `ShadowRealm` lets no object through, so no program there has both.) What it costs: for a cell, a look at its `JSType`: what may be a type is asked
-for its symbol, and a plain object of Python's has its type asked whether its instances have data of C's.
+for its symbol, and a plain object of Python's has its type asked whether its instances have data of C's (a second comparison for every cell, two dependent loads for a cell of `PyObjectType`: 7 instructions on
+`id()`). Every program pays that, with or without the API. Measured without it, release, best of 7, three runs each, before and after: `id()` 19.0 and 19.0 ns, `hash()` 22.2 and 22.1, an object as the key of a dict 32.8 and 33.0.
 
 **`PyExc_ValueError` never changes.** A library may read it as it is loaded, whoever loads it and whenever (JS by `bun:ffi` before there is any Python, a Worker before main has a use
 for the API), and a constructor runs once in a process. So the variable is a constant that the linker fills: the address of a symbol like those of the types, which has no name of its own. What
@@ -1760,7 +1761,8 @@ answer; a `tp_dealloc` is the end of what C keeps in the object.
 - *The class of a body that is let go of.* C needs the type for the end: `tp_dealloc` asks it for `tp_free` and gives back the reference that the instance owns to it. But a class leads to much (class ->
   method -> globals of the module -> whatever is there), and if it has died with the instance that may be the face: `class Sub(Node)` with a method, and `x = Sub()` beside it. No `tp_clear` lets go
   of that, and `tp_dealloc` is not called while the face lives. So from L on the body is an instance of **the nearest base of its class that this collection has found alive**, no further down than the
-  type that the extension has made (which it is if that has died too): the same data, the same slots. That base is marked already, so the body marks nothing by its type, and the class dies like
+  type that the extension has made (which it is if that has died too): the same data, the same slots. (Found alive *by then*. A class that L itself goes on to keep, for an instance that is held and stays whole, is not
+  marked yet when another of its instances is let go of: that one ends as an instance of the base, beside a class that lives on.) That base is marked already, so the body marks nothing by its type, and the class dies like
   anything else. The counted reference moves with it, as for an assignment to `__class__` (`moveToClass()`). What the class added to the instance is in the face and ends with it. A body that is taken back
   (B, or somebody is seen to take it) has a face that is marked, and the face names the class: the body is of that class again, and the reference moves back.
 - *Who is still held keeps its face.* A dead instance to which C owns a reference is held by another dead instance, in its data: any other owner would have kept it alive. That one's `tp_dealloc` is still to
