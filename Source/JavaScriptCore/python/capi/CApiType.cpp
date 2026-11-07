@@ -241,15 +241,21 @@ PY_CAPI Handle PyType_FromSpec(TypeSpec* spec)
 PY_CAPI int PyType_IsSubtype(Handle derived, Handle base)
 {
     CAPI_QUIET_AND_ONLY_READS(0);
-    return PyType::from(toJS(derived))->isSubtypeOf(PyType::from(toJS(base)));
+    // (Not toJS(): that may have to make something.)
+    PyType* derivedType = PyType::tryFrom(toLookAt(derived));
+    PyType* baseType = PyType::tryFrom(toLookAt(base));
+    return derivedType && baseType && derivedType->isSubtypeOf(baseType);
 }
 
 // Null, without an exception: the type has nothing there.
+// (A tp_traverse asks here for the tp_traverse of the base, to which it leaves the rest.)
 PY_CAPI void* PyType_GetSlot(Handle typeHandle, int slot)
 {
-    CAPI_QUIET(nullptr);
-    PyType* type = PyType::tryFrom(toJS(typeHandle));
+    CAPI_QUIET_AND_ONLY_READS(nullptr);
+    PyType* type = PyType::tryFrom(toLookAt(typeHandle));
     if (!type || slot < 0 || static_cast<unsigned>(slot) >= numberOfSlots) [[unlikely]] {
+        if (t_isInTraverse)
+            return nullptr;
         CAPI_ENTER_AFTER_ALL(nullptr);
         entry.raiseBadInternalCall();
         return nullptr;

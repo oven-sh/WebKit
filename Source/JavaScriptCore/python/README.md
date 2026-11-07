@@ -1786,8 +1786,9 @@ answer; a `tp_dealloc` is the end of what C keeps in the object.
   as in CPython. What is left with a count is in a cycle of bodies or hangs off one: `tp_clear`, then the counts again.
 - **What hangs on more than the two questions is only whether `tp_clear` is called**, and that is a matter of answers, not of memory: what has been cleared is still a valid object, by CPython's
   contract. The decision is L's, with the world stopped, as it is the collector's in CPython. From then until the call the program may run. If somebody is *seen* to take one of those
-  that wait, nothing is cleared of all that waits: it may be reachable from that one. It comes up again in the next collection. (At least one `tp_clear` is called in each, so that ends.)
-  `tp_clear` is called once, unless somebody is seen to take the instance afterwards: then it may get into another cycle. (So one that lets go of nothing does not keep `gc.collect()` going.)
+  that wait, nothing is cleared of all that waits: it may be reachable from that one. It comes up again in the next collection. (That ends when a collection comes in which nobody takes one before the first turn. A finalizer that takes one each time puts it off each time.)
+  `tp_clear` is called once, unless somebody is seen to take the instance afterwards: then it may get into another cycle. (So one that lets go of nothing does not keep `gc.collect()` going. Takers are looked
+  for while something waits. A cleared body that C takes later, by a pointer that it does not own, and puts into a new cycle is not cleared again.)
   Seen (`didSeeSomebodyTake()`) are:
   - C takes a reference to the body (`retain()`), by a pointer that it does not own;
   - C hands the body to Python or JS (`toJS()`: an argument, a result, an item of a list);

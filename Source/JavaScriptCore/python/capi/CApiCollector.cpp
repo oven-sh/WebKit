@@ -200,13 +200,19 @@ bool isTracked(JSCell* cell)
     return !face || isTracked(face->body());
 }
 
+JSCell* faceOfBodyIfAnySlow(JSCell* cell)
+{
+    Body* body = Body::tryFromCell(cell);
+    return body ? body->face() : nullptr;
+}
+
 void forEachInstanceThatRefersTo(std::span<const JSValue> values, const ScopedLambda<void(JSCell*)>& function)
 {
     Interpreter& current = interpreter();
     // Nothing here lets a collection go on: tp_traverse calls only what may be called with the world stopped.
     for (auto* list : { &current.oldBodies, &current.youngBodies }) {
         for (Body* body : *list) {
-            if (!body->face())
+            if (!body->face() || !body->isTracked)
                 continue;
             bool refers = false;
             traverse(body, [&](JSCell* target, CountTable::Counts&) {

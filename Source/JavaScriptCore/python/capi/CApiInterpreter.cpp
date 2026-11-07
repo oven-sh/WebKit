@@ -481,6 +481,17 @@ void takeOverReference(uint64_t bits, bool programGetsObject)
     }
 }
 
+PyType* typeOfWhatIsNoObjectOfPythons(JSValue value)
+{
+    // The types of most things of JavaScript's are made when they are first asked for, and nothing is made in the middle of a collection.
+    if (t_isInTraverse && value.isCell()) [[unlikely]] {
+        JSCell* cell = value.asCell();
+        if (cell->type() != StringType && cell->type() != ArrayType && cell->type() != HeapBigIntType && !PyType::is(cell))
+            return nullptr;
+    }
+    return interpreter().runtime.typeOf(value);
+}
+
 // identityBits(), for the face of an instance. Whoever asks has it in hand. With the GIL.
 uint64_t bitsOfInstance(JSCell* cell)
 {

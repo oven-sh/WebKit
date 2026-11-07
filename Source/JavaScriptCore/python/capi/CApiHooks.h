@@ -125,6 +125,9 @@ ALWAYS_INLINE bool hasInstancesToDestroy(Runtime& runtime) { return isSetUpFor(r
 
 // gc.is_tracked(), for an instance.
 bool isTracked(JSCell*);
+// For a cell in the queue of finalizers: what Python sees of it, if it is the body of an instance that has a face. It makes nothing, and nobody is seen to take anything.
+JSCell* faceOfBodyIfAnySlow(JSCell*);
+ALWAYS_INLINE JSCell* faceOfBodyIfAny(JSCell* cell) { return isSomebodys() ? faceOfBodyIfAnySlow(cell) : nullptr; }
 // gc.get_referrers(): what refers to one of the values by a reference that C holds in it. With the GIL, right after a full collection.
 void forEachInstanceThatRefersTo(std::span<const JSValue>, const ScopedLambda<void(JSCell*)>&);
 
@@ -196,6 +199,7 @@ public:
     bool isOver() const { return false; }
 };
 inline bool isTracked(JSCell*) { return false; }
+inline JSCell* faceOfBodyIfAny(JSCell*) { return nullptr; }
 inline void forEachInstanceThatRefersTo(std::span<const JSValue>, const ScopedLambda<void(JSCell*)>&) { }
 inline bool throwWhatCRaised(JSGlobalObject*) { return true; }
 inline bool throwWhatCRaisedBesideResult(JSGlobalObject*, const String&) { return true; }

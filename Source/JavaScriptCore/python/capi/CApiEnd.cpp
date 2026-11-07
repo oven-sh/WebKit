@@ -190,7 +190,7 @@ bool letGoOfWhatIsDead(SlotVisitor& visitor)
                 visitor.appendUnbarriered(body->face());
             else
                 moveToClass(current, body, type, nullptr);
-            if (body->wasCyclicGarbage && body->face())
+            if (body->wasCyclicGarbage && body->face() && body->face()->type()->has(TypeFlag::HasWeakref))
                 facesOfCyclicGarbage.append(body->face());
         }
         visitor.appendUnbarriered(body);
@@ -478,7 +478,8 @@ PY_CAPI int PyObject_GC_IsTracked(Handle object)
     CAPI_QUIET_AND_ONLY_READS(0);
     if (Body* body = bodyOrNull(object))
         return isTracked(body);
-    return isTrackedByCollector(interpreter().runtime, toLookAt(object));
+    // (It asks for the type.)
+    return typeOf(object) && isTrackedByCollector(interpreter().runtime, toLookAt(object));
 }
 
 PY_CAPI int PyObject_GC_IsFinalized(Handle object)

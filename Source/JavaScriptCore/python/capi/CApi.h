@@ -208,11 +208,19 @@ ALWAYS_INLINE Interpreter& interpreter()
     return *current;
 }
 
+// Null: a tp_traverse asks, and the type may have to be made first.
+PyType* typeOfWhatIsNoObjectOfPythons(JSValue);
 ALWAYS_INLINE PyType* typeOf(Handle object)
 {
-    if (Body* body = bodyOrNull(object)) [[unlikely]]
-        return body->type();
-    return interpreter().runtime.typeOf(toLookAt(object));
+    JSValue value = toLookAt(object);
+    if (value.isCell()) [[likely]] {
+        JSCell* cell = value.asCell();
+        if (isPyObject(cell)) [[likely]]
+            return uncheckedDowncast<PyObject>(cell)->type();
+        if (Body* body = Body::tryFromCellOfHandle(cell))
+            return body->type();
+    }
+    return typeOfWhatIsNoObjectOfPythons(value);
 }
 
 // ---- Who may come in ----

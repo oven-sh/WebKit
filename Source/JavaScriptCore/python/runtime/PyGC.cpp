@@ -219,6 +219,9 @@ public:
         }
         m_runtime.forEachObjectToBeFinalized([&](JSCell* cell) {
             m_toBeFinalized.add(cell);
+            // (Of an instance of the type of an extension it is the other cell that waits.)
+            if (JSCell* face = CApi::faceOfBodyIfAny(cell))
+                m_toBeFinalized.add(face);
         });
         bool hasWhatIsOutOfReach = false;
         HeapIterationScope iterationScope(vm.heap);
