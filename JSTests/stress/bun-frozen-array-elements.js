@@ -275,6 +275,7 @@ function testStaysInPlace() {
         array => { delete array[0]; },
         array => { array.length = 0; },
         array => shouldThrowTypeError(() => array.push(9)),
+        array => shouldThrowTypeError(() => Error.captureStackTrace(array)),
     ];
     for (const operation of refusedOperations) {
         forEachFrozenArray((array, original) => {
@@ -317,10 +318,13 @@ function testMoveToSparseMap() {
     }
 }
 
+// This setter defines `testField` on its receiver with putDirect(), which does not ask whether the object takes new properties.
+const definer = $vm.createStaticCustomAccessor();
+
 function testDefinitionByNativeCode() {
     forEachFrozenArray((array, original) => {
-        Error.captureStackTrace(array);
-        shouldBe(typeof array.stack, "string");
+        shouldBe(Reflect.set(definer, "testStaticAccessor", "defined", array), true);
+        shouldBe(array.testField, "defined");
         shouldBe(isInPlace(array), false);
         shouldBe(Object.isExtensible(array), false);
         checkElements(array, original);
