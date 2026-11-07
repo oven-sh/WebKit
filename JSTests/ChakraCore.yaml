@@ -567,8 +567,7 @@
   # Difference when assigning to arguments.
   cmd: runChakra :skip, "NoException", "argumentsMisc_3.baseline", []
 - path: ChakraCore/test/Function/arguments.es5.js
-  # Differences in the handling of sealed objects.
-  cmd: runChakra :skip, "NoException", "arguments.es5.baseline", ["../UnitTestFramework/UnitTestFramework.js"]
+  cmd: runChakra :baseline, "NoException", "arguments.es5.baseline", ["../UnitTestFramework/UnitTestFramework.js"]
 - path: ChakraCore/test/Function/argumentsResolution.js
   cmd: runChakra :baseline, "NoException", "argumentsResolution_3.baseline", []
 - path: ChakraCore/test/Function/argumentsLimits.js
