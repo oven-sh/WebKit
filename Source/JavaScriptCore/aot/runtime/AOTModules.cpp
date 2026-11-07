@@ -792,8 +792,12 @@ void Modules::takeOutRecord(ModuleID module)
     dropAnswersKept();
     Locker locker { m_state.caches->lock() };
     ModuleRecord* record = m_records.take(module);
-    if (!record)
-        return;
+    if (record)
+        forgetAnswersThatName(record);
+}
+
+void Modules::forgetAnswersThatName(ModuleRecord* record)
+{
     record->forgetCachedResolutions();
     if (!record->isRetained() || std::exchange(m_someRetainedRecordHasLeft, true))
         return;
@@ -2135,11 +2139,14 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
             ensureLoaded(each).errorOfModuleThatRanBesideMock.set(*this, error);
         if (storedStatus(each) == StoredModuleStatus::InRecord)
             setStoredStatus(each, StoredModuleStatus::Evaluated);
+        JSObject* madeForModuleItself = ensureLoaded(each).recordBeforeMockInPlace.get();
         ensureLoaded(each).recordBeforeMockInPlace.set(*this, record);
         if (!isFile && record->status() != CyclicModuleRecord::Status::Evaluating && record->status() != CyclicModuleRecord::Status::EvaluatingAsync)
             record->setKeepsToModule();
         dropAnswersKept();
         Locker locker { m_state.caches->lock() };
+        if (madeForModuleItself && madeForModuleItself != record)
+            forgetAnswersThatName(uncheckedDowncast<ModuleRecord>(madeForModuleItself));
         m_records.remove(each);
     };
     setAsideRecord(module);
@@ -7558,8 +7565,8 @@ ModuleRecord* Modules::recordSetAside(ModuleID module)
 
 ModuleRecord* Modules::ensureRecordSetAside(ModuleID module)
 {
-    if (ModuleRecord* record = recordSetAside(module))
-        return record;
+    if (JSObject* record = ensureLoaded(module).recordBeforeMockInPlace.get())
+        return uncheckedDowncast<ModuleRecord>(record);
     ModuleRecord* record = ModuleRecord::create(m_instance, m_instance.vm->aotState().moduleRecordStructure.get(), loader(), moduleKey(module), module);
     record->setHasTLA(data(module).hasTopLevelAwait());
     if (!takesNamesFromValue(data(module)))

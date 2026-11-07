@@ -4,13 +4,16 @@
 # a generator that waits at the first yield of the next turn holds the object no longer. The head, which lies between the first two entrypoints behind the start, stores nothing there.
 # RUN: emit f1:CoroutineBody mechanisms=all
 # CHECK-LABEL: unit f1:CoroutineBody
-# CHECK: Store({{*}}offset = 96, InternalFields
-# CHECK: Store(@2, {{*}}offset = 96, InternalFields
 # CHECK: entrypoint 1
 # CHECK-NOT: Store({{*}}offset = 96, InternalFields
 # CHECK: entrypoint 2
-# CHECK: Store(@2, {{*}}offset = 96, InternalFields
-# CHECK-NOT: Store({{*}}offset = 96, InternalFields
+# In which order the blocks of the making and of the two ways back are laid hangs on the machine, so they are counted: two stores clear the word, and one more sets it.
+# RUN(CLEARS): emit f1:CoroutineBody mechanisms=all
+# CLEARS-COUNT-2: Store(@2, {{*}}offset = 96, InternalFields
+# CLEARS-NOT: Store(@2, {{*}}offset = 96, InternalFields
+# RUN(STORES): emit f1:CoroutineBody mechanisms=all
+# STORES-COUNT-3: Store({{*}}offset = 96, InternalFields
+# STORES-NOT: Store({{*}}offset = 96, InternalFields
 
 layout L0 module=m0 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]
 module m0 path="main.js" displayPath="main.js" body=f0

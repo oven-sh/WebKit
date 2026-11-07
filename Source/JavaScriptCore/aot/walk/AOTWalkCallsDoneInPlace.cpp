@@ -430,8 +430,8 @@ static void makeListForCallAsWritten(Walker& walker, const BodyValue& call, cons
 
     Origin originInFrontOfCall = asWritten.origin();
     originInFrontOfCall.isTailCall = false;
-    Draft again = isListOfCopyInLine ? Draft(Opcode::NewArray, originInFrontOfCall) : walker.draftOf(index.value(object));
-    if (isListOfCopyInLine)
+    Draft again = isArgumentsObject ? walker.draftOf(index.value(object)) : Draft(Opcode::NewArray, originInFrontOfCall);
+    if (!isArgumentsObject)
         again.setContents(TypeTable::anything);
     again.standsForNoValueOfInput = true;
     again.inputValueGiven = { };

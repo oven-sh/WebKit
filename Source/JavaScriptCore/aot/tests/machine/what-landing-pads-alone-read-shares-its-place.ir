@@ -61,7 +61,7 @@
 # FRAME: size = 80
 # REQUIRES(ARM): arm64
 # RUN(ARM): frame f1:CoroutineBody mechanisms=none
-# ARM: size = 96
+# ARM: size = 80
 
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {

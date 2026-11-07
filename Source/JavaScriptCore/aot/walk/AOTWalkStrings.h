@@ -120,6 +120,7 @@ struct NotesOfStrings final : Walker::KeptForBuild {
         Reference object;
         Reference text;
         Reference scan;
+        std::optional<Draft> constructionAsWritten;
         TypeID typeOfObject;
         TypeID typeOfQuery;
         enum class Mention : uint8_t { None, URL, Query, Method };

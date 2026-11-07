@@ -2412,7 +2412,12 @@ static void testArmsOfAnswersAtPlace()
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
                             if (family != StubFamily::ReadAtSiteAskingStructureFirst || receiverIs != ReceiverAtSite::IsAnyValue)
                                 continue;
-                            const uint32_t budget = isFurtherAnswer ? arm.budgetAsFurtherAnswer : arm.budget;
+#if defined(BUN_HARDENED)
+                            constexpr uint32_t instructionsThatBoundIndexOfHandler = 1;
+#else
+                            constexpr uint32_t instructionsThatBoundIndexOfHandler = 0;
+#endif
+                            const uint32_t budget = isFurtherAnswer ? arm.budgetAsFurtherAnswer + instructionsThatBoundIndexOfHandler : arm.budget;
                             if (*run.instructionsInStubs != budget)
                                 dataLogLn("a read at a place that holds ", arm.what, isFurtherAnswer ? " as a further answer: " : ": ", *run.instructionsInStubs, " instructions, the budget is ", budget);
                             isWithinBudget &= *run.instructionsInStubs <= budget;

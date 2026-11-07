@@ -116,7 +116,7 @@ void ClassTable::keepWordsOfObjectWithoutFields(const LayoutData& layout, const 
     RELEASE_ASSERT(layout.size > sizeof(JSCell) && !(layout.size % sizeof(uint64_t)));
     size_t numberOfWords = (layout.size - sizeof(JSCell)) / sizeof(uint64_t);
     UniqueArray<uint64_t> words = makeUniqueArray<uint64_t>(numberOfWords);
-    memcpy(words.get(), reinterpret_cast<const uint8_t*>(&born) + sizeof(JSCell), numberOfWords * sizeof(uint64_t));
+    memcpySpan(std::span { words.get(), numberOfWords }, std::span { reinterpret_cast<const uint64_t*>(&born) + sizeof(JSCell) / sizeof(uint64_t), numberOfWords });
     m_wordsOfObjectsWithoutFields.set(layout.index, WTF::move(words));
 }
 

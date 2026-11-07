@@ -244,6 +244,7 @@ public:
     JSObject* namespaceOfRecordSetAside(ModuleRecord*);
     ModuleRecord* recordSetAside(ModuleID);
     ModuleRecord* ensureRecordSetAside(ModuleID);
+    void forgetAnswersThatName(ModuleRecord*);
     JSPromise* evaluationOfRecordSetAside(ModuleID);
     bool bodySetAsideWaitsForItsMock(ModuleID);
     struct ImportCalledByBodySetAside {

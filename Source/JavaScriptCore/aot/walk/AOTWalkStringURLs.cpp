@@ -570,9 +570,12 @@ static bool answerCallOnQueryInStringURLs(Walker& walker, const URLThatIsNeverMa
         Walker::ClosedArm closedArm(walker);
         Reference kept = walker.referenceOf(call.thisValueOperand());
         auto makeObject = [&](std::span<Reference> results) {
-            Reference object = buildAsWrittenInStringURLs(walker, index.value(url.made));
+            Draft again = *url.constructionAsWritten;
+            walker.chooseConservativeFields(again);
+            Reference object = walker.build(WTF::move(again));
             if (!object)
                 return;
+            walker.bind(url.made, object);
             walker.bind(readOfQuery.objectOperand(), object);
             results[0] = buildAsWrittenInStringURLs(walker, readOfQuery);
         };
@@ -635,6 +638,7 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
     }
     URLThatIsNeverMade url;
     uint32_t numberOfReads = 0;
+    url.constructionAsWritten = walker.draftOf(call.call);
     if (!everyMentionIsAnsweredOutOfTextInStringURLs(walker, made, typeOfObject, url, numberOfReads) || !numberOfReads)
         return false;
     TypeID typeOfQuery = url.typeOfQuery;
