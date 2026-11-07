@@ -322,8 +322,7 @@ std::expected<PageCount, GrowFailReason> Memory::growShared(VM& vm, PageCount de
             RELEASE_ASSERT(m_shared);
             RELEASE_ASSERT(desiredSize <= allocatableBytes);
             RELEASE_ASSERT(desiredSize > size());
-            constexpr bool sizeMustBePageMultiple = true;
-            result = m_shared->tryGrow(locker.value(), desiredSize, sizeMustBePageMultiple, collection);
+            result = m_shared->tryGrow(locker.value(), desiredSize, collection);
         }
         if (collection == BufferMemoryResult::Kind::SyncTryToReclaimMemory) {
             if (attempt == maximumAttempts)
