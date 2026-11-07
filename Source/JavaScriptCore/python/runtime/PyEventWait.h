@@ -68,6 +68,11 @@ struct WaitRequest {
     int64_t timeout { -1 };
     // See IdleWait. For the host this is nothing.
     bool isWaitOfCall { false };
+    // Once a signal of the program's has arrived on the thread (signalsArrivedOnThread()), the wait is over, as if time had run out. (Else it goes on: PEP 475.)
+    // For the host this is nothing: it returns EINTR as soon as calls of Python's are owed, and waitForEvents() decides.
+    bool endsAtSignal { false };
+    // For a caller that makes one wait of several requests: what this has at the end of one it gives to the next. See IdleWait::goOnWithInterval(). For the host this is nothing.
+    int64_t idleInterval { 0 };
     // If the call has been begun again in the middle of this wait: when the wait is to end, on the monotonic clock, which is not `timeout`
     // from now. 0: it has not, or there is no end. For a caller that may wait again for what is left of the time.
     int64_t deadlineTakenUp { 0 };

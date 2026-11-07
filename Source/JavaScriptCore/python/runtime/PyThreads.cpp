@@ -1073,6 +1073,13 @@ IdleWait::IdleWait(JSGlobalObject* globalObject, int64_t& deadline, bool isWaitO
     auto& waits = m_thread.waits;
     if (!m_continuesWait && m_start - waits.endOfLast > waits.lengthOfLast)
         waits.total = 0;
+    goOnWithInterval(m_interval);
+}
+
+void IdleWait::goOnWithInterval(int64_t interval)
+{
+    m_interval = interval;
+    auto& waits = m_thread.waits;
     m_wasDueAtStart = waits.total >= m_interval;
     m_timeToCollect = m_start + std::max<int64_t>(m_interval - waits.total, 0);
 }

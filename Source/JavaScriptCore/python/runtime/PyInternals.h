@@ -402,6 +402,10 @@ bool checkSignals(JSGlobalObject*);
 // until Ctrl-C raises KeyboardInterrupt, or until a signal ends the process. Elsewhere, if there is a function for any signal,
 // whichever runtime of the VM has the signals.
 bool signalMayEndWait(JSGlobalObject*);
+// How many signals that the program wants to hear of have arrived on this thread. For a transfer that goes on piece by piece where the system would make one call of it: such a signal
+// ends such a call, in the thread on which it arrives, with what it has transferred. One that arrives on another thread does not, whoever calls the handler; nor do those by which the
+// engine stops a thread, or the calls that a thread owes, which checkSignals() makes as well.
+unsigned signalsArrivedOnThread();
 // As if the signal had arrived, for the runtime of this VM that has the signals. Nothing happens if it is ignored or has its default effect. False: there is no such signal.
 // (PyErr_SetInterruptEx)
 bool simulateSignal(JSGlobalObject*, int number);

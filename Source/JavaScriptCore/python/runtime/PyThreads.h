@@ -500,6 +500,9 @@ public:
     bool willBlock();
 
     int64_t timeToCollect() const { return m_timeToCollect; }
+    // For one wait that is made as several, each with one of these: the next looks no more often than the last would have gone on to. To be called before anything else.
+    int64_t interval() const { return m_interval; }
+    void goOnWithInterval(int64_t);
     // For how many nanoseconds to wait next, at most, if so many are left to wait (negative: there is no end).
     int64_t nextPiece(int64_t remaining) const;
     // That is over, what was waited for has not come, and so many nanoseconds are left to wait (negative: there is no end).

@@ -18,10 +18,12 @@
 #include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <sys/un.h>
+#include <wtf/Threading.h>
 #if OS(LINUX)
 #include <linux/netlink.h>
 #endif
@@ -701,11 +703,53 @@ static bool socketSetBlocking(JSGlobalObject* globalObject, int fd, bool blockin
 
 struct SocketCallOptions {
     bool isConnect { false };
-    // The call returns at once whatever the socket is like: MSG_DONTWAIT.
+    // The call returns at once whatever the socket is like (MSG_DONTWAIT), or what it is after is not what the wait would wait for (recv() with MSG_OOB or MSG_ERRQUEUE).
     bool neverBlocks { false };
     // If not null, a failure of the system is stored here and not raised. -1: there is an exception all the same.
     int* error { nullptr };
 };
+
+// SO_SNDTIMEO or SO_RCVTIMEO. (The descriptor is asked: the limit may have been set through another object, or have come with accept().)
+static bool socketHasTimeLimitOfKernel(PyRecord* socket, int option)
+{
+    struct timeval limit { };
+    socklen_t length = sizeof(limit);
+    return !getsockopt(socketDescriptor(socket), SOL_SOCKET, option, &limit, &length) && (limit.tv_sec || limit.tv_usec);
+}
+
+// As waitForEvents(), for the socket. `events`: what to wait for, and then what there is. `idleInterval`: see WaitRequest.
+// `hasTransferred`: something has been transferred. It is lost if the call of the native function is begun again (see IdleWait), and a signal for which the program has a handler ends the
+// wait: 0.
+// In a frame of its own: the request is not to lie, unwritten, under a call that blocks without having waited here. See fileIOReadWithoutGIL().
+static NEVER_INLINE int socketWait(JSGlobalObject* globalObject, PyRecord* socket, short& events, int64_t timeout, bool hasTransferred, bool standsForBlockingCall, int64_t* deadlineTakenUp, int64_t* idleInterval)
+{
+    struct pollfd descriptor { socketDescriptor(socket), events, 0 };
+    WaitRequest request { WaitRequest::Kind::Poll };
+    request.timeout = timeout;
+    request.isWaitOfCall = !hasTransferred;
+    request.endsAtSignal = hasTransferred;
+    request.descriptors = &descriptor;
+    request.descriptorCount = 1;
+    if (idleInterval)
+        request.idleInterval = *idleInterval;
+    int ready = 0;
+    if (standsForBlockingCall) {
+        // The wait knows nothing of a time limit that the system keeps for the call. If there is one, the call is made as if it could go ahead.
+        ready = waitWithoutBlocking(request);
+        if (ready < 0 && errno == EINTR)
+            ready = 0;
+        if (!ready && socketHasTimeLimitOfKernel(socket, events & POLLOUT ? SO_SNDTIMEO : SO_RCVTIMEO))
+            ready = 1;
+    }
+    if (!ready)
+        ready = waitForEvents(globalObject, request);
+    events = descriptor.revents;
+    if (deadlineTakenUp)
+        *deadlineTakenUp = request.deadlineTakenUp;
+    if (idleInterval)
+        *idleInterval = request.idleInterval;
+    return ready;
+}
 
 // Calls `function`, which makes a system call on the socket and returns whether that succeeded, leaving the reason in errno.
 // (It may also raise, and return false.)
@@ -737,18 +781,14 @@ static bool socketCall(JSGlobalObject* globalObject, PyRecord* socket, bool isWr
             }
             int ready = 0;
             if (!hasTimeout || interval >= 0) {
-                struct pollfd descriptor { socketDescriptor(socket), static_cast<short>(isWriting ? POLLOUT : POLLIN), 0 };
+                short events = isWriting ? POLLOUT : POLLIN;
                 if (options.isConnect)
-                    descriptor.events |= POLLERR;
-                WaitRequest request { WaitRequest::Kind::Poll };
-                request.timeout = interval;
-                request.isWaitOfCall = true;
-                request.descriptors = &descriptor;
-                request.descriptorCount = 1;
-                ready = waitForEvents(globalObject, request);
+                    events |= POLLERR;
+                int64_t deadlineTakenUp = 0;
+                ready = socketWait(globalObject, socket, events, interval, false, waitsForHost && !options.isConnect, &deadlineTakenUp, nullptr);
                 // The time began to run when the call was first begun.
-                if (hasTimeout && request.deadlineTakenUp)
-                    deadline = request.deadlineTakenUp;
+                if (hasTimeout && deadlineTakenUp)
+                    deadline = deadlineTakenUp;
             }
             if (failed(scope, ready != waitRaised)) {
                 if (options.error)
@@ -1293,14 +1333,448 @@ static JSValue socketShutdown(JSGlobalObject* globalObject, JSValue self, JSValu
     return jsUndefined();
 }
 
-// ---- Receiving ----
-
 static SocketCallOptions socketOptionsForFlags(int flags)
 {
     SocketCallOptions options;
     options.neverBlocks = flags & MSG_DONTWAIT;
     return options;
 }
+
+static SocketCallOptions socketOptionsForReceiveFlags(PyRecord* socket, int flags)
+{
+    int notForPollIn = MSG_DONTWAIT | MSG_OOB;
+#ifdef MSG_ERRQUEUE
+    // (A unix socket has no such queue, and reads on as if nothing had been said.)
+    if (socketFamilyOf(socket) != AF_UNIX)
+        notForPollIn |= MSG_ERRQUEUE;
+#else
+    UNUSED_PARAM(socket);
+#endif
+    SocketCallOptions options;
+    options.neverBlocks = flags & notForPollIn;
+    return options;
+}
+
+// ---- A transfer that the system makes in one call, and this in several ----
+//
+// A blocking send() on a stream socket returns when all has been taken, and recv() with MSG_WAITALL when all has come. Two things are in the way of that here.
+// - The engine stops a thread by a signal (for a collection, a sample of the profiler's, a trap), and a call that has transferred a part returns the part. No program expects that of a
+//   signal it knows nothing of. So the call is made again for the rest: if it came back short and the thread has been stopped meanwhile.
+// - On the thread of a host with an event loop send() must not block, or the loop stands still: see socketSendCall().
+// What goes on is to be told from the one call by nothing but the time it takes. So it ends where the system's own loop ends: see SocketTransfer::serve(), socketIsOverForSending().
+
+#ifdef MSG_NOSIGNAL
+static constexpr int socketNoSignal = MSG_NOSIGNAL;
+#else
+static constexpr int socketNoSignal = 0;
+#endif
+
+// More than this no call transfers.
+#if OS(LINUX)
+static constexpr size_t socketMostInOneCall = 0x7ffff000; // MAX_RW_COUNT
+#else
+static constexpr size_t socketMostInOneCall = std::numeric_limits<ssize_t>::max();
+#endif
+
+static bool socketIsStream(PyRecord* socket) { return socket->get(SocketKind).asInt32() == SOCK_STREAM; }
+
+// With something transferred, the loop of TCP leaves an error of the socket's where it is, for the next call to find. A call would take it. Whether what poll() says tells of one.
+// On Linux POLLERR is also said of a socket with something in its error queue (MSG_ZEROCOPY's completions, say), with which nothing is wrong. An error that ends a connection comes with
+// POLLHUP: see socketLook(). (With IP_RECVERR it may be an error that does not end the connection. The next call takes that one.)
+#if OS(LINUX)
+static bool socketHasError(short events) { return (events & (POLLERR | POLLHUP)) == (POLLERR | POLLHUP); }
+#else
+static bool socketHasError(short events) { return events & POLLERR; }
+#endif
+static bool socketIsOverForSending(short events) { return (events & (POLLHUP | POLLNVAL)) || socketHasError(events); }
+// (After a mere hang-up there may be more to read.)
+static bool socketIsOverForReceiving(short events) { return (events & POLLNVAL) || socketHasError(events); }
+
+// The loop of a unix socket takes the error as it ends short, whatever it has transferred: the next call finds none.
+static void socketDidEndTransferForError(PyRecord* socket)
+{
+    if (socketFamilyOf(socket) != AF_UNIX)
+        return;
+    int error;
+    socklen_t length = sizeof(error);
+    getsockopt(socketDescriptor(socket), SOL_SOCKET, SO_ERROR, &error, &length);
+}
+
+// What has come is read first, whatever has become of the connection.
+static bool socketHasSomethingToRead(int descriptor)
+{
+    int count = 0;
+    return !ioctl(descriptor, FIONREAD, &count) && count > 0;
+}
+
+static short socketLook(int number, short events)
+{
+    struct pollfd descriptor { number, events, 0 };
+    if (poll(&descriptor, 1, 0) <= 0)
+        return 0;
+#if OS(LINUX)
+    // While TCP takes in a reset there is the error and no hang-up yet, for as long as it takes to let go of all that was to be sent. It does that with the socket locked. So
+    // something is asked that waits for the lock, and then poll() again.
+    if ((descriptor.revents & (POLLERR | POLLHUP)) == POLLERR) {
+        uint8_t state;
+        socklen_t length = sizeof(state);
+        getsockopt(number, IPPROTO_TCP, TCP_INFO, &state, &length);
+        if (poll(&descriptor, 1, 0) <= 0)
+            return 0;
+    }
+#endif
+    return descriptor.revents;
+}
+
+// What a transfer that goes on tells one system call, and is told of it.
+struct SocketCallNotes {
+    // Something has been transferred. A call that transfers nothing more and finds an error of the socket's takes the error with it: so a look first, and no call if the connection is
+    // over. As late as can be, behind the release of the GIL: what a wait has said is old by the time the thread runs again.
+    // (An error that comes between the look and the call is taken by the call.)
+    bool looksFirst { false };
+    bool wasOver { false };
+    // The engine has stopped the thread while it was in the system call, and no signal of the program's has come to it there.
+    bool wasStopped { false };
+    // signalsArrivedOnThread() as the system call returned. (To have the GIL again may take a while.)
+    unsigned signalsArrived { 0 };
+};
+
+class SocketTransfer {
+public:
+    // Made before the first system call: a signal that arrives from here on finds the transfer under way.
+    explicit SocketTransfer(JSGlobalObject* globalObject)
+        : m_globalObject(globalObject)
+        , m_signalsArrived(signalsArrivedOnThread())
+    {
+    }
+
+    enum class Next : uint8_t { GoesOn, Ends, Raised };
+
+    // Between two calls: a call that does not block is never interrupted, and one that was cut short may have been so for a reason. The calls that the thread owes, the traps,
+    // the end of what runs, the signals of the program. A signal for which the program has a handler ends the system's loop if something has been transferred; a finalizer does not.
+    // It goes by what has arrived on the thread since the last time, since forgetSignals(), or since the transfer began.
+    Next serve(bool hasTransferred)
+    {
+        auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
+        if (failed(scope, checkSignals(m_globalObject)))
+            return Next::Raised;
+        unsigned before = std::exchange(m_signalsArrived, signalsArrivedOnThread());
+        return hasTransferred && m_signalsArrived != before ? Next::Ends : Next::GoesOn;
+    }
+
+    // Those that had arrived by then ended nothing.
+    void forgetSignals(unsigned arrived) { m_signalsArrived = arrived; }
+
+private:
+    JSGlobalObject* m_globalObject;
+    unsigned m_signalsArrived;
+};
+
+template<typename IsOver, typename SystemCall>
+static ALWAYS_INLINE ssize_t socketCallWithoutGIL(JSGlobalObject* globalObject, AllowThreads::WhenInterrupted whenInterrupted, SocketCallNotes* notes, const IsOver& isOver, const SystemCall& systemCall)
+{
+    Thread* thread = notes ? &Thread::currentSingleton() : nullptr;
+    AllowThreads allow(globalObject, whenInterrupted);
+    if (!thread) [[likely]]
+        return systemCall();
+    if (notes->looksFirst && isOver()) {
+        notes->wasOver = true;
+        return -1;
+    }
+    unsigned timesStopped = thread->timesStoppedBySignal();
+    unsigned signalsArrived = signalsArrivedOnThread();
+    ssize_t count = systemCall();
+    notes->signalsArrived = signalsArrivedOnThread();
+    notes->wasStopped = thread->timesStoppedBySignal() != timesStopped && notes->signalsArrived == signalsArrived;
+    return count;
+}
+
+// Each in a frame of its own: see fileIOReadWithoutGIL().
+static NEVER_INLINE ssize_t socketSendWithoutGIL(JSGlobalObject* globalObject, int descriptor, const void* data, size_t length, int flags, const SocketAddress* address, SocketCallNotes* notes)
+{
+    return socketCallWithoutGIL(globalObject, AllowThreads::MayLoseSomething, notes, [&] {
+        return socketIsOverForSending(socketLook(descriptor, POLLOUT));
+    }, [&] {
+        return address ? sendto(descriptor, data, length, flags, &address->generic, address->length) : send(descriptor, data, length, flags);
+    });
+}
+
+static NEVER_INLINE ssize_t socketSendMessageWithoutGIL(JSGlobalObject* globalObject, int descriptor, const struct msghdr& message, int flags, SocketCallNotes* notes)
+{
+    return socketCallWithoutGIL(globalObject, AllowThreads::MayLoseSomething, notes, [&] {
+        return socketIsOverForSending(socketLook(descriptor, POLLOUT));
+    }, [&] {
+        return sendmsg(descriptor, &message, flags);
+    });
+}
+
+static NEVER_INLINE ssize_t socketReceiveWithoutGIL(JSGlobalObject* globalObject, PyRecord* socket, void* data, size_t length, int flags, SocketAddress* address, SocketCallNotes* notes)
+{
+    int descriptor = socketDescriptor(socket);
+    return socketCallWithoutGIL(globalObject, socketWhenReceiveIsInterrupted(socket, flags), notes, [&] {
+        return socketIsOverForReceiving(socketLook(descriptor, POLLIN)) && !socketHasSomethingToRead(descriptor);
+    }, [&] {
+        return address ? recvfrom(descriptor, data, length, flags, &address->generic, &address->length) : recv(descriptor, data, length, flags);
+    });
+}
+
+// poll() is advice, and the call is the judge: there are ends of a blocking send() of which poll() never tells (on a unix stream socket, shutdown(SHUT_WR) by another thread and
+// shutdown(SHUT_RD) by the peer). So it is not believed for longer than this, and the call is made again. That is a look, not a time limit: nothing is given up when the time is
+// over, and a call that says once more that it would have to wait is followed by the next wait.
+static constexpr int64_t socketLongestWaitBeforeCall = socketNanosecondsPerSecond;
+
+enum class SocketSend : uint8_t {
+    // All of it, as a blocking call of the system's.
+    Whole,
+    // Whatever the system takes at first: for sendall(), which goes on by itself, whatever cut the call short, and is to be told of every failure.
+    Part,
+};
+
+// For send, sendto, sendmsg, sendall. `function(flags, taken, room, notes)` makes the system call for what is left once `taken` bytes of `length` have gone, `room` bytes at
+// most, and returns what the system does, with the reason in errno. (It may also raise, and return -1.) `total`: what has gone. False: an exception.
+// On the thread of a host with an event loop, if the socket blocks for as long as it takes: the call is made so that it does not block, and only if it says that it would have
+// to wait does this wait, in waitForEvents(). Not the other way round, as for reading: POLLOUT is the system's advice that it is worth while to begin again (a unix socket: less
+// than a quarter of the buffer is in use), where send() takes bytes as long as there is room.
+template<typename Function>
+static bool socketSendCall(JSGlobalObject* globalObject, PyRecord* socket, int64_t timeout, int flags, size_t length, SocketSend kind, size_t& total, const Function& function)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    total = 0;
+    int leftAlone = MSG_DONTWAIT;
+#ifdef MSG_FASTOPEN
+    leftAlone |= MSG_FASTOPEN;
+#endif
+    if (timeout >= 0 || (flags & leftAlone)) {
+        ssize_t count = 0;
+        bool succeeded = socketCall(globalObject, socket, true, timeout, [&] {
+            count = function(flags, 0, length, nullptr);
+            return count >= 0;
+        }, socketOptionsForFlags(flags));
+        if (failed(scope, succeeded))
+            return false;
+        total = count;
+        return true;
+    }
+
+    bool isStream = socketIsStream(socket);
+    bool goesOn = kind == SocketSend::Whole && isStream;
+    size_t goal = std::min(length, socketMostInOneCall);
+    bool callsFirst = waitsInHost(globalObject);
+    bool hasWaited = false;
+    bool wasToldReady = false;
+    bool wasToldReadyInVain = false;
+    SocketCallNotes notes;
+    int64_t idleInterval = 0;
+    SocketTransfer transfer(globalObject);
+    // True: it goes on. Else `result` is what to return.
+    bool result;
+    auto serve = [&](bool hasTransferred) {
+        auto next = transfer.serve(hasTransferred);
+        result = next == SocketTransfer::Next::Ends;
+        return !failed(scope, next != SocketTransfer::Next::Raised) && !result;
+    };
+    // With something gone, that is what the call returns.
+    auto fail = [&](int error) {
+        if (total) {
+            if (error == EPIPE)
+                socketDidEndTransferForError(socket);
+            return true;
+        }
+        scope.release();
+        posixError(globalObject, error);
+        return false;
+    };
+    while (true) {
+        notes.looksFirst = total;
+        ssize_t count = function(flags | (callsFirst ? MSG_DONTWAIT : 0) | (total ? socketNoSignal : 0), total, total ? goal - total : length, total || (goesOn && !callsFirst) ? &notes : nullptr);
+        if (notes.wasOver) {
+            socketDidEndTransferForError(socket);
+            return true;
+        }
+        if (count >= 0) {
+            total += count;
+            if (!goesOn || total >= goal)
+                return true;
+            if (!callsFirst) {
+                if (!notes.wasStopped || socketHasTimeLimitOfKernel(socket, SO_SNDTIMEO))
+                    return true;
+                transfer.forgetSignals(notes.signalsArrived);
+                if (!serve(true))
+                    return result;
+                // The rest goes as on the thread of a host. A call that blocks, takes nothing more and is ended by an error of the socket's would take the error with it.
+                // (What is asked before the first wait is known: the call has blocked.)
+                callsFirst = true;
+                hasWaited = true;
+                wasToldReady = false;
+                wasToldReadyInVain = false;
+                continue;
+            }
+            // The buffer is full: where the system's loop sleeps.
+            wasToldReadyInVain = false;
+        } else {
+            int error = errno;
+            RETURN_IF_EXCEPTION(scope, false);
+            if (error == EINTR) {
+                // A signal that is not the engine's: the one call of the system's would have come back with what has gone.
+                if (total && !callsFirst && !notes.wasStopped)
+                    return true;
+                if (!callsFirst)
+                    transfer.forgetSignals(notes.signalsArrived);
+                if (!serve(total))
+                    return result;
+                continue;
+            }
+            if (!callsFirst || (error != EAGAIN && error != EWOULDBLOCK))
+                return fail(error);
+            // There is something that poll() does not know, and to ask it again and again would keep the processor busy and the host's loop from turning. The call is made as a thread
+            // makes it. An unconnected unix datagram socket waits for room in the queue of the receiver; a socket with something in its error queue is always said to have something.
+            // (On a stream socket another thread may have been faster: so not the first time. And there such a call may take an error of the socket's with it.)
+            if (wasToldReady && (!isStream || std::exchange(wasToldReadyInVain, true))) {
+                callsFirst = false;
+                continue;
+            }
+        }
+        if (!std::exchange(hasWaited, true)) {
+            int status = fcntl(socketDescriptor(socket), F_GETFL);
+            if (status < 0)
+                return fail(errno);
+            // The program has made it so behind the back of the socket object.
+            if (status & O_NONBLOCK)
+                return fail(EAGAIN);
+            if (socketHasTimeLimitOfKernel(socket, SO_SNDTIMEO)) {
+                callsFirst = false;
+                goesOn = false;
+                continue;
+            }
+            // Where the system's one call would go to sleep for the first time. It looks for a signal before it does: with a part gone it returns the part.
+            if (!serve(total))
+                return result;
+        }
+        wasToldReady = false;
+        if (socketDescriptor(socket) >= 0) {
+            short events = POLLOUT;
+            int ready = socketWait(globalObject, socket, events, socketLongestWaitBeforeCall, total, false, nullptr, &idleInterval);
+            if (failed(scope, ready != waitRaised))
+                return false;
+            if (ready < 0)
+                return fail(errno);
+            wasToldReady = ready;
+            if (!ready)
+                wasToldReadyInVain = false;
+        }
+        if (!serve(total))
+            return result;
+    }
+}
+
+// With MSG_WAITALL, on a stream socket that blocks for as long as it takes. See socketReceiveCall().
+// In a function of its own: what this needs room for is not to lie, unwritten, in the frame under which a plain recv() waits. See fileIOReadWithoutGIL().
+template<typename Function>
+static NEVER_INLINE bool socketReceiveWhole(JSGlobalObject* globalObject, PyRecord* socket, int flags, size_t length, ssize_t& total, const Function& function)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    size_t goal = std::min(length, socketMostInOneCall);
+    SocketTransfer transfer(globalObject);
+    SocketCallNotes notes;
+    while (true) {
+        bool succeeded = socketCall(globalObject, socket, false, -1, [&] {
+            total = function(0, 0, length, &notes);
+            return total >= 0;
+        });
+        if (failed(scope, succeeded))
+            return false;
+        if (!notes.wasStopped || !total || static_cast<size_t>(total) >= goal || socketHasTimeLimitOfKernel(socket, SO_RCVTIMEO))
+            return true;
+        // (Signals that came while it waited for the first byte ended nothing.)
+        transfer.forgetSignals(notes.signalsArrived);
+        // From here on the call of the native function is not to be begun again: see IdleWait. No wait may have taken the note.
+        runtime(globalObject).threads().current().callThatMayBeginAgain = nullptr;
+        if (!(flags & MSG_PEEK))
+            break;
+        // What has been looked at is still there: the whole call is made again. (So it has something to show, and takes no error with it.)
+        auto next = transfer.serve(true);
+        if (failed(scope, next != SocketTransfer::Next::Raised))
+            return false;
+        if (next == SocketTransfer::Next::Ends)
+            return true;
+    }
+
+    // The rest: a wait, and a call that does not block. One that blocks, gets nothing more and is ended by an error of the socket's would take the error with it.
+    // As in socketSendCall(), the wait is advice (with SO_RCVLOWAT, POLLIN does not come for less than that, and recv() returns it), and what poll() says for ever is not asked for
+    // ever: then the call for the rest does block, and may take such an error with it.
+    int64_t idleInterval = 0;
+    bool wasToldReadyInVain = false;
+    bool blocksInCall = false;
+    notes.looksFirst = true;
+    // True: it goes on. Else `result` is what to return.
+    bool result;
+    auto serve = [&] {
+        auto next = transfer.serve(true);
+        result = !failed(scope, next != SocketTransfer::Next::Raised);
+        return result && next == SocketTransfer::Next::GoesOn && socketDescriptor(socket) >= 0;
+    };
+    while (true) {
+        if (!serve())
+            return result;
+        int ready = 0;
+        if (!blocksInCall) {
+            short events = POLLIN;
+            ready = socketWait(globalObject, socket, events, socketLongestWaitBeforeCall, true, false, nullptr, &idleInterval);
+            if (failed(scope, ready != waitRaised))
+                return false;
+            if (ready < 0)
+                return true;
+            if (!ready)
+                wasToldReadyInVain = false;
+            if (!serve())
+                return result;
+        }
+        ssize_t count = function(blocksInCall ? 0 : MSG_DONTWAIT, total, goal - total, &notes);
+        if (notes.wasOver) {
+            socketDidEndTransferForError(socket);
+            return true;
+        }
+        if (count < 0) {
+            int error = errno;
+            RETURN_IF_EXCEPTION(scope, false);
+            if (error == EINTR) {
+                // A signal that is not the engine's: the one call of the system's would have come back with what has come.
+                if (blocksInCall && !notes.wasStopped)
+                    return true;
+                continue;
+            }
+            if (blocksInCall || (error != EAGAIN && error != EWOULDBLOCK))
+                return true;
+            blocksInCall = ready && std::exchange(wasToldReadyInVain, true);
+            continue;
+        }
+        total += count;
+        if (!count || static_cast<size_t>(total) >= goal || (blocksInCall && !notes.wasStopped))
+            return true;
+        wasToldReadyInVain = false;
+        blocksInCall = false;
+    }
+}
+
+// For recv, recv_into, recvfrom, recvfrom_into. `function(flags, taken, room, notes)` is as above, but that the flags are to be added to those of the program. `total`: what there
+// is in the buffer.
+template<typename Function>
+static ALWAYS_INLINE bool socketReceiveCall(JSGlobalObject* globalObject, PyRecord* socket, int flags, size_t length, ssize_t& total, const Function& function)
+{
+    total = 0;
+    int64_t timeout = socketTimeoutOf(socket);
+    SocketCallOptions options = socketOptionsForReceiveFlags(socket, flags);
+    if ((flags & MSG_WAITALL) && !options.neverBlocks && timeout < 0 && socketIsStream(socket)) [[unlikely]]
+        return socketReceiveWhole(globalObject, socket, flags, length, total, function);
+    return socketCall(globalObject, socket, false, timeout, [&] {
+        total = function(0, 0, length, nullptr);
+        return total >= 0;
+    }, options);
+}
+
+// ---- Receiving ----
 
 // Not in the frame: the call may wait for as long as it likes, with what earlier frames left in that room under the eyes of the collector.
 using SocketScratch = Vector<uint8_t>;
@@ -1348,11 +1822,9 @@ static JSValue socketRecv(JSGlobalObject* globalObject, JSValue self, const Call
         return { };
     ssize_t count = 0;
     if (size) {
-        bool succeeded = socketCall(globalObject, socket, false, socketTimeoutOf(socket), [&] {
-            AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
-            count = recv(socketDescriptor(socket), scratch.mutableSpan().data(), size, flags);
-            return count >= 0;
-        }, socketOptionsForFlags(flags));
+        bool succeeded = socketReceiveCall(globalObject, socket, flags, size, count, [&](int more, size_t taken, size_t room, SocketCallNotes* notes) {
+            return socketReceiveWithoutGIL(globalObject, socket, scratch.mutableSpan().data() + taken, room, flags | more, nullptr, notes);
+        });
         if (failed(scope, succeeded))
             return { };
     }
@@ -1372,13 +1844,14 @@ static JSValue socketRecvFrom(JSGlobalObject* globalObject, JSValue self, const 
     if (failed(scope, socketParseReceive(globalObject, args, "recvfrom"_s, size, flags, scratch)) || failed(scope, socketAddressLength(globalObject, socket, capacity)))
         return { };
     ssize_t count = 0;
-    bool succeeded = socketCall(globalObject, socket, false, socketTimeoutOf(socket), [&] {
+    bool succeeded = socketReceiveCall(globalObject, socket, flags, size, count, [&](int more, size_t taken, size_t room, SocketCallNotes* notes) {
+        // The sender is what the first call says.
+        if (taken)
+            return socketReceiveWithoutGIL(globalObject, socket, scratch.mutableSpan().data() + taken, room, flags | more, nullptr, notes);
         memset(&address.storage, 0, sizeof(address.storage));
         address.length = capacity;
-        AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
-        count = recvfrom(socketDescriptor(socket), scratch.mutableSpan().data(), size, flags, &address.generic, &address.length);
-        return count >= 0;
-    }, socketOptionsForFlags(flags));
+        return socketReceiveWithoutGIL(globalObject, socket, scratch.mutableSpan().data(), room, flags | more, &address, notes);
+    });
     if (failed(scope, succeeded))
         return { };
     JSValue sender = socketAddressObject(globalObject, address, address.length);
@@ -1422,13 +1895,11 @@ static JSValue socketRecvInto(JSGlobalObject* globalObject, JSValue self, JSValu
         return { };
     ssize_t count = 0;
     if (size) {
-        bool succeeded = socketCall(globalObject, socket, false, socketTimeoutOf(socket), [&] {
+        bool succeeded = socketReceiveCall(globalObject, socket, flags, size, count, [&](int more, size_t taken, size_t room, SocketCallNotes* notes) -> ssize_t {
             if (failed(scope, refreshBuffer(globalObject, holder.buffer)))
-                return false;
-            AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
-            count = recv(socketDescriptor(socket), holder.buffer.data, size, flags);
-            return count >= 0;
-        }, socketOptionsForFlags(flags));
+                return -1;
+            return socketReceiveWithoutGIL(globalObject, socket, holder.buffer.data + taken, room, flags | more, nullptr, notes);
+        });
         if (failed(scope, succeeded))
             return { };
     }
@@ -1449,15 +1920,15 @@ static JSValue socketRecvFromInto(JSGlobalObject* globalObject, JSValue self, JS
         || failed(scope, socketAddressLength(globalObject, socket, capacity)))
         return { };
     ssize_t count = 0;
-    bool succeeded = socketCall(globalObject, socket, false, socketTimeoutOf(socket), [&] {
+    bool succeeded = socketReceiveCall(globalObject, socket, flags, size, count, [&](int more, size_t taken, size_t room, SocketCallNotes* notes) -> ssize_t {
         if (failed(scope, refreshBuffer(globalObject, holder.buffer)))
-            return false;
+            return -1;
+        if (taken)
+            return socketReceiveWithoutGIL(globalObject, socket, holder.buffer.data + taken, room, flags | more, nullptr, notes);
         memset(&address.storage, 0, sizeof(address.storage));
         address.length = capacity;
-        AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
-        count = recvfrom(socketDescriptor(socket), holder.buffer.data, size, flags, &address.generic, &address.length);
-        return count >= 0;
-    }, socketOptionsForFlags(flags));
+        return socketReceiveWithoutGIL(globalObject, socket, holder.buffer.data, room, flags | more, &address, notes);
+    });
     if (failed(scope, succeeded))
         return { };
     JSValue sender = socketAddressObject(globalObject, address, address.length);
@@ -1548,7 +2019,7 @@ static JSValue socketReceiveMessage(JSGlobalObject* globalObject, PyRecord* sock
         AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
         count = recvmsg(socketDescriptor(socket), &message, flags);
         return count >= 0;
-    }, socketOptionsForFlags(flags));
+    }, socketOptionsForReceiveFlags(socket, flags));
     if (failed(scope, succeeded))
         return { };
 
@@ -1652,14 +2123,12 @@ static JSValue socketSend(JSGlobalObject* globalObject, JSValue self, JSValue da
     int flags = 0;
     if (failed(scope, holder.get(data)) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))))
         return { };
-    ssize_t count = 0;
-    bool succeeded = socketCall(globalObject, socket, true, socketTimeoutOf(socket), [&] {
+    size_t count = 0;
+    bool succeeded = socketSendCall(globalObject, socket, socketTimeoutOf(socket), flags, holder.buffer.length, SocketSend::Whole, count, [&](int flags, size_t taken, size_t room, SocketCallNotes* notes) -> ssize_t {
         if (failed(scope, refreshBuffer(globalObject, holder.buffer)))
-            return false;
-        AllowThreads allow(globalObject);
-        count = send(socketDescriptor(socket), holder.buffer.data, holder.buffer.length, flags);
-        return count >= 0;
-    }, socketOptionsForFlags(flags));
+            return -1;
+        return socketSendWithoutGIL(globalObject, socketDescriptor(socket), holder.buffer.data + taken, room, flags, nullptr, notes);
+    });
     if (failed(scope, succeeded))
         return { };
     RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, count));
@@ -1689,14 +2158,12 @@ static JSValue socketSendAll(JSGlobalObject* globalObject, JSValue self, JSValue
             if (timeout <= 0)
                 return raise(globalObject, scope, rt.TimeoutError(), "timed out"_s);
         }
-        ssize_t count = 0;
-        bool succeeded = socketCall(globalObject, socket, true, timeout, [&] {
+        size_t count = 0;
+        bool succeeded = socketSendCall(globalObject, socket, timeout, flags, holder.buffer.length - sent, SocketSend::Part, count, [&](int flags, size_t, size_t room, SocketCallNotes* notes) -> ssize_t {
             if (failed(scope, refreshBuffer(globalObject, holder.buffer)))
-                return false;
-            AllowThreads allow(globalObject);
-            count = send(socketDescriptor(socket), holder.buffer.data + sent, holder.buffer.length - sent, flags);
-            return count >= 0;
-        }, socketOptionsForFlags(flags));
+                return -1;
+            return socketSendWithoutGIL(globalObject, socketDescriptor(socket), holder.buffer.data + sent, room, flags, nullptr, notes);
+        });
         if (failed(scope, succeeded))
             return { };
         sent += count;
@@ -1724,14 +2191,12 @@ static JSValue socketSendTo(JSGlobalObject* globalObject, JSValue self, const Ca
         return { };
     if (failed(scope, audit(globalObject, "socket.sendto"_s, self, args[args.size() - 1])))
         return { };
-    ssize_t count = 0;
-    bool succeeded = socketCall(globalObject, socket, true, socketTimeoutOf(socket), [&] {
+    size_t count = 0;
+    bool succeeded = socketSendCall(globalObject, socket, socketTimeoutOf(socket), flags, holder.buffer.length, SocketSend::Whole, count, [&](int flags, size_t taken, size_t room, SocketCallNotes* notes) -> ssize_t {
         if (failed(scope, refreshBuffer(globalObject, holder.buffer)))
-            return false;
-        AllowThreads allow(globalObject);
-        count = sendto(socketDescriptor(socket), holder.buffer.data, holder.buffer.length, flags, &address.generic, address.length);
-        return count >= 0;
-    }, socketOptionsForFlags(flags));
+            return -1;
+        return socketSendWithoutGIL(globalObject, socketDescriptor(socket), holder.buffer.data + taken, room, flags, &address, notes);
+    });
     if (failed(scope, succeeded))
         return { };
     RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, count));
@@ -1776,6 +2241,11 @@ static JSValue socketSendMsg(JSGlobalObject* globalObject, JSValue self, JSValue
     SocketBufferList ancillary(globalObject);
     Vector<Header, 4> headers;
     size_t controlSize = 0;
+    // Without the descriptors, which go with the first byte whatever follows in the same call. All else is for every byte of the call (credentials, a mark).
+    size_t controlSizeOfLaterCalls = 0;
+    auto isForFirstByte = [](const Header& header) {
+        return header.level == SOL_SOCKET && header.type == SCM_RIGHTS;
+    };
     for (unsigned i = 0; i < ancillaryItems.size(); ++i) {
         JSValue item = ancillaryItems.at(i);
         auto* tuple = PyTuple::tryFrom(item);
@@ -1800,6 +2270,8 @@ static JSValue socketSendMsg(JSGlobalObject* globalObject, JSValue self, JSValue
         if (!socketControlSpace(ancillary.at(i).length, space))
             RELEASE_AND_RETURN(scope, socketRaiseOSError(globalObject, "ancillary data item too large"_s));
         controlSize += space;
+        if (!isForFirstByte(header))
+            controlSizeOfLaterCalls += space;
         if (controlSize > socketLengthLimit)
             RELEASE_AND_RETURN(scope, socketRaiseOSError(globalObject, "too much ancillary data"_s));
     }
@@ -1807,24 +2279,47 @@ static JSValue socketSendMsg(JSGlobalObject* globalObject, JSValue self, JSValue
     if (!control.tryGrow(controlSize))
         RELEASE_AND_RETURN(scope, socketRaiseMemoryError(globalObject));
 
-    ssize_t count = 0;
-    bool succeeded = socketCall(globalObject, socket, true, socketTimeoutOf(socket), [&] {
+    size_t length = 0;
+    for (size_t i = 0; i < buffers.size(); ++i)
+        length += buffers.at(i).length;
+    size_t count = 0;
+    bool succeeded = socketSendCall(globalObject, socket, socketTimeoutOf(socket), flags, length, SocketSend::Whole, count, [&](int flags, size_t taken, size_t room, SocketCallNotes* notes) -> ssize_t {
         if (failed(scope, buffers.fillVectors()) || failed(scope, ancillary.fillVectors()))
-            return false;
+            return -1;
         message.msg_iov = buffers.vectors();
         message.msg_iovlen = buffers.size();
-        if (controlSize) {
+        message.msg_control = nullptr;
+        message.msg_controllen = 0;
+        for (size_t skipped = taken; skipped;) {
+            size_t part = std::min(skipped, message.msg_iov->iov_len);
+            message.msg_iov->iov_base = static_cast<uint8_t*>(message.msg_iov->iov_base) + part;
+            message.msg_iov->iov_len -= part;
+            skipped -= part;
+            if (!message.msg_iov->iov_len) {
+                ++message.msg_iov;
+                --message.msg_iovlen;
+            }
+        }
+        if (taken) {
+            for (size_t i = 0; i < static_cast<size_t>(message.msg_iovlen); ++i) {
+                message.msg_iov[i].iov_len = std::min(message.msg_iov[i].iov_len, room);
+                room -= message.msg_iov[i].iov_len;
+            }
+        }
+        if (size_t size = taken ? controlSizeOfLaterCalls : controlSize) {
             // CMSG_NXTHDR() looks at the length in the header it steps to.
-            memset(control.mutableSpan().data(), 0, controlSize);
+            memset(control.mutableSpan().data(), 0, size);
             message.msg_control = control.mutableSpan().data();
-            message.msg_controllen = controlSize;
+            message.msg_controllen = size;
             struct cmsghdr* header = nullptr;
             for (size_t i = 0; i < headers.size(); ++i) {
+                if (taken && isForFirstByte(headers[i]))
+                    continue;
                 header = header ? CMSG_NXTHDR(&message, header) : CMSG_FIRSTHDR(&message);
                 size_t length;
                 if (!header || !socketControlLength(ancillary.at(i).length, length)) {
                     raiseRuntimeError(globalObject, scope, "ancillary data does not fit in calculated space"_s);
-                    return false;
+                    return -1;
                 }
                 header->cmsg_len = length;
                 header->cmsg_level = headers[i].level;
@@ -1833,10 +2328,8 @@ static JSValue socketSendMsg(JSGlobalObject* globalObject, JSValue self, JSValue
                     memcpy(CMSG_DATA(header), ancillary.at(i).data, ancillary.at(i).length);
             }
         }
-        AllowThreads allow(globalObject);
-        count = sendmsg(socketDescriptor(socket), &message, flags);
-        return count >= 0;
-    }, socketOptionsForFlags(flags));
+        return socketSendMessageWithoutGIL(globalObject, socketDescriptor(socket), message, flags, notes);
+    });
     if (failed(scope, succeeded))
         return { };
     RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, count));

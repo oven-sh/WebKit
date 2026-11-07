@@ -102,6 +102,8 @@ struct SignalState {
 } // namespace
 
 static SignalState s_signalState;
+// How many signals that the program wants to hear of have arrived on the thread.
+static thread_local std::atomic<unsigned> t_signalsArrived;
 
 // ---- What runs when a signal arrives: only what is safe there ----
 
@@ -173,8 +175,12 @@ static void signalArrivedOnThread(int number, siginfo_t*, void* context)
         s_signalState.isShielded[number].store(false);
         signalSetAction(number, SIG_DFL);
         ::raise(number);
-    } else
+    } else {
+        // (The runtime sends that one to its threads itself.)
+        if (number != signalThatInterruptsThreads())
+            t_signalsArrived.store(t_signalsArrived.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
         signalTrip(number);
+    }
     errno = savedErrno;
 }
 
@@ -414,6 +420,8 @@ bool checkOnlySignals(JSGlobalObject* globalObject)
     JSGlobalObject* ofHandlers = signalGlobalObjectOfHandlers(globalObject);
     return !ofHandlers || signalRunHandlers(ofHandlers);
 }
+
+unsigned signalsArrivedOnThread() { return t_signalsArrived.load(std::memory_order_relaxed); }
 
 static JSValue signalDefaultIntHandler(JSGlobalObject* globalObject, JSValue numberValue, JSValue)
 {
@@ -1343,6 +1351,7 @@ void initializeSignalModule(JSGlobalObject* globalObject, PyModule* module)
 bool checkSignals(JSGlobalObject* globalObject) { return !runtime(globalObject).threads().throwIfHostEndsWhatRuns(); }
 bool checkOnlySignals(JSGlobalObject*) { return true; }
 bool signalMayEndWait(JSGlobalObject*) { return false; }
+unsigned signalsArrivedOnThread() { return 0; }
 bool simulateSignal(JSGlobalObject*, int number) { return number >= 1 && number < 23; }
 void installSignalHandlers(JSGlobalObject*) { }
 void finalizeSignals(JSGlobalObject*) { }
