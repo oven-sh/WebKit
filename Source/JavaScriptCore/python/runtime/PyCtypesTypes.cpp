@@ -404,6 +404,11 @@ static bool updateStructInfo(JSGlobalObject* globalObject, PyType* type, JSValue
         raise(globalObject, scope, rt.AttributeError(), "_fields_ is final"_s);
         return false;
     }
+    // A metaclass derived from this one and another has the methods of both, for classes that only one of them knows about.
+    if (info->kind != TypeKind::Structure && info->kind != TypeKind::Union) {
+        raiseTypeError(globalObject, scope, '\'', type->name(), "' is no structure and no union"_s);
+        return false;
+    }
 
     JSValue module = importModule(globalObject, "ctypes._layout"_s);
     RETURN_IF_EXCEPTION(scope, false);
@@ -612,7 +617,8 @@ static JSValue pointerMetaSetType(JSGlobalObject* globalObject, JSValue self, JS
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCTypeInfo* info = infoOf(globalObject, self);
-    if (!info)
+    // Where a pointer has the type it points to, a simple type has its code and an array the type of its items.
+    if (!info || info->kind == TypeKind::Simple || info->kind == TypeKind::Array)
         RELEASE_AND_RETURN(scope, raiseAbstractClass(globalObject));
     if (failed(scope, setPointerProto(globalObject, PyType::from(self), info, proto)))
         return { };
@@ -988,7 +994,7 @@ static JSValue simpleMetaFromParam(JSGlobalObject* globalObject, JSValue self, J
     if (isOfType)
         return value;
     PyCTypeInfo* info = infoOf(globalObject, self);
-    if (!info)
+    if (!info || info->kind != TypeKind::Simple)
         RELEASE_AND_RETURN(scope, raiseAbstractClass(globalObject));
     const CodeDescription* description = describeCode(stringOf(strValue(info->proto.get())));
     ASSERT(description);
