@@ -896,12 +896,18 @@ void Modules::copyExportsOfFinishedFile(ModuleID face)
 
 void Modules::captureExportsAgain(ModuleID fileOrFace)
 {
+    if (forgetCapturedExports(fileOrFace))
+        captureExports(m_table.faceOfFile(fileOrFace).value_or(fileOrFace));
+}
+
+bool Modules::forgetCapturedExports(ModuleID fileOrFace)
+{
     ModuleID module = m_table.faceOfFile(fileOrFace).value_or(fileOrFace);
     if (!isCommonJSFileOrFace(module) || !didCaptureExports(module))
-        return;
+        return false;
     LoadedModule& loaded = ensureLoaded(module);
     if (loaded.didDropError || loaded.exportsWhatMockNamesAlone)
-        return;
+        return false;
     loaded.capturedExports.set(*this, nullptr);
     loaded.deferredExportsSource.set(*this, nullptr);
     loaded.capturedFields.set(*this, nullptr);
@@ -914,7 +920,7 @@ void Modules::captureExportsAgain(ModuleID fileOrFace)
             m_modulesWithEarlierNamespaceInValue.set(module.index());
         loaded.namespaceObject.set(*this, nullptr);
     }
-    captureExports(module);
+    return true;
 }
 
 void Modules::endMockOfLibraryModule(ModuleID module)

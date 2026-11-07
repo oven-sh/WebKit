@@ -356,6 +356,10 @@ public:
     JSValue readExportOfModuleItself(ModuleID, unsigned index);
     bool hasMockLaidOver(ModuleID) const;
     LoadedBy whoLoaded(ModuleID);
+    void didEmptyKeyOfMockInPlace(ModuleID fileOrModule);
+    void noteAskUnderMockInPlace(ModuleID fileOrModule);
+    LoadedBy whoLoadedMockInPlaceAnew(ModuleID fileOrModule);
+    bool isKeyOfMockInPlaceEmpty(ModuleID fileOrModule) { return mockInPlace(fileOrModule) && ensureLoaded(moduleWithExportsOf(fileOrModule)).nextAskLoadsMockInPlace; }
     void willRunBodyOfRecord(ModuleID, ModuleRecord*);
     void keepExportsBehindEntryOfProgram(ModuleID);
     void forgetExportsBehindEntryOfProgram(ModuleID);
@@ -740,6 +744,7 @@ public:
     void runFileThatWaitsForItsTurn(ModuleID);
     bool isAskedForBehindLoadInFlight(ModuleID fileOrFace);
     void captureExportsAgain(ModuleID);
+    bool forgetCapturedExports(ModuleID);
     void exportWhatMockNamesAlone(ModuleID file, bool hasRun);
     bool exportsWhatMockNamesAlone(ModuleID) const;
     void fillNamesThatMockLacks(ModuleID file);
@@ -991,6 +996,8 @@ private:
         bool wasRequiredUnderMockInPlace { false };
         bool wasImportedUnderMockInPlace { false };
         uint32_t momentOfTestFileThatLoadedItUnderMockInPlace { 0 };
+        bool nextAskLoadsMockInPlace { false };
+        uint32_t momentOfTestFileThatLoadedMockInPlaceAnew { 0 };
         bool exportsOfMockAreOfCommonJSModule { false };
         bool wasLoadedBehindMock { false };
         bool wasRequiredBehindMock { false };
@@ -1155,8 +1162,8 @@ private:
 
     std::optional<ModuleID> findByName(const Identifier& key);
     enum class FormWithoutAttributes : bool { MayAnswer, IsAnotherModule };
-    std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*, FormWithoutAttributes = FormWithoutAttributes::MayAnswer);
-    std::optional<ModuleID> findFormUnderWrittenName(JSString* name, const ScriptFetchParameters&);
+    std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*, FormWithoutAttributes = FormWithoutAttributes::MayAnswer, std::optional<ModuleID> foundUnderWrittenName = std::nullopt);
+    std::optional<ModuleID> findFormUnderWrittenName(JSString* name, ModuleID referrer, const ScriptFetchParameters&);
     Identifier keyWithoutForm(ModuleID file);
     std::optional<ModuleID> findFormThatStatementLoaded(const Identifier& key, const ScriptFetchParameters&, std::optional<ModuleID> asked) const;
     bool wasImporterLoaded(ModuleID) const;

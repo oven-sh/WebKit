@@ -1397,6 +1397,7 @@ public:
     std::optional<uint32_t> outermostLoopToMakeTextInFrontOf(std::span<const Reference> operands, const Effects& ofText) const;
     Reference askInFrontOfOpenLoopWhetherItsFirstTurnBegins(uint32_t indexOfLoop);
     bool goOnInFrontOfTypedCopyWhereItsFirstTurnBegins();
+    bool isInSightWhereWalkBuilds(Reference) const;
     bool everyTurnOfTypedCopyThatComesRoundPassesHere() const;
     std::optional<uint32_t> outermostLoopToLookUpInFrontOf(std::span<const Reference> operands, const Effects& ofLookup) const;
     void holdLookupInFrontAgainstLookupInTurn(Reference believed, Draft&& lookedUpAgain, const Effects& ofLookup, ProofSource = ProofSource::WhatIsRemembered);

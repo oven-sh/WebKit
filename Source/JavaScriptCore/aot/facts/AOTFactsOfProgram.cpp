@@ -3240,6 +3240,7 @@ public:
     bool liesInModuleThatProgramHolds(BuiltinID canonical) const;
     void takeBuiltinsThatCameOutOfSight(Vector<BuiltinID>&);
     bool objectsMayHaveMethodCalledWithStartupLoads() const { return m_objectsMayHaveMethodCalledWithStartupLoads; }
+    bool climberMayBeHandedWhatNobodyKnows() const { return m_climberMayBeHandedWhatNobodyKnows; }
     bool isOutOfSight(BuiltinID canonical) const { return m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isOutOfSight.quickGet(canonical.index()); }
     bool machineCodeMayBeLoaded() const;
     bool isAskedForOtherNames(BuiltinID canonical) const { return m_lightFormsAskedForMore.get(canonical.index()) || m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isOutOfSight.quickGet(canonical.index()); }
@@ -3391,6 +3392,7 @@ private:
     Vector<Witness> m_witnessesOfEscapes;
     BitVector m_isLetGo;
     bool m_followsClimbsFromWhatIsLetGo { false };
+    bool m_climberMayBeHandedWhatNobodyKnows { false };
     BitVector m_isOutOfSight;
     BitVector m_isCalledOutOfSightOfLink;
     BitVector m_isCalledWithoutRow;
@@ -4021,6 +4023,15 @@ void BuilderOfProgramFacts::noteCallWhoseRowsLinkTells(uint64_t call, BuiltinID 
     }
 }
 
+static bool handsOutPrototypeOfOperandInProgramFacts(const BuiltinTable& builtins, const BuiltinOverload& overload)
+{
+    if (overload.result.type && std::ranges::contains(builtins.at(overload.result.type).parts, BuiltinTypePartKind::Prototype, &BuiltinTypePart::kind))
+        return true;
+    return std::ranges::any_of(overload.flow.transfers, [](const BuiltinTransfer& transfer) {
+        return transfer.from.kind == BuiltinPlaceKind::Prototype;
+    });
+}
+
 void BuilderOfProgramFacts::noteWhatRowsMake(BuiltinID canonical)
 {
     const Builtin& entry = m_builtins.at(canonical);
@@ -4055,6 +4066,8 @@ void BuilderOfProgramFacts::noteWhatRowsMake(BuiltinID canonical)
         });
         if (mayPrintWhatNobodyKnows || mayDescribeWhatNobodyKnows)
             noteObjectHandedToFormatter(true);
+        if (mayBeHandedWhatNobodyKnows && overload.mode == BuiltinCallMode::Call && handsOutPrototypeOfOperandInProgramFacts(m_builtins, overload))
+            m_climberMayBeHandedWhatNobodyKnows = true;
         const RuntimeFunctionEntry* code = findRuntimeFunction(m_source, overload.code.implementation.function);
         bool programHoldsCode = code && code->function;
         if (overload.isUndeclared() && (programHoldsCode || isExportOfCompiledModule))
@@ -6393,6 +6406,11 @@ void BuiltinsInReach::noteClimbFromLostBuiltins()
     m_wasToldSomethingNew |= !std::exchange(m_linked->lookups.climbsFromLostBuiltins, true);
 }
 
+void BuiltinsInReach::noteOperandsHandedToCalleeNobodyKnows()
+{
+    m_wasToldSomethingNew |= !std::exchange(m_linked->lookups.handsOperandsToCalleesNobodyKnows, true);
+}
+
 void BuiltinsInReach::noteClimbFromUnseenObjects()
 {
     m_wasToldSomethingNew |= !std::exchange(m_linked->lookups.climbsFromUnseenObjects, true);
@@ -6460,6 +6478,10 @@ void BuiltinsInReach::settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>
     if (!std::exchange(m_wasToldSomethingNew, false))
         return;
     m_builder->settle();
+    if (m_linked->lookups.handsOperandsToCalleesNobodyKnows && m_builder->climberMayBeHandedWhatNobodyKnows()) {
+        if (!std::exchange(m_linked->lookups.climbsFromUnseenObjects, true))
+            m_builder->settle();
+    }
     m_builder->takeBuiltinsThatCameIntoReach(cameIntoReach);
     m_builder->takeBuiltinsThatCameOutOfSight(cameOutOfSight);
 

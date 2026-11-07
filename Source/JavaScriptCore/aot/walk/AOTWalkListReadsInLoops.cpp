@@ -1342,14 +1342,15 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
         namesAskedInFront.shrink(0);
         textsJoined.shrink(0);
     }
+    Reference roomByCount = room;
     auto roomOfLiteralFilledFromItsEnd = [&](Reference list) -> Reference {
         const Operation& born = walker.code().at(rootOfCellInSweptCode(walker.code(), list.id()));
         if (born.opcode != Opcode::NewArray || born.storage() != AllocationStorage::Heap || !born.holes().empty() || born.elementsOperands().empty())
             return { };
         int64_t written = born.elementsOperands().size();
-        Reference filled = room;
+        Reference filled = roomByCount;
         if (listsPushedOnto.contains(list)) {
-            Reference turnsLeft = buildOperatorOnIntegersOfLoop(walker, Opcode::Sub, room, entering[placeOfCounter], origin);
+            Reference turnsLeft = buildOperatorOnIntegersOfLoop(walker, Opcode::Sub, roomByCount, entering[placeOfCounter], origin);
             filled = turnsLeft ? buildOperatorOnIntegersOfLoop(walker, Opcode::Add, turnsLeft, integerWritten(written), origin) : Reference();
         } else if (integersThatEnter != Range::one(written))
             return { };
@@ -1365,7 +1366,6 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
             value = walker.code().at(value).valueOperand();
         return value;
     };
-    Reference roomByCount = room;
     for (Reference list : lists) {
         if (!countAloneEndsLoop) {
             room = roomOfLiteralFilledFromItsEnd(list);

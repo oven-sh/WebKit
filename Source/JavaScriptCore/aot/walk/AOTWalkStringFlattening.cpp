@@ -67,7 +67,8 @@ Reference flatStringInSight(Walker& walker, Reference string)
         return { };
     if (walker.types().at(walker.typeOf(string)).isOpaque(OpaqueKind::FlatString))
         return string;
-    return flatStringNotedForFlattening(walker, string);
+    Reference flat = flatStringNotedForFlattening(walker, string);
+    return flat && walker.isInSightWhereWalkBuilds(flat) ? flat : Reference();
 }
 
 Reference flatStringMadeWhereWalkStands(Walker& walker, Reference string, Origin origin)
