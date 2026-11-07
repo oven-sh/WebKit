@@ -497,6 +497,9 @@ public:
     }
 
     JSValue invoke(JSGlobalObject*, const CallArgs&);
+    JSValue invokeInline(JSGlobalObject*, const CallArgs&); // (PyNative.cpp)
+    // The same, for a function that takes its arguments as they are.
+    JSValue invokeWithArgumentsAsTheyAre(JSGlobalObject*, const CallArgs&);
     // For a Method or a SlotWrapper, when `self` is known to be an instance of the owner.
     JSValue invokeWithSelf(JSGlobalObject*, JSValue self, const CallArgs&);
     // T.__new__(S, ...): the one place where the C++ function of a type is handed a class that somebody else has picked.

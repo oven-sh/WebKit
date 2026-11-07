@@ -467,19 +467,36 @@ static NEVER_INLINE bool checkSignalsAfterCall(JSGlobalObject* globalObject, Cal
     return checkOnlySignals(globalObject);
 }
 
-JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEVER_INLINE, (JSGlobalObject* globalObject, CallFrame* callFrame))
+// invoke() has room in its frame for the arguments of a function with parameters, and nothing is written there on the way to one without: what earlier frames left in it would be under
+// the eyes of the collector for as long as the function takes, and some of them wait (recv, recvmsg). See fileIOReadWithoutGIL(). So a function, static method or method that takes
+// its arguments as they are has a way of its own, under frames without that room. (For a call that has a frame of its own: what C++ calls, Python::call() for functools.partial, map
+// and the like, goes by way of invoke().) Neither the signature nor the kind changes.
+static ALWAYS_INLINE bool isCalledWithArgumentsAsTheyAre(const NativeDef& def, NativeKind kind)
+{
+    return def.signature.isVariadic && !def.signature.isMadeAtRunTime && (kind == NativeKind::Function || kind == NativeKind::StaticMethod || kind == NativeKind::Method);
+}
+
+template<bool withArgumentsAsTheyAre>
+static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES callNativeFunctionWithFrameBy(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto* function = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee());
+    ASSERT(withArgumentsAsTheyAre == isCalledWithArgumentsAsTheyAre(function->def(), function->kind()));
     CallArgs args(callFrame);
     bool hasMarker = !args.hasKeywords() && hasKeywordMarker(globalObject, callFrame);
     // As for a function written in Python: what JS passes beyond what it can take is dropped. array.map(len)
-    if (const NativeSignature& signature = function->def().signature; !signature.isVariadic && function->kind() != NativeKind::New && !args.hasKeywords() && !hasMarker) {
+    if (const NativeSignature& signature = function->def().signature; !withArgumentsAsTheyAre && !signature.isVariadic && function->kind() != NativeKind::New && !args.hasKeywords() && !hasMarker) {
         unsigned most = ((function->def().flags & OptionalParametersAreNotForJS) ? signature.minPositional : signature.maxPositional) + (function->isDescriptor() ? 1 : 0);
         if (args.size() > most && !isBeingCalledByPython(globalObject, callFrame)) [[unlikely]]
             args = CallArgs(args.positional().first(most));
     }
     VM& vm = getVM(globalObject);
-    JSValue result = hasMarker ? callWithKeywordMarker(globalObject, callFrame) : function->invoke(globalObject, args);
+    JSValue result;
+    if (hasMarker) [[unlikely]]
+        result = callWithKeywordMarker(globalObject, callFrame);
+    else if constexpr (withArgumentsAsTheyAre)
+        result = function->invokeWithArgumentsAsTheyAre(globalObject, args);
+    else
+        result = function->invokeInline(globalObject, args);
     // The frame of this function is gone when that one runs.
     if (!result && (function->def().flags & MayWait)) [[unlikely]] {
         switch (runtime(globalObject).threads().takeRequestToCallAgain(callFrame)) {
@@ -494,6 +511,14 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEV
     if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkSignalsAfterCall(globalObject, callFrame)) [[unlikely]]
         return { };
     return JSValue::encode(resultForCaller(globalObject, callFrame, result));
+}
+
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEVER_INLINE, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto* function = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee());
+    if (isCalledWithArgumentsAsTheyAre(function->def(), function->kind()))
+        [[clang::musttail]] return callNativeFunctionWithFrameBy<true>(globalObject, callFrame);
+    [[clang::musttail]] return callNativeFunctionWithFrameBy<false>(globalObject, callFrame);
 }
 
 // ---- Calls that are simply in order ----
@@ -563,8 +588,10 @@ static PyNativeFunction::Entry entryFor(const NativeDef& def, NativeKind kind, J
     if (def.flags & OptionalParametersAreNotForJS)
         return callNativeFunctionWithParametersNotForJS;
     auto& signature = def.signature;
+    if (isCalledWithArgumentsAsTheyAre(def, kind))
+        return callNativeFunctionWithFrameBy<true>;
     if (signature.isVariadic || signature.hasRequiredKeywordOnly || (def.flags & DescriptorGet))
-        return callNativeFunctionWithFrame;
+        return callNativeFunctionWithFrameBy<false>;
     unsigned arity = signature.parameterCount + signature.hasSelf;
     switch (kind) {
     case NativeKind::Function:
@@ -574,10 +601,10 @@ static PyNativeFunction::Entry entryFor(const NativeDef& def, NativeKind kind, J
     case NativeKind::SlotWrapper:
         if (signature.hasSelf && PyType::is(owner))
             return entryInOrder<SelfOfCall::FirstArgument>(arity);
-        return callNativeFunctionWithFrame;
+        return callNativeFunctionWithFrameBy<false>;
     case NativeKind::ClassMethod:
     case NativeKind::New:
-        return callNativeFunctionWithFrame;
+        return callNativeFunctionWithFrameBy<false>;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -700,7 +727,28 @@ JSValue PyNativeFunction::makeInstance(JSGlobalObject* globalObject, PyType* typ
     return type ? makeInstanceInline<true>(globalObject, type, subtype, args) : makeInstanceInline<false>(globalObject, nullptr, subtype, args);
 }
 
-JSValue PyNativeFunction::invoke(JSGlobalObject* globalObject, const CallArgs& args)
+// See isCalledWithArgumentsAsTheyAre().
+NEVER_INLINE JSValue PyNativeFunction::invokeWithArgumentsAsTheyAre(JSGlobalObject* globalObject, const CallArgs& args)
+{
+    const NativeDef& def = *m_def;
+    ASSERT(def.signature.isVariadic && !def.signature.isMadeAtRunTime);
+    bool isMethod = m_kind == NativeKind::Method;
+    ASSERT(isMethod || m_kind == NativeKind::Function || m_kind == NativeKind::StaticMethod);
+    // (It has what to say of all else.)
+    if (!getVM(globalObject).isSafeToRecurseSoft() || (isMethod && (args.isEmpty() || !typeOf(globalObject, args[0])->isSubtypeOf(ownerType())))) [[unlikely]]
+        return invoke(globalObject, args);
+    if (!isMethod)
+        return def.signature.hasSelf ? def.pointer.variadicWithSelf(globalObject, m_self.get(), args) : def.pointer.variadic(globalObject, args);
+    return def.signature.hasSelf ? def.pointer.variadicWithSelf(globalObject, args[0], args.withoutFirst()) : def.pointer.variadic(globalObject, args.withoutFirst());
+}
+
+// (Not to be made part of invokeWithArgumentsAsTheyAre(), or that would have its room all the same.)
+NEVER_INLINE JSValue PyNativeFunction::invoke(JSGlobalObject* globalObject, const CallArgs& args)
+{
+    return invokeInline(globalObject, args);
+}
+
+ALWAYS_INLINE JSValue PyNativeFunction::invokeInline(JSGlobalObject* globalObject, const CallArgs& args)
 {
     switch (m_kind) {
     case NativeKind::Function:
