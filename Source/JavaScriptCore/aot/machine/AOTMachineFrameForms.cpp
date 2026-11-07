@@ -154,6 +154,11 @@ void emitFrameSetup(CCallHelpers& jit, const Procedure& proc, std::span<const GP
     RELEASE_ASSERT(registersPushedIntoFirstSlots.empty());
     emitFrameSetup(jit, proc);
 }
+
+void emitTeardownOfFrameThatPopsWords(CCallHelpers&, const Frame&, std::span<const GPRReg>)
+{
+    RELEASE_ASSERT_NOT_REACHED();
+}
 #endif
 
 } } } // namespace JSC::AOT::Machine

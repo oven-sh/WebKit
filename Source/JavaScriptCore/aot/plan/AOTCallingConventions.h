@@ -159,6 +159,7 @@ public:
     bool hasFusedCallEntry(FunctionID id) const { return m_functionsWithFusedCallEntry.get(id.index()); }
     JS_EXPORT_PRIVATE void fuseCallEntriesThatOnlyMove(const Program&, const Facts&, const ParallelLoops&);
     bool holdsFusedCallEntry(CodeUnit unit) const { return hasFusedCallEntry(unit.function) && unit == genericEntry(closureEntryOf(unit.function)).target; }
+    bool callEntryIsNumberOfModuleStart(FunctionID id) const { return hasFusedCallEntry(id) && of(id).has(CodeRole::ModuleStart); }
     bool haveNeighboringClosureNumbers(FunctionID lower, FunctionID higher) const
     {
         ASSERT(lower < higher && higher.index() < m_parts.conventions.size());

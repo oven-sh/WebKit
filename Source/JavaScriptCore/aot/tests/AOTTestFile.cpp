@@ -82,6 +82,7 @@ private:
         bool requiresCodeOutsideImage { false };
         bool requiresTargetWithoutJSCVT { false };
         bool requiresEntriesOfBun { false };
+        bool requiresOptionsAsWritten { false };
     };
 
     struct OpenSection {
@@ -708,6 +709,7 @@ static constexpr ASCIILiteral callingLoopPolls = "calling-loop-polls"_s;
 static constexpr ASCIILiteral codeOutsideImage = "code-outside-image"_s;
 static constexpr ASCIILiteral noJSCVT = "no-jscvt"_s;
 static constexpr ASCIILiteral entriesOfBun = "entries-of-bun"_s;
+static constexpr ASCIILiteral asWritten = "as-written"_s;
 #if ASAN_ENABLED
 static constexpr bool isBuiltWithAddressSanitizer = true;
 #else
@@ -734,12 +736,12 @@ void TestFileParser::parseRequires(const DirectiveLine& directive)
         return;
     }
     for (StringView word : words) {
-        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == windows ? group->requiresWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == callingLoopPolls ? group->requiresCallingLoopPolls : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : word == entriesOfBun ? group->requiresEntriesOfBun : group->hasRequiredArchitecture;
+        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == windows ? group->requiresWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == callingLoopPolls ? group->requiresCallingLoopPolls : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : word == entriesOfBun ? group->requiresEntriesOfBun : word == asWritten ? group->requiresOptionsAsWritten : group->hasRequiredArchitecture;
         if (std::exchange(isGiven, true)) {
             addError(directive.line, "REQUIRES is given twice for "_s, prefix);
             return;
         }
-        if (word == unsanitizedCode || word == notWindows || word == windows || word == faultingLoopPolls || word == callingLoopPolls || word == codeOutsideImage || word == noJSCVT || word == entriesOfBun)
+        if (word == unsanitizedCode || word == notWindows || word == windows || word == faultingLoopPolls || word == callingLoopPolls || word == codeOutsideImage || word == noJSCVT || word == entriesOfBun || word == asWritten)
             continue;
         group->requiredArchitecture = findNamedValue(targetArchitectures, word);
         if (!group->requiredArchitecture) {
@@ -886,6 +888,8 @@ void TestFileParser::finishCheckGroups()
                 return run.prefix == group.prefix;
             });
         }
+        for (RunDirective& run : m_file.runs)
+            run.isLeftOutUnderFurtherOptionWords |= group.requiresOptionsAsWritten && run.prefix == group.prefix;
         m_file.checkGroups.append(CheckGroup { WTF::move(group.prefix), WTF::move(group.lines) });
     }
 }

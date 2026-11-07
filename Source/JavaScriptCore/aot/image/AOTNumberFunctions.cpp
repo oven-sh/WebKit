@@ -12,9 +12,11 @@
 #include "AOTCallingConventions.h"
 #include "AOTIRProgram.h"
 #include "AOTImageBuilder.h"
+#include "AOTObjectWords.h"
 #include "AOTPlan.h"
 #include "AOTSort.h"
 #include "AOTStubKey.h"
+#include "AOTStubsPropertyKeys.h"
 #include "AOTThreads.h"
 #include <bit>
 #include <compare>
@@ -22,6 +24,7 @@
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/MathExtras.h>
+#include <wtf/Scope.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
@@ -48,7 +51,7 @@ static bool countOfImageFunctionsFits(BuildContext& context, LimitID limit, uint
     return false;
 }
 
-void ImageNumbersBuilder::numberFunctions()
+void ImageNumbersBuilder::numberFunctions(const NumberingInputs& inputs, ImageNumbers& numbers, BuildContext& context)
 {
     const Typed::CallingConventions& conventions = inputs.plan.conventions();
     const uint32_t firstDerived = static_cast<uint32_t>(inputs.program.functions.size());
@@ -56,14 +59,21 @@ void ImageNumbersBuilder::numberFunctions()
 
     BitVector closureEntries(numberOfUnits);
     BitVector otherDerivedUnits(numberOfUnits);
+    BitVector unitsShownInFrames(numberOfUnits);
     for (const CompiledCode& code : inputs.functions) {
         ASSERT(code.unitIndex == conventions.indexOf(code.unit));
         RELEASE_ASSERT(code.unitIndex < numberOfUnits);
+        for (size_t frame = 1; code.sites.hasEncodedInlineFrames() && frame < code.sites.inlineFrames.size(); ++frame) {
+            Typed::CodeUnit shown = code.body.callees[code.sites.inlineFrames[frame].callee];
+            if (shown.role != Typed::CodeRole::Body)
+                unitsShownInFrames.quickSet(conventions.indexOf(shown));
+        }
         if (code.unit.role == Typed::CodeRole::Body)
             continue;
         bool isListedTwice = (Typed::isGenericEntry(code.unit.role) ? closureEntries : otherDerivedUnits).quickSet(code.unitIndex);
         RELEASE_ASSERT(!isListedTwice);
     }
+    otherDerivedUnits.merge(unitsShownInFrames);
     for (const FusedCallEntry& fused : inputs.functions.fusedCallEntries()) {
         RELEASE_ASSERT(fused.unitIndex < numberOfUnits);
         bool isListedTwice = closureEntries.quickSet(fused.unitIndex);
@@ -103,12 +113,16 @@ void ImageNumbersBuilder::numberFunctions()
     numberUnitsInAscendingOrder(closureEntries);
     numberUnitsInAscendingOrder(otherDerivedUnits);
     AOT::sortInLine(idsOfUnitsBehindFunctions, { }, &FunctionNumbers::IDOfUnit::unit);
+}
 
+void ImageNumbersBuilder::checkEntriesOfMentionedClosures()
+{
+    const Typed::CallingConventions& conventions = inputs.plan.conventions();
     BitVector functionsOfMentionedClosures = mentions.byID(NumberSpace::ClosureFunction).isMentioned;
     functionsOfMentionedClosures.merge(mentions.byID(NumberSpace::ClosureCell).isMentioned);
     for (size_t index : functionsOfMentionedClosures) {
         FunctionID id(index);
-        if (closureEntries.get(conventions.indexOf(conventions.closureEntryOf(id))))
+        if (numbers.m_functions.idOf(conventions.indexOf(conventions.closureEntryOf(id))))
             continue;
         context.diagnostics().add(InternalError {
             .kind = InternalErrorKind::FunctionWithoutCode,
@@ -168,6 +182,18 @@ void ImageNumbersBuilder::numberClosureCellsAndClassRanks()
         if (program.layouts[index].kind == LayoutKind::Instance)
             numbers.m_classRanks[index] = numberOfClassRecords++;
     }
+
+    Vector<LayoutID> heirsLookedAt;
+    Vector<uint32_t> offsetsOfStructuresOfHeirs;
+    uint32_t sizeOfStructuresOfHeirs = 0;
+    for (size_t index : mentions.byID(NumberSpace::HeirLookedAt).isMentioned) {
+        heirsLookedAt.append(LayoutID(index));
+        offsetsOfStructuresOfHeirs.append(sizeOfStructuresOfHeirs);
+        sizeOfStructuresOfHeirs += static_cast<uint32_t>(StructuresOfHeir::sizeWithDisplacementsOfFields(program.layouts[index].fields.size()));
+    }
+    numbers.m_heirsLookedAt = WTF::move(heirsLookedAt);
+    numbers.m_offsetsOfStructuresOfHeirs = WTF::move(offsetsOfStructuresOfHeirs);
+    numbers.m_sizeOfStructuresOfHeirs = sizeOfStructuresOfHeirs;
 }
 
 static NEVER_INLINE void reportMentionWithoutNumber(const CompiledCode& code, const Mention& mention, ASCIILiteral holder, BuildContext& context)
@@ -187,6 +213,21 @@ static ALWAYS_INLINE std::optional<uint32_t> numberToPutInPlaceOfMention(const C
     if (!number)
         reportMentionWithoutNumber(code, mention, holder, context);
     return number;
+}
+
+static ALWAYS_INLINE bool mentionIsOfNameWithColumn(const CompiledCode& code, uint32_t mentionIndex, const ImageNumbers& numbers)
+{
+    const Mention& mention = code.body.mentions[mentionIndex];
+    std::span<const uint32_t> key = keyOf(mention, code.body.mentionWords.span());
+    PropertyKeyID name;
+    if (mention.space == NumberSpace::Name)
+        name = PropertyKeyID(key[0]);
+    else if (mention.space == NumberSpace::SiteCache && ImageNumbers::isPlaceWithSiteAnswers(key))
+        name = ImageNumbers::nameOfSite(key);
+    else
+        return false;
+    std::optional<uint32_t> number = numbers.identifiers().numberOf(name);
+    return number && *number && *number < InstanceLayout::nameOfSiteStandsBehind;
 }
 
 static void putNumberInThrowWordOfThunk(const CompiledCode& code, std::span<uint64_t> moves, size_t index, const ImageNumbers& numbers, BuildContext& context)
@@ -230,6 +271,10 @@ static void putNumbersInThrowWordsOfAccess(const CompiledCode& code, FaultingAcc
 void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& numbers, BuildContext& context)
 {
     forEachRangeOfIndicesInParallel(context.parallelLoops(), functions.size(), [&](size_t first, size_t end) {
+        uint64_t stubKeysLaidOnSiblings = 0;
+        auto countAtEnd = makeScopeExit([&] {
+            context.statistics().count(StatisticID::StubKeysLaidOnSiblingsUnderNamesWithColumn, stubKeysLaidOnSiblings);
+        });
         for (size_t position = first; position < end; ++position) {
             CompiledCode& code = functions[position];
             code.function = numbers.functions().idOf(code.unitIndex);
@@ -244,6 +289,13 @@ void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& num
 
             for (const NumberedStubKey& numbered : code.body.rareLists->numberedStubKeys) {
                 StubKey& key = code.body.stubKeys[numbered.stubKey];
+                if (!key.immediate()) {
+                    if (mentionIsOfNameWithColumn(code, numbered.mention, numbers)) {
+                        key = siblingUnderNameWithColumn(key).value();
+                        ++stubKeysLaidOnSiblings;
+                    }
+                    continue;
+                }
                 ASSERT(key.immediate() == std::optional<uint32_t>(0));
                 if (std::optional<uint32_t> immediate = numberToPutInPlaceOfMention(code, numbered.mention, "the key of a stub"_s, numbers, context))
                     key = key.withImmediate(*immediate);
@@ -253,6 +305,14 @@ void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& num
             for (size_t list = 0; list < numberOfLists; ++list) {
                 std::span<uint64_t> moves = code.body.argumentMoves[list];
                 RELEASE_ASSERT(moves.size() >= numberOfHeaderWords && !((moves.size() - numberOfHeaderWords) % 2));
+                if (moves[1] & (immediateIsMention | mentionNamesSiblingOfCallee)) {
+                    if (std::optional<StubKey> sibling = siblingUnderNameWithColumn(StubKey::fromBits(moves[0])); sibling && mentionIsOfNameWithColumn(code, static_cast<uint32_t>(moves[1]), numbers)) {
+                        moves[0] = sibling->bits();
+                        ++stubKeysLaidOnSiblings;
+                    }
+                    if (moves[1] & mentionNamesSiblingOfCallee)
+                        moves[1] = 0;
+                }
                 if (moves[1] & immediateIsMention) {
                     if (std::optional<uint32_t> immediate = numberToPutInPlaceOfMention(code, static_cast<uint32_t>(moves[1]), "the immediate that an argument thunk moves"_s, numbers, context))
                         moves[1] = hasImmediate | *immediate;

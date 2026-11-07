@@ -19,6 +19,7 @@ bool pushesSeveralValues(unsigned count);
 void emitArrayPushOfSeveral(StubAssembler&);
 
 void emitCallOfBooleanConstructor(StubAssembler&, GPRReg scratch);
+void emitCallOfNumberOrStringConstructor(StubAssembler&, GPRReg scratch);
 
 } } // namespace JSC::AOT
 

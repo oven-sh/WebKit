@@ -513,6 +513,26 @@ bool mapPrivateCloneOfImagePages(const Image& image, std::span<const uint8_t> pa
 }
 #endif
 
+#if OS(LINUX)
+bool mapPrivateCloneOfImagePages(const Image& image, std::span<const uint8_t> pages, void* target)
+{
+    RELEASE_ASSERT(!(pages.size() % pageSize()) && !(reinterpret_cast<uintptr_t>(target) % pageSize()));
+    RELEASE_ASSERT(pages.data() >= image.bytes().data() && pages.data() + pages.size() <= image.bytes().data() + image.bytes().size());
+    const std::optional<Image::PlaceInExecutable>& place = image.placeInExecutable();
+    if (!place)
+        return false;
+    int64_t offsetInFile = place->offset + (pages.data() - image.bytes().data());
+    if (offsetInFile % static_cast<int64_t>(pageSize()))
+        return false;
+    int descriptor = openExecutableThatHolds(image);
+    if (descriptor < 0)
+        return false;
+    bool isMapped = mmap(target, pages.size(), PROT_READ, MAP_PRIVATE | MAP_FIXED, descriptor, offsetInFile) == target;
+    close(descriptor);
+    return isMapped;
+}
+#endif
+
 static void unblockAccessFaults()
 {
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)

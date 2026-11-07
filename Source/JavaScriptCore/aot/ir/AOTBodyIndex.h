@@ -236,7 +236,7 @@ public:
         const BlockPlace& place = m_blocks[id.index()];
         return m_body.blockAt(place.wordOffset, place.wordOffsetOfTerminator, id, ValueID(place.firstParameter));
     }
-    BodyTerminator terminator(BlockID id) const { return block(id).terminator(); }
+    ALWAYS_INLINE BodyTerminator terminator(BlockID id) const { return m_body.terminatorAt(m_blocks[id.index()].wordOffsetOfTerminator, id); }
 
     bool isReachable(BlockID id) const { return m_blocks[id.index()].flags & IsReachable; }
     uint32_t numberOfIncomingEdges(BlockID id) const { return m_blocks[id.index()].numberOfIncomingEdges; }
@@ -418,6 +418,7 @@ public:
     template<typename Functor>
     void forEachLiveAtHead(BlockID block, const Functor& functor) const { forEachLiveAtHead(block, ValueID(0u), m_index->block(block).firstParameter(), functor); }
     bool answersFromSameDataAs(const BodyLiveness& other) const { return m_data == other.m_data; }
+    JS_EXPORT_PRIVATE void countHeadsWhereLive(std::span<const BlockID>, std::span<uint32_t> numbersByValue) const;
 
     ValueID lastUse(ValueID value) const { return ValueID(m_data->lastUses[value.index()]); }
 

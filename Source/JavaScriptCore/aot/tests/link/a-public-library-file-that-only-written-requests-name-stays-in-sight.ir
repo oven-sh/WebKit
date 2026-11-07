@@ -2,7 +2,7 @@
 # Nobody but a written request names the file. The loader reads `join` off the record that the body returns and fills the variable of the import: Link follows that read like any other.
 # So the record stays with compiled code, the variable holds the one function, and that function knows its callers. If a public file went out of sight whoever asked for it, as it did,
 # every function that the record holds would count as called by strangers.
-# The controls: a-public-library-file-goes-out-of-sight-where-a-name-is-made-at-run-time.ir . a-public-library-file-goes-out-of-sight-where-its-object-is-named-as-a-built-in.ir.
+# The control: a-public-library-file-goes-out-of-sight-where-a-name-is-made-at-run-time.ir.
 # LIBRARY: own
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link fields variables functions modules mechanisms=all

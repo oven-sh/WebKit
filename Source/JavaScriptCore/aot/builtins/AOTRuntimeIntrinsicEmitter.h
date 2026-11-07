@@ -22,6 +22,9 @@ public:
     void generateFindsDeclaredMember(const ValueContext&);
     void generateIsPlainInstanceOf(const ValueContext&);
     void generateIsPlainHeirOf(const ValueContext&);
+    void generateIsAsBorn(const ValueContext&);
+    void generateIsAsBornExceptForAddedNames(const ValueContext&);
+    void generateIsPrototypeChainPlain(const ValueContext&);
     void generateFindsNoMember(const ValueContext&);
     void generateGetInternalField(const ValueContext&);
     void generatePutInternalField(const ValueContext&);

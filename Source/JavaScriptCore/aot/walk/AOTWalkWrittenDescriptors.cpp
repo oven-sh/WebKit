@@ -6,6 +6,8 @@
 #include "config.h"
 #include "AOTWalkWrittenDescriptors.h"
 
+#include "AOTAccessPlan.h"
+
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDs.h"
@@ -20,6 +22,7 @@
 #include "AOTTypeArena.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTTypeRelations.h"
+#include "AOTWalkKnown.h"
 #include <array>
 #include <optional>
 #include <ranges>
@@ -351,6 +354,27 @@ bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyVa
         key = walker.build(WTF::move(conversion));
         if (!key)
             return true;
+    }
+
+    constexpr OptionSet<PropertyDescriptorFlags> saysYesToEverything {
+        PropertyDescriptorFlags::HasValue, PropertyDescriptorFlags::HasWritable, PropertyDescriptorFlags::IsWritable, PropertyDescriptorFlags::HasEnumerable,
+        PropertyDescriptorFlags::IsEnumerable, PropertyDescriptorFlags::HasConfigurable, PropertyDescriptorFlags::IsConfigurable
+    };
+    bool definesPlainField = descriptor->flags == saysYesToEverything && descriptor->value && !typeOfObject.primitives && walker.has(Mechanism::TypedOperations);
+    PropertyKeyID name = definesPlainField ? nameThatKeyIs(walker, key) : PropertyKeyID();
+    bool writesSlotInLine = name && fieldCreatedInSlotBy(AccessContext { walker.program(), WalkFacts(walker.facts()), walker.plan(), walker.types(), walker.currentFunction() }, {
+        provenOfObject, walker.typeOf(key), walker.typeOf(descriptor->value), TypeID(), TypeID(), descriptor->flags
+    });
+    if (name && !writesSlotInLine) {
+        Draft field(Opcode::PropDefine, origin);
+        walker.chooseConservativeFields(field);
+        field.setObjectOperand(operands->object);
+        field.setKey(name);
+        field.setValueOperand(descriptor->value);
+        walker.build(WTF::move(field));
+        if (!walker.isUnreachable() && !walker.hasFailed())
+            walker.bind(call.id(), operands->object);
+        return true;
     }
 
     Draft definition(Opcode::DefineOwnProperty, origin);

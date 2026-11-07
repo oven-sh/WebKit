@@ -38,13 +38,28 @@ static bool namesValueInCopiesFused(const BodyValue& operation, ValueID named)
     return names;
 }
 
-bool mayStandBehindCopy(const BodyValue& operation, ValueID copy)
+static bool isTakenByDefinitionOnCopyAloneInCopiesFused(const BodyIndex& index, ValueID made, ValueID copy)
+{
+    ValueID user = index.onlyUsingValue(made);
+    while (user && opcodesThatStateTypes.contains(index.opcodeOf(user))) {
+        made = user;
+        user = index.onlyUsingValue(made);
+    }
+    if (!user || index.opcodeOf(user) != Opcode::PropDefine)
+        return false;
+    auto definition = index.value(user).as<Opcode::PropDefine>();
+    return definition.objectOperand() == copy && definition.valueOperand() == made;
+}
+
+bool mayStandBehindCopy(const Walker& walker, const BodyIndex& index, const BodyValue& operation, ValueID copy)
 {
     Opcode opcode = operation.opcode();
     if (namesValueInCopiesFused(operation, copy))
         return false;
     if (constantsInFormOfUses.contains(opcode))
         return true;
+    if (opcode == Opcode::NewClosure)
+        return walker.everyClosureStandsBehindCopies() || isTakenByDefinitionOnCopyAloneInCopiesFused(index, operation.id(), copy);
     if (opcode == Opcode::Convert) {
         DeclaredType declared = operation.as<Opcode::Convert>().declared();
         return !declared.has(PositionFlags::IsClaim) && !declared.has(PositionFlags::IsInt32Promise);
@@ -108,7 +123,7 @@ bool buildCopyWithWhatFollowsOfItsOpcodes(Walker& walker, const BodyValue& copy)
     for (uint32_t place = placeOfCopy + 1; place < end && firstTaken == TakenByCopyInCopiesFused::Nothing; ++place) {
         BodyValue next = index.value(ValueID(firstValue + place));
         firstTaken = whatCopyTakesOfInCopiesFused(walker, next, copy.id());
-        if (firstTaken == TakenByCopyInCopiesFused::Nothing && !mayStandBehindCopy(next, copy.id()))
+        if (firstTaken == TakenByCopyInCopiesFused::Nothing && !mayStandBehindCopy(walker, index, next, copy.id()))
             return false;
     }
     if (firstTaken == TakenByCopyInCopiesFused::Nothing)
@@ -127,7 +142,7 @@ bool buildCopyWithWhatFollowsOfItsOpcodes(Walker& walker, const BodyValue& copy)
         BodyValue next = index.value(ValueID(firstValue + place));
         TakenByCopyInCopiesFused whatIsTaken = whatCopyTakesOfInCopiesFused(walker, next, copy.id());
         if (whatIsTaken == TakenByCopyInCopiesFused::Nothing) {
-            if (!mayStandBehindCopy(next, copy.id()))
+            if (!mayStandBehindCopy(walker, index, next, copy.id()))
                 break;
             continue;
         }

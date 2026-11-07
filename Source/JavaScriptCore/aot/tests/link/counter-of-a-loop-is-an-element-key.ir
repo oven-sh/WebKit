@@ -2,7 +2,7 @@
 # function fill(list, n) { for (let i = 0; i < n; i++) list[i] = "x"; }  function last(list, n) { let found = 0; for (let i = 0; i < n; i++) found = list[i]; return found; }  const list = [];  fill(list, 3);  last(list, 3);
 # Whatever number a key is, it is printed as an index or as another canonical numeric string, and a name of that kind goes with the elements too.
 # RUN: link functions mechanisms=all
-# CHECK: function f2 callers-known {{*}}result=undefined|i32|string returns
+# CHECK: function f2 callers-known {{*}}result=undefined|int[0, 2147483647]|string returns
 # CHECK-NEXT: parameter 0 {{*}}proven=Array
 
 module m0 path="main.js" displayPath="main.js" body=f0

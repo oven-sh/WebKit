@@ -339,19 +339,17 @@ void generateDidCreateField(StubAssembler& jit)
     jit.returnToCaller();
 
     hasExtraProperties.link(&jit);
-    jit.move(TrustedImm32(0), wordsBefore);
+    listCreatedField(jit, keyOrder, hasNoTransition, std::nullopt);
+    jit.returnToCaller();
+
     isNotRemembered.link(&jit);
-
     appendFieldToKeyOrder(jit, keyOrder, hasNoTransition);
-
-    Jump isNotToBeRemembered = jit.branchTest64(CCallHelpers::Zero, wordsBefore);
     locateKeyOrderRun(jit, wordsBefore, slotKey, run);
     jit.store64(wordsBefore, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
     jit.store64(slotKey, Address(run, KeyOrderRun::offsetOfSlotKeys()));
     jit.load32(Address(object, offsetOfOrderWord), scratch);
     jit.and32(TrustedImm32(static_cast<int32_t>(orderAndCountMask)), scratch);
     jit.store32(scratch, Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()));
-    isNotToBeRemembered.link(&jit);
     jit.returnToCaller();
 
     hasNoTransition.link(&jit);

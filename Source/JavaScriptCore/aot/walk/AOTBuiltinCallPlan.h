@@ -75,6 +75,7 @@ struct InlineBuiltinQuery {
     bool isDoneInPlace { false };
     bool isHiddenInStackTraces { false };
     bool operandsAreAsWritten { false };
+    bool standsInLoop { false };
 
     TypeID receiver() const { return operands.receiver; }
     TypeID argument(unsigned index) const { return index < operands.arguments.size() ? operands.arguments[index] : TypeID(); }

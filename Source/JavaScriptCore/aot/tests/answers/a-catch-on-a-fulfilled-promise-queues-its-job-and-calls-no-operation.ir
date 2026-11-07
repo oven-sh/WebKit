@@ -1,0 +1,35 @@
+# `p.catch(f)` on a fulfilled promise of which nothing is known: the stub queues the job that hands the value on to the derived promise, as the host does; no operation is called, and the derived promise is settled in its turn, not at once.
+# That the road is reached at all is counted beside it: `p.then(f)` on a rejected promise leaves the same stub for the operation.
+# function callCatch(p, f) { return p.catch(f); }  function callThen(p, f) { return p.then(f); }
+# RUN: run-in-shell --aotCountsPath=/dev/null drive = function (callCatch, callThen) { const count = () => Number(aotOperationCount("operationAOTPromiseThen")); let before = count(); callThen(Promise.reject(1), () => {}).catch(() => {}); print("then on a rejected promise: " + (count() - before)); before = count(); const derived = callCatch(Promise.resolve(1), () => {}); print("catch on a fulfilled promise: " + (count() - before)); derived.then(value => print("derived " + value)); Promise.resolve().then(() => print("first")).then(() => print("second")); };
+# CHECK: then on a rejected promise: 1
+# CHECK-NEXT: catch on a fulfilled promise: 0
+# CHECK-NEXT: first
+# CHECK-NEXT: derived 1
+# CHECK-NEXT: second
+# The driver makes the promises, out of sight of the program. The program hands it Promise: the stubs hold no fast path for a built-in that the program cannot get hold of.
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="drive" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Builtin builtin=Promise
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="callCatch" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="catch"
+    v3 = Call v2, v0, v1 calleeKey="catch" calleeName="catch"
+    Return v3
+}
+function f2 name="callThen" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="then"
+    v3 = Call v2, v0, v1 calleeKey="then" calleeName="then"
+    Return v3
+}

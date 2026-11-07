@@ -22,7 +22,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 bool canWaitForStepOfAsyncGenerator(Walker&);
-Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Origin);
+Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Reference goesByDriver, Origin);
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 
 extern const OpcodeSet opcodesThatAnswerFromStepWrittenByHandTakes;
@@ -405,7 +405,7 @@ static Reference buildAwaitedStepInStepsByHand(Walker& walker, const BodyValue& 
         someWayTurnsAway = true;
     }
     walker.noteGuessOpened();
-    Reference stepped = walker.isUnreachable() ? Reference() : buildStepOfAsyncGenerator(walker, generator, sent, held, next, origin);
+    Reference stepped = walker.isUnreachable() ? Reference() : buildStepOfAsyncGenerator(walker, generator, sent, held, next, { }, origin);
     Reference value = buildResultAtInStepsByHand(walker, stepped, StepGeneratorResult::Value, origin);
     Reference status = buildResultAtInStepsByHand(walker, stepped, StepGeneratorResult::Status, origin);
     if (Reference isAnsweredByObject = buildTestOfStatusInStepsByHand(walker, status, AsyncGeneratorStepStatus::Result, origin)) {

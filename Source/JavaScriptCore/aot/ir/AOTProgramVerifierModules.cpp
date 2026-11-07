@@ -148,15 +148,37 @@ static bool hasValidInterop(const Program& program, const Module& module)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool handsOnNameThatRunFinds(const Program& program, const Module& module, StringID name)
+{
+    auto isLess = [](auto one, auto other) {
+        return compareProgramStrings(one, other) == std::strong_ordering::less;
+    };
+    auto textOfName = [&](const ModuleExport& entry) {
+        return program.string(entry.name);
+    };
+    auto entry = std::ranges::lower_bound(module.exports, program.string(name), isLess, textOfName);
+    return entry != module.exports.end() && entry->kind == ModuleExportKind::Indirect && compareProgramStrings(program.string(entry->name), program.string(name)) == std::strong_ordering::equal;
+}
+
+static bool isLeftOutOfFileOfData(const Program& program, const ModuleExport& entry)
+{
+    if (entry.kind != ModuleExportKind::Variable || !entry.variable)
+        return false;
+    ModuleID owner = program.at(entry.variable).module;
+    return owner && program.at(owner).kind == ModuleKind::Data;
+}
+
 static bool hasOneBinding(const Program& program, const ModuleExport& entry, const BitVector& modulesWithVariableThatHoldsMock)
 {
+    if (entry.isLeftOut && !isLeftOutOfFileOfData(program, entry))
+        return false;
     switch (entry.kind) {
     case ModuleExportKind::Variable:
         return entry.variable && !entry.module && !entry.importName && entry.phase == ImportPhase::Evaluation;
     case ModuleExportKind::Namespace:
         return entry.module && !entry.variable && !entry.importName;
     case ModuleExportKind::Indirect:
-        return entry.module && entry.importName && !entry.variable && entry.phase == ImportPhase::Evaluation && (findsNamesAtRunTime(program.at(entry.module)) || modulesWithVariableThatHoldsMock.quickGet(entry.module.index()));
+        return entry.module && entry.importName && !entry.variable && entry.phase == ImportPhase::Evaluation && (findsNamesAtRunTime(program.at(entry.module)) || modulesWithVariableThatHoldsMock.quickGet(entry.module.index()) || handsOnNameThatRunFinds(program, program.at(entry.module), entry.importName));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -168,6 +190,29 @@ static bool hasDuplicateRequests(const Vector<ModuleRequest>& requests)
     });
     AOT::sort(keys);
     return std::ranges::adjacent_find(keys) != keys.end();
+}
+
+static bool hasValidPlacesOfStars(const Module& module)
+{
+    size_t numberOfPlaces = std::ranges::count_if(module.requests, [](const ModuleRequest& request) {
+        return request.starPlace.has_value();
+    });
+    if (!numberOfPlaces)
+        return true;
+    BitVector isTaken(numberOfPlaces);
+    std::optional<uint32_t> last;
+    bool isInOrder = true;
+    for (const ModuleRequest& request : module.requests) {
+        if (request.isDynamicStarExport != request.starPlace.has_value())
+            return false;
+        if (!request.starPlace)
+            continue;
+        if (*request.starPlace >= numberOfPlaces || isTaken.quickSet(*request.starPlace))
+            return false;
+        isInOrder &= !last || *last < *request.starPlace;
+        last = request.starPlace;
+    }
+    return !isInOrder;
 }
 
 static bool isValidRequest(const ModuleRequest& request)
@@ -236,7 +281,8 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
         && (rules.hasRequests || module.requests.isEmpty())
         && (rules.hasRequiredNames || module.requiredNames.isEmpty())
         && std::ranges::all_of(module.requests, isValidRequest)
-        && std::ranges::is_partitioned(module.requests, &ModuleRequest::isHoisted);
+        && std::ranges::is_partitioned(module.requests, &ModuleRequest::isHoisted)
+        && hasValidPlacesOfStars(module);
     bool hasValidLibraryFlag = !isLibrary || (rules.body != BodyRule::Absent && !module.body && module.exports.isEmpty());
     bool hasValidImportOnlyFlag = !module.flags.contains(ModuleFlags::IsLoadedByImportOnly) || module.runtimeModule;
     bool hasValidFlagsOfFiles = !module.flags.containsAny({ ModuleFlags::HasNoSideEffects, ModuleFlags::KeepsError, ModuleFlags::NamesWayToModuleObjects }) || isFileOfProgram(module);
@@ -246,7 +292,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
     bool hasValidLinks = (!!module.referrer == rules.hasReferrer || (module.referrer && module.kind == ModuleKind::CommonJs))
         && (!module.data || rules.canHaveData)
         && (!module.typeAttribute || isUncompiledCode(module))
-        && !!module.namespaceLayout == (module.kind == ModuleKind::SourceText);
+        && !!module.namespaceLayout == hasNamespaceLayout(module.kind);
     auto isBound = [&](const ModuleExport& entry) {
         return hasOneBinding(program, entry, modulesWithVariableThatHoldsMock);
     };
@@ -723,16 +769,33 @@ static bool slotTakesWhateverEvalStores(const Program& program, const EvalBindin
     return !declared.isEstablished() || TypeReader(program).at(declared.written()).isAnything();
 }
 
-static bool isValidEvalBinding(const Program& program, const EvalBinding& binding)
+static bool namesBindingOfKind(const EvalScope& scope, std::optional<uint32_t> index, EvalBindingKind kind)
+{
+    return index && *index < scope.bindings.size() && scope.bindings[*index].kind == kind;
+}
+
+static bool namesItsFunctions(const EvalScope& scope, const EvalBinding& binding)
+{
+    if (namesBindingOfKind(scope, binding.function, EvalBindingKind::PrivateAccessorPair))
+        return binding.kind == EvalBindingKind::PrivateAccessor && binding.setter == binding.function;
+    return (binding.function || binding.setter)
+        && (!binding.function || namesBindingOfKind(scope, binding.function, EvalBindingKind::PrivateFunction))
+        && (!binding.setter || namesBindingOfKind(scope, binding.setter, EvalBindingKind::PrivateFunction));
+}
+
+static bool isValidEvalBinding(const Program& program, const EvalScope& scope, const EvalBinding& binding)
 {
     bool hasFunctions = binding.function || binding.setter;
     switch (binding.kind) {
     case EvalBindingKind::PrivateName:
         return !hasFunctions && hasValidPrivateHolder(program, binding);
     case EvalBindingKind::PrivateMethod:
-        return binding.function && !binding.setter && hasValidPrivateHolder(program, binding);
+        return !binding.setter && namesItsFunctions(scope, binding) && hasValidPrivateHolder(program, binding);
     case EvalBindingKind::PrivateAccessor:
-        return hasFunctions && hasValidPrivateHolder(program, binding);
+        return namesItsFunctions(scope, binding) && hasValidPrivateHolder(program, binding);
+    case EvalBindingKind::PrivateFunction:
+    case EvalBindingKind::PrivateAccessorPair:
+        return !hasFunctions && !binding.name && hasValidStorage(program, binding);
     case EvalBindingKind::MappedArgument:
         return !hasFunctions && !binding.variable && binding.operand && binding.field && !binding.layout;
     case EvalBindingKind::This:
@@ -779,7 +842,7 @@ void ProgramVerifier::verifySmallRecords()
     for (unsigned index = 0; index < m_program.evalScopes.size(); ++index) {
         const EvalScope& scope = m_program.evalScopes[index];
         bool hasValidBindings = std::ranges::all_of(scope.bindings, [&](const EvalBinding& binding) {
-            return isValidEvalBinding(m_program, binding);
+            return isValidEvalBinding(m_program, scope, binding);
         });
         if (!hasValidBindings)
             fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
@@ -816,6 +879,11 @@ void ProgramVerifier::verifySmallRecords()
 
     for (unsigned index = 0; index < m_program.sourceStamps.size(); ++index) {
         if (!m_program.sourceStamps[index].module)
+            fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
+    }
+
+    for (unsigned index = 0; index < m_program.declaredRecords.size(); ++index) {
+        if (!m_program.declaredRecords[index].module)
             fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
     }
 

@@ -8,7 +8,7 @@
 # CHECK-LABEL: code f4:Body
 # CHECK: b0(v0: f2 @
 # CHECK: NewClosure {{*}}function=f5
-# RUN(ENTRY): walk f4:GenericCallEntry mechanisms=all
+# RUN(ENTRY): walk f4:GenericCallEntry mechanisms=all-PromotedEnvironments
 # ENTRY-LABEL: code f4:GenericCallEntry
 # ENTRY-NOT: TypeTest
 # ENTRY: f2 @{{*}}= GetCapture v0 function=f4

@@ -37,7 +37,7 @@
 # RUN(LOOP): walk f7 mechanisms=all
 # LOOP-LABEL: code f7:Body
 # LOOP: = NewArrayLike {{*}}arrayStorage=Int32
-# LOOP: = HasArrayStorage {{*}}arrayStorage=Int32
+# LOOP: = HasArrayStorage {{*}} [isWritable, admitsInt32Storage]
 # With typed operations withheld nothing is asked of the birth.
 # RUN(CLOSED): walk f1 mechanisms=none+DirectCalls+BuiltinCalls
 # CLOSED-NOT: arrayStorage=

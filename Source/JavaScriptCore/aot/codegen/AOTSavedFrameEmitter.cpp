@@ -10,6 +10,7 @@
 
 #include "AOTAsyncAwaitConditions.h"
 #include "AOTBarrierEmitter.h"
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTCallEmitter.h"
 #include "AOTCellAllocationEmitter.h"
@@ -24,8 +25,10 @@
 #include "AOTTypeTestEmitter.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "FunctionRareData.h"
+#include "JSAsyncGenerator.h"
 #include "JSFunction.h"
 #include "MarkedSpace.h"
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <ranges>
@@ -78,6 +81,16 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
     bool hasMode = signature.result == StubResult::TwoGPRs;
     RELEASE_ASSERT(hasMode || signature.result == StubResult::GPR);
     LType type = hasMode ? m_proc.addTuple({ Machine::Int64, Machine::Int64 }) : LType(Machine::Int64);
+    if (m_keepsWordsInMachineFrame)
+        clearWordsOfWhatIsDeadAcross(value);
+    bool frameLiesOnHeap = generator().keepsValuesInHeapFrame() && !m_keepsWordsInMachineFrame;
+    uint16_t entrypoint = 0;
+    if (frameLiesOnHeap) {
+        RELEASE_ASSERT(hasMode);
+        entrypoint = m_numberOfEntrypoints++;
+        m_out.storePtr(addressOfEntrypoint(entrypoint), m_out.address(m_heaps.entire(AbstractHeap::InternalFields), heapFrame(), SavedFrame::offsetOfResumeAddress()));
+        clearWordsOfWhatIsDeadAcross(value);
+    }
 
     RegisterSet lateClobbered = summary.clobbered;
     lateClobbered.merge(RegisterSet::macroClobberedGPRs());
@@ -100,10 +113,16 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
         RELEASE_ASSERT(operand);
         patch->append(operand, Machine::ValueRep::reg(signature.operands[operandIndex++]));
     }
+    if (signature.filledOutOfResultInFront)
+        patch->setRegisterThatCalleeFillsOutOfResult(signature.filledOutOfResultInFront);
     unsigned driverChild = m_proc.resultCount(type) + patch->numChildren();
-    patch->setOperandEncodedAsFrameWordIndex(patch->numChildren());
-    patch->append(driver, Machine::ValueRep::LateColdAny);
-    FrameMapEmitter::Roots roots = emitter<FrameMapEmitter>().appendRoots(patch, value);
+    if (!frameLiesOnHeap) {
+        patch->setOperandEncodedAsFrameWordIndex(patch->numChildren());
+        patch->append(driver, Machine::ValueRep::LateColdAny);
+    }
+    FrameMapEmitter::Roots roots { m_proc.resultCount(type) + patch->numChildren(), { } };
+    if (!frameLiesOnHeap)
+        roots = emitter<FrameMapEmitter>().appendRoots(patch, value);
     std::span<const FrameSlotKind> kindsOfRoots = m_proc.arena().copySpan<FrameSlotKind>(roots.kinds.span());
     patch->resultConstraints = { Machine::ValueRep::reg(signature.firstResult) };
     if (hasMode)
@@ -112,10 +131,10 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
     Origin originOfSuspension = value.origin();
     originOfSuspension.isTailCall = false;
     uint32_t site = calls.addSite(value, { .origin = originOfSuspension, .callerHasLeft = runsCodeOfAwaited == RunsCodeOfAwaited::BehindFunction });
-    patch->setGenerator([records = &m_records, build = &build(), subject = subjectOf(value), operation = nameOf(value.opcode()), key, site, firstRoot = roots.firstChild, kindsOfRoots, driverChild, siteWordGPR = siteWordRegister.gpr()](CCallHelpers& jit, const Machine::PatchParameters& params) {
+    patch->setGenerator([records = &m_records, build = &build(), subject = subjectOf(value), operation = nameOf(value.opcode()), key, site, firstRoot = roots.firstChild, slotOfKeptWords = roots.slotOfKeptWords, tracedWordsInSlot = roots.numberOfTracedWordsInSlot, kindsOfRoots, driverChild, frameLiesOnHeap, siteWordGPR = siteWordRegister.gpr()](CCallHelpers& jit, const Machine::PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        FrameMapEmitter::Roots rootsOfSite { firstRoot, Vector<FrameSlotKind, 8>(kindsOfRoots) };
-        std::optional<uint64_t> word = FrameMapEmitter::siteWordFor(records->frameMaps, params, rootsOfSite, driverChild);
+        FrameMapEmitter::Roots rootsOfSite { firstRoot, Vector<FrameSlotKind, 8>(kindsOfRoots), slotOfKeptWords, tracedWordsInSlot };
+        std::optional<uint64_t> word = frameLiesOnHeap ? FrameMapEmitter::siteWordOfFrameOnHeap(params) : FrameMapEmitter::siteWordFor(records->frameMaps, params, rootsOfSite, driverChild);
         if (size_t numberOfWords = records->frameMaps.words.size(); numberOfWords > build->limit(LimitID::MaxFrameMapWords)) {
             if (!std::exchange(records->frameMaps.didReportLimit, true))
                 build->reportLimitExceeded(LimitID::MaxFrameMapWords, numberOfWords, subject);
@@ -133,13 +152,54 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
             jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(*word)), siteWordGPR);
         if (FrameMapEmitter::savesDeadPreservedRegister(params))
             jit.move(CCallHelpers::TrustedImm32(0), SavedFrame::preservedRegister);
+        if (params.value()->leavesMoveOutOfResultToCallee())
+            records->stubCalls.enterNextStubInFront(params.value()->registerThatCalleeFillsOutOfResult(), params.value()->registerThatCalleeMovesIntoResult());
         records->stubCalls.call(jit, key, OptionalIndex { site });
     });
     calls.finishCallPatchpoint(value, patch, site, request);
+    StubCallResult result = hasMode ? StubCallResult { m_out.extract(patch, 0), m_out.extract(patch, 1) } : StubCallResult { patch, nullptr };
+    if (m_keepsWordsInMachineFrame) {
+        m_stretch = ++m_numberOfStretches;
+        m_stretchInFront = 0;
+        m_lastStretchesOfBlocks[value.block().index()] = m_stretch;
+        m_stretchesWhereNamed[value.id().index()] = m_stretch;
+        if (readBackOutOfHeapFrame(value.block(), value.id()))
+            fail(value, InternalErrorKind::InvalidSuspension);
+    }
+    if (frameLiesOnHeap) {
+        const StubSignature& entry = catalog.summaryOf(enterGeneratorFrame()).signature;
+        RELEASE_ASSERT(entry.numberOfOperands == 3);
+        LBasicBlock throws = newBlock();
+        LBasicBlock takes = newBlock();
+        LBasicBlock goesOn = newBlock();
+        ValueFromBlock valueInPlace = m_out.anchor(result.first);
+        ValueFromBlock wordInPlace = m_out.anchor(result.second);
+        m_out.jump(goesOn);
 
-    if (!hasMode)
-        return { patch, nullptr };
-    return { m_out.extract(patch, 0), m_out.extract(patch, 1) };
+        m_out.appendTo(m_proc.addEntrypoint(entrypoint));
+        LValue frame = m_out.argumentRegister(entry.operands[0]);
+        LValue word = m_out.argumentRegister(entry.operands[1]);
+        LValue sent = m_out.argumentRegister(entry.operands[2]);
+        m_out.storePtr(frame, m_out.address(m_heaps.frameSlots, m_out.slotBase(m_slotOfHeapFrame)));
+        m_out.branch(m_out.testNonZero64(word, m_out.constInt64(1 << SavedFrame::throwsIntoAwaitShift)), unlikelyEdge(throws), normalEdge(takes));
+
+        m_out.appendTo(throws);
+        callVoidOperation(value, RuntimeOperation::Throw, { Boxed(sent) });
+        m_out.unreachable();
+
+        m_out.appendTo(takes);
+        ValueFromBlock valueSent = m_out.anchor(sent);
+        ValueFromBlock wordSent = m_out.anchor(word);
+        m_out.jump(goesOn);
+
+        m_out.appendTo(goesOn);
+        result = { m_out.phi(Machine::Int64, valueInPlace, valueSent), m_out.phi(Machine::Int64, wordInPlace, wordSent) };
+        beginStretchOfHeapFrame(value.block(), readHeapFrameOutOfSlot());
+        m_stretchesWhereNamed[value.id().index()] = m_stretch;
+        if (readBackOutOfHeapFrame(value.block(), value.id()))
+            fail(value, InternalErrorKind::InvalidSuspension);
+    }
+    return result;
 }
 
 // A saved frame resumes at another address, so the register is read where the address is needed. The result must not live across a suspension.
@@ -229,7 +289,10 @@ void SavedFrameEmitter::generateYieldBySavingFrame(const ValueContext& value)
             suspendGenerator(value, GeneratorSuspension::Yield);
         return;
     case CoroutineKind::AsyncGenerator:
-        suspendGenerator(value, GeneratorSuspension::AsyncYield);
+        if (value.id() == m_firstYield && generator().keepsValuesInHeapFrame() && !m_keepsWordsInMachineFrame)
+            yieldOutOfHeapFrame(value);
+        else
+            suspendGenerator(value, GeneratorSuspension::AsyncYield);
         return;
     case CoroutineKind::AsyncFunction:
         fail(value, InternalErrorKind::OpcodeWithoutCode);
@@ -311,7 +374,7 @@ bool SavedFrameEmitter::areNamedOnlyByReadsAndStoresOfWords(ValueID made) const
 Machine::StackSlot* SavedFrameEmitter::slotOfHeapWordsInFrame(ValueID frame)
 {
     const Operation& made = m_code.at(frame);
-    if (made.opcode != Opcode::NewHeapWords || !m_facts.mechanisms().contains(Mechanism::CellsInFrames))
+    if (made.opcode != Opcode::NewHeapWords || !m_code.has(Mechanism::CellsInFrames, m_facts))
         return nullptr;
     for (const HeapWordsInFrame& words : m_heapWordsInFrame) {
         if (words.made == frame)
@@ -408,22 +471,46 @@ bool SavedFrameEmitter::findBlocksBehindFirstYield()
         if (m_code.at(block).terminator.kind == TerminatorKind::ReturnCall || !generator().blockDominates(m_blockOfFirstYield, block))
             return false;
     }
+    static constexpr OpcodeSet suspensionsOfAsyncGenerators { Opcode::YieldBySavingFrame, Opcode::AsyncGeneratorYield, Opcode::AwaitBySavingFrame, Opcode::StepAsyncGenerator };
+    OpcodeSet suspensionsThatLeaveHeapFrame = kindOfFunction() == CoroutineKind::AsyncGenerator ? suspensionsOfAsyncGenerators : OpcodeSet { Opcode::YieldBySavingFrame };
     return std::ranges::all_of(m_code.suspensions(), [&](const LiveAtSuspension& record) {
         BlockID block = m_code.blockOf(record.suspension);
-        return opcodeOf(record.suspension) == Opcode::YieldBySavingFrame && (block == m_blockOfFirstYield || m_blocksBehindFirstYield.get(block.index()));
+        return suspensionsThatLeaveHeapFrame.contains(opcodeOf(record.suspension)) && (block == m_blockOfFirstYield || m_blocksBehindFirstYield.get(block.index()));
     });
 }
 
 bool SavedFrameEmitter::chooseValuesKeptInHeapFrame(Vector<ValueID, 16>& kept)
 {
+    Vector<uint32_t> lastSuspensionsCrossed;
+    BitVector crossesSeveral;
+    if (m_keepsWordsInMachineFrame) {
+        lastSuspensionsCrossed.fill(0, m_code.numberOfValues());
+        uint32_t number = 0;
+        auto note = [&](ValueID id) {
+            if (!id)
+                return;
+            uint32_t last = std::exchange(lastSuspensionsCrossed[id.index()], number);
+            if (last && last != number)
+                crossesSeveral.set(id.index());
+        };
+        for (const LiveAtSuspension& record : m_code.suspensions()) {
+            ++number;
+            for (ValueID live : m_code.liveAt(record.suspension))
+                note(live);
+            for (ValueID held : heldOperandsOf(operationAt(record.suspension)))
+                note(held);
+        }
+    }
     auto choose = [&](ValueID id, ValueID suspension, bool isRead) {
-        if (!id || id == suspension || m_code.isConstant(id) || !m_code.isNeeded(id) || m_wordsOfKeptValues[id.index()])
+        if (!id || m_wordsOfKeptValues[id.index()] || id == suspension || m_code.isConstant(id) || !m_code.isNeeded(id))
+            return true;
+        if (m_keepsWordsInMachineFrame && !crossesSeveral.get(id.index()))
             return true;
         const Operation& operation = operationAt(id);
-        if (isDeferredClosure(id) || typeOf(id).isOpaque(OpaqueKind::StringBuilder))
-            return false;
+        if (isDeferredClosure(id) || typeOf(id).isOpaque(OpaqueKind::StringBuilder) || generator().waitsForBoxOfSum(id, operation))
+            return m_keepsWordsInMachineFrame;
         bool hasSeveralResults = operation.opcode == Opcode::CallDirect ? conventions().numberOfResults(conventions().unitEnteredBy(operation)) > 1 : numberOfResultsOf(m_program, operation).has_value();
-        return !hasSeveralResults && choosesWordFor(formKeptInHeapFrame(id), isRead, id, kept);
+        return (!hasSeveralResults && choosesWordFor(formKeptInHeapFrame(id), isRead, id, kept)) || m_keepsWordsInMachineFrame;
     };
     for (const LiveAtSuspension& record : m_code.suspensions()) {
         for (ValueID live : m_code.liveAt(record.suspension)) {
@@ -475,48 +562,343 @@ bool SavedFrameEmitter::choosesWordFor(Representation representation, bool isRea
 
 bool SavedFrameEmitter::layOutHeapFrame()
 {
-    if (kindOfFunction() != CoroutineKind::Generator || !m_facts.mechanisms().contains(Mechanism::TypedOperations))
+    if (!m_facts.mechanisms().contains(Mechanism::TypedOperations) || m_code.opcodesOfValues().contains(Opcode::ReleaseHint))
         return false;
-    if (m_code.opcodesOfValues().contains(Opcode::ReleaseHint) || conventions().entryConventionOf(m_unit) != EntryConvention::Direct || m_code.suspensions().size() >= fusedCallEntry)
-        return false;
-    if (!findBlocksBehindFirstYield())
-        return false;
+    if (kindOfFunction() != CoroutineKind::AsyncFunction) {
+        if (conventions().entryConventionOf(m_unit) != EntryConvention::Direct || m_code.suspensions().size() >= fusedCallEntry)
+            return false;
+        if (!findBlocksBehindFirstYield())
+            return false;
+    } else {
+        uint64_t lengthOfLists = 0;
+        for (const LiveAtSuspension& record : m_code.suspensions())
+            lengthOfLists += m_code.liveAt(record.suspension).size();
+        if (lengthOfLists <= m_code.numberOfValues())
+            return false;
+        m_keepsWordsInMachineFrame = true;
+        m_hasPassedFirstYield = true;
+        for (BlockID block : generator().order())
+            m_blocksBehindFirstYield.set(block.index());
+    }
 
     Machine::Arena& arena = m_proc.arena();
     m_wordsOfKeptValues = arena.createSpan<uint16_t>(m_code.numberOfValues());
     Vector<ValueID, 16> kept;
-    if (!chooseValuesKeptInHeapFrame(kept))
+    if (!chooseValuesKeptInHeapFrame(kept) || (m_keepsWordsInMachineFrame && kept.isEmpty())) {
+        m_keepsWordsInMachineFrame = false;
         return false;
+    }
 
     m_stretchesWhereNamed = arena.createSpan<uint32_t>(m_code.numberOfValues());
     m_keptValuesAsDefined = arena.createSpan<LValue>(m_code.numberOfValues());
     m_lastStretchesOfBlocks = arena.createSpan<uint32_t>(m_code.numberOfBlocks());
+    m_wordsThatMayBeSetAtStartsOfBlocks.grow(m_code.numberOfBlocks());
+    std::span<const BlockID> order = generator().order();
+    m_tracedWordsDefinedInFrontOfPlaces = arena.createSpan<uint32_t>(order.size() + 1);
+    layBlocksOfEachLoopTogether();
+    auto placeOfDefinition = [&](ValueID id) {
+        return m_placesOfBlocks[m_code.blockOf(id).index()];
+    };
+    std::ranges::stable_sort(kept, { }, placeOfDefinition);
     uint32_t nextTraced = 0;
     uint32_t nextRaw = m_numberOfTracedWords;
     for (ValueID id : kept) {
-        m_wordsOfKeptValues[id.index()] = static_cast<uint16_t>((frameSlotKindOf(formKeptInHeapFrame(id)) ? nextTraced : nextRaw)++ + 1);
+        bool isTraced = !!frameSlotKindOf(formKeptInHeapFrame(id));
+        m_wordsOfKeptValues[id.index()] = static_cast<uint16_t>((isTraced ? nextTraced : nextRaw)++ + 1);
+        m_tracedWordsDefinedInFrontOfPlaces[placeOfDefinition(id) + 1] += isTraced;
         if (opcodeOf(id) == Opcode::Parameter)
             m_keptValuesAsDefined[id.index()] = generator().wordOf(id);
     }
+    for (uint32_t place = 0; place < order.size(); ++place)
+        m_tracedWordsDefinedInFrontOfPlaces[place + 1] += m_tracedWordsDefinedInFrontOfPlaces[place];
+    findWordsNeededAtStartsOfBlocks();
     m_numberOfWordsInHeapFrame = std::max(nextRaw, 1u);
-    m_slotOfHeapFrame = m_proc.addStackSlot(sizeof(uint64_t));
+    if (!m_keepsWordsInMachineFrame) {
+        m_slotOfHeapFrame = m_proc.addStackSlot(sizeof(uint64_t));
+        if (m_everyWayBackLeadsToWhatDominates) {
+            m_suspensionsInFrontOfPlaces = arena.createSpan<uint32_t>(order.size() + 1);
+            for (const LiveAtSuspension& record : m_code.suspensions())
+                ++m_suspensionsInFrontOfPlaces[m_placesOfBlocks[m_code.blockOf(record.suspension).index()] + 1];
+            for (uint32_t place = 0; place < order.size(); ++place)
+                m_suspensionsInFrontOfPlaces[place + 1] += m_suspensionsInFrontOfPlaces[place];
+        }
+        return true;
+    }
+    giveWordsWhoseLivesAreApartOnePlace(static_cast<uint32_t>(kept.size()));
+    m_slotOfKeptWords = m_proc.addStackSlot(m_numberOfWordsInHeapFrame * sizeof(uint64_t));
+    findLoopsInsideStretches();
     return true;
+}
+
+void SavedFrameEmitter::giveWordsWhoseLivesAreApartOnePlace(uint32_t numberOfWords)
+{
+    static constexpr uint32_t none = UINT32_MAX;
+    m_numberOfTracedPlaces = m_numberOfTracedWords;
+    if (!m_everyWayBackLeadsToWhatDominates)
+        return;
+
+    struct Life {
+        uint64_t begin { 0 };
+        uint64_t end { 0 };
+    };
+    std::span<const BlockID> order = generator().order();
+    Vector<Life> lives;
+    lives.fill(Life(), numberOfWords);
+    for (uint32_t turn = static_cast<uint32_t>(order.size()); turn--;) {
+        BlockID block = order[turn];
+        uint64_t startOfBlock = static_cast<uint64_t>(m_placesOfBlocks[block.index()]) << 32;
+        auto noteUse = [&](ValueID id, uint32_t inBlock) {
+            if (!id || !isKeptInHeapFrame(id))
+                return;
+            Life& life = lives[m_wordsOfKeptValues[id.index()] - 1];
+            uint64_t end = startOfBlock | inBlock;
+            if (end <= life.end)
+                return;
+            uint32_t placeOfDefinition = m_placesOfBlocks[m_code.blockOf(id).index()];
+            for (uint32_t head = m_turnsOfHeads.quickGet(turn) ? turn : m_headsAroundTurns[turn]; head != none; head = m_headsAroundTurns[head]) {
+                uint32_t behind = m_placesBehindLoops[order[head].index()];
+                if (placeOfDefinition >= m_placesOfBlocks[order[head].index()] && placeOfDefinition < behind)
+                    break;
+                end = (static_cast<uint64_t>(behind) << 32) - 1;
+            }
+            life.end = end;
+        };
+        auto noteDefinition = [&](ValueID id, uint32_t inBlock) {
+            if (!isKeptInHeapFrame(id))
+                return;
+            Life& life = lives[m_wordsOfKeptValues[id.index()] - 1];
+            life.begin = startOfBlock | inBlock;
+            life.end = std::max(life.end, life.begin);
+        };
+        const Block& written = m_code.at(block);
+        for (ValueID operand : written.terminator.operands())
+            noteUse(operand, none);
+        m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
+            for (ValueID argument : edge.arguments())
+                noteUse(argument, none);
+        });
+        std::span<const ValueID> values = m_code.valuesOf(block);
+        for (uint32_t inBlock = static_cast<uint32_t>(values.size()); inBlock; --inBlock) {
+            ValueID id = values[inBlock - 1];
+            const Operation& operation = operationAt(id);
+            noteDefinition(id, inBlock);
+            if (operation.traits().maySuspend()) {
+                for (ValueID live : m_code.liveAt(id))
+                    noteUse(live, inBlock);
+                for (ValueID held : heldOperandsOf(operation))
+                    noteUse(held, inBlock);
+            }
+            operation.forEachOperand([&](ValueID operand, uint32_t) {
+                noteUse(operand, inBlock);
+            });
+        }
+        for (ValueID parameter : written.parameters())
+            noteDefinition(parameter, 0);
+        noteUse(written.subject, 0);
+    }
+
+    m_placesOfWords = m_proc.arena().createSpan<uint16_t>(numberOfWords);
+    auto givePlaces = [&](uint32_t firstWord, uint32_t endOfWords, uint32_t firstPlace) {
+        auto endsLater = [](const auto& a, const auto& b) { return a > b; };
+        Vector<uint32_t, 64> byBegin;
+        for (uint32_t word = firstWord; word < endOfWords; ++word)
+            byBegin.append(word);
+        std::ranges::stable_sort(byBegin, { }, [&](uint32_t word) { return lives[word].begin; });
+        Vector<std::pair<uint64_t, uint32_t>, 64> endsOfPlaces;
+        uint32_t numberOfPlaces = firstPlace;
+        for (uint32_t word : byBegin) {
+            uint32_t place = numberOfPlaces;
+            if (!endsOfPlaces.isEmpty() && endsOfPlaces.first().first < lives[word].begin) {
+                std::ranges::pop_heap(endsOfPlaces, endsLater);
+                place = endsOfPlaces.takeLast().second;
+            } else
+                ++numberOfPlaces;
+            m_placesOfWords[word] = static_cast<uint16_t>(place);
+            endsOfPlaces.append({ lives[word].end, place });
+            std::ranges::push_heap(endsOfPlaces, endsLater);
+        }
+        return numberOfPlaces;
+    };
+    uint32_t numberOfTracedPlaces = givePlaces(0, m_numberOfTracedWords, 0);
+    uint32_t numberOfPlaces = givePlaces(m_numberOfTracedWords, numberOfWords, numberOfTracedPlaces);
+    if (numberOfPlaces == numberOfWords) {
+        m_placesOfWords = { };
+        return;
+    }
+    m_numberOfTracedPlaces = numberOfTracedPlaces;
+    m_numberOfWordsInHeapFrame = std::max(numberOfPlaces, 1u);
+    m_numbersOfNeededWordsAtPlaces = m_proc.arena().createSpan<uint16_t>(numberOfTracedPlaces);
+}
+
+void SavedFrameEmitter::findLoopsInsideStretches()
+{
+    if (!m_everyWayBackLeadsToWhatDominates)
+        return;
+
+    std::span<const BlockID> order = generator().order();
+    m_orderOfBlocks = order;
+    uint32_t numberOfBlocks = static_cast<uint32_t>(order.size());
+    Vector<uint32_t, 64> turns;
+    Vector<uint32_t, 64> turnsAtPlaces;
+    Vector<uint32_t, 64> waysInFromFront;
+    turns.fill(0, m_code.numberOfBlocks());
+    waysInFromFront.fill(0, m_code.numberOfBlocks());
+    turnsAtPlaces.fill(0, numberOfBlocks);
+    for (uint32_t turn = 0; turn < numberOfBlocks; ++turn) {
+        turns[order[turn].index()] = turn;
+        turnsAtPlaces[m_placesOfBlocks[order[turn].index()]] = turn;
+    }
+    auto liesInLoopOf = [&](BlockID block, BlockID head) {
+        uint32_t place = m_placesOfBlocks[block.index()];
+        return place >= m_placesOfBlocks[head.index()] && place < m_placesBehindLoops[head.index()];
+    };
+    for (BlockID from : order) {
+        m_code.forEachEdgeOf(from, [&](EdgeID, const Edge& edge) {
+            if (m_code.isReached(edge.to) && m_placesBehindLoops[edge.to.index()] && !liesInLoopOf(from, edge.to))
+                ++waysInFromFront[edge.to.index()];
+        });
+    }
+
+    m_frontsOfLoopsInsideStretches = m_proc.arena().createSpan<uint32_t>(m_code.numberOfBlocks());
+    m_headsOfLoopsInsideStretchesBehind = m_proc.arena().createSpan<uint32_t>(m_code.numberOfBlocks());
+    uint32_t placeBehindLastLoopFound = 0;
+    for (uint32_t place = 0; place < numberOfBlocks; ++place) {
+        uint32_t turnOfHead = turnsAtPlaces[place];
+        BlockID head = order[turnOfHead];
+        uint32_t behind = m_placesBehindLoops[head.index()];
+        if (!behind || place < placeBehindLastLoopFound || !turnOfHead || waysInFromFront[head.index()] != 1)
+            continue;
+        BlockID front = order[turnOfHead - 1];
+        if (liesInLoopOf(front, head) || m_frontsOfLoopsInsideStretches[front.index()] || m_headsOfLoopsInsideStretchesBehind[front.index()])
+            continue;
+        bool frontLeadsToHead = false;
+        m_code.forEachEdgeOf(front, [&](EdgeID, const Edge& edge) {
+            frontLeadsToHead |= edge.to == head;
+        });
+        bool liesInsideStretch = frontLeadsToHead;
+        for (uint32_t inside = place; inside < behind && liesInsideStretch; ++inside) {
+            BlockID block = order[turnsAtPlaces[inside]];
+            const Block& written = m_code.at(block);
+            liesInsideStretch = !written.isHandlerBlock() && !written.isEntry;
+            for (ValueID parameter : written.parameters())
+                liesInsideStretch &= !isKeptInHeapFrame(parameter);
+            for (ValueID id : m_code.valuesOf(block))
+                liesInsideStretch &= !isKeptInHeapFrame(id) && !operationAt(id).traits().maySuspend();
+        }
+        if (!liesInsideStretch)
+            continue;
+        placeBehindLastLoopFound = behind;
+        m_headsOfLoopsInsideStretchesBehind[front.index()] = turnOfHead + 1;
+        for (uint32_t turn = turnOfHead; turn < numberOfBlocks && liesInLoopOf(order[turn], head); ++turn)
+            m_frontsOfLoopsInsideStretches[order[turn].index()] = turnOfHead;
+    }
+}
+
+bool SavedFrameEmitter::goesOnInStretchAroundLoop(BlockID block)
+{
+    if (!liesInLoopInsideStretch(block))
+        return false;
+    m_stretch = m_lastStretchesOfBlocks[generator().order()[m_frontsOfLoopsInsideStretches[block.index()] - 1].index()];
+    m_stretchInFront = 0;
+    m_lastStretchesOfBlocks[block.index()] = m_stretch;
+    m_wordsToClearAtStart.shrink(0);
+    return true;
+}
+
+void SavedFrameEmitter::layBlocksOfEachLoopTogether()
+{
+    static constexpr uint32_t none = UINT32_MAX;
+    std::span<const BlockID> order = generator().order();
+    uint32_t numberOfBlocks = static_cast<uint32_t>(order.size());
+    m_placesOfBlocks = m_proc.arena().createSpan<uint32_t>(m_code.numberOfBlocks());
+    m_placesBehindLoops = m_proc.arena().createSpan<uint32_t>(m_code.numberOfBlocks());
+    for (uint32_t turn = 0; turn < numberOfBlocks; ++turn)
+        m_placesOfBlocks[order[turn].index()] = turn;
+
+    m_headsAroundTurns = m_proc.arena().createSpan<uint32_t>(numberOfBlocks);
+    std::span<uint32_t> headsAround = m_headsAroundTurns;
+    std::ranges::fill(headsAround, none);
+    Vector<uint32_t, 64> sizes;
+    sizes.fill(1, numberOfBlocks);
+    BitVector& heads = m_turnsOfHeads;
+    heads.ensureSize(numberOfBlocks);
+    auto layInLoop = [&](uint32_t inner, uint32_t head) {
+        while (inner != head) {
+            if (head > inner) {
+                m_everyWayBackLeadsToWhatDominates = false;
+                return;
+            }
+            uint32_t around = headsAround[inner];
+            if (around == head)
+                return;
+            if (around == none || around < head) {
+                headsAround[inner] = head;
+                if (around == none)
+                    return;
+                inner = std::exchange(head, around);
+            } else
+                inner = around;
+        }
+    };
+    for (uint32_t turn = numberOfBlocks; turn--;) {
+        m_code.forEachEdgeOf(order[turn], [&](EdgeID, const Edge& edge) {
+            if (!m_code.isReached(edge.to))
+                return;
+            uint32_t turnOfTarget = m_placesOfBlocks[edge.to.index()];
+            if (turnOfTarget <= turn) {
+                heads.quickSet(turnOfTarget);
+                m_everyWayBackLeadsToWhatDominates &= generator().blockDominates(edge.to, order[turn]);
+                layInLoop(turn, turnOfTarget);
+            } else if (headsAround[turnOfTarget] != none)
+                layInLoop(turn, headsAround[turnOfTarget]);
+        });
+    }
+    if (!m_everyWayBackLeadsToWhatDominates) {
+        for (size_t turn : heads)
+            m_placesBehindLoops[order[turn].index()] = numberOfBlocks;
+        return;
+    }
+
+    for (uint32_t turn = numberOfBlocks; turn--;) {
+        if (headsAround[turn] != none)
+            sizes[headsAround[turn]] += sizes[turn];
+    }
+    Vector<uint32_t, 64> nextPlacesInLoops;
+    nextPlacesInLoops.fill(0, numberOfBlocks);
+    uint32_t nextPlaceOutsideLoops = 0;
+    for (uint32_t turn = 0; turn < numberOfBlocks; ++turn) {
+        uint32_t& next = headsAround[turn] == none ? nextPlaceOutsideLoops : nextPlacesInLoops[headsAround[turn]];
+        uint32_t place = std::exchange(next, next + sizes[turn]);
+        nextPlacesInLoops[turn] = place + 1;
+        m_placesOfBlocks[order[turn].index()] = place;
+        if (heads.quickGet(turn))
+            m_placesBehindLoops[order[turn].index()] = place + sizes[turn];
+    }
 }
 
 LValue SavedFrameEmitter::readHeapFrameOutOfSlot()
 {
+    if (m_keepsWordsInMachineFrame)
+        return nullptr;
     return m_out.loadPtr(m_out.address(m_heaps.frameSlots, m_out.slotBase(m_slotOfHeapFrame)));
 }
 
 LValue SavedFrameEmitter::heapFrame()
 {
-    if (!isNamedInThisStretch(std::exchange(m_stretchOfHeapFrame, m_stretch)))
+    if (m_keepsWordsInMachineFrame)
+        return nullptr;
+    if (!heapFrameIsNamed()) {
         m_heapFrame = readHeapFrameOutOfSlot();
+        m_stretchOfHeapFrame = m_stretch;
+        m_heapFrameHoldsBelowItsStretch = m_standsAtStartOfStretch || !m_code.handlerOf(m_blocksOfStretches[m_stretch]);
+    }
     return m_heapFrame;
 }
 
 TypedPointer SavedFrameEmitter::wordOfHeapFrame(LValue frame, ValueID kept)
 {
+    if (m_slotOfKeptWords)
+        return wordInFrame(m_slotOfKeptWords, placeOfWord(m_wordsOfKeptValues[kept.index()] - 1));
     return m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame, offsetOfWordInHeapFrame(m_wordsOfKeptValues[kept.index()] - 1));
 }
 
@@ -524,10 +906,12 @@ void SavedFrameEmitter::storeIntoHeapFrame(LValue frame, ValueID kept)
 {
     LValue stored = generator().wordOf(kept);
     RELEASE_ASSERT(stored);
-    if (isTracedInHeapFrame(kept) && typeOf(kept).mayBeUnspecified())
+    if (m_cellCageBase && isTracedInHeapFrame(kept) && typeOf(kept).mayBeUnspecified())
         stored = m_out.select(m_out.equal(stored, m_cellCageBase), m_out.int64Zero, stored);
     m_out.store(stored, wordOfHeapFrame(frame, kept));
     m_valuesStoredInHeapFrame.set(kept.index());
+    if (isTracedInHeapFrame(kept))
+        m_wordsThatMayBeSet.set(m_wordsOfKeptValues[kept.index()] - 1);
     m_keptValuesAsDefined[kept.index()] = generator().wordOf(kept);
 }
 
@@ -547,8 +931,33 @@ void SavedFrameEmitter::keepInHeapFrame(const ValueContext& defined)
     }
     LValue frame = heapFrame();
     storeIntoHeapFrame(frame, id);
-    if (isTracedInHeapFrame(id) && typeOf(id).hasCells())
+    if (!m_slotOfKeptWords && isTracedInHeapFrame(id) && typeOf(id).hasCells())
         emitter<BarrierEmitter>().barrier(defined, CellPointer(frame));
+}
+
+bool SavedFrameEmitter::isNamedAbove(uint32_t stretchWhereNamed)
+{
+    if (stretchWhereNamed == m_stretch)
+        return true;
+    if (stretchWhereNamed >= m_firstStretchesAbove.size() || m_firstStretchesAbove[stretchWhereNamed] != m_firstStretchesAbove[m_stretch])
+        return false;
+    return generator().blockDominates(m_blocksOfStretches[stretchWhereNamed], m_blocksOfStretches[m_stretch]);
+}
+
+uint32_t SavedFrameEmitter::stretchThatGoesOnInto(BlockID block)
+{
+    if (m_code.at(block).isHandlerBlock() || m_code.at(block).isEntry)
+        return 0;
+    if (BlockID onlyPredecessor = generator().onlyPredecessorOf(block))
+        return m_lastStretchesOfBlocks[onlyPredecessor.index()];
+    BlockID above = m_suspensionsInFrontOfPlaces.empty() ? BlockID() : generator().nearestDominatorOf(block);
+    if (!above)
+        return 0;
+    uint32_t placeAbove = m_placesOfBlocks[above.index()];
+    uint32_t end = std::max(m_placesOfBlocks[block.index()], m_placesBehindLoops[block.index()]);
+    if (m_suspensionsInFrontOfPlaces[end] != m_suspensionsInFrontOfPlaces[placeAbove + (m_code.handlerOf(above) ? 0 : 1)])
+        return 0;
+    return m_lastStretchesOfBlocks[above.index()];
 }
 
 void SavedFrameEmitter::beginStretchOfHeapFrame(BlockID block, LValue frameHandedIn)
@@ -556,11 +965,416 @@ void SavedFrameEmitter::beginStretchOfHeapFrame(BlockID block, LValue frameHande
     m_stretch = ++m_numberOfStretches;
     BlockID onlyPredecessor = frameHandedIn ? BlockID() : generator().onlyPredecessorOf(block);
     m_stretchInFront = onlyPredecessor ? m_lastStretchesOfBlocks[onlyPredecessor.index()] : 0;
+    uint32_t above = frameHandedIn ? 0 : stretchThatGoesOnInto(block);
+    while (m_firstStretchesAbove.size() <= m_stretch) {
+        m_firstStretchesAbove.append(0);
+        m_blocksOfStretches.append(BlockID());
+    }
+    m_firstStretchesAbove[m_stretch] = above && above < m_stretch && m_firstStretchesAbove[above] ? m_firstStretchesAbove[above] : m_stretch;
+    m_blocksOfStretches[m_stretch] = block;
     m_lastStretchesOfBlocks[block.index()] = m_stretch;
+    m_standsAtStartOfStretch = true;
     if (frameHandedIn) {
         m_heapFrame = frameHandedIn;
         m_stretchOfHeapFrame = m_stretch;
+        m_heapFrameHoldsBelowItsStretch = true;
+    } else
+        followWordsThatMayBeSetInto(block);
+}
+
+template<typename Functor>
+void SavedFrameEmitter::forEachArgumentReadAlong(const Edge& edge, const Functor& functor) const
+{
+    std::span<const ValueID> parameters = m_code.at(edge.to).parameters();
+    std::span<const ValueID> arguments = edge.arguments();
+    for (size_t index = 0; index < arguments.size(); ++index) {
+        if (m_generator.wordOf(parameters[index]))
+            functor(arguments[index]);
     }
+}
+
+template<typename Read, typename Defined>
+ValueID SavedFrameEmitter::forEachValueReadInStretch(BlockID block, ValueID yieldInFront, const Read& read, const Defined& defined) const
+{
+    const Block& written = m_code.at(block);
+    std::span<const ValueID> values = m_code.valuesOf(block);
+    if (yieldInFront)
+        values = values.subspan(std::ranges::find(values, yieldInFront) - values.begin() + 1);
+    else
+        read(written.subject);
+    for (ValueID id : values) {
+        const Operation& operation = operationAt(id);
+        if ((m_keepsWordsInMachineFrame || operation.opcode != Opcode::YieldBySavingFrame) && operation.traits().maySuspend()) {
+            operation.forEachOperand([&](ValueID operand, uint32_t) {
+                read(operand);
+            });
+            return id;
+        }
+        if (operation.opcode == Opcode::YieldBySavingFrame) {
+            read(operation.generatorOperand());
+            read(operation.valueOperand());
+            return id;
+        }
+        if (operation.opcode == Opcode::Narrowed)
+            read(operation.operand(OperandIndex::Narrowed::value));
+        else if (operation.opcode != Opcode::ReleaseEnvironment || m_code.marksOf(id).contains(SweepMark::ReleasesOperand)) {
+            operation.forEachOperand([&](ValueID operand, uint32_t) {
+                read(operand);
+            });
+        }
+        defined(id);
+    }
+    for (ValueID operand : written.terminator.operands())
+        read(operand);
+    for (uint32_t index = 0; index < written.terminator.numberOfEdges; ++index)
+        forEachArgumentReadAlong(m_code.at(written.terminator.edge(index)), read);
+    if (EdgeID handler = m_code.handlerOf(block); handler && (written.terminator.kind == TerminatorKind::Throw || written.terminator.kind == TerminatorKind::Rethrow))
+        forEachArgumentReadAlong(m_code.at(handler), read);
+    if (uint32_t turn = m_headsOfLoopsInsideStretchesBehind.empty() ? 0 : m_headsOfLoopsInsideStretchesBehind[block.index()]) {
+        for (--turn; turn < m_orderOfBlocks.size() && m_frontsOfLoopsInsideStretches[m_orderOfBlocks[turn].index()]; ++turn)
+            forEachValueReadInStretch(m_orderOfBlocks[turn], ValueID(), read, defined);
+    }
+    return { };
+}
+
+void SavedFrameEmitter::findWordsNeededAtStartsOfBlocks()
+{
+    static constexpr uint32_t none = UINT32_MAX;
+    std::span<const BlockID> order = generator().order();
+    uint32_t numberOfBlocks = static_cast<uint32_t>(order.size());
+    Machine::Arena& arena = m_proc.arena();
+    m_blocksAboveYields.ensureSize(m_code.numberOfBlocks());
+    m_changesOfNeedsAtTurns = arena.createSpan<RangeOfWords>(numberOfBlocks);
+    m_wordsReadLastAtTurns = arena.createSpan<RangeOfWords>(numberOfBlocks);
+    std::span<uint32_t> turns = arena.createSpan<uint32_t>(m_code.numberOfBlocks());
+    for (uint32_t turn = 0; turn < numberOfBlocks; ++turn)
+        turns[order[turn].index()] = turn;
+
+    BitVector blocksThatYield(m_code.numberOfBlocks());
+    Vector<uint16_t, 64> needs;
+    Vector<uint16_t, 16> argumentsOfHandlers;
+    Vector<RangeOfWords, 64> needsAtTurns;
+    Vector<RangeOfWords, 64> argumentsOfHandlersAtTurns;
+    Vector<uint32_t, 64> lastTurnsNoted;
+    Vector<uint32_t, 64> waysInFromFront;
+    needsAtTurns.grow(numberOfBlocks);
+    argumentsOfHandlersAtTurns.grow(numberOfBlocks);
+    lastTurnsNoted.fill(none, m_numberOfTracedWords);
+    waysInFromFront.fill(0, numberOfBlocks);
+    auto forEachTurnLedTo = [&](uint32_t turn, const auto& functor) {
+        m_code.forEachEdgeOf(order[turn], [&](EdgeID, const Edge& edge) {
+            if (m_code.isReached(edge.to))
+                functor(turns[edge.to.index()]);
+        });
+    };
+    for (uint32_t turn = 0; turn < numberOfBlocks; ++turn) {
+        BlockID block = order[turn];
+        auto wordDefinedElsewhere = [&](ValueID id) -> std::optional<uint16_t> {
+            if (!id || !isKeptInHeapFrame(id) || !isTracedInHeapFrame(id) || m_code.blockOf(id) == block)
+                return std::nullopt;
+            return static_cast<uint16_t>(m_wordsOfKeptValues[id.index()] - 1);
+        };
+        auto need = [&](ValueID id) {
+            if (std::optional<uint16_t> word = wordDefinedElsewhere(id); word && std::exchange(lastTurnsNoted[*word], turn) != turn)
+                needs.append(*word);
+        };
+        needsAtTurns[turn].first = static_cast<uint32_t>(needs.size());
+        ValueID yield;
+        do {
+            yield = forEachValueReadInStretch(block, yield, need, [](ValueID) { });
+            if (yield) {
+                m_blocksAboveYields.quickSet(block.index());
+                blocksThatYield.quickSet(block.index());
+                for (ValueID live : m_code.liveAt(yield))
+                    need(live);
+                for (ValueID held : heldOperandsOf(operationAt(yield)))
+                    need(held);
+            }
+        } while (yield);
+        argumentsOfHandlersAtTurns[turn].first = static_cast<uint32_t>(argumentsOfHandlers.size());
+        if (EdgeID handler = m_code.handlerOf(block)) {
+            forEachArgumentReadAlong(m_code.at(handler), [&](ValueID id) {
+                need(id);
+                if (std::optional<uint16_t> word = wordDefinedElsewhere(id))
+                    argumentsOfHandlers.append(*word);
+            });
+        }
+        needsAtTurns[turn].end = static_cast<uint32_t>(needs.size());
+        argumentsOfHandlersAtTurns[turn].end = static_cast<uint32_t>(argumentsOfHandlers.size());
+        forEachTurnLedTo(turn, [&](uint32_t target) {
+            waysInFromFront[target] += target > turn;
+        });
+    }
+    for (uint32_t turn = numberOfBlocks; turn--;) {
+        if (!m_blocksAboveYields.quickGet(order[turn].index()))
+            continue;
+        if (BlockID above = generator().nearestDominatorOf(order[turn]))
+            m_blocksAboveYields.quickSet(above.index());
+    }
+    if (!m_numberOfTracedWords)
+        return;
+
+    size_t lengthOfSet = (m_numberOfTracedWords + 63) / 64;
+    Vector<uint64_t, 64> sets;
+    Vector<uint32_t, 16> setsThatAreFree;
+    Vector<uint32_t, 64> setsAtTurns;
+    Vector<uint32_t, 64> waysInLeft;
+    auto setAt = [&](uint32_t place) {
+        return sets.mutableSpan().subspan(place * lengthOfSet, lengthOfSet);
+    };
+    auto takeSet = [&] {
+        if (!setsThatAreFree.isEmpty())
+            return setsThatAreFree.takeLast();
+        sets.grow(sets.size() + lengthOfSet);
+        return static_cast<uint32_t>(sets.size() / lengthOfSet - 1);
+    };
+    auto forEachWordIn = [&](std::span<const uint64_t> set, const auto& functor) {
+        for (size_t index = 0; index < set.size(); ++index) {
+            for (uint64_t bits = set[index]; bits; bits &= bits - 1)
+                functor(static_cast<uint16_t>(index * 64 + std::countr_zero(bits)));
+        }
+    };
+    auto add = [&](std::span<uint64_t> set, uint16_t word) {
+        set[word / 64] |= 1ull << (word % 64);
+    };
+
+    Vector<uint32_t, 64> placesOfHeads;
+    placesOfHeads.fill(none, numberOfBlocks);
+    uint32_t numberOfHeads = 0;
+    for (size_t turn : m_turnsOfHeads)
+        placesOfHeads[turn] = numberOfHeads++;
+    Vector<uint64_t, 64> setsOfHeads;
+    setsOfHeads.fill(0, numberOfHeads * lengthOfSet);
+    auto setOfHeadAt = [&](uint32_t turn) {
+        return setsOfHeads.mutableSpan().subspan(placesOfHeads[turn] * lengthOfSet, lengthOfSet);
+    };
+    Vector<uint16_t, 64> changes;
+    Vector<uint16_t, 64> readLast;
+    uint32_t behind = takeSet();
+    uint32_t above = takeSet();
+    auto goFromBehind = [&](bool waysBackAreKnown) {
+        setsAtTurns.fill(none, numberOfBlocks);
+        waysInLeft = waysInFromFront;
+        uint32_t turnAbove = none;
+        bool someHeadNeedsMore = false;
+        for (uint32_t turn = numberOfBlocks; turn--;) {
+            BlockID block = order[turn];
+            uint32_t place = takeSet();
+            std::ranges::fill(setAt(place), 0);
+            forEachTurnLedTo(turn, [&](uint32_t target) {
+                std::span<uint64_t> needed = setAt(place);
+                std::span<const uint64_t> atTarget = target <= turn ? setOfHeadAt(target) : setAt(setsAtTurns[target]);
+                for (size_t index = 0; index < lengthOfSet; ++index)
+                    needed[index] |= atTarget[index];
+                if (target > turn && !--waysInLeft[target])
+                    setsThatAreFree.append(std::exchange(setsAtTurns[target], none));
+            });
+            std::span<uint64_t> needed = setAt(place);
+            bool isAsked = waysBackAreKnown && m_blocksBehindFirstYield.get(block.index()) && m_blocksAboveYields.quickGet(block.index());
+            if (isAsked) {
+                std::ranges::copy(needed, setAt(behind).begin());
+                for (uint16_t word : argumentsOfHandlers.span().subspan(argumentsOfHandlersAtTurns[turn].first, argumentsOfHandlersAtTurns[turn].size()))
+                    add(setAt(behind), word);
+            }
+            for (uint16_t word : needs.span().subspan(needsAtTurns[turn].first, needsAtTurns[turn].size()))
+                add(needed, word);
+            uint32_t placeOfBlock = m_placesOfBlocks[block.index()];
+            for (uint32_t word = m_tracedWordsDefinedInFrontOfPlaces[placeOfBlock]; word < m_tracedWordsDefinedInFrontOfPlaces[placeOfBlock + 1]; ++word)
+                needed[word / 64] &= ~(1ull << (word % 64));
+
+            if (!waysBackAreKnown && m_turnsOfHeads.quickGet(turn)) {
+                someHeadNeedsMore |= !std::ranges::equal(needed, setOfHeadAt(turn));
+                std::ranges::copy(needed, setOfHeadAt(turn).begin());
+            }
+            if (isAsked) {
+                if (!blocksThatYield.quickGet(block.index())) {
+                    m_wordsReadLastAtTurns[turn].first = static_cast<uint32_t>(readLast.size());
+                    std::span<uint64_t> neededBehind = setAt(behind);
+                    for (size_t index = 0; index < lengthOfSet; ++index)
+                        neededBehind[index] = needed[index] & ~neededBehind[index];
+                    forEachWordIn(neededBehind, [&](uint16_t word) {
+                        readLast.append(word);
+                    });
+                    m_wordsReadLastAtTurns[turn].end = static_cast<uint32_t>(readLast.size());
+                }
+                if (turnAbove != none) {
+                    m_changesOfNeedsAtTurns[turnAbove].first = static_cast<uint32_t>(changes.size());
+                    std::span<uint64_t> neededAbove = setAt(above);
+                    for (size_t index = 0; index < lengthOfSet; ++index)
+                        neededAbove[index] ^= needed[index];
+                    forEachWordIn(neededAbove, [&](uint16_t word) {
+                        changes.append(word);
+                    });
+                    m_changesOfNeedsAtTurns[turnAbove].end = static_cast<uint32_t>(changes.size());
+                }
+                std::ranges::copy(needed, setAt(above).begin());
+                turnAbove = turn;
+            }
+            if (waysInLeft[turn])
+                setsAtTurns[turn] = place;
+            else
+                setsThatAreFree.append(place);
+        }
+        if (turnAbove != none) {
+            m_changesOfNeedsAtTurns[turnAbove].first = static_cast<uint32_t>(changes.size());
+            forEachWordIn(setAt(above), [&](uint16_t word) {
+                changes.append(word);
+            });
+            m_changesOfNeedsAtTurns[turnAbove].end = static_cast<uint32_t>(changes.size());
+        }
+        return someHeadNeedsMore;
+    };
+    if (m_everyWayBackLeadsToWhatDominates) {
+        goFromBehind(false);
+        for (size_t turn : m_turnsOfHeads) {
+            if (uint32_t around = m_headsAroundTurns[turn]; around != none) {
+                std::span<uint64_t> needed = setOfHeadAt(turn);
+                std::span<const uint64_t> neededAround = setOfHeadAt(around);
+                for (size_t index = 0; index < lengthOfSet; ++index)
+                    needed[index] |= neededAround[index];
+            }
+        }
+    } else {
+        while (goFromBehind(false)) { }
+    }
+    goFromBehind(true);
+
+    m_changesOfNeeds = arena.createSpan<uint16_t>(changes.size());
+    std::ranges::copy(changes, m_changesOfNeeds.begin());
+    m_wordsReadLast = arena.createSpan<uint16_t>(readLast.size());
+    std::ranges::copy(readLast, m_wordsReadLast.begin());
+}
+
+void SavedFrameEmitter::followWordsThatMayBeSetInto(BlockID block)
+{
+    std::span<const BlockID> order = generator().order();
+    while (order[m_numberOfBlocksFollowed] != block) {
+        uint32_t placeLeft = m_placesOfBlocks[order[m_numberOfBlocksFollowed].index()];
+        m_code.forEachEdgeOf(order[m_numberOfBlocksFollowed], [&](EdgeID, const Edge& edge) {
+            if (m_code.isReached(edge.to) && m_placesOfBlocks[edge.to.index()] > placeLeft)
+                m_wordsThatMayBeSetAtStartsOfBlocks[edge.to.index()].merge(m_wordsThatMayBeSet);
+        });
+        BlockID next = order[++m_numberOfBlocksFollowed];
+        for (uint16_t word : m_changesOfNeeds.subspan(m_changesOfNeedsAtTurns[m_numberOfBlocksFollowed].first, m_changesOfNeedsAtTurns[m_numberOfBlocksFollowed].size()))
+        {
+            bool isNeeded = !m_wordsNeeded.get(word);
+            m_wordsNeeded.set(word, isNeeded);
+            if (!m_numbersOfNeededWordsAtPlaces.empty())
+                m_numbersOfNeededWordsAtPlaces[placeOfWord(word)] += isNeeded ? 1 : -1;
+        }
+        if (!m_numbersOfNeededWordsAtPlaces.empty()) {
+            for (uint16_t word : m_changesOfNeeds.subspan(m_changesOfNeedsAtTurns[m_numberOfBlocksFollowed].first, m_changesOfNeedsAtTurns[m_numberOfBlocksFollowed].size()))
+                RELEASE_ASSERT(m_numbersOfNeededWordsAtPlaces[placeOfWord(word)] <= 1);
+        }
+        m_wordsThatMayBeSet = std::exchange(m_wordsThatMayBeSetAtStartsOfBlocks[next.index()], BitVector());
+        uint32_t placeBehindLoopOfNext = m_blocksBehindFirstYield.get(next.index()) ? m_placesBehindLoops[next.index()] : 0;
+        if (placeBehindLoopOfNext && !m_keepsWordsInMachineFrame && m_everyWayBackLeadsToWhatDominates && m_blocksAboveYields.quickGet(next.index()) && !m_code.at(next).isHandlerBlock() && !liesInLoopInsideStretch(next)) {
+            uint32_t placeOfNext = m_placesOfBlocks[next.index()];
+            for (uint32_t word = m_tracedWordsDefinedInFrontOfPlaces[placeOfNext]; word < m_tracedWordsDefinedInFrontOfPlaces[placeBehindLoopOfNext]; ++word) {
+                if (m_wordsNeeded.get(word) || word < m_tracedWordsDefinedInFrontOfPlaces[placeOfNext + 1])
+                    m_wordsThatMayBeSet.set(word);
+            }
+            m_wordsNeededAtHeads.set(next.index() + 1, m_wordsNeeded);
+        } else if (uint32_t placeBehindLoop = placeBehindLoopOfNext) {
+            for (uint32_t word = m_everyWayBackLeadsToWhatDominates ? m_tracedWordsDefinedInFrontOfPlaces[m_placesOfBlocks[next.index()]] : 0; word < m_tracedWordsDefinedInFrontOfPlaces[placeBehindLoop]; ++word)
+                m_wordsThatMayBeSet.set(word);
+        }
+    }
+
+    m_wordsToClearAtStart.shrink(0);
+    if (!m_blocksBehindFirstYield.get(block.index()) || !m_blocksAboveYields.quickGet(block.index()))
+        return;
+    BitVector dead = m_wordsThatMayBeSet;
+    dead.exclude(m_wordsNeeded);
+    uint32_t place = m_placesOfBlocks[block.index()];
+    for (uint32_t word = m_tracedWordsDefinedInFrontOfPlaces[place]; word < m_tracedWordsDefinedInFrontOfPlaces[place + 1]; ++word)
+        dead.clear(word);
+    bool shares = !m_numbersOfNeededWordsAtPlaces.empty();
+    BitVector placesFilledHere;
+    for (uint32_t word = m_tracedWordsDefinedInFrontOfPlaces[place]; shares && word < m_tracedWordsDefinedInFrontOfPlaces[place + 1]; ++word)
+        placesFilledHere.set(placeOfWord(word));
+    for (size_t word : dead) {
+        if (!shares || (!m_numbersOfNeededWordsAtPlaces[placeOfWord(word)] && !placesFilledHere.get(placeOfWord(word))))
+            m_wordsToClearAtStart.append(static_cast<uint32_t>(word));
+    }
+    for (uint16_t word : m_wordsReadLast.subspan(m_wordsReadLastAtTurns[m_numberOfBlocksFollowed].first, m_wordsReadLastAtTurns[m_numberOfBlocksFollowed].size())) {
+        if (m_wordsThatMayBeSet.get(word))
+            m_wordsToClearAtStart.append(word);
+    }
+}
+
+Vector<uint32_t, 8> SavedFrameEmitter::findWordsToClearOnWayBackAlong(const Edge& edge)
+{
+    Vector<uint32_t, 8> words;
+    auto needed = m_wordsNeededAtHeads.find(edge.to.index() + 1);
+    if (needed == m_wordsNeededAtHeads.end())
+        return words;
+    BitVector dead = m_wordsThatMayBeSet;
+    dead.exclude(needed->value);
+    uint32_t placeOfHead = m_placesOfBlocks[edge.to.index()];
+    for (size_t word : dead) {
+        if (word < m_tracedWordsDefinedInFrontOfPlaces[placeOfHead] || word >= m_tracedWordsDefinedInFrontOfPlaces[placeOfHead + 1])
+            words.append(static_cast<uint32_t>(word));
+    }
+    return words;
+}
+
+void SavedFrameEmitter::clearWordsOnWayBackAlong(const Edge& edge)
+{
+    Vector<uint32_t, 8> words = findWordsToClearOnWayBackAlong(edge);
+    if (words.isEmpty())
+        return;
+    Machine::DeclaredAccessesSuspension suspension(m_out);
+    LValue frame = heapFrameIsNamed() ? m_heapFrame : readHeapFrameOutOfSlot();
+    for (uint32_t word : words)
+        m_out.store64(m_out.int64Zero, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame, offsetOfWordInHeapFrame(word)));
+}
+
+void SavedFrameEmitter::clearWordsOfWhatIsDeadAcross(const ValueContext& yield)
+{
+    BitVector wordsAliveAcross;
+    auto note = [&](ValueID id) {
+        if (id && isKeptInHeapFrame(id) && isTracedInHeapFrame(id))
+            wordsAliveAcross.set(m_wordsOfKeptValues[id.index()] - 1);
+    };
+    for (ValueID live : m_code.liveAt(yield.id()))
+        note(live);
+    for (ValueID held : heldOperandsOf(yield.value()))
+        note(held);
+    if (!m_placesOfWords.empty()) {
+        BitVector rawWordsAlive;
+        for (ValueID live : m_code.liveAt(yield.id())) {
+            if (live && isKeptInHeapFrame(live) && !isTracedInHeapFrame(live))
+                rawWordsAlive.set(m_wordsOfKeptValues[live.index()] - 1);
+        }
+        BitVector rawPlacesTaken;
+        for (size_t word : rawWordsAlive)
+            RELEASE_ASSERT(!rawPlacesTaken.set(placeOfWord(word)));
+    }
+    if (EdgeID handler = m_code.handlerOf(yield.block()))
+        m_wordsThatMayBeSetAtStartsOfBlocks[m_code.at(handler).to.index()].merge(m_wordsThatMayBeSet);
+    if (yield.id() != m_firstYield) {
+        m_wordsThatMayBeSet.exclude(wordsAliveAcross);
+        BitVector placesTaken;
+        if (!m_placesOfWords.empty()) {
+            for (size_t word : wordsAliveAcross)
+                RELEASE_ASSERT(!placesTaken.set(placeOfWord(word)));
+        }
+        for (size_t word : m_wordsThatMayBeSet) {
+            if (!placesTaken.set(placeOfWord(word)))
+                clearWordOfHeapFrame(word);
+        }
+    }
+    m_wordsThatMayBeSet = WTF::move(wordsAliveAcross);
+}
+
+void SavedFrameEmitter::clearWordOfHeapFrame(size_t word)
+{
+    if (m_slotOfKeptWords) {
+        m_out.store64(m_out.int64Zero, wordInFrame(m_slotOfKeptWords, placeOfWord(word)));
+        return;
+    }
+    m_out.store64(m_out.int64Zero, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), heapFrame(), offsetOfWordInHeapFrame(static_cast<uint32_t>(word))));
 }
 
 ValueID SavedFrameEmitter::readBackOutOfHeapFrame(BlockID block, ValueID yieldInFront)
@@ -569,20 +1383,19 @@ ValueID SavedFrameEmitter::readBackOutOfHeapFrame(BlockID block, ValueID yieldIn
     if (!isBehindFirstYield && !m_hasPassedFirstYield)
         return { };
 
-    const Block& written = m_code.at(block);
-    std::span<const ValueID> values = m_code.valuesOf(block);
-    if (yieldInFront)
-        values = values.subspan(std::ranges::find(values, yieldInFront) - values.begin() + 1);
-    else {
-        for (ValueID parameter : written.parameters())
+    if (!yieldInFront) {
+        for (ValueID parameter : m_code.at(block).parameters())
             m_stretchesWhereNamed[parameter.index()] = m_stretch;
     }
 
     ValueID neverStored;
-    auto name = [&](ValueID id) {
-        if (!id || !isKeptInHeapFrame(id) || isNamedInThisStretch(std::exchange(m_stretchesWhereNamed[id.index()], m_stretch)))
+    forEachValueReadInStretch(block, yieldInFront, [&](ValueID id) {
+        if (!id || !isKeptInHeapFrame(id))
             return;
-        if (!m_valuesStoredInHeapFrame.get(id.index())) {
+        if (m_keepsWordsInMachineFrame ? isNamedInThisStretch(std::exchange(m_stretchesWhereNamed[id.index()], m_stretch)) : isNamedAbove(m_stretchesWhereNamed[id.index()]))
+            return;
+        m_stretchesWhereNamed[id.index()] = m_stretch;
+        if (!m_valuesStoredInHeapFrame.get(id.index()) || (isBehindFirstYield && isTracedInHeapFrame(id) && !mayBeSetInHeapFrame(id))) {
             neverStored = id;
             return;
         }
@@ -591,31 +1404,16 @@ ValueID SavedFrameEmitter::readBackOutOfHeapFrame(BlockID block, ValueID yieldIn
             return;
         }
         generator().nameAgain(id, readOutOfHeapFrame(heapFrame(), id));
-    };
-    if (!yieldInFront)
-        name(written.subject);
-    for (ValueID id : values) {
-        const Operation& operation = operationAt(id);
-        if (operation.opcode == Opcode::YieldBySavingFrame) {
-            name(operation.generatorOperand());
-            name(operation.valueOperand());
-            return neverStored;
-        }
-        operation.forEachOperand([&](ValueID operand, uint32_t) {
-            name(operand);
-        });
+    }, [&](ValueID id) {
         m_stretchesWhereNamed[id.index()] = m_stretch;
+    });
+    if (!yieldInFront && !neverStored) {
+        for (uint32_t word : m_wordsToClearAtStart) {
+            clearWordOfHeapFrame(word);
+            m_wordsThatMayBeSet.clear(word);
+        }
     }
-    for (ValueID operand : written.terminator.operands())
-        name(operand);
-    for (uint32_t index = 0; index < written.terminator.numberOfEdges; ++index) {
-        for (ValueID argument : m_code.at(written.terminator.edge(index)).arguments())
-            name(argument);
-    }
-    if (EdgeID handler = m_code.handlerOf(block); handler && (written.terminator.kind == TerminatorKind::Throw || written.terminator.kind == TerminatorKind::Rethrow)) {
-        for (ValueID argument : m_code.at(handler).arguments())
-            name(argument);
-    }
+    m_standsAtStartOfStretch = false;
     return neverStored;
 }
 
@@ -623,11 +1421,13 @@ void SavedFrameEmitter::passHandlerArgumentsInLandingPad(BlockID site, const Edg
 {
     Vector<std::pair<ValueID, LValue>, 8> namedAtSite;
     {
-        CodeGenerator::InitializationScope scope(generator());
+        CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap::No);
         bool isBehindFirstYield = standsBehindFirstYield(site);
         LValue frame = nullptr;
         for (ValueID argument : handler.arguments()) {
             if (!isKeptInHeapFrame(argument) || !m_valuesStoredInHeapFrame.get(argument.index()))
+                continue;
+            if (isBehindFirstYield && isTracedInHeapFrame(argument) && !mayBeSetInHeapFrame(argument))
                 continue;
             if (isBehindFirstYield && !frame)
                 frame = readHeapFrameOutOfSlot();
@@ -635,7 +1435,10 @@ void SavedFrameEmitter::passHandlerArgumentsInLandingPad(BlockID site, const Edg
             generator().nameAgain(argument, isBehindFirstYield ? readOutOfHeapFrame(frame, argument) : m_keptValuesAsDefined[argument.index()]);
         }
     }
-    generator().passHandlerArguments(handler);
+    {
+        SetForScope whilePassing(m_passesHandlerArguments, true);
+        generator().passHandlerArguments(handler);
+    }
     for (auto [argument, lowered] : namedAtSite | std::views::reverse)
         generator().nameAgain(argument, lowered);
 }
@@ -651,6 +1454,12 @@ LValue SavedFrameEmitter::addressOfEntrypoint(unsigned index)
         });
     });
     return patch;
+}
+
+void SavedFrameEmitter::clearWordsInMachineFrame()
+{
+    for (uint32_t word = 0; m_slotOfKeptWords && word < m_numberOfTracedPlaces; ++word)
+        m_out.store64(m_out.int64Zero, wordInFrame(m_slotOfKeptWords, word));
 }
 
 void SavedFrameEmitter::makeHeapFrame(const ValueContext& firstYield, CellPointer generatorCell, LValue resumeAddress)
@@ -672,8 +1481,19 @@ void SavedFrameEmitter::makeHeapFrame(const ValueContext& firstYield, CellPointe
         store(live);
     for (ValueID held : heldOperandsOf(firstYield.value()))
         store(held);
-    emitter<BarrierEmitter>().fenceAfterInitialization();
-    m_out.storePtr(frame, m_out.address(fields, generatorCell.value(), Generator::offsetOfSavedFrame()));
+    if (kindOfFunction() == CoroutineKind::AsyncGenerator) {
+        m_out.store32As8(m_out.constInt32(static_cast<int32_t>(CoroutineKind::AsyncGenerator)), m_out.address(fields, frame, SavedFrame::offsetOfKind()));
+        m_out.store32(m_out.int32One, m_out.address(fields, frame, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
+        emitter<BarrierEmitter>().fenceAfterInitialization();
+        m_out.store64(frame, m_out.address(fields, generatorCell.value(), JSAsyncGenerator::offsetOfInternalField(static_cast<unsigned>(JSAsyncGenerator::Field::Frame))));
+        m_out.store64(frame, m_out.address(fields, generatorCell.value(), JSAsyncGenerator::offsetOfInternalField(static_cast<unsigned>(JSAsyncGenerator::Field::Next))));
+        m_out.storePtr(frame, m_out.address(m_heaps.frameSlots, m_out.slotBase(m_slotOfHeapFrame)));
+        m_heapFrame = frame;
+        m_stretchOfHeapFrame = m_stretch;
+    } else {
+        emitter<BarrierEmitter>().fenceAfterInitialization();
+        m_out.storePtr(frame, m_out.address(fields, generatorCell.value(), Generator::offsetOfSavedFrame()));
+    }
     emitter<BarrierEmitter>().barrier(firstYield, generatorCell);
 }
 
@@ -689,13 +1509,16 @@ void SavedFrameEmitter::yieldOutOfHeapFrame(const ValueContext& value)
 
     if (value.id() == m_firstYield) {
         makeHeapFrame(value, generatorCell, resumeAddress);
-        LValue state = m_out.load32(stateOf(generatorCell));
-        m_out.store32(m_out.select(m_out.equal(state, m_out.constInt32(static_cast<int32_t>(Generator::State::Running))), suspendedAtYield, state), stateOf(generatorCell));
+        if (kindOfFunction() == CoroutineKind::Generator) {
+            LValue state = m_out.load32(stateOf(generatorCell));
+            m_out.store32(m_out.select(m_out.equal(state, m_out.constInt32(static_cast<int32_t>(Generator::State::Running))), suspendedAtYield, state), stateOf(generatorCell));
+        }
         m_hasPassedFirstYield = true;
     } else {
         m_out.storePtr(resumeAddress, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), heapFrame(), SavedFrame::offsetOfResumeAddress()));
         m_out.store32(suspendedAtYield, stateOf(generatorCell));
     }
+    clearWordsOfWhatIsDeadAcross(value);
     Operand returned = yielded;
     emitter<CallEmitter>().returnValues(singleElementSpan(returned));
 
@@ -710,11 +1533,21 @@ void SavedFrameEmitter::yieldOutOfHeapFrame(const ValueContext& value)
         fail(value, InternalErrorKind::InvalidSuspension);
 }
 
-CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> closure, LBasicBlock slowPath)
+GeneratorFunctionOrigin SavedFrameEmitter::originOfGeneratorFunction(FunctionID function) const
+{
+    return m_plan.functionKind(m_program, conventions().closureEntryOf(function)).isInRuntimeModule ? GeneratorFunctionOrigin::Library : GeneratorFunctionOrigin::Program;
+}
+
+CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> closure, GeneratorFunctionOrigin origin, LBasicBlock slowPath)
 {
     std::optional<Word32> structureID;
     std::optional<Pointer> structure;
-    if (closure) {
+    if (closure && origin == GeneratorFunctionOrigin::Library) {
+        branchUnless(equal(loadStructureID(*closure), loadImmutable32(AOT_INSTANCE_OFFSET(closures.closureHeaders) + closureStructureOfGeneratorFunctions(false) * sizeof(uint64_t))), slowPath);
+        structureID = Word32(m_out.load32(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.structureIDsOfGeneratorsOfLibrary))));
+        branchUnless(isNotZero(*structureID), slowPath);
+        structure = decodeStructureID(*structureID);
+    } else if (closure) {
         constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
         Pointer taggedRareData = loadField<Pointer>(*closure, m_heaps.JSFunction_executableOrRareData);
         branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), slowPath);
@@ -757,16 +1590,28 @@ void SavedFrameEmitter::generateNewGenerator(const ValueContext& value)
 
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
-    join.add(allocateGenerator(closure, slowPath));
+    join.add(allocateGenerator(closure, originOfGeneratorFunction(value->function()), slowPath));
 
     m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(value, RuntimeOperation::NewGenerator, { closure ? boxCell(*closure) : Boxed(m_out.int64Zero), word32(static_cast<int32_t>(NewGeneratorKind::Sync)) }, { .isOnRarePath = true }));
+    join.add(callOperation<CellPointer>(value, RuntimeOperation::NewGenerator, { closure ? boxCell(*closure) : Boxed(m_out.int64Zero) }, { .isOnRarePath = true }));
+    define(value, join.finish());
+}
+
+void SavedFrameEmitter::generateNewGeneratorOfLibrary(const ValueContext& value)
+{
+    CellPointer closure = in<CellPointer>(value->calleeOperand());
+    LBasicBlock slowPath = newBlock();
+    Join<CellPointer> join(m_out);
+    join.add(allocateGenerator(closure, GeneratorFunctionOrigin::Library, slowPath));
+
+    m_out.appendTo(slowPath);
+    join.add(callOperation<CellPointer>(value, RuntimeOperation::NewGeneratorOfLibrary, { boxCell(closure) }, { .isOnRarePath = true }));
     define(value, join.finish());
 }
 
 void SavedFrameEmitter::generateNewAsyncGenerator(const ValueContext& value)
 {
-    define(value, CellPointer(callStub(value, AOT::newAsyncGenerator(), { in<CellPointer>(value->calleeOperand()).value() }).first));
+    define(value, CellPointer(callStub(value, AOT::newAsyncGenerator(originOfGeneratorFunction(value->function())), { in<CellPointer>(value->calleeOperand()).value() }).first));
 }
 
 void SavedFrameEmitter::generateTakeGeneratorPrototype(const ValueContext& value)
@@ -859,13 +1704,13 @@ void SavedFrameEmitter::generateIsUnmodifiedGenerator(const ValueContext& value)
     });
 }
 
-static std::optional<StepConsumer> stepConsumerOf(CoroutineKind kind, bool awaitsCall)
+static std::optional<StepConsumer> stepConsumerOf(CoroutineKind kind)
 {
     switch (kind) {
     case CoroutineKind::AsyncFunction:
-        return awaitsCall ? StepConsumer::AsyncFunctionAwaitingCall : StepConsumer::AsyncFunction;
+        return StepConsumer::AsyncFunction;
     case CoroutineKind::AsyncGenerator:
-        return awaitsCall ? StepConsumer::AsyncGeneratorAwaitingCall : StepConsumer::AsyncGenerator;
+        return StepConsumer::AsyncGenerator;
     case CoroutineKind::Generator:
         return std::nullopt;
     }
@@ -875,17 +1720,21 @@ static std::optional<StepConsumer> stepConsumerOf(CoroutineKind kind, bool await
 void SavedFrameEmitter::generateStepAsyncGenerator(const ValueContext& value)
 {
     ValueID driver = value->driverOperand();
-    std::optional<StepConsumer> consumer = stepConsumerOf(kindOfFunction(), !!value->calledBuiltin());
+    std::optional<StepConsumer> consumer = stepConsumerOf(kindOfFunction());
     if (!consumer || opcodeOf(driver) == Opcode::Absent) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         return;
     }
 
-    defineValueAndWord(value, suspend(value, stepAsyncGenerator(*consumer), { in<CellPointer>(value->generatorOperand()).value(), cellOrZero(driver), in<Boxed>(value->valueOperand()).value() }, driver));
+    LValue awaitsCall = value->calledBuiltin() ? m_out.constInt64(consumerOfStepAwaitsCall) : m_out.int64Zero;
+    if (ValueID goesByDriver = value->goesByDriverOperand())
+        awaitsCall = m_out.select(in<Condition>(goesByDriver).value(), m_out.int64Zero, awaitsCall);
+    defineValueAndWord(value, suspend(value, stepAsyncGenerator(*consumer), { in<CellPointer>(value->generatorOperand()).value(), cellOrZero(driver), in<Boxed>(value->valueOperand()).value(), awaitsCall }, driver));
 }
 
 void SavedFrameEmitter::generatePromiseAllOfElements(const ValueContext& value)
 {
+    static_assert(maxComputedElementsOfArrayLiteral <= SavedFrame::maxCombinatorElements);
     Vector<Boxed, 8> elements;
     for (ValueID element : value->elementsOperands())
         elements.append(in<Boxed>(element));

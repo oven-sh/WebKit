@@ -225,6 +225,7 @@ static void allocatorSplitsEdgeThatGetsMoves()
     exchange->append(first, ValueRep::reg(second->argumentReg()));
     exchange->append(second, ValueRep::reg(first->argumentReg()));
     exchange->appendSomeRegister(buffer);
+    exchange->setRunsWithoutFrame(true);
     exchange->setGenerator([](CCallHelpers& jit, const PatchParameters& parameters) {
         jit.store64(parameters[0].gpr(), CCallHelpers::Address(parameters[2].gpr()));
         jit.store64(parameters[1].gpr(), CCallHelpers::Address(parameters[2].gpr(), sizeof(uint64_t)));
@@ -437,6 +438,174 @@ static void encoderLeavesMoveOutOfResultRegisterToCalleeThatDoesIt()
     std::array<uint64_t, numberOfCases> stored { };
     AOT_ALLOCATION_TEST_CHECK(test, !test.call<uint64_t>(stored.data(), 7, 0, 0));
     AOT_ALLOCATION_TEST_CHECK(test, stored[0] == 40 && stored[1] == 41 && stored[2] == 42);
+}
+
+static void encoderLeavesPairOfMovesToCalleeThatDoesBoth()
+{
+    enum Case : unsigned { CalleeDoesBoth, CalleeMovesAnotherRegisterIntoResult, CalleeDoesFirstAlone, SourceIsFilledBehindPair, numberOfCases };
+    TestProcedure test;
+    Output& out = test.out();
+    LValue buffer = test.argumentGPR(0);
+    LValue other = test.argumentGPR(1);
+    LValue third = test.argumentGPR(4);
+    const Reg result = Reg(GPRInfo::returnValueGPR);
+    const Reg holdsOther = test.argumentGPR(1)->argumentReg();
+    const Reg filled = test.argumentGPR(2)->argumentReg();
+    const Reg holdsBuffer = test.argumentGPR(3)->argumentReg();
+
+    PatchOperation* takers[numberOfCases];
+    for (unsigned index = 0; index < numberOfCases; ++index) {
+        PatchOperation* maker = out.patchpoint(Int64);
+        maker->resultConstraints = { ValueRep::reg(result) };
+        maker->effects = Effects::none();
+        maker->effects.writesLocalState = true;
+        maker->setGenerator([index](CCallHelpers& jit, const PatchParameters&) {
+            jit.move(CCallHelpers::TrustedImm64(40 + index), GPRInfo::returnValueGPR);
+        });
+        PatchOperation* taker = out.patchpoint(Void);
+        takers[index] = taker;
+        taker->append(maker, ValueRep::reg(filled));
+        taker->append(buffer, ValueRep::reg(holdsBuffer));
+        taker->append(other, ValueRep::reg(result));
+        if (index == SourceIsFilledBehindPair)
+            taker->append(third, ValueRep::reg(holdsOther));
+        taker->setRegisterThatCalleeFillsOutOfResult(filled);
+        if (index != CalleeDoesFirstAlone)
+            taker->setRegisterThatCalleeMovesIntoResult(index == CalleeMovesAnotherRegisterIntoResult ? holdsBuffer : holdsOther);
+        taker->effects = Effects::none();
+        taker->effects.writesLocalState = true;
+        taker->setGenerator([index](CCallHelpers& jit, const PatchParameters& parameters) {
+            if (parameters.value()->leavesMoveOutOfResultToCallee()) {
+                jit.move(GPRInfo::returnValueGPR, parameters[0].gpr());
+                jit.move(parameters.value()->registerThatCalleeMovesIntoResult().gpr(), GPRInfo::returnValueGPR);
+            }
+            jit.store64(parameters[0].gpr(), CCallHelpers::Address(parameters[1].gpr(), 2 * index * sizeof(uint64_t)));
+            jit.store64(parameters[2].gpr(), CCallHelpers::Address(parameters[1].gpr(), (2 * index + 1) * sizeof(uint64_t)));
+        });
+    }
+    out.ret(out.constInt64(0));
+    compileOrFail(test);
+
+    AOT_ALLOCATION_TEST_CHECK(test, takers[CalleeDoesBoth]->leavesMoveOutOfResultToCallee());
+    AOT_ALLOCATION_TEST_CHECK(test, !takers[CalleeMovesAnotherRegisterIntoResult]->leavesMoveOutOfResultToCallee());
+    AOT_ALLOCATION_TEST_CHECK(test, !takers[CalleeDoesFirstAlone]->leavesMoveOutOfResultToCallee());
+    AOT_ALLOCATION_TEST_CHECK(test, !takers[SourceIsFilledBehindPair]->leavesMoveOutOfResultToCallee());
+    std::array<uint64_t, 2 * numberOfCases> stored { };
+    AOT_ALLOCATION_TEST_CHECK(test, !test.call<uint64_t>(stored.data(), 7, 0, 0, 9));
+    for (unsigned index = 0; index < numberOfCases; ++index)
+        AOT_ALLOCATION_TEST_CHECK(test, stored[2 * index] == 40 + index && stored[2 * index + 1] == 7);
+}
+
+static void encoderLeavesMoveOutOfResultRegisterToCalleeThatEndsItsBlock()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue buffer = test.argumentGPR(0);
+    const Reg result = Reg(GPRInfo::returnValueGPR);
+    const Reg filled = test.argumentGPR(2)->argumentReg();
+    const Reg holdsBuffer = test.argumentGPR(3)->argumentReg();
+    LBasicBlock whenEven = out.newBlock();
+    LBasicBlock whenOdd = out.newBlock();
+
+    PatchOperation* maker = out.patchpoint(Int64);
+    maker->resultConstraints = { ValueRep::reg(result) };
+    maker->effects = Effects::none();
+    maker->effects.writesLocalState = true;
+    maker->setGenerator([](CCallHelpers& jit, const PatchParameters&) {
+        jit.move(CCallHelpers::TrustedImm64(41), GPRInfo::returnValueGPR);
+    });
+    PatchOperation* taker = out.patchpoint(Void);
+    taker->append(maker, ValueRep::reg(filled));
+    taker->append(buffer, ValueRep::reg(holdsBuffer));
+    taker->setRegisterThatCalleeFillsOutOfResult(filled);
+    taker->effects = Effects::none();
+    taker->effects.writesLocalState = true;
+    taker->effects.terminal = true;
+    taker->setGenerator([](CCallHelpers& jit, const PatchParameters& parameters) {
+        if (parameters.value()->leavesMoveOutOfResultToCallee())
+            jit.move(GPRInfo::returnValueGPR, parameters[0].gpr());
+        jit.store64(parameters[0].gpr(), CCallHelpers::Address(parameters[1].gpr()));
+        MacroAssembler::Label* first = parameters.successorLabels()[0];
+        MacroAssembler::Label* second = parameters.successorLabels()[1];
+        CCallHelpers::Jump toSecond = jit.branchTest64(CCallHelpers::NonZero, parameters[0].gpr(), CCallHelpers::TrustedImm32(1));
+        CCallHelpers::Jump toFirst;
+        if (!parameters.fallsThroughToSuccessor(0))
+            toFirst = jit.jump();
+        parameters.addLatePath([=](CCallHelpers& jit) {
+            toSecond.linkTo(*second, &jit);
+            if (toFirst.isSet())
+                toFirst.linkTo(*first, &jit);
+        });
+    });
+    out.appendSuccessor(normalEdge(whenEven));
+    out.appendSuccessor(normalEdge(whenOdd));
+    out.appendTo(whenEven);
+    out.ret(out.constInt64(2));
+    out.appendTo(whenOdd);
+    out.ret(out.constInt64(1));
+    compileOrFail(test);
+
+    AOT_ALLOCATION_TEST_CHECK(test, taker->owner()->last() == taker && taker->leavesMoveOutOfResultToCallee());
+    uint64_t stored = 0;
+    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(&stored, 7, 0, 0) == 1 && stored == 41);
+}
+
+static void encoderStepsOverStoreOfAnotherRegisterOnTheWayToCalleeThatDoesMove()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LBasicBlock rare = out.newBlock();
+    LBasicBlock usual = out.newBlock();
+    LValue buffer = test.argumentGPR(0);
+    LValue kept = test.argumentGPR(1);
+    const Reg result = Reg(GPRInfo::returnValueGPR);
+    const Reg filled = test.argumentGPR(2)->argumentReg();
+    const Reg holdsBuffer = test.argumentGPR(3)->argumentReg();
+    out.branch(out.testNonZero64(kept, 1), rareEdge(rare), normalEdge(usual));
+
+    out.appendTo(rare);
+    PatchOperation* maker = out.patchpoint(Int64);
+    maker->resultConstraints = { ValueRep::reg(result) };
+    maker->effects = Effects::none();
+    maker->effects.writesLocalState = true;
+    maker->setGenerator([](CCallHelpers& jit, const PatchParameters&) {
+        jit.move(CCallHelpers::TrustedImm64(43), GPRInfo::returnValueGPR);
+    });
+    PatchOperation* taker = out.patchpoint(Void);
+    taker->append(maker, ValueRep::reg(filled));
+    taker->append(buffer, ValueRep::reg(holdsBuffer));
+    taker->setRegisterThatCalleeFillsOutOfResult(filled);
+    taker->clobberLate(registerFileFor(test.procedure().traits()).allocatableIn(Bank::GP));
+    taker->effects = Effects::none();
+    taker->effects.writesLocalState = true;
+    taker->setGenerator([](CCallHelpers& jit, const PatchParameters& parameters) {
+        if (parameters.value()->leavesMoveOutOfResultToCallee())
+            jit.move(GPRInfo::returnValueGPR, parameters[0].gpr());
+        jit.store64(parameters[0].gpr(), CCallHelpers::Address(parameters[1].gpr()));
+        forEachRegister(parameters.value()->lateClobberedMask(), [&](Reg reg) {
+            if (reg.isGPR())
+                jit.move(CCallHelpers::TrustedImm64(-1), reg.gpr());
+        });
+    });
+    out.ret(kept);
+
+    out.appendTo(usual);
+    out.ret(kept);
+    compileOrFail(test);
+
+    const Allocation& allocation = test.procedure().allocation();
+    const BlockSteps& steps = allocation.stepsOf(rare);
+    uint32_t move = steps.begin;
+    while (move < steps.end && !(allocation.step(move).kind == StepKind::Move && allocation.step(move).destination == Location::reg(filled) && allocation.step(move).sources[0] == Location::reg(result)))
+        ++move;
+    unsigned numberOfStoresBetween = 0;
+    for (uint32_t index = move + 1; index < steps.end && allocation.step(index).kind != StepKind::Execute; ++index)
+        numberOfStoresBetween += allocation.step(index).kind == StepKind::Save;
+    AOT_ALLOCATION_TEST_CHECK(test, test.procedure().order().of(rare).isRare() && move < steps.end && numberOfStoresBetween);
+    AOT_ALLOCATION_TEST_CHECK(test, taker->leavesMoveOutOfResultToCallee());
+    uint64_t stored = 0;
+    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(&stored, 7, 0, 0) == 7 && stored == 43);
+    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(&stored, 8, 0, 0) == 8);
 }
 
 static unsigned allocationTestNumberOfBlocksSplitLate(TestProcedure& test)
@@ -1977,6 +2146,124 @@ static void allocatorGivesRegistersThatPatchesLeaveAloneToWhatLoopUses()
     }
 }
 
+static void allocatorCountsWhatCrossesPatchesOfLoopAgainstRegistersTheyLeave()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    LValue rounds = test.argumentGPR(0);
+    LValue addend = test.argumentGPR(1);
+    LValue buffer = test.argumentGPR(2);
+    RegisterMask argumentRegisters = maskOf(rounds->argumentReg()) | maskOf(addend->argumentReg()) | maskOf(buffer->argumentReg());
+    RegisterMask leftAlone = 0;
+    RegisterMask others = file.allocatableIn(Bank::GP) & ~file.calleeSaved & ~argumentRegisters;
+    for (unsigned count = 0; count < 4; ++count) {
+        leftAlone |= others & ~(others - 1);
+        others &= others - 1;
+    }
+    LValue through = out.load64(allocationTestWordAt(test, buffer, 1));
+    LBasicBlock head = out.newBlock();
+    LBasicBlock body = out.newBlock();
+    LBasicBlock exit = out.newBlock();
+    LValue left = out.phiIn(head, Int64);
+    LValue sum = out.phiIn(head, Int64);
+    out.upsilon(rounds, left);
+    out.upsilon(out.int64Zero, sum);
+    out.jump(normalEdge(head));
+
+    out.appendTo(head);
+    out.branch(left, normalEdge(body), normalEdge(exit));
+
+    out.appendTo(body);
+    LValue madeInTurn = out.opaque(out.add(sum, addend));
+    allocationTestAppendPatchThatTakes(test, file.allocatableIn(Bank::GP) & ~leftAlone);
+    out.upsilon(out.add(madeInTurn, sum), sum);
+    out.upsilon(out.sub(left, 1), left);
+    out.jump(normalEdge(head));
+
+    out.appendTo(exit);
+    out.store64(sum, allocationTestWordAt(test, buffer, 0));
+    out.ret(through);
+    compileOrFail(test);
+
+    AllocationTestText text(test);
+    const Allocation& allocation = test.procedure().allocation();
+    const LoopFacts& facts = test.procedure().liveness().of(test.procedure().order().loops()[0], test.procedure().order());
+    AOT_ALLOCATION_TEST_CHECK(test, allocationTestCountOf(leftAlone) == 4 && facts.pressureAcrossPatches[static_cast<unsigned>(Bank::GP)] == 4);
+    AOT_ALLOCATION_TEST_CHECK(test, allocation.isSpilled(through) && text.isStoredOnceBehindDefinition(through));
+    for (LValue value : { addend, left, sum, madeInTurn })
+        AOT_ALLOCATION_TEST_CHECK(test, !allocation.isSpilled(value));
+    for (const Block* block : { head, body })
+        AOT_ALLOCATION_TEST_CHECK(test, !text.count("reload"_s, nullptr, block) && !text.count("save"_s, nullptr, block));
+
+    constexpr uint64_t added = 5;
+    for (uint64_t numberOfRounds : { 0u, 1u, 3u }) {
+        std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+        uint64_t expected = 0;
+        for (uint64_t round = 0; round < numberOfRounds; ++round)
+            expected = expected + added + expected;
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(numberOfRounds, added, words.data()) == words[1]);
+        AOT_ALLOCATION_TEST_CHECK(test, words[0] == expected);
+    }
+}
+
+static void allocatorCountsWhatLoopReadsOnlyAheadOfPatchAmongWhatCrossesIt()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    LValue rounds = test.argumentGPR(0);
+    LValue addend = test.argumentGPR(1);
+    LValue buffer = test.argumentGPR(2);
+    RegisterMask argumentRegisters = maskOf(rounds->argumentReg()) | maskOf(addend->argumentReg()) | maskOf(buffer->argumentReg());
+    RegisterMask leftAlone = 0;
+    RegisterMask others = file.allocatableIn(Bank::GP) & ~file.calleeSaved & ~argumentRegisters;
+    for (unsigned count = 0; count < 4; ++count) {
+        leftAlone |= others & ~(others - 1);
+        others &= others - 1;
+    }
+    LValue through = out.load64(allocationTestWordAt(test, buffer, 1));
+    LValue readAheadOfPatch = out.load64(allocationTestWordAt(test, buffer, 2));
+    LBasicBlock head = out.newBlock();
+    LBasicBlock body = out.newBlock();
+    LBasicBlock exit = out.newBlock();
+    LValue left = out.phiIn(head, Int64);
+    LValue sum = out.phiIn(head, Int64);
+    out.upsilon(rounds, left);
+    out.upsilon(out.int64Zero, sum);
+    out.jump(normalEdge(head));
+
+    out.appendTo(head);
+    out.branch(left, normalEdge(body), normalEdge(exit));
+
+    out.appendTo(body);
+    LValue madeInTurn = out.opaque(out.add(sum, readAheadOfPatch));
+    allocationTestAppendPatchThatTakes(test, file.allocatableIn(Bank::GP) & ~leftAlone);
+    out.upsilon(out.add(madeInTurn, addend), sum);
+    out.upsilon(out.sub(left, 1), left);
+    out.jump(normalEdge(head));
+
+    out.appendTo(exit);
+    out.store64(sum, allocationTestWordAt(test, buffer, 0));
+    out.ret(through);
+    compileOrFail(test);
+
+    AllocationTestText text(test);
+    const Allocation& allocation = test.procedure().allocation();
+    const LoopFacts& facts = test.procedure().liveness().of(test.procedure().order().loops()[0], test.procedure().order());
+    AOT_ALLOCATION_TEST_CHECK(test, allocationTestCountOf(leftAlone) == 4 && facts.pressureAcrossPatches[static_cast<unsigned>(Bank::GP)] == 4);
+    AOT_ALLOCATION_TEST_CHECK(test, allocation.isSpilled(through) && text.isStoredOnceBehindDefinition(through));
+    for (const Block* block : { head, body })
+        AOT_ALLOCATION_TEST_CHECK(test, !text.count("reload"_s, nullptr, block) && !text.count("save"_s, nullptr, block));
+
+    constexpr uint64_t added = 5;
+    for (uint64_t numberOfRounds : { 0u, 1u, 3u }) {
+        std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(numberOfRounds, added, words.data()) == words[1]);
+        AOT_ALLOCATION_TEST_CHECK(test, words[0] == numberOfRounds * (added + words[2]));
+    }
+}
+
 static void allocatorLoadsNothingAtJoinForRareArm()
 {
     TestProcedure test;
@@ -3454,6 +3741,9 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/operands-of-a-patch-that-ends-the-function-stay-where-they-lie"_s, Machine::allocatorLeavesOperandsOfPatchThatEndsFunctionWhereTheyLie },
         { "machine-allocation/nothing-is-kept-where-the-generator-makes-a-constant"_s, Machine::allocatorKeepsNothingWhereGeneratorMakesConstant },
         { "machine-allocation/a-move-out-of-the-result-register-is-left-to-the-callee-that-does-it"_s, Machine::encoderLeavesMoveOutOfResultRegisterToCalleeThatDoesIt },
+        { "machine-allocation/a-move-out-of-the-result-register-is-left-to-the-callee-that-ends-its-block"_s, Machine::encoderLeavesMoveOutOfResultRegisterToCalleeThatEndsItsBlock },
+        { "machine-allocation/a-pair-of-moves-is-left-to-the-callee-that-does-both"_s, Machine::encoderLeavesPairOfMovesToCalleeThatDoesBoth },
+        { "machine-allocation/a-store-of-another-register-stands-between-the-move-and-the-callee-that-does-it"_s, Machine::encoderStepsOverStoreOfAnotherRegisterOnTheWayToCalleeThatDoesMove },
         { "machine-allocation/three-number-phis-rotate"_s, Machine::allocatorRotatesPhisBySwapping<double, 3> },
         { "machine-allocation/numbers-across-a-call-take-callee-saved-registers"_s, Machine::allocatorKeepsValuesAcrossCallInCalleeSavedRegisters<double> },
         { "machine-allocation/integer-loses-its-register-to-a-loop-under-pressure"_s, Machine::allocatorDecidesByPressureWhatKeepsItsRegisterThroughLoop<uint64_t, true> },
@@ -3477,6 +3767,8 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/phi-of-a-join-has-a-word-of-its-own-where-the-value-that-is-handed-to-it-lives-on"_s, Machine::allocatorLaysPhiOfJoinInWordOfValueThatIsHandedToIt<true> },
         { "machine-allocation/phis-that-lie-in-memory-rotate"_s, Machine::allocatorRotatesPhisThatLieInMemory },
         { "machine-allocation/what-only-lives-through-a-loop-gives-way-for-the-registers-its-patches-leave-alone"_s, Machine::allocatorGivesRegistersThatPatchesLeaveAloneToWhatLoopUses },
+        { "machine-allocation/what-crosses-the-patches-of-a-loop-is-counted-against-the-registers-they-leave"_s, Machine::allocatorCountsWhatCrossesPatchesOfLoopAgainstRegistersTheyLeave },
+        { "machine-allocation/what-a-loop-reads-only-ahead-of-a-patch-is-counted-among-what-crosses-it"_s, Machine::allocatorCountsWhatLoopReadsOnlyAheadOfPatchAmongWhatCrossesIt },
         { "machine-allocation/nothing-is-loaded-at-a-join-for-a-rare-arm"_s, Machine::allocatorLoadsNothingAtJoinForRareArm },
         { "machine-allocation/nothing-is-loaded-on-the-ways-into-a-rare-join"_s, Machine::allocatorLoadsNothingOnWaysIntoRareJoin },
         { "machine-allocation/nothing-is-loaded-at-a-join-for-a-read-behind-a-call"_s, Machine::allocatorLoadsNothingAtJoinForReadBehindCall },

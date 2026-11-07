@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
+#include "AOTStubKey.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -19,21 +20,31 @@ public:
     }
 
     void generateNarrowed(const ValueContext& value) { defineNarrowed(value, get(value->valueOperand())); }
-    void generateAssumeType(const ValueContext& value) { defineNarrowed(value, get(value->valueOperand())); }
     void generateCheckInitialized(const ValueContext&);
     void generateRequireObjectCoercible(const ValueContext&);
     void requireObjectCoercible(const ValueContext&);
     void generateRequireObject(const ValueContext&);
     void generateTypeTest(const ValueContext&);
     void generateCheckProof(const ValueContext&);
-    struct KindsAndClosure {
+    struct QuestionForStub {
+        StubKey stub;
         uint32_t kinds;
-        std::optional<uint32_t> mentionOfUpperHalfOfClosureWord;
+        std::optional<uint32_t> mentionAboveKinds;
+        std::optional<uint32_t> numberInRegister;
     };
-    std::optional<KindsAndClosure> kindsAndClosureThatMakeUp(TypeID);
+    std::optional<QuestionForStub> questionForStubThatTells(TypeID);
+    std::optional<Operand> takeIntegerHandedOnTo(ValueID unboxing);
 
 private:
     const TypeTestPlan& planFor(ValueID operand, TypeID to) { return typeTestPlanFor(typeIDOf(operand), representationOf(operand), to); }
+    ValueID unboxingBehindTestForInt32(const ValueContext& test);
+    bool tryBranchOnInt32AndHandItOn(const ValueContext& test, Operand);
+
+    struct IntegerHandedOn {
+        ValueID unboxing;
+        Operand integer;
+    };
+    Vector<IntegerHandedOn, 1> m_integersHandedOn;
 };
 
 } } } // namespace JSC::AOT::Typed

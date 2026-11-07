@@ -35,8 +35,18 @@ struct ObjectBuiltinWords {
 struct BuiltinDirectFunctionBinding;
 struct BuiltinNativeFunctionBinding;
 
+struct FunctionOfBuiltinAsBuilt {
+    static constexpr EncodedJSValue never = 1;
+
+    EncodedJSValue receiver;
+    EncodedJSValue function;
+};
+
 struct BuiltinWords {
+    static constexpr unsigned numberOfFunctionsAsBuilt = 128;
+
     ObjectBuiltinWords objects;
+    FunctionOfBuiltinAsBuilt functionsAsBuilt[numberOfFunctionsAsBuilt];
     uint8_t* classesWrittenAbove;
     uint8_t* membersWritten;
     uint8_t* namesOnHolders;

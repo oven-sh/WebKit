@@ -1229,6 +1229,68 @@ static void testMachineOperationsPatchExtractAndCheck()
     }
 }
 
+template<typename T>
+static void checkComparisonsOfNumbersAsChecks()
+{
+    constexpr int32_t answerOfLatePath = 77;
+    enum class Spelling : uint8_t { AsItIs, NegatedByXor, NegatedByEqualZero };
+    struct Shape {
+        Spelling spelling;
+        bool isReadAgain { false };
+        bool comparesValueWithItself { false };
+        std::optional<uint64_t> constantOnRight { };
+    };
+    Vector<Shape> shapes {
+        { Spelling::AsItIs }, { Spelling::NegatedByXor }, { Spelling::NegatedByEqualZero }, { Spelling::AsItIs, true }, { Spelling::NegatedByXor, true },
+        { Spelling::AsItIs, false, true }, { Spelling::NegatedByXor, false, true },
+    };
+    for (uint64_t constant : operationTestValuesOf<T>().first(operationTestSomeValues)) {
+        shapes.append({ Spelling::AsItIs, false, false, constant });
+        shapes.append({ Spelling::NegatedByXor, false, false, constant });
+    }
+    for (const OperationTestComparison<T>& row : operationTestComparisonsOf<T>()) {
+        for (const Shape& shape : shapes) {
+            auto [spelling, isReadAgain, comparesValueWithItself, constantOnRight] = shape;
+            OperationTestProcedure test;
+            Output& out = test.out();
+            LValue left = operationTestValueOfBits(out, test.argumentGPR(0), operationTestTypeOf<T>());
+            LValue right = comparesValueWithItself ? left : operationTestValueOfBits(out, constantOnRight ? out.constInt64(*constantOnRight) : test.argumentGPR(1), operationTestTypeOf<T>());
+            LValue comparison = out.binary(row.opcode, left, right);
+            bool isNegated = spelling != Spelling::AsItIs;
+            PatchOperation* check = out.check(spelling == Spelling::AsItIs ? comparison : spelling == Spelling::NegatedByXor ? out.bitXor(comparison, 1) : out.equal(comparison, 0));
+            AOT_TEST_CHECK(check->failsWhenPredicateIsZero() == (isNegated && isComparison(check->child(0)->opcode())));
+            AOT_TEST_CHECK(comparison->isConstant() || check->failsWhenPredicateIsZero() == isNegated);
+            check->setGenerator([](CCallHelpers& jit, const PatchParameters& parameters) {
+                jit.move(CCallHelpers::TrustedImm32(answerOfLatePath), GPRInfo::returnValueGPR);
+                if (parameters.frameIsSetUp())
+                    emitFrameTeardown(jit, parameters.frame());
+                jit.ret();
+            });
+            out.ret(isReadAgain ? out.zeroExt(comparison, Int64) : out.constInt64(0));
+            compileOrFail(test);
+
+            for (uint64_t leftBits : operationTestValuesOf<T>()) {
+                for (uint64_t rightBits : operationTestValuesOf<T>()) {
+                    if (comparesValueWithItself)
+                        rightBits = leftBits;
+                    if (constantOnRight)
+                        rightBits = *constantOnRight;
+                    bool holds = row.reference(operationTestValueOf<T>(leftBits), operationTestValueOf<T>(rightBits));
+                    bool fails = holds != isNegated;
+                    int64_t returned = test.call<int64_t>(leftBits, rightBits);
+                    checkOperationTest(returned == (fails ? answerOfLatePath : isReadAgain && holds), test, descriptionOf(row.opcode).name, isNegated ? ", negated," : "", isReadAgain ? " read again," : "", " as a check of ", RawHex(leftBits), " and ", RawHex(rightBits), " gave ", returned);
+                }
+            }
+        }
+    }
+}
+
+static void testMachineOperationsThatCheckComparisonsOfNumbers()
+{
+    checkComparisonsOfNumbersAsChecks<double>();
+    checkComparisonsOfNumbersAsChecks<float>();
+}
+
 static void testMachineOperationsOnLowHalfOfLoadThroughScaledIndex()
 {
     OperationTestProcedure test;
@@ -1748,6 +1810,7 @@ static std::span<const NativeTest> listOfMachineOperationTests()
         { "machine/operations/memory/stores-of-constants"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatStoreConstants> },
         { "machine/operations/memory/narrow-loads-as-operands"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnNarrowLoads> },
         { "machine/operations/patch-extract-check"_s, runOperationTestWhereCodeRuns<testMachineOperationsPatchExtractAndCheck> },
+        { "machine/operations/comparisons-of-numbers-as-checks"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatCheckComparisonsOfNumbers> },
         { "machine/operations/low-half-of-load-through-scaled-index"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnLowHalfOfLoadThroughScaledIndex> },
         { "machine/operations/sums-tested-by-overflow/relations-and-operands"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnSumsTestedByOverflow> },
         { "machine/operations/sums-tested-by-overflow/sum-that-goes-round-a-loop"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnSumThatGoesRoundLoop> },

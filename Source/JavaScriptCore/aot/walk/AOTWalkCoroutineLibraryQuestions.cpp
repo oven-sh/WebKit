@@ -69,6 +69,7 @@ static bool answerWhetherIteratorIsReadUnseenOfLibraryQuestions(Walker& walker, 
         return false;
     if (!listsAreIteratedUnseen(walker))
         return false;
+    walker.askAgainWhetherObjectIsAsMade(value);
     bindAnswerOfLibraryQuestion(walker, question, true);
     return true;
 }

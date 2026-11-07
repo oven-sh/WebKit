@@ -100,7 +100,7 @@ static StubKey stubThatDefinesBehindStraightAllocation(StraightEmitter& emitter,
 {
     if (emitter.program().at(key).kind == PropertyKeyKind::CreatedSymbol && !emitter.plan().hasOneInstance())
         return putByIdOfSymbolOfRealm(PutMode::Define);
-    return emitter.plan().slots().hasColumn(key) ? AOT::putById(PutMode::Define) : putByIdHashed(PutMode::Define);
+    return putByIdHashed(PutMode::Define);
 }
 
 static void defineBehindStraightAllocation(StraightEmitter& emitter, const BodyValue& value, std::span<const PropertyKeyID> keys, std::span<const ValueID> values)
@@ -158,7 +158,7 @@ static void generateNewObject(StraightEmitter& emitter, const BodyValue& value)
     ValueID prototype = operation.prototypeOperand();
     std::span<const FieldIndex> fieldsAsWritten = operation.fields();
     std::span<const ValueID> valuesAsWritten = operation.valuesOperands();
-    if (fieldsAsWritten.size() != valuesAsWritten.size() || planned.cellsAreHandedBack || planned.liesOnlyInFrames) {
+    if (fieldsAsWritten.size() != valuesAsWritten.size() || planned.cellsAreHandedBack) {
         emitter.fail(value);
         return;
     }

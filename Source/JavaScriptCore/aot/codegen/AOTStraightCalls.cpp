@@ -606,8 +606,12 @@ static bool tryLeaveByDirectCall(StraightEmitter& emitter, const BodyValue& call
         return true;
     }
     bringArgumentsOfStraightDirectCall(emitter, call, planned->locations, StackWordsOfStraightCall::InScratchArea);
-    emitMoveStackWordsToArgumentListFrame(jit, planned->stackWords, 0);
     stubCalls.moveAddressOfFunction(planned->callee, primaryEntry, valueEntryGPR);
+    if (planned->stackWords <= StubKey::maxCount) {
+        stubCalls.tailCall(jit, AOT::callFromArgumentListFrameWithWords(planned->stackWords, 0));
+        return true;
+    }
+    emitMoveStackWordsToArgumentListFrame(jit, planned->stackWords, 0);
     stubCalls.tailCall(jit, AOT::callFromArgumentListFrame());
     return true;
 }

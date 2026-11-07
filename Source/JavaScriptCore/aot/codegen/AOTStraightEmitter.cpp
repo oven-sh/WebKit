@@ -159,6 +159,13 @@ void StraightEmitter::findValuesNobodyReads()
                 --readsLeft[callee];
             continue;
         }
+        if (!m_index.isParameter(id) && m_index.opcodeOf(id) == Opcode::DefineMethod && classRecordCreatesMemberDefinedBy(m_index.value(id))) {
+            countReads();
+            uint32_t function = m_index.value(id).as<Opcode::DefineMethod>().functionOperand().index();
+            if (readsLeft[function] && readsLeft[function] < BodyIndex::maxCountedUses)
+                --readsLeft[function];
+            continue;
+        }
         if (m_index.isParameter(id) || !(operationsThatOnlyMakeValues.contains(m_index.opcodeOf(id)) || (place < checksThatPass.size() && checksThatPass.quickGet(place))))
             continue;
         if (readsLeft.isEmpty() ? !m_index.isUnused(id) : !!readsLeft[place])
@@ -187,20 +194,34 @@ void StraightEmitter::measureFrame()
         for (uint32_t index = 0; index < block.numberOfParameters(); ++index)
             lasting += !m_index.isUnused(block.parameter(index));
         uint32_t passing = 0;
+        BodyTerminator terminator = block.terminator();
+        ValueID returnedCall = terminator.kind() == TerminatorKind::ReturnCall ? terminator.callOperand() : ValueID();
+        auto takesWord = [&](ValueID id) {
+            return !m_index.isUnused(id) && !isReadByNobody(id) && !opcodesWithoutCodeOfTheirOwn.contains(m_index.opcodeOf(id));
+        };
         for (BodyValue value : block.values()) {
             Opcode opcode = value.opcode();
-            longestList = std::max(longestList, value.variadicOperands().size());
+            if (opcode != Opcode::NewObject)
+                longestList = std::max(longestList, value.variadicOperands().size());
             m_entersUnits = m_entersUnits || opcodesThatEnterUnits.contains(opcode);
-            if (m_index.isUnused(value.id()) || isReadByNobody(value.id()) || opcodesWithoutCodeOfTheirOwn.contains(opcode))
+            if (takesWord(value.id())) {
+                std::optional<BodyUser> user = m_index.onlyUser(value.id());
+                bool isReadOnceInBlock = user && (user->kind == BodyUseKind::Operand ? block.holds(user->value) : user->kind == BodyUseKind::TerminatorOperand && user->block == block.id());
+                if (!isReadOnceInBlock)
+                    ++lasting;
+                else
+                    mostPassing = std::max(mostPassing, ++passing);
+            }
+            if (value.id() == returnedCall)
                 continue;
-            std::optional<BodyUser> user = m_index.onlyUser(value.id());
-            bool isReadOnceInBlock = user && (user->kind == BodyUseKind::Operand ? block.holds(user->value) : user->kind == BodyUseKind::TerminatorOperand && user->block == block.id());
-            if (!isReadOnceInBlock)
-                ++lasting;
-            else if (!inputOperationsThatHandOn.contains(opcode))
-                ++passing;
+            bool keepsWordOfWhatItHandsOn = inputOperationsThatHandOn.contains(opcode) && !takesWord(value.id());
+            value.forEachOperand([&](ValueID operand, uint32_t) {
+                if (!operand || m_index.isParameter(operand) || !block.holds(operand) || !m_index.hasOneUse(operand) || !takesWord(operand))
+                    return;
+                --passing;
+                lasting += keepsWordOfWhatItHandsOn;
+            });
         }
-        mostPassing = std::max(mostPassing, passing);
     });
     m_numberOfSlots = lasting + mostPassing;
     m_wordsOfScratchArea = static_cast<uint32_t>((longestList + 5) & ~static_cast<size_t>(1));
@@ -1056,7 +1077,7 @@ void StraightEmitter::takeParameters(const ArgumentLocations& locations)
         if (!declared.environment)
             continue;
         const PlannedLayout& planned = m_inputs.plan.layout(declared.environment);
-        if (!planned.cellsAreHandedBack || planned.liesOnlyInFrames)
+        if (!planned.cellsAreHandedBack)
             continue;
         GPRReg environment = takeResultRegister();
         m_jit->load64(addressOfSlot(parameter), environment);

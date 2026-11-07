@@ -22,6 +22,7 @@ public:
     void generateIsPristineArray(const ValueContext&);
     void generateArrayStorageKind(const ValueContext&);
     void generateHasContiguousIndex(const ValueContext&);
+    bool standsBehindTestThatFoundElement(const ValueContext& user, ValueID array, ValueID position);
     void generateGetContiguousIndex(const ValueContext&);
     void generateGetOwnContiguousIndex(const ValueContext&);
     void generateGetOwnDoubleIndex(const ValueContext&);
@@ -30,7 +31,8 @@ public:
     void generatePutOwnDoubleIndex(const ValueContext&);
     void generatePutOwnInt32Index(const ValueContext&);
     void generateGetDoubleIndex(const ValueContext&);
-    void generatePutContiguousIndex(const ValueContext& value) { putInBounds(value, arrayStorageFormOf(ArrayStorage::Contiguous)); }
+    void generatePutContiguousIndex(const ValueContext&);
+    void putNumberInBounds(const ValueContext&, const ArrayStorageForm&);
     void generatePutDoubleIndex(const ValueContext& value) { putInBounds(value, arrayStorageFormOf(ArrayStorage::Double)); }
     void generateNewContiguousArray(const ValueContext& value) { newArrayOfForm(value, arrayStorageFormOf(ArrayStorage::Contiguous)); }
     void generateNewArrayLike(const ValueContext&);
@@ -48,7 +50,6 @@ private:
 
     ElementAccessEmitter& elements() { return emitter<ElementAccessEmitter>(); }
     Boxed contiguousElementOrEmpty(const ValueContext& access, CellPointer array, Integer index);
-    LValue elementFoundByTestInFront(const ValueContext& read);
     void putInBounds(const ValueContext&, const ArrayStorageForm&);
     enum class AccessVouchedFor : bool { Reads, Writes };
     Integer positionThatLibraryVouchesFor(const ValueContext&, const ArrayElements&, const ArrayStorageForm&, AccessVouchedFor);
@@ -59,7 +60,6 @@ private:
     const ArrayStorageForm& formToConstruct(const ValueContext&) const;
     const ArrayStorageForm* findFormOfListFilled(const ValueContext&) const;
     bool isMadeLikeSource(const ValueContext&) const;
-    Integer lengthOfArrayStoredInto(const ValueContext&, const ArrayElements&);
     CellPointer sourceOrNull(ValueID);
 };
 

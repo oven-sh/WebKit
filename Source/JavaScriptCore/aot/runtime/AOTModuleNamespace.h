@@ -57,7 +57,7 @@ public:
     std::optional<unsigned> findWhetherShownOrNot(UniquedStringImpl*) const;
     bool hasExport(UniquedStringImpl* name) const { return findWhetherShownOrNot(name) || isDynamicExport(name); }
     bool tryReadExports(JSGlobalObject*, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values);
-    void refuseToShowExports();
+    void refuseToShowExport(PropertyName);
 
     void replaceCapturedValue(JSGlobalObject*, const Identifier& name, JSValue);
     void replaceDynamicExports(VM&, const DynamicExports&);

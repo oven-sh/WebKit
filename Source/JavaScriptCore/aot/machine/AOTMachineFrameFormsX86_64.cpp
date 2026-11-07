@@ -98,6 +98,29 @@ void emitTeardownOfFrameInOtherForm(CCallHelpers& jit, const Frame& frame)
     popSavesOfFrame(jit, saves);
 }
 
+void emitTeardownOfFrameThatPopsWords(CCallHelpers& jit, const Frame& frame, std::span<const GPRReg> registersPoppedOutOfWords)
+{
+    RELEASE_ASSERT(!frame.hasFrameRecord() && !frame.savesLieAtBottom() && registersPoppedOutOfWords.size() == numberOfWordsBesideSavesOf(frame));
+    unsigned numberOfWordsThatNobodyWants = 0;
+    auto giveBackWordsThatNobodyWants = [&] {
+        if (numberOfWordsThatNobodyWants == 1)
+            jit.pop(scratchGPR);
+        else if (numberOfWordsThatNobodyWants)
+            jit.add64(CCallHelpers::TrustedImm32(safeCast<int32_t>(numberOfWordsThatNobodyWants * bytesOfPushedFrameWord)), CCallHelpers::stackPointerRegister);
+        numberOfWordsThatNobodyWants = 0;
+    };
+    for (GPRReg reg : registersPoppedOutOfWords) {
+        if (reg == InvalidGPRReg) {
+            ++numberOfWordsThatNobodyWants;
+            continue;
+        }
+        giveBackWordsThatNobodyWants();
+        jit.pop(reg);
+    }
+    giveBackWordsThatNobodyWants();
+    popSavesOfFrame(jit, frame.calleeSaveRegisterAtOffsetList());
+}
+
 } } } // namespace JSC::AOT::Machine
 
 #endif // ENABLE(AOT) && CPU(X86_64)

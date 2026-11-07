@@ -1,0 +1,87 @@
+# `$findsNoMember(object, "missing")` WHERE NOTHING IS PROVEN OF THE OPERAND AND A LAYOUT IS EXPECTED OF IT: as its sister `$findsDeclaredMember` does, the question takes what is expected and tests the shape itself.
+# So it can be asked of `this` in a constructor function of the library's, and of a parameter of a function that anybody may call. A cell of another shape gets a no, whatever it holds: false says nothing.
+# function Meter(level) { this.level = level; this.count = 1; }
+# function Gauge() { this.missing = 7; this.level = 0; }
+# function asks(object: Meter) { return $findsNoMember(object, "missing") ? "lacks" : "may hold"; }   in the library; handed to code that the build has not seen
+# hand(asks, new Meter(5), new Gauge(), Meter);
+# f3 = asks
+# OPTIONS: mechanisms=all
+# RUN(FORM): walk f3
+# FORM: b0(v0: anything
+# FORM: = FindsNoMember v0 key="missing" conditions=[{layout=L0 key="missing"}] receivers=[L0]
+# A Meter lacks the name. A Gauge HOLDS it and is of another shape; so are a literal that holds it, one that does not, and what is no object: each gets the no that says nothing.
+# RUN(ASKED): run-in-shell hand = function (asks, meter, gauge) { print(asks(meter), "|", asks(gauge), "|", asks({ missing: 1 }), "|", asks({ }), "|", asks(5), asks(null), asks(undefined), asks("text")); };
+# ASKED: lacks | may hold | may hold | may hold | may hold may hold may hold may hold
+# ASKED-NEXT: exited with 0
+# Whoever lays the name ends the yes: on the object, on the prototype, by an accessor, by an object laid between (which ends the guard of the class, for every Meter).
+# RUN(OWN): run-in-shell hand = function (asks, meter) { print(asks(meter)); meter.missing = 1; print(asks(meter)); };
+# OWN: lacks
+# OWN-NEXT: may hold
+# RUN(ABOVE): run-in-shell hand = function (asks, meter, gauge, Meter) { print(asks(meter)); Meter.prototype.missing = 2; print(asks(meter), asks(new Meter(1))); };
+# ABOVE: lacks
+# ABOVE-NEXT: may hold may hold
+# RUN(ACCESSORABOVE): run-in-shell hand = function (asks, meter, gauge, Meter) { Object.defineProperty(Meter.prototype, "missing", { get() { return 3; }, configurable: true }); print(asks(meter)); };
+# ACCESSORABOVE: may hold
+# RUN(LINK): run-in-shell hand = function (asks, meter, gauge, Meter) { const link = Object.create(Meter.prototype); link.missing = 4; Object.setPrototypeOf(meter, link); print(asks(meter), asks(new Meter(1))); };
+# LINK: may hold may hold
+# Another property of its own sends the question to the place of the name, which remembers nothing yet: a no.
+# RUN(OWNOTHER): run-in-shell hand = function (asks, meter) { meter.unrelated = 1; print(asks(meter)); meter.missing = 1; print(asks(meter)); };
+# OWNOTHER: may hold
+# OWNOTHER-NEXT: may hold
+# Code that no mechanism has touched answers no.
+# RUN(CLOSED): run-in-shell mechanisms=none hand = function (asks, meter) { print(asks(meter)); };
+# CLOSED: may hold
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Meter" module=m0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}, {key="count" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L1 kind=Instance name="Gauge" module=m0 constructor=f2 fields=[{key="missing" declared={type=anything} flags=[IsRequired]}, {key="level" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+variable g0 name="Meter" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Gauge" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @300
+    v3 = PropGet v2 key="hand" [isFreeName] @300
+    v4 = GetModuleVariable variable=g0 @315
+    v5 = Integer integer=5 @321
+    v6 = Construct v4, -, v5 calleeName="Meter" @315
+    v7 = GetModuleVariable variable=g1 @329
+    v8 = Construct v7, - calleeName="Gauge" @329
+    v9 = GetModuleVariable variable=g0 @338
+    v10 = Call v3, -, v1, v6, v8, v9 calleeName="hand" @300
+    v11 = Undefined @300
+    Return v11 @300
+}
+function f1 name="Meter" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = Integer integer=1 @57
+    PropSet v0, v3 key="count" @44
+    v5 = Undefined @44
+    Return v5 @44
+}
+function f2 name="Gauge" module=m0 position=70 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=7 @104
+    PropSet v0, v1 key="missing" @89
+    v3 = Integer integer=0 @120
+    PropSet v0, v3 key="level" @107
+    v5 = Undefined @107
+    Return v5 @107
+}
+function f3 name="asks" module=m1 position=10 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: L0):
+    v1 = FindsNoMember v0 key="missing" @40
+    v2 = ToBoolean v1 @40
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @40
+  b1(v3):
+    v4 = String string="lacks" @70
+    Jump -> next b3(v4) @70
+  b2(v5):
+    v6 = String string="may hold" @80
+    Jump -> next b3(v6) @80
+  b3(v7):
+    Return v7 @80
+}

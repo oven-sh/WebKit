@@ -57,6 +57,7 @@ public:
 private:
     TypedPointer recordField(Pointer record, ptrdiff_t offset) { return m_out.address(m_heaps.AOTStackStringBuilder_fields, record.value(), offset); }
     Pointer limitOnStack(Pointer record);
+    void storeEmptyRecord(Pointer record);
     Pointer copyShortLatin1Characters(Pointer cursor, Pointer source, Word32 length);
 };
 

@@ -29,7 +29,7 @@ static Reference integerToSwitchOnInPlaceOf(Walker& walker, const BodyTerminator
 
 static bool planSwitchOnCodeUnitOfCharacter(Walker& walker, const BodyTerminator& terminator, Reference subject, SwitchOnNumbers& planned)
 {
-    Reference codeUnit = codeUnitBesideCharacter(walker, subject);
+    Reference codeUnit = codePointBesideCharacter(walker, subject);
     if (!codeUnit)
         return false;
     bool mayBeUndefined = walker.types().at(walker.typeOf(subject)).primitives & Primitive::Undefined;
@@ -42,6 +42,8 @@ static bool planSwitchOnCodeUnitOfCharacter(Walker& walker, const BodyTerminator
         int64_t taken = neverTaken;
         if (text.length() == 1)
             taken = text[0];
+        else if (text.length() == 2 && U16_IS_LEAD(text[0]) && U16_IS_TRAIL(text[1]))
+            taken = U16_GET_SUPPLEMENTARY(text[0], text[1]);
         else if (text.isEmpty() && !mayBeUndefined)
             taken = -1;
         planned.cases.append(planned.cases.contains(taken) ? neverTaken : taken);

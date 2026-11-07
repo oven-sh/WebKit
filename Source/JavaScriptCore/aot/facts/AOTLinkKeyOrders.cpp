@@ -16,12 +16,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void writeAccessorsExpectedInFields(const LinkFlow& flow, LinkTables& tables)
 {
-    for (const Layout& layout : flow.program.layouts) {
-        for (const StaticField& field : layout.staticFields) {
-            if (field.key && !liesInThread(field.key))
-                tables.keysOfStaticFields.set(field.key.index());
-        }
-    }
     Vector<AccessorLaidInField> laid = flow.accessorsLaidInFields;
     std::ranges::sort(laid);
     for (size_t first = 0; first < laid.size();) {
@@ -88,14 +82,9 @@ void writeMembersAboveCreatedLayouts(const LinkFlow& flow, LinkTables& tables)
                 if (!key || !function)
                     continue;
                 tables.membersAboveCreatedLayouts.append(LinkedMember { LayoutID(index), ClassSide::Prototype, kind, number++, key, function, false, { } });
-                tables.functionsAboveCreatedLayoutsUnderKeys.append({ key, function });
-                tables.keysOfFunctionsAboveCreatedLayouts.set(key.index());
             }
         }
     }
-    std::ranges::sort(tables.functionsAboveCreatedLayoutsUnderKeys);
-    auto repeated = std::ranges::unique(tables.functionsAboveCreatedLayoutsUnderKeys);
-    tables.functionsAboveCreatedLayoutsUnderKeys.shrink(repeated.begin() - tables.functionsAboveCreatedLayoutsUnderKeys.begin());
 }
 
 const LinkedAccessorsOfField* LinkTables::findAccessorsExpectedIn(FieldReference field) const

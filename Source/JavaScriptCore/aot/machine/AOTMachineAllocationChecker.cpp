@@ -506,7 +506,7 @@ bool AllocationChecker::storeBehindDefinition(const Operation* value)
     Reg reg = m_allocation.registerAtDefinitionOf(value);
     if (spill == noSpill || !reg.isSet() || m_allocation.isWrittenByEdges(value))
         return true;
-    if (spill < m_spills.size() && m_spills[spill].isStoredAtHeadOfFramedPart)
+    if (spill < m_spills.size() && (m_spills[spill].isStoredAtHeadOfFramedPart || m_spills[spill].isReadByNoStep))
         return true;
     if (spill >= m_spills.size() || reg.index() >= numberOfRegisters || m_spills[spill].value != value || !value->type().isNumeric())
         return fail(FailureKind::SpillSlotLacksItsValue, value);

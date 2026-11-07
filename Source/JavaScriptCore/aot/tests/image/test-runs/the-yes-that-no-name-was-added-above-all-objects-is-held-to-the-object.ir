@@ -1,0 +1,28 @@
+# `$isObjectPrototypeWithoutAddedNames()` answers out of one byte, which the run time raises where a name is laid. Behind its yes the library's text leaves lookups out: no record stands there for any net.
+# Under testing=CheckWalkAtRunTime the yes is held to the object: each name that its structure lists must be one that the table of built-ins gives it. 4097 says "nothing, answered by the yes that no name was added".
+# OPTIONS: admit=ReplacedBuiltins
+# RUN(EMIT): emit f1 mechanisms=all testing=CheckWalkAtRunTime
+# EMIT: = Const32(4097)
+# RUN(BARE): emit f1 mechanisms=all
+# BARE-NOT: = Const32(4097)
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime const aboveAll = Object.prototype; globalThis.lay = () => { Object.defineProperty(aboveAll, "laid", { value: 1, configurable: true }); }; globalThis.take = () => { delete aboveAll.laid; };
+# ASKED: true
+# ASKED-NEXT: false
+# ASKED-NEXT: false
+# ASKED-NEXT: exited with 0
+# RUN(BOTH): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckWalkAtRunTime const aboveAll = Object.prototype; globalThis.lay = () => { Object.defineProperty(aboveAll, "laid", { value: 1, configurable: true }); }; globalThis.take = () => { delete aboveAll.laid; };
+# BOTH: true
+# BOTH-NEXT: false
+# BOTH-NEXT: false
+# BOTH-NEXT: exited with 0
+# The lie, testing=GuardsAndFactsAreTakenToHold: the byte is taken to say "as built". By itself the question says yes in silence while the name lies there.
+# RUN(BITES): run-in-shell mechanisms=all testing=GuardsAndFactsAreTakenToHold const aboveAll = Object.prototype; globalThis.lay = () => { Object.defineProperty(aboveAll, "laid", { value: 1, configurable: true }); }; globalThis.take = () => { delete aboveAll.laid; };
+# BITES: true
+# BITES-NEXT: true
+# BITES-NEXT: true
+# BITES-NEXT: exited with 0
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold const aboveAll = Object.prototype; globalThis.lay = () => { Object.defineProperty(aboveAll, "laid", { value: 1, configurable: true }); }; globalThis.take = () => { delete aboveAll.laid; };
+# ASKEDLIE: true
+# ASKEDLIE-NEXT: AOT: the yes to the question whether no name was added to a built-in object is held to the object, and the object holds the name laid, which it was not built with. This is a bug in Bun.
+# ASKEDLIE: crashed with
+# PROGRAM-OF: whether-a-name-was-added-above-all-objects-is-asked-of-a-byte.ir

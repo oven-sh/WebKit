@@ -6,7 +6,7 @@
 # CHECK-NOT: function f2 {{*}}result=i32 returns
 # CHECK-NOT: function f2 {{*}}result=undefined|i32 returns
 # RUN(KEPT): link functions mechanisms=all
-# KEPT: function f4 callers-known {{*}}result=undefined|i32 returns
+# KEPT: function f4 callers-known {{*}}result=undefined|int[0, 2147483647] returns
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -4,8 +4,8 @@
 # The call has one callee, if it enters any: `new P` may run in front of the store, so nobody says that the method is found.
 # RUN: link functions calls fields members layouts mechanisms=all
 # CHECK: function f1 callers-known one-callee
-# CHECK: function f2 callers-known one-callee {{*}}result=i32
-# CHECK: function f3 callers-known one-callee {{*}}result=i32
+# CHECK: function f2 callers-known one-callee {{*}}result=int[0, 2147483647]
+# CHECK: function f3 callers-known one-callee {{*}}result=int[0, 2147483647]
 # CHECK: call f3 v2 -> f2
 # CHECK: field L0.0 "x" proven=i32 writers-known filled
 # CHECK: on-prototype L0 "get" function=f2

@@ -5,7 +5,7 @@
 # CHECK: function f1 callers-known
 # CHECK-NEXT: parameter 0 {{*}}proven=function
 # CHECK: function f4 callers-known
-# CHECK-NEXT: parameter 0 {{*}}proven=i32
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]
 # RUN(HELD): link held functions mechanisms=all
 # HELD: function f1 
 # HELD-NEXT: parameter 0 {{*}}proven=f2|f3

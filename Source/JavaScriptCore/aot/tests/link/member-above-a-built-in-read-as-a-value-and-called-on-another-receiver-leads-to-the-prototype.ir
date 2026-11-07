@@ -1,10 +1,10 @@
 # const o = {}; process.on.call(o, "x", () => {}); Object.getPrototypeOf(o._events).removeListener = (type, target) => target(); process.removeListener("tick", second)
-# The table says of the native emitters that their instances are entries: `process` alone. But handed another receiver native code makes an emitter for it and lays it under `_events`: its link is the prototype on which `removeListener` lies.
-# That needs a member as a value: who reads one off `process` may come by the prototype, which goes out of sight. If the call were still taken for its row, `second` would be left out.
+# Handed another receiver native code makes an emitter for it and lays it under `_events`: its link is the prototype on which `removeListener` lies: a program can come by that prototype.
+# Its members are locked: the run time refuses the store by name, so the call is the table's whoever has the object, and `second`, at which the row only looks, is left out.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
 # REQUIRES: entries-of-bun
-# CHECK-NOT: function f2 unreached
+# CHECK: function f2 unreached
 
 layout L0 fields=[{key="mark" declared={type=anything}}]
 module m0 path="main.js" displayPath="main.js" body=f0

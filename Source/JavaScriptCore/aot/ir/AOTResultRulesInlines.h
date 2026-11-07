@@ -305,7 +305,25 @@ inline TypeID tryTypeWrittenForOverloadInResultRules(const TypingContext& contex
     const BuiltinOverload& overload = context.program.builtins().at(id);
     if (overload.isUndeclared() || (overload.resultIsDeclaredOnly() && context.level == TypeLevel::Proven))
         return { };
+    if (context.program.builtinWhoseRowWritesNullAlone == overload.builtin.index()) [[unlikely]]
+        return TypeArena::fromPrimitives(Primitive::Null);
     return typeOfBuiltinType(builtinTypeContextOfResultRules(context), overload.result.type);
+}
+
+inline TypeID typeOfRegExpMatchInResultRules(const TypingContext& context, RegExpMatchForm form)
+{
+    switch (form) {
+    case RegExpMatchForm::Test:
+    case RegExpMatchForm::Parts:
+        return TypeTable::boolean;
+    case RegExpMatchForm::Search:
+        return context.types.integer(Range { -1, INT32_MAX });
+    case RegExpMatchForm::Exec:
+    case RegExpMatchForm::Match:
+        break;
+    }
+    TypeID pieces = TypeArena::fromPrimitives(Primitive::Undefined | Primitive::String);
+    return context.types.withPrimitives(context.types.builtinClass(BuiltinClasses::Array, singleElementSpan(pieces)), Primitive::Null);
 }
 
 inline ContentsSlot defaultContentsSlotInResultRules(const TypingContext& context, TypeID container)
@@ -594,12 +612,34 @@ TypeID ResultRules::declared(const Operation& operation, BuiltinOverloadID overl
     BuiltinCallForm form = BuiltinCallForm::Whole;
     if constexpr (HoldsOpcode<Operation>) {
         Opcode opcode = opcodeOf(operation);
+        if (opcode == Opcode::RegExpMatchLiteral)
+            return typeOfRegExpMatchInResultRules(context, operation.matchForm());
         if (!callsOfOverloadsInResultRules.contains(opcode))
-            return provenOrUnknown(tryTypeWrittenForOverloadInResultRules(context, overload), UnknownSeed::UndescribedNativeResult);
+        {
+            TypeID written = tryTypeWrittenForOverloadInResultRules(context, overload);
+            if (opcode == Opcode::GetBuiltinValue && context.program.rowsOfNativeCodeWriteNullish)
+                written = TypeArena::fromPrimitives(Primitive::UndefinedOrNull);
+            if (opcode == Opcode::GetBuiltinValue && context.level == TypeLevel::Proven && written) {
+                Type type = context.types.at(written);
+                if (type.isJavaScriptValue() && !(type.primitives & (Primitive::Absent | Primitive::Unspecified)))
+                    written = context.types.wholeKindsAndBuiltinClassesOf(written);
+            }
+            return provenOrUnknown(written, UnknownSeed::UndescribedNativeResult);
+        }
         if (opcode == Opcode::CallBuiltin)
             form = operation.builtinCallForm();
     }
-    return typeOfOverloadCallInResultRules(context, overload, form, operands);
+    TypeID written = typeOfOverloadCallInResultRules(context, overload, form, operands);
+    if constexpr (HoldsOpcode<Operation>) {
+        if (opcodeOf(operation) == Opcode::CallBuiltin && context.level == TypeLevel::Proven && written)
+        {
+            Type type = context.types.at(written);
+            if (type.isJavaScriptValue() && !(type.primitives & (Primitive::Absent | Primitive::Unspecified)))
+                return context.types.wholeKindsAndBuiltinClassesOf(written);
+            return context.types.unionOf(written, context.types.numbersAskedBehindCallOfBuiltin(written));
+        }
+    }
+    return written;
 }
 
 template<typename Operation>
@@ -618,11 +658,11 @@ TypeID ResultRules::declaredContents(const Operation& operation, uint32_t operan
     if (protocolsOf(opcode, operandIndex).contains(Protocol::Thenable))
         return provenOrUnknown(tryTypeOfAwaited(context, container), seed);
     if (opcode == Opcode::GetArrayElement) {
-        bool findsElement = operation.isPresent() || (operation.isInBounds() && operation.readsHoleAsNaN());
-        return provenOrUnknown(tryTypeOfArrayElementRead(context, container, operation.arrayStorage(), findsElement, operation.readsHoleAsNaN()), seed);
+        bool findsElement = operation.isPresent() || operation.readsHoleAsNaN();
+        return provenOrUnknown(tryTypeOfArrayElementRead(context, container, operation.arrayStorage(), operation.admitsInt32Storage(), findsElement, operation.readsHoleAsNaN()), seed);
     }
     if (readsOutOfArrayStorageInResultRules.contains(opcode))
-        return provenOrUnknown(tryTypeOfArrayElementRead(context, container, ArrayStorage::Other, false, false), seed);
+        return provenOrUnknown(tryTypeOfArrayElementRead(context, container, ArrayStorage::Other, false, false, false), seed);
 
     TypeID contents = tryTypeOfContentsRead(context, container, slot ? *slot : defaultContentsSlotInResultRules(context, container));
     bool givesUndefinedWhereNothingIsFound = stepsOfCollectionsInResultRules.contains(opcode) && context.level == TypeLevel::Proven;
@@ -630,6 +670,8 @@ TypeID ResultRules::declaredContents(const Operation& operation, uint32_t operan
         contents = context.types.withPrimitives(contents, Primitive::Undefined);
     if (!contents)
         contents = context.positions.contentsBeingTyped(context.level);
+    if (contents && opcode == Opcode::GetValueAtPlaceInMap)
+        contents = context.types.withPrimitives(contents, Primitive::Undefined);
     return provenOrUnknown(contents, seed);
 }
 

@@ -397,7 +397,11 @@ void Allocator::letGoOfWorkingLists()
     m_numbersOfListsOfReads.letGo(m_arena);
     m_firstReadsFromHeads.letGo(m_arena);
     m_firstReadsNotKnownOutOfReach.letGo(m_arena);
+    m_allocation.m_numberOfLaterReadsAskedWhetherTheyCount = m_numberOfLaterReadsAskedWhetherTheyCount;
+    m_allocation.m_numberOfBlocksReachedBySearchesForWays = m_numberOfBlocksReachedBySearchesForWays;
+    m_lastReadsThatCounted.letGo(m_arena);
     m_knownReadsOutsideRareRegions.letGo(m_arena);
+    m_whetherHeadsAroundHold.letGo(m_arena);
     m_phisInSpills.letGo(m_arena);
     m_pendingMoves.letGo(m_arena);
     m_valuesSavedInRareRegion.letGo(m_arena);
@@ -585,8 +589,23 @@ void Allocator::run()
     m_isAheadOfFramedPart = false;
     if (m_allocation.usedCalleeSaves())
         noteFrameUse();
+    findSpillsThatNoStepReads();
     settleFramedPart();
     findGapsAheadOfLandingPads();
+}
+
+void Allocator::findSpillsThatNoStepReads()
+{
+    ArenaVector<SpillFacts>& spills = m_allocation.m_spills;
+    if (spills.isEmpty())
+        return;
+    for (SpillIndex index = 0; index < spills.size(); ++index) {
+        SpillFacts& facts = spills[index];
+        if (facts.isRead || !facts.value || facts.isSaveInRareRegion || facts.isPointerBesideNarrowReference || facts.livesAcrossSuspension || facts.isSharedByPhis)
+            continue;
+        const ValueFacts& value = m_valueFacts[facts.value->index()];
+        facts.isReadByNoStep = !value.has(ValueFlag::LivesIntoLandingPad) && !value.has(ValueFlag::LivesAcrossSuspension) && !value.has(ValueFlag::IsKeptForCollector);
+    }
 }
 
 ALWAYS_INLINE void Allocator::allocateBlock(Block* block)

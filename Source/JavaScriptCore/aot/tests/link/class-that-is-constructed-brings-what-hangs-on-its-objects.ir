@@ -1,9 +1,10 @@
 # new AbortController()
-# The control of constructor-that-native-code-finds-by-the-protocol-alone-is-not-called.ir and of class-that-is-only-named-brings-nothing-that-hangs-on-its-objects.ir: an object of the class is made, and a listener on it may make native code warn.
+# The control of constructor-that-native-code-finds-by-the-protocol-alone-is-not-called.ir and of class-that-is-only-named-brings-nothing-that-hangs-on-its-objects.ir: an object of the class is made, and what a listener on it throws is reported at the next tick.
+# The warning is emitted inside addEventListener(), which nobody calls here: a-listener-that-is-added-brings-the-warning-of-add-event-listener.ir.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
 # REQUIRES: entries-of-bun
-# CHECK-NOT: function f2 unreached
+# CHECK: function f2 unreached
 # CHECK-NOT: function f3 unreached
 
 module m0 path="main.js" displayPath="main.js" body=f0

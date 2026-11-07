@@ -37,12 +37,14 @@ enum class AnswerKeptInArena : uint8_t {
     FieldsOfSlotRead = 85,
     TypeInFilledSlot = 101,
     TestOfGuess = 102,
-    TypeHeldUnderName = 104,
     ShapesOfLayouts = 105,
     PartWhoseClassesHaveGuards = 106,
     PartOfWrittenSetThatFactoriesFill = 107,
     PartThatHasNameAsked = 108,
     ConstantMemberOfBuiltin = 109,
+    RecordsThatFileWrites = 110,
+    UnitMayMentionFunctions = 111,
+    LiteralsWithoutNames = 112,
 };
 
 enum class MakerOfType : uint8_t {
@@ -159,6 +161,7 @@ public:
     TypeID withPrimitives(TypeID, uint16_t added);
     TypeID withoutPrimitives(TypeID, uint16_t removed);
     TypeID wholeKindsAndBuiltinClassesOf(TypeID);
+    TypeID numbersAskedBehindCallOfBuiltin(TypeID);
     TypeID withoutNullish(TypeID type) { return withoutPrimitives(type, Primitive::UndefinedOrNull); }
     TypeID withoutObjects(TypeID);
     TypeID withOnlyObjects(TypeID);
@@ -367,8 +370,8 @@ inline std::span<const ClassPart> TypeArena::at(ClassPartsID id) const
 
 ALWAYS_INLINE const PropertyKey& TypeArena::at(PropertyKeyID key) const
 {
-    if (key.bits() < m_table.m_numberOfPropertyKeysOnceFrozen) [[likely]]
-        return m_table.propertyKeyOnceFrozenAt(key.bits());
+    if (key.bits() < m_table.m_numberOfPropertyKeysFoundByAddress) [[likely]]
+        return m_table.propertyKeyFoundByAddressAt(key.bits());
     if (liesInThread(key))
         return m_propertyKeys[positionOf(key)];
     return m_table.at(key);

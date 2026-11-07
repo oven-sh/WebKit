@@ -619,6 +619,16 @@ TypeID naturalTypeOfOperands(const TypingContext& context, Opcode opcode, Natura
     for (const NaturalOperand& operand : operands)
         classes.append(classOf(operand));
     TypeID upperBound = naturalTypeFrom(context.types, naturalTypeOf(table, classes.span()));
+    bool mayGiveText = std::ranges::any_of(operands, [](const NaturalOperand& operand) {
+        return !operand.hasOnlyPrimitives(Primitive::NumberLike | Primitive::BigInt);
+    });
+    bool mayGiveBigInt = std::ranges::all_of(operands, [](const NaturalOperand& operand) {
+        return !operand.isMadeOfPrimitives || operand.primitives & (Primitive::BigInt | Primitive::Unspecified | Primitive::Absent);
+    });
+    if (!mayGiveText || !mayGiveBigInt)
+        upperBound = context.types.withoutPrimitives(upperBound, (mayGiveText ? 0 : Primitive::AnyString) | (mayGiveBigInt ? 0 : Primitive::BigInt));
+    if (isNeverType(upperBound))
+        return TypeTable::never;
     if (!isNumberType(upperBound))
         return upperBound;
     TypeID refined = numberResultOf(context.types, opcode, operands.span());

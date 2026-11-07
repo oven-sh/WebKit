@@ -350,6 +350,9 @@ NEVER_INLINE void StubCatalog::generateAndClose(unsigned first) const
     for (const Node* node : addedNodes) {
         StubKey body = node->recording.body;
         RELEASE_ASSERT(!isOperationCallHead(body) || node->effects.writes.isSubsetOf(AOT::effectsOf(entryAtOffset(*body.immediate())).writes));
+        const StubSignature signature = signatureOf(body);
+        if (Reg filled = signature.filledOutOfResultInFrontOfBody; filled && !signature.usesCallConvention && !std::ranges::contains(std::span(signature.operands).first(signature.numberOfOperands), filled))
+            RELEASE_ASSERT(!node->clobbered.contains(filled, IgnoreVectors));
         for (const StubReference& reference : node->recording.references) {
             if (reference.kind != StubReference::Kind::ReturnedAddress)
                 continue;

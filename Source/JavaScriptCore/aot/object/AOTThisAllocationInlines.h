@@ -86,6 +86,18 @@ ALWAYS_INLINE JSObject* tryCreateFinalObjectInline(VM& vm, Structure* structure)
     return reinterpret_cast<JSObject*>(cell);
 }
 
+ALWAYS_INLINE JSObject* tryCreateObjectWithoutFieldsInline(VM& vm, Structure* structure, size_t size, const uint64_t* wordsBehindHeader)
+{
+    uint8_t* cell = tryAllocateCellInline(vm, size);
+    if (!cell) [[unlikely]]
+        return nullptr;
+    *reinterpret_cast<uint32_t*>(cell + JSCell::structureIDOffset()) = structure->id().bits();
+    *reinterpret_cast<uint32_t*>(cell + JSCell::indexingTypeAndMiscOffset()) = structure->typeInfoBlob();
+    memcpy(cell + sizeof(JSCell), wordsBehindHeader, size - sizeof(JSCell));
+    vm.mutatorFence();
+    return reinterpret_cast<JSObject*>(cell);
+}
+
 } } // namespace JSC::AOT
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

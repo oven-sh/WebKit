@@ -56,6 +56,7 @@ constexpr bool isEnforced(ProofSource source)
     case ProofSource::OtherOperation:
     case ProofSource::Test:
     case ProofSource::WhatIsRemembered:
+    case ProofSource::CallMadeInFront:
     case ProofSource::Lifetime:
         return false;
     }
@@ -73,7 +74,7 @@ uint16_t sourcesOfProofsCheckedUnder(Switches testing)
 }
 
 template<typename Switches>
-bool readsStorageWhereItIsUsedUnder(Switches testing)
+bool testsEveryPositionUnder(Switches testing)
 {
     return AOT::hasFlag(testing, Wire::TestingSwitch::TestsEveryPosition) || AOT::hasFlag(testing, Wire::TestingSwitch::CheckProofsAtRunTime);
 }
@@ -86,8 +87,22 @@ struct WalkOptions {
     bool checksProofs { false };
     uint16_t sourcesOfProofsChecked { 0 };
     bool testsEveryPosition { false };
-    bool readsStorageWhereItIsUsed { false };
     bool takesPositionsToLieInside { false };
+    bool showsPositionsTakenToLieInsideToVerifier { false };
+    bool leavesOutReadsBehindTestsOfLengths { false };
+    bool takesVariablesThatBoundToBeAsInFront { false };
+    bool takesDividendsOfReciprocalsToFit32Bits { false };
+    bool roundsBoundsOfCountersTheOtherWay { false };
+    bool takesGuardsAndFactsToHold { false };
+    bool makesCallsMadeInFrontAgainInTurns { false };
+    bool takesEveryBuiltinInLineToAnswerOutOfItsOperands { false };
+    bool takesNumbersStoredIntoListsOfDoublesToBeNoNaN { false };
+    bool takesOneRowToSpeakForAll { false };
+    bool takesNothingToBeDoneToFreshLists { false };
+    bool sweepTurnsBranchThatDecidesIntoJump { false };
+    bool sweepLetsGoEdgeThatIsTaken { false };
+    bool handlerEdgesTakeWhatStandsIn { false };
+    bool everyClosureStandsBehindCopies { false };
     bool takesCalleesToKeepNothing { false };
     bool writesBodiesStraight { false };
     bool checksEffects { false };
@@ -102,9 +117,15 @@ struct WalkOptions {
     bool ignoresExpectedTypes { false };
     bool shufflesExpectedTypes { false };
     bool failsGuesses { false };
+    bool turnsForgetWhatWasDone { false };
+    bool netOfEffectsWatchesTurns { false };
     bool shufflesChoices { false };
     bool judgesInt32Promises { true };
     uint32_t seedOfShuffles { 0 };
+    WayOfWalking wayForcedOnUnits { WayOfWalking::AsBuilt };
+    uint32_t periodOfUnitsWalkedThatWay { 0 };
+    uint32_t periodOfHearingsThatCutWalks { 0 };
+    uint32_t phaseOfHearingsThatCutWalks { 0 };
     PrintStream* explainsClosedAccessesTo { nullptr };
 };
 
@@ -178,11 +199,13 @@ public:
 
     std::optional<CompiledCode> compile(CodeUnit);
     bool walkAndSweep(CodeUnit);
+    bool walkAndSweep(CodeUnit, WayOfWalking);
 
     bool compile(CodeUnit unit, Vector<CompiledCode, 2>& finished) { return append(compile(unit), finished); }
 
     CodeGenerationTotals& totals() LIFETIME_BOUND { return m_totals; }
     Vector<WalkNotes>& notes() LIFETIME_BOUND { return m_notes; }
+    Vector<FunctionID, 8>& functionsThatUnitMayEnterByValue() LIFETIME_BOUND { return m_functionsThatUnitMayEnterByValue; }
     Walker& walker() LIFETIME_BOUND { return *m_walker; }
 
     struct InstructionsOfSteps {
@@ -213,6 +236,7 @@ private:
     RoomsOfSweep m_roomsOfSweep;
     CodeGenerationTotals m_totals;
     Vector<WalkNotes> m_notes;
+    Vector<FunctionID, 8> m_functionsThatUnitMayEnterByValue;
     InstructionsOfSteps m_instructionsOfSteps;
 };
 

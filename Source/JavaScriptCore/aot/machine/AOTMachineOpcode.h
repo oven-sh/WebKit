@@ -104,6 +104,7 @@ constexpr unsigned sizeOf(Type type) { return bytesForWidth(widthOf(type)); }
     v(Shl, 2, None) \
     v(SShr, 2, None) \
     v(ZShr, 2, None) \
+    v(RotR, 2, None) \
     v(Clz, 1, None) \
     v(PopCount, 1, None) \
     \

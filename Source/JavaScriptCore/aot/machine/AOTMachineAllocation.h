@@ -125,6 +125,8 @@ struct SpillFacts {
     bool isSaveInRareRegion { false };
     bool isStoredAtHeadOfFramedPart { false };
     bool isSharedByPhis { false };
+    bool isRead { false };
+    bool isReadByNoStep { false };
 
     bool hasGap() const { return beginOfGap != noPosition; }
     bool isInGap(Position position) const { return hasGap() && beginOfGap <= position && position <= endOfGap; }
@@ -174,6 +176,8 @@ public:
     const PatchAssignment& patchAssignment(uint32_t index) const { return m_patchAssignments[index]; }
     uint32_t numberOfPatchAssignments() const { return m_patchAssignments.size(); }
     uint32_t numberOfOperationsAllocated() const { return m_numberOfOperationsAllocated; }
+    uint64_t numberOfLaterReadsAskedWhetherTheyCount() const { return m_numberOfLaterReadsAskedWhetherTheyCount; }
+    uint64_t numberOfBlocksReachedBySearchesForWays() const { return m_numberOfBlocksReachedBySearchesForWays; }
 
     std::span<Step> stepsForTesting() { return m_steps.span(); }
     BlockSteps& stepsForTesting(const Block* block) { return m_blocks[block->index()]; }
@@ -188,7 +192,7 @@ public:
     bool isStoredBehindDefinition(const Operation* value) const
     {
         SpillIndex spill = spillOf(value);
-        return spill != noSpill && registerAtDefinitionOf(value).isSet() && !m_spills[spill].isStoredAtHeadOfFramedPart && !isWrittenByEdges(value);
+        return spill != noSpill && registerAtDefinitionOf(value).isSet() && !m_spills[spill].isStoredAtHeadOfFramedPart && !m_spills[spill].isReadByNoStep && !isWrittenByEdges(value);
     }
     bool isWrittenByEdges(const Operation* phi) const { return m_phisWrittenByEdges.size() && m_phisWrittenByEdges.get(phi->index()); }
 
@@ -236,6 +240,8 @@ private:
     RegisterMask m_usedCalleeSaves { 0 };
     BitSpan m_phisWrittenByEdges;
     uint32_t m_numberOfOperationsAllocated { 0 };
+    uint64_t m_numberOfLaterReadsAskedWhetherTheyCount { 0 };
+    uint64_t m_numberOfBlocksReachedBySearchesForWays { 0 };
     bool m_needsFrameOutsideRareRegions { false };
     bool m_needsFrameAheadOfFramedPart { false };
     bool m_writesMemoryAheadOfFramedPart { false };

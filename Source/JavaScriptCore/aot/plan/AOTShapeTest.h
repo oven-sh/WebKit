@@ -105,6 +105,7 @@ inline constexpr uint32_t maxShapesInFlatTable = 1024;
 struct DistancesByShape {
     JS_EXPORT_PRIVATE unsigned numberOfInstructions() const;
     JS_EXPORT_PRIVATE uint32_t distanceOf(uint32_t shape) const;
+    uint32_t distanceOfNoMember() const { return logBytesPerDistance ? std::numeric_limits<uint16_t>::max() : std::numeric_limits<uint8_t>::max(); }
 
     DistanceForm form { DistanceForm::Comparisons };
     uint8_t logBytesPerDistance { 0 };
@@ -113,6 +114,7 @@ struct DistancesByShape {
     uint8_t hashShift { 0 };
     uint32_t hashMultiplier { 0 };
     uint32_t lastShape { 0 };
+    uint32_t numberOfShapes { 0 };
     DistancesByComparison comparisons;
     Vector<uint8_t> table;
 };

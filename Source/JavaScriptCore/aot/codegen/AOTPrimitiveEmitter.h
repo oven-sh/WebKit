@@ -34,6 +34,7 @@ protected:
         , m_notCellMask(generator.pinned().notCellMask)
         , m_cellCageBase(generator.pinned().cellCageBase)
         , m_wordsOfInt32Elements(generator.pinned().wordsOfInt32Elements)
+        , m_owesFenceBehindStores(generator.owesFenceBehindStores())
     {
     }
 
@@ -254,6 +255,7 @@ protected:
     LValue& m_notCellMask;
     LValue& m_cellCageBase;
     UncheckedKeyHashMap<LValue, LValue>& m_wordsOfInt32Elements;
+    bool& m_owesFenceBehindStores;
 
 private:
     Word32 loadCellType(CellPointer cell) { return Word32(m_out.load8ZeroExt32(cell.value(), m_heaps.JSCell_typeInfoType)); }

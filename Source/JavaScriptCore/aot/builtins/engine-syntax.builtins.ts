@@ -88,6 +88,7 @@ export default b.declarations(
   b.intrinsic("setIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%SetIterator%.prototype.next" }),
   b.intrinsic("generatorProtoNext", "Value", { intrinsic: "Builtin", path: "%Generator%.prototype.next" }),
   b.intrinsic("stringProtoSymbolIterator", "Value", { intrinsic: "Builtin", path: "String.prototype.@@iterator" }),
+  b.intrinsic("iteratorProtoSymbolIterator", "Value", { intrinsic: "Builtin", path: "Iterator.prototype.@@iterator" }),
   b.intrinsic("Infinity", "Value", { intrinsic: "Double", value: Infinity }),
   b.intrinsic("MAX_SAFE_INTEGER", "Value", {
     intrinsic: "Int",

@@ -156,8 +156,8 @@ bool TextParser::scanItems()
     for (const TextItem& item : m_items) {
         if (item.list != ProgramList::Modules)
             continue;
-        bool hasNamespaceLayout = scanModuleKind(m_text, item.start) == ModuleKind::SourceText;
-        m_scan.namespaceLayoutRanks.append(hasNamespaceLayout ? std::optional(m_scan.numberOfNamespaceLayouts++) : std::nullopt);
+        std::optional<ModuleKind> kind = scanModuleKind(m_text, item.start);
+        m_scan.namespaceLayoutRanks.append(kind && hasNamespaceLayout(*kind) ? std::optional(m_scan.numberOfNamespaceLayouts++) : std::nullopt);
     }
     return !hasFailed();
 }
@@ -277,6 +277,9 @@ void TextParser::parseItem(const TextItem& item)
         break;
     case ProgramList::SourceStamps:
         parseProgramRecord<Wire::SourceStamp, SourceStamp>(*this, &Program::sourceStamps);
+        break;
+    case ProgramList::DeclaredRecords:
+        parseProgramRecord<Wire::DeclaredRecord, DeclaredRecord>(*this, &Program::declaredRecords);
         break;
     case ProgramList::EvalScopes:
         parseProgramRecord<Wire::EvalScope, EvalScope>(*this, &Program::evalScopes);

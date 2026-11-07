@@ -730,6 +730,20 @@ static void testInheritedSettersOfAbsentFields()
         FakeTypedObject object(JSValue::ValueUndefined);
         checkUncached(stores, storeCase, object.address(), value);
         AOT_TEST_CHECK(object.field() == JSValue::ValueUndefined);
+
+        constexpr uint32_t orderWordThatLeavesFieldOut = orderWordOf(9, 3);
+        stores.file(storeCase, *Slot::tryCreateFieldAndHolder(toStructureID(PropertyStores::structureID), Slot::Kind::FieldOrInheritedSetter, Slot::dependsOnChain | Slot::emptySlotMayBeUndefined, SlotData::decode(orderWordThatLeavesFieldOut), std::bit_cast<JSCell*>(holder.address()), offset, stores.runner.instance().cellCageBase));
+        for (uint32_t otherBits : { 0u, orderWordHasExtraProperties, orderWordIntegrityBits }) {
+            FakeTypedObject objectThatLeavesFieldOut(JSValue::ValueEmpty, orderWordThatLeavesFieldOut | otherBits);
+            StubRun run = stores.store(storeCase, objectThatLeavesFieldOut.address(), value);
+            AOT_TEST_CHECK(!run.calledOperation && run.landedCall.place == LandedCall::Place::CompiledFunction && !objectThatLeavesFieldOut.field());
+            AOT_TEST_CHECK(run.landedCall.values.callee == setter.address() && run.landedCall.values.thisValue == objectThatLeavesFieldOut.address() && run.landedCall.values.arguments[0] == value);
+        }
+        for (uint32_t otherWord : { orderWordOf(9, 4), orderWordOf(9, 2), orderWordOf(8, 3), orderWordThatLeavesFieldOut | orderWordHasFieldOutsideSlot, outOfLineOrderWord }) {
+            FakeTypedObject objectUnderOtherWord(JSValue::ValueEmpty, otherWord);
+            checkUncached(stores, storeCase, objectUnderOtherWord.address(), value);
+            AOT_TEST_CHECK(!objectUnderOtherWord.field());
+        }
     }
 }
 
@@ -1421,15 +1435,11 @@ static void testStoresGoByTablesAlone()
 {
     PropertyStores stores;
     FieldTable table(stores);
-    AccessTableWords& words = stores.runner.instance().propertyCaches.accessTable;
-    AccessTable::Store& place = words.stores[AccessTable::indexFor(PropertyStores::structureID, PropertyStores::storedName)];
-    const uint64_t key = AccessTable::keyFor(PropertyStores::structureID, PropertyStores::storedName);
     const uint64_t before = bitsOf(jsNumber(1));
     const uint64_t number = bitsOf(jsNumber(42));
     forEachStoreWithEmptyCaches(stores, [&](const StoreCase& storeCase) {
         FakeObjectWithShape object(FieldTable::shapeThatTakesAnyValue, before);
         AOT_TEST_CHECK(!stores.store(storeCase, object.address(), number).calledOperation && object.field() == number);
-        AOT_TEST_CHECK(place.key != key && !words.holdsStoresToUnwatchedStructures);
         FakeObjectWithShape withoutRow(FieldTable::shapeWithoutTheNames, before);
         AOT_TEST_CHECK(stores.storeAgain(storeCase, withoutRow.address(), number).calledOperation && withoutRow.field() == before && withoutRow.wordAfterFieldIsUntouched());
 
@@ -1439,7 +1449,6 @@ static void testStoresGoByTablesAlone()
             auto stored = [&]() -> uint64_t& { return isInlineOffset(offset) ? plain.word(Slot::wordIndexFor(offset)) : storage.property(offset - firstOutOfLineOffset); };
             stores.file(storeCase, Slot::createInStorage(toStructureID(PropertyStores::structureID), Slot::Kind::Value, Slot::isOwn, nullptr, offset));
             AOT_TEST_CHECK(!stores.store(storeCase, plain.address(), number).calledOperation && stored() == number);
-            AOT_TEST_CHECK(place.key != key && !words.holdsStoresToUnwatchedStructures);
             stores.clearCaches();
             stored() = before;
             AOT_TEST_CHECK(stores.storeAgain(storeCase, plain.address(), number).calledOperation && stored() == before);

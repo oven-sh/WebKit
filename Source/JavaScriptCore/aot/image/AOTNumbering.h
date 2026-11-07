@@ -86,6 +86,38 @@ bool forEachGuardInClassGuardCountKey(std::span<const uint32_t> key, NOESCAPE co
     return numberOfGuards > 1;
 }
 
+inline constexpr uint32_t firstWordOfRowOfClassGuardCountsKey = UINT32_MAX - 1;
+inline bool isRowOfClassGuardCountsKey(std::span<const uint32_t> key) { return !key.empty() && key[0] == firstWordOfRowOfClassGuardCountsKey; }
+
+template<typename Functor>
+bool forEachSlotInRowOfClassGuardCountsKey(std::span<const uint32_t> key, NOESCAPE const Functor& functor)
+{
+    if (!isRowOfClassGuardCountsKey(key))
+        return false;
+    uint32_t slot = 0;
+    for (std::span<const uint32_t> rest = key.subspan(1); !rest.empty(); ++slot) {
+        size_t numberOfWords = rest[0];
+        if (numberOfWords >= rest.size())
+            return false;
+        functor(slot, rest.subspan(1, numberOfWords));
+        rest = rest.subspan(1 + numberOfWords);
+    }
+    return !!slot;
+}
+
+template<typename Functor>
+bool forEachGuardInSlotOfRowOfClassGuardCounts(std::span<const uint32_t> slot, NOESCAPE const Functor& functor)
+{
+    for (std::span<const uint32_t> rest = slot; !rest.empty();) {
+        size_t numberOfWords = rest[0];
+        if (numberOfWords < 2 || numberOfWords >= rest.size() || rest[1] >= firstWordOfRowOfClassGuardCountsKey)
+            return false;
+        functor(rest.subspan(1, numberOfWords));
+        rest = rest.subspan(1 + numberOfWords);
+    }
+    return true;
+}
+
 enum class NumberSpace : uint8_t {
     Name,
     NameOfText,
@@ -108,9 +140,11 @@ enum class NumberSpace : uint8_t {
     RegExpLiteralCell,
     TemplateObjectCell,
     ArrayProfile,
+    RowsOfReads,
     EnvironmentHandedBack,
     ClassGuard,
     ClassRank,
+    HeirLookedAt,
     ClosureFunction,
     ClosureCell,
     Allocation,
@@ -123,7 +157,7 @@ enum class NumberSpace : uint8_t {
     MethodSelector,
     RegExp,
 };
-inline constexpr unsigned numberOfNumberSpaces = 35;
+inline constexpr unsigned numberOfNumberSpaces = 37;
 static_assert(static_cast<unsigned>(NumberSpace::RegExp) + 1 == numberOfNumberSpaces);
 
 enum class GlobalBindingFlags : uint8_t {
@@ -180,6 +214,7 @@ public:
     }
     uint32_t classGuard(const ClassGuardKey& key) { return add(NumberSpace::ClassGuard, key.span()); }
     JS_EXPORT_PRIVATE uint32_t classGuardCount(std::span<const ClassGuardKey> guards);
+    JS_EXPORT_PRIVATE uint32_t rowOfClassGuardCounts(std::span<const Vector<ClassGuardKey, 4>> slots);
     uint32_t builtinCell(BuiltinCellKey key) { return add(NumberSpace::BuiltinCell, key.encoded()); }
     uint32_t globalBinding(PropertyKeyID key, OptionSet<GlobalBindingFlags> flags) { return addPair(NumberSpace::GlobalBinding, key.index(), flags.toRaw()); }
     static constexpr uint32_t firstUseOfSiteAnswers = 8;
@@ -270,8 +305,10 @@ constexpr bool mayHaveUnitsBehind(NumberSpace space)
     case NumberSpace::RegExpLiteralCell:
     case NumberSpace::TemplateObjectCell:
     case NumberSpace::ArrayProfile:
+    case NumberSpace::RowsOfReads:
     case NumberSpace::EnvironmentHandedBack:
     case NumberSpace::ClassGuard:
+    case NumberSpace::HeirLookedAt:
     case NumberSpace::PropertyRun:
     case NumberSpace::AtomOfComparedText:
     case NumberSpace::ShownString:
@@ -377,6 +414,7 @@ struct PlacedStatics {
     Vector<uint32_t> templateObjectCellOffsets;
     Vector<uint32_t> arrayProfileOffsets;
     uint32_t distanceFromArrayProfileToLastArray { 0 };
+    Vector<uint32_t> rowsOfReadsOffsets;
     Vector<ModuleBuiltinCell> moduleBuiltinCells;
     Vector<uint32_t> classGuardBits;
     Vector<PlacedClassGuardOfName> classGuardsOfNames;
@@ -449,6 +487,8 @@ public:
     std::optional<uint32_t> rankOfClass(LayoutID id) const { return id.index() < m_classRanks.size() && m_classRanks[id.index()] != UINT32_MAX ? std::optional(m_classRanks[id.index()]) : std::nullopt; }
     uint32_t closureCellNumber(FunctionID id) const { return id.index() < m_closureCellNumbers.size() ? m_closureCellNumbers[id.index()] : 0; }
     uint32_t numberOfClosureCells() const { return m_numberOfClosureCells; }
+    std::span<const LayoutID> heirsLookedAt() const { return m_heirsLookedAt.span(); }
+    uint32_t sizeOfStructuresOfHeirs() const { return m_sizeOfStructuresOfHeirs; }
 
     const NumberedKeys& allocations() const { return m_allocations; }
     const NumberedKeys& requests() const { return m_requests; }
@@ -458,6 +498,7 @@ public:
     const NumberedKeys& regExpLiteralCells() const { return m_regExpLiteralCells; }
     const NumberedKeys& templateObjectCells() const { return m_templateObjectCells; }
     const NumberedKeys& arrayProfiles() const { return m_arrayProfiles; }
+    const NumberedKeys& rowsOfReads() const { return m_rowsOfReads; }
     const NumberedKeys& siteCaches() const { return m_siteCaches; }
     std::span<const uint32_t> numbersOfSites() const { return m_numbersOfSites.span(); }
     static bool isPlaceWithSiteAnswers(std::span<const uint32_t> keyOfSite) { return keyOfSite.back() >= MentionList::firstUseOfSiteAnswers; }
@@ -516,6 +557,9 @@ private:
     Vector<uint32_t> m_classRanks;
     Vector<uint32_t> m_closureCellNumbers;
     uint32_t m_numberOfClosureCells { 0 };
+    Vector<LayoutID> m_heirsLookedAt;
+    Vector<uint32_t> m_offsetsOfStructuresOfHeirs;
+    uint32_t m_sizeOfStructuresOfHeirs { 0 };
     NumberedKeys m_allocations;
     NumberedKeys m_requests;
     Vector<uint32_t> m_offsetsOfRequests;
@@ -524,6 +568,7 @@ private:
     NumberedKeys m_regExpLiteralCells;
     NumberedKeys m_templateObjectCells;
     NumberedKeys m_arrayProfiles;
+    NumberedKeys m_rowsOfReads;
     NumberedKeys m_classGuards;
     NumberedKeys m_siteCaches;
     Vector<uint32_t> m_numbersOfSites { 0 };
@@ -583,6 +628,7 @@ constexpr bool hasOneIDAsKey(NumberSpace space)
     case NumberSpace::DataElements:
     case NumberSpace::EnvironmentHandedBack:
     case NumberSpace::ClassRank:
+    case NumberSpace::HeirLookedAt:
     case NumberSpace::ClosureFunction:
     case NumberSpace::ClosureCell:
     case NumberSpace::AtomOfComparedText:
@@ -600,6 +646,7 @@ constexpr bool hasOneIDAsKey(NumberSpace space)
     case NumberSpace::RegExpLiteralCell:
     case NumberSpace::TemplateObjectCell:
     case NumberSpace::ArrayProfile:
+    case NumberSpace::RowsOfReads:
     case NumberSpace::Allocation:
     case NumberSpace::Request:
     case NumberSpace::PropertyRun:
@@ -654,7 +701,8 @@ struct ImageNumbersBuilder {
     ImageNumbers& numbers;
     BuildContext& context;
 
-    void numberFunctions();
+    static void numberFunctions(const NumberingInputs&, ImageNumbers&, BuildContext&);
+    void checkEntriesOfMentionedClosures();
     void numberClosureCellsAndClassRanks();
     void collectNamesAndStringsWithText();
     void numberIdentifiersAndStrings();

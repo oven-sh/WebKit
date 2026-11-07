@@ -129,6 +129,8 @@ static std::optional<Result> tryVisitCachedList(VM& vm, const Object& typed, JSO
     Vector<PropertyListEntry, 16> entries;
     {
         DeferGC deferGC(vm);
+        if (!findCachedPropertyList(typed, extra) && !typed.state().objects->caches->propertyLists.isSecondWalk(extra->structureID(), typed.shapeWord(), typed.orderWord() & orderAndCountMask))
+            return std::nullopt;
         CachedPropertyList* list = cachedPropertyList(vm, typed);
         if (!list)
             return std::nullopt;
@@ -854,9 +856,7 @@ void setIntegrity(VM& vm, JSObject* object, Integrity level)
 {
     ASSERT(isCompiledObject(object));
     DeferTerminationForAWhile deferTermination(vm);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     uncheckedDowncast<Object>(object)->setIntegrity(object->structure()->realm(), objectIntegrity(level));
-    scope.assertNoException();
 }
 
 Presence testIntegrity(JSObject* object, Integrity level)
@@ -1035,6 +1035,8 @@ bool tryAssignCallingGetters(JSGlobalObject* globalObject, JSObject* target, JSO
 bool tryAssign(VM& vm, JSObject* compiledTarget, JSObject* source, bool& goesOnKeyByKey)
 {
     Object* typed = compiledObjectOrNull(compiledTarget);
+    if (typed && isAskedByCodeThatInspectorBrought(vm, *typed))
+        return false;
     return typed && (tryAssignPropertiesOf(vm, *typed, source) || tryAssignInOrderOfCreation(vm, *typed, source, goesOnKeyByKey));
 }
 

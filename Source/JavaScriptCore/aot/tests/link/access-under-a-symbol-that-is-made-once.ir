@@ -8,7 +8,7 @@
 # LINK: access f0 v7 under symbol("depth")@m0:0
 # LINK-NEXT: access f1 v2 under symbol("depth")@m0:0
 # LINK-NEXT: access f2 v3 under symbol("depth")@m0:0
-# LINK: function f1 callers-known one-callee {{*}}result=undefined|i32 returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# LINK: function f1 callers-known one-callee {{*}}result=undefined|int[0, 2147483647] returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
 # LINK: field L0.0 "x" proven=string writers-known written-at-construction-alone filled
 # LINK: field L0.1 symbol("depth")@m0:0 proven=i32 writers-known
 # LINK: variable g0 proven=symbol("depth")@m0:0 writers-known written-at-construction-alone

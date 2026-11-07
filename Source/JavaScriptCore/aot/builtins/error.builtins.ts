@@ -134,4 +134,5 @@ export default b.declarations(
   ),
 
   b.name("error", "suppressed"),
+  b.extend("Error.stackTraceLimit", { canBeListed: true }),
 );

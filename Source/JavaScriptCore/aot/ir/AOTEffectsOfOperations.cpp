@@ -155,6 +155,11 @@ constexpr auto effectsOfEveryOperationWithRoomForAll = [] {
         if (builder.hangsOnOperation())
             continue;
         Effects effects = withDeclaredKindOfThrow(opcode, builder.effects());
+        if (opcode == Opcode::PutDoubleIndex || opcode == Opcode::PutOwnDoubleIndex) {
+            uint64_t written = effects.writes.maskOf(AbstractHeap::Elements) & ~markOfElementsOfArraysNotStoredAsRawDoubles;
+            effects.writes.remove(AbstractHeapSet { AbstractHeap::Elements });
+            effects.writes.add(AbstractHeap::Elements, written);
+        }
         size_t row = 0;
         while (row < result.numberOfRows && result.rows[row] != effects)
             ++row;
@@ -185,6 +190,14 @@ constexpr const Effects& effectsOfEveryOperationWith(Opcode opcode)
 }
 
 static_assert(effectsOfEveryOperation.opcodesNamingOnlyEntireHeaps.contains(Opcode::IsNotFrozen));
+static_assert([] {
+    bool rawStoresLackMarkAlone = true;
+    for (Opcode opcode : { Opcode::PutDoubleIndex, Opcode::PutOwnDoubleIndex })
+        rawStoresLackMarkAlone &= effectsOfEveryOperationWith(opcode).writes.maskOf(AbstractHeap::Elements) == (locationMaskOfElementBase(ElementBase::Array) & ~markOfElementsOfArraysNotStoredAsRawDoubles);
+    for (Opcode opcode : { Opcode::PutContiguousIndex, Opcode::PutOwnContiguousIndex, Opcode::PutOwnInt32Index })
+        rawStoresLackMarkAlone &= effectsOfEveryOperationWith(opcode).writes.maskOf(AbstractHeap::Elements) == locationMaskOfElementBase(ElementBase::Array);
+    return rawStoresLackMarkAlone && std::popcount(locationMaskOfElementBase(ElementBase::Array)) == 2;
+}());
 static_assert([] {
     bool areAllTheBound = true;
     effectsOfEveryOperation.opcodesNamingOnlyEntireHeaps.forEach([&](Opcode opcode) {
@@ -241,8 +254,17 @@ static constexpr OpcodeSet opcodesWithEffectsFittedToOperands = [] {
     OpcodeSet opcodes = opcodesWithEffectsOfResolvingRopesAlone;
     if (effectRuleOf(Opcode::Strcat) == EffectRule::Declared)
         opcodes.add(Opcode::Strcat);
+    if (effectRuleOf(Opcode::GetArrayElement) == EffectRule::Declared)
+        opcodes.add(Opcode::GetArrayElement);
+    opcodes.add(Opcode::ElemDefine);
+    if (effectRuleOf(Opcode::NewArrayLike) == EffectRule::Declared)
+        opcodes.add(Opcode::NewArrayLike);
+    if (effectRuleOf(Opcode::PutArrayElement) == EffectRule::Declared)
+        opcodes.add(Opcode::PutArrayElement);
     return opcodes;
 }();
+
+static constexpr AbstractHeapSet heapsThatReadInsideListLeavesAloneForEffects { AbstractHeap::StringStorage, AbstractHeap::AllocatorState, AbstractHeap::NamedProperties };
 
 static constexpr OpcodeSet opcodesUnderRuleOfOperators = [] {
     OpcodeSet opcodes;
@@ -370,7 +392,7 @@ static OperandSeenByProtocols operandSeenByProtocols(const TypingContext& contex
         uint16_t primitives = primitivesInID(operand);
         return { primitives, !!(primitives & Primitive::Unspecified) };
     }
-    Type type = context.at(operand);
+    const Type& type = context.types.recordOf(operand);
     return { type.primitives, type.hasObjects() || !type.isJavaScriptValue() || type.mayBeUnspecified() };
 }
 
@@ -505,7 +527,7 @@ struct CodeRunByOperands {
 
 } // anonymous namespace
 
-static void cutBoundByWhatCallerFound(Effects& effects, const CodeRunByOperands& code, const Effects* foundByCaller)
+static NEVER_INLINE void cutBoundByWhatCallerFoundOrCodeRuns(Effects& effects, const CodeRunByOperands& code, const Effects* foundByCaller)
 {
     if (!foundByCaller) {
         if (code.isUnknown)
@@ -524,6 +546,12 @@ static void cutBoundByWhatCallerFound(Effects& effects, const CodeRunByOperands&
     effects.writes.add(AbstractHeap::MemberGuards, ownWritesOfGuards);
     if (code.mayCreatePrototypeProperty)
         effects.writes.add(AbstractHeap::MemberGuards);
+}
+
+static ALWAYS_INLINE void cutBoundByWhatCallerFound(Effects& effects, const CodeRunByOperands& code, const Effects* foundByCaller)
+{
+    if (foundByCaller || code.isUnknown || code.iteratesStrings)
+        cutBoundByWhatCallerFoundOrCodeRuns(effects, code, foundByCaller);
 }
 
 static bool declaresCodeOfOperands(Opcode opcode)
@@ -554,10 +582,32 @@ static ALWAYS_INLINE void addCodeOfOperands(const TypingContext& context, Entry 
     cutBoundByWhatCallerFound(effects, code, foundByCaller);
 }
 
-static bool mayBeConvertedByLooseEqualityForEffects(const Type& operand, const Type& other)
+namespace {
+
+struct OperandOfOperatorForEffects {
+    OperandOfOperatorForEffects() = default;
+    OperandOfOperatorForEffects(const TypingContext& context, TypeID type)
+        : record(holdsOnlyPrimitives(type) ? nullptr : &context.types.recordOf(type))
+        , primitives(record ? record->primitives : primitivesInID(type))
+        , hasObjects(record && record->hasObjects())
+        , isJavaScriptValue(!record || record->isJavaScriptValue())
+    {
+    }
+
+    bool isAnyString() const { return record ? record->isAnyString() : primitives && !(primitives & ~Primitive::AnyString); }
+
+    const Type* record { nullptr };
+    uint16_t primitives { 0 };
+    bool hasObjects { false };
+    bool isJavaScriptValue { true };
+};
+
+} // anonymous namespace
+
+static bool mayBeConvertedByLooseEqualityForEffects(const OperandOfOperatorForEffects& operand, const OperandOfOperatorForEffects& other)
 {
-    bool isMoreThanNullish = operand.primitives & ~Primitive::UndefinedOrNull || operand.hasObjects() || !operand.isJavaScriptValue();
-    bool isComparedWithPrimitive = other.primitives & ~Primitive::UndefinedOrNull || !other.isJavaScriptValue();
+    bool isMoreThanNullish = operand.primitives & ~Primitive::UndefinedOrNull || operand.hasObjects || !operand.isJavaScriptValue;
+    bool isComparedWithPrimitive = other.primitives & ~Primitive::UndefinedOrNull || !other.isJavaScriptValue;
     return isMoreThanNullish && isComparedWithPrimitive;
 }
 
@@ -576,9 +626,9 @@ static Effects effectsOfOperatorWithin(const TypingContext& context, Opcode opco
     if (areAllNumberLike && makesNoCell)
         return Effects::none();
 
-    std::array<Type, 2> types;
+    std::array<OperandOfOperatorForEffects, 2> operands;
     for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex)
-        types[operandIndex] = context.at(typeIDs[operandIndex]);
+        operands[operandIndex] = OperandOfOperatorForEffects(context, typeIDs[operandIndex]);
 
     CodeRunByOperands code;
     TextsJoinedByOperation texts;
@@ -588,19 +638,27 @@ static Effects effectsOfOperatorWithin(const TypingContext& context, Opcode opco
     bool hasConvertedOperand = false;
     bool hasStringOperand = false;
     for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex) {
-        const Type& type = types[operandIndex];
+        const OperandOfOperatorForEffects& operand = operands[operandIndex];
         const OperandInfo& info = operandInfoOf(opcode, operandIndex);
         Protocols protocols = info.protocols;
-        if (opcode == Opcode::Eq && !mayBeConvertedByLooseEqualityForEffects(type, types[1 - operandIndex]))
+        if (opcode == Opcode::Eq && !mayBeConvertedByLooseEqualityForEffects(operand, operands[1 - operandIndex]))
             protocols = { };
         bool isConverted = !protocols.isEmpty();
-        bool hasOnlyInertPrimitives = !(type.primitives & ~Primitive::NumberLike) && type.isJavaScriptValue();
-        areAllInert &= hasOnlyInertPrimitives && !(isConverted && type.hasObjects());
-        mayAllBeStrings &= !!(type.primitives & Primitive::AnyString);
+        if (isConverted && operand.hasObjects && !foundByCaller) {
+            Effects bound = declaredBoundOf(opcode);
+            RELEASE_ASSERT(!bound.mayRunOtherCode());
+            bound.merge(Effects::unknownCode());
+            return bound;
+        }
+        bool hasOnlyInertPrimitives = !(operand.primitives & ~Primitive::NumberLike) && operand.isJavaScriptValue;
+        areAllInert &= hasOnlyInertPrimitives && !(isConverted && operand.hasObjects);
+        mayAllBeStrings &= !!(operand.primitives & Primitive::AnyString);
         hasConvertedOperand |= isConverted;
-        hasStringOperand |= type.isAnyString();
-        if (mayMakeText)
-            texts.add(context.types, type);
+        hasStringOperand |= operand.isAnyString();
+        if (mayMakeText && operand.record)
+            texts.add(context.types, *operand.record);
+        else if (mayMakeText)
+            texts.add(context.types, context.at(typeIDs[operandIndex]));
         code.add(context, protocols, info.uses, typeIDs[operandIndex], !!foundByCaller);
     }
 
@@ -667,16 +725,62 @@ static ALWAYS_INLINE Effects declaredEffectsBuiltInPlace(const Program& program,
 }
 
 template<typename Holder>
-static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode opcode, const Holder& operation, OperandTypes operandTypes)
+static bool readInsideListOnlyLoadsForEffects(const TypingContext& context, const Holder& read, TypeID result)
 {
+    if ((!read.isInBounds() && !read.isPresent()) || read.asksCellWhereNothingIsFound())
+        return false;
+    ArrayStorage storage = read.arrayStorage();
+    if (storage == ArrayStorage::Contiguous || storage == ArrayStorage::Int32)
+        return true;
+    return storage == ArrayStorage::Double && result && context.types.intersectionOf(result, TypeTable::number) == TypeID(TypeTable::number);
+}
+
+static bool lengthIsThatOfListForEffects(const TypingContext& context, OperandTypes operandTypes)
+{
+    TypeID length = operandTypes[OperandIndex::NewArrayLike::length];
+    if (!length || !context.at(length).isInteger())
+        return false;
+    Range lengths = context.at(length).integers;
+    return lengths.minimum >= 0 && lengths.maximum <= static_cast<int64_t>(UINT32_MAX);
+}
+
+static bool definesElementOfListForEffects(const TypingContext& context, OperandTypes operandTypes)
+{
+    TypeID object = operandTypes[OperandIndex::ElemDefine::object];
+    TypeID key = operandTypes[OperandIndex::ElemDefine::property];
+    if (!object || !key || !context.at(object).isObject() || !context.at(key).isNumber())
+        return false;
+    const ClassPart* onlyClass = singleBuiltinClassOf(context.types, context.at(object));
+    return onlyClass && onlyClass->builtinClass == BuiltinClasses::Array;
+}
+
+template<typename Holder>
+static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode opcode, const Holder& operation, OperandTypes operandTypes, TypeID result)
+{
+    if (opcode == Opcode::ElemDefine && definesElementOfListForEffects(context, operandTypes)) {
+        Effects effects = declaredBoundOf(Opcode::PutArrayElement);
+        effects.writes.add(perObjectHeaps);
+        effects.mayThrow = true;
+        return effects;
+    }
     Effects effects = declaredEffectsBuiltInPlace(context.program, opcode, operation);
     if (opcodesWithEffectsOfResolvingRopesAlone.contains(opcode) && readsOnlyFlatStringsForEffects(context, opcode, operation, operandTypes)) {
         LocationMasks reads = effects.reads;
         effects = Effects::none();
         effects.reads = reads;
     }
+    if (opcode == Opcode::NewArrayLike && effects.mayThrow && lengthIsThatOfListForEffects(context, operandTypes))
+        effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
+    if (opcode == Opcode::PutArrayElement && effects.mayThrow && operation.fillsPlaceOfListMadeHere())
+        effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
     if (opcode == Opcode::Strcat && effects.mayThrow && joinsTextsThatFitForEffects(context, operation, operandTypes))
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
+    if (opcode == Opcode::GetArrayElement && readInsideListOnlyLoadsForEffects(context, operation, result)) {
+        LocationMasks reads = effects.reads;
+        reads.remove(heapsThatReadInsideListLeavesAloneForEffects);
+        effects = Effects::none();
+        effects.reads = reads;
+    }
     return effects;
 }
 
@@ -702,10 +806,12 @@ Effects effectsOf(const TypingContext& context, const Operation& operation, Oper
     if (opcodesUnderRuleOfOperators.contains(opcode))
         return effectsOfOperatorWithin(context, opcode, operandTypes.types, result, foundByCaller);
 
-    Effects effects = opcodesWithEffectsFittedToOperands.contains(opcode) ? declaredEffectsWithOperands(context, opcode, operation, operandTypes) : declaredEffectsBuiltInPlace(context.program, opcode, operation);
+    Effects effects = opcodesWithEffectsFittedToOperands.contains(opcode) ? declaredEffectsWithOperands(context, opcode, operation, operandTypes, result) : declaredEffectsBuiltInPlace(context.program, opcode, operation);
     addCodeOfOperands(context, opcode, operation, operandTypes, effects, foundByCaller);
     if (foundByCaller && opcodesThatMakeThisForEffects.contains(opcode))
         effects.merge(effectsOfMakingThisOfConstruction);
+    if (foundByCaller && opcode == Opcode::GetBuiltinValue)
+        effects.intersect(*foundByCaller);
     return effects;
 }
 

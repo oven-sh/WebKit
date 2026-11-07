@@ -160,7 +160,7 @@ static void zeroBehindFirstChunk(StubAssembler& jit, const AllocationSiteRegiste
 
 StubSignature signatureOfAllocateCell(StubKey key)
 {
-    return StubSignature::withGPRResult({ gprOf(shortStubImmediateRegister) }).withResultIn(key.operandRegister());
+    return StubSignature::withGPRResult({ gprOf(shortStubImmediateRegister) }).withResultIn(key.operandRegister()).fillingOperandInFront(0);
 }
 
 void generateAllocateCell(StubAssembler& jit)

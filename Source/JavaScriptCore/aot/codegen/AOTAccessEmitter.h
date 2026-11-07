@@ -8,10 +8,15 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
+#include "AOTStaleAnswers.h"
 #include <optional>
 #include <wtf/ScopedLambda.h>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
+
+enum class PresenceQuestion : uint8_t;
+
+namespace Typed {
 
 struct MentionedAllocation;
 
@@ -33,6 +38,9 @@ public:
     void generateGetGlobalBinding(const ValueContext&);
     void generateSetGlobalBinding(const ValueContext&);
     void generateGetCachedGetter(const ValueContext&);
+    void generateGetValueAtSiteOrAbsent(const ValueContext&);
+    void generateGetPropertyOfHeir(const ValueContext&);
+    void generatePutPropertyOfHeir(const ValueContext&);
     void generateElemGet(const ValueContext&);
     void generateElemGetByKeyParts(const ValueContext&);
     void generateElemSet(const ValueContext&);
@@ -55,12 +63,25 @@ public:
     void generateSuperSet(const ValueContext&);
 
     Boxed getById(const OperationContext&, Boxed receiver, PropertyKeyID, ValueID receiverID = { });
+    Boxed getByIdThroughStub(const OperationContext&, Boxed receiver, PropertyKeyID, ValueID receiverID);
+    bool verifiesFastPathAnswers(PropertyKeyID);
+    Word32 slowPathReadCount() { return loadMutable32(AOT_INSTANCE_OFFSET(propertyCaches.slowPathReadCount)); }
+    Word32 recordPendingRead(Boxed receiver, PropertyKeyID);
+    void verifyFastPathAnswer(const OperationContext&, Boxed receiver, PropertyKeyID, Boxed answer, StubThatAnswers, Word32 countBeforeRead);
     void putById(const OperationContext&, Boxed receiver, PropertyKeyID, Boxed value, PutMode, std::optional<Pointer> site = std::nullopt);
     std::optional<Pointer> siteOf(const OperationContext&, PropertyKeyID, SlotAccess);
     std::optional<Pointer> siteOfStore(const OperationContext&, PropertyKeyID, SlotAccess);
     std::optional<NumberedImmediate> answersOf(const OperationContext&, PropertyKeyID, SiteUse);
+    struct ReadOfGroup {
+        ValueID id;
+        PropertyKeyID key;
+        NumberedImmediate answers;
+    };
+    std::optional<NumberedImmediate> answersOfReadOutOfRow(BlockID, const Operation&);
+    void readGroupOffOneValue(const ValueContext&, Boxed receiver, bool mayBeNoCell, NumberedImmediate answersOfFirst);
     StubKey stubThatReadsAtSite(PropertyKeyID, ValueID receiver);
     Condition hasById(const OperationContext&, Boxed receiver, PropertyKeyID);
+    Condition findsName(const OperationContext&, Boxed receiver, PropertyKeyID, PresenceQuestion);
     Boxed getByVal(const OperationContext&, Boxed receiver, Boxed key);
     bool isSymbolOfRealm(PropertyKeyID key) const { return !m_plan.hasOneInstance() && !liesInThread(key) && m_program.at(key).kind == PropertyKeyKind::CreatedSymbol; }
     Boxed cellOfKey(const OperationContext&, PropertyKeyID);
@@ -71,11 +92,13 @@ public:
     std::optional<CellPointer> tryAllocateCopyOfFields(const ValueContext& allocation, const MentionedAllocation&, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty);
     bool tryCallMethodByName(const ValueContext& call);
     bool readsTruthAtSite(BlockID, ValueID read) const;
+    std::optional<unsigned> integerThatLengthIsAskedFor(BlockID, ValueID read, ValueID test);
     bool isPatternLeftToCall(ValueID pattern) const { return m_readLeftToCall && m_readLeftToCall->pattern == pattern; }
     bool methodMayBeUnread(ValueID read) const { return m_methodsThatMayBeUnread.get(read.index()); }
     static PutMode putModeOf(ECMAMode mode) { return forMode(mode, PutMode::Strict, PutMode::Sloppy); }
 
 private:
+    HashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesReadInFront;
     template<typename T> static T forMode(ECMAMode mode, T whenStrict, T whenSloppy)
     {
         switch (mode) {
@@ -97,6 +120,7 @@ private:
     void putNamedProperty(const ValueContext&, Boxed object, PutMode);
     Boxed getNamedProperty(const ValueContext&);
     void branchOnTruthAtSite(const ValueContext& read);
+    void branchOnWhetherLengthIs(const ValueContext& read, unsigned integer);
     std::optional<Boxed> lookWhetherReceiverIsAsMadeInPlaceOfRead(const ValueContext&);
     bool isReadOfMethodCalledNext(const ValueContext& read);
     ValueID findPatternLeftToCall(const ValueContext& read);
@@ -110,6 +134,8 @@ private:
     CellPointer globalObject();
     Pointer globalBindingAddress(PropertyKeyID, OptionSet<GlobalBindingFlags>);
     TypedPointer globalBindingLocationOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss);
+    bool lookVouchesForPropertyOfHeir(const ValueContext&) const;
+    TypedPointer locationOfPropertyOfHeir(const ValueContext&, CellPointer object);
     void defineAccessor(const ValueContext&, uint32_t accessorFlags);
     struct ElementKey {
         LValue value;

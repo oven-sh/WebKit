@@ -456,7 +456,7 @@ static void testNameNumberPastFifteenBits()
         uint32_t numberInCode = 0;
         memcpy(&numberInCode, code + word.offset, sizeof(numberInCode));
         AOT_TEST_CHECK(numberInCode == *number);
-        if (slots.hasColumn(word.key))
+        if (slots.keysWithColumn().get(word.key.index()))
             AOT_TEST_CHECK(*number < names.countWithLookupTableColumn() && RowDisplacementTable::hasColumn(*number));
         if (*number < firstNumberPastFifteenBits)
             continue;

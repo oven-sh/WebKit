@@ -260,7 +260,8 @@ TypeAsWritten TypesAsWritten::typeWrittenOf(ValueID value) const
     if (primitiveConstants.contains(m_input.opcodeOf(value)))
         return { typeOfConstant(typingForInt32Promises(m_walker), m_input.value(value)) };
     ExpectationOfValue expectation = findExpectation(m_walker, value);
-    if (expectation.type && expectation.isDeclared) {
+    Walker::RememberedExpectation remembered = m_walker.expectationRememberedOf(value);
+    if (expectation.type && expectation.isDeclared && !(remembered.isKnown && remembered.isHeld)) {
         TypeAsWritten walked = asWalkHasIt(value);
         bool proofKeepsWhatWordDoesNot = walked.type && writtenTypeKeepsInt32Promise(m_walker, walked.type) && !writtenTypeKeepsInt32Promise(m_walker, expectation.type);
         if (proofKeepsWhatWordDoesNot && restsOnWordThatIsOnlyExpected(value))
@@ -418,7 +419,7 @@ BuiltinID TypesAsWritten::builtinBoundedByArguments(BodyValue written) const
     const BuiltinTable& table = m_walker.program().builtins();
     BuiltinID builtin = table.canonicalID(named);
     bool isBounded = std::ranges::any_of(table.overloadsOf(builtin), [](const BuiltinOverload& overload) {
-        return overload.mode == BuiltinCallMode::Call && !overload.receiver && overload.result.rangeRule != BuiltinRangeRule::None;
+        return overload.mode == BuiltinCallMode::Call && !overload.receiver;
     });
     return isBounded ? builtin : BuiltinID();
 }

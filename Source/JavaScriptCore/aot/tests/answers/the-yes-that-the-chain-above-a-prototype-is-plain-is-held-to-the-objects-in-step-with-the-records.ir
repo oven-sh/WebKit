@@ -1,0 +1,52 @@
+# BEHIND THE YES OF `$isPrototypeChainPlain` THE LIBRARY's OWN TEXT LEAVES LOOKS OUT AT A BIRTH. The yes reads bytes that the run time keeps; no record of the walk stands there for a net to ask.
+# Under testing=CheckWalkAtRunTime the yes is held to the objects themselves, for each class asked: the own `prototype` of the class object, read without making it, and each link above it, walked in step with the records of the
+# classes, the tables that arm the bytes: each is the prototype object that the record's class has, and the last stands below Object.prototype. What lies ON those objects is not asked.
+# RUN(FORM): walk f4 mechanisms=all testing=CheckWalkAtRunTime
+# FORM: [[yes]]: boolean @Boolean = AreMembersUnchanged
+# FORM: AskObjectAgain {{*}}, -, [[yes]] key="prototype" function=f2 [asksChainAbovePrototype]
+# FORM: AskObjectAgain {{*}}, -, [[yes]] key="prototype" function=f3 [asksChainAbovePrototype]
+# Nothing touched, and what the promise allows: no stop.
+# RUN(QUIET): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; born = () => true; early = function () { }; later = function () { };
+# QUIET: yes yes
+# QUIET-NEXT: yes yes
+# QUIET-NEXT: exited with 0
+# RUN(STORED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Meter.prototype.other = function () { }; Base.prototype.more = 1; Base.prototype.reach = function () { return "wrapped"; }; };
+# STORED: yes yes
+# STORED-NEXT: yes yes
+# STORED-NEXT: exited with 0
+# A link that changes ends the yes, and the net is not asked.
+# RUN(LINK): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Object.setPrototypeOf(Meter.prototype, { }); };
+# LINK: yes yes
+# LINK-NEXT: no no
+# LINK-NEXT: exited with 0
+# RUN(ABOVE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Object.setPrototypeOf(Base.prototype, { }); };
+# ABOVE: yes yes
+# ABOVE-NEXT: no no
+# ABOVE-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base, Other) { Other.prototype = { }; };
+# REPLACED: yes yes
+# REPLACED-NEXT: no no
+# REPLACED-NEXT: exited with 0
+# The lie, testing=GuardsAndFactsAreTakenToHold: the question is answered yes while the program is compiled; the guards still begin in front of it. On an untouched program the net stays silent under it.
+# RUN(LIEQUIET): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; born = () => true; early = function () { }; later = function () { };
+# LIEQUIET: yes yes
+# LIEQUIET-NEXT: yes yes
+# LIEQUIET-NEXT: exited with 0
+# RUN(LIELINK): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Object.setPrototypeOf(Meter.prototype, { }); };
+# LIELINK: yes yes
+# LIELINK-NEXT: AOT: the yes to the question whether the chain above the prototype of a class is plain promises that no link above the prototype of the class has changed, and the objects, walked in step with the records of the classes, are others.
+# LIELINK: crashed with
+# RUN(LIEABOVE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Object.setPrototypeOf(Base.prototype, { }); };
+# LIEABOVE: yes yes
+# LIEABOVE-NEXT: AOT: the yes to the question whether the chain above the prototype of a class is plain promises that no link above the prototype of the class has changed
+# LIEABOVE: crashed with
+# Every object on the chain is still a holder that the tables know, and one is passed over: a walk that asked only "is this a known holder" would pass it.
+# RUN(LIESKIPS): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Object.setPrototypeOf(Meter.prototype, Object.prototype); };
+# LIESKIPS: yes yes
+# LIESKIPS-NEXT: AOT: the yes to the question whether the chain above the prototype of a class is plain promises that no link above the prototype of the class has changed
+# LIESKIPS: crashed with
+# RUN(LIEREPLACED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base, Other) { Other.prototype = { }; };
+# LIEREPLACED: yes yes
+# LIEREPLACED-NEXT: AOT: the yes to the question whether the chain above the prototype of a class is plain promises that the prototype of the class is the object that it was
+# LIEREPLACED: crashed with
+# PROGRAM-OF: whether-the-prototype-chain-of-a-class-is-plain-is-asked-without-an-object.ir

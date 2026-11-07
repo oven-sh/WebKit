@@ -174,9 +174,10 @@ static void buildFirstReadForGenerators(Walker& walker, BuiltinName name, Origin
         walker.state().noteReadOfBuiltin(*location);
 }
 
-void buildFirstReadsThatOpenOfGeneratorLeavesOut(Walker& walker, Origin origin)
+void buildFirstReadsThatOpenOfGeneratorLeavesOut(Walker& walker, Origin origin, bool asksGeneratorForIterator)
 {
-    buildFirstReadForGenerators(walker, walker.program().builtins().nameOf(WellKnownSymbol::Iterator), origin);
+    if (asksGeneratorForIterator)
+        buildFirstReadForGenerators(walker, walker.program().builtins().nameOf(WellKnownSymbol::Iterator), origin);
     buildFirstReadForGenerators(walker, BuiltinNames::next, origin);
 }
 
@@ -188,6 +189,7 @@ void buildFirstReadThatCloseOfGeneratorLeavesOut(Walker& walker, Origin origin)
 
 static Reference buildStepOfGenerator(Walker& walker, BuilderForGenerators& builder, Reference generator, ResumeMode mode, GeneratorStepCheck check)
 {
+    RELEASE_ASSERT(check != GeneratorStepCheck::None);
     if (walker.isUnreachable())
         return { };
     Draft step = builder.draft(Opcode::StepGenerator);
@@ -195,6 +197,18 @@ static Reference buildStepOfGenerator(Walker& walker, BuilderForGenerators& buil
     step.setResumeMode(mode);
     step.setValueOperand(builder.undefined());
     step.setCheck(check);
+    return builder.build(WTF::move(step));
+}
+
+static Reference buildNextStepOfGeneratorAskedAtOpen(Walker& walker, BuilderForGenerators& builder, Reference generator, const PassedTest&)
+{
+    if (walker.isUnreachable())
+        return { };
+    Draft step = builder.draft(Opcode::StepGenerator);
+    step.setGeneratorOperand(generator);
+    step.setResumeMode(ResumeMode::Next);
+    step.setValueOperand(builder.undefined());
+    step.setCheck(GeneratorStepCheck::None);
     return builder.build(WTF::move(step));
 }
 
@@ -211,7 +225,12 @@ static TypeID typeOfGenerators(Walker& walker)
 
 static bool isStateOfLoopOverGenerator(Walker& walker, Reference state)
 {
-    return state && state.isValue() && walker.loopsOverGenerators().states.contains(state.bits());
+    return state && state.isValue() && walker.loopsOverGenerators().statesOpened.contains(state.bits());
+}
+
+static Reference listOfWordsMadeForState(Walker& walker, Reference state)
+{
+    return Reference::fromBits(walker.loopsOverGenerators().statesOpened.get(state.bits()).listOfWords);
 }
 
 GeneratorStepCheck checkLeftToStepOf(Walker& walker, Reference generator)
@@ -222,6 +241,7 @@ GeneratorStepCheck checkLeftToStepOf(Walker& walker, Reference generator)
 
 Reference buildStepOfGenerator(Walker& walker, Reference generator, ResumeMode mode, Reference sent, GeneratorStepCheck check, Origin origin)
 {
+    RELEASE_ASSERT(check != GeneratorStepCheck::None);
     if (walker.isUnreachable())
         return { };
     BuilderForGenerators builder(walker, origin);
@@ -258,7 +278,7 @@ static bool openLoopOverGenerator(Walker& walker, const BodyValue& open)
     std::optional<LoopOverIterator> loop = findLoopOverIterator(walker.currentBodyIndex(), open.id());
     if (!loop || !engineAnswersForGenerators(walker))
         return false;
-    if (!walker.has(Mechanism::Guesses) || !walker.has(Mechanism::BuiltinCalls) || !walker.opensGuesses() || !hasInstanceTest(walker.program().builtins(), BuiltinClasses::Generator))
+    if (!walker.has(Mechanism::Guesses) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::Folding) || !walker.opensGuesses() || !hasInstanceTest(walker.program().builtins(), BuiltinClasses::Generator))
         return false;
     if (!loop->stepStandsInHeadOfLoop && !shouldOpenGuess(walker, iterable, generators, isDeclared, closedOperationsOfProtocolForGenerators))
         return false;
@@ -271,11 +291,12 @@ static bool openLoopOverGenerator(Walker& walker, const BodyValue& open)
     Reference generator = classIsProven ? iterable : builder.goOnWhereTypeTestPasses(iterable, generators, byProtocol);
     Draft test = builder.draft(Opcode::IsUnmodifiedGenerator);
     test.setValueOperand(generator);
-    BlockID isAsMade = builder.addBlock();
-    builder.branch(builder.build(WTF::move(test)), isAsMade, byProtocol);
-    builder.continueIn(isAsMade);
-    buildFirstReadsThatOpenOfGeneratorLeavesOut(walker, builder.origin());
-    builder.jumpTo(opened, { generator });
+    std::optional<PassedTest> generatorIsAsMade = builder.goOnWhereTestPasses(builder.build(WTF::move(test)), byProtocol);
+    if (generatorIsAsMade) {
+        buildFirstReadsThatOpenOfGeneratorLeavesOut(walker, builder.origin());
+        builder.jumpTo(opened, { generator });
+    } else if (!walker.isUnreachable())
+        builder.jumpTo(byProtocol);
 
     builder.continueIn(byProtocol);
     Reference words = builder.openByProtocol(iterable);
@@ -284,7 +305,7 @@ static bool openLoopOverGenerator(Walker& walker, const BodyValue& open)
     walker.noteGuessOpened();
     if (walker.isUnreachable())
         return true;
-    walker.loopsOverGenerators().states.add(state.bits());
+    walker.loopsOverGenerators().statesOpened.add(state.bits(), LoopsOverGeneratorsOfUnit::StateOpened { words.bits(), generatorIsAsMade });
     walker.bind(open.id(), state);
     return true;
 }
@@ -299,7 +320,8 @@ static bool stepLoopOverGenerator(Walker& walker, const BodyValue& step)
     BuilderForGenerators::MeetingOfStep after = builder.openMeetingOfStep();
     BlockID byProtocol = builder.addBlock(BlockFrequency::Unlikely);
     Reference generator = builder.goOnWhereTypeTestPasses(state, typeOfGenerators(walker), byProtocol);
-    Reference stepped = buildStepOfGenerator(walker, builder, generator, ResumeMode::Next, GeneratorStepCheck::None);
+    std::optional<PassedTest> generatorWasAsMade = walker.loopsOverGenerators().statesOpened.get(state.bits()).generatorWasAsMade;
+    Reference stepped = generatorWasAsMade ? buildNextStepOfGeneratorAskedAtOpen(walker, builder, generator, *generatorWasAsMade) : buildStepOfGenerator(walker, builder, generator, ResumeMode::Next, GeneratorStepCheck::IsUnmodified);
     Reference value = builder.resultAt(stepped, static_cast<uint32_t>(StepGeneratorResult::Value));
     Reference status = builder.resultAt(stepped, static_cast<uint32_t>(StepGeneratorResult::Status));
 
@@ -317,7 +339,7 @@ static bool stepLoopOverGenerator(Walker& walker, const BodyValue& step)
     builder.endStep(builder.isInteger(status, static_cast<int64_t>(GeneratorStepStatus::Completed)), value, after);
 
     builder.continueIn(byProtocol);
-    Reference words = builder.takeWordsOfProtocol(state);
+    Reference words = builder.takeWordsOfProtocol(state, listOfWordsMadeForState(walker, state));
     Reference iterator = builder.iteratorIn(words);
     builder.stepByProtocol(iterator, builder.nextIn(words), after);
     if (Reference results = builder.resultsOf(after.done, after.value))
@@ -368,7 +390,7 @@ static bool closeLoopOverGenerator(Walker& walker, const BodyValue& close)
     builder.jumpTo(after);
 
     builder.continueIn(byProtocol);
-    builder.closeByProtocol(builder.iteratorIn(builder.takeWordsOfProtocol(state)), completion);
+    builder.closeByProtocol(builder.iteratorIn(builder.takeWordsOfProtocol(state, listOfWordsMadeForState(walker, state))), completion);
     builder.jumpTo(after);
     leaveAnythingForCalleeListedAtForGenerators(walker, close);
     return true;

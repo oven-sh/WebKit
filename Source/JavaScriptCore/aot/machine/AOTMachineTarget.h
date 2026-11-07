@@ -110,6 +110,7 @@ ALWAYS_INLINE bool acceptsImmediate(const Operation& user, unsigned childIndex, 
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
         return childIndex == 1 && constant.hasInt32();
 
     case Load8Z:
@@ -254,6 +255,7 @@ ALWAYS_INLINE bool acceptsMemoryOperand(const Operation& user, unsigned childInd
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
     case Clz:
     case PopCount:
     case Abs:
@@ -306,7 +308,7 @@ constexpr bool resultPrefersRegisterOfFirstChild() { return isX86_64(); }
 constexpr bool resultOverwritesFirstChild(Opcode opcode)
 {
     return opcode == Add || opcode == Sub || opcode == Mul || opcode == Div || opcode == Neg
-        || opcode == BitAnd || opcode == BitOr || opcode == BitXor || opcode == Shl || opcode == SShr || opcode == ZShr;
+        || opcode == BitAnd || opcode == BitOr || opcode == BitXor || opcode == Shl || opcode == SShr || opcode == ZShr || opcode == RotR;
 }
 
 constexpr bool clearsUpperHalfOfRegister(Opcode opcode)
@@ -324,6 +326,7 @@ constexpr bool clearsUpperHalfOfRegister(Opcode opcode)
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
     case Clz:
     case PopCount:
     case SExt8:
@@ -366,6 +369,8 @@ JS_EXPORT_PRIVATE unsigned numberOfScratchGPRsOf(const ProcedureTraits&, const O
 
 inline constexpr unsigned minCasesForJumpTable = 4;
 inline constexpr uint64_t maxEntriesOfJumpTablePerCase = 16;
+inline constexpr uint64_t valuesInSwitchWindow = 64;
+inline constexpr unsigned maxPlacesToldByBitsOfSwitchWindow = 3;
 
 JS_EXPORT_PRIVATE uint32_t trapReach();
 

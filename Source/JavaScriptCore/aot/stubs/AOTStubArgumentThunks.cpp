@@ -13,9 +13,13 @@
 #include "AOTStubAssembler.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
+#include "AOTStubHelpers.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
+#include "Butterfly.h"
+#include "JSObject.h"
+#include "JSString.h"
 #include <algorithm>
 #include <limits>
 #include <wtf/CheckedArithmetic.h>
@@ -142,6 +146,61 @@ static void emitConstantsOfThunk(CCallHelpers& jit, std::span<const uint64_t> mo
     });
 }
 
+static void returnLengthOfListOrTextInFrontOfMoves(CCallHelpers& jit, const StubSignature& signature, std::span<const uint64_t> moves, std::optional<int32_t> asked)
+{
+    const GPRReg operand = signature.operands[0].gpr();
+    const GPRReg scratch = *signature.immediate;
+    const GPRReg result = asked ? scratch : signature.firstResult.gpr();
+    auto answer = [&](CCallHelpers::Address length) {
+        if (!asked) {
+            jit.load32(length, result);
+            jit.or64(numberTag, result);
+            jit.ret();
+            return;
+        }
+#if CPU(X86_64)
+        jit.m_assembler.cmpl_im(*asked, length.offset, length.base);
+#else
+        jit.load32(length, scratch);
+        jit.m_assembler.cmp<32>(scratch, UInt12(*asked));
+#endif
+        jit.ret();
+    };
+    GPRReg receiver = operand;
+    bool liesInRegister = true;
+    forEachThunkMove(moves, [&](ArgumentSource source, GPRReg destination, uint64_t payload) {
+        if (destination != operand)
+            return;
+        if (source == ArgumentSource::Register)
+            receiver = static_cast<GPRReg>(payload);
+        else
+            liesInRegister = false;
+    });
+    if (!liesInRegister || receiver == scratch)
+        return;
+    CCallHelpers::Jump isNotCell = jit.branchIfNotCell(receiver);
+    CCallHelpers::Jump isNoContiguousList = jit.branch8(CCallHelpers::NotEqual, CCallHelpers::Address(receiver, JSCell::indexingTypeAndMiscOffset()), CCallHelpers::TrustedImm32(ArrayWithContiguous));
+    CCallHelpers::Label hasPlainStorage = jit.label();
+    jit.loadPtr(CCallHelpers::Address(receiver, JSObject::butterflyOffset()), result);
+    answer(CCallHelpers::Address(result, Butterfly::offsetOfPublicLength()));
+
+    isNoContiguousList.link(&jit);
+    CCallHelpers::Jump isNoText = jit.branch8(CCallHelpers::NotEqual, CCallHelpers::Address(receiver, JSCell::typeInfoTypeOffset()), CCallHelpers::TrustedImm32(StringType));
+    jit.loadPtr(CCallHelpers::Address(receiver, JSString::offsetOfValue()), scratch);
+    CCallHelpers::Jump isRope = jit.branchIfRopeStringImpl(scratch);
+    answer(CCallHelpers::Address(scratch, StringImpl::lengthMemoryOffset()));
+
+    isRope.link(&jit);
+    answer(CCallHelpers::Address(receiver, JSRopeString::offsetOfLength()));
+
+    isNoText.link(&jit);
+    static_assert(ArrayWithUndecided + 2 == ArrayWithInt32 && ArrayWithUndecided + 4 == ArrayWithDouble && ArrayWithUndecided + 6 == ArrayWithContiguous);
+    jit.load8(CCallHelpers::Address(receiver, JSCell::indexingTypeAndMiscOffset()), scratch);
+    jit.sub32(CCallHelpers::TrustedImm32(ArrayWithUndecided), scratch);
+    jit.branchTest32(CCallHelpers::Zero, scratch, CCallHelpers::TrustedImm32(0xff & ~(6 | CopyOnWrite | MayHaveIndexedAccessors))).linkTo(hasPlainStorage, &jit);
+    isNotCell.link(&jit);
+}
+
 static std::expected<ArgumentThunks, LinkFailure> generateArgumentThunksOfChunk(BuildContext& context, const StubCatalog& catalog, std::span<const KeptArgumentMoves> lists, std::span<const uint32_t> stubKeyIndexes)
 {
     ArgumentThunks result;
@@ -162,6 +221,10 @@ static std::expected<ArgumentThunks, LinkFailure> generateArgumentThunksOfChunk(
         RELEASE_ASSERT(areThunkMovesSound(key, signature, movesImmediate, moves));
 
         labels.append(jit.label());
+        if (key.family() == StubFamily::GetLengthAtSite)
+            returnLengthOfListOrTextInFrontOfMoves(jit, signature, moves, std::nullopt);
+        if (key.family() == StubFamily::LengthIs)
+            returnLengthOfListOrTextInFrontOfMoves(jit, signature, moves, static_cast<int32_t>(key.count()));
         emitRegisterMovesOfThunk(jit, moves);
         emitLoadsOfThunk(jit, moves);
         emitConstantsOfThunk(jit, moves);

@@ -608,6 +608,13 @@ export function reportsException(effects: Effects): boolean {
   return mayThrow(effects) || effects.terminates;
 }
 
+export const bitsInNarrowFlagWord = 32;
+export const bitsInWideFlagWord = 64;
+
+export function isWideFlagWord(type: SchemaEnum): boolean {
+  return type.isFlags && type.members.length > bitsInNarrowFlagWord;
+}
+
 export function innermostKindOf(kind: Kind): Kind {
   return kind.tag === "Span" || kind.tag === "List" ? innermostKindOf(kind.element) : kind;
 }

@@ -20,6 +20,7 @@ constexpr StubKey enterSlimClosure() { return StubKey(StubFamily::EnterSlimClosu
 constexpr StubKey enterModuleBody() { return StubKey(StubFamily::EnterModuleBody); }
 constexpr StubKey enterClosureForConstruct() { return StubKey(StubFamily::EnterClosureForConstruct); }
 constexpr StubKey startModule() { return StubKey(StubFamily::StartModule); }
+constexpr StubKey startModuleThatRunTimeNames() { return StubKey(StubFamily::StartModuleThatRunTimeNames); }
 
 enum class AdapterCaller : uint8_t { NativeCodeOrInterpreter, NativeCodeForJobOfCoroutine };
 void emitEnterAdapter(StubAssembler&, AdapterCaller, unsigned extraBytes = 0);

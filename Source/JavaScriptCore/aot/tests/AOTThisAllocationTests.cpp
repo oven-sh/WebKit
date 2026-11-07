@@ -23,6 +23,7 @@
 #include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
+#include "AOTStubTestSupport.h"
 #include "AOTTemporaryFile.h"
 #include "AOTTestHarness.h"
 #include "AOTThisAllocationInlines.h"
@@ -418,6 +419,40 @@ static void checkWhichInstancesHaveThePrototypeOfTheirLayout(LoadedProgram& prog
     AOT_TEST_CHECK(&withOtherPrototype->layout() == &classNamed(program, "Base"_s) && withOtherPrototype->compiledStructure().hasOtherPrototype());
 }
 
+#if OS(UNIX)
+static constexpr ASCIILiteral classThatStaysInSightText = R"IR(layout L0 kind=Instance name="Kept" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}]
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = PropGet v3 key="x"
+    Return v4
+}
+function f1 name="Kept" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    Return v2
+}
+)IR"_s;
+
+static void checkStrangePrototypeAtBirthIsStoppedWherePrototypeStaysAsWritten(LoadedProgram& program)
+{
+    DeferGC deferGC(program.vm());
+    AOT_TEST_CHECK(classNamed(program, "Kept"_s).impossibleMutations().contains(ObjectMutation::ChangePrototype));
+    Object* allocated = allocate(program, "Kept"_s, { });
+    JSObject* stranger = constructEmptyObject(program.realm());
+    ChildOutcome outcome = runInChild([&] {
+        classesOf(program).instanceWithPrototype(program.vm(), allocated, stranger);
+    });
+    AOT_TEST_CHECK(outcome == ChildOutcome::Crashed);
+}
+#endif
+
 template<typename CreateSlow, typename TryCreateInline>
 static bool createsSameCell(size_t size, const CreateSlow& createSlow, const TryCreateInline& tryCreateInline)
 {
@@ -565,6 +600,9 @@ std::span<const NativeTest> thisAllocationTests()
 {
     static constexpr NativeTest tests[] = {
         { "this-allocation/which-instances-have-the-prototype-of-their-layout"_s, withEnumeratedClasses<checkWhichInstancesHaveThePrototypeOfTheirLayout> },
+#if OS(UNIX)
+        { "this-allocation/a-strange-prototype-at-birth-is-stopped-where-the-prototype-stays-as-written"_s, runNativeTestWithLoadedProgram<thisAllocationTests, classThatStaysInSightText, checkStrangePrototypeAtBirthIsStoppedWherePrototypeStaysAsWritten> },
+#endif
         { "this-allocation/create-this-fast-paths-create-same-cells"_s, withEnumeratedClasses<checkCreateThisFastPathsCreateSameCells> },
         { "this-allocation/class-below-constructor-function"_s, withEnumeratedClasses<checkClassBelowConstructorFunction>, noClassAboveInRecord },
         { "this-allocation/construction-from-native-code"_s, testConstructionFromNativeCode },

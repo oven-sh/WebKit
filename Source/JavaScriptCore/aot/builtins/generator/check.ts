@@ -1167,7 +1167,7 @@ function checkConditions(model: TableModel, problems: Problems): void {
         );
       }
       if (hasProperty === null) continue;
-      if (operand === null || isOneOf.length + startsWith.length > 0) {
+      if (operand === null || isOneOf.length > 0) {
         problems.add(
           null,
           `${builtin.text}: a condition is about the property ${hasProperty.text} of an operand or about its text`,
@@ -1257,6 +1257,7 @@ function checkObjectsWithLockedMembers(model: TableModel, problems: Problems): v
     }
     const inheritsFromLockedObject =
       prototype.link === "Null" ||
+      prototype.link === "Unknown" ||
       (prototype.link === "Builtin" &&
         (prototype.builtin.flags.includes("IsLockedObject") || prototype.builtin.flags.includes("HasLockedMembers")));
     if (!inheritsFromLockedObject) {
@@ -1348,6 +1349,30 @@ function checkMarksOfReach(model: Pick<TableModel, "builtins">, problems: Proble
         null,
         `${builtin.text} has the mark ${mark}, which says how far the code reaches that it lets in, and it lets none in: runsUnseenCode`,
       );
+    }
+  }
+}
+
+function checkRowsThatLayOperandAbovePrototype(model: Pick<TableModel, "builtins">, problems: Problems): void {
+  const mark: BuiltinMark = "LaysOperandAbovePrototype";
+  for (const builtin of model.builtins) {
+    if (!builtin.marks.includes(mark)) continue;
+    for (const { parameters, flow } of builtin.overloads) {
+      const laid = parameters[0];
+      if (laid === undefined) continue;
+      const isOfLaid = (place: ModelPlace) => {
+        const operand = operandOfPlace(place);
+        return operand !== null && isSameOperand(operand, laid.operand);
+      };
+      const isKeptInCellAlone =
+        laid.uses.every(use => use === "Inspects" || use === "Retains") &&
+        laid.protocols.every(protocol => protocol === "PrototypeChain") &&
+        [laid.namedMembers, laid.calledMembers, laid.convertedMembers].every(list => list.length === 0) &&
+        flow.transfers.every(({ from, to }) => !isOfLaid(to) && (!isOfLaid(from) || (from.place === "Operand" && to.place === "NativeCell"))) &&
+        flow.callbacks.length + flow.propertyActions.length + flow.handlerCalls.length === 0;
+      if (!isKeptInCellAlone) {
+        problems.add(null, `${builtin.text} has the mark ${mark}: its first operand is stored in a native cell and its chain is walked, and the row says nothing else of it and calls nothing`);
+      }
     }
   }
 }
@@ -1504,6 +1529,7 @@ export function checkModel(model: TableModel, schema: Schema, problems: Problems
   checkMutability(model, problems);
   checkMarksOfTestRunner(model, problems);
   checkMarksOfReach(model, problems);
+  checkRowsThatLayOperandAbovePrototype(model, problems);
   checkSyntax(model, problems);
   checkEngineFiles(model, problems);
   checkGuards(model, problems);

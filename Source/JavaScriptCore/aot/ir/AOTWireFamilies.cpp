@@ -185,8 +185,11 @@ private:
     Vector<uint32_t> m_firstName;
 };
 
+static constexpr size_t leastNamesHeldThroughAnotherType = 16;
+
 struct NamesOfLayoutFamilies {
     bool lacksRequiredName(LayoutID member, uint32_t type) const;
+    bool lacksOneOf(LayoutID member, std::span<const uint32_t> names) const;
 
     uint32_t numberOfWireLayouts { 0 };
     NamesByWireLayout required;
@@ -207,7 +210,6 @@ struct LayoutConversion {
 };
 
 struct LayoutsThatMeetTypesByNames {
-    static constexpr size_t mostThatMeetTypeKnownByNamesAlone = 4;
     static constexpr uint32_t noGroup = UINT32_MAX;
 
     bool meetNone(uint32_t type) const { return heldAgainstType[type].isEmpty() && (groupOfType[type] == noGroup || withoutTellingFields[groupOfType[type]].isEmpty()); }
@@ -398,17 +400,50 @@ static uint64_t addNamesToHashOfWireLayout(uint64_t hash, std::span<const uint32
     return hash;
 }
 
+static uint64_t addNamesButOneToHashOfWireLayout(uint64_t hash, std::span<const uint32_t> names, uint32_t leftOut)
+{
+    hash = addToInternedHash(hash, names.size() - 1);
+    for (uint32_t name : names) {
+        if (name != leftOut)
+            hash = addToInternedHash(hash, name);
+    }
+    return hash;
+}
+
+static bool areNamesButOne(std::span<const uint32_t> fewer, std::span<const uint32_t> names, uint32_t leftOut)
+{
+    if (fewer.size() + 1 != names.size())
+        return false;
+    size_t place = 0;
+    for (uint32_t name : names) {
+        if (name == leftOut)
+            continue;
+        if (place == fewer.size() || fewer[place++] != name)
+            return false;
+    }
+    return place == fewer.size();
+}
+
+static bool holdsAllNames(std::span<const uint32_t> list, std::span<const uint32_t> names)
+{
+    return names.size() == 1 ? std::ranges::binary_search(list, names[0]) : std::ranges::includes(list, names);
+}
+
 bool NamesOfLayoutFamilies::lacksRequiredName(LayoutID member, uint32_t type) const
 {
-    std::span<const uint32_t> names = required.of(type);
+    return lacksOneOf(member, required.of(type));
+}
+
+bool NamesOfLayoutFamilies::lacksOneOf(LayoutID member, std::span<const uint32_t> names) const
+{
     if (names.empty())
         return false;
     uint32_t index = member.index();
     if (index < numberOfWireLayouts)
-        return declaresEveryName.quickGet(index) && !std::ranges::includes(declared.of(index), names);
+        return declaresEveryName.quickGet(index) && !holdsAllNames(declared.of(index), names);
     if (index < firstTaggedLayout || index - firstTaggedLayout >= declaredByTaggedLayouts.size())
         return false;
-    return !std::ranges::includes(declaredByTaggedLayouts[index - firstTaggedLayout], names);
+    return !holdsAllNames(declaredByTaggedLayouts[index - firstTaggedLayout].span(), names);
 }
 
 static NamesOfLayoutFamilies collectNamesOfLayoutFamilies(const ParallelLoops& loops, const Wire::Sections& checkedSections)
@@ -576,36 +611,82 @@ static LayoutsThatMeetTypesByNames findLayoutsThatMeetWireTypesByNames(const Bui
     result.withoutTellingFields.grow(numberOfGroups);
     result.heldAgainstType.grow(numberOfLayouts);
     Vector<Vector<uint32_t>> withTellingFieldsOfGroup(numberOfGroups);
+    auto rarestNameOf = [&](std::span<const uint32_t> ofInstances) {
+        uint32_t rarest = ofInstances[0];
+        for (uint32_t name : ofInstances) {
+            if (layoutsWithName[name].size() < layoutsWithName[rarest].size())
+                rarest = name;
+        }
+        return rarest;
+    };
+    Vector<uint32_t> groupOfPlace(FillWith { }, typesByNames.size(), 0u);
+    for (uint32_t group = 0; group < numberOfGroups; ++group) {
+        for (uint32_t place = firstOfGroup[group]; place < firstOfGroup[group + 1]; ++place)
+            groupOfPlace[place] = group;
+    }
+    Vector<uint32_t> groupThatRequiresAllButRarestName(FillWith { }, numberOfGroups, LayoutsThatMeetTypesByNames::noGroup);
     forEachIndexInParallel(loops, numberOfGroups, [&](unsigned group) {
+        uint32_t firstType = typesByNames[firstOfGroup[group]];
+        std::span<const uint32_t> required = requiredOfInstances.of(firstType);
+        if (required.size() < leastNamesHeldThroughAnotherType || !std::ranges::equal(required, requiredOfRecords.of(firstType)))
+            return;
+        uint32_t rarest = rarestNameOf(required);
+        uint64_t hash = static_cast<uint64_t>(finishInternedHash(addNamesButOneToHashOfWireLayout(addNamesButOneToHashOfWireLayout(0, required, rarest), required, rarest))) << 32;
+        for (size_t place = std::ranges::lower_bound(typesByHashOfNames, hash) - typesByHashOfNames.begin(); place < typesByHashOfNames.size() && typesByHashOfNames[place] >> 32 == hash >> 32; ++place) {
+            uint32_t other = typesByNames[place];
+            if (areNamesButOne(requiredOfInstances.of(other), required, rarest) && areNamesButOne(requiredOfRecords.of(other), required, rarest)) {
+                groupThatRequiresAllButRarestName[group] = groupOfPlace[place];
+                return;
+            }
+        }
+    });
+    auto takeLayoutThatMeetsGroup = [&](unsigned group, uint32_t layout) {
+        if (tellingFields.tellsNothingApartFrom(layout))
+            result.withoutTellingFields[group].append(LayoutID(layout));
+        else
+            withTellingFieldsOfGroup[group].append(layout);
+    };
+    forEachIndexInParallel(loops, numberOfGroups, [&](unsigned group) {
+        for (uint32_t place = firstOfGroup[group]; place < firstOfGroup[group + 1]; ++place)
+            result.groupOfType[typesByNames[place]] = group;
+        if (groupThatRequiresAllButRarestName[group] != LayoutsThatMeetTypesByNames::noGroup)
+            return;
         uint32_t firstType = typesByNames[firstOfGroup[group]];
         std::span<const uint32_t> ofRecords = requiredOfRecords.of(firstType);
         std::span<const uint32_t> ofInstances = requiredOfInstances.of(firstType);
-        const Vector<uint32_t>* fewest = nullptr;
-        for (uint32_t name : ofInstances) {
-            if (!fewest || layoutsWithName[name].size() < fewest->size())
-                fewest = &layoutsWithName[name];
+        for (uint32_t layout : layoutsWithName[rarestNameOf(ofInstances)]) {
+            if (std::ranges::includes(names.of(layout), wireLayoutDeclaresEveryName(layouts[layout]) ? ofRecords : ofInstances))
+                takeLayoutThatMeetsGroup(group, layout);
         }
-        for (uint32_t layout : *fewest) {
-            if (!std::ranges::includes(names.of(layout), wireLayoutDeclaresEveryName(layouts[layout]) ? ofRecords : ofInstances))
-                continue;
-            if (tellingFields.tellsNothingApartFrom(layout))
-                result.withoutTellingFields[group].append(LayoutID(layout));
-            else
-                withTellingFieldsOfGroup[group].append(layout);
-        }
-        for (uint32_t place = firstOfGroup[group]; place < firstOfGroup[group + 1]; ++place)
-            result.groupOfType[typesByNames[place]] = group;
     });
+    Vector<uint32_t> groupsMetThroughOthers;
+    for (uint32_t group = 0; group < numberOfGroups; ++group) {
+        if (groupThatRequiresAllButRarestName[group] != LayoutsThatMeetTypesByNames::noGroup)
+            groupsMetThroughOthers.append(group);
+    }
+    auto numberOfNamesOf = [&](uint32_t group) {
+        return requiredOfInstances.of(typesByNames[firstOfGroup[group]]).size();
+    };
+    std::ranges::stable_sort(groupsMetThroughOthers, { }, numberOfNamesOf);
+    for (uint32_t group : groupsMetThroughOthers) {
+        uint32_t other = groupThatRequiresAllButRarestName[group];
+        std::span<const LayoutID> without = result.withoutTellingFields[other].span();
+        std::span<const uint32_t> with = withTellingFieldsOfGroup[other].span();
+        for (uint32_t layout : layoutsWithName[rarestNameOf(requiredOfInstances.of(typesByNames[firstOfGroup[group]]))]) {
+            while (!without.empty() && without.front().index() < layout)
+                without = without.subspan(1);
+            while (!with.empty() && with.front() < layout)
+                with = with.subspan(1);
+            if ((!without.empty() && without.front().index() == layout) || (!with.empty() && with.front() == layout))
+                takeLayoutThatMeetsGroup(group, layout);
+        }
+    }
     steps.didFinish("layouts by group"_s);
     forEachIndexInParallel(loops, static_cast<unsigned>(typesByNames.size()), [&](unsigned place) {
         uint32_t type = typesByNames[place];
         uint32_t group = result.groupOfType[type];
         const Vector<uint32_t>& withTellingFields = withTellingFieldsOfGroup[group];
         Vector<LayoutID>& found = result.heldAgainstType[type];
-        if (isKnownByNamesAlone(type) && result.withoutTellingFields[group].size() + withTellingFields.size() > LayoutsThatMeetTypesByNames::mostThatMeetTypeKnownByNamesAlone) {
-            result.groupOfType[type] = LayoutsThatMeetTypesByNames::noGroup;
-            return;
-        }
         auto holdAgainstType = [&](uint32_t layout) {
             if (layout != type && !tellingFields.tellApart(layout, type) && !isToldByNameThatTypeLacks(layout, type))
                 found.append(LayoutID(layout));
@@ -808,14 +889,79 @@ static void removeFamilyMembersThatLackRequiredNames(const ParallelLoops& loops,
     }
     unsigned numberOfGroups = static_cast<unsigned>(firstOfGroup.size());
     firstOfGroup.append(static_cast<uint32_t>(types.size()));
-    forEachIndexInParallel(loops, numberOfGroups, [&](unsigned group, unsigned worker) {
+
+    constexpr uint32_t noGroup = UINT32_MAX;
+    uint32_t endOfNames = 0;
+    Vector<uint64_t> longTypesByHashOfNames;
+    Vector<uint32_t> groupOfType(FillWith { }, families.members.size(), noGroup);
+    for (unsigned group = 0; group < numberOfGroups; ++group) {
         uint32_t type = types[firstOfGroup[group]];
-        LayoutSetID left = arenas.of(worker).layoutSets().filtered(families.members[type], [&](LayoutID member) {
-            return !names.lacksRequiredName(member, type);
-        });
-        for (uint32_t other : types.subspan(firstOfGroup[group], firstOfGroup[group + 1] - firstOfGroup[group]))
-            families.members[other] = left;
+        groupOfType[type] = group;
+        std::span<const uint32_t> required = names.required.of(type);
+        if (required.size() + 1 < leastNamesHeldThroughAnotherType)
+            continue;
+        endOfNames = std::max(endOfNames, required.back() + 1);
+        longTypesByHashOfNames.append(static_cast<uint64_t>(finishInternedHash(addNamesToHashOfWireLayout(0, required))) << 32 | type);
+    }
+    AOT::sort(longTypesByHashOfNames);
+    Vector<uint32_t> numberOfLongTypesThatRequire(FillWith { }, endOfNames, 0u);
+    for (uint64_t hashAndType : longTypesByHashOfNames) {
+        for (uint32_t name : names.required.of(static_cast<uint32_t>(hashAndType)))
+            ++numberOfLongTypesThatRequire[name];
+    }
+    struct OtherGroup {
+        uint32_t group { noGroup };
+        uint32_t nameBeside { 0 };
+    };
+    Vector<OtherGroup> groupThatRequiresAllButOneName(numberOfGroups);
+    Vector<uint8_t> isAskedByAnotherGroup(FillWith { }, numberOfGroups, static_cast<uint8_t>(0));
+    forEachIndexInParallel(loops, numberOfGroups, [&](unsigned group) {
+        std::span<const uint32_t> required = names.required.of(types[firstOfGroup[group]]);
+        if (required.size() < leastNamesHeldThroughAnotherType)
+            return;
+        uint32_t rarest = required[0];
+        for (uint32_t name : required) {
+            if (numberOfLongTypesThatRequire[name] < numberOfLongTypesThatRequire[rarest])
+                rarest = name;
+        }
+        uint64_t hash = static_cast<uint64_t>(finishInternedHash(addNamesButOneToHashOfWireLayout(0, required, rarest))) << 32;
+        for (size_t place = std::ranges::lower_bound(longTypesByHashOfNames, hash) - longTypesByHashOfNames.begin(); place < longTypesByHashOfNames.size() && longTypesByHashOfNames[place] >> 32 == hash >> 32; ++place) {
+            uint32_t other = static_cast<uint32_t>(longTypesByHashOfNames[place]);
+            if (areNamesButOne(names.required.of(other), required, rarest)) {
+                groupThatRequiresAllButOneName[group] = { groupOfType[other], rarest };
+                AtomicRef(isAskedByAnotherGroup[groupOfType[other]]).store(1, std::memory_order_relaxed);
+                return;
+            }
+        }
     });
+    Vector<Vector<uint32_t>> membersLeftInGroup(numberOfGroups);
+    auto removeFrom = [&](unsigned group, unsigned worker) {
+        uint32_t type = types[firstOfGroup[group]];
+        OtherGroup other = groupThatRequiresAllButOneName[group];
+        LayoutSetID left = arenas.of(worker).layoutSets().filtered(families.members[type], [&](LayoutID member) {
+            bool holdsNamesOfOther = other.group != noGroup && std::ranges::binary_search(membersLeftInGroup[other.group], member.index());
+            bool stays = holdsNamesOfOther ? !names.lacksOneOf(member, singleElementSpan(other.nameBeside)) : !names.lacksRequiredName(member, type);
+            if (stays && isAskedByAnotherGroup[group])
+                membersLeftInGroup[group].append(member.index());
+            return stays;
+        });
+        for (uint32_t sameAs : types.subspan(firstOfGroup[group], firstOfGroup[group + 1] - firstOfGroup[group]))
+            families.members[sameAs] = left;
+    };
+    forEachIndexInParallel(loops, numberOfGroups, [&](unsigned group, unsigned worker) {
+        if (groupThatRequiresAllButOneName[group].group == noGroup)
+            removeFrom(group, worker);
+    });
+    Vector<uint32_t> groupsHeldThroughOthers;
+    for (unsigned group = 0; group < numberOfGroups; ++group) {
+        if (groupThatRequiresAllButOneName[group].group != noGroup)
+            groupsHeldThroughOthers.append(group);
+    }
+    std::ranges::stable_sort(groupsHeldThroughOthers, { }, [&](uint32_t group) {
+        return names.required.of(types[firstOfGroup[group]]).size();
+    });
+    for (uint32_t group : groupsHeldThroughOthers)
+        removeFrom(group, 0);
 }
 
 static bool canPassForWireType(const LayoutConversions& conversions, LayoutID member, uint32_t type)
@@ -939,7 +1085,7 @@ bool WireTypeReader::computeDeclaredMembers()
     uint32_t numberOfLayouts = static_cast<uint32_t>(layouts.size());
 
     auto numberOfNamespaceLayouts = std::ranges::count_if(m_sections.modules, [](const Wire::Module& module) {
-        return module.kind == static_cast<uint32_t>(ModuleKind::SourceText);
+        return module.kind == static_cast<uint32_t>(ModuleKind::SourceText) || module.kind == static_cast<uint32_t>(ModuleKind::RuntimeSource);
     });
     m_numberOfDerivedLayouts += static_cast<uint32_t>(numberOfNamespaceLayouts);
 

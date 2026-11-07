@@ -71,7 +71,7 @@ void forEachUnitMentionedBy(const CompiledCode& code, const Typed::CompileInputs
 
 void mentionUnitNamedOutsideCode(UnitQueue& queue, unsigned thread, CodeUnit unit)
 {
-    queue.mention(thread, unit);
+    queue.mention(thread, unit, Typed::isGenericEntry(unit.role) ? MentionKind::ClosureWord : MentionKind::Call);
 }
 
 void mentionWhatCodeNames(UnitQueue& queue, unsigned thread, const CompiledCode& code, const Typed::CompileInputs& inputs)
@@ -94,7 +94,7 @@ void mentionWhatCodeNames(UnitQueue& queue, unsigned thread, const CompiledCode&
             return false;
         if (const Vector<CodeUnit>* unitsThatAsk = queue.unitsThatAskAmongMentionedUnitsOfClass(classOrNoneBehindLast)) {
             for (CodeUnit unit : *unitsThatAsk)
-                queue.mention(thread, unit);
+                queue.mention(thread, unit, MentionKind::ClosureWord);
             return false;
         }
         classesGoneThrough.append({ classOrNoneBehindLast, { } });
@@ -107,11 +107,11 @@ void mentionWhatCodeNames(UnitQueue& queue, unsigned thread, const CompiledCode&
         if (namesSelector && queue.hasMentionedUnitsBehindSelector(keyOf(mention, body.mentionWords.span())[0]))
             continue;
         bool queueAsksWhoMentions = false;
-        forEachUnitBehind(mention, body.mentionWords.span(), walk.program, walk.facts, walk.plan, scopedLambda<void(Typed::CodeUnit, MentionKind)>([&](CodeUnit unit, MentionKind) {
+        forEachUnitBehind(mention, body.mentionWords.span(), walk.program, walk.facts, walk.plan, scopedLambda<void(Typed::CodeUnit, MentionKind)>([&](CodeUnit unit, MentionKind kind) {
             queueAsksWhoMentions |= namesSelector && queue.asksWhoMentions(unit);
             if (goesThroughClass && queue.asksWhoMentions(unit))
                 classesGoneThrough.last().unitsThatAskWhoMentions.append(unit);
-            queue.mention(thread, unit);
+            queue.mention(thread, unit, kind);
         }), &asksForUnitsOfClass);
         if (namesSelector && !queueAsksWhoMentions)
             queue.didMentionUnitsBehindSelector(keyOf(mention, body.mentionWords.span())[0]);
@@ -348,11 +348,14 @@ CompiledProgram compileQueuedUnits(const Typed::CompileInputs& inputs, Typed::Ty
                 output.timesOfUnits.append({ *unit, startOfUnit - startOfUnits, MonotonicTime::now() - startOfUnit, instructions.walkAndSweep - instructionsInFront.walkAndSweep, instructions.emitToEncode - instructionsInFront.emitToEncode });
             }
             if (code && prepareCodeOfCompileThread(*code, conventions, build)) {
+                for (FunctionID entered : worker.functionsThatUnitMayEnterByValue())
+                    queue.noteEntryByValue(thread, entered, inputs.walk.options.verifiesCode);
                 mentionWhatCodeNames(queue, thread, *code, inputs);
                 keepCodeOfCompileThread(output, WTF::move(*code));
             } else {
                 didFail.store(true, std::memory_order_relaxed);
             }
+            worker.functionsThatUnitMayEnterByValue().shrink(0);
             queue.didFinish(thread);
         }
         output.notes = WTF::move(worker.notes());

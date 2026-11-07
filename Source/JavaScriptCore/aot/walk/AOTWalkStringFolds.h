@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTLimits.h"
 #include "AOTWalkStrings.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -35,13 +36,14 @@ ALWAYS_INLINE void takeTextsUsedAsKeysAsAtoms(Walker& walker, Draft& draft)
 bool buildThrowOfNewError(Walker&, const CallByOneRow&);
 bool buildFormatterCallByPattern(Walker&, const CallByOneRow&);
 bool buildURLCallByScan(Walker&, const CallByOneRow&);
+bool standsForMethodOfURLThatIsNeverMade(Walker&, const BodyValue& read);
 
 ScratchRealm* scratchRealmOfWalk(Walker&);
 std::optional<Effects> effectsOfProtocolsResolvedOn(Walker&, OptionSet<Protocol>, TypeID operand);
 
 StringID textOfKnownPatternOfRegExp(Walker&, Reference patternOrNull);
 
-inline constexpr size_t mostBytesOfTextMadeByStringFolds = 65536;
+inline constexpr size_t mostBytesOfTextMadeByStringFolds = defaultLimitValue(LimitID::MaxFoldedStringBytes, hostArchitecture());
 inline constexpr size_t mostBytesOfPatternMadeByStringFolds = 1048576;
 
 PrimitiveKnownToFolding joinKnownTextsForStrings(Walker&, std::span<const PrimitiveKnownToFolding> parts, size_t mostBytes = mostBytesOfTextMadeByStringFolds);

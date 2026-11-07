@@ -201,6 +201,8 @@ struct CompiledFrame {
     JS_EXPORT_PRIVATE String sourceURL() const;
     JS_EXPORT_PRIVATE LineColumn lineColumn() const;
     JS_EXPORT_PRIVATE SourceOrigin sourceOrigin() const;
+    bool isOfBuiltin() const;
+    bool runsCodeOfFile() const;
     JS_EXPORT_PRIVATE bool isActivationOf(JSCell* function) const;
     std::optional<ModuleID> moduleWhoseBodyRuns() const;
 
@@ -357,6 +359,8 @@ private:
     InlineFrameReader m_inlineFrames;
 };
 static_assert(sizeof(CompiledFrameIterator) <= 1024);
+
+JS_EXPORT_PRIVATE bool findOriginOfCaller(CompiledFrameIterator&, SourceOrigin&);
 
 } // namespace AOT
 } // namespace JSC
