@@ -11,7 +11,7 @@ alive, this prints what a heap snapshot taken at that moment says of the cell (i
 collector reports neither for what it has found on a stack) and which words of the blocked thread's stack point at it, each with the frame
 it lies in. See "The stack" in README.md: the frames under which a thread waits have little room that is not written to.
 """
-import bisect, copy, ctypes, gc, json, os, socket, struct, sys, threading, weakref
+import bisect, copy, ctypes, gc, json, os, platform, socket, struct, sys, threading, weakref
 import js
 
 
@@ -57,6 +57,16 @@ def snapshot_says(cell):
     )
 
 
+FUTEX = {'x86_64': 202, 'aarch64': 98}.get(platform.machine())
+
+
+def system_call_of(thread):
+    # The fields of /proc's line if the thread is blocked in a system call, and not for its turn to run. Else nothing: it is "running", between two pieces of its wait.
+    with open('/proc/self/task/%d/syscall' % thread) as file:
+        fields = file.read().split()
+    return fields if len(fields) == 9 and int(fields[0]) != FUTEX else None
+
+
 def words_that_point_at(cell, size, thread, symbols):
     maps = [(int(p[0].split('-')[0], 16), int(p[0].split('-')[1], 16), p[1], p[5] if len(p) > 5 else '') for p in (line.split() for line in open('/proc/self/maps'))]
     executable = os.path.realpath('/proc/self/exe')
@@ -71,11 +81,11 @@ def words_that_point_at(cell, size, thread, symbols):
                     return '[%s]' % (os.path.basename(path) or 'jit')
                 return symbols[bisect.bisect_right(starts, address) - 1][1].split('(')[0] if symbols else '?'
 
-    fields = []
-    while len(fields) < 9:  # "running": it is between two pieces of its wait.
-        fields = open('/proc/self/task/%d/syscall' % thread).read().split()
+    fields = None
+    while not fields:
+        fields = system_call_of(thread)
     bottom = int(fields[7], 16)
-    top = next(high for low, high, mode, path in maps if low <= bottom < high)
+    top = next((high for low, high, mode, path in maps if low <= bottom < high), bottom)
     raw = ctypes.string_at(bottom, top - bottom)
     words = struct.unpack('<%dQ' % (len(raw) // 8), raw)
 
@@ -92,7 +102,10 @@ def words_that_point_at(cell, size, thread, symbols):
             pointer = following
         return links
 
-    links = next(c for c in (chain(bottom + 8 * i) for i in range(len(words) - 2)) if len(c) >= 6)
+    links = next((c for c in (chain(bottom + 8 * i) for i in range(len(words) - 2)) if len(c) >= 6), None)
+    if links is None:
+        yield 'a stack in which no chain of frames is found'
+        return
     frames, low, owner = [], bottom, '(the system call and libc)'
     for pointer, caller in links:
         frames.append((low, pointer + 16, owner))
@@ -111,6 +124,7 @@ def look(kind, symbols):
     unbuffered, buffered = os.fdopen(os.dup(reader), 'rb', buffering=0), os.fdopen(os.dup(reader), 'rb')
     libc, room = ctypes.CDLL(None), ctypes.create_string_buffer(1)
     block = {'unbuffered': lambda: unbuffered.read(1), 'buffered': lambda: buffered.read(1), 'recv': lambda: here.recv(1), 'ctypes': lambda: libc.read(reader, room, 1)}[kind]
+
     alive = 0
     for way, use in WAYS.items():
         box, ready = [], threading.Event()
@@ -128,7 +142,7 @@ def look(kind, symbols):
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
         ready.wait()
-        while open('/proc/self/task/%d/stat' % thread.native_id).read().rsplit(')', 1)[1].split()[0] != 'S':
+        while not (system_call_of(thread.native_id) and system_call_of(thread.native_id)):
             pass
         for _ in range(6):
             gc.collect()
@@ -141,6 +155,10 @@ def look(kind, symbols):
         there.send(b'x') if kind == 'recv' else os.write(writer, b'x')
         thread.join()
     print('%s: %d of %d alive after six collections' % (kind, alive, len(WAYS)))
+    for file in (unbuffered, buffered, here, there):
+        file.close()
+    os.close(reader)
+    os.close(writer)
 
 
 symbols = sorted((int(line[:16], 16), line[19:].rstrip()) for line in open(sys.argv[2]) if line[17:18] in 'tTwW') if len(sys.argv) > 2 else []
