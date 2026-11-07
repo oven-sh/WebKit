@@ -132,7 +132,7 @@ async function test() {
     expectKeptOrReleased(census(), 1, "after a loader whose body threw and one that ran it");
     await expectAllReleasedWhenShrunk("after a loader whose body threw and one that ran it");
 
-    // So is a loader's record that never runs because a module it depends on threw,
+    // So is a loader's record that never runs because a module it depends on threw.
     const parent = "./resources/module-loaders-released-code/parent-of-throwing.js";
     globalThis.moduleLoadersReleasedCodeParentStarted = 0;
     globalThis.moduleLoadersReleasedCodeShouldThrow = true;
@@ -154,9 +154,11 @@ async function test() {
     expectKeptOrReleased(census(), 2, "after a loader whose dependency threw and one that ran both");
     await expectAllReleasedWhenShrunk("after a loader whose dependency threw and one that ran both");
 
-    // and one that is suspended at a top-level await when a sibling of it throws: it is never resumed.
+    // A record that is suspended at a top-level await when a sibling of it throws is not done: its body is resumed, and
+    // the code goes once that has run to its end.
     const cycleRoot = "./resources/module-loaders-released-code/cycle-root.js";
     globalThis.moduleLoadersReleasedCodeCycleRootStarted = 0;
+    globalThis.moduleLoadersReleasedCodeCycleAwaitsFinished = 0;
     globalThis.moduleLoadersReleasedCodeShouldThrow = true;
     let openSecondGate;
     globalThis.moduleLoadersReleasedCodeNextGate = new Promise((resolve) => { openSecondGate = resolve; });
@@ -167,19 +169,73 @@ async function test() {
         thrown = error;
     }
     assert(thrown instanceof Error && thrown.message === "the sibling throws" && globalThis.moduleLoadersReleasedCodeCycleRootStarted === 0, "the root of the cycle never ran");
+    assert(globalThis.moduleLoadersReleasedCodeCycleAwaitsFinished === 0, "the record that awaits is still suspended");
+    now = census();
+    if (releasesLinkedCode && keepsLinkedCodeForAWhile)
+        assert(now.moduleExecutablesWithLinkedCode === keptLinked + 1, "the suspended record keeps the module's code: " + JSON.stringify(now));
+    if (releasesUnlinkedCode)
+        assert(now.moduleExecutablesWithUnlinkedCode === keptUnlinked + 1, "linked and unlinked: " + JSON.stringify(now));
     openSecondGate();
     await new Promise((resolve) => setTimeout(resolve, 1));
+    assert(globalThis.moduleLoadersReleasedCodeCycleAwaitsFinished === 1, "the suspended body ran to its end");
     now = census();
     if (releasesLinkedCode)
-        assert(now.moduleExecutablesWithLinkedCode <= keptLinked, "released although a record was left suspended: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithLinkedCode <= keptLinked, "released once the suspended body ended: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
         assert(now.moduleExecutablesWithUnlinkedCode <= keptUnlinked, "linked and unlinked: " + JSON.stringify(now));
     globalThis.moduleLoadersReleasedCodeShouldThrow = false;
     globalThis.moduleLoadersReleasedCodeNextGate = undefined;
     const r = await load(cycleRoot);
     assert(r.describe() === "awaited:sibling" && globalThis.moduleLoadersReleasedCodeCycleRootStarted === 1, "the second loader ran the cycle");
-    expectKeptOrReleased(census(), 3, "after a loader that left a record suspended and one that ran the cycle");
-    await expectAllReleasedWhenShrunk("after a loader that left a record suspended and one that ran the cycle");
+    expectKeptOrReleased(census(), 3, "after a loader whose suspended record ran to its end and one that ran the cycle");
+    await expectAllReleasedWhenShrunk("after a loader whose suspended record ran to its end and one that ran the cycle");
+
+    // Other loaders can take the executable while records are still suspended with their error. The suspended bodies are
+    // then resumed in code that is shared, and its unlinked code stays through a shrink until the last of them has ended,
+    // whether that one runs to its end or throws.
+    const adoptedRoot = "./resources/module-loaders-released-code/adopted-root.js";
+    globalThis.moduleLoadersReleasedCodeAdoptedRootStarted = 0;
+    globalThis.moduleLoadersReleasedCodeAdoptedAwaitsResumed = 0;
+    globalThis.moduleLoadersReleasedCodeAdoptedAwaitsFinished = 0;
+    const adoptedCounts = () => [globalThis.moduleLoadersReleasedCodeAdoptedRootStarted, globalThis.moduleLoadersReleasedCodeAdoptedAwaitsResumed, globalThis.moduleLoadersReleasedCodeAdoptedAwaitsFinished].join();
+    const openAdoptedGates = [];
+    for (const throwsAfterTheAwait of [false, true]) {
+        globalThis.moduleLoadersReleasedCodeShouldThrow = true;
+        globalThis.moduleLoadersReleasedCodeThrowsAfterTheAwait = throwsAfterTheAwait;
+        globalThis.moduleLoadersReleasedCodeNextGate = new Promise((resolve) => { openAdoptedGates.push(resolve); });
+        thrown = undefined;
+        try {
+            await load(adoptedRoot);
+        } catch (error) {
+            thrown = error;
+        }
+        assert(thrown instanceof Error && thrown.message === "the adopted sibling throws" && adoptedCounts() === "0,0,0", "a record is suspended with its sibling's error");
+        now = census();
+        if (releasesLinkedCode && keepsLinkedCodeForAWhile)
+            assert(now.moduleExecutablesWithLinkedCode === keptLinked + 1, "the suspended records have one executable: " + JSON.stringify(now));
+    }
+    globalThis.moduleLoadersReleasedCodeShouldThrow = false;
+    globalThis.moduleLoadersReleasedCodeThrowsAfterTheAwait = false;
+    globalThis.moduleLoadersReleasedCodeNextGate = undefined;
+    const adopted = await load(adoptedRoot);
+    assert(adopted.describe() === "awaited:dependency:adopted sibling" && adoptedCounts() === "1,1,1", "the third loader ran the cycle");
+    const expectOnlyASuspendedRecordsCodeWhenShrunk = async (what) => {
+        $vm.shrinkFootprintWhenIdle();
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        const now = census();
+        assert(now.moduleExecutablesWithLinkedCode === 0, what + ": no linked code after shrinking: " + JSON.stringify(now));
+        if (releasesUnlinkedCode)
+            assert(now.moduleExecutablesWithUnlinkedCode === 1, what + ": a suspended record has yet to run its module to the end: " + JSON.stringify(now));
+    };
+    await expectOnlyASuspendedRecordsCodeWhenShrunk("two records suspended with an error");
+    openAdoptedGates[0]();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    assert(adoptedCounts() === "1,2,2", "the first suspended body ran to its end");
+    await expectOnlyASuspendedRecordsCodeWhenShrunk("one record suspended with an error");
+    openAdoptedGates[1]();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    assert(adoptedCounts() === "1,3,2" && adopted.describe() === "awaited:dependency:adopted sibling", "the second suspended body threw, and the third loader's module is its own");
+    await expectAllReleasedWhenShrunk("after suspended records whose executable other loaders took");
 
     // All code is deleted between two loaders: the second one's environment is made from another symbol table than the
     // first one's, so what the second links (and the optimizing tiers specialize on its one environment) must not become
