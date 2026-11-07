@@ -1474,8 +1474,9 @@ up before it waits for events while a collection that it has asked for is under 
   out, and whatever then held it had it marked. The search for weak references with callbacks (`Runtime::weakRefsWithCallbacksToUnmarkedObjects`), which looked into every one that stood. They ask now. Requests to end what runs (`node:vm` timeouts, `Worker.terminate()`, the
   watchdog) are put aside for the main thread too, and the VM counts as idle (`VM::isIdle()`) when the main thread is outside it,
   whatever Python frames other threads are parked in.
-- While there are other threads, a `Buffer` that C++ holds of memory of JS pins the `ArrayBuffer` (`runtime/PyBuffer.h`): JS, which may run
-  while the thread is in a system call, cannot detach or shrink it.
+- A `Buffer` that C++ holds of memory of JS pins the `ArrayBuffer` (`runtime/PyBuffer.h`), with other threads or without: JS, which may
+  run while the thread is in a system call, and in a callback or the handler of a signal in the thread itself, cannot detach or shrink it.
+  Not so memory of WebAssembly, which cannot be pinned: the thread keeps the GIL instead (DEFERRED.md).
 - A thread that waits for others for more than 50 ms, having allocated since it last did so, collects and runs finalizers: the
   others may be waiting for what a dropped object holds open, and in CPython it would have been closed when it was dropped.
 - A wait without a time limit while there is no other thread can be ended by a finalizer, so the thread collects at once, or by a

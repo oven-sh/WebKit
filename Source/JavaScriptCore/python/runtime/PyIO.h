@@ -273,7 +273,7 @@ public:
     bool acquire(JSGlobalObject*, JSValue);
     // "readinto() argument must be read-write bytes-like object, not x"
     bool acquireWritable(JSGlobalObject*, ASCIILiteral function, JSValue, ASCIILiteral argument = "argument"_s);
-    // After anything that may have run code, which may have been JS taking its memory away. False: a BufferError.
+    // After anything that may have run code: memory of WebAssembly, which is not pinned, may have moved. False: a BufferError.
     bool refresh() { return !m_globalObject || refreshBuffer(m_globalObject, m_buffer); }
 
     size_t size() const { return m_buffer.length; }

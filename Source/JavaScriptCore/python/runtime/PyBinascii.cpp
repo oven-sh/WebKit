@@ -89,7 +89,7 @@ public:
 
     bool isSet() const { return m_globalObject || !m_text.isNull(); }
 
-    // Converting the other arguments may have run code, and JS may have moved its memory then, or taken it away: a BufferError.
+    // Converting the other arguments may have run code, and memory of WebAssembly, which is not pinned, may have moved then: a BufferError.
     bool refresh() { return !m_globalObject || refreshBuffer(m_globalObject, m_buffer); }
 
     std::span<const uint8_t> bytes() const

@@ -369,7 +369,7 @@ public:
         state.limit = state.positionAt(text.length);
     }
 
-    // After code of the program has run: the memory of a typed array of JS may be elsewhere now. False: a BufferError.
+    // After code of the program has run: memory of WebAssembly, which is not pinned, may be elsewhere now. False: a BufferError.
     bool refresh(JSGlobalObject* globalObject)
     {
         if (!text.buffer.object)

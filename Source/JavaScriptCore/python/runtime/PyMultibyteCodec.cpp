@@ -358,7 +358,7 @@ public:
         if (failed(scope, m_holder.get(input)))
             return false;
         span = m_holder.buffer.span();
-        // A handler may run anything, and memory that belongs to JS may then be gone.
+        // A handler may run anything, and memory of WebAssembly, which is not pinned, may then be gone.
         if (before.empty() && (errors.mode != ErrorMode::Handler || PyBytes::is(input)))
             return true;
         if (!m_copy.tryReserveInitialCapacity(before.size() + span.size())) {

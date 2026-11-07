@@ -23,12 +23,15 @@ namespace Python {
 // JS. What is remembered is the owner and an offset into its memory, not an address.
 // - Cells do not move, so the memory of a bytes or of a PyByteStorage stays where it is for as long as the cell lives.
 // - That of a bytearray stays where it is while the bytearray has exports, which keep it from being resized.
-// - JS may detach, shrink or move the memory of a typed array whenever it runs. Nothing stops it: where the memory is, and
-//   whether there is still enough of it, is looked up again after anything that may have run code.
-//   With threads, JS may run while another thread, which has let go of the GIL, is in a system call that uses the memory. So
-//   while there are threads, a Buffer (not a memoryview, which may live long) pins the ArrayBuffer: until it is released, a
-//   transfer copies the memory instead of detaching it, and it cannot shrink. A thread that holds a Buffer of memory that is
-//   not pinned does not let go of the GIL in blocking calls.
+// - JS may detach or shrink the memory of a typed array whenever it runs: in a callback, in the handler of a signal, in another
+//   thread while this one is in a system call. So a Buffer (not a memoryview, which may live long) pins the ArrayBuffer: until
+//   it is released, a transfer copies the memory instead of detaching it, and it cannot shrink.
+//   Whoever has no Buffer, a memoryview among them, looks up where the memory is, and whether there is still enough of it,
+//   after anything that may have run code.
+//   (The memory of a typed array of up to 1000 items moves once, when the array is given its ArrayBuffer. That is when Python
+//   first asks for its memory, whoever asks, before it is told where the memory is.)
+//   Memory of WebAssembly cannot be pinned: it may move when it grows. Whoever holds a Buffer of it has to look it up again as
+//   if he had none (refreshBuffer()), and does not let go of the GIL in blocking calls.
 
 // What the consumer of a buffer can cope with. The values are those of inspect.BufferFlags.
 enum BufferFlag : unsigned {
@@ -70,7 +73,7 @@ struct Buffer {
     // make up a word, all of which is written. (The room inside the vectors is not: to write it takes 10 ns, for every Buffer.)
     unsigned dimensions { 1 };
     bool isReadOnly { true };
-    bool keepsGIL { false }; // For getBuffer() and releaseBuffer(), if the memory is that of JS.
+    bool keepsGIL { false }; // For getBuffer() and releaseBuffer(), if the memory is that of WebAssembly.
     uint16_t unused { 0 };
     String format; // In the syntax of the module struct. Null: "B".
     Vector<int64_t, 4> shape; // Empty if not asked for: one dimension, of length / itemSize items.
@@ -100,7 +103,7 @@ JS_EXPORT_PRIVATE bool getBufferRunsCode(JSValue);
 bool getBuffer(JSGlobalObject*, JSValue object, Buffer&, unsigned flags = BufferSimple);
 // May be called with an exception pending, and on a buffer that holds nothing. It raises nothing.
 void releaseBuffer(JSGlobalObject*, Buffer&);
-// After code of the program may have run, if the memory may be that of JS: sets `data` again. False: a BufferError.
+// After code of the program may have run, for memory of JS's that is not pinned: sets `data` again. False: a BufferError.
 // A system call that is made again when a signal has interrupted it comes behind such code, the handler: this goes into the loop, right before the call.
 bool refreshBuffer(JSGlobalObject*, Buffer&);
 // The same for whoever has noted the owner and not a Buffer: where `length` bytes of its memory are, from `offset` on.

@@ -1647,25 +1647,22 @@ static JSValue bytesJoinHoldingBuffers(JSGlobalObject* globalObject, JSValue sel
     Vector<Buffer> buffers(count);
     // What the buffers refer to: the collector does not look into the vector.
     MarkedArgumentBuffer referents;
-    auto releaseAll = [&] {
+    auto releaseAll = makeScopeExit([&] {
         for (auto& buffer : buffers)
             releaseBuffer(globalObject, buffer);
-    };
+    });
     for (unsigned i = 0; i < count; ++i) {
         Buffer& buffer = buffers[i];
         JSValue item = tuple ? tuple->at(i) : listGet(list, i);
         if (failed(scope, getBuffer(globalObject, item, buffer))) {
             takePendingException(globalObject);
-            releaseAll();
             return raiseTypeError(globalObject, scope, "sequence item "_s, i, ": expected a bytes-like object, "_s, typeName(globalObject, item), " found"_s);
-        }
-        if (list && listLength(list) != count) {
-            releaseAll();
-            return raiseRuntimeError(globalObject, scope, "sequence changed size during iteration"_s);
         }
         referents.append(buffer.object);
         referents.append(buffer.view ? buffer.view : jsUndefined());
         referents.append(buffer.owner ? JSValue(buffer.owner) : jsUndefined());
+        if (list && listLength(list) != count)
+            return raiseRuntimeError(globalObject, scope, "sequence changed size during iteration"_s);
     }
     auto separator = bytesSpanOf(self);
     uint64_t total = 0;
@@ -1676,14 +1673,11 @@ static JSValue bytesJoinHoldingBuffers(JSGlobalObject* globalObject, JSValue sel
         if (failed(scope, refreshBuffer(globalObject, buffers[i])) || total > static_cast<uint64_t>(bytesMaxSsize)) {
             if (!scope.exception())
                 raiseOverflowError(globalObject, scope, "join() result is too long"_s);
-            releaseAll();
             return { };
         }
     }
-    if (failed(scope, bytesAllocate(globalObject, bytesIsArray(self), total, result, data))) {
-        releaseAll();
+    if (failed(scope, bytesAllocate(globalObject, bytesIsArray(self), total, result, data)))
         return { };
-    }
     for (unsigned i = 0; i < count; ++i) {
         if (i && !separator.empty()) {
             memcpy(data, separator.data(), separator.size());
@@ -1694,7 +1688,6 @@ static JSValue bytesJoinHoldingBuffers(JSGlobalObject* globalObject, JSValue sel
             data += buffers[i].length;
         }
     }
-    releaseAll();
     return result;
 }
 

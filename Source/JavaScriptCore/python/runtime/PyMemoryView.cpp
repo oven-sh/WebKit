@@ -942,6 +942,23 @@ static bool bufferFill(JSGlobalObject* globalObject, Buffer& buffer, JSValue obj
     return true;
 }
 
+// All that the view has, whatever the consumer can cope with. The view cannot be released until the buffer is.
+static bool bufferFillFromMemoryView(JSGlobalObject* globalObject, PyMemoryView* view, Buffer& buffer)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint8_t* data = view->data(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    memoryViewFillBuffer(view, buffer);
+    buffer.data = data;
+    buffer.owner = view->managedBuffer()->owner();
+    buffer.requiredSize = view->managedBuffer()->requiredSize;
+    buffer.object = view;
+    buffer.release = memoryViewReleaseExport;
+    memoryViewAddExport(view);
+    return true;
+}
+
 static bool bufferGetFromMemoryView(JSGlobalObject* globalObject, PyMemoryView* view, Buffer& buffer, unsigned flags)
 {
     VM& vm = getVM(globalObject);
@@ -966,10 +983,8 @@ static bool bufferGetFromMemoryView(JSGlobalObject* globalObject, PyMemoryView* 
     if (!asksFor(BufferND) && asksFor(BufferFormat))
         return fail("memoryview: cannot cast to unsigned bytes if the format flag is present"_s);
 
-    uint8_t* data = view->data(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    memoryViewFillBuffer(view, buffer);
-    buffer.data = data;
+    if (failed(scope, bufferFillFromMemoryView(globalObject, view, buffer)))
+        return false;
     // Without the format the items are bytes, though the size of an item stays what it was; without the shape, there is one
     // dimension.
     if (!asksFor(BufferFormat))
@@ -980,11 +995,6 @@ static bool bufferGetFromMemoryView(JSGlobalObject* globalObject, PyMemoryView* 
         buffer.dimensions = 1;
         buffer.shape.clear();
     }
-    buffer.owner = view->managedBuffer()->owner();
-    buffer.requiredSize = view->managedBuffer()->requiredSize;
-    buffer.object = view;
-    buffer.release = memoryViewReleaseExport;
-    memoryViewAddExport(view);
     return true;
 }
 
@@ -1024,6 +1034,15 @@ static bool bufferGetFromJS(JSGlobalObject* globalObject, JSCell* cell, Buffer& 
     ASCIILiteral format;
     size_t itemSize = 1;
     if (cell->type() != ArrayBufferType) {
+        // A typed array may have no ArrayBuffer yet, and when it is given one, the memory of one of up to 1000 items moves. It needs
+        // one to be pinned. It is given one here, where Python looks at the memory for the first time: nobody has an address of
+        // it yet, and some keep what they get (ctypes).
+        if (!uncheckedDowncast<JSArrayBufferView>(cell)->possiblySharedBuffer()) [[unlikely]] {
+            VM& vm = getVM(globalObject);
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            raiseMemoryError(globalObject, scope, String());
+            return false;
+        }
         TypedArrayType type = typedArrayType(cell->type());
         itemSize = type == TypeDataView ? 1 : elementSize(type);
         switch (type) {
@@ -1152,28 +1171,18 @@ static bool bufferGet(JSGlobalObject* globalObject, JSValue object, Buffer& buff
     return false;
 }
 
-// See PyBuffer.h. What is not pinned:
-// - Memory of WebAssembly, which may move when it grows, pinned or not.
-// - Anything, while there is no other thread. To be pinned, a small typed array has to be given an ArrayBuffer, which costs.
-static bool bufferHoldMemoryOfJS(JSGlobalObject* globalObject, Buffer& buffer)
+// See PyBuffer.h. False: it is memory of WebAssembly, which may move when it grows, pinned or not.
+static bool bufferPinMemoryOfJS(Buffer& buffer)
 {
-    Runtime& rt = runtime(globalObject);
     JSCell* owner = buffer.owner;
-    ArrayBuffer* memory = nullptr;
-    if (rt.threads().runningCount()) {
-        memory = owner->type() == ArrayBufferType ? uncheckedDowncast<JSArrayBuffer>(owner)->impl() : uncheckedDowncast<JSArrayBufferView>(owner)->possiblySharedBuffer();
-        if (memory && memory->isWasmMemory())
-            memory = nullptr;
-    }
-    if (!memory) {
-        buffer.keepsGIL = true;
-        ++rt.buffersThatKeepGIL;
-        return true;
-    }
+    // A typed array has one since bufferGetFromJS(). To give it one now would move the memory away from under buffer.data.
+    RELEASE_ASSERT(owner->type() == ArrayBufferType || uncheckedDowncast<JSArrayBufferView>(owner)->hasArrayBuffer());
+    ArrayBuffer* memory = owner->type() == ArrayBufferType ? uncheckedDowncast<JSArrayBuffer>(owner)->impl() : uncheckedDowncast<JSArrayBufferView>(owner)->possiblySharedBuffer();
+    if (memory->isWasmMemory())
+        return false;
     memory->pin();
     buffer.pinned = memory;
-    // That of a small typed array has just moved.
-    return refreshBuffer(globalObject, buffer);
+    return true;
 }
 
 bool getBuffer(JSGlobalObject* globalObject, JSValue object, Buffer& buffer, unsigned flags)
@@ -1185,9 +1194,9 @@ bool getBuffer(JSGlobalObject* globalObject, JSValue object, Buffer& buffer, uns
     ASSERT_UNUSED(ok, ok);
     if (!buffer.owner || !bufferIsJSExporter(buffer.owner)) [[likely]]
         return true;
-    if (failed(scope, bufferHoldMemoryOfJS(globalObject, buffer))) {
-        releaseBuffer(globalObject, buffer);
-        return false;
+    if (!bufferPinMemoryOfJS(buffer)) {
+        buffer.keepsGIL = true;
+        ++runtime(globalObject).buffersThatKeepGIL;
     }
     return true;
 }
@@ -2351,6 +2360,7 @@ static bool memoryViewMakeUnpacker(JSGlobalObject* globalObject, const MemoryVie
     unpacker.itemSize = operand.itemSize;
     unpacker.item = PyByteStorage::create(vm, rt.structure<PyByteStorage>(), operand.itemSize);
     unpacker.view = PyMemoryView::createForMemory(globalObject, unpacker.item, 0, operand.itemSize, false);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -2499,6 +2509,22 @@ static std::optional<bool> memoryViewEquals(JSGlobalObject* globalObject, PyMemo
         return equal;
     }
 
+    // The module struct is code like any other: the memory has to stay while it runs, and the views cannot be released.
+    // (Not by getBuffer(). A view that is lent to a __release_buffer__() gives no buffer, and can be compared. And for memory of
+    // WebAssembly the GIL would be kept, while code of the program runs that may wait for another thread: that memory is not held.
+    // Where the other operand is no view, `holder` above does keep it.)
+    BufferHolder holderOfView(globalObject);
+    BufferHolder holderOfOtherView(globalObject);
+    auto hold = [&](PyMemoryView* held, Buffer& buffer, MemoryViewOperand& operand) {
+        if (failed(scope, bufferFillFromMemoryView(globalObject, held, buffer)))
+            return false;
+        if (buffer.owner && bufferIsJSExporter(buffer.owner))
+            bufferPinMemoryOfJS(buffer);
+        operand.data = buffer.data;
+        return true;
+    };
+    if (!hold(view, holderOfView.buffer, v) || (otherView && !hold(otherView, holderOfOtherView.buffer, w)))
+        return std::nullopt;
     MemoryViewUnpacker unpackV;
     MemoryViewUnpacker unpackW;
     if (failed(scope, memoryViewMakeUnpacker(globalObject, v, unpackV)) || failed(scope, memoryViewMakeUnpacker(globalObject, w, unpackW))) {
@@ -2508,10 +2534,6 @@ static std::optional<bool> memoryViewEquals(JSGlobalObject* globalObject, PyMemo
         takePendingException(globalObject);
         return false;
     }
-    // The module struct is code like any other: the memory has to stay while it runs.
-    memoryViewAddExport(view);
-    if (otherView)
-        memoryViewAddExport(otherView);
     bool equal = memoryViewCompareItems(vm, v.data, w.data, v.shape, v.strides, w.strides, v.dimensions, [&](const uint8_t* p, const uint8_t* q) {
         JSValue a = memoryViewUnpackWithStruct(globalObject, unpackV, p);
         RETURN_IF_EXCEPTION(scope, false);
@@ -2521,9 +2543,6 @@ static std::optional<bool> memoryViewEquals(JSGlobalObject* globalObject, PyMemo
         RETURN_IF_EXCEPTION(scope, false);
         return equal;
     });
-    memoryViewReleaseExport(globalObject, view);
-    if (otherView)
-        memoryViewReleaseExport(globalObject, otherView);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     return equal;
 }
