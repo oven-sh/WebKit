@@ -1297,6 +1297,7 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort, bool keepWhatNeedsPar
         // it uses a callee check, but then it will call into dead code.
 
         // PreciseAllocations are always eagerly swept so we don't have to worry about handling instances pending destruction thus need a HeapIterationScope
+        // (Not always: see mayRunEmbedderFinalizers(). One that is left unswept is not live, and a precise allocation says so by its own two bits.)
         if (m_webAssemblyInstanceSpace) {
             m_webAssemblyInstanceSpace->forEachLiveCell([&] (HeapCell* cell, HeapCell::Kind kind) {
                 ASSERT_UNUSED(kind, kind == HeapCell::JSCell);

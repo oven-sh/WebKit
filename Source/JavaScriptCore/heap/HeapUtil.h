@@ -67,7 +67,8 @@ public:
             if (!set->isValidValue(pointer))
                 return false;
 #endif
-            return set->contains(pointer);
+            // What a collection has found dead may still stand: unswept (see Heap::mayRunEmbedderFinalizers()), or swept and kept for its weak handles.
+            return set->contains(pointer) && pointer->preciseAllocation().isLive();
         }
     
         const UncheckedKeyHashSet<MarkedBlock*>& set = heap.objectSpace().blocks().set();

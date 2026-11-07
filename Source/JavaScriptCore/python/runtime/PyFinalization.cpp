@@ -864,9 +864,10 @@ Vector<PyWeakRef*> Runtime::weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor& 
             return IterationStatus::Continue;
         });
     });
-    // Those that earlier collections found dead are gone: they are swept when a collection ends.
+    // One that an earlier collection found dead may still stand, as in a block: see Heap::mayRunEmbedderFinalizers(). One that was alive when this collection began is live until it ends.
     space->forEachPreciseAllocation([&](PreciseAllocation* allocation) {
-        look(allocation->cell());
+        if (allocation->isLive())
+            look(allocation->cell());
     });
     return result;
 }

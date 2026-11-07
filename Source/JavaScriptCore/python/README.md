@@ -726,7 +726,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     another had only just put its queue forward: the program above made 15 full collections for 1 as soon as there was a second realm. And a runtime that had nothing left was told that marking was over while another was still keeping: it counted
     two collections for one, called `gc.callbacks` four times, and took out of its lists what the other might yet have marked.)
   - *A runtime ends in the collection that finds its global object dead* (`Heap::didKeepAllPythonObjectsToFinalize`, `Runtime::globalObjectDidDie`), not when that is swept. The first eight global objects of a VM are allocations of their own, which are
-    destroyed at the end of that collection. The ninth lies in a block, and a block is swept when its memory is wanted, perhaps many collections later. Until then the runtime stayed in the heap's list, and the collector went on asking it about cells that had been
+    destroyed at the end of that collection if the main thread has the VM then. The ninth lies in a block, and a block is swept when its memory is wanted, perhaps many collections later. Until then the runtime stayed in the heap's list, and the collector went on asking it about cells that had been
     swept and whose memory was in use again: nine plain realms, a tenth that imports a `.py` and is dropped, 20 MB of garbage made by the main realm's Python in one call: a crash. It also kept the signals for as long. Now the heap forgets it there and then, and what
     the world outside knows of it (the signals, `faulthandler`, the C API) ends as well. A realm that is dropped is garbage like any other: what of it has a finalizer is kept and finalized, at a safe point of whatever runs in the VM (`makeCallsOwed` goes through all the
     runtimes), and keeps the realm meanwhile by way of its Structure. So a runtime that ends owes nothing.
@@ -1410,11 +1410,15 @@ up before it waits for events while a collection that it has asked for is under 
   module, a property that the engine or the host makes when it is first asked for (`js.WeakRef`) and an object of a class with a way of its own
   to look properties up are a `RuntimeError` as before, and so are calls, writes, items and iteration. `type()` and `repr()` work; `repr()` does without the name of the class.
 - **So does everything else that is the host's.** `Heap::mayRunEmbedderFinalizers()` is false while another thread has the VM. Then
-  cells with destructors of the host's, or with dead weak handles whose finalizers are not known to run anywhere
-  (`Heap::addFinalizerForAnyThread()`), are not swept: the allocator passes over their blocks, `gc.collect()` does not sweep. The main
+  cells with destructors that may be the host's, or with dead weak handles whose finalizers are not known to run anywhere
+  (`Heap::addFinalizerForAnyThread()`), are not swept: the allocator passes over their blocks, `gc.collect()` does not sweep. (Whose a destructor is the engine knows only in a block of a space for
+  one class, where such a thread allocates none but the engine's. Anywhere else, so in a large allocation and in the first few cells of any class, which are allocations of their own, every
+  destructor counts as the host's.) The main
   thread is woken and makes up for it at its next safe point. Until then such a cell stands there dead, while what it refers to is swept. In a block the engine has always had that, sweeping
   being lazy, and whatever comes to a cell by anything but a reference asks whether it is alive. A large allocation, or one of the first few cells of a class, used to be swept by the collection that
-  found it dead, so the scan of the stacks did not ask: a stale word marked such a cell again, and the marker went on into what had been swept. It asks now (`ConservativeRoots::genericAddPointer`). Requests to end what runs (`node:vm` timeouts, `Worker.terminate()`, the
+  found it dead, so three places did not ask. The scan of the stacks (`ConservativeRoots::genericAddPointer`): a stale word marked such a cell again, and the marker went on into what had been swept.
+  `HeapUtil::isPointerGCObjectJSCell()`, by which `ctypes` takes bits for an object and the sampling profiler a word for a callee: `ctypes.cast(address, ctypes.py_object).value` gave such a cell
+  out, and whatever then held it had it marked. The search for weak references with callbacks (`Runtime::weakRefsWithCallbacksToUnmarkedObjects`), which looked into every one that stood. They ask now. Requests to end what runs (`node:vm` timeouts, `Worker.terminate()`, the
   watchdog) are put aside for the main thread too, and the VM counts as idle (`VM::isIdle()`) when the main thread is outside it,
   whatever Python frames other threads are parked in.
 - While there are other threads, a `Buffer` that C++ holds of memory of JS pins the `ArrayBuffer` (`runtime/PyBuffer.h`): JS, which may run
@@ -2222,6 +2226,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | A metadata table, unlinked or linked | 12 bytes: six more kinds of instruction have metadata (24 where the offsets are of 32 bits). A cached code block with rare data: 8 bytes |
 | `ArrayBuffer.prototype.resize()` | refuses to shrink a buffer that is pinned, as it refuses to detach one |
 | A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |
+| A word on a stack, or a callee that the sampling profiler has sampled, points to a large allocation or to one of the first few cells of a class | is that alive (`PreciseAllocation::isLive()`): two loads and branches at most |
 | The incremental sweeper runs | one load and branch (`hasParkedThreads()`) |
 | A call is linked, or is virtual and not to compiled JS | is the caller Python code: three loads and a branch |
 | An exception is thrown | whether there is a Python in the VM is asked once for an unwind (`UnwindFunctor::m_tellsPython`: a load and a compare) and the frame it starts in is noted (`m_frameToldOfLast`: a store), and the answer is looked at twice for each frame the exception passes. All that is done on Python's account is out of line behind it. `throw` and `catch`: has the realm a Python, a load and a branch each |
