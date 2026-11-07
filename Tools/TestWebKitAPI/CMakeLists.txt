@@ -261,6 +261,10 @@ if (ENABLE_JAVASCRIPTCORE)
         Tests/JavaScriptCore/UnsafeCallerFrame.cpp
     )
 
+    if (ENABLE_STATIC_JSC)
+        list(APPEND TestJavaScriptCore_SOURCES Tests/JavaScriptCore/AsyncStackTrace.cpp)
+    endif ()
+
     set(TestJavaScriptCore_LIBRARIES
         WebKit::gtest
     )
