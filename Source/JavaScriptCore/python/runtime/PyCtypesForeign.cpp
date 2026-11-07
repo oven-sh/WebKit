@@ -770,8 +770,8 @@ bool allocateCallbackCode(JSGlobalObject* globalObject, PyCThunk* thunk)
                 return true;
             }
         }
-        // Those that the program has dropped are freed once the collector has noticed.
-        if (!attempt) {
+        // Those that the program has dropped are freed once the collector has noticed, and their finalizers have been called: which within a finalizer, or the callback of a weak reference, they are not.
+        if (!attempt && !runtime(globalObject).isRunningPendingCalls()) {
             collectAndFinalize(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
         }

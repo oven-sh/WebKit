@@ -154,10 +154,419 @@ Runtime::CallsOwed& Runtime::callsOwedBy(uint32_t thread)
     return *m_callsOwed.last();
 }
 
+void Runtime::rankIfItHasNone(CallsOwed& owed)
+{
+    if (owed.thread && !owed.rank)
+        owed.rank = ++m_lastRank;
+}
+
 void Runtime::didTakeFrom(CallsOwed& owed)
 {
     if (std::exchange(owed.hasStoodSinceFullCollection, false))
         m_vm.heap.didBeginToFinalizeWhatWaitedIndefinitely();
+}
+
+bool Runtime::isOfEarlierEra(JSCell* cell, uint32_t era, bool isWeakRef) const
+{
+    return isWeakRef ? uncheckedDowncast<PyWeakRef>(cell)->serial() < m_firstWeakRefOfEraThatIsServed : era < m_eraThatIsServed;
+}
+
+Deque<Runtime::CallOwed>& Runtime::halfFor(CallsOwed& owed, JSCell* cell, uint32_t era, bool isWeakRef)
+{
+    if (m_collectionIsWaitedFor && (m_callsThatAskerMakes == CallsOf::AllThreads || (m_callsThatAskerMakes == CallsOf::OfEarlierEras && isOfEarlierEra(cell, era, isWeakRef))))
+        return owed.taken;
+    rankIfItHasNone(owed);
+    return owed.calls;
+}
+
+void Runtime::queueCall(Deque<CallOwed>& queue, JSCell* cell, uint32_t era, bool isWeakRef, bool continuesGroup)
+{
+    queue.append(CallOwed { cell, m_sequenceOfNextCall++, era & ((1u << 30) - 1), isWeakRef, continuesGroup });
+}
+
+void Runtime::noteCallback(CallsOwed& owed, PyWeakRef* weakRef)
+{
+    owed.callbacksOfThisCollection.append(weakRef);
+    halfFor(owed, weakRef, 0, true); // (For the rank.)
+}
+
+// Each into its place among the callbacks with which its queue begins.
+void Runtime::queueCallbacks(CallsOwed& owed, Vector<PyWeakRef*>& callbacks)
+{
+    std::ranges::sort(callbacks, [](PyWeakRef* a, PyWeakRef* b) {
+        return a->serial() > b->serial();
+    });
+    for (auto* half : { &owed.taken, &owed.calls }) {
+        Vector<CallOwed, 8> front;
+        for (PyWeakRef* weakRef : callbacks) {
+            if (&halfFor(owed, weakRef, 0, true) != half)
+                continue;
+            CallOwed call { weakRef, m_sequenceOfNextCall++, 0, true, false };
+            while (!half->isEmpty() && half->first().comesBefore(call))
+                front.append(half->takeFirst());
+            front.append(call);
+        }
+        for (auto& call : front | std::views::reverse)
+            half->prepend(call);
+        assertIsInOrder(*half);
+    }
+    callbacks.shrink(0);
+}
+
+// Each half of a queue is, group by group: whoever looks for the next call looks at the heads.
+void Runtime::assertIsInOrder(const Deque<CallOwed>& queue)
+{
+#if ASSERT_ENABLED
+    const CallOwed* last = nullptr;
+    unsigned groupsLeftToLookAt = 1000;
+    for (auto& call : queue) {
+        if (call.continuesGroup)
+            continue;
+        ASSERT(!last || !call.comesBefore(*last));
+        last = &call;
+        if (!--groupsLeftToLookAt)
+            break;
+    }
+#else
+    UNUSED_PARAM(queue);
+#endif
+}
+
+bool Runtime::isLeftToOneThatServes(const CallOwed& call) const
+{
+    bool isLeft = false;
+    for (auto* server : m_thoseThatServeOthers) {
+        // (One that serves leaves nothing to another.)
+        if (server->m_thread->number() == m_currentThread)
+            return false;
+        isLeft = isLeft || server->m_callsOf == CallsOf::AllThreads || isOfEarlierEra(call.cell, call.era, call.isWeakRef);
+    }
+    return isLeft;
+}
+
+// (Another that serves, and serves everything, may have taken what is not of an earlier era.)
+bool Runtime::mayBeginWhatIsTakenOf(const CallsOwed& owed, CallsOf callsOf) const
+{
+    if (owed.taken.isEmpty())
+        return false;
+    if (owed.thread == m_currentThread)
+        return callsOf != CallsOf::ThisThread || !isLeftToOneThatServes(owed.taken.first());
+    switch (callsOf) {
+    case CallsOf::ThisThread:
+        return false;
+    case CallsOf::AllThreads:
+        return true;
+    case CallsOf::OfEarlierEras: {
+        auto& first = owed.taken.first();
+        return isOfEarlierEra(first.cell, first.era, first.isWeakRef);
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// To another thread, which has been told, and may come first. (The exit's looks at the head of the queue and no further: behind something younger there may be something older. That is for the thread itself, which is
+// awake if it has made something since; or it is taken before the next collection of the exit's.)
+bool Runtime::mayBeginWhatIsHandedOutTo(const CallsOwed& owed, CallsOf callsOf) const
+{
+    ASSERT(owed.thread != m_currentThread);
+    if (owed.calls.isEmpty())
+        return false;
+    switch (callsOf) {
+    case CallsOf::ThisThread:
+        return false;
+    case CallsOf::AllThreads:
+        return true;
+    case CallsOf::OfEarlierEras: {
+        auto& first = owed.calls.first();
+        return isOfEarlierEra(first.cell, first.era, first.isWeakRef);
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// What another thread has begun is that thread's.
+bool Runtime::mayBeginCallsOf(const CallsOwed& owed, CallsOf callsOf) const
+{
+    if (owed.thread == m_currentThread)
+        return !owed.inHand.isEmpty() || !owed.calls.isEmpty() || mayBeginWhatIsTakenOf(owed, callsOf);
+    return mayBeginWhatIsHandedOutTo(owed, callsOf) || mayBeginWhatIsTakenOf(owed, callsOf);
+}
+
+// Callbacks of weak references come before finalizers. Of two callbacks the one whose weak reference was made later: the references to an object are told of its death latest first, and a reference that a
+// callback has made, to what it then drops, is later than all that wait. Of two finalizers the one that was queued first.
+bool Runtime::CallOwed::comesBefore(const CallOwed& other) const
+{
+    if (isWeakRef != other.isWeakRef)
+        return isWeakRef;
+    if (isWeakRef)
+        return uncheckedDowncast<PyWeakRef>(cell)->serial() > uncheckedDowncast<PyWeakRef>(other.cell)->serial();
+    return static_cast<int32_t>(sequence - other.sequence) < 0;
+}
+
+// Which call next: what it would be if, as it used to be, each thread had one queue, and what a collection finds that somebody waits for who makes the calls of all threads went into the queue of that one.
+// - One that makes the calls of all threads takes first what other collections have handed out to other threads, thread by thread: it was found earlier than what its own collections have found.
+// - Its own `calls`, and every `taken` that it may begin, are one queue to it: of their heads, what comes first. To the exit's also what other collections have handed out to other threads: while that step
+//   lasted, whatever was of an earlier era went into the main thread's queue, whichever collection found it.
+// - The rest of a group stands, for the thread that has it in its hand, where it stood: at the head of the finalizers of the queue that the group was taken from. If another group from the same place is begun
+//   in the middle of it (their numbers may go by turns: cyclic garbage of several makers that one collection has found), the two are one from then on, in the order of their numbers.
+bool Runtime::takeNextCall(CallsOwed& own, CallsOf callsOf, CallOwed& call)
+{
+    ASSERT(own.inHand.isEmpty() == own.groupsInHand.isEmpty());
+    bool isInGroup = !own.inHand.isEmpty();
+    uint32_t threadWhereHandStands = isInGroup ? own.groupsInHand.last().threadFromWhoseCalls : noThread;
+    bool takesFromHand = false;
+    CallsOwed* from = nullptr;
+    Deque<CallOwed>* queue = nullptr;
+    uint32_t threadFromWhoseCalls = noThread;
+    if (callsOf == CallsOf::AllThreads) {
+        for (auto& owed : m_callsOwed) {
+            if (owed.get() != &own && (!owed->calls.isEmpty() || owed->thread == threadWhereHandStands) && (!from || owed->rank < from->rank))
+                from = owed.get();
+        }
+        if (from) {
+            if (from->thread == threadWhereHandStands && (from->calls.isEmpty() || !from->calls.first().isWeakRef))
+                takesFromHand = true;
+            else {
+                queue = &from->calls;
+                threadFromWhoseCalls = from->thread;
+            }
+        }
+    }
+    if (!queue && !takesFromHand) {
+        auto look = [&](CallsOwed& owed, Deque<CallOwed>& candidate) {
+            if (candidate.isEmpty() || (queue && !candidate.first().comesBefore(queue->first())))
+                return;
+            from = &owed;
+            queue = &candidate;
+        };
+        look(own, own.calls);
+        for (auto& owed : m_callsOwed) {
+            if (mayBeginWhatIsTakenOf(*owed, callsOf))
+                look(*owed, owed->taken);
+            if (callsOf == CallsOf::OfEarlierEras && owed.get() != &own && mayBeginWhatIsHandedOutTo(*owed, callsOf))
+                look(*owed, owed->calls);
+        }
+        takesFromHand = isInGroup && (!queue || !queue->first().comesBefore(own.inHand.first()));
+    }
+    if (takesFromHand) {
+        call = own.inHand.takeFirst();
+        if (own.inHand.size() == own.groupsInHand.last().restOfHand)
+            own.groupsInHand.removeLast();
+        didTakeFrom(own);
+        return true;
+    }
+    if (!queue)
+        return false;
+    call = queue->takeFirst();
+    ASSERT(!call.continuesGroup);
+    didTakeFrom(*from);
+    if (queue->isEmpty() || !queue->first().continuesGroup)
+        return true;
+    // The rest of the group, in front of what is in hand already.
+    size_t restOfHand = own.inHand.size();
+    if (!isInGroup) {
+        while (!queue->isEmpty() && queue->first().continuesGroup)
+            own.inHand.append(queue->takeFirst());
+    } else {
+        Vector<CallOwed, 8> rest;
+        if (threadFromWhoseCalls == threadWhereHandStands) {
+            restOfHand = own.groupsInHand.takeLast().restOfHand;
+            while (own.inHand.size() > restOfHand) {
+                while (!queue->isEmpty() && queue->first().continuesGroup && queue->first().comesBefore(own.inHand.first()))
+                    rest.append(queue->takeFirst());
+                rest.append(own.inHand.takeFirst());
+            }
+        }
+        while (!queue->isEmpty() && queue->first().continuesGroup)
+            rest.append(queue->takeFirst());
+        for (auto& other : rest | std::views::reverse)
+            own.inHand.prepend(other);
+    }
+    own.groupsInHand.append({ restOfHand, threadFromWhoseCalls });
+    return true;
+}
+
+template<typename T>
+static void moveAll(Deque<T>& from, Deque<T>& to)
+{
+    while (!from.isEmpty())
+        to.append(from.takeFirst());
+}
+
+void Runtime::putBackWhatIsInHand(CallsOwed& owed)
+{
+    while (!owed.groupsInHand.isEmpty()) {
+        size_t restOfHand = owed.groupsInHand.takeLast().restOfHand;
+        Deque<CallOwed> group;
+        while (owed.inHand.size() > restOfHand)
+            group.append(owed.inHand.takeFirst());
+        group.first().continuesGroup = false;
+        mergeCalls(group, owed.calls);
+    }
+}
+
+void Runtime::didQueueCallsIn(CallsOwed& owed)
+{
+    // For what is taken nobody is woken, by whatever collection: whoever has taken it tells the maker if it gives it back.
+    if (owed.thread == m_currentThread || !owed.calls.isEmpty())
+        didQueueCallsFor(owed.thread);
+}
+
+// Whether they have been told before or not: one that has looked while somebody served has left its queue alone.
+void Runtime::tellThoseThatOwe()
+{
+    for (auto& owed : m_callsOwed) {
+        if (owed->thread != m_currentThread && owed->hasCallsThatNobodyHasBegun())
+            didQueueCallsFor(owed->thread);
+    }
+}
+
+// Group by group. Each of the two is in order (CallOwed::comesBefore()), and so is what comes of them.
+void Runtime::mergeCalls(Deque<CallOwed>& from, Deque<CallOwed>& into)
+{
+    if (from.isEmpty())
+        return;
+    Deque<CallOwed> merged;
+    while (!from.isEmpty() && !into.isEmpty()) {
+        auto& next = from.first().comesBefore(into.first()) ? from : into;
+        do {
+            merged.append(next.takeFirst());
+        } while (!next.isEmpty() && next.first().continuesGroup);
+    }
+    moveAll(from, merged);
+    moveAll(into, merged);
+    into = WTF::move(merged);
+    assertIsInOrder(into);
+}
+
+// From here on it is what another collection has handed out. (A fact that stays, not a state of whoever had taken it: a thread that has been told looks once, whenever it gets to it.)
+bool Runtime::takenBecomesItsMakers()
+{
+    bool wasTaken = false;
+    for (auto& owed : m_callsOwed) {
+        if (owed->taken.isEmpty())
+            continue;
+        wasTaken = true;
+        rankIfItHasNone(*owed);
+        mergeCalls(owed->taken, owed->calls);
+    }
+    return wasTaken;
+}
+
+bool Runtime::giveBackWhatIsTaken()
+{
+    Locker locker { m_finalizationLock };
+    // If nothing was taken this is no news: of two threads that are stuck in calls of their own and owe more, each would wake the other for ever.
+    if (!takenBecomesItsMakers())
+        return false;
+    tellThoseThatOwe();
+    return !m_isRunningPendingCalls && std::ranges::any_of(m_callsOwed, [&](auto& owed) WTF_REQUIRES_LOCK(m_finalizationLock) {
+        return owed->thread == m_currentThread && mayBeginCallsOf(*owed, CallsOf::ThisThread);
+    });
+}
+
+Runtime::ServesOtherThreads::ServesOtherThreads(Runtime& runtime, CallsOf callsOf)
+    : m_runtime(runtime)
+    , m_callsOf(callsOf)
+{
+    if (callsOf == CallsOf::ThisThread)
+        return;
+    m_thread = &runtime.threads().current();
+    runtime.threads().didBeginToServeOthers();
+    Locker locker { runtime.m_finalizationLock };
+    runtime.assertNothingIsTakenUnlessSomebodyServes();
+    // A thread serves once at a time: code of the program runs in the life of one of these only within runPendingCalls(), and whoever is about to serve asks isRunningPendingCalls() first.
+    ASSERT(std::ranges::none_of(runtime.m_thoseThatServeOthers, [&](auto* other) {
+        return other->m_thread == m_thread;
+    }));
+    runtime.m_thoseThatServeOthers.append(this);
+    if (callsOf == CallsOf::OfEarlierEras) {
+        ASSERT(!runtime.m_eraThatIsServed);
+        runtime.m_eraThatIsServed = ++runtime.m_era;
+        runtime.m_firstWeakRefOfEraThatIsServed = nextWeakRefSerial();
+        takeWhatIsOwed();
+    }
+}
+
+void Runtime::ServesOtherThreads::takeWhatIsOwed()
+{
+    for (auto& owed : m_runtime.m_callsOwed) {
+        // Group by group.
+        Deque<CallOwed> taken;
+        Deque<CallOwed> left;
+        bool isTaken = false;
+        while (!owed->calls.isEmpty()) {
+            CallOwed call = owed->calls.takeFirst();
+            if (!call.continuesGroup)
+                isTaken = m_runtime.isOfEarlierEra(call.cell, call.era, call.isWeakRef);
+            (isTaken ? taken : left).append(call);
+        }
+        owed->calls = WTF::move(left);
+        mergeCalls(taken, owed->taken);
+    }
+}
+
+// What it serves of what is taken goes into its own queue. Whether there was any.
+bool Runtime::ServesOtherThreads::keepWhatIsTaken()
+{
+    CallsOwed& own = m_runtime.callsOwedBy(m_runtime.m_currentThread);
+    m_runtime.rankIfItHasNone(own);
+    bool keepsSomething = false;
+    for (auto& owed : m_runtime.m_callsOwed) {
+        // Group by group.
+        Deque<CallOwed> kept;
+        Deque<CallOwed> left;
+        bool isKept = false;
+        while (!owed->taken.isEmpty()) {
+            CallOwed call = owed->taken.takeFirst();
+            if (!call.continuesGroup)
+                isKept = m_callsOf == CallsOf::AllThreads || m_runtime.isOfEarlierEra(call.cell, call.era, call.isWeakRef);
+            (isKept ? kept : left).append(call);
+        }
+        owed->taken = WTF::move(left);
+        if (kept.isEmpty())
+            continue;
+        keepsSomething = true;
+        mergeCalls(kept, own.calls);
+        if (owed.get() != &own)
+            m_runtime.didTakeFrom(*owed);
+    }
+    return keepsSomething;
+}
+
+void Runtime::ServesOtherThreads::willCollectAgain()
+{
+    if (m_callsOf != CallsOf::OfEarlierEras)
+        return;
+    Locker locker { m_runtime.m_finalizationLock };
+    takeWhatIsOwed();
+}
+
+Runtime::ServesOtherThreads::~ServesOtherThreads()
+{
+    if (m_callsOf == CallsOf::ThisThread)
+        return;
+    m_runtime.threads().didCeaseToServeOthers();
+    Locker locker { m_runtime.m_finalizationLock };
+    // If something is still taken it leaves early: the handler of a signal has raised, say. What its collections have found is still its own to make, at its next safe point, like the rest of a group that it
+    // has in its hand: the makers are in no better state for it than they were. (If there is another that serves, nobody can tell which of the two has taken what.)
+    if (keepWhatIsTaken())
+        m_runtime.didQueueCallsFor(m_runtime.m_currentThread);
+    m_runtime.m_thoseThatServeOthers.removeFirst(this);
+    if (m_callsOf == CallsOf::OfEarlierEras)
+        m_runtime.m_eraThatIsServed = 0;
+    m_runtime.assertNothingIsTakenUnlessSomebodyServes();
+    m_runtime.tellThoseThatOwe();
+}
+
+void Runtime::assertNothingIsTakenUnlessSomebodyServes()
+{
+#if ASSERT_ENABLED
+    if (!m_thoseThatServeOthers.isEmpty())
+        return;
+    for (auto& owed : m_callsOwed)
+        ASSERT(owed->taken.isEmpty());
+#endif
 }
 
 // With the GIL, or for the collector while whoever holds it is stopped.
@@ -186,11 +595,15 @@ void Runtime::threadDidEnd(uint32_t thread)
     CallsOwed& heir = callsOwedBy(0);
     bool leavesSomething = owed->hasFinalizers() || m_threadBetweenStartAndStop == thread;
     didTakeFrom(*owed);
-    while (!owed->finalizers.isEmpty())
-        heir.finalizers.append(owed->finalizers.takeFirst());
-    while (!owed->weakRefCallbacks.isEmpty()) {
-        heir.weakRefCallbacks.append(owed->weakRefCallbacks.takeFirst());
-        heir.weakRefCallbacksAreInOrder = false;
+    putBackWhatIsInHand(*owed);
+    mergeCalls(owed->taken, heir.taken);
+    mergeCalls(owed->calls, heir.calls);
+    // What another thread has in its hand of this one's `calls` stands at the heir's from now on.
+    for (auto& other : m_callsOwed) {
+        for (auto& group : other->groupsInHand) {
+            if (group.threadFromWhoseCalls == thread)
+                group.threadFromWhoseCalls = other.get() == &heir ? noThread : heir.thread;
+        }
     }
     if (m_threadBetweenStartAndStop == thread)
         m_threadBetweenStartAndStop = heir.thread;
@@ -235,10 +648,9 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
         for (auto& owed : m_callsOwed) {
             if (owed->hasStoodSinceFullCollection != (step == StepOfKeeping::QueuesThatStandStill))
                 continue;
-            for (JSCell* cell : owed->finalizers)
-                keep(cell);
-            for (PyWeakRef* weakRef : owed->weakRefCallbacks)
-                keep(weakRef);
+            owed->forEachCall([&](const CallOwed& call) {
+                keep(call.cell);
+            });
         }
         return keptSomething;
     }
@@ -307,8 +719,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
     Vector<JSCell*> referents = weakRefs.map([](PyWeakRef* weakRef) {
         return weakRef->referent();
     });
-    bool askerMakesAllCalls = wasAskedFor && m_askerMakesAllCalls;
-    bool areOfSeveralThreads = !askerMakesAllCalls && std::ranges::any_of(places, [&](Finalizable* entry) {
+    bool areOfSeveralThreads = std::ranges::any_of(places, [&](Finalizable* entry) {
         return entry->thread != places[0]->thread;
     });
     // It goes through what has died, and the global object may be among that: see visitPendingCalls().
@@ -329,36 +740,54 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
     // the weak references that have callbacks: it clears them, calls the callbacks of those that are not garbage
     // themselves, and then calls the finalizers. (So such a reference stays dead if a finalizer brings its referent back.)
     //
-    // Which thread: whoever waits for this collection takes all. Otherwise each object is its maker's. But what has to happen in a
-    // certain order is not split among threads: a round that takes parents and children at once goes to the maker of the oldest; and
+    // Whose queue: each object is its maker's, whoever waits for this collection and is going to make the calls (see CallsOwed). But what has to happen in a
+    // certain order is not split among threads: in a round that takes parents and children at once, what the going of an object frees goes with that object, to its maker; and
     // of what CPython's collector would have found, which calls all the finalizers itself, one after the other, each piece that
-    // hangs together goes to the maker of its oldest, with the callbacks of the weak references to it.
-    auto freedByReferenceCounts = order.now.span().first(order.freedByReferenceCounts);
+    // hangs together goes to the maker of its oldest, with the callbacks of the weak references to it. And whoever begins such a thing makes all of it: such a tree is a group (CallOwed::continuesGroup),
+    // and so are the finalizers of all the cyclic garbage that a thread is given. No more than that: what has nothing to do with one another is not to wait for one another (of two objects that two
+    // threads have dropped, the finalizer of the one may wait for that of the other, whatever else has died with them).
     auto cyclicGarbage = order.now.span().subspan(order.freedByReferenceCounts);
     auto makerOf = [&](unsigned candidate) {
-        return askerMakesAllCalls ? m_currentThread : threadToFinalize(*places[candidate]);
+        return threadToMakeCallsOf(places[candidate]->thread);
     };
     auto takerOfPieceWithOldest = [&](unsigned oldest) {
         return makerOf(oldest < candidates.size() ? oldest : cyclicGarbage.empty() ? 0 : cyclicGarbage[0]);
     };
-    uint32_t takerOfAllLevels = order.takesAllLevels ? makerOf(*std::ranges::min_element(freedByReferenceCounts)) : 0;
 
     for (unsigned i = 0; i < weakRefs.size(); ++i) {
         if (!order.isCyclicGarbageToFinalize[i])
             continue;
         PyWeakRef* weakRef = weakRefs[i];
         weakRef->setReferent(nullptr);
-        if (visitor.isMarked(weakRef)) {
-            CallsOwed& owed = callsOwedBy(takerOfPieceWithOldest(areOfSeveralThreads ? order.oldestOfPieceOfCellAskedAbout[i] : FinalizationOrder::none));
-            owed.weakRefCallbacks.append(weakRef);
-            owed.weakRefCallbacksAreInOrder = false;
-        } else
+        if (visitor.isMarked(weakRef))
+            noteCallback(callsOwedBy(takerOfPieceWithOldest(areOfSeveralThreads ? order.oldestOfPieceOfCellAskedAbout[i] : FinalizationOrder::none)), weakRef);
+        else
             weakRef->clearCallback();
     }
+    // (Now, not when the collection ends: the program may run before that, and the finalizers of that garbage are about to be queued.)
+    for (auto& owed : m_callsOwed) {
+        if (!owed->callbacksOfThisCollection.isEmpty())
+            queueCallbacks(*owed, owed->callbacksOfThisCollection);
+    }
 
+    // Where the group of each thread that has one has begun.
+    Vector<std::pair<uint32_t, Deque<CallOwed>*>, 4> groups;
+    auto queueInGroup = [&](uint32_t taker, JSCell* cell, uint32_t era) WTF_REQUIRES_LOCK(m_finalizationLock) {
+        for (auto& [thread, queue] : groups) {
+            if (thread == taker) {
+                queueCall(*queue, cell, era, false, true);
+                return;
+            }
+        }
+        auto& queue = halfFor(callsOwedBy(taker), cell, era, false);
+        groups.append({ taker, &queue });
+        queueCall(queue, cell, era);
+    };
     Vector<uint32_t> takers;
     takers.fill(noThread, candidates.size());
-    CallsOwed* owed = nullptr;
+    // They come tree by tree, each from its top down: see DeadGraph::order().
+    uint32_t takerOfTree = 0;
+    Deque<CallOwed>* queueOfTree = nullptr;
     for (unsigned n = 0; n < order.now.size(); ++n) {
         unsigned candidate = order.now[n];
         Finalizable& entry = *places[candidate];
@@ -367,12 +796,18 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
         bool isCyclicGarbage = n >= order.freedByReferenceCounts;
         if (m_leavesCyclicGarbageForLater && isCyclicGarbage)
             continue;
-        uint32_t taker = isCyclicGarbage ? takerOfPieceWithOldest(areOfSeveralThreads ? order.oldestOfPiece[candidate] : FinalizationOrder::none)
-            : order.takesAllLevels ? takerOfAllLevels : makerOf(candidate);
-        takers[candidate] = taker;
-        if (!owed || owed->thread != taker)
-            owed = &callsOwedBy(taker);
-        owed->finalizers.append(cell);
+        if (isCyclicGarbage) {
+            takers[candidate] = takerOfPieceWithOldest(areOfSeveralThreads ? order.oldestOfPiece[candidate] : FinalizationOrder::none);
+            queueInGroup(takers[candidate], cell, entry.era);
+        } else {
+            bool continuesTree = order.takesAllLevels && order.letGoBy[candidate] != FinalizationOrder::none;
+            if (!continuesTree) {
+                takerOfTree = makerOf(candidate);
+                queueOfTree = &halfFor(callsOwedBy(takerOfTree), cell, entry.era, false);
+            }
+            takers[candidate] = takerOfTree;
+            queueCall(*queueOfTree, cell, entry.era, false, continuesTree);
+        }
         entry.clear();
         didTakeOffList(cell, true);
     }
@@ -506,8 +941,8 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
 
     // Those that owe since an earlier collection are told again: a thread may have been about to wait when it was told.
     for (auto& owed : m_callsOwed) {
-        if (owed->hasFinalizers())
-            didQueueCallsFor(owed->thread);
+        if (owed->hasCallsThatNobodyHasBegun())
+            didQueueCallsIn(*owed);
     }
 
     double duration = m_collectionBegan ? (MonotonicTime::now() - m_collectionBegan).seconds() : 0;
@@ -564,11 +999,13 @@ void Runtime::reconcileWeakReferencesAtGCEnd()
     m_typeLookupCache->removeUnmarked(m_vm.heap);
     if (CApi::isSetUpFor(*this))
         CApi::didFinishMarking(m_vm.heap);
-    // Each thread is told once of all that queueWeakRefCallback() has left for it: to tell may be a system call.
     Locker locker { m_finalizationLock };
+    // Each thread is told once of all that there is for it: to tell may be a system call.
     for (auto& owed : m_callsOwed) {
-        if (!owed->weakRefCallbacks.isEmpty())
-            didQueueCallsFor(owed->thread);
+        if (owed->callbacksOfThisCollection.isEmpty())
+            continue;
+        queueCallbacks(*owed, owed->callbacksOfThisCollection);
+        didQueueCallsIn(*owed);
     }
 }
 
@@ -582,10 +1019,10 @@ void Runtime::forEachUnmarkedObjectWithFinalizer(SlotVisitor& visitor, const Sco
 {
     Locker locker { m_finalizationLock };
     for (auto& owed : m_callsOwed) {
-        for (JSCell* cell : owed->finalizers) {
-            if (!visitor.isMarked(cell))
-                function(cell, true);
-        }
+        owed->forEachCall([&](const CallOwed& call) {
+            if (!call.isWeakRef && !visitor.isMarked(call.cell))
+                function(call.cell, true);
+        });
     }
     // What is in a list for nothing stays there until the next collection has looked, and may be in a queue as well (Runtime::releaseUnreachableBuffers()).
     for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
@@ -600,18 +1037,17 @@ void Runtime::forEachObjectToBeFinalized(const ScopedLambda<void(JSCell*)>& func
 {
     Locker locker { m_finalizationLock };
     for (auto& owed : m_callsOwed) {
-        for (JSCell* cell : owed->finalizers)
-            function(cell);
+        owed->forEachCall([&](const CallOwed& call) {
+            if (!call.isWeakRef)
+                function(call.cell);
+        });
     }
 }
 
 void Runtime::queueWeakRefCallback(PyWeakRef* weakRef)
 {
     Locker locker { m_finalizationLock };
-    bool isOfEarlierEra = m_threadThatPaysForEarlierEras != noThread && weakRef->serial() < m_firstWeakRefOfEra;
-    CallsOwed& owed = callsOwedBy(m_collectionIsWaitedFor && m_askerMakesAllCalls ? m_currentThread : isOfEarlierEra ? m_threadThatPaysForEarlierEras : threadToMakeCallsOf(weakRef->thread()));
-    owed.weakRefCallbacks.append(weakRef);
-    owed.weakRefCallbacksAreInOrder = false;
+    noteCallback(callsOwedBy(threadToMakeCallsOf(weakRef->thread())), weakRef);
 }
 
 template<typename Visitor>
@@ -623,9 +1059,10 @@ void Runtime::visitPendingCalls(Visitor& visitor)
     if (!m_isPuttingFinalizersInOrder)
         locker.emplace(m_finalizationLock);
     for (auto& owed : m_callsOwed) {
-        for (JSCell* cell : owed->finalizers)
-            visitor.appendUnbarriered(cell);
-        for (PyWeakRef* weakRef : owed->weakRefCallbacks)
+        owed->forEachCall([&](const CallOwed& call) {
+            visitor.appendUnbarriered(call.cell);
+        });
+        for (PyWeakRef* weakRef : owed->callbacksOfThisCollection)
             visitor.appendUnbarriered(weakRef);
     }
 }
@@ -810,8 +1247,8 @@ bool Runtime::owesCalls(CallsOf callsOf)
     Locker locker { m_finalizationLock };
     if (m_threadBetweenStartAndStop == noThread ? !m_collectionsToTellOf.isEmpty() : m_threadBetweenStartAndStop == m_currentThread && m_collectionBeingToldOf)
         return true;
-    return std::ranges::any_of(m_callsOwed, [&](auto& owed) {
-        return (owed->thread == m_currentThread || callsOf == CallsOf::AllThreads) && owed->hasFinalizers();
+    return std::ranges::any_of(m_callsOwed, [&](auto& owed) WTF_REQUIRES_LOCK(m_finalizationLock) {
+        return mayBeginCallsOf(*owed, callsOf);
     });
 }
 
@@ -952,13 +1389,14 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
     {
         Locker locker { m_finalizationLock };
         own = &callsOwedBy(m_currentThread);
+        rankIfItHasNone(*own);
     }
 
     while (true) {
         // A long queue does not hold up Ctrl-C, and a handler is called with the frame of the program, not with that of a finalizer
         // that happens to come next.
         if (!isFinalized && failed(scope, checkOnlySignals(globalObject))) [[unlikely]] {
-            m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);
+            didQueueCallsFor(m_currentThread); // (It may have served others only, and have the rest of a group in its hand.)
             return;
         }
         // A finalizer written in C++ drops what the code it calls raises. If that was ended by the host, this is where it is thrown
@@ -976,38 +1414,18 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
         CollectionNotice collection { };
         {
             Locker locker { m_finalizationLock };
-            // What others owe was found earlier than what this thread has just been given.
-            CallsOwed* owed = own;
-            if (callsOf == CallsOf::AllThreads) {
-                for (auto& other : m_callsOwed) {
-                    if (other.get() != own && other->hasFinalizers()) {
-                        owed = other.get();
-                        break;
-                    }
-                }
-            }
+            CallOwed next;
             if (m_threadBetweenStartAndStop == noThread && !m_collectionsToTellOf.isEmpty()) {
                 m_threadBetweenStartAndStop = m_currentThread;
                 m_collectionBeingToldOf = collection = m_collectionsToTellOf.takeFirst();
                 collectionStarts = true;
-            } else if (!owed->weakRefCallbacks.isEmpty()) {
-                // The references to an object are told of its death latest first. The collector finds them in no order.
-                if (!std::exchange(owed->weakRefCallbacksAreInOrder, true)) {
-                    Vector<PyWeakRef*> all(owed->weakRefCallbacks.size(), [&](size_t) {
-                        return owed->weakRefCallbacks.takeFirst();
-                    });
-                    std::ranges::sort(all, [](PyWeakRef* a, PyWeakRef* b) {
-                        return a->serial() > b->serial();
-                    });
-                    for (PyWeakRef* each : all)
-                        owed->weakRefCallbacks.append(each);
+            } else if (takeNextCall(*own, callsOf, next)) {
+                if (next.isWeakRef)
+                    weakRef = uncheckedDowncast<PyWeakRef>(next.cell);
+                else {
+                    object = next.cell;
+                    m_justFinalized.append(object);
                 }
-                weakRef = owed->weakRefCallbacks.takeFirst();
-                didTakeFrom(*owed);
-            } else if (!owed->finalizers.isEmpty()) {
-                object = owed->finalizers.takeFirst();
-                didTakeFrom(*owed);
-                m_justFinalized.append(object);
             } else if (m_threadBetweenStartAndStop == m_currentThread && m_collectionBeingToldOf) {
                 collection = *m_collectionBeingToldOf;
                 collectionIsOver = true;
@@ -1052,7 +1470,7 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
                     throwScope.throwException(globalObject, Exception::create(m_vm, raised, Exception::StackCaptureAction::DoNotCaptureStack));
                 }
                 EXCEPTION_ASSERT(scope.exception());
-                m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);
+                didQueueCallsFor(m_currentThread);
                 return;
             }
         }
@@ -1096,6 +1514,18 @@ UncheckedKeyHashSet<JSCell*> Runtime::whatOtherThreadsHold()
 
 void Runtime::finalizeAllAtExit()
 {
+    // The host exits from within a call that is owed (process.exit() in a finalizer): no other is made within it.
+    if (m_isRunningPendingCalls) [[unlikely]]
+        return;
+    ServesOtherThreads serves(*this, CallsOf::AllThreads);
+    {
+        // The other threads never run again. What they had begun is for whoever comes.
+        Locker locker { m_finalizationLock };
+        for (auto& owed : m_callsOwed) {
+            if (owed->thread != m_currentThread)
+                putBackWhatIsInHand(*owed);
+        }
+    }
     auto isDone = [&] {
         bool hasSomethingToFinalize = hasPendingFinalizers();
         forEachFinalizable([&](JSCell* cell) {
@@ -1162,7 +1592,7 @@ void Runtime::finalizeAllAtExit()
         Locker locker { m_finalizationLock };
         CallsOwed& owed = callsOwedBy(m_currentThread);
         for (JSCell* cell : rest)
-            owed.finalizers.append(cell);
+            queueCall(owed.calls, cell, 0);
         didQueueCallsFor(m_currentThread);
     }
     runPendingCalls(false, CallsOf::AllThreads);
@@ -1194,8 +1624,8 @@ NEVER_INLINE void wipeStackBelow(JSGlobalObject* globalObject, size_t size)
 bool Runtime::hasPendingFinalizers(CallsOf callsOf)
 {
     Locker locker { m_finalizationLock };
-    return std::ranges::any_of(m_callsOwed, [&](auto& owed) {
-        return owed->hasFinalizers() && (callsOf == CallsOf::AllThreads || owed->thread == m_currentThread);
+    return std::ranges::any_of(m_callsOwed, [&](auto& owed) WTF_REQUIRES_LOCK(m_finalizationLock) {
+        return mayBeginCallsOf(*owed, callsOf);
     });
 }
 
@@ -1215,42 +1645,25 @@ void Runtime::collectAsAskedFor(CollectionScope collectionScope, bool leavesCycl
 
 void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
 {
+    if (m_isRunningPendingCalls) [[unlikely]]
+        return;
     // See m_era.
-    ++m_era;
-    SetForScope threadThatPays(m_threadThatPaysForEarlierEras, m_currentThread);
-    m_firstWeakRefOfEra = nextWeakRefSerial();
-    {
-        // What the others owe by now comes first: it was found earlier.
-        Locker locker { m_finalizationLock };
-        CallsOwed& own = callsOwedBy(m_currentThread);
-        Deque<JSCell*> finalizers;
-        for (auto& other : m_callsOwed) {
-            if (other.get() == &own)
-                continue;
-            didTakeFrom(*other);
-            while (!other->finalizers.isEmpty())
-                finalizers.append(other->finalizers.takeFirst());
-            while (!other->weakRefCallbacks.isEmpty()) {
-                own.weakRefCallbacks.append(other->weakRefCallbacks.takeFirst());
-                own.weakRefCallbacksAreInOrder = false;
-            }
-        }
-        while (!finalizers.isEmpty())
-            own.finalizers.prepend(finalizers.takeLast());
-    }
+    ServesOtherThreads serves(*this, CallsOf::OfEarlierEras);
     for (unsigned round = 0; round < 64; ++round) {
-        bool hasSomethingToDo = hasPendingFinalizers(CallsOf::ThisThread);
+        if (round)
+            serves.willCollectAgain();
+        bool hasSomethingToDo = hasPendingFinalizers(CallsOf::OfEarlierEras);
         forEachFinalizable([&](JSCell* cell) {
             hasSomethingToDo |= hasFinalizerOfProgram(*this, cell) && !hasNothingToFinalize(cell);
         });
         if (!hasSomethingToDo)
             return;
         wipeStackBelow(m_globalObject);
-        collectAsAskedFor(CollectionScope::Full, true, CallsOf::ThisThread);
-        if (!owesCalls(CallsOf::ThisThread))
+        collectAsAskedFor(CollectionScope::Full, true, CallsOf::OfEarlierEras);
+        if (!owesCalls(CallsOf::OfEarlierEras))
             return;
-        bool mayFindMore = hasPendingFinalizers(CallsOf::ThisThread);
-        runPendingCalls(false, CallsOf::ThisThread);
+        bool mayFindMore = hasPendingFinalizers(CallsOf::OfEarlierEras);
+        runPendingCalls(false, CallsOf::OfEarlierEras);
         if (!mayFindMore || m_vm.hasPendingTerminationException())
             return;
     }
@@ -1262,9 +1675,12 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
     VM& vm = rt.vm();
     ASSERT(!rt.isRunningPendingCalls());
     writeOutPendingOutput(globalObject); // Until then they are not to be collected.
+    Runtime::ServesOtherThreads serves(rt, callsOf);
     // An object with a finalizer takes two rounds: one finds it, the next frees it, which may clear weak references in turn
     // and finds what only it referred to. The limit is for finalizers that make new garbage with finalizers for ever.
     for (unsigned round = 0; round < 64; ++round) {
+        if (round)
+            serves.willCollectAgain();
         {
             // What an observer listens to is the collection asked for here, from beginning to end. Not one that was under way, or had been asked for: this one would follow, and
             // free what the observer has been told of and has noted by its address. Nor does another come before the observer has heard that it is over.

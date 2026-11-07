@@ -110,7 +110,7 @@ void Runtime::globalObjectDidDie()
     {
         Locker locker { m_finalizationLock };
         for (auto& owed : m_callsOwed)
-            ASSERT(!owed->hasFinalizers() && owed->weakRefCallbacks.isEmpty());
+            ASSERT(!owed->hasFinalizers());
     }
 #endif
     end();

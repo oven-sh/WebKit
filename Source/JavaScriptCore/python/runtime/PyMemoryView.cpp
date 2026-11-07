@@ -655,8 +655,9 @@ void Runtime::releaseUnreachableBuffers(bool thorough)
                 buffers.append(buffer);
         };
         for (auto& owed : m_callsOwed) {
-            for (JSCell* cell : owed->finalizers)
-                add(cell);
+            owed->forEachCall([&](const CallOwed& call) {
+                add(call.cell);
+            });
         }
         pendingCount = buffers.size();
         if (isPrecise)
@@ -679,13 +680,29 @@ void Runtime::releaseUnreachableBuffers(bool thorough)
                 Locker locker { m_finalizationLock };
                 if (!runsCode) {
                     for (auto& owed : m_callsOwed) {
-                        if (auto it = owed->finalizers.findIf([&](JSCell* cell) { return cell == buffer; }); it != owed->finalizers.end())
-                            owed->finalizers.remove(it);
+                        for (auto* queue : { &owed->inHand, &owed->taken, &owed->calls }) {
+                            auto it = queue->findIf([&](const CallOwed& call) {
+                                return call.cell == buffer;
+                            });
+                            if (it == queue->end())
+                                continue;
+                            // If a group begins with it, it begins with the next.
+                            if (auto next = it; !it->continuesGroup && ++next != queue->end())
+                                next->continuesGroup = false;
+                            size_t behindIt = 0;
+                            for (auto next = it; ++next != queue->end();)
+                                ++behindIt;
+                            queue->remove(it);
+                            if (queue == &owed->inHand)
+                                owed->didRemoveFromHand(behindIt);
+                        }
                     }
                 } else if (!isPending) {
                     // At the next safe point.
                     unregisterFinalizable(buffer);
-                    callsOwedBy(m_currentThread).finalizers.append(buffer);
+                    CallsOwed& own = callsOwedBy(m_currentThread);
+                    rankIfItHasNone(own);
+                    queueCall(own.calls, buffer, m_era); // (It falls due now: it is this thread's, at exit too.)
                     didQueue = true;
                 }
             }

@@ -67,6 +67,7 @@ bool Sleeper::sleep(int64_t deadline)
 void Sleeper::wake()
 {
     int savedErrno = errno;
+    ++m_wakes;
     m_isWoken.store(1);
     syscall(SYS_futex, &m_isWoken, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, nullptr, nullptr, 0);
     errno = savedErrno;
@@ -91,6 +92,7 @@ bool Sleeper::sleep(int64_t deadline)
 
 void Sleeper::wake()
 {
+    ++m_wakes;
     m_isWoken.store(true);
     if (m_lock.tryLock()) {
         m_condition.notifyOne();
@@ -296,9 +298,11 @@ void Threads::takeGIL(ThreadState& thread)
         // Somebody may be waiting for this thread to take it, and somebody else for it to be free.
         m_debtCondition.notifyAll();
         m_gilCondition.notifyOne();
+        thread.isAskingForGIL = false;
         while (!m_isStopping.load())
             m_stopCondition.wait(m_gilLock);
     }
+    thread.isAskingForGIL = true;
     ++m_waitingForGIL;
     uint64_t number = ++m_numberOfAsks;
     while (m_gilIsHeld) {
@@ -312,11 +316,13 @@ void Threads::takeGIL(ThreadState& thread)
         }
         if (!thread.isMain && m_isFinalized.load() && !m_isStopping.load()) [[unlikely]] {
             --m_waitingForGIL;
+            thread.isAskingForGIL = false;
             m_gilLock.unlock();
             return takeGIL(thread);
         }
     }
     --m_waitingForGIL;
+    thread.isAskingForGIL = false;
     m_gilIsHeld = true;
     if (m_lastHolder != &thread) {
         m_lastHolder = &thread;
@@ -335,7 +341,31 @@ void Threads::takeGIL(ThreadState& thread)
     m_gilLock.unlock();
 }
 
-void Threads::dropGIL(ThreadState&, bool isYielding)
+bool Threads::isAskingForGIL(const ThreadState& thread)
+{
+    Locker locker { m_gilLock };
+    return thread.isAskingForGIL;
+}
+
+bool Threads::allOthersWaitForGood()
+{
+    return std::ranges::all_of(m_threads, [&](auto& thread) {
+        // (One that asks for the GIL comes to have a look of its own: IdleWait.)
+        return thread.ptr() == t_currentThread || (thread->waitsForGood && thread->isQueued && thread->sleeper.wakes() == thread->wakesAnswered && !isAskingForGIL(thread.get()));
+    });
+}
+
+// Nothing can move any more.
+void Threads::giveBackWhatIsTaken(ThreadState& thread)
+{
+    for (Runtime* runtime : m_vm.heap.pythonRuntimes()) {
+        // This thread has something to do after all.
+        if (runtime->giveBackWhatIsTaken())
+            thread.sleeper.wake();
+    }
+}
+
+void Threads::dropGIL(ThreadState& thread, bool isYielding)
 {
     Locker locker { m_gilLock };
     ASSERT(m_gilIsHeld);
@@ -343,6 +373,8 @@ void Threads::dropGIL(ThreadState&, bool isYielding)
     m_gilCondition.notifyOne();
     if (!isYielding || !m_waitingForGIL)
         return;
+    // From here on, not from takeGIL(): whoever pays the debt has the GIL, and may look at once.
+    thread.isAskingForGIL = true;
     // This thread is about to ask for it again, and would as likely as not get it before the one that was notified wakes up. That
     // somebody else has had it is not enough: a third thread that happens to be awake has it, and is done with it, before any of those
     // that are asking now runs. Nobody but this thread is kept waiting. One of them is in the queue until the debt is paid, unless they
@@ -412,6 +444,7 @@ void Threads::acquire(ThreadState& thread, JSLock::ParkedThread& parked, SavedSt
     thread.parked = nullptr;
     // Now that it is back in the VM nobody hands out calls: that takes the GIL, or a collector that has stopped the VM's thread.
     thread.losesNothingIfInterrupted = false;
+    thread.wakesAnswered = thread.sleeper.wakes();
 #if !OS(WINDOWS)
     if (thread.isBeingInterrupted.load(std::memory_order_relaxed)) [[unlikely]]
         stopInterrupting(thread);
@@ -797,6 +830,9 @@ void Threads::runThread(ThreadState& thread, Function<void()>&& body)
         });
         for (Runtime* runtime : m_vm.heap.pythonRuntimes())
             runtime->threadDidEnd(thread.number());
+        // This may have been the last that could move.
+        if (m_numberThatServeOthers && allOthersWaitForGood()) [[unlikely]]
+            giveBackWhatIsTaken(thread);
         if (m_vm.heap.hasPostponedEmbedderFinalizers() && !m_didTellMainThreadOfFinalizers) [[unlikely]]
             tellMainThreadOfFinalizers();
         if (m_isStopping.load()) [[unlikely]]
@@ -1215,11 +1251,16 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
 
         m_waiters.add(address, Deque<ThreadState*>()).iterator->value.append(&thread);
         thread.isQueued = true;
+        thread.waitsForGood = deadline < 0;
+        // With this thread asleep nothing moves any more, and only a finalizer can bring about what is waited for. Whoever has taken those of others upon itself is among the sleepers.
+        if (m_numberThatServeOthers && thread.waitsForGood && allOthersWaitForGood()) [[unlikely]]
+            giveBackWhatIsTaken(thread);
         {
             AllowThreads allow(globalObject);
             int64_t until = deadline >= 0 ? std::min(deadline, idle.timeToCollect()) : idle.timeToCollect();
             while (!thread.sleeper.sleep(until) && allow.wasInterruptedForNothing()) { }
         }
+        thread.waitsForGood = false;
         if (thread.isQueued) {
             thread.isQueued = false;
             auto it = m_waiters.find(address);

@@ -715,9 +715,9 @@ public:
 
     // This thread owes calls.
     ALWAYS_INLINE bool hasPendingCalls() const { return m_hasPendingCalls; }
-    // Those that this thread owes, or those that any thread owes and has not begun: whoever waits for a collection (gc.collect()) makes
-    // all the calls that come of it, and all that are owed already, before it goes on.
-    enum class CallsOf : bool { ThisThread, AllThreads };
+    // Those that this thread owes, or those that any thread owes and nobody has begun: whoever waits for a collection (gc.collect()) makes
+    // all the calls that come of it, and all that are owed already, before it goes on. Or, of the other threads', those for what is older than the era that is served (the exit's first step).
+    enum class CallsOf : uint8_t { ThisThread, AllThreads, OfEarlierEras };
     // Some of them are finalizers or callbacks of weak references: the next collection may find more than the last.
     bool hasPendingFinalizers(CallsOf = CallsOf::AllThreads);
     bool owesCalls(CallsOf);
@@ -789,14 +789,46 @@ public:
         WaitForCollection(Runtime& runtime, bool leavesCyclicGarbageForLater, CallsOf callsOf)
             : m_isWaitedFor(runtime.m_collectionIsWaitedFor, true)
             , m_leavesCyclicGarbageForLater(runtime.m_leavesCyclicGarbageForLater, leavesCyclicGarbageForLater)
-            , m_askerMakesAllCalls(runtime.m_askerMakesAllCalls, callsOf == CallsOf::AllThreads)
+            , m_callsThatAskerMakes(runtime.m_callsThatAskerMakes, callsOf)
         {
         }
     private:
         SetForScope<bool> m_isWaitedFor;
         SetForScope<bool> m_leavesCyclicGarbageForLater;
-        SetForScope<bool> m_askerMakesAllCalls;
+        SetForScope<CallsOf> m_callsThatAskerMakes;
     };
+    // While there is one, this thread makes calls that other threads owe (runPendingCalls() with the same CallsOf). CallsOf::OfEarlierEras begins an era: see m_era.
+    //
+    // WHAT ITS OWN COLLECTIONS FIND IS ITS OWN TO MAKE; WHEN NOTHING CAN MOVE ANY MORE IT GIVES BACK WHAT IT HAS NOT BEGUN, AND TELLS THE MAKERS.
+    // - What it takes: what it serves of what the collections find that it waits for (WaitForCollection, with the same CallsOf), which do not wake the makers for that. Nothing changes hands: a call that is
+    //   taken lies in its maker's queue (CallsOwed::taken), and the maker leaves it alone, woken or running, told or not. The program has asked THIS thread, and another may be in no state to run a
+    //   finalizer: on top of a wait in which it holds a lock that the finalizer wants.
+    // - What other collections have handed out, before it came or since, is its maker's as ever, who has been told; one that serves all threads makes it if it comes to it first, and goes to it first
+    //   (takeNextCall()). (Taken as well, a call that its maker was on the way to would wait for a caller that spins, in a finalizer, for what that call does.)
+    // - The exit's (CallsOf::OfEarlierEras) serves only what is of an earlier era. It takes what is owed, too: when it comes, and again before each further collection of its own (willCollectAgain()). What
+    //   another collection hands out meanwhile it may begin where it stands at the head of its maker's queue (mayBeginWhatIsHandedOutTo()).
+    // - A finalizer that it runs may wait for what one of those calls does. Nobody can see that. But if that is so, and nobody else brings about what it waits for, there comes a standstill: every thread
+    //   of Python's, this one among them, waits for another thread, without a deadline (Threads::allOthersWaitForGood(), asked by the last that goes to sleep: Threads::waitUntil()). Then nothing but a
+    //   call that is owed can end any of those waits. So what is taken and not begun goes into the other half of its maker's queue, and the makers are told (giveBackWhatIsTaken()): from then on it is
+    //   what another collection has handed out. In any other wait it is left to whoever can move to end it: a thread that the finalizer has started, a child, time. (This thread asks again every time it goes
+    //   back to sleep, which in a finalizer it does every 50 ms or so: IdleWait::collectIfDue(). That a thread which ends asks too is for promptness.)
+    // - If it leaves early (the handler of a signal has raised), what it serves of what is still taken becomes its own, in its own queue, and it makes it at its next safe point.
+    class ServesOtherThreads {
+        WTF_MAKE_NONCOPYABLE(ServesOtherThreads);
+    public:
+        ServesOtherThreads(Runtime&, CallsOf);
+        ~ServesOtherThreads();
+        void willCollectAgain();
+    private:
+        friend class Runtime;
+        void takeWhatIsOwed() WTF_REQUIRES_LOCK(m_runtime.m_finalizationLock);
+        bool keepWhatIsTaken() WTF_REQUIRES_LOCK(m_runtime.m_finalizationLock);
+        Runtime& m_runtime;
+        CallsOf m_callsOf;
+        ThreadState* m_thread { nullptr };
+    };
+    // For Threads::waitUntil(), at a standstill. Whether this thread, which is about to go to sleep, has got something to do by that.
+    bool giveBackWhatIsTaken();
     // For when the interpreter exits, before the program is told (atexit): what is unreachable by then and reference
     // counts would have freed would have been finalized long ago.
     void finalizeWhatReferenceCountsWouldHaveFreed();
@@ -1157,12 +1189,10 @@ private:
         uint32_t era; // When: see m_era.
     };
     // The main thread, as it ends, finalizes what has been dropped by then, whoever made it, and what comes of that, while daemon threads go on running. What they make from then on
-    // is theirs to finalize, as at any other time, or a program whose daemons keep making garbage would not exit. So that step begins an era: what is older and is found dead, by
-    // whichever collection, is for the thread that pays.
+    // is theirs to finalize, as at any other time, or a program whose daemons keep making garbage would not exit. So that step begins an era, and takes what is older (ServesOtherThreads).
     uint32_t m_era { 0 };
-    uint32_t m_threadThatPaysForEarlierEras { noThread };
-    uint64_t m_firstWeakRefOfEra { 0 };
-    uint32_t threadToFinalize(const Finalizable& entry) { return m_threadThatPaysForEarlierEras != noThread && entry.era < m_era ? m_threadThatPaysForEarlierEras : threadToMakeCallsOf(entry.thread); }
+    uint32_t m_eraThatIsServed { 0 }; // 0: none.
+    uint64_t m_firstWeakRefOfEraThatIsServed { 0 };
     Vector<Finalizable> m_oldFinalizable;
     Vector<Finalizable> m_youngFinalizable;
     void forEachFinalizable(const ScopedLambda<void(JSCell*)>&);
@@ -1218,21 +1248,98 @@ private:
         int generation;
         double duration;
     };
+    // A call that is owed: the finalizer of an object, or the callback of a weak reference.
+    struct CallOwed {
+        JSCell* cell { nullptr };
+        uint32_t sequence { 0 }; // They are numbered as they are queued, whichever thread's queue it is. It wraps.
+        uint32_t era : 30 { 0 }; // Of an object: see m_era.
+        uint32_t isWeakRef : 1 { 0 };
+        // What has to happen in one order is a group: whoever begins its first call takes the others with it. Groups are of finalizers.
+        uint32_t continuesGroup : 1 { 0 };
+        // The order in which each half of a queue is kept, group by group, and by which lists are merged.
+        bool comesBefore(const CallOwed&) const;
+    };
     // What a thread owes. The cells are kept by every collection: see keepUnreachableObjectsToFinalize().
+    // A call lies in the queue of the thread that made the object (of the main thread, if that one has ended) until somebody begins it, be it another thread that makes it in the end. Or a call would
+    // lie behind one that waits, in the queue of a stranger, while the thread that could make it sits idle.
     struct CallsOwed {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CallsOwed);
         uint32_t thread { 0 };
-        Deque<JSCell*> finalizers;
-        Deque<PyWeakRef*> weakRefCallbacks;
-        bool weakRefCallbacksAreInOrder { true };
+        // Its place among the threads for one that makes the calls of all of them (takeNextCall()): given when something is first put into `calls`, or the thread first looks. 0: the main thread's, which comes
+        // first; or none yet.
+        uint32_t rank { 0 };
+        // The queue, in two halves. What somebody who serves other threads has taken, which the thread leaves alone (ServesOtherThreads; there is something in it only while somebody serves), and the rest.
+        Deque<CallOwed> taken;
+        Deque<CallOwed> calls;
+        // The rest of the groups that this thread has begun, from whichever queue, the last begun in front (one from the same place as that in front is merged with it). Nobody else takes from here.
+        Deque<CallOwed> inHand;
+        // Those groups, the last begun last.
+        struct GroupInHand {
+            size_t restOfHand; // So much of what is in hand lies behind it.
+            // Where it stands: at `calls` of another thread, from which one that makes the calls of all threads has taken it (of the heir, if that thread has ended). noThread: in what is one queue to
+            // this thread. See takeNextCall().
+            uint32_t threadFromWhoseCalls;
+        };
+        Vector<GroupInHand, 2> groupsInHand;
+        // One of what is in hand has been taken out of the middle, with so many behind it.
+        void didRemoveFromHand(size_t behindIt)
+        {
+            size_t endOfGroup = inHand.size();
+            for (size_t i = groupsInHand.size(); i--;) {
+                auto& group = groupsInHand[i];
+                if (group.restOfHand > behindIt)
+                    --group.restOfHand;
+                if (group.restOfHand == endOfGroup)
+                    groupsInHand.removeAt(i);
+                else
+                    endOfGroup = group.restOfHand;
+            }
+        }
+        // What a collection has noted for this thread until it queues it (queueCallbacks()): those for cyclic garbage while it marks, the others when it ends.
+        Vector<PyWeakRef*> callbacksOfThisCollection;
         // A full collection has found some of these, and none has been taken since: the thread is in foreign code, or does not get its turn.
         bool hasStoodSinceFullCollection { false };
-        bool hasFinalizers() const { return !finalizers.isEmpty() || !weakRefCallbacks.isEmpty(); }
+        bool hasFinalizers() const { return hasCallsThatNobodyHasBegun() || !inHand.isEmpty(); }
+        bool hasCallsThatNobodyHasBegun() const { return !taken.isEmpty() || !calls.isEmpty(); }
+        template<typename Function>
+        void forEachCall(const Function& function) const
+        {
+            for (auto* queue : { &inHand, &taken, &calls }) {
+                for (auto& call : *queue)
+                    function(call);
+            }
+        }
     };
     // The first is the main thread's. A thread has one from the first time it owes something, or looks, until it ends.
     Vector<std::unique_ptr<CallsOwed>, 1> m_callsOwed WTF_GUARDED_BY_LOCK(m_finalizationLock);
     CallsOwed& callsOwedBy(uint32_t thread) WTF_REQUIRES_LOCK(m_finalizationLock);
     void didTakeFrom(CallsOwed&) WTF_REQUIRES_LOCK(m_finalizationLock);
+    void rankIfItHasNone(CallsOwed&) WTF_REQUIRES_LOCK(m_finalizationLock);
+    uint32_t m_lastRank WTF_GUARDED_BY_LOCK(m_finalizationLock) { 0 };
+    uint32_t m_sequenceOfNextCall WTF_GUARDED_BY_LOCK(m_finalizationLock) { 0 };
+    // The half of the queue for what a collection has found: whoever waits for the collection takes what it serves. What continues a group goes where the group began.
+    Deque<CallOwed>& halfFor(CallsOwed&, JSCell*, uint32_t era, bool isWeakRef) WTF_REQUIRES_LOCK(m_finalizationLock);
+    bool isOfEarlierEra(JSCell*, uint32_t era, bool isWeakRef) const; // Than m_eraThatIsServed.
+    void queueCall(Deque<CallOwed>&, JSCell*, uint32_t era, bool isWeakRef = false, bool continuesGroup = false) WTF_REQUIRES_LOCK(m_finalizationLock);
+    void noteCallback(CallsOwed&, PyWeakRef*) WTF_REQUIRES_LOCK(m_finalizationLock);
+    void queueCallbacks(CallsOwed&, Vector<PyWeakRef*>&) WTF_REQUIRES_LOCK(m_finalizationLock); // It empties the list.
+    // The next call for this thread to make: of a group that it has begun, or the first of a group, or a single call, that it may begin; the rest of the group is then in its hand.
+    bool takeNextCall(CallsOwed& own, CallsOf, CallOwed&) WTF_REQUIRES_LOCK(m_finalizationLock);
+    bool mayBeginCallsOf(const CallsOwed&, CallsOf) const WTF_REQUIRES_LOCK(m_finalizationLock);
+    bool mayBeginWhatIsTakenOf(const CallsOwed&, CallsOf) const WTF_REQUIRES_LOCK(m_finalizationLock);
+    bool mayBeginWhatIsHandedOutTo(const CallsOwed&, CallsOf) const WTF_REQUIRES_LOCK(m_finalizationLock);
+    // By this thread, which finds it at the head of what is taken in its own queue: another thread serves it.
+    bool isLeftToOneThatServes(const CallOwed&) const WTF_REQUIRES_LOCK(m_finalizationLock);
+    // Its thread will not go on with the groups: they are groups like any other again.
+    static void putBackWhatIsInHand(CallsOwed&);
+    // A collection has left something in the queue, or found something there: its thread is told, unless all of it is taken.
+    void didQueueCallsIn(CallsOwed&) WTF_REQUIRES_LOCK(m_finalizationLock);
+    void tellThoseThatOwe() WTF_REQUIRES_LOCK(m_finalizationLock);
+    static void mergeCalls(Deque<CallOwed>& from, Deque<CallOwed>& into);
+    static void assertIsInOrder(const Deque<CallOwed>&);
+    bool takenBecomesItsMakers() WTF_REQUIRES_LOCK(m_finalizationLock);
+    void assertNothingIsTakenUnlessSomebodyServes() WTF_REQUIRES_LOCK(m_finalizationLock);
+    Vector<ServesOtherThreads*, 2> m_thoseThatServeOthers WTF_GUARDED_BY_LOCK(m_finalizationLock);
     // The thread if it can still make calls, else the main one.
     uint32_t threadToMakeCallsOf(uint32_t thread);
     uint32_t m_currentThread { 0 };
@@ -1265,7 +1372,7 @@ private:
     MarkingObserver* m_markingObserver { nullptr };
     bool m_collectionIsWaitedFor { false }; // See WaitForCollection, for these three.
     bool m_leavesCyclicGarbageForLater { false };
-    bool m_askerMakesAllCalls { false };
+    CallsOf m_callsThatAskerMakes { CallsOf::ThisThread };
 
     PyType* typeIfMadeForDefinitionAt(const void*) const WTF_IGNORES_THREAD_SAFETY_ANALYSIS;
     void keepTypeMadeForDefinitionAt(const void*, PyType*);

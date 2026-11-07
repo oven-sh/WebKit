@@ -792,15 +792,73 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   - What dies because something else died follows that: an object that waits for another (see the order above) goes to the
     thread that finalizes the other, as the thread that frees the parent frees the child. That is worked out among what ONE collection finds dead. A collection of the young that takes a young parent does not
     look at a child that is old: that one comes up alone in a later full collection, and is its maker's.
-  - What has to happen in one order is not split: a round that takes parents and children at once goes to the maker of the oldest, and
-    so does each piece of cyclic garbage that hangs together, with the callbacks of the weak references to it. CPython's collector
+  - What has to happen in one order is not split: in a round that takes parents and children at once, an object and all that its going frees go to the maker of that object; each piece of
+    cyclic garbage that hangs together goes to the maker of its oldest, with the callbacks of the weak references to it. CPython's collector
     calls those finalizers one after the other, in whichever thread it happens to run. What hangs together does so by objects of the
     program (`isCellOfTheProgram`), not by what the engine shares among them: the `Structure` of the instances of a class that have the same
     attributes dies with the last of them, and all the dead of that shape refer to it.
-  - **A collection that the program waits for** (`gc.collect()`, the retry after `EMFILE`, a wait that nothing else can end) is served by
-    the caller: all that it finds, and all that any thread owes and has not begun, before it returns. A collection of the engine's
-    own only hands out. A thread that collects because it is idle makes the calls that are its own.
-  - **No such thread any more**: the main thread. A thread makes the calls it owes before it ends. At exit everything is the main thread's.
+  - **A collection that the program waits for** (`gc.collect()`, a wait that nothing else can end) is served by
+    the caller: all that it finds, and all that any thread owes and nobody has begun, before it returns (`Runtime::ServesOtherThreads`). A collection of the engine's
+    own only hands out. A thread that collects because it is idle makes the calls that are its own. The retry after `EMFILE` is in between: its collection hands out, so the makers are told, and the caller makes
+    what any thread owes and nobody has begun, beside them.
+  - **What the caller's own collections find is the caller's to make; when nothing can move any more it gives back what it has not begun, and tells the makers** (`Runtime::ServesOtherThreads`). Nothing changes hands for
+    that (unless the caller leaves early: below): a call lies in the queue of its thread until somebody begins it (`CallsOwed::taken`), and the caller takes it off at that moment, whichever queue it is
+    (`Runtime::takeNextCall`; in which order: below). But the thread is not woken for what is taken, and leaves it alone, woken or running, told or not: the program has asked the caller, and another thread may be in no state for a
+    finalizer: it may wait holding a lock that the finalizer wants. What another collection has handed out, the engine's own or that of a thread that is idle, before the caller came or since, is its maker's as
+    ever, who has been told; the caller makes it if it comes to it first. (Taken as well, a call that its maker was on the way to waited for the caller: whose finalizer spun for what that call does.)
+    - What such a caller's collection found used to go into the caller's own queue, and at exit the main thread took the queues of the others whole. Then a call lay behind one that waits, in the queue of a stranger,
+      while the thread that could have made it sat idle: two threads have each dropped an object, the finalizer of the one waits for what that of the other does: with reference counts each thread finalizes its own
+      and that ends; here `gc.collect()` never returned, and the program never exited.
+    - Nobody can see what a finalizer waits for. But if it is what a call does that the caller has taken, and nobody else brings it about, there comes a standstill: every thread of Python's in the VM, the caller among
+      them, waits for another thread (`Threads::waitUntil`: a lock, an event, a condition, a thread), without a deadline, and nobody has let it go on (`Threads::allOthersWaitForGood`). That is a state, which the last
+      thread that goes to sleep, or ends, finds with the GIL in its hand. Nothing but a call that is owed can end any of those waits then. So what is taken and not begun goes into the other half of its maker's
+      queue, and the threads that owe are told (`Runtime::giveBackWhatIsTaken`): from then on it is what another collection has handed out. (Not a permission that lasts as long as the caller's wait: a thread
+      that is told looks once, whenever it gets to it, and the caller may be awake just then, in the handler of a signal on top of its wait.) If nothing is taken, nobody is woken. It is what a single
+      thread does when it waits for a lock without a deadline ("only a finalizer can bring about what is waited for"), said for several. What cannot be given back is what lies in the caller's own
+      queue: it made the object itself, or the maker has ended and the main thread is the heir.
+    - A caller that leaves early (the handler of a signal raises out of `gc.collect()`) keeps what it serves of what is still taken, whoever else serves: it goes into the caller's own queue, and is made at
+      its next safe point, like the rest of a group that it has in its hand. (Left to the makers: a thread that waited with a lock in its hand ran the finalizer that wanted it, after a Ctrl-C in the main
+      thread.) So something is taken only while somebody serves.
+    - In any other wait of the caller's nobody is told: whoever can move may end it. A thread can move that runs, asks for the GIL, has been started and has not run yet, is in a system call or in foreign code, sleeps,
+      waits with a deadline, or waits for descriptors, which somebody outside may end; so can the main thread in the host's event loop. (Told whenever a finalizer of the caller's let go of the GIL for a wait that
+      somebody else can end, the threads that sat idle shared the calls with the caller as soon as a finalizer started a thread, which waits for an event: of 200 such finalizers they made 83 to 104, one was not
+      over when the callbacks of `atexit` ran in 3 runs of 4, and one that sat there with a lock in its hand ran the finalizer that wanted it. Told at every system call: anything from 0 to 200 of 200 were
+      finalized when `gc.collect()` returned.)
+    - So the cure holds for programs in which everything waits for threads. One thread anywhere that polls (`q.get(timeout=1)` in a loop), sits in `accept`, `select` or `recv`, sleeps or computes, and there is no
+      standstill: `gc.collect()` does not return, as before. Nor is there one if the finalizer itself waits with a deadline (which then runs out), for a descriptor, polls with `time.sleep`, or spins. And what
+      may end a standstill without a call that is owed is what has not happened yet: a signal that comes later, whose handler runs on top of the main thread's wait; a waiting thread's own later look for
+      garbage. There the makers have got their calls back for nothing. (A thread that somebody has sent for already, whoever and whatever for, can move: `Sleeper::wake` counts, and the thread notes up to
+      which wake it has come back, `ThreadState::wakesAnswered`.) With several runtimes in a VM: a thread looks at the calls of the runtime in whose wait it is, so the cure does not reach from one to another.
+  - **What has to happen in one order is begun as one**: in a round that takes parents and children at once, an object with all that its going frees; all the finalizers of the cyclic garbage that a
+    collection gives a thread. Such a group (`CallOwed::continuesGroup`) is taken off the queue whole by whoever begins it, and made call by call, each over before the next begins; what lies behind it in the
+    queue is open to the next: while a caller of `gc.collect()`, or the main thread as it ends, has the rest of a thread's group in its hand, the thread itself, if it looks, goes on with what lies behind the group. (With two that serve
+    one queue, the thread itself, woken, and a caller of `gc.collect()`, a chain of six was finalized by both at once, a child before its parent.) A group is no larger than that:
+    whatever is in one group with a finalizer that waits lies in the hand of a thread that is blocked, and nobody takes from a hand. Callbacks are single calls. Cyclic garbage is the
+    exception, as it is in CPython, whose collector calls all the finalizers that it finds in one thread, one after the other: two cycles that have nothing to do with each other are in one group if one thread
+    gets both. (A child that two such trees hold goes with the one that lets go of it last. The other holder may be in another thread's hand: the two calls are then in no order.) The price: a caller goes on
+    while another thread is in the middle of a group. A daemon has begun a chain of 200 slow finalizers when the main thread ends: none is over when the callbacks of `atexit` run; the main thread makes
+    the other 199 behind those, in order; the one that the daemon was in is cut off, as any finalizer is that a daemon is in the middle of at the end. (When the queue was open call by call, the main thread
+    made the 199 before the callbacks, the first of them while its parent's finalizer was still running.) Nothing but to wait for that thread would help: while a call of a group runs nobody may begin the next.
+    Of the same kind, without a group: what has been given back at a standstill the caller shares with the makers, call by call, to the end, and the last may be a maker's: of 200 finalizers of 1 ms that the
+    main thread had given back at exit, one was not over when the callbacks of `atexit` ran, in 10 runs of 20 (with `gc.collect()`, at its return: 1 of 20). (To take them again as soon as the caller goes on:
+    its next finalizer polled for what one of them does, while the maker was still busy with another: the maker left it alone, and the program never exited.)
+    And as long as a thread is stuck in the middle of a group there are finalizers left to be called, whoever collects: so the code of the `ctypes` callbacks that the program has dropped is kept.
+  - **Which call next** is what it was when each thread had one queue and what such a caller's collections found went into the caller's (`Runtime::takeNextCall`, `CallOwed::comesBefore`): callbacks before
+    finalizers; of two callbacks the one whose weak reference was made later (so the references to an object are told latest first, and a reference that a callback has made, to what it then drops, comes before
+    all that wait); finalizers as they were queued. Each half of a queue is kept in that order, and lists are merged by it. One that makes the calls of all threads takes first what other collections have handed
+    out to other threads, thread by thread, in the order in which the threads first came to owe or looked (`CallsOwed::rank`): that was found earlier than what its own collections have found. Its own
+    `calls` and every `taken` that it may begin are one queue to it. And the rest of a group stands, for the thread that has it in its hand, where it stood: at the head of the finalizers of the queue that the
+    group was taken from (`CallsOwed::groupsInHand`); if another group from the same place is begun in the middle of it, the two are one from then on, by their numbers (cyclic garbage of several makers that
+    `gc.collect()` has found is numbered in the order of making, so by turns, and is finalized in that order). So wherever one thread makes the calls their order has not changed, but for this:
+    - A caller that leaves early in the middle of a group of another thread's goes on with it at its next safe point; it used to lie in the other's queue until somebody served that.
+    - What other threads owe when the main thread comes to its end: in the order in which it was found, as reference counts would have it. (The queues used to be taken over whole, one behind the other.)
+    - A round that takes parents and children at once, handed out: each tree lies in the queue of the maker of its top, so a caller that comes later goes maker by maker. (The whole round used to go to one
+      thread, in the order of reference counts.)
+    - What a thread leaves when it ends, and what the threads that are stopped at exit have in their hands, is merged by number into the queue of the heir, or of the thread that held it. The rest of a group of
+      such a thread's in another's hand stands at the heir's from then on; if the heir has it itself, in its one queue, so behind what other threads owe.
+    What that order is not: the order of reference counts. The callbacks for one object are parted by a later reference to another; a callback for cyclic garbage comes before that of an earlier reference to
+    what reference counts would have freed long before; what a call drops comes behind what waits, unless its reference is later. See DEFERRED.md.
+  - **No such thread any more**: the main thread. A thread makes the calls it owes before it ends. When the other threads have been stopped for good at exit, everything is the main thread's.
   - **A thread that waits is woken** (`Threads::wakeToMakeCalls`: what it sleeps on, the host's event loop, or the signal that gets it out of
     a system call), makes its calls where it would look at signals (`checkSignals()`, as `PyErr_CheckSignals()` runs the collector in CPython), and
     goes on waiting for the time it has left. One that only waits for the GIL finds out when it has it: the flag that the safe points
@@ -829,6 +887,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     runs in W, on top of the sleep, and never gets a lock that is not re-entrant. It takes four things at once: the maker is not
     the one who drops, the maker waits, holding a plain lock, which the finalizer takes without a timeout. The data model warns of
     locks in `__del__` for the like reason ("may deadlock"), and none was found in the standard library or in 262 distributions.
+    Not with what a caller of `gc.collect()`, or the main thread as it ends, has taken: that one runs the finalizer, and waits for the lock as in CPython.
 - **At exit**, when the threads are joined and before `atexit`'s callbacks, what is unreachable by then and reference counts would
   have freed is finalized: in CPython it would have been long ago. (Only if an object is registered whose finalizer is code of the
   program.) After the callbacks, if there is anything left to finalize, `sys.modules` is emptied as CPython empties it, and
@@ -842,9 +901,14 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     order depends on where the generations of its collector happen to be cut, and differs between two installations of one version in 35 to 48 % of all pairs.
   - Daemon threads are still running during the first of these steps, and in CPython they finalize what they drop themselves. So the step begins
     an era (`Runtime::m_era`, which each object with a finalizer is registered with; weak references have serial numbers): the main thread
-    takes over what the others owe by then, and while the step lasts every collection, its own or the engine's, gives it what is of an
-    earlier era and is found dead, whoever made it; what a thread has made since is its maker's, as at any other time. It ends when the main
-    thread owes nothing after a collection. (It used to pay until no thread owed anything, and each of its collections took all garbage upon
+    is a caller as above that serves only what is of an earlier era, whoever made it. It takes more: beside what its own collections find, what the others owe when it comes, and again before each further
+    collection of its own. What another collection hands out while the step lasts is its maker's as ever, who is told; the main thread makes it if it comes to it first, where it stands at the head of that
+    thread's queue; to the main thread it is part of its one queue. (Taken, whichever collection finds it: the main thread's finalizer polled for what the finalizer of an object does that its maker dropped
+    meanwhile: the maker's own look for garbage found the object, and the maker left it alone: the program never exited.) So a maker may make such a call at exit, too: one that waits with a lock in its hand
+    that the finalizer wants runs it on top of that wait, as at any other time. What a thread has made since is for that thread alone, as at any other time; but all the cyclic garbage that one collection gives a
+    thread goes by its oldest. Behind something younger at the head of a queue the main thread does not look: that thread has made something since, so it is awake; if it never comes back, what is older is
+    taken before the next collection of the step, or, if there is none, made behind the callbacks of `atexit`. It ends when a collection leaves nothing that the main thread may begin.
+    (It used to pay until no thread owed anything, and each of its collections took all garbage upon
     it: beside two daemons that keep making objects with a `__del__` the process ended after 1 to 60 s or not at all, with millions of
     finalizers called by the main thread; now in half a second, most of it for what the daemons had left when they were stopped.)
   - What it costs, measured: black formatting its own 24 sources in one process (7 s, 330 MB) makes one full collection at exit, 99.9 ms of

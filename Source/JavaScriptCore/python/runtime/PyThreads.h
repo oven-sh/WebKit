@@ -52,10 +52,14 @@ public:
     bool sleep(int64_t deadline);
     // From any thread, and from signal handlers.
     void wake();
-    // Whether there has been a wake() that no sleep() has answered. It counts as answered.
+    // Whether there has been a wake() that no sleep() has answered. It counts as answered. Whoever takes one, here or in sleep(), sleeps no more before it has been back in the VM
+    // (Threads::acquire()): ThreadState::wakesAnswered rests on that.
     bool takeWake() { return m_isWoken.exchange(0); }
+    // How many times wake() has been called. Nothing takes this back. (What the wake is for has been written before.)
+    uint64_t wakes() const { return m_wakes.load(); }
 
 private:
+    std::atomic<uint64_t> m_wakes { 0 };
 #if OS(LINUX)
     std::atomic<uint32_t> m_isWoken { 0 };
 #else
@@ -100,6 +104,12 @@ public:
     struct SavedStates* saved { nullptr };
     // Whether it is in a queue of Threads::waitUntil().
     bool isQueued { false };
+    // It sleeps in Threads::waitUntil(), without a deadline. If it is no longer in the queue, somebody has let it go on, and it is on its way.
+    bool waitsForGood { false };
+    // Up to which wake() of its sleeper it has come back (Threads::acquire()). If there has been one since, somebody has sent for it, whoever and whatever for, and it is on its way, too.
+    uint64_t wakesAnswered { 0 };
+    // It waits for the GIL and for nothing else, or has been made to give it up and will ask for it again: it runs as soon as it is let. With the lock of the GIL: see Threads::isAskingForGIL().
+    bool isAskingForGIL { false };
     // See Threads::willCallFunctionThatMayWait(). The wait of that call takes it (IdleWait), so whatever else waits finds nothing.
     CallFrame* callThatMayBeginAgain { nullptr };
     // What the wait of a call that is begun again has come to. No call: there is none.
@@ -178,6 +188,17 @@ public:
     // Where the environment of the host differs from that of the process: what the variable is to the host, null if it has none.
     // Bytes, whatever they encode. See PosixChildEnvironment. With the GIL.
     HashMap<Latin1CString, Latin1CString>& variablesOfHost() { return m_variablesOfHost; }
+
+    // ---- What a thread can tell of the others: see Runtime::ServesOtherThreads ----
+
+    bool isAskingForGIL(const ThreadState&);
+    // Every thread but this one waits for another thread (waitUntil()), without a deadline, and nobody has let it go on or sent for it. So none of them moves again unless this thread does something about it. One
+    // that can move: it asks for the GIL; it has been started and has not run yet; it is in a system call or in foreign code; it sleeps; it waits with a deadline, or for descriptors, which
+    // somebody outside the process may end; the main thread in the host's event loop.
+    bool allOthersWaitForGood();
+    // So many Runtime::ServesOtherThreads there are, in all runtimes.
+    void didBeginToServeOthers() { ++m_numberThatServeOthers; }
+    void didCeaseToServeOthers() { --m_numberThatServeOthers; }
 
     // The state of the current thread, which holds the GIL.
     ThreadState& current();
@@ -332,6 +353,7 @@ private:
     JS_EXPORT_PRIVATE bool throwIfStoppingSlow();
     void didTakeGIL(ThreadState&);
     void tellMainThreadOfFinalizers();
+    void giveBackWhatIsTaken(ThreadState&);
     void wakeMainThread();
     void wakeToHandleTrap(ThreadState&, bool isTermination);
     friend void mainThreadIsToHandleTrap(VM&, const AbstractLocker&, JSLock::ParkedThread*, bool, bool);
@@ -343,6 +365,7 @@ private:
     bool m_hasPreparedSignals { false };
     uint64_t m_mainThreadIdent { 0 };
     unsigned m_runningCount { 0 };
+    unsigned m_numberThatServeOthers { 0 };
     Vector<Ref<ThreadState>> m_threads;
     ThreadState* m_parkedMainThread { nullptr }; // For JSLock::ifEmbedderThreadWaits().
     UncheckedKeyHashMap<const void*, Deque<ThreadState*>> m_waiters;
