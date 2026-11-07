@@ -835,10 +835,15 @@ static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObje
             return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 
         if (slot.attributes() & PropertyAttribute::CustomValue) {
-            // (Not for a receiver with immutable properties: a native setter does not ask, and [[DefineOwnProperty]] below does.)
+            // The holder is not the receiver if the receiver answers [[GetOwnProperty]] with the slot of another object: a Proxy without a
+            // getOwnPropertyDescriptor trap (its target's slot), or an embedder's object that stands in front of another one (the global
+            // object of a node:vm context in Bun). The native setter gets what an assignment to the holder gives it: the holder and the
+            // holder's realm.
+            // (Not if the receiver or the holder has the property immutable: a native setter does not ask, and [[DefineOwnProperty]] below does.)
+            JSObject* holder = slot.slotBase();
             PutValueFunc customSetter = slot.customSetter();
-            if (customSetter && !receiver->structure()->isImmutableProperty(propertyName.uid()))
-                RELEASE_AND_RETURN(scope, customSetter(receiver->realm(), JSValue::encode(receiver), JSValue::encode(value), propertyName));
+            if (customSetter && !receiver->structure()->isImmutableProperty(propertyName.uid()) && (holder == receiver || !holder->structure()->isImmutableProperty(propertyName.uid())))
+                RELEASE_AND_RETURN(scope, customSetter(holder->realm(), JSValue::encode(holder), JSValue::encode(value), propertyName));
         }
 
         PropertyDescriptor descriptor;
