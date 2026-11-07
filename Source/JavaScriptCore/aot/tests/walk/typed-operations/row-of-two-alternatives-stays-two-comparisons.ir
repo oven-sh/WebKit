@@ -1,0 +1,37 @@
+# two comparisons cost less than a switch: a row of alternatives becomes one from three constants on
+# function isKind(kind) { return kind === 1 || kind === 4; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = StrictEq
+# CHECK: Branch
+# CHECK: = StrictEq
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: Switch
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="isKind" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Jump -> next b4(v4)
+  b2(v5):
+    Jump -> next b3()
+  b3():
+    v6 = Integer integer=4
+    v7 = StrictEq v0, v6
+    Jump -> next b4(v7)
+  b4(v8):
+    Return v8
+}

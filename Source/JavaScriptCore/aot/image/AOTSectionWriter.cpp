@@ -31,10 +31,17 @@ bool checkSectionSize(uint64_t size, BuildContext& context)
     return true;
 }
 
+bool checkListSize(uint64_t count, size_t sizeOfElement, BuildContext& context)
+{
+    if (count <= context.limit(LimitID::VectorBytes) / sizeOfElement)
+        return true;
+    context.reportLimitExceeded(LimitID::VectorBytes, count * sizeOfElement);
+    return false;
+}
+
 void growSectionTo(Vector<uint8_t>& bytes, size_t newSize)
 {
     ASSERT(newSize <= maxWrittenVectorSize);
-    // Vector::grow() reserves more than it needs, and crashes when that is more than a Vector can hold.
     if (newSize > bytes.capacity())
         bytes.reserveCapacity(std::min(maxWrittenVectorSize, std::max(newSize, bytes.capacity() + bytes.capacity() / 2)));
     bytes.grow(newSize);
@@ -71,18 +78,25 @@ Vector<uint8_t> SectionWriter::takeBytes()
     return std::exchange(m_bytes, { });
 }
 
-static uint64_t hashBytes(std::span<const uint8_t> bytes)
+static uint32_t hashOfStream(std::span<const uint8_t> bytes)
 {
+    constexpr uint64_t multiplier = 1099511628211ull;
     uint64_t hash = 1469598103934665603ull;
+    for (; bytes.size() >= sizeof(uint64_t); bytes = bytes.subspan(sizeof(uint64_t))) {
+        uint64_t word;
+        memcpySpan(asMutableByteSpan(word), bytes.first(sizeof(uint64_t)));
+        hash = (hash ^ word) * multiplier;
+        hash ^= hash >> 32;
+    }
     for (uint8_t byte : bytes)
-        hash = (hash ^ byte) * 1099511628211ull;
-    return hash;
+        hash = (hash ^ byte) * multiplier;
+    return static_cast<uint32_t>(hash ^ hash >> 32);
 }
 
 namespace {
 
 struct HashedStream {
-    uint64_t hash;
+    uint32_t hash;
     uint32_t index;
 };
 
@@ -92,10 +106,10 @@ static Vector<HashedStream> sortStreamsByHash(const ParallelLoops& loops, std::s
 {
     Vector<HashedStream> entries = collectInParallel<HashedStream>(loops, streams.size(), [&](unsigned index, Vector<HashedStream>& hashed) {
         if (!streams[index].isEmpty())
-            hashed.append({ hashBytes(streams[index].span()), index });
+            hashed.append({ hashOfStream(streams[index].span()), index });
     });
-    parallelSort(loops, entries.mutableSpan(), [](const HashedStream& a, const HashedStream& b) {
-        return a.hash != b.hash ? a.hash < b.hash : a.index < b.index;
+    radixSortKeepingEqualKeysInOrder<32>(entries, [](const HashedStream& entry) {
+        return entry.hash;
     });
     return entries;
 }
@@ -108,19 +122,15 @@ Vector<uint32_t> SectionWriter::appendAll(std::span<const Vector<uint8_t>> strea
 
     const ParallelLoops& loops = m_context.parallelLoops();
     Vector<HashedStream> entries = sortStreamsByHash(loops, streams);
-    // The first stream with the same bytes: the stream itself where its bytes are stored.
     Vector<uint32_t> firstEqualStream(streams.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    constexpr size_t entriesInChunk = 4096;
-    forEachIndexInParallel(loops, (entries.size() + entriesInChunk - 1) / entriesInChunk, [&](unsigned chunk) {
-        size_t end = std::min(entries.size(), (static_cast<size_t>(chunk) + 1) * entriesInChunk);
-        size_t at = static_cast<size_t>(chunk) * entriesInChunk;
+    forEachRangeOfIndicesInParallel(loops, entries.size(), [&](size_t at, size_t end) {
         while (at && at < end && entries[at].hash == entries[at - 1].hash)
             ++at;
         Vector<uint32_t, 4> newStreams;
         while (at < end) {
-            uint64_t hash = entries[at].hash;
+            uint32_t hash = entries[at].hash;
             newStreams.shrink(0);
             for (; at < entries.size() && entries[at].hash == hash; ++at) {
                 uint32_t index = entries[at].index;
@@ -149,11 +159,13 @@ Vector<uint32_t> SectionWriter::appendAll(std::span<const Vector<uint8_t>> strea
     }
     growSectionTo(m_bytes, newSize);
     std::span<uint8_t> section = m_bytes.mutableSpan();
-    forEachIndexInParallel(loops, streams.size(), [&](unsigned index) {
-        if (firstEqualStream[index] != index)
-            offsets[index] = offsets[firstEqualStream[index]];
-        else if (!streams[index].isEmpty())
-            memcpySpan(section.subspan(offsets[index]), streams[index].span());
+    forEachRangeOfIndicesInParallel(loops, streams.size(), [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            if (firstEqualStream[index] != index)
+                offsets[index] = offsets[firstEqualStream[index]];
+            else if (!streams[index].isEmpty())
+                memcpySpan(section.subspan(offsets[index]), streams[index].span());
+        }
     });
     return offsets;
 }

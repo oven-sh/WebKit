@@ -19,6 +19,7 @@ public:
     void generateCreatePromise(const ValueContext&);
     void generateResolvePromise(const ValueContext&);
     void generateRejectPromise(const ValueContext& value) { callVoidOperation(value, RuntimeOperation::RejectPromise, { in<CellPointer>(value->promiseOperand()), in<Boxed>(value->valueOperand()) }); }
+    void generateFulfillFreshPromise(const ValueContext&);
 
     CellPointer newPromise(const OperationContext&);
     Condition hasPromiseStructure(CellPointer);

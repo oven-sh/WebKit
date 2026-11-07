@@ -1,0 +1,11 @@
+# a callee is read again at each call, so the body of a coroutine holds a copy in front of the await and a copy behind it, each under its own frame, and the one suspension between them
+# RUN: walk f2:CoroutineBody mechanisms=none+DirectCalls+Inlining
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: frame 1 callee=f1
+# CHECK: frame 2 callee=f1
+# CHECK: = PropGet {{*}}key="x"
+# CHECK: = AwaitBySavingFrame
+# CHECK: = PropGet {{*}}key="x"
+# RUN(NEVER): walk f2:CoroutineBody mechanisms=none+DirectCalls+Inlining
+# NEVER-NOT: CallDirect
+# PROGRAM-OF: ../direct-calls/direct-calls-on-both-sides-of-an-await.ir

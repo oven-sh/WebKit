@@ -53,8 +53,7 @@ const pristineCatch = (onRejected: b.TableType, contents: Contents) =>
 
 const resolveImplementation = b.inline("PromiseResolve", { otherwise: b.hostCall });
 
-const elementProtocols = b.runsTransitively("Iterate", "Thenable");
-// The promise settles as the first element that settles does: with what a promise among the elements holds, not with the promise.
+const elementProtocols = [b.runsTransitively("Iterate", "Thenable"), b.contentsOfContentsOnlyStored];
 const adoptedElement = b.settled("iterable");
 const settlementRecord = b.union(
   b.ordinaryObjectOf("PromiseFulfilledResult"),
@@ -67,7 +66,7 @@ const combinator = (feature: string, contents: Contents, ...iterableUses: readon
       ...operandCodeEffects,
       args: { iterable: b.any },
       returns: newPromiseHolding(contents),
-      uses: { this: b.inspected, iterable: [elementProtocols, ...iterableUses] },
+      uses: { this: b.inspected, iterable: [...elementProtocols, ...iterableUses] },
       requiresHolderAsThis: true,
       usesFeature: feature,
       implementation: b.hostCall,
@@ -80,6 +79,10 @@ const disposalOf = (...disposed: readonly b.TableType[]) => [
   b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args: disposed, result: "Escapes" }),
 ];
 const stackFunction = (name: string) => b.compiled("AsyncDisposableStackPrototype", name);
+const fieldsOfNewStack = {
+  state: b.state("InternalFields", b.int(0, 1)),
+  capability: b.state("InternalFields", b.instance("Array").holding({ element: b.never }).fresh),
+};
 
 export default b.declarations(
   b.layout("PromiseCapability", {
@@ -94,9 +97,8 @@ export default b.declarations(
     jsType: "JSPromiseType",
     constructorCallee: "Function",
     constructorOnlyReadsPrototypeOfNewTarget: true,
-    slots: { value: b.contents("Value", promiseState), reason: b.state(promiseState) },
-    lockedObjects: ["prototype"],
-    lockedMembers: ["constructor"],
+    slots: { value: b.contents("Value", promiseState), reason: b.thrownValue(b.internalField(1, promiseState)) },
+    lockedMembers: ["constructor", "prototype"],
     types: [b.viewType("Promise", "value"), b.viewType("PromiseLike", "value")],
     constructorTable: b.staticTable("runtime/JSPromiseConstructor.cpp", "promiseConstructorTable"),
     prototypeTable: b.staticTable("runtime/JSPromisePrototype.cpp", "promisePrototypeTable"),
@@ -130,7 +132,6 @@ export default b.declarations(
           args: { reason: b.any.optional },
           returns: newPromiseHolding({ value: b.never }),
           capability: "heap",
-          // The host hands the reason of a promise that nobody handles to the listeners for unhandled rejections, and Promise.any puts it among the errors of what it rejects with.
           uses: { this: b.inspected, reason: [b.storedIn(b.resultSlot("reason")), b.retained] },
           writes: [promiseState],
           requiresHolderAsThis: true,
@@ -163,7 +164,6 @@ export default b.declarations(
           writes: [promiseState],
           implementation: resolveImplementation,
         },
-        // No primitive is a thenable, so nothing rejects the promise.
         {
           args: { value: b.primitiveValue.optional },
           returns: newPromiseHolding({ value: b.operand("value"), reason: b.never }),
@@ -214,7 +214,7 @@ export default b.declarations(
     proto: {
       then: [
         { ...pristineThen(b.callable, b.callable, { value: eitherHandlerResult }), privateAlias: true },
-        pristineThen(b.callable, b.any.optional, { value: b.callbackResult("onFulfilled"), reason: settledReason }),
+        pristineThen(b.callable, b.any.optional, { value: b.callbackResult("onFulfilled") }),
         pristineThen(b.any, b.callable, { value: valueOrHandlerResult }),
         pristineThen(b.any.optional, b.any.optional, { value: settledValue, reason: settledReason }),
         {
@@ -246,9 +246,9 @@ export default b.declarations(
           ...operandCodeEffects,
           this: pristinePromise,
           args: { onFinally: b.any.optional },
-          returns: newPromiseHolding({ value: settledValue, reason: settledReason }),
+          returns: newPromiseHolding({ value: settledValue }),
           uses: {
-            this: contentsUpdate,
+            this: [...contentsUpdate, b.createdIn(b.any, b.resultSlot("reason"))],
             onFinally: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args: [], result: "Stored", resultTo: b.resultSlot("value") })],
           },
           implementation: b.hostCall,
@@ -270,6 +270,7 @@ export default b.declarations(
 
   b.class("AsyncDisposableStack", {
     jsType: "AsyncDisposableStackType",
+    slots: fieldsOfNewStack,
     stateHeap: "InternalFields",
     types: [b.exactType("AsyncDisposableStack")],
     call: requiresNew,
@@ -321,7 +322,7 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       move: {
-        returns: b.instance("AsyncDisposableStack").fresh,
+        returns: b.instance("AsyncDisposableStack").holding({ capability: b.slot("this", "capability") }).fresh,
         capability: "heap",
         throws: true,
         uses: { this: contentsUpdate },
@@ -341,6 +342,5 @@ export default b.declarations(
   }),
   b.same("AsyncDisposableStack.prototype.@@asyncDispose", "AsyncDisposableStack.prototype.disposeAsync"),
 
-  // `import "core-js"` replaces it without a test, from 3.22 to 3.37.
   b.replacedByPackages("Promise.try"),
 );

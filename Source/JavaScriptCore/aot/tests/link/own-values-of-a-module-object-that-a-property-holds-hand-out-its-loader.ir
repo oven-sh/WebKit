@@ -1,0 +1,21 @@
+# sink(Object.values(require.main));
+# require is an own property of a module object that is listed with the others: a native that hands out own values hands out the loader, and nobody spells its name.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: causes mechanisms=all
+# CHECK: cause LoadsModuleByName ModuleRequire
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs body=f0
+entry module=m0
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v3 = PropGet v2 key="main"
+    v4 = Builtin builtin=Object
+    v5 = PropGet v4 key="values"
+    v6 = Call v5, v4, v3 calleeKey="values" calleeName="Object.values"
+    v7 = Call v1, -, v6
+    v8 = Undefined
+    Return v8
+}

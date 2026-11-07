@@ -120,6 +120,11 @@ if (USE_BUN_JSC_ADDITIONS)
     # static JavaScriptCore (ENABLE_STATIC_JSC=ON), which every lane and the development configuration build.
     set(testaotObjects_LIBRARY_TYPE OBJECT)
     set(testaotObjects_SOURCES ${aotTestSources})
+    # The compiler asks ICU in the process of the build, which in a test is testaot: it needs the shell's hook for the repacked data (aot/tests/AOTICUDataOfTestProgram.cpp).
+    if (BUN_ICU_ZSTD_SOURCE_DIR)
+        set_source_files_properties(../aot/tests/AOTICUDataOfTestProgram.cpp PROPERTIES COMPILE_DEFINITIONS "BUN_ICU_ZSTD=1")
+        set(testaotObjects_C_SOURCES ${jsc_ZSTD_DECODER_SOURCES})
+    endif ()
     set(testaotObjects_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testaotObjects_PRIVATE_LIBRARIES WebKit::JavaScriptCore WebKit::WTF WebKit::bmalloc)
     WEBKIT_LIBRARY_DECLARE(testaotObjects)
@@ -143,6 +148,15 @@ if (USE_BUN_JSC_ADDITIONS)
     endif ()
 
     WEBKIT_EXECUTABLE_DECLARE(testaot)
+endif ()
+
+if (APPLE AND ENABLE_SANITIZERS)
+    # With the sanitizer's checks each of these has about 128 MB of code, which is as far as a branch reaches on arm64.
+    foreach (program jsc testFFI testaot)
+        if (TARGET ${program})
+            target_link_options(${program} PRIVATE "LINKER:-dead_strip")
+        endif ()
+    endforeach ()
 endif ()
 
 if (APPLE)

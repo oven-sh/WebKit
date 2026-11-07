@@ -1,0 +1,48 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTWalk.h"
+
+namespace JSC { namespace AOT { namespace Typed {
+
+struct ListTestedInFrontOfLoop {
+    Reference name;
+    ArrayStorage storage { ArrayStorage::Other };
+    bool admitsInt32Storage { false };
+    bool isWritable { false };
+    bool turnsStoreIntoLists { false };
+};
+
+std::optional<ListTestedInFrontOfLoop> findListTestedInFrontOfLoop(Walker&, const BodyValue& read);
+std::optional<ListTestedInFrontOfLoop> findListTestedInFrontOfLoop(Walker&, Reference list);
+std::optional<ListTestedInFrontOfLoop> askListInFrontOfTypedCopy(Walker&, const BodyValue& read, Reference list);
+bool readsListFoundByReadFromInFront(const Program&, const BodyIndex&, const BodyValue& operation, uint32_t firstValueOfLoop);
+void nameKindOfListTestedInFrontOfLoop(Draft& read, const ListTestedInFrontOfLoop&);
+void takeStorageAndLengthFromInFrontOfLoop(Walker&, Draft& read, const ListTestedInFrontOfLoop&);
+bool positionIsKnownToLieInsideList(Walker&, Reference list, Reference position);
+Reference storageOfListFromInFrontOfLoop(Walker&, const ListTestedInFrontOfLoop&, Origin);
+
+bool holeLeavesTurnBehindRow(const BodyIndex&, const BodyValue& read, const ListTestedInFrontOfLoop&);
+bool readLeavesTurnAtHoleBehindRow(Walker&, const BodyValue& read);
+bool leavesListsTestedInFrontOfLoopAsTheyAre(const Effects&);
+Vector<ValueID, 2> namesInFrontThatLoopMentions(const Walker&, const BodyIndex&, LoopID, uint32_t firstValueOfLoop, Reference value);
+bool readsLengthOfViewTestedInFrontOfLoop(Walker&, const BodyValue& read);
+
+struct ListsReadInLoop {
+    Vector<ListTestedInFrontOfLoop, 2> lists;
+    bool areLeftAsTheyAre { false };
+    bool areTested { false };
+};
+void reserveRoomOfListsThatLoopFills(Walker&, BlockID inputHead, std::span<const Reference> entering);
+ListsReadInLoop findListsReadInLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses);
+void buildTestsOfListsReadInLoop(Walker&, BlockID inputHead, std::span<const Reference> entering, ListsReadInLoop&, std::span<const GuessInFrontOfLoop>, std::span<const Reference> proofs, BlockID& closedStart, Origin);
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

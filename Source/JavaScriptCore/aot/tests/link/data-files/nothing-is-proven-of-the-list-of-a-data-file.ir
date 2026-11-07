@@ -1,0 +1,42 @@
+# import names from "./names.json"; (0, eval)(text); first(names); function first(list) { return list[0]; }
+# The text imports names.json by its path and stores what it likes into the list: the loader hands a data file out to whoever names it (Modules::refusesRequestFromHost()).
+# The flow follows the list from the body of the data file into `first` and sees no store. What keeps it from a proof: the variables of a data module count as shared with unseen code
+# (AOTLinkLayouts.cpp, variablesAreWrittenOnlyByBodiesInLinkLayouts()). Whoever turns that line finds `read f2 v2 proven=undefined|string` here, over a list that holds a number.
+# RUN: link lookups variables accesses functions mechanisms=all
+# CHECK: lookup called Eval
+# CHECK: lookup instance-at-unseen Array
+# CHECK-NOT: variable g0 proven=
+# CHECK-NOT: read f2 v2
+# CHECK-NOT: receiver-as-made f2 v2
+# CHECK-NOT: stays-as-made
+
+module m0 path="/names.json" displayPath="names.json" kind=Data requireResult=DefaultExport body=f0 data=d0 exports=[{name="default" variable=g0}]
+module m1 path="/main.mjs" displayPath="main.mjs" body=f1 requests=[{target=m0 completes=true}]
+entry module=m1
+data d0 root=Array{contents=anything elements=[String{value="ada"}, String{value="bob"}]} module=m0
+variable g0 name="_0" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d0
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="eval" [isFreeName]
+    v2 = PropGet v0 key="text" [isFreeName]
+    v3 = Call v1, -, v2
+    v4 = GetModuleVariable variable=g0
+    v5 = CheckInitialized v4 name="names"
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v5 calleeName="first"
+    Return v7
+}
+function f2 name="first" module=m1 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = ElemGet v0, v1
+    Return v2
+}

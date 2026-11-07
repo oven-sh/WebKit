@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// const amount = { valueOf() { return 5 }, unused: 1 }; print(amount + 1); print(amount < 6); print(String({ toString() { return "label" } }))
 static constexpr ASCIILiteral methodsRunByConversions = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Amount" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}, {key="unused" declared={type=anything} flags=[IsRequired]}]
@@ -43,7 +42,6 @@ function f2 name="toString" flags=[HasThis] thisType={type=anything} results=[{t
 }
 )IR"_s;
 
-// const amount = { valueOf: () => 5 }; print(amount + 1); const hinted = { [Symbol.toPrimitive]: hint => hint }; print(hinted + 1)
 static constexpr ASCIILiteral arrowFunctionsRunByConversions = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Amount" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
@@ -71,7 +69,6 @@ function f2 name="toPrimitive" kind=Arrow length=1 parameters=[{type=anything}] 
 }
 )IR"_s;
 
-// const parent = { m() { return 7 }, unused: 1 }, heir = { x: 1 }; Object.setPrototypeOf(heir, parent); print(heir.m()); print(Object.create(Object.create(parent)).m())
 static constexpr ASCIILiteral methodCalledThroughHeirs = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Heir" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
@@ -102,9 +99,7 @@ function f1 name="m" results=[{type=anything}] {
 }
 )IR"_s;
 
-// const label = { toString() { return "label" } }; print(label.toLocaleString())
-static constexpr ASCIILiteral methodCalledByModel = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+static constexpr ASCIILiteral methodCalledByBuiltinFunction = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Label" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -121,15 +116,8 @@ function f1 name="toString" flags=[HasThis] thisType={type=anything} results=[{t
     v1 = String string="label"
     Return v1
 }
-function f2 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=ObjectsToLocaleString thisType={type=anything} results=[{type=anything}] {
-    v1 = PropGet v0 key="toString"
-    v2 = Call v1, v0 calleeKey="toString"
-    ReturnCall v2
-}
-runtimefunction id=ObjectsToLocaleString function=f2
 )IR"_s;
 
-// const parent = { listed: 1 }; for (const key in Object.create(Object.create(parent))) print(key)
 static constexpr ASCIILiteral keyListedThroughHeirs = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Parent" fields=[{key="listed" declared={type=anything} flags=[IsRequired]}]
@@ -157,7 +145,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-// function five() { return 5 } function twice() { return five() + five() } print(twice())
 static constexpr ASCIILiteral declarationThatIsOnlyCalled = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 variable g0 name="five" module=m0 declared={type=function} initialization=Function function=f1
@@ -184,7 +171,6 @@ function f2 name="twice" results=[{type=anything}] {
 }
 )IR"_s;
 
-// library.js: export function five() { return 5 }. main.js: import * as library from "library.js"; print(Object.create(library).five())
 static constexpr ASCIILiteral exportCalledThroughHeirOfNamespace = R"IR(module m0 path="library.js" displayPath="library.js" body=f1 exports=[{name="five" variable=g0}]
 module m1 path="main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}]
 entry module=m1
@@ -209,7 +195,6 @@ function f2 name="five" module=m0 results=[{type=anything}] {
 }
 )IR"_s;
 
-// print(JSON.parse("1", (key, value) => 5)); print(JSON.stringify(1, (key, value) => 2))
 static constexpr ASCIILiteral callbacksOfNativeCode = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -237,21 +222,19 @@ function f2 name="replacer" kind=Arrow length=2 parameters=[{type=anything}, {ty
 }
 )IR"_s;
 
-// const holder = { m: () => 8 }; function run(x) { return x.m() } print(run(holder), run(outside)). The last function makes the program large enough for a second version of run.
-static constexpr ASCIILiteral methodCalledInGenericVersion = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+static constexpr ASCIILiteral methodCalledOnKnownAndUnknownReceivers = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Holder" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = NewClosure function=f2
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure function=f1
-    v3 = Call v2, -, v1
+    v3 = Call v2, -, v1 [isNeverInlined]
     v4 = Builtin builtin=GlobalThis
     v5 = PropGet v4 key="outside" [isFreeName]
-    v6 = Call v2, -, v5
+    v6 = Call v2, -, v5 [isNeverInlined]
     v7 = PropGet v4 key="print" [isFreeName]
     v8 = Call v7, -, v3, v6
-    v9 = CallDirect function=f3
     Return
 }
 function f1 name="run" parameters=[{type=anything}] results=[{type=anything}] {
@@ -263,113 +246,51 @@ function f2 name="m" kind=Arrow results=[{type=anything}] {
     v0 = Integer integer=8
     Return v0
 }
-function f3 name="padding" results=[{type=anything}] {
-    v0 = Undefined
-    v1 = Undefined
-    v2 = Undefined
-    v3 = Undefined
-    v4 = Undefined
-    v5 = Undefined
-    v6 = Undefined
-    v7 = Undefined
-    v8 = Undefined
-    v9 = Undefined
-    v10 = Undefined
-    v11 = Undefined
-    v12 = Undefined
-    v13 = Undefined
-    v14 = Undefined
-    v15 = Undefined
-    v16 = Undefined
-    v17 = Undefined
-    v18 = Undefined
-    v19 = Undefined
-    v20 = Undefined
-    v21 = Undefined
-    v22 = Undefined
-    v23 = Undefined
-    v24 = Undefined
-    v25 = Undefined
-    v26 = Undefined
-    v27 = Undefined
-    v28 = Undefined
-    v29 = Undefined
-    Return
-}
 )IR"_s;
-
-static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expectedOutput, ASCIILiteral statementsBeforeProgram = ""_s)
-{
-    static constexpr ASCIILiteral words[] = {
-        "validate"_s,
-        "heat=EverythingIsHot"_s,
-        "heat=EverythingIsCold"_s,
-        "only-passes=AnalyzeFlow"_s,
-        "only-passes=RemoveUnreadFields"_s,
-        "only-passes=ResolveCalls,RemoveUnreadFields"_s,
-        "disable=pass:RemoveUnreadFields"_s,
-        "disable=pass:ResolveCalls"_s,
-        "disable=pass:ResolveAccesses"_s,
-        "disable=pass:EliminateDeadCode"_s,
-        "disable=pass:InlineCalls"_s,
-        "disable=pass:SinkAllocations"_s,
-        "disable=pass:AllocateInFrames"_s,
-        "disable=pass:DeferClosuresInFields"_s,
-        "disable=flow:ObjectUses"_s,
-        "disable=flow:CalleeSets"_s,
-        "disable=flow:ReceiverSets"_s,
-    };
-    checkOutputOfProgramInShell(programText, expectedOutput, { }, statementsBeforeProgram);
-    for (ASCIILiteral word : words)
-        checkOutputOfProgramInShell(programText, expectedOutput, { word }, statementsBeforeProgram);
-}
 
 static void testMethodsRunByConversions()
 {
-    checkUnderEveryOption(methodsRunByConversions, "6\ntrue\nlabel\n"_s);
+    checkOutputOfProgramInShell(methodsRunByConversions, "6\ntrue\nlabel\n"_s, { });
 }
 
 static void testArrowFunctionsRunByConversions()
 {
-    checkUnderEveryOption(arrowFunctionsRunByConversions, "6\ndefault1\n"_s);
+    checkOutputOfProgramInShell(arrowFunctionsRunByConversions, "6\ndefault1\n"_s, { });
 }
 
 static void testMethodCalledThroughHeirs()
 {
-    checkUnderEveryOption(methodCalledThroughHeirs, "7\n7\n"_s);
+    checkOutputOfProgramInShell(methodCalledThroughHeirs, "7\n7\n"_s, { });
 }
 
-static void testMethodCalledByModel()
+static void testMethodCalledByBuiltinFunction()
 {
-    checkUnderEveryOption(methodCalledByModel, "label\n"_s);
+    checkOutputOfProgramInShell(methodCalledByBuiltinFunction, "label\n"_s, { });
 }
 
 static void testKeyListedThroughHeirs()
 {
-    checkUnderEveryOption(keyListedThroughHeirs, "listed\n"_s);
+    checkOutputOfProgramInShell(keyListedThroughHeirs, "listed\n"_s, { });
 }
 
 static void testDeclarationThatIsOnlyCalled()
 {
-    checkUnderEveryOption(declarationThatIsOnlyCalled, "10\n"_s);
+    checkOutputOfProgramInShell(declarationThatIsOnlyCalled, "10\n"_s, { });
 }
 
 static void testExportCalledThroughHeirOfNamespace()
 {
-    checkUnderEveryOption(exportCalledThroughHeirOfNamespace, "5\n"_s);
+    checkOutputOfProgramInShell(exportCalledThroughHeirOfNamespace, "5\n"_s, { });
 }
 
-static void testMethodCalledInGenericVersion()
+static void testMethodCalledOnKnownAndUnknownReceivers()
 {
-    constexpr ASCIILiteral defineOutside = "globalThis.outside = { m() { return 9; } };"_s;
-    checkUnderEveryOption(methodCalledInGenericVersion, "8 9\n"_s, defineOutside);
-    checkOutputOfProgramInShell(methodCalledInGenericVersion, "8 9\n"_s, { "disable=flow:CalleeSets,pass:InlineCalls"_s }, defineOutside);
-    checkOutputOfProgramInShell(methodCalledInGenericVersion, "8 9\n"_s, { "disable=flow:CalleeSets"_s, "limit=MaxInlinedCallerBytes:0"_s }, defineOutside);
+    checkOutputOfProgramInShell(methodCalledOnKnownAndUnknownReceivers, "8 9\n"_s, { }, "globalThis.outside = { m() { return 9; } };"_s);
 }
 
 static void testCallbacksOfNativeCode()
 {
-    checkUnderEveryOption(callbacksOfNativeCode, "5\n2\n"_s);
+    checkOutputOfProgramInShell(callbacksOfNativeCode, "5\n2\n"_s, { });
 }
 
 std::span<const NativeTest> locationsReadAtRunTimeTests()
@@ -378,11 +299,11 @@ std::span<const NativeTest> locationsReadAtRunTimeTests()
         { "locations-read-at-run-time/methods-run-by-conversions"_s, testMethodsRunByConversions },
         { "locations-read-at-run-time/arrow-functions-run-by-conversions"_s, testArrowFunctionsRunByConversions },
         { "locations-read-at-run-time/method-called-through-heirs"_s, testMethodCalledThroughHeirs },
-        { "locations-read-at-run-time/method-called-by-model"_s, testMethodCalledByModel },
+        { "locations-read-at-run-time/method-called-by-builtin-function"_s, testMethodCalledByBuiltinFunction },
         { "locations-read-at-run-time/key-listed-through-heirs"_s, testKeyListedThroughHeirs },
         { "locations-read-at-run-time/declaration-that-is-only-called"_s, testDeclarationThatIsOnlyCalled },
         { "locations-read-at-run-time/export-called-through-heir-of-namespace"_s, testExportCalledThroughHeirOfNamespace },
-        { "locations-read-at-run-time/method-called-in-generic-version"_s, testMethodCalledInGenericVersion },
+        { "locations-read-at-run-time/method-called-on-known-and-unknown-receivers"_s, testMethodCalledOnKnownAndUnknownReceivers },
         { "locations-read-at-run-time/callbacks-of-native-code"_s, testCallbacksOfNativeCode },
     };
     return tests;

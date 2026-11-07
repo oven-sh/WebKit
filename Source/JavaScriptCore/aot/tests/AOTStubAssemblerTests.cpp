@@ -7,15 +7,14 @@
 
 #if ENABLE(AOT)
 
-#include "AOTConvention.h"
 #include "AOTRelocation.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubTestSupport.h"
 #include "AOTVector.h"
 #include "CPU.h"
+#include "StackAlignment.h"
 #include <algorithm>
 #include <array>
-#include <iterator>
 #include <optional>
 #include <span>
 #include <wtf/FastMalloc.h>
@@ -25,7 +24,7 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-struct ReadOnlyOperand {
+struct ReadOnlyStubOperand {
     StubKey body;
     unsigned index;
     GPRReg gpr;
@@ -39,22 +38,16 @@ static constexpr StubKey bodyWithTwoEntries { StubFamily::StringEqualsLiteral };
 static constexpr StubKey secondEntry { StubFamily::ValueEqualsLiteral };
 static constexpr StubKey nonexistentStub = StubKey(StubFamily::StringsAreEqual).withCallerFrame(CallerFrame::Frameless);
 static constexpr StubKey bodyEnteredAtFaults { StubFamily::ThrowAtFault };
+static constexpr Entry calledOperation = Entry::operationAOTValueAdd;
 static constexpr Entry preserveMostLeaf = Entry::operationAOTStringImplsAreEqual;
 static constexpr Entry ordinaryLeaf = Entry::operationAOTToInt32;
 
 static_assert(exists(calledStub) && !neverReturns(calledStub) && !exists(nonexistentStub));
 static_assert(bodyOf(bodyWithTwoEntries) == bodyWithTwoEntries && bodyOf(secondEntry) == bodyWithTwoEntries && bodyOf(calledStub) != bodyWithTwoEntries);
 static_assert(exists(bodyEnteredAtFaults) && exists(bodyEnteredAtFaults.withCallerFrame(CallerFrame::Frameless)));
+static_assert(!isLeaf(RuntimeOperation::ValueAdd) && effectsOf(calledOperation).mayThrow);
 static_assert(isLeaf(RuntimeOperation::StringImplsAreEqual) && preservesMostRegisters(RuntimeOperation::StringImplsAreEqual));
 static_assert(isLeaf(RuntimeOperation::ToInt32) && !preservesMostRegisters(RuntimeOperation::ToInt32));
-
-static constexpr StubRegister stubRegisters[] = {
-    StubRegister::R0, StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A4, StubRegister::A5, StubRegister::A6, StubRegister::A7,
-    StubRegister::T9, StubRegister::T10, StubRegister::T11, StubRegister::T12, StubRegister::T13, StubRegister::T14, StubRegister::T15,
-    StubRegister::EntryT12, StubRegister::EntryT13, StubRegister::Operation,
-};
-
-static_assert(std::size(stubRegisters) == static_cast<size_t>(StubRegister::Operation) + 1);
 
 static constexpr FPRReg borrowedFPR = FPRInfo::fpRegT0;
 
@@ -72,7 +65,7 @@ static void checkRecordedClobbers(const StubRecording& recording)
     AOT_TEST_CHECK(pinnedRegisters().filter(recording.clobbered()).isEmpty());
     for (StubKey entry : recording.entries)
         checkWrittenRegisters(recording.clobberedInline, signatureFor(entry));
-    if (!recording.leavesStubs && recording.symbols.isEmpty())
+    if (!recording.leavesStubs)
         AOT_TEST_CHECK(recording.clobberedByCallees.isEmpty());
 
     if (neverReturns(body))
@@ -95,12 +88,6 @@ static void checkRecording(const StubRecording& recording, StubKey body)
     }
     AOT_TEST_CHECK(!recording.returnLabels.contains(StubFrameKind::Plain));
     AOT_TEST_CHECK(recording.entriesUsed.subsumes(recording.operationsCalled));
-    for (const StubExitRecord& exit : recording.exits) {
-        AOT_TEST_CHECK(recording.operationsCalled.get(indexOf(exit.operation)));
-        AOT_TEST_CHECK((exit.exit == StubExit::Miss) == (exit.reason == RuntimeCounterID::None));
-    }
-    for (CodeSymbol symbol : recording.symbols)
-        AOT_TEST_CHECK(symbol.space == SymbolSpace::RegExp);
     checkRecordedClobbers(recording);
 }
 
@@ -108,7 +95,7 @@ static void testStubBodyGeneration()
 {
     Vector<StubKey> bodies = allStubBodies();
     for (const StubOptions& options : stubOptionVariants()) {
-        StubCatalog catalog(options, StubPolicy { });
+        StubCatalog catalog(options);
         StubAssembler jit(options, catalog);
         size_t numberOfBoundEntries = 0;
         for (StubKey body : bodies) {
@@ -122,12 +109,12 @@ static void testStubBodyGeneration()
 
 static const StubCatalog& defaultCatalog()
 {
-    static NeverDestroyed<StubCatalog> catalog(StubOptions { }, StubPolicy { });
+    static NeverDestroyed<StubCatalog> catalog(StubOptions { });
     return catalog.get();
 }
 
 template<typename Emit>
-static StubRecording record(StubKey body, const Emit& emit)
+static StubRecording recordStubBody(StubKey body, const Emit& emit)
 {
     const StubCatalog& catalog = defaultCatalog();
     StubAssembler jit(catalog.options(), catalog);
@@ -135,18 +122,22 @@ static StubRecording record(StubKey body, const Emit& emit)
 }
 
 template<typename Accepts>
-static StubKey findBody(const Accepts& accepts)
+static std::optional<StubKey> tryFindStubBody(const Accepts& accepts)
 {
-    std::optional<StubKey> found;
     for (StubKey body : allStubBodies()) {
-        if (body.operandRegister() || entriesOf(body).size() != 1)
+        if (entriesOf(body).size() != 1)
             continue;
         StubSignature signature = signatureFor(body);
-        if (signature.usesCallConvention || !accepts(body, signature))
-            continue;
-        found = body;
-        break;
+        if (!signature.usesCallConvention && accepts(body, signature))
+            return body;
     }
+    return std::nullopt;
+}
+
+template<typename Accepts>
+static StubKey findStubBody(const Accepts& accepts)
+{
+    std::optional<StubKey> found = tryFindStubBody(accepts);
     AOT_TEST_CHECK(found.has_value());
     return *found;
 }
@@ -155,18 +146,20 @@ static std::optional<StubRegister> stubRegisterOf(GPRReg reg)
 {
     if (reg == InvalidGPRReg)
         return std::nullopt;
-    for (StubRegister candidate : stubRegisters) {
+    for (unsigned index = 0; index < numberOfStubRegisters; ++index) {
+        StubRegister candidate = static_cast<StubRegister>(index);
         if (gprOf(candidate) == reg)
             return candidate;
     }
     return std::nullopt;
 }
 
-static StubRegister freeRegisterOf(StubKey body)
+static StubRegister freeStubRegisterOf(StubKey body)
 {
     StubSignature signature = signatureFor(body);
     std::optional<StubRegister> found;
-    for (StubRegister candidate : stubRegisters) {
+    for (unsigned index = 0; index < numberOfStubRegisters; ++index) {
+        StubRegister candidate = static_cast<StubRegister>(index);
         GPRReg reg = gprOf(candidate);
         if (reg == InvalidGPRReg || namesRegister(signature, reg))
             continue;
@@ -177,21 +170,28 @@ static StubRegister freeRegisterOf(StubKey body)
     return *found;
 }
 
-static bool isPlain(StubKey body, const StubSignature& signature)
+static bool isPlainStubBody(StubKey body, const StubSignature& signature)
 {
     return body.callerFrame() == CallerFrame::HasFrame && !signature.immediate;
 }
 
-static StubKey findPlainBody() { return findBody(isPlain); }
+static StubKey findPlainStubBody() { return findStubBody(isPlainStubBody); }
 
-static StubKey findPlainBodyWithout(Reg reg)
+static StubKey findPlainStubBodyWithout(Reg reg)
 {
-    return findBody([&](StubKey candidate, const StubSignature& signature) {
-        return isPlain(candidate, signature) && !namesRegister(signature, reg);
+    return findStubBody([&](StubKey candidate, const StubSignature& signature) {
+        return isPlainStubBody(candidate, signature) && !namesRegister(signature, reg);
     });
 }
 
-static std::optional<unsigned> findReadOnlyOperand(const StubSignature& signature)
+static StubKey findStubBodyWithoutRegisters()
+{
+    return findStubBody([](StubKey candidate, const StubSignature& signature) {
+        return isPlainStubBody(candidate, signature) && !signature.numberOfOperands && signature.result == StubResult::None;
+    });
+}
+
+static std::optional<unsigned> indexOfReadOnlyOperand(const StubSignature& signature)
 {
     for (unsigned i = 0; i < signature.numberOfOperands; ++i) {
         Reg operand = signature.operands[i];
@@ -206,13 +206,13 @@ static std::optional<unsigned> findReadOnlyOperand(const StubSignature& signatur
     return std::nullopt;
 }
 
-static ReadOnlyOperand findReadOnlyOperand()
+static ReadOnlyStubOperand findReadOnlyStubOperand()
 {
-    StubKey body = findBody([](StubKey candidate, const StubSignature& signature) {
-        return isPlain(candidate, signature) && findReadOnlyOperand(signature);
+    StubKey body = findStubBody([](StubKey candidate, const StubSignature& signature) {
+        return isPlainStubBody(candidate, signature) && indexOfReadOnlyOperand(signature);
     });
     StubSignature signature = signatureFor(body);
-    unsigned index = findReadOnlyOperand(signature).value();
+    unsigned index = indexOfReadOnlyOperand(signature).value();
     GPRReg gpr = signature.operands[index].gpr();
     return { body, index, gpr, stubRegisterOf(gpr).value() };
 }
@@ -221,15 +221,15 @@ static void checkRecordedScratch(StubKey plain, StubRegister scratch)
 {
     GPRReg scratchGPR = gprOf(scratch);
 
-    StubRecording unsaved = record(plain, [&](StubAssembler& jit) { jit.allocateScratch(scratch); });
+    StubRecording unsaved = recordStubBody(plain, [&](StubAssembler& jit) { jit.allocateScratch(scratch); });
     AOT_TEST_CHECK(containsRegister(unsaved.clobberedInline, scratchGPR) && unsaved.clobberedByCallees.isEmpty());
 
-    StubRecording preserved = record(plain, [&](StubAssembler& jit) {
+    StubRecording preserved = recordStubBody(plain, [&](StubAssembler& jit) {
         jit.preserving({ scratchGPR }, [&] { jit.allocateScratch(scratch); });
     });
     AOT_TEST_CHECK(!containsRegister(preserved.clobbered(), scratchGPR));
 
-    StubRecording saved = record(plain, [&](StubAssembler& jit) {
+    StubRecording saved = recordStubBody(plain, [&](StubAssembler& jit) {
         jit.withSavedRegisters(RegisterSet { scratchGPR }, [&] { jit.allocateScratch(scratch); });
     });
     AOT_TEST_CHECK(!containsRegister(saved.clobbered(), scratchGPR));
@@ -237,13 +237,13 @@ static void checkRecordedScratch(StubKey plain, StubRegister scratch)
 
 static void checkBorrowedRegister()
 {
-    StubKey body = findPlainBodyWithout(borrowedFPR);
-    StubRegister scratch = freeRegisterOf(body);
+    StubKey body = findPlainStubBodyWithout(borrowedFPR);
+    StubRegister scratch = freeStubRegisterOf(body);
 
-    StubRecording allocated = record(body, [](StubAssembler& jit) { jit.allocateScratch(borrowedFPR); });
+    StubRecording allocated = recordStubBody(body, [](StubAssembler& jit) { jit.allocateScratch(borrowedFPR); });
     AOT_TEST_CHECK(containsRegister(allocated.clobberedInline, borrowedFPR));
 
-    StubRecording borrowed = record(body, [&](StubAssembler& jit) {
+    StubRecording borrowed = recordStubBody(body, [&](StubAssembler& jit) {
         GPRReg saved = jit.allocateScratch(scratch);
         jit.saveFPR(borrowedFPR, saved);
         jit.restoreFPR(borrowedFPR, saved);
@@ -254,15 +254,15 @@ static void checkBorrowedRegister()
 
 static void checkRecordedRegisterSet()
 {
-    StubKey body = findPlainBodyWithout(borrowedFPR);
-    GPRReg scratch = gprOf(freeRegisterOf(body));
+    StubKey body = findPlainStubBodyWithout(borrowedFPR);
+    GPRReg scratch = gprOf(freeStubRegisterOf(body));
     RegisterSet registers { scratch };
     registers.add(borrowedFPR, IgnoreVectors);
 
-    StubRecording unsaved = record(body, [&](StubAssembler& jit) { jit.recordClobbers(registers); });
+    StubRecording unsaved = recordStubBody(body, [&](StubAssembler& jit) { jit.recordClobbers(registers); });
     AOT_TEST_CHECK(unsaved.clobberedInline.subsumes(registers));
 
-    StubRecording preserved = record(body, [&](StubAssembler& jit) {
+    StubRecording preserved = recordStubBody(body, [&](StubAssembler& jit) {
         jit.preserving({ scratch }, [&] { jit.recordClobbers(registers); });
     });
     AOT_TEST_CHECK(!containsRegister(preserved.clobbered(), scratch) && containsRegister(preserved.clobbered(), borrowedFPR));
@@ -270,33 +270,33 @@ static void checkRecordedRegisterSet()
 
 static void testRecordedStubRegisters()
 {
-    StubKey plain = findPlainBody();
-    StubRegister scratch = freeRegisterOf(plain);
+    StubKey plain = findPlainStubBody();
+    StubRegister scratch = freeStubRegisterOf(plain);
     checkRecordedScratch(plain, scratch);
     checkBorrowedRegister();
     checkRecordedRegisterSet();
 
     auto emitNothing = [](StubAssembler&) { };
-    StubRecording empty = record(plain, emitNothing);
+    StubRecording empty = recordStubBody(plain, emitNothing);
     checkWrittenRegisters(empty.clobberedInline, signatureFor(plain));
     AOT_TEST_CHECK(!containsRegister(empty.clobbered(), gprOf(scratch)));
 
-    StubKey bodyWithImmediate = findBody([](StubKey, const StubSignature& signature) {
+    StubKey bodyWithImmediate = findStubBody([](StubKey, const StubSignature& signature) {
         return signature.firstResult.isSet() && signature.immediate;
     });
-    checkWrittenRegisters(record(bodyWithImmediate, emitNothing).clobberedInline, signatureFor(bodyWithImmediate));
+    checkWrittenRegisters(recordStubBody(bodyWithImmediate, emitNothing).clobberedInline, signatureFor(bodyWithImmediate));
 
-    ReadOnlyOperand operand = findReadOnlyOperand();
-    AOT_TEST_CHECK(!containsRegister(record(operand.body, emitNothing).clobbered(), operand.gpr));
-    StubRecording clobberedOperand = record(operand.body, [&](StubAssembler& jit) { jit.clobberOperand(operand.index); });
+    ReadOnlyStubOperand operand = findReadOnlyStubOperand();
+    AOT_TEST_CHECK(!containsRegister(recordStubBody(operand.body, emitNothing).clobbered(), operand.gpr));
+    StubRecording clobberedOperand = recordStubBody(operand.body, [&](StubAssembler& jit) { jit.clobberOperand(operand.index); });
     AOT_TEST_CHECK(containsRegister(clobberedOperand.clobberedInline, operand.gpr));
 }
 
 static void checkScratchAllocation()
 {
-    StubKey plain = findPlainBody();
-    StubRegister scratch = freeRegisterOf(plain);
-    record(plain, [&](StubAssembler& jit) {
+    StubKey plain = findPlainStubBody();
+    StubRegister scratch = freeStubRegisterOf(plain);
+    recordStubBody(plain, [&](StubAssembler& jit) {
         AOT_TEST_CHECK(jit.canAllocate(scratch));
         jit.allocateScratch(scratch);
         AOT_TEST_CHECK(!jit.canAllocate(scratch));
@@ -305,8 +305,8 @@ static void checkScratchAllocation()
 
 static void checkOperandAllocation()
 {
-    ReadOnlyOperand operand = findReadOnlyOperand();
-    record(operand.body, [&](StubAssembler& jit) {
+    ReadOnlyStubOperand operand = findReadOnlyStubOperand();
+    recordStubBody(operand.body, [&](StubAssembler& jit) {
         AOT_TEST_CHECK(!jit.canAllocate(operand.stubRegister));
         jit.preserving({ operand.gpr }, [&] { AOT_TEST_CHECK(jit.canAllocate(operand.stubRegister)); });
         GPRReg clobbered = jit.clobberOperand(operand.index);
@@ -319,8 +319,8 @@ static void checkOperandAllocation()
 
 static void checkAliasedRegisterAllocation()
 {
-    StubKey body = findPlainBodyWithout(gprOf(StubRegister::A0));
-    record(body, [](StubAssembler& jit) {
+    StubKey body = findPlainStubBodyWithout(gprOf(StubRegister::A0));
+    recordStubBody(body, [](StubAssembler& jit) {
         AOT_TEST_CHECK(jit.canAllocate(StubRegister::T12));
         jit.allocateScratch(StubRegister::A0);
         AOT_TEST_CHECK(!jit.canAllocate(StubRegister::T12));
@@ -338,24 +338,22 @@ static void testAllocatableStubRegisters()
 
 static void checkRecordedCalls(StubKey plain, StubRegister scratch)
 {
-    Entry entry = operationFrontEnds()[0].raw;
-
-    StubRecording operationCall = record(plain, [&](StubAssembler& jit) { jit.callOperation(entry, jit.allocateScratch(scratch)); });
-    AOT_TEST_CHECK(operationCall.entriesUsed.get(indexOf(entry)));
-    AOT_TEST_CHECK(operationCall.operationsCalled.get(indexOf(entry)));
+    StubRecording operationCall = recordStubBody(plain, [&](StubAssembler& jit) { jit.callOperation(calledOperation, jit.allocateScratch(scratch)); });
+    AOT_TEST_CHECK(operationCall.entriesUsed.get(indexOf(calledOperation)));
+    AOT_TEST_CHECK(operationCall.operationsCalled.get(indexOf(calledOperation)));
     AOT_TEST_CHECK(!operationCall.hasUnknownEffects && operationCall.leavesStubs);
     AOT_TEST_CHECK(operationCall.clobberedByCallees == RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
 
-    StubRecording pointerLoad = record(plain, [&](StubAssembler& jit) { jit.loadRuntimePointer(entry, jit.allocateScratch(scratch)); });
-    AOT_TEST_CHECK(pointerLoad.entriesUsed.get(indexOf(entry)));
+    StubRecording pointerLoad = recordStubBody(plain, [&](StubAssembler& jit) { jit.loadRuntimePointer(calledOperation, jit.allocateScratch(scratch)); });
+    AOT_TEST_CHECK(pointerLoad.entriesUsed.get(indexOf(calledOperation)));
     AOT_TEST_CHECK(pointerLoad.operationsCalled.isEmpty());
     AOT_TEST_CHECK(!pointerLoad.leavesStubs && pointerLoad.clobberedByCallees.isEmpty());
 
-    StubRecording compiledCall = record(plain, [&](StubAssembler& jit) { jit.call(jit.allocateScratch(scratch), JSEntryPtrTag); });
+    StubRecording compiledCall = recordStubBody(plain, [&](StubAssembler& jit) { jit.call(jit.allocateScratch(scratch), JSEntryPtrTag); });
     AOT_TEST_CHECK(compiledCall.hasUnknownEffects && compiledCall.leavesStubs);
     AOT_TEST_CHECK(compiledCall.clobberedByCallees == registersClobberedByCompiledCalls());
 
-    StubRecording hostCall = record(plain, [&](StubAssembler& jit) { jit.call(jit.allocateScratch(scratch), HostFunctionPtrTag); });
+    StubRecording hostCall = recordStubBody(plain, [&](StubAssembler& jit) { jit.call(jit.allocateScratch(scratch), HostFunctionPtrTag); });
     AOT_TEST_CHECK(hostCall.hasUnknownEffects && hostCall.leavesStubs);
     AOT_TEST_CHECK(hostCall.clobberedByCallees == registersClobberedByOperations());
 }
@@ -363,23 +361,22 @@ static void checkRecordedCalls(StubKey plain, StubRegister scratch)
 static void checkRecordedTailCall()
 {
     constexpr GPRReg function = gprOf(StubRegister::Operation);
-    Entry entry = operationFrontEnds()[0].raw;
-    StubKey body = findBody([](StubKey candidate, const StubSignature& signature) {
-        if (!isPlain(candidate, signature) || signature.firstResult == Reg(function) || signature.secondResult == Reg(function))
+    StubKey body = tryFindStubBody([](StubKey candidate, const StubSignature& signature) {
+        if (!isPlainStubBody(candidate, signature) || signature.firstResult == Reg(function) || signature.secondResult == Reg(function))
             return false;
         return namesRegister(signature, function);
-    });
+    }).value_or(findPlainStubBody());
 
-    StubRecording tailCall = record(body, [&](StubAssembler& jit) {
-        jit.tailCallOperation(entry, OperationCall::FirstArgument::Instance);
+    StubRecording tailCall = recordStubBody(body, [&](StubAssembler& jit) {
+        jit.tailCallOperation(calledOperation, OperationCall::FirstArgument::Instance);
     });
-    AOT_TEST_CHECK(tailCall.operationsCalled.get(indexOf(entry)));
+    AOT_TEST_CHECK(tailCall.operationsCalled.get(indexOf(calledOperation)));
     AOT_TEST_CHECK(tailCall.leavesStubs && tailCall.clobberedByCallees == registersClobberedByOperations());
 }
 
 static void checkRecordedStubReferences(StubKey plain, StubRegister scratch)
 {
-    StubRecording everyKind = record(plain, [&](StubAssembler& jit) {
+    StubRecording everyKind = recordStubBody(plain, [&](StubAssembler& jit) {
         GPRReg reg = jit.allocateScratch(scratch);
         jit.callStub(calledStub);
         jit.jumpToStub(calledStub);
@@ -393,20 +390,20 @@ static void checkRecordedStubReferences(StubKey plain, StubRegister scratch)
         AOT_TEST_CHECK(everyKind.references[i].savedAround.isEmpty());
     }
 
-    StubKey bodyWithResult = findBody([](StubKey candidate, const StubSignature& signature) {
-        return isPlain(candidate, signature) && signature.result == StubResult::GPR;
+    StubKey bodyWithResult = findStubBody([](StubKey candidate, const StubSignature& signature) {
+        return isPlainStubBody(candidate, signature) && signature.result == StubResult::GPR;
     });
-    StubRecording returnedAddress = record(bodyWithResult, [](StubAssembler& jit) { jit.returnStubAddress(calledStub); });
+    StubRecording returnedAddress = recordStubBody(bodyWithResult, [](StubAssembler& jit) { jit.returnStubAddress(calledStub); });
     AOT_TEST_CHECK(returnedAddress.references.size() == 1);
     AOT_TEST_CHECK(returnedAddress.references[0].target == calledStub && returnedAddress.references[0].kind == StubReference::Kind::ReturnedAddress);
 
-    StubRecording preservingCall = record(plain, [&](StubAssembler& jit) {
+    StubRecording preservingCall = recordStubBody(plain, [&](StubAssembler& jit) {
         jit.preserving({ jit.allocateScratch(scratch) }, [&] { jit.callStub(calledStub); });
     });
     AOT_TEST_CHECK(preservingCall.references.size() == 1);
     AOT_TEST_CHECK(containsRegister(preservingCall.references[0].savedAround, gprOf(scratch)));
 
-    StubRecording jumpPreservingNothing = record(plain, [](StubAssembler& jit) {
+    StubRecording jumpPreservingNothing = recordStubBody(plain, [](StubAssembler& jit) {
         size_t sizeBefore = jit.m_assembler.codeSize();
         jit.preserving(std::span<const GPRReg>(), [] { });
         AOT_TEST_CHECK(jit.m_assembler.codeSize() == sizeBefore);
@@ -415,7 +412,7 @@ static void checkRecordedStubReferences(StubKey plain, StubRegister scratch)
     AOT_TEST_CHECK(jumpPreservingNothing.references.size() == 1);
     AOT_TEST_CHECK(jumpPreservingNothing.references[0].kind == StubReference::Kind::Jump);
 
-    StubRecording labeledCall = record(plain, [](StubAssembler& jit) {
+    StubRecording labeledCall = recordStubBody(plain, [](StubAssembler& jit) {
         jit.callStub(calledStub);
         jit.bindReturnLabel(StubFrameKind::EngineCallee);
     });
@@ -425,38 +422,30 @@ static void checkRecordedStubReferences(StubKey plain, StubRegister scratch)
 
 static void testRecordedStubReferences()
 {
-    StubKey plain = findPlainBody();
-    StubRegister scratch = freeRegisterOf(plain);
+    StubKey plain = findPlainStubBody();
+    StubRegister scratch = freeStubRegisterOf(plain);
     checkRecordedCalls(plain, scratch);
     checkRecordedTailCall();
     checkRecordedStubReferences(plain, scratch);
 }
 
-static StubKey findBodyWithoutRegisters()
-{
-    return findBody([](StubKey candidate, const StubSignature& signature) {
-        return isPlain(candidate, signature) && !signature.numberOfOperands && signature.result == StubResult::None;
-    });
-}
-
 static void checkCallInSavingScope(StubKey body, StubRegister scratch, bool hasResult, const RegisterSet& expectedLoss)
 {
-    Entry entry = operationFrontEnds()[0].raw;
-    StubRecording recording = record(body, [&](StubAssembler& jit) {
+    StubRecording recording = recordStubBody(body, [&](StubAssembler& jit) {
         jit.preservingCallerSavedRegisters(hasResult, [&](unsigned bytes) {
             AOT_TEST_CHECK(bytes);
-            jit.callOperation(entry, jit.allocateScratch(scratch));
+            jit.callOperation(calledOperation, jit.allocateScratch(scratch));
         });
     });
     AOT_TEST_CHECK(recording.clobberedByCallees == expectedLoss);
-    AOT_TEST_CHECK(recording.leavesStubs && recording.operationsCalled.get(indexOf(entry)));
+    AOT_TEST_CHECK(recording.leavesStubs && recording.operationsCalled.get(indexOf(calledOperation)));
 }
 
 static void checkPreservingCall(StubKey body, StubRegister scratch, bool returnsValue, const RegisterSet& expectedLoss)
 {
     for (StubCallee callee : { StubCallee::Operation, StubCallee::HostFunction, StubCallee::CompiledCode }) {
         PtrTag tag = callee == StubCallee::Operation ? OperationPtrTag : callee == StubCallee::HostFunction ? HostFunctionPtrTag : JSEntryPtrTag;
-        StubRecording recording = record(body, [&](StubAssembler& jit) {
+        StubRecording recording = recordStubBody(body, [&](StubAssembler& jit) {
             jit.callAndReturnPreservingRegisters({ callee, returnsValue, true }, [&] {
                 jit.call(jit.allocateScratch(scratch), tag);
             });
@@ -465,7 +454,6 @@ static void checkPreservingCall(StubKey body, StubRegister scratch, bool returns
         lostIntegerRegisters.filter(RegisterSet::allGPRs());
         lostIntegerRegisters.exclude(RegisterSet::macroClobberedGPRs());
         AOT_TEST_CHECK(lostIntegerRegisters == expectedLoss);
-        // Of the floating-point registers that the callee may write, two are stored and loaded.
         RegisterSet keptFloatingPointRegisters = registersClobberedBy(callee);
         keptFloatingPointRegisters.filter(RegisterSet::allFPRs());
         keptFloatingPointRegisters.exclude(recording.clobberedByCallees);
@@ -477,7 +465,7 @@ static void checkPreservingCall(StubKey body, StubRegister scratch, bool returns
 
 static void testCallsInSavingScopes()
 {
-    StubKey body = findBodyWithoutRegisters();
+    StubKey body = findStubBodyWithoutRegisters();
     StubRegister scratch = StubRegister::A1;
     RegisterSet nothing;
     RegisterSet returnedValue { GPRInfo::returnValueGPR };
@@ -487,12 +475,11 @@ static void testCallsInSavingScopes()
     checkPreservingCall(body, scratch, false, nothing);
     checkPreservingCall(body, scratch, true, returnedValue);
 
-    Entry entry = operationFrontEnds()[0].raw;
-    StubRecording unsaved = record(body, [&](StubAssembler& jit) { jit.callOperation(entry, jit.allocateScratch(scratch)); });
+    StubRecording unsaved = recordStubBody(body, [&](StubAssembler& jit) { jit.callOperation(calledOperation, jit.allocateScratch(scratch)); });
     AOT_TEST_CHECK(unsaved.clobberedByCallees == registersClobberedByOperations() && unsaved.leavesStubs);
 
-    StubRecording partlySaved = record(body, [&](StubAssembler& jit) {
-        jit.preserving({ gprOf(scratch) }, [&] { jit.callOperation(entry, jit.allocateScratch(scratch)); });
+    StubRecording partlySaved = recordStubBody(body, [&](StubAssembler& jit) {
+        jit.preserving({ gprOf(scratch) }, [&] { jit.callOperation(calledOperation, jit.allocateScratch(scratch)); });
     });
     AOT_TEST_CHECK(partlySaved.clobberedByCallees == registersClobberedByOperations().remove(gprOf(scratch)));
 }
@@ -500,7 +487,7 @@ static void testCallsInSavingScopes()
 static void checkLeafCall(StubKey body, Entry leaf, RegisterSet expectedLoss)
 {
     expectedLoss.add(leafFunctionGPR, IgnoreVectors);
-    StubRecording recording = record(body, [&](StubAssembler& jit) { jit.callLeaf(leaf); });
+    StubRecording recording = recordStubBody(body, [&](StubAssembler& jit) { jit.callLeaf(leaf); });
     AOT_TEST_CHECK(recording.clobberedInline == expectedLoss);
     AOT_TEST_CHECK(recording.clobberedByCallees.isEmpty());
     AOT_TEST_CHECK(!recording.leavesStubs && !recording.hasUnknownEffects);
@@ -509,83 +496,76 @@ static void checkLeafCall(StubKey body, Entry leaf, RegisterSet expectedLoss)
 
 static void testLeafCalls()
 {
-    StubKey body = findBodyWithoutRegisters();
+    StubKey body = findStubBodyWithoutRegisters();
     checkLeafCall(body, preserveMostLeaf, registersClobberedByPreserveMostLeaves());
     checkLeafCall(body, ordinaryLeaf, registersClobberedByOperations());
 
     constexpr GPRReg saved = GPRInfo::returnValueGPR;
-    StubRecording preserving = record(body, [&](StubAssembler& jit) {
+    StubRecording preserving = recordStubBody(body, [&](StubAssembler& jit) {
         jit.preserving({ saved }, [&] { jit.callLeaf(preserveMostLeaf, stackAlignmentBytes()); });
     });
     AOT_TEST_CHECK(containsRegister(registersClobberedByPreserveMostLeaves(), saved) && !containsRegister(preserving.clobbered(), saved));
 }
 
-static void testRecordedExits()
+static constexpr StubKey bodyForEveryCaller { StubFamily::AllocateCell };
+static constexpr StubKey stubMakingSameResult = bodyForEveryCaller.withForm(1);
+static constexpr StubKey stubMakingNoResult { StubFamily::RememberElement };
+
+static_assert(exists(bodyForEveryCaller.withCallerFrame(CallerFrame::KeepsNoFPRs)));
+static_assert(exists(stubMakingSameResult.withCallerFrame(CallerFrame::KeepsNoFPRs)));
+static_assert(exists(stubMakingNoResult.withCallerFrame(CallerFrame::KeepsNoFPRs)));
+static_assert(!exists(StubKey(StubFamily::BuiltinCell).withCallerFrame(CallerFrame::KeepsNoFPRs)) && !exists(StubKey(StubFamily::Equal).withCallerFrame(CallerFrame::KeepsNoFPRs)) && !exists(bodyWithTwoEntries.withCallerFrame(CallerFrame::KeepsNoFPRs)));
+
+static RegisterSet registersLostToOperationFor(CallerFrame callerFrame, SavedRegistersAreRead savedRegistersAreRead)
 {
-    constexpr Entry cachingOperation = Entry::operationAOTGetByIdAndCache;
-    constexpr Entry finisher = Entry::operationAOTCallGetterOfSlot;
-    constexpr RuntimeCounterID reason = RuntimeCounterID::StubCannotCallGetter;
-    constexpr GPRReg reasonArgument = operationArgumentGPR(3);
-
-    StubRecording recording = record(findBodyWithoutRegisters(), [&](StubAssembler& jit) {
-        jit.exitOnMiss(cachingOperation, { });
-        jit.exitOnCannot(finisher, reason, reasonArgument, { });
-    });
-    AOT_TEST_CHECK(recording.exits.size() == 2);
-    AOT_TEST_CHECK(recording.exits[0] == (StubExitRecord { StubExit::Miss, cachingOperation, RuntimeCounterID::None }));
-    AOT_TEST_CHECK(recording.exits[1] == (StubExitRecord { StubExit::Cannot, finisher, reason }));
-    AOT_TEST_CHECK(recording.operationsCalled.get(indexOf(cachingOperation)) && recording.operationsCalled.get(indexOf(finisher)));
-    AOT_TEST_CHECK(containsRegister(recording.clobbered(), reasonArgument));
-    AOT_TEST_CHECK(record(findBodyWithoutRegisters(), [](StubAssembler&) { }).exits.isEmpty());
-
-    StubRecording savingRegisters = record(findBodyWithoutRegisters(), [&](StubAssembler& jit) {
-        jit.exitOnCannot(finisher, reason, reasonArgument, { .saves = OperationCall::Saves::CallerSavedRegisters });
-    });
-    AOT_TEST_CHECK(savingRegisters.exits.size() == 1 && savingRegisters.exits[0] == recording.exits[1]);
-    AOT_TEST_CHECK(!containsRegister(savingRegisters.clobbered(), reasonArgument));
+    return recordStubBody(bodyForEveryCaller.withCallerFrame(callerFrame), [&](StubAssembler& jit) {
+        jit.callOperationAndReturn(calledOperation, { .saves = OperationCall::Saves::CallerSavedRegisters }, [] { }, savedRegistersAreRead);
+    }).clobberedByCallees;
 }
 
-static void testRecordedCodeSymbols()
+static StubKey targetOfJumpFor(CallerFrame callerFrame, StubKey target)
 {
-    constexpr CodeSymbol narrow { SymbolSpace::RegExp, 3, 0 };
-    constexpr CodeSymbol wide { SymbolSpace::RegExp, 3, 1 };
+    StubRecording recording = recordStubBody(bodyForEveryCaller.withCallerFrame(callerFrame), [&](StubAssembler& jit) { jit.jumpToStub(target); });
+    AOT_TEST_CHECK(recording.references.size() == 1 && recording.references[0].kind == StubReference::Kind::Jump);
+    return recording.references[0].target;
+}
 
-    StubRecording recording = record(findBodyWithoutRegisters(), [&](StubAssembler& jit) {
-        jit.callCode(narrow);
-        jit.callCode(narrow);
-        jit.callCode(wide);
-        AOT_TEST_CHECK(jit.relocations().numberOfRelocations() == 3);
-    });
-    AOT_TEST_CHECK(recording.symbols.size() == 2 && recording.symbols[0] == narrow && recording.symbols[1] == wide);
-    AOT_TEST_CHECK(recording.clobberedByCallees == registersClobberedByOperations());
-    AOT_TEST_CHECK(!recording.leavesStubs && !recording.hasUnknownEffects);
+static void testCallersThatKeepFewerRegisters()
+{
+    AOT_TEST_CHECK(signatureFor(bodyForEveryCaller).firstResult == Reg(GPRInfo::returnValueGPR) && signatureFor(stubMakingSameResult).firstResult == Reg(GPRInfo::returnValueGPR) && !signatureFor(stubMakingNoResult).firstResult.isSet());
 
-    StubRecording saved = record(findBodyWithoutRegisters(), [&](StubAssembler& jit) {
-        jit.preservingCallerSavedRegisters(false, [&](unsigned) { jit.callCode(narrow); });
-    });
-    AOT_TEST_CHECK(saved.symbols.size() == 1 && saved.clobberedByCallees.isEmpty());
+    RegisterSet lostToCallerWithFrame = registersLostToOperationFor(CallerFrame::HasFrame, SavedRegistersAreRead::ByCallerAlone);
+    AOT_TEST_CHECK(!lostToCallerWithFrame.numberOfSetFPRs());
+    RegisterSet lostToCallerWithoutFPRs = registersLostToOperationFor(CallerFrame::KeepsNoFPRs, SavedRegistersAreRead::ByCallerAlone);
+    AOT_TEST_CHECK(RegisterSet(lostToCallerWithoutFPRs).filter(RegisterSet::allGPRs()) == lostToCallerWithFrame);
+    AOT_TEST_CHECK(RegisterSet(lostToCallerWithoutFPRs).filter(RegisterSet::allFPRs()) == registersClobberedByOperations().filter(RegisterSet::allFPRs()));
+
+    AOT_TEST_CHECK(targetOfJumpFor(CallerFrame::HasFrame, stubMakingSameResult) == stubMakingSameResult);
+    AOT_TEST_CHECK(registersLostToOperationFor(CallerFrame::KeepsNoFPRs, SavedRegistersAreRead::BeforeReturnToo) == lostToCallerWithFrame);
+    AOT_TEST_CHECK(targetOfJumpFor(CallerFrame::KeepsNoFPRs, stubMakingSameResult) == stubMakingSameResult.withCallerFrame(CallerFrame::KeepsNoFPRs));
+    AOT_TEST_CHECK(targetOfJumpFor(CallerFrame::KeepsNoFPRs, stubMakingNoResult) == stubMakingNoResult.withCallerFrame(CallerFrame::KeepsNoFPRs));
 }
 
 #if OS(UNIX)
 
 template<typename Legal, typename Illegal>
-static void checkAssertion(StubKey body, const Legal& legal, const Illegal& illegal)
+static void checkAssemblerAssertion(StubKey body, const Legal& legal, const Illegal& illegal)
 {
-    AOT_TEST_CHECK(runInChild([&] { record(body, legal); }) == ChildOutcome::Finished);
-    AOT_TEST_CHECK(runInChild([&] { record(body, illegal); }) == ChildOutcome::Crashed);
+    AOT_TEST_CHECK(runInChild([&] { recordStubBody(body, legal); }) == ChildOutcome::Finished);
+    AOT_TEST_CHECK(runInChild([&] { recordStubBody(body, illegal); }) == ChildOutcome::Crashed);
 }
 
 static void checkRegisterAssertions(StubKey plain, StubRegister scratch)
 {
-    ReadOnlyOperand operand = findReadOnlyOperand();
-    checkAssertion(operand.body, [&](StubAssembler& jit) {
+    ReadOnlyStubOperand operand = findReadOnlyStubOperand();
+    checkAssemblerAssertion(operand.body, [&](StubAssembler& jit) {
         jit.clobberOperand(operand.index);
         jit.reuseScratch(operand.stubRegister);
     }, [&](StubAssembler& jit) {
         jit.allocateScratch(operand.stubRegister);
     });
 
-    checkAssertion(plain, [&](StubAssembler& jit) {
+    checkAssemblerAssertion(plain, [&](StubAssembler& jit) {
         jit.allocateScratch(scratch);
         jit.reuseScratch(scratch);
     }, [&](StubAssembler& jit) {
@@ -596,9 +576,9 @@ static void checkRegisterAssertions(StubKey plain, StubRegister scratch)
 
 static void checkBorrowedRegisterAssertion()
 {
-    StubKey body = findPlainBodyWithout(borrowedFPR);
-    StubRegister scratch = freeRegisterOf(body);
-    checkAssertion(body, [&](StubAssembler& jit) {
+    StubKey body = findPlainStubBodyWithout(borrowedFPR);
+    StubRegister scratch = freeStubRegisterOf(body);
+    checkAssemblerAssertion(body, [&](StubAssembler& jit) {
         GPRReg saved = jit.allocateScratch(scratch);
         jit.saveFPR(borrowedFPR, saved);
         jit.restoreFPR(borrowedFPR, saved);
@@ -609,45 +589,30 @@ static void checkBorrowedRegisterAssertion()
     });
 }
 
-static void callThroughHandlerTable(StubAssembler& jit, GPRReg index)
-{
-    jit.callThroughHandlerTable(CCallHelpers::BaseIndex(instanceGPR, index, CCallHelpers::TimesEight), std::array { calledStub });
-}
-
-static void checkHandlerTableAssertions()
-{
-    ReadOnlyOperand operand = findReadOnlyOperand();
-    checkAssertion(operand.body, [&](StubAssembler& jit) {
-        callThroughHandlerTable(jit, jit.allocateScratch(freeRegisterOf(operand.body)));
-    }, [&](StubAssembler& jit) {
-        callThroughHandlerTable(jit, operand.gpr);
-    });
-}
-
 static void checkEntryAssertions()
 {
     auto bindSecondEntry = [](StubAssembler& jit) { jit.bindEntry(secondEntry); };
 
-    checkAssertion(bodyWithTwoEntries, bindSecondEntry, [](StubAssembler& jit) {
+    checkAssemblerAssertion(bodyWithTwoEntries, bindSecondEntry, [](StubAssembler& jit) {
         jit.bindEntry(secondEntry);
         jit.bindEntry(calledStub);
     });
-    checkAssertion(bodyWithTwoEntries, bindSecondEntry, [](StubAssembler& jit) {
+    checkAssemblerAssertion(bodyWithTwoEntries, bindSecondEntry, [](StubAssembler& jit) {
         jit.bindEntry(secondEntry);
         jit.bindEntry(secondEntry);
     });
-    checkAssertion(bodyWithTwoEntries, bindSecondEntry, [](StubAssembler&) { });
+    checkAssemblerAssertion(bodyWithTwoEntries, bindSecondEntry, [](StubAssembler&) { });
 }
 
 static void checkReferenceAssertions(StubKey plain, StubRegister scratch)
 {
-    checkAssertion(plain, [](StubAssembler& jit) {
+    checkAssemblerAssertion(plain, [](StubAssembler& jit) {
         jit.callStub(calledStub);
     }, [](StubAssembler& jit) {
         jit.callStub(nonexistentStub);
     });
 
-    checkAssertion(plain, [](StubAssembler& jit) {
+    checkAssemblerAssertion(plain, [](StubAssembler& jit) {
         jit.callStub(calledStub);
         jit.bindReturnLabel(StubFrameKind::EngineCallee);
     }, [](StubAssembler& jit) {
@@ -655,7 +620,7 @@ static void checkReferenceAssertions(StubKey plain, StubRegister scratch)
         jit.bindReturnLabel(StubFrameKind::Plain);
     });
 
-    checkAssertion(plain, [&](StubAssembler& jit) {
+    checkAssemblerAssertion(plain, [&](StubAssembler& jit) {
         jit.preserving({ gprOf(scratch) }, [&] { jit.callStub(calledStub); });
     }, [&](StubAssembler& jit) {
         jit.preserving({ gprOf(scratch) }, [&] { jit.jumpToStub(calledStub); });
@@ -665,16 +630,46 @@ static void checkReferenceAssertions(StubKey plain, StubRegister scratch)
 static void checkFaultLinkAssertion()
 {
     auto clobberLink = [](StubAssembler& jit) { jit.clobberRegister(faultCallerLinkGPR); };
-    AOT_TEST_CHECK(runInChild([&] { record(bodyEnteredAtFaults, clobberLink); }) == ChildOutcome::Finished);
-    AOT_TEST_CHECK(runInChild([&] { record(bodyEnteredAtFaults.withCallerFrame(CallerFrame::Frameless), clobberLink); }) == ChildOutcome::Crashed);
+    AOT_TEST_CHECK(runInChild([&] { recordStubBody(bodyEnteredAtFaults, clobberLink); }) == ChildOutcome::Finished);
+    AOT_TEST_CHECK(runInChild([&] { recordStubBody(bodyEnteredAtFaults.withCallerFrame(CallerFrame::Frameless), clobberLink); }) == ChildOutcome::Crashed);
 }
 
 static void checkLeafAssertion(StubKey plain)
 {
-    checkAssertion(plain, [](StubAssembler& jit) {
+    checkAssemblerAssertion(plain, [](StubAssembler& jit) {
         jit.callLeaf(ordinaryLeaf);
     }, [](StubAssembler& jit) {
-        jit.callLeaf(operationFrontEnds()[0].operation);
+        jit.callLeaf(calledOperation);
+    });
+}
+
+static void checkScratchRegisterAssertions(StubKey plain)
+{
+    constexpr int32_t largest = std::numeric_limits<int32_t>::max();
+    checkAssemblerAssertion(plain, [](StubAssembler& jit) {
+        const OwnedScratchRegister length(jit);
+        jit.load64(CCallHelpers::Address(instanceGPR), length);
+        jit.branch64(CCallHelpers::Above, length, CCallHelpers::TrustedImm32(largest)).link(&jit);
+    }, [](StubAssembler& jit) {
+        const OwnedScratchRegister length(jit);
+        jit.load64(CCallHelpers::Address(instanceGPR), length);
+        jit.branch64(CCallHelpers::Above, length, CCallHelpers::TrustedImm64(largest)).link(&jit);
+    });
+    checkAssemblerAssertion(plain, [](StubAssembler& jit) {
+        {
+            const OwnedScratchRegister first(jit);
+        }
+        const OwnedScratchRegister second(jit);
+    }, [](StubAssembler& jit) {
+        const OwnedScratchRegister first(jit);
+        const OwnedScratchRegister second(jit);
+    });
+    checkAssemblerAssertion(plain, [](StubAssembler& jit) {
+        const OwnedScratchRegister handedOn(jit, instanceGPR);
+        jit.branch64(CCallHelpers::Above, instanceGPR, CCallHelpers::TrustedImm64(largest)).link(&jit);
+    }, [](StubAssembler& jit) {
+        const OwnedScratchRegister handedOn(jit, OwnedScratchRegister::registerToHandOn);
+        jit.branch64(CCallHelpers::Above, instanceGPR, CCallHelpers::TrustedImm64(largest)).link(&jit);
     });
 }
 
@@ -694,16 +689,17 @@ static void testStubAssemblerAssertions()
     WTF::fastDisableScavenger();
     defaultCatalog();
 
-    StubKey plain = findPlainBody();
-    StubRegister scratch = freeRegisterOf(plain);
+    StubKey plain = findPlainStubBody();
+    StubRegister scratch = freeStubRegisterOf(plain);
     checkRegisterAssertions(plain, scratch);
     checkBorrowedRegisterAssertion();
-    checkHandlerTableAssertions();
     checkEntryAssertions();
     checkReferenceAssertions(plain, scratch);
     if (isARM64())
         checkFaultLinkAssertion();
     checkLeafAssertion(plain);
+    if (isX86_64())
+        checkScratchRegisterAssertions(plain);
     checkBodyAssertion();
 }
 
@@ -712,14 +708,11 @@ static void testStubAssemblerAssertions()
 static bool canLinkAddressAcross(size_t distance, PCRelativeReach reach)
 {
     const StubCatalog& catalog = defaultCatalog();
-    StubKey plain = findPlainBody();
     StubAssembler jit(catalog.options(), catalog, reach);
-    jit.generateForTesting(plain, [&](StubAssembler& jit) {
-        CCallHelpers::Label target = jit.label();
-        while (jit.m_assembler.codeSize() < distance)
-            jit.nop();
-        jit.loadLabelAddress(target, jit.allocateScratch(freeRegisterOf(plain)));
-    });
+    CCallHelpers::Label target = jit.label();
+    while (jit.m_assembler.codeSize() < distance)
+        jit.nop();
+    jit.loadLabelAddress(target, gprOf(StubRegister::R0));
     ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
     AOT_TEST_CHECK(!buffer.didFailToAllocate());
     return jit.linkCallsAndAddresses(buffer.linkBuffer());
@@ -740,8 +733,7 @@ std::span<const NativeTest> stubAssemblerTests()
         { "stubs/recorded-references"_s, testRecordedStubReferences },
         { "stubs/calls-in-saving-scopes"_s, testCallsInSavingScopes },
         { "stubs/leaf-calls"_s, testLeafCalls },
-        { "stubs/recorded-exits"_s, testRecordedExits },
-        { "stubs/recorded-code-symbols"_s, testRecordedCodeSymbols },
+        { "stubs/callers-that-keep-fewer-registers"_s, testCallersThatKeepFewerRegisters },
         { "stubs/address-reach"_s, testAddressReach },
 #if OS(UNIX)
         { "stubs/assembler-assertions"_s, testStubAssemblerAssertions },

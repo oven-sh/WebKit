@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClassToken.h"
+#include "AOTEffectsNet.h"
 #include "AOTEnvironment.h"
 #include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
@@ -19,7 +21,6 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStatics.h"
-#include "AOTProgramStrings.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "BuiltinNames.h"
@@ -97,7 +98,7 @@ static JSValue readBinding(Instance* instance, JSCellButterfly* operands, const 
     case EvalBindingForm::ModuleVariable:
         return ProgramStatics::readVariable(*instance, binding.slot);
     case EvalBindingForm::EnvironmentSlot:
-        return readSlot(binding.slot.representation(), &cellOperandOf<Environment>(operands, binding)->at<uint8_t>(binding.slot.offset), *instance->state->strings);
+        return readSlot(binding.slot.representation(), &cellOperandOf<Environment>(operands, binding)->at<uint8_t>(binding.slot.offset), *instance);
     case EvalBindingForm::MappedArgument:
         return mappedArgumentsOf(operands, binding)->argument(DirectArgumentsOffset(binding.slot.offset)).get();
     case EvalBindingForm::Operand:
@@ -111,7 +112,6 @@ static JSValue boundThisOrEmpty(JSValue thisValue, bool isInDerivedConstructor)
     return isInDerivedConstructor && thisValue.isUndefined() ? JSValue() : thisValue;
 }
 
-// `this` of a derived constructor names the constructor, and lies where compiled code reads it again.
 static bool canBeBoundByText(const EvalBindingData& thisBinding)
 {
     return thisBinding.function != EvalBindingData::noOperand && formOf(thisBinding) == EvalBindingForm::EnvironmentSlot;
@@ -180,10 +180,12 @@ static bool needsPrivateBrand(const EvalBindingData& binding)
     return entry && entry->isPrivateMethodOrAccessor();
 }
 
-static Symbol* privateSymbolAt(Instance* instance, uint32_t privateKey)
+static Symbol* privateSymbolOf(Instance* instance, JSCellButterfly* operands, const EvalBindingData& binding)
 {
-    UniquedStringImpl* uid = identifierAt(instance, privateKey).impl();
+    UniquedStringImpl* uid = identifierAt(instance, binding.privateKey).impl();
     RELEASE_ASSERT(uid && uid->isSymbol() && static_cast<SymbolImpl*>(uid)->isPrivate());
+    if (Symbol* name = ClassToken::tryNameForText(*instance->vm, *instance->state, operandOrEmpty(operands, binding.operand), uid))
+        return name;
     return Symbol::create(*instance->vm, static_cast<SymbolImpl&>(*uid));
 }
 
@@ -198,7 +200,6 @@ static JSObject* createAccessorPair(VM& vm, JSGlobalObject* globalObject, JSValu
     return pair;
 }
 
-// What evaluated text finds as the derived constructor. `super()` constructs its prototype: that of the class at that moment.
 class DerivedConstructorStandIn final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -259,6 +260,7 @@ public:
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject) { return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info()); }
     static EvalBindings* create(VM&, Structure*, Instance*, const DirectEvalRequest&, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData>);
+    static EvalBindings* createWithoutPrivateValues(VM&, Structure*, Instance*, const DirectEvalRequest&, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData>);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -288,7 +290,7 @@ private:
     JSObject* createStaticFieldAccessors(VM&, const EvalBindingData&);
     JSValue readStaticField(JSGlobalObject*, const EvalBindingData&) const;
     void storeStaticField(JSGlobalObject*, const EvalBindingData&, JSValue);
-    bool storeVariable(JSGlobalObject*, const EvalBindingData&, PropertyName, JSValue);
+    bool storeVariable(JSGlobalObject*, const EvalBindingData&, JSValue);
     void writeBinding(VM&, const EvalBindingData&, JSValue);
 
     Instance* m_instance;
@@ -306,7 +308,7 @@ JSCell* EvalBindings::createPrivateValue(VM& vm, const EvalBindingData& binding)
     if (isStaticPrivateField(binding))
         return createStaticFieldAccessors(vm, binding);
     if (kindOf(binding) == EvalBindingKind::PrivateName)
-        return privateSymbolAt(m_instance, binding.privateKey);
+        return privateSymbolOf(m_instance, m_operands.get(), binding);
     if (kindOf(binding) != EvalBindingKind::PrivateAccessor)
         return nullptr;
     JSCellButterfly* operands = m_operands.get();
@@ -343,13 +345,19 @@ void EvalBindings::storeStaticField(JSGlobalObject* globalObject, const EvalBind
     readStaticField(globalObject, binding);
     RETURN_IF_EXCEPTION(scope, void());
     scope.release();
-    storeVariable(globalObject, binding, identifierAt(m_instance, binding.name), value);
+    storeVariable(globalObject, binding, value);
+}
+
+EvalBindings* EvalBindings::createWithoutPrivateValues(VM& vm, Structure* structure, Instance* instance, const DirectEvalRequest& request, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData> bindings)
+{
+    auto* result = new (NotNull, allocateCell<EvalBindings>(vm)) EvalBindings(vm, structure, instance, request, operands, homeObjectHolder, bindings);
+    result->finishCreation(vm);
+    return result;
 }
 
 EvalBindings* EvalBindings::create(VM& vm, Structure* structure, Instance* instance, const DirectEvalRequest& request, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData> bindings)
 {
-    auto* result = new (NotNull, allocateCell<EvalBindings>(vm)) EvalBindings(vm, structure, instance, request, operands, homeObjectHolder, bindings);
-    result->finishCreation(vm);
+    EvalBindings* result = createWithoutPrivateValues(vm, structure, instance, request, operands, homeObjectHolder, bindings);
     for (auto& binding : bindings) {
         if (JSCell* value = result->createPrivateValue(vm, binding))
             operands->setIndex(vm, result->privateValueIndexOf(binding), value);
@@ -431,23 +439,21 @@ bool EvalBindings::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalOb
 
 void EvalBindings::writeBinding(VM& vm, const EvalBindingData& binding, JSValue value)
 {
-    ProgramStrings& strings = *m_instance->state->strings;
     SlotRepresentation representation = binding.slot.representation();
     uint32_t offset = binding.slot.offset;
     switch (formOf(binding)) {
     case EvalBindingForm::ModuleVariable: {
         RELEASE_ASSERT(representation != SlotRepresentation::DeferredClosure);
         ProgramStatics& statics = *m_instance->state->statics;
-        statics.ensureProgramStaticsInitialized();
-        statics.ensureVariableIsFilled(offset);
-        RELEASE_ASSERT(tryWriteSlot(strings, representation, m_instance->statics() + offset, value));
+        m_instance->state->countWriteForEffectsNet(Typed::CountInEffectsNet::WordsOfStaticsWritten);
+        RELEASE_ASSERT(tryWriteSlot(*m_instance, representation, m_instance->statics() + offset, value));
         if (traitsOf(representation).holdsCell)
             statics.didStoreRootInStatics(offset);
         return;
     }
     case EvalBindingForm::EnvironmentSlot: {
         auto* environment = cellOperandOf<Environment>(m_operands.get(), binding);
-        RELEASE_ASSERT(tryWriteSlot(strings, representation, &environment->at<uint8_t>(offset), value));
+        RELEASE_ASSERT(tryWriteSlot(*m_instance, representation, &environment->at<uint8_t>(offset), value));
         vm.writeBarrier(environment, value);
         return;
     }
@@ -462,14 +468,10 @@ void EvalBindings::writeBinding(VM& vm, const EvalBindingData& binding, JSValue 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool EvalBindings::storeVariable(JSGlobalObject* globalObject, const EvalBindingData& binding, PropertyName name, JSValue value)
+bool EvalBindings::storeVariable(JSGlobalObject* globalObject, const EvalBindingData& binding, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!read(binding)) {
-        throwException(globalObject, scope, createTDZError(globalObject, StringView(name.uid())));
-        return false;
-    }
     if (formOf(binding) == EvalBindingForm::Operand) {
         throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
         return false;
@@ -487,10 +489,6 @@ bool EvalBindings::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName 
     if (!binding)
         return false;
     EvalBindingKind kind = kindOf(*binding);
-    if (isAssignableBinding(kind))
-        RELEASE_AND_RETURN(scope, thisObject->storeVariable(globalObject, *binding, name, value));
-    if (kind == EvalBindingKind::FunctionName && !slot.isStrictMode())
-        return true;
     if (kind == EvalBindingKind::This) {
         if (!canBeBoundByText(*binding)) {
             throwException(globalObject, scope, createSuperCallInDirectEvalError(globalObject));
@@ -500,6 +498,14 @@ bool EvalBindings::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName 
         return true;
     }
     RELEASE_ASSERT(isNamedBinding(kind));
+    if (!thisObject->read(*binding)) {
+        throwException(globalObject, scope, createTDZError(globalObject, StringView(name.uid())));
+        return false;
+    }
+    if (isAssignableBinding(kind))
+        RELEASE_AND_RETURN(scope, thisObject->storeVariable(globalObject, *binding, value));
+    if (kind == EvalBindingKind::FunctionName && !slot.isStrictMode())
+        return true;
     throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
     return false;
 }
@@ -669,7 +675,6 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
         return asObject(object);
     };
 
-    // The bindings of the class follow those of its constructor.
     auto parentOfClass = [&](const EvalBindingData& bindingOfConstructor) {
         const EvalBindingData* classObject = findBinding(bindings.subspan(&bindingOfConstructor - bindings.data()), EvalBindingKind::ClassObject);
         RELEASE_ASSERT(classObject);
@@ -717,12 +722,17 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
         innermost = EvalVariableScope::create(vm, ensureStructure(vm, *instance, &DirectEvalStructures::variableScope, EvalVariableScope::createStructure), innermost, scopeType, contents);
     };
 
+    if (request.outer != DirectEvalRequest::noOuter) {
+        const auto& outer = requestAt<DirectEvalRequest>(instance, request.outer);
+        EvalBindings* namesAround = EvalBindings::createWithoutPrivateValues(vm, ensureStructure(vm, *instance, &DirectEvalStructures::bindings, EvalBindings::createStructure), instance, outer, operandCopy, homeObjectHolder, unsafeMakeSpan(outer.bindings, outer.numberOfBindings));
+        innermost = EvalScope::create(vm, ensureStructure(vm, *instance, &DirectEvalStructures::scope, EvalScope::createStructure), innermost, namesAround, newTarget);
+    }
+
     PrivateNameEnvironment privateNames;
     for (auto& binding : bindings) {
         if (std::optional<PrivateNameEntry> entry = privateNameEntryOf(binding))
             privateNames.add(RefPtr<UniquedStringImpl> { identifierAt(instance, binding.name).impl() }, *entry);
     }
-    // An eval inside the evaluated source collects the private names in scope from the symbol tables of the scope chain. This scope binds nothing, so it stands outside the others.
     if (!privateNames.isEmpty())
         pushVariableScope(ScopeType::LexicalScope, { .ownBindings = createBindings({ }), .privateNames = &privateNames });
 
@@ -759,7 +769,7 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
                 return binding.privateKey && needsPrivateBrand(binding);
             });
             if (instanceMember != group.end())
-                contents.privateBrand = privateSymbolAt(instance, instanceMember->privateKey);
+                contents.privateBrand = privateSymbolOf(instance, operandCopy, *instanceMember);
             pushVariableScope(ScopeType::LexicalScope, contents);
             runEnd = groupStart;
         }

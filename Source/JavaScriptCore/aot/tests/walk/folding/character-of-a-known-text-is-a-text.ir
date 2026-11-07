@@ -1,0 +1,52 @@
+# the characters of a string are its own properties, and nothing can change them: a read of one off a known text under a known index is that character
+# function second() { return ["abc"[1]]; }
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: [[character]]: {{*}} = String string="b"
+# CHECK: = NewArray [[character]]
+# RUN(NEVER): walk f1 mechanisms=none+Folding
+# NEVER-NOT: = ElemGet
+# past the end the read asks String.prototype, so it stays: function behind() { return ["abc"[3]]; }
+# RUN(BEHIND): walk f2 mechanisms=none+Folding
+# BEHIND-LABEL: code f2:Body
+# BEHIND: = ElemGet
+# nobody knows the index: function any(i) { return ["abc"[i]]; }
+# RUN(ANY): walk f3 mechanisms=none+Folding
+# ANY-LABEL: code f3:Body
+# ANY: = ElemGet
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="second" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abc"
+    v1 = Integer integer=1
+    v2 = ElemGet v0, v1
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f2 name="behind" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abc"
+    v1 = Integer integer=3
+    v2 = ElemGet v0, v1
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f3 name="any" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="abc"
+    v2 = ElemGet v1, v0
+    v3 = NewArray v2 contents=anything
+    Return v3
+}

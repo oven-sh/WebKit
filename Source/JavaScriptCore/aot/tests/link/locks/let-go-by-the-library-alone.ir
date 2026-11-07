@@ -1,0 +1,35 @@
+# the library keeps built-in objects in objects of its own, `w.emitter = process` of node:events, and replaces no member so: what the library alone lets go stays locked
+# where the library has the object in sight and writes on it under a name that nobody can read, as node:worker_threads does with `process`, its members are open
+# in the library: keep(Date); Math[name] = 1;      in the program: Date.now(); Math.random();
+# RUN: locks
+# CHECK: locked DateNow constant
+# CHECK-NOT: MathRandom
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v1 key="now"
+    v3 = Call v2, v1
+    v4 = Builtin builtin=Math
+    v5 = PropGet v4 key="random"
+    v6 = Call v5, v4
+    v7 = NewClosure function=f1
+    v8 = Call v7
+    Return v6
+}
+function f1 module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date"
+    v2 = PropGet v0 key="keep"
+    v3 = Call v2, -, v1
+    v4 = Builtin builtin=Math
+    v5 = PropGet v0 key="name"
+    v6 = Integer integer=1
+    ElemSet v4, v5, v6
+    Return v3
+}

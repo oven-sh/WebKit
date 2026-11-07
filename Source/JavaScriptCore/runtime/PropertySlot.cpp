@@ -25,7 +25,6 @@
 #include "JSCJSValueInlines.h"
 #include "JSObject.h"
 
-#include "AOTMembersLeftOut.h"
 
 namespace JSC {
 
@@ -46,14 +45,7 @@ JSValue PropertySlot::customGetter(VM& vm, PropertyName propertyName) const
             return throwDOMAttributeGetterTypeError(globalObject, scope, domAttribute->classInfo, propertyName);
         }
     }
-    JSValue result = JSValue::decode(m_data.custom.getValue(globalObject, JSValue::encode(thisValue), propertyName));
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode() && vm.exceptionForInspection()) [[unlikely]] {
-        if (JSValue standIn = AOT::takeStandInForMemberLeftOut(globalObject, String(propertyName.uid()), slotBase()))
-            return standIn;
-    }
-#endif
-    return result;
+    return JSValue::decode(m_data.custom.getValue(globalObject, JSValue::encode(thisValue), propertyName));
 }
 
 JSValue PropertySlot::getPureResult() const

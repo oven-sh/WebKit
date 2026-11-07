@@ -1,0 +1,34 @@
+# If Link answered this read with less than the field holds, the caller of `get` would take what comes back for a string where it is none. If it answered with anything, as the first version did, the object would count as escaped and every read of it would stay closed
+# function get(o) { return o.x; }  get({ x: "a" });
+# That the source calls the field required is a guess. The one literal of the layout lists it, so it is filled, and the read gives what the field holds and no undefined.
+# RUN: summary f1
+# CHECK: access [[read]] v1 Read Parameter 0 "x" -> [[read]]
+# CHECK: edge [[read]] -> Result 0
+# RUN(KEPT): summary f1
+# KEPT-NOT: Parameter 0 -> Unknown
+# KEPT-NOT: Unknown -> Result
+# RUN(LINK): link calls functions fields layouts mechanisms=all
+# LINK: call f0 v4 -> f1
+# LINK: function f1 callers-known one-callee {{*}}result=string
+# LINK-NEXT: parameter 0 {{*}}proven=L0
+# LINK: field L0.0 "x" proven=string writers-known written-at-construction-alone filled
+# LINK: layout L0 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v2 calleeName="get"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

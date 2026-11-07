@@ -113,9 +113,7 @@ function respellToken(token: string, groups: TokenGroups): string {
   if (skipped !== undefined) return token;
   if (annotation !== undefined) return directiveOf(annotation, value);
   if (head !== undefined && declared !== undefined) return exportedHeadOf(head, declared);
-  // The checker knows an object with such a member as iterable only where the key is written as TypeScript writes it.
   if (literalKey !== undefined) return `[Symbol.${literalKey}]`;
-  // The text has no types. What begins empty would be a list of nothing, or an object without a member, for good.
   if (emptyDeclaration !== undefined) return `${emptyDeclaration}: ${emptyLiteral === "[]" ? "any[]" : "any"}`;
   if (symbol !== undefined) return `${symbolKeyPrefix}${symbol}`;
   return `${privateNamePrefix}${name}`;

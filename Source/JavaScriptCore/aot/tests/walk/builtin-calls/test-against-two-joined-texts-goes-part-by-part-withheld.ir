@@ -1,0 +1,6 @@
+# the same function with calls of built-ins withheld: the method is called by value with the joined text
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = GetStringCodeUnit
+# CHECK: = Call v
+# PROGRAM-OF: test-against-two-joined-texts-goes-part-by-part.ir

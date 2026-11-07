@@ -1,0 +1,266 @@
+# `$isPlainInstanceOf(object, Meter)` WHERE THE CLASS IS A CONSTRUCTOR FUNCTION, as most classes of the library are.
+# function Meter(level) { this.level = level; this.mark = "m"; }
+# Meter.prototype.read = function () { return this.level; };
+# function Below(level) { Meter.call(this, level); }
+# Object.setPrototypeOf(Below.prototype, Meter.prototype);
+# function ask(object) { return $isPlainInstanceOf(object, Meter) ? "plain" : "-"; }      in a file of the library
+# const made = new Meter(5);
+# print(ask(made), ask(new Below(6)), ask({ level: 1, mark: "m" }), ask(Meter.prototype), ask(Meter));
+# change(made, Meter);
+# print(ask(made), ask(new Meter(8)));
+# print(made.read(), made.mark);
+# An object of the function that inherits by hand holds the same fields, stored by the same text: it is an heir, and gets a no.
+# OPTIONS: mechanisms=all
+# RUN(FORM): walk f3
+# FORM: = IsPlainInstanceOf v0 {{*}}receivers=[L0]
+# Nothing reads the class at run time.
+# RUN(OPERAND): walk f3
+# OPERAND-NOT: GetModuleVariable
+# RUN(NOTHING): run-in-shell change = function () { };
+# NOTHING: plain - - - -
+# NOTHING-NEXT: plain plain
+# NOTHING-NEXT: 5 m
+# NOTHING-NEXT: exited with 0
+# RUN(ACCESSOR): run-in-shell change = function (made) { Object.defineProperty(made, "mark", { get() { return "a"; }, configurable: true }); };
+# ACCESSOR: plain - - - -
+# ACCESSOR-NEXT: - plain
+# ACCESSOR-NEXT: 5 a
+# RUN(BETWEEN): run-in-shell change = function (made, Meter) { const link = Object.create(Meter.prototype); link.send = function () { }; Object.setPrototypeOf(made, link); made.locals = { }; };
+# BETWEEN: plain - - - -
+# BETWEEN-NEXT: plain plain
+# BETWEEN-NEXT: 5 m
+# RUN(HIDES): run-in-shell change = function (made, Meter) { const link = Object.create(Meter.prototype); link.read = function () { return 73; }; Object.setPrototypeOf(made, link); };
+# HIDES: plain - - - -
+# HIDES-NEXT: - plain
+# HIDES-NEXT: 73 m
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+module m4 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Meter" module=m0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}, {key="mark" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L1 kind=Instance name="Below" module=m0 position=122 base=L0 constructor=f2 fields=[{key="level" declared={type=anything}}, {key="mark" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L2 module=m0 position=369 fields=[{key="level" declared={type=anything} flags=[IsRequired]}, {key="mark" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Object{layout=L2 members=[{key="level" value=Number{value=1}}, {key="mark" value=String{value="m"}}]} module=m0
+data d1 root=Array{contents=anything} module=m2
+data d2 root=Array{contents=anything} module=m2
+variable g0 name="Meter" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = GetModuleVariable variable=g0 @63
+    v5 = PropGet v4 key="prototype" @63
+    v6 = NewClosure function=f4 @86
+    PropSet v5, v6 key="read" @69
+    v8 = Builtin builtin=Object @173
+    v9 = Builtin builtin=ObjectSetPrototypeOf @173
+    v10 = PropGet v1 key="prototype" @195
+    v11 = GetModuleVariable variable=g0 @212
+    v12 = PropGet v11 key="prototype" @212
+    v13 = Call v9, v8, v10, v12 calleeName="Object.setPrototypeOf" @180
+    v14 = GetModuleVariable variable=g0 @319
+    v15 = Integer integer=5 @325
+    v16 = Construct v14, -, v15 calleeName="Meter" @319
+    v17 = Builtin builtin=GlobalThis @329
+    v18 = PropGet v17 key="print" [isFreeName] @329
+    v19 = Call v3, -, v16 calleeName="ask" @335
+    v20 = Integer integer=6 @360
+    v21 = Construct v1, -, v20 calleeName="Below" @354
+    v22 = Call v3, -, v21 calleeName="ask" @346
+    v23 = Data data=d0 @369
+    v24 = Call v3, -, v23 calleeName="ask" @365
+    v25 = GetModuleVariable variable=g0 @399
+    v26 = PropGet v25 key="prototype" @399
+    v27 = Call v3, -, v26 calleeName="ask" @395
+    v28 = GetModuleVariable variable=g0 @421
+    v29 = Call v3, -, v28 calleeName="ask" @417
+    v30 = Call v18, -, v19, v22, v24, v27, v29 calleeName="print" @329
+    v31 = Builtin builtin=GlobalThis @430
+    v32 = PropGet v31 key="change" [isFreeName] @430
+    v33 = GetModuleVariable variable=g0 @443
+    v34 = Call v32, -, v16, v33 calleeName="change" @430
+    v35 = Builtin builtin=GlobalThis @451
+    v36 = PropGet v35 key="print" [isFreeName] @451
+    v37 = Call v3, -, v16 calleeName="ask" @457
+    v38 = GetModuleVariable variable=g0 @476
+    v39 = Integer integer=8 @482
+    v40 = Construct v38, -, v39 calleeName="Meter" @476
+    v41 = Call v3, -, v40 calleeName="ask" @468
+    v42 = Call v36, -, v37, v41 calleeName="print" @451
+    v43 = Builtin builtin=GlobalThis @488
+    v44 = PropGet v43 key="print" [isFreeName] @488
+    v45 = PropGet v16 key="read" @494
+    v46 = Call v45, v16 calleeKey="read" calleeName="made.read" @499
+    v47 = PropGet v16 key="mark" @507
+    v48 = Call v44, -, v46, v47 calleeName="print" @488
+    v49 = Undefined @488
+    Return v49 @488
+}
+function f1 name="Meter" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = String string="m" @56
+    PropSet v0, v3 key="mark" @44
+    v5 = Undefined @44
+    Return v5 @44
+}
+function f2 name="Below" module=m0 position=122 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    v2 = GetModuleVariable variable=g0 @146
+    v3 = PropGet v2 key="call" @146
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Meter.call" @152
+    v5 = Undefined @146
+    Return v5 @146
+}
+function f3 name="ask" module=m4 position=230 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @260
+    v2 = Undefined @260
+    v3 = GetModuleVariable variable=g0 @276
+    v4 = IsPlainInstanceOf v0, v3 @260
+    v5 = ToBoolean v4 @260
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @260
+  b1(v6):
+    v7 = String string="plain" @285
+    Jump -> next b3(v7) @285
+  b2(v8):
+    v9 = String string="-" @295
+    Jump -> next b3(v9) @295
+  b3(v10):
+    Return v10 @295
+}
+function f4 module=m0 position=86 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="level" @107
+    Return v1 @107
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f6 name="call" module=m2 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):
+    v8 = CreateUnmappedArguments v1, v7, v2, v3, v4, v5, v6 @0
+    v9 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @194
+    v10 = StrictEq v0, v9 @194
+    Branch v10 -> taken b2(), notTaken b1() @194
+  b1():
+    v11 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @229
+    v12 = StrictEq v0, v11 @229
+    Branch v12 -> taken b2(), notTaken b6() @229
+  b2():
+    v13 = Data data=d1 @288
+    v14 = Integer integer=1 @313
+    v15 = Convert v14 declared={type=number} @313
+    Jump -> next b3(v15) @309
+  b3(v16: number):
+    LoopHint @309
+    v18 = Less v16, v1 @320
+    Branch v18 -> taken b4(), notTaken b5() @320
+  b4():
+    v19 = Integer integer=1 @392
+    v20 = Sub v16, v19 @392
+    v21 = ElemGet v8, v16 @395
+    v22 = Convert v13 declared={type=object flags=[IsFromCompiler, IsClaim]} @355
+    ElemDefine v22, v20, v21 @355
+    v24 = Increment v16 @338
+    v25 = Convert v24 declared={type=number} @338
+    Jump -> next b3(v25) @338
+  b5():
+    v26 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @433
+    v27 = Call v26, v0, v2, v13 [isDoneInPlace] @433
+    ReturnCall v27 @433
+  b6():
+    Switch v1 cases=[0, 1, 2, 3, 4, 5] -> case b7(), case b7(), case b8(), case b9(), case b10(), case b11(), otherwise b12() @548
+  b7():
+    v28 = Call v0, v2 @578
+    ReturnCall v28 @578
+  b8():
+    v29 = Call v0, v2, v3 @631
+    ReturnCall v29 @631
+  b9():
+    v30 = Call v0, v2, v3, v4 @698
+    ReturnCall v30 @698
+  b10():
+    v31 = Call v0, v2, v3, v4, v5 @779
+    ReturnCall v31 @779
+  b11():
+    v32 = Call v0, v2, v3, v4, v5, v6 @874
+    ReturnCall v32 @874
+  b12():
+    v33 = Data data=d2 @990
+    v34 = Integer integer=1 @1011
+    v35 = Convert v34 declared={type=number} @1011
+    Jump -> next b13(v35) @1007
+  b13(v36: number):
+    LoopHint @1007
+    v38 = Less v36, v1 @1018
+    Branch v38 -> taken b14(), notTaken b15() @1018
+  b14():
+    v39 = Integer integer=1 @1085
+    v40 = Sub v36, v39 @1085
+    v41 = ElemGet v8, v36 @1088
+    v42 = Convert v33 declared={type=object flags=[IsFromCompiler, IsClaim]} @1049
+    ElemDefine v42, v40, v41 @1049
+    v44 = Increment v36 @1036
+    v45 = Convert v44 declared={type=number} @1036
+    Jump -> next b13(v45) @1036
+  b15():
+    v46 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1115
+    v47 = Call v46, v0, v2, v33 [isDoneInPlace] @1115
+    ReturnCall v47 @1115
+}
+function f7 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1248
+    Branch v4 -> taken b2(), notTaken b1() @1248
+  b1():
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1283
+    Branch v6 -> taken b2(), notTaken b3() @1283
+  b2():
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    ReturnCall v8 @1333
+  b3():
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
+}
+function f8 name="[Symbol.dispose]" module=m3 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=FunctionPrototypeApply function=f7
+runtimefunction id=FunctionPrototypeCall function=f6
+runtimefunction id=JSIteratorPrototypeDispose function=f8
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

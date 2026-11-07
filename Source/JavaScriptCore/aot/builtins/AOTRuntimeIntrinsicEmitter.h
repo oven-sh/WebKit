@@ -20,12 +20,15 @@ public:
     void generateLinkTimeConstant(const ValueContext&);
     void generateHasJSType(const ValueContext&);
     void generateFindsDeclaredMember(const ValueContext&);
+    void generateIsPlainInstanceOf(const ValueContext&);
+    void generateIsPlainHeirOf(const ValueContext&);
+    void generateFindsNoMember(const ValueContext&);
     void generateGetInternalField(const ValueContext&);
     void generatePutInternalField(const ValueContext&);
 
 private:
-    Condition hasJSType(const Value&, CellPointer);
-    TypedPointer internalField(const Value&);
+    Condition hasJSType(const Operation&, CellPointer);
+    TypedPointer internalField(const Operation&);
 };
 
 } } } // namespace JSC::AOT::Typed

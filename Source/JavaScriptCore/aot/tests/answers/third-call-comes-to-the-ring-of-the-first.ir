@@ -1,0 +1,58 @@
+# import("./pages.js"), two jobs later import("./layout.js"), two jobs later import("./menu.js")        pages.js: import "./layout.js"        layout.js: import "./pages.js"        menu.js: import "./layout.js"
+# The ring is entered at pages.js, and the calls settle in their order: what is held behind one load is let go in the order of the calls.
+# RUN: run-in-shell globalThis.report = name => print(name + " runs"); globalThis.register = (...closures) => { globalThis.registered = closures; }; const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const result = start(entry); Promise.resolve(result).then(async () => { const jobsBetween = [[2, 2]]; const words = ["first", "second", "third"]; let next = 0; for (const jobs of jobsBetween) { const calls = []; for (let call = 0; call <= jobs.length; ++call) { const word = words[call]; const made = registered[next++](); made.then(() => print(word + " settled"), () => print(word + " failed")); calls.push(made); for (let job = 0; job < (jobs[call] ?? 0); ++job) await null; } await Promise.allSettled(calls); } }); return result; };
+# CHECK: layout.js runs
+# CHECK-NEXT: pages.js runs
+# CHECK-NEXT: menu.js runs
+# CHECK-NEXT: first settled
+# CHECK-NEXT: second settled
+# CHECK-NEXT: third settled
+# CHECK: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/pages.js" displayPath="pages.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/layout.js" displayPath="layout.js" body=f2 requests=[{target=m1 completes=true}]
+module m3 path="/menu.js" displayPath="menu.js" body=f3 requests=[{target=m2 completes=true}]
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = NewClosure function=f5
+    v2 = NewClosure function=f6
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return
+}
+function f1 name="pages" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="pages.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f2 name="layout" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="layout.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f3 name="menu" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="menu.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f4 name="import1" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+function f5 name="import2" results=[{type=anything}] {
+    v0 = ImportModule module=m2 referrer=m0
+    Return v0
+}
+function f6 name="import3" results=[{type=anything}] {
+    v0 = ImportModule module=m3 referrer=m0
+    Return v0
+}

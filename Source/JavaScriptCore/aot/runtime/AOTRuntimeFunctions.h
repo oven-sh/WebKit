@@ -20,25 +20,21 @@ class Identifier;
 class JSArray;
 class JSGlobalObject;
 class JSMap;
+class JSMapIterator;
 class JSObject;
 class JSPropertyNameEnumerator;
 class JSSet;
 class JSString;
 class PropertyName;
-class PropertyRun;
 class PutPropertySlot;
 class ThrowScope;
 
 namespace AOT {
 
-const PropertyRun* propertyRunAt(Instance*, uint32_t number);
-
 JS_EXPORT_PRIVATE JSObject* withAllPropertiesInline(JSGlobalObject*, JSObject*);
 
 void defineDataProperty(Instance*, JSObject*, PropertyName, JSValue, PutPropertySlot&);
-// False: nothing was done.
 bool tryDefineElementOfCompiledObject(Instance*, JSObject*, uint32_t index, JSValue);
-// An accessor that is found gets the receiver for `this`.
 JSValue getWithoutCaches(Instance*, JSValue base, const Identifier&, JSValue receiver);
 inline JSValue getWithoutCaches(Instance* instance, JSValue base, const Identifier& identifier) { return getWithoutCaches(instance, base, identifier, base); }
 
@@ -64,6 +60,10 @@ JSPropertyNameEnumerator* enumeratorFor(JSGlobalObject*, JSValue object);
 EnumeratedKey findEnumeratedKey(JSGlobalObject*, JSPropertyNameEnumerator*, JSValue object, uint64_t position);
 
 void initializeIterationWords(Instance&);
+void appendElementsOfList(JSGlobalObject*, JSArray* target, JSArray* source);
+void appendMembersOfSet(JSGlobalObject*, JSArray* target, JSSet* source);
+bool tryAppendPairsOfMap(JSGlobalObject*, JSArray* target, JSMap* source);
+bool tryAppendPairsLeftIn(JSGlobalObject*, JSArray* target, JSMapIterator*);
 JS_EXPORT_PRIVATE size_t numberOfElementsSpreadFrom(JSGlobalObject*, JSString*);
 
 } } // namespace JSC::AOT

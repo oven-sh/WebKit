@@ -327,6 +327,21 @@ static void promiseResolveThenableJob(JSGlobalObject* globalObject, JSValue prom
     EXCEPTION_ASSERT(scope.exception() || true);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static ALWAYS_INLINE JSValue asyncContextForDriverResume(JSGlobalObject* globalObject, VM& vm, JSValue target)
+{
+#if ENABLE(AOT)
+    if (vm.isAsyncContextTrackingEnabled() && vm.hasCompiledCode()) [[unlikely]] {
+        if (JSValue context = AOT::contextInWhichDriverGoesOn(target))
+            return context;
+    }
+#else
+    UNUSED_PARAM(target);
+#endif
+    return AsyncContextSwapScope::current(vm, globalObject);
+}
+#endif
+
 // Settle a cooperative-driver request (target is a driver, not a real .next() JSPromise). The iterator
 // result belongs to the producer's realm (for an async generator that is the generator's realm even when
 // driven cross-realm; for an AsyncFromSyncIterator it is the wrapper's realm), so use it for the object and
@@ -339,7 +354,7 @@ static ALWAYS_INLINE void settleDriverWithIteratorResult(JSGlobalObject* globalO
     JSGlobalObject* realm = producer->realm();
 #if USE(BUN_JSC_ADDITIONS)
     // AsyncGeneratorDriverResume runs the driver under the async context active now.
-    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    JSValue asyncContext = asyncContextForDriverResume(globalObject, vm, target);
 #define BUN_ASYNC_CONTEXT , asyncContext
 #else
     UNUSED_PARAM(globalObject);
@@ -597,7 +612,7 @@ static void asyncGeneratorCompleteStep(JSGlobalObject* globalObject, JSAsyncGene
     // resolveWithInternalMicrotask keeps resolvePromise's thenable check, matching a real Promise settlement.
     if (isThrow) {
 #if USE(BUN_JSC_ADDITIONS)
-        JSPromise::rejectWithInternalMicrotask(vm, globalObject, value, InternalMicrotask::AsyncGeneratorDriverResume, target, AsyncContextSwapScope::current(vm, globalObject));
+        JSPromise::rejectWithInternalMicrotask(vm, globalObject, value, InternalMicrotask::AsyncGeneratorDriverResume, target, asyncContextForDriverResume(globalObject, vm, target));
 #else
         JSPromise::rejectWithInternalMicrotask(vm, globalObject, value, InternalMicrotask::AsyncGeneratorDriverResume, target);
 #endif
@@ -1205,7 +1220,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             if (auto* compiled = context->payload()->inherits<ModuleGraphLoadingState>() ? nullptr : dynamicDowncast<AOT::ModuleRecord>(module))
                 compiled->willBeLoadedByImport();
 #endif
-            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
+            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher(), vm.hasCompiledCode() && context->referrer().getModule() ? dynamicDowncast<ModuleGraphLoadingState>(context->payload()) : nullptr);
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1257,7 +1272,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
 
             // setEntryRecord logic
             auto* entry = context->entry();
-            if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module); cyclic && cyclic->status() != CyclicModuleRecord::Status::Unlinked) {
+            if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module); cyclic && cyclic->status() != CyclicModuleRecord::Status::Unlinked && !(cyclic->status() == CyclicModuleRecord::Status::New && vm.hasCompiledCode())) {
                 ASSERT(cyclic->status() != CyclicModuleRecord::Status::Linking);
                 loadPromise->fulfill(vm, entry->record());
             } else {
@@ -1636,6 +1651,10 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
     }
 
     // Step-6 linkAndEvaluateClosure
+#if ENABLE(AOT)
+    if (auto* compiled = vm.hasCompiledCode() ? dynamicDowncast<AOT::ModuleRecord>(module) : nullptr; compiled && compiled->holdGraphBehindEarlierCalls(dynamicPayload, deferred))
+        return;
+#endif
     // 6.a. Let link be Completion(module.Link()).
     module->link(globalObject, nullptr);
 
@@ -2253,15 +2272,6 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     case InternalMicrotask::CompiledAsyncFunctionResume: {
         scope.release();
         LEAVE_FOR_COMPILED_JOB(AOT::runAsyncFunctionResumeJob(globalObject, vm, task, payload, argument0, argument1, argument2, argument3, microtaskCallCache));
-    }
-
-    case InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn: {
-#if USE(BUN_JSC_ADDITIONS)
-        globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, payload, argument0, argument1, argument2, argument3);
-#else
-        globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, payload, argument0, argument1, argument2);
-#endif
-        return;
     }
 #endif
 

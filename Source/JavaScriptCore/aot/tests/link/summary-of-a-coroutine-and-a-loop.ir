@@ -1,0 +1,26 @@
+# If the summary did not say that the body has a loop, that it suspends and that a call stands in the loop, the walk would not copy the callee in line where that pays, and Link would take a function that may be left in the middle for one that runs to its end
+# async function each(f, p) { for (;;) { f(); await p; } }
+# RUN: summary f1
+# CHECK: summary f1 operations={{*}}traits=[HasLoops, Suspends
+# CHECK: call c0 v3 Value Parameter 0 () in-loop
+# RUN(PLAIN): summary f0
+# PLAIN: summary f0 operations=
+# PLAIN-NOT: HasLoops
+# PLAIN-NOT: Suspends
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    Return v0
+}
+function f1 name="each" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Call v0, -
+    v4 = Await v1
+    Jump -> next b1()
+}

@@ -10,8 +10,8 @@
 #include "AOTBuiltinFamilyEmitter.h"
 #include "TypedArrayType.h"
 #include "Width.h"
-#include <array>
 #include <optional>
+#include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -33,6 +33,7 @@ private:
 
     ByteOrder byteOrderOf(const InlineCall&, unsigned argumentIndex, unsigned size);
     bool mayBeNegative(ValueID) const;
+    Pointer vectorHoldingElement(CellPointer view, Integer index, LBasicBlock otherwise);
     Pointer findBytes(CellPointer view, Integer offset, bool mayBeNegative, unsigned size, LBasicBlock otherwise);
     LValue byteSwapped(LValue bits, unsigned size);
     LValue inByteOrder(LValue bits, unsigned size, const ByteOrder&);
@@ -40,7 +41,7 @@ private:
     void storeBytes(Pointer, TypedArrayType, Operand, const ByteOrder&);
     Operand valueToStoreOrElse(ValueID, TypedArrayType, LBasicBlock otherwise);
     Integer offsetOrElse(ValueID, LBasicBlock otherwise);
-    LValue emitAtomicAccess(AtomicsOperation, std::array<LValue, 2> operands, LValue address, Width);
+    LValue emitAtomicAccess(AtomicsOperation, std::span<const LValue> operands, LValue address, Width);
 };
 
 } } } // namespace JSC::AOT::Typed

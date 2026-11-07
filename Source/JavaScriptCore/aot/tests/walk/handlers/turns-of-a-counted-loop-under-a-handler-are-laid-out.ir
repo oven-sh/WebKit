@@ -1,0 +1,76 @@
+# function added() { let total = 0; try { for (let i = 0; i < 1000; i++) for (let j = 0; j < 100; j++) total = (total + j * i) | 0; } catch {} return total; }
+# Nothing in the loops can throw but their polls. Under a handler the walk ends the block of a head behind its poll, so the test of the counter stands in a block of its own behind a jump;
+# the sweep drops the handler and the cut stays. The turns of the inner loop are laid out all the same: the product stands there once for each turn laid out and once in the loop as written.
+# It once stood there once: 8 instructions more a turn, and slower than without the compiler.
+# the function is handed to code that nobody has seen
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NEXT: = LoopHint
+# CHECK-NEXT: Jump -> next
+# RUN(EMIT): emit f1:Body mechanisms=all
+# EMIT-LABEL: unit f1:Body
+# EMIT: = Mul(
+# EMIT: = Mul(
+# EMIT: = Mul(
+# EMIT: = Mul(
+# EMIT: = Mul(
+# EMIT: = Mul(
+# EMIT: = Mul(
+# EMIT: = Mul(
+# EMIT: = Mul(
+# RUN(SHELL): run-in-shell globalThis.sink = added => { print(String(added())); };
+# SHELL: -1822442296
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="added" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    Jump -> next b1()
+  b1() handler=b9(v0):
+    v1 = Integer
+    Jump -> next b2(v0, v1)
+  b2(v2, v3) handler=b9(v2):
+    LoopHint
+    v5 = Integer integer=1000
+    v6 = Less v3, v5
+    Branch v6 -> taken b3(), notTaken b8()
+  b3() handler=b9(v2):
+    v7 = Integer
+    Jump -> next b4(v2, v7)
+  b4(v8, v9) handler=b9(v8):
+    LoopHint
+    v11 = Integer integer=100
+    v12 = Less v9, v11
+    Branch v12 -> taken b5(), notTaken b7()
+  b5() handler=b9(v8):
+    v13 = Mul v9, v3
+    v14 = Add v8, v13
+    v15 = Integer
+    v16 = BitOr v14, v15
+    Jump -> next b6()
+  b6() handler=b9(v16):
+    v17 = Increment v9
+    Jump -> next b4(v16, v17)
+  b7() handler=b9(v8):
+    v18 = Increment v3
+    Jump -> next b2(v8, v18)
+  b8() handler=b9(v2):
+    Jump -> next b10(v2)
+  b9(v19) role=CatchHandler:
+    v20 = CatchValue
+    Jump -> next b10(v19)
+  b10(v21):
+    Return v21
+}

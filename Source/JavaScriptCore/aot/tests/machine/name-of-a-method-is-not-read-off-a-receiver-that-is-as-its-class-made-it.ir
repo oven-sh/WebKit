@@ -1,0 +1,43 @@
+# function late(o, look) { const map = new Map(); look(map); map.set(o.k, 1); return [map]; }
+# `o.k` may run other code between the read of `set` and the call, so the two are not one call of a stub. The receiver is proven a Map, and what a Map as its class made it finds under the name never changes.
+# So in the place of the read stands a stub that looks at the bit of the object: as made, it answers the empty value and nothing has been read; else it reads as every read at a site does.
+# The stub of the call looks at the bit again and goes on to the code of the built-in. Where the object has changed since and the method was left unread, it fetches that method and calls it by value:
+# what was found at the read is what is called.
+# RUN: bytes f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: ReadAtSiteUnlessAsMade.OfCell
+# RUN(CALLED): bytes f1:Body mechanisms=all
+# CALLED: Stub CallMethodThatMayBeUnread.MapSet count 2
+# RUN(WITHHELD): bytes f1:Body mechanisms=all-BuiltinCalls
+# WITHHELD-NOT: Unread
+# WITHHELD-NOT: UnlessAsMade
+# RUN(ANSWERS): run-in-shell globalThis.sink = late => { let held; print(late({ k: 1 }, map => { })[0].get(1)); print(late({ get k() { held.set = () => { print("own"); }; return 2; } }, map => { held = map; })[0].has(2)); print(late({ get k() { Object.setPrototypeOf(held, { set() { print("moved"); } }); return 3; } }, map => { held = map; })[0] === held && Map.prototype.has.call(held, 3)); print(late({ k: 4 }, map => { map.set = () => { print("own at the read"); }; })[0].has(4)); };
+# ANSWERS: 1
+# ANSWERS-NEXT: true
+# ANSWERS-NEXT: true
+# ANSWERS-NEXT: own at the read
+# ANSWERS-NEXT: false
+# ANSWERS-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="late" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Map
+    v3 = Construct v2
+    v4 = Call v1, -, v3
+    v5 = PropGet v3 key="set" @60
+    v6 = PropGet v0 key="k" @66
+    v7 = Integer integer=1
+    v8 = Call v5, v3, v6, v7 calleeKey="set" @64
+    v9 = NewArray v3 contents=anything
+    Return v9
+}

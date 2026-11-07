@@ -1,0 +1,26 @@
+# `RegExp.$1`, `RegExp.lastMatch` and their like answer for the last match. Where the program may read one of them, a match takes the object of its pattern and leaves its record.
+# function tested(s: string) { return /a+(b)/.test(s) ? RegExp.$1 : ""; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[re]]: RegExp @Cell = SharedRegExpLiteral pattern="a+(b)"
+# CHECK: = RegExpMatchLiteral [[text]], [[re]] overload=RegExpPrototypeTest/0 pattern="a+(b)"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="caab"
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f1 name="tested" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="a+(b)" @11
+    v2 = PropGet v1 key="test" @12
+    v3 = Call v2, v1, v0 calleeKey="test" calleeName="test" @13
+    v4 = Builtin builtin=RegExp @14
+    v5 = PropGet v4 key="$1" @15
+    v6 = NewArray v3, v5 contents=anything @16
+    Return v6 @17
+}

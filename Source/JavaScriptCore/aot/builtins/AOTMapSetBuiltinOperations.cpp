@@ -8,19 +8,31 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
+#include "AOTArraysMadeInARow.h"
+#include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinIDs.h"
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTCompactTable.h"
 #include "AOTInstance.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeHooks.h"
 #include "CommonSlowPathsInlines.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
+#include "ExceptionHelpers.h"
+#include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSMapInlines.h"
 #include "JSMapIterator.h"
+#include "MapIteratorPrototypeInlines.h"
 #include "JSSetInlines.h"
 #include "JSSetIterator.h"
+#include "TopExceptionScope.h"
+#include <algorithm>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -37,7 +49,7 @@ static JSArray* asContiguousArray(JSValue value, unsigned minLength)
 template<typename Collection>
 static ALWAYS_INLINE void reserveForAdditionsIfFull(JSGlobalObject* globalObject, Collection* collection, uint64_t remaining, uint64_t finished)
 {
-    if (collection->hasCompactStorage() && uncheckedDowncast<CompactTable>(collection->storage())->isFullHeapTable())
+    if (collection->hasCompactStorage() && uncheckedDowncast<CompactTable>(collection->storage())->isFull())
         CompactTable::reserveForAdditions(globalObject, collection, remaining, finished, 0);
 }
 
@@ -49,7 +61,6 @@ static JSCell* tryNewSetFromSideEffectFreeIterable(JSGlobalObject* globalObject,
         return nullptr;
     JSCellButterfly* walked = nullptr;
     {
-        // What is too long for one list is walked step by step.
         auto listScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         walked = CommonSlowPaths::trySpreadFast(globalObject, iterable.asCell());
         if (listScope.exception()) [[unlikely]] {
@@ -142,6 +153,32 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTryNewMapFromEntries, JSCell*, (Instance* i
     OPERATION_RETURN(scope, tryNewMapFromPairs(globalObject, globalObject->mapStructure(), JSValue::decode(iterable)));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTNewSetFromIterable, JSCell*, (Instance* instance, EncodedJSValue encodedIterable))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewSetFromIterable);
+    JSValue iterable = JSValue::decode(encodedIterable);
+    JSCell* set = tryNewSetFromIterable(globalObject, globalObject->setStructure(), iterable);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (set)
+        OPERATION_RETURN(scope, set);
+    JSValue constructed = constructInEngine(instance, Builtins::Set, iterable);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, constructed.asCell());
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewMapFromEntries, JSCell*, (Instance* instance, EncodedJSValue encodedIterable))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewMapFromEntries);
+    JSValue iterable = JSValue::decode(encodedIterable);
+    JSCell* map = tryNewMapFromPairs(globalObject, globalObject->mapStructure(), iterable);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (map)
+        OPERATION_RETURN(scope, map);
+    JSValue constructed = constructInEngine(instance, Builtins::Map, iterable);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, constructed.asCell());
+}
+
 static ALWAYS_INLINE UGPRPair hasEntryAndIndex(bool hasEntry, uint32_t entry)
 {
     return makeUGPRPair(hasEntry, entry);
@@ -150,7 +187,7 @@ static ALWAYS_INLINE UGPRPair hasEntryAndIndex(bool hasEntry, uint32_t entry)
 template<typename Collection>
 static void moveWalkedTableToHeap(JSGlobalObject* globalObject, Collection* collection, JSCell* storage)
 {
-    if (!collection->hasCompactStorage() || storage != collection->storage())
+    if (!storage || !collection->hasCompactStorage() || storage != collection->storage())
         return;
     auto* table = uncheckedDowncast<CompactTable>(storage);
     if (!table->isLive() || !table->isInImage())
@@ -205,12 +242,160 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetNext, UGPRPair, (Instance* inst
     OPERATION_RETURN(scope, nextEntry(globalObject, cellArgument<JSSet>(collection, Entry::operationAOTSetNext), JSValue::decode(table), entry, results));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveCollectionCapacity, void, (Instance* instance, JSCell* collection, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry))
+template<typename Functor>
+static void forEachMemberOfSet(VM& vm, JSSet* set, NOESCAPE const Functor& functor)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveCollectionCapacity);
-    if (collection->type() != JSMapType && collection->type() != JSSetType) [[unlikely]]
-        crashOnWrongOperand(Entry::operationAOTReserveCollectionCapacity);
-    CompactTable::reserveForAdditions(globalObject, asObject(collection), remaining, finished, sizeAtEntry);
+    JSCell* storage = set->storage();
+    if (!storage)
+        return;
+    if (JSSet::Helper::isCompact(*storage)) {
+        CompactTable::forEachInColumn(vm, storage, 0, true, functor);
+        return;
+    }
+    for (auto next = JSSet::Helper::transitAndNext(vm, *storage, 0); next.storage; next = JSSet::Helper::transitAndNext(vm, *next.storage, next.entry + 1))
+        functor(next.key);
+}
+
+static bool tryAppendMembersInPlace(VM& vm, JSArray* target, JSSet* source)
+{
+    IndexingType mode = target->indexingMode();
+    if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
+        return false;
+    unsigned length = target->butterfly()->publicLength();
+    uint64_t newLength = static_cast<uint64_t>(length) + source->size();
+    if (newLength > MAX_STORAGE_VECTOR_LENGTH || !target->ensureLength(vm, static_cast<unsigned>(newLength)))
+        return false;
+
+    DeferGCForAWhile deferGC(vm);
+    Butterfly* butterfly = target->butterfly();
+    unsigned index = length;
+    if (mode == ArrayWithContiguous) {
+        forEachMemberOfSet(vm, source, [&](JSValue member) { butterfly->contiguous().atUnsafe(index++).setWithoutWriteBarrier(member); });
+        vm.writeBarrier(target);
+        return true;
+    }
+
+    bool takesAll = true;
+    if (mode == ArrayWithInt32) {
+        forEachMemberOfSet(vm, source, [&](JSValue member) {
+            takesAll &= member.isInt32();
+            butterfly->contiguous().atUnsafe(index++).setWithoutWriteBarrier(member);
+        });
+    } else {
+        forEachMemberOfSet(vm, source, [&](JSValue member) {
+            double number = member.isNumber() ? member.asNumber() : PNaN;
+            takesAll &= number == number;
+            butterfly->contiguousDouble().atUnsafe(index++) = number;
+        });
+    }
+    if (takesAll)
+        return true;
+    while (index > length) {
+        if (mode == ArrayWithDouble)
+            butterfly->contiguousDouble().atUnsafe(--index) = PNaN;
+        else
+            butterfly->contiguous().atUnsafe(--index).clear();
+    }
+    butterfly->setPublicLength(length);
+    return false;
+}
+
+void appendMembersOfSet(JSGlobalObject* globalObject, JSArray* target, JSSet* source)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    moveWalkedTableToHeap(globalObject, source, source->storage());
+    if (static_cast<uint64_t>(target->length()) + source->size() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    if (tryAppendMembersInPlace(vm, target, source))
+        return;
+
+    MarkedArgumentBuffer members;
+    {
+        DeferGCForAWhile deferGC(vm);
+        forEachMemberOfSet(vm, source, [&](JSValue member) { members.append(member); });
+    }
+    if (members.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    for (size_t index = 0; index < members.size(); ++index) {
+        target->push(globalObject, members.at(index));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+bool tryAppendPairsOfMap(JSGlobalObject* globalObject, JSArray* target, JSMap* source)
+{
+    VM& vm = globalObject->vm();
+    if (source->realm() != globalObject) [[unlikely]]
+        return false;
+    if (target->indexingMode() != ArrayWithContiguous || globalObject->isHavingABadTime()) [[unlikely]] {
+        if (globalObject->isHavingABadTime() || !source->size() || !target->tryMakeWritableContiguous(vm).data() || target->indexingMode() != ArrayWithContiguous)
+            return false;
+    }
+    JSCell* storage = source->storage();
+    unsigned size = source->size();
+    if (!storage || !size)
+        return true;
+    unsigned length = target->butterfly()->publicLength();
+    uint64_t newLength = static_cast<uint64_t>(length) + size;
+    if (newLength > MAX_STORAGE_VECTOR_LENGTH || !target->ensureLength(vm, static_cast<unsigned>(newLength)))
+        return false;
+
+    DeferGCForAWhile deferGC(vm);
+    ArraysMadeInARow pairs(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 2, 3);
+    auto* elements = target->butterfly()->contiguous().data();
+    unsigned index = length;
+    auto append = [&](JSValue key, JSValue value) ALWAYS_INLINE_LAMBDA {
+        RELEASE_ASSERT(index < newLength);
+        JSArray* pair = pairs.make([&](EncodedJSValue* both) ALWAYS_INLINE_LAMBDA {
+            both[0] = JSValue::encode(key);
+            both[1] = JSValue::encode(value);
+        });
+        elements[index++].setWithoutWriteBarrier(pair);
+    };
+    if (JSMap::Helper::isCompact(*storage))
+        CompactTable::forEachEntry(vm, storage, append);
+    else {
+        for (auto next = JSMap::Helper::transitAndNext(vm, *storage, 0); next.storage; next = JSMap::Helper::transitAndNext(vm, *next.storage, next.entry + 1))
+            append(next.key, next.value);
+    }
+    vm.writeBarrier(target);
+    RELEASE_ASSERT(index == newLength);
+    return true;
+}
+
+bool tryAppendPairsLeftIn(JSGlobalObject* globalObject, JSArray* target, JSMapIterator* entries)
+{
+    VM& vm = globalObject->vm();
+    if (entries->realm() != globalObject || entries->kind() != IterationKind::Entries || entries->entry() || entries->tryGetStorage() == vm.orderedHashTableSentinel() || !mapIteratorProtocolIsFastAndNonObservable(vm, entries))
+        return false;
+    if (!tryAppendPairsOfMap(globalObject, target, entries->iteratedObject()))
+        return false;
+    entries->close(vm);
+    return true;
+}
+
+JSArray* RuntimeHooks::tryCreateArrayOfPairs(JSGlobalObject* globalObject, JSCell* items)
+{
+    JSMap* map = items->type() == JSMapType ? uncheckedDowncast<JSMap>(items) : nullptr;
+    JSMapIterator* entries = items->type() == JSMapIteratorType ? uncheckedDowncast<JSMapIterator>(items) : nullptr;
+    if (map ? !map->isIteratorProtocolFastAndNonObservable() : !entries || entries->kind() != IterationKind::Entries)
+        return nullptr;
+    JSArray* list = JSArray::tryCreate(globalObject->vm(), globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
+    if (!list)
+        return nullptr;
+    return (map ? tryAppendPairsOfMap(globalObject, list, map) : tryAppendPairsLeftIn(globalObject, list, entries)) ? list : nullptr;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTAppendMembers, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendMembers);
+    appendMembersOfSet(globalObject, cellArgument<JSArray>(cell, Entry::operationAOTAppendMembers), cellArgument<JSSet>(sourceCell, Entry::operationAOTAppendMembers));
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTMapDelete, EncodedJSValue, (Instance* instance, JSCell* collection, EncodedJSValue lookupKey))
@@ -268,6 +453,24 @@ static OperationReturnType<void> JIT_OPERATION_ATTRIBUTES clearSetGeneric(Instan
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetClear);
     cellArgument<JSSet>(collection, Entry::operationAOTSetClear)->clear(globalObject);
     OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTMapClearOfAnyMap, EncodedJSValue, (Instance* instance, JSCell* collection))
+{
+    if (CompactTable::tryClearInPlace(asObject(collection))) [[likely]]
+        return { JSValue::encode(jsUndefined()), nullptr };
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTMapClearOfAnyMap);
+    cellArgument<JSMap>(collection, Entry::operationAOTMapClearOfAnyMap)->clear(globalObject);
+    OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetClearOfAnySet, EncodedJSValue, (Instance* instance, JSCell* collection))
+{
+    if (CompactTable::tryClearInPlace(asObject(collection))) [[likely]]
+        return { JSValue::encode(jsUndefined()), nullptr };
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetClearOfAnySet);
+    cellArgument<JSSet>(collection, Entry::operationAOTSetClearOfAnySet)->clear(globalObject);
+    OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
 } } // namespace JSC::AOT

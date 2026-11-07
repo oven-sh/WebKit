@@ -1,0 +1,13 @@
+# the ReturnCall of a direct call says whether the jump is owed: what ends its own tail calls may be called and returned from, what may go on without end has to be jumped to
+# f2 = a, which returns leaf(v). f5 = c, which returns byValue(f, v), and byValue returns a call of a value
+# RUN: walk f2 mechanisms=none+DirectCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: [[call]]: {{*}} = CallDirect {{*}}function=f1
+# CHECK: ReturnCall [[call]] {{*}}requirement=Allowed
+# RUN(OWED): walk f5 mechanisms=none+DirectCalls
+# OWED-LABEL: code f5:Body
+# OWED: [[call]]: {{*}} = CallDirect {{*}}function=f4
+# OWED: ReturnCall [[call]]
+# RUN(NEVER): walk f5 mechanisms=none+DirectCalls
+# NEVER-NOT: requirement=Allowed
+# PROGRAM-OF: ../../plan/tail-calls/function-whose-tail-calls-end-says-so.ir

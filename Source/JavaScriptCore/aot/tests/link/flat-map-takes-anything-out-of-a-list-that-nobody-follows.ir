@@ -1,0 +1,122 @@
+# `[0, 1].flatMap(pick)` takes the elements out of whatever the function answers with that is a list. Where that may be a list that nobody follows, the new list may hold anything.
+#   const rows = JSON.parse("[[1,2],[3]]");
+#   function Rows(i) { return rows[i]; }
+#   function pick(i) { return new Rows(i); }
+#   function followed(i) { return ["a", "b"]; }
+#   function made(i) { return { x: "a" }; }
+#   function either(i) { switch (i) { case 1: return { y: "b" }; case 2: return { z: "c" }; case 3: return { u: "d" }; case 4: return { v: "e" }; default: return { w: "f" }; } }
+#   [0, 1].flatMap(pick)[0];  [0, 1].flatMap(followed)[0];  [0, 1].flatMap(made)[0];  [0, 1].flatMap(either)[0];
+# What a plain function returns to `new` counts only if it is an object: of `anything` the objects that nobody has seen are left, without the primitives.
+# While the row looked into the lists that have a site and into nothing else, the first read was proven to give undefined or an object, and `typeof v === "number"` behind it was folded away: 900 | 0.
+# The other three say that the first is not empty-handed: the elements of a list in sight are followed, and an object of the program that is no list is stored as it is.
+# Five strangers meet in what `either` answers with, one more than a set takes, so the last of the three stores a lost value: no layout of the program is written below Array, so it is no list.
+# RUN: link accesses mechanisms=all
+# CHECK-NOT: read f0 v18
+# CHECK: read f0 v23 proven=undefined|string|Array
+# CHECK-NEXT: read f0 v28 proven=undefined|L2
+# CHECK-NEXT: read f0 v33 proven=undefined|L0|L1|L3|L4|L5
+
+module m0 path="flat.js" displayPath="flat.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="z" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="u" declared={type=anything} flags=[IsRequired]}]
+layout L4 module=m0 fields=[{key="v" declared={type=anything} flags=[IsRequired]}]
+layout L5 module=m0 fields=[{key="w" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="Rows" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="rows" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+data d0 root=Array{contents=anything elements=[Number{}, Number{value=1}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{}, Number{value=1}]} module=m0
+data d2 root=Array{contents=anything elements=[Number{}, Number{value=1}]} module=m0
+data d3 root=Array{contents=anything elements=[Number{}, Number{value=1}]} module=m0
+data d4 root=Array{contents=anything elements=[String{value="a"}, String{value="b"}]} module=m0
+data d5 root=Object{layout=L2 members=[{key="x" value=String{value="a"}}]} module=m0
+data d6 root=Object{layout=L1 members=[{key="y" value=String{value="b"}}]} module=m0
+data d7 root=Object{layout=L0 members=[{key="z" value=String{value="c"}}]} module=m0
+data d8 root=Object{layout=L3 members=[{key="u" value=String{value="d"}}]} module=m0
+data d9 root=Object{layout=L4 members=[{key="v" value=String{value="e"}}]} module=m0
+data d10 root=Object{layout=L5 members=[{key="w" value=String{value="f"}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]}
+    v4 = NewClosure function=f4
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]}
+    v6 = NewClosure function=f5
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]}
+    v8 = Builtin builtin=JSON
+    v9 = PropGet v8 key="parse"
+    v10 = Convert v9 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v11 = String string="[[1,2],[3]]"
+    v12 = Call v10, v8, v11 calleeKey="parse" calleeName="JSON.parse"
+    PutModuleVariable v12 variable=g1
+    v14 = Data data=d0
+    v15 = PropGet v14 key="flatMap"
+    v16 = Call v15, v14, v1 calleeKey="flatMap" calleeName="flatMap"
+    v17 = Integer
+    v18 = ElemGet v16, v17
+    v19 = Data data=d1
+    v20 = PropGet v19 key="flatMap"
+    v21 = Call v20, v19, v3 calleeKey="flatMap" calleeName="flatMap"
+    v22 = Integer
+    v23 = ElemGet v21, v22
+    v24 = Data data=d2
+    v25 = PropGet v24 key="flatMap"
+    v26 = Call v25, v24, v5 calleeKey="flatMap" calleeName="flatMap"
+    v27 = Integer
+    v28 = ElemGet v26, v27
+    v29 = Data data=d3
+    v30 = PropGet v29 key="flatMap"
+    v31 = Call v30, v29, v7 calleeKey="flatMap" calleeName="flatMap"
+    v32 = Integer
+    v33 = ElemGet v31, v32
+    v34 = Undefined
+    Return v34
+}
+function f1 name="Rows" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="rows"
+    v3 = ElemGet v2, v0
+    Return v3
+}
+function f2 name="pick" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Construct v1, -, v0 calleeName="Rows"
+    Return v2
+}
+function f3 name="followed" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Data data=d4
+    Return v1
+}
+function f4 name="made" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Data data=d5
+    Return v1
+}
+function f5 name="either" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Switch v0 cases=[1, 2, 3, 4] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+  b1():
+    v1 = Data data=d6
+    Jump -> next b6(v1)
+  b2():
+    v2 = Data data=d7
+    Jump -> next b6(v2)
+  b3():
+    v3 = Data data=d8
+    Jump -> next b6(v3)
+  b4():
+    v4 = Data data=d9
+    Jump -> next b6(v4)
+  b5():
+    v5 = Data data=d10
+    Jump -> next b6(v5)
+  b6(v6):
+    Return v6
+}

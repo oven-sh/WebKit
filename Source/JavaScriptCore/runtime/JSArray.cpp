@@ -38,8 +38,6 @@
 #include "VMInlines.h"
 #include <wtf/Assertions.h>
 
-#include "AOTRuntimeValidation.h"
-
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -1302,13 +1300,8 @@ void JSArray::validatePristine(VM& vm) const
     if (!isPristine())
         return;
 
-    auto check = [&](bool condition) {
-#if ENABLE(AOT)
-        if (!condition) [[unlikely]]
-            AOT::crashOnValidationFailure(vm, { AOT::ValidationFailureKind::ArrayNotPristine, { }, { }, this });
-#else
+    auto check = [](bool condition) {
         RELEASE_ASSERT(condition);
-#endif
     };
 
     Structure* structure = this->structure();

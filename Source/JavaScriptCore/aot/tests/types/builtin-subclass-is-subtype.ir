@@ -44,4 +44,5 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Registry" flags=[HasHeritage] writtenBuiltinBase=Map
 layout L1 kind=Instance name="Plain"
 layout L2 kind=Instance name="Failure" flags=[HasHeritage] writtenBuiltinBase=TypeError
-function f0 name="types" parameters=[{type=L0}, {type=Map}, {type=L1}, {type=Set}, {type=L0|L1}, {type=L2}, {type=Error}, {type=Map|L1}, {type=TypeError}] results=[{type=undefined}]
+function f0 name="types" role=Signature parameters=[{type=L0}, {type=Map}, {type=L1}, {type=Set}, {type=L0|L1}, {type=L2}, {type=Error}, {type=Map|L1}, {type=TypeError}] results=[{type=undefined}]
+entry module=m0

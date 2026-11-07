@@ -1,0 +1,85 @@
+# a part of a template that has text by itself goes into the join as it is: the conversion that was written for that join alone is read by nobody, and the sweep drops it
+# function px(n) { if (typeof n === "number") return `${n}px`; }
+# function flagged(x) { return `${x === 2}!`; }   a boolean has text by itself too
+# function twice(n) { if (typeof n === "number") { const text = `${n}`; return [`${text}px`, text]; } }   written so that the conversion has a second reader: the text is made
+# function any(x) { return `${x}px`; }   the conversion may run code where it stands
+# each function is handed to code that nobody has seen
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Strcat [[n]], [[px]] traits
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: = ToString
+# RUN(FLAGGED): walk f2 mechanisms=none+TypedOperations
+# FLAGGED-LABEL: code f2:Body
+# FLAGGED: = StrictEq
+# FLAGGED: = Strcat [[isTwo]], [[mark]] traits
+# RUN(BOOLEAN): walk f2 mechanisms=none+TypedOperations
+# BOOLEAN-NOT: = ToString
+# RUN(TWICE): walk f3 mechanisms=none+TypedOperations
+# TWICE-LABEL: code f3:Body
+# TWICE: = ToString
+# RUN(ANY): walk f4 mechanisms=none+TypedOperations
+# ANY-LABEL: code f4:Body
+# ANY: = ToString
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = Strcat
+# RUN(ALLONLY): walk f1 mechanisms=all
+# ALLONLY-NOT: = ToString
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="px" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = ToString v2
+    v4 = String string="px"
+    v5 = Strcat v3, v4
+    Return v5
+  b2():
+    v6 = Undefined
+    Return v6
+}
+function f2 name="flagged" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = StrictEq v0, v1
+    v3 = ToString v2
+    v4 = String string="!"
+    v5 = Strcat v3, v4
+    Return v5
+}
+function f3 name="twice" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = ToString v2
+    v4 = String string="px"
+    v5 = Strcat v3, v4
+    v6 = NewArray v5, v3 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f4 name="any" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToString v0
+    v2 = String string="px"
+    v3 = Strcat v1, v2
+    Return v3
+}

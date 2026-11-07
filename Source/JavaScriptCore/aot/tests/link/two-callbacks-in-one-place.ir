@@ -1,0 +1,48 @@
+# If the call listed one of the two closures as its one callee, the other would never run. If the two counted as escaped, the object that the call passes would escape with them, and their parameters would hold anything
+# function a(o) { return o.x; }  function b(o) { return true; }  function run(cb) { return cb({ x: "s" }); }  run(a); run(b);
+# Two closures meet, so both become lost. A call of a lost closure enters the members, and their parameters get what such calls pass: `a` reads a string off its parameter. Neither may take what a walk has left at a call for all that arrives.
+# RUN: link calls mechanisms=all
+# CHECK-NOT: call f3 v4
+# RUN(LOST): link functions fields layouts mechanisms=all
+# LOST: function f1
+# LOST-NOT: unreached
+# LOST-NOT: one-callee
+# LOST: function f2
+# LOST-NOT: unreached
+# LOST-NOT: one-callee
+# LOST: function f3 callers-known one-callee {{*}}result=true|string
+# LOST-NEXT: parameter 0 {{*}}proven=function
+# LOST: field L0.0 "x" proven=string writers-known written-at-construction-alone
+# LOST: layout L0 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f1
+    v2 = Call v0, -, v1 calleeName="run"
+    v3 = NewClosure function=f2
+    v4 = Call v0, -, v3 calleeName="run"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="a" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="b" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Boolean boolean=true
+    Return v1
+}
+function f3 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="s"
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Call v0, -, v3 calleeName="cb"
+    Return v4
+}

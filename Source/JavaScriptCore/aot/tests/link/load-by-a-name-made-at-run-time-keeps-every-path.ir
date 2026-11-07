@@ -1,0 +1,30 @@
+# a name that is made when the program runs may be that of any file, and the message of a load that fails spells it: one reached load by name, and every module keeps its path
+# main.js: import "./a.js"; sink(name => require(name));
+# RUN: summary f2 mechanisms=all
+# REQUIRES: code-outside-image
+# CHECK: may-read-path-of-any-module
+# RUN(LINK): link layouts mechanisms=all
+# REQUIRES(LINK): code-outside-image
+# LINK-NOT: path-unread
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/app/a.js" displayPath="a.js" body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="load" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = RequireDynamic v0 referrer=m0
+    Return v1
+}

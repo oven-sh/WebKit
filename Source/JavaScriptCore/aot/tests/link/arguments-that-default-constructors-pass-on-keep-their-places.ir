@@ -1,0 +1,76 @@
+# A class without a constructor of its own gathers its arguments in a list and constructs the class above with that list. If the list stood for its elements as one heap, every parameter of the constructor at the top would hold what any argument holds, and `undefined` besides, since nobody knows how long a list is: both fields would be `undefined|i32|string`.
+# Nothing but the call touches the list, so it holds what the callers wrote, place by place: the first argument comes to the first parameter and to no other, through two such classes too, and no place that every caller fills is left empty.
+#   class Base { constructor(n, s) { this.n = n; this.s = s; } }  class Middle extends Base {}  class Leaf extends Middle {}  new Leaf(1, "x"); new Middle(2, "y");
+# OPTIONS: check=FlowFixpoint
+# RUN(SUMMARY): summary f3
+# SUMMARY: traits=[{{*}}OnlyPassesOnGatheredArguments
+# SUMMARY: call c0 {{*}} passes-list passes-on-gathered-arguments
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "n" proven=i32 writers-known
+# CHECK-NEXT: field L0.1 "s" proven=string writers-known
+# RUN(OLDEST): link fields oldest-first mechanisms=all
+# OLDEST: field L0.0 "n" proven=i32 writers-known
+# OLDEST-NEXT: field L0.1 "s" proven=string writers-known
+# RUN(SCATTERED): link fields scattered mechanisms=all
+# SCATTERED: field L0.0 "n" proven=i32 writers-known
+# SCATTERED-NEXT: field L0.1 "s" proven=string writers-known
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="n" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="Middle" module=m0 base=L0 constructor=f2 fields=[{key="n" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}, {key="s" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=1}] supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Leaf" module=m0 base=L1 constructor=f3 fields=[{key="n" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}, {key="s" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=1}] supertypes=[L1] flags=[HasHeritage]
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = FinishClass v1 layout=L0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]}
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f2
+    v7 = NewClass v6, v4, v5 layout=L1
+    PutModuleVariable v7 variable=g1
+    v9 = FinishClass v7 layout=L1
+    v10 = Convert v9 declared={type=f2 flags=[IsFromCompiler]}
+    v11 = ResolveHeritage v10
+    v12 = NewClosure function=f3
+    v13 = NewClass v12, v10, v11 layout=L2
+    PutModuleVariable v13 variable=g2
+    v15 = FinishClass v13 layout=L2
+    v16 = Convert v15 declared={type=f3 flags=[IsFromCompiler]}
+    v17 = Integer integer=1
+    v18 = String string="x"
+    v19 = Construct v16, -, v17, v18 calleeName="Leaf"
+    v20 = Integer integer=2
+    v21 = String string="y"
+    v22 = Construct v10, -, v20, v21 calleeName="Middle"
+    v23 = Undefined
+    Return v23
+}
+function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    v5 = Convert v4 declared={type=L0}
+    PropSet v5, v1 key="n"
+    PropSet v5, v2 key="s"
+    Return v5
+}
+function f2 name="Middle" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    v5 = Convert v4 declared={type=L1}
+    Return v5
+}
+function f3 name="Leaf" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L2
+    v5 = Convert v4 declared={type=L2}
+    Return v5
+}

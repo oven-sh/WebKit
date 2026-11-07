@@ -1,0 +1,17 @@
+# The list follows from the program alone. What an operator does with a number does not grow with the number: new RegExp("a" + (5 < 3000000))
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /atrue/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = String string="a"
+    v2 = Integer integer=5
+    v3 = Integer integer=3000000
+    v4 = Less v2, v3
+    v5 = Add v1, v4
+    v6 = Construct v0, -, v5
+    Return v6
+}

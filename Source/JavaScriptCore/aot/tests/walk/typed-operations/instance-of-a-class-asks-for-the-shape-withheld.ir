@@ -1,0 +1,14 @@
+# the same program with typed operations withheld: the operator stays as it is written, whatever Link has proven of its sides
+# RUN: walk f7 mechanisms=none+DirectCalls+Arrivals
+# CHECK-LABEL: code f7:Body
+# CHECK: = InstanceOf
+# RUN(NEVER): walk f4 f5 f6 f7 f8 mechanisms=none+DirectCalls+Arrivals+Folding
+# NEVER-NOT: ShapeTest
+# NEVER-NOT: HasInPrototypeChain
+# NEVER-NOT: GetClassPrototype
+# with folding withheld no answer is a constant: a Twig is asked for its shape no more, and its chain is walked
+# RUN(UNFOLDED): walk f5 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# UNFOLDED-LABEL: code f5:Body
+# UNFOLDED-NOT: boolean=true
+# UNFOLDED: = HasInPrototypeChain
+# PROGRAM-OF: instance-of-a-class-asks-for-the-shape.ir

@@ -8,14 +8,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTChainDependents.h"
 #include "AOTCompiledCall.h"
+#include "AOTGrowingText.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTPrimitives.h"
-#include "AOTProgramStrings.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeFunctions.h"
@@ -77,8 +78,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValueAdd, EncodedJSValue, (Instance* instan
     JSValue right = JSValue::decode(encodedRight);
     if (left.isHeapBigInt() && right.isHeapBigInt())
         OPERATION_RETURN(scope, JSValue::encode(JSBigInt::add(globalObject, left.asHeapBigInt(), right.asHeapBigInt())));
+    if (left.isString() && right.isString())
+        OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, asString(left), asString(right))));
     if (left.isString() && right.isInt32())
-        OPERATION_RETURN(scope, JSValue::encode(jsString(globalObject, asString(left), int32ToString(vm, right.asInt32(), 10))));
+        OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, asString(left), int32ToString(vm, right.asInt32(), 10))));
     if (left.isInt32() && right.isString())
         OPERATION_RETURN(scope, JSValue::encode(jsString(globalObject, int32ToString(vm, left.asInt32(), 10), asString(right))));
     OPERATION_RETURN(scope, JSValue::encode(jsAdd(globalObject, left, right)));
@@ -104,8 +107,6 @@ AOT_DEFINE_UNARY_OPERATION(operationAOTValueBitNot, EncodedJSValue, JSValue::enc
 AOT_DEFINE_UNARY_OPERATION(operationAOTToNumber, double, operand.toNumber(globalObject))
 AOT_DEFINE_UNARY_OPERATION(operationAOTToNumeric, EncodedJSValue, JSValue::encode(operand.toNumeric(globalObject)))
 
-// What JSObject::toString() calls for an instance of a class with a toString() of its own. The caches of reads by name say what its two reads find, so no chain is walked.
-// Null where they do not say so: nothing has run then, and the generic path starts from the beginning.
 static JSObject* compiledToStringOrNull(Instance* instance, Object& object, CallData& callData)
 {
     VM& vm = *instance->vm;
@@ -128,12 +129,10 @@ static JSObject* compiledToStringOrNull(Instance* instance, Object& object, Call
     JSValue function = valueAtOffset(asObject(method->holder), method->offsetInStorage());
     if (!function.isCell())
         return nullptr;
-    // A class has the type of a closure too, and calling it throws: the generic path says so.
     callData = compiledCallDataOf(function.asCell());
     return callData.type == CallData::Type::Compiled ? asObject(function) : nullptr;
 }
 
-// JSObject::ordinaryToPrimitive() from where toString() has answered with an object.
 static JSValue primitiveFromValueOf(JSGlobalObject* globalObject, JSObject* object)
 {
     VM& vm = globalObject->vm();
@@ -151,7 +150,6 @@ static JSValue primitiveFromValueOf(JSGlobalObject* globalObject, JSObject* obje
     return { };
 }
 
-// Apart from the operation, which most often converts a number: that path saves few registers.
 static NEVER_INLINE JSString* toStringOfCompiledObject(Instance* instance, Object& object)
 {
     VM& vm = *instance->vm;
@@ -176,11 +174,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToString, JSCell*, (Instance* instance, Enc
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTToString);
     JSValue operand = JSValue::decode(encodedOperand);
-    // As JSValue::toStringSlowCase(), which asks six questions about a cell before it looks at it.
     if (operand.isCell()) {
         JSCell* cell = operand.asCell();
         if (cell->type() == CompiledObjectType)
             OPERATION_RETURN(scope, toStringOfCompiledObject(instance, *uncheckedDowncast<Object>(cell)));
+        if (isJSArray(cell)) {
+            JSString* joined = tryConvertListToString(globalObject, asArray(cell));
+            OPERATION_RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
+            if (joined)
+                OPERATION_RETURN(scope, joined);
+        }
         JSString* string = cell->toStringInline(globalObject);
         OPERATION_RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
         OPERATION_RETURN(scope, string);
@@ -192,7 +195,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToString, JSCell*, (Instance* instance, Enc
     OPERATION_RETURN(scope, operand.toString(globalObject));
 }
 
-// The stub finds the text of a small index there the next time.
 AOT_DEFINE_UNARY_OPERATION(operationAOTToKey, EncodedJSValue, JSValue::encode(operand.isInt32() && static_cast<uint32_t>(operand.asInt32()) < NumericStrings::cacheSize ? JSValue(instance->vm->numericStrings.addJSString(*instance->vm, operand.asInt32())) : operand.toPropertyKeyValue(globalObject)))
 #undef AOT_DEFINE_BINARY_OPERATION
 #undef AOT_DEFINE_NUMERIC_BINARY_OPERATION
@@ -202,16 +204,9 @@ AOT_DEFINE_UNARY_OPERATION(operationAOTToKey, EncodedJSValue, JSValue::encode(op
 JSC_DEFINE_JIT_OPERATION(operationAOTValueURShift, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTValueURShift);
-    // jsURShift gives the 32 bits as an int32: bytecode has op_unsigned behind it.
     JSValue bits = jsURShift(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight));
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(static_cast<uint32_t>(bits.asInt32()))));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTCompareEqToString, size_t, (Instance* instance, EncodedJSValue encodedLeft, uint64_t text))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCompareEqToString);
-    OPERATION_RETURN(scope, JSValue::equal(globalObject, JSValue::decode(encodedLeft), instance->state->strings->string(vm, StringID(static_cast<uint32_t>(text)))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTValueNegate, EncodedJSValue, (Instance* instance, EncodedJSValue operand))
@@ -239,7 +234,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsCallable, size_t, (Instance*, JS
     return cell->isCallable();
 }
 
-// Exact for a whole quotient below maxExactQuotient.
 #if CPU(ARM64) || defined(__FMA__)
 static constexpr double maxExactQuotient = 0x1p53;
 static ALWAYS_INLINE double subtractProduct(double dividend, double quotient, double divisor)

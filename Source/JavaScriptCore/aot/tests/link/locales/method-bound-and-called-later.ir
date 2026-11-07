@@ -1,0 +1,22 @@
+# what `bind` makes calls the method with operands of two calls
+# const format = (5).toLocaleString.bind(5); format(globalThis.input);
+# LIBRARY: own
+# RUN: locales
+# CHECK: locale unknown NumberPrototypeToLocaleString
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+# NEVER-NOT: efault
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    v1 = PropGet v0 key="toLocaleString"
+    v2 = PropGet v1 key="bind"
+    v3 = Call v2, v1, v0 calleeKey="bind"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="input" [isFreeName]
+    v6 = Call v3, -, v5
+    Return v6
+}

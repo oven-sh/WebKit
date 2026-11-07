@@ -1,0 +1,71 @@
+# function mixed(start: number, step: number, turns: number) { let sum = start | 0, bits = 0; const by = step | 0; for (let i = 0; i < turns; i++) { bits ^= sum; sum += by; } return sum + ":" + bits; }
+# function add(a: number, b: number) { return (a | 0) + (b | 0); }  function sub(a: number, b: number) { return (a | 0) - (b | 0); }
+# A bitwise operator takes the sum in every turn. Where the sum is no int32 it is the number that the whole sum is.
+# RUN(ANSWER): run-in-shell globalThis.register = (mixed, add, sub) => { const max = 2147483647, min = -2147483648; for (const turns of [2, 3, 4]) print(mixed(max - 2, 1, turns), mixed(min + 2, -1, turns)); const pairs = [max, 0, max, 1, 1, max, min, 0, min, -1, -1, min, max, max, min, min, max, min]; for (let i = 0; i < pairs.length; i += 2) { const a = pairs[i], b = pairs[i + 1]; print(add(a, b), sub(a, b), sub(b, a)); } };
+# ANSWER: 2147483647:3 -2147483648:3
+# ANSWER-NEXT: 2147483648:2147483644 -2147483649:-2147483645
+# ANSWER-NEXT: 2147483649:-4 -2147483650:-4
+# ANSWER-NEXT: 2147483647 2147483647 -2147483647
+# ANSWER-NEXT: 2147483648 2147483646 -2147483646
+# ANSWER-NEXT: 2147483648 -2147483646 2147483646
+# ANSWER-NEXT: -2147483648 -2147483648 2147483648
+# ANSWER-NEXT: -2147483649 -2147483647 2147483647
+# ANSWER-NEXT: -2147483649 2147483647 -2147483647
+# ANSWER-NEXT: 4294967294 0 0
+# ANSWER-NEXT: -4294967296 0 0
+# ANSWER-NEXT: -1 4294967295 -4294967295
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=Function
+    v1 = String string="return globalThis.register"
+    v2 = Construct v0, -, v1
+    v3 = Call v2
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = NewClosure function=f3
+    v7 = Call v3, -, v4, v5, v6
+    v8 = Undefined
+    Return v8
+}
+function f1 name="mixed" module=m0 flags=[IsChecked] parameters=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: number):
+    v3 = Integer
+    v4 = BitOr v0, v3
+    v5 = BitOr v1, v3
+    v6 = Integer
+    v7 = Integer
+    Jump -> next b1(v4, v6, v7)
+  b1(v8, v9, v10):
+    LoopHint
+    v12 = Less v10, v2
+    Branch v12 -> taken b2(), notTaken b3()
+  b2():
+    v13 = BitXor v9, v8
+    v14 = Add v8, v5
+    v15 = Increment v10
+    Jump -> next b1(v14, v13, v15)
+  b3():
+    v16 = String string=":"
+    v17 = Add v8, v16
+    v18 = Add v17, v9
+    Return v18
+}
+function f2 name="add" module=m0 flags=[IsChecked] parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = BitOr v1, v2
+    v5 = Add v3, v4
+    Return v5
+}
+function f3 name="sub" module=m0 flags=[IsChecked] parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = BitOr v1, v2
+    v5 = Sub v3, v4
+    Return v5
+}
+entry module=m0

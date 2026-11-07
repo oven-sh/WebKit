@@ -1,0 +1,27 @@
+# the row of an operator counts on a symbol or a BigInt among its operands. Numbers alone arrive here, so the callee throws by no rule: all that is left is the stack
+# const byRank = (a, b) => a - b;  byRank(2, 1);
+# RUN: summary f1
+# CHECK: summary f1 {{*}}operators=[mayThrow, mayThrowByRule
+# CHECK: operands-of-operators Parameter 0, Parameter 1
+# RUN(OWN): summary f1
+# OWN-NOT: summary f1 {{*}}effects=[mayThrow
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}}returns=[mayThrow, mayCollect] throws=[mayThrow, mayCollect]
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f1 {{*}}mayThrowByRule
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    v1 = Integer integer=1
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v0, v1
+    Return v3
+}
+function f1 name="byRank" module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v0, v1
+    Return v2
+}

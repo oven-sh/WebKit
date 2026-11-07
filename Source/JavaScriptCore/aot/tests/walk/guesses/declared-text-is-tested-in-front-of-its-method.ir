@@ -1,0 +1,49 @@
+# the source declares a text, which is a guess. In a loop one branch stands in front of the read of the method and its call, which both lean on it: behind it the read is the member of the class and the call goes to its entry.
+# Loop invariants are withheld: with them the test stands in front of the loop, which is built twice.
+# Where the test fails the read and the call are made as they are written, so an object with a method of its own under the name answers for itself
+# function sumOfCodes(s: string, n) { let sum = 0; for (let i = 0; i < n; i++) sum = sum + s.charCodeAt(i); return sum; }
+# The guard at the entry is withheld: with it the text is proven in the whole body.
+# RUN: walk f1 mechanisms=all-ParameterGuards-LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=string
+# CHECK: Branch [[test]] ->
+# CHECK: = GetStringLength
+# CHECK: frequency=Rare
+# CHECK: = PropGet {{*}}key="charCodeAt"
+# CHECK: = Call v
+# With guesses withheld nothing is tested, and both stay closed.
+# RUN(CLOSED): walk f1 mechanisms=all-Guesses-ParameterGuards
+# CLOSED-LABEL: code f1:Body
+# CLOSED-NOT: TypeTest
+# CLOSED: = PropGet {{*}}key="charCodeAt"
+# CLOSED-NOT: overload=StringPrototypeCharCodeAt
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="sumOfCodes" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|string, v1: anything):
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v0 key="charCodeAt"
+    v9 = Call v8, v0, v5 calleeKey="charCodeAt" calleeName="s.charCodeAt"
+    v10 = Add v4, v9
+    v11 = Increment v5
+    Jump -> next b1(v10, v11)
+  b3():
+    Return v4
+}

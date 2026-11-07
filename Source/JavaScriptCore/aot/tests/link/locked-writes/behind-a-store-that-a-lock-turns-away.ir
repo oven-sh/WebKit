@@ -1,0 +1,21 @@
+# the twin of behind-a-store-that-no-lock-turns-away.ir: the first store always throws, and the build stops for it. The second is never come to: it throws if it runs
+# Array.prototype.pop = f; Array.prototype.push = f;
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @1
+    v1 = Builtin builtin=ArrayPrototype @2
+    PropSet v1, v0 key="pop" @3
+    PropSet v1, v0 key="push" @4
+    Return v0 @5
+}
+function f1 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @101
+    Return v0 @102
+}

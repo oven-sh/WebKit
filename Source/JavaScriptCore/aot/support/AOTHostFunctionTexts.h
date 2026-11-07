@@ -12,7 +12,6 @@
 
 namespace JSC { namespace AOT {
 
-// The host keeps the text of a module that it has left out of the program, and the build asks for it where it lays out the text of functions.
 struct HostFunctionTexts {
     void* owner { nullptr };
     size_t (*size)(void* owner, uint32_t module) { nullptr };

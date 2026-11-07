@@ -8,16 +8,13 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCellFormat.h"
 #include "AOTInstance.h"
 #include "AOTPropertyCachesStringKeys.h"
-#include "AOTStringBuilderStorage.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
-#include "JSString.h"
+#include "JSCJSValueInlines.h"
 #include "NumericStrings.h"
-#include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {
 
@@ -38,9 +35,8 @@ StubSignature signatureOfConcatenateKeyOfPair(StubKey)
 void locateKeysOfPair(StubAssembler& jit, GPRReg first, GPRReg second, GPRReg set, GPRReg scratch)
 {
     RELEASE_ASSERT(noOverlap(first, second, set, scratch));
-    // StringKeyCache::hashOfPair().
     jit.getEffectiveAddress(BaseIndex(first, second, CCallHelpers::TimesEight), set);
-    jit.mul32(TrustedImm32(StringKeyCache::keyOfPairMultiplier), set, set);
+    jit.mul32(TrustedImm32(static_cast<int32_t>(StringKeyCache::keyOfPairMultiplier)), set, set);
     jit.urshift32(TrustedImm32(StringKeyCache::keyOfPairHashShift), set);
 #if CPU(X86_64)
     UNUSED_PARAM(scratch);
@@ -52,7 +48,6 @@ void locateKeysOfPair(StubAssembler& jit, GPRReg first, GPRReg second, GPRReg se
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keysOfPairs)), set);
 }
 
-// The operation joins the parts and enters the pair.
 void generateConcatenateKeyOfPair(StubAssembler& jit)
 {
     const GPRReg first = jit.operand(0);
@@ -72,7 +67,7 @@ void generateConcatenateKeyOfPair(StubAssembler& jit)
         hasOtherFirst.link(&jit);
         hasOtherSecond.link(&jit);
     }
-    auto use = static_cast<ConcatenatedKeyForm>(jit.key().form()) == ConcatenatedKeyForm::Name ? StringBuilderStorage::StringUse::LikelyName : StringBuilderStorage::StringUse::LikelyKey;
+    auto use = static_cast<ConcatenatedKeyForm>(jit.key().form()) == ConcatenatedKeyForm::Name ? UseOfJoinedText::LikelyName : UseOfJoinedText::LikelyKey;
     jit.callOperationAndReturn(Entry::operationAOTConcatenatePair, {
         .returns = OperationCall::Returns::Value,
         .saves = OperationCall::Saves::CallerSavedGPRs,
@@ -80,7 +75,6 @@ void generateConcatenateKeyOfPair(StubAssembler& jit)
     });
 }
 
-// The caches hold int32 keys. The operation takes every integer.
 void generateIntegerToString(StubAssembler& jit)
 {
     const GPRReg result = jit.result();
@@ -148,76 +142,6 @@ void generateIntegerToString(StubAssembler& jit)
     slow.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTIntToString, { .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = value });
 }
-
-// StringKeyCache::tryFindCaseConversion(): what the conversion of this very string gave the last time.
-static void returnRememberedCaseConversion(StubAssembler& jit, StringKeyCache::LetterCase letterCase, GPRReg string, GPRReg source, GPRReg index, GPRReg table, GPRReg entry, GPRReg sourceOfEntry)
-{
-    RELEASE_ASSERT(noOverlap(string, source, index, table, entry, sourceOfEntry, instanceGPR, cellCageBaseGPR));
-    if (jit.options().useWideReferences)
-        return;
-    JumpList isRemembered;
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.caseConversions)), table);
-    Jump hasNoTable = jit.branchTestPtr(CCallHelpers::Zero, table);
-    // Of a string outside the cage this has more than 32 bits, and equals the upper half of no entry.
-    jit.move(string, source);
-    jit.sub64(cellCageBaseGPR, source);
-    jit.urshift64(TrustedImm32(cell32Shift), source);
-    jit.mul32(TrustedImm32(static_cast<int32_t>(StringKeyCache::caseConversionMultiplier)), source, index);
-    jit.urshift32(TrustedImm32(StringKeyCache::caseConversionShift), index);
-    jit.lshift32(TrustedImm32(StringKeyCache::caseConversionSetShift), index);
-    for (size_t way = 0; way < StringKeyCache::waysOfCaseConversions; ++way) {
-        jit.load64(BaseIndex(table, index, CCallHelpers::TimesEight, static_cast<int32_t>(StringKeyCache::indexOfCaseConversion(0, letterCase, way) * sizeof(uint64_t))), entry);
-        jit.urshift64(entry, TrustedImm32(32), sourceOfEntry);
-        isRemembered.append(jit.branch64(CCallHelpers::Equal, sourceOfEntry, source));
-    }
-    Jump isNotRemembered = jit.jump();
-
-    isRemembered.link(&jit);
-    jit.zeroExtend32ToWord(entry, entry);
-    decodeCell32(jit, entry, jit.result());
-    jit.returnToCaller();
-
-    hasNoTable.link(&jit);
-    isNotRemembered.link(&jit);
-}
-
-static PreludeExit emitUnchangedCasePrelude(StubAssembler& jit, StringKeyCache::LetterCase letterCase)
-{
-    const uint8_t firstConvertedLetter = letterCase == StringKeyCache::LetterCase::Lower ? 'A' : 'a';
-    const uint8_t lastConvertedLetter = letterCase == StringKeyCache::LetterCase::Lower ? 'Z' : 'z';
-    // A call that preserves registers has none to scan with.
-    if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::GPR)
-        return PreludeExit::CallsOperation;
-
-    constexpr GPRReg string = operationArgumentGPR(1);
-    const GPRReg impl = jit.allocateScratch(StubRegister::A2);
-    const ScannedBytes scanned {
-        .bytes = impl,
-        .size = jit.allocateScratch(StubRegister::A3),
-        .word = jit.allocateScratch(StubRegister::A4),
-        .atLeastFirst = jit.allocateScratch(StubRegister::A5),
-        .aboveLast = jit.allocateScratch(StubRegister::R0),
-        .addendForFirst = jit.allocateScratch(StubRegister::T9),
-        .addendForLast = jit.allocateScratch(StubRegister::T12),
-    };
-    RELEASE_ASSERT(noOverlap(string, scanned.bytes, scanned.size, scanned.word, scanned.atLeastFirst, scanned.aboveLast, scanned.addendForFirst, scanned.addendForLast));
-
-    JumpList mayChange;
-    jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
-    mayChange.append(jit.branchIfRopeStringImpl(impl));
-    mayChange.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
-    jit.load32(Address(impl, StringImpl::lengthMemoryOffset()), scanned.size);
-    jit.loadPtr(Address(impl, StringImpl::dataOffset()), scanned.bytes);
-    branchUnlessASCIIOutsideRange(jit, scanned, firstConvertedLetter, lastConvertedLetter, mayChange);
-    returnResult(jit, string);
-
-    mayChange.link(&jit);
-    returnRememberedCaseConversion(jit, letterCase, string, scanned.size, scanned.word, scanned.bytes, scanned.atLeastFirst, scanned.addendForFirst);
-    return PreludeExit::CallsOperation;
-}
-
-PreludeExit emitToLowerCasePrelude(StubAssembler& jit) { return emitUnchangedCasePrelude(jit, StringKeyCache::LetterCase::Lower); }
-PreludeExit emitToUpperCasePrelude(StubAssembler& jit) { return emitUnchangedCasePrelude(jit, StringKeyCache::LetterCase::Upper); }
 
 } } // namespace JSC::AOT
 

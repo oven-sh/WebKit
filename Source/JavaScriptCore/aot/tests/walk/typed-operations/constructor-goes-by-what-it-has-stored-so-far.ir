@@ -1,0 +1,46 @@
+# Link calls the field filled for whoever gets the object from outside. The constructor itself reads it in front of the store: that read reckons with an empty slot, and its store is one that creates the field
+# class P { constructor(v) { this.early = this.x; this.x = v; } }  function get(p) { return p.x; }  get(new P("a"));
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "early" proven=undefined|string {{*}}filled
+# CHECK: field L0.1 "x" proven=string {{*}}filled read-by-its-makers-while-empty
+# RUN(MAKER): walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# MAKER-LABEL: code f1:Body
+# MAKER: = GetSlotOrUndefined {{*}}key="x"
+# MAKER: PutSlotOrAdd {{*}}key="early"
+# MAKER: PutSlotOrAdd {{*}}key="x"
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# NEVER-NOT: = GetSlot v
+# NEVER-NOT: PutSlot v
+# RUN(OUTSIDE): walk f2 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# OUTSIDE-LABEL: code f2:Body
+# OUTSIDE: : string {{*}} = GetSlot {{*}}key="x"
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="early" declared={type=anything}}, {key="x" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = String string="a"
+    v4 = Construct v2, -, v3
+    v5 = NewClosure function=f2
+    v6 = Call v5, -, v4 calleeName="get"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="P" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = PropGet v3 key="x"
+    PropSet v3, v4 key="early"
+    PropSet v3, v1 key="x"
+    Return v3
+}
+function f2 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

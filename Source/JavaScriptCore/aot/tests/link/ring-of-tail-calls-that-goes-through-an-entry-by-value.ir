@@ -1,0 +1,153 @@
+# a call in tail position is a jump, and whoever is jumped to returns in place of the function. An entry by value returns a boxed value, and comes back for a raw one to box it.
+# Round a ring a row of such calls may go on without end, so there each has to be a jump: a ring with a call by value in it returns boxed values, whatever is proven of its results
+# function first(n, next, other) { return n === 0 ? n * 1 : next(n - 1, other, next) }  function second(n, next, other) { return n === 0 ? n * 2 : next(n - 1, other, next) }
+# function enters(n) { return first(n, second, first) }  function entersOther(n) { return first(n, first, second) }  function added(n) { return enters(n) + 1 }
+# function ring(n) { return n === 0 ? 0.5 : ring(n - 1) }  function floor(n) { return Math.floor(n) }  function byList(n, ...rest) { return n === 0 ? 0.5 : byList(n - 1, ...rest) }
+# RUN: summary f1
+# CHECK: call c0 {{*}} in-tail-position
+# RUN(ADDED): summary f5
+# ADDED-NOT: in-tail-position
+# All of them return numbers
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}}result=int|whole {{*}}ring-by-value
+# LINK: function f2 {{*}}result=int|whole {{*}}ring-by-value
+# LINK: function f3 {{*}}result=int|whole
+# LINK: function f6 {{*}}result=fractional {{*}}ring-by-value
+# LINK: function f8 {{*}}result=fractional {{*}}ring-by-value
+# RUN(LISTED): link functions mechanisms=all
+# LISTED-NOT: function f3 {{*}}ring-by-value
+# LISTED-NOT: function f4 {{*}}ring-by-value
+# LISTED-NOT: function f5 {{*}}ring-by-value
+# LISTED-NOT: function f7 {{*}}ring-by-value
+# RUN(PLAN): plan units mechanisms=all
+# PLAN: unit f1:Body ({{*}}) -> (JSValue)
+# PLAN: unit f2:Body ({{*}}) -> (JSValue)
+# Whoever only leads into the ring stands in none: it comes back from its call, once, and unboxes
+# PLAN: unit f3:Body ({{*}}) -> (Double)
+# PLAN: unit f4:Body ({{*}}) -> (Double)
+# PLAN: unit f5:Body ({{*}}) -> (Double)
+# A ring of one call of a value, listed with its one callee: whether such a call is direct is decided unit by unit, so the ring returns boxed values: ring-of-tail-calls-returns-raw-values-only-where-each-call-is-written-direct.ir
+# PLAN: unit f6:Body ({{*}}) -> (JSValue)
+# Native code comes back
+# PLAN: unit f7:Body ({{*}}) -> (Double)
+# The one callee is listed, and still the call goes by value: the walk lays out no list whose length it does not know
+# PLAN: unit f8:Body ({{*}}) -> (JSValue)
+
+variable g0 name="first" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="second" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="enters" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="entersOther" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="added" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="ring" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="floor" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="byList" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    v1 = GetModuleVariable variable=g4
+    v2 = Call v1, -, v0 calleeName="added"
+    v3 = GetModuleVariable variable=g3
+    v4 = Call v3, -, v0 calleeName="entersOther"
+    v5 = GetModuleVariable variable=g5
+    v6 = Call v5, -, v0 calleeName="ring"
+    v7 = GetModuleVariable variable=g6
+    v8 = Call v7, -, v0 calleeName="floor"
+    v9 = GetModuleVariable variable=g7
+    v10 = Call v9, -, v0, v0 calleeName="byList"
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="sink" [isFreeName]
+    v13 = Call v12, -, v2, v4, v6, v8, v10
+    Return v13
+}
+function f1 name="first" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    v6 = Mul v0, v5
+    Return v6
+  b2():
+    v7 = Integer integer=1
+    v8 = Sub v0, v7
+    v9 = Call v1, -, v8, v2, v1 calleeName="next"
+    ReturnCall v9
+}
+function f2 name="second" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=2
+    v6 = Mul v0, v5
+    Return v6
+  b2():
+    v7 = Integer integer=1
+    v8 = Sub v0, v7
+    v9 = Call v1, -, v8, v2, v1 calleeName="next"
+    ReturnCall v9
+}
+function f3 name="enters" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v1, -, v0, v2, v1 calleeName="first"
+    ReturnCall v3
+}
+function f4 name="entersOther" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v1, -, v0, v1, v2 calleeName="first"
+    ReturnCall v3
+}
+function f5 name="added" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2
+    v2 = Call v1, -, v0 calleeName="enters"
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    Return v4
+}
+function f6 name="ring" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Double number=0.5
+    Return v3
+  b2():
+    v4 = Integer integer=1
+    v5 = Sub v0, v4
+    v6 = GetModuleVariable variable=g5
+    v7 = Call v6, -, v5 calleeName="ring"
+    ReturnCall v7
+}
+function f7 name="floor" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=MathFloor
+    v2 = Call v1, -, v0 calleeName="floor"
+    ReturnCall v2
+}
+function f8 name="byList" module=m0 flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = Integer
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Double number=0.5
+    Return v4
+  b2():
+    v5 = Integer integer=1
+    v6 = Sub v0, v5
+    v7 = GetModuleVariable variable=g7
+    v8 = NewArray v6 contents=anything
+    AppendSpread v8, v1
+    v10 = CallList v7, -, v8 calleeName="byList"
+    ReturnCall v10
+}

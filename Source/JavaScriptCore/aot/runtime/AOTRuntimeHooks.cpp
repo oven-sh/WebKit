@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAsyncResumption.h"
 #include "AOTBuiltinModules.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTClosure.h"
@@ -53,7 +54,6 @@ public:
 
 } // anonymous namespace
 
-// Compiled code takes `f.call`, `f.apply`, `f.bind` and `x instanceof f` on a function of the engine for the members of Function.prototype (BuiltinTable::isFunctionOfEngine).
 Structure* structureOfHostFunctions(JSGlobalObject* realm, Structure* structure)
 {
     if (!locksBuiltins(realm))
@@ -166,21 +166,17 @@ void didCreateRealm(JSGlobalObject* realm)
 {
     refuseEvaluationUnlessAdmitted(realm);
     Instance* instance = Instance::of(realm);
-    // The engine's text of next(), return() and throw() takes the engine's own generators alone. A host brings the three compiled.
     if (!instance || (!BuiltinBindings::hasHost() && !hasBuiltinFunction(realm->vm(), static_cast<uint32_t>(BuiltinCodeIndex::generatorPrototypeNextCode))))
         installGeneratorMethodsForCompiledGenerators(realm);
     if (!instance)
         return;
 
-    Instance::forEachOf(realm, [&](Instance& each) {
-        makeBuiltinsImmutable(each);
-        Instance::create(realm);
-        // A host installs its globals after this and then calls hostDidCreateRealm().
-        if (!BuiltinBindings::hasHost())
-            didInstallBuiltins(each);
-    });
-    if (!BuiltinBindings::hasHost())
-        installDeferredWatchpoints(realm);
+    makeBuiltinsImmutable(*instance);
+    Instance::create(realm);
+    if (BuiltinBindings::hasHost())
+        return;
+    didInstallBuiltins(*instance);
+    installDeferredWatchpoints(realm);
 }
 
 void didChangeMicrotaskQueueing(VM& vm)
@@ -189,7 +185,7 @@ void didChangeMicrotaskQueueing(VM& vm)
         instance->realm.microtaskQueue = &instance->globalObject->microtaskQueue();
         instance->awaitMustSuspend = !instance->globalObject->canFastQueueMicrotask() || vm.hostObservesMicrotaskBoundaries() || vm.m_synchronousModuleQueue;
         if (instance->awaitMustSuspend)
-            instance->coroutines.frameThatMayContinue = nullptr;
+            takeAwayRightToContinue(*instance);
     }
     if (vm.hostObservesMicrotaskBoundaries() && vm.aotState().modulesWhoseFilesRunAheadOfLoader) [[unlikely]]
         runFilesThatWaitInLoader(vm);
@@ -201,6 +197,25 @@ CONCURRENT_SAFE void setLoopPollsEnabled(VM& vm, bool enabled)
     Locker locker { polled.lock };
     for (Instance* instance : polled.instances)
         setPollsEnabled(*instance, enabled);
+}
+
+constinit std::atomic<bool> wasNoHelperThreadsScopeEntered { false };
+static thread_local unsigned t_noHelperThreadsScopes;
+
+NoHelperThreadsScope::NoHelperThreadsScope()
+{
+    wasNoHelperThreadsScopeEntered.store(true, std::memory_order_relaxed);
+    ++t_noHelperThreadsScopes;
+}
+
+NoHelperThreadsScope::~NoHelperThreadsScope()
+{
+    --t_noHelperThreadsScopes;
+}
+
+bool isThreadInNoHelperThreadsScope()
+{
+    return t_noHelperThreadsScopes;
 }
 
 } // namespace JSC::AOT::RuntimeHooks

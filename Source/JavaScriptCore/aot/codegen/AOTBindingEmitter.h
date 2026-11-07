@@ -16,8 +16,9 @@ public:
     explicit BindingEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateGetModuleVariable(const ValueContext&);
-    void generateGetEncodedModuleVariable(const ValueContext&);
     void generatePutModuleVariable(const ValueContext&);
+    void generateGetStaticFieldOrAbsent(const ValueContext&);
+    void generatePutStaticField(const ValueContext&);
     void generateGetEnvironmentField(const ValueContext&);
     void generatePutEnvironmentField(const ValueContext&);
     void generateScopeHasBinding(const ValueContext&);
@@ -25,6 +26,8 @@ public:
 
 private:
     void failAndDefineZero(const ValueContext&, InternalErrorKind);
+    bool endsWayAtEnvironmentThatIsNeverMade(LayoutID);
+    CellPointer singletonClosureOf(const ValueContext&, FunctionID);
     void defineSingletonClosure(const ValueContext&, FunctionID);
 };
 

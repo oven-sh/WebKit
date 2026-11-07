@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTFrameArrays.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTOperationScope.h"
@@ -36,17 +35,13 @@ ALWAYS_INLINE T* cellArgument(JSCell* cell, Entry entry)
     T* result = cell ? dynamicDowncast<T>(cell) : nullptr;
     if (!result) [[unlikely]]
         crashOnWrongOperand(entry);
-    if constexpr (std::is_base_of_v<T, JSArray>) {
-        if (!mayBeGivenFrameArray(entry) && isFrameArray(cell)) [[unlikely]]
-            crashOnWrongOperand(entry);
-    }
     return result;
 }
 
 ALWAYS_INLINE JSObject* objectArgument(EncodedJSValue value, Entry entry)
 {
     JSValue decoded = JSValue::decode(value);
-    if (!decoded.isObject() || (!mayBeGivenFrameArray(entry) && isFrameArray(decoded.asCell()))) [[unlikely]]
+    if (!decoded.isObject()) [[unlikely]]
         crashOnWrongOperand(entry);
     return asObject(decoded);
 }

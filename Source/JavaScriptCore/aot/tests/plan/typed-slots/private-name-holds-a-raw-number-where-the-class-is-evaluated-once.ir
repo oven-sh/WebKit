@@ -1,0 +1,131 @@
+# class P { #x = 1; open = 2; sum() { return this.#x + this.open; } bump() { this.#x = this.#x + 1; } static get(o: any) { return o.#x; } static has(o: any) { return #x in o; } }
+# const p = new P();
+# p.bump();
+# report(p.sum());
+# report(P.get(p));
+# report(P.has(p));
+# (globalThis as any).kept = p;
+# Every writer of a private name stands in the class body, so what Link proves of it holds of every store, whoever has the object. The brand holds the token of the evaluation as it is.
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject
+# CHECK-NEXT: slot 0 #"#"@L0 JSValue Inline
+# CHECK-NEXT: slot 1 #"#x"@L0 OptionalDouble Inline
+# CHECK-NEXT: slot 2 "open" JSValue Inline
+# RUN(WITHHELD): plan layouts mechanisms=-TypedSlots
+# WITHHELD: slot 1 #"#x"@L0 JSValue Inline
+
+module m0 path="once.ts" displayPath="once.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="P" module=m0 position=53 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#x"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key="open" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClassToken layout=L0 @47
+    PutModuleVariable v0 variable=g1 @47
+    v2 = NewClosure function=f1 @47
+    v3 = NewClass v2 layout=L0 @47
+    PutModuleVariable v3 variable=g0 @47
+    v5 = NewClosure function=f2 @75
+    DefineMethod v3, v5 layout=L0 key="sum" @75
+    v7 = NewClosure function=f3 @113
+    DefineMethod v3, v7 layout=L0 index=1 key="bump" @113
+    v9 = NewClosure function=f4 @154
+    DefineMethod v3, v9 layout=L0 side=Static index=2 key="get" @154
+    v11 = NewClosure function=f5 @190
+    DefineMethod v3, v11 layout=L0 side=Static index=3 key="has" @190
+    v13 = FinishClass v3 layout=L0 @47
+    v14 = Convert v13 declared={type=f1 flags=[IsFromCompiler]} @47
+    v15 = Convert v13 declared={type=f1 flags=[IsFromCompiler]} @47
+    v16 = Construct v15 calleeName="P" @238
+    v17 = Convert v16 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @234
+    v18 = PropGet v17 key="bump" @243
+    v19 = Call v18, v17 calleeKey="bump" calleeName="p.bump" @245
+    v20 = Builtin builtin=GlobalThis @253
+    v21 = PropGet v20 key="report" [isFreeName] @253
+    v22 = PropGet v17 key="sum" @260
+    v23 = Call v22, v17 calleeKey="sum" calleeName="p.sum" @262
+    v24 = Call v21, -, v23 calleeName="report" @253
+    v25 = Builtin builtin=GlobalThis @270
+    v26 = PropGet v25 key="report" [isFreeName] @270
+    v27 = PropGet v15 key="get" @277
+    v28 = Call v27, v15, v17 calleeKey="get" calleeName="P.get" @279
+    v29 = Call v26, -, v28 calleeName="report" @270
+    v30 = Builtin builtin=GlobalThis @288
+    v31 = PropGet v30 key="report" [isFreeName] @288
+    v32 = PropGet v15 key="has" @295
+    v33 = Call v32, v15, v17 calleeKey="has" calleeName="P.has" @297
+    v34 = Call v31, -, v33 calleeName="report" @288
+    v35 = Builtin builtin=GlobalThis @307
+    v36 = PropGet v35 key="globalThis" [isFreeName] @307
+    v37 = Convert v36 declared={type=builtin(GlobalThis) flags=[IsExpected]} @307
+    PropSet v37, v17 key="kept" @307
+    v39 = Undefined @307
+    Return v39 @307
+}
+function f1 name="P" module=m0 position=53 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @53
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @53
+    v2 = NewObject v1 layout=L0 @53
+    v3 = Convert v2 declared={type=L0} @53
+    v4 = CallDirect v3 function=f6 @53
+    Return v3 @53
+}
+function f2 name="sum" module=m0 position=75 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @75
+  b1():
+    v1 = GetModuleVariable variable=g1 @90
+    v2 = PrivateGet v0, v1 layout=L0 field=1 @90
+    v3 = PropGet v0 key="open" @100
+    v4 = Add v2, v3 @100
+    Return v4 @100
+}
+function f3 name="bump" module=m0 position=113 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @113
+  b1():
+    v1 = GetModuleVariable variable=g1 @132
+    v2 = PrivateGet v0, v1 layout=L0 field=1 @132
+    v3 = Integer integer=1 @142
+    v4 = Add v2, v3 @142
+    v5 = GetModuleVariable variable=g1 @122
+    PrivateSet v0, v5, v4 layout=L0 field=1 @122
+    v7 = Undefined @122
+    Return v7 @122
+}
+function f4 name="get" module=m0 position=147 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @147
+  b1():
+    v1 = GetModuleVariable variable=g1 @175
+    v2 = PrivateGet v0, v1 layout=L0 field=1 @175
+    Return v2 @175
+}
+function f5 name="has" module=m0 position=183 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @183
+  b1():
+    v1 = GetModuleVariable variable=g1 @217
+    v2 = PrivateHas v0, v1 layout=L0 field=1 @217
+    Return v2 @217
+}
+function f6 module=m0 position=53 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @53
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @53
+    v2 = GetModuleVariable variable=g1 @53
+    PrivateDefine v1, v2, v2 layout=L0 @53
+    v4 = Integer integer=1 @62
+    v5 = GetModuleVariable variable=g1 @57
+    PrivateDefine v1, v5, v4 layout=L0 field=1 @57
+    v7 = Integer integer=2 @72
+    PropDefine v1, v7 key="open" @65
+    v9 = Undefined @53
+    Return v9 @53
+}

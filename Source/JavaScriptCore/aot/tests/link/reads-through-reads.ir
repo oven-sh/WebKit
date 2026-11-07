@@ -1,0 +1,43 @@
+# If a type came only so many reads deep, as in the first version, which gained one read a round, `a.b.c.d` would be anything and all three objects would count as escaped. Each read finds its field when the layout arrives at its subject, however long the row is
+# function deep(a) { return a.b.c.d; }  deep({ b: { c: { d: "s" } } });
+# RUN: summary f1
+# CHECK: access [[b]] v1 Read Parameter 0 "b" -> [[b]]
+# CHECK: access [[c]] v2 Read [[b]] "c" -> [[c]]
+# CHECK: access [[d]] v3 Read [[c]] "d" -> [[d]]
+# CHECK: edge [[d]] -> Result 0
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f1 callers-known one-callee {{*}}result=string
+# LINK-NEXT: parameter 0 {{*}}proven=L0
+# LINK: field L0.0 "b" proven=L1 writers-known
+# LINK: field L1.0 "c" proven=L2 writers-known
+# LINK: field L2.0 "d" proven=string writers-known
+# LINK: layout L0 changes=[]
+# LINK: layout L1 changes=[]
+# LINK: layout L2 changes=[]
+
+layout L0 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="d" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="s"
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v6 calleeName="deep"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="deep" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="b"
+    v2 = PropGet v1 key="c"
+    v3 = PropGet v2 key="d"
+    Return v3
+}

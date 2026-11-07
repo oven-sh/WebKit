@@ -32,7 +32,6 @@ const recordIncludes = [
   "<wtf/Variant.h>",
 ];
 
-// Without AOTVector.h in front, `Vector` would name the class of WTF here and the compiler's own in whoever reads a record.
 const listsAreOfTheCompiler = "static_assert(std::is_same_v<Vector<uint32_t>, AOT::Vector<uint32_t>>);";
 
 function fieldDecl(field: Field): string {
@@ -43,7 +42,6 @@ function isDouble(field: Field): boolean {
   return field.kind.tag === "Scalar" && field.kind.scalar === "Double";
 }
 
-// Two records are equal when they hold the same bits: 0 is not -0, and a NaN equals itself.
 function comparisonOf(name: string, fields: readonly Field[]): string[] {
   if (!fields.some(isDouble)) return [`friend bool operator==(const ${name}&, const ${name}&) = default;`];
   const terms = fields.map(field =>
@@ -130,7 +128,6 @@ function schemaFileOf(type: SchemaType): string {
   return (type.tag === "Record" ? type.record : type.variant).file.path;
 }
 
-// The records of the first schema file depend on no later file, so they come first in dependency order and get a header of their own.
 function recordsHeaders(schema: Schema): OutputFile[] {
   const types = engineTypesInDependencyOrder(schema);
   const firstOfOtherFile = types.findIndex(type => schemaFileOf(type) !== schemaFileOf(types[0]));
@@ -154,17 +151,19 @@ function recordsHeaders(schema: Schema): OutputFile[] {
 }
 
 function payloadWordsHeader(schema: Schema): string[] {
-  const specializations = payloadTypesOf(schema).map(type => {
+  const types = payloadTypesOf(schema);
+  const specializations = types.map(type => {
     const name = engineStructNameOf(type);
     return [
       `template<> struct PayloadWords<${name}> {`,
       `    static constexpr unsigned count = ${payloadWordsOf(type)};`,
-      `    JS_EXPORT_PRIVATE static ${name} decode(std::span<const uint32_t, count>);`,
+      `    ${type.tag === "Record" ? "" : "JS_EXPORT_PRIVATE "}static ${name} decode(std::span<const uint32_t, count>);`,
       `    JS_EXPORT_PRIVATE static void encode(const ${name}&, std::span<uint32_t, count>);`,
       "};",
     ];
   });
-  return cppHeader(['"AOTSchemaSupport.h"'], inNamespace("Typed", blocks(...specializations)));
+  const decoders = types.flatMap(type => (type.tag === "Record" ? [recordDecoder(type.record)] : []));
+  return cppHeader(['"AOTSchemaSupport.h"'], inNamespace("Typed", blocks(...specializations, ...decoders)));
 }
 
 function hasPayloadWordsCodec(kind: Kind): boolean {
@@ -200,16 +199,21 @@ function encodeStatements(fields: readonly Field[], source: string, firstWord = 
   return statements;
 }
 
-function recordCodec(record: SchemaRecord): string[] {
+function recordDecoder(record: SchemaRecord): string[] {
   const name = engineRecordNameOf(record);
   return [
-    `${name} PayloadWords<${name}>::decode(std::span<const uint32_t, count> words)`,
+    `inline ${name} PayloadWords<${name}>::decode(std::span<const uint32_t, count> words)`,
     "{",
     `    ${name} record;`,
     ...indent(decodeStatements(record.fields, "record")),
     "    return record;",
     "}",
-    "",
+  ];
+}
+
+function recordEncoder(record: SchemaRecord): string[] {
+  const name = engineRecordNameOf(record);
+  return [
     `void PayloadWords<${name}>::encode(const ${name}& record, std::span<uint32_t, count> words)`,
     "{",
     ...indent(encodeStatements(record.fields, "record")),
@@ -280,7 +284,7 @@ function caseNameFunction(variant: Variant): string[] {
 function recordsSource(schema: Schema): string[] {
   const variants = engineTypesInDependencyOrder(schema).flatMap(type => (type.tag === "Variant" ? [type.variant] : []));
   const codecs = payloadTypesOf(schema).map(type =>
-    type.tag === "Record" ? recordCodec(type.record) : variantCodec(type.variant),
+    type.tag === "Record" ? recordEncoder(type.record) : variantCodec(type.variant),
   );
   return cppSource(
     ['"AOTSchemaRecords.h"', "<algorithm>", "<array>"],

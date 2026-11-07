@@ -80,12 +80,12 @@ export function denseEnum(
   lines.push(
     `${indentation}pub const fn name(self) -> &'static str { Self::NAMES[self as usize] }`,
     `${indentation}pub fn from_name(name: &str) -> Option<${type}> { Self::ALL.into_iter().find(|member| member.name() == name) }`,
-    `${indentation}pub const fn to_wire(self) -> u32 { self as u32 }`,
-    `${indentation}pub const fn from_wire(word: u32) -> Option<${type}> { if (word as usize) < Self::COUNT { Some(Self::ALL[word as usize]) } else { None } }`,
+    `${indentation}#[inline] pub const fn to_wire(self) -> u32 { self as u32 }`,
+    `${indentation}#[inline] pub const fn from_wire(word: u32) -> Option<${type}> { if (word as usize) < Self::COUNT { Some(Self::ALL[word as usize]) } else { None } }`,
   );
   for (const column of columns) {
     if (!column.isInRust) continue;
-    const signature = `pub const fn ${rustIdentifier(column.name)}(self) -> ${columnType(schema, column.kind)}`;
+    const signature = `#[inline] pub const fn ${rustIdentifier(column.name)}(self) -> ${columnType(schema, column.kind)}`;
     lines.push(`${indentation}${signature} { Self::${screamingCase(column.name)}[self as usize] }`);
   }
   lines.push("}");
@@ -121,22 +121,21 @@ export function flagWord(type: SchemaEnum): string[] {
       "];",
       indentation,
     ),
-    `${indentation}pub const fn contains(self, other: ${name}) -> bool { self.0 & other.0 == other.0 }`,
-    `${indentation}pub const fn intersects(self, other: ${name}) -> bool { self.0 & other.0 != 0 }`,
-    `${indentation}pub const fn is_empty(self) -> bool { self.0 == 0 }`,
-    `${indentation}pub const fn without(self, other: ${name}) -> ${name} { ${name}(self.0 & !other.0) }`,
-    `${indentation}pub const fn to_wire(self) -> u32 { self.0 }`,
-    `${indentation}pub const fn from_wire(word: u32) -> Option<${name}> { if word & !Self::ALL.0 == 0 { Some(${name}(word)) } else { None } }`,
+    `${indentation}#[inline] pub const fn contains(self, other: ${name}) -> bool { self.0 & other.0 == other.0 }`,
+    `${indentation}#[inline] pub const fn intersects(self, other: ${name}) -> bool { self.0 & other.0 != 0 }`,
+    `${indentation}#[inline] pub const fn is_empty(self) -> bool { self.0 == 0 }`,
+    `${indentation}#[inline] pub const fn without(self, other: ${name}) -> ${name} { ${name}(self.0 & !other.0) }`,
+    `${indentation}#[inline] pub const fn to_wire(self) -> u32 { self.0 }`,
+    `${indentation}#[inline] pub const fn from_wire(word: u32) -> Option<${name}> { if word & !Self::ALL.0 == 0 { Some(${name}(word)) } else { None } }`,
     "}",
-    `impl core::ops::BitOr for ${name} { type Output = ${name}; fn bitor(self, other: ${name}) -> ${name} { ${name}(self.0 | other.0) } }`,
-    `impl core::ops::BitOrAssign for ${name} { fn bitor_assign(&mut self, other: ${name}) { self.0 |= other.0; } }`,
-    `impl core::ops::BitAnd for ${name} { type Output = ${name}; fn bitand(self, other: ${name}) -> ${name} { ${name}(self.0 & other.0) } }`,
+    `impl core::ops::BitOr for ${name} { type Output = ${name}; #[inline] fn bitor(self, other: ${name}) -> ${name} { ${name}(self.0 | other.0) } }`,
+    `impl core::ops::BitOrAssign for ${name} { #[inline] fn bitor_assign(&mut self, other: ${name}) { self.0 |= other.0; } }`,
+    `impl core::ops::BitAnd for ${name} { type Output = ${name}; #[inline] fn bitand(self, other: ${name}) -> ${name} { ${name}(self.0 & other.0) } }`,
   ];
 }
 
 const abiFiles: ReadonlySet<string> = new Set([
   "schema/limits.def",
-  "schema/passes.def",
   "schema/statistics.def",
   "schema/diagnostics.def",
   "schema/compile-call.def",

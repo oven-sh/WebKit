@@ -1,0 +1,68 @@
+# function once(first) { return first(); }
+# function gathers(first, ...rest) { gc(); return first() + rest.length; }
+# function borrows(given, holder, list) { const n: number = list[0]; const it = () => given.size; return holder.run(it) + n; }
+# const list = JSON.parse('["a",5]'); print(borrows({ size: 1 }, { run: once }, list) + borrows({ size: 2 }, { run: gathers }, list));
+# RUN(ANSWER): run-in-shell
+# ANSWER: 1a2a
+# ANSWER-NEXT: exited with 0
+
+layout L0 name="Sized" fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = PropGet v0 key="parse"
+    v2 = String string="[\"a\",5]"
+    v3 = Call v1, v0, v2 calleeKey="parse" calleeName="JSON.parse"
+    v4 = NewDictionary
+    v5 = NewClosure function=f3
+    PropSet v4, v5 key="run"
+    v7 = NewDictionary
+    v8 = NewClosure function=f4
+    PropSet v7, v8 key="run"
+    v10 = Integer integer=1
+    v11 = NewObject -, v10 layout=L0 fields=[0]
+    v12 = NewClosure function=f1
+    v13 = Call v12, -, v11, v4, v3 calleeName="borrows" [isNeverInlined]
+    v14 = Integer integer=2
+    v15 = NewObject -, v14 layout=L0 fields=[0]
+    v16 = Call v12, -, v15, v7, v3 calleeName="borrows" [isNeverInlined]
+    v17 = Add v13, v16
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="print" [isFreeName]
+    v20 = Call v19, -, v17 calleeName="print"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="borrows" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    v4 = ElemGet v2, v3
+    v5 = Convert v4 declared={type=number} illTypedCause=FromLooseType
+    v6 = NewClosure v0 function=f2
+    v7 = PropGet v1 key="run"
+    v8 = Call v7, v1, v6 calleeKey="run" calleeName="holder.run"
+    v9 = Add v8, v5
+    Return v9
+}
+function f2 name="it" module=m0 kind=Arrow flags=[IsChecked] captures=[{type=anything variableName="given"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+function f3 name="once" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Call v0 calleeName="first"
+    Return v1
+}
+function f4 name="gathers" module=m0 flags=[IsChecked, HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: Array):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="gc" [isFreeName]
+    v4 = Call v3 calleeName="gc"
+    v5 = Call v0 calleeName="first"
+    v6 = PropGet v1 key="length"
+    v7 = Add v5, v6
+    Return v7
+}

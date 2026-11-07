@@ -1,0 +1,19 @@
+# a variable that is assigned twice: one edge into the block brings a written tag and the other a value that nobody knows. The place is the call: a parameter of a block stands nowhere in the text
+# let locale = "de"; if (globalThis.input) locale = globalThis.input; (1).toLocaleString(locale);
+# RUN: locales
+# CHECK: locale unknown NumberPrototypeToLocaleString at f0 v6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = String string="de"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    Branch v3 -> taken b1(v3), notTaken b1(v1)
+  b1(v4):
+    v5 = PropGet v0 key="toLocaleString"
+    v6 = Call v5, v0, v4 calleeKey="toLocaleString"
+    Return v6
+}

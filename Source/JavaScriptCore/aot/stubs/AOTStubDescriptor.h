@@ -38,8 +38,6 @@ enum class StubAxis : uint8_t {
     Immediate = 16,
     StubFrame = 32,
     NeverReturns = 64,
-    // However long the program runs, its slow path comes again: a block of cells runs out, a number has no text yet. In the other families it ends once a cache holds the answer or the site has run once.
-    // So what the stub saves around the operation is felt, and it has a form for callers that keep no floating-point register. A stub that is needed in two forms has its fast path twice.
     SlowPathRecurs = 128,
 };
 
@@ -53,13 +51,13 @@ constexpr StubISA currentStubISA = StubISA::X86_64;
 #error "AOT stubs are generated for ARM64 and x86-64 only"
 #endif
 
-enum class OperandRegisterChoice : uint8_t { NoChoice, AlternateReceivers };
-enum class ImmediateBinding : uint8_t { Never, ByPolicy, OperationOffset };
+enum class OperandRegisterChoice : uint8_t { NoChoice, AnyAllocatableRegister, AlternateResults, FewAlternateResults };
+
+constexpr bool namesRegisterOfResult(OperandRegisterChoice choice) { return choice == OperandRegisterChoice::AlternateResults || choice == OperandRegisterChoice::FewAlternateResults; }
+enum class ImmediateBinding : uint8_t { Never, Every, OperationOffset, InThunk };
 enum class StubResult : uint8_t { None, GPR, FPR, TwoGPRs, Flags };
-// CallsOnlyBookkeeping: what it calls allocates no cell, throws nothing and walks no stack, so nobody asks who called the stub.
 enum class StubLeafness : uint8_t { MayCall, Leaf, CallsOnlyBookkeeping };
 enum class StubClobbers : uint8_t { ClobbersLikeCall, ClobbersOnlyScratch };
-enum class StubBoundImmediates : uint8_t { None, Every, NamesRead, NamesStored, NamesDefined };
 
 struct StubOwnEffects {
     constexpr Typed::Effects toEffects() const
@@ -88,8 +86,9 @@ struct StubSignature {
     Reg firstResult;
     Reg secondResult;
     std::optional<GPRReg> immediate;
-    StubBoundImmediates boundImmediates { StubBoundImmediates::None };
     MacroAssembler::ResultCondition trueCondition { MacroAssembler::Zero };
+    Reg filledOutOfResultInFront;
+    Reg filledOutOfResultInFrontOfBody;
 
     constexpr void addOperand(Reg reg)
     {
@@ -105,6 +104,30 @@ struct StubSignature {
             signature.addOperand(reg);
         signature.result = StubResult::GPR;
         signature.firstResult = GPRInfo::returnValueGPR;
+        return signature;
+    }
+
+    constexpr StubSignature withResultIn(std::optional<GPRReg> reg) const
+    {
+        StubSignature signature = *this;
+        if (reg)
+            signature.firstResult = *reg;
+        return signature;
+    }
+
+    constexpr StubSignature fillingOperandInFront(unsigned operand) const
+    {
+        StubSignature signature = *this;
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(operand < numberOfOperands && operands[operand].isGPR() && operands[operand].gpr() != GPRInfo::returnValueGPR);
+        signature.filledOutOfResultInFront = operands[operand];
+        signature.filledOutOfResultInFrontOfBody = operands[operand];
+        return signature;
+    }
+
+    constexpr StubSignature standingBehindEntryThatFillsOperandInFront(unsigned operand) const
+    {
+        StubSignature signature = fillingOperandInFront(operand);
+        signature.filledOutOfResultInFront = Reg();
         return signature;
     }
 
@@ -136,7 +159,6 @@ struct StubDescriptor {
     StubOwnEffects ownEffects;
 };
 
-// A compiled program reads the descriptors: its fault handler asks exists(). Only the compiler reads the generators, so the code that emits stubs leaves an executable together with the compiler.
 struct StubGenerator {
     void (*generate)(StubAssembler&);
     StubSignature (*signature)(StubKey);
@@ -229,7 +251,6 @@ constexpr const StubDescriptor& descriptorOf(StubFamily family)
     return StubFamilyTokens::descriptors[static_cast<size_t>(family)];
 }
 
-// See StubAddressInImage. The run time finds every other handler by its place in ImageSection::SlotHandlers.
 constexpr bool isFoundByKey(StubFamily family)
 {
     StubLinkage linkage = descriptorOf(family).linkage;
@@ -260,10 +281,9 @@ constexpr bool hasConsistentColumns(const StubDescriptor& descriptor)
         return false;
     if (axes.contains(StubAxis::OperandRegister) != (descriptor.operandRegisters != OperandRegisterChoice::NoChoice))
         return false;
-    return axes.contains(StubAxis::Immediate) == (descriptor.binding != ImmediateBinding::Never);
+    return axes.contains(StubAxis::Immediate) == (descriptor.binding == ImmediateBinding::Every || descriptor.binding == ImmediateBinding::OperationOffset);
 }
 
-// bodyOf() keeps the form, so form i of an entry is form i of its body.
 constexpr bool hasFormsOfBody(const StubDescriptor& entry, const StubDescriptor& body)
 {
     size_t numberOfFormNames = entry.formNames.size();
@@ -316,13 +336,22 @@ constexpr std::span<const GPRReg> operandRegistersOf(OperandRegisterChoice choic
     switch (choice) {
     case OperandRegisterChoice::NoChoice:
         return { };
-    case OperandRegisterChoice::AlternateReceivers:
-        return alternateReceiverGPRs();
+    case OperandRegisterChoice::AnyAllocatableRegister:
+        return allocatableGPRs;
+    case OperandRegisterChoice::AlternateResults:
+        return alternateResultGPRs();
+    case OperandRegisterChoice::FewAlternateResults:
+        return fewAlternateResultGPRs();
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// Asked at every call of a stub that the compiler emits.
+constexpr bool hasOperandRegisterVariant(const StubDescriptor& descriptor, GPRReg reg)
+{
+    std::span<const GPRReg> registers = operandRegistersOf(descriptor.operandRegisters);
+    return std::ranges::find(registers, reg) != registers.end();
+}
+
 inline constexpr std::array<bool, numberOfStubFamilies> familiesThatAreOnlyEntryOfTheirBody = [] {
     std::array<unsigned, numberOfStubFamilies> entries { };
     for (const StubDescriptor& descriptor : StubFamilyTokens::descriptors)
@@ -338,26 +367,16 @@ constexpr bool isOnlyEntryOfItsBody(const StubDescriptor& descriptor) { return f
 constexpr bool hasCallerFrameVariant(const StubDescriptor& descriptor, StubKey key)
 {
     switch (key.callerFrame()) {
+    case CallerFrame::KeepsNoFPRs:
+        return descriptor.axes.contains(StubAxis::SlowPathRecurs) && descriptor.linkage == StubLinkage::CalledByCode && descriptor.leafness != StubLeafness::Leaf && descriptor.clobbers == StubClobbers::ClobbersOnlyScratch && (!key.operandRegister() || namesRegisterOfResult(descriptor.operandRegisters)) && isOnlyEntryOfItsBody(descriptor);
     case CallerFrame::HasFrame:
         return true;
     case CallerFrame::Frameless:
         return descriptor.framelessISAs.contains(currentStubISA);
     case CallerFrame::StubFrame:
         return descriptor.axes.contains(StubAxis::StubFrame) && !key.operandRegister();
-    case CallerFrame::KeepsNoFPRs:
-        if (!descriptor.axes.contains(StubAxis::SlowPathRecurs))
-            return false;
-        [[fallthrough]];
-    case CallerFrame::KeepsNoRegisters:
-        return descriptor.linkage == StubLinkage::CalledByCode && descriptor.leafness != StubLeafness::Leaf && descriptor.clobbers == StubClobbers::ClobbersOnlyScratch && !key.operandRegister() && isOnlyEntryOfItsBody(descriptor);
     }
     return false;
-}
-
-constexpr bool hasOperandRegisterVariant(const StubDescriptor& descriptor, GPRReg reg)
-{
-    std::span<const GPRReg> registers = operandRegistersOf(descriptor.operandRegisters);
-    return std::ranges::find(registers, reg) != registers.end();
 }
 
 constexpr bool exists(StubKey key)
@@ -403,8 +422,6 @@ constexpr std::optional<StubKey> tryWithCallerFrame(StubKey key, CallerFrame cal
     return candidate;
 }
 
-void dump(PrintStream&, StubKey);
-
 template<typename Functor>
 void forEachRegisterVariant(StubKey key, const Functor& functor)
 {
@@ -413,7 +430,6 @@ void forEachRegisterVariant(StubKey key, const Functor& functor)
     functor(key);
     if (operandRegistersOf(descriptorOf(key.family()).operandRegisters).empty())
         return;
-    // In register order, which is key order. The lists of AOTStubRegisters.h are in no order.
     for (Reg reg = Reg::first(); reg.isGPR(); reg = reg.next()) {
         if (std::optional<StubKey> variant = tryWithOperandRegister(key, reg.gpr()))
             functor(*variant);
@@ -423,7 +439,7 @@ void forEachRegisterVariant(StubKey key, const Functor& functor)
 template<typename Functor>
 void forEachKeyWithoutImmediate(const Functor& functor)
 {
-    constexpr std::array callerFrames { CallerFrame::HasFrame, CallerFrame::Frameless, CallerFrame::StubFrame, CallerFrame::KeepsNoRegisters, CallerFrame::KeepsNoFPRs };
+    constexpr std::array callerFrames { CallerFrame::HasFrame, CallerFrame::Frameless, CallerFrame::StubFrame, CallerFrame::KeepsNoFPRs };
     for (const StubDescriptor& descriptor : StubFamilyTokens::descriptors) {
         for (uint8_t form = 0; form < descriptor.numberOfForms; ++form) {
             for (unsigned count = descriptor.minCount; count <= descriptor.maxCount; ++count) {

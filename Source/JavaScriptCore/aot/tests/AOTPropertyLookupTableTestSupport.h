@@ -11,7 +11,6 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTNativeTest.h"
 #include "AOTPropertyCaches.h"
-#include "AOTRuntimeCounters.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
 #include "DeferGC.h"
@@ -77,15 +76,15 @@ inline TableFixture::TableFixture()
     AOT_TEST_CHECK(!vm.hasCompiledCode() && !vm.aotState().caches);
     vm.aotState().pages = makeUnique<PagesOfVM>(8 * MB);
     vm.aotState().caches = makeUnique<CacheRegistry>();
-    vm.aotState().counters = makeUniqueWithoutFastMallocCheck<RuntimeCounters>();
-    auto& parts = vm.aotState().parts;
-    parts.grow(1);
-    parts[0].propertyCaches = makeUnique<VMPropertyCaches>(vm);
-    vm.aotState().propertyCaches = parts[0].propertyCaches.get();
+    vm.aotState().propertyCaches = makeUnique<VMPropertyCaches>(vm);
 }
 
 inline TableFixture::~TableFixture()
 {
+    VMState& state = m_vm->aotState();
+    state.propertyCaches = nullptr;
+    state.caches = nullptr;
+    state.pages = nullptr;
     m_identifiers.clear();
     m_globalObject.clear();
     m_deferGC.reset();
@@ -127,7 +126,7 @@ inline JSObject* TableFixture::createPrototype()
 
 inline const PackedSlot& TableFixture::cellAt(Structure* structure, uint32_t column, SlotAccess access)
 {
-    return front().plane(access)[StructureRows::ofImageAt(0).rowOf(structure->id()) + column];
+    return front().plane(access)[StructureRows::singleton().rowOf(structure->id()) + column];
 }
 
 inline size_t TableFixture::numberOfSlots()
@@ -151,7 +150,7 @@ inline size_t TableFixture::sweep(CollectionScope scope)
 
 inline uint32_t rowOf(Structure* structure)
 {
-    return StructureRows::ofImageAt(0).rowOf(structure->id());
+    return StructureRows::singleton().rowOf(structure->id());
 }
 
 inline bool isSameSlot(const Slot& a, const Slot& b)

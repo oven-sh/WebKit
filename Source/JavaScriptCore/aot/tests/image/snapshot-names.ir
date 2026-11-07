@@ -1,0 +1,52 @@
+# A heap snapshot shows what a variable of a module holds, and what a closure holds in place of a variable, under the name that the source gives the variable
+# let keptInModule = fresh(); const make = keptInClosure => () => keptInClosure;
+# hold(make(fresh()), make(fresh()), () => keptInModule); print(namesOfVariables());
+# RUN(TABLES): image ProgramTables
+# TABLES-LABEL: ProgramTables:
+# TABLES: namedVariable module=0 name=[[inModule]] offset=
+# TABLES-NOT: namedVariable
+# TABLES: namedCapture closure={{*}} slot=0 name=[[inClosure]]
+# TABLES-NOT: namedCapture
+# The variables are roots of the collector, which a snapshot shows without a name. So a cell stands for the module and lists them. Another stands between a closure and what it captures, as the scope of a call does under the interpreter.
+# RUN: run-in-shell globalThis.fresh = () => ({}); globalThis.held = []; globalThis.hold = (...values) => { held.push(...values); }; globalThis.namesOfVariables = () => { const snapshot = generateHeapSnapshot(); const kind = snapshot.edgeTypes.indexOf("Variable"); const classes = new Map(); for (let i = 0; i < snapshot.nodes.length; i += 4) classes.set(snapshot.nodes[i], snapshot.nodeClassNames[snapshot.nodes[i + 2]]); const found = new Set(); for (let i = 0; i < snapshot.edges.length; i += 4) { const name = snapshot.edgeNames[snapshot.edges[i + 3]]; if (snapshot.edges[i + 2] === kind && name.startsWith("kept")) found.add(name + " in " + classes.get(snapshot.edges[i])); } return [...found].sort().join(", "); };
+# CHECK: keptInClosure in JSLexicalEnvironment, keptInModule in JSModuleEnvironment
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="keptInModule" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="fresh" [isFreeName]
+    v2 = Call v1 calleeName="fresh"
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f1
+    v5 = Call v1 calleeName="fresh"
+    v6 = Call v4, -, v5 calleeName="make" [isNeverInlined]
+    v7 = Call v1 calleeName="fresh"
+    v8 = Call v4, -, v7 calleeName="make" [isNeverInlined]
+    v9 = NewClosure function=f3
+    v10 = PropGet v0 key="hold" [isFreeName]
+    v11 = Call v10, -, v6, v8, v9 calleeName="hold"
+    v12 = PropGet v0 key="namesOfVariables" [isFreeName]
+    v13 = Call v12 calleeName="namesOfVariables"
+    v14 = PropGet v0 key="print" [isFreeName]
+    v15 = Call v14, -, v13 calleeName="print"
+    v16 = Undefined
+    Return v16
+}
+function f1 name="make" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure v0 function=f2
+    Return v1
+}
+function f2 module=m0 kind=Arrow captures=[{type=anything variableName="keptInClosure"}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

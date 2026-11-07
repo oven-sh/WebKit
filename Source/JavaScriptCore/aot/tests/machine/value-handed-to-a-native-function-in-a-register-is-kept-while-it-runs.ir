@@ -1,0 +1,86 @@
+# function describes() { return describeUnlessOrdinary(make()); }        function describesNumber() { return describeUnlessOrdinary(count()); }
+# The helper is native code that compiled code enters directly, with its argument in a register. The object is held by nothing but the call: it lies in a slot of the frame while the helper runs,
+# as it lies in the frame of a host function. A number needs no slot.
+# function scans() { return scanPlainURL(text()); }        That helper makes nothing, and its text needs no slot.
+# f1 = make, f2 = describes, f3 = count, f4 = describesNumber, f5 = text, f6 = scans
+# REQUIRES: x86_64 unsanitized-code
+# RUN: allocate f2:Body mechanisms=none+DirectCalls+BuiltinCalls+Arrivals+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: unit f2:Body
+# CHECK: save rax -> s0
+# CHECK: = Patch rdi, {{*}}, s0, used
+# REQUIRES(NUMBER): x86_64 unsanitized-code
+# RUN(NUMBER): allocate f4:Body mechanisms=none+DirectCalls+BuiltinCalls+Arrivals+TypedOperations+UnboxedNumbers
+# NUMBER-LABEL: unit f4:Body
+# NUMBER-NOT: save
+# NUMBER: = Patch rdi, {{*}}, used
+# REQUIRES(LEAF): x86_64 unsanitized-code
+# RUN(LEAF): allocate f6:Body mechanisms=none+DirectCalls+BuiltinCalls+Arrivals+TypedOperations+UnboxedNumbers
+# LEAF-LABEL: unit f6:Body
+# LEAF-NOT: save
+# LEAF: Return
+
+layout L0 module=m0 position=0 fields=[{key="a" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="make" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="describes" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="count" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="describesNumber" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="text" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="scans" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="kept" module=m0 declared={type=anything|absent}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Call v0, - calleeName="describes"
+    PutModuleVariable v1 variable=g6
+    v3 = GetModuleVariable variable=g3
+    v4 = Call v3, - calleeName="describesNumber"
+    PutModuleVariable v4 variable=g6
+    v6 = GetModuleVariable variable=g5
+    v7 = Call v6, - calleeName="scans"
+    PutModuleVariable v7 variable=g6
+    v9 = Undefined
+    Return v9
+}
+function f1 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="describes" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, - calleeName="make"
+    v3 = Call v0, -, v2 calleeName="describeUnlessOrdinary"
+    Return v3
+}
+function f3 name="count" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f4 name="describesNumber" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary
+    v1 = GetModuleVariable variable=g2
+    v2 = Call v1, - calleeName="count"
+    v3 = Call v0, -, v2 calleeName="describeUnlessOrdinary"
+    Return v3
+}
+function f5 name="text" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="http://host.example/"
+    Return v0
+}
+function f6 name="scans" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=CompilerHelpersScanPlainURL
+    v1 = GetModuleVariable variable=g4
+    v2 = Call v1, - calleeName="text"
+    v3 = Call v0, -, v2 calleeName="scanPlainURL"
+    Return v3
+}

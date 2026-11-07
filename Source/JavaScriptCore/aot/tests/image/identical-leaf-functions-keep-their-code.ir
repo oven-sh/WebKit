@@ -1,0 +1,42 @@
+# Code that calls nothing and faults nowhere is never found on the stack. It is not folded across functions either: a crash report and a profile ask any address for its function
+# function first() { return 7 }  function second() { return 7 }  function third() { return 8 }  register(first, second, third)
+# RUN: units-with-code f1:Body f2:Body f3:Body
+# CHECK: unit f1:Body {{*}} bytes
+# CHECK-NEXT: unit f2:Body {{*}} bytes
+# CHECK-NEXT: unit f3:Body {{*}} bytes
+# RUN(IMAGE): image Functions
+# IMAGE-LABEL: Functions:
+# IMAGE: : f1 sideTables
+# IMAGE: : f2 sideTables
+# IMAGE: : f3 sideTables
+# RUN(SHELL): run-in-shell globalThis.register = (first, second, third) => { print(first(), second(), third(), first === second, first.name, second.name, third.name); };
+# SHELL: 7 7 8 false first second third
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2 calleeName="register"
+    Return v5
+}
+function f1 name="first" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f2 name="second" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f3 name="third" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=8
+    Return v0
+}

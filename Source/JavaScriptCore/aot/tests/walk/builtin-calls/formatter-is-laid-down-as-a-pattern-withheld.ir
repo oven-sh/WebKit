@@ -1,0 +1,9 @@
+# the same functions with calls of built-ins withheld: the formatter is constructed, and the method called, by value
+# RUN: walk f1 mechanisms=all-BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Construct
+# RUN(NEVER): walk f1 mechanisms=all-BuiltinCalls
+# NEVER-NOT: NewFormatterWithPattern
+# RUN(TEXT): walk f2 mechanisms=all-BuiltinCalls
+# TEXT-NOT: FormatNumberWithPattern
+# PROGRAM-OF: formatter-is-laid-down-as-a-pattern.ir

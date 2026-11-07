@@ -1,0 +1,30 @@
+# The entry for calls of a function with a parameter guard lies in front of the guard: it loads the capture and jumps to the entry of the guard, which begins with its way to the slow version
+# function make(c) { return function scaled(n: number) { return n + n + c } }  register(make)
+# RUN: units-with-code f2:GenericCallEntry mechanisms=all
+# CHECK: unit f2:GenericCallEntry fused into f2:ParameterGuard, {{*}} bytes
+# CHECK-NOT: ParameterGuard, 0 bytes
+# RUN(SHELL): run-in-shell globalThis.register = (make) => { const ten = make(10), text = make("c"); print(ten(1), ten(2.5), ten("x"), ten(), text(1), text("x"), ten.call(null, 4, 5)); };
+# SHELL: 12 15 xx10 NaN 2c xxc 18
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="register"
+    Return v3
+}
+function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure v0 function=f2
+    Return v1
+}
+function f2 name="scaled" module=m0 flags=[HasExplicitName] length=1 captures=[{type=anything variableName="c"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Add v1, v1
+    v3 = Add v2, v0
+    Return v3
+}

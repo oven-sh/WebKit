@@ -8,13 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
-#include "AOTCompactList.h"
-#include "AOTIRForm.h"
 #include "AOTAbstractHeap.h"
 #include "AOTOpcode.h"
 #include "AOTSchemaRecords.h"
-#include "AOTValue.h"
-#include "AOTBlock.h"
+#include "AOTBody.h"
+#include "AOTBodyIndex.h"
 #include "AOTPrimitives.h"
 #include "AOTType.h"
 #include "AOTTypeTable.h"

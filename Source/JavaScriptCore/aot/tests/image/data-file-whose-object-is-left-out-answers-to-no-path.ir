@@ -1,0 +1,35 @@
+# import settings from "./settings.json"; import names from "./names.json"; print(names);
+# The front end has folded every read off settings.json and left its object out: the body of the file makes nothing, and `default` is never filled. names.json makes its list.
+# Whoever finds a file by its path is handed its namespace, so the first answers to no path and the second does. Beside it stand main.mjs and the module that every program has.
+# RUN: image ProgramTables
+# CHECK: modulesByPath 3
+
+module m0 path="/settings.json" displayPath="settings.json" kind=Data requireResult=DefaultExport body=f0 data=d0 exports=[{name="default" variable=g0}]
+module m1 path="/names.json" displayPath="names.json" kind=Data requireResult=DefaultExport body=f1 data=d1 exports=[{name="default" variable=g1}]
+module m2 path="/main.mjs" displayPath="main.mjs" body=f2 requests=[{target=m0 completes=true}, {target=m1 completes=true}]
+entry module=m2
+data d0 root=Array{contents=anything elements=[String{value="first"}]} module=m0
+data d1 root=Array{contents=anything elements=[String{value="ada"}]} module=m1
+variable g0 name="_0" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="_1" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d1
+    PutModuleVariable v0 variable=g1
+    v2 = Undefined
+    Return v2
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="names"
+    v4 = Call v1, -, v3
+    Return v4
+}

@@ -88,7 +88,6 @@ public:
             return image;
         return currentOfThread();
     }
-    // Null if there is no image or if threads differ: ask current() then. For callers that cannot afford the call in current().
     static const Image* sharedByAllThreads()
     {
         const Image* image = s_current.load(std::memory_order_acquire);
@@ -96,54 +95,32 @@ public:
     }
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
-    // Where setCurrentOfThread() writes on this thread.
     static const Image** addressOfCurrentOfThread();
-    // For a thread whose VM runs no compiled program.
     JS_EXPORT_PRIVATE static void useNoneOnThisThread();
     static bool usesNoneOnThisThread();
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
-    // Takes no lock and does not depend on the calling thread.
     static const Image* findByCodeAddress(const void*);
-    // Calls the functor for every image that any thread has started to use, with that image as the calling thread's current image. Takes no lock.
     static void forEachPublishedImage(const ScopedLambda<IterationStatus(const Image&)>&);
 
     JS_EXPORT_PRIVATE static Wire::ImageVerdict check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity);
     JS_EXPORT_PRIVATE static std::optional<Wire::AdmittedCode> admittedCode(std::span<const uint8_t> bytes);
     JS_EXPORT_PRIVATE static std::optional<OptionSet<ImageFlag>> flags(std::span<const uint8_t> bytes);
     JS_EXPORT_PRIVATE static std::unique_ptr<Image> create(std::span<const uint8_t> bytes, const uint8_t* code);
-    JS_EXPORT_PRIVATE static void publish(std::unique_ptr<Image>&&, std::span<const uint8_t> allImages);
-    // The image was built above the last of the images that share their realms with `first`. Every VM that is created from here on for `first` runs it too.
-    static void publishAbove(const Image& first, std::unique_ptr<Image>&&);
-
-    // Images that share their realms stand in a list, in the order in which they were built. An image that shares none is a list of one.
-    bool sharesRealms() const { return header().has(ImageFlag::SharesRealms); }
-    const Image& first() const { return *m_first; }
-    const Image* above() const { return m_above.load(std::memory_order_acquire); }
-    const Image& last() const;
-    // How many stand in front of it.
-    unsigned position() const { return m_position; }
-    const Image* atPosition(unsigned) const;
-    // How many layout indices, and how many modules, those in front of it have together. A number that counts on from there says which image of the list it is of.
-    uint32_t layoutIndicesBelow() const { return m_layoutIndicesBelow; }
-    uint32_t modulesBelow() const { return m_modulesBelow; }
-    // In the list of this image.
-    const Image* findInListByCodeAddress(const void*) const;
-    const Image& holderOfStringHeader(uint32_t number) const;
-    // The image of the list that the address lies in: a table, or something a table points at.
-    ALWAYS_INLINE const Image& holderOf(const void* address) const
-    {
-        if (std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(m_bytes.data()) < m_bytes.size()) [[likely]]
-            return *this;
-        return holderInListOf(address);
-    }
-    JS_EXPORT_PRIVATE const Image& holderInListOf(const void* address) const;
+    JS_EXPORT_PRIVATE static void publish(std::unique_ptr<Image>&&);
 
     struct PositionInFile {
         int descriptor { -1 };
         int64_t offset { 0 };
     };
-    const std::optional<PositionInFile>& positionInFile() const { return m_positionInFile; }
-    void setPositionInFile(std::optional<PositionInFile> position) { m_positionInFile = position; }
+    struct PlaceInExecutable {
+        int64_t offset { 0 };
+        uint64_t device { 0 };
+        uint64_t inode { 0 };
+    };
+    const std::optional<PlaceInExecutable>& placeInExecutable() const { return m_placeInExecutable; }
+    void setPlaceInExecutable(const PlaceInExecutable& place) { m_placeInExecutable = place; }
+    const std::optional<PositionInFile>& positionOfCodeInFile() const { return m_positionOfCodeInFile; }
+    void setPositionOfCodeInFile(const std::optional<PositionInFile>& position) { m_positionOfCodeInFile = position; }
     unsigned number() const { return m_number; }
 
     const ImageHeader& header() const { return *reinterpret_cast<const ImageHeader*>(m_bytes.data()); }
@@ -160,14 +137,14 @@ public:
     bool isObfuscated() const { return header().has(ImageFlag::IsObfuscated); }
     bool admitsUnknownJavaScript() const { return header().has(ImageFlag::AdmitsUnknownJavaScript); }
     bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
-    bool findsDataFilesByName() const { return header().has(ImageFlag::FindsDataFilesByName); }
     bool admitsLibraryText() const { return header().has(ImageFlag::AdmitsLibraryText); }
-    bool runsUnreadCode() const { return header().has(ImageFlag::RunsUnreadCode); }
+    bool isBuiltWithLibrary() const { return header().has(ImageFlag::IsBuiltWithLibrary); }
     bool refusesOriginalsBesideMocks() const { return header().has(ImageFlag::RefusesOriginalsBesideMocks); }
     bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && header().has(ImageFlag::LoadsCodeOutsideImage); }
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
     bool storesPathOfMainModule() const { return header().has(ImageFlag::StoresPathOfMainModule); }
     bool runsEntryPointsAgain() const { return header().has(ImageFlag::RunsEntryPointsAgain); }
+    bool showsEntriesOfRequireCache() const { return header().has(ImageFlag::ShowsEntriesOfRequireCache); }
 
     JS_EXPORT_PRIVATE CodeLocation locate(const void* pc) const;
 
@@ -182,25 +159,20 @@ public:
     enum class FrequentStub : uint8_t { EnterClosure, EnterSlimClosure, EnterModuleBody, EnterClosureForConstruct, EnterHandlerOfJob, EnterSavedFrame, RejectInFrame, RejectInFrameBelowSpilledArguments };
     template<typename Functor> void* frequentStub(FrequentStub, const Functor&) const;
     JS_EXPORT_PRIVATE std::span<const StubAddressInImage> stubAddressesOf(StubFamily) const;
-    // The part of ImageSection::StubAddresses that has the stubs of the family, sorted by key.
     std::span<const StubAddressInImage> stubAddressesSortedWith(StubFamily) const;
-    // For the stub that starts at this offset in the shared code. x86-64 only.
     bool usesCallConvention(uint32_t offsetInSharedCode) const;
     std::span<const StubReturnSite> stubReturnSites() const;
     std::span<const uint32_t> sharedCodeCopies() const { return section<uint32_t>(ImageSection::SharedCodeCopies); }
     std::span<const uint32_t> slotHandlerOffsets() const { return section<uint32_t>(ImageSection::SlotHandlers); }
-    std::span<const uint32_t> methodTable() const { return section<uint32_t>(ImageSection::MethodTable); }
-    std::span<const uint32_t> methodLookups() const { return section<uint32_t>(ImageSection::MethodLookups); }
+    std::span<const uint32_t> methodTable() const { return section<uint32_t>(ImageSection::MethodTable).first(programTables().instanceSizes.sizeOfMethodTable / sizeof(uint32_t)); }
+    std::span<const uint32_t> methodLookups() const { return section<uint32_t>(ImageSection::MethodTable).subspan(programTables().instanceSizes.sizeOfMethodTable / sizeof(uint32_t)); }
     const uint8_t* sharedCodeCopy(unsigned index) const;
 
     JS_EXPORT_PRIVATE bool containsCharactersOf(const StringImpl&) const;
     static bool isBackedByStaticData(const StringImpl&);
 
     std::optional<uint32_t> imageFunctionFromClosureWord(FunctionID) const;
-    // Sorts every function without a closure word on first use.
     std::optional<uint32_t> imageFunctionOf(FunctionID) const;
-    bool hasSortedFunctionIndex() const { return !m_functionsByID.isEmpty(); }
-    std::optional<FunctionID> innerEntryContaining(const void* pc) const;
     std::span<const uint32_t> frameMapWords(uint32_t function) const;
     bool hasFrameAt(uint32_t function, uint32_t offset) const;
     bool hasFrameAtReturnOffset(uint32_t function, uint32_t returnOffset) const;
@@ -209,11 +181,6 @@ public:
     ReturnSiteInfo returnSiteInfoAt(uint32_t function, uint32_t returnOffset) const;
 
     std::optional<CallSiteRecord> callSiteAt(uint32_t function, uint32_t returnOffset) const;
-    // The function has made the function object that it calls at the site itself and has handed it to nobody. The site of an inline frame stands for the call whose place the frame has taken.
-    // nullopt: the site does not record which function object it calls.
-    std::optional<CalleeOfSite> calleeOfSiteAt(uint32_t function, CallSiteIndex) const;
-    bool hasCalleesOfSites(uint32_t function) const { return this->function(function).has(ImageFunctionFlag::HasCalleesOfSites); }
-    // The callee of a direct construct that may leave its frame by a tail call.
     std::optional<FunctionID> constructedCalleeAt(uint32_t function, CallSiteIndex) const;
     std::optional<PrologueCheck> prologueCheckAt(const void* returnAddress) const;
 
@@ -221,7 +188,6 @@ public:
 
     std::optional<SourcePosition> positionOf(uint32_t function, CallSiteIndex) const;
 
-    // False: no module has a path that starts so. A program asks about every path that the disk does not have, and nearly all of them lie in directories without modules.
     bool mayHoldModulePathStartingWith(StringView start) const;
 
 private:
@@ -234,14 +200,10 @@ private:
     static std::atomic<const Image*> s_lastPublished;
 
     mutable std::array<std::atomic<void*>, 8> m_frequentStubs { };
-    std::optional<PositionInFile> m_positionInFile;
     unsigned m_number { 0 };
     const Image* m_publishedBefore { nullptr };
-    const Image* m_first { this };
-    mutable std::atomic<const Image*> m_above { nullptr };
-    unsigned m_position { 0 };
-    uint32_t m_layoutIndicesBelow { 0 };
-    uint32_t m_modulesBelow { 0 };
+    std::optional<PlaceInExecutable> m_placeInExecutable;
+    std::optional<PositionInFile> m_positionOfCodeInFile;
     std::span<const uint8_t> m_bytes;
     const uint8_t* m_code;
     const ImageFunction* m_functions;

@@ -69,6 +69,7 @@ function formatTypePart(part: ModelTypePart, pools: TypePools): string {
 function formatTypeFlags(type: ModelType): string {
   const flags: readonly (readonly [flag: string, isSet: boolean])[] = [
     ["IsAnything", type.isAnything],
+    ["IsMadeOfListedClasses", type.isMadeOfListedClasses],
     ["HasAnyObject", type.hasAnyObject],
     ["HasAnyFunction", type.hasAnyFunction],
     ["HasPlainData", type.hasPlainData],

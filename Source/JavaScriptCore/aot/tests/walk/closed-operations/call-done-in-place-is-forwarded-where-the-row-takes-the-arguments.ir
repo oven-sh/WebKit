@@ -1,0 +1,18 @@
+# the row of Reflect.apply takes a function and an object. Where both are proven by what makes them, the call is forwarded. Where one is not, is left out or is something else, the built-in is called, which refuses in its own words
+# RUN: walk f2 f3 f4 f5 mechanisms=none
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: CallList
+# CHECK: = Call {{*}} calleeName="Reflect.apply" [isDoneInPlace]
+# CHECK-LABEL: code f3:Body
+# CHECK: [[callee]]: f1 {{*}} = NewClosure function=f1
+# CHECK: [[list]]: Array @Cell = NewArray
+# CHECK: [[boxed]]: f1 @JSValue = Box [[callee]]
+# CHECK: = CallList [[boxed]], {{*}}, [[list]] calleeName="Reflect.apply"
+# CHECK-LABEL: code f4:Body
+# CHECK: = Call {{*}} calleeName="Reflect.apply" [isDoneInPlace]
+# CHECK-LABEL: code f5:Body
+# CHECK-NOT: CallList
+# CHECK: = Call {{*}} calleeName="Reflect.apply" [isDoneInPlace]
+# RUN(NEVER): walk f3 mechanisms=none
+# NEVER-NOT: isDoneInPlace
+# PROGRAM-OF: ../../answers/reflect-apply-done-in-place-keeps-what-the-built-in-refuses.ir

@@ -1,0 +1,109 @@
+# each alternative of the row reads `node.kind` anew. The first block has read the field out of its slot, nothing that is seen happens between the reads, so the later reads find the same value: one read, one Switch
+# f2 is the same function handed to code that nobody has seen, so its read is no read of a slot and may run a getter each time: all three reads stay . in f3 the third alternative reads the field off another object, so the row ends in front of it
+# function isKind(node) { return node.kind === 1 || node.kind === 4 || node.kind === 9; }
+# f1 and f3 are called from f0 alone, with literals, so Link proves their parameters. The walk takes that proof with Arrivals: without them a parameter is anything and no read is a read of a slot
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="kind"
+# CHECK-NOT: key="kind"
+# CHECK: Switch {{*}}cases=[1, 4, 9] -> case [[listed]](), case [[listed]](), case [[listed]](), otherwise [[rest]]()
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# NEVER-NOT: Branch
+# RUN(OTHERS): walk f2 f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# OTHERS-NOT: Switch
+# RUN(GETTER): walk f2 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# GETTER: key="kind"
+# GETTER: key="kind"
+# GETTER: key="kind"
+# RUN(WITHHELD): walk f1 mechanisms=none
+# WITHHELD-NOT: Switch
+# RUN(SHELL): run-in-shell let next = 0; const kinds = [1, 4, 9, 5, "4", 2]; globalThis.source = () => kinds[next++ % kinds.length]; let ran = 0; globalThis.sink = (a, b, c, d, isKind) => { print([a, b, c, d].join()); print(String(isKind({ get kind() { ran++; return 9; } })), String(ran)); };
+# SHELL: true,true,true,false
+# SHELL-NEXT: true 3
+# SHELL-NEXT: exited with 0
+
+layout L0 name="Node" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f3
+# REPEAT: i = 0..3
+    v%(i*4+4) = Call v1, -
+    v%(i*4+5) = NewObject -, v%(i*4+4) layout=L0 fields=[0]
+    v%(i*4+6) = FinishObject v%(i*4+5)
+    v%(i*4+7) = Call v2, -, v%(i*4+6)
+# END REPEAT
+    v20 = Call v3, -, v6, v10
+    v21 = NewClosure function=f2
+    v22 = PropGet v0 key="sink" [isFreeName]
+    v23 = Call v22, -, v7, v11, v15, v19, v21
+    Return v20
+}
+# REPEAT: f = 1 2; type = L0 anything
+function f%(f) name="isKind%(f)" module=m0 length=1 thisType={type=anything} parameters=[{type=%(type) flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: %(type)):
+    v1 = PropGet v0 key="kind"
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    Jump -> next b4(v5)
+  b2(v6):
+    Jump -> next b3()
+  b3():
+    v7 = PropGet v0 key="kind"
+    v8 = Integer integer=4
+    v9 = StrictEq v7, v8
+    Jump -> next b4(v9)
+  b4(v10):
+    v11 = ToBoolean v10
+    Branch v11 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v12):
+    Jump -> next b8(v12)
+  b6(v13):
+    Jump -> next b7()
+  b7():
+    v14 = PropGet v0 key="kind"
+    v15 = Integer integer=9
+    v16 = StrictEq v14, v15
+    Jump -> next b8(v16)
+  b8(v17):
+    Return v17
+}
+# END REPEAT
+function f3 name="isKindOfEither" module=m0 length=2 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}, {type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0, v1: L0):
+    v2 = PropGet v0 key="kind"
+    v3 = Integer integer=1
+    v4 = StrictEq v2, v3
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6):
+    Jump -> next b4(v6)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = PropGet v0 key="kind"
+    v9 = Integer integer=4
+    v10 = StrictEq v8, v9
+    Jump -> next b4(v10)
+  b4(v11):
+    v12 = ToBoolean v11
+    Branch v12 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v13):
+    Jump -> next b8(v13)
+  b6(v14):
+    Jump -> next b7()
+  b7():
+    v15 = PropGet v1 key="kind"
+    v16 = Integer integer=9
+    v17 = StrictEq v15, v16
+    Jump -> next b8(v17)
+  b8(v18):
+    Return v18
+}

@@ -1,0 +1,7 @@
+# the same functions with folding withheld: the negation is built, its truth is asked, and the branch asks that
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = LogicalNot
+# CHECK: [[asked]]: {{*}} = ToBoolean
+# CHECK: Branch [[asked]] -> taken
+# PROGRAM-OF: negation-between-two-tests-for-truth-is-taken-off-a-branch.ir

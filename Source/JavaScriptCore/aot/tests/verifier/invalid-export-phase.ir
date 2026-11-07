@@ -1,5 +1,4 @@
 # only a namespace export has the phase Defer
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidModule 2
 

@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTRuntimeTable.h"
-#include "AOTStubFrontEnds.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "Butterfly.h"
@@ -21,7 +20,6 @@ namespace JSC { namespace AOT {
 
 static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2) && gprOf(StubRegister::A3) == operationArgumentGPR(3));
 
-// What JSObject::putByIndex does for an index inside the vector of an array whose storage is its own and has one of the three kinds: no such array has an accessor, a read-only element or a fixed length, on itself or on its prototypes.
 static void emitStoreInsideVector(StubAssembler& jit, GPRReg kind, GPRReg butterfly, GPRReg length, JumpList& isBeyondVector, JumpList& callsOperation)
 {
     const GPRReg array = jit.operand(0);
@@ -63,7 +61,10 @@ static void emitStoreInsideVector(StubAssembler& jit, GPRReg kind, GPRReg butter
     callsOperation.append(jit.jump());
 
     isInt32Shape.link(&jit);
-    callsOperation.append(jit.branchIfNotInt32(value));
+    Jump isInteger = jit.branchIfInt32(value);
+    callsOperation.append(jit.branchIfNumber(value));
+    widenStorageOfIntegersForAnyValue(jit, array, kind, callsOperation);
+    isInteger.link(&jit);
     isContiguousShape.link(&jit);
     loadVector();
     jit.store64(value, BaseIndex(butterfly, position, CCallHelpers::TimesEight));
@@ -74,45 +75,6 @@ static void emitStoreInsideVector(StubAssembler& jit, GPRReg kind, GPRReg butter
     jit.add32(TrustedImm32(1), position, length);
     jit.store32(length, Address(butterfly, Butterfly::offsetOfPublicLength()));
     isInsideLength.link(&jit);
-}
-
-static void emitFrontEnd(StubAssembler& jit, Entry rawOperation)
-{
-    const GPRReg kind = jit.allocateScratch(StubRegister::T9);
-    const GPRReg butterfly = jit.allocateScratch(StubRegister::T10);
-    const GPRReg length = jit.allocateScratch(StubRegister::T11);
-    JumpList callsOperation;
-
-    emitStoreInsideVector(jit, kind, butterfly, length, callsOperation, callsOperation);
-    // The stub that remembers an element takes a register that an operation call preserves, which no front end may. The operation stores the same value again and remembers it.
-    Jump isNotCell = jit.branchIfNotCell(jit.operand(1));
-    callsOperation.append(branchIfBarrierIsNeeded(jit, jit.operand(0), kind));
-    isNotCell.link(&jit);
-    jit.move(TrustedImm32(0), jit.result());
-    jit.returnToCaller();
-
-    callsOperation.link(&jit);
-    jit.tailCallOperation(rawOperation, OperationCall::FirstArgument::Instance);
-}
-
-StubSignature signatureOfArrayPutAtIndexFrontEnd(StubKey)
-{
-    return operationFrontEndSignature(3);
-}
-
-void generateArrayPutAtIndexFrontEnd(StubAssembler& jit)
-{
-    emitFrontEnd(jit, Entry::RawArrayPutAtIndex);
-}
-
-StubSignature signatureOfArrayPutNumberAtIndexFrontEnd(StubKey)
-{
-    return operationFrontEndSignature(3);
-}
-
-void generateArrayPutNumberAtIndexFrontEnd(StubAssembler& jit)
-{
-    emitFrontEnd(jit, Entry::RawArrayPutNumberAtIndex);
 }
 
 static ArrayStoredValue storedValueOf(StubAssembler& jit)
@@ -139,7 +101,6 @@ void generateArrayPutAtIndex(StubAssembler& jit)
     emitStoreInsideVector(jit, kind, butterfly, length, isBeyondVector, callsOperation);
     emitElementBarrierAndReturn(jit, jit.operand(0), jit.operand(1));
 
-    // A store at the length of a full vector is a push. No program can observe the capacity, so the value may still turn out not to fit the kind.
     isBeyondVector.link(&jit);
     jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
     callsOperation.append(jit.branch64(CCallHelpers::NotEqual, jit.operand(2), length));
@@ -147,7 +108,11 @@ void generateArrayPutAtIndex(StubAssembler& jit)
     jit.jump().linkTo(start, &jit);
 
     callsOperation.link(&jit);
-    Entry operation = storedValueOf(jit) == ArrayStoredValue::Number ? Entry::operationAOTArrayPutNumberAtIndex : Entry::operationAOTArrayPutAtIndex;
+    Entry operation = Entry::operationAOTArrayPutAtIndex;
+    if (storedValueOf(jit) == ArrayStoredValue::Number)
+        operation = Entry::operationAOTArrayPutNumberAtIndex;
+    else if (storedValueOf(jit) == ArrayStoredValue::ValueInSloppyCode)
+        operation = Entry::operationAOTArrayPutAtIndexInSloppyCode;
     jit.callOperationAndReturn(operation, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
@@ -170,6 +135,56 @@ void generateArrayPutAtNumber(StubAssembler& jit)
 
     isNotInteger.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTArrayPutAtNumber, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
+}
+
+StubSignature signatureOfReserveArrayRoom(StubKey)
+{
+    return StubSignature::withoutResult({ gprOf(StubRegister::A1), FPRInfo::argumentFPR0 });
+}
+
+void generateReserveArrayRoom(StubAssembler& jit)
+{
+    const GPRReg array = jit.operand(0);
+    const FPRReg bound = jit.operandFPR(1);
+    const GPRReg room = jit.allocateScratch(StubRegister::A2);
+    const GPRReg grownToRoom = jit.allocateScratch(StubRegister::A3);
+    const GPRReg kind = jit.allocateScratch(StubRegister::T9);
+    const GPRReg butterfly = jit.allocateScratch(StubRegister::T10);
+    const GPRReg length = jit.allocateScratch(StubRegister::T11);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T12);
+    const GPRReg allocator = jit.allocateScratch(firstStubOperandRegister);
+    const FPRReg converted = jit.allocateScratch(FPRInfo::argumentFPR1);
+    JumpList hasRoom;
+    JumpList callsOperation;
+
+    static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape, "an array has no shape between these");
+    jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
+    jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), kind);
+    jit.sub32(TrustedImm32(Int32Shape), kind);
+    hasRoom.append(jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ContiguousShape - Int32Shape)));
+
+    jit.truncateDoubleToInt64(bound, room);
+    jit.convertInt64ToDouble(room, converted);
+    Jump isWhole = jit.branchDouble(CCallHelpers::DoubleEqualAndOrdered, bound, converted);
+    jit.add64(TrustedImm32(1), room);
+    isWhole.link(&jit);
+    jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+    jit.load32(Address(butterfly, Butterfly::offsetOfVectorLength()), length);
+    hasRoom.append(jit.branch64(CCallHelpers::LessThanOrEqual, room, length));
+    hasRoom.append(jit.branch64(CCallHelpers::Above, room, TrustedImm32(MAX_STORAGE_VECTOR_LENGTH)));
+
+    jit.urshift32(room, TrustedImm32(2), grownToRoom);
+    jit.urshift32(room, TrustedImm32(4), kind);
+    jit.add32(kind, grownToRoom);
+    jit.neg32(grownToRoom);
+    jit.add32(room, grownToRoom);
+    jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
+    growVectorFor(jit, { array, butterfly, length, storage, allocator, kind }, grownToRoom, callsOperation);
+    hasRoom.link(&jit);
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTReserveArrayRoom, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false });
 }
 
 } } // namespace JSC::AOT

@@ -1,0 +1,77 @@
+# If what a join makes hung on the order in which layouts arrive, two builds of one program whose walks end in another order would differ: two members of a declared family of five became the family first, and with a stranger any object; the stranger in between kept all three as a set.
+# interface Shape { }  A, B, C, D, E: Shape  interface Small { }  P, Q, R: Small  const s = { x: 7, s: 7 };
+# (w ? a : w1 ? b : s).x;  (w ? a : w1 ? s : b).x;  (w ? p : w1 ? q : s).x;  (w ? p : w1 ? s : q).x;
+# Members that a family holds together stand for that family before the four are counted: five and one are any object in both orders, three and one are a set of four in both.
+# RUN: walk f0 mechanisms=all-EscapeAnalysis
+# CHECK: ([[first]]: object 
+# CHECK: ([[second]]: object 
+# CHECK: ([[third]]: L6|L8|L9|L10 
+# CHECK: ([[fourth]]: L6|L8|L9|L10 
+
+layout L0 name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L1 name="A" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="B" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="C" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L4 name="D" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L5 name="E" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L6 name="Stranger" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}]
+layout L7 name="Small" module=m0 flags=[IsNeverAllocated]
+layout L8 name="P" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}] supertypes=[L7]
+layout L9 name="Q" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}] supertypes=[L7]
+layout L10 name="R" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}] supertypes=[L7]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="which" [isFreeName]
+    v2 = PropGet v0 key="which1" [isFreeName]
+    v3 = Integer integer=7
+    v4 = NewObject -, v3, v3 layout=L1 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = NewObject -, v3, v3 layout=L2 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = NewObject -, v3, v3 layout=L6 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = NewObject -, v3, v3 layout=L8 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = NewObject -, v3, v3 layout=L9 fields=[0, 1]
+    v13 = FinishObject v12
+    Jump -> next b1()
+  b1():
+    Branch v1 -> taken b4(v5), notTaken b2()
+  b2():
+    Branch v2 -> taken b4(v7), notTaken b3()
+  b3():
+    Jump -> next b4(v9)
+  b4(v14):
+    v15 = PropGet v14 key="x" @10
+    Jump -> next b5()
+  b5():
+    Branch v1 -> taken b8(v5), notTaken b6()
+  b6():
+    Branch v2 -> taken b8(v9), notTaken b7()
+  b7():
+    Jump -> next b8(v7)
+  b8(v16):
+    v17 = PropGet v16 key="x" @20
+    Jump -> next b9()
+  b9():
+    Branch v1 -> taken b12(v11), notTaken b10()
+  b10():
+    Branch v2 -> taken b12(v13), notTaken b11()
+  b11():
+    Jump -> next b12(v9)
+  b12(v18):
+    v19 = PropGet v18 key="x" @30
+    Jump -> next b13()
+  b13():
+    Branch v1 -> taken b16(v11), notTaken b14()
+  b14():
+    Branch v2 -> taken b16(v9), notTaken b15()
+  b15():
+    Jump -> next b16(v13)
+  b16(v20):
+    v21 = PropGet v20 key="x" @40
+    Return v21
+}

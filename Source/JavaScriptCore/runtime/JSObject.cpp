@@ -2364,7 +2364,6 @@ ASCIILiteral JSObject::putDirectToCompiledObject(VM& vm, PropertyName propertyNa
 ASCIILiteral JSObject::putDirectToCompiledClosure(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes, PutPropertySlot& slot)
 {
     slot.disableCaching();
-    AOT::PropertyWalk::willPutDirectOnClosure(vm, this, propertyName.uid());
     ASCIILiteral error = putDirectInternal<PutModeDefineOwnPropertyWithoutClosureHooks>(vm, propertyName, value, attributes, slot);
     if (error.isNull())
         AOT::PropertyWalk::didPutDirectOnClosure(vm, this, propertyName.uid());
@@ -3383,8 +3382,11 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
                     JSValue standIn = vm.hasCompiledCode() ? AOT::takeStandInForMemberLeftOut(globalObject, key.string()) : JSValue();
                     if (!standIn)
                         return;
+                    // It is laid as a getter: called, it throws the error that names the member. No read finds it as a value.
                     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-                    putDirect(vm, key, standIn, attributesForStructure(value.attributes()));
+                    unsigned attributesOfGetter = (attributesForStructure(value.attributes()) & ~static_cast<unsigned>(PropertyAttribute::ReadOnly)) | PropertyAttribute::Accessor;
+                    putDirectNonIndexAccessor(vm, key, GetterSetter::create(vm, globalObject, asObject(standIn), nullptr), attributesOfGetter);
+                    continue;
 #else
                     return;
 #endif

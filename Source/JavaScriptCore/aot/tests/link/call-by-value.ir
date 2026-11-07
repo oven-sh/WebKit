@@ -1,0 +1,40 @@
+# If a call by value entered anything until a later round showed otherwise, as in the first version, what it passes would have escaped by then and could not be taken back. If it found no callee at all, `plus` would be left out of the executable
+# function plus(n) { return n; }  function apply(f, n) { return f(n); }  apply(plus, "a")
+# The call finds its callee when the closure arrives at its subject. Until then it enters nothing, and nothing escapes.
+# RUN: summary f2
+# CHECK: call c0 v2 Value Parameter 0 (Parameter 1)
+# CHECK: edge c0.0 -> Result 0
+# RUN(KEPT): summary f2
+# KEPT-NOT: -> Unknown
+# RUN(LINK): link calls functions mechanisms=all
+# LINK: call f0 v3 -> f2
+# LINK: call f2 v2 -> f1
+# LINK: function f1 callers-known one-callee
+# LINK-NEXT: parameter 0 {{*}}proven=string
+# LINK: referrers
+# LINK: function f2 callers-known one-callee {{*}}result=string
+# LINK-NEXT: parameter 0 {{*}}proven=f1
+# LINK-NEXT: parameter 1 {{*}}proven=string
+
+variable g0 name="plus" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="apply" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = GetModuleVariable variable=g0
+    v2 = String string="a"
+    v3 = Call v0, -, v1, v2 calleeName="apply"
+    v4 = Undefined
+    Return v4
+}
+function f1 name="plus" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="apply" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 calleeName="f"
+    Return v2
+}

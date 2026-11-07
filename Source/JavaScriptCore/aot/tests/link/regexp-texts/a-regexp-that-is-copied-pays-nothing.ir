@@ -1,0 +1,16 @@
+# The list follows from the program alone. A pattern that is a RegExp object is copied: nothing is converted and nothing is matched, so nothing is asked of it: new RegExp(/(?:a+)+b/, "i" + "").
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /(?:a+)+b/i
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = NewRegExp pattern="(?:a+)+b"
+    v2 = String string="i"
+    v3 = String string=""
+    v4 = Add v2, v3
+    v5 = Construct v0, -, v1, v4
+    Return v5
+}

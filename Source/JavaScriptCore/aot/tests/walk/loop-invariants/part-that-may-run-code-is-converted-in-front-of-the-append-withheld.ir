@@ -1,0 +1,9 @@
+# the same functions with loop invariants withheld: each join is built as it is written, and converts its parts itself
+# RUN: walk f2 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f2:Body
+# CHECK: = Strcat
+# RUN(NEVER): walk f2 mechanisms=none+TypedOperations
+# NEVER-NOT: StringBuilder
+# RUN(NONE): walk f1 mechanisms=none
+# NONE-NOT: StringBuilder
+# PROGRAM-OF: part-that-may-run-code-is-converted-in-front-of-the-append.ir

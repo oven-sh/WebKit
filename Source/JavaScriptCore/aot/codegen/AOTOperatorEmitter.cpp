@@ -10,8 +10,9 @@
 
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTIRProgram.h"
+#include "AOTNumbering.h"
 #include "AOTStringEmitter.h"
-#include "AOTStringRangeReadEmitter.h"
 #include "AOTStubsPrimitiveFastPaths.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTTypeTable.h"
@@ -22,19 +23,19 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct ArithmeticTraits {
+struct ArithmeticOperatorTraits {
     BinaryOperator stub;
     std::optional<RuntimeOperation> onNumberAndValue;
 };
 
-struct UnaryTraits {
+struct UnaryOperatorTraits {
     UnaryOperationForm stub;
     RuntimeOperation onBigInt;
 };
 
 } // anonymous namespace
 
-static ArithmeticTraits traitsOfOperator(ArithmeticOperator op)
+static ArithmeticOperatorTraits traitsOfArithmeticOperator(ArithmeticOperator op)
 {
     switch (op) {
     case ArithmeticOperator::Add:
@@ -53,7 +54,7 @@ static ArithmeticTraits traitsOfOperator(ArithmeticOperator op)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static UnaryTraits traitsOfOperator(UnaryOperator op)
+static UnaryOperatorTraits traitsOfUnaryOperator(UnaryOperator op)
 {
     switch (op) {
     case UnaryOperator::Negate:
@@ -80,26 +81,43 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
     ValueID right = value->rightOperand();
     switch (value->form()) {
     case OperatorForm::Generic: {
+        m_out.noteForm(op == ArithmeticOperator::Pow ? Form::Runtime : Form::Closed, StateOfKnowledge::Generic);
         Boxed x = in<Boxed>(left);
         Boxed y = in<Boxed>(right);
         return arithmeticOnBoxedOperands(value, op, x, y);
     }
     case OperatorForm::Integers:
+        m_out.noteForm(Form::Open, StateOfKnowledge::Integers);
         return arithmeticOnIntegers(value, op);
     case OperatorForm::CheckedIntegers:
+        m_out.noteForm(Form::Open, StateOfKnowledge::CheckedIntegers);
         return arithmeticOnCheckedIntegers(value, op);
     case OperatorForm::Numbers: {
-        if (value.representation() == Representation::JSValue)
-            return sumOfBoxedNumbers(op, get(left), typeOf(left), get(right), typeOf(right));
-        Number x = op == ArithmeticOperator::Add ? asTermOfSum(left, right) : asNumericOperand(left);
-        Number y = op == ArithmeticOperator::Add || op == ArithmeticOperator::Sub ? asTermOfSum(right, left) : asNumericOperand(right);
+        if (op != ArithmeticOperator::Mod && op != ArithmeticOperator::Pow)
+            m_out.noteForm(Form::Open, StateOfKnowledge::Numbers);
+        if (value.representation() == Representation::JSValue) {
+            auto termOfBoxedSum = [&](ValueID term) -> Operand {
+                return representationOf(term) == Representation::Int32 ? get(term) : Operand(in<Boxed>(term));
+            };
+            Operand x = termOfBoxedSum(left);
+            Operand y = termOfBoxedSum(right);
+            return sumOfBoxedNumbers(op, x, typeOf(left), y, typeOf(right));
+        }
+        if (handsOnBitsOfNaN(value.value()) && (generator().holdsAnyNaN(left) || generator().holdsAnyNaN(right))) {
+            Number x = asNumericOperandWithAnyNaN(left);
+            Number y = asNumericOperandWithAnyNaN(right);
+            return generator().settleNaNOf(value, arithmeticOnNumbers(op, x, y));
+        }
+        Number x = asNumericOperand(left);
+        Number y = asNumericOperand(right);
         return arithmeticOnNumbers(op, x, y);
     }
     case OperatorForm::NumberAndValue:
-        if (op != ArithmeticOperator::Pow && traitsOfOperator(op).onNumberAndValue)
+        if (op != ArithmeticOperator::Pow && traitsOfArithmeticOperator(op).onNumberAndValue)
             return arithmeticOnNumberAndValue(value, op);
         break;
     case OperatorForm::BigInts: {
+        m_out.noteForm(op == ArithmeticOperator::Pow ? Form::Runtime : Form::Closed, StateOfKnowledge::BigInts);
         Boxed x = boxCell(in<CellPointer>(left));
         Boxed y = boxCell(in<CellPointer>(right));
         return unboxCell(arithmeticOnBoxedOperands(value, op, x, y));
@@ -109,8 +127,10 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
     case OperatorForm::NullableStrings:
     case OperatorForm::NullableStringAndPrimitive:
     case OperatorForm::MayBeString:
-        if (op == ArithmeticOperator::Add)
+        if (op == ArithmeticOperator::Add) {
+            m_out.noteForm(Form::Closed, stateOf(value->form()));
             return addStrings(value);
+        }
         break;
     case OperatorForm::Unselected:
     case OperatorForm::Bits:
@@ -139,20 +159,50 @@ Boxed OperatorEmitter::arithmeticOnBoxedOperands(const ValueContext& value, Arit
 {
     if (op == ArithmeticOperator::Pow)
         return callOperation<Boxed>(value, RuntimeOperation::ValuePow, { left, right });
-    return Boxed(callBinaryStub(value, traitsOfOperator(op).stub, left, right));
+    return Boxed(callBinaryStub(value, traitsOfArithmeticOperator(op).stub, left, right));
 }
 
 Number OperatorEmitter::arithmeticOnNumberAndValue(const ValueContext& value, ArithmeticOperator op)
 {
-    bool numberIsOnRight = representationOf(value->leftOperand()) != Representation::Double;
+    bool numberIsOnRight = !typeOf(value->leftOperand()).isNumber();
     ValueID numberID = numberIsOnRight ? value->rightOperand() : value->leftOperand();
     ValueID otherID = numberIsOnRight ? value->leftOperand() : value->rightOperand();
     Number numberOperand = in<Number>(numberID);
     Boxed otherOperand = in<Boxed>(otherID);
-    Word32 typeAndNumberSide = word32(static_cast<int32_t>(NumberAndValueBits::encode(TypeTable::number.index(), numberIsOnRight)));
-    if (typeOf(otherID).primitives & Primitive::Number)
-        return Number(callStub(value, binaryWithDouble(traitsOfOperator(op).stub, numberIsOnRight), { numberOperand.value(), otherOperand.value(), typeAndNumberSide.value() }).first);
-    return callOperation<Number>(value, *traitsOfOperator(op).onNumberAndValue, { otherOperand, typeAndNumberSide, numberOperand });
+    ArithmeticOperatorTraits traits = traitsOfArithmeticOperator(op);
+    Word32 typeAndNumberSide = word32(static_cast<int32_t>(NumberAndValueBits::encode(0, numberIsOnRight)));
+    if (typeOf(otherID).primitives & Primitive::Number) {
+        m_out.noteForm(Form::Closed, StateOfKnowledge::NumberAndValue);
+        auto byStub = [&] {
+            return Number(callStub(value, binaryWithDouble(traits.stub, numberIsOnRight), { numberOperand.value(), otherOperand.value(), typeAndNumberSide.value() }).first);
+        };
+        if (standsInRareBlock(value))
+            return byStub();
+        auto withNumber = [&](Number otherNumber) {
+            return numberIsOnRight ? arithmeticOnNumbers(op, otherNumber, numberOperand) : arithmeticOnNumbers(op, numberOperand, otherNumber);
+        };
+        LBasicBlock int32Case = newBlock();
+        LBasicBlock noInt32Case = newBlock();
+        LBasicBlock doubleCase = newBlock();
+        LBasicBlock otherCase = newBlock();
+        Join<Number> join(m_out);
+        Condition holdsInt32 = isInt32(otherOperand);
+        ScopeFork fork = m_out.forkScope();
+        m_out.branch(holdsInt32.value(), normalEdge(int32Case), unlikelyEdge(noInt32Case));
+        m_out.appendToArm(int32Case, fork);
+        join.add(withNumber(toNumber(low32(otherOperand))));
+        m_out.appendToArm(noInt32Case, fork);
+        Condition holdsDouble = isNumber(otherOperand);
+        ScopeFork forkOfNoInt32 = m_out.forkScope();
+        m_out.branch(holdsDouble.value(), normalEdge(doubleCase), rareEdge(otherCase));
+        m_out.appendToArm(doubleCase, forkOfNoInt32);
+        join.add(withNumber(unboxDouble(otherOperand)));
+        m_out.appendToArm(otherCase, forkOfNoInt32);
+        join.add(byStub());
+        return join.finishBehind(fork);
+    }
+    m_out.noteForm(Form::Runtime, StateOfKnowledge::NumberAndOtherValue);
+    return callOperation<Number>(value, *traits.onNumberAndValue, { otherOperand, typeAndNumberSide, numberOperand });
 }
 
 template<typename Functor>
@@ -168,14 +218,11 @@ Operand OperatorEmitter::withIntegerOperand(const ValueContext& value, const Fun
     case Representation::Void:
     case Representation::Boolean:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -187,20 +234,26 @@ Operand OperatorEmitter::unaryResult(const ValueContext& value, UnaryOperator op
     ValueID operand = value->valueOperand();
     switch (value->form()) {
     case OperatorForm::Generic:
-        return Boxed(callStub(value, unaryOperation(traitsOfOperator(op).stub), { in<Boxed>(operand).value() }).first);
+        m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
+        return Boxed(callStub(value, unaryOperation(traitsOfUnaryOperator(op).stub), { in<Boxed>(operand).value() }).first);
     case OperatorForm::Integers:
+        m_out.noteForm(Form::Open, StateOfKnowledge::Integers);
         return unaryOnIntegers(value, op);
     case OperatorForm::CheckedIntegers:
+        m_out.noteForm(Form::Open, StateOfKnowledge::CheckedIntegers);
         return unaryOnCheckedIntegers(value, op);
     case OperatorForm::Numbers:
+        m_out.noteForm(Form::Open, StateOfKnowledge::Numbers);
         if (value.representation() == Representation::JSValue) {
             RELEASE_ASSERT(op == UnaryOperator::Increment || op == UnaryOperator::Decrement);
             ArithmeticOperator sum = op == UnaryOperator::Increment ? ArithmeticOperator::Add : ArithmeticOperator::Sub;
-            return sumOfBoxedNumbers(sum, get(operand), typeOf(operand), word32(1), typeOf(operand));
+            Boxed stepped = in<Boxed>(operand);
+            return sumOfBoxedNumbers(sum, stepped, typeOf(operand), word32(1), typeOf(operand));
         }
         return unaryOnNumbers(op, operand);
     case OperatorForm::BigInts:
-        return unboxCell(callOperation<Boxed>(value, traitsOfOperator(op).onBigInt, { boxCell(in<CellPointer>(operand)) }));
+        m_out.noteForm(Form::Runtime, StateOfKnowledge::BigInts);
+        return unboxCell(callOperation<Boxed>(value, traitsOfUnaryOperator(op).onBigInt, { boxCell(in<CellPointer>(operand)) }));
     case OperatorForm::Unselected:
     case OperatorForm::NumberAndValue:
     case OperatorForm::Bits:
@@ -268,7 +321,7 @@ Operand OperatorEmitter::unaryOnNumbers(UnaryOperator op, ValueID id)
     case UnaryOperator::Decrement:
         return sub(operand, number(1));
     case UnaryOperator::BitNot:
-        return bitXor(emitter<ConversionEmitter>().toInt32(operand, ConversionEmitter::BitsOfInt32::All, id), -1);
+        return bitXor(emitter<ConversionEmitter>().toInt32(operand, ConversionEmitter::BitsOfInt32::All), -1);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -294,14 +347,16 @@ Operand OperatorEmitter::convertedToNumber(const ValueContext& value, const Func
     case OperatorForm::Generic:
         return convertValue(in<Boxed>(operand));
     case OperatorForm::Integers:
+        m_out.noteForm(Form::Open, StateOfKnowledge::Integers);
         return get(operand);
     case OperatorForm::Numbers:
-        if (representationOf(operand) == Representation::Double)
-            return get(operand);
-        return emitter<ConversionEmitter>().withoutPayload(asNumericOperand(operand));
+        m_out.noteForm(Form::Open, StateOfKnowledge::Numbers);
+        return asNumericOperand(operand);
     case OperatorForm::NullableNumber:
+        m_out.noteForm(Form::Open, StateOfKnowledge::NullableNumber);
         return asNumberLikeOperand(operand);
     case OperatorForm::Booleans:
+        m_out.noteForm(Form::Open, StateOfKnowledge::Booleans);
         return asWord32(in<Condition>(operand));
     case OperatorForm::Unselected:
     case OperatorForm::CheckedIntegers:
@@ -328,14 +383,7 @@ Operand OperatorEmitter::convertedToNumber(const ValueContext& value, const Func
 void OperatorEmitter::generateToNumber(const ValueContext& value)
 {
     define(value, convertedToNumber(value, [&](Boxed operand) -> Operand {
-        const Type& type = typeOf(value->valueOperand());
-        if (type.primitives & Primitive::AnyString && type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Number | Primitive::Boolean | Primitive::UndefinedOrNull)) {
-            return either<Number>(isCell(operand), [&] {
-                return emitter<StringRangeReadEmitter>().toNumber(emitter<StringEmitter>().viewOfString(value, unboxCell(operand)));
-            }, [&] {
-                return asNumberLikeOperand(value->valueOperand());
-            });
-        }
+        m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
         return Number(callStub(value, toNumberAsDouble(), { operand.value() }).first);
     }));
 }
@@ -343,6 +391,7 @@ void OperatorEmitter::generateToNumber(const ValueContext& value)
 void OperatorEmitter::generateToNumeric(const ValueContext& value)
 {
     define(value, convertedToNumber(value, [&](Boxed operand) -> Operand {
+        m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
         return Boxed(callStub(value, unaryOperation(UnaryOperationForm::ToNumeric), { operand.value() }).first);
     }));
 }
@@ -357,19 +406,21 @@ void OperatorEmitter::generateTypeOf(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::TypeOf, { in<Boxed>(value->valueOperand()) }));
 }
 
-// What passes the test is the result as it stands.
 template<typename T, typename Functor>
-T OperatorEmitter::passingOrConverted(Boxed value, const TypeTestPlan& plan, const Functor& convert)
+T OperatorEmitter::passingOrConverted(Boxed value, const TypeTestPlan& plan, Form formOfConversion, const Functor& convert)
 {
     switch (plan.verdict) {
     case TypeTestVerdict::AlwaysPasses:
+        m_out.noteForm(Form::Open, StateOfKnowledge::PassesTest);
         return T(value.value());
     case TypeTestVerdict::NeverPasses:
+        m_out.noteForm(formOfConversion, StateOfKnowledge::FailsTest);
         return convert(CallOptions { });
     case TypeTestVerdict::NeedsTest:
         break;
     }
 
+    m_out.noteForm(Form::Open, StateOfKnowledge::NeedsTest);
     LBasicBlock passes = newBlock();
     LBasicBlock fails = newBlock();
     Join<T> join(m_out);
@@ -385,22 +436,33 @@ T OperatorEmitter::passingOrConverted(Boxed value, const TypeTestPlan& plan, con
 
 void OperatorEmitter::generateToObject(const ValueContext& value)
 {
-    StringID message = value->message() ? value->message() : m_program.strings.emptyString();
+    bool hasResult = !isNeverType(value->type);
     Boxed operand = in<Boxed>(value->valueOperand());
-    const TypeTestPlan& plan = typeTestPlanFor(m_function.at(value->valueOperand()).type, Representation::JSValue, TypeTable::object);
-    CellPointer object = passingOrConverted<CellPointer>(operand, plan, [&](const CallOptions& options) {
-        return callOperation<CellPointer>(value, RuntimeOperation::ToObject, { operand, word32(message.index()) }, options);
+    const TypeTestPlan& plan = typeTestPlanFor(typeIDOf(value->valueOperand()), Representation::JSValue, TypeTable::object);
+    if (hasResult && plan.verdict == TypeTestVerdict::AlwaysPasses) {
+        m_out.noteForm(Form::Open, StateOfKnowledge::PassesTest);
+        defineNarrowed(value, operand);
+        return;
+    }
+
+    StringID message = value->message() ? value->message() : m_program.strings.emptyString();
+    CellPointer object = passingOrConverted<CellPointer>(operand, plan, Form::Runtime, [&](const CallOptions& options) {
+        return callOperation<CellPointer>(value, RuntimeOperation::ToObject, { operand, numberOf(m_mentions.add(NumberSpace::ShownString, message)) }, options);
     });
-    // The conversion of undefined or null throws, and a value of type never has no representation of an object.
-    if (!typeOf(value.id()).isNever())
+    if (hasResult)
         define(value, object);
 }
 
 void OperatorEmitter::generateToThis(const ValueContext& value)
 {
     Boxed operand = in<Boxed>(value->valueOperand());
-    const TypeTestPlan& plan = typeTestPlanFor(m_function.at(value->valueOperand()).type, Representation::JSValue, TypeTable::object);
-    define(value, passingOrConverted<CellPointer>(operand, plan, [&](const CallOptions& options) {
+    const TypeTestPlan& plan = typeTestPlanFor(typeIDOf(value->valueOperand()), Representation::JSValue, TypeTable::object);
+    if (plan.verdict == TypeTestVerdict::AlwaysPasses) {
+        m_out.noteForm(Form::Open, StateOfKnowledge::PassesTest);
+        defineNarrowed(value, operand);
+        return;
+    }
+    define(value, passingOrConverted<CellPointer>(operand, plan, Form::Runtime, [&](const CallOptions& options) {
         return unboxCell(callOperation<Boxed>(value, RuntimeOperation::ToThis, { operand }, options));
     }));
 }
@@ -408,9 +470,9 @@ void OperatorEmitter::generateToThis(const ValueContext& value)
 void OperatorEmitter::generateToPropertyKey(const ValueContext& value)
 {
     Boxed operand = in<Boxed>(value->valueOperand());
-    TypeID keyType = types().intern(Type::fromPrimitives(Primitive::String | Primitive::Symbol));
-    const TypeTestPlan& plan = typeTestPlanFor(types().intern(typeOf(value->valueOperand())), Representation::JSValue, keyType);
-    define(value, unboxCell(passingOrConverted<Boxed>(operand, plan, [&](const CallOptions&) {
+    constexpr TypeID keyType = typeOfPrimitives(Primitive::String | Primitive::Symbol);
+    const TypeTestPlan& plan = typeTestPlanFor(typeIDOf(value->valueOperand()), Representation::JSValue, keyType);
+    define(value, unboxCell(passingOrConverted<Boxed>(operand, plan, Form::Closed, [&](const CallOptions&) {
         return Boxed(callStub(value, AOT::toPropertyKey(), { operand.value() }).first);
     })));
 }

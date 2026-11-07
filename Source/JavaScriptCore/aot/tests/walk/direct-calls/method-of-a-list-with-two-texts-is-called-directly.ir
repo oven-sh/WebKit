@@ -1,0 +1,53 @@
+# function user(k) { const list = [k]; return list.some(x => x === k); }   sink(user);
+# The methods that go up a list and call a function for each element are written twice in the library, and each has two rows, so no ONE function stands behind the built-in, and the call was left by value.
+# What the function object of the built-in runs takes whatever comes: that text is called directly. It is not copied: at every such call of a large application a copy costs more than it gives.
+# The library here is a stand-in.
+# LIBRARY: own
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = CallDirect {{*}}function=f3
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: calleeKey="some"
+# NEVER-NOT: callee=f3
+# NEVER-NOT: function=f2
+# RUN(WITHHELD): walk f1 mechanisms=all-DirectCalls
+# WITHHELD: calleeKey="some"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeSome function=f3
+runtimefunction id=ArrayPrototypeSomeOfList function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="user" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = PropGet v1 key="some"
+    v3 = NewClosure v0 function=f4
+    v4 = Call v2, v1, v3 calleeKey="some" calleeName="list.some"
+    Return v4
+}
+function f2 name="someOfList" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeSomeOfList thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f3 name="some" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeSome thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    v3 = ElemGet v0, v2
+    v4 = Call v1, -, v3
+    Return v4
+}
+function f4 module=m0 kind=Arrow length=1 captures=[{type=anything variableName="k"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = StrictEq v1, v0
+    Return v2
+}

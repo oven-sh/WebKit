@@ -54,13 +54,17 @@
 #if ENABLE(AOT)
 #include "AOTJSONHooks.h"
 #include "AOTJSONTextWriter.h"
+#include "AOTJSONHooks.h"
 #include "AOTPropertyListCache.h"
 #include "AOTPropertyWalkInlines.h"
-#include "AOTRuntimeCounters.h"
-#include "AOTStringBuilderStorage.h"
+#include "AOTRuntimeReporter.h"
+#include "AOTWatchedJSONLevels.h"
 #include "DateInstance.h"
 #include "DateTimeWriter.h"
 #include "DeferGC.h"
+#include "DeferTermination.h"
+#include <variant>
+#include <wtf/HashSet.h>
 #endif
 
 // Turn this on to log information about fastStringify usage, with a focus on why it failed.
@@ -118,10 +122,6 @@ class Stringifier {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
     static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space);
-#if ENABLE(AOT)
-    enum class ToJSONStep : bool { Pending, Done };
-    static String stringifyProperty(JSGlobalObject&, JSValue, const PropertyNameForFunctionCall&, std::span<JSCell* const> outerHolders, unsigned levelsAround, ToJSONStep = ToJSONStep::Pending);
-#endif
 
 private:
     class Holder {
@@ -160,7 +160,6 @@ private:
 
     enum StringifyResult { StringifyFailed, StringifySucceeded, StringifyFailedDueToUndefinedOrSymbolValue };
     StringifyResult appendStringifiedValue(StringBuilder&, JSValue, const Holder&, const PropertyNameForFunctionCall&);
-    StringifyResult appendValueBehindToJSON(StringBuilder&, JSValue, const Holder&, const PropertyNameForFunctionCall&);
 
     bool willIndent() const;
     void indent();
@@ -179,12 +178,6 @@ private:
     Vector<Holder, 16, UnsafeVectorOverflow> m_holderStack;
     String m_repeatedGap;
     StringView m_indent;
-#if ENABLE(AOT)
-    // The objects and arrays around the value, where compiled code writes them and this writes a part.
-    std::span<JSCell* const> m_outerHolders;
-    // All that is open around the value. Compiled code around which no code runs shows none of its holders and says how many they are.
-    unsigned m_levelsAround { 0 };
-#endif
 };
 
 // ------------------------------ helper functions --------------------------------
@@ -335,31 +328,6 @@ String Stringifier::stringify(JSGlobalObject& globalObject, JSValue value, JSVal
     RELEASE_AND_RETURN(scope, result.toString());
 }
 
-#if ENABLE(AOT)
-String Stringifier::stringifyProperty(JSGlobalObject& globalObject, JSValue value, const PropertyNameForFunctionCall& propertyName, std::span<JSCell* const> outerHolders, unsigned levelsAround, ToJSONStep toJSONStep)
-{
-    VM& vm = globalObject.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    Stringifier stringifier(&globalObject, jsUndefined(), jsUndefined());
-    RETURN_IF_EXCEPTION(scope, { });
-    stringifier.m_outerHolders = outerHolders;
-    stringifier.m_levelsAround = levelsAround;
-
-    StringBuilder result(OverflowPolicy::RecordOverflow);
-    Holder root(Holder::RootHolder, nullptr);
-    auto stringifyResult = toJSONStep == ToJSONStep::Done ? stringifier.appendValueBehindToJSON(result, value, root, propertyName) : stringifier.appendStringifiedValue(result, value, root, propertyName);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (result.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(&globalObject, scope);
-        return { };
-    }
-    if (stringifyResult != StringifySucceeded) [[unlikely]]
-        RELEASE_AND_RETURN(scope, { });
-    RELEASE_AND_RETURN(scope, result.toString());
-}
-#endif
-
 ALWAYS_INLINE JSValue Stringifier::toJSON(JSValue baseValue, const PropertyNameForFunctionCall& propertyName)
 {
     VM& vm = m_globalObject->vm();
@@ -411,14 +379,6 @@ Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder& 
         value = toJSON(value, propertyName);
         RETURN_IF_EXCEPTION(scope, StringifyFailed);
     }
-
-    RELEASE_AND_RETURN(scope, appendValueBehindToJSON(builder, value, holder, propertyName));
-}
-
-ALWAYS_INLINE Stringifier::StringifyResult Stringifier::appendValueBehindToJSON(StringBuilder& builder, JSValue value, const Holder& holder, const PropertyNameForFunctionCall& propertyName)
-{
-    VM& vm = m_globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Call the replacer function.
     if (isCallableReplacer()) {
@@ -511,16 +471,6 @@ ALWAYS_INLINE Stringifier::StringifyResult Stringifier::appendValueBehindToJSON(
             return StringifyFailed;
         }
     }
-#if ENABLE(AOT)
-    if (std::ranges::contains(m_outerHolders, object)) [[unlikely]] {
-        throwTypeError(m_globalObject, scope, "JSON.stringify cannot serialize cyclic structures."_s);
-        return StringifyFailed;
-    }
-    if (m_holderStack.size() + m_levelsAround >= maximumSideStackRecursion) [[unlikely]] {
-        throwStackOverflowError(m_globalObject, scope);
-        return StringifyFailed;
-    }
-#endif
 
     if (m_holderStack.size() >= maximumSideStackRecursion) [[unlikely]] {
         throwStackOverflowError(m_globalObject, scope);
@@ -824,25 +774,22 @@ struct StringifyHints {
     bool isWideInStaticBuffer;
 };
 thread_local static StringifyHints stringifyHints;
+
 #if ENABLE(AOT)
-thread_local static ASCIILiteral reasonOfLastFailure;
+using AOT::WatchedJSONLevels;
 #endif
 
 template<typename CharType, BufferMode bufferMode>
 class FastStringifier {
 public:
-    // Returns null string if the fast case fails.
-    // `levelsAround`: the objects and lists that compiled code is writing around the value.
+    // Returns null string if the fast case fails. `levelsAround`: the objects and lists that somebody else is writing around the value.
     static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space, std::optional<FailureReason>&, unsigned levelsAround = 0);
-#if ENABLE(AOT)
-    // False if the fast case fails, and with an exception.
-    static bool tryAppendTo(AOT::StringBuilderStorage&, JSGlobalObject&, JSValue, std::optional<FailureReason>&, unsigned levelsAround);
-#endif
 
+    static constexpr bool growsBuffer = bufferMode != BufferMode::StaticBuffer;
     static constexpr unsigned staticBufferSize = bufferMode == BufferMode::StaticBuffer ? 8192 : 8;
-    static constexpr unsigned dynamicBufferInlineCapacity = bufferMode == BufferMode::StaticBuffer ? 0 : 1024;
+    static constexpr unsigned dynamicBufferInlineCapacity = bufferMode == BufferMode::DynamicBuffer ? 1024 : 0;
 
-    static constexpr bool useShortCopyTier = bufferMode == BufferMode::DynamicBuffer;
+    static constexpr bool useShortCopyTier = growsBuffer;
 
     // A string that is at least so long is gone through once, escaping as it goes, so much at a time. (A shorter one is copied in the hope that there is nothing to escape.)
     static constexpr unsigned lengthOfLongString = 64;
@@ -873,6 +820,8 @@ private:
     static std::optional<unsigned> reservationFor(std::span<const AOT::FieldAsProperty>);
     template<HasGap hasGap> bool writeListedFields(Cursor&, JSObject&, std::span<const AOT::FieldAsProperty>, unsigned reservation);
     template<HasGap hasGap> void appendListedFields(JSObject&, std::span<const AOT::FieldAsProperty>);
+    bool isMemberWrittenByItsFields(JSObject&);
+    bool writeListedFieldsOfMember(Cursor&, JSObject&, std::span<const AOT::FieldAsProperty>, unsigned reservation);
     void appendElementsInCompiledProgram(JSArray&);
     bool isCompiledStructureKnown(const JSObject& object) const { return m_hasCompiledStructureWithoutToJSON && object.structureID().bits() == m_compiledStructureWithoutToJSON; }
 #endif
@@ -897,8 +846,8 @@ private:
     String firstGetterSetterPropertyName(JSObject&) const;
     void recordFastPropertyEnumerationFailure(JSObject&);
     bool haveFailure() const;
-    template<HasGap hasGap> bool enterHolder();
     bool startBelow(unsigned levelsAround);
+    template<HasGap hasGap> bool enterHolder();
     template<HasGap hasGap> void leaveHolder();
     bool hasRemainingCapacity(unsigned size = 1);
     bool hasRemainingCapacitySlow(unsigned size);
@@ -934,11 +883,11 @@ private:
     std::optional<FailureReason> m_failureReason;
     Vector<CharType, dynamicBufferInlineCapacity, CrashOnOverflow, 16, WTF::StringImplMalloc> m_dynamicBuffer;
     uint8_t* m_stackLimit { nullptr };
-    unsigned m_maxDepth { maximumSideStackRecursion };
 #if ENABLE(AOT)
     uint32_t m_compiledStructureWithoutToJSON; // The bits of a StructureID. Written before m_hasCompiledStructureWithoutToJSON is set.
-    // While it watches, m_stackLimit lies above every frame.
-    NO_UNIQUE_ADDRESS std::conditional_t<bufferMode == BufferMode::DynamicBuffer, AOT::WatchedJSONLevels, std::monostate> m_watchedLevels;
+    uint32_t m_compiledStructureOfMemberWithoutToJSON { 0 }; // The same for an object that is a member of another. No StructureID is zero.
+    // While it is watching, m_stackLimit is above every frame, so every append() takes the slow check.
+    NO_UNIQUE_ADDRESS std::conditional_t<growsBuffer, WatchedJSONLevels, std::monostate> m_watchedLevels;
 #endif
 
     CharType m_buffer[staticBufferSize];
@@ -1102,29 +1051,15 @@ template<typename CharType, BufferMode bufferMode>
 template<HasGap hasGap>
 ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::enterHolder()
 {
-    static_assert(bufferMode == BufferMode::DynamicBuffer || staticBufferSize < maximumSideStackRecursion);
-    if constexpr (bufferMode == BufferMode::DynamicBuffer) {
-        if (m_depth >= m_maxDepth) [[unlikely]] {
+    static_assert(growsBuffer || staticBufferSize < maximumSideStackRecursion);
+    if constexpr (growsBuffer) {
+        if (m_depth >= maximumSideStackRecursion) [[unlikely]] {
             recordFailure(FailureReason::StackOverflow, "nested too deep"_s);
             return false;
         }
     }
-    if constexpr (hasGap == HasGap::Yes || bufferMode == BufferMode::DynamicBuffer)
+    if constexpr (hasGap == HasGap::Yes || growsBuffer)
         ++m_depth;
-    return true;
-}
-
-// False with a failure: a static buffer counts no levels, so it takes no value that could pass the limit before the buffer is full.
-template<typename CharType, BufferMode bufferMode>
-ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::startBelow(unsigned levelsAround)
-{
-    if constexpr (bufferMode == BufferMode::StaticBuffer) {
-        if (levelsAround > maximumSideStackRecursion - staticBufferSize) [[unlikely]] {
-            recordBufferFull();
-            return false;
-        }
-    } else
-        m_maxDepth = maximumSideStackRecursion - std::min(levelsAround, maximumSideStackRecursion);
     return true;
 }
 
@@ -1132,7 +1067,7 @@ template<typename CharType, BufferMode bufferMode>
 template<HasGap hasGap>
 ALWAYS_INLINE void FastStringifier<CharType, bufferMode>::leaveHolder()
 {
-    if constexpr (hasGap == HasGap::Yes || bufferMode == BufferMode::DynamicBuffer)
+    if constexpr (hasGap == HasGap::Yes || growsBuffer)
         --m_depth;
 }
 
@@ -1180,12 +1115,6 @@ inline String FastStringifier<CharType, bufferMode>::result()
 template<typename CharType, BufferMode bufferMode>
 template<typename T> inline void FastStringifier<CharType, bufferMode>::recordFailure(FailureReason failureReason, T&& reason)
 {
-#if ENABLE(AOT)
-    if constexpr (std::same_as<std::remove_cvref_t<T>, ASCIILiteral>) {
-        if (!haveFailure())
-            reasonOfLastFailure = reason;
-    }
-#endif
     if (!haveFailure())
         logOutcome(std::forward<T>(reason));
     m_failureReason = failureReason;
@@ -1200,7 +1129,7 @@ inline void FastStringifier<CharType, bufferMode>::recordBufferFull()
 template<typename CharType, BufferMode bufferMode>
 inline void FastStringifier<CharType, bufferMode>::recordWideString()
 {
-    if constexpr (bufferMode == BufferMode::DynamicBuffer)
+    if constexpr (growsBuffer)
         recordFailure(FailureReason::Found16BitLate, "16-bit string, "_s);
     else
         recordFailure(m_length < (m_capacity / 2) ? FailureReason::Found16BitEarly : FailureReason::Found16BitLate, "16-bit string, "_s);
@@ -1265,7 +1194,7 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
 template<typename CharType, BufferMode bufferMode>
 NEVER_INLINE bool FastStringifier<CharType, bufferMode>::hasStackSpaceAtWatchedLevel(JSValue value, void* stackPointer)
 {
-    if constexpr (bufferMode == BufferMode::DynamicBuffer) {
+    if constexpr (growsBuffer) {
         uint8_t* stackLimit = std::bit_cast<uint8_t*>(m_vm.softStackLimit());
         if (std::bit_cast<uint8_t*>(stackPointer) < stackLimit) {
             recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
@@ -1673,7 +1602,7 @@ template<typename CharType, BufferMode bufferMode>
 template<HasGap hasGap>
 void FastStringifier<CharType, bufferMode>::append(JSValue value)
 {
-    if constexpr (bufferMode == BufferMode::DynamicBuffer) {
+    if constexpr (growsBuffer) {
         if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
 #if ENABLE(AOT)
             if (!hasStackSpaceAtWatchedLevel(value, currentStackPointer()))
@@ -2192,6 +2121,9 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendDate(DateInstance
 template<typename CharType, BufferMode bufferMode>
 bool FastStringifier<CharType, bufferMode>::datesHaveBuiltinToJSON(JSObject& datePrototype)
 {
+    // A name that is immutable stays so, and a date of this realm has been written in place only behind all that is asked below.
+    if (m_vm.aotState().realmWhoseDatesAreWrittenInPlace == &m_globalObject) [[likely]]
+        return true;
     if (m_datesHaveBuiltinToJSON != TriState::Indeterminate)
         return m_datesHaveBuiltinToJSON == TriState::True;
     bool result = true;
@@ -2380,6 +2312,8 @@ static const AOT::CachedPropertyList* listOfPropertiesForJSON(VM& vm, JSObject& 
     return list && !list->hasToJSON && !list->endsOfJSONKeys.isEmpty() ? list : nullptr;
 }
 
+// Writes the listed properties from `index` on, each with a comma in front, up to the first one that takes more than its key, the room up to the limit and a number, a boolean, null or a flat 8-bit string.
+// Of a value that is left to the caller the key is written. Of a property that needs room, and of a field that is absent, nothing is.
 static NEVER_INLINE ListedPropertiesWritten writeListedProperties(const JSObject& object, JSObject* extraProperties, const AOT::CachedPropertyList& list, unsigned index, Latin1Character* next, const Latin1Character* limit)
 {
     using Status = ListedPropertiesWritten::Status;
@@ -2431,17 +2365,21 @@ static NEVER_INLINE ListedPropertiesWritten writeListedProperties(const JSObject
             next = AOT::appendJSONNumber(afterKey, value.asDouble());
         else if (value.isBoolean())
             next = AOT::appendJSONBoolean(afterKey, value.isTrue());
-        else
+        else if (value.isNull())
             next = AOT::appendJSONLiteral(afterKey, "null"_s);
+        else
+            return { Status::FoundOtherValue, index, afterKey, 0, value };
     }
     return { Status::All, index, next };
 }
 
+// False with nothing written, for an object that is left to the general way of compiled objects. True with the object written, or with a failure.
 template<typename CharType, BufferMode bufferMode>
 NEVER_INLINE bool FastStringifier<CharType, bufferMode>::tryAppendObjectWithExtraProperties(JSObject& object)
 {
     if constexpr (std::same_as<CharType, Latin1Character>) {
         using Status = ListedPropertiesWritten::Status;
+        // A collection forgets the list.
         DeferGC deferGC(m_vm);
         JSObject* extraProperties;
         const AOT::CachedPropertyList* list = listOfPropertiesForJSON(m_vm, object, extraProperties);
@@ -2450,8 +2388,11 @@ NEVER_INLINE bool FastStringifier<CharType, bufferMode>::tryAppendObjectWithExtr
         JSValue prototype = object.structure()->storedPrototype();
         if (prototype.isObject() && mayHaveToJSON(*asObject(prototype))) [[unlikely]]
             return false;
+        if (!enterHolder<HasGap::No>()) [[unlikely]]
+            return true;
 
         unsigned count = list->properties.size();
+        // Every key starts with a comma. The first one lands where the brace belongs, which is written at the end.
         unsigned brace = m_length;
         bool hasPublished = false;
         Cursor cursor = cursorAtEnd();
@@ -2464,8 +2405,10 @@ NEVER_INLINE bool FastStringifier<CharType, bufferMode>::tryAppendObjectWithExtr
             if (written.status == Status::All) [[likely]]
                 break;
             if (written.status == Status::FoundAbsentField) {
-                if (!hasPublished)
+                if (!hasPublished) {
+                    leaveHolder<HasGap::No>();
                     return false;
+                }
                 recordFailure("a listed field of a compiled object is absent"_s);
                 return true;
             }
@@ -2479,6 +2422,7 @@ NEVER_INLINE bool FastStringifier<CharType, bufferMode>::tryAppendObjectWithExtr
             append<HasGap::No>(written.otherValue);
             if (haveFailure()) [[unlikely]]
                 return true;
+            // The list of an object inside this one may have taken its place.
             list = listOfPropertiesForJSON(m_vm, object, extraProperties);
             if (!list || list->properties.size() != count) [[unlikely]] {
                 recordFailure("the list of a compiled object's properties was replaced"_s);
@@ -2487,6 +2431,7 @@ NEVER_INLINE bool FastStringifier<CharType, bufferMode>::tryAppendObjectWithExtr
             cursor = cursorAtEnd();
             ++index;
         }
+        leaveHolder<HasGap::No>();
         cursor.next += static_cast<size_t>(cursor.next - buffer()) == brace;
         buffer()[brace] = '{';
         *cursor.next++ = '}';
@@ -2630,8 +2575,6 @@ static ALWAYS_INLINE FieldsWrittenBySlot writeFieldsBySlotInline(Latin1Character
         case AOT::SlotRepresentation::Int16:
         case AOT::SlotRepresentation::Uint32:
         case AOT::SlotRepresentation::Float:
-        case AOT::SlotRepresentation::LiteralString:
-        case AOT::SlotRepresentation::LiteralString32:
         case AOT::SlotRepresentation::DeferredClosure:
             return { next, field };
         }
@@ -2756,7 +2699,7 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
 
     for (const AOT::FieldAsProperty* current = fields.data(), *end = current + fields.size(); ; ++current) {
         if constexpr (writesLatin1 && hasGap == HasGap::No) {
-            if (readsSlots) [[likely]] {
+            if (readsSlots && current != end) [[likely]] {
                 FieldsWrittenBySlot written = writeFieldsBySlot(cursor.next, cursor.limit, object, current, end, reservation);
                 cursor.next = written.next;
                 current = written.firstFieldNotWritten;
@@ -2848,6 +2791,22 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
                     return false;
                 }
                 continue;
+            } else if constexpr (writesLatin1 && hasGap == HasGap::No) {
+                // A compiled object of which all is known goes on with this cursor.
+                if (type == CompiledObjectType && !AOT::PropertyWalk::hasExtraProperties(asObject(&cell))) {
+                    if (!isMemberWrittenByItsFields(*asObject(&cell))) [[unlikely]] {
+                        recordFailure("compiled object that is callable, has a prototype of its own or static properties that are not made yet, or may have toJSON"_s);
+                        return false;
+                    }
+                    auto fieldsOfMember = AOT::PropertyWalk::fieldsInKeyOrder(asObject(&cell));
+                    auto reservationOfMember = fieldsOfMember ? reservationFor(*fieldsOfMember) : std::nullopt;
+                    if (reservationOfMember) [[likely]] {
+                        appendKey();
+                        if (!writeListedFieldsOfMember(cursor, *asObject(&cell), *fieldsOfMember, *reservationOfMember) || !reserve(cursor, reservation)) [[unlikely]]
+                            return false;
+                        continue;
+                    }
+                }
             }
         } else if constexpr (writesLatin1) {
             appendKey();
@@ -2888,6 +2847,39 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
     return true;
 }
 
+// What appendCompiledObject() asks of an object without extra properties in front of its fields.
+template<typename CharType, BufferMode bufferMode>
+ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::isMemberWrittenByItsFields(JSObject& object)
+{
+    uint32_t bits = object.structureID().bits();
+    if (bits == m_compiledStructureOfMemberWithoutToJSON || isCompiledStructureKnown(object)) [[likely]]
+        return true;
+    auto& structure = *object.structure();
+    uint32_t known = m_compiledStructureWithoutToJSON;
+    bool hasKnown = m_hasCompiledStructureWithoutToJSON;
+    if (object.isCallable() || structure.hasPolyProto() || structure.hasNonReifiedStaticProperties() || mayCompiledObjectHaveToJSON(object)) [[unlikely]]
+        return false;
+    // Only a Structure that has answered is remembered. Where this object alone has answered, the next one of its Structure is asked again.
+    if (isCompiledStructureKnown(object)) {
+        m_compiledStructureOfMemberWithoutToJSON = bits;
+        m_compiledStructureWithoutToJSON = known;
+        m_hasCompiledStructureWithoutToJSON = hasKnown;
+    }
+    return true;
+}
+
+template<typename CharType, BufferMode bufferMode>
+NEVER_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFieldsOfMember(Cursor& cursor, JSObject& object, std::span<const AOT::FieldAsProperty> fields, unsigned reservation)
+{
+    if constexpr (growsBuffer) {
+        if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
+            if (!hasStackSpaceAtWatchedLevel(&object, currentStackPointer()))
+                return false;
+        }
+    }
+    return writeListedFields<HasGap::No>(cursor, object, fields, reservation);
+}
+
 template<typename CharType, BufferMode bufferMode>
 template<HasGap hasGap>
 NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendListedFields(JSObject& object, std::span<const AOT::FieldAsProperty> fields)
@@ -2909,9 +2901,9 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompile
     auto* butterfly = array.butterfly();
     unsigned length = butterfly->publicLength();
     auto data = butterfly->contiguous();
-    if constexpr (bufferMode == BufferMode::DynamicBuffer) {
+    if constexpr (growsBuffer) {
         if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
-            // append() has shown the array.
+            // append() has already reported the array.
             if (!hasStackSpaceAtWatchedLevel(jsUndefined(), currentStackPointer()))
                 return;
         }
@@ -3003,23 +2995,30 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendInt32Array(JSArra
     }
 }
 
+// The levels around the value count as those inside it. False with a failure: a static buffer counts none, so it takes no value that could pass the limit before the buffer is full.
+template<typename CharType, BufferMode bufferMode>
+ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::startBelow(unsigned levelsAround)
+{
+    if constexpr (growsBuffer)
+        m_depth = levelsAround;
+    else if (levelsAround > maximumSideStackRecursion - staticBufferSize) [[unlikely]] {
+        recordBufferFull();
+        return false;
+    }
+    return true;
+}
+
 template<typename CharType, BufferMode bufferMode>
 inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, std::optional<FailureReason>& failureReason, unsigned levelsAround)
 {
     if (replacer.isObject()) {
         logOutcome("replacer"_s);
-#if ENABLE(AOT)
-        reasonOfLastFailure = "replacer"_s;
-#endif
         return { };
     }
     FastStringifier stringifier(globalObject);
     if (!space.isUndefined()) {
         if (!stringifier.setGap(space)) [[unlikely]] {
             logOutcome("space"_s);
-#if ENABLE(AOT)
-            reasonOfLastFailure = "space"_s;
-#endif
             return { };
         }
     }
@@ -3034,21 +3033,6 @@ inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& g
     failureReason = stringifier.m_failureReason;
     return stringifier.result();
 }
-
-#if ENABLE(AOT)
-template<typename CharType, BufferMode bufferMode>
-inline bool FastStringifier<CharType, bufferMode>::tryAppendTo(AOT::StringBuilderStorage& builder, JSGlobalObject& globalObject, JSValue value, std::optional<FailureReason>& failureReason, unsigned levelsAround)
-{
-    FastStringifier stringifier(globalObject);
-    if (stringifier.startBelow(levelsAround)) [[likely]]
-        stringifier.template append<HasGap::No>(value);
-    failureReason = stringifier.m_failureReason;
-    if (stringifier.haveFailure())
-        return false;
-    std::span<const CharType> text { static_cast<const FastStringifier&>(stringifier).buffer(), stringifier.m_length };
-    return builder.append(&globalObject, text) == AOT::StringBuilderStorage::AppendResult::Appended;
-}
-#endif
 
 // A fast case that fails has run no code, so the next one starts over. Null if all of them fail.
 static String stringifyAfterFirstFastCaseFailed(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, std::optional<FailureReason> failureReason, unsigned levelsAround = 0)
@@ -3078,6 +3062,24 @@ static String stringifyAfterFirstFastCaseFailed(JSGlobalObject& globalObject, JS
     return { };
 }
 
+#if ENABLE(AOT)
+// A fast path only succeeds when no user code has to run, so the general path runs none either and must produce the same string.
+static NEVER_INLINE void checkAgainstGeneralStringifier(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, const String& written)
+{
+    VM& vm = globalObject.vm();
+    DeferTerminationForAWhile deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    AOT::countEvent(vm, AOT::RuntimeCounterID::AnswersAskedAgain);
+    String general = Stringifier::stringify(globalObject, value, replacer, space);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return;
+    }
+    if (general != written)
+        AOT::stopAtJSONTextMismatch(written, general);
+}
+#endif
+
 static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space)
 {
     // Nothing is written for undefined, and without an object among the other arguments no code runs that could tell.
@@ -3089,16 +3091,24 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
         std::optional<FailureReason> failureReason;
         if (stringifyHints.isWideInStaticBuffer)
             failureReason = FailureReason::Found16BitEarly;
-        else if (String result = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+        else if (String result = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull()) {
+#if ENABLE(AOT)
+            if (vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+                checkAgainstGeneralStringifier(globalObject, value, replacer, space, result);
+#endif
             return result;
-        if (String result = stringifyAfterFirstFastCaseFailed(globalObject, value, replacer, space, failureReason); !result.isNull())
+        }
+        if (String result = stringifyAfterFirstFastCaseFailed(globalObject, value, replacer, space, failureReason); !result.isNull()) {
+#if ENABLE(AOT)
+            if (vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+                checkAgainstGeneralStringifier(globalObject, value, replacer, space, result);
+#endif
             return result;
+        }
     }
 #if ENABLE(AOT)
-    if (vm.hasCompiledCode()) [[unlikely]] {
-        AOT::count(vm, AOT::RuntimeCounterID::JSONStringifySlowPaths);
-        AOT::countReasonForSlowStringify(vm, std::bit_cast<uint8_t*>(currentStackPointer()) >= stackLimit ? reasonOfLastFailure : "little stack left"_s);
-    }
+    if (vm.hasCompiledCode()) [[unlikely]]
+        AOT::countEvent(vm, AOT::RuntimeCounterID::JSONStringifySlowPaths);
 #endif
     String result = Stringifier::stringify(globalObject, value, replacer, space);
 #if FAST_STRINGIFY_LOG_USAGE
@@ -3107,247 +3117,6 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
 #endif
     return result;
 }
-
-#if ENABLE(AOT)
-// A record that holds a number stands for that many holders, which nobody lists: all that are open around those in front of it.
-static unsigned numberOfLevels(const AOT::JSONHolderRecord* innermostHolder)
-{
-    unsigned number = 0;
-    for (const AOT::JSONHolderRecord* record = innermostHolder; record; record = record->outer) {
-        JSValue holder = JSValue::decode(record->holder);
-        if (holder.isInt32())
-            return number + holder.asInt32();
-        ++number;
-    }
-    return number;
-}
-
-static String stringifyProperty(JSGlobalObject& globalObject, JSValue value, JSValue property, const AOT::JSONHolderRecord* innermostHolder, Stringifier::ToJSONStep toJSONStep = Stringifier::ToJSONStep::Pending)
-{
-    VM& vm = globalObject.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // Compiled code does not look for a cycle. It has run no code of the program since it went round one.
-    if (AOT::StringBuilderStorage::hasRepeatedHolder(innermostHolder)) [[unlikely]] {
-        throwTypeError(&globalObject, scope, "JSON.stringify cannot serialize cyclic structures."_s);
-        return { };
-    }
-    // The frames of the compiled code keep the holders alive.
-    Vector<JSCell*, 16> holders;
-    for (const AOT::JSONHolderRecord* record = innermostHolder; record; record = record->outer) {
-        if (JSValue holder = JSValue::decode(record->holder); holder.isCell())
-            holders.append(holder.asCell());
-    }
-    unsigned levelsAround = numberOfLevels(innermostHolder);
-
-    if (property.isNumber())
-        RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(static_cast<unsigned>(property.asNumber())), holders.span(), levelsAround, toJSONStep));
-    Identifier name = asString(property)->toIdentifier(&globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(name.impl()), holders.span(), levelsAround, toJSONStep));
-}
-
-static std::optional<size_t> roomForListedScalars(JSGlobalObject& globalObject, const JSObject& object, JSObject* extraProperties, const AOT::CachedPropertyList& list, unsigned index)
-{
-    VM& vm = globalObject.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    size_t room = list.jsonKeys.size() + list.properties.size() * AOT::maxJSONNumberLength;
-    for (const AOT::PropertyListEntry& property : list.properties.span().subspan(index)) {
-        JSValue value = uncheckedDowncast<AOT::Object>(&object)->readPropertyListEntry(property, extraProperties);
-        if (!value)
-            return std::nullopt;
-        if (!value.isCell())
-            continue;
-        if (value.asCell()->type() != StringType || !asString(value.asCell())->is8Bit())
-            return std::nullopt;
-        // A piece of a string resolves to the width that the storage of that string has now.
-        auto text = asString(value.asCell())->value(&globalObject);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!text->is8Bit())
-            return std::nullopt;
-        room += 1 + text->length() + 1;
-    }
-    return room;
-}
-
-static NEVER_INLINE bool tryAppendScalarsInSeveralSteps(JSGlobalObject& globalObject, AOT::StringBuilderStorage& builder, const JSObject& object, JSObject* extraProperties, const AOT::CachedPropertyList& list, Latin1Character* start, ListedPropertiesWritten written)
-{
-    using Status = ListedPropertiesWritten::Status;
-    auto scope = DECLARE_THROW_SCOPE(globalObject.vm());
-    uint32_t lengthBefore = builder.length();
-    bool hasBrace = false;
-    if (written.status == Status::FoundOtherValue && asString(written.otherValue)->isRope()) {
-        written.status = Status::NeedsRoom;
-        written.next -= list.endsOfJSONKeys[written.index] - (written.index ? list.endsOfJSONKeys[written.index - 1] : 0);
-    }
-    std::optional<size_t> room = roomForListedScalars(globalObject, object, extraProperties, list, written.index);
-    EXCEPTION_ASSERT_UNUSED(scope, !scope.exception() || !room);
-    while (room) {
-        Latin1Character* next = written.next;
-        unsigned index = written.index;
-        if (next != start && !hasBrace) {
-            *start = '{';
-            hasBrace = true;
-        }
-        if (written.status == Status::FoundOtherValue) {
-            std::span<const Latin1Character> characters = asString(written.otherValue)->tryGetValueImpl()->span8();
-            if (AOT::maxLengthOfEscapedJSONString(characters.size()) + AOT::maxStringBuilderReservation > String::MaxLength - builder.length())
-                break;
-            next = AOT::appendEscapedJSONString(&globalObject, builder, next, characters);
-            EXCEPTION_ASSERT(!scope.exception() || !next);
-            if (!next)
-                break;
-            *room -= 1 + characters.size() + 1;
-            ++index;
-        }
-        builder.commit(next);
-        start = builder.tryReserve({ .length = *room + 2, .roomForMore = AOT::roomBehindJSONText(*room) });
-        if (!start)
-            break;
-        written = writeListedProperties(object, extraProperties, list, index, start, start + *room);
-        next = written.next;
-        *room -= next - start;
-        if (written.status == Status::FoundOtherValue)
-            continue;
-        if (written.status != Status::All)
-            break;
-        if (!hasBrace) {
-            next += next == start;
-            *start = '{';
-        }
-        *next++ = '}';
-        builder.commit(next);
-        return true;
-    }
-    builder.rollBack(lengthBefore);
-    return false;
-}
-
-static NEVER_INLINE Latin1Character* tryAppendEscapedInPlace(const ListedPropertiesWritten& written, const Latin1Character* limit)
-{
-    const StringImpl* string = written.otherValue.isString() ? asString(written.otherValue)->tryGetValueImpl() : nullptr;
-    if (!string || !string->is8Bit() || static_cast<size_t>(limit - written.next) < AOT::maxLengthOfEscapedJSONString(string->length()))
-        return nullptr;
-    return AOT::appendQuotedAndEscapedJSONString(written.next, string->span8());
-}
-
-static bool tryAppendScalarsOfObjectWithExtraProperties(JSGlobalObject& globalObject, AOT::StringBuilderStorage& builder, JSObject& object)
-{
-    using Status = ListedPropertiesWritten::Status;
-    VM& vm = globalObject.vm();
-    DeferGC deferGC(vm);
-    JSObject* extraProperties;
-    const AOT::CachedPropertyList* list = listOfPropertiesForJSON(vm, object, extraProperties);
-    if (!list) [[unlikely]]
-        return false;
-    JSValue prototype = object.structure()->storedPrototype();
-    if (prototype.isObject()) {
-        JSValue toJSON = asObject(prototype)->structure()->cachedSpecialProperty(CachedSpecialPropertyKey::ToJSON);
-        if (!toJSON || !toJSON.isUndefined()) [[unlikely]]
-            return false;
-    }
-
-    size_t room = 2 * (list->jsonKeys.size() + list->properties.size() * AOT::maxJSONNumberLength);
-    Latin1Character* brace = builder.tryReserve(room + 2);
-    if (!brace) [[unlikely]]
-        return false;
-    ListedPropertiesWritten written = writeListedProperties(object, extraProperties, *list, 0, brace, brace + room);
-    if (written.status != Status::All) [[unlikely]] {
-        while (written.status == Status::FoundOtherValue) {
-            Latin1Character* afterText = tryAppendEscapedInPlace(written, brace + room);
-            if (!afterText)
-                break;
-            written = writeListedProperties(object, extraProperties, *list, written.index + 1, afterText, brace + room);
-        }
-        if (written.status == Status::FoundAbsentField || (written.status == Status::FoundOtherValue && !written.otherValue.isString()))
-            return false;
-        if (written.status != Status::All)
-            return tryAppendScalarsInSeveralSteps(globalObject, builder, object, extraProperties, *list, brace, written);
-    }
-    Latin1Character* next = written.next;
-    next += next == brace;
-    *brace = '{';
-    *next++ = '}';
-    builder.commit(next);
-    return true;
-}
-
-// A function found under toJSON by a lookup that runs no code. Empty: the general path has to look, and no code has run.
-static JSValue findToJSONWithoutRunningCode(JSGlobalObject* globalObject, JSObject* object)
-{
-    VM& vm = globalObject->vm();
-    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    bool isFound = object->getPropertySlot(globalObject, vm.propertyNames->toJSON, slot);
-    slot.disallowVMEntry.reset();
-    if (!isFound || slot.isTaintedByOpaqueObject() || !slot.isValue())
-        return { };
-    JSValue function = slot.getPureResult();
-    return function.isCallable() ? function : JSValue();
-}
-
-bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderStorage& builder, JSValue value, JSValue property, const JSONHolderRecord* holders)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (value.isCell() && value.asCell()->type() == CompiledObjectType && AOT::PropertyWalk::hasExtraProperties(asObject(value))) {
-        bool isAppended = tryAppendScalarsOfObjectWithExtraProperties(*globalObject, builder, *asObject(value));
-        RETURN_IF_EXCEPTION(scope, false);
-        if (isAppended)
-            return true;
-    }
-
-    // They are levels as those inside the value are.
-    unsigned levelsAround = numberOfLevels(holders);
-
-    std::optional<FailureReason> failureReason;
-    if (std::bit_cast<uint8_t*>(currentStackPointer()) >= std::bit_cast<uint8_t*>(vm.softStackLimit())) [[likely]] {
-        bool isAppended = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::tryAppendTo(builder, *globalObject, value, failureReason, levelsAround);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (isAppended)
-            return true;
-
-        // An object with a toJSON that answers a primitive needs no serializer of its own. A cycle among the holders is thrown before toJSON runs.
-        JSValue toJSON = value.isObject() && !StringBuilderStorage::hasRepeatedHolder(holders) ? findToJSONWithoutRunningCode(globalObject, asObject(value)) : JSValue();
-        RETURN_IF_EXCEPTION(scope, false);
-        if (toJSON) {
-            JSValue key = property;
-            if (key.isNumber()) {
-                key = jsString(vm, String::number(static_cast<unsigned>(property.asNumber())));
-                RETURN_IF_EXCEPTION(scope, false);
-            }
-            auto arguments = WTF::toArray<EncodedJSValue>({ JSValue::encode(key) });
-            JSValue answer = call(globalObject, toJSON, JSC::getCallData(toJSON), value, ArgList { arguments.data(), arguments.size() });
-            RETURN_IF_EXCEPTION(scope, false);
-            failureReason = std::nullopt;
-            if (answer.isNumber() || answer.isBoolean() || answer.isNull() || answer.isString()) {
-                bool isAnswerAppended = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::tryAppendTo(builder, *globalObject, answer, failureReason, 0);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (isAnswerAppended)
-                    return true;
-            }
-            // toJSON has run: it does not run again, for this object or for what it answered.
-            String text = stringifyProperty(*globalObject, answer, property, holders, Stringifier::ToJSONStep::Done);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (text.isNull())
-                return false;
-            auto result = text.is8Bit() ? builder.append(globalObject, text.span8()) : builder.append(globalObject, text.span16());
-            RELEASE_AND_RETURN(scope, result == StringBuilderStorage::AppendResult::Appended);
-        }
-    }
-
-    // Only the general serializer calls toJSON, which is told the key.
-    String text = stringifyAfterFirstFastCaseFailed(*globalObject, value, jsUndefined(), jsUndefined(), failureReason, levelsAround);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (text.isNull())
-        text = stringifyProperty(*globalObject, value, property, holders);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (text.isNull())
-        return false;
-    auto result = text.is8Bit() ? builder.append(globalObject, text.span8()) : builder.append(globalObject, text.span16());
-    RELEASE_AND_RETURN(scope, result == StringBuilderStorage::AppendResult::Appended);
-}
-#endif
 
 // ------------------------------ JSONObject --------------------------------
 
@@ -3592,8 +3361,8 @@ NEVER_INLINE JSValue Walker::walk(JSValue unfiltered)
                 else {
                     unsigned attributes;
                     PropertyOffset offset = object->getDirectOffset(vm, prop, attributes);
-                    // The reviver was handed this holder and may have made its properties immutable: only the checked path may write then.
-                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None) && !object->structure()->mayHaveImmutableProperties()) [[likely]] {
+                    // The reviver was handed this holder and may have made its properties immutable, or laid it above other objects: only the checked path may write then.
+                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None) && !object->structure()->mayHaveImmutableProperties() && !(object->structure()->mayBePrototype() && vm.hasCompiledCode())) [[likely]] {
                         object->putDirectOffset(vm, offset, filteredValue);
                         object->structure()->didReplaceProperty(offset);
                     } else {
@@ -3669,15 +3438,6 @@ static NEVER_INLINE JSValue jsonParseSlow(JSGlobalObject* globalObject, JSString
     return walker.walk(unfiltered);
 }
 
-#if ENABLE(AOT)
-static ALWAYS_INLINE JSValue tryParseWithCompiledParser(JSGlobalObject* globalObject, StringView text)
-{
-    if (!globalObject->aotInstance()) [[likely]]
-        return { };
-    return AOT::tryParseJSON(globalObject, text);
-}
-#endif
-
 // ECMA-262 v5 15.12.2
 JSC_DEFINE_HOST_FUNCTION(jsonProtoFuncParse, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -3696,8 +3456,10 @@ JSC_DEFINE_HOST_FUNCTION(jsonProtoFuncParse, (JSGlobalObject* globalObject, Call
     }
 
 #if ENABLE(AOT)
-    if (JSValue parsed = tryParseWithCompiledParser(globalObject, view))
-        return JSValue::encode(parsed);
+    if (globalObject->aotInstance()) [[unlikely]] {
+        if (JSValue parsed = AOT::tryParseJSON(globalObject, view))
+            return JSValue::encode(parsed);
+    }
 #endif
 
     if (view->is8Bit()) {
@@ -3734,8 +3496,10 @@ JSValue JSONParse(JSGlobalObject* globalObject, StringView json)
         return JSValue();
 
 #if ENABLE(AOT)
-    if (JSValue parsed = tryParseWithCompiledParser(globalObject, json))
-        return parsed;
+    if (globalObject->aotInstance()) [[unlikely]] {
+        if (JSValue parsed = AOT::tryParseJSON(globalObject, json))
+            return parsed;
+    }
 #endif
 
     if (json.is8Bit()) {
@@ -3763,7 +3527,7 @@ StreamingJSONParseResult streamingJSONParse(JSGlobalObject* globalObject, String
 }
 #endif // USE(BUN_JSC_ADDITIONS)
 
-JSValue JSONParseWithException(JSGlobalObject* globalObject, StringView json, CompiledJSONParser compiledParser)
+JSValue JSONParseWithException(JSGlobalObject* globalObject, StringView json)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3772,12 +3536,10 @@ JSValue JSONParseWithException(JSGlobalObject* globalObject, StringView json, Co
         return JSValue();
 
 #if ENABLE(AOT)
-    if (globalObject->aotInstance() && compiledParser == CompiledJSONParser::Try) [[unlikely]] {
+    if (globalObject->aotInstance()) [[unlikely]] {
         if (JSValue parsed = AOT::tryParseJSON(globalObject, json))
             return parsed;
     }
-#else
-    UNUSED_PARAM(compiledParser);
 #endif
 
     if (json.is8Bit()) {

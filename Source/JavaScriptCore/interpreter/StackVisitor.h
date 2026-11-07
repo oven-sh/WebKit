@@ -103,7 +103,7 @@ public:
         JS_EXPORT_PRIVATE const AOT::CompiledFrame& compiledFrame() const;
         // The frame is that of the built-in function that compiledFrame() calls, and whose steps compiled code runs itself.
         bool isOfBuiltinCalledByCompiledFrame() const { return m_isOfBuiltinCalledByCompiledFrame; }
-        // compiledFrame() is the frame above it: CompiledFrameIterator::constructedFunctionThatLeft().
+        // compiledFrame() is the frame of its caller: CompiledFrameIterator::constructedFunctionThatLeft().
         bool isOfConstructedFunctionThatLeft() const { return m_isOfConstructedFunctionThatLeft; }
         JS_EXPORT_PRIVATE bool isConstructCall() const;
 #else

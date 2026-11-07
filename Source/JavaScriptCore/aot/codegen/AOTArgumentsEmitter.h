@@ -18,16 +18,10 @@ public:
     void generateGetArgument(const ValueContext&);
     void generateGetRestLength(const ValueContext&);
     void generateCreateRest(const ValueContext&);
-    void generateGetMyArgumentByVal(const ValueContext&);
-    void generateCallForwardVarargs(const ValueContext&);
-    void generateConstructSuperForwardVarargs(const ValueContext&);
 
 private:
     Word32 restLength(uint32_t firstArgument);
     Pointer restList(uint32_t firstArgument);
-    Integer indexOfBoxedKey(Boxed key, LBasicBlock isNotIndex);
-    Boxed readFromMaterializedList(const ValueContext&, Boxed key);
-    void emitTailCallWithList(Boxed callee, Boxed thisValue, Word32 count, Pointer list);
 };
 
 } } } // namespace JSC::AOT::Typed

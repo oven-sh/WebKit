@@ -1,0 +1,27 @@
+# a read off a literal may run a getter that the literal lays, and that may end the process: the store behind it is no store that every run comes to. A warning
+# ({ get ready() { process.exit(0); } }).ready; Array.prototype.push = f;
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks
+
+layout L0 module=m0
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 @1
+    v1 = NewClosure function=f1 @1
+    DefineGetter v0, v1 key="ready" @1
+    v3 = FinishObject v0 @1
+    v4 = PropGet v3 key="ready" @2
+    v5 = Builtin builtin=ArrayPrototype @3
+    PropSet v5, v1 key="push" @4
+    Return v4 @5
+}
+function f1 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process @101
+    v1 = PropGet v0 key="exit" @102
+    v2 = Integer @103
+    v3 = Call v1, v0, v2 calleeKey="exit" @104
+    Return v3 @105
+}

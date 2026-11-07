@@ -1,0 +1,13 @@
+# The table of objects has no shape for the value of an accessor, nor for a built-in object whose prototype nobody knows. What passes a test for arrays is an array for life, so in Compile `unknown` within the tested type takes the place of the name, which proves nothing of the cell. Facts and Plan keep the name. Array.prototype fails the test
+# RUN: edges
+# CHECK: t0 passing t1 = builtin(IntlDateTimeFormatPrototypeFormat)
+# CHECK: t2 passing t1 = builtin(Console)
+# CHECK: t3 passing t1 = never
+# CHECK: t0 passing t1 in Compile = Array
+# CHECK: t2 passing t1 in Compile = Array
+# CHECK-NOT: t3 passing t1 in Compile
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" role=Signature parameters=[{type=number|builtin(IntlDateTimeFormatPrototypeFormat)}, {type=Array}, {type=number|builtin(Console)}, {type=number|builtin(ArrayPrototype)}] results=[{type=undefined}]
+entry module=m0

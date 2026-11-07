@@ -1,0 +1,28 @@
+# If the arguments of a call by binding were read as positional, which two files of the first version did while the scan wrote them otherwise, each would land one or two parameters off: the capture would be taken for the first argument, and `this` for the second
+# The operands of CallDirect are the entry parameters of the callee in their order: the capture, `this`, then what is written.
+# RUN: summary f0
+# CHECK: call c0 v3 Binding f1 (Constant string, Constant true, Constant null)
+# RUN(BARE): summary f0
+# BARE-NOT: this=
+# RUN(LINK): link calls functions mechanisms=all
+# LINK: call f0 v3 -> f1
+# LINK: function f1 callers-known one-callee {{*}}result=null
+# LINK-NEXT: parameter 0 {{*}}proven=string
+# LINK-NEXT: parameter 1 {{*}}proven=true
+# LINK-NEXT: parameter 2 {{*}}proven=null
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="c"
+    v1 = Boolean boolean=true
+    v2 = Null
+    v3 = CallDirect v0, v1, v2 function=f1
+    v4 = Undefined
+    Return v4
+}
+function f1 name="callee" module=m0 flags=[HasThis] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v2
+}

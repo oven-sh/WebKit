@@ -23,6 +23,8 @@
 #include "Collector.h"
 
 #include "AOTHeapHooks.h"
+#include "AOTRuntimeHooks.h"
+#include "AddressSpaceBudget.h"
 #include "CagedAlignedMemoryAllocator.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
@@ -566,7 +568,11 @@ bool Collector::canSkipMarking()
 
 void Collector::startHelpers()
 {
-    if (startsHelpersLazily() && m_collectionsWithoutHelpers.load(std::memory_order_relaxed))
+#if ENABLE(AOT)
+    if (AOT::RuntimeHooks::isInNoHelperThreadsScope())
+        return;
+#endif
+    if (startsHelpersLazily() && (hasAddressSpaceLimit() || m_collectionsWithoutHelpers.load(std::memory_order_relaxed)))
         return;
     if (m_hasStartedHelpers.exchange(true))
         return;
@@ -741,11 +747,6 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
         m_markingConditionVariable.notifyAll();
     }
     m_helperClient.finish();
-#if ENABLE(AOT)
-    // Let the threads this collection started finish their first-time allocations before it ends.
-    if (startsHelpersLazily() && hasStartedHelpers())
-        m_helperClient.pool().waitUntilThreadsAreUp();
-#endif
 
     assertMarkStacksEmpty();
     RELEASE_ASSERT(m_raceMarkStack->isEmpty());

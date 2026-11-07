@@ -11,15 +11,11 @@
 #include "AOTCompileOptions.h"
 #include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
-#include "AOTHeapHooks.h"
-#include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTPendingStars.h"
 #include "AOTProgramIdentifiers.h"
-#include "AOTProgramStrings.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "BuiltinNames.h"
 #include "GetterSetter.h"
@@ -27,6 +23,7 @@
 #include "HeapCellInlines.h"
 #include "JSCInlines.h"
 #include <bit>
+#include <wtf/DataLog.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -52,50 +49,22 @@ Object* Object::create(VM& vm, Structure* structure, const LayoutData& layout, s
             object->clear(field);
         isBornUnfinished |= field.isFilledAtBirth;
     }
-    object->setPerCellBit(isBornUnfinished);
     object->at<uint32_t>(offsetOfOrderWord) = orderWord;
     object->at<uint32_t>(offsetOfShapeWord) = shapeWordOf(layout.shape);
+    object->setIsInBirth(isBornUnfinished);
     object->JSCell::finishCreation(vm);
-    return object;
-}
-
-Object* Object::createAsAtBirth(VM& vm, Structure* structure, std::span<const uint8_t> bodyAtBirth, bool isBornUnfinished)
-{
-    Object* object = new (NotNull, allocateCell<Object>(vm, bodyAtBirth.size() + sizeof(JSCell))) Object(vm, structure);
-    memcpySpan(std::span { reinterpret_cast<uint8_t*>(object) + sizeof(JSCell), bodyAtBirth.size() }, bodyAtBirth);
-    object->setPerCellBit(isBornUnfinished);
-    object->JSCell::finishCreation(vm);
-    return object;
-}
-
-Object* Object::createWithBody(VM& vm, Structure* structure, std::span<const uint8_t> body)
-{
-    Object* object = new (NotNull, allocateCell<Object>(vm, body.size() + sizeof(JSCell))) Object(vm, structure);
-    memcpySpan(std::span { reinterpret_cast<uint8_t*>(object) + sizeof(JSCell), body.size() }, body);
-    object->JSCell::finishCreation(vm);
-    object->setPerCellBit(object->orderWord() & orderWordHasFieldOutsideSlot || !object->hasEveryFieldOfBirth());
     return object;
 }
 
 Instance& Object::instance() const
 {
     Instance* instance = structure()->realm()->aotInstance();
-    if (!instance->above) [[likely]]
-        return *instance;
-    uint32_t shape = this->shape();
-    while (shape > instance->lastShape)
-        instance = instance->above;
     return *instance;
 }
 
 State& Object::state() const
 {
     return *instance().state;
-}
-
-bool Object::isDescribedBy(const State& state) const
-{
-    return &instance() == &state.instance;
 }
 
 VM& Object::vm() const
@@ -117,6 +86,15 @@ bool Object::isInSlot(const FieldData& field) const
     return slot && !slotHoldsAbsent(field.slot.representation(), slot);
 }
 
+bool Object::holdsEveryFieldHeldFilled() const
+{
+    for (const FieldData& field : layout().fields()) {
+        if (field.isHeldFilled && !isInSlot(field))
+            return false;
+    }
+    return true;
+}
+
 JSValue Object::read(const FieldData& field) const
 {
     SlotRepresentation representation = field.slot.representation();
@@ -124,7 +102,7 @@ JSValue Object::read(const FieldData& field) const
         return isInSlot(field) ? const_cast<Object*>(this)->materializeDeferredClosure(vm(), field) : JSValue();
     const void* slot = slotOf(field);
     State& state = this->state();
-    JSValue value = slot ? readSlot(representation, slot, *state.strings) : JSValue();
+    JSValue value = slot ? readSlot(representation, slot, state.instance) : JSValue();
     if (!value && field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field) && !livesInExtraProperties(*state.instance.vm, *this, field))
         return jsUndefined();
     return value;
@@ -132,14 +110,9 @@ JSValue Object::read(const FieldData& field) const
 
 bool Object::tryStore(VM& vm, const FieldData& field, JSValue value)
 {
-    // A write-once slot that has no absent state, or that defers a closure, holds a placeholder until its only store, which may come by name.
-    bool holdsPlaceholder = !field.canLeaveSlot() || field.slot.representation() == SlotRepresentation::DeferredClosure;
-    if (field.flags & fieldIsStoredOnce && !holdsPlaceholder)
-        return false;
     return tryInitialize(vm, field, value);
 }
 
-// The first value of a field of an object that nobody has seen yet: the one store of a field that is stored once.
 bool Object::tryInitialize(VM& vm, const FieldData& field, JSValue value)
 {
     std::optional<AcceptedValue> accepted = state().objects->layouts.accept(field, value);
@@ -151,20 +124,16 @@ bool Object::store(VM& vm, const FieldData& field, AcceptedValue accepted)
     return store(vm, field, accepted.value());
 }
 
-ALWAYS_INLINE void Object::willStoreMarker(VM& vm, const FieldData& field, JSValue marker)
+ALWAYS_INLINE void Object::willStoreMarker(const FieldData& field)
 {
-    if (field.keepsStateOfBirth && !state().objects->layouts.fieldAccepts(field, marker)) [[unlikely]]
-        crashOnLostStateOfBirth(vm, *this, field, nameOf(ObjectMutation::StoreOfOtherType));
     if (field.holdsRawValueFromBirth)
-        setPerCellBit(true);
+        setBearsMark(true);
 }
 
 bool Object::store(VM& vm, const FieldData& field, JSValue value)
 {
-    // A field that is in the key order and has no storage reads as undefined.
     if (value.isUndefined() && field.flags & fieldMayExistWithoutStorage && !slotOf(field)) {
-        ASSERT(!layout().keysAreNeverEnumerated);
-        willStoreMarker(vm, field, value);
+        willStoreMarker(field);
         return true;
     }
     ensureStorageFor(vm, field);
@@ -172,10 +141,10 @@ bool Object::store(VM& vm, const FieldData& field, JSValue value)
     if (!slot)
         return false;
     SlotRepresentation representation = field.slot.representation();
-    if (!tryWriteSlot(*state().strings, representation, slot, value))
+    if (!tryWriteSlot(instance(), representation, slot, value))
         return false;
     if (value.isUndefinedOrNull())
-        willStoreMarker(vm, field, value);
+        willStoreMarker(field);
     if (traitsOf(representation).holdsCell)
         vm.writeBarrier(this, value);
     return true;
@@ -189,7 +158,6 @@ void Object::ensureStorageFor(VM& vm, const FieldData& field)
     ensureExtensionGranules(vm, granuleBitOf(field.slot.offset));
 }
 
-// Marking begins and ends while the mutator is stopped, so it does neither before the caller has returned.
 void Object::ensureExtensionGranules(VM& vm, uint64_t granuleBits)
 {
     ensureExtensionGranules(vm, granuleBits, vm.heap.mutatorShouldBeFenced());
@@ -204,6 +172,8 @@ void Object::ensureExtensionGranules(VM& vm, uint64_t granuleBits, bool collecto
     uint64_t missing = granuleBits & ~held;
     if (!missing || (current && current->tryAppend(missing)))
         return;
+    if (!current)
+        missing |= layout().granulesOfFirstExtension();
     if (current && !collectorMayVisit && current->tryInsert(missing))
         return;
     Extension* replacement = Extension::create(vm, held | missing);
@@ -241,10 +211,6 @@ void Object::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     JSCell::visitChildren(cell, visitor);
     visitFields(uncheckedDowncast<Object>(cell), visitor);
-    // A type test reads the cell that a slot points to, which races with a running mutator.
-    VM& vm = cell->vm();
-    if (validatesRuntime(vm) && visitor.mutatorsAreStopped()) [[unlikely]]
-        HeapHooks::validateSlotsOf(vm, cell);
 }
 
 DEFINE_VISIT_CHILDREN(Object);
@@ -270,6 +236,13 @@ void Object::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
             continue;
         if (UniquedStringImpl* name = identifiers.tryGetIdentifierConcurrently(field.name))
             analyzer.analyzePropertyNameEdge(object, target, name);
+    }
+    JSObject* extraProperties = object->extraProperties();
+    if (!extraProperties)
+        return;
+    for (const auto& entry : extraProperties->structure()->getPropertiesConcurrently()) {
+        if (JSValue value = extraProperties->getDirect(entry.offset()); value && value.isCell())
+            analyzer.analyzePropertyNameEdge(object, value.asCell(), entry.key());
     }
 }
 
@@ -305,7 +278,6 @@ bool Extension::tryInsert(uint64_t granuleBits)
     uint32_t to = std::popcount(bitsAfter);
     if (to > extensionCapacityFor(from))
         return false;
-    // From the last granule down, until those that are left stay where they are.
     uint64_t* words = granules();
     for (uint64_t remaining = bitsAfter; from != to;) {
         uint64_t last = 1ull << (std::bit_width(remaining) - 1);
@@ -317,93 +289,28 @@ bool Extension::tryInsert(uint64_t granuleBits)
     return true;
 }
 
-static StringView nameOfLayout(VM& vm, const LayoutData& layout)
+[[noreturn]] static void crashOnFalseProof(const Object& object, ObjectMutation mutation, const FieldData* field)
 {
-    const ImageText& text = vm.aotState().image->holderOf(&layout).text();
-    StringID name(layout.name);
-    return name && text.hasText(name) ? text.view(name) : StringView("-"_s);
+    dataLog("AOT: ", nameOf(mutation), " of an object of layout L", object.layout().index);
+    if (field)
+        dataLog(", field ", object.indexOf(*field));
+    dataLogLn(": the compiler has proven that it never happens, and compiled code reads such objects without a look. This is a bug in Bun.");
+    CRASH_WITH_INFO(std::bit_cast<uintptr_t>(&object));
 }
 
-static ASCIILiteral plainWordsFor(ObjectMutation mutation)
+void crashOnImpossibleMutation(VM&, const Object& object, ObjectMutation mutation)
 {
-    switch (mutation) {
-    case ObjectMutation::AddProperty:
-        return "added a property to an object"_s;
-    case ObjectMutation::DeleteField:
-        return "deleted a property of an object"_s;
-    case ObjectMutation::RedefineProperty:
-        return "redefined a property of an object"_s;
-    case ObjectMutation::StoreOfOtherType:
-        return "stored a value of a new kind in a property of an object"_s;
-    case ObjectMutation::ChangeIntegrity:
-        return "froze, sealed or closed an object"_s;
-    case ObjectMutation::ChangePrototype:
-        return "changed the prototype of an object"_s;
-    case ObjectMutation::BecomePrototype:
-        return "made an object the prototype of another"_s;
-    default:
-        return "did something to an object"_s;
-    }
+    crashOnFalseProof(object, mutation, nullptr);
 }
 
-static void explainBrokenClaim(ASCIILiteral whatTheProgramDid)
+void crashOnImpossibleMutation(VM&, const Object& object, PropertyName, ObjectMutation mutation)
 {
-    dataLogLn("AOT: The program ", whatTheProgramDid, ", which is allowed. The compiler had concluded that it never does, and the compiled code relies on that, so the program can't go on.");
-    dataLogLn("AOT: This is a bug in Bun. Please report it with these lines: https://github.com/oven-sh/bun/issues");
-    dataLogLn("AOT: Until it is fixed, build with --aot-disable=flow-results");
+    crashOnFalseProof(object, mutation, nullptr);
 }
 
-void crashOnImpossibleMutation(VM& vm, const Object& object, ObjectMutation mutation)
+void crashOnImpossibleMutation(VM&, const Object& object, const FieldData& field, ObjectMutation mutation)
 {
-    const LayoutData& layout = object.layout();
-    dataLogLn("AOT: ", nameOf(mutation), " on an object of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which the compiler assumed never happens");
-    explainBrokenClaim(plainWordsFor(mutation));
-    crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
-}
-
-void crashOnImpossibleMutation(VM& vm, const Object& object, PropertyName name, ObjectMutation mutation)
-{
-    const LayoutData& layout = object.layout();
-    dataLogLn("AOT: ", nameOf(mutation), " of ", String(name.uid()), " on an object of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which the compiler assumed never happens");
-    explainBrokenClaim(plainWordsFor(mutation));
-    crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
-}
-
-void crashOnImpossibleMutation(VM& vm, const Object& object, const FieldData& field, ObjectMutation mutation)
-{
-    const LayoutData& layout = object.layout();
-    dataLogLn("AOT: ", nameOf(mutation), " of field ", String(propertyNameOf(vm, object, field)), " on an object of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which the compiler assumed never happens");
-    explainBrokenClaim(plainWordsFor(mutation));
-    crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
-}
-
-void crashOnLostStateOfBirth(VM& vm, const Object& object, const FieldData& field, ASCIILiteral event)
-{
-    const LayoutData& layout = object.layout();
-    dataLogLn("AOT: ", event, " of field ", String(propertyNameOf(vm, object, field)), " of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which compiled code reads without a test");
-    explainBrokenClaim("changed a property of an object"_s);
-    crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
-}
-
-static thread_local const JSObject* objectListedWithoutOrder;
-
-KeyListingThatShowsNoOrder::KeyListingThatShowsNoOrder(const JSObject* object)
-    : m_outer(std::exchange(objectListedWithoutOrder, object))
-{
-}
-
-KeyListingThatShowsNoOrder::~KeyListingThatShowsNoOrder()
-{
-    objectListedWithoutOrder = m_outer;
-}
-
-void failIfKeysMustNotBeListed(VM& vm, const Object& object)
-{
-    const LayoutData& layout = object.layout();
-    if (object.state().objects->layouts.everyObjectHadRemovedField(layout))
-        crashOnValidationFailure(vm, { ValidationFailureKind::RemovedFieldNamed, { }, { }, &object });
-    if (layout.keysAreNeverEnumerated && objectListedWithoutOrder != &object)
-        crashOnValidationFailure(vm, { ValidationFailureKind::KeysListed, { }, { }, &object });
+    crashOnFalseProof(object, mutation, &field);
 }
 
 UniquedStringImpl* propertyNameOf(VM& vm, const Object& object, const FieldData& field)
@@ -411,7 +318,6 @@ UniquedStringImpl* propertyNameOf(VM& vm, const Object& object, const FieldData&
     return object.state().objects->layouts.nameOf(vm, field);
 }
 
-// Pending stars go on waiting unless one of them binds the name of the field.
 static JSObject* extraPropertiesThatMayHold(const Object& object, const FieldData& field)
 {
     return isBoundByPendingStar(object, field).value_or(false) ? object.extraProperties() : extraPropertiesIfMade(object);
@@ -419,7 +325,6 @@ static JSObject* extraPropertiesThatMayHold(const Object& object, const FieldDat
 
 FieldProperty findFieldProperty(VM& vm, const Object& object, const FieldData& field)
 {
-    // readInline() called read() for a field that is stored out of line.
     JSValue value = object.readInline(field);
     if (!value && !field.isOutOfLine())
         value = object.read(field);
@@ -443,16 +348,12 @@ bool livesInExtraProperties(VM& vm, const Object& object, const FieldData& field
     return extra && extra->getDirect(vm, propertyNameOf(vm, object, field));
 }
 
-bool tryCreateField(VM& vm, State& stateAtHand, Object& object, const FieldData& field, JSValue value)
+bool tryCreateField(VM& vm, State& state, Object& object, const FieldData& field, JSValue value)
 {
-    // As in Object::fieldNamed(): the state may be the caller's, and the object of another image.
-    State& state = stateAtHand.sharesRealm ? object.state() : stateAtHand;
     ASSERT(!object.isInSlot(field) && !livesInExtraProperties(vm, object, field));
-    // The creation is the one store of a field that is stored once, so this does not ask tryStore, which refuses every store to such a field.
     std::optional<AcceptedValue> accepted = state.objects->layouts.accept(field, value);
     if (!accepted || !object.store(vm, field, *accepted))
         return false;
-    // store() has already allocated the storage that the value needs.
     object.didCreateField(state, field, false);
     if (field.isFilledAtBirth)
         object.tryFinishBirth();
@@ -473,17 +374,18 @@ void putProperty(VM& vm, JSObject* holder, PropertyName name, Object::LeavingPro
 
 void didChangeOwnProperties(VM& vm, Object& object, VM::StructureChainIntegrityEvent event, UniquedStringImpl* nameOrNull)
 {
+    if (!object.perCellBit() && object.hasAccessorAmongExtraProperties()) [[unlikely]]
+        object.setBearsMark(true);
     if (object.structure()->mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(event, &object, nameOrNull);
 }
 
 bool interceptsIndexedAccesses(const Object& object)
 {
-    JSObject* extra = object.extraProperties();
+    JSObject* extra = extraPropertiesIfMade(object);
     return extra && extra->structure()->mayInterceptIndexedAccesses();
 }
 
-// The extra properties are nobody's prototype, so JSObject::notifyPresenceOfIndexedAccessors() tells nobody on their behalf.
 void didChangeIndexedProperties(VM& vm, Object& object, bool interceptedIndexedAccessesBefore)
 {
     if (!interceptedIndexedAccessesBefore && object.mayBePrototype() && interceptsIndexedAccesses(object))
@@ -524,8 +426,8 @@ Environment* Environment::create(VM& vm, Structure* structure, const Environment
         if (traitsOf(variable.slot.representation()).absentBits)
             clearSlot(variable.slot.representation(), &environment->at<uint8_t>(variable.slot.offset));
     }
-    environment->at<uint8_t>(offsetOfEnvironmentShapeLowByte) = layout.shape;
-    environment->at<uint8_t>(offsetOfEnvironmentShapeHighByte) = layout.shape >> 8;
+    environment->at<uint8_t>(offsetOfEnvironmentShapeLowByte) = lowByteOfEnvironmentShape(layout.shape);
+    environment->at<uint8_t>(offsetOfEnvironmentShapeHighByte) = highByteOfEnvironmentShape(layout.shape);
     ASSERT(environment->at<uint64_t>(0) == headerFor(structure, layout.shape));
     vm.mutatorFence();
     return environment;
@@ -537,7 +439,7 @@ uint64_t Environment::headerFor(Structure* structure, uint32_t shape)
     ASSERT(uncheckedDowncast<CompiledStructure>(structure)->environmentShapePage() == shape >> environmentShapesPerPageShift);
     uint64_t header = cellHeaderFor(structure);
     header &= ~(0xffull << 8 * offsetOfEnvironmentShapeLowByte | 0xffull << 8 * offsetOfEnvironmentShapeHighByte);
-    header |= static_cast<uint64_t>(shape & 0xff) << 8 * offsetOfEnvironmentShapeLowByte | static_cast<uint64_t>(shape >> 8 & 0xff) << 8 * offsetOfEnvironmentShapeHighByte;
+    header |= static_cast<uint64_t>(lowByteOfEnvironmentShape(shape)) << 8 * offsetOfEnvironmentShapeLowByte | static_cast<uint64_t>(highByteOfEnvironmentShape(shape)) << 8 * offsetOfEnvironmentShapeHighByte;
     return header;
 }
 

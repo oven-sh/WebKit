@@ -1,5 +1,4 @@
-# A built-in function, method or constructor is a function. Any other built-in object is not, and a function type may still hold it: met with `function` it is named as the second type names it, never dropped.
-# FORM: Prepared
+# A built-in function, method or constructor is a function. Any other built-in object is not, and a function type may still hold it: met with `function` it keeps its name and is never dropped.
 # RUN(SUBSET): subset
 # RUN(INTERSECT): intersect
 # SUBSET: t0 <= t0: yes overlaps: yes
@@ -25,7 +24,7 @@
 # INTERSECT-NEXT: t0 - t4 = never
 # INTERSECT: t1 & t3 = builtin(Array)
 # INTERSECT-NEXT: t1 - t3 = never
-# INTERSECT: t2 & t3 = function
+# INTERSECT: t2 & t3 = builtin(GlobalThis)
 # INTERSECT-NEXT: t2 - t3 = builtin(GlobalThis)
 # INTERSECT: t3 & t0 = builtin(ArrayPrototypePush)
 # INTERSECT-NEXT: t3 - t0 = function
@@ -36,4 +35,5 @@
 # INTERSECT-NEXT: laws hold
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="types" parameters=[{type=builtin(ArrayPrototypePush)}, {type=builtin(Array)}, {type=builtin(GlobalThis)}, {type=function}, {type=object}] results=[{type=undefined}]
+function f0 name="types" role=Signature parameters=[{type=builtin(ArrayPrototypePush)}, {type=builtin(Array)}, {type=builtin(GlobalThis)}, {type=function}, {type=object}] results=[{type=undefined}]
+entry module=m0

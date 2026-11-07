@@ -1,0 +1,35 @@
+# function probe() { const parent = { get self() { return this } }; const k = Object.create(parent); return k.self === parent }  print(probe())
+# RUN: run-in-shell
+# CHECK: false
+# CHECK-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="self" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="probe"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="print" [isFreeName]
+    v4 = Call v3, -, v1 calleeName="print"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="probe" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f2
+    DefineGetter v0, v1 key="self"
+    v3 = FinishObject v0
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectCreate
+    v6 = Call v5, v4, v3 calleeName="Object.create"
+    v7 = PropGet v6 key="self"
+    v8 = StrictEq v7, v3
+    Return v8
+}
+function f2 name="self" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

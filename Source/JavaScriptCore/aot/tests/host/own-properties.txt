@@ -6,6 +6,8 @@
 %AsyncIterator%.prototype : @@asyncDispose/wc @@asyncIterator/wc
 %Generator%.prototype : @@toStringTag/c constructor/c next/wc return/wc throw/wc
 %GeneratorFunction%.prototype : @@toStringTag/c constructor/c prototype/c
+%IntlSegmentIterator%.prototype : @@toStringTag/c next/wc
+%IntlSegments%.prototype : @@iterator/wc containing/wc
 %IteratorHelper%.prototype : @@toStringTag/c next/wc return/wc
 %MapIterator%.prototype : @@toStringTag/c next/wc
 %RegExpStringIterator%.prototype : @@toStringTag/c next/wc
@@ -148,6 +150,7 @@ WeakSet : length/? name/? prototype/-
 WeakSet.prototype : @@toStringTag/c add/wc constructor/wc delete/wc has/wc
 WebAssembly : @@toStringTag/c CompileError/wc Exception/wc Global/wc Instance/wc JSTag/ac LinkError/wc Memory/wc Module/wc RuntimeError/wc SuspendError/wc Suspending/wc Table/wc Tag/wc compile/wc compileStreaming/wc instantiate/wc instantiateStreaming/wc promising/wc validate/wc
 WebAssembly.CompileError : length/? name/? prototype/-
+WebAssembly.CompileError.prototype : constructor/wc message/wc name/wc
 WebAssembly.Exception : length/? name/? prototype/-
 WebAssembly.Exception.prototype : @@toStringTag/c constructor/wc getArg/wc is/wc stack/ac
 WebAssembly.Global : length/? name/? prototype/-
@@ -155,12 +158,15 @@ WebAssembly.Global.prototype : @@toStringTag/c constructor/wc value/ac valueOf/w
 WebAssembly.Instance : length/? name/? prototype/-
 WebAssembly.Instance.prototype : @@toStringTag/c constructor/wc exports/ac
 WebAssembly.LinkError : length/? name/? prototype/-
+WebAssembly.LinkError.prototype : constructor/wc message/wc name/wc
 WebAssembly.Memory : length/? name/? prototype/-
 WebAssembly.Memory.prototype : @@toStringTag/c buffer/ac constructor/wc grow/wc toFixedLengthBuffer/wc toResizableBuffer/wc
 WebAssembly.Module : customSections/wc exports/wc imports/wc length/? name/? prototype/-
 WebAssembly.Module.prototype : @@toStringTag/c constructor/wc
 WebAssembly.RuntimeError : length/? name/? prototype/-
+WebAssembly.RuntimeError.prototype : constructor/wc message/wc name/wc
 WebAssembly.SuspendError : length/? name/? prototype/-
+WebAssembly.SuspendError.prototype : constructor/wc message/wc name/wc
 WebAssembly.Suspending : length/? name/? prototype/-
 WebAssembly.Suspending.prototype : constructor/wc
 WebAssembly.Table : length/? name/? prototype/-

@@ -1,0 +1,59 @@
+# nothing is written, held or seen to arrive, and one class of the program has all the names that are asked of the value. `settled` is a name of that class alone: it is expected. `then` is asked of every promise too, so it speaks for no layout, and nothing is tested
+# class Deferred { then = 1 }  class Settled { settled = 1 }  function first(e) { return e.then; }  function second(e) { return e.settled; }  sink(first, second, new Deferred(), new Settled());
+# RUN: walk f2 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetSlot {{*}}key="settled" receivers=[L1] level=Expected
+# RUN(BUILTIN): walk f1 mechanisms=none+TypedOperations+Guesses
+# BUILTIN-LABEL: code f1:Body
+# BUILTIN: = PropGet {{*}}key="then"
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses
+# NEVER-NOT: = GetSlot
+# NEVER-NOT: = ShapeTest
+
+layout L0 kind=Instance name="Deferred" module=m0 constructor=f3 fields=[{key="then" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Settled" module=m0 constructor=f4 fields=[{key="settled" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f4
+    v7 = NewClass v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = Construct v8
+    v10 = NewClosure function=f1
+    v11 = NewClosure function=f2
+    v12 = Call v1, -, v10, v11, v5, v9
+    Return v12
+}
+function f1 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="then"
+    Return v1
+}
+function f2 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="settled"
+    Return v1
+}
+function f3 name="Deferred" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="then"
+    Return v2
+}
+function f4 name="Settled" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Integer integer=1
+    PropSet v2, v3 key="settled"
+    Return v2
+}

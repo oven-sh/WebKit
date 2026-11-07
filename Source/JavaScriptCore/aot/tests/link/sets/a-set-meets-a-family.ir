@@ -1,0 +1,67 @@
+# If a set that meets a declared family stayed apart from it, a store through the parameter would miss the fields of the one or of the other. No declared family holds all, so the set is taken apart, and its members and the family are lost and united, as two strangers and a family were before there were sets
+# abstract class Shape { }  class A, B, C, D, E extends Shape  function same(s) { return s; }  function put(o) { o.x = null; }  same(a); same(b); same(c); same(d);  put({ x: "s", p: "s" });  put({ x: "s", q: "s" });  put(same(e));
+# Five members meet at `same`, so what it returns is typed as their family. That has the longer way to `put`, where the two strangers are a set by then.
+# RUN: link families functions fields mechanisms=all
+# CHECK: family F{{*}} [L3, L4, L5, L6, L7]
+# CHECK: function f1 callers-known one-callee {{*}}result=L3|L4|L5|L6|L7 returns=
+# CHECK: function f2 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L3|L4|L5|L6|L7
+# CHECK: field L0.0 "x" proven=null|string writers-known
+# CHECK: field L1.0 "x" proven=null|string writers-known
+# CHECK: field L3.0 "x" proven=null|string writers-known
+# CHECK: field L4.0 "x" proven=null|string writers-known
+# CHECK: field L5.0 "x" proven=null|string writers-known
+# CHECK: field L6.0 "x" proven=null|string writers-known
+# CHECK: field L7.0 "x" proven=null|string writers-known
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L3 name="A" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}] supertypes=[L2]
+layout L4 name="B" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] supertypes=[L2]
+layout L5 name="C" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}] supertypes=[L2]
+layout L6 name="D" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}] supertypes=[L2]
+layout L7 name="E" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=anything} flags=[IsRequired]}] supertypes=[L2]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="s"
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = NewObject -, v0, v0 layout=L4 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = NewObject -, v0, v0 layout=L5 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = NewObject -, v0, v0 layout=L6 fields=[0, 1]
+    v12 = FinishObject v11
+    v13 = NewObject -, v0, v0 layout=L7 fields=[0, 1]
+    v14 = FinishObject v13
+    v15 = NewClosure function=f1
+    v16 = Call v15, -, v6 calleeName="same"
+    v17 = Call v15, -, v8 calleeName="same"
+    v18 = Call v15, -, v10 calleeName="same"
+    v19 = Call v15, -, v12 calleeName="same"
+    v20 = Call v15, -, v14 calleeName="same"
+    v21 = NewClosure function=f2
+    v22 = Call v21, -, v2 calleeName="put"
+    v23 = Call v21, -, v4 calleeName="put"
+    v24 = Call v21, -, v20 calleeName="put"
+    v25 = Undefined
+    Return v25
+}
+function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="put" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}

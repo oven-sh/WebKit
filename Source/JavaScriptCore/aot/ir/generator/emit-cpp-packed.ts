@@ -84,7 +84,6 @@ function rawBitsOf({ name, kind }: PackedField): string {
   return kind.tag === "Number" && kind.cppType === "uint64_t" ? name : `static_cast<uint64_t>(${name})`;
 }
 
-/** How many bits a value of the kind can need where nothing bounds it. */
 function bitsOfKind(kind: PackedField["kind"]): number {
   return kind.tag === "Signed" || (kind.tag === "Number" && kind.cppType === "uint64_t") ? bitsInWord : 32;
 }
@@ -93,7 +92,6 @@ function mayBeWrittenEmpty({ kind }: PackedField): boolean {
   return kind.tag === "Number" || kind.tag === "CodeOffset" || kind.tag === "Signed" || kind.tag === "Record";
 }
 
-/** Nothing says anything where it is not written. But for numbers and rows, what is written says something. */
 function checksOf(word: PackedWord): string[] {
   const all = fieldsOfWord(word);
   const offsets = all.filter(field => field.kind.tag === "CodeOffset");
@@ -121,7 +119,6 @@ function bitsOf(field: PackedField): string {
   return field.shift ? `${rawBitsOf(field)} << ${field.shift}` : rawBitsOf(field);
 }
 
-/** The lines of all words. Neighbors that are there under one condition share its test. */
 function guardedLines(
   words: readonly PackedWord[],
   owner: string,
@@ -215,7 +212,6 @@ function readLinesOf(word: PackedWord, position: number): string[] {
   ];
 }
 
-/** Null: the row holds as many rows or bytes as it likes. */
 function maxSizeOf(record: PackedRecord): number | null {
   let size = 0;
   const endOf = ({ shift, width, kind }: PackedField) => shift + (width ?? bitsOfKind(kind));
@@ -246,7 +242,7 @@ function structLines(record: PackedRecord): string[] {
     maxSize === null ? [] : [`static constexpr unsigned maxSize = ${maxSize};`],
     isComparable ? [equality] : [],
     [
-      "void append(Vector<uint8_t>& bytes) const",
+      "void append(auto& bytes) const",
       "{",
       ...indent([...words.flatMap(checksOf), ...guardedLines(words, "", appendLinesOf)]),
       "}",

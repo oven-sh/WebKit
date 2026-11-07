@@ -1,0 +1,42 @@
+# Where nobody knows the key under which a row reads through the prototypes, it may find any member above the object: the code of the library behind each of them is in the image
+# function take(name) { return Reflect.get([], name); }  sink(take);
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+# CHECK-NOT: function f3 unreached
+# RUN(MAP): image ProgramTables
+# MAP: compiledRuntimeFunction ArrayPrototypeMap
+# RUN(FILTER): image ProgramTables
+# FILTER: compiledRuntimeFunction ArrayPrototypeFilter
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+data d0 root=Array{contents=never} module=m0
+entry module=m0
+runtimefunction id=ArrayPrototypeFilter function=f3
+runtimefunction id=ArrayPrototypeMap function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = Undefined
+    Return v4
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Reflect
+    v2 = Builtin builtin=ReflectGet
+    v3 = Data data=d0
+    v4 = Call v2, v1, v3, v0 calleeName="Reflect.get"
+    Return v4
+}
+function f2 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f3 name="filter" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

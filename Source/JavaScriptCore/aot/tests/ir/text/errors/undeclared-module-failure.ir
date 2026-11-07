@@ -1,5 +1,5 @@
 # A module failure id past every modulefailure line
-# RUN: print
+# RUN: verify
 # DIAGNOSTIC: IdOutOfRange
 
 module m0 path="main.js" displayPath="main.js"
@@ -9,3 +9,4 @@ function f0 name="f" results=[{type=undefined}] {
     v0 = ThrowModuleFailure failure=q1
     Unreachable
 }
+entry module=m0

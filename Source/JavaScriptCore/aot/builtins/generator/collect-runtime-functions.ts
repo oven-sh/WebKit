@@ -22,7 +22,6 @@ export interface EngineFunction {
 export interface RuntimeFunctionInput {
   javaScriptCore: string | null;
   declared: readonly SourcedDeclaration[];
-  /** What the front end of the host compiles, beside what the host declares with b.frontEndFunctions(). */
   frontEndFunctions: readonly FoundFunction[];
 }
 
@@ -95,7 +94,6 @@ const compareFunctions = (left: FunctionRef, right: FunctionRef): number =>
 
 export const sourceOf = (file: string, origin: Origin): Source => ({ file, line: null, origin, proof: "Structure" });
 
-/** The files of builtins/ that implement a member that is left out. An engine that is built without the member is built without the file. */
 function objectsLeftOut(declared: readonly SourcedDeclaration[]): Set<string> {
   const roots = leftOutOf(declared).flatMap(leftOut => leftOut.paths);
   const isLeftOut = (path: string): boolean => roots.some(root => path === root || path.startsWith(`${root}.`));
@@ -343,7 +341,6 @@ function collectEngineHalf(
   return half;
 }
 
-// The engine's come first, so that no function of a host moves the number of one of them.
 function numberCompilerFunctions(
   found: readonly FoundFunction[],
   numberOfDeclaredFunctions: number,

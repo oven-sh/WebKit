@@ -74,10 +74,6 @@ struct LateMarkCase {
 
 constexpr ASCIILiteral alwaysLockedObjects[] = {
     "Object.prototype"_s,
-    "RegExp.prototype"_s,
-    "Promise.prototype"_s,
-    "Object.getPrototypeOf(function* () { }).prototype"_s,
-    "Object.getPrototypeOf(async function* () { }).prototype"_s,
 };
 
 constexpr ASCIILiteral constructorsWithLockedMembers[] = {
@@ -574,10 +570,10 @@ static void testVMStateWithoutImage()
     VM& vm = realms.vm();
     VMState& state = vm.aotState();
     AOT_TEST_CHECK(!vm.hasCompiledCode() && !state.hasCompiledCode);
-    AOT_TEST_CHECK(!state.image && !state.validatesRuntime && !state.structureIDBase);
-    AOT_TEST_CHECK(!state.runtimeTable && !state.identifiers && !state.caches && !state.propertyCaches && !state.counters && !state.reporter);
+    AOT_TEST_CHECK(!state.image && !state.structureIDBase);
+    AOT_TEST_CHECK(!state.pages && !state.runtimeTable && !state.identifiers && !state.caches && !state.propertyCaches);
     AOT_TEST_CHECK(!state.callSiteCache && !state.functionTables && !state.regExpLiterals && !state.regExpMatchOutput);
-    AOT_TEST_CHECK(!state.moduleRecordStructure && !state.stringBuilderStorageStructure);
+    AOT_TEST_CHECK(!state.moduleRecordStructure);
     AOT_TEST_CHECK(state.instances.isEmpty() && state.instancesToDestroy.isEmpty());
     AOT_TEST_CHECK(!Instance::of(realms.locked()) && !Instance::of(realms.plain()));
 }
@@ -765,7 +761,6 @@ static void testPristineIterators()
     checkPristineOnlyInLockedRealm(realms, pristineIterators);
 }
 
-// The compiler takes a new instance for pristine and relies on a change of the instance to clear the mark.
 static void testClassesWithPristineTestHaveMarkedStructures()
 {
     Realms realms;
@@ -781,7 +776,6 @@ static void testClassesWithPristineTestHaveMarkedStructures()
         BuiltinClassID builtinClass(index);
         if (table.at(builtinClass).origin != BuiltinOrigin::Engine || !table.mayHavePristineInstances(builtinClass) || markedClasses.get(index))
             continue;
-        // An option of the engine can leave a class out of the realm.
         if (!findInRealm(realms.locked(), BuiltinCellKey::object(table.at(builtinClass).prototype)))
             continue;
         dataLogLn("No Structure is marked for the instances that inherit from ", table.textOf(table.at(builtinClass).prototype));
@@ -924,7 +918,6 @@ static void testStartUpCreatesNoClass(LoadedProgram& program)
     JSGlobalObject* realm = program.realm();
     AOT_TEST_CHECK(!realm->dateStructureConcurrently() && !realm->weakMapStructureConcurrently() && !realm->weakSetStructureConcurrently());
     AOT_TEST_CHECK(!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Default));
-    // Where the option is on, as in Bun and here, JSGlobalObject::init() puts SharedArrayBuffer on the global object of every realm.
     AOT_TEST_CHECK(!!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared) == Options::useSharedArrayBuffer());
     AOT_TEST_CHECK(!realm->typedArrayStructureConcurrently(TypeUint8, false) && !realm->typedArrayStructureConcurrently(TypeFloat64, false) && !realm->typedArrayStructureConcurrently(TypeDataView, false));
     AOT_TEST_CHECK(!findExistingObject(realm, Identifier::fromString(program.realms().vm(), "Math"_s).impl()));
@@ -936,8 +929,8 @@ static void testStartUpWatchesNoObjectBeforeItIsLocked(LoadedProgram& program)
     JSGlobalObject* realm = program.realm();
     for (JSObject* watched : { static_cast<JSObject*>(realm->arrayPrototype()), static_cast<JSObject*>(realm->stringPrototype()) })
         AOT_TEST_CHECK(watched->structure()->hasListedImmutableProperties() && watched->structure()->transitionWatchpointSet().isBeingWatched());
-    for (JSObject* lockedWhole : { static_cast<JSObject*>(realm->objectPrototype()), static_cast<JSObject*>(realm->regExpPrototype()) })
-        AOT_TEST_CHECK(lockedWhole->structure()->hasImmutableProperties() && !lockedWhole->structure()->transitionWatchpointSet().isBeingWatched());
+    AOT_TEST_CHECK(realm->regExpPrototype()->structure()->hasListedImmutableProperties());
+    AOT_TEST_CHECK(realm->objectPrototype()->structure()->hasImmutableProperties() && !realm->objectPrototype()->structure()->transitionWatchpointSet().isBeingWatched());
     AOT_TEST_CHECK(realm->objectPrototypeChainIsSaneWatchpointSet().isStillValid() && realm->regExpPrimordialPropertiesWatchpointSet().isStillValid() && realm->promiseThenWatchpointSet().isStillValid());
     Structure* structureOfArrayPrototype = realm->arrayPrototype()->structure();
     for (const Identifier& watched : { vm.propertyNames->join, vm.propertyNames->iteratorSymbol, vm.propertyNames->constructor }) {
@@ -961,7 +954,6 @@ static void testStartUpWatchesNoObjectBeforeItIsLocked(LoadedProgram& program)
     AOT_TEST_CHECK(numberOfStructures > 100);
 }
 
-// Native code makes the first instance of many a class, and no name of the global object has been read by then.
 static void testClassCreatedForAnInstanceIsLocked(LoadedProgram& program)
 {
     Realms& realms = program.realms();
@@ -1001,7 +993,6 @@ static void testObjectCreatedAtFirstReadIsLocked(LoadedProgram& program)
     AOT_TEST_CHECK(realms.throwsTypeError(realm, "(function () { 'use strict'; Object.getPrototypeOf(true).valueOf = 1; })()"_s));
 }
 
-// The program may put something else under the name of a class that nobody has used yet. The class that the realm then creates is the one that is locked and found.
 static void testClassBehindReplacedNameIsLocked(LoadedProgram& program)
 {
     Realms& realms = program.realms();

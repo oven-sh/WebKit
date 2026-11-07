@@ -1,0 +1,52 @@
+# a call by name off the object of a barrel that may be mocked enters whatever the mock has under the name: it is listed with no callee
+# lib.js: export function fn() { return 1 }   barrel.js, which a test mocks: export * from "./lib.js"   plain.js: export function other() { return 2 }
+# main.test.js: import * as barrel from "./barrel.js"; import * as plain from "./plain.js"; barrel.fn(); plain.other()
+# the control: the call off the object of plain.js has its one callee
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link calls mechanisms=all
+# CHECK-NOT: -> f4
+# CHECK: call f0 {{*}} -> f5
+# CHECK-NOT: -> f4
+
+module m0 path="/main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}, {target=m3 completes=true}]
+module m1 path="/barrel.js" displayPath="barrel.js" flags=[MayBeMocked] body=f1 requests=[{target=m2 completes=true}] exports=[{name="fn" variable=g0 isFromStarExport=true}]
+module m2 path="/lib.js" displayPath="lib.js" body=f2 exports=[{name="fn" variable=g0}]
+module m3 path="/plain.js" displayPath="plain.js" body=f3 exports=[{name="other" variable=g1}]
+entry module=m0
+variable g0 name="fn" module=m2 declared={type=function} initialization=Function function=f4 flags=[IsImmutable]
+variable g1 name="other" module=m3 declared={type=function} initialization=Function function=f5 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="fn"
+    v2 = Call v1, v0 calleeKey="fn"
+    v3 = ModuleNamespace module=m3
+    v4 = PropGet v3 key="other"
+    v5 = Call v4, v3 calleeKey="other"
+    Return v5
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="fn" module=m2 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f5 name="other" module=m3 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

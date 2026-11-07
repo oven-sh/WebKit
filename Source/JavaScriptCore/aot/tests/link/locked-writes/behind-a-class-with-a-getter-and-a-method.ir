@@ -1,0 +1,43 @@
+# a class without a parent, with a getter and a method under written names, is defined without a throw: every run comes to the store: the build stops
+# class Point { get double() {} twice() {} } Array.prototype.push = () => {};
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+# RUN: locks
+
+layout L0 kind=Instance name="Point" module=m0 constructor=f1
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @1
+    v1 = NewClass v0 layout=L0 @1
+    v2 = NewClosure function=f2 @1
+    DefineMethod v1, v2 layout=L0 methodKind=Getter key="double" @1
+    v4 = NewClosure function=f3 @1
+    DefineMethod v1, v4 layout=L0 index=1 key="twice" @1
+    v6 = FinishClass v1 layout=L0 @1
+    v7 = Builtin builtin=ArrayPrototype @2
+    v8 = NewClosure function=f4 @2
+    PropSet v7, v8 key="push" @3
+    Return v6 @4
+}
+function f1 name="Point" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @101
+    v2 = NewObject v1 layout=L0 @101
+    Return v2 @101
+}
+function f2 name="double" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined @102
+    Return v1 @102
+}
+function f3 name="twice" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined @103
+    Return v1 @103
+}
+function f4 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @104
+    Return v0 @104
+}

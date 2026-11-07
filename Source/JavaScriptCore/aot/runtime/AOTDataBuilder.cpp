@@ -19,7 +19,6 @@
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
 #include "AOTTableInImage.h"
@@ -50,9 +49,7 @@ struct Builder {
     std::span<const uint64_t> data;
     MarkedArgumentBuffer& roots;
     bool usesWideReferences { state.instance.options().useWideReferences() };
-    // Tables that are not part of the image of the process lie in memory that the collector takes for its own.
     bool dataIsOutsideHeap { JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(data.data())) };
-    // The rows of a table are objects of one allocation.
     uint32_t allocationOfReferences { UINT32_MAX };
     const uint32_t* references { nullptr };
 };
@@ -75,12 +72,12 @@ ALWAYS_INLINE static ArrayNode arrayNodeAt(const uint64_t* node, DataNodeHeader 
 
 static ArrayNode arrayNodeAt(std::span<const uint64_t> data, uint32_t first)
 {
+    RELEASE_ASSERT(first >= DataNodeHeader::firstNode);
     DataNodeHeader header = DataNodeHeader::decode(data[first]);
     RELEASE_ASSERT(header.kind() == DataNodeHeader::Kind::Array);
     return { static_cast<IndexingType>(header.operand & DataNodeHeader::indexingTypeMask), !!(header.operand & DataNodeHeader::isStorage), data.subspan(first + DataNodeHeader::wordsBeforeElements, header.count) };
 }
 
-// As compiled code makes it. A header is zero where the realm gives new arrays another kind of storage.
 ALWAYS_INLINE static JSArray* createArrayCell(Builder& builder, uint64_t header, Butterfly* butterfly)
 {
     static_assert(sizeof(JSArray) == 2 * sizeof(uint64_t) && JSObject::butterflyOffset() == sizeof(uint64_t));
@@ -128,7 +125,6 @@ JSValue constantOfDataWord(State& state, uint64_t word)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The word of a string constant in the instance is what a narrow slot holds.
 ALWAYS_INLINE static uint32_t narrowStringConstant(Builder& builder, uint32_t number)
 {
     Instance& instance = builder.state.instance;
@@ -182,7 +178,6 @@ ALWAYS_INLINE static const uint32_t* referencesOfAllocation(Builder& builder, ui
     return builder.references;
 }
 
-// As compiled code allocates it: the record has the first two words, and an allocator that may be one without room.
 ALWAYS_INLINE static uint64_t* allocateObjectCell(Builder& builder, uint32_t allocation)
 {
     StructureTable& structures = builder.state.objects->structures;
@@ -200,7 +195,6 @@ ALWAYS_INLINE static uint64_t* allocateObjectCell(Builder& builder, uint32_t all
     return words;
 }
 
-// No collection begins or ends while a tree is built, and nothing leads to the cell yet. Where a member cannot be made, the cell is left without a word of the table.
 ALWAYS_INLINE static JSObject* buildObjectFromBody(Builder& builder, const uint64_t* node, DataNodeHeader header)
 {
     VM& vm = builder.vm;
@@ -243,12 +237,9 @@ ALWAYS_INLINE static JSObject* buildObjectFromBody(Builder& builder, const uint6
         }
     }
     Object* object = reinterpret_cast<Object*>(words);
-    if (checksClaimsAboutObjects(vm)) [[unlikely]]
-        validateSlotTypes(vm, *object);
     return object;
 }
 
-// The storage is filled before an array points at it, so the collector never finds a word of the table in it.
 static JSArray* tryBuildArrayOfValues(Builder& builder, const ArrayNode& node)
 {
     VM& vm = builder.vm;
@@ -270,7 +261,6 @@ static JSArray* tryBuildArrayOfValues(Builder& builder, const ArrayNode& node)
     for (uint32_t index = 0; index < count; ++index) {
         uint64_t word = words[index];
         if (DataWord::kindOf(word) != DataWord::Kind::Immediate) {
-            // The rows of a table.
             const uint64_t* row = DataWord::kindOf(word) == DataWord::Kind::Node ? builder.data.data() + DataWord::operandOf(word) : nullptr;
             if (row && DataNodeHeader::decode(*row).kind() == DataNodeHeader::Kind::ObjectBody)
                 word = JSValue::encode(buildObjectFromBody(builder, row, DataNodeHeader::decode(*row)));
@@ -378,8 +368,6 @@ static NEVER_INLINE JSObject* buildObject(Builder& builder, uint32_t first)
         bool isStored = object->store(vm, fields[fieldIndices[index]], AcceptedValue::provenAtBuildTime(builder.roots.at(firstRoot + index)));
         RELEASE_ASSERT(isStored);
     }
-    if (checksClaimsAboutObjects(vm)) [[unlikely]]
-        validateSlotTypes(vm, *object);
     if (!otherMembers.values.empty()) {
         defineOtherMembers(builder, *object, otherMembers.identifierNumbers, firstRoot + count);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -388,13 +376,14 @@ static NEVER_INLINE JSObject* buildObject(Builder& builder, uint32_t first)
     return object;
 }
 
-// What NewDictionary makes, with its properties.
 static NEVER_INLINE JSObject* buildOrdinaryObject(Builder& builder, uint32_t first)
 {
     VM& vm = builder.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     OtherMembersNode members = membersOfNodeAt(builder.data, first, DataNodeHeader::Kind::OrdinaryObject);
     int count = static_cast<int>(members.values.size());
+    if (!count)
+        return constructEmptyObject(vm, builder.realm->objectStructureForObjectConstructor());
 
     ProgramIdentifiers& identifiers = identifiersOf(builder.state.instance);
     Vector<UniquedStringImpl*, 16> names(count, [&](size_t index) {
@@ -402,7 +391,6 @@ static NEVER_INLINE JSObject* buildOrdinaryObject(Builder& builder, uint32_t fir
     });
     Structure* structure = Structure::createForOneObject(vm, builder.realm->objectStructureForObjectConstructor(), names.span());
 
-    // No collection begins or ends while a tree is built: the storage is filled before an object points at it, and the cell before anything leads to it.
     int inlineCapacity = structure->inlineCapacity();
     Butterfly* butterfly = structure->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
     for (int index = inlineCapacity; index < count; ++index) {
@@ -500,12 +488,26 @@ JSObject* tryBuildData(JSGlobalObject* realm, State& state, const DataRequest& r
     return CommonSlowPaths::allocateNewArrayBuffer(vm, realm->arrayStructureForIndexingTypeDuringAllocation(shared->indexingMode()), shared);
 }
 
+ALWAYS_INLINE static CompactTable::Width widthOfColumnForData(const Builder& builder, JSValue first)
+{
+    return builder.usesWideReferences || first.isNumber() ? CompactTable::Width::Wide : CompactTable::Width::Narrow;
+}
+
+template<typename Collection>
+static void createTableWithRoomForData(Builder& builder, Collection* collection, size_t numberOfEntries, CompactTable::Width keyWidth, CompactTable::Width valueWidth)
+{
+    auto scope = DECLARE_THROW_SCOPE(builder.vm);
+    CompactTable* table = CompactTable::tryCreate(builder.realm, keyWidth, valueWidth, static_cast<uint32_t>(std::min<size_t>(numberOfEntries, CompactTable::maxCapacity)));
+    RETURN_IF_EXCEPTION(scope, void());
+    collection->m_storage.set(builder.vm, collection, table);
+}
+
 JSSet* tryBuildSet(JSGlobalObject* realm, State& state, const CollectionDataRequest& request)
 {
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (request.tableInImage)
-        return CompactTable::createSetInImage(realm, *state.tables.at<TableInImage>(request.tableInImage));
+        return CompactTable::createSetInImage(realm, state, *state.tables.at<TableInImage>(request.tableInImage));
 
     DeferGC deferGC(vm);
     MarkedArgumentBuffer roots;
@@ -515,6 +517,10 @@ JSSet* tryBuildSet(JSGlobalObject* realm, State& state, const CollectionDataRequ
     for (uint32_t index = 0; index < keys.words.size(); ++index) {
         JSValue key = buildElement(builder, keys, index);
         RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!set->storage()) {
+            createTableWithRoomForData(builder, set, keys.words.size(), widthOfColumnForData(builder, key), CompactTable::Width::None);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
         set->add(realm, key);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
@@ -526,7 +532,7 @@ JSMap* tryBuildMap(JSGlobalObject* realm, State& state, const CollectionDataRequ
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (request.tableInImage)
-        return CompactTable::createMapInImage(realm, *state.tables.at<TableInImage>(request.tableInImage));
+        return CompactTable::createMapInImage(realm, state, *state.tables.at<TableInImage>(request.tableInImage));
 
     DeferGC deferGC(vm);
     MarkedArgumentBuffer roots;
@@ -542,6 +548,10 @@ JSMap* tryBuildMap(JSGlobalObject* realm, State& state, const CollectionDataRequ
         RETURN_IF_EXCEPTION(scope, nullptr);
         JSValue value = buildElement(builder, entry, 1);
         RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!map->storage()) {
+            createTableWithRoomForData(builder, map, entries.words.size(), widthOfColumnForData(builder, key), widthOfColumnForData(builder, value));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
         map->set(realm, key, value);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }

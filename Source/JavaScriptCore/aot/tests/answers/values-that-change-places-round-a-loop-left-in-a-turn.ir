@@ -1,0 +1,61 @@
+# function turns(call, n, p0, .., p9) { let older = "o", prev = "p", cur = "c", out = ""; for (let i = 0; i < n; i++) { const s: string = call(i); older = prev; prev = cur; cur = cur + s; out = out + older + prev; } return out + cur + older + prev + p0 + .. + p9; }
+# More values are alive in the loop than registers take.
+# Three of them change places in each turn. In one turn `call` answers a number, which is not what is written: what the loop reads from there on is what it held in that turn, and what it stores round the loop is read under the right name.
+# No turn, then the first, the second, the third, the last turn is that turn.
+# RUN: run-in-shell globalThis.register = turns => { for (let bad = -1; bad < 5; bad++) print(turns(i => i === bad ? i : "s" + i, 5, "A", "B", "C", "D", "E", "F", "G", "H", "I", "J")); };
+# CHECK: pcccs0cs0cs0s1cs0s1cs0s1s2cs0s1s2cs0s1s2s3cs0s1s2s3s4cs0s1s2cs0s1s2s3ABCDEFGHIJ
+# CHECK-NEXT: pccc0c0c0s1c0s1c0s1s2c0s1s2c0s1s2s3c0s1s2s3s4c0s1s2c0s1s2s3ABCDEFGHIJ
+# CHECK-NEXT: pcccs0cs0cs01cs01cs01s2cs01s2cs01s2s3cs01s2s3s4cs01s2cs01s2s3ABCDEFGHIJ
+# CHECK-NEXT: pcccs0cs0cs0s1cs0s1cs0s12cs0s12cs0s12s3cs0s12s3s4cs0s12cs0s12s3ABCDEFGHIJ
+# CHECK-NEXT: pcccs0cs0cs0s1cs0s1cs0s1s2cs0s1s2cs0s1s23cs0s1s23s4cs0s1s2cs0s1s23ABCDEFGHIJ
+# CHECK-NEXT: pcccs0cs0cs0s1cs0s1cs0s1s2cs0s1s2cs0s1s2s3cs0s1s2s34cs0s1s2cs0s1s2s3ABCDEFGHIJ
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=Function
+    v1 = String string="return globalThis.register"
+    v2 = Construct v0, -, v1
+    v3 = Call v2
+    v4 = NewClosure function=f1
+    v5 = Call v3, -, v4
+    v6 = Undefined
+    Return v6
+}
+function f1 name="turns" module=m0 flags=[IsChecked] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything):
+    v12 = String string="o"
+    v13 = String string="p"
+    v14 = String string="c"
+    v15 = String string=""
+    v16 = Integer
+    Jump -> next b1(v16, v12, v13, v14, v15)
+  b1(v17, v18, v19, v20, v21):
+    LoopHint
+    v23 = Less v17, v1
+    Branch v23 -> taken b2(), notTaken b3()
+  b2():
+    v24 = Call v0, -, v17
+    v25 = Convert v24 declared={type=string} illTypedCause=FromLooseType
+    v26 = Add v20, v25
+    v27 = Add v21, v19
+    v28 = Add v27, v20
+    v29 = Increment v17
+    Jump -> next b1(v29, v19, v20, v26, v28)
+  b3():
+    v30 = Add v21, v20
+    v31 = Add v30, v18
+    v32 = Add v31, v19
+    v33 = Add v32, v2
+    v34 = Add v33, v3
+    v35 = Add v34, v4
+    v36 = Add v35, v5
+    v37 = Add v36, v6
+    v38 = Add v37, v7
+    v39 = Add v38, v8
+    v40 = Add v39, v9
+    v41 = Add v40, v10
+    v42 = Add v41, v11
+    Return v42
+}
+entry module=m0

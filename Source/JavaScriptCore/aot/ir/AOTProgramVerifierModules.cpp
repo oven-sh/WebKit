@@ -4,13 +4,15 @@
  */
 
 #include "config.h"
-#include "AOTVerifierInternal.h"
+#include "AOTProgramVerifier.h"
 
 #if ENABLE(AOT)
 
+#include "AOTBody.h"
+#include "AOTBuildContext.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
-#include "AOTFlowSiteData.h"
-#include "AOTSchemaWalkers.h"
+#include "AOTPhaseTimes.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
@@ -18,9 +20,11 @@
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <compare>
 #include <optional>
 #include <span>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <wtf/ASCIICType.h>
 #include <wtf/BitVector.h>
@@ -52,6 +56,8 @@ struct VerifiedRequestTargets {
 
 } // anonymous namespace
 
+bool hoistsFunctionsIntoVariables(ModuleKind kind) { return hoistsFunctionsIntoVariablesOf(kind); }
+
 static ModuleKindRules rulesOf(ModuleKind kind)
 {
     switch (kind) {
@@ -76,7 +82,6 @@ static bool isUncompiledCode(const Module& module)
     return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
 }
 
-// The names of such a module are known only at run time, or the host creates an export when it is first read.
 static bool findsNamesAtRunTime(const Module& module)
 {
     return isUncompiledCode(module) || module.kind == ModuleKind::Runtime || module.requests.containsIf([](const ModuleRequest& request) {
@@ -84,7 +89,6 @@ static bool findsNamesAtRunTime(const Module& module)
     });
 }
 
-// A mock that stands in place of such a module answers for every name, also for one that the module lacks.
 static BitVector findModulesWithVariableThatHoldsMock(const Program& program)
 {
     BitVector modules(program.modules.size());
@@ -258,8 +262,6 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
 
 void ProgramVerifier::verifyModules()
 {
-    if (!isAsRead())
-        return;
     auto& modules = m_program.modules;
     BitVector modulesWithVariableThatHoldsMock = findModulesWithVariableThatHoldsMock(m_program);
     Vector<uint32_t> invalidModules = findIndicesInParallel(m_build.parallelLoops(), modules.size(), [&](unsigned index) {
@@ -308,150 +310,106 @@ bool ProgramVerifier::hasValidBody(const Module& module) const
         && !body->flags.containsAny(rules.forbiddenBodyFlags);
 }
 
-namespace {
-
-enum class EvaluationRule : uint32_t {
-    TargetIsFileThatEndsAtOnce = 1,
-    ReferrerRequestsTarget,
-    BareSiteStandsInBodyOfReferrer,
-    BareSiteStandsInBodyThatNeverWaits,
-    BareSiteHasNoHandler,
-    BareSiteRunsOnce,
-    BareSitesRunInOneOrder,
-    EveryRunThatEndsPassesBareSite,
-};
-
-} // anonymous namespace
-
-void FunctionVerifier::verifyModuleEvaluation(BlockID block, ValueID id, const Value& value)
-{
-    auto failRule = [&](EvaluationRule rule) {
-        fail(InternalErrorKind::InvalidModuleEvaluation, block, id, static_cast<uint32_t>(rule));
-    };
-    const Module& target = m_program.at(value.module());
-    if (!isFileOfProgram(target) || target.flags.contains(ModuleFlags::HasTopLevelAwait))
-        return failRule(EvaluationRule::TargetIsFileThatEndsAtOnce);
-
-    bool isBare = value.opcode == Opcode::EvaluateModule && value.isBare() && form() == IRForm::AsRead && !isOptimizing();
-    m_moduleEvaluations.append(ModuleEvaluationSite { value.referrer(), value.module(), block, id, isBare });
-    if (!isBare)
-        return;
-    if (m_program.at(value.referrer()).body != m_id)
-        return failRule(EvaluationRule::BareSiteStandsInBodyOfReferrer);
-    if (m_function.has(FunctionFlags::IsAsync))
-        return failRule(EvaluationRule::BareSiteStandsInBodyThatNeverWaits);
-    if (m_function.at(block).handler)
-        return failRule(EvaluationRule::BareSiteHasNoHandler);
-    if (analyses().isInCycle(block))
-        failRule(EvaluationRule::BareSiteRunsOnce);
-}
-
-void FunctionVerifier::verifyBareEvaluations()
-{
-    if (hasFailed())
-        return;
-    const ModuleEvaluationSite* last = nullptr;
-    for (const ModuleEvaluationSite& site : m_moduleEvaluations) {
-        if (!site.isBare)
-            continue;
-        if (last && !analyses().dominators().dominates(last->block, site.block))
-            return fail(InternalErrorKind::InvalidModuleEvaluation, site.block, site.value, static_cast<uint32_t>(EvaluationRule::BareSitesRunInOneOrder));
-        last = &site;
-    }
-    if (!last)
-        return;
-    for (BlockID block : analyses().cfg().reversePostOrder()) {
-        TerminatorKind kind = m_function.at(block).terminator.kind;
-        bool returns = kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall;
-        if (returns && !analyses().dominators().dominates(last->block, block))
-            return fail(InternalErrorKind::InvalidModuleEvaluation, last->block, last->value, static_cast<uint32_t>(EvaluationRule::EveryRunThatEndsPassesBareSite));
-    }
-}
-
-void FunctionVerifier::verifyRequestsOfEvaluations()
-{
-    if (hasFailed() || m_moduleEvaluations.isEmpty())
-        return;
-    AOT::sort(m_moduleEvaluations, { }, [](const ModuleEvaluationSite& site) {
-        return std::tuple { site.referrer, site.target, site.value };
-    });
-    ModuleID referrer;
-    Vector<ModuleID> requiredModules;
-    for (const ModuleEvaluationSite& site : m_moduleEvaluations) {
-        if (site.referrer != referrer) {
-            referrer = site.referrer;
-            requiredModules.shrink(0);
-            for (const ModuleRequest& request : m_program.at(referrer).requests) {
-                if (request.kind == ModuleRequestKind::Require)
-                    requiredModules.append(request.target);
-            }
-            AOT::sort(requiredModules);
-        }
-        if (!std::ranges::binary_search(requiredModules, site.target))
-            return fail(InternalErrorKind::InvalidModuleEvaluation, site.block, site.value, static_cast<uint32_t>(EvaluationRule::ReferrerRequestsTarget));
-    }
-}
-
 template<typename Functor>
-static void forEachNamedModule(const Module& module, const Functor& functor)
+static void forEachNamedModule(const Program& program, const Module& module, const Functor& functor)
 {
     for (auto& entry : module.exports) {
-        if (entry.module)
-            functor(entry.module);
+        ModuleID named = entry.module ? entry.module : program.at(entry.variable).module;
+        if (named && &program.at(named) != &module)
+            functor(named);
     }
     for (auto& required : module.requiredNames)
         functor(required.module);
 }
 
-// The modules that name a module to which nothing leads from them. `targetsOf` gives what a module leads to in one step.
-static Vector<uint32_t> findUnreachedNames(unsigned numberOfModules, const auto& targetsOf, const auto& forEachNamed)
+namespace {
+
+struct NameFurtherOff {
+    uint32_t holder;
+    ModuleID named;
+};
+
+} // anonymous namespace
+
+static Vector<NameFurtherOff> findNamesFurtherOff(const ParallelLoops& loops, unsigned numberOfModules, const auto& targetsOf, const auto& forEachNamed)
 {
-    Vector<ModuleID> allNamedModules;
-    for (unsigned index = 0; index < numberOfModules; ++index) {
+    return collectInParallel<NameFurtherOff>(loops, numberOfModules, [&](unsigned index, Vector<NameFurtherOff>& found) {
+        auto targets = targetsOf(index);
+        Vector<ModuleID, 16> sortedTargets;
+        for (size_t target = 0; target < targets.size(); ++target)
+            sortedTargets.append(targets[target]);
+        AOT::sort(sortedTargets);
         forEachNamed(index, [&](ModuleID named) {
-            allNamedModules.append(named);
+            if (!std::ranges::binary_search(sortedTargets, named))
+                found.append({ index, named });
         });
-    }
-    if (allNamedModules.isEmpty())
+    });
+}
+
+static Vector<uint32_t> findUnreachedNames(const ParallelLoops& loops, unsigned numberOfModules, const auto& targetsOf, std::span<const NameFurtherOff> namesFurtherOff)
+{
+    constexpr size_t wordsPerSlice = 8;
+    constexpr size_t namesPerSlice = wordsPerSlice * 64;
+    constexpr uint32_t isNotNamed = UINT32_MAX;
+    if (namesFurtherOff.empty())
         return { };
-    SortedSet<ModuleID> namedModules(allNamedModules.span());
-    auto rankOf = [&](ModuleID module) -> size_t {
-        return std::lower_bound(namedModules.begin(), namedModules.end(), module) - namedModules.begin();
-    };
+
+    Vector<uint32_t> rankOfModule(FillWith { }, numberOfModules, isNotNamed);
+    for (const NameFurtherOff& name : namesFurtherOff)
+        rankOfModule[name.named.index()] = 0;
+    Vector<uint32_t> namedModules;
+    for (uint32_t module = 0; module < numberOfModules; ++module) {
+        if (rankOfModule[module] == isNotNamed)
+            continue;
+        rankOfModule[module] = static_cast<uint32_t>(namedModules.size());
+        namedModules.append(module);
+    }
 
     auto components = computeStronglyConnectedComponents(numberOfModules, targetsOf);
     auto& componentOf = components.componentOf;
-
-    Vector<uint32_t> modulesByComponent(numberOfModules, [](size_t index) {
-        return static_cast<uint32_t>(index);
-    });
-    AOT::sort(modulesByComponent, { }, [&](uint32_t module) {
-        return componentOf[module];
-    });
-
-    Vector<BitVector> reachedNames(components.numberOfComponents);
-    for (size_t rank = 0; rank < namedModules.size(); ++rank)
-        reachedNames[componentOf[namedModules[rank].index()]].set(rank);
-    for (uint32_t index : modulesByComponent) {
-        uint32_t component = componentOf[index];
-        auto targets = targetsOf(index);
-        for (size_t target = 0; target < targets.size(); ++target) {
-            uint32_t requestedComponent = componentOf[targets[target].index()];
-            if (requestedComponent != component)
-                reachedNames[component].merge(reachedNames[requestedComponent]);
+    struct EdgeBetweenComponents {
+        uint32_t from;
+        uint32_t to;
+    };
+    Vector<EdgeBetweenComponents> edgesInOrderOfComponents;
+    for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
+        for (uint32_t module : components.membersOf(component)) {
+            auto targets = targetsOf(module);
+            for (size_t target = 0; target < targets.size(); ++target) {
+                uint32_t requestedComponent = componentOf[targets[target].index()];
+                if (requestedComponent != component)
+                    edgesInOrderOfComponents.append({ component, requestedComponent });
+            }
         }
     }
 
+    size_t numberOfSlices = (namedModules.size() + namesPerSlice - 1) / namesPerSlice;
+    Vector<Vector<uint32_t>> holdersBySlice(numberOfSlices);
+    forEachIndexInParallel(loops, static_cast<unsigned>(numberOfSlices), [&](unsigned slice) {
+        size_t firstRank = slice * namesPerSlice;
+        size_t endRank = std::min(namedModules.size(), firstRank + namesPerSlice);
+        Vector<uint64_t> reachedNames(FillWith { }, components.numberOfComponents * wordsPerSlice, static_cast<uint64_t>(0));
+        auto wordOf = [&](uint32_t component, size_t rank) -> uint64_t& {
+            return reachedNames[component * wordsPerSlice + (rank - firstRank) / 64];
+        };
+        for (size_t rank = firstRank; rank < endRank; ++rank)
+            wordOf(componentOf[namedModules[rank]], rank) |= 1ull << (rank % 64);
+        for (EdgeBetweenComponents edge : edgesInOrderOfComponents) {
+            for (size_t word = 0; word < wordsPerSlice; ++word)
+                reachedNames[edge.from * wordsPerSlice + word] |= reachedNames[edge.to * wordsPerSlice + word];
+        }
+        for (const NameFurtherOff& name : namesFurtherOff) {
+            size_t rank = rankOfModule[name.named.index()];
+            if (rank >= firstRank && rank < endRank && !(wordOf(componentOf[name.holder], rank) >> (rank % 64) & 1))
+                holdersBySlice[slice].append(name.holder);
+        }
+    });
+
     Vector<uint32_t> holders;
-    for (unsigned index = 0; index < numberOfModules; ++index) {
-        const BitVector& reached = reachedNames[componentOf[index]];
-        bool reachesEveryName = true;
-        forEachNamed(index, [&](ModuleID named) {
-            reachesEveryName &= reached.get(rankOf(named));
-        });
-        if (!reachesEveryName)
-            holders.append(index);
-    }
+    for (const Vector<uint32_t>& holdersOfSlice : holdersBySlice)
+        holders.appendVector(holdersOfSlice);
+    AOT::sort(holders);
+    removeRepeatedElements(holders);
     return holders;
 }
 
@@ -484,79 +442,99 @@ static Vector<MentionInCode> findMentionsInCode(const Program& program, const Pa
         size_t first = found.size();
         auto add = [&](MentionInCode::Kind kind, ModuleID other) {
             MentionInCode mention { kind, file, other };
-            if (other && other != file && !std::ranges::contains(found.span().subspan(first), mention))
+            if (other.index() < program.modules.size() && other != file && !std::ranges::contains(found.span().subspan(first), mention))
                 found.append(mention);
         };
-        // A module that stands beside a file has code of the file as its body.
         if (ModuleID beside = moduleWithBody[index]; beside && beside != file) {
             add(MentionInCode::Kind::LoadsModule, beside);
             found.append({ MentionInCode::Kind::LoadsModule, beside, file });
         }
-        for (const Block& block : function.blocks) {
-            for (ValueID id : block.values) {
-                const Value& value = function.at(id);
-                forEachVariable(value, [&](VariableID variable) {
-                    if (!variable)
-                        return;
-                    if (ModuleID owner = program.at(variable).module; owner && isFileOfProgram(program.at(owner)))
-                        add(MentionInCode::Kind::NamesVariable, owner);
-                });
-                forEachModuleReference(value, [&](ModuleID module, ModuleReferenceKind kind) {
-                    if (kind == ModuleReferenceKind::Target)
-                        add(MentionInCode::Kind::LoadsModule, module);
+        auto isTarget = [](ModuleReferenceKind kind) {
+            return kind == ModuleReferenceKind::Target;
+        };
+        const Body& body = function.body;
+        BodyBlock block = body.entry();
+        for (uint32_t blockIndex = 0; blockIndex < body.numberOfBlocks(); ++blockIndex) {
+            BodyValues::Iterator cursor = block.values().begin();
+            for (uint32_t remaining = block.numberOfValues(); remaining--; ++cursor) {
+                (*cursor).forEachReference([&](auto reference, auto... role) -> void {
+                    using Reference = decltype(reference);
+                    if constexpr (std::is_same_v<Reference, VariableID>) {
+                        if (reference.index() >= program.variables.size())
+                            return;
+                        if (ModuleID owner = program.at(reference).module; owner && isFileOfProgram(program.at(owner)))
+                            add(MentionInCode::Kind::NamesVariable, owner);
+                    } else if constexpr (std::is_same_v<Reference, ModuleID>) {
+                        if (isTarget(role...))
+                            add(MentionInCode::Kind::LoadsModule, reference);
+                    }
                 });
             }
+            block = BodyBlock(BodyTerminator(cursor.words(), &body.unit(), block.id()).end(), nullptr, &body.unit(), BlockID(blockIndex + 1), block.endOfValues());
         }
     });
-    AOT::sort(mentions);
-    mentions.shrink(std::ranges::unique(mentions).begin() - mentions.begin());
+    sortAndRemoveDuplicates(loops, mentions);
     return mentions;
 }
 
-// A variable has its first state once its file, or a file that leads there, has been entered (place/AOTStaticsLayout.cpp).
-static Vector<uint32_t> findFilesThatNameUnreachedVariables(const Program& program, const ParallelLoops& loops)
+void ProgramVerifier::verifyModuleGraph()
 {
-    Vector<MentionInCode> mentions = findMentionsInCode(program, loops);
+    auto& modules = m_program.modules;
+    StepTimes steps(m_build, "ReadAndVerify: module graph"_s);
+    for (unsigned index = 0; index < modules.size(); ++index) {
+        if (modules[index].flags.contains(ModuleFlags::IsLibrary) && !modules[index].requests.isEmpty())
+            fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
+    }
+
+    const ParallelLoops& loops = m_build.parallelLoops();
+    auto targetsOfRequests = [&](unsigned index) {
+        return VerifiedRequestTargets { modules[index].requests };
+    };
+    Vector<NameFurtherOff> namesInTables = findNamesFurtherOff(loops, modules.size(), targetsOfRequests, [&](unsigned index, const auto& functor) {
+        forEachNamedModule(m_program, modules[index], functor);
+    });
+    steps.didFinish("names that lie further off"_s);
+
+    for (uint32_t index : findUnreachedNames(loops, modules.size(), targetsOfRequests, namesInTables.span()))
+        fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
+    steps.didFinish("what requests lead to"_s);
+    verifyModuleFailures();
+}
+
+void ProgramVerifier::verifyModulesNamedInBodies()
+{
+    auto& modules = m_program.modules;
+    const ParallelLoops& loops = m_build.parallelLoops();
+    StepTimes steps(m_build, "ReadAndVerify: modules named in bodies"_s);
+    Vector<MentionInCode> mentions = findMentionsInCode(m_program, loops);
+    steps.didFinish("mentions in code"_s);
+
     auto mentionsOf = [&](MentionInCode::Kind kind, unsigned index) {
         return std::ranges::equal_range(mentions, std::pair { kind, ModuleID(index) }, { }, [](const MentionInCode& mention) {
             return std::pair { mention.kind, mention.file };
         });
     };
-    Vector<Vector<ModuleID>> targets(program.modules.size(), [&](size_t index) {
-        Vector<ModuleID> found = WTF::map(program.modules[index].requests, [](const ModuleRequest& request) {
+    Vector<Vector<ModuleID>> targetsOfRequestsAndCode(modules.size());
+    forEachIndexInParallel(loops, modules.size(), [&](unsigned index) {
+        Vector<ModuleID> found = WTF::map(modules[index].requests, [](const ModuleRequest& request) {
             return request.target;
         });
         for (const MentionInCode& mention : mentionsOf(MentionInCode::Kind::LoadsModule, index))
             found.append(mention.other);
-        return found;
+        targetsOfRequestsAndCode[index] = WTF::move(found);
     });
-    return findUnreachedNames(program.modules.size(), [&](unsigned index) {
-        return targets[index].span();
-    }, [&](unsigned index, const auto& functor) {
+    auto targetsOfCode = [&](unsigned index) {
+        return targetsOfRequestsAndCode[index].span();
+    };
+    Vector<NameFurtherOff> namesInCode = findNamesFurtherOff(loops, modules.size(), targetsOfCode, [&](unsigned index, const auto& functor) {
         for (const MentionInCode& mention : mentionsOf(MentionInCode::Kind::NamesVariable, index))
             functor(mention.other);
     });
-}
+    steps.didFinish("names that lie further off"_s);
 
-void ProgramVerifier::verifyModuleGraph()
-{
-    if (!isAsRead())
-        return;
-    auto& modules = m_program.modules;
-    for (unsigned index = 0; index < modules.size(); ++index) {
-        if (modules[index].flags.contains(ModuleFlags::IsLibrary) && !modules[index].requests.isEmpty())
-            fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
-    }
-    Vector<uint32_t> holders = findUnreachedNames(modules.size(), [&](unsigned index) {
-        return VerifiedRequestTargets { modules[index].requests };
-    }, [&](unsigned index, const auto& functor) {
-        forEachNamedModule(modules[index], functor);
-    });
-    for (uint32_t index : holders)
+    for (uint32_t index : findUnreachedNames(loops, modules.size(), targetsOfCode, namesInCode.span()))
         fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
-    for (uint32_t index : findFilesThatNameUnreachedVariables(m_program, m_build.parallelLoops()))
-        fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
-    verifyModuleFailures();
+    steps.didFinish("what code leads to"_s);
 }
 
 void ProgramVerifier::verifyModuleFailures()
@@ -584,8 +562,6 @@ static bool isValidHostRead(const BuiltinTable& builtins, const HostRead& read)
 
 void ProgramVerifier::verifyEntries()
 {
-    if (!isAsRead())
-        return;
     if (m_program.entries.isEmpty())
         fail({ .kind = InternalErrorKind::NoEntryPoint });
     BitVector isEntry(m_program.modules.size());
@@ -603,6 +579,8 @@ void ProgramVerifier::verifyEntries()
     }
 }
 
+static constexpr uint32_t maxNestingDepthOfDataTree = 2000;
+
 static bool isDecimalInteger(std::span<const uint8_t> text)
 {
     if (!text.empty() && text.front() == '-')
@@ -615,16 +593,16 @@ static bool hasObjectKind(const Program& program, LayoutID layout)
     return layout && isObjectLayout(program.at(layout).kind);
 }
 
-static bool hasValidMembers(const Program& program, const DataNode::Object& object, bool mayLackLayout, Vector<PropertyKeyID, 16>& keys)
+static bool hasValidMembers(const Program& program, const DataNode::Object& object, Vector<PropertyKeyID, 16>& keys)
 {
-    if (object.layout ? !hasObjectKind(program, object.layout) : !mayLackLayout)
+    if (!hasObjectKind(program, object.layout))
         return false;
 
-    const Layout* layout = object.layout ? &program.at(object.layout) : nullptr;
-    bool hasOnlyFields = layout && !canHaveExtraKeysOf(layout->kind);
+    const Layout& layout = program.at(object.layout);
+    bool hasOnlyFields = !canHaveExtraKeysOf(layout.kind);
     keys.shrink(0);
     for (const DataMember& member : object.members) {
-        if (!member.key || member.value.is<DataNode::Hole>() || (hasOnlyFields && !layout->findField(member.key)))
+        if (!member.key || member.value.is<DataNode::Hole>() || (hasOnlyFields && !layout.findField(member.key)))
             return false;
         keys.append(member.key);
     }
@@ -632,7 +610,7 @@ static bool hasValidMembers(const Program& program, const DataNode::Object& obje
     return std::ranges::adjacent_find(keys) == keys.end();
 }
 
-static bool isValidDataNode(const Program& program, const DataNode& node, bool mayLackLayout, Vector<PropertyKeyID, 16>& keys)
+static bool isValidDataNode(const Program& program, const DataNode& node, Vector<PropertyKeyID, 16>& keys)
 {
     switch (node.kind()) {
     case DataNode::Kind::Undefined:
@@ -650,28 +628,58 @@ static bool isValidDataNode(const Program& program, const DataNode& node, bool m
     case DataNode::Kind::Array:
         return !!node.as<DataNode::Array>().contents;
     case DataNode::Kind::Object:
-        return hasValidMembers(program, node.as<DataNode::Object>(), mayLackLayout, keys);
+        return hasValidMembers(program, node.as<DataNode::Object>(), keys);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isValidDataTree(const Program& program, const DataNode& root, bool mayLackLayout)
+static bool isValidDataTree(const Program& program, const DataNode& root)
 {
-    bool isValid = !root.is<DataNode::Hole>();
+    struct NodeAtDepth {
+        const DataNode* node;
+        uint32_t depth;
+    };
+
+    if (root.is<DataNode::Hole>())
+        return false;
     Vector<PropertyKeyID, 16> keys;
-    forEachDataNodeInPreorder(root, [&](uint32_t, const DataNode& node) {
-        isValid = isValid && isValidDataNode(program, node, mayLackLayout, keys);
-    });
-    return isValid;
+    Vector<NodeAtDepth, 32> stack;
+    stack.append({ &root, 1 });
+    while (!stack.isEmpty()) {
+        auto [node, depth] = stack.takeLast();
+        if (!isValidDataNode(program, *node, keys))
+            return false;
+        switch (node->kind()) {
+        case DataNode::Kind::Array:
+            if (depth > maxNestingDepthOfDataTree)
+                return false;
+            for (const DataNode& element : node->as<DataNode::Array>().elements)
+                stack.append({ &element, depth + 1 });
+            break;
+        case DataNode::Kind::Object:
+            if (depth > maxNestingDepthOfDataTree)
+                return false;
+            for (const DataMember& member : node->as<DataNode::Object>().members)
+                stack.append({ &member.value, depth + 1 });
+            break;
+        case DataNode::Kind::Undefined:
+        case DataNode::Kind::Null:
+        case DataNode::Kind::Hole:
+        case DataNode::Kind::Boolean:
+        case DataNode::Kind::Number:
+        case DataNode::Kind::String:
+        case DataNode::Kind::BigInt:
+            break;
+        }
+    }
+    return true;
 }
 
 void ProgramVerifier::verifyData()
 {
-    if (!hasUncheckedRecords())
-        return;
     auto& data = m_program.data;
     Vector<uint32_t> invalidRecords = findIndicesInParallel(m_build.parallelLoops(), data.size(), [&](unsigned index) {
-        return !isValidDataTree(m_program, data[index].root, !isAsRead());
+        return !isValidDataTree(m_program, data[index].root);
     });
     for (uint32_t index : invalidRecords)
         verifyDataNode(DataID(index), data[index].root);
@@ -679,7 +687,7 @@ void ProgramVerifier::verifyData()
 
 void ProgramVerifier::verifyDataNode(DataID id, const DataNode& root)
 {
-    if (!isValidDataTree(m_program, root, !isAsRead()))
+    if (!isValidDataTree(m_program, root))
         fail({ .kind = InternalErrorKind::InvalidData, .count = id.index() });
 }
 
@@ -707,6 +715,14 @@ static bool hasValidStorage(const Program& program, const EvalBinding& binding)
     return binding.operand && layout.kind == LayoutKind::Environment && binding.field && *binding.field < layout.fields.size();
 }
 
+static bool slotTakesWhateverEvalStores(const Program& program, const EvalBinding& binding)
+{
+    if (!binding.layout)
+        return true;
+    const DeclaredType& declared = program.at(binding.layout).fields[*binding.field].declared;
+    return !declared.isEstablished() || TypeReader(program).at(declared.written()).isAnything();
+}
+
 static bool isValidEvalBinding(const Program& program, const EvalBinding& binding)
 {
     bool hasFunctions = binding.function || binding.setter;
@@ -722,18 +738,25 @@ static bool isValidEvalBinding(const Program& program, const EvalBinding& bindin
     case EvalBindingKind::This:
         return (binding.function || !binding.setter) && hasValidStorage(program, binding);
     case EvalBindingKind::Variable:
+    case EvalBindingKind::Arguments:
+    case EvalBindingKind::SimpleCatchParameter:
+        return !hasFunctions && hasValidStorage(program, binding) && slotTakesWhateverEvalStores(program, binding);
     case EvalBindingKind::Constant:
     case EvalBindingKind::FunctionName:
     case EvalBindingKind::NewTarget:
     case EvalBindingKind::HomeObject:
     case EvalBindingKind::ClassObject:
-    case EvalBindingKind::Arguments:
     case EvalBindingKind::WithObject:
     case EvalBindingKind::EvalVariables:
-    case EvalBindingKind::SimpleCatchParameter:
         return !hasFunctions && hasValidStorage(program, binding);
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool isReachedWithoutOperand(const EvalBinding& binding)
+{
+    bool isName = binding.kind == EvalBindingKind::Variable || binding.kind == EvalBindingKind::Constant || binding.kind == EvalBindingKind::FunctionName;
+    return isName && binding.name && binding.variable;
 }
 
 static bool isValidExpectedResult(const Program& program, const ExpectedResult& expected)
@@ -743,17 +766,30 @@ static bool isValidExpectedResult(const Program& program, const ExpectedResult& 
     });
 }
 
+static bool isHelperOfCompiler(const BuiltinTable& builtins, RuntimeFunctionID id)
+{
+    return std::ranges::any_of(builtins.at(id).implements, [&](BuiltinID implemented) {
+        return builtins.at(implemented).holder == Builtins::CompilerHelpers;
+    });
+}
+
 void ProgramVerifier::verifySmallRecords()
 {
-    if (!hasUncheckedRecords())
-        return;
-
+    BitVector scopesThatMayLieAroundOthers(m_program.evalScopes.size());
     for (unsigned index = 0; index < m_program.evalScopes.size(); ++index) {
-        bool hasValidBindings = std::ranges::all_of(m_program.evalScopes[index].bindings, [&](const EvalBinding& binding) {
+        const EvalScope& scope = m_program.evalScopes[index];
+        bool hasValidBindings = std::ranges::all_of(scope.bindings, [&](const EvalBinding& binding) {
             return isValidEvalBinding(m_program, binding);
         });
         if (!hasValidBindings)
             fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
+        if (!scope.outer && std::ranges::all_of(scope.bindings, isReachedWithoutOperand))
+            scopesThatMayLieAroundOthers.set(index);
+    }
+    for (unsigned index = 0; index < m_program.evalScopes.size(); ++index) {
+        EvalScopeID outer = m_program.evalScopes[index].outer;
+        if (outer && !scopesThatMayLieAroundOthers.get(outer.index()))
+            fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index, .detail = "what lies around the scope of a direct eval needs an operand of a call or has a scope around itself"_s });
     }
 
     auto& runtimeFunctions = m_program.runtimeFunctions;
@@ -763,6 +799,8 @@ void ProgramVerifier::verifySmallRecords()
     for (auto& entry : runtimeFunctions) {
         if (!entry.id || !m_program.builtins().contains(entry.id) || !entry.function || !m_program.at(entry.function).captures.isEmpty())
             fail({ .kind = InternalErrorKind::InvalidCreatorRecord, .function = entry.function });
+        else if (isHelperOfCompiler(m_program.builtins(), entry.id) && std::ranges::count(runtimeFunctions, entry.function, &RuntimeFunctionEntry::function) != 1)
+            fail({ .kind = InternalErrorKind::InvalidCreatorRecord, .function = entry.function, .detail = "a function that stands for a helper of the compiler stands for another function of the library too"_s });
     }
 
     for (unsigned index = 0; index < m_program.expectedResults.size(); ++index) {

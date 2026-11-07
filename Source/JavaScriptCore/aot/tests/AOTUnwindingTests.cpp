@@ -8,13 +8,15 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTNativeTest.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <stdlib.h>
@@ -409,73 +411,70 @@ globalThis.namesInStack = function namesInStack(error) {
     }
     return names;
 };
-globalThis.errorsNotCreated = function errorsNotCreated() { return Number(/(\d+)\tcounter:ThrownErrorsNotCreated/.exec(aotRuntimeCounters())[1]); };
-globalThis.printWithErrorsNotCreated = function printWithErrorsNotCreated(work) {
+globalThis.printSecondResult = function printSecondResult(work) {
     // The first throw at a site puts its frames into the call site cache, which is all that a later throw looks at.
     work();
-    let before = errorsNotCreated();
-    let result = work();
-    print(result + "; errors not created: " + (errorsNotCreated() - before));
+    print(work());
 };
 )js"_s;
 
-enum class Validation : bool { Off, On };
-
-static std::unique_ptr<CompileOutput> compile(ASCIILiteral referencesWord, Validation validation)
+static std::unique_ptr<CompileOutput> compile(ASCIILiteral way, ASCIILiteral referencesWord)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
         Wire::CompileOptions options = makeDefaultCompileOptions();
-        if (validation == Validation::On)
-            AOT_TEST_CHECK(!applyOptionWord(options, "validate"_s));
         AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
         BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
+        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), build);
         if (!program) {
             build.diagnostics().finish(nullptr);
             Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
         }
         AOT_TEST_CHECK(program);
-        output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
+        output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfWay(way));
+        if (!output->hasImage())
+            Typed::printDiagnosticsOf(*output, WTF::dataFile());
+        AOT_TEST_CHECK(output->hasImage() && output->records<uint32_t>(Wire::ResultSection::EntryModuleIds).size() == 1);
     });
     return output;
 }
 
-static ChildProcessResult runInShell(ASCIILiteral referencesWord, ASCIILiteral statements, std::initializer_list<ASCIILiteral> shellOptions, Validation validation = Validation::On)
+static ChildProcessResult runInShell(ASCIILiteral way, ASCIILiteral referencesWord, ASCIILiteral statements, std::initializer_list<ASCIILiteral> shellOptions)
 {
-    std::unique_ptr<CompileOutput> output = compile(referencesWord, validation);
-    TemporaryFile image(".image"_s, output->image.span());
+    std::unique_ptr<CompileOutput> output = compile(way, referencesWord);
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments { makeString("--aotImagePath="_s, image.path()) };
     for (ASCIILiteral option : shellOptions)
         arguments.append(String(option));
     arguments.append(String("-e"_s));
-    arguments.append(makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").then(async () => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s));
+    arguments.append(makeString(scriptStart, "runCompiledEntryPoint("_s, output->records<uint32_t>(Wire::ResultSection::EntryModuleIds)[0], ").then(async () => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s));
     ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
     result.output = makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
     return result;
 }
 
-static void checkShellOutput(ASCIILiteral statements, ASCIILiteral expectedOutput, Validation validation = Validation::On)
+static void checkShellOutput(ASCIILiteral statements, ASCIILiteral expectedOutput)
 {
-    for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
-        ChildProcessResult result = runInShell(referencesWord, statements, { }, validation);
-        if (!result.exitedWith(EXIT_SUCCESS) || result.output != expectedOutput)
-            dataLog("with ", referencesWord, " the shell ", result.description(), " and printed\n", result.output, "expected\n", expectedOutput);
-        AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS) && result.output == expectedOutput);
+    for (ASCIILiteral way : waysToCompilePrograms) {
+        for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
+            ChildProcessResult result = runInShell(way, referencesWord, statements, { });
+            if (!result.exitedWith(EXIT_SUCCESS) || result.output != expectedOutput)
+                dataLog("with ", way, " ", referencesWord, " the shell ", result.description(), " and printed\n", result.output, "expected\n", expectedOutput);
+            AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS) && result.output == expectedOutput);
+        }
     }
 }
 
 static void checkOutputOfTerminatedShell(ASCIILiteral statements, ASCIILiteral expectedOutput)
 {
-    for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
-        ChildProcessResult result = runInShell(referencesWord, statements, { "--watchdog=300"_s });
-        bool wasTerminated = result.outcome == ChildProcessOutcome::Exited && result.code != EXIT_SUCCESS;
-        if (!wasTerminated || result.output != expectedOutput)
-            dataLog("with ", referencesWord, " the shell ", result.description(), " and printed\n", result.output, "expected\n", expectedOutput);
-        AOT_TEST_CHECK(wasTerminated && result.output == expectedOutput);
+    for (ASCIILiteral way : waysToCompilePrograms) {
+        for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
+            ChildProcessResult result = runInShell(way, referencesWord, statements, { "--watchdog=300"_s });
+            bool wasTerminated = result.outcome == ChildProcessOutcome::Exited && result.code != EXIT_SUCCESS;
+            if (!wasTerminated || result.output != expectedOutput)
+                dataLog("with ", way, " ", referencesWord, " the shell ", result.description(), " and printed\n", result.output, "expected\n", expectedOutput);
+            AOT_TEST_CHECK(wasTerminated && result.output == expectedOutput);
+        }
     }
 }
 
@@ -604,33 +603,33 @@ nothing was thrown to the caller
 )"_s);
 }
 
-static void testIgnoredErrorIsNotCreated()
+static void testHandlerIgnoresWhatWasThrown()
 {
     checkShellOutput(R"js(
-    printWithErrorsNotCreated(() => registry.ignoresDirectCallees());
-    printWithErrorsNotCreated(() => registry.ignoresCallee(registry.throwsNewError));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(registry.passes, registry.throwsNewError));
-    printWithErrorsNotCreated(() => registry.ignoresNamedCallee(5));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(function returns() { return "not thrown"; }));
-)js"_s, R"(ignored what was thrown; errors not created: 1
-ignored what was thrown; errors not created: 1
-ignored what was thrown; errors not created: 1
-ignored what was thrown; errors not created: 0
-not thrown; errors not created: 0
-)"_s, Validation::Off);
+    printSecondResult(() => registry.ignoresDirectCallees());
+    printSecondResult(() => registry.ignoresCallee(registry.throwsNewError));
+    printSecondResult(() => registry.ignoresCallee(registry.passes, registry.throwsNewError));
+    printSecondResult(() => registry.ignoresNamedCallee(5));
+    printSecondResult(() => registry.ignoresCallee(function returns() { return "not thrown"; }));
+)js"_s, R"(ignored what was thrown
+ignored what was thrown
+ignored what was thrown
+ignored what was thrown
+not thrown
+)"_s);
 }
 
 static void testObservableErrorIsCreated()
 {
     checkShellOutput(R"js(
-    printWithErrorsNotCreated(() => registry.catchesDirectCallees());
-    printWithErrorsNotCreated(() => registry.catchesCallee(registry.throwsNewError));
-    printWithErrorsNotCreated(() => registry.catchesNamedCallee(5));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(registry.catchesCallee, registry.throwsNewError));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(function interpreted() { return registry.throwsNewError(); }));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(function viaHost() { return JSON.stringify({ toJSON: registry.throwsNewError }); }));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(function cleaned() { return registry.cleansUp(registry.throwsNewError, print); }));
-    printWithErrorsNotCreated(() => {
+    printSecondResult(() => registry.catchesDirectCallees());
+    printSecondResult(() => registry.catchesCallee(registry.throwsNewError));
+    printSecondResult(() => registry.catchesNamedCallee(5));
+    printSecondResult(() => registry.ignoresCallee(registry.catchesCallee, registry.throwsNewError));
+    printSecondResult(() => registry.ignoresCallee(function interpreted() { return registry.throwsNewError(); }));
+    printSecondResult(() => registry.ignoresCallee(function viaHost() { return JSON.stringify({ toJSON: registry.throwsNewError }); }));
+    printSecondResult(() => registry.ignoresCallee(function cleaned() { return registry.cleansUp(registry.throwsNewError, print); }));
+    printSecondResult(() => {
         try {
             registry.throwsNewError();
         } catch (error) {
@@ -638,27 +637,25 @@ static void testObservableErrorIsCreated()
         }
     });
     await registry.asyncCalls(1, registry.throwsNewError).catch(() => { });
-    let before = errorsNotCreated();
     try {
         await registry.asyncCalls(1, registry.throwsNewError);
     } catch (error) {
-        print("rejected with: " + error.name + ": " + error.message + "; errors not created: " + (errorsNotCreated() - before));
+        print("rejected with: " + error.name + ": " + error.message);
     }
-)js"_s, R"(caught around direct calls: RangeError; errors not created: 0
-caught in a caller: RangeError; errors not created: 0
-caught in the same frame: TypeError; errors not created: 0
-caught in a caller: RangeError; errors not created: 0
-ignored what was thrown; errors not created: 0
-ignored what was thrown; errors not created: 0
+)js"_s, R"(caught around direct calls: RangeError
+caught in a caller: RangeError
+caught in the same frame: TypeError
+caught in a caller: RangeError
+ignored what was thrown
+ignored what was thrown
 left by a throw
 left by a throw
-ignored what was thrown; errors not created: 0
-caught in interpreted code: RangeError: made to be thrown, with a stack: string; errors not created: 0
-rejected with: RangeError: made to be thrown; errors not created: 0
+ignored what was thrown
+caught in interpreted code: RangeError: made to be thrown, with a stack: string
+rejected with: RangeError: made to be thrown
 )"_s);
 }
 
-// What copies properties calls back into compiled code, which throws. The error lists the frames on both sides of the copy, and the handler lies beyond it.
 static void testThrowBelowACopyOfProperties()
 {
     constexpr ASCIILiteral statements = R"js(
@@ -745,8 +742,7 @@ copied first left last, one frame down, two frames down
 copied first left last, one frame down, two frames down
 copied first left last
 )"_s;
-    checkShellOutput(statements, expectedOutput, Validation::On);
-    checkShellOutput(statements, expectedOutput, Validation::Off);
+    checkShellOutput(statements, expectedOutput);
 }
 
 static void testValuesLiveAcrossTheCallAreRestored()
@@ -807,7 +803,6 @@ static void testTerminationOfLoopWithoutCalls()
 )"_s);
 }
 
-// The engine's own code looks for a request at the entry of every function, the body of a resumed coroutine included.
 static void testTerminationRequestedAheadOfAnEntryFromNativeCode()
 {
     checkShellOutput(R"js(
@@ -867,7 +862,7 @@ std::span<const NativeTest> unwindingTests()
         { "unwinding/handler-in-interpreted-code"_s, testHandlerInInterpretedCode },
         { "unwinding/cleanup-handler-rethrows"_s, testCleanupHandlerRethrows },
         { "unwinding/throw-in-async-function-rejects-its-promise"_s, testThrowInAsyncFunctionRejectsItsPromise },
-        { "unwinding/ignored-error-is-not-created"_s, testIgnoredErrorIsNotCreated },
+        { "unwinding/handler-ignores-what-was-thrown"_s, testHandlerIgnoresWhatWasThrown },
         { "unwinding/observable-error-is-created"_s, testObservableErrorIsCreated },
         { "unwinding/throw-below-a-copy-of-properties"_s, testThrowBelowACopyOfProperties },
         { "unwinding/values-live-across-the-call-are-restored"_s, testValuesLiveAcrossTheCallAreRestored },

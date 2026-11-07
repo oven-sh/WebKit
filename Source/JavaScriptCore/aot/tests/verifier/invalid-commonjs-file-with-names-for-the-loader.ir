@@ -1,0 +1,20 @@
+# the body of a CommonJS file of the program stores the names that somebody reads, so the loader has nothing to fill or to check for the file: it has neither synthetic exports nor required names
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 2
+
+variable g0 name="x" module=m1 declared={type=anything|absent}
+variable g1 name="y" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="/good.cjs" displayPath="good.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 requests=[{target=m3 kind=Require completes=true}]
+module m1 path="/badSyntheticExport.cjs" displayPath="badSyntheticExport.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1 syntheticExports=[{name="x" variable=g0}]
+module m2 path="/badRequiredName.cjs" displayPath="badRequiredName.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m3 kind=Require completes=true}] requiredNames=[{module=m3 name="y"}]
+module m3 path="/names.js" displayPath="names.js" exports=[{name="y" variable=g1}]
+entry module=m0
+function f0 name="good" module=m0 kind=CommonJsModule results=[{type=anything}] {
+    Return
+}
+function f1 name="badSyntheticExport" module=m1 kind=CommonJsModule results=[{type=anything}] {
+    Return
+}
+function f2 name="badRequiredName" module=m2 kind=CommonJsModule results=[{type=anything}] {
+    Return
+}

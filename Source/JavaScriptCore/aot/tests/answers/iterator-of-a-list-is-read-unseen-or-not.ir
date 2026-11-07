@@ -1,0 +1,8 @@
+# the question whether a second read of @@iterator off a list could be seen, asked of lists that the program makes and of lists that the shell hands in
+# If the answer by the state held of a list with a getter under @@iterator or with another prototype, these would differ
+# LIBRARY: own
+# RUN(SHELL): run-in-shell globalThis.sink = (ofList, ofPromise, ofAnything, ofSeen) => { if (typeof ofList !== "function") return; print(ofList(), ofPromise(), ofAnything([1]), ofSeen()); const own = [1]; Object.defineProperty(own, Symbol.iterator, { get() { return Array.prototype.values; } }); const moved = [1]; Object.setPrototypeOf(moved, { }); print(ofAnything(own), ofAnything(moved)); };
+# SHELL: true false true true
+# SHELL-NEXT: false false
+# SHELL-NEXT: exited with 0
+# PROGRAM-OF: ../walk/folding/question-about-the-iterator-of-a-list-is-answered.ir

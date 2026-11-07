@@ -1,0 +1,61 @@
+# function Base() {}  Base.prototype.c = 0;  function Made(x) { this.a = x; this.c = x; }  Object.setPrototypeOf(Made.prototype, Base.prototype);
+# print(new Made(1).c); register(Base.prototype); print(new Made(2).c);
+# A store passes a plain value that lies under its name on a prototype object above, and has a guard of its own that such a value does not end.
+# The caller freezes that prototype object once an object is made. From then on the value takes the store, which throws.
+# Freezing changes nothing that a read finds, so it ends the guards that stores ask and no other.
+# The program evaluates text, so code that the build has not seen runs.
+# RUN: run-in-shell globalThis.register = parent => { Object.freeze(parent); };
+# CHECK: 1
+# CHECK-NEXT: TypeError: Attempted to assign to readonly property
+# CHECK-NOT: exited with 0
+# CHECK: exited with 3
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Made" module=m0 base=L0 constructor=f2 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="Base" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Made" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="prototype"
+    v2 = Integer
+    PropSet v1, v2 key="c"
+    v4 = GetModuleVariable variable=g1
+    v5 = PropGet v4 key="prototype"
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectSetPrototypeOf
+    v8 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
+    v9 = Call v7, v6, v5, v8 calleeName="Object.setPrototypeOf"
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="print" [isFreeName]
+    v12 = Integer integer=1
+    v13 = Construct v4, -, v12 calleeName="Made"
+    v14 = PropGet v13 key="c"
+    v15 = Call v11, -, v14 calleeName="print"
+    v16 = Builtin builtin=Function
+    v17 = String string="return globalThis.register"
+    v18 = Construct v16, -, v17
+    v19 = Call v18
+    v20 = Call v19, -, v1
+    v21 = Integer integer=2
+    v22 = Construct v4, -, v21 calleeName="Made"
+    v23 = PropGet v22 key="c"
+    v24 = Call v11, -, v23 calleeName="print"
+    v25 = Undefined
+    Return v25
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Undefined
+    Return v1
+}
+function f2 name="Made" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    v2 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v2, v1 key="a"
+    PropSet v2, v1 key="c"
+    v5 = Undefined
+    Return v5
+}

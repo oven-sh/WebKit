@@ -21,7 +21,6 @@ const lazyOwnProperty = (type: b.TableType) =>
     implementation: b.generic,
   }) satisfies b.GetterField;
 
-// FunctionPrototype.cpp argumentsGetter, callerGetter.
 const poisoned = {
   this: b.any.refusing(b.null),
   getter: b.any,
@@ -46,7 +45,6 @@ export default b.declarations(
     lockedMembers: ["prototype"],
     closedToOtherNames: ["prototype"],
     openNamesOfPrototype: ["demethodize", "unThis"],
-    // A bound function has `length` and `name` alone. A function made from text also has `prototype`: the rows that make one answer b.any, so the compiler follows none.
     namesDefinedOnNewInstances: [],
     types: [b.viewType("Function"), b.viewType("CallableFunction"), b.viewType("NewableFunction")],
     usesFeature: "Interpreter",
@@ -151,6 +149,8 @@ export default b.declarations(
       ],
     },
   }),
+
+  b.name("displayName"),
 
   b.fn("Function.prototype", {
     usesFeature: [],

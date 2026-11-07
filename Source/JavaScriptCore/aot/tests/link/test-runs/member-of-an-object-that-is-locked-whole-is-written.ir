@@ -1,0 +1,35 @@
+# the run time locks every built-in object by its names in a test run, so the table of the build does too: a member of Object.prototype goes by its own lock, which is the program's to lay, and not by the lock of the object
+# put(Object.prototype, () => true); sink(Object.prototype.hasOwnProperty)   with   put = (o, v) => { o.hasOwnProperty = v }
+# were the object still locked whole in the table of the build, the read would be the function of the table
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: test-run
+# CHECK: replaces ObjectPrototypeHasOwnProperty
+# RUN(WALK): walk f0 mechanisms=all
+# WALK-LABEL: code f0:Body
+# WALK: key="hasOwnProperty"
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2 = PropGet v1 key="prototype"
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = Call v3, -, v2, v4
+    v6 = PropGet v2 key="hasOwnProperty"
+    v7 = PropGet v0 key="sink" [isFreeName]
+    v8 = Call v7, -, v6
+    Return v8
+}
+function f1 name="put" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="hasOwnProperty"
+    Return v1
+}
+function f2 name="fake" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    Return v0
+}

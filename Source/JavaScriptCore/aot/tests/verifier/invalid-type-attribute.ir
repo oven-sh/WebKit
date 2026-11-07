@@ -1,5 +1,4 @@
 # only a module of code outside the image has a type attribute: the loader of the host is asked with it, and nothing asks the loader for a file of the image or for a value of the host
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidModule 2
 

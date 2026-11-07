@@ -364,17 +364,11 @@ export function parseInline(cursor: Cursor): InlineSyntax {
   cursor.expect("family");
   const family = takeName(cursor);
   let hasOptionalSlowPath = false;
-  let isFormOnly = false;
   while (cursor.accept(";")) {
     const mark = cursor.location;
-    if (cursor.accept("formOnly")) {
-      if (isFormOnly) throw new SchemaError(mark, "formOnly is listed twice");
-      isFormOnly = true;
-      continue;
-    }
     cursor.expect("optionalSlowPath");
     if (hasOptionalSlowPath) throw new SchemaError(mark, "optionalSlowPath is listed twice");
     hasOptionalSlowPath = true;
   }
-  return { declares: "inline", entries, effects, family, hasOptionalSlowPath, isFormOnly };
+  return { declares: "inline", entries, effects, family, hasOptionalSlowPath };
 }

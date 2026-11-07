@@ -1,0 +1,25 @@
+# no file names the object that stands above a generator function, so no look at a file finds it. The flow climbs to it from the closure, and the name that is stored there is opened
+# Object.getPrototypeOf(function* () { }).stored = 1
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: test-run
+# CHECK: adds {{*}} "stored"
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2 = PropGet v1 key="getPrototypeOf"
+    v3 = NewClosure function=f1
+    v4 = Call v2, v1, v3 calleeKey="getPrototypeOf"
+    v5 = Integer integer=1
+    PropSet v4, v5 key="stored"
+    Return v5
+}
+function f1 name="steps" module=m0 flags=[IsGenerator, HasThis, TakesCallee] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    InitialYield
+    v3 = Undefined
+    Return v3
+}

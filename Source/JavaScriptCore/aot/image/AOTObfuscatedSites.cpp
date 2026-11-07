@@ -14,6 +14,7 @@
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <span>
 #include <wtf/FastBitVector.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
@@ -23,30 +24,30 @@ namespace JSC { namespace AOT {
 using Wire::ObfuscatedSiteRecord;
 using Wire::TextRange;
 
-static uint32_t numberOfFrames(const CompiledCode& code)
+static uint32_t numberOfObfuscatedFrames(const CompiledCode& code)
 {
     return std::max<uint32_t>(code.sites.inlineFrames.size(), 1);
 }
 
-static FunctionID frameFunction(const Typed::Program& program, const CompiledCode& code, uint32_t frame)
+static FunctionID functionOfObfuscatedFrame(const CompiledCode& code, uint32_t frame)
 {
-    return findFunctionAsRead(&program, frame ? code.body.callees[code.sites.inlineFrames[frame].callee] : code.function);
+    return frame ? code.body.callees[code.sites.inlineFrames[frame].callee].function : code.unit.function;
 }
 
-static StringID frameName(const Typed::Program& program, const CompiledCode& code, uint32_t frame)
+static StringID nameOfObfuscatedFrame(const Typed::Program& program, const CompiledCode& code, uint32_t frame)
 {
-    FunctionID function = frameFunction(program, code, frame);
+    FunctionID function = functionOfObfuscatedFrame(code, frame);
     return function ? program.at(function).name : StringID();
 }
 
-static ModuleID evaluatedTextOf(const Typed::Program& program, const CompiledCode& code, uint32_t frame)
+static ModuleID evaluatedTextOfObfuscatedFrame(const Typed::Program& program, const CompiledCode& code, uint32_t frame)
 {
-    FunctionID function = frameFunction(program, code, frame);
+    FunctionID function = functionOfObfuscatedFrame(code, frame);
     ModuleID module = function ? program.at(function).module : ModuleID();
     return module && program.at(module).kind == Typed::ModuleKind::CommonJs && program.at(module).referrer ? module : ModuleID();
 }
 
-static TextRange appendUTF8(Vector<uint8_t>& names, const Typed::StringTable& strings, StringID string)
+static TextRange appendNameOfObfuscatedFrame(Vector<uint8_t>& names, const Typed::StringTable& strings, StringID string)
 {
     if (strings[string].empty())
         return { };
@@ -58,39 +59,35 @@ static TextRange appendUTF8(Vector<uint8_t>& names, const Typed::StringTable& st
     return { offset, static_cast<uint32_t>(names.size()) - offset };
 }
 
-static Vector<TextRange> encodeFrameNames(const LinkedFunctions& functions, const Typed::Program& program, std::span<const Typed::WrittenTailCall> placesOfTailCalls, const ParallelLoops& loops, Vector<uint8_t>& names)
+static Vector<TextRange> encodeObfuscatedFrameNames(const LinkedFunctions& functions, const Typed::Program& program, const ParallelLoops& loops, Vector<uint8_t>& names)
 {
     FastBitVector isFrameName(program.strings.size());
     forEachIndexInParallel(loops, static_cast<unsigned>(functions.size()), [&](unsigned position) {
         const CompiledCode& code = functions[position];
-        for (uint32_t frame = 0; frame < numberOfFrames(code); ++frame) {
-            if (StringID name = frameName(program, code, frame))
+        for (uint32_t frame = 0; frame < numberOfObfuscatedFrames(code); ++frame) {
+            if (StringID name = nameOfObfuscatedFrame(program, code, frame))
                 isFrameName.atomicSetAndCheck(name.index(), true);
         }
     });
-    for (const Typed::WrittenTailCall& place : placesOfTailCalls) {
-        if (StringID name = program.at(place.function).name)
-            isFrameName.atomicSetAndCheck(name.index(), true);
-    }
 
     Vector<TextRange> rangeByString(program.strings.size());
     isFrameName.forEachSetBit([&](size_t string) {
-        rangeByString[string] = appendUTF8(names, program.strings, StringID(string));
+        rangeByString[string] = appendNameOfObfuscatedFrame(names, program.strings, StringID(string));
     });
     return rangeByString;
 }
 
-static void appendSiteRecords(Vector<ObfuscatedSiteRecord>& records, uint32_t position, const CompiledCode& code, const Typed::Program& program, const Vector<TextRange>& rangeByString)
+static void appendObfuscatedSiteRecords(Vector<ObfuscatedSiteRecord>& records, uint32_t position, const CompiledCode& code, const Typed::Program& program, const Vector<TextRange>& rangeByString)
 {
     Vector<TextRange, 8> nameByFrame;
     Vector<ModuleID, 8> evaluatedTextByFrame;
-    for (uint32_t frame = 0; frame < numberOfFrames(code); ++frame) {
-        StringID name = frameName(program, code, frame);
+    for (uint32_t frame = 0; frame < numberOfObfuscatedFrames(code); ++frame) {
+        StringID name = nameOfObfuscatedFrame(program, code, frame);
         nameByFrame.append(name ? rangeByString[name.index()] : TextRange { });
-        evaluatedTextByFrame.append(evaluatedTextOf(program, code, frame));
+        evaluatedTextByFrame.append(evaluatedTextOfObfuscatedFrame(program, code, frame));
     }
 
-    const Vector<SitePosition>& positions = code.sites.positions;
+    std::span<const SitePosition> positions = code.sites.positions.span();
     for (uint32_t site = 0; site < positions.size(); ++site) {
         const SitePosition& sitePosition = positions[site];
         ModuleID source = sitePosition.source && evaluatedTextByFrame[sitePosition.inlineFrame] ? evaluatedTextByFrame[sitePosition.inlineFrame] : sitePosition.source;
@@ -103,24 +100,14 @@ static void appendSiteRecords(Vector<ObfuscatedSiteRecord>& records, uint32_t po
     }
 }
 
-ObfuscatedSites collectObfuscatedSites(const LinkedFunctions& functions, const Typed::Program& program, BuildContext& context, std::span<const Typed::WrittenTailCall> placesOfTailCalls)
+ObfuscatedSites collectObfuscatedSites(const LinkedFunctions& functions, const Typed::Program& program, BuildContext& context)
 {
     const ParallelLoops& loops = context.parallelLoops();
     ObfuscatedSites result;
-    Vector<TextRange> rangeByString = encodeFrameNames(functions, program, placesOfTailCalls, loops, result.names);
+    Vector<TextRange> rangeByString = encodeObfuscatedFrameNames(functions, program, loops, result.names);
     result.records = collectInParallel<ObfuscatedSiteRecord>(loops, static_cast<unsigned>(functions.size()), [&](unsigned position, Vector<ObfuscatedSiteRecord>& records) {
-        appendSiteRecords(records, position, functions[position], program, rangeByString);
+        appendObfuscatedSiteRecords(records, position, functions[position], program, rangeByString);
     });
-    uint32_t numberInFrames = static_cast<uint32_t>(functions.size());
-    for (const Typed::WrittenTailCall& place : placesOfTailCalls) {
-        const Typed::Function& function = program.at(place.function);
-        result.records.append(ObfuscatedSiteRecord {
-            .function = numberInFrames++,
-            .site = 0,
-            .location = { function.module.index(), place.position },
-            .name = function.name ? rangeByString[function.name.index()] : TextRange { },
-        });
-    }
     return result;
 }
 

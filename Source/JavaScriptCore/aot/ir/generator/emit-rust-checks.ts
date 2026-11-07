@@ -8,7 +8,7 @@ import { listedTypesOf } from "./rust-types.ts";
 const internerTables: ReadonlyMap<string, string | null> = new Map<string, string | null>([
   ["strings", null],
   ["propertyKeys", "program.property_keys.as_slice()"],
-  ["types", "program.types.types()"],
+  ["types", "&program.types.types().to_records()"],
   ["signatures", "program.types.signatures()"],
 ]);
 

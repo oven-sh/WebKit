@@ -1,0 +1,36 @@
+# const box = { handler: function first() { return 1; } };
+# function setsBox(b: Box, v) { b.handler = v; }   the layout of `box` is EXPECTED of the parameter
+# globalThis.kept = setsBox;   print(box.handler());
+# Nothing leads from setsBox to first: a test of `v` for what is proven of the field would mention a function that the unit may not mention.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 1
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="handler" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    v3 = Builtin builtin=GlobalThis
+    PropSet v3, v2 key="kept"
+    v5 = PropGet v1 key="handler"
+    v6 = Call v5, v1 calleeKey="handler" calleeName="box.handler"
+    v7 = PropGet v3 key="print" [isFreeName]
+    v8 = Call v7, -, v6 calleeName="print"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="first" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="setsBox" module=m0 length=2 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="handler"
+    v3 = Undefined
+    Return v3
+}

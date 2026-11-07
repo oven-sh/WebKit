@@ -14,6 +14,7 @@
 #include "AOTCellAllocationEmitter.h"
 #include "AOTCellFormat.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTTypeTable.h"
 #include "JSObject.h"
 #include "JSTypeInfo.h"
 #include "Structure.h"
@@ -75,7 +76,7 @@ void ObjectBuiltinEmitter::generateObjectCreate(const InlineCall& call)
     ValueID prototype = call.argument(0);
     Join<CellPointer> join(m_out);
     if (typeOf(prototype).primitives & Primitive::Null) {
-        const TypeTestPlan& plan = typeTestPlanFor(m_function.at(prototype).type, representationOf(prototype), TypeTable::null);
+        const TypeTestPlan& plan = typeTestPlanFor(typeIDOf(prototype), representationOf(prototype), TypeTable::null);
         LBasicBlock isNull = newBlock();
         LBasicBlock isNotNull = newBlock();
         branchOnType(get(prototype), plan, { normalEdge(isNull), normalEdge(isNotNull) });
@@ -101,8 +102,6 @@ void ObjectBuiltinEmitter::generateSetPrototypeOf(const InlineCall& call)
     ValueID argument = call.argument(0);
     CellPointer object = objectOrMiss(call, argument);
     Boxed prototype = boxedOperand(call.context(), call.argument(1));
-    if (generator().validates())
-        missUnless(call, Condition(m_out.booleanFalse));
     Word32 structureID = emitter<AccessEmitter>().findPrototypeTransition(object, prototype, missBlockOf(call));
     missUnless(call, hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(object), orderWordIsNotExtensible));
     emitter<AccessEmitter>().storeStructureAfterPrototypeTransition(object, structureID);
@@ -123,7 +122,7 @@ Condition ObjectBuiltinEmitter::isSameValue(const OperationContext& context, Val
     const Type& left = typeOf(a);
     const Type& right = typeOf(b);
     auto bitsOf = [&](Number x) {
-        return Integer(m_out.bitCast(x.value(), B3::Int64));
+        return Integer(m_out.bitCast(x.value(), Machine::Int64));
     };
     auto areSameNumber = [&](Number x, Number y) {
         Integer bitsOfX = bitsOf(x);
@@ -143,17 +142,13 @@ Condition ObjectBuiltinEmitter::isSameValue(const OperationContext& context, Val
     Boxed y = boxedOperand(context, b);
     if (!(left.primitives & Primitive::Number) || !(right.primitives & Primitive::Number))
         return equal(x, y);
-    LBasicBlock numbers = newBlock();
-    LBasicBlock others = newBlock();
-    Join<Condition> join(m_out);
     Condition xIsNumber = isNumber(x);
-    branch(logicalAnd(xIsNumber, isNumber(y)), { normalEdge(numbers), normalEdge(others) });
-    m_out.appendTo(numbers);
-    Number numberX = numberToDouble(x);
-    join.add(areSameNumber(numberX, numberToDouble(y)));
-    m_out.appendTo(others);
-    join.add(equal(x, y));
-    return join.finish();
+    return selectByBranch<Condition>(logicalAnd(xIsNumber, isNumber(y)), [&] {
+        Number numberX = numberToDouble(x);
+        return areSameNumber(numberX, numberToDouble(y));
+    }, [&] {
+        return equal(x, y);
+    });
 }
 
 void ObjectBuiltinEmitter::generateObjectIs(const InlineCall& call)
@@ -184,56 +179,12 @@ void ObjectBuiltinEmitter::generateCallObjectConstructor(const InlineCall& call)
     finish(call, objectOrMiss(call, call.argument(0)));
 }
 
-void ObjectBuiltinEmitter::generateObjectFreeze(const InlineCall& call)
-{
-    static_assert(orderWordHasExtraProperties < orderWordIsFrozen && orderWordIsFrozen < orderWordIsSealed && orderWordIsSealed < orderWordIsNotExtensible);
-    ValueID argument = call.argument(0);
-    const Type& type = typeOf(argument);
-    ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
-    Word32 frozen = word32(static_cast<int32_t>(orderWordIntegrityBits));
-    CellPointer cell = objectOrMiss(call, argument);
-    if (!shapeTests.hasOnlyCompiledObjects(type))
-        missUnless(call, shapeTests.hasShapeIn(cell, type.layouts, type));
-    missUnless(call, hasNoBits(loadField<Word32>(loadStructure(cell), m_heaps.Structure_bitField), Structure::s_mayBePrototypeBits));
-    Word32 word = shapeTests.orderWordOf(cell);
-    missUnless(call, below(word, word32(orderWordHasExtraProperties)));
-    storeField(cell, m_heaps.AOTObject_orderWord, bitOr(word, frozen));
-    finish(call, get(argument), type);
-}
-
-// An object that is made in the block of the call and that nothing in between names.
-static bool isUnseenNewObject(const Function& function, const Block& block, ValueID call, ValueID object)
-{
-    ValueID finished;
-    if (function.at(object).opcode == Opcode::FinishObject) {
-        finished = object;
-        object = function.at(finished).objectOperand();
-    }
-    if (function.at(object).opcode != Opcode::NewObject)
-        return false;
-    std::span<const ValueID> values = block.values.span();
-    size_t made = std::ranges::find(values, object) - values.begin();
-    if (made == values.size())
-        return false;
-    for (ValueID between : values.subspan(made + 1)) {
-        if (between == call)
-            break;
-        if (between == finished)
-            continue;
-        std::span<const ValueID> operands = function.at(between).operands();
-        if (std::ranges::contains(operands, object) || (finished && std::ranges::contains(operands, finished)))
-            return false;
-    }
-    return true;
-}
-
 void ObjectBuiltinEmitter::generateObjectAssign(const InlineCall& call)
 {
     ValueID target = call.argument(0);
     CellPointer object = objectOrMiss(call, target);
     Boxed source = boxedOperand(call.context(), call.argument(1));
-    bool isUnseen = isUnseenNewObject(m_function, m_function.at(call.context().block()), call.context().valueID(), target);
-    missUnless(call, callOperation<Condition>(call.context(), isUnseen ? RuntimeOperation::ObjectAssignToUnseenObject : RuntimeOperation::ObjectAssignWithoutCode, { object, source }, { .calledBuiltin = functionOf(call.overload()) }));
+    missUnless(call, callOperation<Condition>(call.context(), RuntimeOperation::ObjectAssignWithoutCode, { object, source }, { .calledBuiltin = functionOf(call.overload()) }));
     finish(call, get(target), typeOf(target));
 }
 

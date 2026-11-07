@@ -8,11 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTNativeTest.h"
+#include "AOTRuntimeTable.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubBlob.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
-#include "AOTStubFrontEnds.h"
 #include "AOTStubRegisters.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -70,7 +70,7 @@ inline Vector<StubKey> entriesOf(StubKey body)
 inline Vector<StubOptions> stubOptionVariants()
 {
     Vector<StubOptions> variants { StubOptions { } };
-    for (bool StubOptions::* member : { &StubOptions::useWideReferences, &StubOptions::forceGCSlowPaths, &StubOptions::imageHasWebAssembly, &StubOptions::hasOneInstance, &StubOptions::validates }) {
+    for (bool StubOptions::* member : { &StubOptions::useWideReferences, &StubOptions::imageHasWebAssembly, &StubOptions::hasOneInstance, &StubOptions::matchesRegExps, &StubOptions::recordsLastMatch, &StubOptions::checksProofs, &StubOptions::checksWalk, &StubOptions::methodsOfBuiltinsMayBeReplaced }) {
         StubOptions options;
         options.*member = !(options.*member);
         variants.append(options);

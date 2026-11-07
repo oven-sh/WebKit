@@ -1,0 +1,94 @@
+# the callee is known and the receiver lies in its row, and one operand is unknown. In a loop that operand is tested for what every row takes: behind the test the call goes by its row, and where the test fails it is made as it is written
+# function sum(s, p, n) { if (typeof s !== "string") return; let t = 0; for (let i = 0; i < n; i++) t = t + s.charCodeAt(p); return t; }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: [[test]]: {{*}} = TypeTest {{*}}testedType=i32
+# CHECK: Branch [[test]] ->
+# CHECK: = GetStringLength
+# CHECK: frequency=Rare
+# outside a loop nothing is declared of the operand, so no test pays: function once(s, p) { if (typeof s === "string") return [s.charCodeAt(p)]; }
+# RUN(ONCE): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Guesses
+# ONCE-LABEL: code f2:Body
+# ONCE-NOT: testedType=i32
+# ONCE: = NewArray
+# the operand is proven to be an object, so no such test can pass: function never(s, p, n) { the same loop behind a test that p is an object }
+# RUN(NEVER): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Guesses
+# NEVER-NOT: testedType=i32
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="sum" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b5()
+  b1(v4):
+    v5 = Integer
+    v6 = Integer
+    Jump -> next b2(v5, v6)
+  b2(v7, v8):
+    LoopHint
+    v10 = Less v8, v2
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    v11 = PropGet v4 key="charCodeAt"
+    v12 = Call v11, v4, v1 calleeKey="charCodeAt"
+    v13 = Add v7, v12
+    v14 = Increment v8
+    Jump -> next b2(v13, v14)
+  b4():
+    Return v7
+  b5():
+    v15 = Undefined
+    Return v15
+}
+function f2 name="once" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = PropGet v3 key="charCodeAt"
+    v5 = Call v4, v3, v1 calleeKey="charCodeAt"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f3 name="never" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b6()
+  b1(v4):
+    v5 = TypeTest v1 testedType=object
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    v7 = Integer
+    v8 = Integer
+    Jump -> next b3(v7, v8)
+  b3(v9, v10):
+    LoopHint
+    v12 = Less v10, v2
+    Branch v12 -> taken b4(), notTaken b5()
+  b4():
+    v13 = PropGet v4 key="charCodeAt"
+    v14 = Call v13, v4, v6 calleeKey="charCodeAt"
+    v15 = Add v9, v14
+    v16 = Increment v10
+    Jump -> next b3(v15, v16)
+  b5():
+    Return v9
+  b6():
+    v17 = Undefined
+    Return v17
+}

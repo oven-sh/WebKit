@@ -1,0 +1,68 @@
+# const a = { tag: 1 };  const b = { mark: 2 };  const c = { note: 3 };  const d = { sign: 3 };  const e = { word: 3 };  function drop(o) { delete o.tag; }  drop(a);  drop(b);  drop(c);  drop(d);  drop(e);  report(a.tag);  report(b.mark);
+# Five strangers meet at one parameter, one more than a set takes, so they are lost, and through the parameter a property is deleted. Which of them loses it nobody knows, so a PROOF charges all five.
+# What is held is what is expected of an object of the layout: on a large program strangers meet until most layouts are one family, in which everything is done to somebody. It charges none of them, and the look at the object sees the rest
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[{{*}}LosesProperty
+# CHECK: layout L1 {{*}}changes=[{{*}}LosesProperty
+# CHECK: layout L2 {{*}}changes=[{{*}}LosesProperty
+# CHECK: layout L3 {{*}}changes=[{{*}}LosesProperty
+# CHECK: layout L4 {{*}}changes=[{{*}}LosesProperty
+# RUN(HELD): link held layouts mechanisms=all
+# HELD: layout L0 {{*}}changes=[]
+# HELD: layout L1 {{*}}changes=[]
+# HELD: layout L2 {{*}}changes=[]
+# HELD: layout L3 {{*}}changes=[]
+# HELD: layout L4 {{*}}changes=[]
+# RUN(LOST): link functions mechanisms=all
+# LOST: function f1 callers-known one-callee
+# LOST-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4
+# RUN(ANSWER): run-in-shell globalThis.report = value => print(String(value));
+# ANSWER: undefined
+# ANSWER-NEXT: 2
+# ANSWER-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none globalThis.report = value => print(String(value));
+# NONE: undefined
+# NONE-NEXT: 2
+# NONE-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="mark" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="note" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="sign" declared={type=anything} flags=[IsRequired]}]
+layout L4 module=m0 fields=[{key="word" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Integer integer=2
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = Integer integer=3
+    v10 = NewObject -, v9 layout=L2 fields=[0]
+    v11 = FinishObject v10
+    v12 = NewObject -, v9 layout=L3 fields=[0]
+    v13 = FinishObject v12
+    v14 = NewObject -, v9 layout=L4 fields=[0]
+    v15 = FinishObject v14
+    v16 = Call v2, -, v5 calleeName="drop"
+    v17 = Call v2, -, v8 calleeName="drop"
+    v18 = Call v2, -, v11 calleeName="drop"
+    v19 = Call v2, -, v13 calleeName="drop"
+    v20 = Call v2, -, v15 calleeName="drop"
+    v21 = PropGet v5 key="tag"
+    v22 = Call v1, -, v21 calleeName="report"
+    v23 = PropGet v8 key="mark"
+    v24 = Call v1, -, v23 calleeName="report"
+    Return v24
+}
+function f1 name="drop" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropDelete v0 key="tag"
+    Return v1
+}

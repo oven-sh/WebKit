@@ -29,7 +29,6 @@
 #if ENABLE(AOT)
 #include "AOTAsyncResumption.h"
 #include "AOTModuleRecord.h"
-#include "AOTRuntimeCounters.h"
 #endif
 #include "BuiltinNames.h"
 #include "CodeCache.h"
@@ -1939,7 +1938,6 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
         case InternalMicrotask::AsyncFunctionResume:
 #if ENABLE(AOT)
         case InternalMicrotask::CompiledAsyncFunctionResume:
-        case InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn:
         case InternalMicrotask::CompiledModuleBodyResume:
 #endif
         case InternalMicrotask::AsyncModuleExecutionResume:
@@ -2008,21 +2006,14 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
     };
 
     constexpr size_t maxPromises = 4096;
-#if ENABLE(AOT)
-    static_assert(maxPromises == AOT::defaultLimitValue(AOT::LimitID::PromisesWalkedPerImport, AOT::hostArchitecture()));
-#endif
     while (!work.isEmpty() && !found) {
         JSPromise* promise = work.takeLast();
         if (promise->status() != JSPromise::Status::Pending)
             continue;
         if (!seen.add(promise).isNewEntry)
             continue;
-        if (seen.size() > maxPromises) {
-#if ENABLE(AOT)
-            AOT::countLimitHit(importPromise->vm(), AOT::LimitID::PromisesWalkedPerImport);
-#endif
+        if (seen.size() > maxPromises)
             return false;
-        }
         promise->forEachPendingReaction(visitReaction);
     }
     return found;

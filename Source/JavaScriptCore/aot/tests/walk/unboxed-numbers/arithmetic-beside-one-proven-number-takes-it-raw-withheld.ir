@@ -1,0 +1,10 @@
+# the same functions with unboxed numbers withheld: the product takes both operands as any value. With typed operations withheld too, so does the sum with the empty text
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Mul {{*}}form=Generic
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: form=NumberAndValue
+# RUN(TEXT): walk f3 mechanisms=none
+# TEXT-LABEL: code f3:Body
+# TEXT: = Add {{*}}form=Generic
+# PROGRAM-OF: arithmetic-beside-one-proven-number-takes-it-raw.ir

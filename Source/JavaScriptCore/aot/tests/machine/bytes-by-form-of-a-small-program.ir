@@ -1,0 +1,47 @@
+# function half(x) { const y = +x * 0.5; if (y > 100) throw y; return y; }
+# The text of `bytes-by-form`: a row for each operation, state of knowledge, place and form, with its sites, its bytes and its bytes a site, in the order of the opcodes.
+# OPTIONS: report=Flow mechanisms=none+TypedOperations
+# RUN: bytes-by-form
+# CHECK-NOT: the build failed
+# CHECK: Mul Numbers Anywhere Open 1 [[product]] [[product]]
+# CHECK: ToNumber Generic Anywhere Closed 1 [[conversion]] [[conversion]]
+# CHECK: Greater Numbers Anywhere Open 1 [[test]] [[test]]
+# CHECK: Call Always Anywhere Closed [[calls]] [[bytesOfCalls]] [[bytesOfOneCall]]
+# CHECK: Box Always Anywhere Open 1 [[inLine]] [[inLine]]
+# CHECK-NOT: not named:
+# CHECK: every form is named
+# CHECK-NEXT: all forms [[sites]] [[bytes]]
+# CHECK-NEXT: in inline frames [[inFrames]]
+# CHECK-NEXT: in inline frames of the library [[inFramesOfLibrary]]
+# CHECK-NEXT: in frames of built-ins [[inFramesOfBuiltins]]
+# CHECK-NEXT: all code [[code]]
+# RUN(BODY): bytes-by-form Body
+# BODY: Box Always Anywhere Open 1
+# BODY: all code
+# BODY-NEXT: units
+# BODY-NEXT: inline frames
+
+variable g0 name="half" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v0 key="start" [isFreeName]
+    v3 = Call v2, -, v1 calleeName="start"
+    Return v3
+}
+function f1 name="half" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    v2 = Double number=0.5
+    v3 = Mul v1, v2
+    v4 = Double number=100
+    v5 = Greater v3, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    Throw v3
+  b2():
+    Return v3
+}

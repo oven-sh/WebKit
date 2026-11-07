@@ -1,0 +1,55 @@
+# a suspension is a call that may do anything. That a value is a number, and that an object has a layout, holds for good: the operator behind the await is typed, and the read behind it goes by slot.
+# That a slot is filled was seen at a point and holds until other code runs: the read in front of the await is GetSlot, and the read behind it reckons with an empty slot
+# async function wait(o, n, p) { if (!(o is of layout L0) || typeof n !== "number") return; o.x = n; const a = o.x; await p; return [a, o.x, n * n]; }
+# Another object of the layout is made without the property: else Link calls the field filled, and no read of it reckons with an empty slot.
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: [[o]]: L0{{*}} = Narrowed
+# CHECK: PutSlot
+# CHECK: [[before]]: {{*}} = Unbox [[o]]
+# CHECK: = GetSlot [[before]] key="x"
+# CHECK: = AwaitBySavingFrame
+# CHECK: [[behind]]: {{*}} = Unbox [[o]]
+# CHECK: = GetSlotOrUndefined [[behind]] key="x"
+# CHECK: = Mul {{*}}form=Numbers
+# RUN(NEVER): walk f1:CoroutineBody mechanisms=none+TypedOperations
+# NEVER-NOT: = PropGet
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="kept" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    v6 = FinishObject v4
+    PutModuleVariable v6 variable=g0
+    v8 = NewObject layout=L0
+    v9 = FinishObject v8
+    PutModuleVariable v9 variable=g0
+    Return v3
+}
+function f1 name="wait" module=m0 flags=[IsAsync] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=L0
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = TypeTest v1 testedType=number
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    PropSet v4, v6 key="x"
+    v8 = PropGet v4 key="x"
+    v9 = Await v2
+    v10 = PropGet v4 key="x"
+    v11 = Mul v6, v6
+    v12 = NewArray v8, v10, v11 contents=anything
+    Return v12
+  b3():
+    v13 = Undefined
+    Return v13
+}

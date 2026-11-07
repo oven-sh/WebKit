@@ -103,6 +103,21 @@ export function listedTypesOf(schema: Schema): SchemaType[] {
   return wireTypesOf(schema).filter(type => !(type.tag === "Record" && type.record.isWireOnly));
 }
 
+const viewsOfSlices: ReadonlyMap<string, { readonly name: string; readonly path: string }> = new Map([
+  ["Type", { name: "TypeRef", path: "crate::ir::types::TypeRef" }],
+]);
+
+export function viewOfSlices(type: SchemaType): string | null {
+  return viewsOfSlices.get(nameOf(type))?.name ?? null;
+}
+
+export function viewImports(types: readonly SchemaType[]): string[] {
+  return types.flatMap(type => {
+    const view = viewsOfSlices.get(nameOf(type));
+    return view === undefined ? [] : [`use ${view.path};`];
+  });
+}
+
 export function payloadTypesOf(schema: Schema): SchemaType[] {
   const visited = new Set<string>();
   const types: SchemaType[] = [];

@@ -1,0 +1,55 @@
+# `new Set(["a", "b"])`, `new Map([["a", 1]])`: the list is written as constant data and the construction is all that ever sees it. The constructor walks it by the iteration of lists and hands each entry to what lies under `add` | `set`:
+# by the table all of that is the engine's own for good, so no code of the program runs. The run time makes the collection of the record, out of a table that lies in the image where the image can hold one. Nothing needs the list, and the sweep drops it.
+# A list that something else names as well may have changed, and what it holds is shared with whoever has it: the constructor is called with it.
+# function both() { keep(new Set(["a", "b"]), new Map([["a", 1]])); }   function seen() { const list = ["a"]; keep(list); return new Set(list); }
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: [[set]]: Set{{*}} = NewSetFromData data=d0
+# CHECK: [[map]]: Map{{*}} = NewMapFromData data=d1
+# RUN(NEVER): walk f1 mechanisms=none+DirectCalls+BuiltinCalls
+# NEVER-NOT: = Data
+# NEVER-NOT: = NewArray
+# NEVER-NOT: = CallBuiltin
+# NEVER-NOT: = Construct
+# RUN(SEEN): walk f2 mechanisms=none+DirectCalls+BuiltinCalls
+# SEEN-NOT: FromData
+# RUN(CLOSED): walk f1 mechanisms=none
+# CLOSED-NOT: FromData
+
+data d0 root=Array{contents=anything elements=[String{value="a"}, String{value="b"}]} module=m0
+data d1 root=Array{contents=anything elements=[Array{contents=anything elements=[String{value="a"}, Number{value=1}]}]} module=m0
+data d2 root=Array{contents=anything elements=[String{value="a"}]} module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="both" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="keep" [isFreeName]
+    v2 = Builtin builtin=Set
+    v3 = Data data=d0
+    v4 = Construct v2, -, v3
+    v5 = Builtin builtin=Map
+    v6 = Data data=d1
+    v7 = Construct v5, -, v6
+    v8 = Call v1, -, v4, v7
+    Return v8
+}
+function f2 name="seen" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="keep" [isFreeName]
+    v2 = Data data=d2
+    v3 = Call v1, -, v2
+    v4 = Builtin builtin=Set
+    v5 = Construct v4, -, v2
+    Return v5
+}

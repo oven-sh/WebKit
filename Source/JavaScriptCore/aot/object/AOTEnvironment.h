@@ -51,6 +51,9 @@ public:
 
     template<typename T> T& at(uint32_t offset) const { return *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(const_cast<Environment*>(this)) + offset); }
 
+    bool isEscaped() const { return at<uint8_t>(offsetOfEnvironmentShapeHighByte) & environmentIsEscapedBit; }
+    void markEscaped() { at<uint8_t>(offsetOfEnvironmentShapeHighByte) |= environmentIsEscapedBit; }
+
     template<typename Visitor>
     ALWAYS_INLINE static void visitFields(Environment* environment, Visitor& visitor)
     {
@@ -73,7 +76,7 @@ static_assert(sizeof(Environment) == offsetOfFirstEnvironmentVariable);
 ALWAYS_INLINE const EnvironmentData& EnvironmentShapes::at(uint16_t page, const JSCell* cell) const
 {
     auto* header = reinterpret_cast<const uint8_t*>(cell);
-    return tables->environmentForShape((static_cast<uint32_t>(page) << environmentShapesPerPageShift) + header[offsetOfEnvironmentShapeLowByte] + (header[offsetOfEnvironmentShapeHighByte] << 8));
+    return tables->environmentForShape((static_cast<uint32_t>(page) << environmentShapesPerPageShift) + environmentShapeInPage(header[offsetOfEnvironmentShapeLowByte], header[offsetOfEnvironmentShapeHighByte]));
 }
 
 ALWAYS_INLINE const EnvironmentData& Environment::layout() const

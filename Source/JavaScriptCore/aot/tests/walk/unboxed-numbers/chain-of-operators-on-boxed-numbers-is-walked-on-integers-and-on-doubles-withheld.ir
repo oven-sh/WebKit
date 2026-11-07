@@ -1,0 +1,9 @@
+# the same function with guesses withheld: no test of ours stands in front of the chain, and the sum is a sum of doubles
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = Add {{*}}form=Numbers
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# NEVER-NOT: testedType=i32
+# RUN(ONLY): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# ONLY-NOT: form=Integers
+# PROGRAM-OF: chain-of-operators-on-boxed-numbers-is-walked-on-integers-and-on-doubles.ir

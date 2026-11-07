@@ -11,9 +11,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTRepresentation.h"
-#include "AOTRepresentationRules.h"
-#include "AOTResultRules.h"
-#include "AOTVector.h"
+#include "AOTTypeArena.h"
 #include "JSObject.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -34,8 +32,6 @@ Number BuiltinFamilyEmitter::numberOperand(ValueID id)
     case Representation::Int64:
         return conversions.toNumber(in<Integer>(id), type.integers);
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
         return in<Number>(id);
     case Representation::OptionalInt64:
         return conversions.toNumber(conversions.withoutMarkers(get(id)).as<Integer>(), type.integers);
@@ -48,7 +44,6 @@ Number BuiltinFamilyEmitter::numberOperand(ValueID id)
     case Representation::Boolean:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -66,8 +61,6 @@ Integer BuiltinFamilyEmitter::integerOperand(ValueID id)
     case Representation::Int64:
         return in<Integer>(id);
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
         return conversions.toInteger(in<Number>(id));
     case Representation::OptionalInt64:
         return conversions.withoutMarkers(get(id)).as<Integer>();
@@ -80,7 +73,6 @@ Integer BuiltinFamilyEmitter::integerOperand(ValueID id)
     case Representation::Boolean:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -98,8 +90,6 @@ Word32 BuiltinFamilyEmitter::int32Operand(ValueID id)
     case Representation::Int64:
         return conversions.narrow(in<Integer>(id));
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
         return conversions.toInt32(in<Number>(id));
     case Representation::OptionalInt64:
         return conversions.narrow(conversions.withoutMarkers(get(id)).as<Integer>());
@@ -112,7 +102,6 @@ Word32 BuiltinFamilyEmitter::int32Operand(ValueID id)
     case Representation::Boolean:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -132,13 +121,10 @@ Condition BuiltinFamilyEmitter::booleanOperand(ValueID id)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -160,11 +146,8 @@ CellPointer BuiltinFamilyEmitter::getCell(ValueID id)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -195,7 +178,7 @@ CellPointer BuiltinFamilyEmitter::objectOrElse(ValueID id, LBasicBlock otherwise
         return CellPointer(m_out.intPtrZero);
     }
 
-    const TypeTestPlan& plan = typeTestPlanFor(m_function.at(id).type, representationOf(id), TypeTable::object);
+    const TypeTestPlan& plan = typeTestPlanFor(typeIDOf(id), representationOf(id), TypeTable::object);
     LBasicBlock isObject = newBlock();
     branchOnType(get(id), plan, { normalEdge(isObject), rareEdge(otherwise) });
     m_out.appendTo(isObject);
@@ -218,6 +201,8 @@ void BuiltinFamilyEmitter::missUnless(const InlineCall& call, Condition mustHold
 
 Operand BuiltinFamilyEmitter::inRepresentation(const OperationContext& context, Representation wanted, Operand produced, const Type& producedType)
 {
+    if (wanted == Representation::Void)
+        return { };
     return emitter<ConversionEmitter>().inRepresentation(context, produced, producedType, wanted);
 }
 
@@ -238,7 +223,7 @@ void BuiltinFamilyEmitter::finish(const InlineCall& call, Number number)
 
 void BuiltinFamilyEmitter::finish(const InlineCall& call, Integer integer, Range range)
 {
-    finish(call, integer, Type::integer(range));
+    finish(call, integer, types().at(types().integer(range)));
 }
 
 void BuiltinFamilyEmitter::finish(const InlineCall& call, Condition condition)
@@ -263,19 +248,6 @@ void BuiltinFamilyEmitter::finishWithUndefined(const InlineCall& call)
         return;
     }
     finish(call, undefined(), m_program.at(TypeTable::undefined));
-}
-
-void BuiltinFamilyEmitter::finishWithResults(const InlineCall& call, std::span<const Operand> results)
-{
-    RELEASE_ASSERT(call.value() && !call.canMiss());
-    TypingContext typing { m_program, m_function, types() };
-    Vector<Operand, 8> converted;
-    converted.reserveInitialCapacity(results.size());
-    for (uint32_t index = 0; index < results.size(); ++index) {
-        Type type = computeResultType(typing, call.value()->value(), index);
-        converted.append(inRepresentation(call.context(), defaultRepresentationOf(type), results[index], type));
-    }
-    defineResults(*call.value(), converted.span());
 }
 
 TypedPointer BuiltinFamilyEmitter::inlineProperty(CellPointer object, PropertyOffset offset)

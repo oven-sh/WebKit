@@ -1,0 +1,76 @@
+# function key<S extends { id: number }, T extends { id: number }>(source: S, target: T) { return source.id + "," + target.id; }
+# function keyOfOptional(id, target) { return id + "," + (target.id as number); }   keyOfOptional(undefined, ..), keyOfOptional(7, ..): the text of undefined is as short as that of a number
+# function keyOfThree(a, b, c) { return a.id + "," + b.id + "," + c.id; }
+# RUN(ANSWER): run-in-shell globalThis.show = (text) => print(text);
+# ANSWER: 1,22,1|undefined,2|7,1|1,2,1|2,1,2
+# ANSWER-NEXT: exited with 0
+
+variable g0 name="key" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="keyOfOptional" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="keyOfThree" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = PropGet v0 key="parse"
+    v2 = String string="[{\"id\":1},{\"id\":2}]"
+    v3 = Call v1, v0, v2 calleeKey="parse" calleeName="JSON.parse"
+    v4 = Integer
+    v5 = ElemGet v3, v4
+    v6 = Integer integer=1
+    v7 = ElemGet v3, v6
+    v8 = GetModuleVariable variable=g0
+    v9 = Call v8, -, v5, v7 calleeName="key"
+    v10 = Call v8, -, v7, v5 calleeName="key"
+    v11 = Add v9, v10
+    v12 = GetModuleVariable variable=g1
+    v13 = Undefined
+    v14 = Call v12, -, v13, v7 calleeName="keyOfOptional"
+    v15 = Integer integer=7
+    v16 = Call v12, -, v15, v5 calleeName="keyOfOptional"
+    v17 = GetModuleVariable variable=g2
+    v18 = Call v17, -, v5, v7, v5 calleeName="keyOfThree"
+    v19 = Call v17, -, v7, v5, v7 calleeName="keyOfThree"
+    v20 = String string="|"
+    v21 = Strcat v11, v20, v14, v20, v16, v20, v18, v20, v19
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="show" [isFreeName]
+    v24 = Call v23, -, v21 calleeName="show"
+    Return v24
+}
+function f1 name="key" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="id"
+    v3 = Convert v2 declared={type=number} illTypedCause=Assertion
+    v4 = String string=","
+    v5 = Add v3, v4
+    v6 = PropGet v1 key="id"
+    v7 = Convert v6 declared={type=number} illTypedCause=Assertion
+    v8 = Add v5, v7
+    Return v8
+}
+function f2 name="keyOfOptional" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=","
+    v3 = Add v0, v2
+    v4 = PropGet v1 key="id"
+    v5 = Convert v4 declared={type=number} illTypedCause=Assertion
+    v6 = Add v3, v5
+    Return v6
+}
+function f3 name="keyOfThree" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="id"
+    v4 = Convert v3 declared={type=number} illTypedCause=Assertion
+    v5 = String string=","
+    v6 = Add v4, v5
+    v7 = PropGet v1 key="id"
+    v8 = Convert v7 declared={type=number} illTypedCause=Assertion
+    v9 = Add v6, v8
+    v10 = Add v9, v5
+    v11 = PropGet v2 key="id"
+    v12 = Convert v11 declared={type=number} illTypedCause=Assertion
+    v13 = Add v10, v12
+    Return v13
+}
+entry module=m0

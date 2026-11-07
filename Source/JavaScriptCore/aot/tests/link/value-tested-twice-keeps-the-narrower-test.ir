@@ -1,0 +1,30 @@
+# what has passed two tests is of both types. The second test is the wider one here, so the first stays on the edge
+# function pick(a) { if (typeof a === "string") { if (typeof a === "string" || typeof a === "number") return a; } return 0; }
+# RUN: summary f1
+# CHECK: edge Parameter 0 -> Result 0 passes=string
+# RUN(NEVER): summary f1
+# NEVER-NOT: edge Parameter 0 -> Result 0 passes={{*}}number
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="pick" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    v3 = TypeTest v2 testedType=number|string
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    Return v4
+  b3():
+    v5 = Integer
+    Return v5
+}

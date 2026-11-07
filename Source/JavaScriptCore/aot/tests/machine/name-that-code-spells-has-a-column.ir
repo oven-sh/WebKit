@@ -1,0 +1,22 @@
+# function readIt(object) { return object.m; }   publish(readIt);   globalThis.config
+# If no name had a column in the front tables, each access by name would call a stub that first asks whether the number of its name has one, and looks the name up by its hash where it has none.
+# RUN: bytes f0:Body f1:Body
+# CHECK-LABEL: unit f0:Body
+# CHECK-NOT: CheckingColumn
+# CHECK-LABEL: unit f1:Body
+# CHECK: Call Stub ReadAtSiteOfNameWithoutField.OfAnyValueUnderNameWithColumn
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="config"
+    Return v4
+}
+function f1 name="readIt" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m" @10
+    Return v1
+}

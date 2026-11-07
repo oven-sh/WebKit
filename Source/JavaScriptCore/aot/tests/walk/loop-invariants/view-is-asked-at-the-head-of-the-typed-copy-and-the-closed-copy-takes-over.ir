@@ -1,0 +1,49 @@
+# function sum(view: Uint8Array) { let total = 0; for (let i = 0; i < view.length; i++) { keep(i); total += view[i]; } return total; }   sink(sum);
+# Nobody knows who calls it, so the view is asked when the code runs. The loop is built twice. The test whether the view is as its class makes it stands in the HEAD of the typed copy, where nothing of the turn has run,
+# and its failing edge leads into the closed copy, which takes what the head holds: the sum and the counter. So the typed copy has no closed arm and no join: the length is an integer, the counter lies below it, the read asks no bound.
+# `keep(i)` may do anything to the view: the next head asks again.
+# The test once stood in the loop with a closed arm, and the join made the length `anything`: 34 instructions a turn, 15 since.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: = PropGet {{*}}key="length"
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = IsPristine {{*}} builtinClass=Uint8Array
+# CHECK-NOT: PropGet {{*}}key="length"
+# CHECK: = GetTypedArrayLength
+# CHECK: = Less {{*}} form=Integers
+# RUN(SHELL): run-in-shell let armed = false, subject; globalThis.keep = (i) => { if (armed && i === 2) { armed = false; Object.defineProperty(subject, "length", { value: 4 }); } }; globalThis.sink = (sum) => { const plain = new Uint8Array([1, 2, 3, 4, 5]); subject = new Uint8Array([1, 2, 3, 4, 5]); let said = sum(plain) + " " + sum(plain); armed = true; print(said + " " + sum(subject) + " " + sum(subject) + " " + sum(plain)); };
+# SHELL: 15 15 10 10 15
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: number, v4: number):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="keep" [isFreeName]
+    v10 = Call v9, -, v4
+    v11 = ElemGet v0, v4
+    v12 = Add v3, v11
+    v13 = Increment v4
+    Jump -> next b1(v12, v13)
+  b3():
+    Return v3
+}

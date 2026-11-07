@@ -1,0 +1,51 @@
+# function values() { return [7] }  function total(list: number[]) { let sum = 0; for (const item of list.values()) sum += item; return sum }  sink(total(register(values)))
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN(SHELL): run-in-shell globalThis.register = values => ({ values }); globalThis.sink = print;
+# SHELL: 7
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="register"
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3 calleeName="total"
+    v6 = PropGet v1 key="sink" [isFreeName]
+    v7 = Call v6, -, v5 calleeName="sink"
+    Return v7
+}
+function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = PropGet v0 key="values"
+    v2 = Call v1, v0 calleeKey="values" calleeName="list.values"
+    v3 = Convert v2 declared={type=anything flags=[IsExpected]}
+    v4 = IteratorOpen v3
+    v5 = Integer integer=0
+    Jump -> next b1(v5)
+  b1(v6):
+    LoopHint
+    v8 = IteratorResume v4
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    Return v6
+  b3() handler=b4():
+    v11 = Add v6, v10
+    Jump -> next b1(v11)
+  b4() role=IterationCleanup subject=v4:
+    v12 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v12
+}
+function f2 name="values" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    v1 = NewArray v0
+    Return v1
+}

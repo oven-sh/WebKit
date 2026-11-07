@@ -1,0 +1,27 @@
+# every caller is known and hands over a double, so with Arrivals the parameter comes raw. The body hears of what Link has proven through Arrivals alone: without it the parameter holds anything there and comes boxed
+# function twice(n) { return n + n; }  twice(1.5)
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: b0({{*}}: {{*}} @Double
+# RUN(WITHHELD): walk f1 mechanisms=-Arrivals-ParameterGuards
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD: b0({{*}}: anything{{*}} @JSValue
+# RUN(CALLS): walk f1 mechanisms=-DirectCalls-ParameterGuards
+# CALLS-LABEL: code f1:Body
+# CALLS: b0({{*}}: anything{{*}} @JSValue
+
+variable g0 name="twice" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Double number=1.5
+    v2 = Call v0, -, v1 calleeName="twice" [isNeverInlined]
+    Return v2
+}
+function f1 name="twice" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Add v0, v0
+    Return v1
+}

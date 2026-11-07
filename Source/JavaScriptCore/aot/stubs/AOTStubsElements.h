@@ -15,11 +15,9 @@ namespace JSC { namespace AOT {
 enum class ElementStoreMode : uint8_t { Strict, Sloppy };
 
 constexpr StubKey getByVal(bool indexIsInteger) { return StubKey(indexIsInteger ? StubFamily::GetByValAtIndex : StubFamily::GetByVal); }
-// The same read for a stub that keeps the registers of its caller: whatever it calls, it saves them first.
 constexpr StubKey getByValKeepingRegisters() { return StubKey(StubFamily::GetByValKeepingRegisters); }
 constexpr StubKey putByVal(bool indexIsInteger, ECMAMode mode) { return StubKey(indexIsInteger ? StubFamily::PutByValAtIndex : StubFamily::PutByVal).withForm(static_cast<uint8_t>(mode.isStrict() ? ElementStoreMode::Strict : ElementStoreMode::Sloppy)); }
 
-// What the type of the receiver at a site leads one to expect.
 enum class ExpectedElements : uint8_t { Int32Array, Uint8Array };
 inline constexpr uint8_t numberOfExpectedElements = 2;
 
@@ -29,7 +27,6 @@ constexpr StubKey putByValExpecting(bool indexIsInteger, ECMAMode mode, Expected
     return StubKey(indexIsInteger ? StubFamily::PutByValAtIndexExpecting : StubFamily::PutByValExpecting).withForm((mode.isStrict() ? 0 : numberOfExpectedElements) + static_cast<uint8_t>(expected));
 }
 
-// Handles 1 to this many bytes.
 inline constexpr unsigned maxBytesMovedByStub = 16;
 constexpr StubKey moveFewBytes() { return StubKey(StubFamily::MoveFewBytes); }
 

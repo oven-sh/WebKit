@@ -1,0 +1,61 @@
+# Whether a list still has the names and the prototype that it was made with only the run shows: one bit of its cell. Where it has, the loop reads it by index, and where it has not the protocol opens the iteration.
+# Each step asks which of the two it is, and rejoins. No step of a for-of stands under the close of its iteration, so nothing is kept in memory: the position says whether the iterator is done.
+# A spread is one operation whatever is spread: its stub asks the same of a list. With Guesses withheld no test is put in, and the loop goes by the protocol.
+# function each(values: number[]) { for (const value of values) keep(value); return [...values]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: [[isArray]]: boolean {{*}} = TypeTest [[values]] testedType=Array
+# CHECK: [[proven]]: Array{{*}} = Narrowed [[values]], [[isArray]]
+# CHECK: = IsPristine [[proven]] builtinClass=Array aspects=[Storage, Names]
+# CHECK: ([[list]]: undefined|Array{{*}}, [[iterator]]: {{*}}, [[next]]: {{*}}):
+# CHECK: ([[position]]: int[0, 34359738368] {{*}}isLoopHead=true
+# CHECK: [[isList]]: boolean {{*}} = TypeTest [[list]] testedType=Array
+# CHECK: Branch [[isList]]
+# CHECK: = GetArrayElement {{*}}level=Expected
+# CHECK-NOT: = IsPristine
+# CHECK: AppendIterable {{*}}[readsListsByIndex]
+# RUN(ARM): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# ARM: = Call [[next]], [[iterator]]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# NEVER-NOT: NewHeapWords
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations
+# WITHHELD-NOT: IsPristine
+# RUN(STILL): walk f1 mechanisms=none+TypedOperations
+# STILL: key="next"
+# RUN(NOCELL): walk f1 mechanisms=none+TypedOperations
+# NOCELL-NOT: NewHeapWords
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="each" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b3(), notTaken b2()
+  b2() handler=b4():
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="keep" [isFreeName]
+    v8 = Call v7, -, v5
+    Jump -> next b1()
+  b3():
+    v9 = NewArray contents=anything
+    AppendSpread v9, v0
+    Return v9
+  b4() role=IterationCleanup subject=v1:
+    v11 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v11
+}

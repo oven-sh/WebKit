@@ -1,0 +1,24 @@
+# function onLeft(x, next, times) { let found = 0; for (let i = 0; i < times; i++) if (x === next()) found++; return found; }   onRight: next() === x   kept: answer = x === next()
+# `x` is expected to be an object, null or undefined. The walk says on which side that operand stands. In a loop the site asks that one operand whether it is a cell and of what kind, compares the bits,
+# and leaves all else to the stub for any two values: none of the tests of both operands and no comparison of two strings stand in line, as they do where nothing is expected (strict-equality-of-unknown-values-compares-no-strings-in-line.ir).
+# PROGRAM-OF: ../answers/strict-equality-in-a-loop-with-what-is-expected-to-be-an-object.ir
+# RUN(CODE): walk f1:Body f2:Body f3:Body mechanisms=all
+# CODE-LABEL: code f1:Body
+# CODE: = StrictEq {{*}}form=Generic [expectsObjectOnLeft]
+# CODE-LABEL: code f2:Body
+# CODE: = StrictEq {{*}}form=Generic [expectsObjectOnRight]
+# CODE-LABEL: code f3:Body
+# CODE: = StrictEq {{*}}form=Generic [expectsObjectOnLeft]
+# RUN: bytes f1:Body f2:Body f3:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: StringsAreEqual
+# CHECK: {{*}} Equal.StrictInFlags
+# CHECK-NOT: StringsAreEqual
+# CHECK-LABEL: unit f2:Body
+# CHECK-NOT: StringsAreEqual
+# CHECK: {{*}} Equal.StrictInFlags
+# CHECK-NOT: StringsAreEqual
+# CHECK-LABEL: unit f3:Body
+# CHECK-NOT: StringsAreEqual
+# CHECK: {{*}} Equal.StrictInFlags
+# CHECK-NOT: StringsAreEqual

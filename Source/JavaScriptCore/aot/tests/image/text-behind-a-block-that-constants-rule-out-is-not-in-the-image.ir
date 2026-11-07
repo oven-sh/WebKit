@@ -1,0 +1,49 @@
+# If the image held what no compiled unit mentions, a text or a pattern that stands only behind an arm which a constant of the build rules out could be read out of the executable
+# enum Mode { On = 1 }  function dead() { return sink("stands only behind the arm", /only-behind-the-arm/) }  function asks() { if (Mode.On !== 1) dead(); }  asks(); asks();
+# Texts, patterns and functions are numbered for the image from what the code of units mentions, and `dead` has no code: Link does not reach it.
+# RUN: image mechanisms=all
+# CHECK: section StringConstants 0
+# CHECK: section RegExps 0
+# RUN(UNITS): units-with-code f1:Body mechanisms=all
+# UNITS: unit f1:Body has no code
+# With Folding withheld Link reaches `dead`, whose own unit names the text. `asks` runs twice: a text of code that runs at most once has no constant.
+# The arm in `asks` is walked with `dead` in line, and the branch on the constant is folded where the machine code is built: nothing leads to the arm's block, it is not generated,
+# and the pattern, which the copy in line alone would name, is not there. If the block were generated all the same, the section would hold it.
+# RUN(BOTH): image mechanisms=-Folding
+# BOTH-NOT: section StringConstants 0
+# BOTH: section RegExps 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0 calleeName="asks" [isNeverInlined]
+    v2 = Call v0 calleeName="asks" [isNeverInlined]
+    v3 = Undefined
+    Return v3
+}
+function f1 name="dead" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = String string="stands only behind the arm"
+    v3 = NewRegExp pattern="only-behind-the-arm"
+    v4 = Call v1, -, v2, v3 calleeName="sink"
+    Return v4
+}
+function f2 name="asks" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    v4 = LogicalNot v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0 calleeName="dead"
+    Jump -> next b2()
+  b2():
+    v6 = Undefined
+    Return v6
+}

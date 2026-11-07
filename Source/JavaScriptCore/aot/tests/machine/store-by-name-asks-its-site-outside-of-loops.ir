@@ -1,0 +1,26 @@
+# function storeIt(object, value) { object.m = value; }
+# A read by name that stays closed has answers at its place. A store had its site in loops alone, and elsewhere asked the shared tables three times over in front of the handler that adds the property: 57 instructions against the dozen of a site.
+# The shell fills the site by coming by often enough, and then changes what lies above the receivers: a record that says "add the property" waits for those objects.
+# LIBRARY: own
+# RUN: bytes f1:Body
+# CHECK-LABEL: unit f1:Body
+# CHECK: InstanceWord SiteCache "main.js" 20 "m"
+# CHECK: PutByIdAtSite.Strict
+# CHECK-NOT: PutById.Strict
+# RUN(SHELL): run-in-shell globalThis.publish = storeIt => { const above = {}; const out = []; let seen = 0; const attempt = value => { const object = Object.create(above); try { storeIt(object, value); return Object.hasOwn(object, "m") ? "own" : "none"; } catch (error) { return error.constructor.name; } }; for (let i = 0; i < 300; i++) attempt(i); out.push(attempt(1)); Object.defineProperty(above, "m", { value: 1, writable: false, configurable: true }); out.push(attempt(2)); delete above.m; out.push(attempt(3)); for (let i = 0; i < 300; i++) attempt(i); Object.defineProperty(above, "m", { set(value) { seen = value; }, configurable: true }); out.push(attempt(4), seen); delete above.m; out.push(attempt(5)); print(out.join()); };
+# SHELL: own,TypeError,own,none,4,own
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="storeIt" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="m" @20
+    Return
+}

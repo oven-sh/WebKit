@@ -1,0 +1,141 @@
+# L0   { raw: 0, get value() { .. }, set value(next) { .. } }   one literal lays both halves, and the object is only read and stored into: both halves are proven, and `raw` beside them is filled
+# L1   { get value() { .. } }  and  { }                         another allocation leaves the name out: nothing is proven
+# L2   { get value() { .. } }  and  { set value(next) { .. } }  every object has an accessor there, and neither half is in every object
+# L3   o = { }; o.value; lay the getter                         the body that makes the object reads the name in front of the definition
+# L4   { get value() { .. } }; delete o.value                   an object loses the property
+# RUN: link fields accesses layouts mechanisms=all
+# CHECK: field L0.0 "raw" {{*}} filled
+# CHECK: field L0.1 "value" {{*}}filled-by-accessors-alone accessor-from-birth
+# CHECK-NOT: field L1.0 "value" {{*}}accessor-from-birth
+# CHECK: field L2.0 "value" {{*}}accessor-from-birth
+# CHECK-NOT: field L3.0 "value" {{*}}accessor-from-birth
+# CHECK-NOT: field L4.0 "value" {{*}}accessor-from-birth
+# CHECK: accessors L0.1 "value" getter=f2 proven setter=f3 proven
+# CHECK-NOT: accessors L1.0 {{*}}proven
+# CHECK-NOT: accessors L2.0 {{*}}proven
+# CHECK-NOT: accessors L3.0 {{*}}proven
+# CHECK-NOT: accessors L4.0 {{*}}proven
+# CHECK: layout L0 {{*}}redefined-by-literals-alone
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="raw" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 fields=[{key="value" declared={type=anything}}] ownFieldCount=1
+layout L2 module=m0 fields=[{key="value" declared={type=anything}}] ownFieldCount=1
+layout L3 module=m0 fields=[{key="value" declared={type=anything}}] ownFieldCount=1
+layout L4 module=m0 fields=[{key="value" declared={type=anything}}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    v2 = NewClosure function=f4
+    v3 = Call v2, -
+    v4 = NewClosure function=f6
+    v5 = Call v4, -
+    v6 = NewClosure function=f9
+    v7 = Call v6, -
+    v8 = NewClosure function=f11
+    v9 = Call v8, -
+    Return v9
+}
+function f1 name="both" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    DefineGetter v1, v2 key="value"
+    v4 = NewClosure function=f3
+    DefineSetter v1, v4 key="value"
+    v6 = FinishObject v1
+    v7 = Integer integer=6
+    PropSet v6, v7 key="value"
+    v9 = PropGet v6 key="value"
+    Return v9
+}
+function f2 name="value" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="raw"
+    Return v1
+}
+function f3 name="value" module=m0 kind=Setter flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="raw"
+    v3 = Undefined
+    Return v3
+}
+function f4 name="leftOut" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L1
+    v1 = NewClosure function=f5
+    DefineGetter v0, v1 key="value"
+    v3 = FinishObject v0
+    v4 = NewObject layout=L1
+    v5 = FinishObject v4
+    v6 = PropGet v3 key="value"
+    v7 = PropGet v5 key="value"
+    v8 = Add v6, v7
+    Return v8
+}
+function f5 name="value" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f6 name="halves" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L2
+    v1 = NewClosure function=f7
+    DefineGetter v0, v1 key="value"
+    v3 = FinishObject v0
+    v4 = NewObject layout=L2
+    v5 = NewClosure function=f8
+    DefineSetter v4, v5 key="value"
+    v7 = FinishObject v4
+    v8 = PropGet v3 key="value"
+    v9 = PropGet v7 key="value"
+    v10 = Add v8, v9
+    Return v10
+}
+function f7 name="value" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f8 name="value" module=m0 kind=Setter flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f9 name="early" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L3
+    v1 = PropGet v0 key="value"
+    v2 = NewClosure function=f10
+    DefineGetter v0, v2 key="value"
+    v4 = FinishObject v0
+    v5 = PropGet v4 key="value"
+    v6 = Add v1, v5
+    Return v6
+}
+function f10 name="value" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f11 name="lost" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L4
+    v1 = NewClosure function=f12
+    DefineGetter v0, v1 key="value"
+    v3 = FinishObject v0
+    v4 = PropGet v3 key="value"
+    v5 = PropDelete v3 key="value"
+    v6 = PropGet v3 key="value"
+    v7 = Add v4, v6
+    Return v7
+}
+function f12 name="value" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}

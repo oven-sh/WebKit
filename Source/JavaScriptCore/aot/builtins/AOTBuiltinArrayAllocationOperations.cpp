@@ -112,15 +112,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithHoles, JSCell*, (Instance* inst
             OPERATION_RETURN(scope, nullptr);
         }
     }
-    OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr, flags & NewArrayWithHolesFlag::lengthIsCapacity ? 0 : static_cast<uint32_t>(length)));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTGrowNewArray, void, (Instance* instance, JSCell* array, uint64_t length))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTGrowNewArray);
-    if (length <= MAX_STORAGE_VECTOR_LENGTH / 2)
-        cellArgument<JSArray>(array, Entry::operationAOTGrowNewArray)->setLength(globalObject, std::max<uint32_t>(length * 2, 8), true);
-    OPERATION_RETURN(scope);
+    OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr, static_cast<uint32_t>(length)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTruncateNewArray, JSCell*, (Instance* instance, JSCell* cell, uint32_t length))

@@ -1,0 +1,33 @@
+# what a read under a key that nobody knows answers is followed no further: each object that lies on the holder is let go there, and the holder is not. What hangs deeper keeps its locks
+# the holder comes to the read through the parameter of a block, beside what the read itself brings round
+# let holder = globalThis; while (more) holder = holder[name]; holder[name] = 1;      Date.now(); new Date().getTimezoneOffset(); new TextEncoder().encode("");
+# RUN: locks
+# CHECK-NOT: locked DateNow
+# CHECK: locked TextEncoderPrototypeEncode constant
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v1 key="now"
+    v3 = Call v2, v1
+    v4 = PropGet v0 key="TextEncoder" [isFreeName]
+    v5 = Construct v4, -
+    v6 = PropGet v5 key="encode"
+    v7 = Call v6, v5
+    v8 = PropGet v0 key="name" [isFreeName]
+    Jump -> next b1(v0)
+  b1(v9):
+    LoopHint
+    v11 = PropGet v0 key="more" [isFreeName]
+    Branch v11 -> taken b2(), notTaken b3()
+  b2():
+    v12 = ElemGet v9, v8
+    Jump -> next b1(v12)
+  b3():
+    v13 = Integer integer=1
+    ElemSet v9, v8, v13
+    Return v3
+}

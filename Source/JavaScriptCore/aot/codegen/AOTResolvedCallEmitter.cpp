@@ -17,17 +17,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-ResolvedCallEmitter::ResolvedCallEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 void ResolvedCallEmitter::generateResolveCallTarget(const ValueContext& value)
 {
     StubKey stub = resolveCallValue(value->argumentCount());
     CallOptions options { .pureFunction = pureFunction(PureOperation::ResolveCallTarget, stub.count(), true) };
-    LValue target = callStub(value, stub, { in<Boxed>(value->calleeOperand()).value() }, options).first;
-    define(value, Operand(value.representation(), target));
+    define(value, Pointer(callStub(value, stub, { in<Boxed>(value->calleeOperand()).value() }, options).first));
 }
 
 void ResolvedCallEmitter::generateCallResolved(const ValueContext& value)
@@ -49,7 +43,8 @@ void ResolvedCallEmitter::generateCallResolved(const ValueContext& value)
         .count = m_out.constInt64(static_cast<int64_t>(arguments.size())),
         .arguments = values.span(),
     };
-    define(value, emitter<CallEmitter>().callByConvention(value, call, { .throwSite = CallEmitter::siteThatNamesCallee(value) }));
+    CallEmitter& calls = emitter<CallEmitter>();
+    define(value, calls.callByConvention(value, call, { .throwSite = calls.siteThatNamesCallee(value) }));
 }
 
 } } } // namespace JSC::AOT::Typed

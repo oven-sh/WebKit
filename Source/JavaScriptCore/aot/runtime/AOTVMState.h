@@ -9,20 +9,21 @@
 
 #include "AOTVector.h"
 #include <JavaScriptCore/CollectionScope.h>
-#include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <memory>
 #include <wtf/BitVector.h>
-#include <wtf/Box.h>
+#include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/UniqueArray.h>
+#include <wtf/text/StringHash.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC {
 
 class CallFrame;
-class JSCell;
 class JSGlobalObject;
+class JSObject;
 class Structure;
 class VM;
 
@@ -30,25 +31,19 @@ namespace AOT {
 
 class CacheRegistry;
 class CallSiteCache;
-class CheckedFrameCells;
 class Image;
 class Modules;
 class PagesOfVM;
 class ProgramIdentifiers;
 class RegExpLiterals;
-class RuntimeReporter;
+class RuntimeCounts;
 class RuntimeTable;
 class VMPropertyCaches;
+struct CyclesOfImports;
 struct FormatPatternState;
 struct FunctionTables;
-struct QuotesOfPlaces;
 struct Instance;
-struct MockedModules;
-struct OperationsBeingValidated;
-struct RecheckedCells;
-struct RuntimeCounters;
 
-// Every live Structure whose objects store elements without asking the objects above them.
 class StructuresWithFastIndexing {
 public:
     void add(Structure* structure) { m_structures.append(structure); }
@@ -59,22 +54,15 @@ private:
     Vector<Structure*> m_structures;
 };
 
-// Reads like the std::unique_ptr that owns the object: VMState::PartsOfImage.
-template<typename T>
-class PartOfRunningImage {
-public:
-    T* get() const { return m_part; }
-    T* operator->() const { return m_part; }
-    T& operator*() const { return *m_part; }
-    explicit operator bool() const { return !!m_part; }
-    void operator=(T* part) { m_part = part; }
-
-private:
-    T* m_part { nullptr };
-};
-
 struct FormatPatternStateDeleter {
     void operator()(FormatPatternState*) const;
+};
+
+struct CountedFiles {
+    using Counts = Vector<uint64_t>;
+
+    UncheckedKeyHashMap<String, std::unique_ptr<Counts>> byDescription;
+    Vector<Counts*> byModule;
 };
 
 struct VMState {
@@ -83,74 +71,22 @@ public:
     VMState();
     ~VMState();
 
-    // What a VM has once for each image that it runs. A VM runs several where images share their realms (Image::above()), and then the image that runs is the one
-    // whose code was entered last: an operation finds the tables of its caller in the members of VMState, whichever image the caller is in.
-    struct PartsOfImage {
-        PartsOfImage();
-        PartsOfImage(PartsOfImage&&);
-        ~PartsOfImage();
-
-        const Image* image { nullptr };
-        std::unique_ptr<RuntimeTable> runtimeTable;
-        std::unique_ptr<VMPropertyCaches> propertyCaches;
-        std::unique_ptr<CallSiteCache> callSiteCache;
-        std::unique_ptr<FunctionTables> functionTables;
-        std::unique_ptr<RegExpLiterals> regExpLiterals;
-        // Where a function of the engine returns to when code of the image has called it: StubFrameKind::EngineCallee.
-        const void* returnAddressOfEngineCallee { nullptr };
-        // The sets of mocked modules that the last realm went through, in that order.
-        Vector<Box<MockedModules>> mockedModules;
-        // By the number of a module of the image that stands for a file of an image below: Modules::resolvedKey(). Images do not change, and each realm would make the keys anew.
-        Vector<Identifier> keysOfFilesInImagesBelow;
-        // By the same number: Modules::placeInRealm().
-        Vector<uint32_t> filesInImagesBelow;
-        BitVector filesWithKnownFirstLoad;
-        BitVector filesFirstLoadedSynchronously;
-    };
-
     void attachImage(VM&);
-    // A Worker whose file is in no image runs apart from them. What it interprets is counted like everybody's.
     void countWithoutImage(VM&);
-    JS_EXPORT_PRIVATE void run(const Image&);
-    // The engine jumps to an adapter from many places. Where images share realms, the adapter itself sees to it that its image runs, and that the one before runs again when its frame is left.
-    // It does both in place, and calls only for room to note one more frame.
-    void runImageOfAdapter(const Image&, const void* adapterFrame);
-    void restoreImageBelowAdapter();
-    // A throw leaves the frame: whatever lies below it is gone, the frames of adapters too, by whichever way the walk has passed them. Where images share realms.
-    ALWAYS_INLINE void didLeaveFramesBelow(const void* frame)
-    {
-        if (adapterFrameThatRestoresImage < frame) [[unlikely]]
-            restoreImagesBelowAdaptersBelow(frame);
-    }
-    void restoreImagesBelowAdaptersBelow(const void* frame);
-    void makeRoomForImagesBelowAdapters();
-    PartsOfImage& partsOfRunningImage();
     void willShutDownHeap();
     void releaseImage(VM&);
     template<typename Visitor> void visitAggregate(Visitor&);
 
     void didChangeInstances()
     {
-        // Never in a VM that runs several images: whoever finds none asks which image it is about.
-        onlyInstance = instances.size() == 1 && !hasSeveralImages ? instances.first() : nullptr;
+        onlyInstance = instances.size() == 1 ? instances.first() : nullptr;
         instanceOfRecentRun = { };
     }
 
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
-    static constexpr ptrdiff_t offsetOfImage() { return OBJECT_OFFSETOF(VMState, image); }
-    static constexpr ptrdiff_t offsetOfPartsOfImageThatRuns() { return OBJECT_OFFSETOF(VMState, partsOfImageThatRuns); }
-    static constexpr size_t sizeOfWordsOfImageThatRuns() { return OBJECT_OFFSETOF(VMState, partsOfImageThatRuns) - OBJECT_OFFSETOF(VMState, image); }
-    static constexpr ptrdiff_t offsetOfCurrentImageOfThread() { return OBJECT_OFFSETOF(VMState, currentImageOfThread); }
-    static constexpr ptrdiff_t offsetOfAdapterFrameThatRestoresImage() { return OBJECT_OFFSETOF(VMState, adapterFrameThatRestoresImage); }
-    static constexpr ptrdiff_t offsetOfEndOfImagesBelowAdapters() { return OBJECT_OFFSETOF(VMState, endOfImagesBelowAdapters); }
-    static constexpr ptrdiff_t offsetOfReturnAddressOfEngineCalleeInParts() { return OBJECT_OFFSETOF(PartsOfImage, returnAddressOfEngineCallee); }
-    static constexpr ptrdiff_t offsetOfEndOfRoomForImagesBelowAdapters() { return OBJECT_OFFSETOF(VMState, endOfRoomForImagesBelowAdapters); }
     static constexpr ptrdiff_t offsetOfEntriesWithSeveralInstances() { return OBJECT_OFFSETOF(VMState, entriesWithSeveralInstances); }
     static constexpr ptrdiff_t offsetOfRegExpMatchOutput() { return OBJECT_OFFSETOF(VMState, regExpMatchOutput); }
-    static constexpr ptrdiff_t offsetOfParentOfSuperCall() { return OBJECT_OFFSETOF(VMState, parentOfSuperCall); }
-    static constexpr ptrdiff_t offsetOfNewTargetOfSuperCall() { return OBJECT_OFFSETOF(VMState, newTargetOfSuperCall); }
-    // regExpMatchOutput has room for the literals of the image, and for any pattern made at run time with so many groups.
     static constexpr unsigned maxGroupsInRegExpMatchOutput = 15;
 
     struct PolledInstances {
@@ -158,44 +94,36 @@ public:
         Vector<Instance*, 1> instances WTF_GUARDED_BY_LOCK(lock);
     };
 
-    // The words of the PartsOfImage that runs, in its order: an adapter copies them.
     const Image* image { nullptr };
-    PartOfRunningImage<RuntimeTable> runtimeTable;
-    PartOfRunningImage<VMPropertyCaches> propertyCaches;
-    PartOfRunningImage<CallSiteCache> callSiteCache;
-    PartOfRunningImage<FunctionTables> functionTables;
-    PartOfRunningImage<RegExpLiterals> regExpLiterals;
-    const PartsOfImage* partsOfImageThatRuns { nullptr };
-    // Where Image::currentOfThread() reads, on the thread of the VM.
-    const Image** currentImageOfThread { nullptr };
+    std::unique_ptr<PagesOfVM> pages;
+    std::unique_ptr<CacheRegistry> caches;
+    std::unique_ptr<RuntimeCounts> counts;
+    std::unique_ptr<RuntimeTable> runtimeTable;
+    std::unique_ptr<VMPropertyCaches> propertyCaches;
+    std::unique_ptr<CallSiteCache> callSiteCache;
+    std::unique_ptr<FunctionTables> functionTables;
+    std::unique_ptr<CyclesOfImports> cyclesOfImports;
+    std::unique_ptr<RegExpLiterals> regExpLiterals;
+    std::unique_ptr<FormatPatternState, FormatPatternStateDeleter> formatPatternState;
+    BitVector filesWithKnownFirstLoad;
+    BitVector filesFirstLoadedSynchronously;
+    BitVector filesWhoseTextHostKeeps;
+    BitVector builtinMembersWrittenInSomeRealm;
+    BitVector builtinHoldersWithNamesAddedInSomeRealm;
     bool hasCompiledCode { false };
-    bool hasSeveralImages { false };
-    struct ImageBelowAdapter {
-        const void* adapterFrame;
-        const PartsOfImage* parts;
-    };
-    // The innermost adapter frame that changed which image runs. Where images share realms and there is none: aboveEveryAdapterFrame().
-    const void* adapterFrameThatRestoresImage { nullptr };
-    static const void* aboveEveryAdapterFrame() { return reinterpret_cast<const void*>(std::numeric_limits<uintptr_t>::max()); }
-    // A stack with one entry for each such frame, on top of an entry for aboveEveryAdapterFrame().
-    ImageBelowAdapter* endOfImagesBelowAdapters { nullptr };
-    ImageBelowAdapter* endOfRoomForImagesBelowAdapters { nullptr };
-    UniqueArray<ImageBelowAdapter> imagesBelowAdapters;
-    bool validatesRuntime { false };
     bool nativeTestChangesObjectsUnseen { false };
     bool didFinishCollection { false };
-    // Some object has become a dictionary for the names that it is being given.
     bool hasObjectsBeingFilled { false };
-    // It is marked as a prototype when it is created, but nothing inherits from it until the class definition ends. Only compared with.
+    bool verifiesFastPathAnswers { false };
+    bool someClassHasPrivateNames { false };
+    bool somePrivateNameLiesBesideFields { false };
+    bool someTextKnowsPrivateNames { false };
     JSObject* classPrototypeBeingDefined { nullptr };
-    // Its Date.prototype has the members that JSON.stringify reads on a date, and keeps them. Only compared with, never read through: a realm may be gone.
     JSGlobalObject* realmWhoseDatesAreWrittenInPlace { nullptr };
-    // They run the CommonJS files of a graph in front of the jobs in which the loader of `bun run` would.
     Modules* modulesWhoseFilesRunAheadOfLoader { nullptr };
     uintptr_t structureIDBase { 0 };
     Instance* onlyInstance { nullptr };
     uint64_t entriesWithSeveralInstances { 0 };
-    // The frame pointers from lowestFrame to adapterFrame are those of one run.
     struct InstanceOfRun {
         uint64_t entries { 0 };
         void* entryFrame { nullptr };
@@ -204,96 +132,29 @@ public:
         const void* adapterFrame { nullptr };
     };
     InstanceOfRun instanceOfRecentRun;
-    // The frame of the host function that throws because a class was called without `new`, while it makes the error.
     CallFrame* classCalledWithoutNew { nullptr };
-    // Set from when compiled code's `super(..)` enters a native constructor until that constructor requests the Structure for the new object, or returns. Only compared, never dereferenced.
-    JSCell* parentOfSuperCall { nullptr };
-    JSCell* newTargetOfSuperCall { nullptr };
-    // In the innermost native code that has asked for the Exception of what it calls, and so may list the frames of the throw.
     void* stackPointerOfExceptionTaker { nullptr };
-    // Of the innermost call in compiled code when the heap was last full and collected, or could have.
     const void* returnAddressOfCallThatCollected { nullptr };
-    // While an import() runs a module that `bun run` runs from a job: no stack trace lists the frames from here on down.
     void* stackPointerOfImport { nullptr };
-    // What is on top of the stack while an import() of compiled code asks the loader. Bytecode calls a host function for that, and its frame is the first that a stack trace skips.
     CallFrame* frameOfImportThatAsksLoader { nullptr };
-    // While the host loads what a file of a test run asked for under a name nobody knows, and an executable would hold the file too.
     bool askerLoadsCompiledFilesAlone { false };
-    // An import() of compiled code asks the host what its name stands for.
     bool isResolvingImportCall { false };
-    // A require() runs the mocks that wait below what it loads. It cannot wait for them.
     bool requireRunsMocks { false };
-    std::unique_ptr<PagesOfVM> pages;
     std::unique_ptr<ProgramIdentifiers> identifiers;
-    std::unique_ptr<CacheRegistry> caches;
-    std::unique_ptr<RuntimeCounters> counters;
-    std::unique_ptr<RuntimeReporter> reporter;
-    std::unique_ptr<RecheckedCells> recheckedCells;
-    CheckedFrameCells* checkedFrameCells { nullptr };
-    const void* lowestFrameOfCheckedCells { nullptr };
-    std::unique_ptr<FormatPatternState, FormatPatternStateDeleter> formatPatternState;
-    // By Image::position(). Its size never changes while the VM runs code, so the collector's threads may read it.
-    Vector<PartsOfImage, 1> parts;
+    CountedFiles countedFiles;
     UniqueArray<int> regExpMatchOutput;
     WriteBarrier<Structure> moduleRecordStructure;
     WriteBarrier<Structure> stringBuilderStorageStructure;
+    WriteBarrier<Structure> poisonedCellStructure;
     Lock instancesLock;
     Vector<Instance*, 1> instances;
     Vector<Instance*> instancesToDestroy;
     StructuresWithFastIndexing structuresWithFastIndexing;
     PolledInstances polledInstances;
-    // What error messages have quoted so far: AOTErrorMessages.cpp, which alone knows the type.
-    std::unique_ptr<QuotesOfPlaces, void (*)(QuotesOfPlaces*)> quotesOfPlaces { nullptr, nullptr };
-    // Modules::holdText().
-    uint32_t numberOfTextsThatWait { 0 };
-    uint32_t numberOfCallsThatWaitApart { 0 };
-    uint32_t numberOfTextsAskedFor { 0 };
-    uint32_t turnOfTexts { 0 };
-    // One clock for the loads of graphs, the mocks that leave a module alone and the beginnings of test files, in every image: Modules::seesMockOf().
     uint32_t momentOfLoads { 0 };
     uint32_t momentOfTestFile { 0 };
-    // AOTRuntimeValidation.cpp, which alone knows the type.
-    std::unique_ptr<OperationsBeingValidated, void (*)(OperationsBeingValidated*)> operationsBeingValidated { nullptr, nullptr };
 };
 
-static_assert(sizeof(PartOfRunningImage<RuntimeTable>) == sizeof(void*));
-#define AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(part) static_assert(OBJECT_OFFSETOF(VMState, part) - OBJECT_OFFSETOF(VMState, image) == OBJECT_OFFSETOF(VMState::PartsOfImage, part))
-AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(image);
-AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(runtimeTable);
-AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(propertyCaches);
-AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(callSiteCache);
-AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(functionTables);
-AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(regExpLiterals);
-#undef AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE
-static_assert(!OBJECT_OFFSETOF(VMState::PartsOfImage, image) && OBJECT_OFFSETOF(VMState::PartsOfImage, regExpLiterals) + sizeof(void*) == VMState::sizeOfWordsOfImageThatRuns());
-
-bool belongsToOtherImageSlow(VM&, const JSCell*);
-// For whoever has no VM at hand: in the VM of this thread, if it has one that runs compiled code.
-JS_EXPORT_PRIVATE void runImageOnThisThread(const Image&);
-
-// While it lives, the image is the one that runs.
-class RunningImageScope {
-    WTF_MAKE_NONCOPYABLE(RunningImageScope);
-    WTF_FORBID_HEAP_ALLOCATION;
-public:
-    ALWAYS_INLINE RunningImageScope(VMState& state, const Image* image)
-        : m_state(state)
-    {
-        if (state.image != image) [[unlikely]] {
-            m_previous = state.image;
-            state.run(*image);
-        }
-    }
-    ALWAYS_INLINE ~RunningImageScope()
-    {
-        if (m_previous) [[unlikely]]
-            m_state.run(*m_previous);
-    }
-
-private:
-    VMState& m_state;
-    const Image* m_previous { nullptr };
-};
 static_assert(sizeof(UniqueArray<int>) == sizeof(void*));
 
 template<typename Visitor>
@@ -301,6 +162,7 @@ void VMState::visitAggregate(Visitor& visitor)
 {
     visitor.append(moduleRecordStructure);
     visitor.append(stringBuilderStorageStructure);
+    visitor.append(poisonedCellStructure);
 }
 
 } } // namespace JSC::AOT

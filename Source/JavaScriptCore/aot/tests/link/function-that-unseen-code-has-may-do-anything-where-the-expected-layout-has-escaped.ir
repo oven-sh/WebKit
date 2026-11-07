@@ -1,0 +1,28 @@
+# the same function, and an object of the declared layout is handed to unseen code too: an accessor may lie on it by now, so the argument being as expected says nothing of what the store finds
+# function move(s: Shape, w) { s.w = w; }   sink(move); sink({ w: 0 });
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}mayCallUnknownCode
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: given-arguments
+
+layout L0 module=m0 fields=[{key="w" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = Integer
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = Call v1, -, v6
+    Return v7
+}
+function f1 name="move" module=m0 length=2 thisType={type=anything} parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="w"
+    v3 = Undefined
+    Return v3
+}

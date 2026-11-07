@@ -1,0 +1,84 @@
+# What is held of an operator that converts a function which unseen code has got is what the built-ins answer, whether the function comes to the operator in front of its escape or behind it
+# function soon() {}  function late() {}  function minusSoon(f) { return -f; }  function minusLate(f) { return -f; }  function a(x) { return x.a; }  function b(x) { return x.b; }  function c(x) { return x.c; }  function d(x) { return x.d; }  sink(soon);  sink(late);  minusSoon(soon);  minusLate(d(c(b(a({ a: { b: { c: { d: late } } } })))));
+# The conversion is a call by name for each key of the protocol, and on a function it also calls whatever unseen code may have laid there once the function has escaped. That is there by escape alone. late() comes to its operator through four reads, each a round behind the last, so it is first asked for behind the escape. If what may lie on it then arrived in sight, a bigint would be held of -late and not of -soon
+# RUN: link held functions mechanisms=all
+# CHECK: function f3 {{*}}result=number returns
+# CHECK: function f4 {{*}}result=number returns
+
+layout L0 module=m0 fields=[{key="d" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2 calleeName="sink"
+    v5 = Call v1, -, v3 calleeName="sink"
+    v6 = NewClosure function=f3
+    v7 = Call v6, -, v2 calleeName="minusSoon"
+    v8 = NewObject -, v3 layout=L0 fields=[0]
+    v9 = FinishObject v8
+    v10 = NewObject -, v9 layout=L1 fields=[0]
+    v11 = FinishObject v10
+    v12 = NewObject -, v11 layout=L2 fields=[0]
+    v13 = FinishObject v12
+    v14 = NewObject -, v13 layout=L3 fields=[0]
+    v15 = FinishObject v14
+    v16 = NewClosure function=f5
+    v17 = Call v16, -, v15 calleeName="a"
+    v18 = NewClosure function=f6
+    v19 = Call v18, -, v17 calleeName="b"
+    v20 = NewClosure function=f7
+    v21 = Call v20, -, v19 calleeName="c"
+    v22 = NewClosure function=f8
+    v23 = Call v22, -, v21 calleeName="d"
+    v24 = NewClosure function=f4
+    v25 = Call v24, -, v23 calleeName="minusLate"
+    v26 = Undefined
+    Return v26
+}
+function f1 name="soon" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="late" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="minusSoon" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Negate v0
+    Return v1
+}
+function f4 name="minusLate" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Negate v0
+    Return v1
+}
+function f5 name="a" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+function f6 name="b" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="b"
+    Return v1
+}
+function f7 name="c" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="c"
+    Return v1
+}
+function f8 name="d" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="d"
+    Return v1
+}

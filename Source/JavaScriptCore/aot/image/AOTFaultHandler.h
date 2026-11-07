@@ -8,16 +8,15 @@
 #if ENABLE(AOT)
 
 #include "JSExportMacros.h"
+#include <cstdint>
 #include <wtf/PlatformRegisters.h>
 
 namespace JSC { namespace AOT {
 
 void installFaultHandler();
 
-// A thread that has run out of stack has none left for whoever reports that.
 void takeFaultsOfThisThreadOnAnotherStack();
 
-// Whether compiled code raised this access fault on purpose. If so, the registers continue where that code handles it.
 JS_EXPORT_PRIVATE bool handleAccessFault(void* faultingAddress, PlatformRegisters&);
 
 } } // namespace JSC::AOT

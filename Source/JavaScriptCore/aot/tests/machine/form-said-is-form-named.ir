@@ -1,0 +1,71 @@
+# function tenths(x) { return +x % 0.1 }
+# function tiny(x) { return +x % 1e-200 }
+# function power(x, y) { return (+x) ** (+y) }
+# One form per operation and state of knowledge, named in the schema. The emitter of Mod says what it knows of the divisor and which form it writes: in line for a constant with a fraction, the call of the library
+# for a constant whose reciprocal is out of reach. The rows of ir/schema/operations.def name the same forms, so nothing is listed as not named.
+# The control: an emitter that says another form than the schema names is listed, whether the operation has several forms (Mod) or one (Call).
+# OPTIONS: report=Flow mechanisms=none+TypedOperations
+# RUN: bytes-by-form
+# CHECK-NOT: the build failed
+# CHECK-NOT: not named:
+# CHECK: Mod NumbersAndDivisorWithFraction Anywhere Open 1 [[inLine]] [[inLine]]
+# CHECK-NOT: not named:
+# CHECK: Mod NumbersAndOtherDivisor Anywhere Runtime 1 [[byLibrary]] [[byLibrary]]
+# CHECK-NOT: not named:
+# CHECK: Pow Numbers Anywhere Runtime 1 [[power]] [[power]]
+# CHECK-NOT: not named:
+# CHECK: ToNumber Generic Anywhere Closed 4 [[conversions]] [[oneConversion]]
+# CHECK-NOT: not named:
+# CHECK: every form is named
+# CHECK: all forms
+# RUN(LIE): bytes-by-form says=Mod:Closed
+# LIE-NOT: the build failed
+# LIE-NOT: Mod Numbers
+# LIE: Mod Always Anywhere Closed 2 [[bytes]]
+# LIE: not named: Mod Always Anywhere Closed 2
+# LIE: forms not named 1
+# RUN(ONE): bytes-by-form says=Call:Open
+# ONE-NOT: the build failed
+# ONE: Call Always Anywhere Open [[calls]] [[bytes]]
+# ONE: not named: Call Always Anywhere Open [[calls]]
+# ONE: forms not named 1
+# RUN(AGAIN): bytes-by-form
+# AGAIN-NOT: not named:
+# AGAIN: every form is named
+
+variable g0 name="tenths" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="tiny" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="power" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = GetModuleVariable variable=g0
+    v2 = GetModuleVariable variable=g1
+    v3 = GetModuleVariable variable=g2
+    v4 = PropGet v0 key="start" [isFreeName]
+    v5 = Call v4, -, v1, v2, v3 calleeName="start"
+    Return v5
+}
+function f1 name="tenths" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    v2 = Double number=0.1
+    v3 = Mod v1, v2
+    Return v3
+}
+function f2 name="tiny" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    v2 = Double number=1e-200
+    v3 = Mod v1, v2
+    Return v3
+}
+function f3 name="power" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = ToNumber v0
+    v3 = ToNumber v1
+    v4 = Pow v2, v3
+    Return v4
+}

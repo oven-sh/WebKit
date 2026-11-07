@@ -1,0 +1,8 @@
+# the same function with guesses withheld: no test is put in, and every operator is closed
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-7: = Mul {{*}}form=Generic
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: TypeTest
+# NEVER-NOT: form=Numbers
+# PROGRAM-OF: written-type-opens-one-test.ir

@@ -1,15 +1,13 @@
-# A command on the types of f0 takes no argument: it reports the first word and runs nothing. Without an argument it asks for f0. A list of layouts is refused as a whole word.
-# FORM: Prepared
+# An argument of a command on types is a type as ir/AOTTypeText.h spells it, and counts on behind the parameters of f0. A word that is no type is reported, the first such word alone, and nothing runs.
+# `t0` is a short name for sections and for other commands, and a layout that the program lacks is no type. A list of layouts is refused as a whole word.
 # RUN(SUBSET): subset declared
-# RUN(UNION): union L0
-# RUN(WIDENING): union-widening 3
+# RUN(UNION): union L9
 # RUN(INTERSECT): intersect t0
 # RUN(CAST): cast t0 t1
 # RUN(CANONICAL): canonical -
 # RUN(REP): rep Cell
-# RUN(MEMBERS): members L0
+# RUN(MEMBERS): members number L9
 # RUN(TRUTHY): truthy t0
-# RUN(NOFUNCTION): subset
 # RUN(RANGE): layout-set L4000000000
 # RUN(OVERFLOW): layout-set L4294967296
 # RUN(SIGN): layout-set L+0
@@ -18,25 +16,22 @@
 # RUN(PREFIX): layout-set 0
 # RUN(FIRST): layout-set L0 sealed L1
 # SUBSET: error: bad argument declared
-# SUBSET-NOT: no function
-# UNION: error: bad argument L0
-# UNION-NOT: no function
-# WIDENING: error: bad argument 3
-# WIDENING-NOT: no function
+# SUBSET-NOT: laws hold
+# UNION: error: bad argument L9
+# UNION-NOT: laws hold
 # INTERSECT: error: bad argument t0
-# INTERSECT-NOT: no function
+# INTERSECT-NOT: laws hold
 # CAST: error: bad argument t0
 # CAST-NOT: argument
 # CANONICAL: error: bad argument -
-# CANONICAL-NOT: no function
+# CANONICAL-NOT: laws hold
 # REP: error: bad argument Cell
-# REP-NOT: no function
-# MEMBERS: error: bad argument L0
+# REP-NOT: laws hold
+# MEMBERS-NOT: members
+# MEMBERS: error: bad argument L9
 # MEMBERS-NOT: members
 # TRUTHY: error: bad argument t0
-# TRUTHY-NOT: no function
-# NOFUNCTION-NOT: argument
-# NOFUNCTION: no function
+# TRUTHY-NOT: laws hold
 # RANGE: error: bad argument L4000000000
 # OVERFLOW: error: bad argument L4294967296
 # SIGN: error: bad argument L+0
@@ -47,4 +42,7 @@
 # FIRST: error: bad argument sealed
 # FIRST-NOT: argument
 
+module m0 path="main.js" displayPath="main.js"
 layout L0
+function f0 name="types" role=Signature results=[{type=undefined}]
+entry module=m0

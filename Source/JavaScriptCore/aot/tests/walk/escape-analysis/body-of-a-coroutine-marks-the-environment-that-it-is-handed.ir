@@ -1,0 +1,54 @@
+# `start` goes on while `later` is suspended, and comes to where it has done with its scope. The saved frame of `later` holds that scope, so the body of the coroutine sets the byte where it is entered, in front of everything else
+# function start(v) { let held = v - 1; function bump() { held++; } async function later() { await 0; return held; } bump(); if (v) return later(); return held; }  sink(start);
+# RUN: walk f2:CoroutineBody mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: MarkEnvironmentEscaped
+# CHECK: = AwaitBySavingFrame
+# RUN(ALL): walk f2:CoroutineBody mechanisms=all
+# ALL-LABEL: code f2:CoroutineBody
+# ALL: MarkEnvironmentEscaped
+# ALL: = AwaitBySavingFrame
+# RUN(WITHHELD): walk f2:CoroutineBody mechanisms=-EscapeAnalysis
+# WITHHELD-NOT: MarkEnvironmentEscaped
+
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="held"}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="sink"
+    Return v3
+}
+function f1 name="start" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Decrement v0
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = CallDirect v2 function=f3
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = NewClosure v2 function=f2
+    v6 = Call v5 calleeName="later"
+    Return v6
+  b2():
+    v7 = GetEnvironmentField v2 layout=L0
+    Return v7
+}
+function f2 name="later" module=m0 flags=[IsAsync] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = Integer
+    v2 = Await v1
+    v3 = GetEnvironmentField v0 layout=L0
+    Return v3
+}
+function f3 name="bump" module=m0 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = Increment v1
+    PutEnvironmentField v0, v2 layout=L0
+    v4 = Undefined
+    Return v4
+}

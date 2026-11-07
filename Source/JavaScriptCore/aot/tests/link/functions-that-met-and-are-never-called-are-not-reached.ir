@@ -1,0 +1,35 @@
+# If a function counted as reached as soon as it met another function at one place, a helper that only looks at the functions it is handed would bring the bodies of all of them into the executable, and with them whatever those bodies load.
+# function look(f) { return typeof f; }  function one() { return 1; }  function two() { return 2; }  look(one); look(two);
+# The two meet at the parameter of `look`, so Link no longer tells them apart. Nobody calls what `look` is handed.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK: function f2 unreached
+# CHECK: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v0, -, v1 calleeName="look"
+    v4 = Call v0, -, v2 calleeName="look"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="look" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeOf v0
+    Return v1
+}
+function f2 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="two" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

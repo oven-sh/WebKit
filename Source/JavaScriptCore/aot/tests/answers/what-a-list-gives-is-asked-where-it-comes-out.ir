@@ -1,0 +1,79 @@
+# const rows = [{ kept: 1 }];
+# rows.push(id("text"));
+# function read(at) { const row = rows[at]; return row === undefined ? "none" : row.kept; }
+# print(read(0));
+# print(read(1));
+# print("went on");
+# WHAT A CONTAINER HOLDS HAS NO DOOR: native code stores in lists, Maps and Sets, so no list of the roads into one can be made. What Link says of it is asked of each value where it comes out: in every build, and a misfit stops by name.
+# THE RED CONTROL. The lie, testing=UnseenCodeAnswersUndefined (false-proofs-are-stopped-where-the-value-comes-in.ir): Link takes what the shell's `id` gives for undefined,
+# so all that it sees go into the container is an object of one layout, and undefined. The read of `kept` off the text took a word out of the text's cell for a slot: SIGSEGV.
+# OPTIONS: testing=UnseenCodeAnswersUndefined
+# RUN(FORM): walk f1 mechanisms=all
+# FORM: CheckProof {{*}} source=Contents
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 1
+# ALL-NEXT: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ALL-NOT: went on
+# ALL: crashed with
+# RUN(CALLS): run-in-shell mechanisms=-Inlining
+# CALLS: 1
+# CALLS-NEXT: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# CALLS-NOT: went on
+# CALLS: crashed with
+
+layout L0 module=m0 fields=[{key="kept" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="rows" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="id" [isFreeName]
+    v4 = Integer integer=1
+    v5 = Integer integer=1
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = NewArray v7 contents=anything
+    PutModuleVariable v8 variable=g0
+    v10 = PropGet v8 key="push"
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="id" [isFreeName]
+    v13 = String string="text"
+    v14 = Call v12, -, v13 calleeName="id"
+    v15 = Call v10, v8, v14 calleeKey="push" calleeName="rows.push"
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="print" [isFreeName]
+    v18 = Integer
+    v19 = Call v1, -, v18 calleeName="read"
+    v20 = Call v17, -, v19 calleeName="print"
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="print" [isFreeName]
+    v23 = Integer integer=1
+    v24 = Call v1, -, v23 calleeName="read"
+    v25 = Call v22, -, v24 calleeName="print"
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="print" [isFreeName]
+    v28 = String string="went on"
+    v29 = Call v27, -, v28 calleeName="print"
+    v30 = Undefined
+    Return v30
+}
+function f1 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="rows"
+    v3 = ElemGet v2, v0
+    v4 = TypeTest v3 testedType=undefined
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = String string="none"
+    Jump -> next b3(v6)
+  b2(v7):
+    v8 = NarrowByTest v3, v7
+    v9 = PropGet v8 key="kept"
+    Jump -> next b3(v9)
+  b3(v10):
+    Return v10
+}
+entry module=m0

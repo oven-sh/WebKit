@@ -1,0 +1,30 @@
+# const options = { port: 0 }; hidden(options); Bun.serve(options); Date.now();
+# Bun.serve(options) and Date.now() are resolved in one pass. What the one notes (it may run code, so members of the global object may be written) is not seen by the other in that pass, whichever comes first:
+# a note waits until the pass is over, on one thread as on several. While a note acted at once on one thread, Date.now() behind Bun.serve() found `Date` no longer taken for constant, and its row was never followed:
+# `called DateNow` stood in two orders of the worklist and was missing in the one that a build has.
+# `run` holds the three orders of the worklist against each other.
+# RUN: link lookups
+# CHECK: lookup called BunServe
+# CHECK: lookup called DateNow
+# CHECK: lookup let-go DateNow
+
+layout L0 module=m0 fields=[{key="app" declared={type=anything} flags=[IsNeverWritten]}, {key="port" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = PropGet v1 key="serve"
+    v3 = NewObject layout=L0
+    v4 = Integer
+    PropDefine v3, v4 key="port"
+    v6 = FinishObject v3
+    v7 = PropGet v0 key="hidden" [isFreeName]
+    v8 = Call v7, -, v6
+    v9 = Call v2, v1, v6 calleeKey="serve"
+    v10 = PropGet v0 key="Date" [isFreeName]
+    v11 = PropGet v10 key="now"
+    v12 = Call v11, v10 calleeKey="now"
+    Return v12
+}

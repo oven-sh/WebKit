@@ -8,57 +8,29 @@
 
 #if ENABLE(AOT)
 
-#include "AOTConversionEmitter.h"
+#include "AOTClosureTestEmitter.h"
+#include "AOTCompileUnit.h"
 #include "AOTEffectsDeclared.h"
-#include "AOTPromisedResults.h"
-#include "AOTRuntimeValidationEmitter.h"
+#include "AOTOpcodeSets.h"
+#include "AOTStubsValues.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTypeTestPlan.h"
-#include "B3UpsilonValue.h"
+#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-static_assert(declaredBoundOf(RuntimeOperation::ReportMismatch).mayThrow && declaredBoundOf(Opcode::ReportMismatch).mayThrow, "the report reads the position of its call site, and a call has a site only if the operation and the callee declare throws");
-
-void CastEmitter::generateAssumeType(const ValueContext& value)
-{
-    if (generator().checksProofs())
-        emitter<RuntimeValidationEmitter>().checkAssumedType(value);
-    define(value, get(value->valueOperand()));
-}
-
-void CastEmitter::generateReportMismatch(const ValueContext& value)
-{
-    ValueID source = value->valueOperand();
-    Operand operand = get(source);
-    const TypeTestPlan& plan = planFor(source, value->expectedType().predicted());
-    if (plan.verdict == TypeTestVerdict::AlwaysPasses)
-        return;
-    LBasicBlock mismatch = newBlock();
-    LBasicBlock continuation = newBlock();
-    branchOnType(operand, plan, { normalEdge(continuation), rareEdge(mismatch) });
-
-    m_out.appendTo(mismatch);
-    Boxed found = emitter<ConversionEmitter>().box(value, operand, m_program.at(plan.from));
-    callVoidOperation(value, RuntimeOperation::ReportMismatch, { found, word32(static_cast<int32_t>(plan.to.index())), word32(static_cast<int32_t>(value->site().index())) }, { .isOnRarePath = true });
-    m_out.jump(continuation);
-
-    m_out.appendTo(continuation);
-}
 
 void CastEmitter::generateCheckInitialized(const ValueContext& value)
 {
     ValueID source = value->valueOperand();
     Operand operand = get(source);
     emitter<ThrowEmitter>().requireInitialized(value, operand, typeOf(source), value->name());
-    define(value, operand);
+    defineNarrowed(value, operand);
 }
 
 void CastEmitter::generateRequireObjectCoercible(const ValueContext& value)
 {
-    if (generator().nullishCheckBehindFailedTest(value.block()) != value.id())
-        requireObjectCoercible(value);
-    define(value, get(value->valueOperand()));
+    requireObjectCoercible(value);
+    defineNarrowed(value, get(value->valueOperand()));
 }
 
 void CastEmitter::requireObjectCoercible(const ValueContext& value)
@@ -72,87 +44,117 @@ void CastEmitter::generateRequireObject(const ValueContext& value)
     ValueID source = value->valueOperand();
     Operand operand = get(source);
     const TypeTestPlan& plan = planFor(source, TypeTable::object);
+    if (plan.verdict == TypeTestVerdict::NeverPasses)
+        m_out.noteForm(Form::Runtime, StateOfKnowledge::FailsTest);
+    else
+        m_out.noteForm(Form::Open, plan.verdict == TypeTestVerdict::AlwaysPasses ? StateOfKnowledge::PassesTest : StateOfKnowledge::NeedsTest);
     if (plan.verdict != TypeTestVerdict::AlwaysPasses) {
         LBasicBlock isNotObject = newBlock();
         LBasicBlock continuation = newBlock();
+        ScopeFork fork = m_out.forkScope();
         branchOnType(operand, plan, { normalEdge(continuation), rareEdge(isNotObject) });
 
         m_out.appendTo(isNotObject);
+        static_assert(mayCollect(Opcode::RequireObject) || !declaredBoundOf(RuntimeOperation::ThrowRuntimeError).mayCollect);
         callVoidOperation(value, RuntimeOperation::ThrowRuntimeError, { word32(static_cast<int32_t>(value->runtimeError())) }, { .isOnRarePath = true });
         m_out.unreachable();
 
-        m_out.appendTo(continuation);
+        m_out.appendToJoin(continuation, fork);
     }
-    define(value, operand);
+    defineNarrowed(value, operand);
 }
 
 void CastEmitter::generateTypeTest(const ValueContext& value)
 {
     ValueID source = value->valueOperand();
     Operand operand = get(source);
-    if (value.isBranchCondition() && generator().nullishCheckBehindFailedTest(value.block()) == source) {
-        testAheadOfNullishCheck(value, operand);
-        return;
-    }
-    const TypeTestPlan& plan = planFor(source, value->testedType());
+    if (value->asksInFull())
+        operand = Operand { Representation::JSValue, operand.value };
+    TypeID whatMayCome = hasTestedForHole(operationAt(definitionOf(source))) ? TypeTable::anything : TypeTable::anythingOrAbsent;
+    const TypeTestPlan& plan = value->asksInFull() ? typeTestPlanFor(whatMayCome, Representation::JSValue, value->testedType()) : planFor(source, value->testedType());
     if (!value.isBranchCondition()) {
-        define(value, hasType(operand, plan, value.shape()));
+        define(value, hasType(operand, plan));
         return;
     }
-    if (std::optional<CodeGenerator::GuardUnderTest> guard = generator().takeGuardUnderTest(value)) {
-        branchOnType(operand, plan, generator().targetsOf(value, *guard), value.shape());
-        return;
-    }
-    ValueID call = inputs().promisedResults.findCallThatStandsForTest(m_program, m_function, m_function.at(value.block()));
-    if (std::optional<CodeGenerator::LandingOfMisfit> landing = generator().takeLandingOfMisfit(call)) {
-        testAtLandingOfMisfit(value, call, *landing, plan);
-        return;
-    }
-    branchOnType(operand, plan, value.branchTargets(), value.shape());
+    branchOnType(operand, plan, value.branchTargets());
 }
 
-// What the callee returned has the type. Only what arrives at the landing is tested, and not even that where it failed the same test in the callee.
-void CastEmitter::testAtLandingOfMisfit(const ValueContext& test, ValueID call, const CodeGenerator::LandingOfMisfit& landing, const TypeTestPlan& plan)
+auto CastEmitter::kindsAndClosureThatMakeUp(TypeID type) -> std::optional<KindsAndClosure>
 {
-    FunctionID callee = m_function.at(call).function();
-    const BranchTargets& targets = test.branchTargets();
-    LBasicBlock here = m_out.m_block;
-
-    m_out.appendTo(landing.landing);
-    Boxed misfit(m_out.load64(instanceField(m_heaps.AOTInstance_misfit, AOT_INSTANCE_OFFSET(scratch.misfit))));
-    m_out.m_block->appendNew<B3::UpsilonValue>(m_proc, m_out.origin(), misfit.value(), landing.result);
-    bool failedSameTest = inputs().promisedResults.of(callee) == test->testedType() && inputs().promisedResults.misfitsAreNeverOfType(callee);
-    LValue hasTestedType = failedSameTest ? m_out.constInt32(0) : hasType(misfit, plan, test.shape()).value();
-    m_out.m_block->appendNew<B3::UpsilonValue>(m_proc, m_out.origin(), hasTestedType, landing.hasTestedType);
-    m_out.jump(landing.meeting);
-
-    m_out.appendTo(here);
-    if (!generator().validates()) {
-        m_out.branch(landing.hasTestedType, targets);
-        return;
+    if (!types().at(type).isJavaScriptValue())
+        return std::nullopt;
+    const TypeTestPlan& plan = typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, type);
+    if (plan.verdict == TypeTestVerdict::AlwaysPasses)
+        return KindsAndClosure { KindsOfProof::all, std::nullopt };
+    if (plan.verdict == TypeTestVerdict::NeverPasses || plan.integers || !plan.stringLiterals.isEmpty())
+        return std::nullopt;
+    uint16_t numbers = plan.passingPrimitives & Primitive::Number;
+    if (numbers && numbers != Primitive::Number)
+        return std::nullopt;
+    uint32_t primitives = plan.passingPrimitives & KindsOfProof::primitives;
+    if (plan.objects == ObjectsVerdict::NeedTest) {
+        if (plan.cellTests.size() != 1 || plan.cellTests[0].kind != CellTestKind::IsClosureOf)
+            return std::nullopt;
+        std::optional<uint32_t> mention = emitter<ClosureTestEmitter>().mentionOfUpperHalfThatNames(plan.cellTests[0].function);
+        if (!mention)
+            return std::nullopt;
+        return KindsAndClosure { primitives, mention };
     }
-    LBasicBlock isSaidToHaveType = newBlock();
-    LBasicBlock brokenPromise = newBlock();
-    m_out.branch(landing.hasTestedType, normalEdge(isSaidToHaveType), targets.notTaken);
-    m_out.appendTo(isSaidToHaveType);
-    branchOnType(get(call), plan, { targets.taken, rareEdge(brokenPromise) }, test.shape());
-    m_out.appendTo(brokenPromise);
-    emitter<RuntimeValidationEmitter>().reportUnreachable(call);
-    m_out.unreachable();
+    for (const CellTest& test : plan.cellTests) {
+        if (test.kind != CellTestKind::IsObject)
+            return std::nullopt;
+    }
+    return KindsAndClosure { primitives | (plan.objects == ObjectsVerdict::AllPass ? KindsOfProof::everyObject : 0), std::nullopt };
 }
 
-// The test meets what the check has not seen, so its plan is made for the type of the unchecked value.
-void CastEmitter::testAheadOfNullishCheck(const ValueContext& test, Operand operand)
+void CastEmitter::generateCheckProof(const ValueContext& value)
 {
-    ValueID check = test->valueOperand();
-    const TypeTestPlan& plan = planFor(m_function.at(check).valueOperand(), test->testedType());
-    const BranchTargets& targets = test.branchTargets();
-    LBasicBlock failed = newBlock();
-    branchOnType(operand, plan, { targets.taken, { failed, targets.notTaken.frequency() } }, test.shape());
-
-    m_out.appendTo(failed);
-    generator().generateNullishCheckBehindFailedTest(test.block(), check);
-    m_out.jump(targets.notTaken.block());
+    if (value->isLeftToTestBehind())
+        return;
+    Operand source = get(value->valueOperand());
+    if (numberRepresentations.contains(source.representation) || optionalRepresentations.contains(source.representation)) {
+        emitter<ThrowEmitter>().checkOrStopAtFalseProof(value, hasType(source, typeTestPlanFor(value->typeWithoutProof(), source.representation, value->checkedType())), value->source());
+        return;
+    }
+    bool isAnswerOfTest = source.representation == Representation::Boolean;
+    Boxed found(isAnswerOfTest ? m_out.constInt64(JSValue::encode(JSValue())) : source.value);
+    if (isAnswerOfTest) {
+        emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, Condition(source.value), std::nullopt, value->source());
+        return;
+    }
+    bool asksForType = value->checkedType() != value->typeWithoutProof();
+    bool looksAtCell = sourcesOfProofsCheckedUnder(build().options().testing);
+    if (!asksForType && !looksAtCell)
+        return;
+    bool asksStub = looksAtCell && !generator().isInitializingCell();
+    if (asksStub) {
+        if (std::optional<KindsAndClosure> asked = asksForType ? kindsAndClosureThatMakeUp(value->checkedType()) : std::optional(KindsAndClosure { KindsOfProof::all, std::nullopt })) {
+            emitter<ThrowEmitter>().stopUnlessAmongKinds(value, found, asked->kinds, value->source(), asked->mentionOfUpperHalfOfClosureWord);
+            return;
+        }
+    }
+    LBasicBlock stops = newBlock();
+    LBasicBlock continuation = newBlock();
+    ScopeFork fork = m_out.forkScope();
+    if (asksForType) {
+        LBasicBlock hasCheckedType = looksAtCell ? newBlock() : continuation;
+        branchOnType(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType()), { normalEdge(hasCheckedType), rareEdge(stops) });
+        if (looksAtCell)
+            m_out.appendToJoin(hasCheckedType, fork);
+    }
+    if (asksStub) {
+        emitter<ThrowEmitter>().stopUnlessAmongKinds(value, found, KindsOfProof::all, value->source());
+        m_out.jump(continuation);
+    } else if (looksAtCell) {
+        LBasicBlock isCellToLookAt = newBlock();
+        m_out.branch(logicalOr(logicalNot(isCell(found)), isEmpty(found)).value(), normalEdge(continuation), normalEdge(isCellToLookAt));
+        m_out.appendToJoin(isCellToLookAt, fork);
+        CellPointer cell = unboxCell(found);
+        m_out.branch(logicalOr(hasCellTypeIn(cell, { StringType, SymbolType }), isObjectCell(cell)).value(), normalEdge(continuation), rareEdge(stops));
+    }
+    m_out.appendToJoin(stops, fork);
+    emitter<ThrowEmitter>().stopAtFalseProof(value, found, value->source());
+    m_out.appendToJoin(continuation, fork);
 }
 
 } } } // namespace JSC::AOT::Typed

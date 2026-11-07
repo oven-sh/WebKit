@@ -1,0 +1,51 @@
+# `made++`, `depth--` on a variable that holds undefined until it is set: proven `undefined|int|whole`, it lies boxed and is stored boxed again. The walk writes Unbox, the step on numbers, Box.
+# The code asks the tag once and steps an int32 as an int32, as it does for a proven number: it was int32 > double, is it NaN, the step, double > int32 > double, a compare of both, the tag: 20 instructions for 8.
+# What is no int32 is not asked for its tag again: it is a double, or undefined, which steps to NaN.
+# var made; sink(bump, drop); made = 0; function bump() { made++; } function drop() { made--; }
+# With typed slots such a variable of a module lies raw (plan/a-variable-of-a-module-that-holds-numbers-alone-lies-raw.ir): they are withheld here, so that it lies boxed, as an exported one does.
+# RUN(FORM): walk f1 mechanisms=all-TypedSlots
+# FORM-LABEL: code f1:Body
+# FORM: @OptionalDouble = Unbox
+# FORM: @Double = Increment {{*}}form=Numbers
+# FORM: @JSValue = Box
+# The one conversion of an integer that is left is that of a sum that has left int32.
+# RUN(UP): emit f1 mechanisms=all-TypedSlots
+# UP: AboveEqual
+# UP-NOT: AboveEqual
+# RUN(UPONCE): emit f1 mechanisms=all-TypedSlots
+# UPONCE: IToD
+# UPONCE-NOT: IToD
+# RUN(DOWNONCE): emit f2 mechanisms=all-TypedSlots
+# DOWNONCE: IToD
+# DOWNONCE-NOT: IToD
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="made" module=m0 declared={type=undefined|number} initialization=Undefined
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    v5 = Integer
+    PutModuleVariable v5 variable=g0
+    Return v4
+}
+function f1 name="bump" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Increment v0
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    Return v3
+}
+function f2 name="drop" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Decrement v0
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    Return v3
+}

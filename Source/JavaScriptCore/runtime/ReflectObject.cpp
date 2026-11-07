@@ -26,6 +26,8 @@
 #include "config.h"
 #include "ReflectObject.h"
 
+#include "AOTRuntimeHooks.h"
+#include "ImmutablePropertyNames.h"
 #include "Interpreter.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
@@ -289,6 +291,19 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectDeleteProperty, (JSGlobalObject* globalObj
     RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(targetObject->methodTable()->deleteProperty(targetObject, globalObject, propertyName, slot))));
 }
 
+#if ENABLE(AOT)
+static bool isPrototypeRefusedByLanguage(JSObject* object, JSValue prototype)
+{
+    if (object->structure()->isImmutablePrototypeExoticObject() || !object->isStructureExtensible())
+        return true;
+    for (JSValue next = prototype; next.isObject() && asObject(next)->type() != ProxyObjectType; next = asObject(next)->getPrototypeDirect()) {
+        if (next == JSValue(object))
+            return true;
+    }
+    return false;
+}
+#endif
+
 // https://tc39.github.io/ecma262/#sec-reflect.setprototypeof
 JSC_DEFINE_HOST_FUNCTION(reflectObjectSetPrototypeOf, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -305,6 +320,13 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectSetPrototypeOf, (JSGlobalObject* globalObj
     JSObject* object = asObject(target);
 
     bool shouldThrowIfCantSet = false;
+#if ENABLE(AOT)
+    // As Reflect.defineProperty(), Reflect.set() and Reflect.deleteProperty(): in a compiled test run what a locked built-in refuses throws, however the test writes it. What the language refuses by itself answers false.
+    if (object->structure()->hasImmutablePrototype() && !isPrototypeRefusedByLanguage(object, proto)) [[unlikely]] {
+        ImmutablePropertyNames* names = object->structure()->listedImmutablePropertyNames();
+        shouldThrowIfCantSet = names ? names->throwsFromReflect() : AOT::RuntimeHooks::reflectThrowsOnLockedProperty(object);
+    }
+#endif
     bool didSetPrototype = object->setPrototype(vm, globalObject, proto, shouldThrowIfCantSet);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     return JSValue::encode(jsBoolean(didSetPrototype));

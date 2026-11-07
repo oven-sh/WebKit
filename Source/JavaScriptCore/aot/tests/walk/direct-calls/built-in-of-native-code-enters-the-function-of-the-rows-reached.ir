@@ -1,0 +1,55 @@
+# function sorted(a, b) { const list = [a, b]; return list.sort((x, y) => x - y); }   function byAnything(a, c) { const list = [a]; return list.sort(c); }   sink(sorted, byAnything);
+# The function object of Array.prototype.sort is native code. One of its rows, for a list as its class makes it and a comparator that can be called, names a function of the library.
+# Where the operands of a call reach that row alone the function is called directly: native code would call the comparator out of the run time at each comparison.
+# Of `c` nothing is proven: the call reaches the rows of native code too, and stays as it is.
+# The library here is a stand-in.
+# LIBRARY: own
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: = CallDirect {{*}}function=f3
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: calleeKey="sort"
+# RUN(UNKNOWN): walk f2 mechanisms=all
+# UNKNOWN-LABEL: code f2:Body
+# UNKNOWN-NOT: function=f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/prelude/array-sort.ts" displayPath="/$bun/js/prelude/array-sort.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArraySortSort function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="sorted" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = PropGet v2 key="sort"
+    v4 = NewClosure function=f4
+    v5 = Call v3, v2, v4 calleeKey="sort" calleeName="list.sort"
+    Return v5
+}
+function f2 name="byAnything" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0 contents=anything
+    v3 = PropGet v2 key="sort"
+    v4 = Call v3, v2, v1 calleeKey="sort" calleeName="list.sort"
+    Return v4
+}
+function f3 name="sort" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArraySortSort thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    v3 = ElemGet v0, v2
+    v4 = Call v1, -, v3, v3
+    Return v0
+}
+function f4 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v0, v1
+    Return v2
+}

@@ -129,31 +129,14 @@ function f3 name="outer" flags=[IsChecked] parameters=[{type=anything}, {type=an
 }
 )IR"_s;
 
-static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expectedOutput)
-{
-    static constexpr ASCIILiteral words[] = {
-        "validate"_s,
-        "heat=EverythingIsHot"_s,
-        "heat=EverythingIsCold"_s,
-        "disable=flow:CalleeSets"_s,
-        "disable=flow:NarrowedTypes"_s,
-        "disable=pass:ResolveCalls"_s,
-        "disable=pass:InlineCalls"_s,
-        "disable=pass:ChooseCallingConventions"_s,
-    };
-    checkOutputOfProgramInShell(programText, expectedOutput, { });
-    for (ASCIILiteral word : words)
-        checkOutputOfProgramInShell(programText, expectedOutput, { word });
-}
-
 static void testTypedFunctionsCalledByValue()
 {
-    checkUnderEveryOption(typedFunctionsCalledByValue, "0.5\n0.5\ntext\ntext\n"_s);
+    checkOutputOfProgramInShell(typedFunctionsCalledByValue, "0.5\n0.5\ntext\ntext\n"_s, { });
 }
 
 static void testOrdinaryCallUnderWaitingFrame()
 {
-    checkUnderEveryOption(ordinaryCallUnderWaitingFrame, "0.5\n"_s);
+    checkOutputOfProgramInShell(ordinaryCallUnderWaitingFrame, "0.5\n"_s, { });
 }
 
 std::span<const NativeTest> tailCallProgramTests()

@@ -1,40 +1,28 @@
-// To read some fields is to take more for granted than the type of a value says: the word in the cell of a string is a StringImpl only while the string is flat,
-// and a type says what the characters are, not which object holds them. Such a field is read by few functions, which test first or take a type that only a proof can make.
-// This step of the build counts, file by file, who names the heap of such a field and who calls a function that trusts its caller, and holds the counts to
-// aot/codegen/AOTReadsThatAssume.txt. A place that the list lacks stops the build: go through one of the functions named in the message, or add the place with the reason why it is right.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-const compilerDirectories = ["builtins", "codegen", "image", "object", "passes", "place", "represent", "select", "stubs"];
 const listFile = "aot/codegen/AOTReadsThatAssume.txt";
 const stampFile = "AOTReadsThatAssumeChecked.h";
 
-const watched: { name: string; pattern: RegExp; instead: string }[] = [
+const watched: { name: string; pattern: RegExp; unless?: RegExp; notOnLineWith?: RegExp; instead: string }[] = [
   {
     name: "JSString_value",
-    pattern: /\b(?:m_)?heaps\.JSString_value\b/g,
+    pattern: /\bJSString_value\b/g,
     instead: "StringEmitter::viewOf(), lengthOf(), viewOfString(), isRopeString(), or implOfFlatString() with a FlatStringCell",
   },
   {
-    name: "flatStringWrittenHere",
-    pattern: /\bflatStringWrittenHere\(/g,
-    instead: "StringEmitter::flatStringByType(): this one trusts its caller that the cell is the value's",
-  },
-  {
-    name: "flatStringAssumedBy",
-    pattern: /\bflatStringAssumedBy\(/g,
-    instead: "StringEmitter::flatStringByType(), and another road for what is not flat: this one stops the build of a user's program",
-  },
-  {
     name: "viewOfFlatString",
-    pattern: /\bviewOfFlatString\(/g,
+    pattern: /\bviewOfFlatString\s*\(/g,
     instead: "StringEmitter::viewOf(): this one trusts its caller that isRopeString() of the same cell has just answered no",
   },
   {
-    name: "areBoth8Bit",
-    pattern: /\bareBoth8Bit\(/g,
-    instead: "StringEmitter::areEqual(): this one trusts its caller that both strings are flat",
+    name: "offsetOfValue untested",
+    pattern: /\bJSString\s*::\s*offsetOfValue\s*\(\s*\)/g,
+    unless:
+      /\bbranchIf(?:Not)?RopeStringImpl\b|\bbranchTest(?:Ptr|8|32|64)\s*\([^;]*\bisRopeInPointer\b|\bloadStringLength\s*\(/,
+    notOnLineWith: /\bstatic_assert\s*\(/,
+    instead: "a branch on the rope bit within three lines behind the load (branchIfRopeStringImpl()), or loadStringLength()",
   },
 ];
 
@@ -44,16 +32,34 @@ function keyOf(name: string, file: string): string {
   return `${name} | ${file}`;
 }
 
+function sourcesBelow(directory: string, prefix: string): string[] {
+  return readdirSync(directory, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : 1))
+    .flatMap(entry => {
+      if (entry.isDirectory()) return sourcesBelow(join(directory, entry.name), `${prefix}${entry.name}/`);
+      return entry.isFile() && /\.(?:cpp|h)$/.test(entry.name) ? [`${prefix}${entry.name}`] : [];
+    });
+}
+
+function countIn(text: string, { pattern, unless, notOnLineWith }: (typeof watched)[number]): number {
+  if (!unless && !notOnLineWith) return text.match(pattern)?.length ?? 0;
+  const lines = text.split("\n");
+  let found = 0;
+  for (const match of text.matchAll(pattern)) {
+    const line = text.slice(0, match.index).split("\n").length - 1;
+    if (notOnLineWith?.test(lines[line]!)) continue;
+    if (!unless?.test(lines.slice(line, line + 4).join("\n"))) ++found;
+  }
+  return found;
+}
+
 function countPlaces(javascriptcore: string): Counts {
   const counts: Counts = new Map();
-  for (const directory of compilerDirectories) {
-    for (const entry of readdirSync(join(javascriptcore, "aot", directory), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      if (!entry.isFile() || !/\.(?:cpp|h)$/.test(entry.name)) continue;
-      const text = readFileSync(join(javascriptcore, "aot", directory, entry.name), "utf8");
-      for (const { name, pattern } of watched) {
-        const found = text.match(pattern)?.length ?? 0;
-        if (found) counts.set(keyOf(name, `${directory}/${entry.name}`), found);
-      }
+  for (const file of sourcesBelow(join(javascriptcore, "aot"), "")) {
+    const text = readFileSync(join(javascriptcore, "aot", file), "utf8");
+    for (const entry of watched) {
+      const found = countIn(text, entry);
+      if (found) counts.set(keyOf(entry.name, file), found);
     }
   }
   return counts;
@@ -89,9 +95,13 @@ function compare(found: Counts, listed: Counts): string[] {
   return problems;
 }
 
-// A check that was never seen to fail proves nothing: every name must be found somewhere, and one place too many, one too few and one in a file of its own must each be noticed.
 function hasTeeth(found: Counts): boolean {
   if (!watched.every(({ name }) => [...found.keys()].some(key => key.startsWith(`${name} | `)))) return false;
+  const spaced = (name: string) => (name.startsWith("offsetOfValue") ? "JSString ::\n    offsetOfValue\n    ( )" : `heaps\n    -> ${name}\n    (cell)`);
+  if (!watched.every(entry => countIn(spaced(entry.name), entry) === 1)) return false;
+  const load = "jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);";
+  const untested = watched.find(({ unless }) => unless)!;
+  if (countIn(`${load}\n\n\nslow.append(jit.branchIfRopeStringImpl(impl));`, untested) || !countIn(`${load}\n\n\n\nslow.append(jit.branchIfRopeStringImpl(impl));`, untested)) return false;
   const [key, count] = [...found][0] ?? [];
   if (key === undefined || count === undefined) return false;
   const more = new Map(found).set(key, count + 1);

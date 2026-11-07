@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTModuleGraph.h"
 #include "AOTModules.h"
 #include "AOTVector.h"
 #include "ThrowScope.h"
@@ -17,7 +18,6 @@
 
 namespace JSC { namespace AOT {
 
-// The modules that a link reaches from a root and that have work in it, in the order of the requests.
 class ModuleLinkWalk {
     WTF_MAKE_NONCOPYABLE(ModuleLinkWalk);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ModuleLinkWalk);
@@ -27,19 +27,15 @@ public:
     ModuleLinkWalk(const Modules&, ModuleID root);
 
     ModuleID root() const { return m_root; }
-    // Whether a replay does what the replay of a walk made now would do. A walk made now captures what a file that has run since exports and does not enter the file: the step that captures moves in front of the one that enters.
     bool bringUpToDate(const Modules&);
-    // Such a walk enters the root only. Of the modules below it, didLeave() hears of those that resolve names, whether another link has finished them or not.
     bool hasPlan() const { return !m_plan.empty(); }
-    // Of a plan other than the entry point's.
-    std::optional<ModuleID> memberOfCycle() const { return m_memberOfCycle; }
+    std::span<const uint32_t> modulesThatOnlyBecomeLinked() const LIFETIME_BOUND { return m_modulesThatOnlyBecomeLinked.span(); }
 
-    // shouldEnter(module) answers for a module with requests, visitLeaf(leaf, module) may throw, didLeave(module, resolvesNames) follows the requests of an entered module.
     template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>
     bool replay(ThrowScope&, const ShouldEnterFunctor&, const VisitLeafFunctor&, const DidLeaveFunctor&) const;
 
 private:
-    enum class StepKind : uint8_t { CapturesExports, IsUncompiled, Enter, Leave };
+    using StepKind = StepOfLinkWalk;
 
     struct Step {
         uint32_t module;
@@ -54,8 +50,8 @@ private:
     ModuleID m_root;
     unsigned m_linkEpoch;
     std::span<const LinkPlanStepData> m_plan;
-    std::optional<ModuleID> m_memberOfCycle;
     Vector<Step, 64> m_steps;
+    Vector<uint32_t, 64> m_modulesThatOnlyBecomeLinked;
 };
 
 template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>

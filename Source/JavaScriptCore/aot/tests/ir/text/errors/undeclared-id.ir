@@ -1,5 +1,5 @@
 # A layout id past every declared and derived layout
-# RUN: print
+# RUN: verify
 # DIAGNOSTIC: IdOutOfRange
 
 layout L0
@@ -9,3 +9,4 @@ function f0 name="f" results=[{type=undefined}] {
     v0 = NewObject layout=L4294967000
     Return
 }
+entry module=m0

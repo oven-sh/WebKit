@@ -9,8 +9,8 @@
 
 #include "AOTBuildContext.h"
 #include "AOTChildProcess.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTImageLoading.h"
@@ -18,12 +18,13 @@
 #include "AOTInstance.h"
 #include "AOTModules.h"
 #include "AOTNativeTest.h"
+#include "AOTNativeTestReasons.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramFile.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTTemporaryFile.h"
-#include "AOTTestSubcommands.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "CustomGetterSetter.h"
@@ -68,6 +69,10 @@ static constexpr ASCIILiteral programText =
     "  b0():\n"
     "    v0 = Null\n"
     "    v1 = NewObject -, v0 layout=L0 fields=[0]\n"
+    "    v2 = Builtin builtin=GlobalThis\n"
+    "    v3 = PropGet v2 key=\"registry\" [isFreeName]\n"
+    "    PropSet v1, v3 key=\"x\"\n"
+    "    PropSet v1, v0 key=\"x\"\n"
     "    Return v1\n"
     "}\n"
     "function f2 name=\"mutate\" length=3 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {\n"
@@ -125,17 +130,13 @@ static Vector<uint8_t> compileOnThisThread()
     Wire::CompileOptions options = ImageTests::wireOptions();
     options.target.referenceWidth = Wire::ReferenceWidth::Narrow;
     BuildContext build(options);
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
-    if (!program) {
-        build.diagnostics().finish(nullptr);
-        Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
-    }
-    AOT_TEST_CHECK(program);
-    std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-    if (output->image.isEmpty())
-        Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-    AOT_TEST_CHECK(!output->image.isEmpty());
-    return WTF::move(output->image);
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), build);
+    if (!program)
+        failBecauseTextIsNoProgram(__FILE__, __LINE__, build, "references=narrow"_s);
+    std::unique_ptr<CompileOutput> output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfProcess());
+    if (!output->hasImage())
+        failBecauseThereIsNoImage(__FILE__, __LINE__, *output, "references=narrow"_s);
+    return Vector<uint8_t>(output->section(Wire::ResultSection::Image));
 }
 
 static Vector<uint8_t> compileWithNarrowReferences()
@@ -366,7 +367,6 @@ static void testDefinitionOfCustomAccessor(RunningProgram& program)
     AOT_TEST_CHECK(putOwnDataProperty(vm, point, program.x(), jsNumber(3)));
     CustomGetterSetter* accessor = CustomGetterSetter::create(vm, getSeven, nullptr);
     AOT_TEST_CHECK(point->putDirectCustomAccessor(vm, program.added(), accessor, PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly));
-    // It is an extra property like any other.
     AOT_TEST_CHECK(PropertyWalk::isCompiledObject(point) && isFieldInSlot(point, program.x()));
     AOT_TEST_CHECK(hasOwnProperty(vm, point, program.x(), jsNumber(3), 0));
     AOT_TEST_CHECK(point->get(program.realm(), program.added()) == jsNumber(7));

@@ -7,20 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
-#include "AOTCompile.h"
-#include "AOTCompileOptionWords.h"
-#include "AOTIRParser.h"
-#include "AOTNativeTest.h"
-#include "AOTProgramFile.h"
-#include "AOTShellProcess.h"
-#include "AOTTemporaryFile.h"
-#include "AOTThreads.h"
-#include "AOTVector.h"
-#include <initializer_list>
-#include <stdlib.h>
-#include <wtf/DataLog.h>
-#include <wtf/text/MakeString.h>
+#include "AOTShellProgramTestSupport.h"
 
 namespace JSC { namespace AOT {
 
@@ -432,79 +419,16 @@ after the stores: patched,Patched prototype ant 1,function
 Patched.prototype after the stores: constructor=function zebra=function ant=function extra=function
 )"_s;
 
-static std::unique_ptr<CompileOutput> compileOnThisThread(std::initializer_list<ASCIILiteral> optionWords)
+static void testMembersKeepDefinitionOrder()
 {
-    Wire::CompileOptions options = makeDefaultCompileOptions();
-    for (ASCIILiteral word : optionWords)
-        AOT_TEST_CHECK(!applyOptionWord(options, word));
-    BuildContext build(options);
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
-    if (!program) {
-        build.diagnostics().finish(nullptr);
-        Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
-    }
-    AOT_TEST_CHECK(program);
-
-    std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-    if (output->image.isEmpty())
-        Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-    AOT_TEST_CHECK(!output->image.isEmpty());
-    AOT_TEST_CHECK(output->entryModuleIDs.size() == 1);
-    return output;
-}
-
-static String runInShell(std::initializer_list<ASCIILiteral> optionWords)
-{
-    std::unique_ptr<CompileOutput> output;
-    runOnBuildThread([&] {
-        output = compileOnThisThread(optionWords);
-    });
-
-    TemporaryFile image(".image"_s, output->image.span());
-    Vector<String> arguments {
-        makeString("--aotImagePath="_s, image.path()),
-        String("-e"_s),
-        makeString(script, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").catch(error => print(\"the program threw \" + error));"_s),
-    };
-
-    String shell = shellPath();
-    ChildProcessResult result = ChildProcessLauncher(String(shell), { }).run(arguments.span());
-    if (!result.exitedWith(EXIT_SUCCESS))
-        dataLogLn(shell, " ", result.description(), "\n", result.output);
-    AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
-    return makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
-}
-
-static void checkMemberOrder(std::initializer_list<ASCIILiteral> optionWords)
-{
-    String output = runInShell(optionWords);
-    if (output != expectedOutput)
-        dataLog(output);
-    AOT_TEST_CHECK(output == expectedOutput);
-}
-
-static void testEveryPass()
-{
-    checkMemberOrder({ });
-    checkMemberOrder({ "references=narrow"_s });
-}
-
-static void testWithoutInlining()
-{
-    checkMemberOrder({ "disable=pass:InlineCalls"_s });
-}
-
-static void testEveryMemberAtDefinition()
-{
-    checkMemberOrder({ "disable=flow-results"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s }, script);
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s }, script);
 }
 
 std::span<const NativeTest> classMemberOrderTests()
 {
     static constexpr NativeTest tests[] = {
-        { "class-member-order/every-pass"_s, testEveryPass },
-        { "class-member-order/without-inlining"_s, testWithoutInlining },
-        { "class-member-order/every-member-at-definition"_s, testEveryMemberAtDefinition },
+        { "class-member-order/members-keep-definition-order"_s, testMembersKeepDefinitionOrder },
     };
     return tests;
 }

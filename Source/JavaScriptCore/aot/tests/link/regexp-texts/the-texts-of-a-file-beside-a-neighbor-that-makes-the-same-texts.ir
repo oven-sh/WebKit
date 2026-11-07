@@ -1,0 +1,85 @@
+# The list follows from the program alone, and the texts that come of one file are the same whatever stands beside it.
+# b.js: export function make() { for (let index = 0; index < 100; index++) { for (let turn = 0; turn < 400; turn++); new RegExp("t" + index); } return new RegExp("b-" + "last"); }
+# Nobody calls it: it is gone through by itself, and each text that it finds lets it go on. a.js, which stands in front of it, makes the same hundred texts first.
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /b-last/
+
+module m0 path="/a.js" displayPath="a.js" body=f0 exports=[{name="make" variable=g0}]
+module m1 path="/b.js" displayPath="b.js" body=f2 exports=[{name="make" variable=g1}]
+module m2 path="/main.js" displayPath="main.js" body=f4 requests=[{target=m0 completes=true}, {target=m1 completes=true}]
+entry module=m2
+variable g0 name="make" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="make" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f1 name="make" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = String string="t"
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3: anything):
+    LoopHint
+    Jump -> next b2(v2)
+  b2(v5: anything):
+    LoopHint
+    v7 = Increment v5
+    v8 = Integer integer=400
+    v9 = Less v7, v8
+    Branch v9 -> taken b2(v7), notTaken b3()
+  b3():
+    v10 = Add v1, v3
+    v11 = Construct v0, -, v10
+    v12 = Increment v3
+    v13 = Integer integer=100
+    v14 = Less v12, v13
+    Branch v14 -> taken b1(v12), notTaken b4()
+  b4():
+    Return v2
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    PutModuleVariable v0 variable=g1
+    v2 = Undefined
+    Return v2
+}
+function f3 name="make" module=m1 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = String string="t"
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3: anything):
+    LoopHint
+    Jump -> next b2(v2)
+  b2(v5: anything):
+    LoopHint
+    v7 = Increment v5
+    v8 = Integer integer=400
+    v9 = Less v7, v8
+    Branch v9 -> taken b2(v7), notTaken b3()
+  b3():
+    v10 = Add v1, v3
+    v11 = Construct v0, -, v10
+    v12 = Increment v3
+    v13 = Integer integer=100
+    v14 = Less v12, v13
+    Branch v14 -> taken b1(v12), notTaken b4()
+  b4():
+    v15 = String string="b-"
+    v16 = String string="last"
+    v17 = Add v15, v16
+    v18 = Construct v0, -, v17
+    Return v18
+}
+function f4 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

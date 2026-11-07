@@ -1,0 +1,98 @@
+# function total(things: number[]) { let sum = 0; for (const thing of things) sum += thing; return sum; }   print(total(list)); replace(); .. print(total(list)); print(total(odd))
+# The loop is built twice: as it is written, and with the list's storage read in line. The way into the second copy asks the list once, in front of the loop.
+# A read by index needs nothing of what stands above lists: no index can be laid there where a list has its bit. So in a test run that test asks the list alone (CellAlone), like the opening of the loop:
+# by the byte of the class, one spy on `push` anywhere in the process would send every loop over a list into the copy as written for the rest of the run.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell mechanisms=all const above = Array.prototype, values = above.values; const once = value => function () { let given = false; return { next() { const done = given; given = true; return { done, value: done ? undefined : value }; }, [Symbol.iterator]() { return this; } }; }; globalThis.hidden = () => [1]; globalThis.list = [1, 2, 3]; globalThis.odd = [1, 2, 3]; globalThis.odd[Symbol.iterator] = once(40); globalThis.replace = () => { above.values = once(50); };
+# CHECK: 6
+# CHECK-NEXT: 50
+# CHECK-NEXT: 6
+# CHECK-NEXT: 40
+# CHECK-NEXT: exited with 0
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK-NOT: aspects=[Storage, Names]
+# WALK: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names, CellAlone]
+# WALK-NOT: aspects=[Storage, Names]
+# WALK: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names, CellAlone]
+# WALK-NOT: = IsPristine
+# WALK: = HasArrayStorage
+# WALK-NOT: = IsPristine
+# WALK: isInLoop=true isLoopHead=true
+# WALK-NOT: = IsPristine
+# WALK: = GetArrayElement
+
+module m0 path="/a.test.ts" displayPath="a.test.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = PropGet v0 key="hidden" [isFreeName]
+    v4 = Call v3, -
+    v5 = Integer integer=0
+    PropSet v4, v5 key="values"
+    v7 = Call v3, -
+    v8 = PropGet v0 key="Object" [isFreeName]
+    v9 = PropGet v8 key="getPrototypeOf"
+    v10 = Call v9, v8, v7 calleeKey="getPrototypeOf"
+    v11 = PropGet v0 key="list" [isFreeName]
+    v12 = PropGet v0 key="odd" [isFreeName]
+    v13 = PropGet v0 key="print" [isFreeName]
+    v14 = Call v1, -, v11
+    v15 = Call v13, -, v14
+    v16 = PropGet v0 key="replace" [isFreeName]
+    v17 = Call v16, -
+    v18 = Call v2, -, v11
+    v19 = Call v13, -, v18
+    v20 = Call v1, -, v11
+    v21 = Call v13, -, v20
+    v22 = Call v1, -, v12
+    v23 = Call v13, -, v22
+    Return v23
+}
+function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer integer=0
+    v2 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v3: anything):
+    LoopHint
+    v5 = IteratorResume v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v3
+  b3() handler=b4():
+    v8 = Add v3, v7
+    Jump -> next b1(v8)
+  b4() role=IterationCleanup subject=v2:
+    v9 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v9
+}
+function f2 name="ofValues" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer integer=0
+    v2 = PropGet v0 key="values"
+    v3 = Call v2, v0 calleeKey="values"
+    v4 = IteratorOpen v3
+    Jump -> next b1(v1)
+  b1(v5: anything):
+    LoopHint
+    v7 = IteratorResume v4
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    Return v5
+  b3() handler=b4():
+    v10 = Add v5, v9
+    Jump -> next b1(v10)
+  b4() role=IterationCleanup subject=v4:
+    v11 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v11
+}

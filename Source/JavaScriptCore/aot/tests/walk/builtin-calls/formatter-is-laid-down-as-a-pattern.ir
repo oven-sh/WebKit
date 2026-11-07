@@ -1,0 +1,63 @@
+# where the locale and the options of a formatter are constants, ICU is asked in the realm of the build, and the formatter is made with the pattern that it gave
+# function percent() { return new Intl.NumberFormat("en-US"); }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewFormatterWithPattern
+# the text is written by the pattern, and what the pattern does not cover takes the call as written: function shown(n) { if (typeof n === "number") return [n.toLocaleString("en-US")]; }
+# RUN(TEXT): walk f2 mechanisms=all
+# TEXT-LABEL: code f2:Body
+# TEXT: = FormatNumberWithPattern
+# TEXT: = TypeTest {{*}}testedType=string
+# TEXT: frequency=Rare
+# nobody knows the locale: function shownIn(n, locale) { if (typeof n === "number") return [n.toLocaleString(locale)]; }
+# RUN(UNKNOWN): walk f3 mechanisms=all
+# UNKNOWN-LABEL: code f3:Body
+# UNKNOWN-NOT: FormatNumberWithPattern
+# UNKNOWN: = NewArray
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="percent" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=IntlNumberFormat
+    v1 = String string="en-US"
+    v2 = Construct v0, -, v1 calleeName="Intl.NumberFormat"
+    Return v2
+}
+function f2 name="shown" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="toLocaleString"
+    v4 = String string="en-US"
+    v5 = Call v3, v2, v4 calleeKey="toLocaleString"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f3 name="shownIn" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = PropGet v3 key="toLocaleString"
+    v5 = Call v4, v3, v1 calleeKey="toLocaleString"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}

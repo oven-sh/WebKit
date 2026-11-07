@@ -1,0 +1,35 @@
+# function listOf(length) { return Array(length) }  function pairOf(a, b) { return Array(a, b) }  drive(listOf, pairOf)
+# Array(..) as written is marked as done in place too. Its row forwards the call to no operand, so nothing stands in its place: it is a call of the built-in, which answers as ever.
+# RUN: run-in-shell globalThis.drive = (listOf, pairOf) => { const attempt = (way, ...operands) => { try { print(JSON.stringify(way(...operands))); } catch (error) { print(error.name + ": " + error.message); } }; attempt(listOf, 3); attempt(listOf, 0); attempt(listOf, "3"); attempt(listOf, undefined); attempt(listOf, -1); attempt(listOf, 1.5); attempt(pairOf, 1, 2); };
+# CHECK: [null,null,null]
+# CHECK-NEXT: []
+# CHECK-NEXT: ["3"]
+# CHECK-NEXT: [null]
+# CHECK-NEXT: RangeError: Array length must be a positive integer of safe magnitude.
+# CHECK-NEXT: RangeError: Array length must be a positive integer of safe magnitude.
+# CHECK-NEXT: [1,2]
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="drive" [isFreeName]
+    v4 = Call v3, -, v0, v1 calleeName="drive"
+    Return v4
+}
+function f1 name="listOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Call v1, -, v0 calleeName="Array" [isDoneInPlace]
+    Return v2
+}
+function f2 name="pairOf" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Array
+    v3 = Call v2, -, v0, v1 calleeName="Array" [isDoneInPlace]
+    Return v3
+}

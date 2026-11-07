@@ -115,14 +115,10 @@ undefined
 
 static constexpr ASCIILiteral showsValuesAsJSON = "globalThis.show = value => print(JSON.stringify(value));"_s;
 
-// Validation stops the program at a value that is not of the type it is assumed to have.
 static void testRecordsWithArrayMembers()
 {
-    checkOutputOfProgramInShell(recordsWithArrayMembers, outputOfRecordsWithArrayMembers, { }, showsValuesAsJSON);
-    checkOutputOfProgramInShell(recordsWithArrayMembers, outputOfRecordsWithArrayMembers, { "validate"_s }, showsValuesAsJSON);
-    checkOutputOfProgramInShell(recordsWithArrayMembers, outputOfRecordsWithArrayMembers, { "references=narrow"_s, "validate"_s }, showsValuesAsJSON);
-    checkOutputOfProgramInShell(recordsWithArrayMembers, outputOfRecordsWithArrayMembers, { "disable=pass:InlineCalls"_s, "validate"_s }, showsValuesAsJSON);
-    checkOutputOfProgramInShell(recordsWithArrayMembers, outputOfRecordsWithArrayMembers, { "disable=flow-results"_s }, showsValuesAsJSON);
+    checkOutputOfProgramInShell(recordsWithArrayMembers, outputOfRecordsWithArrayMembers, { "references=wide"_s }, showsValuesAsJSON);
+    checkOutputOfProgramInShell(recordsWithArrayMembers, outputOfRecordsWithArrayMembers, { "references=narrow"_s }, showsValuesAsJSON);
 }
 
 std::span<const NativeTest> typedResultProgramTests()

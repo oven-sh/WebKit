@@ -1,0 +1,19 @@
+# code that nobody has read names whatever locale it likes: one record, with the built-in and the place of what lets the code in
+# new Function(globalThis.input)();
+# RUN: locales
+# CHECK: locale unknown Function at f0
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+# NEVER-NOT: locale host-default
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = Call v3
+    Return v4
+}

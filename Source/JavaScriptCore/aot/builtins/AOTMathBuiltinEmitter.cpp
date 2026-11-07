@@ -10,8 +10,10 @@
 
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
+#include "AOTIRProgram.h"
 #include "AOTOperatorEmitter.h"
 #include "AOTRepresentationRules.h"
+#include "AOTTypeArena.h"
 #include "AOTTypeTable.h"
 #include "AOTVector.h"
 #include "MathCommon.h"
@@ -21,10 +23,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool areIntegers(const Function& function, const InlineCall& call)
+static bool mathArgumentsAreIntegers(const Code& code, const InlineCall& call)
 {
     return std::ranges::all_of(call.arguments(), [&](ValueID argument) {
-        return integerRepresentations.contains(function.at(argument).representation);
+        return integerRepresentations.contains(code.at(argument).representation);
     });
 }
 
@@ -33,7 +35,7 @@ static double extremumOfNoValues(bool isMax)
     return isMax ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity();
 }
 
-static RuntimeOperation runtimeOperationOf(MathFunctionKind kind)
+static RuntimeOperation runtimeOperationOfMathFunction(MathFunctionKind kind)
 {
     switch (kind) {
 #define AOT_MATH_FUNCTION_OPERATION(capitalizedName, lowerName) \
@@ -48,70 +50,6 @@ static RuntimeOperation runtimeOperationOf(MathFunctionKind kind)
 MathBuiltinEmitter::MathBuiltinEmitter(CodeGenerator& generator)
     : BuiltinFamilyEmitter(generator)
 {
-}
-
-Number MathBuiltinEmitter::extremumOfElements(Extremum kind, CellPointer array, Pointer butterfly, Integer length, LBasicBlock otherwise)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    ArrayElements storage { array, butterfly };
-    bool isMax = kind == Extremum::Max;
-    Join<Number> join(m_out);
-    auto fold = [&](const ArrayStorageForm& form) {
-        bool foldPropagatesHoles = form.element == Representation::Double;
-        LBasicBlock loop = newBlock();
-        LBasicBlock element = newBlock();
-        LBasicBlock done = newBlock();
-        ValueFromBlock firstIndex = m_out.anchor(integer(0).value());
-        ValueFromBlock initialValue = m_out.anchor(number(extremumOfNoValues(isMax)).value());
-        m_out.jump(loop);
-        m_out.appendTo(loop);
-        Integer index(m_out.phi(B3::Int64, firstIndex));
-        Number chosen(m_out.phi(B3::Double, initialValue));
-        branch(below(index, length), { normalEdge(element), normalEdge(done) });
-        m_out.appendTo(element);
-        Operand raw = elements.loadRawElement(form, storage, index);
-        if (form.element == Representation::JSValue)
-            branchUnless(isNumber(raw.as<Boxed>()), otherwise);
-        else if (!foldPropagatesHoles)
-            branchUnless(logicalNot(elements.isHole(form, raw)), otherwise);
-        Number next = elements.convertRawElement(form, raw, Representation::Double, m_program.at(TypeTable::number)).as<Number>();
-        m_out.addIncomingToPhi(index.value(), m_out.anchor(add(index, integer(1)).value()));
-        m_out.addIncomingToPhi(chosen.value(), m_out.anchor((isMax ? max(chosen, next) : min(chosen, next)).value()));
-        m_out.jump(loop);
-        m_out.appendTo(done);
-        if (foldPropagatesHoles)
-            branchUnless(logicalNot(elements.isHole(form, chosen)), otherwise);
-        join.add(chosen);
-    };
-    const ArrayStorageForm& doubleForm = arrayStorageFormOf(ArrayStorage::Double);
-    const ArrayStorageForm& int32Form = arrayStorageFormOf(ArrayStorage::Int32);
-    const ArrayStorageForm& boxedForm = arrayStorageFormOf(ArrayStorage::Contiguous);
-    Word32 mode = elements.indexingMode(array, arrayStorageTestMask);
-    LBasicBlock doubles = newBlock();
-    LBasicBlock notDoubles = newBlock();
-    LBasicBlock int32s = newBlock();
-    LBasicBlock notInt32s = newBlock();
-    branch(elements.hasShape(mode, doubleForm), { normalEdge(doubles), normalEdge(notDoubles) });
-    m_out.appendTo(doubles);
-    fold(doubleForm);
-    m_out.appendTo(notDoubles);
-    branch(elements.hasShape(mode, int32Form), { normalEdge(int32s), normalEdge(notInt32s) });
-    m_out.appendTo(int32s);
-    fold(int32Form);
-    m_out.appendTo(notInt32s);
-    branchUnless(elements.hasShape(mode, boxedForm), otherwise);
-    fold(boxedForm);
-    return join.finish();
-}
-
-void MathBuiltinEmitter::extremumOfArray(const InlineCall& call, Extremum kind)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    ArrayElements storage = elements.elementsOf(cellOperand(call.argument(0)));
-    Integer length = elements.publicLength(storage);
-    // The call refuses a list that does not fit on the stack.
-    branchUnless(below(length, integer(static_cast<int64_t>(build().limit(LimitID::MaxReservedStackArguments)) + 1)), missBlockOf(call));
-    finish(call, extremumOfElements(kind, storage.array, storage.butterfly, length, missBlockOf(call)));
 }
 
 void MathBuiltinEmitter::round(const InlineCall& call, Rounding rounding)
@@ -160,7 +98,7 @@ void MathBuiltinEmitter::generateMathRound(const InlineCall& call)
 void MathBuiltinEmitter::generateMathAbs(const InlineCall& call)
 {
     ValueID argument = call.argument(0);
-    if (!areIntegers(m_function, call)) {
+    if (!mathArgumentsAreIntegers(m_code, call)) {
         finish(call, abs(numberOperand(argument)));
         return;
     }
@@ -190,7 +128,7 @@ void MathBuiltinEmitter::generateMathSqrt(const InlineCall& call)
 void MathBuiltinEmitter::generateMathSign(const InlineCall& call)
 {
     ValueID argument = call.argument(0);
-    if (!areIntegers(m_function, call)) {
+    if (!mathArgumentsAreIntegers(m_code, call)) {
         Number x = numberOperand(argument);
         finish(call, selectByBranch<Number>(greaterThan(x, number(0)), [&] {
             return number(1);
@@ -211,7 +149,7 @@ void MathBuiltinEmitter::generateMathSign(const InlineCall& call)
 
 void MathBuiltinEmitter::generateMathFunction(const InlineCall& call)
 {
-    finish(call, callLeaf<Number>(runtimeOperationOf(call.parameter<MathFunctionKind>(0)), { numberOperand(call.argument(0)) }));
+    finish(call, callLeaf<Number>(runtimeOperationOfMathFunction(call.parameter<MathFunctionKind>(0)), { numberOperand(call.argument(0)) }));
 }
 
 void MathBuiltinEmitter::generateMathATan2(const InlineCall& call)
@@ -245,7 +183,7 @@ void MathBuiltinEmitter::generateMathHypot(const InlineCall& call)
 
 void MathBuiltinEmitter::generateMathRandom(const InlineCall& call)
 {
-    const B3::AbstractHeap& runtimeState = m_heaps.entire(AbstractHeap::RuntimeState);
+    const Machine::AbstractHeap& runtimeState = m_heaps.entire(AbstractHeap::RuntimeState);
     LValue globalObject = loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)).value();
     TypedPointer lowAddress = m_out.address(runtimeState, globalObject, JSGlobalObject::weakRandomOffset() + WeakRandom::lowOffset());
     TypedPointer highAddress = m_out.address(runtimeState, globalObject, JSGlobalObject::weakRandomOffset() + WeakRandom::highOffset());
@@ -275,8 +213,7 @@ void MathBuiltinEmitter::extremum(const InlineCall& call, Extremum kind)
         finish(call, number(extremumOfNoValues(isMax)));
         return;
     }
-    // Int32 operands are compared and selected directly, without extending and truncating.
-    if (areIntegers(m_function, call) && std::ranges::all_of(arguments, [&](ValueID argument) { return typeOf(argument).isInt32(); })) {
+    if (mathArgumentsAreIntegers(m_code, call) && std::ranges::all_of(arguments, [&](ValueID argument) { return typeOf(argument).isInt32(); })) {
         Word32 chosen = int32Operand(arguments[0]);
         Range range = typeOf(arguments[0]).integers;
         for (ValueID argument : arguments.subspan(1)) {
@@ -284,10 +221,10 @@ void MathBuiltinEmitter::extremum(const InlineCall& call, Extremum kind)
             chosen = select(isMax ? greaterThan(chosen, next) : lessThan(chosen, next), chosen, next);
             range = range.unionWith(typeOf(argument).integers);
         }
-        finish(call, chosen, Type::integer(range));
+        finish(call, chosen, types().at(types().integer(range)));
         return;
     }
-    if (areIntegers(m_function, call)) {
+    if (mathArgumentsAreIntegers(m_code, call)) {
         Integer chosen = integerOperand(arguments[0]);
         Range range = typeOf(arguments[0]).integers;
         for (ValueID argument : arguments.subspan(1)) {
@@ -316,16 +253,6 @@ void MathBuiltinEmitter::generateMathMax(const InlineCall& call)
     extremum(call, Extremum::Max);
 }
 
-void MathBuiltinEmitter::generateMathMinOfArray(const InlineCall& call)
-{
-    extremumOfArray(call, Extremum::Min);
-}
-
-void MathBuiltinEmitter::generateMathMaxOfArray(const InlineCall& call)
-{
-    extremumOfArray(call, Extremum::Max);
-}
-
 void MathBuiltinEmitter::generateMathImul(const InlineCall& call)
 {
     Word32 x = int32Operand(call.argument(0));
@@ -335,7 +262,7 @@ void MathBuiltinEmitter::generateMathImul(const InlineCall& call)
 
 void MathBuiltinEmitter::generateMathClz32(const InlineCall& call)
 {
-    finish(call, countLeadingZeros(int32Operand(call.argument(0))), Type::integer({ 0, 32 }));
+    finish(call, countLeadingZeros(int32Operand(call.argument(0))), types().at(types().integer({ 0, 32 })));
 }
 
 } } } // namespace JSC::AOT::Typed

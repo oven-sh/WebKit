@@ -1,0 +1,21 @@
+# a call of what is no function throws by itself: a warning
+# null(); Array.prototype.push = () => {};
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Null @1
+    v1 = Call v0, - @1
+    v2 = Builtin builtin=ArrayPrototype @2
+    v3 = NewClosure function=f1 @2
+    PropSet v2, v3 key="push" @3
+    Return v1 @4
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @101
+    Return v0 @102
+}

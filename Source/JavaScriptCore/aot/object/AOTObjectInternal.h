@@ -9,26 +9,11 @@
 
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
-#include "AOTRuntimeCounters.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "StructureInlines.h"
 #include "VM.h"
 
 namespace JSC { namespace AOT {
-
-constexpr RuntimeCounterID counterFor(SlotExitReason reason)
-{
-    switch (reason) {
-    case SlotExitReason::Delete:
-        return RuntimeCounterID::FieldsLeftSlotByDelete;
-    case SlotExitReason::Redefinition:
-        return RuntimeCounterID::FieldsLeftSlotByRedefinition;
-    case SlotExitReason::StoreOfOtherType:
-        return RuntimeCounterID::FieldsLeftSlotByStoreOfOtherType;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
 
 constexpr ObjectMutation mutationOf(SlotExitReason reason)
 {
@@ -79,34 +64,6 @@ ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, const FieldDat
         crashOnImpossibleMutation(vm, object, field, mutation);
 }
 
-[[noreturn]] void crashOnLostStateOfBirth(VM&, const Object&, const FieldData&, ASCIILiteral event);
-
-ALWAYS_INLINE void willLeaveStateOfBirth(VM& vm, const Object& object, const FieldData& field, ObjectMutation mutation)
-{
-    if (field.keepsStateOfBirth) [[unlikely]]
-        crashOnLostStateOfBirth(vm, object, field, nameOf(mutation));
-}
-
-void failIfKeysMustNotBeListed(VM&, const Object&);
-
-// The loader lists the own keys of what a CommonJS module exports, for the names that importers bind and for a namespace object, whose names are sorted.
-class KeyListingThatShowsNoOrder {
-    WTF_MAKE_NONCOPYABLE(KeyListingThatShowsNoOrder);
-public:
-    explicit KeyListingThatShowsNoOrder(const JSObject*);
-    ~KeyListingThatShowsNoOrder();
-
-private:
-    const JSObject* m_outer;
-};
-
-// A listing shows which fields the object has and in which order it got them.
-ALWAYS_INLINE void validateKeyListing(VM& vm, const Object& object)
-{
-    if (vm.aotState().validatesRuntime) [[unlikely]]
-        failIfKeysMustNotBeListed(vm, object);
-}
-
 struct FieldProperty {
     explicit operator bool() const { return !!valueOrAccessor; }
 
@@ -118,7 +75,6 @@ struct FieldProperty {
 UniquedStringImpl* propertyNameOf(VM&, const Object&, const FieldData&);
 FieldProperty findFieldProperty(VM&, const Object&, const FieldData&);
 bool livesInExtraProperties(VM&, const Object&, const FieldData&);
-// The property gets the attributes that the layout gives the field, so the caller has compared them with the ones it creates.
 bool tryCreateField(VM&, State&, Object&, const FieldData&, JSValue);
 void putProperty(VM&, JSObject* holder, PropertyName, Object::LeavingProperty);
 void removeFieldFromKeyOrder(VM&, State&, Object&, const FieldData&);
@@ -133,12 +89,11 @@ ALWAYS_INLINE bool isExtraKey(State& state, const Object& object, UniquedStringI
     return !(object.orderWord() & orderWordHasFieldOutsideSlot) || !object.fieldNamed(state, name);
 }
 
-// Every field of the key order, by its index, and every extra key, by its entry in the table of the extra properties, as they follow each other.
 void forEachKeyAsCreated(VM& vm, State& state, const Object& object, const Invocable<void(uint16_t)> auto& fieldFunctor, const auto& extraKeyFunctor)
 {
     uint32_t numberOfFields = object.layout().numberOfFields;
-    Object::KeyOrderStorage storage;
-    std::span<const uint16_t> entries = object.keyOrder(state, storage);
+    JSObject* extra = object.extraProperties();
+    std::span<const uint16_t> entries = object.keyOrder(state);
     std::span<const RefPtr<UniquedStringImpl>> namedKeys;
     if (object.hasKeyOrderOfItsOwn())
         namedKeys = object.compiledStructure().keysNamedByOrder();
@@ -164,7 +119,7 @@ void forEachKeyAsCreated(VM& vm, State& state, const Object& object, const Invoc
         }
     };
     listFieldsUpToNextExtraKey();
-    if (JSObject* extra = object.extraProperties()) {
+    if (extra) {
         extra->structure()->forEachProperty(vm, [&](const auto& entry) {
             if (!isExtraKey(state, object, entry.key()))
                 return true;
@@ -182,7 +137,6 @@ void forEachKeyAsCreated(VM& vm, State& state, const Object& object, const Invoc
 
 enum class KeysListed : uint8_t { Strings = 1, Symbols = 2, StringsAndSymbols = 3 };
 
-// The own keys that are neither indexes nor private names, as OrdinaryOwnPropertyKeys orders them. No name comes twice.
 void forEachOwnKey(VM& vm, State& state, const Object& object, KeysListed listed, DontEnumPropertiesMode mode, const Invocable<void(UniquedStringImpl*)> auto& functor)
 {
     RuntimeLayoutTable& layouts = state.objects->layouts;

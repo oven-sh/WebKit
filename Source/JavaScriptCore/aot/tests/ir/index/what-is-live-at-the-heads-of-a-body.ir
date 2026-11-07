@@ -1,0 +1,116 @@
+# what is live at the head of each block, and where each value is read last: arms, a way that leaves, loops in loops, an exit that stands among the members, a handler
+# RUN: liveness
+# RUN(PLAIN): liveness-against-plain-computation
+
+module m0 path="main.js" displayPath="main.js"
+
+# PLAIN: 5 bodies: the liveness is what the plain computation finds
+
+# const x = a(); if (c) a(x); else a(); return c
+function f0 name="arms" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = Call v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Call v0, -, v2
+    Jump -> next b3()
+  b2():
+    v4 = Call v0
+    Jump -> next b3()
+  b3():
+    Return v1
+# CHECK: b0 live at head: []
+# CHECK: b1 live at head: [v0 v1 v2]
+# CHECK: b2 live at head: [v0 v1]
+# CHECK: b3 live at head: [v1]
+# CHECK: v2 Call last use: v3
+}
+
+# const x = a(); if (!c) throw c; return x
+function f1 name="leaves" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = Call v0
+    Branch v1 -> taken b2(), notTaken b1()
+  b1():
+    Throw v1
+  b2():
+    Return v2
+# CHECK: b1 live at head: [v1]
+# CHECK: b2 live at head: [v2]
+}
+
+# const x = a(); const y = a(); while (c) { a(x); while (c) { } } return c
+# x is read in front of the inner loop and is live all the way round the outer one. y is read by nobody.
+function f2 name="loops" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = Call v0
+    v3 = Call v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b5()
+  b2():
+    v5 = Call v0, -, v2
+    Jump -> next b3()
+  b3():
+    LoopHint
+    Branch v1 -> taken b3(), notTaken b4()
+  b4():
+    Jump -> next b1()
+  b5():
+    Return v1
+# CHECK: b1 live at head: [v0 v1 v2]
+# CHECK: b3 live at head: [v0 v1 v2]
+# CHECK: b4 live at head: [v0 v1 v2] terminator at: v7
+# CHECK: b5 live at head: [v1]
+# CHECK: v2 Call last use: v7
+# CHECK: v3 Call last use: none
+}
+
+# const x = a(); while (c) { if (d) return x; a() } return c
+# The exit that reads x stands in front of the last member.
+function f3 name="exit" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: boolean):
+    v3 = Call v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b5()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    Return v3
+  b4():
+    v5 = Call v0
+    Jump -> next b1()
+  b5():
+    Return v1
+# CHECK: b3 live at head: [v3]
+# CHECK: b4 live at head: [v0 v1 v2 v3] terminator at: v6
+# CHECK: b5 live at head: [v1]
+# CHECK: v3 Call last use: v6
+}
+
+# const x = a(); try { a(); a() } catch { return x } return c
+function f4 name="handler" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = Call v0
+    Jump -> next b1()
+  b1() handler=b4():
+    v3 = Call v0
+    Jump -> next b2()
+  b2() handler=b4():
+    v4 = Call v0
+    Jump -> next b3()
+  b3():
+    Return v1
+  b4() role=CatchHandler:
+    v5 = CatchValue
+    Return v2
+# CHECK: b1 live at head: [v0 v1 v2]
+# CHECK: b2 live at head: [v0 v1 v2]
+# CHECK: b3 live at head: [v1]
+# CHECK: b4 live at head: [v2]
+}
+
+entry module=m0

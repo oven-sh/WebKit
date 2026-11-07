@@ -330,7 +330,7 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
             bool hasElements = holder && holder->canHaveExistingOwnIndexedProperties();
             if (hasElements && (target->structure()->holesMustForwardToPrototype(target) || mayHaveElementsWithAttributes(vm, target))) [[unlikely]]
                 return false;
-            auto result = AOT::PropertyWalk::forEachOwnPropertyAsCreatedInline(vm, source, [&](const AOT::PropertyWalk::OwnProperty& property) {
+            auto result = AOT::PropertyWalk::forEachOwnPropertyAsCreatedAfterPreparingInline(globalObject, source, [&](const AOT::PropertyWalk::OwnProperty& property) {
                 if ((property.attributes & PropertyAttribute::DontEnum) || PropertyName(property.name).isPrivateName())
                     return IterationStatus::Continue;
                 if (property.name == vm.propertyNames->underscoreProto.impl())
@@ -339,6 +339,7 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
                 values.appendWithCrashOnOverflow(property.value);
                 return IterationStatus::Continue;
             }, AOT::PropertyWalk::Elements::AreLeftOut);
+            RETURN_IF_EXCEPTION(scope, { });
             if (result != AOT::PropertyWalk::Result::Completed)
                 return false;
             if (hasElements) {

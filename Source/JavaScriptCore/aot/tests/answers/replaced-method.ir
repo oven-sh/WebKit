@@ -1,0 +1,92 @@
+# class Square { area() { return 4 }  edge() { return 1 } }  class Disk { area() { return 3 }  edge() { return 2 } }  Square.prototype.area = function () { return 7 }
+# function areaOf(shape: Square | Disk) { return shape.area() }  function edgeOf(shape: Square | Disk) { return shape.edge() }  register(areaOf, edgeOf, new Square(), new Disk())
+# RUN(ANSWERS): run-in-shell globalThis.register = (areaOf, edgeOf, square, disk) => { print(areaOf(square), areaOf(disk), edgeOf(square), edgeOf(disk)); };
+# ANSWERS: 7 3 1 2
+# ANSWERS-NEXT: exited with 0
+
+layout L0 kind=Instance name="Square" module=m0 constructor=f1
+layout L1 kind=Instance name="Disk" module=m0 constructor=f3
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=80 kind=Parameter
+typesite w1 module=m0 position=90 kind=Parameter
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="area"
+    v4 = NewClosure function=f7
+    DefineMethod v1, v4 layout=L0 index=1 key="edge"
+    v6 = FinishClass v1 layout=L0
+    v7 = NewClosure function=f3
+    v8 = NewClass v7 layout=L1
+    v9 = NewClosure function=f4
+    DefineMethod v8, v9 layout=L1 key="area"
+    v11 = NewClosure function=f8
+    DefineMethod v8, v11 layout=L1 index=1 key="edge"
+    v13 = FinishClass v8 layout=L1
+    v14 = PropGet v6 key="prototype"
+    v15 = NewClosure function=f6
+    PropSet v14, v15 key="area"
+    v17 = Construct v6
+    v18 = Construct v13
+    v19 = NewClosure function=f5
+    v20 = NewClosure function=f9
+    v21 = Builtin builtin=Function
+    v22 = String string="return globalThis.register"
+    v23 = Construct v21, -, v22
+    v24 = Call v23
+    v25 = Call v24, -, v19, v20, v17, v18
+    v26 = Undefined
+    Return v26
+}
+function f1 name="Square" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="area" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=4
+    Return v1
+}
+function f3 name="Disk" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f4 name="area" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    Return v1
+}
+function f5 name="areaOf" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1 site=w0}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="area"
+    v2 = Call v1, v0 calleeKey="area"
+    Return v2
+}
+function f6 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f7 name="edge" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f8 name="edge" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}
+function f9 name="edgeOf" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1 site=w1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="edge"
+    v2 = Call v1, v0 calleeKey="edge"
+    Return v2
+}

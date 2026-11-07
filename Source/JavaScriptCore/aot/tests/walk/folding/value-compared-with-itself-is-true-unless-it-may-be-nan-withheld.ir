@@ -1,0 +1,8 @@
+# the same comparison with folding withheld: it is built
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = StrictEq
+# RUN(TYPED): walk f1 mechanisms=none+TypedOperations
+# TYPED-LABEL: code f1:Body
+# TYPED: = StrictEq
+# PROGRAM-OF: value-compared-with-itself-is-true-unless-it-may-be-nan.ir

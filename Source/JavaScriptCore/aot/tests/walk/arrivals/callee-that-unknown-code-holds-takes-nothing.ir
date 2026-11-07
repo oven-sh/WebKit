@@ -1,0 +1,38 @@
+# the same call, but a closure of the callee is also handed to unknown code. Not every caller is known, so what the one known caller left proves nothing of the parameter
+# RUN: walk f2 f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# CHECK-LABEL: code f2:Body
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[n]]: anything{{*}} @JSValue {{*}})
+# CHECK: = Add [[n]], [[n]] form=Generic
+
+variable g0 name="callee" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="callee" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Add v0, v0
+    Return v1
+}
+function f2 name="caller" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Mul v2, v2
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v3 calleeName="callee"
+    v6 = Add v5, v5
+    Return v6
+  b2(v7):
+    Return v7
+}

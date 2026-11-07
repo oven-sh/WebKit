@@ -1,0 +1,92 @@
+# class Plain { take(more, give) { return give() + more; } self() { return 1; } }  class Other extends Plain { take(more, give) { return give() + more + 1; } self() { return 2; } }
+# held.self(); held.take(turn, <the closure that is laid under Plain's `self`>), with `held` of either class. `give` is proven a closure of f5, which lies under a name and is one of two callees: it is in the queue from the start, and anybody may name it
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN: walk f4:GenericCallEntry mechanisms=all
+# CHECK-LABEL: code f4:GenericCallEntry
+# The entry asks in every build, and the failing side stops by name.
+# CHECK: TypeTest v3 testedType=f5
+# CHECK: CheckProof v3 checkedType=never
+
+layout L0 kind=Instance name="Plain" module=m0 constructor=f1
+layout L1 kind=Instance name="Other" module=m0 base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="take"
+    v4 = NewClosure function=f5
+    DefineMethod v1, v4 layout=L0 index=1 key="self"
+    v6 = FinishClass v1 layout=L0
+    v7 = ResolveHeritage v6
+    v8 = NewClosure function=f3
+    v9 = NewClass v8, v6, v7 layout=L1
+    v10 = NewClosure function=f4
+    DefineMethod v9, v10 layout=L1 key="take"
+    v12 = NewClosure function=f6
+    DefineMethod v9, v12 layout=L1 index=1 key="self"
+    v14 = FinishClass v9 layout=L1
+    v15 = Construct v6
+    v16 = Integer
+    Jump -> next b1(v15, v16)
+  b1(v17, v18):
+    LoopHint
+    v20 = Integer integer=4
+    v21 = Less v18, v20
+    Branch v21 -> taken b2(), notTaken b5()
+  b2():
+    v22 = Integer integer=2
+    v23 = StrictEq v18, v22
+    Branch v23 -> taken b3(), notTaken b4(v17)
+  b3():
+    v24 = Construct v14
+    Jump -> next b4(v24)
+  b4(v25):
+    v26 = PropGet v25 key="self"
+    v27 = Call v26, v25 calleeKey="self"
+    v28 = PropGet v25 key="take"
+    v29 = Call v28, v25, v18, v4 calleeKey="take"
+    v30 = Increment v18
+    Jump -> next b1(v25, v30)
+  b5():
+    v31 = Undefined
+    Return v31
+}
+function f1 name="Plain" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="take" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1
+    v3 = Add v2, v0
+    Return v3
+}
+function f3 name="Other" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f4 name="take" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1
+    v3 = Add v2, v0
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    Return v5
+}
+function f5 name="self" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f6 name="self" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

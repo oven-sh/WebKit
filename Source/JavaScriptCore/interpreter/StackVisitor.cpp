@@ -211,7 +211,7 @@ bool StackVisitor::WithCompiledFrames::showNextCompiledFrame()
             return true;
         }
         // A function that is constructed waits for what its last call returns.
-        bool isTailDeleted = frame.isTailDeleted && !(frame.visibility == AOT::TraceVisibility::Visible && !frames.tailCalledOwnBody() && frames.isConstructCall());
+        bool isTailDeleted = frame.isTailDeleted && !(frame.visibility == AOT::TraceVisibility::Visible && frames.isConstructCall());
         if (m_shownFrameFilter.shows(frame.visibility, isTailDeleted)) {
             setCompiledFrame(frame.callFrame, frame.returnAddress);
             return true;

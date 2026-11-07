@@ -8,18 +8,18 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTCodeGenerationDriver.h"
+#include "AOTCodeRole.h"
 #include "AOTCodeTemplates.h"
-#include "AOTCodeUnits.h"
 #include "AOTIRProgram.h"
 #include "AOTImage.h"
 #include "AOTImageBuilder.h"
 #include "AOTNativeTest.h"
-#include "AOTPipeline.h"
 #include "AOTRelocation.h"
 #include "AOTRuntimeTable.h"
+#include "AOTStages.h"
 #include "AOTStubCalls.h"
 #include "AOTStubCatalog.h"
+#include "AOTTestHarness.h"
 #include "AOTVector.h"
 #include "AssemblerPolicy.h"
 #include "CCallHelpers.h"
@@ -31,7 +31,6 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/PtrTag.h>
 #include <wtf/RefPtr.h>
@@ -41,27 +40,17 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC::AOT::ImageTests {
 
-// The offsets are numbered anew behind the change: packed units have none.
-void changeUnits(CodeBody&, NOESCAPE const Invocable<void(Vector<CodeUnit>&)> auto& change);
-
 using Typed::FunctionID;
 
-inline constexpr uint64_t loweredReach = 128 * KB;
-// Code that checks the shadow of the address sanitizer is several times as long, and so is the shared code, of which the reach has to hold a copy.
-inline constexpr uint32_t scaleOfSharedCode = AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE ? 4 : 1;
-inline constexpr uint64_t loweredSharedCodeReach = scaleOfSharedCode * MB;
 inline constexpr std::array<uint8_t, 16> testIdentity { 'a', 'o', 't', '-', 'i', 'm', 'a', 'g', 'e', '-', 't', 'e', 's', 't', 's', 1 };
 
 struct TestOptions {
-    LimitID loweredLimit { LimitID::None };
-    uint64_t loweredLimitValue { 0 };
     unsigned threadCount { 1 };
-    uint32_t layoutSeed { 0 };
+    const HostThreadPool* hostPool { nullptr };
     Wire::CheckSet checks { };
-    Wire::ReportSet reports { };
-    Wire::HeatOverride heat { Wire::HeatOverride::None };
     Wire::OutputOptions output { };
     Wire::AdmittedCode admittedCode { };
+    Wire::ExcludedCode excludedCode { Wire::ExcludedCode::CodeOutsideImage };
 };
 
 Wire::CompileOptions wireOptions(const TestOptions& = { });
@@ -70,6 +59,8 @@ String runtimeFunctionsText(unsigned libraryFunction);
 
 AssemblerPolicy testAssemblerPolicy();
 const CodeTemplates& testTemplates();
+
+inline CodeUnit bodyUnitOf(uint32_t function) { return { FunctionID(function), Typed::CodeRole::Body }; }
 
 class AlignedBytes {
 public:
@@ -103,16 +94,17 @@ public:
     ~TestBuild();
 
     BuildContext& context() { return *m_context; }
-    const Typed::PipelineOutput& pipeline() const { return *m_pipeline; }
-    const Typed::Program& program() const { return *m_pipeline->program; }
-    FunctionID genericEntrypointOf(uint32_t function) const;
-
-    const CodeGenerationPlan& plan();
-    const StubCatalog& stubCatalog() { return *plan().stubCatalog; }
+    Typed::StagedBuild& staged() { return *m_staged; }
+    const PreparedProgram& prepared() const { return *m_prepared; }
+    Typed::Program& program() { return *m_prepared->program; }
+    const Typed::Program& program() const { return *m_prepared->program; }
+    const Typed::Facts& facts() const { return *m_prepared->facts; }
+    const Typed::Plan& plan() const { return *m_prepared->plan; }
+    const StubCatalog& stubCatalog() const { return *m_prepared->stubCatalog; }
+    CodeUnit genericEntrypointOf(uint32_t function) const;
 
     Vector<uint8_t> encodeTables();
     TestImage build(Vector<CompiledCode>&&);
-    TestImage build(Vector<CompiledCode>&&, CompiledRegExps&&, WebAssemblyImageInputs&&, FFIStubs&& = { });
 
     unsigned count(InternalErrorKind);
     unsigned count(UserDiagnosticKind, LimitID = LimitID::None);
@@ -122,10 +114,8 @@ private:
     void finishDiagnostics();
 
     std::unique_ptr<BuildContext> m_context;
-    std::unique_ptr<Typed::PipelineOutput> m_pipeline;
-    std::optional<CodeGenerationPlan> m_plan;
-    BitVector m_namedStrings;
-    BitVector m_stringsOnlyShown;
+    std::optional<Typed::StagedBuild> m_staged;
+    const PreparedProgram* m_prepared { nullptr };
     bool m_isFinished { false };
 };
 
@@ -145,26 +135,31 @@ Vector<CompiledCode> bodies(Code... code)
 class CodeSketch {
 public:
     explicit CodeSketch(uint32_t function);
+    explicit CodeSketch(CodeUnit);
 
     CodeSketch& withFrame(unsigned frameSizeInBytes = 16);
 
     uint32_t plain(uint32_t word, unsigned count = 1);
     uint32_t pinned(uint32_t word, unsigned count = 1);
     uint32_t pinnedBytes(unsigned count);
+    uint32_t noOperationBytes(unsigned count) { return pinnedBytes(count); }
     uint32_t callStub(StubKey, OptionalIndex site = { });
     uint32_t jumpToStub(StubKey);
     uint32_t callThunk(const ArgumentMoves&, OptionalIndex site = { });
-    uint32_t callFunction(uint32_t callee, OptionalIndex site = { }, uint16_t entry = primaryEntry);
-    uint32_t jumpToFunction(uint32_t callee, uint16_t entry = primaryEntry);
+    uint32_t callThunkAgain(uint32_t index, OptionalIndex site = { });
+    uint32_t callFunction(CodeUnit callee, OptionalIndex site = { }, uint16_t entry = primaryEntry);
+    uint32_t callFunction(uint32_t callee, OptionalIndex site = { }, uint16_t entry = primaryEntry) { return callFunction(bodyUnitOf(callee), site, entry); }
+    uint32_t jumpToFunction(CodeUnit callee, uint16_t entry = primaryEntry);
+    uint32_t jumpToFunction(uint32_t callee, uint16_t entry = primaryEntry) { return jumpToFunction(bodyUnitOf(callee), entry); }
     uint32_t end();
     uint32_t jumpTo(uint32_t target);
-    uint32_t padding(unsigned bytes);
 
-    uint32_t calleeIndex(uint32_t callee);
+    uint32_t calleeIndex(CodeUnit callee);
+    uint32_t calleeIndex(uint32_t callee) { return calleeIndex(bodyUnitOf(callee)); }
     uint32_t stubKeyIndex(StubKey);
     OptionalIndex addSite(unsigned inlineFrame = 0, uint32_t line = 1, uint32_t column = 1);
 
-    Relocation& lastRelocation() { return m_code.body.relocations.last(); }
+
     CompiledCode& code() { return m_code; }
     uint32_t size() const { return static_cast<uint32_t>(m_code.body.bytes.size()); }
 
@@ -172,21 +167,22 @@ public:
     CompiledCode takeUnchecked();
 
 private:
-    uint32_t append(CodeUnit::Kind, std::span<const uint8_t>);
+    uint32_t append(std::span<const uint8_t>);
     uint32_t appendCall(CodeSymbol, OptionalIndex site);
     uint32_t appendJump(CodeSymbol);
     void finishFrame();
 
     CompiledCode m_code;
+    Vector<ArgumentMoves> m_argumentMoves;
+    uint32_t m_sizeAfterLastEnd { 0 };
     bool m_hasFrame { false };
-    bool m_hasPadding { false };
 };
 
 struct Assembly {
     CCallHelpers& jit;
     RelocationRecorder& relocations;
     StubCalls& calls;
-    CodeUnitRecorder& units;
+    MentionList& mentions;
 };
 
 template<typename Emit, typename AfterLink>
@@ -194,11 +190,10 @@ CompiledCode assemble(uint32_t function, const StubCatalog& catalog, const Emit&
 {
     CCallHelpers jit;
     RelocationRecorder relocations(jit, testAssemblerPolicy());
-    CodeUnitRecorder units;
-    StubCalls calls(catalog, relocations, units);
-    Assembly assembly { jit, relocations, calls, units };
+    StubCalls calls(catalog, relocations);
+    MentionList mentions;
+    Assembly assembly { jit, relocations, calls, mentions };
     emit(assembly);
-    CCallHelpers::Label end = jit.label();
 
     ImageLinkBuffer buffer(jit, LinkBuffer::Profile::FTL);
     AOT_TEST_CHECK(!buffer.didFailToAllocate());
@@ -209,13 +204,10 @@ CompiledCode assemble(uint32_t function, const StubCatalog& catalog, const Emit&
     CompiledCode code = CodeSketch(function).takeUnchecked();
     code.body.relocations = WTF::move(*linked);
     calls.describeCalls(code.body.relocations.span(), code.body);
-    code.body.units = units.link(buffer, code.body.relocations.span());
-    code.body.localSites = buffer.linkBuffer().linkedSites();
+    mentions.moveTo(code.body);
     code.body.bytes.append(buffer.bytes());
-    code.body.paddingStart = buffer.linkBuffer().offsetOf(end);
 
     afterLink(buffer.linkBuffer(), code);
-    AOT_TEST_CHECK(verifyCodeUnits(code) == CodeUnitsError::None);
     return code;
 }
 
@@ -241,18 +233,6 @@ void whenExecutable()
 {
     if (ExecutableAllocator::singleton().isValid())
         run();
-}
-
-void changeUnits(CodeBody& body, NOESCAPE const Invocable<void(Vector<CodeUnit>&)> auto& change)
-{
-    Vector<CodeUnit> units = body.units.unpack();
-    change(units);
-    uint32_t offset = 0;
-    for (CodeUnit& unit : units) {
-        unit.offset = offset;
-        offset += unit.length;
-    }
-    body.units = units;
 }
 
 } // namespace JSC::AOT::ImageTests

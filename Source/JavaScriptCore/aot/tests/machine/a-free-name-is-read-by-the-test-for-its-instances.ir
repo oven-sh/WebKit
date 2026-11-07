@@ -1,0 +1,50 @@
+# function isOne(x) { return x instanceof Kind; }   function kindAndTest(x) { const K = Kind; return [K, x instanceof K]; }
+# Outside loops a free name is read by a stub and `instanceof` is answered by a stub. Where the name is read for the test alone the read is left to the test: one stub takes the number of the binding, reads its record and goes on as for any constructor.
+# The shell warms the test in front of every change: the name is not there, comes to be, is stored, is redefined as a getter, is deleted, holds what is no object, holds an object with a Symbol.hasInstance of its own.
+# LIBRARY: own
+# RUN: bytes f1:Body
+# CHECK-LABEL: unit f1:Body
+# CHECK: InstanceOf.NameSeenByScripts
+# RUN(ONE): bytes f1:Body
+# ONE-NOT: GetGlobalBinding
+# a name that is read for more than the test is read by itself
+# RUN(BOTH): bytes f2:Body
+# BOTH-LABEL: unit f2:Body
+# BOTH: Call Stub GetGlobalBinding.ScriptsAndGlobalObject
+# BOTH: InstanceOf.Constructor
+# RUN(SHELL): run-in-shell globalThis.publish = isOne => { const attempt = x => { try { return isOne(x); } catch (error) { return error.constructor.name; } }; const warm = (...all) => { let last; for (let i = 0; i < 20; i++) last = all.map(attempt).join(); print(last); }; warm({}); globalThis.Kind = function () {}; const First = Kind, one = new Kind(); warm(one, {}, 7); globalThis.Kind = class {}; warm(one, new Kind(), null); Object.defineProperty(globalThis, "Kind", { get() { return First; }, configurable: true }); warm(one, {}); delete globalThis.Kind; warm(one); globalThis.Kind = 5; warm(one, 7); globalThis.Kind = { [Symbol.hasInstance]: x => x === 7 }; warm(7, one); globalThis.Kind = First; warm(one, {}); First.prototype = {}; warm(one, new First()); };
+# SHELL: ReferenceError
+# SHELL-NEXT: true,false,false
+# SHELL-NEXT: false,true,false
+# SHELL-NEXT: true,false
+# SHELL-NEXT: ReferenceError
+# SHELL-NEXT: TypeError,TypeError
+# SHELL-NEXT: true,false
+# SHELL-NEXT: true,false
+# SHELL-NEXT: false,true
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="isOne" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Kind" [isFreeName] @10
+    v3 = InstanceOf v0, v2 @11
+    Return v3
+}
+function f2 name="kindAndTest" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Kind" [isFreeName] @20
+    v3 = InstanceOf v0, v2 @21
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}

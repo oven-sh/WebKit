@@ -1,0 +1,37 @@
+# a scope slot that is laid down as the closures of one declared function takes the closure that was made over the very environment that is stored into: whoever calls the function out of the slot hands on the environment that he has read it from
+# RUN: verify
+# DIAGNOSTIC: InvalidEnvironmentUse 3
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 kind=Environment fields=[{key="inner" declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable]}]
+function f0 name="good" results=[{type=undefined}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure v0 function=f4
+    v2 = Convert v1 declared={type=f4 flags=[IsFromCompiler]}
+    PutEnvironmentField v0, v2 layout=L0 field=0
+    Return
+}
+function f1 name="closureOverAnotherEnvironment" results=[{type=undefined}] {
+    v0 = NewObject layout=L0
+    v1 = NewObject layout=L0
+    v2 = NewClosure v1 function=f4
+    PutEnvironmentField v0, v2 layout=L0 field=0
+    Return
+}
+function f2 name="closureThatArrives" captures=[{type=env L0 flags=[IsFromCompiler]}] parameters=[{type=f4 flags=[IsFromCompiler]}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: f4):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+function f3 name="closureReadOutOfAnotherEnvironment" captures=[{type=env L0 flags=[IsFromCompiler]}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    v1 = NewObject layout=L0
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    PutEnvironmentField v1, v2 layout=L0 field=0
+    Return
+}
+function f4 name="inner" captures=[{type=env L0 flags=[IsFromCompiler]}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    Return
+}

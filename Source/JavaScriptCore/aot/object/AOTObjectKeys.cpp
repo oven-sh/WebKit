@@ -17,6 +17,7 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTState.h"
 #include "AOTVector.h"
 #include "DeferGC.h"
@@ -28,6 +29,7 @@
 #include "StructureChain.h"
 #include "VMInlines.h"
 #include <algorithm>
+#include <wtf/HashFunctions.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringCommon.h>
 
@@ -35,28 +37,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-static bool isPresent(VM& vm, const Object& object, const FieldData& field)
-{
-    return object.isInSlot(field) || (object.hasExtraProperties() && livesInExtraProperties(vm, object, field));
-}
-
-static bool canPositionEveryKey(const LayoutData& layout, Structure* extraPropertiesStructure)
-{
-    return layout.numberOfFields + numberOfSlotsForMaxOffset(extraPropertiesStructure->maxOffset(), extraPropertiesStructure->inlineCapacity()) <= maxKeyOrderEntry;
-}
-
-std::span<const uint16_t> Object::keyOrder(State& state, KeyOrderStorage& storage) const
+std::span<const uint16_t> Object::keyOrder(State& state) const
 {
     const LayoutData& layout = this->layout();
-    if (layout.keysAreNeverEnumerated) {
-        VM& vm = this->vm();
-        storage.shrink(0);
-        for (const FieldData& field : layout.fields()) {
-            if (isPresent(vm, *this, field))
-                storage.append(layout.indexOf(field));
-        }
-        return storage.span();
-    }
     uint32_t word = orderWord();
     if (isOrderStoredOutOfLine(word)) {
         std::span<const uint16_t> held = compiledStructure().outOfLineKeyOrder();
@@ -65,31 +48,28 @@ std::span<const uint16_t> Object::keyOrder(State& state, KeyOrderStorage& storag
     return state.objects->keyOrders.entriesInOrder(layout, orderOf(word)).first(countOf(word));
 }
 
-bool Object::isInKeyOrder(State& stateAtHand, const FieldData& field) const
+bool Object::isInKeyOrder(State& state, const FieldData& field) const
 {
-    State& state = stateAtHand.sharesRealm ? this->state() : stateAtHand;
-    if (layout().keysAreNeverEnumerated)
-        return isPresent(vm(), *this, field);
-    KeyOrderStorage storage;
-    auto keys = keyOrder(state, storage);
+    auto keys = keyOrder(state);
     uint16_t index = indexOf(field);
     if (index < keys.size() && keys[index] == index)
         return true;
     return WTF::find16(keys.data(), index, keys.size());
 }
 
-Vector<UniquedStringImpl*, 16> Object::extraKeyNames() const
+static uint32_t numberOfExtraKeysCountedByOrder(State& state, const Object& object)
 {
-    Vector<UniquedStringImpl*, 16> names;
-    if (JSObject* extra = extraProperties()) {
-        State& state = this->state();
-        extra->structure()->forEachProperty(vm(), [&](const auto& property) {
-            if (isExtraKey(state, *this, property.key()))
-                names.append(property.key());
-            return true;
-        });
-    }
-    return names;
+    const LayoutData& layout = object.layout();
+    if (object.hasKeyOrderOfItsOwn())
+        return 0;
+    ExtraKeyCounter positioned(layout.numberOfFields);
+    positioned.addAll(object.keyOrder(state));
+    return positioned.count();
+}
+
+bool Object::keyOrderCountsExtraKeys() const
+{
+    return numberOfExtraKeysCountedByOrder(state(), *this);
 }
 
 using CountsOfPositionedKeys = Vector<uint32_t, PlacesOfPositionedKeys::maxNumberOfCounts>;
@@ -98,23 +78,24 @@ static CountsOfPositionedKeys countPositionedExtraKeys(State& state, const Objec
 {
     CountsOfPositionedKeys counts;
     const LayoutData& layout = object.layout();
-    if (layout.keysAreNeverEnumerated || object.hasKeyOrderOfItsOwn())
+    if (object.hasKeyOrderOfItsOwn())
         return counts;
     ExtraKeyCounter positioned(layout.numberOfFields);
-    object.forEachKeyInOrder(state, [&](uint16_t key) {
-        if (key >= layout.numberOfFields) {
-            positioned.add(key);
-            return;
-        }
+    auto noteCount = [&] {
         if (positioned.count() && (counts.isEmpty() || counts.last() != positioned.count()))
             counts.append(positioned.count());
+    };
+    object.forEachKeyInOrder(state, [&](uint16_t key) {
+        if (key >= layout.numberOfFields)
+            positioned.add(key);
+        else
+            noteCount();
     });
-    if (positioned.count() && (counts.isEmpty() || counts.last() != positioned.count()))
-        counts.append(positioned.count());
+    noteCount();
     return counts;
 }
 
-static bool describes(const PlacesOfPositionedKeys& places, const Object& object, const PropertyTable& table, const CountsOfPositionedKeys& counts)
+static bool arePlacesOfPositionedKeysOf(const PlacesOfPositionedKeys& places, const Object& object, const PropertyTable& table, const CountsOfPositionedKeys& counts)
 {
     return places.object == &object && places.table == &table && places.structureID == object.structureID().bits() && places.orderWord == object.orderWord()
         && places.numberOfRemovedEntries == table.numberOfRemovedEntries() && std::ranges::equal(std::span { places.counts }.first(places.numberOfCounts), counts);
@@ -136,21 +117,40 @@ static bool tryFindPlacesOfPositionedKeys(State& state, const Object& object, co
     return next == counts.size();
 }
 
-static std::optional<uint32_t> findOrdinalByWalk(State& state, const Object& object, const PropertyTable& table, unsigned entry, uint32_t numberOfPositionedKeys)
+static std::optional<uint32_t> findOrdinalOfExtraKeyByWalk(State& state, const Object& object, const PropertyTable& table, unsigned entry, uint32_t numberOfCountedKeys)
 {
     uint32_t ordinal = 0;
-    for (unsigned earlier = 1; earlier < entry && ordinal < numberOfPositionedKeys; ++earlier) {
+    for (unsigned earlier = 1; earlier < entry && ordinal < numberOfCountedKeys; ++earlier) {
         UniquedStringImpl* key = table.keyOfEntry(earlier);
         ordinal += key && isExtraKey(state, object, key);
     }
-    if (ordinal >= numberOfPositionedKeys)
+    if (ordinal >= numberOfCountedKeys)
         return std::nullopt;
     return ordinal;
 }
 
-bool Object::keyOrderCountsExtraKeys() const
+static std::optional<uint32_t> ordinalOfCountedExtraKey(State& state, const Object& object, JSObject& extra, PropertyName name, const CountsOfPositionedKeys& counts, PlacesOfPositionedKeys& places)
 {
-    return !countPositionedExtraKeys(state(), *this).isEmpty();
+    PropertyTable& table = *extra.structure()->propertyTableInOrderOfAddition(object.vm());
+    unsigned entry = table.find(name.uid()).entryIndex;
+    if (entry == PropertyTable::EmptyEntryIndex)
+        return std::nullopt;
+    bool isExtra = isExtraKey(state, object, name.uid());
+    if (counts.size() > PlacesOfPositionedKeys::maxNumberOfCounts)
+        return isExtra ? findOrdinalOfExtraKeyByWalk(state, object, table, entry, counts.last()) : std::nullopt;
+    if (!arePlacesOfPositionedKeysOf(places, object, table, counts) && !tryFindPlacesOfPositionedKeys(state, object, table, counts, places)) {
+        places = { };
+        return isExtra ? findOrdinalOfExtraKeyByWalk(state, object, table, entry, counts.last()) : std::nullopt;
+    }
+    places.entryOfKeyAskedFor = entry;
+    places.keyAskedForIsExtraKey = isExtra;
+    if (!isExtra)
+        return std::nullopt;
+    for (uint32_t index = 0; index < counts.size(); ++index) {
+        if (entry <= places.lastEntries[index])
+            return index ? counts[index - 1] : 0;
+    }
+    return std::nullopt;
 }
 
 static UniquedStringImpl* lastExtraKeyUpTo(State& state, const Object& object, const PropertyTable& table, unsigned entry)
@@ -203,7 +203,7 @@ private:
 
 void Object::takeKeyOrderOfItsOwn(VM& vm, State& state)
 {
-    ASSERT(!hasKeyOrderOfItsOwn() && !layout().keysAreNeverEnumerated);
+    ASSERT(!hasKeyOrderOfItsOwn());
     forgetPlacesOfPositionedKeys(state);
     KeyOrderOfOneObject order(layout().numberOfFields);
     if (keyOrderCountsExtraKeys()) {
@@ -221,34 +221,7 @@ void Object::takeKeyOrderOfItsOwn(VM& vm, State& state)
     }
     JSCell::setStructure(vm, state.objects->structures.withKeyOrderOfOneObject(vm, compiledStructure(), order.entries(), order.namedKeys()));
     setOrderAndCount(outOfLineOrderWord);
-    count(instance(), RuntimeCounterID::KeyOrdersStoredOutOfLine);
-}
-
-bool Object::tryListFieldBehindNamedKey(State& state, const FieldData& field)
-{
-    bool namesKeys = hasKeyOrderOfItsOwn();
-    JSObject* extra = extraProperties();
-    if (!namesKeys && !(extra && extra->structure()->isDictionary()))
-        return false;
-    if (field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field))
-        return true;
-    VM& vm = this->vm();
-    UniquedStringImpl* lastKey = nullptr;
-    if (extra) {
-        const PropertyTable& table = *extra->structure()->propertyTableInOrderOfAddition(vm);
-        lastKey = lastExtraKeyUpTo(state, *this, table, table.numberOfEntriesWithRemovedOnes());
-    }
-    if (!namesKeys) {
-        if (!lastKey)
-            return false;
-        takeKeyOrderOfItsOwn(vm, state);
-    }
-    const CompiledStructure& structure = compiledStructure();
-    std::span<const RefPtr<UniquedStringImpl>> namedKeys = structure.keysNamedByOrder();
-    if (!namedKeys.empty() && namedKeys.back() == lastKey)
-        lastKey = nullptr;
-    structure.appendToKeyOrderOfOneObject(lastKey, static_cast<uint16_t>(layout().numberOfFields + namedKeys.size()), indexOf(field));
-    return true;
+    countEvent(vm, RuntimeCounterID::KeyOrdersStoredOutOfLine);
 }
 
 static void rebuildKeyOrderOfOneObject(const Object& object, const Invocable<bool(uint16_t)> auto& keepsField, const Invocable<UniquedStringImpl*(size_t, UniquedStringImpl*)> auto& keyInPlaceOf)
@@ -266,29 +239,31 @@ static void rebuildKeyOrderOfOneObject(const Object& object, const Invocable<boo
     order.moveTo(structure);
 }
 
-static std::optional<uint32_t> extraKeyOrdinal(State& state, const Object& object, JSObject& extra, PropertyName name, const CountsOfPositionedKeys& counts, PlacesOfPositionedKeys& places)
+bool Object::tryListFieldBehindNamedKey(State& state, const FieldData& field)
 {
-    PropertyTable& table = *extra.structure()->propertyTableInOrderOfAddition(object.vm());
-    unsigned entry = table.find(name.uid()).entryIndex;
-    if (entry == PropertyTable::EmptyEntryIndex)
-        return std::nullopt;
-    bool isExtra = isExtraKey(state, object, name.uid());
-
-    if (counts.size() > PlacesOfPositionedKeys::maxNumberOfCounts)
-        return isExtra ? findOrdinalByWalk(state, object, table, entry, counts.last()) : std::nullopt;
-    if (!describes(places, object, table, counts) && !tryFindPlacesOfPositionedKeys(state, object, table, counts, places)) {
-        places = { };
-        return isExtra ? findOrdinalByWalk(state, object, table, entry, counts.last()) : std::nullopt;
+    bool namesKeys = hasKeyOrderOfItsOwn();
+    JSObject* extra = extraProperties();
+    if (!namesKeys && !(extra && extra->structure()->isDictionary()))
+        return false;
+    if (field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field))
+        return true;
+    VM& vm = this->vm();
+    RefPtr<UniquedStringImpl> lastKey;
+    if (extra) {
+        const PropertyTable& table = *extra->structure()->propertyTableInOrderOfAddition(vm);
+        lastKey = lastExtraKeyUpTo(state, *this, table, table.numberOfEntriesWithRemovedOnes());
     }
-    places.entryOfKeyAskedFor = entry;
-    places.keyAskedForIsExtraKey = isExtra;
-    if (!isExtra)
-        return std::nullopt;
-    for (uint32_t index = 0; index < counts.size(); ++index) {
-        if (entry <= places.lastEntries[index])
-            return index ? counts[index - 1] : 0;
+    if (!namesKeys) {
+        if (!lastKey)
+            return false;
+        takeKeyOrderOfItsOwn(vm, state);
     }
-    return std::nullopt;
+    const CompiledStructure& structure = compiledStructure();
+    std::span<const RefPtr<UniquedStringImpl>> namedKeys = structure.keysNamedByOrder();
+    if (!namedKeys.empty() && namedKeys.back() == lastKey)
+        lastKey = nullptr;
+    structure.appendToKeyOrderOfOneObject(lastKey.get(), static_cast<uint16_t>(layout().numberOfFields + namedKeys.size()), indexOf(field));
+    return true;
 }
 
 Object::PlaceOfExtraKey Object::placeOfExtraKey(PropertyName name)
@@ -296,7 +271,6 @@ Object::PlaceOfExtraKey Object::placeOfExtraKey(PropertyName name)
     JSObject* extra = extraProperties();
     if (!extra)
         return { };
-    // The orders of the image list fields alone.
     if (orderOf(orderWord()) < layout().numberOfOrders)
         return { };
     State& state = this->state();
@@ -308,7 +282,7 @@ Object::PlaceOfExtraKey Object::placeOfExtraKey(PropertyName name)
         if (counts.isEmpty())
             return { };
         if (!extra->structure()->isDictionary())
-            return { extraKeyOrdinal(state, *this, *extra, name, counts, places), std::nullopt, nullptr, true };
+            return { ordinalOfCountedExtraKey(state, *this, *extra, name, counts, places), std::nullopt, nullptr, true };
         takeKeyOrderOfItsOwn(vm(), state);
     }
     std::span<const RefPtr<UniquedStringImpl>> namedKeys = compiledStructure().keysNamedByOrder();
@@ -317,7 +291,7 @@ Object::PlaceOfExtraKey Object::placeOfExtraKey(PropertyName name)
             continue;
         PropertyTable& table = *extra->structure()->propertyTableInOrderOfAddition(vm());
         unsigned entry = table.find(name.uid()).entryIndex;
-        ASSERT(entry != PropertyTable::EmptyEntryIndex);
+        RELEASE_ASSERT(entry != PropertyTable::EmptyEntryIndex);
         return { std::nullopt, index, lastExtraKeyUpTo(state, *this, table, entry - 1) };
     }
     return { };
@@ -326,16 +300,16 @@ Object::PlaceOfExtraKey Object::placeOfExtraKey(PropertyName name)
 void Object::didRemoveExtraKey(VM& vm, State& state, const PlaceOfExtraKey& place)
 {
     if (place.indexAmongNamedKeys) {
-        uint32_t index = *place.indexAmongNamedKeys;
+        uint32_t removed = *place.indexAmongNamedKeys;
         const CompiledStructure& structure = compiledStructure();
-        if (place.extraKeyInFront && (!index || structure.keysNamedByOrder()[index - 1] != place.extraKeyInFront)) {
-            structure.replaceKeyNamedByOrder(index, place.extraKeyInFront);
+        if (place.extraKeyInFront && (!removed || structure.keysNamedByOrder()[removed - 1] != place.extraKeyInFront)) {
+            structure.replaceKeyNamedByOrder(removed, place.extraKeyInFront);
             return;
         }
         rebuildKeyOrderOfOneObject(*this, [](uint16_t) {
             return true;
-        }, [&](size_t other, UniquedStringImpl* key) {
-            return other == index ? nullptr : key;
+        }, [&](size_t index, UniquedStringImpl* key) {
+            return index == removed ? nullptr : key;
         });
         return;
     }
@@ -365,6 +339,10 @@ void Object::didRemoveCountedExtraKey(State& state)
         places = { };
         return;
     }
+    auto isExtraKeyAt = [&](unsigned entry) {
+        UniquedStringImpl* key = table->keyOfEntry(entry);
+        return key && isExtraKey(state, *this, key);
+    };
     for (uint32_t index = 0; places.keyAskedForIsExtraKey && index < places.numberOfCounts; ++index) {
         if (removed > places.lastEntries[index])
             continue;
@@ -376,10 +354,6 @@ void Object::didRemoveCountedExtraKey(State& state)
         if (removed != places.lastEntries[index])
             continue;
         unsigned entry = removed - 1;
-        auto isExtraKeyAt = [&](unsigned candidate) {
-            UniquedStringImpl* key = table->keyOfEntry(candidate);
-            return key && isExtraKey(state, *this, key);
-        };
         while (entry && !isExtraKeyAt(entry))
             --entry;
         if (!entry) {
@@ -393,51 +367,81 @@ void Object::didRemoveCountedExtraKey(State& state)
     places.orderWord = orderWord();
 }
 
-std::optional<Object::InitialKeyOrder> Object::initialKeyOrder(VM& vm, std::span<const uint16_t> keys, JSObject* extra)
+static void storeKeyOrderOutOfLine(VM& vm, State& state, Object& object, std::span<const uint16_t> keys, StructureTable::HeldKeyOrder heldKeyOrder = StructureTable::HeldKeyOrder::IsFoundByOthers)
 {
-    State& state = this->state();
-    const LayoutData& layout = this->layout();
-    if (hasFlagsInOrderWord())
-        return std::nullopt;
-    StructureTable& structures = state.objects->structures;
-    CompiledStructure* structure = const_cast<CompiledStructure*>(&compiledStructure());
-    if (hasOutOfLineKeyOrder())
-        structure = structures.withNumberedKeyOrder(vm, *structure);
-    if (extra) {
-        Structure* extraStructure = extra->structure();
-        if (!layout.extraPropertiesSlot() || layout.impossibleMutations().contains(ObjectMutation::AddProperty) || !canPositionEveryKey(layout, extraStructure))
-            return std::nullopt;
-        bool areAllExtra = true;
-        extraStructure->forEachProperty(vm, [&](const auto& property) {
-            areAllExtra = !property.attributes() && !state.objects->layouts.field(vm, layout, property.key());
-            return areAllExtra;
-        });
-        if (!areAllExtra)
-            return std::nullopt;
-        extraStructure->forEachProperty(vm, [&](const auto& property) {
-            willAddExtraProperty(vm, property.key());
-            return true;
-        });
-        CompiledStructure* existing = structures.existingWithExtraProperties(*structure, *extraStructure);
-        structure = existing ? existing : structures.withExtraProperties(vm, *structure, nullptr);
-    }
-    if (layout.keysAreNeverEnumerated)
-        return InitialKeyOrder { unorderedOrderWord, structure };
-    if (auto orderAndCount = state.objects->keyOrders.orderStartingWith(layout, keys))
-        return InitialKeyOrder { *orderAndCount, structure };
-    count(instance(), RuntimeCounterID::KeyOrdersStoredOutOfLine);
-    return InitialKeyOrder { outOfLineOrderWordFor(keys.size()), structures.withOutOfLineKeyOrder(vm, *structure, keys) };
+    object.JSCell::setStructure(vm, state.objects->structures.withOutOfLineKeyOrder(vm, object.compiledStructure(), keys, heldKeyOrder));
+    object.setOrderAndCount(outOfLineOrderWordFor(keys.size()));
+    countEvent(vm, RuntimeCounterID::KeyOrdersStoredOutOfLine);
 }
 
-void Object::setInitialKeyOrder(VM& vm, InitialKeyOrder order, JSObject* extra)
+static bool tryStepInOutOfLineKeyOrder(Object& object, std::span<const uint16_t> added)
 {
-    setOrderAndCount(order.orderAndCount);
-    if (extra) {
-        setExtraProperties(vm, extra, order.structure);
-        return;
+    uint32_t count = countOf(object.orderWord());
+    if (!object.hasOutOfLineKeyOrder() || !count || count + added.size() > maxFieldsInOrder)
+        return false;
+    const CompiledStructure& structure = object.compiledStructure();
+    for (uint16_t entry : added) {
+        std::span<const uint16_t> held = structure.outOfLineKeyOrder();
+        if (count < held.size() ? held[count] != entry : !structure.tryAppendToOutOfLineKeyOrder(entry))
+            return false;
+        ++count;
     }
-    if (order.structure != &compiledStructure())
-        JSCell::setStructure(vm, order.structure);
+    object.setOrderAndCount(outOfLineOrderWordFor(count));
+    return true;
+}
+
+static ALWAYS_INLINE bool trySearchForHeldKeyOrder(VM& vm, State& state, Object& object, std::span<const uint16_t> keys)
+{
+    KeyOrderTable& keyOrders = state.objects->keyOrders;
+    const LayoutData& layout = object.layout();
+    bool leavesNumberedOrder = !object.hasOutOfLineKeyOrder();
+    if (leavesNumberedOrder && !keyOrders.shouldSearchForHeldOrder(layout))
+        return false;
+    bool leavesOrderThatItFound = !leavesNumberedOrder && object.compiledStructure().keyOrderWasFoundAgain();
+    storeKeyOrderOutOfLine(vm, state, object, keys);
+    bool didFind = object.compiledStructure().keyOrderWasFoundAgain();
+    if (leavesNumberedOrder && didFind)
+        keyOrders.didFindHeldOrder(layout);
+    else if (leavesOrderThatItFound && !didFind)
+        keyOrders.didMakeHeldOrderAfterFindingOne(layout);
+    return true;
+}
+
+static void appendEntriesToUnnumberedKeyOrder(VM& vm, State& state, Object& object, std::span<const uint16_t> added)
+{
+    if (tryStepInOutOfLineKeyOrder(object, added))
+        return;
+    Vector<uint16_t, 32> entries(object.keyOrder(state));
+    entries.append(added);
+    if (!trySearchForHeldKeyOrder(vm, state, object, entries.span()))
+        storeKeyOrderOutOfLine(vm, state, object, entries.span(), StructureTable::HeldKeyOrder::IsFoundByNobody);
+}
+
+static ALWAYS_INLINE bool sharesStepsOfKeyOrder(const Object& object)
+{
+    return !object.hasFlagsInOrderWord() && !object.hasKeyOrderOfItsOwn();
+}
+
+static bool tryRepeatStepOfKeyOrder(VM& vm, State& state, Object& object, uint16_t field, StructureTable::KindOfStep kind)
+{
+    const StructureTable::StepOfKeyOrder* step = state.objects->structures.findStepOfKeyOrder(object.structureID(), object.orderWord() & orderAndCountMask, field, kind);
+    if (!step)
+        return false;
+    uint32_t orderAndCountAfter = step->orderAndCountAfter;
+    if (step->after != object.structureID()) {
+        auto* after = uncheckedDowncast<CompiledStructure>(step->after.decode());
+        if (after->hasOutOfLineKeyOrder())
+            after->didFindKeyOrderAgain();
+        object.JSCell::setStructure(vm, after);
+    }
+    object.setOrderAndCount(orderAndCountAfter);
+    return true;
+}
+
+static void rememberStepOfKeyOrder(State& state, const Object& object, StructureID before, uint32_t orderAndCountBefore, uint16_t field, StructureTable::KindOfStep kind)
+{
+    if (sharesStepsOfKeyOrder(object))
+        state.objects->structures.rememberStepOfKeyOrder(before, orderAndCountBefore, field, kind, object.structureID(), object.orderWord() & orderAndCountMask);
 }
 
 static uint32_t countExtraKeys(State& state, const Object& object, JSObject* extra)
@@ -476,108 +480,24 @@ std::optional<uint32_t> Object::numberOfExtraKeysByStructure() const
     return compiledStructure().numberOfExtraKeys();
 }
 
-using AddedEntries = Vector<uint16_t, 4>;
+using EntriesAddedToKeyOrder = Vector<uint16_t, 4>;
 
-static AddedEntries entriesPositioningExtraKeys(State& state, const Object& object, std::optional<uint32_t> numberOfKeysOfPendingStars)
+static EntriesAddedToKeyOrder entriesCountingExtraKeys(State& state, const Object& object, std::optional<uint32_t> numberOfKeysOfStars)
 {
-    AddedEntries entries;
-    JSObject* extra = numberOfKeysOfPendingStars ? nullptr : object.extraProperties();
-    if (!extra && !numberOfKeysOfPendingStars)
+    EntriesAddedToKeyOrder entries;
+    JSObject* extra = numberOfKeysOfStars ? nullptr : object.extraProperties();
+    if (!extra && !numberOfKeysOfStars)
         return entries;
     const LayoutData& layout = object.layout();
-    uint32_t numberOfExtraKeys = extra ? countExtraKeys(state, object, extra) : *numberOfKeysOfPendingStars;
+    uint32_t numberOfExtraKeys = extra ? countExtraKeys(state, object, extra) : *numberOfKeysOfStars;
     if (!numberOfExtraKeys)
         return entries;
     if (!object.hasOutOfLineKeyOrder() && state.objects->keyOrders.positionsExtraKeys(layout, object.orderWord() & orderAndCountMask, numberOfExtraKeys))
         return entries;
     ExtraKeyCounter positioned(layout.numberOfFields);
-    Object::KeyOrderStorage storage;
-    positioned.addAll(object.keyOrder(state, storage));
+    positioned.addAll(object.keyOrder(state));
     positioned.appendEntriesCountingTo(numberOfExtraKeys, entries);
     return entries;
-}
-
-static void storeKeyOrderOutOfLine(VM& vm, State& state, Object& object, std::span<const uint16_t> keys, StructureTable::HeldKeyOrder heldKeyOrder = StructureTable::HeldKeyOrder::IsFoundByOthers)
-{
-    object.JSCell::setStructure(vm, state.objects->structures.withOutOfLineKeyOrder(vm, object.compiledStructure(), keys, heldKeyOrder));
-    object.setOrderAndCount(outOfLineOrderWordFor(keys.size()));
-    count(object.instance(), RuntimeCounterID::KeyOrdersStoredOutOfLine);
-}
-
-static bool tryStepInOutOfLineKeyOrder(Object& object, std::span<const uint16_t> added)
-{
-    uint32_t count = countOf(object.orderWord());
-    if (!object.hasOutOfLineKeyOrder() || !count || count + added.size() > maxFieldsInOrder)
-        return false;
-    const CompiledStructure& structure = object.compiledStructure();
-    for (uint16_t entry : added) {
-        std::span<const uint16_t> held = structure.outOfLineKeyOrder();
-        if (count < held.size() ? held[count] != entry : !structure.tryAppendToOutOfLineKeyOrder(entry))
-            return false;
-        ++count;
-    }
-    object.setOrderAndCount(outOfLineOrderWordFor(count));
-    return true;
-}
-
-static ALWAYS_INLINE bool trySearchForHeldKeyOrder(VM& vm, State& state, Object& object, std::span<const uint16_t> keys)
-{
-    KeyOrderTable& keyOrders = state.objects->keyOrders;
-    const LayoutData& layout = object.layout();
-    bool leavesNumberedOrder = !object.hasOutOfLineKeyOrder();
-    if (leavesNumberedOrder && !keyOrders.shouldSearchForHeldOrder(layout))
-        return false;
-    bool leavesOrderThatItFound = !leavesNumberedOrder && object.compiledStructure().keyOrderWasFoundAgain();
-    storeKeyOrderOutOfLine(vm, state, object, keys);
-    bool didFind = object.compiledStructure().keyOrderWasFoundAgain();
-    if (leavesNumberedOrder && didFind)
-        keyOrders.didFindHeldOrder(layout);
-    else if (leavesOrderThatItFound && !didFind)
-        keyOrders.didMakeHeldOrderAfterFindingOne(layout);
-    return true;
-}
-
-// For an order that has no number. No order with a number starts with it, and the table takes no other order once it has refused one, so what is longer has no number either.
-static void appendEntriesToUnnumberedKeyOrder(VM& vm, State& state, Object& object, std::span<const uint16_t> added)
-{
-    if (tryStepInOutOfLineKeyOrder(object, added))
-        return;
-    Object::KeyOrderStorage storage;
-    Vector<uint16_t, 32> entries(object.keyOrder(state, storage));
-    entries.append(added);
-    if (!trySearchForHeldKeyOrder(vm, state, object, entries.span()))
-        storeKeyOrderOutOfLine(vm, state, object, entries.span(), StructureTable::HeldKeyOrder::IsFoundByNobody);
-}
-
-// The object has nothing but fields in their slots, and shares what says their order with every object that has the same keys.
-static ALWAYS_INLINE bool sharesStepsOfKeyOrder(const Object& object)
-{
-    return !object.hasFlagsInOrderWord() && !object.hasKeyOrderOfItsOwn();
-}
-
-static bool tryRepeatStepOfKeyOrder(VM& vm, State& state, Object& object, uint16_t field, StructureTable::KindOfStep kind)
-{
-    const StructureTable::StepOfKeyOrder* step = state.objects->structures.findStepOfKeyOrder(object.structureID(), object.orderWord() & orderAndCountMask, field, kind);
-    if (!step)
-        return false;
-    // The first object that took the step asked for a number and was refused one. So is this one.
-    if (isOrderStoredOutOfLine(step->orderAndCountAfter) && (kind == StructureTable::KindOfStep::Removes || !object.hasOutOfLineKeyOrder()))
-        countLimitHit(vm, LimitID::KeyOrdersPerLayout);
-    if (step->after != object.structureID()) {
-        auto* after = uncheckedDowncast<CompiledStructure>(step->after.decode());
-        // Removing from an order that no second object has asked for gives the object an order of its own.
-        if (after->hasOutOfLineKeyOrder())
-            after->didFindKeyOrderAgain();
-        object.JSCell::setStructure(vm, after);
-    }
-    object.setOrderAndCount(step->orderAndCountAfter);
-    return true;
-}
-
-static void rememberStepOfKeyOrder(State& state, const Object& object, StructureID before, uint32_t orderAndCountBefore, uint16_t field, StructureTable::KindOfStep kind)
-{
-    if (sharesStepsOfKeyOrder(object))
-        state.objects->structures.rememberStepOfKeyOrder(before, orderAndCountBefore, field, kind, object.structureID(), object.orderWord() & orderAndCountMask);
 }
 
 void Object::willCreateField(State&, const FieldData& field)
@@ -586,18 +506,16 @@ void Object::willCreateField(State&, const FieldData& field)
         ensureStorageFor(vm(), field);
 }
 
-void Object::didCreateField(State& stateAtHand, const FieldData& field, bool withStorage)
+void Object::didCreateField(State& state, const FieldData& field, bool withStorage)
 {
-    State& state = stateAtHand.sharesRealm ? this->state() : stateAtHand;
     if (withStorage)
         willCreateField(state, field);
     const LayoutData& layout = this->layout();
     if (layout.isClass())
-        state.objects->classes.didShadowMember(layout, state.objects->layouts.nameOf(vm(), field));
-    if (layout.keysAreNeverEnumerated)
-        return;
+        state.objects->classes.didShadowMember(layout, field);
     KeyOrderTable& keyOrders = state.objects->keyOrders;
-    if (std::optional<uint32_t> after = keyOrders.stepInsideOrderOfImage(layout, orderWord(), indexOf(field))) {
+    uint16_t index = indexOf(field);
+    if (std::optional<uint32_t> after = keyOrders.stepInsideOrderOfImage(layout, orderWord(), index)) {
         setOrderAndCount(*after);
         return;
     }
@@ -609,31 +527,28 @@ void Object::didCreateField(State& stateAtHand, const FieldData& field, bool wit
             return;
         }
     }
-    if (!hasFlagsInOrderWord() && !hasOutOfLineKeyOrder() && !(field.flags & fieldMayExistWithoutStorage)) {
+    bool isKnownNotToBeListed = !(field.flags & fieldMayExistWithoutStorage);
+    if (isKnownNotToBeListed && !hasFlagsInOrderWord() && !hasOutOfLineKeyOrder()) {
         if (std::optional<uint32_t> after = keyOrders.tryAppendToAddedOrder(layout, before, field)) {
             setOrderAndCount(*after);
             return;
         }
     }
-    bool sharesStep = sharesStepsOfKeyOrder(*this) && !(field.flags & fieldMayExistWithoutStorage);
+    bool sharesStep = isKnownNotToBeListed && sharesStepsOfKeyOrder(*this);
     StructureID structureBefore = structureID();
-    if (sharesStep) {
-        uint16_t index = indexOf(field);
-        if (tryStepInOutOfLineKeyOrder(*this, singleElementSpan(index)) || tryRepeatStepOfKeyOrder(vm(), state, *this, index, StructureTable::KindOfStep::Creates))
-            return;
-    }
-    // The order needs the number of the keys in front of the field, so stars go on waiting.
+    if (sharesStep && (tryStepInOutOfLineKeyOrder(*this, singleElementSpan(index)) || tryRepeatStepOfKeyOrder(vm(), state, *this, index, StructureTable::KindOfStep::Creates)))
+        return;
     std::optional<uint32_t> numberOfKeysOfStars = numberOfKeysOfPendingStars(vm(), *this);
     if (!numberOfKeysOfStars && tryListFieldBehindNamedKey(state, field))
         return;
-    AddedEntries added = entriesPositioningExtraKeys(state, *this, numberOfKeysOfStars);
+    EntriesAddedToKeyOrder added = entriesCountingExtraKeys(state, *this, numberOfKeysOfStars);
     numberOfExtraKeys = numberOfExtraKeysByStructure();
     if (field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field)) {
         if (!hasOutOfLineKeyOrder() && numberOfExtraKeys)
             keyOrders.publishTransition(layout, before, field, before, *numberOfExtraKeys);
         return;
     }
-    added.append(indexOf(field));
+    added.append(index);
     if (!hasOutOfLineKeyOrder()) {
         std::optional<uint32_t> after = before;
         bool publishesWholeStep = numberOfExtraKeys && (*numberOfExtraKeys || added.size() > 1);
@@ -650,13 +565,13 @@ void Object::didCreateField(State& stateAtHand, const FieldData& field, bool wit
     }
     appendEntriesToUnnumberedKeyOrder(vm(), state, *this, added.span());
     if (sharesStep)
-        rememberStepOfKeyOrder(state, *this, structureBefore, before, indexOf(field), StructureTable::KindOfStep::Creates);
+        rememberStepOfKeyOrder(state, *this, structureBefore, before, index, StructureTable::KindOfStep::Creates);
 }
 
 ALWAYS_INLINE bool Object::trySetNumberedKeyOrder(VM& vm, State& state, std::span<const uint16_t> keys)
 {
     const LayoutData& layout = this->layout();
-    ASSERT(!layout.keysAreNeverEnumerated && !hasKeyOrderOfItsOwn());
+    ASSERT(!hasKeyOrderOfItsOwn());
     auto numbered = state.objects->keyOrders.orderStartingWith(layout, keys);
     if (!numbered)
         return false;
@@ -675,10 +590,7 @@ void Object::setKeyOrder(VM& vm, State& state, std::span<const uint16_t> keys)
 
 void Object::removeExtraKeyFromOrder(VM& vm, State& state, uint32_t ordinal)
 {
-    const LayoutData& layout = this->layout();
-    if (layout.keysAreNeverEnumerated)
-        return;
-    uint32_t numberOfFields = layout.numberOfFields;
+    uint32_t numberOfFields = layout().numberOfFields;
     ExtraKeyCounter positionedBefore(numberOfFields);
     ExtraKeyCounter positionedAfter(numberOfFields);
     bool isChanged = false;
@@ -701,8 +613,6 @@ void Object::removeExtraKeyFromOrder(VM& vm, State& state, uint32_t ordinal)
 
 void removeFieldFromKeyOrder(VM& vm, State& state, Object& object, const FieldData& field)
 {
-    if (object.layout().keysAreNeverEnumerated)
-        return;
     object.forgetPlacesOfPositionedKeys(state);
     uint16_t index = object.indexOf(field);
     bool sharesStep = sharesStepsOfKeyOrder(object);
@@ -753,7 +663,7 @@ void removeFieldFromKeyOrder(VM& vm, State& state, Object& object, const FieldDa
 
 static bool hasNumberedKeyOrder(const Object& object)
 {
-    return !object.hasOutOfLineKeyOrder() && !object.layout().keysAreNeverEnumerated;
+    return !object.hasOutOfLineKeyOrder();
 }
 
 static bool holdsValue(const Object& object, const FieldData& listedField)
@@ -769,7 +679,6 @@ static bool holdsValue(const Object& object, const FieldData& listedField)
 
 std::optional<std::span<const FieldAsProperty>> Object::fieldsInKeyOrderSlow() const
 {
-    validateKeyListing(vm(), *this);
     if (hasExtraProperties() || !hasNumberedKeyOrder(*this))
         return std::nullopt;
     State& state = this->state();
@@ -786,7 +695,6 @@ bool Object::forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, 
         return false;
     State& state = this->state();
     VM& vm = *state.instance.vm;
-    validateKeyListing(vm, *this);
     std::optional<std::span<const FieldAsProperty>> properties;
     if (symbolKeys == SymbolKeys::Skip || !layout().hasFieldsWithSymbolKeys)
         properties = fieldsInKeyOrder();
@@ -821,6 +729,7 @@ bool Object::forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, 
 
 NEVER_INLINE void writeJSONKeys(VM& vm, CachedPropertyList& list)
 {
+    constexpr size_t sizeAroundName = 4;
     size_t size = FieldAsProperty::jsonKeyBlockSize;
     bool areWrittenAsTheyAre = true;
     for (const PropertyListEntry& property : list.properties) {
@@ -828,9 +737,9 @@ NEVER_INLINE void writeJSONKeys(VM& vm, CachedPropertyList& list)
         areWrittenAsTheyAre = areWrittenAsTheyAre && property.name->is8Bit() && std::ranges::all_of(property.name->span8(), [](Latin1Character character) {
             return character >= 0x20 && character < 0x7F && character != '"' && character != '\\';
         });
-        size += property.name->length() + 4;
+        size += property.name->length() + sizeAroundName;
     }
-    if (!areWrittenAsTheyAre)
+    if (!areWrittenAsTheyAre || size > UINT32_MAX)
         return;
     list.jsonKeys.fill(0, size);
     list.endsOfJSONKeys.fill(0, list.properties.size());
@@ -844,25 +753,19 @@ NEVER_INLINE void writeJSONKeys(VM& vm, CachedPropertyList& list)
         next += property.name->length();
         *next++ = '"';
         *next++ = ':';
-        *end++ = next - start;
+        *end++ = static_cast<uint32_t>(next - start);
     }
 }
 
-CachedPropertyList* findCachedPropertyList(VM& vm, const Object& object, JSObject* extra)
+CachedPropertyList* findCachedPropertyList(const Object& object, JSObject* extra)
 {
-    validateKeyListing(vm, object);
     if (!hasNumberedKeyOrder(object))
         return nullptr;
-    StructureID structureID = extra->structureID();
-    uint32_t shapeWord = object.shapeWord();
-    uint32_t orderAndCount = object.orderWord() & orderAndCountMask;
-    CachedPropertyList& entry = object.state().objects->caches->propertyLists.entryFor(structureID, shapeWord, orderAndCount);
-    return entry.extraPropertiesStructureID == structureID && entry.shapeWord == shapeWord && entry.orderAndCount == orderAndCount ? &entry : nullptr;
+    return object.state().objects->caches->propertyLists.find(extra->structureID(), object.shapeWord(), object.orderWord() & orderAndCountMask);
 }
 
 CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
 {
-    validateKeyListing(vm, object);
     JSObject* extra = object.extraProperties();
     if (!extra || !hasNumberedKeyOrder(object))
         return nullptr;
@@ -872,13 +775,12 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
     Structure* structure = extra->structure();
     uint32_t shapeWord = object.shapeWord();
     uint32_t orderAndCount = object.orderWord() & orderAndCountMask;
-    auto& cachedEntry = propertyLists.entryFor(structure->id(), shapeWord, orderAndCount);
-    if (cachedEntry.extraPropertiesStructureID == structure->id() && cachedEntry.shapeWord == shapeWord && cachedEntry.orderAndCount == orderAndCount) {
-        for (auto& property : cachedEntry.properties) {
+    if (CachedPropertyList* found = propertyLists.find(structure->id(), shapeWord, orderAndCount)) {
+        for (const PropertyListEntry& property : found->properties) {
             if (property.field && !holdsValue(object, *property.field))
                 return nullptr;
         }
-        return &cachedEntry;
+        return found;
     }
     if (extra->type() != FinalObjectType || structure->isDictionary() || structure->hasNonEnumerableProperties() || !structure->canPerformFastPropertyEnumeration() || structure->hasNonReifiedStaticProperties())
         return nullptr;
@@ -896,8 +798,7 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
         return nullptr;
     Vector<PropertyListEntry> properties;
     bool hasAllFields = true;
-    Object::KeyOrderStorage storage;
-    size_t nextExtraKey = Object::forEachPositionedKey(object.keyOrder(state, storage), layout.numberOfFields, extraKeys.size(), [&](uint16_t index) {
+    size_t nextExtraKey = Object::forEachPositionedKey(object.keyOrder(state), layout.numberOfFields, extraKeys.size(), [&](uint16_t index) {
         const FieldData& field = fields[index];
         if (!layouts.hasStringKey(field)) {
             hasAllFields &= !layouts.hasSymbolKey(field);
@@ -919,9 +820,13 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
         return nullptr;
     for (; nextExtraKey < extraKeys.size(); ++nextExtraKey)
         properties.append(extraKeys[nextExtraKey]);
-    auto& newEntry = propertyLists.entryFor(structure->id(), shapeWord, orderAndCount);
-    newEntry = { structure->id(), shapeWord, orderAndCount, nullptr, WTF::move(properties) };
-    return &newEntry;
+    return &propertyLists.add({ structure->id(), shapeWord, orderAndCount, WTF::move(properties) });
+}
+
+const Vector<PropertyListEntry>* Object::fieldsAndExtraPropertiesInKeyOrder(VM& vm) const
+{
+    CachedPropertyList* list = cachedPropertyList(vm, *this);
+    return list ? &list->properties : nullptr;
 }
 
 JSValue Object::readPropertyListEntry(const PropertyListEntry& property, JSObject* extra) const
@@ -940,16 +845,16 @@ bool Object::keysDependOnlyOnStructureAndOrderWord() const
 JSCellButterfly* Object::keysWithExtraProperties(VM& vm) const
 {
     DeferGC deferGC(vm);
-    auto* listing = cachedPropertyList(vm, *this);
-    if (!listing || listing->keys)
-        return listing ? listing->keys : nullptr;
-    JSCellButterfly* list = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, listing->properties.size());
-    if (!list)
+    CachedPropertyList* list = cachedPropertyList(vm, *this);
+    if (!list || list->keys)
+        return list ? list->keys : nullptr;
+    JSCellButterfly* keys = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, static_cast<unsigned>(list->properties.size()));
+    if (!keys)
         return nullptr;
-    for (unsigned i = 0; i < listing->properties.size(); ++i)
-        list->setIndex(vm, i, jsOwnedString(vm, listing->properties[i].name));
-    listing->keys = list;
-    return list;
+    for (unsigned index = 0; index < list->properties.size(); ++index)
+        keys->setIndex(vm, index, jsOwnedString(vm, String(list->properties[index].name)));
+    list->keys = keys;
+    return keys;
 }
 
 JSArray* Object::tryCreateKeysArrayWithExtraProperties(JSGlobalObject* globalObject) const
@@ -966,22 +871,54 @@ JSArray* Object::tryCreateKeysArrayWithExtraProperties(JSGlobalObject* globalObj
     if (!list)
         return nullptr;
     auto values = list->butterfly()->contiguous();
-    for (unsigned i = 0; i < length; ++i)
-        values.at(list, i).setWithoutWriteBarrier(keys->get(i));
+    for (unsigned index = 0; index < length; ++index)
+        values.at(list, index).setWithoutWriteBarrier(keys->get(index));
+    vm.mutatorFence();
     return list;
 }
 
-const Vector<PropertyListEntry>* Object::fieldsAndExtraPropertiesInKeyOrder(VM& vm) const
+static bool enumerableNamesFollowFromStructureAndOrderWord(VM&, const Object&);
+
+static JSCellButterfly* keysOfObjectWithExtraProperties(VM& vm, const Object& object)
 {
-    auto* listing = cachedPropertyList(vm, *this);
-    return listing ? &listing->properties : nullptr;
+    State& state = object.state();
+    uint32_t orderWord = object.orderWord();
+    uint32_t structureWord = keyListWordOfStructure(object.structureID().bits());
+    KeyListCacheEntry& cacheEntry = state.instance.objects.keyLists[indexOfKeyList(structureWord, orderWord)];
+    if (cacheEntry.shapeWord == structureWord && cacheEntry.orderWord == orderWord)
+        return uncheckedDowncast<JSCellButterfly>(cacheEntry.list);
+    if (hasPendingStars(object) || !enumerableNamesFollowFromStructureAndOrderWord(vm, object))
+        return nullptr;
+    if (JSCellButterfly* list = object.keysWithExtraProperties(vm)) {
+        cacheEntry = { orderWord, structureWord, list };
+        return list;
+    }
+    Vector<UniquedStringImpl*, 32> names;
+    forEachOwnKey(vm, state, object, KeysListed::Strings, DontEnumPropertiesMode::Exclude, [&](UniquedStringImpl* name) {
+        names.append(name);
+    });
+    size_t numberOfOwnKeys = 0;
+    forEachOwnKey(vm, state, object, KeysListed::StringsAndSymbols, DontEnumPropertiesMode::Include, [&](UniquedStringImpl*) {
+        ++numberOfOwnKeys;
+    });
+    if (numberOfOwnKeys != names.size())
+        return nullptr;
+    DeferGC deferGC(vm);
+    JSCellButterfly* list = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, static_cast<unsigned>(names.size()));
+    if (!list)
+        return nullptr;
+    for (unsigned index = 0; index < names.size(); ++index)
+        list->setIndex(vm, index, jsOwnedString(vm, String(names[index])));
+    cacheEntry = { orderWord, structureWord, list };
+    return list;
 }
 
 JSCellButterfly* Object::keys(VM& vm, KeyListKind kind) const
 {
-    validateKeyListing(vm, *this);
-    if (hasExtraProperties() || !hasNumberedKeyOrder(*this))
+    if (!hasNumberedKeyOrder(*this))
         return nullptr;
+    if (hasExtraProperties())
+        return kind == KeyListKind::Symbols ? nullptr : keysOfObjectWithExtraProperties(vm, *this);
     State& state = this->state();
     if (!hasKeyListsInTable(kind, state.tables.numberOfShapes))
         return state.objects->keyOrders.keysInOrder(vm, layout(), orderWord(), kind);
@@ -995,23 +932,6 @@ JSCellButterfly* Object::keys(VM& vm, KeyListKind kind) const
     return list;
 }
 
-static CachedPropertyList* listOfKeysFixedByStructure(VM& vm, const Object& object)
-{
-    JSObject* extra = object.extraProperties();
-    if (!extra || !object.keysDependOnlyOnStructureAndOrderWord() || hasIndexedProperties(extra->indexingType()))
-        return nullptr;
-    return cachedPropertyList(vm, object);
-}
-
-static JSPropertyNameEnumerator* cachedEnumeratorOfObjectWithExtraProperties(VM& vm, const Object& object, StructureChain* prototypeChain)
-{
-    CachedPropertyList* listing = listOfKeysFixedByStructure(vm, object);
-    if (!listing || !listing->enumerator || listing->prototypeChain != prototypeChain || listing->enumerator->cachedStructureID() != object.structureID())
-        return nullptr;
-    return listing->enumerator;
-}
-
-// Which names a loop finds on the object itself, and in which order: the attributes of a field in its slot are those of the layout, and the Structure of the extra properties has those of every other.
 static bool enumerableNamesFollowFromStructureAndOrderWord(VM& vm, const Object& object)
 {
     if (!object.keysDependOnlyOnStructureAndOrderWord())
@@ -1048,6 +968,33 @@ static bool canCacheEnumeratorFor(StructureChain* prototypeChain)
             return false;
     }
     return true;
+}
+
+static CachedPropertyList* listOfKeysFixedByStructure(VM& vm, const Object& object)
+{
+    JSObject* extra = object.extraProperties();
+    if (!extra || !object.keysDependOnlyOnStructureAndOrderWord() || hasIndexedProperties(extra->indexingType()))
+        return nullptr;
+    return cachedPropertyList(vm, object);
+}
+
+static JSPropertyNameEnumerator* cachedEnumeratorOfObjectWithExtraProperties(VM& vm, const Object& object, StructureChain* prototypeChain)
+{
+    DeferGC deferGC(vm);
+    CachedPropertyList* list = listOfKeysFixedByStructure(vm, object);
+    if (!list || !list->enumerator || list->prototypeChain != prototypeChain || list->enumerator->cachedStructureID() != object.structureID())
+        return nullptr;
+    return list->enumerator;
+}
+
+static void cacheEnumeratorOfObjectWithExtraProperties(VM& vm, const Object& object, JSPropertyNameEnumerator* enumerator, StructureChain* prototypeChain)
+{
+    DeferGC deferGC(vm);
+    CachedPropertyList* list = listOfKeysFixedByStructure(vm, object);
+    if (!list)
+        return;
+    list->enumerator = enumerator;
+    list->prototypeChain = prototypeChain;
 }
 
 JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalObject)
@@ -1101,10 +1048,8 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
         if (structureBefore->prototypeChain(vm, globalObject, this) == prototypeChainBefore && canCacheEnumeratorFor(prototypeChainBefore)) {
             if (!hasExtraProperties)
                 keyOrders.setEnumerator(vm, layout, orderWordBefore, enumerator, prototypeChainBefore);
-            else if (CachedPropertyList* listing = listOfKeysFixedByStructure(vm, *this)) {
-                listing->enumerator = enumerator;
-                listing->prototypeChain = prototypeChainBefore;
-            }
+            else
+                cacheEnumeratorOfObjectWithExtraProperties(vm, *this, enumerator, prototypeChainBefore);
             keyOrders.publishEnumerator(*this, enumerator);
         }
     }
@@ -1112,19 +1057,20 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
 }
 
 PropertyListCache::PropertyListCache(State& state)
-    : m_state(state)
-    , m_entries(state.tableArena)
+    : m_entries(state.tableArena)
     , m_ownKeyLists(state.tableArena)
 {
     state.caches->add(CacheKind::ClearedEachCollection, "property lists"_s, *this);
 }
 
-CachedPropertyList& PropertyListCache::entryFor(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
+CachedPropertyList& PropertyListCache::add(CachedPropertyList&& list)
 {
     if (!m_entries)
         m_entries.make();
     m_writes.recordAll();
-    return (*m_entries)[((extraPropertiesStructureID.bits() >> 4) + shapeWord + orderAndCount * 31) % numberOfEntries];
+    CachedPropertyList& place = (*m_entries)[placeOf(list.extraPropertiesStructureID, list.shapeWord, list.orderAndCount)];
+    place = WTF::move(list);
+    return place;
 }
 
 KeptOwnKeys& PropertyListCache::ownKeysFor(StructureID structureID, uint32_t orderWord, bool listsSymbols)
@@ -1150,9 +1096,15 @@ KeptOwnKeys& PropertyListCache::ownKeysFor(StructureID structureID, uint32_t ord
     return withoutList ? *withoutList : set[m_numberOfOwnKeyListsReplaced++ % listsPerSet];
 }
 
+static bool ownKeysFollowFromStructureAndOrderWord(const Object& object)
+{
+    JSObject* extra = object.extraProperties();
+    return extra && object.keysDependOnlyOnStructureAndOrderWord() && object.compiledStructure().extraPropertiesStructureID() == extra->structureID();
+}
+
 JSCellButterfly* findKeptOwnKeys(const Object& object, bool listsSymbols)
 {
-    if (!object.keysDependOnlyOnStructureAndOrderWord())
+    if (!ownKeysFollowFromStructureAndOrderWord(object))
         return nullptr;
     const KeptOwnKeys& kept = object.state().objects->caches->propertyLists.ownKeysFor(object.structureID(), object.orderWord(), listsSymbols);
     return kept.isFor(object.structureID(), object.orderWord(), listsSymbols) ? kept.keys : nullptr;
@@ -1160,7 +1112,7 @@ JSCellButterfly* findKeptOwnKeys(const Object& object, bool listsSymbols)
 
 void didListOwnKeys(VM& vm, const Object& object, bool listsSymbols, JSArray* list)
 {
-    if (!object.keysDependOnlyOnStructureAndOrderWord())
+    if (!ownKeysFollowFromStructureAndOrderWord(object))
         return;
     DeferGC deferGC(vm);
     KeptOwnKeys& kept = object.state().objects->caches->propertyLists.ownKeysFor(object.structureID(), object.orderWord(), listsSymbols);
@@ -1182,15 +1134,11 @@ void PropertyListCache::clear()
 {
     m_writes.forEachRegionToClear([&](size_t, size_t) {
         if (m_entries) {
-            for (auto& listing : *m_entries)
-                listing = { };
+            for (CachedPropertyList& list : *m_entries)
+                list = { };
         }
         if (m_ownKeyLists)
             m_ownKeyLists->fill({ });
-        for (auto& cacheEntry : std::span { m_state.instance.objects.keyLists, numberOfKeyLists }) {
-            if (cacheEntry.orderWord & orderWordHasExtraProperties)
-                cacheEntry = { };
-        }
     });
 }
 

@@ -1,0 +1,8 @@
+# the same program with direct calls withheld: both calls are closed, and the one await stands in the join
+# RUN: walk f3:CoroutineBody mechanisms=none
+# CHECK-LABEL: code f3:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# CHECK-NOT: = AwaitBySavingFrame
+# RUN(NEVER): walk f3:CoroutineBody mechanisms=none
+# NEVER-NOT: = AwaitCallBySavingFrame
+# PROGRAM-OF: await-at-the-head-of-a-join-is-built-by-each-jump-into-it.ir

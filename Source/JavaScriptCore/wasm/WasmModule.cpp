@@ -153,10 +153,7 @@ void Module::createInterpreterMetadataIfNeeded(const CalleeGroup& group)
     if (!info.moduleWithSkippedFunctions)
         return;
 #if ENABLE(WEBASSEMBLY_OMGJIT)
-    std::span<const FunctionInImage> functionsInImage = CodeInImage::functionsOf(*info.moduleWithSkippedFunctions);
     for (unsigned index = 0; index < info.internalFunctionCount(); ++index) {
-        if (!functionsInImage[index].hasCode)
-            continue;
         info.functions[index].finishedValidating = false;
         auto metadata = parseAndCompileMetadata(info.functions[index].data, info.rtt(info.internalFunctionTypeSignatureIndices[index]), info, FunctionCodeIndex(index));
         RELEASE_ASSERT(metadata);

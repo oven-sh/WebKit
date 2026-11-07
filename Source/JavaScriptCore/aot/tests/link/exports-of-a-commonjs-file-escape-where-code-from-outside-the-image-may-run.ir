@@ -1,0 +1,6 @@
+# Code from disk has a loader of its own.
+# PROGRAM-OF: exports-of-a-commonjs-file-do-not-escape.ir
+# REQUIRES: code-outside-image
+# RUN: link functions variables mechanisms=all
+# CHECK-NOT: function f2 callers-known
+# CHECK-NOT: variable g0 {{*}}writers-known

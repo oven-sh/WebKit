@@ -1,0 +1,138 @@
+# Layout, set, declared family, lost: not every order climbs that alike. Five members meet at a parameter, which climbs to their family, and a stranger comes later: the whole family is lost, and every member that
+# may be known by it joins. The stranger in the same step: each was lost by itself, nobody told the family, and the sixth member kept its proof. Which of the two a large program got hung on the clock.
+# The nearest declared family of two layouts that stand in one lost family is lost, so both programs below end alike, in every order of the worklist.
+#   abstract class Shape { }  Circle, Square, Triangle, Oval, Kite, Star extend Shape  Point     abstract class Tool { }  Hammer, Saw, Drill, File, Plane, Chisel extend Tool  Nail
+#   function area(o) { return 1 }  function put(e) { e.x = null }  function same(v) { return v }  function use(o) { return 1 }  function lay(e) { e.x = null }
+#   area(circle); area(triangle); area(oval); area(kite); area(star);  put(circle); put(square); put(oval); put(kite); put(star); put(same(same(point)));       the stranger has the longer way
+#   use(hammer); use(drill); use(file); use(plane); use(chisel);  lay(hammer); lay(saw); lay(file); lay(plane); lay(chisel); lay(nail);                         the stranger comes with the five
+# Triangle and Drill may be known by their families because five members meet at `area` and at `use`: up to four are a set, which names its members and no family.
+# Without the rule the field of Drill is proven a string here, and that of Triangle null|string.
+# RUN: link fields mechanisms=all
+# CHECK: field L3.0 "x" proven=null|string
+# CHECK: field L8.0 "x" proven=null|string
+# RUN(OLDEST): link fields oldest-first mechanisms=all
+# OLDEST: field L3.0 "x" proven=null|string
+# OLDEST: field L8.0 "x" proven=null|string
+# RUN(SCATTERED): link fields scattered mechanisms=all
+# SCATTERED: field L3.0 "x" proven=null|string
+# SCATTERED: field L8.0 "x" proven=null|string
+# RUN(LOST): link functions mechanisms=all
+# LOST: function f1 callers-known one-callee
+# LOST-NEXT: parameter 0 {{*}}proven=L1|L2|L3|L10|L11|L12
+# LOST: function f2 callers-known one-callee
+# LOST-NEXT: parameter 0 {{*}}proven=L1|L2|L3|L4|L10|L11|L12
+# LOST: function f4 callers-known one-callee
+# LOST-NEXT: parameter 0 {{*}}proven=L6|L7|L8|L13|L14|L15
+# LOST: function f5 callers-known one-callee
+# LOST-NEXT: parameter 0 {{*}}proven=L6|L7|L8|L9|L13|L14|L15
+
+layout L0 kind=Instance name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L1 name="Circle" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Square" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Triangle" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="t" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L4 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L5 kind=Instance name="Tool" module=m0 flags=[IsNeverAllocated]
+layout L6 name="Hammer" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]
+layout L7 name="Saw" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="w" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]
+layout L8 name="Drill" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]
+layout L9 name="Nail" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L10 name="Oval" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="o" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L11 name="Kite" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="k" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L12 name="Star" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L13 name="File" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="f" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]
+layout L14 name="Plane" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="l" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]
+layout L15 name="Chisel" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="s"
+    v1 = Integer integer=0
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewObject -, v0, v1 layout=L2 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = NewObject -, v0, v1 layout=L3 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = NewObject -, v0, v1 layout=L4 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = NewObject -, v0, v1 layout=L6 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = NewObject -, v0, v1 layout=L7 fields=[0, 1]
+    v13 = FinishObject v12
+    v14 = NewObject -, v0, v1 layout=L8 fields=[0, 1]
+    v15 = FinishObject v14
+    v16 = NewObject -, v0, v1 layout=L9 fields=[0, 1]
+    v17 = FinishObject v16
+    v18 = NewObject -, v0, v1 layout=L10 fields=[0, 1]
+    v19 = FinishObject v18
+    v20 = NewObject -, v0, v1 layout=L11 fields=[0, 1]
+    v21 = FinishObject v20
+    v22 = NewObject -, v0, v1 layout=L12 fields=[0, 1]
+    v23 = FinishObject v22
+    v24 = NewObject -, v0, v1 layout=L13 fields=[0, 1]
+    v25 = FinishObject v24
+    v26 = NewObject -, v0, v1 layout=L14 fields=[0, 1]
+    v27 = FinishObject v26
+    v28 = NewObject -, v0, v1 layout=L15 fields=[0, 1]
+    v29 = FinishObject v28
+    v30 = NewClosure function=f1
+    v31 = Call v30, -, v3 calleeName="area"
+    v32 = Call v30, -, v7 calleeName="area"
+    v33 = Call v30, -, v19 calleeName="area"
+    v34 = Call v30, -, v21 calleeName="area"
+    v35 = Call v30, -, v23 calleeName="area"
+    v36 = NewClosure function=f2
+    v37 = Call v36, -, v3 calleeName="put"
+    v38 = Call v36, -, v5 calleeName="put"
+    v39 = Call v36, -, v19 calleeName="put"
+    v40 = Call v36, -, v21 calleeName="put"
+    v41 = Call v36, -, v23 calleeName="put"
+    v42 = NewClosure function=f3
+    v43 = Call v42, -, v9 calleeName="same"
+    v44 = Call v42, -, v43 calleeName="same"
+    v45 = Call v36, -, v44 calleeName="put"
+    v46 = NewClosure function=f4
+    v47 = Call v46, -, v11 calleeName="use"
+    v48 = Call v46, -, v15 calleeName="use"
+    v49 = Call v46, -, v25 calleeName="use"
+    v50 = Call v46, -, v27 calleeName="use"
+    v51 = Call v46, -, v29 calleeName="use"
+    v52 = NewClosure function=f5
+    v53 = Call v52, -, v11 calleeName="lay"
+    v54 = Call v52, -, v13 calleeName="lay"
+    v55 = Call v52, -, v25 calleeName="lay"
+    v56 = Call v52, -, v27 calleeName="lay"
+    v57 = Call v52, -, v29 calleeName="lay"
+    v58 = Call v52, -, v17 calleeName="lay"
+    v59 = Undefined
+    Return v59
+}
+function f1 name="area" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f2 name="put" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="use" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f5 name="lay" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}

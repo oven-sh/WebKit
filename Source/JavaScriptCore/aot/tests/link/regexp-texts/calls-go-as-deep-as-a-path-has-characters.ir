@@ -1,0 +1,125 @@
+# function insert(text, index) { return index === text.length ? null : { key: text[index], next: insert(text, index + 1) }; }
+# function spell(node) { return node === null ? "" : node.key + spell(node.next); }
+# export const made = new RegExp("^" + spell(insert("/a-path-of-more-than-forty-characters-that-is-laid-into-a-tree", 0)) + "$");
+# A router lays a path into a tree of its characters, one call a character, and spells the tree out again. The path has 62 characters.
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /^/a-path-of-more-than-forty-characters-that-is-laid-into-a-tree$/
+# CHECK-NOT: text /
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="made" variable=g0}] namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 module=m0 position=69 fields=[{key="key" declared={type=anything}}, {key="next" declared={type=anything}}] ownFieldCount=2
+variable g0 name="made" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="insert" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g2 name="spell" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Builtin builtin=RegExp @230
+    v1 = String string="^" @237
+    v2 = GetModuleVariable variable=g2 @243
+    v3 = GetModuleVariable variable=g1 @249
+    v4 = String string="/a-path-of-more-than-forty-characters-that-is-laid-into-a-tree" @256
+    v5 = Integer @322
+    v6 = Call v3, -, v4, v5 calleeName="insert" @249
+    v7 = Call v2, -, v6 calleeName="spell" @243
+    v8 = Add v1, v7 @243
+    v9 = String string="$" @328
+    v10 = Add v8, v9 @328
+    v11 = Construct v0, -, v10 calleeName="RegExp" @230
+    PutModuleVariable v11 variable=g0 @219
+    v13 = Undefined @219
+    Return v13 @219
+}
+function f1 name="insert" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: i32):
+    Jump -> next b1() @0
+  b1():
+    v2 = PropGet v0 key="length" @48
+    v3 = StrictEq v1, v2 @48
+    Branch v3 -> taken b2(), notTaken b3() @48
+  b2():
+    v4 = Null @62
+    Jump -> next b4(v4) @62
+  b3():
+    v5 = ElemGet v0, v1 @76
+    v6 = GetModuleVariable variable=g1 @95
+    v7 = Integer integer=1 @116
+    v8 = Add v1, v7 @116
+    v9 = Call v6, -, v0, v8 calleeName="insert" @95
+    v10 = NewObject -, v5, v9 layout=L0 fields=[0, 1] @69
+    v11 = FinishObject v10 @69
+    Jump -> next b4(v11) @69
+  b4(v12):
+    Return v12 @69
+}
+function f2 name="spell" module=m0 position=124 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0):
+    Jump -> next b1() @124
+  b1():
+    v1 = TypeTest v0 testedType=null @154
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @154
+  b2(v2):
+    Jump -> next b3() @154
+  b3():
+    v3 = String string="" @170
+    Jump -> next b6(v3) @170
+  b4(v4):
+    Jump -> next b5() @154
+  b5():
+    v5 = PropGet v0 key="key" @175
+    v6 = GetModuleVariable variable=g2 @186
+    v7 = PropGet v0 key="next" @192
+    v8 = Call v6, -, v7 calleeName="spell" @186
+    v9 = Add v5, v8 @186
+    Jump -> next b6(v9) @186
+  b6(v10):
+    Return v10 @186
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f4 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @14610
+  b1():
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @14702
+  b2(v4):
+    Jump -> next b5() @14702
+  b3(v5):
+    Jump -> next b4() @14702
+  b4():
+    v6 = Call v2, v0 @14744
+    Jump -> next b5() @14744
+  b5():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f4
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

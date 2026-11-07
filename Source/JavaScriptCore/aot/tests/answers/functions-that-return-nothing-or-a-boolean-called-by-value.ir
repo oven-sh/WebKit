@@ -1,0 +1,48 @@
+# A function that anybody may call by value returns undefined or a boolean to whoever calls it, and so does one whose every caller is known
+# function note(x) { sink(x) }  function isSmall(n) { return n < 3 }  function local(x) { sink(x) }
+# local(0); local(9); register(note, isSmall)
+# RUN(SHELL): run-in-shell globalThis.sink = x => print("sink", x); globalThis.register = (note, isSmall) => { print(note(1), isSmall(1), isSmall(5), isSmall("a")); };
+# SHELL: sink 0
+# SHELL-NEXT: sink 9
+# SHELL-NEXT: sink 1
+# SHELL-NEXT: undefined true false false
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Integer integer=0
+    v4 = Call v2, -, v3 calleeName="local"
+    v5 = Integer integer=9
+    v6 = Call v2, -, v5 calleeName="local"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="register" [isFreeName]
+    v9 = Call v8, -, v0, v1 calleeName="register"
+    Return v9
+}
+function f1 name="note" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="isSmall" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    v2 = Less v0, v1
+    Return v2
+}
+function f3 name="local" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}

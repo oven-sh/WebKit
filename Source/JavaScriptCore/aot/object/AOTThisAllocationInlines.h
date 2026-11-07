@@ -9,12 +9,6 @@
 
 #include "AOTClosureWord.h"
 #include "AOTCompiledCallee.h"
-#include "AOTCompiledStructure.h"
-#include "AOTInstance.h"
-#include "AOTObjectModel.h"
-#include "AOTObjectWords.h"
-#include "AOTRuntimeValidation.h"
-#include "AOTState.h"
 #include "FreeListInlines.h"
 #include "FunctionRareData.h"
 #include "JSFunction.h"
@@ -25,9 +19,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// What FunctionRareData::compiledAllocationConstructor() holds for a function that was constructed with itself as new.target. Any other constructor is remembered by its closure number.
 static constexpr uint32_t constructorIsNewTarget = FunctionRareData::maxCompiledAllocationConstructor;
-// The same, where the function only returns and its object is an ordinary one of the default size: llint_aot_op_construct makes the object and enters nothing. It tells by the high bits alone.
 static constexpr uint32_t bitOfConstructorWithBody = 1u << 16;
 static constexpr uint32_t constructorIsNewTargetAndOnlyReturns = constructorIsNewTarget & ~bitOfConstructorWithBody;
 static_assert(ClosureWord::functionMask < constructorIsNewTargetAndOnlyReturns && ClosureWord::functionMask >> 16 < constructorIsNewTargetAndOnlyReturns >> 16);
@@ -42,12 +34,8 @@ inline constexpr ptrdiff_t offsetOfAllocatorOfDefaultFinalObject = OBJECT_OFFSET
 
 } // namespace Interpreter
 
-// The fast paths of ClassTable::createThis(). They call nothing, so they cannot collect and their callers need no frame.
-
-ALWAYS_INLINE Structure* rememberedStructureOfThis(VM& vm, JSCell* constructor, JSCell* newTarget)
+ALWAYS_INLINE Structure* rememberedStructureOfThis(VM&, JSCell* constructor, JSCell* newTarget)
 {
-    if (validatesRuntime(vm)) [[unlikely]]
-        return nullptr;
     auto* function = dynamicDowncast<JSFunction>(*newTarget);
     FunctionRareData* rareData = function ? function->rareData() : nullptr;
     Structure* remembered = rareData ? rareData->compiledAllocationStructure() : nullptr;
@@ -73,7 +61,7 @@ ALWAYS_INLINE uint8_t* tryAllocateCellInline(VM& vm, size_t size)
     }, freeList.cellSize()));
 }
 
-// In both, the fence keeps the loop from becoming a call of memset or memcpy.
+// The fence keeps the loop from becoming a call of memset.
 
 ALWAYS_INLINE JSObject* tryCreateFinalObjectInline(VM& vm, Structure* structure)
 {
@@ -94,26 +82,6 @@ ALWAYS_INLINE JSObject* tryCreateFinalObjectInline(VM& vm, Structure* structure)
             WTF::compilerFence();
         }
     }
-    vm.mutatorFence();
-    return reinterpret_cast<JSObject*>(cell);
-}
-
-ALWAYS_INLINE JSObject* tryCreateCompiledObjectInline(Instance& instance, Structure* structure, const LayoutData& layout)
-{
-    const RuntimeLayoutTable::BodyAtBirth* body = instance.state->objects->layouts.bodyAtBirthIfKnown(layout);
-    if (!body) [[unlikely]]
-        return nullptr;
-    VM& vm = *instance.vm;
-    std::span<const uint8_t> cellAtBirth = body->cell.span();
-    uint8_t* cell = tryAllocateCellInline(vm, cellAtBirth.size());
-    if (!cell) [[unlikely]]
-        return nullptr;
-    for (size_t offset = 0; offset < cellAtBirth.size(); offset += cellChunkSize) {
-        memcpy(cell + offset, cellAtBirth.data() + offset, cellChunkSize);
-        WTF::compilerFence();
-    }
-    static_assert(JSCell::typeInfoFlagsOffset() == 6);
-    *reinterpret_cast<uint64_t*>(cell) = cellHeaderFor(structure) | (body->isBornUnfinished ? static_cast<uint64_t>(TypeInfoPerCellBit) << 48 : 0);
     vm.mutatorFence();
     return reinterpret_cast<JSObject*>(cell);
 }

@@ -15,8 +15,10 @@
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/FixedVector.h>
+#include <wtf/FastMalloc.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -32,7 +34,7 @@ public:
     enum class Failure : uint8_t {
         NoStubs,
         CannotPrepareContext,
-        NoFreeEntry,
+        CannotMapMoreEntries,
     };
 
     CallbackEntryPool() = default;
@@ -44,19 +46,25 @@ public:
     JS_EXPORT_PRIVATE void release(unsigned entry);
 
     JS_EXPORT_PRIVATE void* entrypoint(unsigned entry) const;
-    JSFFICallback* callbackAt(unsigned entry) const { return m_callbacks[entry].load(std::memory_order_acquire); }
+    // An entry that is called reads its word through its context and asks nothing here.
+    JS_EXPORT_PRIVATE JSFFICallback* callbackAt(unsigned entry) const;
 
     JS_EXPORT_PRIVATE unsigned numberOfEntries() const;
 
 private:
-    std::optional<Failure> prepare() WTF_REQUIRES_LOCK(m_lock);
+    struct Block;
 
-    Lock m_lock;
-    bool m_didPrepare WTF_GUARDED_BY_LOCK(m_lock) { false };
-    std::optional<Failure> m_preparationFailure WTF_GUARDED_BY_LOCK(m_lock);
+    std::optional<Failure> addBlock() WTF_REQUIRES_LOCK(m_lock);
+    std::atomic<JSFFICallback*>& wordOf(unsigned entry) const WTF_REQUIRES_LOCK(m_lock);
+
+    mutable Lock m_lock;
+    std::optional<Failure> m_failureOfFirstBlock WTF_GUARDED_BY_LOCK(m_lock);
     BitVector m_entriesInUse WTF_GUARDED_BY_LOCK(m_lock);
-    const Stubs* m_stubs { nullptr };
-    FixedVector<std::atomic<JSFFICallback*>> m_callbacks;
+    // No entry in front of it is free.
+    size_t m_firstEntryThatMayBeFree WTF_GUARDED_BY_LOCK(m_lock) { 0 };
+    const Stubs* m_stubs WTF_GUARDED_BY_LOCK(m_lock) { nullptr };
+    // A block stays for as long as the process: foreign code may hold the address of an entry that was closed.
+    Vector<Block*> m_blocks WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } } // namespace JSC::FFI

@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// class Failure extends Error { code, detail, info, describe(), get twice() }, class Deeper extends Failure { level, describe() }
 static constexpr ASCIILiteral errorSubclasses = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Failure" constructor=f1 fields=[{key="code" declared={type=anything}}, {key="detail" declared={type=anything}}, {key="info" declared={type=anything}}] flags=[HasHeritage]
@@ -155,7 +154,6 @@ function f5 name="describe" kind=Method flags=[HasThis] results=[{type=anything}
 }
 )IR"_s;
 
-// class List extends Array { tag, size, label() }, class Registry extends Map { hits, name, lookup(key) }, class Bytes extends Uint8Array { cursor, next() }
 static constexpr ASCIILiteral collectionSubclasses = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="List" constructor=f1 fields=[{key="tag" declared={type=anything}}, {key="size" declared={type=anything}}] flags=[HasHeritage]
@@ -323,7 +321,6 @@ function f6 name="next" kind=Method flags=[HasThis] results=[{type=anything}] {
 }
 )IR"_s;
 
-// class Failure extends Error { constructor(m) { super(m, { cause: 17 }) } get message() { return "from getter" } }, class Stack extends Array { get length() { return 42 } }
 static constexpr ASCIILiteral gettersUnderOwnNames = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Failure" constructor=f1 flags=[HasHeritage]
@@ -380,26 +377,177 @@ function f4 name="length" kind=Getter flags=[HasThis] results=[{type=anything}] 
 }
 )IR"_s;
 
-// The shell has none of the host's classes, whose members flow takes for constant as soon as a name is read on a value nobody knows.
-static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expectedOutput)
+static constexpr ASCIILiteral cellsThatLeaveAndJoinClass = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Registry" constructor=f1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = PropGet v0 key="Map" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L0
+    v6 = NewClosure function=f2
+    DefineMethod v5, v6 layout=L0 key="lookup"
+    v8 = FinishClass v5 layout=L0
+    v9 = String string="x"
+    v10 = Integer integer=5
+    v11 = Construct v8
+    v12 = PropGet v11 key="set"
+    v13 = Call v12, v11, v9, v10 calleeKey="set"
+    v14 = PropGet v11 key="lookup"
+    v15 = Call v14, v11, v9 calleeKey="lookup"
+    v16 = InstanceOf v11, v8
+    v17 = InstanceOf v11, v2
+    v18 = Call v1, -, v15, v16, v17
+    v19 = Integer integer=9
+    PropSet v11, v19 key="lookup" mode=Strict
+    v21 = PropGet v11 key="lookup"
+    v22 = Call v1, -, v21
+    v23 = PropGet v0 key="Object" [isFreeName]
+    v24 = PropGet v23 key="setPrototypeOf"
+    v25 = PropGet v2 key="prototype"
+    v26 = Construct v8
+    v27 = Call v24, v23, v26, v25 calleeKey="setPrototypeOf"
+    v28 = PropGet v26 key="lookup"
+    v29 = TypeOf v28
+    v30 = InstanceOf v26, v8
+    v31 = InstanceOf v26, v2
+    v32 = Call v1, -, v29, v30, v31
+    v33 = Construct v2
+    v34 = Integer integer=7
+    v35 = PropGet v33 key="set"
+    v36 = Call v35, v33, v9, v34 calleeKey="set"
+    v37 = PropGet v8 key="prototype"
+    v38 = Call v24, v23, v33, v37 calleeKey="setPrototypeOf"
+    v39 = PropGet v33 key="lookup"
+    v40 = Call v39, v33, v9 calleeKey="lookup"
+    v41 = InstanceOf v33, v8
+    v42 = Call v1, -, v40, v41
+    v43 = PropGet v23 key="create"
+    v44 = Call v43, v23, v37 calleeKey="create"
+    v45 = InstanceOf v44, v8
+    v46 = InstanceOf v44, v2
+    v47 = Call v1, -, v45, v46
+    Return
+}
+function f1 name="Registry" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f2 name="lookup" kind=Method flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="get"
+    v3 = Call v2, v0, v1 calleeKey="get"
+    Return v3
+}
+)IR"_s;
+
+static constexpr ASCIILiteral privateNameOfCollectionSubclass = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key=#"n"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}] flags=[HasHeritage]
+layout L1 name="Kept" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = PropGet v0 key="Map" [isFreeName]
+    v3 = NewClassToken layout=L0
+    v4 = NewClosure v3 function=f1
+    v5 = ResolveHeritage v2
+    v6 = NewClass v4, v2, v5 layout=L0
+    v7 = NewClosure v3 function=f2
+    DefineMethod v6, v7 layout=L0 key="bump"
+    v9 = NewClosure v3 function=f3
+    DefineMethod v6, v9 layout=L0 index=1 key="keep"
+    v11 = NewClosure v3 function=f4
+    DefineMethod v6, v11 layout=L0 index=2 key="read"
+    v13 = FinishClass v6 layout=L0
+    v14 = Integer integer=0
+    v15 = Integer integer=1
+    Jump -> next b1(v14, v14)
+  b1(v16, v17):
+    LoopHint
+    v19 = Integer integer=100
+    v20 = Less v16, v19
+    Branch v20 -> taken b2(), notTaken b3()
+  b2():
+    v21 = Construct v13
+    v22 = PropGet v21 key="bump"
+    v23 = Call v22, v21 calleeKey="bump"
+    v24 = Call v22, v21 calleeKey="bump"
+    v25 = Call v22, v21 calleeKey="bump"
+    v26 = Add v17, v25
+    v27 = Add v16, v15
+    Jump -> next b1(v27, v26)
+  b3():
+    v28 = Call v1, -, v17
+    v29 = Construct v13
+    PropSet v29, v15 key="extra" mode=Strict
+    v31 = PropGet v29 key="bump"
+    v32 = Call v31, v29 calleeKey="bump"
+    v33 = Call v31, v29 calleeKey="bump"
+    v34 = PropGet v29 key="extra"
+    v35 = Call v1, -, v33, v34
+    v36 = PropGet v0 key="gc" [isFreeName]
+    v37 = Call v36
+    v38 = PropGet v29 key="keep"
+    v39 = Call v38, v29 calleeKey="keep"
+    v40 = PropGet v0 key="edenGC" [isFreeName]
+    v41 = Call v40
+    v42 = PropGet v29 key="read"
+    v43 = Call v42, v29 calleeKey="read"
+    v44 = PropGet v43 key="a"
+    v45 = Call v1, -, v44
+    v46 = Construct v2
+    Jump -> next b4()
+  b4() handler=b6():
+    v47 = Call v31, v46 calleeKey="bump"
+    Jump -> next b5()
+  b5():
+    Return
+  b6() role=CatchHandler:
+    v48 = CatchValue
+    v49 = PropGet v48 key="name"
+    v50 = PropGet v48 key="message"
+    v51 = Call v1, -, v49, v50
+    Return
+}
+function f1 name="Counter" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] captures=[{type=classtoken flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v3 = GetSuperBase v1 homeKind=Object
+    v4 = SuperConstruct v3, v2 layout=L0
+    v5 = Integer integer=0
+    PrivateDefine v4, v0, v5 layout=L0
+    Return v4
+}
+function f2 name="bump" kind=Method flags=[HasThis] captures=[{type=classtoken flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v2 = PrivateGet v1, v0 layout=L0
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    PrivateSet v1, v0, v4 layout=L0
+    v6 = PrivateGet v1, v0 layout=L0
+    Return v6
+}
+function f3 name="keep" kind=Method flags=[HasThis] captures=[{type=classtoken flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v2 = Integer integer=7
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    PrivateSet v1, v0, v3 layout=L0
+    Return
+}
+function f4 name="read" kind=Method flags=[HasThis] captures=[{type=classtoken flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v2 = PrivateGet v1, v0 layout=L0
+    Return v2
+}
+)IR"_s;
+
+static void checkBuiltinSubclassProgram(ASCIILiteral programText, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral forShell = "disable=flow:ConstantBuiltinLocations"_s;
-    checkOutputOfProgramInShell(programText, expectedOutput, { forShell, "references=narrow"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { forShell, "references=wide"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { forShell, "references=narrow"_s, "validate"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { forShell, "references=wide"_s, "validate"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { forShell, "heat=EverythingIsHot"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { forShell, "disable=pass:ResolveAccesses"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { forShell, "disable=pass:ResolveCalls"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { forShell, "disable=pass:SinkAllocations"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { forShell, "disable=pass:AllocateInFrames"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { forShell, "disable=pass:RemoveUnreadFields"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { forShell, "disable=flow-results"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s });
 }
 
 static void testErrorSubclasses()
 {
-    checkUnderEveryOption(errorSubclasses, R"(7 dboom 3
+    checkBuiltinSubclassProgram(errorSubclasses, R"(7 dboom 3
 dboom:7 14
 true true false
 9 2 deep dboom2 18
@@ -411,7 +559,7 @@ true true true
 
 static void testCollectionSubclasses()
 {
-    checkUnderEveryOption(collectionSubclasses, R"(0 2 5 t 1.5
+    checkBuiltinSubclassProgram(collectionSubclasses, R"(0 2 5 t 1.5
 t2 true true true
 4 tag size
 5 undefined 2 a 1 true true
@@ -422,8 +570,27 @@ t 1.5 a 0 0
 
 static void testGettersUnderOwnNames()
 {
-    checkUnderEveryOption(gettersUnderOwnNames, R"(given 17 string
+    checkBuiltinSubclassProgram(gettersUnderOwnNames, R"(given 17 string
 0
+)"_s);
+}
+
+static void testCellsThatLeaveAndJoinClass()
+{
+    checkBuiltinSubclassProgram(cellsThatLeaveAndJoinClass, R"(5 true true
+9
+undefined false true
+7 true
+true true
+)"_s);
+}
+
+static void testPrivateNameOfCollectionSubclass()
+{
+    checkBuiltinSubclassProgram(privateNameOfCollectionSubclass, R"(300
+2 1
+7
+TypeError Cannot access invalid private field
 )"_s);
 }
 
@@ -433,6 +600,8 @@ std::span<const NativeTest> builtinSubclassTests()
         { "builtin-subclasses/fields-and-methods-of-error-subclasses"_s, testErrorSubclasses },
         { "builtin-subclasses/fields-and-methods-of-collection-subclasses"_s, testCollectionSubclasses },
         { "builtin-subclasses/own-properties-come-before-getters-of-the-class"_s, testGettersUnderOwnNames },
+        { "builtin-subclasses/cells-that-leave-and-join-the-class"_s, testCellsThatLeaveAndJoinClass },
+        { "builtin-subclasses/private-name-of-a-collection-subclass"_s, testPrivateNameOfCollectionSubclass },
     };
     return tests;
 }

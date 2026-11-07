@@ -1,0 +1,9 @@
+# no operand spells the answer, so the engine makes it in the realm of the build: function loud() { return ["abc".toUpperCase()]; }
+# RUN: walk f4 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
+# CHECK-LABEL: code f4:Body
+# CHECK: [[text]]: {{*}} = String string=made "ABC"
+# CHECK: = NewArray [[text]]
+# with folding withheld the engine is not asked
+# RUN(WITHHELD): walk f4 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# WITHHELD-NOT: string=made "ABC"
+# PROGRAM-OF: string-methods-on-known-texts-are-their-answers.ir

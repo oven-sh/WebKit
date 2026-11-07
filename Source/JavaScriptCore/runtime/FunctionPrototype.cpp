@@ -130,11 +130,6 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncSymbolHasInstance, (JSGlobalObject* gl
         // 2.b. Return ? InstanceofOperator(instance, boundConstructor).
         RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(boundFunction->targetFunction()->hasInstance(globalObject, instance))));
     }
-#if ENABLE(AOT)
-    // So has the closure of a bound function that was compiled ahead of time.
-    if (JSObject* callee = asObject(thisValue); isCompiledCalleeType(callee->type()) && AOT::CompiledCallee::isBoundFunction(callee))
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(callee->methodTable()->customHasInstance(callee, globalObject, instance))));
-#endif
 
     // 3. If instance is not an Object, return false.
     if (!instance.isObject())

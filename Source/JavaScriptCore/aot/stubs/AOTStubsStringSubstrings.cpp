@@ -66,7 +66,6 @@ AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, co
 
         isAtMostTwo.link(&part);
         Jump isAtMostOne = part.branch32(CCallHelpers::BelowOrEqual, length, TrustedImm32(1));
-        // Two units of a 16-bit string make an 8-bit string if both are ASCII. The engine keeps the ones it has made, and the operation makes the others.
         part.branchTest32(CCallHelpers::NonZero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())).linkTo(makesRope, &part);
         part.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
         part.load32(BaseIndex(characters, start, CCallHelpers::TimesTwo), codeUnit);
@@ -167,7 +166,6 @@ void generateSubstring(StubAssembler& jit)
     isWhole.link(&jit);
     returnResult(jit, string);
 
-    // Two units of a 16-bit string make an 8-bit string if both are ASCII. The operation looks at them.
     isAtMostTwoOfRope.link(&jit);
     Jump isNotTwoOfRope = jit.branch64(CCallHelpers::NotEqual, span, TrustedImm32(2));
     jit.branchTestPtr(CCallHelpers::NonZero, fiber, TrustedImm32(JSRopeString::is8BitInPointer)).linkTo(isLongPartOfRope, &jit);

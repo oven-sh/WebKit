@@ -70,10 +70,26 @@ public:
     // Of the module that was appended last.
     void forgetVisited(CyclicModuleRecord* cyclic)
     {
+        if (m_wholeLoad)
+            m_wholeLoad->forgetVisited(cyclic);
         Locker locker { cellLock() };
-        ASSERT(m_visited.last().get() == cyclic);
-        m_visited.removeLast();
+        bool wasVisited = m_visited.removeLastMatching([&](const auto& visited) { return visited.get() == cyclic; });
+        ASSERT_UNUSED(wasVisited, wasVisited);
         m_visitedSet.remove(cyclic);
+    }
+
+    // Each module gets a state of its own (moduleLoadStep()), and each state walks through every record that is still New: on a cycle, through all of it.
+    // The state of a compiled record that was asked for by a graph load knows that load: a compiled record is walked once a load, by the first state that comes to it.
+    // Whatever such a state walks, compiled or not, lies in the [[Visited]] of the load's first state too.
+    void setWholeLoad(VM& vm, ModuleGraphLoadingState* askedBy) { m_wholeLoad.set(vm, this, askedBy->m_wholeLoad ? askedBy->m_wholeLoad.get() : askedBy); }
+    bool isPartOfWholeLoad() const { return !!m_wholeLoad; }
+    // Whether this state is the first of its load that comes to the record. If so the record counts as walked from here on.
+    bool beginWalkForWholeLoad(VM& vm, CyclicModuleRecord* cyclic)
+    {
+        if (m_wholeLoad->containsVisited(cyclic))
+            return false;
+        m_wholeLoad->appendVisited(vm, cyclic);
+        return true;
     }
 #endif
     bool containsVisited(const AbstractModuleRecord* record) const { return m_visitedSet.contains(record); }
@@ -116,6 +132,9 @@ private:
     // dynamicDowncast on the per-edge fast path.
     UncheckedKeyHashSet<const AbstractModuleRecord*> m_visitedSet;
     Vector<AbstractModuleRecord*, 8> m_innerLoadQueue;
+#if ENABLE(AOT)
+    WriteBarrier<ModuleGraphLoadingState> m_wholeLoad;
+#endif
     // Slot used only at top-level loadModule to AND-join loadPromise and statePromise into combinedPromise.
     WriteBarrier<Unknown> m_fulfillment;
     // [[PendingModulesCount]]

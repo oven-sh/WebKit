@@ -1,0 +1,29 @@
+# the read of an internal field, by itself. No walk runs: the Code is written out.
+# the words of a promise lie under another heap than internal fields do, and so does the table of a Map or a Set: whoever writes those ends no load of an internal field. None of the three has internal fields, and a validated build asks the cell.
+# OPTIONS: check=Validate
+# RUN: emit-code
+# CHECK-LABEL: unit f1:Body
+# CHECK: JSCell_typeInfoType
+# CHECK: JSInternalFieldObjectImpl_internalFields
+# -- code
+# code f1:Body {
+#   b0(v0: object @JSValue) entry=0:
+#     v1: object @Cell = Unbox v0
+#     v2: anything @JSValue = GetInternalField v1 index=1 traits=[mayTouchMemory]
+#     Return v2
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="asked" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}

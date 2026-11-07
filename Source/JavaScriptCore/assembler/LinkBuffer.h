@@ -447,7 +447,7 @@ private:
 
 #if CPU(X86_64)
         Vector<X86JumpShift> jumpShifts;
-        size_t jumpShiftCursor { 0 };
+        Vector<uint32_t, 64> firstJumpShiftByStretch;
         Vector<X86EmittedJump> emittedJumps;
 #endif
         unsigned patchablePointerCount { 0 };
@@ -504,7 +504,10 @@ private:
     void takeRecords(MacroAssembler&);
     void finalizeRecords();
 #if CPU(X86_64)
-    JS_EXPORT_PRIVATE uint32_t jumpShiftAt(uint32_t offset) const;
+    uint32_t jumpShiftAt(uint32_t offset) const
+    {
+        return shortenedJumpShiftAt(m_records->jumpShifts.span(), m_records->firstJumpShiftByStretch.span(), offset);
+    }
 #endif
     JS_EXPORT_PRIVATE void didLinkCall(Call, AssemblerLabel emittedLabel, const void* target);
     JS_EXPORT_PRIVATE void didLinkJump(Jump, AssemblerLabel emittedLabel, BranchEncoding, const void* target);

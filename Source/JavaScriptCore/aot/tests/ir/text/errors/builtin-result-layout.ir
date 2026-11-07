@@ -1,5 +1,7 @@
 # A layout of kind BuiltinResult comes from the built-ins table and has no line
-# RUN: print
-# DIAGNOSTIC: EngineOnlyOnWire
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout
 
 layout L0 kind=BuiltinResult
+module m0 path="main.js" displayPath="main.js"
+entry module=m0

@@ -45,6 +45,13 @@ enum class BindingFailure {
 std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm(const Wasm::ModuleInformation&, unsigned importIndex);
 void emitWasmToWasm(CCallHelpers&, const Wasm::ModuleInformation&, unsigned importIndex);
 
+// Code for an image holds no address of the process that builds it. What has an address only in the process that runs the code, it reads from the pointer table of the instance that runs it (ImagePointerTable).
+bool isForImage(const CCallHelpers&);
+void loadImagePointer(CCallHelpers&, GPRReg instanceThatRunsTheCode, uint32_t slot, GPRReg dest);
+// Writes the scratch register of the assembler. In code for an image GPRInfo::wasmContextInstancePointer holds the instance that runs the code.
+// An operation without a slot in the table leaves its address in the code, and whoever links code for an image refuses that.
+void callOperation(CCallHelpers&, CodePtr<OperationPtrTag>);
+
 // Code for an image finds the cage through the pointer table of the instance that runs it, so it asks while that instance is still at hand.
 void emitPrepareToCageMemoryBase(CCallHelpers&, GPRReg instanceThatRunsTheCode, GPRReg scratch);
 void emitCageMemoryBase(CCallHelpers&, GPRReg scratch);

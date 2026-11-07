@@ -145,7 +145,6 @@ function columnValue(kind: ColumnKind, value: ColumnValue): string {
   }
 }
 
-/** The functor is called with the type of the member's row as its template argument, and with void for none. */
 function typeColumnLines(type: SchemaEnum, column: EnumColumn, position: number): string[] {
   const cases = type.members.map(member => ({
     label: member.name,
@@ -160,7 +159,6 @@ function typeColumnLines(type: SchemaEnum, column: EnumColumn, position: number)
 
 const bitsInWord = 64;
 
-/** A bit an enumerator. */
 function boolColumnLines(type: SchemaEnum, column: EnumColumn, position: number): string[] {
   let bits = 0n;
   type.members.forEach((member, number) => {
@@ -236,7 +234,6 @@ function declaredEnums(schema: Schema, namespace: "Wire" | "Typed"): SchemaEnum[
     .sort((left, right) => positionOf(left) - positionOf(right));
 }
 
-// A build without the compiler still answers useImage() with an ImageVerdict.
 function wireEnumsHeader(schema: Schema): string[] {
   const abi = declaredEnums(schema, "Wire");
   const includes = [
@@ -466,7 +463,6 @@ function nameFunction(type: SchemaEnum): string[] {
   }
   if (numberOfCharacters > 0xffff)
     throw new Error(`the names of ${type.name} take more characters than 16 bits number`);
-  // The zero behind the last name is the one that ends the literal.
   const literals = names.map((name, index) => `"${name}${index + 1 < names.length ? "\\0" : ""}"`);
   return [
     `ASCIILiteral nameOf(${type.name} value)`,

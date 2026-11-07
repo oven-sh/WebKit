@@ -1,0 +1,30 @@
+# A type that an operation states may name a function of which nothing has arrived there: the walk tests for it, and the test mentions the function. If only what arrives made a referrer, that mention would come from nobody that Link lists
+# function f() {}  function reads(o) { return o.x as typeof f; }  f(); reads(unknown);
+# Whatever the fields of a body's operations name goes into ThinSummary::functionsNamed by the schema's own visitor: a function, the constructor of a layout, what a variable is born as, what a type names.
+# RUN: link functions mechanisms=all
+# CHECK: function f1
+# CHECK: referrers f0, f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="f"
+    v2 = NewClosure function=f2
+    v3 = Builtin builtin=GlobalThis
+    v4 = Call v2, -, v3 calleeName="reads"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="f" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="reads" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = Convert v1 declared={type=f1 flags=[IsExpected]}
+    Return v2
+}

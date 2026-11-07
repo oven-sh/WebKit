@@ -17,4 +17,5 @@
 # CHECK: laws hold
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="types" parameters=[{type=MapIterator}, {type=SetIterator}, {type=Map}, {type=Array}, {type=Array|MapIterator|SetIterator}] results=[{type=undefined}]
+function f0 name="types" role=Signature parameters=[{type=MapIterator}, {type=SetIterator}, {type=Map}, {type=Array}, {type=Array|MapIterator|SetIterator}] results=[{type=undefined}]
+entry module=m0

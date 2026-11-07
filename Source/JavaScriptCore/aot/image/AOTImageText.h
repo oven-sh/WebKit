@@ -41,6 +41,7 @@ struct ImageString {
     static constexpr uint32_t hasNoHeaderFlag = 1u << 27;
     static constexpr uint32_t hasTextFlag = 1u << 28;
     static constexpr uint32_t hasListedHashFlag = 1u << 29;
+    static constexpr uint32_t isShorterThanTwoFlag = 1u << 30;
 
     bool hasText() const { return !!location; }
     bool is16Bit() const { return hashAndFlags & is16BitFlag; }
@@ -80,7 +81,6 @@ inline ImageStringWord ImageString::inImage(uint32_t number) const
     return { flags | number };
 }
 
-// ImageSection::LongStrings in an image: where the strings without a header are. One word, the offset above the length, or a zero word, the offset and the length.
 struct ImageListedString {
     static constexpr unsigned maxNumberOfWords = 3;
 
@@ -114,8 +114,6 @@ inline ImageLongString ImageString::range(std::span<const ImageLongString> longS
 }
 
 struct ImageStringRecord {
-    static constexpr uint32_t isLiteralStringFlag = 1u << 30;
-
     static ImageStringRecord create(uint32_t rangeOrIndex, uint32_t hash, bool is16Bit, bool isAtom)
     {
         return { rangeOrIndex, hash | ImageString::hasTextFlag | (is16Bit ? ImageString::is16BitFlag : 0) | (isAtom ? ImageString::isAtomFlag : 0) };
@@ -124,7 +122,6 @@ struct ImageStringRecord {
     bool hasText() const { return !!hashAndFlags; }
     bool is16Bit() const { return hashAndFlags & ImageString::is16BitFlag; }
     bool isAtom() const { return hashAndFlags & ImageString::isAtomFlag; }
-    bool isLiteralString() const { return hashAndFlags & isLiteralStringFlag; }
     uint32_t hash() const { return hashAndFlags & ImageString::hashMask; }
 
     uint32_t rangeOrIndex;
@@ -132,7 +129,6 @@ struct ImageStringRecord {
 };
 static_assert(sizeof(ImageStringRecord) == 8 && isImageRecord<ImageStringRecord>);
 
-// The words of a WTF::StaticStringImpl.
 struct ImageStringHeader {
     static ImageStringHeader create(uint64_t characters, uint32_t length, uint32_t hash, bool is16Bit, StringImpl::StringKind kind)
     {
@@ -145,7 +141,7 @@ struct ImageStringHeader {
     uint32_t length;
     uint64_t characters;
     uint32_t hashAndFlags;
-    uint32_t literalStringWord;
+    uint32_t unused;
 };
 static_assert(sizeof(ImageStringHeader) == sizeof(StringImpl) && alignof(ImageStringHeader) == alignof(StringImpl) && isImageRecord<ImageStringHeader>);
 static_assert(offsetof(ImageStringHeader, length) == static_cast<size_t>(StringImpl::lengthMemoryOffset()));
@@ -163,11 +159,10 @@ struct LazyStringHeaderArena {
     uint64_t unused;
     uint32_t end;
     std::atomic<uint32_t> isLocked;
-    uint32_t unused2;
-    uint32_t sizeInBytes;
+    uint64_t unused2;
     uint64_t unused3;
 };
-static_assert(sizeof(LazyStringHeaderArena) == sizeof(LazyStringHeader) && offsetof(LazyStringHeaderArena, sizeInBytes) == offsetof(ImageStringHeader, literalStringWord));
+static_assert(sizeof(LazyStringHeaderArena) == sizeof(LazyStringHeader));
 
 struct ImageIdentifierWord;
 
@@ -236,7 +231,7 @@ public:
 
     uint32_t numberOfStrings() const { return static_cast<uint32_t>(m_strings.size()); }
     uint32_t numberOfIdentifiers() const { return static_cast<uint32_t>(m_identifiers.size()); }
-    uint32_t numberOfStringConstants() const { return static_cast<uint32_t>(m_stringConstants.size()); }
+    uint32_t numberOfStringConstants() const { return static_cast<uint32_t>(m_stringConstants.size() / 2); }
 
     bool hasText(StringID string) const { return m_strings[string.index()].hasText(); }
     bool isAtom(StringID string) const { return m_strings[string.index()].isAtom(); }
@@ -247,8 +242,6 @@ public:
     JS_EXPORT_PRIVATE String createAtom(StringID) const;
     StringImpl* tryGetHeader(StringID) const;
 
-    std::optional<uint32_t> identifierNumber(StringID) const;
-    // Of a number that an image before this one gave out: what this program calls so, or nothing.
     const ImageIdentifierWord& identifier(uint32_t number) const { return m_identifiers[number]; }
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     std::span<const ImageStringRecord> stringRecords() const { return m_stringRecords; }
@@ -262,21 +255,16 @@ public:
     size_t lazyHeadersCapacity() const { return (m_stringRecords.size() + 1) * sizeof(LazyStringHeader); }
     JS_EXPORT_PRIVATE size_t lazyHeadersSize() const;
 #else
-    UniquedStringImpl* identifierAtoms() const { return reinterpret_cast<UniquedStringImpl*>(const_cast<ImageStringHeader*>(m_headerOfNumberZero)); }
-    // The image shares its realms with images that were loaded before it, and its headers have been copied behind theirs.
-    void didCopyStringHeaders(const ImageStringHeader* headerOfNumberZero) { m_headerOfNumberZero = headerOfNumberZero; }
-    std::span<const ImageStringHeader> ownStringHeaders() const { return m_stringHeaders; }
+    UniquedStringImpl* identifierAtoms() const { return reinterpret_cast<UniquedStringImpl*>(const_cast<ImageStringHeader*>(m_stringHeaders.data())); }
 #endif
-    StringID stringConstant(uint32_t number) const { return StringID(m_stringConstants[number]); }
+    StringID stringConstant(uint32_t number) const { return StringID(m_stringConstants[numberOfStringConstants() + number]); }
     bool hasListedHash(StringID string) const { return m_strings[string.index()].hasListedHash(); }
-    std::optional<uint32_t> literalStringWordOfHeader(const StringImpl&) const;
 
 private:
     bool hasHeader(StringID string) const { return !m_strings[string.index()].hasText() || m_strings[string.index()].hasHeader(); }
     StringImpl* headerOf(StringID) const;
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     ImageLongString rangeFor(const ImageStringRecord&) const;
-    uint32_t literalStringWordFor(const ImageStringRecord&) const;
     JS_EXPORT_PRIVATE StringImpl& createLazyHeader(uint32_t number) const;
     size_t lazyHeaderOffsetsSize() const;
     size_t lazyHeadersReservationSize() const;
@@ -290,19 +278,15 @@ private:
     std::span<const uint8_t> m_text;
     std::span<const ImageIdentifierWord> m_identifiers;
     std::span<const uint32_t> m_stringConstants;
-    uint32_t m_firstStringHeader { 0 };
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     std::span<const ImageStringRecord> m_stringRecords;
     std::atomic<uint32_t>* m_lazyHeaderOffsets { nullptr };
     uint8_t* m_lazyHeaders { nullptr };
     void* m_lazyHeadersReservation { nullptr };
 #else
-    const ImageStringHeader& headerAt(uint32_t number) const { return m_headerOfNumberZero[number]; }
+    const ImageStringHeader& headerAt(uint32_t number) const { return m_stringHeaders.data()[number]; }
 
-    // Those of the numbers that this image gave out, without the room that the first image of a realm leaves for others.
     std::span<const ImageStringHeader> m_stringHeaders;
-    // Where the header of number 0 lies, or would lie: an image alone holds its own numbers, from m_firstStringHeader on.
-    const ImageStringHeader* m_headerOfNumberZero { nullptr };
     uint64_t m_addressOfText { 0 };
 #endif
 };
@@ -348,18 +332,6 @@ inline std::optional<uint32_t> ImageText::lazyHeaderNumber(const StringImpl& str
 }
 #endif
 
-inline std::optional<uint32_t> ImageText::literalStringWordOfHeader(const StringImpl& string) const
-{
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    if (!lazyHeaderNumber(string))
-#else
-    uintptr_t offset = std::bit_cast<uintptr_t>(&string) - std::bit_cast<uintptr_t>(m_headerOfNumberZero + m_firstStringHeader);
-    if (offset >= m_stringHeaders.size_bytes())
-#endif
-        return std::nullopt;
-    return reinterpret_cast<const ImageStringHeader&>(string).literalStringWord;
-}
-
 inline StringImpl* ImageText::tryGetHeader(StringID string) const
 {
     ImageStringWord word = m_strings[string.index()];
@@ -382,41 +354,12 @@ inline StringImpl* ImageText::tryGetHeader(StringID string) const
 #endif
 }
 
-inline std::optional<uint32_t> ImageText::identifierNumber(StringID string) const
-{
-    ImageStringWord word = m_strings[string.index()];
-    if (!word.hasIdentifierNumber())
-        return std::nullopt;
-    return word.number();
-}
-
-// An image holds addresses in two kinds of places, and nowhere else: ImageHeader::address, which is the address of the image itself, and ImageStringHeader::characters.
-// A position-independent image holds none.
-struct ImageAddressPlaces {
-    uint64_t offsetOfImageAddress;
-    uint64_t offsetOfFirstStringAddress;
-    uint64_t bytesBetweenStringAddresses;
-    uint64_t numberOfStringAddresses;
-};
-JS_EXPORT_PRIVATE ImageAddressPlaces addressPlacesOf(std::span<const uint8_t> image);
 JS_EXPORT_PRIVATE void relocateImage(std::span<uint8_t> image, uint64_t address);
-
-// What copyStringHeadersBehind() reads and where it writes. Whoever writes the files of images that every process loads above one another may lay the headers there:
-// then nothing is written when they are loaded, and the pages stay those of the file.
-struct StringHeadersBehind {
-    size_t offsetInFirstImage;
-    size_t offsetInImage;
-    size_t size;
-};
-JS_EXPORT_PRIVATE std::optional<StringHeadersBehind> placeOfStringHeadersBehind(std::span<const uint8_t> firstImage, std::span<const uint8_t> image);
 
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
 [[nodiscard]] inline bool relocateLoadedImage(std::span<const uint8_t>) { return true; }
-[[nodiscard]] inline bool copyStringHeadersBehind(std::span<const uint8_t>, std::span<const uint8_t>) { return false; }
 #else
 [[nodiscard]] JS_EXPORT_PRIVATE bool relocateLoadedImage(std::span<const uint8_t> image);
-// Both are loaded and relocated. The headers of the image go into the room that the first image of its realms has left behind its own.
-[[nodiscard]] bool copyStringHeadersBehind(std::span<const uint8_t> firstImage, std::span<const uint8_t> image);
 #endif
 
 } } // namespace JSC::AOT

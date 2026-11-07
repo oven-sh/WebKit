@@ -14,11 +14,13 @@
 #include "AOTInstance.h"
 #include "AOTOperationData.h"
 #include "AOTRegExpRecord.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRuntimeFactsOfLayoutsIncludes.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubBlob.h"
 #include "AOTStubRegisters.h"
 #include "FFIStubs.h"
+#include "StructureRareDataInlines.h"
 #include <bit>
 #include <cstring>
 #include <iterator>
@@ -73,7 +75,6 @@ static constexpr DescribedRuntime thisRuntime = {
     },
 };
 
-// It lies beside imageStamp(), which every run time has, so that no linker leaves it out.
 extern "C" AOT_IN_RUNTIME_DESCRIPTION_SECTION AOT_KEPT_BY_EVERY_LINKER constinit const DescribedRuntime describedRuntime = thisRuntime;
 
 std::span<const uint8_t> descriptionOfThisRuntime()
@@ -117,17 +118,11 @@ static std::optional<RuntimeDifference> findDifferenceFromThisTable(const Builti
     };
     static constexpr Fact facts[] = {
         { "the names of the built-ins in the order of their numbers"_s, &BuiltinTableDescription::hashOfBuiltinTokens },
-        { "the number of built-ins"_s, &BuiltinTableDescription::numberOfBuiltins },
-        { "the number of overloads of built-ins"_s, &BuiltinTableDescription::numberOfOverloads },
-        { "the number of types of built-ins"_s, &BuiltinTableDescription::numberOfTypes },
-        { "the number of classes of built-ins"_s, &BuiltinTableDescription::numberOfClasses },
-        { "the number of slots of built-ins"_s, &BuiltinTableDescription::numberOfSlots },
-        { "the number of layouts of built-ins"_s, &BuiltinTableDescription::numberOfLayouts },
-        { "the number of modules of the run time"_s, &BuiltinTableDescription::numberOfModules },
-        { "the number of functions of the run time"_s, &BuiltinTableDescription::numberOfFunctions },
+        { "the table of built-ins"_s, &BuiltinTableDescription::hashOfTable },
+        { "the table of native functions"_s, &BuiltinTableDescription::hashOfHostBindings },
     };
     if (there.size != sizeof(there))
-        return RuntimeDifference { };
+        return RuntimeDifference { "the size of the description of the table of built-ins"_s, sizeof(there), there.size };
     for (const Fact& fact : facts) {
         if (there.*fact.value != describedBuiltinTable.*fact.value)
             return RuntimeDifference { fact.name, describedBuiltinTable.*fact.value, there.*fact.value };

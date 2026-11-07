@@ -1,0 +1,8 @@
+# the same functions with folding withheld: the comparison is asked for its truth, as it is written, and is read behind the branch
+# RUN: walk f2 mechanisms=none
+# CHECK-LABEL: code f2:Body
+# CHECK: [[same]]: {{*}} = StrictEq {{*}} uses=3
+# CHECK: [[truth]]: {{*}} = ToBoolean
+# CHECK-NEXT: Branch [[truth]] -> taken
+# CHECK-COUNT-2: = Box [[same]]
+# PROGRAM-OF: boolean-that-a-branch-asks-is-a-constant-behind-it.ir

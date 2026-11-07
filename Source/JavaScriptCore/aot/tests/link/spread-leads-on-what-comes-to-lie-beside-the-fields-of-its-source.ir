@@ -1,0 +1,30 @@
+# function copy(s) { return { ...s }; }  const s = { x: "a" };  s.late = true;  copy(s);
+# The copy waits until something lies beside the fields of its source, and is told. If it were not, the record would be proven to gain nothing, and its field a string alone:
+# under which name the boolean lies nobody lists here, so it may land in any field of the target or beside them.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L1.0 "x" proven=true|string writers-known
+# CHECK: layout L1 {{*}}changes=[GainsProperty]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Boolean boolean=true
+    PropSet v2, v3 key="late"
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v2 calleeName="copy"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="copy" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L1
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+}

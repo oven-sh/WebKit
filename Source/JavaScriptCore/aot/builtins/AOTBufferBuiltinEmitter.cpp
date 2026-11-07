@@ -14,19 +14,19 @@
 #include "AOTBuiltinTypes.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTElementAccessEmitter.h"
 #include "AOTResultRules.h"
 #include "AOTSlotEmitter.h"
 #include "AOTTruthinessEmitter.h"
+#include "AOTTypeArena.h"
 #include "AOTTypedArrayKinds.h"
-#include "B3StackmapGenerationParams.h"
 #include "CCallHelpers.h"
+#include "JSBigInt.h"
+#include "PageCount.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static LValue bitwiseCast(Output& out, LValue value)
-{
-    return out.m_block->appendNew<B3::Value>(out.m_proc, B3::BitwiseCast, out.origin(), value);
-}
+static constexpr int64_t maxByteLengthOfBuffer = static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE);
 
 BufferBuiltinEmitter::BufferBuiltinEmitter(CodeGenerator& generator)
     : BuiltinFamilyEmitter(generator)
@@ -38,10 +38,9 @@ void BufferBuiltinEmitter::generateDataViewByteLength(const InlineCall& call)
     ArrayBufferViewBuiltinEmitter& views = emitter<ArrayBufferViewBuiltinEmitter>();
     CellPointer view = cellOperand(call.receiver());
     missUnless(call, views.hasFixedLength(view));
-    // A view of a detached buffer has no bytes, and the getter throws.
     Integer length = views.lengthOf(view);
     missUnless(call, isNotZero(length));
-    finish(call, length, Range { 1, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
+    finish(call, length, Range { 1, maxByteLengthOfBuffer });
 }
 
 void BufferBuiltinEmitter::generateArrayBufferByteLength(const InlineCall& call)
@@ -50,7 +49,7 @@ void BufferBuiltinEmitter::generateArrayBufferByteLength(const InlineCall& call)
     Pointer buffer = loadField<Pointer>(cell, m_heaps.JSArrayBuffer_impl);
     Integer length = loadField<Integer>(buffer, m_heaps.ArrayBuffer_sizeInBytes);
     ensureStillAliveHere(cell);
-    finish(call, length, Range { 0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
+    finish(call, length, Range { 0, maxByteLengthOfBuffer });
 }
 
 void BufferBuiltinEmitter::generateDataViewGet(const InlineCall& call)
@@ -64,7 +63,7 @@ void BufferBuiltinEmitter::generateDataViewGet(const InlineCall& call)
     Pointer address = findBytes(view, offset, mayBeNegative(call.argument(0)), size, miss);
     Operand loaded = loadBytes(call.context(), address, elements, order);
     ensureStillAliveHere(view);
-    finish(call, loaded, elementTypeOf(elements));
+    finish(call, loaded, types().at(elementTypeOf(elements)));
 }
 
 void BufferBuiltinEmitter::generateDataViewSet(const InlineCall& call)
@@ -91,7 +90,6 @@ void BufferBuiltinEmitter::generateDataViewSet(const InlineCall& call)
     finishWithUndefined(call);
 }
 
-// `source.copy(target, targetStart, sourceStart, sourceEnd)` copies as many bytes as are available and fit. A position that is negative, fractional or past the end of the source falls back to the function.
 void BufferBuiltinEmitter::generateBufferCopy(const InlineCall& call)
 {
     ArrayBufferViewBuiltinEmitter& views = emitter<ArrayBufferViewBuiltinEmitter>();
@@ -108,7 +106,9 @@ void BufferBuiltinEmitter::generateBufferCopy(const InlineCall& call)
         return position;
     };
     auto byteLengthOf = [&](CellPointer view, ValueID id) {
-        return Integer(m_out.shl(views.lengthOf(view).value(), logElementSize(typedArrayTypeOf(m_builtins, typeOf(id)))));
+        TypedArrayType elements = typedArrayTypeOf(BuiltinTypeContext { m_program, types() }, typeIDOf(id));
+        RELEASE_ASSERT(isTypedView(elements));
+        return Integer(m_out.shl(views.lengthOf(view).value(), logElementSize(elements)));
     };
     Integer targetStart = positionOr(1, integer(0));
     Integer sourceStart = positionOr(2, integer(0));
@@ -132,7 +132,7 @@ void BufferBuiltinEmitter::generateBufferCopy(const InlineCall& call)
     m_out.jump(done);
 
     m_out.appendTo(done);
-    finish(call, count, Range { 0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
+    finish(call, count, Range { 0, maxByteLengthOfBuffer });
 }
 
 BufferBuiltinEmitter::ByteOrder BufferBuiltinEmitter::byteOrderOf(const InlineCall& call, unsigned argumentIndex, unsigned size)
@@ -140,7 +140,7 @@ BufferBuiltinEmitter::ByteOrder BufferBuiltinEmitter::byteOrderOf(const InlineCa
     ValueID argument = call.argumentOrNull(argumentIndex);
     if (size == 1 || !argument)
         return { false, { } };
-    const Type& type = typeOf(argument);
+    Type type = typeOf(argument);
     if (type.hasOnlyPrimitives(Primitive::UndefinedOrNull | Primitive::False))
         return { false, { } };
     if (type.hasOnlyPrimitives(Primitive::True))
@@ -150,7 +150,7 @@ BufferBuiltinEmitter::ByteOrder BufferBuiltinEmitter::byteOrderOf(const InlineCa
 
 bool BufferBuiltinEmitter::mayBeNegative(ValueID id) const
 {
-    const Type& type = typeOf(id);
+    Type type = typeOf(id);
     return !type.isInteger() || type.integers.minimum < 0;
 }
 
@@ -164,21 +164,28 @@ Integer BufferBuiltinEmitter::offsetOrElse(ValueID id, LBasicBlock otherwise)
     return offset;
 }
 
+Pointer BufferBuiltinEmitter::vectorHoldingElement(CellPointer view, Integer index, LBasicBlock otherwise)
+{
+    TypedArrayElements elements = emitter<ElementAccessEmitter>().typedArrayElementsOf(view, otherwise);
+    branchUnless(below(index, elements.length), otherwise);
+    return elements.vector;
+}
+
 Pointer BufferBuiltinEmitter::findBytes(CellPointer view, Integer offset, bool mayBeNegative, unsigned size, LBasicBlock otherwise)
 {
     if (size > 1 && mayBeNegative)
         branchUnless(greaterThanOrEqual(offset, integer(0)), otherwise);
-    Pointer vector = emitter<ArrayBufferViewBuiltinEmitter>().findTypedArrayElement(view, add(offset, integer(size - 1)), otherwise, otherwise);
+    Pointer vector = vectorHoldingElement(view, add(offset, integer(size - 1)), otherwise);
     return offsetBy(vector, offset, 0);
 }
 
 LValue BufferBuiltinEmitter::byteSwapped(LValue bits, unsigned size)
 {
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(size == 8 ? B3::Int64 : B3::Int32);
-    patchpoint->appendSomeRegister(bits);
-    patchpoint->effects = B3::Effects::none();
-    patchpoint->setRunsWithoutFrame(true);
-    patchpoint->setGenerator([size](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    Machine::PatchOperation* swapped = m_out.patchpoint(size == 8 ? Machine::Int64 : Machine::Int32);
+    swapped->appendSomeRegister(bits);
+    swapped->effects = Machine::Effects::none();
+    swapped->setRunsWithoutFrame(true);
+    swapped->setGenerator([size](CCallHelpers& jit, const Machine::PatchParameters& params) {
         GPRReg result = params[0].gpr();
         jit.move(params[1].gpr(), result);
         switch (size) {
@@ -194,7 +201,7 @@ LValue BufferBuiltinEmitter::byteSwapped(LValue bits, unsigned size)
         }
         RELEASE_ASSERT_NOT_REACHED();
     });
-    return patchpoint;
+    return swapped;
 }
 
 LValue BufferBuiltinEmitter::inByteOrder(LValue bits, unsigned size, const ByteOrder& order)
@@ -226,10 +233,10 @@ Operand BufferBuiltinEmitter::loadBytes(const OperationContext& context, Pointer
             element = zeroExtended(Word32(bits));
             break;
         case TypeFloat32:
-            element = Number(m_out.floatToDouble(bitwiseCast(m_out, bits)));
+            element = Number(m_out.floatToDouble(m_out.bitCast(bits, Machine::Float)));
             break;
         case TypeFloat64:
-            element = Number(m_out.bitCast(bits, B3::Double));
+            element = Number(m_out.bitCast(bits, Machine::Double));
             break;
         case TypeBigInt64:
         case TypeBigUint64:
@@ -247,7 +254,7 @@ Operand BufferBuiltinEmitter::loadBytes(const OperationContext& context, Pointer
     if (isBigInt(elements))
         return newBigInt(context, element.as<Integer>(), elements == TypeBigInt64);
     if (isFloat(elements))
-        return ImpureNumber(element.value);
+        return emitter<ConversionEmitter>().purified(element.as<Number>());
     return element;
 }
 
@@ -261,9 +268,9 @@ void BufferBuiltinEmitter::storeBytes(Pointer address, TypedArrayType elements, 
     }
     LValue bits = stored.value;
     if (elements == TypeFloat32)
-        bits = bitwiseCast(m_out, m_out.doubleToFloat(bits));
+        bits = m_out.bitCast(m_out.doubleToFloat(bits), Machine::Int32);
     else if (elements == TypeFloat64)
-        bits = m_out.bitCast(bits, B3::Int64);
+        bits = m_out.bitCast(bits, Machine::Int64);
     bits = inByteOrder(bits, size, order);
     switch (size) {
     case 1:
@@ -284,11 +291,12 @@ void BufferBuiltinEmitter::storeBytes(Pointer address, TypedArrayType elements, 
 
 Condition BufferBuiltinEmitter::isNegativeBigInt(CellPointer bigInt)
 {
-    return hasBits(loadByte(bigInt, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit);
+    return hasBits(loadByte(bigInt, m_heaps.JSBigInt_sign), TypeInfoPerCellBit);
 }
 
 Integer BufferBuiltinEmitter::low64Of(CellPointer bigInt)
 {
+    static_assert(sizeof(JSBigInt::Digit) == sizeof(uint64_t));
     return either<Integer>(isNotZero(loadField<Word32>(bigInt, m_heaps.JSBigInt_length)), [&] {
         Integer digit = loadField<Integer>(bigInt, m_heaps.JSBigInt_data);
         Condition isNegative = isNegativeBigInt(bigInt);
@@ -309,7 +317,7 @@ CellPointer BufferBuiltinEmitter::newBigInt(const OperationContext& context, Int
     CellPointer cell;
     {
         CodeGenerator::InitializationScope scope(generator());
-        cell = cells.allocateObject(InlineAllocation::BigInt, slowPath);
+        cell = cells.allocateCellWithHeader(InlineAllocation::BigInt, slowPath);
         Integer magnitude = bits;
         if (isSigned) {
             Condition isNegative = lessThan(bits, integer(0));
@@ -346,8 +354,8 @@ Operand BufferBuiltinEmitter::valueToStoreOrElse(ValueID id, TypedArrayType elem
         return value;
     }
     Integer value = offsetOrElse(id, otherwise);
-    Range range = elementTypeOf(elements).integers;
-    if (const Type& valueType = typeOf(id); !valueType.isInteger() || !valueType.integers.isSubsetOf(range))
+    Range range = types().at(elementTypeOf(elements)).integers;
+    if (Type valueType = typeOf(id); !valueType.isInteger() || !valueType.integers.isSubsetOf(range))
         branchUnless(belowOrEqual(sub(value, range.minimum), range.maximum - range.minimum), otherwise);
     return low32(value);
 }
@@ -377,7 +385,7 @@ void BufferBuiltinEmitter::generateBufferAccess(const InlineCall& call)
     }
     Operand loaded = loadBytes(call.context(), address, *elements, order);
     ensureStillAliveHere(view);
-    finish(call, loaded, elementTypeOf(*elements));
+    finish(call, loaded, types().at(elementTypeOf(*elements)));
 }
 
 } } } // namespace JSC::AOT::Typed

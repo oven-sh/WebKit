@@ -1,0 +1,102 @@
+# what is unequal to the one value at the end of a range lies within the rest: behind `a !== -2147483648` there is room for one less, behind `a !== 2147483647` for one more, behind `a === 5` the value is 5
+# THE LYING CONTROLS ARE STILL REPORTED: unequal to a value INSIDE the range cuts nothing (f4), room for one is not room for two (f5), and on the edge on which the two ARE equal the step is a constant below every int32 (f6: said as ConstantNotInt32)
+# function previous(a: int32): int32 { if (a !== -2147483648) return a - 1; return a; }  function next(a: int32): int32 { if (a != 2147483647) return a + 1; return a; }  function five(a: int32): int32 { if (a === 5) return a * 400000000; return a; }
+# function inside(a: int32): int32 { if (a !== -2147483647) return a - 1; return a; }  function two(a: int32): int32 { if (a !== -2147483648) return a - 2; return a; }  function equal(a: int32): int32 { if (a === -2147483648) return a - 1; return a; }
+# DIAGNOSTIC: UnprovenInt32 2
+# DIAGNOSTIC: ConstantNotInt32 1
+# RUN: walk f1 f2 f3 f4 f5 f6 mechanisms=none
+# CHECK-LABEL: code f1:Body
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @1
+    v1 = PropGet v0 key="sink" [isFreeName] @1
+    v2 = NewClosure function=f1 @1
+    v3 = NewClosure function=f2 @1
+    v4 = NewClosure function=f3 @1
+    v5 = NewClosure function=f4 @1
+    v6 = NewClosure function=f5 @1
+    v7 = NewClosure function=f6 @1
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7 @1
+    Return v8 @1
+}
+function f1 name="previous" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Integer integer=-2147483648 @2
+    v2 = StrictEq v0, v1 @2
+    Branch v2 -> taken b1(), notTaken b2() @2
+  b1():
+    Return v0 @3
+  b2():
+    v3 = Integer integer=1 @4
+    v4 = Sub v0, v3 @4
+    v5 = Convert v4 declared={type=i32 flags=[IsInt32Promise]} @4
+    Return v5 @4
+}
+function f2 name="next" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Integer integer=2147483647 @5
+    v2 = Eq v0, v1 @5
+    Branch v2 -> taken b1(), notTaken b2() @5
+  b1():
+    Return v0 @6
+  b2():
+    v3 = Integer integer=1 @7
+    v4 = Add v0, v3 @7
+    v5 = Convert v4 declared={type=i32 flags=[IsInt32Promise]} @7
+    Return v5 @7
+}
+function f3 name="five" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Integer integer=5 @8
+    v2 = StrictEq v0, v1 @8
+    Branch v2 -> taken b1(), notTaken b2() @8
+  b1():
+    v3 = Integer integer=400000000 @9
+    v4 = Mul v0, v3 @9
+    v5 = Convert v4 declared={type=i32 flags=[IsInt32Promise]} @9
+    Return v5 @9
+  b2():
+    Return v0 @10
+}
+function f4 name="inside" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Integer integer=-2147483647 @11
+    v2 = StrictEq v0, v1 @11
+    Branch v2 -> taken b1(), notTaken b2() @11
+  b1():
+    Return v0 @12
+  b2():
+    v3 = Integer integer=1 @13
+    v4 = Sub v0, v3 @13
+    v5 = Convert v4 declared={type=i32 flags=[IsInt32Promise]} @13
+    Return v5 @13
+}
+function f5 name="two" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Integer integer=-2147483648 @14
+    v2 = StrictEq v0, v1 @14
+    Branch v2 -> taken b1(), notTaken b2() @14
+  b1():
+    Return v0 @15
+  b2():
+    v3 = Integer integer=2 @16
+    v4 = Sub v0, v3 @16
+    v5 = Convert v4 declared={type=i32 flags=[IsInt32Promise]} @16
+    Return v5 @16
+}
+function f6 name="equal" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Integer integer=-2147483648 @17
+    v2 = StrictEq v0, v1 @17
+    Branch v2 -> taken b1(), notTaken b2() @17
+  b1():
+    v3 = Integer integer=1 @18
+    v4 = Sub v0, v3 @18
+    v5 = Convert v4 declared={type=i32 flags=[IsInt32Promise]} @18
+    Return v5 @18
+  b2():
+    Return v0 @19
+}

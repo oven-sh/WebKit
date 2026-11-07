@@ -65,8 +65,7 @@ ParsedJSONNumber parseJSONNumberSlow(const uint8_t* start, const uint8_t* source
 const uint8_t* decodeJSONString(const JSONWords&, const uint8_t* afterQuote, const uint8_t* firstSpecial, StringBuilder&);
 ParsedJSONString makeJSONStringWithEscapes(Instance&, VM&, const uint8_t* afterQuote, const uint8_t* firstSpecial);
 ParsedJSONString makeUncachedJSONString(Instance&, VM&, const uint8_t* afterQuote);
-// Up to here JSONCache makes the narrowest string whatever the source. A longer one has the width of its source.
-AOT_THRESHOLD(unsigned, maxLengthOfJSONStringOfEitherWidth, 16);
+static constexpr unsigned maxLengthOfJSONStringOfEitherWidth = 16;
 
 ALWAYS_INLINE const uint8_t* skipJSONWhitespaceCharacters(const uint8_t* cursor)
 {
@@ -104,130 +103,6 @@ ALWAYS_INLINE unsigned jsonEscapeLength(const uint8_t* backslash)
         return isASCIIHexDigit(backslash[2]) && isASCIIHexDigit(backslash[3]) && isASCIIHexDigit(backslash[4]) && isASCIIHexDigit(backslash[5]) ? 6 : 0;
     default:
         return 0;
-    }
-}
-
-ALWAYS_INLINE const uint8_t* skipJSONString(const uint8_t* cursor, bool& hasEscapes)
-{
-    for (;;) {
-        cursor = findEndOfPlainJSONCharacters(cursor);
-        if (*cursor == '"') [[likely]]
-            return cursor + 1;
-        if (*cursor != '\\')
-            return nullptr;
-        unsigned length = jsonEscapeLength(cursor);
-        if (!length)
-            return nullptr;
-        hasEscapes = true;
-        cursor += length;
-    }
-}
-
-ALWAYS_INLINE const uint8_t* skipJSONNumber(const uint8_t* cursor)
-{
-    cursor += *cursor == '-';
-    if (!isASCIIDigit(*cursor))
-        return nullptr;
-    if (*cursor++ != '0') {
-        while (isASCIIDigit(*cursor))
-            ++cursor;
-    }
-    if (*cursor == '.') {
-        if (!isASCIIDigit(*++cursor))
-            return nullptr;
-        while (isASCIIDigit(*cursor))
-            ++cursor;
-    }
-    if ((*cursor | 0x20) == 'e') {
-        ++cursor;
-        cursor += *cursor == '-' || *cursor == '+';
-        if (!isASCIIDigit(*cursor))
-            return nullptr;
-        while (isASCIIDigit(*cursor))
-            ++cursor;
-    }
-    return cursor;
-}
-
-inline const uint8_t* skipJSONValue(const uint8_t* cursor)
-{
-    uint64_t objectDepthBits = 0;
-    static_assert(maxSkippedJSONDepth <= 8 * sizeof(objectDepthBits));
-    unsigned depth = 0;
-    bool hasEscapes = false;
-    for (;;) {
-        bool expectsKey = false;
-        switch (*cursor) {
-        case '"':
-            cursor = skipJSONString(cursor + 1, hasEscapes);
-            if (!cursor)
-                return nullptr;
-            break;
-        case '{':
-        case '[': {
-            bool isObject = *cursor == '{';
-            cursor = skipJSONWhitespaceCharacters(cursor + 1);
-            if (*cursor == (isObject ? '}' : ']')) {
-                ++cursor;
-                break;
-            }
-            if (depth == maxSkippedJSONDepth)
-                return nullptr;
-            objectDepthBits = objectDepthBits << 1 | isObject;
-            ++depth;
-            if (!isObject)
-                continue;
-            expectsKey = true;
-            break;
-        }
-        case 't':
-            if (WTF::unalignedLoad<uint32_t>(cursor) != ('t' | 'r' << 8 | 'u' << 16 | 'e' << 24))
-                return nullptr;
-            cursor += 4;
-            break;
-        case 'f':
-            if (WTF::unalignedLoad<uint32_t>(cursor + 1) != ('a' | 'l' << 8 | 's' << 16 | 'e' << 24))
-                return nullptr;
-            cursor += 5;
-            break;
-        case 'n':
-            if (WTF::unalignedLoad<uint32_t>(cursor) != ('n' | 'u' << 8 | 'l' << 16 | 'l' << 24))
-                return nullptr;
-            cursor += 4;
-            break;
-        default:
-            cursor = skipJSONNumber(cursor);
-            if (!cursor)
-                return nullptr;
-            break;
-        }
-        while (!expectsKey) {
-            if (!depth)
-                return cursor;
-            cursor = skipJSONWhitespaceCharacters(cursor);
-            bool isObject = objectDepthBits & 1;
-            if (*cursor == ',') {
-                cursor = skipJSONWhitespaceCharacters(cursor + 1);
-                expectsKey = isObject;
-                break;
-            }
-            if (*cursor != (isObject ? '}' : ']'))
-                return nullptr;
-            ++cursor;
-            objectDepthBits >>= 1;
-            --depth;
-        }
-        if (!expectsKey)
-            continue;
-        if (*cursor != '"')
-            return nullptr;
-        cursor = skipJSONString(cursor + 1, hasEscapes);
-        if (!cursor)
-            return nullptr;
-        cursor = skipJSONWhitespaceCharacters(cursor);
-        if (*cursor != ':')
-            return nullptr;
-        cursor = skipJSONWhitespaceCharacters(cursor + 1);
     }
 }
 
@@ -273,26 +148,6 @@ ALWAYS_INLINE ParsedJSONNumber parseJSONNumber(const uint8_t* start, const uint8
     return { isNegative ? -number : number, cursor };
 }
 
-ALWAYS_INLINE ParsedJSONInteger parseJSONInteger(const uint8_t* start)
-{
-    bool isNegative = *start == '-';
-    const uint8_t* digits = start + isNegative;
-    unsigned digit = *digits - '0';
-    if (digit > 9) [[unlikely]]
-        return { };
-    const uint8_t* cursor = digits + 1;
-    uint64_t magnitude = digit;
-    unsigned next = *cursor - '0';
-    if (digit) {
-        for (; next <= 9 && cursor - digits < maxDigitsOfJSONInteger; next = *++cursor - '0')
-            magnitude = magnitude * 10 + next;
-    }
-    if (next <= 9 || *cursor == '.' || (*cursor | 0x20) == 'e' || magnitude > static_cast<uint64_t>(maxJSONInteger) || (isNegative && !magnitude)) [[unlikely]]
-        return { };
-    int64_t integer = static_cast<int64_t>(magnitude);
-    return { isNegative ? -integer : integer, cursor };
-}
-
 ALWAYS_INLINE const uint8_t* tryParseSmallJSONInteger(const uint8_t* start, JSValue& value)
 {
     unsigned digit = *start - '0';
@@ -311,7 +166,7 @@ ALWAYS_INLINE const uint8_t* tryParseSmallJSONInteger(const uint8_t* start, JSVa
     return cursor;
 }
 
-ALWAYS_INLINE bool isShortTextLatin1AfterDecoding(const JSONWords& words, const uint8_t* text, unsigned length)
+ALWAYS_INLINE bool isShortTextLatin1AfterDecoding(const uint8_t* text, unsigned length)
 {
     constexpr size_t stride = SIMD::stride<uint8_t>;
     static_assert(2 * stride <= jsonSourcePadding);
@@ -319,7 +174,7 @@ ALWAYS_INLINE bool isShortTextLatin1AfterDecoding(const JSONWords& words, const 
     constexpr simde_uint8x16_t lowIndices { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
     constexpr simde_uint8x16_t highIndices { 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
     auto lengths = SIMD::splat<uint8_t>(length);
-    auto largestUnchanged = SIMD::splat<uint8_t>(words.sourceEncoding == JSONSourceEncoding::UTF8 ? 0x7f : saturatedJSONCharacter - 1);
+    auto largestUnchanged = SIMD::splat<uint8_t>(saturatedJSONCharacter - 1);
     auto low = SIMD::bitAnd(SIMD::lessThan(largestUnchanged, SIMD::load(text)), SIMD::lessThan(lowIndices, lengths));
     auto high = SIMD::bitAnd(SIMD::lessThan(largestUnchanged, SIMD::load(text + stride)), SIMD::lessThan(highIndices, lengths));
     return !SIMD::isNonZero(SIMD::bitOr(low, high));
@@ -333,116 +188,10 @@ ALWAYS_INLINE std::optional<ParsedJSONString> findCachedJSONString(const JSONWor
         return std::nullopt;
     if (words.sourceEncoding != JSONSourceEncoding::Latin1) {
         constexpr unsigned quotes = 2;
-        if (entry->textLength > maxLengthOfJSONStringOfEitherWidth + quotes || (!entry->textIsASCII && !isShortTextLatin1AfterDecoding(words, quote, entry->textLength)))
+        if (entry->textLength > maxLengthOfJSONStringOfEitherWidth + quotes || (!entry->textIsASCII && !isShortTextLatin1AfterDecoding(quote, entry->textLength)))
             return std::nullopt;
     }
     return ParsedJSONString { entry->string, quote + entry->textLength };
-}
-
-ALWAYS_INLINE std::optional<ParsedJSONValue> tryParseJSONScalarAt(Instance& instance, VM& vm, const uint8_t* start)
-{
-    const JSONWords& words = instance.json;
-    auto endsAfter = [&](size_t length, JSValue value) {
-        return ParsedJSONValue { value, start + length };
-    };
-    switch (*start) {
-    case '"': {
-        std::optional<ParsedJSONString> cached = findCachedJSONString(words, vm, start);
-        ParsedJSONString parsed = cached ? *cached : makeUncachedJSONString(instance, vm, start + 1);
-        return parsed.end ? ParsedJSONValue { parsed.string, parsed.end } : ParsedJSONValue { };
-    }
-    case 't':
-        if (WTF::unalignedLoad<uint32_t>(start) == ('t' | 'r' << 8 | 'u' << 16 | 'e' << 24))
-            return endsAfter(4, jsBoolean(true));
-        return std::nullopt;
-    case 'f':
-        if (WTF::unalignedLoad<uint32_t>(start + 1) == ('a' | 'l' << 8 | 's' << 16 | 'e' << 24))
-            return endsAfter(5, jsBoolean(false));
-        return std::nullopt;
-    case 'n':
-        if (WTF::unalignedLoad<uint32_t>(start) == ('n' | 'u' << 8 | 'l' << 16 | 'l' << 24))
-            return endsAfter(4, jsNull());
-        return std::nullopt;
-    case '{':
-    case '[':
-        return std::nullopt;
-    default:
-        if (ParsedJSONNumber parsed = parseJSONNumber(start, words.sourceEnd); parsed.end)
-            return ParsedJSONValue { jsNumber(parsed.number), parsed.end };
-        return std::nullopt;
-    }
-}
-
-JSONKeyComparison compareJSONKey(const JSONWords& words, const uint8_t* key, const uint8_t* closingQuote, bool hasEscapes, NOESCAPE const Invocable<bool(StringView)> auto& hasText)
-{
-    auto compareWith = [&](StringView text) {
-        return hasText(text) ? JSONKeyComparison::Equal : JSONKeyComparison::Different;
-    };
-    std::span<const uint8_t> characters { key, closingQuote };
-    if (!hasEscapes && isLatin1(words, characters)) [[likely]]
-        return compareWith(StringView { byteCast<Latin1Character>(characters) });
-    StringBuilder builder(OverflowPolicy::RecordOverflow);
-    if (!decodeJSONString(words, key, findEndOfPlainJSONCharacters(key), builder) || builder.hasOverflowed())
-        return JSONKeyComparison::Unknown;
-    return compareWith(builder);
-}
-
-ALWAYS_INLINE ComparedJSONMember compareJSONMemberKey(const JSONWords& words, const uint8_t* cursor, NOESCAPE const Invocable<bool(StringView)> auto& hasText)
-{
-    if (*cursor != '"')
-        return { };
-    const uint8_t* key = cursor + 1;
-    bool hasEscapes = false;
-    const uint8_t* afterKey = skipJSONString(key, hasEscapes);
-    if (!afterKey)
-        return { };
-    const uint8_t* colon = skipJSONWhitespaceCharacters(afterKey);
-    if (*colon != ':')
-        return { };
-    return { compareJSONKey(words, key, afterKey - 1, hasEscapes, hasText), skipJSONWhitespaceCharacters(colon + 1) };
-}
-
-FoundJSONMember findJSONMember(const JSONWords& words, const uint8_t* cursor, NOESCAPE const Invocable<bool(StringView)> auto& hasText)
-{
-    cursor = skipJSONWhitespaceCharacters(cursor);
-    if (*cursor == '}')
-        return { Typed::JSONMemberSearch::Absent };
-    for (;;) {
-        ComparedJSONMember member = compareJSONMemberKey(words, cursor, hasText);
-        switch (member.comparison) {
-        case JSONKeyComparison::Unknown:
-            return { };
-        case JSONKeyComparison::Equal:
-            return { Typed::JSONMemberSearch::Found, member.value };
-        case JSONKeyComparison::Different:
-            break;
-        }
-        cursor = skipJSONValue(member.value);
-        if (!cursor)
-            return { };
-        cursor = skipJSONWhitespaceCharacters(cursor);
-        if (*cursor == '}')
-            return { Typed::JSONMemberSearch::Absent };
-        if (*cursor != ',')
-            return { };
-        cursor = skipJSONWhitespaceCharacters(cursor + 1);
-    }
-}
-
-bool jsonMemberRepeats(const JSONWords& words, const uint8_t* cursor, NOESCAPE const Invocable<bool(StringView)> auto& hasText)
-{
-    while (cursor) {
-        cursor = skipJSONWhitespaceCharacters(cursor);
-        if (*cursor == '}')
-            return false;
-        if (*cursor != ',')
-            return true;
-        ComparedJSONMember member = compareJSONMemberKey(words, skipJSONWhitespaceCharacters(cursor + 1), hasText);
-        if (member.comparison != JSONKeyComparison::Different)
-            return true;
-        cursor = skipJSONValue(member.value);
-    }
-    return true;
 }
 
 } } // namespace JSC::AOT

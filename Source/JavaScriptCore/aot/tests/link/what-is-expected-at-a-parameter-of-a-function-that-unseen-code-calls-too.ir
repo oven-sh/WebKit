@@ -1,0 +1,48 @@
+# function take(o) { return o.tag; }  function only(x) { return x; }  sink(take);  report(take({ tag: 1 }));  sink(only);
+# Unseen code calls both functions with whatever it likes, so nothing is PROVEN of their parameters.
+# What is expected at the parameter of `take` is what compiled callers pass: the record. Whoever leans on that tests it where the function is entered.
+# No compiled caller passes `only` anything. Its body is not gone through with nothing in hand: its parameter holds anything
+# RUN: link functions mechanisms=all
+# CHECK: function f1
+# CHECK-NOT: parameter 0 expected=L0
+# CHECK-NOT: parameter 0 {{*}}proven
+# CHECK: function f2
+# RUN(HELD): link held functions mechanisms=all
+# HELD: function f1
+# HELD-NEXT: parameter 0 expected=L0
+# HELD: function f2
+# HELD-NOT: parameter 0 expected=L0
+# RUN(ANSWER): run-in-shell globalThis.report = value => print(String(value)); globalThis.sink = f => print(String(f({ tag: "from outside" })));
+# ANSWER: from outside
+# ANSWER-NEXT: 1
+# ANSWER-NEXT: [object Object]
+# ANSWER-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = PropGet v0 key="sink" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = Call v2, -, v3 calleeName="sink"
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    v8 = FinishObject v7
+    v9 = Call v3, -, v8 calleeName="take"
+    v10 = Call v1, -, v9 calleeName="report"
+    v11 = Call v2, -, v4 calleeName="sink"
+    Return v11
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="tag"
+    Return v1
+}
+function f2 name="only" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

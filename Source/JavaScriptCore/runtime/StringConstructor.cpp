@@ -123,6 +123,8 @@ JSC_DEFINE_HOST_FUNCTION(stringFromCodePoint, (JSGlobalObject* globalObject, Cal
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     unsigned length = callFrame->argumentCount();
+    if (vm.hasCompiledCode() && length == 1 && callFrame->uncheckedArgument(0).isInt32()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(stringFromCodePoint(globalObject, callFrame->uncheckedArgument(0).asInt32())));
     StringBuilder builder;
     builder.reserveCapacity(length);
 

@@ -1,0 +1,134 @@
+# interface Rest { kind: number; last: unknown; n: number }
+# interface RestOne extends Rest { kind: 1; value: number }
+# interface RestTwo extends Rest { kind: 2; text: string }
+# function RestMaker(this: Rest, kind, ...rest) { this.kind = kind; this.last = rest[rest.length - 1]; this.n = rest.length; }
+# interface Link { kind: number; next: unknown }
+# interface LinkOne extends Link { kind: 1; value: number }
+# interface LinkTwo extends Link { kind: 2; text: string }
+# function DeepMaker(this: Link, kind) { this.kind = kind; this.next = new Deep(id(kind)); }
+# const Deep = DeepMaker;
+# function tell(made) { report(made.kind); report(made.last); report(made.n); }
+# tell(new RestMaker(id(1))); tell(new RestMaker(id(2), "a")); tell(new RestMaker(id(9), 1, 2, 3, 4, 5, 6, "g"));
+# try { new Deep(id(1)); report("no end"); } catch (e) { report(e.name); }
+# Nobody knows the tag at any `new`. Where no call is made direct, each calls the entry of its constructor that makes `this`, past the stub that finds the entry and tests the stack in front of it.
+# The entry of a function with a rest parameter takes its arguments in a buffer: it pushes the argument registers against the stack words of its caller, with no argument, with one and with more than there are registers.
+# A constructor that constructs itself without end stops where the stack ends, with a RangeError that the program catches.
+# RUN: run-in-shell globalThis.report = value => print(String(value));
+# CHECK: 1
+# CHECK-NEXT: undefined
+# CHECK-NEXT: 0
+# CHECK-NEXT: 2
+# CHECK-NEXT: a
+# CHECK-NEXT: 1
+# CHECK-NEXT: 9
+# CHECK-NEXT: g
+# CHECK-NEXT: 7
+# CHECK-NEXT: RangeError
+# CHECK-NEXT: exited with 0
+# RUN(CALLS): bytes f0:Body mechanisms=none+TypedOperations
+# CALLS-LABEL: unit f0:Body
+# CALLS-COUNT-3: Call Function AllocatingConstructEntry {{*}}"RestMaker"
+# RUN(DEEP): bytes f2:Body mechanisms=none+TypedOperations
+# DEEP-LABEL: unit f2:Body
+# DEEP: Call Function AllocatingConstructEntry {{*}}"DeepMaker"
+
+layout L0 kind=Instance name="RestMaker" module=m0 constructor=f1 fields=[{key="kind" declared={type=number} flags=[IsRequired] originLayout=L1 originField=0}, {key="last" declared={type=anything} flags=[IsRequired] originLayout=L1 originField=1}, {key="n" declared={type=number} flags=[IsRequired] originLayout=L1 originField=2}] supertypes=[L1] flags=[IsConstructorFunction] ownFieldCount=3
+layout L1 name="Rest" module=m0 fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="last" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=number} flags=[IsRequired]}] supertypes=[L2, L3] flags=[IsNeverAllocated] ownFieldCount=3
+layout L2 name="RestOne" module=m0 fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="last" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated] declaredOrder=[0, 3, 1, 2] ownFieldCount=4
+layout L3 name="RestTwo" module=m0 fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="last" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated] declaredOrder=[0, 3, 1, 2] ownFieldCount=4
+layout L4 kind=Instance name="DeepMaker" module=m0 constructor=f2 fields=[{key="kind" declared={type=number} flags=[IsRequired] originLayout=L5 originField=0}, {key="next" declared={type=anything} flags=[IsRequired] originLayout=L5 originField=1}] supertypes=[L5] flags=[IsConstructorFunction] ownFieldCount=2
+layout L5 name="Link" module=m0 fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] supertypes=[L6, L7] flags=[IsNeverAllocated] ownFieldCount=2
+layout L6 name="LinkOne" module=m0 fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L5] flags=[IsNeverAllocated] declaredOrder=[0, 2, 1] ownFieldCount=3
+layout L7 name="LinkTwo" module=m0 fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L5] flags=[IsNeverAllocated] declaredOrder=[0, 2, 1] ownFieldCount=3
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="Deep" module=m0 declared={type=undefined|null|function|absent flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Convert v3 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v6 variable=g0
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="report" [isFreeName]
+    v10 = PropGet v8 key="id" [isFreeName]
+    v11 = Integer integer=1
+    v12 = Call v10, -, v11 calleeName="id"
+    v13 = Construct v1, -, v12 calleeName="RestMaker"
+    v14 = Call v5, -, v13 calleeName="tell"
+    v15 = Integer integer=2
+    v16 = Call v10, -, v15 calleeName="id"
+    v17 = String string="a"
+    v18 = Construct v1, -, v16, v17 calleeName="RestMaker"
+    v19 = Call v5, -, v18 calleeName="tell"
+    v20 = Integer integer=9
+    v21 = Call v10, -, v20 calleeName="id"
+    v22 = Integer integer=3
+    v23 = Integer integer=4
+    v24 = Integer integer=5
+    v25 = Integer integer=6
+    v26 = String string="g"
+    v27 = Construct v1, -, v21, v11, v15, v22, v23, v24, v25, v26 calleeName="RestMaker"
+    v28 = Call v5, -, v27 calleeName="tell"
+    Jump -> next b1()
+  b1() handler=b3():
+    v29 = Call v10, -, v11 calleeName="id"
+    v30 = Construct v3, -, v29 calleeName="Deep"
+    v31 = String string="no end"
+    v32 = Call v9, -, v31 calleeName="report"
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    v33 = CatchValue
+    v34 = Builtin builtin=GlobalThis
+    v35 = PropGet v34 key="report" [isFreeName]
+    v36 = PropGet v33 key="name"
+    v37 = Call v35, -, v36 calleeName="report"
+    Jump -> next b4()
+  b4():
+    v38 = Undefined
+    Return v38
+}
+function f1 name="RestMaker" module=m0 flags=[HasThis, HasRestParameter, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: undefined|null|L0, v1: anything, v2: Array):
+    PropSet v0, v1 key="kind"
+    v4 = PropGet v2 key="length"
+    v5 = Integer integer=1
+    v6 = Sub v4, v5
+    v7 = ElemGet v2, v6
+    PropSet v0, v7 key="last"
+    PropSet v0, v4 key="n"
+    v10 = Undefined
+    Return v10
+}
+function f2 name="DeepMaker" module=m0 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L4 {
+  b0(v0: undefined|null|L4, v1: anything):
+    PropSet v0, v1 key="kind"
+    v3 = GetModuleVariable variable=g0
+    v4 = CheckInitialized v3 name="Deep"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="id" [isFreeName]
+    v7 = Call v6, -, v1 calleeName="id"
+    v8 = Construct v4, -, v7 calleeName="Deep"
+    PropSet v0, v8 key="next"
+    v10 = Undefined
+    Return v10
+}
+function f3 name="tell" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="report" [isFreeName]
+    v3 = PropGet v0 key="kind"
+    v4 = Call v2, -, v3 calleeName="report"
+    v5 = PropGet v0 key="last"
+    v6 = Call v2, -, v5 calleeName="report"
+    v7 = PropGet v0 key="n"
+    v8 = Call v2, -, v7 calleeName="report"
+    v9 = Undefined
+    Return v9
+}

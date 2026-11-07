@@ -1,0 +1,46 @@
+# as built-ins-that-meet-are-written-together.ir, under a key that nobody can read: every member of each of them stays open. JSON has met nobody
+# same(new Map().constructor); same(new Date().constructor)[name] = f; Date.now(); Date.parse("0"); Map.groupBy("0", f); JSON.parse("0");
+# RUN: locks open
+# CHECK: locked JSONParse constant
+# CHECK: open DateNow 
+# CHECK: open DateParse 
+# CHECK: open MapGroupBy written-through-lost-built-ins
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v1 key="now"
+    v3 = Call v2, v1
+    v4 = PropGet v1 key="parse"
+    v5 = String string="0"
+    v6 = Call v4, v1, v5
+    v7 = PropGet v0 key="Map" [isFreeName]
+    v8 = PropGet v7 key="groupBy"
+    v9 = NewClosure function=f2
+    v10 = Call v8, v7, v5, v9
+    v11 = Construct v1, -
+    v12 = PropGet v11 key="constructor"
+    v13 = Construct v7, -
+    v14 = PropGet v13 key="constructor"
+    v15 = NewClosure function=f1
+    v16 = Call v15, -, v14
+    v17 = Call v15, -, v12
+    v18 = PropGet v0 key="name" [isFreeName]
+    ElemSet v17, v18, v9
+    v20 = Builtin builtin=JSON
+    v21 = PropGet v20 key="parse"
+    v22 = Call v21, v20, v5
+    Return v3
+}
+function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

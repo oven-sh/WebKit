@@ -27,26 +27,6 @@
 
 namespace JSC { namespace AOT {
 
-static void emitStorageGrowthValidation(StubAssembler& jit, const StorageGrowth& growth)
-{
-    JumpList isValid;
-    JumpList isInvalid;
-    isInvalid.append(jit.branchTest8(CCallHelpers::NonZero, Address(growth.object, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
-    Jump grows = jit.branchTest32(CCallHelpers::NonZero, growth.oldCapacity);
-    isValid.append(jit.branch32(CCallHelpers::Equal, growth.newCapacity, TrustedImm32(initialOutOfLineCapacity)));
-    isInvalid.append(jit.jump());
-
-    grows.link(&jit);
-    isInvalid.append(jit.branch32(CCallHelpers::Below, growth.oldCapacity, TrustedImm32(initialOutOfLineCapacity)));
-    isInvalid.append(jit.branch32(CCallHelpers::Above, growth.newCapacity, TrustedImm32(MarkedSpace::largeCutoff / sizeof(EncodedJSValue))));
-    jit.lshift32(growth.oldCapacity, TrustedImm32(1), growth.storage);
-    isValid.append(jit.branch32(CCallHelpers::Equal, growth.storage, growth.newCapacity));
-
-    isInvalid.link(&jit);
-    jit.breakpoint();
-    isValid.link(&jit);
-}
-
 static void emitFirstStorageInitialization(StubAssembler& jit, const StorageGrowth& growth)
 {
     constexpr size_t storageSize = initialOutOfLineCapacity * sizeof(EncodedJSValue);
@@ -78,7 +58,6 @@ static void copyAndClearPair(StubAssembler& jit, GPRReg oldValues, GPRReg copied
 #endif
 }
 
-// From its base upward the storage has oldCapacity new slots, highest index first, then the oldCapacity old values.
 static void emitDoubledStorageInitialization(StubAssembler& jit, const StorageGrowth& growth)
 {
     static_assert(!(initialOutOfLineCapacity % 2) && outOfLineGrowthFactor == 2);
@@ -109,10 +88,6 @@ void growOutOfLineStorage(StubAssembler& jit, const StorageGrowth& growth, JumpL
     const GPRReg allocator = growth.scratch;
     RELEASE_ASSERT(noOverlap(object, growth.newStructureID, growth.oldCapacity, growth.newCapacity, storage, allocator, growth.addedValue.value_or(InvalidGPRReg), instanceGPR));
 
-    if (jit.options().validates)
-        emitStorageGrowthValidation(jit, growth);
-
-    // The allocator for newCapacity values is entry newCapacity / 2, at byte newCapacity * 4.
     static_assert(MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*) && !(initialOutOfLineCapacity % 2));
     jit.loadPtr(Address(object, JSObject::butterflyOffset()), storage);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), allocator);
@@ -138,18 +113,16 @@ void growOutOfLineStorage(StubAssembler& jit, const StorageGrowth& growth, JumpL
     jit.store32(growth.newStructureID, Address(object, JSCell::structureIDOffset()));
 }
 
-static void emitVectorGrowthValidation(StubAssembler& jit, const VectorGrowth& growth)
+void widenStorageOfIntegersForAnyValue(StubAssembler& jit, GPRReg array, GPRReg scratch, JumpList& isLeftToOthers)
 {
-    JumpList isInvalid;
-    isInvalid.append(jit.branchPtr(CCallHelpers::NotEqual, growth.butterfly, Address(growth.array, JSObject::butterflyOffset())));
-    isInvalid.append(jit.branch32(CCallHelpers::NotEqual, growth.length, Address(growth.butterfly, Butterfly::offsetOfPublicLength())));
-    Jump isValid = jit.branch32(CCallHelpers::Equal, growth.length, Address(growth.butterfly, Butterfly::offsetOfVectorLength()));
-    isInvalid.link(&jit);
-    jit.breakpoint();
-    isValid.link(&jit);
+    jit.load32(Address(array, JSCell::structureIDOffset()), scratch);
+    isLeftToOthers.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithInt32))));
+    jit.load32(Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithContiguous)), scratch);
+    isLeftToOthers.append(jit.branchTest32(CCallHelpers::Zero, scratch));
+    jit.store32(scratch, Address(array, JSCell::structureIDOffset()));
+    jit.store8(TrustedImm32(ArrayWithContiguous), Address(array, JSCell::indexingTypeAndMiscOffset()));
 }
 
-// The butterfly of such an array holds the indexing header and the vector and nothing else, and the vector is the array's own.
 static void branchUnlessHasOriginalArrayStructure(StubAssembler& jit, GPRReg array, GPRReg structureID, JumpList& otherwise)
 {
     JumpList hasOriginalStructure;
@@ -160,7 +133,6 @@ static void branchUnlessHasOriginalArrayStructure(StubAssembler& jit, GPRReg arr
     hasOriginalStructure.link(&jit);
 }
 
-// The allocator that Butterfly::optimalContiguousVectorLength(0, nextLength(length + 1)) rounds up to, or the same for nextLength(neededLength).
 static void loadAllocatorOfNextVector(StubAssembler& jit, const VectorGrowth& growth, std::optional<GPRReg> neededLength, JumpList& slowPath)
 {
     static_assert(sizeof(IndexingHeader) == sizeof(EncodedJSValue) && MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*));
@@ -201,24 +173,20 @@ static void loadHoleOf(StubAssembler& jit, GPRReg array, GPRReg hole)
 
 static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::optional<GPRReg> neededLength, JumpList& slowPath)
 {
-    const auto [array, butterfly, length, storage, allocator, scratch, isOfExtraProperties] = growth;
+    const GPRReg array = growth.array;
+    const GPRReg butterfly = growth.butterfly;
+    const GPRReg length = growth.length;
+    const GPRReg storage = growth.storage;
+    const GPRReg allocator = growth.allocator;
+    const GPRReg scratch = growth.scratch;
     const GPRReg index = length;
     const GPRReg vectorLength = allocator;
     RELEASE_ASSERT(noOverlap(array, butterfly, length, storage, allocator, scratch, instanceGPR));
     RELEASE_ASSERT(!neededLength || noOverlap(*neededLength, array, butterfly, length, storage, allocator, scratch, instanceGPR));
 
     slowPath.append(jit.branch32(CCallHelpers::Above, neededLength.value_or(length), TrustedImm32(maxLengthForElementwiseCopy)));
-    // Only the array leads to the new vector, so an array that the collector will not visit again is left to C++.
     slowPath.append(branchIfBarrierIsNeeded(jit, array, scratch));
-    if (growth.isOfExtraProperties) {
-        // Such hold elements alone.
-        jit.load32(Address(array, JSCell::structureIDOffset()), scratch);
-        slowPath.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.headerOfExtraPropertiesWithElements))));
-    } else
-        branchUnlessHasOriginalArrayStructure(jit, array, scratch, slowPath);
-    // The length of an array with ArrayStorage may lie beyond its vector.
-    if (jit.options().validates && !neededLength)
-        emitVectorGrowthValidation(jit, growth);
+    branchUnlessHasOriginalArrayStructure(jit, array, scratch, slowPath);
     loadAllocatorOfNextVector(jit, growth, neededLength, slowPath);
     allocateCell(jit, storage, allocator, scratch, slowPath);
 

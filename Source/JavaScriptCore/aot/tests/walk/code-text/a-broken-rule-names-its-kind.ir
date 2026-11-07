@@ -1,0 +1,23 @@
+# every stop of the verifier of Code names its kind: a value that one arm alone defines is read behind the join of the arms
+# RUN: verify-code
+# CHECK: UseNotDominated: f0 Body b3 {{*}}the definition of an operand does not stand in front of the use on every path: v2 (Box)
+# -- code
+# code f0:Body {
+#   b0(v0: boolean @Boolean, v1: int[0, 9] @Int32) entry=0:
+#     Branch v0 -> taken b1(), notTaken b2()
+#   b1():
+#     v2: int[0, 9] @JSValue = Box v1
+#     Jump -> next b3()
+#   b2():
+#     Jump -> next b3()
+#   b3():
+#     Return v2
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="picks" parameters=[{type=boolean}, {type=int[0,9]}] results=[{type=anything}] {
+  b0(v0: boolean, v1: int[0,9]):
+    Return v1
+}
+entry module=m0

@@ -1,0 +1,9 @@
+# a field that the constructor stores behind a point at which `this` is handed to somebody is not filled: whoever got the object may read it empty. It is of the birth all the same: the constructor has stored it on every way to its return, and the mark of the cell is clear only from there on
+# PROGRAM-OF: filled-field-and-this-that-leaves-in-front-of-the-store.ir
+# RUN: summary f1
+# CHECK: construction Allocated fills ["x"] looks-up ["x", "y"] seen-from-outside fills-at-end ["y"]
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.0 "x" {{*}}filled
+# LINK: field L0.1 "y" {{*}}of-birth
+# RUN(NEVER): link fields mechanisms=all
+# NEVER-NOT: field L0.1 "y" {{*}}filled

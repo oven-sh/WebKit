@@ -1,0 +1,33 @@
+# The list follows from the program alone. What the starts of a file may do in all is not filled up again by the texts that they find.
+# for (let index = 0; index < 300; index++) { for (let turn = 0; turn < 12000; turn++); new RegExp("r" + index); }   fourteen million operations: more than a file of this size may do.
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /r0/
+# CHECK-NOT: text /r299/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = String string="r"
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3: anything):
+    LoopHint
+    Jump -> next b2(v2)
+  b2(v5: anything):
+    LoopHint
+    v7 = Increment v5
+    v8 = Integer integer=12000
+    v9 = Less v7, v8
+    Branch v9 -> taken b2(v7), notTaken b3()
+  b3():
+    v10 = Add v1, v3
+    v11 = Construct v0, -, v10
+    v12 = Increment v3
+    v13 = Integer integer=300
+    v14 = Less v12, v13
+    Branch v14 -> taken b1(v12), notTaken b4()
+  b4():
+    Return v2
+}

@@ -1,0 +1,7 @@
+# the same function with typed operations withheld: the read takes the constant as it is written
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = ElemGet
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: isAtom
+# PROGRAM-OF: texts-used-as-keys-are-atoms.ir

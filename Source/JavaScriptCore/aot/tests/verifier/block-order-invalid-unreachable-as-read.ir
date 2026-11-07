@@ -1,5 +1,4 @@
 # as read, no block is unreachable
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: BlockOrderInvalid 1
 

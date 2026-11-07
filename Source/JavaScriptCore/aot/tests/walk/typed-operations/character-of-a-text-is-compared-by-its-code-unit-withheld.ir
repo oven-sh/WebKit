@@ -1,0 +1,10 @@
+# the same functions with typed operations withheld: the read under the key is closed, and the comparison takes what it gave
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = Substring
+# CHECK: = ElemGet
+# RUN(COMMA): walk f2 mechanisms=none
+# COMMA-LABEL: code f2:Body
+# COMMA-NOT: GetStringCodeUnit
+# COMMA: = StrictEq {{*}}form=Generic
+# PROGRAM-OF: character-of-a-text-is-compared-by-its-code-unit.ir

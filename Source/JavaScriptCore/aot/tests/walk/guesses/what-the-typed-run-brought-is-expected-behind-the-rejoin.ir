@@ -1,0 +1,47 @@
+# nothing is written of `links`, and unseen code has the holder, so behind the rejoin nothing is proven of what `h.links` gives. In the typed run the read is answered by the store in front of it: a Links.
+# The typed run is the arm that is expected to be taken, so a Links is expected behind the rejoin, in the next block too: the store of `flags` asks for that shape
+# function fill(h: Holder, c) { h.links = new Links(); const l = h.links; if (c) sink(); l.flags = 1; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L1]
+# CHECK: ([[links]]: anything{{*}}):
+# CHECK: PutSlot [[links]], {{*}}key="flags" receivers=[L0] level=Expected
+
+layout L0 name="Links" module=m0 fields=[{key="flags" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 name="Holder" module=m0 fields=[{key="links" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="flags"
+    v6 = FinishObject v4
+    v7 = NewObject layout=L1
+    PropDefine v7, v3 key="links"
+    v9 = FinishObject v7
+    v10 = Call v1, -, v6, v9
+    Return v10
+}
+function f1 name="fill" module=m0 length=2 thisType={type=anything} parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    v2 = NewObject layout=L0
+    PropDefine v2, v1 key="flags"
+    v4 = FinishObject v2
+    PropSet v0, v4 key="links"
+    v6 = PropGet v0 key="links"
+    v7 = ToBoolean v1
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="sink" [isFreeName]
+    v10 = Call v9, -
+    Jump -> next b2()
+  b2():
+    v11 = Integer integer=1
+    PropSet v6, v11 key="flags"
+    Return v11
+}

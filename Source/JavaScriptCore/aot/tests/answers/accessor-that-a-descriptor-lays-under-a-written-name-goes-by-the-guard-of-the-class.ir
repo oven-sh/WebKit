@@ -1,0 +1,81 @@
+# function Temp(c) { this.c = c; }
+# Object.defineProperty(Temp.prototype, "warmth", { get: function () { return this.c * 2; }, set: function (v) { this.c = v; } });
+# let total = 0;   for (let i = 0; i < count; i++) { const t = new Temp(i & 3); t.warmth = t.warmth + 1; total += t.warmth; }   print(total);
+# RUN(ANSWER): run-in-shell globalThis.count = 10;
+# ANSWER: 72
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Instance name="Temp" module=m0 constructor=f1 fields=[{key="c" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="set" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = PropGet v1 key="prototype"
+    v3 = String string="warmth"
+    v4 = NewObject layout=L1
+    v5 = NewClosure function=f2
+    PropDefine v4, v5 key="get"
+    v7 = NewClosure function=f3
+    PropDefine v4, v7 key="set"
+    v9 = FinishObject v4
+    v10 = Builtin builtin=ObjectDefineProperty
+    v11 = Builtin builtin=Object
+    v12 = Call v10, v11, v2, v3, v9 calleeName="Object.defineProperty"
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="count" [isFreeName]
+    v15 = Builtin builtin=Number
+    v16 = Call v15, -, v14 calleeName="Number"
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Integer
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    v20 = Integer
+    v21 = Convert v20 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v19, v21)
+  b1(v22, v23):
+    LoopHint
+    v25 = Less v23, v17
+    Branch v25 -> taken b2(), notTaken b3()
+  b2():
+    v26 = Integer integer=3
+    v27 = BitAnd v23, v26
+    v28 = Construct v1, -, v27 calleeName="Temp"
+    v29 = Convert v28 declared={type=anything flags=[IsExpected]}
+    v30 = PropGet v29 key="warmth"
+    v31 = Integer integer=1
+    v32 = Add v30, v31
+    PropSet v29, v32 key="warmth"
+    v34 = PropGet v29 key="warmth"
+    v35 = Add v22, v34
+    v36 = Convert v35 declared={type=number flags=[IsExpected]}
+    v37 = Increment v23
+    v38 = Convert v37 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v36, v38)
+  b3():
+    v39 = PropGet v13 key="print" [isFreeName]
+    v40 = Call v39, -, v22
+    v41 = Undefined
+    Return v41
+}
+function f1 name="Temp" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v2, v1 key="c"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="get" module=m0 flags=[HasThis] thisType={type=anything flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="c"
+    v2 = Integer integer=2
+    v3 = Mul v1, v2
+    Return v3
+}
+function f3 name="set" module=m0 flags=[HasThis] length=1 thisType={type=anything flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="c"
+    v3 = Undefined
+    Return v3
+}

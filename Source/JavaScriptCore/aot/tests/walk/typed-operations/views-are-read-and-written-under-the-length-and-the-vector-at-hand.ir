@@ -1,0 +1,150 @@
+# function beside(view: Int32Array, n: number) { let total = 0; for (let i = 0; i < n; i++) total = (total + view[i] + view[i + 1]) | 0; return total; }
+# function behindOtherCode(view: Int32Array, n: number) { let total = 0; for (let i = 0; i < n; i++) { total = (total + view[i]) | 0; keep(); total = (total + view[i + 1]) | 0; } return total; }
+# function stored(view: Int32Array, n: number) { for (let i = 0; i < n; i++) view[i + 1] = view[i] + 1; return view[2]; }
+# An access that is not known to lie inside the view compares its position with the length that is at hand and goes by the vector that is at hand. It asks the view for neither, nor for its kind.
+# Where the turns leave the storage of views alone both are read in front of the loop. Code that nobody has seen may resize a buffer or hand it away, so behind it both are read again.
+# A store into a view writes its elements, not its storage. Each access once asked for the kind, the length and the vector: 6 instructions for 3.
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[length]]: {{*}} = GetTypedArrayLength
+# CHECK: [[vector]]: {{*}} = GetTypedArrayVector
+# CHECK: isLoopHead=true
+# CHECK-NOT: = GetTypedArrayLength
+# CHECK-NOT: = GetTypedArrayVector
+# CHECK: = GetTypedArrayElement {{*}}, [[vector]], [[length]] typedArrayType
+# CHECK: = GetTypedArrayElement {{*}}, [[vector]], [[length]] typedArrayType
+# CHECK-LABEL: code f2:Body
+# CHECK: isLoopHead=true
+# CHECK: [[lengthInFront]]: {{*}} = GetTypedArrayLength
+# CHECK: = GetTypedArrayElement {{*}}, [[lengthInFront]] typedArrayType
+# CHECK: = Call
+# CHECK: [[lengthBehind]]: {{*}} = GetTypedArrayLength
+# CHECK: = GetTypedArrayElement {{*}}, [[lengthBehind]] typedArrayType
+# CHECK-LABEL: code f3:Body
+# CHECK: [[lengthOfStored]]: {{*}} = GetTypedArrayLength
+# CHECK: [[vectorOfStored]]: {{*}} = GetTypedArrayVector
+# CHECK: isLoopHead=true
+# CHECK: = GetTypedArrayElement {{*}}, [[vectorOfStored]], [[lengthOfStored]] typedArrayType
+# CHECK: = PutTypedArrayElement {{*}}, [[vectorOfStored]], [[lengthOfStored]] typedArrayType
+# RUN(SHELL): run-in-shell globalThis.keep = () => { }; globalThis.sink = (first, second, third) => { print(String(first) + " " + String(second) + " " + String(third)); };
+# SHELL: 0 0 2
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=GlobalThis @548
+    v7 = PropGet v6 key="sink" [isFreeName] @548
+    v8 = Builtin builtin=Int32Array @564
+    v9 = Integer integer=4 @575
+    v10 = Construct v8, -, v9 calleeName="Int32Array" @564
+    v11 = Convert v10 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @560
+    v12 = Integer integer=6 @579
+    v13 = Call v1, -, v11, v12 calleeName="beside" @553
+    v14 = Builtin builtin=Int32Array @603
+    v15 = Integer integer=4 @614
+    v16 = Construct v14, -, v15 calleeName="Int32Array" @603
+    v17 = Convert v16 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @599
+    v18 = Integer integer=6 @618
+    v19 = Call v3, -, v17, v18 calleeName="behindOtherCode" @583
+    v20 = Builtin builtin=Int32Array @633
+    v21 = Integer integer=4 @644
+    v22 = Construct v20, -, v21 calleeName="Int32Array" @633
+    v23 = Convert v22 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @629
+    v24 = Integer integer=6 @648
+    v25 = Call v5, -, v23, v24 calleeName="stored" @622
+    v26 = Call v7, -, v13, v19, v25 calleeName="sink" @548
+    v27 = Undefined @548
+    Return v27 @548
+}
+function f1 name="beside" module=m0 position=79 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: number):
+    v2 = Integer @138
+    v3 = Convert v2 declared={type=number} @138
+    v4 = Integer @154
+    v5 = Convert v4 declared={type=number} @154
+    Jump -> next b1(v3, v5) @150
+  b1(v6: number, v7: number):
+    LoopHint @150
+    v9 = Less v7, v1 @161
+    Branch v9 -> taken b2(), notTaken b3() @161
+  b2():
+    v10 = ElemGet v0, v7 @186
+    v11 = Add v6, v10 @186
+    v12 = Integer integer=1 @206
+    v13 = Add v7, v12 @206
+    v14 = ElemGet v0, v13 @197
+    v15 = Add v11, v14 @197
+    v16 = Integer @213
+    v17 = BitOr v15, v16 @213
+    v18 = Convert v17 declared={type=number} @169
+    v19 = Increment v7 @164
+    v20 = Convert v19 declared={type=number} @164
+    Jump -> next b1(v18, v20) @164
+  b3():
+    Return v6 @223
+}
+function f2 name="behindOtherCode" module=m0 position=232 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: number):
+    v2 = Integer @300
+    v3 = Convert v2 declared={type=number} @300
+    v4 = Integer @316
+    v5 = Convert v4 declared={type=number} @316
+    Jump -> next b1(v3, v5) @312
+  b1(v6: number, v7: number):
+    LoopHint @312
+    v9 = Less v7, v1 @323
+    Branch v9 -> taken b2(), notTaken b3() @323
+  b2():
+    v10 = ElemGet v0, v7 @350
+    v11 = Add v6, v10 @350
+    v12 = Integer @362
+    v13 = BitOr v11, v12 @362
+    v14 = Convert v13 declared={type=number} @333
+    v15 = Builtin builtin=GlobalThis @365
+    v16 = PropGet v15 key="keep" [isFreeName] @365
+    v17 = Call v16 calleeName="keep" @365
+    v18 = Integer integer=1 @399
+    v19 = Add v7, v18 @399
+    v20 = ElemGet v0, v19 @390
+    v21 = Add v14, v20 @390
+    v22 = Integer @406
+    v23 = BitOr v21, v22 @406
+    v24 = Convert v23 declared={type=number} @373
+    v25 = Increment v7 @326
+    v26 = Convert v25 declared={type=number} @326
+    Jump -> next b1(v24, v26) @326
+  b3():
+    Return v6 @418
+}
+function f3 name="stored" module=m0 position=427 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: number):
+    v2 = Integer @487
+    v3 = Convert v2 declared={type=number} @487
+    Jump -> next b1(v3) @483
+  b1(v4: number):
+    LoopHint @483
+    v6 = Less v4, v1 @494
+    Branch v6 -> taken b2(), notTaken b3() @494
+  b2():
+    v7 = Integer integer=1 @511
+    v8 = Add v4, v7 @511
+    v9 = ElemGet v0, v4 @516
+    v10 = Integer integer=1 @527
+    v11 = Add v9, v10 @527
+    ElemSet v0, v8, v11 @502
+    v13 = Increment v4 @497
+    v14 = Convert v13 declared={type=number} @497
+    Jump -> next b1(v14) @497
+  b3():
+    v15 = Integer integer=2 @537
+    v16 = ElemGet v0, v15 @537
+    Return v16 @537
+}

@@ -12,17 +12,13 @@
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"
 #include "AOTOperationData.h"
-#include "AOTPrimitives.h"
-#include "AOTRuntimeRecords.h"
 #include "AOTStubsKeyed.h"
-#include "AOTStubsStrings.h"
 #include "JSCJSValue.h"
 #include <algorithm>
+#include <array>
 #include <optional>
 
 namespace JSC { namespace AOT {
-
-namespace Primitive = Typed::Primitive;
 
 static constexpr unsigned representationShift = 32;
 
@@ -61,6 +57,10 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
     RELEASE_ASSERT(!rememberStore || (end == FieldStoreEnd::ReturnAfterBarrier && typeTest != FieldTypeTest::HasPassed));
     std::array<JumpList, 4> storedInSlotOfClass;
     auto branchIfStoreIsRemembered = [&](ClassOfSlot classOfSlot) {
+        if (typeTest == FieldTypeTest::IsEmitted) {
+            storedInSlotOfClass[static_cast<size_t>(classOfSlot)].append(jit.jump());
+            return;
+        }
         Jump wouldPushAnotherOut = branchIfEveryPlaceWasFiledFromSlots(jit);
         storedInSlotOfClass[static_cast<size_t>(classOfSlot)].append(jit.jump());
         wouldPushAnotherOut.link(&jit);
@@ -72,7 +72,6 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
     std::optional<Label> storedCell;
     JumpList typeIsNotAccepted;
 
-    // The first store of what may be a cell emits the barrier, and the later ones jump to it.
     auto didStore = [&](StoredValue kind) {
         if (end == FieldStoreEnd::JoinList)
             stored->append(jit.jump());
@@ -163,29 +162,6 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
 
         isNotCell.link(&jit);
         storeUndefinedOrNull(traits, classOfSlot);
-    };
-    auto storeLiteralStringField = [&](const SlotTraits& traits) {
-        const GPRReg word = r.type;
-        JumpList isEmpty;
-        JumpList isStoredAsCell;
-        Jump isNotCell = jit.branchIfNotCell(value);
-        exits.cannot.append(jit.branchIfNotString(value));
-        findLiteralStringWord(jit, { .string = value, .impl = r.scratch, .entry = word, .tables = r.secondScratch, .maxLength = r.field.representation }, isEmpty, isStoredAsCell, exits.cannot);
-        if (traits.isNarrowReference)
-            jit.store32(word, slot);
-        else
-            jit.store64(word, slot);
-        didStore(StoredValue::IsNotCell);
-
-        isEmpty.link(&jit);
-        storeBits(traits.width, emptyLiteralStringWord);
-        didStore(StoredValue::IsNotCell);
-
-        isStoredAsCell.link(&jit);
-        storeCell(traits);
-
-        isNotCell.link(&jit);
-        storeUndefinedOrNull(traits);
     };
     auto branchUnlessInt32Fits = [&](const SlotTraits& traits) {
         const GPRReg extended = r.scratch;
@@ -310,9 +286,6 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
         case SlotValueKind::Cell:
             storeCellField(traits, representation);
             return;
-        case SlotValueKind::LiteralString:
-            storeLiteralStringField(traits);
-            return;
         case SlotValueKind::SignedInteger:
         case SlotValueKind::UnsignedInteger:
             storeIntegerField(traits);
@@ -336,20 +309,18 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
         jit.urshift64(r.type, TrustedImm32(representationShift), r.field.representation);
         jit.zeroExtend32ToWord(r.type, r.type);
     };
-    // branchUnlessTypeAccepts() takes three scratch registers and reads only bits 0 to 31 of type, so bits 32 to 63 carry the representation across it.
     auto branchUnlessFieldTypeAccepts = [&](JumpList& isNotAccepted) {
-        // Out of a Slot the type comes by a shift, which leaves nothing above it.
         if (typeTest != FieldTypeTest::IsEmittedForSlot)
             jit.zeroExtend32ToWord(r.type, r.type);
         jit.lshift64(TrustedImm32(representationShift), r.field.representation);
         jit.or64(r.field.representation, r.type);
-        branchUnlessTypeAccepts(jit, { value, r.type, r.field.representation, r.scratch, r.secondScratch }, isNotAccepted, isNotAccepted);
+        const GPRReg holder = end == FieldStoreEnd::ReturnAfterBarrier ? r.field.object : InvalidGPRReg;
+        branchUnlessTypeAccepts(jit, { value, r.type, r.field.representation, r.scratch, r.secondScratch, holder }, isNotAccepted, isNotAccepted);
         unpackRepresentation();
     };
     auto jumpIfSlotHoldsValueAsMarker = [&](Label isAdmitted) {
         Jump isNeitherUndefinedNorNull = jit.branchIfNotOther(value, r.scratch);
-        // The mark of the cell may answer for the raw value of the field, and Object::store() knows for which fields it does. A cell that has the mark, as every object has until its constructor is through, takes the marker here.
-        Jump cellHasNoMark = jit.branchTest8(CCallHelpers::Zero, CCallHelpers::Address(r.field.object, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit));
+        Jump cellHasNoMark = branchUnlessCellBearsMark(jit, r.field.object);
         LayoutData layoutWithSuchField { };
         layoutWithSuchField.hasSlotWithUnusedMarkers = 1;
         static_assert(sizeof(LayoutData) % sizeof(uint32_t) == 0);
@@ -370,55 +341,9 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
         isNeitherUndefinedNorNull.link(&jit);
     };
 
-    JumpList bitsOfTypeAccept;
-    JumpList bitsOfTypeDoNotAccept;
-    if (typeTest == FieldTypeTest::IsEmittedForSlot && jit.options().sharesRealms) {
-        auto acceptIfTypeHas = [&](uint32_t bits) {
-            bitsOfTypeDoNotAccept.append(jit.branchTest32(CCallHelpers::Zero, r.type, TrustedImm32(static_cast<int32_t>(bits))));
-            bitsOfTypeAccept.append(jit.jump());
-        };
-        auto primitive = [](uint16_t bits) {
-            return static_cast<uint32_t>(bits) << Slot::shiftOfPrimitivesInType;
-        };
-        Jump isOffsetInTables = jit.branchTest32(CCallHelpers::Zero, r.type, TrustedImm32(Slot::typeIsGivenByBits));
-        Jump isCell = jit.branchIfCell(value);
-        Jump isNotInt32 = jit.branchIfNotInt32(value);
-        acceptIfTypeHas(primitive(Primitive::Integer));
-
-        isNotInt32.link(&jit);
-        Jump isNotNumber = jit.branchIfNotNumber(value);
-        jit.and32(TrustedImm32(static_cast<int32_t>(primitive(Primitive::Number))), r.type, r.scratch);
-        bitsOfTypeDoNotAccept.append(jit.branch32(CCallHelpers::NotEqual, r.scratch, TrustedImm32(static_cast<int32_t>(primitive(Primitive::Number)))));
-        bitsOfTypeAccept.append(jit.jump());
-
-        isNotNumber.link(&jit);
-        static constexpr std::pair<int32_t, uint16_t> primitivesOfImmediates[] = {
-            { JSValue::ValueUndefined, Primitive::Undefined },
-            { JSValue::ValueNull, Primitive::Null },
-            { JSValue::ValueTrue, Primitive::True },
-            { JSValue::ValueFalse, Primitive::False },
-        };
-        for (auto [encoded, bits] : primitivesOfImmediates) {
-            Jump isOtherValue = jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(encoded));
-            acceptIfTypeHas(primitive(bits));
-            isOtherValue.link(&jit);
-        }
-        bitsOfTypeDoNotAccept.append(jit.jump());
-
-        isCell.link(&jit);
-        jit.load8(Address(value, JSCell::typeInfoTypeOffset()), r.scratch);
-        Jump isObject = jit.branch32(CCallHelpers::AboveOrEqual, r.scratch, TrustedImm32(ObjectType));
-        bitsOfTypeDoNotAccept.append(jit.branch32(CCallHelpers::NotEqual, r.scratch, TrustedImm32(StringType)));
-        acceptIfTypeHas(primitive(Primitive::String));
-
-        isObject.link(&jit);
-        acceptIfTypeHas(Slot::typeAcceptsEveryObject);
-        isOffsetInTables.link(&jit);
-    }
     if (typeTest != FieldTypeTest::HasPassed)
         branchUnlessFieldTypeAccepts(typeIsNotAccepted);
     Label isAdmitted = jit.label();
-    bitsOfTypeAccept.link(&jit);
     emitDispatchOnRepresentation(jit, r.field.representation, storeWithRepresentation);
 
     if (rememberStore) {
@@ -436,7 +361,6 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
     switch (end) {
     case FieldStoreEnd::JoinList:
         RELEASE_ASSERT(typeTest != FieldTypeTest::IsEmittedForSlot);
-        // Behind a type test this is the store to a variable, which has no other place to go to: its type is all that its slot may hold.
         exits.cannot.append(typeIsNotAccepted);
         return;
     case FieldStoreEnd::ReturnAfterBarrier:
@@ -444,7 +368,6 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
         typeIsNotAccepted.link(&jit);
         unpackRepresentation();
         jumpIfSlotHoldsValueAsMarker(isAdmitted);
-        bitsOfTypeDoNotAccept.link(&jit);
         branchOnFieldPresence(jit, r.field, r.scratch, exits.cannot, exits.wasAbsentAndIsNotAccepted);
         return;
     }

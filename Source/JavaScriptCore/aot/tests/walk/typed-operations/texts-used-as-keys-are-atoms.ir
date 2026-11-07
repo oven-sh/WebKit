@@ -1,0 +1,38 @@
+# a written text that is looked up is made of an atom, which a lookup answers by its address. The copy says what is done with the text here, and nothing about the constant elsewhere
+# function first(list) { return [list["1"], "1"]; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: [[atom]]: {{*}} = String string="1" [isAtom]
+# CHECK: = ElemGet {{*}}, [[atom]]
+# what is only stored is no key: function kept(list) { list[0] = "1"; }
+# RUN(KEPT): walk f2 mechanisms=none+TypedOperations
+# KEPT-LABEL: code f2:Body
+# KEPT-NOT: isAtom
+# KEPT: ElemSet
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="1"
+    v2 = ElemGet v0, v1
+    v3 = NewArray v2, v1 contents=anything
+    Return v3
+}
+function f2 name="kept" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = String string="1"
+    ElemSet v0, v1, v2
+    v4 = Undefined
+    Return v4
+}

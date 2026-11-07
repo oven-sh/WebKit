@@ -1,0 +1,27 @@
+# function joinIt(list, separator) { return list.join(separator); }
+# Nothing is known of `list`, so the call goes by name and finds the engine's function. The stub that enters a host function asks whether the run time answers for it with the operands as they are (AOTStubsBoxedCalls.cpp):
+# for push, slice, sort, indexOf it did, for join it did not, so every such join ran the engine's own loop, which copies long elements where the run time's leaves them joined as a rope.
+# The operation calls the function itself where the text of an element may come from code of the program, and whatever is no list never comes to it.
+# LIBRARY: own
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.publish = joinIt => { const calls = () => aotOperationCount("operationAOTArrayJoinOfAnyReceiver"); const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } }; let before = calls(); print(joinIt(["a", "b", "c"], "-"), joinIt([1, 2.5, "x", null, undefined, true], ", "), joinIt([], "-") === "", joinIt(["only"], "-"), joinIt(["Ж", "b"], "中").length, calls() - before); before = calls(); let order = []; const telling = name => ({ toString() { order.push(name); return name; } }); print(joinIt([telling("p"), "q", telling("r")], "+"), order.join(), joinIt(["a", "b"], 7), joinIt(["a", "b"], undefined), joinIt(["a", "b"], telling("s")), joinIt([, "b", , ], "|"), joinIt([["a", "b"], ["c"]], ";"), calls() - before); before = calls(); class Derived extends Array {} print(joinIt(Derived.from(["d", "e"]), "."), joinIt({ join: separator => "mine" + separator }, "!"), joinIt("text".split(""), ""), attempt(() => joinIt(null, "-")), attempt(() => joinIt({}, "-")), attempt(() => joinIt([Symbol()], "-")), calls() - before); const long = Array.from({ length: 70 }, (_, i) => String.fromCharCode(97 + i % 26).repeat(300)); const joined = joinIt(long, "\n"); print(joined.length, joined[300] === "\n", joined.slice(295, 305).length, joined === long.join("\n")); };
+# CHECK: a-b-c 1, 2.5, x, , , true true only 3 5
+# CHECK-NEXT: p+q+r p,r a7b a,b asb |b| a,b;c 6
+# CHECK-NEXT: d.e mine! text TypeError TypeError TypeError 3
+# CHECK-NEXT: 21069 true 10 true
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="joinIt" length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="join"
+    v3 = Call v2, v0, v1 calleeKey="join" calleeName="list.join"
+    Return v3
+}

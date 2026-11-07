@@ -1,0 +1,49 @@
+# the relation of the inner loop compares its counter with the counter of the outer loop, so the edge that leaves the inner loop narrows the outer counter in all that stands behind it, the step of the outer counter too.
+# In look 1 at the inner loop nothing is left of either operand on that edge: its counter is 0 and no turn has been seen. A look at the outer loop comes to that edge once in each look at the inner one, and the last one counts
+# function run(n) { let s = 0; for (let i = 0; i < n; i++) for (let j = 0; j < i; j++) s += j; return s; }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[s]]: int|whole @Double, [[i]]: int[0, 2147483647] @Int32) {{*}}isLoopHead=true
+# CHECK: ({{*}}: int|whole @Double, [[j]]: int[0, 2147483646] @Int32) {{*}}isLoopHead=true
+# CHECK: int[1, 2147483647] @Int32 = Increment {{*}}form=Integers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b8()
+  b1(v2):
+    v3 = Integer
+    Jump -> next b2(v3, v3)
+  b2(v4, v5):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b3(), notTaken b7()
+  b3():
+    v8 = Integer
+    Jump -> next b4(v4, v8)
+  b4(v9, v10):
+    LoopHint
+    v12 = Less v10, v5
+    Branch v12 -> taken b5(), notTaken b6()
+  b5():
+    v13 = Add v9, v10
+    v14 = Increment v10
+    Jump -> next b4(v13, v14)
+  b6():
+    v15 = Increment v5
+    Jump -> next b2(v9, v15)
+  b7():
+    Return v4
+  b8():
+    Return v0
+}

@@ -4,7 +4,6 @@ type ParameterList = Readonly<Record<string, b.TableType>>;
 
 const bytes = "TypedArrayElements";
 const storage = "TypedArrayStorage";
-// No value of the language lies among the bytes.
 const rawBytes = b.state(bytes, b.never);
 const otherAgents = "ExternalState";
 
@@ -12,6 +11,7 @@ const byteCount = b.int(0, b.checked(2 ** 32, "MAX_ARRAY_BUFFER_SIZE"));
 const anyArrayBuffer = b.union(b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"));
 const readsState = [b.readsContents()];
 const changesState = [b.readsContents(), b.writesContents()];
+const fixedAtCreation = b.inspected;
 
 const requiresNew = {
   returns: b.never,
@@ -72,7 +72,6 @@ const bufferSlice = (className: string) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// A buffer of a fixed length is refused before the length is converted.
 const lengthChange = {
   args: { newLength: b.index.loose },
   capability: "heap",
@@ -218,7 +217,7 @@ export default b.declarations(
       },
       detached: bufferGetter(b.bool, readsState),
       maxByteLength: bufferGetter(byteCount, readsState),
-      resizable: bufferGetter(b.bool, b.inspected),
+      resizable: bufferGetter(b.bool, fixedAtCreation),
       resize: lengthChange,
       slice: bufferSlice("ArrayBuffer"),
       transfer: bufferTransfer,
@@ -239,8 +238,8 @@ export default b.declarations(
     static: { "@@species": speciesGetter },
     proto: {
       byteLength: { ...bufferGetter(byteCount, readsState), reads: [otherAgents], writes: [otherAgents] },
-      growable: bufferGetter(b.bool, b.inspected),
-      maxByteLength: bufferGetter(byteCount, b.inspected),
+      growable: bufferGetter(b.bool, fixedAtCreation),
+      maxByteLength: bufferGetter(byteCount, fixedAtCreation),
       grow: { ...lengthChange, reads: [otherAgents], writes: [otherAgents] },
       slice: bufferSlice("SharedArrayBuffer"),
     },

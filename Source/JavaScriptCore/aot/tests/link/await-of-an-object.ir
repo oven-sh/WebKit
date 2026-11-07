@@ -1,0 +1,39 @@
+# If what is awaited flowed into unseen code, as in the first version, every object that an asynchronous function waits for would lose what is known of its fields
+# async function wait(o) { const p = await o;  return 0; }  function get(o) { return o.x; }  const a = { x: "a", only: 0 };  wait(a);  get(a);
+# The object answers to no `then`, so nothing of the program runs, and what comes back is the object itself.
+# RUN: summary f1
+# CHECK: call {{*}} v1 Name "then" this=[[objects]] (Unknown, Unknown)
+# RUN(KEPT): summary f1
+# KEPT-NOT: Parameter 0 -> Unknown
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f2 callers-known one-callee {{*}}result=string
+# LINK: field L0.0 "x" proven=string writers-known written-at-construction-alone
+# LINK: layout L0 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="only" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Integer integer=0
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3 calleeName="wait"
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v3 calleeName="get"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="wait" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    v2 = Integer integer=0
+    Return v2
+}
+function f2 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

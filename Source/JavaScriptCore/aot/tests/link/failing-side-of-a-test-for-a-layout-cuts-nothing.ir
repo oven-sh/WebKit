@@ -1,0 +1,42 @@
+# If the failing side of a test for a layout lost the objects of the layout, an object that Link knows under the layout and that has another shape when the test runs would be proven never to arrive at other()
+# class P { }  function other(p) { return p; }  function pick(p) { return isShapedAsP(p) ? 1 : other(p); }  pick(new P());
+# A test for a layout, a class or a function does not answer the same for ever of whatever Link files under the name, so where it fails all that came goes on.
+# RUN: link functions mechanisms=all
+# CHECK: function f3
+# CHECK-NEXT: parameter 0 {{*}}proven=L0
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = NewClosure function=f2
+    v5 = Call v4, -, v3 calleeName="pick"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="P" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="pick" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=1
+    Return v3
+  b2(v4):
+    v5 = CallDirect v0 function=f3
+    Return v5
+}
+function f3 name="other" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

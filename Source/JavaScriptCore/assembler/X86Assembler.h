@@ -6666,8 +6666,8 @@ public:
         char* code = static_cast<char*>(m_formatter.data());
         ASSERT(!WTF::unalignedLoad<int32_t>(std::bit_cast<int32_t*>(code + from.offset()) - 1));
         setRel32(code + from.offset(), code + to.offset());
-        if (m_recordsJumps) [[unlikely]]
-            m_linkedJumps.append(X86LinkedJump { from.offset(), to.offset() });
+        if (from.offset() == to.offset() && m_recordsJumps) [[unlikely]]
+            m_jumpsToNextInstruction.append(from.offset());
     }
 
     void setRecordsJumps(bool recordsJumps)
@@ -6676,17 +6676,20 @@ public:
         m_recordsJumps = recordsJumps;
     }
 
+    // X86JumpShortener::startOfRareCode.
+    void setStartOfRareCode(uint32_t offset) { m_startOfRareCode = offset; }
+
     void assignJumpKinds()
     {
         RELEASE_ASSERT(m_recordsJumps);
-        assignX86JumpKinds(m_linkedJumps, m_emittedJumps.span());
+        collectX86LinkedJumps({ static_cast<const uint8_t*>(m_formatter.data()), codeSize() }, m_emittedJumps.span(), m_jumpsToNextInstruction, m_linkedJumps);
     }
 
     Vector<X86JumpShift> shortenJumps()
     {
         RELEASE_ASSERT(m_recordsJumps);
         Vector<X86JumpShift> shifts;
-        size_t size = shortenX86Jumps({ static_cast<uint8_t*>(m_formatter.data()), codeSize() }, m_linkedJumps, shifts);
+        size_t size = shortenX86Jumps({ static_cast<uint8_t*>(m_formatter.data()), codeSize() }, m_linkedJumps, shifts, m_startOfRareCode);
         m_formatter.m_buffer.setCodeSize(size);
         m_indexOfLastWatchpoint = INT_MIN;
         m_indexOfTailOfLastWatchpoint = INT_MIN;
@@ -6979,8 +6982,11 @@ private:
 
     AssemblerLabel didEmitJump(AssemblerLabel end, X86JumpKind kind, uint8_t condition)
     {
-        if (m_recordsJumps) [[unlikely]]
+        if (m_recordsJumps) [[unlikely]] {
+            if (m_emittedJumps.size() == m_emittedJumps.capacity())
+                m_emittedJumps.reserveCapacity(std::max(initialEmittedJumpCapacity, 2 * m_emittedJumps.capacity()));
             m_emittedJumps.append(X86EmittedJump { end.offset(), kind, condition });
+        }
         return end;
     }
 
@@ -7816,7 +7822,10 @@ private:
     int m_indexOfLastWatchpoint;
     int m_indexOfTailOfLastWatchpoint;
     bool m_recordsJumps { false };
+    uint32_t m_startOfRareCode { UINT32_MAX };
+    static constexpr size_t initialEmittedJumpCapacity = 64;
     Vector<X86EmittedJump> m_emittedJumps;
+    Vector<uint32_t> m_jumpsToNextInstruction;
     Vector<X86LinkedJump> m_linkedJumps;
 };
 
