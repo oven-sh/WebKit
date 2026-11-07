@@ -535,7 +535,7 @@ void Unit::jump(Label& target, JumpIs jumpIs, bool takesInMore)
     // A jump that came of a constant is still a branch when CPython's compiler takes in what jumps lead to and first works out the lines. Later it goes where
     // this one goes, if this is still nothing but a jump, and the lines are worked out again; by then the jumps that lead nowhere have been dropped.
     bool isLedToByConstant = jumpOfConstantLeadsHere();
-    // (Alone it is not the only way: what it jumps over came here too.)
+    // (Alone it is not the only way: what it jumps over came here too. For a guard see whereBranchesMeet().)
     auto lineno = m_targetsOfJumpsStillJumpedTo.contains(&target) || (isLedToByConstant && (takesInMore || jumpIs == JumpIs::Hidden || !g.branchesToLastPythonLabel().count)) ? std::nullopt : lineOfOnlyWayHere(JumpsHere::AreTakenIn);
     if (lineno) {
         silentLine(*lineno);
@@ -848,8 +848,11 @@ bool Unit::jumpOfConstantGoesOn(const Last& isLast)
     return isLast.jumpsBefore <= (isLast.isInPlaceOfJump ? 0u : 1u) && nothingRunsBeforeJump(isLast) && !isReplacedByCopy(isLast);
 }
 
-Label& Unit::labelForLine(ReturnsByLine& labels, int lineno, const Range& place)
+Label& Unit::labelForLine(ReturnsByLine& labels, int lineno, const Range& place, bool isForJump)
 {
+    // (What jumps to a jump has a copy of it, in CPython too.)
+    if (labels.waysMeet && !isForJump)
+        lineno = 0;
     auto keyOf = [](int lineno, const Range& place) { return std::tuple { lineno, place.colOffset, place.endLineno, place.endColOffset }; };
     auto key = keyOf(lineno, place);
     auto keyOfEntry = [&](auto& entry) { return keyOf(entry.lineno, entry.place); };
@@ -864,27 +867,43 @@ Label& Unit::labelForLine(ReturnsByLine& labels, int lineno, const Range& place)
 
 void Unit::emitReturnsByLine(ReturnsByLine& returns, const Last& isLast)
 {
-    auto emit = [&](auto& entry, bool comesInPlaceOfJump = false) {
+    auto emit = [&](auto& entry) {
         g.emitLabel(entry.label.get());
         if (isLast.kind != Last::BeforeJump || isLast.jumpIs >= JumpIs::ToldOf)
             line(entry.lineno);
-        else if (comesInPlaceOfJump && nothingRunsBeforeJump(isLast) && !g.branchesToLastPythonLabel().count)
-            silentLine(entry.lineno); // A jump to a jump: in CPython it goes where that goes, and is of its own line still. (Not if something is run first, or a branch leads here too.)
+        else if (m_markedLine != -1)
+            noLine();
         if (entry.place.lineno)
             place(entry.place);
         leave(isLast);
-        // (The copies that follow are of no line.)
-        if (comesInPlaceOfJump && isLast.kind == Last::BeforeJump && isLast.jumpIs < JumpIs::ToldOf)
-            noLine();
     };
     // `if a and 0:`: nothing that can be reached is left between the jump that came of the constant and what it leads to. In CPython such a jump is dropped.
-    auto* next = std::ranges::find(returns, m_targetOfJumpOfConstant.get(), [](auto& entry) { return entry.label.ptr(); });
-    if (next != returns.end())
-        emit(*next, true);
+    // (Where the ways meet, it leads where the branches do: whereBranchesMeet().)
+    auto* next = returns.waysMeet ? std::ranges::find(returns, 0, &WayOut::lineno) : std::ranges::find(returns, m_targetOfJumpOfConstant.get(), [](auto& entry) { return entry.label.ptr(); });
+    if (next != returns.end() && !returns.waysMeet)
+        emit(*next);
     for (auto& entry : returns) {
         if (&entry != next)
             emit(entry);
     }
+}
+
+// The place that the branches out of a pattern and its guard lead to where the ways meet. It is where the statement ends: what comes next is compiled once, and other ways
+// may come there too, out of a statement that ends here as well.
+void Unit::whereBranchesMeet(ReturnsByLine& returns, const Last& isLast, bool guardHasOneBranch)
+{
+    ASSERT(returns.waysMeet);
+    bool isFallenInto = !cannotGetHere();
+    auto* entry = std::ranges::find(returns, 0, &WayOut::lineno);
+    if (entry != returns.end())
+        g.emitLabel(entry->label.get());
+    bool isLedToByConstant = entry != returns.end() && entry->label.ptr() == m_targetOfJumpOfConstant;
+    if (auto lineno = isLedToByConstant && guardHasOneBranch && !jumpOfConstantGoesOn(isLast) && !isReplacedByCopy(isLast) ? lineOfOnlyWayHere(JumpsHere::AreTakenIn) : std::nullopt) {
+        // The jump that came of the constant does not go on from here. It was a branch when the lines were first worked out, and the only way here so far.
+        m_whereLineOfBranchIsMarked = g.instructions().size();
+        silentLine(*lineno);
+    } else if (m_markedLine != -1 && !(isFallenInto && !g.branchesToLastPythonLabel().count && (!isLedToByConstant || jumpOfConstantGoesOn(isLast))))
+        noLine(); // (Unless what comes before is the only way here.)
 }
 
 // After the label that a branch goes to when it leaves the last statement of a function: it was on that line.

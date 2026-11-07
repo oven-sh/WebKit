@@ -229,6 +229,7 @@ private:
     };
     struct ReturnsByLine : Vector<WayOut, 4> {
         bool isInOrder { true }; // By line and place. See labelForLine().
+        bool waysMeet { false }; // The branches all go to one place, whatever line they are of.
     };
 
     struct PatternContext {
@@ -244,6 +245,8 @@ private:
         unsigned stillToLookAt { 0 };
         // If the statement is the last of something: what comes then is of the line that the pattern failed on.
         ReturnsByLine* failsByLine { nullptr };
+        // Where the ways meet in front of a jump: what jumps to a jump has a copy of it in place of the jump, in CPython too, and alternatives that have all failed jump.
+        const Last* leavesWhereAlternativesFail { nullptr };
         // It is the pattern of the last case of a `match` that the body of this loop, one of m_blocks, ends with.
         std::optional<unsigned> loopToGoOnWith;
         // With nothing to drop. A jump there is replaced by a copy of what is there.
@@ -330,7 +333,8 @@ private:
     bool labelComesBehindStatements() const;
     void jumpIfOrLeave(Expr* test, Label& target, const Last&, ReturnsByLine&, bool condition = false);
     void emitReturnsByLine(ReturnsByLine&, const Last&);
-    Label& labelForLine(ReturnsByLine&, int lineno, const Range& place = { });
+    void whereBranchesMeet(ReturnsByLine&, const Last&, bool guardHasOneBranch);
+    Label& labelForLine(ReturnsByLine&, int lineno, const Range& place = { }, bool isForJump = false);
     ReturnsByLine* m_endsOfClassBody { nullptr };
     Label& endOfClassBodyForLine(int lineno);
     // What jumpIf() does about the branches that go to the label.
@@ -428,6 +432,7 @@ private:
     size_t m_endOfDeadCode { 0 };
     size_t m_whereLineOfBranchIsMarked { notFound };
     std::optional<bool> constantTruth(Expr*);
+    static unsigned branchCount(Expr*, bool condition);
 
     RegisterID* callRuntime(RegisterID* dst, RuntimeFunction, Arguments&);
     RegisterID* callRuntime(RegisterID* dst, RuntimeFunction);
@@ -690,7 +695,7 @@ private:
     void pattern(AST::Pattern*, RegisterID* subject, PatternContext&);
     void subpattern(AST::Pattern*, RegisterID* subject, PatternContext&);
     void capture(Name, RegisterID* value, const Range&, PatternContext&);
-    Label& whereToFail(PatternContext&);
+    Label& whereToFail(PatternContext&, bool byJump = false);
     void failUnless(RegisterID* condition, PatternContext&, bool isNone = false);
     // CPython has an instruction here, of this line, that drops what the pattern has looked at. There is nothing to drop here, but it is
     // where a branch goes on that comes right before, and a jump that comes next is not one with a jump that leads here.

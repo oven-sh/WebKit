@@ -1477,6 +1477,24 @@ static Expr* testedLast(Expr* node)
     }
 }
 
+// How many branches CPython's compiler makes of a test that lead where it goes if the test comes out as `condition`. Of a constant too: that is dropped, or becomes a jump, later.
+unsigned Unit::branchCount(Expr* node, bool condition)
+{
+    if (auto* unary = node->tryAs<UnaryOp>(); unary && unary->op == AST::UnaryKind::Not)
+        return branchCount(unary->operand, !condition);
+    if (auto* boolOp = node->tryAs<BoolOp>()) {
+        if ((boolOp->op == BoolOperator::Or) != condition)
+            return branchCount(boolOp->values.last(), condition);
+        unsigned count = 0;
+        for (Expr* value : boolOp->values)
+            count += branchCount(value, condition);
+        return count;
+    }
+    if (auto* ifExp = node->tryAs<IfExp>())
+        return branchCount(ifExp->body, condition) + branchCount(ifExp->orelse, condition);
+    return 1;
+}
+
 void Unit::jumpIf(Expr* node, Label& target, bool condition)
 {
     // `b` in `a and 0 and b`. A branch would make it look as if its target could be reached from here.

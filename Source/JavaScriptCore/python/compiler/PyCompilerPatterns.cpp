@@ -37,11 +37,11 @@ static bool isStarWildcard(Pattern* pattern)
     return pattern->kind == PatternKind::MatchStar && !pattern->as<MatchStar>()->name;
 }
 
-Label& Unit::whereToFail(PatternContext& context)
+Label& Unit::whereToFail(PatternContext& context, bool byJump)
 {
     if (context.stillToLookAt || !context.captures.isEmpty())
         return *context.failWithMoreToDrop;
-    return context.failsByLine ? labelForLine(*context.failsByLine, m_markedLine) : *context.fail;
+    return context.failsByLine ? labelForLine(*context.failsByLine, m_markedLine, { }, byJump) : *context.fail;
 }
 
 // The pattern fails unless the condition holds; `isNone`: unless the value is None. Where to fail is to go on with the loop, with nothing to drop first, the branch
@@ -428,7 +428,9 @@ void Unit::patternOr(MatchOr* node, RegisterID* subject, PatternContext& context
         emitFailLabels(alternative->range, *inner.failWithMoreToDrop, *inner.fail);
     }
     dropWhatPatternLookedAt(node->range);
-    if (Label& target = whereToFail(context); context.functionEndsWhereItFails && &target != context.failWithMoreToDrop)
+    if (context.leavesWhereAlternativesFail && !context.stillToLookAt && context.captures.isEmpty())
+        leave(context.leavesWhereAlternativesFail->inPlaceOfJump(JumpIs::ToldOf));
+    else if (Label& target = whereToFail(context, true); context.functionEndsWhereItFails && &target != context.failWithMoreToDrop)
         hiddenJump(target);
     else
         jump(target);
@@ -499,8 +501,14 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         bool failingBranchesToTarget = isLastCase && isLast.kind == Last::BeforeJump && !isReplacedByCopy(isLast) && canBranchTo(isLast);
         context.fail = failingBranchesToTarget ? isLast.target : next.ptr();
         ReturnsByLine failsByLine;
-        if (isLast && isLastCase && !failingBranchesToTarget && matchCase->pattern->range.lineno != (matchCase->guard ? matchCase->guard->range : matchCase->pattern->range).endLineno)
+        bool failsOnSeveralLines = matchCase->pattern->range.lineno != (matchCase->guard ? matchCase->guard->range : matchCase->pattern->range).endLineno;
+        // (At a jump that tools are not told of whichever way it goes, the ways meet.)
+        failsByLine.waysMeet = isLast.kind == Last::BeforeJump && isLast.jumpIs < JumpIs::ToldOf;
+        if (isLast && isLastCase && !failingBranchesToTarget && failsOnSeveralLines) {
             context.failsByLine = &failsByLine;
+            if (failsByLine.waysMeet && !isReplacedByCopy(isLast))
+                context.leavesWhereAlternativesFail = &isLast;
+        }
         bool failingGoesOnWithLoop = isLastCase && isLast.kind == Last::OfLoopBody && !isLast.isBehindJump;
         if (failingGoesOnWithLoop)
             context.loopToGoOnWith = isLast.loop;
@@ -525,8 +533,8 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         context.captures.clear();
         if (matchCase->guard) {
             SetForScope branchTarget(m_branchTarget, failingGoesOnWithLoop ? BranchTarget { next.ptr(), { }, nullptr, isLast.loop, nullptr }
-                : context.failsByLine ? BranchTarget { next.ptr(), { }, context.failsByLine, { }, nullptr }
-                : isLastCase && isLast.kind == Last::BeforeJump && isLast.jumpIs < JumpIs::ToldOf && !failingBranchesToTarget ? BranchTarget { .label = context.fail, .jumpOfConstantGoesOn = jumpOfConstantGoesOn(isLast) } : m_branchTarget);
+                : context.failsByLine ? BranchTarget { .label = next.ptr(), .returns = context.failsByLine, .jumpOfConstantGoesOn = failsByLine.waysMeet && jumpOfConstantGoesOn(isLast) }
+                : isLastCase && failsByLine.waysMeet && !failingBranchesToTarget ? BranchTarget { .label = context.fail, .jumpOfConstantGoesOn = jumpOfConstantGoesOn(isLast) } : m_branchTarget);
             jumpIf(matchCase->guard, *context.fail, false);
         }
         popBlock();
@@ -543,9 +551,21 @@ void Unit::matchStatement(Match* node, const Last& isLast)
             // What is left of the jump where a copy of the end of the function has taken its place is of the line of the only way there.
             OpNop::emit(&g);
         }
-        emitReturnsByLine(failsByLine, isLast);
+        // What drops something where the pattern has failed comes in front of the places that the guard, and what fails with nothing to drop, lead to, as in CPython's code.
+        bool branchesMeet = failsByLine.waysMeet && !failsByLine.isEmpty();
+        bool guardHasOneBranch = matchCase->guard && branchCount(matchCase->guard, false) == 1;
+        bool dropsFirst = !failsByLine.isEmpty() && !branchesMeet && nextWithMoreToDrop->isBound();
+        // That place is where the statement ends, so that other ways may come there too. (Where a copy of the end of the function stands there, or where the jump that came of a
+        // constant goes on from there, it is by itself.)
+        if (branchesMeet && !nextWithMoreToDrop->isBound() && (isReplacedByCopy(isLast) || jumpOfConstantGoesOn(isLast))) {
+            whereBranchesMeet(failsByLine, isLast, guardHasOneBranch);
+            leave(isLast);
+            branchesMeet = false;
+        }
+        if (!dropsFirst)
+            emitReturnsByLine(failsByLine, isLast);
         // (A pattern that always matches.)
-        if (!next->isBound() && !nextWithMoreToDrop->isBound())
+        if (!branchesMeet && !next->isBound() && !nextWithMoreToDrop->isBound())
             continue;
         // Where a `break` leads, behind a `for` loop, CPython is left with something of the line of the loop. What has failed does not come through it.
         // (The guard of a `case _` that is the last of several branches to the end of the statement, like the `break`.)
@@ -553,6 +573,13 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         if (!isDefault && m_endOfForLoop.position == g.instructions().size() && (m_endOfForLoop.hasBreak || g.jumpsToLastPythonLabel().count) && g.branchesToLastPythonLabel().count == 1)
             OpNop::emit(&g);
         emitFailLabels(matchCase->pattern->range, nextWithMoreToDrop.get(), next.get());
+        if (branchesMeet) {
+            // It is given an instruction, and goes on with what the branches lead to.
+            if (nextWithMoreToDrop->isBound())
+                g.settlePythonLineMark();
+            whereBranchesMeet(failsByLine, isLast, guardHasOneBranch);
+            continue;
+        }
         if (isLast.kind == Last::BeforeJump && isLastCase) {
             // (Unless other ways meet here: see endOfStatement(). In CPython the body jumps here, over what drops something, and then a copy of the end of the
             // function, which has lines of its own, does not take the line of either way.)
@@ -566,6 +593,10 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         }
         else if (isLast && isLastCase)
             line(matchCase->pattern->range);
+        if (dropsFirst) {
+            leave(isLast);
+            emitReturnsByLine(failsByLine, isLast);
+        }
     }
     endOfStatement(end.get());
 }
