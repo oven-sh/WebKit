@@ -47,6 +47,7 @@ namespace JSC {
 
     class ArgumentListNode;
     class BytecodeGenerator;
+    struct Decision;
     class FunctionMetadataNode;
     class FunctionParameters;
     class ModuleAnalyzer;
@@ -2700,7 +2701,7 @@ namespace JSC {
     public:
         CaseBlockNode(ClauseListNode* list1, CaseClauseNode* defaultClause, ClauseListNode* list2);
 
-        void emitBytecodeForBlock(BytecodeGenerator&, RegisterID* input, RegisterID* destination);
+        void emitBytecodeForBlock(BytecodeGenerator&, RegisterID* input, RegisterID* destination, const Decision&);
 
     private:
         SwitchInfo::SwitchType tryTableSwitch(Vector<ExpressionNode*, 8>& literalVector, int32_t& min_num, int32_t& max_num);

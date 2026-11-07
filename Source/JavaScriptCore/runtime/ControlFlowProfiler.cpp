@@ -27,6 +27,9 @@
 #include "config.h"
 #include "ControlFlowProfiler.h"
 
+#include "BytecodeStructs.h"
+#include "CodeCache.h"
+#include "UnlinkedFunctionCodeBlock.h"
 #include "VM.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -53,6 +56,67 @@ BasicBlockLocation* ControlFlowProfiler::getBasicBlockLocation(SourceID sourceID
     if (addResultForBasicBlock.isNewEntry)
         addResultForBasicBlock.iterator->value = new BasicBlockLocation(startOffset, endOffset);
     return addResultForBasicBlock.iterator->value;
+}
+
+BasicBlockLocation* ControlFlowProfiler::getBranchLocation(SourceID sourceID, const OpProfileControlFlow& bytecode)
+{
+    ASSERT(bytecode.m_isBranch);
+    int decisionStartOffset = bytecode.m_textOffset;
+    int decisionEndOffset = bytecode.m_textEndOffset - 1;
+    DecisionCache& cache = m_decisions.add(sourceID, DecisionCache()).iterator->value;
+    auto& branches = cache.add(BasicBlockKey(decisionStartOffset, decisionEndOffset), Vector<std::unique_ptr<BasicBlockLocation>, 2>()).iterator->value;
+    while (branches.size() <= bytecode.m_branchIndex)
+        branches.append(makeUnique<BasicBlockLocation>(decisionStartOffset, decisionEndOffset));
+    BasicBlockLocation* branch = branches[bytecode.m_branchIndex].get();
+    branch->setCountsOtherBranches(bytecode.m_countsOtherBranches);
+    return branch;
+}
+
+void ControlFlowProfiler::didLinkCodeBlock(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source)
+{
+    // A function of a module can be called before the module is evaluated.
+    if (codeBlock->codeType() != FunctionCode && m_sourcesWithEagerBytecode.remove(source.providerID()))
+        generateBytecodeForFunctions(vm, codeBlock, source);
+}
+
+void ControlFlowProfiler::generateBytecodeForFunctions(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source)
+{
+    ParserError error;
+    generateUnlinkedCodeBlockForFunctions(vm, codeBlock, source, codeBlock->codeGenerationMode(), error, std::numeric_limits<unsigned>::max(), OptimizeBytecode::No, [&](UnlinkedFunctionCodeBlock* functionCodeBlock, const SourceCode& functionSource) {
+        if (!functionCodeBlock->hasOpProfileControlFlowBytecodeOffsets())
+            return;
+        for (JSInstructionStream::Offset offset : functionCodeBlock->opProfileControlFlowBytecodeOffsets()) {
+            auto bytecode = functionCodeBlock->instructions().at(offset)->as<OpProfileControlFlow>();
+            if (bytecode.m_isBranch)
+                getBranchLocation(functionSource.providerID(), bytecode);
+        }
+    });
+}
+
+Vector<BranchRange> ControlFlowProfiler::getBranchesForSourceID(SourceID sourceID) const
+{
+    Vector<BranchRange> result;
+    auto decisions = m_decisions.find(sourceID);
+    if (decisions == m_decisions.end())
+        return result;
+
+    for (const auto& [decision, branches] : decisions->value) {
+        size_t executionCountOfOtherBranches = 0;
+        for (const auto& branch : branches) {
+            if (!branch->countsOtherBranches())
+                executionCountOfOtherBranches += branch->executionCount();
+        }
+        for (unsigned index = 0; index < branches.size(); index++) {
+            size_t executionCount = branches[index]->executionCount();
+            if (branches[index]->countsOtherBranches())
+                executionCount -= executionCountOfOtherBranches;
+            result.append(BranchRange { decision.m_startOffset, decision.m_endOffset, index, executionCount });
+        }
+    }
+    std::ranges::sort(result, [](const BranchRange& a, const BranchRange& b) {
+        return std::tie(a.m_decisionStartOffset, a.m_decisionEndOffset, a.m_index) < std::tie(b.m_decisionStartOffset, b.m_decisionEndOffset, b.m_index);
+    });
+    return result;
 }
 
 void ControlFlowProfiler::dumpData() const
