@@ -55,12 +55,17 @@ public:
     }
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-    static ModuleGraphLoadingState* create(VM&, JSPromise*, RefPtr<ScriptFetcher>);
+    static ModuleGraphLoadingState* create(VM&, JSPromise*, RefPtr<ScriptFetcher>, JSValue asyncContext = { });
 
     JSPromise* promise() const { return m_promise.get(); }
     unsigned pendingModulesCount() const { return m_pendingModulesCount; }
     bool isLoading() const { return m_isLoading; }
     ScriptFetcher* scriptFetcher() const { return m_scriptFetcher.get(); }
+#if USE(BUN_JSC_ADDITIONS)
+    // The async context of the load that this state is for. The requests that the load makes for its modules inherit it:
+    // JSModuleLoader::asyncContextOfLoad().
+    JSValue asyncContext() const { return m_asyncContext.get(); }
+#endif
 
     void setPendingModulesCount(unsigned count) { m_pendingModulesCount = count; }
     void setIsLoading(bool loading) { m_isLoading = loading; }
@@ -119,7 +124,7 @@ public:
 
 
 private:
-    ModuleGraphLoadingState(VM&, Structure*, JSPromise*, RefPtr<ScriptFetcher>);
+    ModuleGraphLoadingState(VM&, Structure*, JSPromise*, RefPtr<ScriptFetcher>, JSValue asyncContext);
 
     void finishCreation(VM&);
 
@@ -137,6 +142,9 @@ private:
 #endif
     // Slot used only at top-level loadModule to AND-join loadPromise and statePromise into combinedPromise.
     WriteBarrier<Unknown> m_fulfillment;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_asyncContext;
+#endif
     // [[PendingModulesCount]]
     unsigned m_pendingModulesCount { 1 };
     uint8_t m_remainingFulfillments { 2 };

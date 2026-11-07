@@ -721,7 +721,7 @@ public:
     enum class TextOfImport : bool { MayComeLater, HasCome };
     JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode, TextOfImport = TextOfImport::MayComeLater, JSPromise* promiseOfCaller = nullptr, JSValue stateOfWait = JSValue(), std::optional<bool> answerOfWalkAlreadyMade = std::nullopt);
     JSPromise* rejectImportWithErrorOfLoad(ModuleID, ImportCaller);
-    void startImportWhoseTextHasCome(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
+    void startImportWhoseTextHasCome(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext);
     bool holdTextOfRequest(JSPromise* fetched, ModuleRecord* requested, ModuleID requester);
     void deliverFirstTextOnItsWay();
     enum class AskedBy : bool { Loader, Import };
@@ -739,7 +739,7 @@ public:
     void tellHostOfImport(JSPromise*, const String& path);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&, JSValue stateOfWait = { });
-    void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
+    void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
     void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error);
 
@@ -1519,9 +1519,12 @@ private:
         Strong<JSCell> importerLoad { };
     };
     Vector<DeferredRequest> m_deferredRequests;
+    JSValue asyncContextForImport() const;
+    Strong<Unknown> currentAsyncContext() const;
     struct DeferredImport {
         ModuleID file;
         Strong<JSPromise> promise;
+        Strong<Unknown> asyncContext;
     };
     Vector<DeferredImport> m_deferredImports;
     BitVector m_modulesThatHadRunWhenMocked;
@@ -1570,6 +1573,7 @@ private:
         Strong<JSCell> requested;
         std::optional<int64_t> referrerAsyncOrder;
         std::optional<uint32_t> stepsOfLoaderAtCall;
+        Strong<Unknown> asyncContext { };
     };
     Deque<TextOnItsWay, 2> m_textsOnTheirWay;
     bool m_canJobsOfFileTellWhenTextsCome { false };
@@ -1594,6 +1598,7 @@ private:
         std::optional<int64_t> referrerAsyncOrder { };
         ImportCaller caller { ImportCaller::CompiledCode };
         uint32_t jobsBehindFirstCall { 0 };
+        Strong<Unknown> asyncContext { };
     };
     Strong<JSPromise> m_promiseOfJobOfRound;
     bool m_isJobOfRoundQueued { false };

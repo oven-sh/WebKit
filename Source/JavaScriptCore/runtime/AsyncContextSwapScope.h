@@ -30,6 +30,7 @@
 #include "InternalFieldTuple.h"
 #include "JSCast.h"
 #include "JSGlobalObject.h"
+#include "VM.h"
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Noncopyable.h>
 
@@ -139,7 +140,16 @@ public:
         return wrap(vm, globalObject, userContext, current(vm, globalObject));
     }
 
-private:
+protected:
+    // For a scope that decides by itself whether it enters: ModuleLoaderAsyncContextScope.
+    enum DoNotEnterTag { DoNotEnter };
+    ALWAYS_INLINE AsyncContextSwapScope(VM& vm, DoNotEnterTag)
+        : m_vm(vm)
+    {
+    }
+
+    bool didEnter() const { return m_asyncContextData; }
+
     // The previous value is put back on exit even when nothing had to be
     // installed, so whatever the job itself leaves in the slot (enterWith())
     // ends with the job.
@@ -155,9 +165,79 @@ private:
             m_asyncContextData->putInternalField(m_vm, 0, asyncContext);
     }
 
+private:
     VM& m_vm;
     InternalFieldTuple* m_asyncContextData { nullptr };
     JSValue m_restoreAsyncContext;
+};
+
+// For a job of the module loader, and for what the loader calls on its way.
+//
+// A load keeps the async context of whoever started it: what was current where import() was called. It is in the cells of
+// the load (ModuleLoadingContext, ModuleLoaderPayload, ModuleGraphLoadingState, and ModuleRegistryEntry until the record
+// is made), and every request that the load makes takes it from there: JSModuleLoader::asyncContextOfLoad(). Where that
+// context is a store, a job of the load is a continuation of the import(): it runs under the store, and what it leaves
+// in the slot ends with it.
+//
+// A load that captured no store has no scope. Its jobs run as such jobs always did: under what is in the slot, and what
+// they leave there stays. That is:
+// - an import() outside any store, and the load of an entry point, whose module enters what the program goes on in;
+// - a synchronous load (JSModuleLoader::loadModuleSync()), which captures nothing: what it runs inside the call of
+//   require() runs in the context of the caller, and what its modules enter is the caller's, as for a CommonJS module.
+//
+// While a synchronous load drains its queue, no job of the loader enters the context of its load. The drain also takes
+// the jobs of other loads that come due meanwhile: of an import() in flight, and of an import() that a module calls
+// during the drain. It runs them inside the call of require(), so they run in the context of its caller, as the steps
+// of the synchronous load do. (The job that resumes a module behind its own await is no such job: it has the context
+// of that await, as any await has.)
+class ModuleLoaderAsyncContextScope : public AsyncContextSwapScope {
+public:
+    ALWAYS_INLINE ModuleLoaderAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
+        : AsyncContextSwapScope(vm, DoNotEnter)
+    {
+        if (!wouldEnter(vm, asyncContext)) [[likely]]
+            return;
+        enter(globalObject, asyncContext);
+    }
+
+    static ALWAYS_INLINE bool wouldEnter(VM& vm, JSValue asyncContext)
+    {
+        if (asyncContext.isEmpty() || asyncContext.isUndefined()) [[likely]]
+            return false;
+        return !vm.synchronousModuleQueue();
+    }
+};
+
+// For a job of the module loader that evaluates modules. A module with a top-level await leaves a job behind that runs
+// the modules that wait for it (CyclicModuleRecord::executeAsync()). That job continues the job that began to evaluate
+// the module: JSModuleLoader::asyncContextOfModulesThatWait() says what it gets.
+// - Where the job entered the context of its load, the slot is the job's own: the job behind the await gets what is
+//   current where the awaiting module begins, as any continuation does.
+// - Where the job did not enter it (the drain of a synchronous load), it gets the context of the load.
+// - Where the load keeps no context, it gets none, as before there was this scope. What the slot holds in a job that
+//   entered nothing is not the job's to hand on: it can be the context of whoever runs the job.
+class ModuleEvaluationAsyncContextScope final : public ModuleLoaderAsyncContextScope {
+public:
+    ALWAYS_INLINE ModuleEvaluationAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
+        : ModuleLoaderAsyncContextScope(vm, globalObject, asyncContext)
+        , m_vm(vm)
+        , m_asyncContextOfLoad(asyncContext)
+        , m_outer(std::exchange(vm.m_moduleEvaluationAsyncContextScope, this))
+    {
+    }
+
+    ALWAYS_INLINE ~ModuleEvaluationAsyncContextScope()
+    {
+        m_vm.m_moduleEvaluationAsyncContextScope = m_outer;
+    }
+
+    using ModuleLoaderAsyncContextScope::didEnter;
+    JSValue asyncContextOfLoad() const { return m_asyncContextOfLoad; }
+
+private:
+    VM& m_vm;
+    JSValue m_asyncContextOfLoad;
+    ModuleEvaluationAsyncContextScope* m_outer;
 };
 
 } // namespace JSC

@@ -30,6 +30,7 @@
 #include "AOTState.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
+#include "AsyncContextSwapScope.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
 #include "DeferredWorkTimer.h"
@@ -2625,25 +2626,36 @@ static JSValue moduleForJob(ModuleID module)
 }
 
 static void withModuleOfJob(JSGlobalObject* realm, JSValue moduleForJob, const ScopedLambda<void(Modules&, ModuleID)>&);
-static void continueImportOfJob(Modules&, JSPromise*, ModuleID, JSValue referrerAsyncOrder);
+static void continueImportOfJob(Modules&, JSPromise*, ModuleID, JSValue referrerAsyncOrder, JSValue asyncContext);
 
-static void queueImportJob(JSGlobalObject* realm, JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder)
+static void queueImportJob(JSGlobalObject* realm, JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext)
 {
     constexpr uint8_t unusedPayload = 0;
-    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImport, unusedPayload, importPromise, moduleForJob(module), referrerAsyncOrder ? jsNumber(static_cast<double>(*referrerAsyncOrder)) : jsUndefined());
+    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImport, unusedPayload, importPromise, moduleForJob(module), referrerAsyncOrder ? jsNumber(static_cast<double>(*referrerAsyncOrder)) : jsUndefined(), asyncContext);
 }
 
-void runCompiledModuleImport(JSGlobalObject*, JSValue importPromise, JSValue module, JSValue referrerAsyncOrder)
+JSValue Modules::asyncContextForImport() const
+{
+    return loader()->asyncContextForLoad(*m_instance.vm, m_instance.globalObject);
+}
+
+Strong<Unknown> Modules::currentAsyncContext() const
+{
+    JSValue asyncContext = asyncContextForImport();
+    return asyncContext.isUndefined() ? Strong<Unknown>() : Strong<Unknown>(*m_instance.vm, asyncContext);
+}
+
+void runCompiledModuleImport(JSGlobalObject*, JSValue importPromise, JSValue module, JSValue referrerAsyncOrder, JSValue asyncContext)
 {
     auto* promise = uncheckedDowncast<JSPromise>(importPromise);
     withModuleOfJob(promise->realm(), module, [&](Modules& modules, ModuleID imported) {
-        continueImportOfJob(modules, promise, imported, referrerAsyncOrder);
+        continueImportOfJob(modules, promise, imported, referrerAsyncOrder, asyncContext);
     });
 }
 
-static void continueImportOfJob(Modules& modules, JSPromise* promise, ModuleID imported, JSValue referrerAsyncOrder)
+static void continueImportOfJob(Modules& modules, JSPromise* promise, ModuleID imported, JSValue referrerAsyncOrder, JSValue asyncContext)
 {
-    modules.continueImport(promise, imported, referrerAsyncOrder.isUndefined() ? std::nullopt : std::optional(static_cast<int64_t>(referrerAsyncOrder.asNumber())));
+    modules.continueImport(promise, imported, referrerAsyncOrder.isUndefined() ? std::nullopt : std::optional(static_cast<int64_t>(referrerAsyncOrder.asNumber())), asyncContext);
 }
 
 static constexpr InternalMicrotask jobsOfImportOfEvaluatedModule[] = {
@@ -2658,24 +2670,29 @@ static constexpr InternalMicrotask jobsOfImportOfEvaluatedModule[] = {
 
 static constexpr size_t numberOfJobsBehindEvaluation = std::size(jobsOfImportOfEvaluatedModule) - 2;
 
-static void queueStepOfImport(JSPromise* importPromise, JSValue module, uint8_t stepsLeft, JSValue error = { })
+static void queueStepOfImport(JSPromise* importPromise, JSValue module, uint8_t stepsLeft, JSValue asyncContext, JSValue error = { })
 {
     JSGlobalObject* realm = importPromise->realm();
-    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImportStep, stepsLeft, importPromise, module, error);
+    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImportStep, stepsLeft, importPromise, module, error, asyncContext);
 }
 
-void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue error, uint8_t stepsLeft)
+static JSValue contextOfImportSettled(JSGlobalObject* realm, JSValue moduleForJob, JSValue asyncContext)
+{
+    return AsyncContextSwapScope::wrap(realm->vm(), realm, moduleForJob, asyncContext);
+}
+
+void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue error, uint8_t stepsLeft, JSValue asyncContext)
 {
     auto* promise = uncheckedDowncast<JSPromise>(importPromise);
     if (--stepsLeft)
-        queueStepOfImport(promise, module, stepsLeft, error);
+        queueStepOfImport(promise, module, stepsLeft, asyncContext, error);
     else
         withModuleOfJob(promise->realm(), module, [&](Modules& modules, ModuleID imported) {
             modules.finishImportOfEvaluatedModule(promise, imported, error);
         });
 }
 
-void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSValue resolution, JSValue module, JSPromise::Status status)
+void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSValue resolution, JSValue module, JSPromise::Status status, JSValue asyncContext)
 {
     auto* promise = uncheckedDowncast<JSPromise>(importPromise);
     RELEASE_ASSERT(status != JSPromise::Status::Pending);
@@ -2683,7 +2700,7 @@ void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSVa
         if (JSValue error = modules.errorOfLoadEndedByMock(imported)) [[unlikely]]
             promise->reject(promise->vm(), error);
         else if (modules.isImportedByLoader(imported))
-            queueStepOfImport(promise, module, numberOfJobsBehindEvaluation - 1, status == JSPromise::Status::Rejected ? resolution : JSValue());
+            queueStepOfImport(promise, module, numberOfJobsBehindEvaluation - 1, asyncContext, status == JSPromise::Status::Rejected ? resolution : JSValue());
         else if (status == JSPromise::Status::Rejected)
             promise->reject(promise->vm(), resolution);
         else
@@ -3160,7 +3177,7 @@ void Modules::holdText(JSPromise* promise, ModuleID module, ModuleRecord* reques
     VM& vm = *m_instance.vm;
     putCallsThatWaitApartInLine();
     uint64_t place = static_cast<uint64_t>(turnOfRequest) << 32 | m_numberOfTextsAskedFor++;
-    m_textsOnTheirWay.appendAndBubble(TextOnItsWay { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, m_stepsOfLoader }, [&](const TextOnItsWay& inLine) {
+    m_textsOnTheirWay.appendAndBubble(TextOnItsWay { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, m_stepsOfLoader, requested ? Strong<Unknown>() : currentAsyncContext() }, [&](const TextOnItsWay& inLine) {
         return inLine.place > place;
     });
     if (host().callInLaterTurn && isTestRun()) {
@@ -3189,11 +3206,11 @@ void Modules::deliverFirstTextOnItsWay()
         callsMadeWhileLoaderTookNoStep.append(m_textsOnTheirWay.takeFirst());
     SetForScope stepsOfLoaderAtCall(m_stepsOfLoaderAtCallWhoseTextHasCome, text.stepsOfLoaderAtCall);
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    startImportWhoseTextHasCome(text.promise.get(), text.module, text.referrerAsyncOrder);
+    startImportWhoseTextHasCome(text.promise.get(), text.module, text.referrerAsyncOrder, text.asyncContext.get());
     RETURN_IF_EXCEPTION(scope, void());
     for (TextOnItsWay& call : callsMadeWhileLoaderTookNoStep) {
         noteThatTextHasCome(call.module);
-        startImportWhoseTextHasCome(call.promise.get(), call.module, call.referrerAsyncOrder);
+        startImportWhoseTextHasCome(call.promise.get(), call.module, call.referrerAsyncOrder, call.asyncContext.get());
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
@@ -3219,11 +3236,13 @@ JSPromise* Modules::startImportInLaterTurn(ModuleID module, std::optional<int64_
     return importPromise;
 }
 
-void Modules::startImportWhoseTextHasCome(JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder)
+void Modules::startImportWhoseTextHasCome(JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     m_modulesOfQueuedImports.clear(module.index());
+    AsyncContextSwapScope asyncContextOfCall(vm, m_instance.globalObject, asyncContext);
+    ModuleEvaluationAsyncContextScope jobOfImport(vm, m_instance.globalObject, asyncContext);
     JSPromise* loaded = startImport(module, referrerAsyncOrder, ImportCaller::Host, TextOfImport::HasCome);
     if (scope.exception()) [[unlikely]] {
         importPromise->rejectWithCaughtException(vm, scope);
@@ -3311,14 +3330,14 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         if (isCalledByProgram && (!isBuiltinModule || isBuiltinModuleThatLoaderHas) && loaderOnlyHandsOverNamespace(module)) {
             JSPromise* promise = promiseForCaller();
             if (promise->isThenFastAndNonObservable()) [[likely]] {
-                queueStepOfImport(promise, moduleForJob(module), std::size(jobsOfImportOfEvaluatedModule));
+                queueStepOfImport(promise, moduleForJob(module), std::size(jobsOfImportOfEvaluatedModule), asyncContextForImport());
                 return promise;
             }
         }
         bool isCalledUnderRequire = vm.synchronousModuleQueue() && isCommonJSFileOrFace(module) && isEvaluatedByLoader(fileOf(module));
         if (isCalledUnderRequire || (asyncLoadMustWaitFor(module) && !loader()->registryEntry(moduleKey(module)))) [[unlikely]] {
             JSPromise* promise = promiseForCaller();
-            m_deferredImports.append(DeferredImport { fileOf(module), Strong<JSPromise>(vm, promise) });
+            m_deferredImports.append(DeferredImport { fileOf(module), Strong<JSPromise>(vm, promise), currentAsyncContext() });
             return promise;
         }
         if (isBuiltinModuleThatLoaderHas || (data(module).kind == ModuleKind::SourceText && !isNotLoaded(module))) {
@@ -3378,7 +3397,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
 
     JSPromise* importPromise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
     m_modulesOfQueuedImports.set(module.index());
-    queueImportJob(realm, importPromise, module, referrerAsyncOrder);
+    queueImportJob(realm, importPromise, module, referrerAsyncOrder, asyncContextForImport());
     return importPromise;
 }
 
@@ -3623,7 +3642,7 @@ void Modules::resumeDeferredImports(ModuleID file, uint8_t jobsUntilLoaded)
                 error = recordIfExists(evaluated)->evaluationError();
         }
         uint8_t skippedJobs = error ? 2 : 0;
-        queueStepOfImport(import.promise.get(), jsNumber(file.index()), jobsUntilLoaded + std::size(jobsOfImportOfEvaluatedModule) - 1 - skippedJobs, error);
+        queueStepOfImport(import.promise.get(), jsNumber(file.index()), jobsUntilLoaded + std::size(jobsOfImportOfEvaluatedModule) - 1 - skippedJobs, import.asyncContext.get(), error);
         return true;
     });
 }
@@ -3702,7 +3721,7 @@ void Modules::keepLinkWalk(std::unique_ptr<ModuleLinkWalk>&& walk)
     m_linkWalksOfLoads.append(WTF::move(walk));
 }
 
-void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder)
+void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3719,8 +3738,8 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
     }
 
     if (status(module) == ModuleStatus::Evaluating) {
-        vm.whenIdle([realm = m_instance.globalObject, importPromise = Strong<JSPromise>(vm, importPromise), module, referrerAsyncOrder] {
-            queueImportJob(realm, importPromise.get(), module, referrerAsyncOrder);
+        vm.whenIdle([realm = m_instance.globalObject, importPromise = Strong<JSPromise>(vm, importPromise), asyncContext = asyncContext && !asyncContext.isUndefined() ? Strong<Unknown>(vm, asyncContext) : Strong<Unknown>(), module, referrerAsyncOrder] {
+            queueImportJob(realm, importPromise.get(), module, referrerAsyncOrder, asyncContext.get());
         });
         return;
     }
@@ -3739,7 +3758,7 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
     }
     if (didRunModule || didRunFile) {
         keepLinkWalk(WTF::move(linkWalk));
-        queueImportJob(m_instance.globalObject, importPromise, module, referrerAsyncOrder);
+        queueImportJob(m_instance.globalObject, importPromise, module, referrerAsyncOrder, asyncContext);
         return;
     }
 
@@ -3747,7 +3766,7 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
     RETURN_IF_EXCEPTION(scope, void());
     switch (evaluation->status()) {
     case JSPromise::Status::Pending:
-        evaluation->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledModuleImportSettled, importPromise, moduleForJob(module));
+        evaluation->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledModuleImportSettled, importPromise, contextOfImportSettled(m_instance.globalObject, moduleForJob(module), asyncContext));
         return;
     case JSPromise::Status::Fulfilled:
         RELEASE_AND_RETURN(scope, resolveWithNamespace(importPromise, module));
@@ -6403,6 +6422,7 @@ void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
     ASSERT(status() == Status::Evaluating || status() == Status::EvaluatingAsync);
     ASSERT(hasTLA());
 
+    JSValue asyncContext = moduleLoader()->asyncContextOfModulesThatWait(vm, globalObject);
     JSValue result = modules().callBodyOfModuleEnteredByLoader(m_module);
     RETURN_IF_EXCEPTION(scope, void());
     auto* promise = dynamicDowncast<JSPromise>(result);
@@ -6410,7 +6430,7 @@ void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
         promise = JSPromise::resolvedPromise(globalObject, result);
         RETURN_IF_EXCEPTION(scope, void());
     }
-    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this, asyncContext);
 }
 
 bool ModuleRecord::standsForMock() const

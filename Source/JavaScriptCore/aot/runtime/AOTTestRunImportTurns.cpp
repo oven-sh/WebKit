@@ -11,6 +11,7 @@
 #include "AOTInstance.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
+#include "AsyncContextSwapScope.h"
 #include "JSCInlines.h"
 #include "JSMicrotask.h"
 #include "JSModuleLoader.h"
@@ -96,7 +97,7 @@ void Modules::holdTextOfCall(JSPromise* promise, ModuleID module, ModuleRecord* 
         queueJobOfRound(module);
     }
     uint64_t place = static_cast<uint64_t>(m_turnOfTexts) << 32 | m_numberOfTextsAskedFor++;
-    m_textsThatWait.append(TextThatWaits { place, m_turnOfDeliveries, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, caller, m_jobsBehindFirstCall });
+    m_textsThatWait.append(TextThatWaits { place, m_turnOfDeliveries, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, caller, m_jobsBehindFirstCall, requested ? Strong<Unknown>() : currentAsyncContext() });
     host().callInLaterTurn(m_instance.globalObject);
 }
 
@@ -107,7 +108,7 @@ void Modules::putCallsThatWaitApartInLine()
     for (TextThatWaits& text : textsThatWait()) {
         if (!text.requestedRecord)
             m_modulesOfQueuedImports.set(text.module.index());
-        m_textsOnTheirWay.appendAndBubble(TextOnItsWay { text.place, WTF::move(text.promise), text.module, WTF::move(text.requestedRecord), text.referrerAsyncOrder, std::nullopt }, [&](const TextOnItsWay& inLine) {
+        m_textsOnTheirWay.appendAndBubble(TextOnItsWay { text.place, WTF::move(text.promise), text.module, WTF::move(text.requestedRecord), text.referrerAsyncOrder, std::nullopt, WTF::move(text.asyncContext) }, [&](const TextOnItsWay& inLine) {
             return inLine.place > text.place;
         });
     }
@@ -169,6 +170,8 @@ void Modules::makeCallAgain(TextThatWaits& text)
         promise->fulfill(vm, text.requestedRecord.get());
         return;
     }
+    AsyncContextSwapScope asyncContextOfCall(vm, m_instance.globalObject, text.asyncContext.get());
+    ModuleEvaluationAsyncContextScope jobOfImport(vm, m_instance.globalObject, text.asyncContext.get());
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, text.caller, TextOfImport::HasCome, promise);
     if (scope.exception()) [[unlikely]] {
         promise->rejectWithCaughtException(vm, scope);

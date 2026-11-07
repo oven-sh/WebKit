@@ -23,6 +23,7 @@
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubEntrypoints.h"
 #include "AOTVMState.h"
+#include "AsyncContextSwapScope.h"
 #include "ExceptionHelpers.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
@@ -1274,9 +1275,10 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
     bool didRunFile = false;
     FilesBeingRun filesBeingRun { root, std::nullopt, m_innermostFilesBeingRun, jobs == JobsOfImportedFiles::WaitForLoader, load };
     filesBeingRun.isAheadOfStepsOfLoader = jobs == JobsOfImportedFiles::StepsOfLoaderWaitForLoader;
+    JSValue asyncContextOfLoad = load ? load->asyncContext() : JSValue();
     SetForScope innermostFilesBeingRun(m_innermostFilesBeingRun, &filesBeingRun);
     SetForScope modulesWhoseFilesRunAheadOfLoader(vm.aotState().modulesWhoseFilesRunAheadOfLoader, filesBeingRun.isAheadOfJobsOfLoader ? this : vm.aotState().modulesWhoseFilesRunAheadOfLoader);
-    if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && !doOtherJobsWait() && !m_rootWhoseFilesRun) {
+    if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && !doOtherJobsWait() && !m_rootWhoseFilesRun && !ModuleLoaderAsyncContextScope::wouldEnter(vm, asyncContextOfLoad)) {
         ensureRecord(root)->retain();
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
             bool hadQueuedTicks = hasQueuedTicks();
@@ -1393,6 +1395,9 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         bool hadQueuedTicks = hasQueuedTicks();
         filesBeingRun.fileOrFace = imported;
         filesBeingRun.numberOfJobsInFrontOfFile = numberOfJobs;
+        std::optional<ModuleLoaderAsyncContextScope> asyncContextOfFile;
+        if (jobs == JobsOfImportedFiles::WaitForLoader)
+            asyncContextOfFile.emplace(vm, m_instance.globalObject, asyncContextOfLoad);
         if (!isOwedBesideMock) [[likely]] {
             if (storedStatus(imported) < StoredModuleStatus::InRecord && data(imported).evaluatesItself())
                 evaluateByCallingBody(imported);
@@ -1404,6 +1409,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             runFileBesideMock(fileOf(imported));
             RETURN_IF_EXCEPTION(scope, didRunFile);
         }
+        asyncContextOfFile.reset();
         Exception* exception = scope.exception();
         bool didQueueJobsAheadOfLoader = filesBeingRun.isAheadOfJobsOfLoader && (numberOfJobsThatWouldWait(jobs) != numberOfJobs || (!hadQueuedTicks && hasQueuedTicks()));
         if (didQueueJobsAheadOfLoader && !(exception && vm.isTerminationException(exception))) [[unlikely]] {
@@ -1549,7 +1555,7 @@ void Modules::handSynchronousLoadToLoader(FilesBeingRun& files)
     SetForScope fileBeingHandedToLoader(m_fileBeingHandedToLoader, fileOf(running));
     SetForScope isAskingHost(m_isAskingHost, true);
     takeUpWaysOfLoads();
-    JSPromise* promise = loader()->loadModule(m_instance.globalObject, moduleKey(files.root), nullptr, nullptr, { ModuleLoadFlag::Evaluate });
+    JSPromise* promise = loader()->loadModule(m_instance.globalObject, moduleKey(files.root), nullptr, nullptr, { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Synchronous });
     scope.assertNoException();
     m_synchronousLoadsHandedToLoader.append({ files.root, Strong<JSPromise>(vm, promise) });
     runSynchronousStepsInFrontOf(fileOf(running));
