@@ -798,40 +798,47 @@ const TypeDef simpleTypeDef { "_ctypes._SimpleCData"_s, { TypeFlag::Base, TypeFl
 
 // ---- Structure, Union ----
 
-// Sets the fields of the class, after those of its bases, from the positional arguments. Returns how many fields there are so
-// far, or -1 for an exception.
-static int64_t structInitFromPositional(JSGlobalObject* globalObject, JSValue self, PyType* type, const CallArgs& args, int64_t index)
+// Sets the fields of the class, after those of its bases, from the positional arguments. Returns how many fields there are, or -1 for an exception.
+static int64_t structInitFromPositional(JSGlobalObject* globalObject, JSValue self, PyType* type, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     State& state = stateOf(globalObject);
-    if (type->base() && infoOf(globalObject, type->base())) {
-        index = structInitFromPositional(globalObject, self, type->base(), args, index);
-        RETURN_IF_EXCEPTION(scope, -1);
+    // The bases as they are now: what sets a field may run anything.
+    MarkedArgumentBuffer classes;
+    classes.append(type);
+    while (type->base() && infoOf(globalObject, type->base())) {
+        type = type->base();
+        classes.append(type);
     }
-    PyCTypeInfo* info = infoOf(globalObject, type);
-    if (!info)
-        return index;
-    JSValue fields = type->dict()->get(state.fieldsName.get());
-    if (!fields)
-        return index;
-    for (int64_t i = index; i < info->length && i < static_cast<int64_t>(args.size()); ++i) {
-        JSValue pair = getItem(globalObject, fields, makeInt(globalObject, i - index));
-        RETURN_IF_EXCEPTION(scope, -1);
-        JSValue name = getItem(globalObject, pair, jsNumber(0));
-        RETURN_IF_EXCEPTION(scope, -1);
-        JSString* attribute = attributeName(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, -1);
-        if (args.hasKeywords() && args.keyword(attribute)) {
-            String text = reprForMessage(globalObject, name);
+    int64_t index = 0;
+    while (!classes.isEmpty()) {
+        type = PyType::from(classes.takeLast());
+        PyCTypeInfo* info = infoOf(globalObject, type);
+        if (!info)
+            continue;
+        JSValue fields = type->dict()->get(state.fieldsName.get());
+        if (!fields)
+            continue;
+        for (int64_t i = index; i < info->length && i < static_cast<int64_t>(args.size()); ++i) {
+            JSValue pair = getItem(globalObject, fields, makeInt(globalObject, i - index));
             RETURN_IF_EXCEPTION(scope, -1);
-            raiseTypeError(globalObject, scope, "duplicate values for field "_s, text);
-            return -1;
+            JSValue name = getItem(globalObject, pair, jsNumber(0));
+            RETURN_IF_EXCEPTION(scope, -1);
+            JSString* attribute = attributeName(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, -1);
+            if (args.hasKeywords() && args.keyword(attribute)) {
+                String text = reprForMessage(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, -1);
+                raiseTypeError(globalObject, scope, "duplicate values for field "_s, text);
+                return -1;
+            }
+            setAttr(globalObject, self, attribute, args[static_cast<unsigned>(i)]);
+            RETURN_IF_EXCEPTION(scope, -1);
         }
-        setAttr(globalObject, self, attribute, args[static_cast<unsigned>(i)]);
-        RETURN_IF_EXCEPTION(scope, -1);
+        index = info->length;
     }
-    return info->length;
+    return index;
 }
 
 static JSValue structInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
@@ -839,7 +846,7 @@ static JSValue structInit(JSGlobalObject* globalObject, JSValue self, const Call
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (args.size()) {
-        int64_t count = structInitFromPositional(globalObject, self, PyCData::from(self)->type(), args, 0);
+        int64_t count = structInitFromPositional(globalObject, self, PyCData::from(self)->type(), args);
         RETURN_IF_EXCEPTION(scope, { });
         if (count < static_cast<int64_t>(args.size()))
             return raiseTypeError(globalObject, scope, "too many initializers"_s);
