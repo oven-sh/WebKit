@@ -204,10 +204,8 @@ static JSValue loadNativeModule(JSGlobalObject* globalObject, JSString* name, co
     JSValue module = createNativeModule(globalObject, name, def);
     RETURN_IF_EXCEPTION(scope, { });
     rt.modules()->set(vm, name, module);
-    if (rt.modules()->get(rt.names.uFrozenImportlib())) {
-        ensureNativeModuleSpec(globalObject, PyModule::from(module));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    ensureNativeModuleSpec(globalObject, PyModule::from(module));
+    RETURN_IF_EXCEPTION(scope, { });
     if (def.execute) {
         def.execute(globalObject, PyModule::from(module));
         RETURN_IF_EXCEPTION(scope, { });
@@ -351,8 +349,10 @@ static JSValue loadImportlibBootstrap(JSGlobalObject* globalObject, JSString* na
     RETURN_IF_EXCEPTION(scope, { });
     if (!module)
         return { };
+    rt.setSlot(Runtime::Slot::ImportlibBootstrap, module);
     callMethod(globalObject, module, internString(vm, "_install"_s), rt.sysModule(), imp);
     if (scope.exception()) {
+        rt.setSlot(Runtime::Slot::ImportlibBootstrap, JSValue());
         rt.modules()->remove(vm, name);
         return { };
     }
@@ -477,14 +477,13 @@ bool ensureNativeModuleSpec(JSGlobalObject* globalObject, PyModule* module)
         return true;
     if (!module->isNative() && module != rt.sysModule() && module != rt.builtinsModule())
         return true;
-    // Loading it gives one to every module there is. Without the standard library they go without.
-    JSValue bootstrap = importModuleOrNone(globalObject, rt.names.uFrozenImportlib(), true);
-    RETURN_IF_EXCEPTION(scope, false);
     if (JSValue spec = dict->get(rt.names.dSpec()); spec && !isNone(spec))
         return true;
+    // importlib._bootstrap says. It is loaded when the interpreter starts, and not for this: loading it begins with an import of _imp, which, once there are threads, asks for the
+    // __spec__ of _imp. Without it, because there is no standard library or the start has failed, the modules go without.
     // It is given _imp once it has been loaded. Until then it cannot be asked, and then it sees to the modules there are.
-    auto* bootstrapModule = PyModule::tryFrom(bootstrap);
-    if (!bootstrapModule || !bootstrapModule->dict()->get(internString(vm, "_imp"_s)))
+    auto* bootstrap = PyModule::tryFrom(rt.slot(Runtime::Slot::ImportlibBootstrap));
+    if (!bootstrap || !bootstrap->dict()->get(internString(vm, "_imp"_s)))
         return true;
     JSValue importer = getAttr(globalObject, bootstrap, internString(vm, "BuiltinImporter"_s));
     RETURN_IF_EXCEPTION(scope, false);
@@ -514,7 +513,7 @@ static bool waitUntilModuleIsInitialized(JSGlobalObject* globalObject, JSValue m
         return true;
     bool waits = isTrue(globalObject, isInitializing);
     RETURN_IF_EXCEPTION(scope, false);
-    JSValue bootstrap = rt.modules()->get(rt.names.uFrozenImportlib());
+    JSValue bootstrap = rt.slot(Runtime::Slot::ImportlibBootstrap);
     if (!waits || !bootstrap)
         return true;
     scope.release();

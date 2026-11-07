@@ -436,6 +436,7 @@ public:
     enum class Slot : unsigned {
         CurrentContext,
         NativeModules, // dict: name -> dict (nativeModuleNamespace())
+        ImportlibBootstrap, // The module importlib._bootstrap, once it has been loaded. (What sys.modules has under its name is the program's to change.)
         FindAndLoad, // importlib._bootstrap._find_and_load, once importlib is the import system
         Monitoring, // See Monitoring::state().
         TraceFunction, // sys.settrace() and sys.setprofile(), of the thread that is running. Empty: none.

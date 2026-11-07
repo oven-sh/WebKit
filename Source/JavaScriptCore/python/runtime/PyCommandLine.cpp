@@ -889,7 +889,7 @@ PyModule* ensureMainModule(JSGlobalObject* globalObject)
     PyModule* main = PyModule::create(globalObject, rt.names.dMain());
     rt.modules()->set(vm, rt.names.dMain(), main);
     main->dict()->set(vm, rt.names.dBuiltins(), rt.builtinsModule());
-    if (auto* bootstrap = PyModule::tryFrom(rt.modules()->get(rt.names.uFrozenImportlib()))) {
+    if (auto* bootstrap = PyModule::tryFrom(rt.slot(Runtime::Slot::ImportlibBootstrap))) {
         if (JSValue importer = bootstrap->dict()->get(internString(vm, "BuiltinImporter"_s)))
             main->dict()->set(vm, rt.names.dLoader(), importer);
     }
