@@ -52,19 +52,40 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(DateConstructor, InternalFunction);
 JSObject* constructDate(JSGlobalObject*, JSValue newTarget, const ArgList&);
 JSValue dateNowImpl(JSGlobalObject*);
 
+// MakeDay takes a year or a month count of at most 12 * 2^53 in magnitude. Up to there the floor of the real quotient
+// month / 12 is an exact Number, so the 64-bit integer arithmetic below is MakeDay's. NaN fails the comparison too.
+constexpr static inline bool isYearOrMonthForMakeDay(double value)
+{
+    return std::abs(value) <= 12 * (maxSafeInteger() + 1);
+}
+
+// https://tc39.es/ecma262/#sec-makeday steps 5 to 7, for a year and a month count that pass isYearOrMonthForMakeDay():
+// year becomes year + floor(month / 12), month becomes month modulo 12. 64-bit integers give the floor of the real
+// quotient. A double quotient has no fraction from 2^52. Returns false when the year does not fit an int32_t.
+constexpr static inline bool normalizeYearAndMonthForMakeDay(int64_t& year, int64_t& month)
+{
+    if (month < 0 || month > 11) {
+        int64_t additionalYears = month / 12;
+        month %= 12;
+        if (month < 0) {
+            month += 12;
+            --additionalYears;
+        }
+        year += additionalYears;
+    }
+    return year == static_cast<int32_t>(year);
+}
+
 // https://tc39.es/ecma262/#sec-makeday
 constexpr static inline double makeDay(double year, double month, double date)
 {
-    double additionalYears = std::floor(month / 12);
-    double ym = year + additionalYears;
-    if (!std::isfinite(ym))
+    if (!isYearOrMonthForMakeDay(year) || !isYearOrMonthForMakeDay(month))
         return PNaN;
-    double mm = month - additionalYears * 12;
-    int32_t yearInt32 = toInt32(ym);
-    int32_t monthInt32 = toInt32(mm);
-    if (yearInt32 != ym || monthInt32 != mm)
+    int64_t normalizedYear = static_cast<int64_t>(year);
+    int64_t normalizedMonth = static_cast<int64_t>(month);
+    if (!normalizeYearAndMonthForMakeDay(normalizedYear, normalizedMonth))
         return PNaN;
-    double days = dateToDaysFrom1970(yearInt32, monthInt32, 1);
+    double days = dateToDaysFrom1970(static_cast<int32_t>(normalizedYear), static_cast<int32_t>(normalizedMonth), 1);
     return days + date - 1;
 }
 
