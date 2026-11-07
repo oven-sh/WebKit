@@ -1,0 +1,162 @@
+# declare function print(value: any): void;
+# declare function id(value: any): any;
+# declare const which: number;
+# class Holder { held: string | undefined; constructor(first?: string) { this.held = first; } }
+# function put(h: Holder, kind: number): void { h.held = (kind === 0 ? "fits" : kind === 1 ? 7 : undefined) as any; }
+# function read(h: Holder): string { return h.held === undefined ? "none" : typeof h.held; }
+# id(put);
+# const holder = new Holder("first");
+# put(holder, which);
+# print(read(holder));
+# print("went on");
+# A STORE THAT TESTS FOR ITSELF ASKS IN FULL. The receiver is guessed, so the store is one operation that tests the receiver's shape and the value's type in line (PutSlot level=Expected). The value is claimed to be
+# undefined, 7 or "fits"; the slot takes undefined, null or a text. Planned from the claim the test let every cell pass: under the claim a cell can only be the text. A cell outside a false claim went into the typed slot.
+# Planned from `anything or the empty word` it reads the kind of the cell. The failing side goes by name to the door, as before: no stop.
+# RUN(WALKED): walk f1 mechanisms=all-Inlining
+# WALKED-LABEL: code f1:Body
+# WALKED: ([[stored]]: undefined|7|"fits" @JSValue)
+# WALKED: PutSlot {{*}}, [[stored]] key="held" receivers=[L0] level=Expected
+# RUN(EMITTED): emit f1 mechanisms=all-Inlining
+# EMITTED: JSCell_typeInfoType
+# RUN(TEXT): run-in-shell mechanisms=-Inlining globalThis.which = 0; globalThis.id = (value) => value;
+# TEXT: string
+# TEXT: went on
+# RUN(NUMBER): run-in-shell mechanisms=-Inlining globalThis.which = 1; globalThis.id = (value) => value;
+# NUMBER: number
+# NUMBER: went on
+# RUN(NOTHING): run-in-shell mechanisms=-Inlining globalThis.which = 2; globalThis.id = (value) => value;
+# NOTHING: none
+# NOTHING: went on
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Holder" module=m0 position=115 constructor=f3 fields=[{key="held" declared={type=undefined|null|string flags=[OmitsNull]} flags=[IsRequired]}] ownFieldCount=1
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @109
+    v5 = NewClass v4 layout=L0 @109
+    PutModuleVariable v5 variable=g0 @109
+    v7 = FinishClass v5 layout=L0 @109
+    v8 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @109
+    v9 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @109
+    v10 = Builtin builtin=GlobalThis @410
+    v11 = PropGet v10 key="id" [isFreeName] @410
+    v12 = Call v11, -, v1 calleeName="id" @410
+    v13 = String string="first" @445
+    v14 = Construct v9, -, v13 calleeName="Holder" @438
+    v15 = Builtin builtin=GlobalThis @467
+    v16 = PropGet v15 key="which" [isFreeName] @467
+    v17 = Call v1, -, v14, v16 calleeName="put" @455
+    v18 = Builtin builtin=GlobalThis @475
+    v19 = PropGet v18 key="print" [isFreeName] @475
+    v20 = Call v3, -, v14 calleeName="read" @481
+    v21 = Call v19, -, v20 calleeName="print" @475
+    v22 = Builtin builtin=GlobalThis @496
+    v23 = PropGet v22 key="print" [isFreeName] @496
+    v24 = String string="went on" @502
+    v25 = Call v23, -, v24 calleeName="print" @496
+    v26 = Undefined @496
+    Return v26 @496
+}
+function f1 name="put" module=m0 position=203 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = Integer @268
+    v3 = StrictEq v1, v2 @268
+    Branch v3 -> taken b1(), notTaken b2() @268
+  b1():
+    v4 = String string="fits" @272
+    Jump -> next b5(v4) @272
+  b2():
+    v5 = Integer integer=1 @290
+    v6 = StrictEq v1, v5 @290
+    Branch v6 -> taken b3(), notTaken b4() @290
+  b3():
+    v7 = Integer integer=7 @294
+    Jump -> next b5(v7) @294
+  b4():
+    v8 = Undefined @298
+    Jump -> next b5(v8) @298
+  b5(v9):
+    PropSet v0, v9 key="held" @249
+    v11 = Undefined @249
+    Return v11 @249
+}
+function f2 name="read" module=m0 position=319 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="held" @361
+    v2 = TypeTest v1 testedType=undefined @361
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @361
+  b1(v3):
+    v4 = String string="none" @384
+    Jump -> next b3(v4) @384
+  b2(v5):
+    v6 = PropGet v0 key="held" @400
+    v7 = TypeOf v6 @393
+    Jump -> next b3(v7) @393
+  b3(v8):
+    v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @393
+    Return v9 @393
+}
+function f3 name="Holder" module=m0 position=161 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: undefined|null|string):
+    v2 = GetConstructPrototype v0 layout=L0 @161
+    v3 = NewObject v2 layout=L0 @161
+    v4 = Convert v3 declared={type=L0} @161
+    v5 = CallDirect v4 function=f4 @161
+    PropSet v4, v1 key="held" @180
+    v7 = Undefined @180
+    v8 = TypeTest v7 testedType=object @180
+    Branch v8 -> taken b1(| 0), notTaken b2(v4) @180
+  b1(v9):
+    Jump -> next b2(v9) @180
+  b2(v10):
+    Return v10 @180
+}
+function f4 module=m0 position=115 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @115
+    v2 = Undefined @115
+    PropDefine v1, v2 key="held" @124
+    v4 = Undefined @115
+    Return v4 @115
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f6 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f6
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

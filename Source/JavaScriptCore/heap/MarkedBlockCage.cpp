@@ -819,7 +819,7 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
     }
     m_errorWaitsForPoll = false;
     // A collection takes its own memory from malloc, and malloc has none.
-    if (m_exhaustedHeaps == ExhaustedHeap::ListOfArrayBuffers)
+    if (!m_exhaustedHeaps.isEmpty() && m_exhaustedHeaps.containsOnly({ ExhaustedHeap::ListOfArrayBuffers, ExhaustedHeap::WeakBlocks }))
         return false;
     if (vm.heap.isDeferred() || (m_hasCollectedAtPoll && !m_owesCollection))
         return false;
@@ -1111,6 +1111,10 @@ void* MarkedBlockCage::allocateWeakBlock(VM& vm)
 {
     if (!tryFillSpareWeakBlocks() && !vm.traps().needsOutOfMemoryError()) [[unlikely]] {
         addExhaustedHeap(ExhaustedHeap::WeakBlocks);
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && !vm.heap.isDeferred())
+            AOT::HeapHooks::didFindNoRoomWhereCollectionMayRun(vm);
+#endif
         vm.traps().setNeedsOutOfMemoryError(true);
     }
     if (m_spareWeakBlocks.isEmpty()) [[unlikely]] {

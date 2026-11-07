@@ -44,40 +44,24 @@ public:
 
     ModuleID module() const { return m_module; }
     bool isDeferred() const { return m_isDeferred; }
-    // A mock that came ahead of the load stands in place of the module: no cache answers for the object.
     bool isAnsweredByMock() const;
     JSObject* mockInPlace() const;
-    // `vi.doMock()` over a module that has run leaves the module alone. Whoever held its object keeps it, and it answers for the module while the mock stands.
-    void setKeepsToModule(bool keepsToModule)
-    {
-        m_keepsToModule = keepsToModule;
-        m_neverReadsMock = false;
-    }
+    void setKeepsToModule(bool keepsToModule) { m_keepsToModule = keepsToModule; }
     bool keepsToModule() const { return m_keepsToModule; }
-    void setNeverReadsMock() { m_neverReadsMock = true; }
-    // What is made for whoever asks under such a mock is the object of that mock, for good.
     void setMockOfView(VM& vm, JSObject* mock) { m_mockOfView.set(vm, this, mock); }
     void clearMockOfView() { m_mockOfView.clear(); }
     AbstractModuleRecord* recordForResolution();
-    // A read of a deferred namespace object may evaluate the module, so that object does not have the module's namespace layout.
-    // Image::position() of the image that has the module.
-    unsigned imagePosition() const { return m_imagePosition; }
     bool hasNamespaceLayoutOf(ModuleID module) const { return (m_module == module || m_face == module) && !m_isDeferred && !m_mockOfView; }
-    // The object of a file is also what code gets that asks for the namespace object of the file's face, where that face captures nothing.
     void setFace(ModuleID face) { m_face = face; }
     std::optional<unsigned> find(UniquedStringImpl*) const;
-    bool hasExport(UniquedStringImpl* name) const { return find(name) || isDynamicExport(name); }
-    // Reads every export once, in the order of the keys, as [[OwnPropertyKeys]] and [[Get]] of each key would, without a lookup by name.
+    std::optional<unsigned> findWhetherShownOrNot(UniquedStringImpl*) const;
+    bool hasExport(UniquedStringImpl* name) const { return findWhetherShownOrNot(name) || isDynamicExport(name); }
     bool tryReadExports(JSGlobalObject*, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values);
+    void refuseToShowExports();
 
     void replaceCapturedValue(JSGlobalObject*, const Identifier& name, JSValue);
-    // A mock that gave the object its names has ended, and whoever was linked meanwhile goes on holding the object.
     void replaceDynamicExports(VM&, const DynamicExports&);
-    // The value of an export that was captured when its file had run, as every export of a CommonJS file is, or nothing. It stays until replaceCapturedValue(), which gives the object another Structure.
-    // Nothing is allocated.
     JSValue capturedValueWithoutAllocating(UniquedStringImpl*) const;
-    // Of a module of the library: the export is read now if nobody has read it yet, and stays what it is then. False: the name is no export of such a module.
-    bool readDeferredExport(JSGlobalObject*, const Identifier& name);
 
     bool hasESModuleMarker() const { return m_hasESModuleMarker; }
     void setESModuleMarker(bool hasMarker) { m_hasESModuleMarker = hasMarker; }
@@ -85,7 +69,6 @@ public:
     bool hasOwnStructure() const { return m_hasOwnStructure; }
     void ensureOwnStructure(VM&);
     void leaveStructureThatCachesKnow(VM&);
-    void becomeExtensible(VM&, Structure* sharedByExtensibleObjects);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
@@ -101,7 +84,6 @@ private:
 
     Modules& modules() const;
     std::span<const ModuleExportData> exports() const;
-    // Listed in the table of the module, and no export of it.
     bool isHiddenExport(unsigned index) const;
     bool isSymbolLikeKey(UniquedStringImpl*) const;
     bool isOrdinaryKey(PropertyName) const;
@@ -116,13 +98,11 @@ private:
     WriteBarrier<JSObject> m_mockOfView;
     ModuleID m_module;
     ModuleID m_face;
-    unsigned m_imagePosition;
     bool m_isDeferred;
     bool m_mayNeedEvaluation;
     bool m_hasESModuleMarker { false };
     bool m_hasOwnStructure { false };
     bool m_keepsToModule { false };
-    bool m_neverReadsMock { false };
 };
 
 } } // namespace JSC::AOT

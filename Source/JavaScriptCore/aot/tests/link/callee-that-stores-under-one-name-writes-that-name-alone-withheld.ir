@@ -1,0 +1,7 @@
+# the same program with every mechanism withheld: Link claims nothing of what a function does, and the table of whose objects are written is empty
+# RUN: link functions mechanisms=none
+# CHECK: function f1 {{*}}returns=anything throws=anything
+# RUN(NEVER): link functions mechanisms=none
+# NEVER-NOT: fields-written
+# NEVER-NOT: layouts-written
+# PROGRAM-OF: callee-that-stores-under-one-name-writes-that-name-alone.ir

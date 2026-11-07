@@ -99,7 +99,8 @@ ALWAYS_INLINE JSObject* ObjectBuilder::tryBuild(VM& vm, const ObjectBuilderPlan&
     }
     auto* object = reinterpret_cast<JSObject*>(cell);
     if (!hasEveryFieldOfBirth) [[unlikely]]
-        object->setPerCellBit(true);
+        cell[offsetOfByteWithMark] &= static_cast<uint8_t>(~byteWithMarkIsUnmarked);
+    vm.mutatorFence();
     return object;
 }
 

@@ -7,52 +7,15 @@
 
 #if ENABLE(AOT)
 
-#include "AOTImageForward.h"
-#include "AOTSchemaEnums.h"
+#include "AOTID.h"
 #include "AOTVector.h"
-#include <array>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
 
 using Typed::PropertyKeyID;
-
-struct StringUses {
-    BitVector isNamed;
-    BitVector isNamedBesideCreation;
-    BitVector isConstant;
-    BitVector isCreatedRepeatedly;
-    BitVector isConstantInTables;
-    BitVector isAtom;
-    Vector<Vector<uint32_t>> namedByFunction;
-    Vector<uint32_t> functionsInSourceOrder;
-};
-
-struct KeyUse {
-    uint32_t uses { 0 };
-    uint32_t tableLookupUses { 0 };
-    // Also counts code that runs once, which asks the table of fields and files nothing.
-    uint32_t lookupsByName { 0 };
-    FunctionID firstTableLookupFunction;
-    std::array<uint32_t, numberOfEnumerators<Typed::Access>> usesByAccess { };
-};
-
-struct KeyUses {
-    Vector<KeyUse> byKey;
-    BitVector keysNamedByTables;
-    BitVector stringsNamedAsKeysByTables;
-    // `kind === "circle"` in code that runs more than once. As a name of the image the text has one atom, at a place that the image fixes.
-    BitVector textsComparedRepeatedly;
-};
-
-struct ProgramUses {
-    StringUses strings;
-    KeyUses keys;
-};
-
-ProgramUses collectProgramUses(const Typed::PipelineOutput&, const BitVector& bodiesWithoutCode, BuildContext&);
+using Typed::StringID;
 
 template<typename ID>
 std::optional<uint32_t> numberIn(const Vector<uint32_t>& numbers, ID id)
@@ -74,13 +37,11 @@ public:
     std::span<const StringID> strings() const { return m_strings.span(); }
 
 private:
-    friend StringConstantNumbering numberStringConstants(const Typed::Program&, const StringUses&, BuildContext&);
+    friend struct ImageNumbersBuilder;
 
     Vector<uint32_t> m_numbersPlusOne;
     Vector<StringID> m_strings;
 };
-
-StringConstantNumbering numberStringConstants(const Typed::Program&, const StringUses&, BuildContext&);
 
 } } // namespace JSC::AOT
 

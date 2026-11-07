@@ -1,0 +1,62 @@
+# function below(x) { return x < 80 ? 1 : 2; }   function atLeast(x) { return 80 <= x ? 1 : 2; }   function answer(x) { return x > -1; }
+# The value is asked for the tag of an int32 first, and two int32 are compared, with the written one in the instruction. A value that is no int32 goes to one stub in the cold part: no double is made at the site.
+# On the TypeScript compiler checking a project a relation between a value and a number ran 109 million times at 13 instructions: both ways of unboxing were computed, one was chosen, and the integer came out of memory as a double.
+# RUN: emit f1:Body mechanisms=none+TypedOperations
+# CHECK-LABEL: unit f1:Body
+# CHECK: = AboveEqual(
+# CHECK-NEXT: = Branch({{*}}, rare #
+# CHECK: = Trunc(
+# CHECK-NEXT: = LessThan(
+# CHECK-NEXT: = Branch(
+# RUN(NODOUBLE): emit f1:Body mechanisms=none+TypedOperations
+# NODOUBLE-NOT: = IToD(
+# RUN(SHELL): run-in-shell globalThis.register = (below, atLeast, answer) => { const row = (values, answer) => { let said = ""; for (let i = 0; i < values.length; i++) said += (i ? " " : "") + answer(values[i]); print(said); }; const values = [79, 80, 81, -2147483648, 2147483647, 79.5, 80.5, 4294967295, -4294967296.5, NaN, Infinity, -Infinity, -0, "79", "81", "x", "", null, undefined, true, 79n, 81n, { valueOf() { return 5; } }, { valueOf() { return 500; } }, [7], []]; row(values, below); row(values, atLeast); row(values, answer); let threw = ""; try { below(Symbol()); } catch (error) { threw = error.constructor.name; } print(threw); };
+# SHELL: 1 2 2 1 2 1 2 2 1 2 2 1 1 1 2 2 1 1 2 1 1 2 1 2 1 1
+# SHELL-NEXT: 2 1 1 2 1 2 1 1 2 2 1 2 2 2 1 2 2 2 2 2 2 1 2 1 2 2
+# SHELL-NEXT: true true true false true true true true false false true false true true true false true true false true true true true true true true
+# SHELL-NEXT: TypeError
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2 calleeName="register"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="below" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=80
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+}
+function f2 name="atLeast" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=80
+    v2 = LessEq v1, v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+}
+function f3 name="answer" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=-1
+    v2 = Greater v0, v1
+    Return v2
+}

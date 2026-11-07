@@ -1,0 +1,48 @@
+# an edge of the second comparison hands on what the test has proven of the value. A look at a loop types the parameter that takes it by the comparison as it is written, so no edge of a chain may hand on a proof: the chain ends in front of that comparison, and one link is no chain of three
+# function pick(kind) { if (kind === 1) return 10; else if (kind === 4) return kind; else if (kind === 9) return 30; return 20; }   with the proof written by hand: the front end hands one on where a field of a local is compared
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: Branch
+# CHECK: Branch
+# CHECK: Branch
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: Switch
+# RUN(SHELL): run-in-shell globalThis.sink = pick => { print([pick(1), pick(4), pick(9), pick(5), pick("4")].join()); };
+# SHELL: 10,4,30,20,20
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="pick" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=10
+    Return v3
+  b2():
+    v4 = Integer integer=4
+    v5 = StrictEq v0, v4
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    Return v6
+  b4():
+    v7 = Integer integer=9
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b5(), notTaken b6()
+  b5():
+    v9 = Integer integer=30
+    Return v9
+  b6():
+    v10 = Integer integer=20
+    Return v10
+}

@@ -1,0 +1,8 @@
+# the same two functions with arrivals withheld: what Link proved stands, which is no number, and the operator of the callee is not typed as one of numbers
+# RUN: walk f2 f1 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: form=Numbers
+# CHECK: Return
+# PROGRAM-OF: what-the-caller-proved-is-proven-of-the-parameter.ir

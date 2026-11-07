@@ -40,7 +40,7 @@
 
 #include "AOTRegExpInProcessLoader.h"
 #include "AOTRegExpRecords.h"
-#include "AOTRuntimeCounters.h"
+#include "AOTRuntimeReporter.h"
 
 namespace JSC {
 
@@ -177,7 +177,7 @@ static void countParsedPattern(VM& vm)
 {
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) [[unlikely]]
-        AOT::count(vm, AOT::RuntimeCounterID::RegExpPatternsParsed);
+        AOT::countEvent(vm, AOT::RuntimeCounterID::RegExpPatternsParsed);
 #else
     UNUSED_PARAM(vm);
 #endif
@@ -243,11 +243,10 @@ const AOT::ImageRegExp* RegExp::imageRecord() const
 
 void RegExp::finishCreationFromImage(VM& vm, const AOT::ImageRegExp& record)
 {
-    // A number says nothing without its image, and any image may run when the record is asked for.
-    uint32_t index = vm.aotState().hasSeveralImages ? imageRecordIsFoundByPattern : AOT::RegExpRecords(*vm.aotState().image).idOf(record).index();
+    uint32_t index = AOT::RegExpRecords(*vm.aotState().image).idOf(record).index();
     m_imageRecordNumber = index + 1 < imageRecordIsFoundByPattern ? index + 1 : imageRecordIsFoundByPattern;
     if (!record.isLiteral)
-        AOT::count(vm, AOT::RuntimeCounterID::RegExpPredictedTextsCreated);
+        AOT::countEvent(vm, AOT::RuntimeCounterID::RegExpPredictedTextsCreated);
     if (record.form() == AOT::RegExpRecordForm::NoMetadata)
         return;
 
@@ -438,7 +437,7 @@ std::optional<Yarr::CharacterSetView> RegExp::specificCharacterClass() const
 
 static Yarr::PatternAnalysis patternAnalysisFor(VM& vm)
 {
-    // The others: so that a shell without a compiled program can test the flat program, and what stands behind the code of an image.
+    // validateRegExpFlatProgram lets a shell that runs no compiled program test the flat program.
     bool isPerformed = vm.hasCompiledCode() || Options::validateRegExpFlatProgram();
 #if ENABLE(AOT)
     // Where nothing compiles a pattern as for an image, the JIT takes the pattern as it is written.
@@ -453,27 +452,27 @@ static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yar
 }
 
 #if ENABLE(AOT)
-void RegExp::countBytecodeCompilation(VM& vm, BytecodeIsFor purpose) const
-{
-    if (!vm.hasCompiledCode()) [[likely]]
-        return;
-    if (purpose == BytecodeIsFor::LongSearch) {
-        AOT::count(vm, AOT::RuntimeCounterID::RegExpsPreparedForLongSearches);
-        return;
-    }
-    AOT::count(vm, AOT::RuntimeCounterID::RegExpsCompiledToBytecode);
-    if (const AOT::ImageRegExp* record = imageRecord())
-        AOT::count(vm, record->isLiteral ? AOT::RuntimeCounterID::RegExpLiteralsCompiledToBytecode : AOT::RuntimeCounterID::RegExpPredictedTextsCompiledToBytecode);
-}
-#endif
-
-#if ENABLE(AOT)
 void RegExp::crashIfLiteralIsInterpreted() const
 {
     if (!Options::crashIfInterpreterIsUsed() || !m_imageRecordNumber || !imageRecord()->isLiteral || hasValidAtom()) [[likely]]
         return;
     dataLogLn("crashIfInterpreterIsUsed: regular expression /", m_patternString, "/", StringView { Yarr::flagsString(m_flags).span() });
     CRASH();
+}
+#endif
+
+#if ENABLE(AOT)
+void RegExp::countBytecodeCompilation(VM& vm, BytecodeIsFor purpose) const
+{
+    if (!vm.hasCompiledCode()) [[likely]]
+        return;
+    if (purpose == BytecodeIsFor::LongSearch) {
+        AOT::countEvent(vm, AOT::RuntimeCounterID::RegExpsPreparedForLongSearches);
+        return;
+    }
+    AOT::countEvent(vm, AOT::RuntimeCounterID::RegExpsCompiledToBytecode);
+    if (const AOT::ImageRegExp* record = imageRecord())
+        AOT::countEvent(vm, record->isLiteral ? AOT::RuntimeCounterID::RegExpLiteralsCompiledToBytecode : AOT::RuntimeCounterID::RegExpPredictedTextsCompiledToBytecode);
 }
 #endif
 
@@ -520,9 +519,9 @@ bool RegExp::takeCodeFromImage(VM& vm)
         return false;
     if (!hasCode())
         vm.regExpCache()->addToStrongCache(this);
-    AOT::count(vm, record->isLiteral ? AOT::RuntimeCounterID::RegExpLiteralsGivenCode : AOT::RuntimeCounterID::RegExpPredictedTextsGivenCode);
+    AOT::countEvent(vm, record->isLiteral ? AOT::RuntimeCounterID::RegExpLiteralsGivenCode : AOT::RuntimeCounterID::RegExpPredictedTextsGivenCode);
     auto entrypoints = AOT::regExpEntrypointsOf(vm, *record);
-    ensureRegExpJITCode().setCodeFromImage(entrypoints.for8Bit, entrypoints.for16Bit);
+    ensureRegExpJITCode().setCodeFromImage(entrypoints.for8Bit, record->hasCodeFor8BitSubjectsAlone ? nullptr : entrypoints.for16Bit);
     m_state = ImageCode;
     m_minimumSize = record->minimumSize;
     return true;
@@ -534,34 +533,32 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
     if (startOffset > s.length())
         return -1;
 
-    int result;
-    {
+    auto execute = [&](auto subject) -> int {
         Yarr::MatchingContextHolder regExpContext(vm, this, Yarr::MatchFrom::VMThread);
-        if (s.is8Bit())
-            result = m_regExpJITCode->execute(s.span8(), startOffset, offsetVector, &regExpContext).start;
-        else
-            result = m_regExpJITCode->execute(s.span16(), startOffset, offsetVector, &regExpContext).start;
+        return m_regExpJITCode->execute(subject, startOffset, offsetVector, &regExpContext).start;
+    };
+
+    int result;
+    if (s.is8Bit())
+        result = execute(s.span8());
+    else if (m_regExpJITCode->has16BitCode())
+        result = execute(s.span16());
+    else {
+        RELEASE_ASSERT(imageRecord()->hasCodeFor8BitSubjectsAlone);
+        std::span<const char16_t> wide = s.span16();
+        if (!WTF::charactersAreAllLatin1(wide)) {
+            AOT::countEvent(vm, AOT::RuntimeCounterID::RegExpWideSubjectsRefused);
+            return -1;
+        }
+        AOT::countEvent(vm, AOT::RuntimeCounterID::RegExpSubjectsNarrowed);
+        Vector<Latin1Character, 256> narrow(wide.size());
+        StringImpl::copyCharacters(narrow.mutableSpan(), wide);
+        result = execute(narrow.span());
     }
     if (result != static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure))
         return result;
 
     const AOT::ImageRegExp* record = imageRecord();
-    if (record && !s.is8Bit() && record->hasCodeFor8BitSubjectsAlone) {
-        std::span<const char16_t> wide = s.span16();
-        if (!WTF::charactersAreAllLatin1(wide)) {
-            AOT::count(vm, AOT::RuntimeCounterID::RegExpWideSubjectsRefused);
-            return -1;
-        }
-        AOT::count(vm, AOT::RuntimeCounterID::RegExpSubjectsNarrowed);
-        Vector<Latin1Character, 256> narrow(wide.size(), [&](size_t index) {
-            return static_cast<Latin1Character>(wide[index]);
-        });
-        Yarr::MatchingContextHolder regExpContext(vm, this, Yarr::MatchFrom::VMThread);
-        result = m_regExpJITCode->execute(narrow.span(), startOffset, offsetVector, &regExpContext).start;
-        if (result != static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure))
-            return result;
-    }
-
     bool isLongSearch = record && record->handsLongSearchesOver;
     byteCodeCompileIfNecessary(&vm, isLongSearch ? BytecodeIsFor::LongSearch : BytecodeIsFor::Interpreter);
     if (m_state == ParseError) {
@@ -574,9 +571,9 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
         return -1;
     }
     if (isLongSearch)
-        AOT::count(vm, AOT::RuntimeCounterID::RegExpLongSearchesHandedOver);
+        AOT::countEvent(vm, AOT::RuntimeCounterID::RegExpLongSearchesHandedOver);
     else {
-        AOT::count(vm, AOT::RuntimeCounterID::RegExpImageCodeGaveUp);
+        AOT::countEvent(vm, AOT::RuntimeCounterID::RegExpImageCodeGaveUp);
         countInterpretedMatch(vm);
     }
     Yarr::MatchingContextHolder regExpContext(vm, this, Yarr::MatchFrom::VMThread);
@@ -595,7 +592,7 @@ bool RegExp::collectMatchesOfOneSetOrRun(VM& vm, StringView subject, Vector<unsi
 
 void RegExp::countInterpretedMatch(VM& vm)
 {
-    AOT::count(vm, AOT::RuntimeCounterID::RegExpMatchesInterpreted);
+    AOT::countEvent(vm, AOT::RuntimeCounterID::RegExpMatchesInterpreted);
 }
 #endif
 

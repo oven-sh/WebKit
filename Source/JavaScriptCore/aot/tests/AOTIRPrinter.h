@@ -9,6 +9,7 @@
 
 #include "AOTIDPrefix.h"
 #include "AOTIR.h"
+#include "AOTTypeText.h"
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -25,9 +26,10 @@ enum class PrintedFields : uint8_t { All, WireOnly };
 
 void printProgram(PrintStream&, const Program&);
 void printProgram(PrintStream&, const Program&, PrintedFields);
-void printFunction(PrintStream&, const Program&, FunctionID, const Function&);
-void printValue(PrintStream&, const Program&, const Function&, ValueID);
-void printType(PrintStream&, const Program&, const Type&);
+void printFunction(PrintStream&, const Program&, FunctionID);
+void printBody(PrintStream&, const Program&, const Body&);
+void printValue(PrintStream&, const Program&, const BodyValue&);
+void printTerminator(PrintStream&, const Program&, const BodyTerminator&);
 void printType(PrintStream&, const Program&, TypeID);
 void printString(PrintStream&, const Program&, StringID);
 void printPropertyKey(PrintStream&, const Program&, PropertyKeyID);
@@ -37,6 +39,7 @@ class IRPrinter {
 public:
     IRPrinter(PrintStream&, const Program&);
     IRPrinter(PrintStream&, const Program&, PrintedFields);
+    IRPrinter(PrintStream&, const Program&, TypeReader typesOfCode);
 
     PrintStream& out() { return m_out; }
     const Program& program() const { return m_program; }
@@ -44,10 +47,12 @@ public:
 
     void printProgram();
     void printFunction(FunctionID, const Function&);
-    void printBody(const Function&);
-    void printValue(const Function&, ValueID);
-    void printTerminator(const Terminator&);
-    void printType(const Type&);
+    void printBody(const Body&);
+    void printValue(const BodyValue&);
+    void printTerminator(const BodyTerminator&);
+    void printFlags(std::span<const ASCIILiteral> names, unsigned flags);
+    void printOrigin(Origin);
+    void printTarget(ASCIILiteral name, BlockID, std::span<const ValueID> arguments, std::span<const uint32_t> proofs);
 
     void print(ValueID id) { printID(IDPrefix::Value, id.index()); }
     void print(BlockID id) { printID(IDPrefix::Block, id.index()); }
@@ -65,7 +70,6 @@ public:
     void print(TypeID);
     void print(ExpectedType expected) { print(expected.predicted()); }
     void print(LayoutSetID);
-    void print(CalleeSetID);
     template<typename Tag> void print(ID<Tag> id) { m_out.print(id.index()); }
 
     void print(BuiltinID);
@@ -101,22 +105,16 @@ private:
     void printInvalid(ASCIILiteral kind, uint64_t number);
     void printQuoted(std::span<const uint8_t>);
 
-    void printBlock(const Function&, BlockID);
-    void printBlockHead(const Function&, BlockID, const Block&);
-    void printEngineValueFields(const Value&);
-    void printTarget(ASCIILiteral name, const Target&);
+    void printBlock(const BodyBlock&);
+    void printBlockHead(const BodyBlock&);
+    void printPositions(const BodyValue&);
     void printArguments(std::span<const ValueID>);
-
-    void printPrimitives(const Type&, CommaPrinter& bar);
-    void printStringLiterals(const Type&, CommaPrinter& bar);
-    void printSymbolLiterals(const Type&, CommaPrinter& bar);
-    void printObjectParts(const Type&, CommaPrinter& bar);
-    void printClassPart(const Type&, const ClassPart&);
 
     PrintStream& m_out;
     const Program& m_program;
     PrintedFields m_printedFields { PrintedFields::All };
     bool m_needsBlankBeforeField { true };
+    std::optional<TypeReader> m_typesOfCode;
 };
 
 template<typename E>
@@ -166,7 +164,6 @@ void IRPrinter::list(const Range& range, NOESCAPE const Functor& printElement)
     m_out.print("]"_s);
 }
 
-// The name of a runtime function in IR text. Null for an id that is not in the table.
 StringView tokenOf(const BuiltinTable&, RuntimeFunctionID);
 RuntimeFunctionID runtimeFunctionFromToken(const BuiltinTable&, StringView);
 

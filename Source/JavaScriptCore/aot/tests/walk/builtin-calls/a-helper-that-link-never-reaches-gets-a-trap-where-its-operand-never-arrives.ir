@@ -1,0 +1,145 @@
+# function boom() { throw new RangeError("r"); }
+# function f() { using r0 = boom(); return 0; }
+# try { print(f()); } catch (e) { print(e.name); }
+# f1 = boom, f2 = f, f4 = the function of the library that finds the dispose method of what `using` holds. It has no function object: the walk must enter it directly.
+# Link makes a call only when its operands have types, and what never comes back gives none: nobody else calls f4, so it is not reached and the plan has no unit of it to enter.
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f4 unreached
+# The walk does not know that boom() never comes back and arrives at the call. The place is dead by Link's proof: it gets the trap that a failed proof gets, and the block ends. It was an internal compiler error.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[made]]: {{*}} = CallDirect {{*}}function=f1
+# CHECK: CheckProof [[made]] checkedType=never
+# CHECK: Unreachable
+# RUN(RUNS): run-in-shell mechanisms=all
+# RUNS: RangeError
+# RUNS-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/DisposableStackPrototype.ts" displayPath="/$bun/js/engine/DisposableStackPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+variable g0 name="boom" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    Jump -> next b1() @93
+  b1() handler=b2():
+    v2 = Builtin builtin=GlobalThis @99
+    v3 = PropGet v2 key="print" [isFreeName] @99
+    v4 = Call v1 calleeName="f" @105
+    v5 = Call v3, -, v4 calleeName="print" @99
+    Jump -> next b3() @99
+  b2() role=CatchHandler:
+    v6 = CatchValue @123
+    v7 = Builtin builtin=GlobalThis @125
+    v8 = PropGet v7 key="print" [isFreeName] @125
+    v9 = PropGet v6 key="name" @131
+    v10 = Call v8, -, v9 calleeName="print" @125
+    Jump -> next b3() @125
+  b3():
+    v11 = Undefined @125
+    Return v11 @125
+}
+function f1 name="boom" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @28
+    v1 = PropGet v0 key="RangeError" [isFreeName] @28
+    v2 = Convert v1 declared={type=builtin(RangeError) flags=[IsExpected]} @28
+    v3 = String string="r" @39
+    v4 = Construct v2, -, v3 calleeName="RangeError" @28
+    Throw v4 @24
+}
+function f2 name="f" module=m0 position=47 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @73
+    v1 = Call v0 calleeName="boom" @73
+    v2 = Builtin builtin=CompilerHelpersGetDisposeMethod [isNotReadFromHolder] @68
+    v3 = Call v2, -, v1 @68
+    Jump -> next b1() @68
+  b1() handler=b7():
+    v4 = Integer @88
+    Jump -> next b2(v4) @88
+  b2(v5):
+    v6 = TypeTest v3 testedType=undefined @68
+    Branch v6 -> taken b5(), notTaken b3(| 0) @68
+  b3(v7):
+    Jump -> next b4() @68
+  b4() handler=b6():
+    v8 = Call v7, v1 @68
+    Jump -> next b5() @68
+  b5():
+    Return v5 @68
+  b6() role=CatchHandler:
+    v9 = CatchValue @68
+    Throw v9 @68
+  b7() role=DisposalCleanup subject=v1:
+    v10 = CatchValue @68
+    v11 = TypeTest v3 testedType=undefined @68
+    Branch v11 -> taken b10(), notTaken b8(| 0) @68
+  b8(v12):
+    Jump -> next b9() @68
+  b9() handler=b11():
+    v13 = Call v12, v1 @68
+    Jump -> next b10() @68
+  b10():
+    Throw v10 @68
+  b11() role=CatchHandler:
+    v14 = CatchValue @68
+    v15 = NewSuppressedError v14, v10 @68
+    Throw v15 @68
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f4 name="getDisposeMethod" module=m2 position=731 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=DisposableStackPrototypeGetDisposeMethod thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @764
+    v2 = TypeTest v0 testedType=undefined|null @800
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @800
+  b1(v3):
+    v4 = Undefined @842
+    Return v4 @842
+  b2(v5):
+    v6 = NarrowByTest v0, v5 @800
+    v7 = TypeTest v6 testedType=object @862
+    Branch v7 -> taken b3(| 0), notTaken b8(| 0) @862
+  b3(v8):
+    v9 = NarrowByTest v0, v8 @862
+    v10 = PropGet v9 key=@@dispose @980
+    v11 = TypeTest v10 testedType=undefined|null @1005
+    Branch v11 -> taken b4(| 0), notTaken b5(| 0) @1005
+  b4(v12):
+    v13 = ThrowNewError errorKind=TypeError message="@@dispose must not be undefined or null" @1041
+    Unreachable @1041
+  b5(v14):
+    v15 = NarrowByTest v10, v14 @1005
+    v16 = TypeTest v15 testedType=function @1110
+    Branch v16 -> taken b6(| 0), notTaken b7(| 0) @1110
+  b6(v17):
+    v18 = NarrowByTest v10, v17 @1110
+    Return v18 @1197
+  b7(v19):
+    v20 = ThrowNewError errorKind=TypeError message="@@dispose must be callable" @1139
+    Unreachable @1139
+  b8(v21):
+    v22 = ThrowNewError errorKind=TypeError message="Disposable value must be an object, null, or undefined" @888
+    Unreachable @888
+}
+runtimefunction id=DisposableStackPrototypeGetDisposeMethod function=f4 visibility=Private
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

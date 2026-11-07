@@ -1,0 +1,64 @@
+# the ramp reads `prototype` of the function when it makes the generator. Nothing between the entry of the body and its initial yield can put another object there, so the body does not read it again
+# function* count() { yield 1; }  function* asks(first = globalThis.first()) { yield first; }  sink(count, asks);
+# the one property changed in `asks`: a call stands in front of the initial yield, and may store `asks.prototype`
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = YieldBySavingFrame
+# RUN(NEVER): walk f1:CoroutineBody mechanisms=none+TypedOperations
+# NEVER-NOT: TakeGeneratorPrototype
+# RUN(ALL): walk f1:CoroutineBody mechanisms=all
+# ALL-NOT: TakeGeneratorPrototype
+# RUN(HEAD): walk f2:CoroutineBody mechanisms=none+TypedOperations
+# HEAD-LABEL: code f2:CoroutineBody
+# HEAD: TakeGeneratorPrototype
+# HEAD: = YieldBySavingFrame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="count" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    Jump -> next b1()
+  b1():
+    InitialYield
+    v3 = Integer integer=1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2():
+    Throw v5
+  b3():
+    Return v5
+  b4():
+    v7 = Undefined
+    Return v7
+}
+function f2 name="asks" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="first" [isFreeName]
+    v4 = Call v3
+    Jump -> next b1()
+  b1():
+    InitialYield
+    v6 = Yield v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2():
+    Throw v7
+  b3():
+    Return v7
+  b4():
+    v9 = Undefined
+    Return v9
+}

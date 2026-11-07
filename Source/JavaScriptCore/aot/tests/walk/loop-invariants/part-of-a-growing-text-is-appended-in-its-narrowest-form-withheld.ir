@@ -1,0 +1,12 @@
+# the same functions with loop invariants withheld: each turn adds the part to the string that came round, and nothing is appended to a builder
+# RUN: walk f1 f2 f3 f4 f5 f6 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK: mechanisms TypedOperations,Guesses,Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK-LABEL: code f6:Body
+# CHECK: isLoopHead=true
+# RUN(NEVER): walk f1 f2 f3 f4 f5 f6 mechanisms=none+TypedOperations+Guesses+Folding
+# NEVER-NOT: StringBuilder
+# RUN(NONE): walk f1 f2 f3 f4 f5 f6 mechanisms=none
+# NONE-NOT: StringBuilder
+# PROGRAM-OF: part-of-a-growing-text-is-appended-in-its-narrowest-form.ir

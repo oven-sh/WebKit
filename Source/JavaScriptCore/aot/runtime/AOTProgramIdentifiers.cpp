@@ -12,18 +12,19 @@
 #include "AOTIdentifierTable.h"
 #include "AOTImage.h"
 #include "AOTPropertyWalk.h"
-#include "AOTRuntimeCounters.h"
-#include "AOTThreshold.h"
 #include "BuiltinNames.h"
 #include "JSCInlines.h"
 #include <algorithm>
 #include <bit>
+#include <mutex>
 #include <span>
 #include <tuple>
 #include <utility>
 #include <wtf/FastMalloc.h>
 #include <wtf/MathExtras.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/ThreadSpecific.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/AtomStringTable.h>
 #include <wtf/text/StringHasherInlines.h>
@@ -36,7 +37,7 @@ namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProgramIdentifiers);
 
-AOT_THRESHOLD(uint32_t, minNumberOfSymbolPlaces, 64);
+static constexpr uint32_t minNumberOfSymbolPlaces = 64;
 
 static ProgramSymbols createSymbols(uint32_t numberOfPlaces)
 {
@@ -62,16 +63,15 @@ Identifier enginePrivateName(VM& vm, const String& text)
     Ref<PrivateSymbolImpl> symbol = PrivateSymbolImpl::create(*text.impl());
     Identifier name = Identifier::fromUid(vm, symbol.ptr());
     vm.propertyNames->appendExternalName(Identifier::fromString(vm, text), name);
-    SUPPRESS_UNCOUNTED_LOCAL auto* leaked = &symbol.leakRef();
-    UNUSED_VARIABLE(leaked);
     return name;
 }
 
-// The VM makes this object before it makes a name of its own, so from its first atom on a text that the image has is the atom of the image.
+static void createPlaceForNamesAskedForLately();
+
 ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image, ProgramIdentifiers* ofVM)
     : m_vm(vm)
     , m_image(image)
-    , m_count(image.last().text().numberOfIdentifiers())
+    , m_count(image.text().numberOfIdentifiers())
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     , m_text(image.text())
 #else
@@ -81,7 +81,8 @@ ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image, ProgramIdenti
     , m_realmsCreateTheirSymbols(!ofVM && image.programTables().flags & ProgramTables::mayRunInMultipleInstances)
     , m_symbols(createSymbols(ofVM ? minNumberOfSymbolPlaces : std::max(minNumberOfSymbolPlaces, WTF::roundUpToPowerOfTwo(static_cast<uint32_t>(image.programTables().identifiersOfEngineSymbols().size()) * 2 + 2))))
 {
-    RELEASE_ASSERT(&image == Image::current() && &image == &image.first());
+    RELEASE_ASSERT(&image == Image::current());
+    createPlaceForNamesAskedForLately();
     AtomStringTable::setReadOnlyAtomLookup(findAtom);
 }
 
@@ -99,10 +100,8 @@ void ProgramIdentifiers::createEngineSymbols()
     if (m_hasCreatedEngineSymbols)
         return;
     m_hasCreatedEngineSymbols = true;
-    for (const Image* image = &m_image; image; image = image->above()) {
-        for (uint32_t number : image->programTables().identifiersOfEngineSymbols())
-            uid(number);
-    }
+    for (uint32_t number : m_image.programTables().identifiersOfEngineSymbols())
+        uid(number);
 }
 
 NEVER_INLINE UniquedStringImpl* ProgramIdentifiers::uidSlowCase(uint32_t number)
@@ -143,12 +142,12 @@ void ProgramIdentifiers::addSymbol(uint32_t number, UniquedStringImpl* uid)
 
 bool ProgramIdentifiers::isCreatedSymbol(uint32_t number) const
 {
-    return m_image.holderOfStringHeader(number).text().identifier(number).kind() == PropertyKeyKind::CreatedSymbol;
+    return m_image.text().identifier(number).kind() == PropertyKeyKind::CreatedSymbol;
 }
 
 Identifier ProgramIdentifiers::create(uint32_t number) const
 {
-    const ImageText& text = m_image.holderOfStringHeader(number).text();
+    const ImageText& text = m_image.text();
     const ImageIdentifierWord& record = text.identifier(number);
     StringID string = record.text();
     switch (record.kind()) {
@@ -218,20 +217,12 @@ std::optional<uint32_t> ProgramIdentifiers::numberOf(UniquedStringImpl* uid) con
             return found->value;
         return m_ofVM ? m_ofVM->numberOf(uid) : std::nullopt;
     }
-    // The empty name is no atom of an image. Whichever image is the first to have it has numbered it.
-    if (!uid->length()) {
-        for (const Image* image = &m_image; image; image = image->above()) {
-            if (std::optional<uint32_t> number = numberOfText(*image, StringView(*uid), uid->existingHash()))
-                return number;
-        }
-        return std::nullopt;
-    }
+    if (!uid->length())
+        return numberOfText(m_image, StringView(*uid), uid->existingHash());
     ASSERT(!numberOfText(m_image, StringView(*uid), uid->existingHash()));
     return std::nullopt;
 }
 
-#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-// Names are short. The last word of each width ends where the characters end, and lies over the one in front of it where it has to.
 static ALWAYS_INLINE bool areSameCharacters(const Latin1Character* first, const Latin1Character* second, size_t length)
 {
     ASSERT(length);
@@ -252,7 +243,6 @@ static ALWAYS_INLINE bool areSameCharacters(const Latin1Character* first, const 
         return areSameAt(0, uint16_t()) && areSameAt(length - sizeof(uint16_t), uint16_t());
     return *first == *second;
 }
-#endif
 
 std::optional<uint32_t> ProgramIdentifiers::numberOfText(const Image& image, StringView characters, unsigned hash)
 {
@@ -285,42 +275,88 @@ std::optional<uint32_t> ProgramIdentifiers::numberOfText(const Image& image, Str
     });
 }
 
-// Every new atom comes through here, a thousand of them while a VM is created. The common answers need no frame: no name has the hash, or an 8-bit name is the text.
+struct NameAskedForLately {
+    static constexpr size_t maxLength = 48;
+    static constexpr uint32_t mark = 1u << 31;
+
+    AtomStringImpl* atom;
+    uint32_t hashAndMark;
+    uint32_t length;
+    Latin1Character characters[maxLength];
+};
+static_assert(sizeof(NameAskedForLately) == 64);
+using NamesAskedForLately = std::array<NameAskedForLately, 2>;
+using NamesAskedForLatelyOnThread = std::array<NamesAskedForLately, 16>;
+static LazyNeverDestroyed<ThreadSpecific<NamesAskedForLatelyOnThread, CanBeGCThread::True>> s_namesAskedForLately;
+
+static void createPlaceForNamesAskedForLately()
+{
+    static std::once_flag once;
+    std::call_once(once, [] {
+        s_namesAskedForLately.construct();
+    });
+}
+
+static ALWAYS_INLINE AtomStringImpl* noteNameAskedFor(NamesAskedForLately& lately, AtomStringImpl* atom, unsigned hash, StringView characters)
+{
+    if (!atom) {
+        lately[1].atom = nullptr;
+        lately[1].hashAndMark = hash | NameAskedForLately::mark;
+        return nullptr;
+    }
+    if (!characters.is8Bit() || characters.length() > NameAskedForLately::maxLength)
+        return atom;
+    lately[1] = lately[0];
+    lately[0].atom = atom;
+    lately[0].hashAndMark = hash | NameAskedForLately::mark;
+    lately[0].length = characters.length();
+    memcpySpan(std::span { lately[0].characters }, characters.span8());
+    return atom;
+}
+
 AtomStringImpl* ProgramIdentifiers::findAtom(StringView characters, unsigned hash)
 {
-#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    if (const Image* image = Image::sharedByAllThreads(); image && !characters.isEmpty()) [[likely]] {
-        std::optional<uint32_t> number = IdentifierTable(image->programTables().identifiersByHash()).inSlotFor(hash);
-        if (!number)
+    const Image* image = Image::sharedByAllThreads();
+    if (!image || characters.isEmpty()) [[unlikely]]
+        return findAtomSlow(characters, hash);
+    ASSERT(!(hash & NameAskedForLately::mark));
+    NamesAskedForLatelyOnThread& onThread = *s_namesAskedForLately.get();
+    NamesAskedForLately& lately = onThread[hash % onThread.size()];
+    for (const NameAskedForLately& name : lately) {
+        if (name.hashAndMark != (hash | NameAskedForLately::mark))
+            continue;
+        if (!name.atom)
             return nullptr;
-        UniquedStringImpl& atom = image->text().identifierAtoms()[*number];
-        if (atom.length() == characters.length() && atom.existingHash() == hash && atom.is8Bit() && characters.is8Bit() && areSameCharacters(atom.span8().data(), characters.span8().data(), characters.length())) [[likely]]
-            return static_cast<AtomStringImpl*>(&atom);
+        if (name.length == characters.length() && characters.is8Bit() && areSameCharacters(name.characters, characters.span8().data(), name.length))
+            return name.atom;
     }
+    std::optional<uint32_t> number = IdentifierTable(image->programTables().identifiersByHash()).inSlotFor(hash);
+    if (!number)
+        return noteNameAskedFor(lately, nullptr, hash, characters);
+#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    UniquedStringImpl& atom = image->text().identifierAtoms()[*number];
+    if (atom.length() == characters.length() && atom.existingHash() == hash && atom.is8Bit() && characters.is8Bit() && areSameCharacters(atom.span8().data(), characters.span8().data(), characters.length())) [[likely]]
+        return noteNameAskedFor(lately, static_cast<AtomStringImpl*>(&atom), hash, characters);
 #endif
-    return findAtomSlow(characters, hash);
+    AtomStringImpl* found = findAtomSlow(characters, hash);
+    return found ? noteNameAskedFor(lately, found, hash, characters) : nullptr;
 }
 
 NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomSlow(StringView characters, unsigned hash)
 {
-    const Image* imageOfThread = Image::current();
-    if (characters.isEmpty() || !imageOfThread)
+    const Image* image = Image::current();
+    if (characters.isEmpty() || !image)
         return nullptr;
-    const Image* holder = &imageOfThread->first();
-    std::optional<uint32_t> number = numberOfText(*holder, characters, hash);
-    while (!number && (holder = holder->above()))
-        number = numberOfText(*holder, characters, hash);
+    std::optional<uint32_t> number = numberOfText(*image, characters, hash);
     if (!number)
         return nullptr;
-    const Image& image = *holder;
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    return static_cast<AtomStringImpl*>(&image.text().ensureLazyHeader(*number));
+    return static_cast<AtomStringImpl*>(&image->text().ensureLazyHeader(*number));
 #else
-    return static_cast<AtomStringImpl*>(image.text().identifierAtoms() + *number);
+    return static_cast<AtomStringImpl*>(image->text().identifierAtoms() + *number);
 #endif
 }
 
-// The whole text up to 16 characters, the length and both ends of a longer one.
 static ALWAYS_INLINE uint64_t fingerprintOf(std::span<const Latin1Character> characters)
 {
     const Latin1Character* data = characters.data();
@@ -342,7 +378,6 @@ static ALWAYS_INLINE uint64_t fingerprintOf(std::span<const Latin1Character> cha
     return (mixed ^ mixed >> 29) | 1;
 }
 
-// Where the linker puts two literals decides whether they share a place by address, anew in every build. Two that do would put each other out at every turn.
 NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomOfNativeTextByCharacters(std::span<const Latin1Character> characters)
 {
     static_assert(hasOneBitSet(std::tuple_size_v<decltype(m_nativeTextsByCharacters)>));
@@ -357,7 +392,6 @@ NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomOfNativeTextByCharacter
                 return known.atom;
         }
     }
-    countNativeTextHashed(m_vm);
     AtomStringImpl* atom = findAtom(StringView(characters), StringHasher::computeHashAndMaskTop8Bits(characters));
     if (atom && !atom->is8Bit())
         atom = nullptr;
@@ -374,7 +408,6 @@ AtomStringImpl* ProgramIdentifiers::findAtomOfNativeText(std::span<const Latin1C
     static_assert(hasOneBitSet(std::tuple_size_v<decltype(m_recentNativeTexts)>));
     NativeText& recent = m_recentNativeTexts[std::bit_cast<uintptr_t>(characters.data()) * 0x9e3779b97f4a7c15ull >> (64 - std::countr_zero(m_recentNativeTexts.size()))];
     if (recent.characters == characters.data() && recent.length == characters.size()) [[likely]] {
-        // The address may hold other characters by now. Whoever gets null asks the atom table, which is right whatever stands here.
         if (!recent.atom)
             return nullptr;
         if (WTF::equal(recent.atom->span8().data(), characters)) [[likely]]
@@ -404,7 +437,8 @@ UniquedStringImpl* tryFindName(VM& vm, std::span<const Latin1Character> characte
 
 String ProgramIdentifiers::textOf(const Image& image, uint32_t number)
 {
-    const ImageText& text = image.holderOfStringHeader(number).text();
+    const ImageText& text = image.text();
+    RELEASE_ASSERT(number < text.numberOfIdentifiers());
     const ImageIdentifierWord& record = text.identifier(number);
     if (record.kind() != PropertyKeyKind::Text || !record.text())
         return String();

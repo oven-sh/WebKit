@@ -37,19 +37,15 @@
 #include "AOTEvalEmitter.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTExpandedIterationEmitter.h"
-#include "AOTExpectedRowsEmitter.h"
 #include "AOTForInEmitter.h"
 #include "AOTFrameMapEmitter.h"
 #include "AOTFunctionBuiltinEmitter.h"
-#include "AOTFusedAccessEmitter.h"
 #include "AOTGuardEmitter.h"
-#include "AOTGuardValueEmitter.h"
+#include "AOTGuessedAccessEmitter.h"
 #include "AOTHashTableBuiltinEmitter.h"
 #include "AOTHintEmitter.h"
 #include "AOTInlineBuiltinEmitter.h"
 #include "AOTIntlBuiltinEmitter.h"
-#include "AOTJSONParseEmitter.h"
-#include "AOTJSONWriteEmitter.h"
 #include "AOTMapSetBuiltinEmitter.h"
 #include "AOTMathBuiltinEmitter.h"
 #include "AOTModuleEmitter.h"
@@ -66,62 +62,71 @@
 #include "AOTResolvedCallEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeIntrinsicEmitter.h"
-#include "AOTRuntimeValidationEmitter.h"
 #include "AOTSavedFrameEmitter.h"
-#include "AOTSelectedOperatorEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTSlotAccessEmitter.h"
 #include "AOTSlotEmitter.h"
-#include "AOTSlotRunEmitter.h"
 #include "AOTStaticsEmitter.h"
+#include "AOTStringBuiltinEmitter.h"
 #include "AOTStringBuilderEmitter.h"
 #include "AOTStringBuilderPartEmitter.h"
-#include "AOTStringBuiltinEmitter.h"
 #include "AOTStringEmitter.h"
-#include "AOTStringRangeReadEmitter.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTruthinessEmitter.h"
 #include "AOTTypeTestEmitter.h"
-#include <wtf/FastMalloc.h>
+#include <memory>
+#include <type_traits>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-struct CodeGenerator::Emitters {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Emitters);
-
-#define AOT_DECLARE_EMITTER_SLOT(Class) std::optional<Class> m_##Class;
-    FOR_EACH_AOT_EMITTER(AOT_DECLARE_EMITTER_SLOT)
-#undef AOT_DECLARE_EMITTER_SLOT
-};
-
-CodeGenerator::CodeGenerator(const FunctionInputs& inputs, B3::Procedure& proc, CodeRecords& records)
+CodeGenerator::CodeGenerator(const FunctionInputs& inputs, Machine::Procedure& proc, CodeRecords& records)
     : m_inputs(inputs)
     , m_proc(proc)
-    , m_heaps(AOTHeaps::of(proc))
     , m_records(records)
+    , m_mentions(records.mentions)
+    , m_typing { inputs.program.program, inputs.types, PositionTypes::knowingNothing() }
+    , m_operationDispatchers(operationDispatchers())
+    , m_terminatorDispatchers(terminatorDispatchers())
     , m_out(proc)
-    , m_emitters(makeUnique<Emitters>())
-    , m_droppedGuard(droppedGuardIn(inputs.build.recordedOptions(), inputs.id))
-    , m_validates(inputs.build.validates())
-    , m_checksProofs(!inputs.build.validates() && inputs.build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime))
-    , m_runsOutOfMemoryWhenCounted(inputs.build.recordedOptions().isSabotaged(Sabotage::MemoryRunsOutWhenCounted) || inputs.build.recordedOptions().isSabotaged(Sabotage::MemoryRunsOutWhenCountedByRule))
-    , m_checksKeptRegisters(inputs.build.validates() && inputs.build.options().validatesBackEnd)
-    , m_forcesGCSlowPaths(inputs.build.recordedOptions().has(TestingSwitch::ForceGCSlowPaths))
+    , m_checksAllocation(proc.traits().checksAllocation)
+    , m_checksEffects(AOT::hasFlag(inputs.build.options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime))
+    , m_rowThatSaysLess(inputs.build.options().rowThatSaysLess)
 {
+    if (proc.traits().notesRangesOfOrigins) {
+        records.formsSaid.beginNoting();
+        m_out.noteFormsIn(records.formsSaid);
+    }
+    m_notesForms = records.formsSaid.areNoted();
+    m_watchesOperations = m_notesForms || m_checksAllocation || m_checksEffects;
+    if (build().options().recorded.validates) [[unlikely]] {
+        m_out.verifyInheritedLoads(heaps().collectorState.index(), [this](LValue readSameBits) {
+            m_out.check(m_out.isZero32(readSameBits))->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters&) {
+                jit.breakpoint();
+            });
+        });
+    }
 }
 
-CodeGenerator::~CodeGenerator() = default;
-
-#define AOT_DEFINE_EMITTER_ACCESSOR(Class) \
-    template<> Class& CodeGenerator::emitter<Class>() \
-    { \
-        std::optional<Class>& slot = m_emitters->m_##Class; \
-        if (!slot) \
-            slot.emplace(*this); \
-        return *slot; \
+CodeGenerator::~CodeGenerator()
+{
+#define AOT_DESTROY_EMITTER(Class) \
+    if constexpr (!std::is_trivially_destructible_v<Class>) { \
+        if (Class* made = m_emitters.pointerTo##Class) \
+            std::destroy_at(made); \
     }
-FOR_EACH_AOT_EMITTER(AOT_DEFINE_EMITTER_ACCESSOR)
-#undef AOT_DEFINE_EMITTER_ACCESSOR
+    FOR_EACH_AOT_EMITTER(AOT_DESTROY_EMITTER)
+#undef AOT_DESTROY_EMITTER
+}
+
+#define AOT_DEFINE_EMITTER_MAKER(Class) \
+    template<> Class& CodeGenerator::makeEmitter<Class>() \
+    { \
+        Class* made = new (NotNull, m_proc.arena().allocate(sizeof(Class), alignof(Class))) Class(*this); \
+        m_emitters.pointerTo##Class = made; \
+        return *made; \
+    }
+FOR_EACH_AOT_EMITTER(AOT_DEFINE_EMITTER_MAKER)
+#undef AOT_DEFINE_EMITTER_MAKER
 
 } } } // namespace JSC::AOT::Typed
 

@@ -1,0 +1,86 @@
+# a promise that this code has made and fulfilled in the block, and that nobody else has, is awaited by awaiting its value: one job either way. Nothing is left that needs the promise, and the sweep drops it with its store
+# async function now() { return await Promise.resolve(1); }
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# RUN(NEVER): walk f1:CoroutineBody mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls+BuiltinCalls
+# NEVER-NOT: = NewPromise
+# RUN(STORE): walk f1:CoroutineBody mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls+BuiltinCalls
+# STORE-NOT: FulfillFreshPromise
+# RUN(ALL): walk f1:CoroutineBody mechanisms=all
+# ALL-NOT: = NewPromise
+# whoever has got hold of the promise may have given it a `then` of its own
+# async function seen() { const p = Promise.resolve(1); sink(p); return await p; }
+# RUN(SEEN): walk f2:CoroutineBody mechanisms=all
+# SEEN-LABEL: code f2:CoroutineBody
+# SEEN: = NewPromise
+# SEEN: = AwaitBySavingFrame
+# a function that returns the promise settles its own two turns later than with the value, so the promise is handed on
+# async function handsOn(p) { await p; return Promise.resolve(1); }
+# RUN(RETURNED): walk f3:CoroutineBody mechanisms=all
+# RETURNED-LABEL: code f3:CoroutineBody
+# RETURNED: = NewPromise
+# RETURNED: = ReturnAsyncResult
+# what was stored on one way into a block says nothing of the other way
+# async function oneWay(c) { const p = $newPromise(); if (c) $resolvePromise(p, 1); return await p; }
+# RUN(ONEWAY): walk f4:CoroutineBody mechanisms=all
+# ONEWAY-LABEL: code f4:CoroutineBody
+# ONEWAY: = NewPromise
+# ONEWAY: = AwaitBySavingFrame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="now" module=m0 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise
+    v1 = Builtin builtin=PromiseResolve
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="resolve" calleeName="Promise.resolve"
+    v4 = Await v3
+    Return v4
+}
+function f2 name="seen" module=m0 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise
+    v1 = Builtin builtin=PromiseResolve
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="resolve" calleeName="Promise.resolve"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = Await v3
+    Return v7
+}
+function f3 name="handsOn" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    v2 = Builtin builtin=Promise
+    v3 = Builtin builtin=PromiseResolve
+    v4 = Integer integer=1
+    v5 = Call v3, v2, v4 calleeKey="resolve" calleeName="Promise.resolve"
+    Return v5
+}
+function f4 name="oneWay" module=m1 role=Library flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewPromise
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    ResolvePromise v1, v2
+    Jump -> next b2()
+  b2():
+    v4 = Await v1
+    Return v4
+}

@@ -38,7 +38,6 @@ struct PrologueCheck {
 #define AOT_LOOP_POLLS_FAULT 1
 static constexpr size_t sizeOfLoopPoll = 7;
 #elif CPU(ARM64) && (OS(LINUX) || OS(DARWIN) || OS(WINDOWS)) && !defined(BUN_HARDENED)
-// A hardened instance has the words that are written once where the page would have to lie: InstanceLayout::offsetOfLoopPollPage().
 #define AOT_LOOP_POLLS_FAULT 1
 static constexpr size_t sizeOfLoopPoll = 4;
 #else
@@ -46,15 +45,14 @@ static constexpr size_t sizeOfLoopPoll = 4;
 static constexpr size_t sizeOfLoopPoll = 0;
 #endif
 static constexpr bool hasFaultingLoopPolls = !!sizeOfLoopPoll;
+
 static_assert(hasFaultingLoopPolls == !!AOT_LOOP_POLLS_FAULT);
 #if CPU(ARM64)
-// The load is of 64 bits: its immediate offset reaches twice as far as that of a load of 32 bits.
 static constexpr size_t sizeOfWordLoadedByLoopPoll = sizeof(uint64_t);
 #else
 static constexpr size_t sizeOfWordLoadedByLoopPoll = sizeof(uint32_t);
 #endif
 static constexpr ptrdiff_t offsetOfLeafPollInLoopPollPage = sizeOfWordLoadedByLoopPoll;
-// The handler of the fault tells a poll that has left its handler by the address it loads.
 static constexpr ptrdiff_t offsetOfPollLeavingOwedErrorInLoopPollPage = 2 * sizeOfWordLoadedByLoopPoll;
 
 struct PollSite {

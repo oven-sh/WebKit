@@ -1,0 +1,94 @@
+# If Link listed the method of the base class as the one callee, an object of the class that overrides it would run the wrong function, and the override would be left out of the executable as unreached
+# class A { m() { return "a"; } }  class B extends A { m() { return true; } }  class C extends A { }
+# function ask(x) { return x.m(); }  function askB(x) { return x.m(); }  ask(new B()); ask(new C()); askB(new B());
+# At `ask` two classes meet: their join is the family of A, and the callees are the methods that the layouts of the family find. No type holds the two closures, so neither is lost.
+# RUN: link families functions members mechanisms=all
+# CHECK: family [[all]] [L0, L1, L2]
+# CHECK: function f2 callers-known
+# CHECK-NOT: one-callee
+# CHECK: function f3
+# CHECK: function f4 callers-known
+# CHECK-NOT: one-callee
+# CHECK: function f5
+# CHECK: function f6 callers-known one-callee {{*}}result=true|string
+# CHECK-NEXT: parameter 0 {{*}}proven=L0
+# CHECK: member L0 Prototype 0 Method "m" function=f2 writers-known
+# CHECK: member L1 Prototype 0 Method "m" function=f4 writers-known
+# RUN(CALLS): link calls mechanisms=all
+# CALLS-NOT: call f6 v2
+# CALLS-NOT: call f7 v2 -> f2
+# RUN(REACHED): link functions mechanisms=all
+# REACHED-NOT: unreached
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1
+layout L1 kind=Instance name="B" module=m0 base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="C" module=m0 base=L0 constructor=f5 supertypes=[L0] flags=[HasHeritage]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6, v4, v5 layout=L1
+    v8 = NewClosure function=f4
+    DefineMethod v7, v8 layout=L1 key="m"
+    v10 = FinishClass v7 layout=L1
+    v11 = ResolveHeritage v4
+    v12 = NewClosure function=f5
+    v13 = NewClass v12, v4, v11 layout=L2
+    v14 = FinishClass v13 layout=L2
+    v15 = Construct v10
+    v16 = Construct v14
+    v17 = NewClosure function=f6
+    v18 = Call v17, -, v15 calleeName="ask"
+    v19 = Call v17, -, v16 calleeName="ask"
+    v20 = NewClosure function=f7
+    v21 = Call v20, -, v15 calleeName="askB"
+    v22 = Undefined
+    Return v22
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    Return v0
+}
+function f3 name="B" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f4 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    Return v0
+}
+function f5 name="C" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f6 name="ask" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return v2
+}
+function f7 name="askB" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return v2
+}

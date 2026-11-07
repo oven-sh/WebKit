@@ -1,6 +1,5 @@
-# The variable that holds what stands in place of a module while a mock that came ahead of its load does: it begins empty, native code stores it, no code of the program names it,
-# its module may be mocked, and a module has one at most.
-# FORM: AsRead
+# A variable with HoldsMock holds what replaces its module while a mock that was registered before the module loaded is in effect. Native code stores it, so it starts uninitialized,
+# is replaceable and has no name. Its module has MayBeMocked, and a module has at most one such variable.
 # RUN: verify
 # DIAGNOSTIC: InvalidVariable 5
 

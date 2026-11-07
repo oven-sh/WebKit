@@ -1,0 +1,29 @@
+# function merge(s) { return Object.assign({}, s); }  merge({ x: 1 });
+# The call assigns. Every key that the source can have is listed, none is `__proto__`, the target is a record: no setter is found, so nobody gets the target, it stays where it stands, and what lies in the field of the source comes to the field of the target.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L1.0 "x"{{*}} writers-known
+# CHECK: layout L1 {{*}}changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v2 calleeName="merge"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="merge" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectAssign
+    v3 = NewObject layout=L1
+    v4 = FinishObject v3
+    v5 = Call v2, v1, v4, v0 calleeName="Object.assign"
+    Return v5
+}

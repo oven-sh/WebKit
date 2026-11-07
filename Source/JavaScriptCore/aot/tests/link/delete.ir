@@ -1,0 +1,53 @@
+# If the delete were not noted for the layout that arrives, a read of the field would be compiled as a load of its slot and proven a string, where JavaScript answers undefined
+# function drop(o) { return delete o.x; }  function get(o) { return o.x; }  function other(o) { return o.x; }  const a = { x: "a", y: "a" };  drop(a); get(a); other({ x: "a" });
+# The layout may lose a property. The delete is a write of that field after construction, which leaves it empty. The other field of the layout, and a layout with a field of the same name that never arrives at the delete, are not touched.
+# RUN: summary f1
+# CHECK: change {{*}} v1 Deletes Parameter 0 "x"
+# RUN(KEPT): summary f1
+# KEPT-NOT: Parameter 0 -> Unknown
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f2
+# LINK-NOT: result=string
+# LINK: function f3 callers-known one-callee {{*}}result=string
+# LINK: field L0.0 "x" proven=undefined|string
+# LINK-NOT: written-at-construction-alone
+# LINK: field L0.1 "y" proven=string writers-known written-at-construction-alone
+# LINK: field L1.0 "x" proven=string writers-known written-at-construction-alone filled
+# LINK: layout L0 {{*}}changes=[LosesProperty]
+# LINK: layout L1 {{*}}changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v2 calleeName="drop"
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v2 calleeName="get"
+    v9 = NewClosure function=f3
+    v10 = Call v9, -, v4 calleeName="other"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="drop" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropDelete v0 key="x"
+    Return v1
+}
+function f2 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f3 name="other" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

@@ -11,10 +11,10 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr ASCIILiteral methodCalls = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="arrowField" declared={type=function flags=[IsExpected]} flags=[IsRequired]}, {key="v" declared={type=anything}}]
+static constexpr ASCIILiteral methodCalls = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="arrowField" declared={type=function flags=[IsExpected]} flags=[IsRequired]}, {key="v" declared={type=anything}}]
 layout L1 kind=Instance name="D" module=m0 base=L0 constructor=f7 supertypes=[L0] flags=[HasHeritage]
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
-variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g2 module=m0 declared={type=anything} flags=[IsImmutable]
 variable g3 module=m0 declared={type=function} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -102,7 +102,7 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b1():
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Convert v3 declared={type=L0} illTypedCause=FromLooseType
     v5 = CallDirect v4 function=f8
     v6 = Convert v3 declared={type=L0 flags=[IsExpected]}
     PropSet v6, v1 key="v"
@@ -117,7 +117,6 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
     Return v12
 }
 function f2 name="#m" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = PropGet v0 key="v"
@@ -125,7 +124,6 @@ function f2 name="#m" module=m0 kind=Method flags=[HasThis, HasExplicitName] len
     Return v3
 }
 function f3 name="onThis" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -156,21 +154,20 @@ function f5 name="onArgument" module=m0 kind=Method flags=[HasExplicitName] leng
     ReturnCall v5
 }
 function f6 name="inArrow" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = NewClosure v0 function=f9
     v2 = Call v1
     ReturnCall v2
 }
-function f7 name="D" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+function f7 name="D" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     Jump -> next b1()
   b1():
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L1
     Return v4
 }
-function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
     v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
@@ -183,7 +180,6 @@ function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] th
     Return v7
 }
 function f9 module=m0 kind=Arrow captures=[{type=L0 flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = Convert v0 declared={type=L0 flags=[IsExpected]}
@@ -194,7 +190,7 @@ function f9 module=m0 kind=Arrow captures=[{type=L0 flags=[IsExpected]}] thisTyp
     v6 = Call v4, v1, v5 calleeName="#m"
     ReturnCall v6
 }
-function f10 name="arrowField" module=m0 kind=Arrow captures=[{type=L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+function f10 name="arrowField" module=m0 kind=Arrow captures=[{type=L0}] thisType={type=anything} results=[{type=anything}] {
     Jump -> next b1()
   b1():
     v1 = Convert v0 declared={type=L0 flags=[IsExpected]}
@@ -208,10 +204,10 @@ function f10 name="arrowField" module=m0 kind=Arrow captures=[{type=L0 flags=[Is
 entry module=m0
 )IR"_s;
 
-static constexpr ASCIILiteral methodReadAsValue = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="v" declared={type=anything}}]
+static constexpr ASCIILiteral methodReadAsValue = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="v" declared={type=anything}}]
 layout L1 module=m0 fields=[{key="v" declared={type=string flags=[IsExpected]} flags=[IsRequired]}, {key="f" declared={type=function flags=[IsExpected]} flags=[IsRequired]}]
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
-variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g2 module=m0 declared={type=anything} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -285,7 +281,7 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b1():
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Convert v3 declared={type=L0} illTypedCause=FromLooseType
     v5 = CallDirect v4 function=f7
     v6 = Convert v3 declared={type=L0 flags=[IsExpected]}
     PropSet v6, v1 key="v"
@@ -300,7 +296,6 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
     Return v12
 }
 function f2 name="#m" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = TypeTest v0 testedType=undefined
@@ -319,7 +314,6 @@ function f2 name="#m" module=m0 kind=Method flags=[HasThis, HasExplicitName] thi
     Return v6
 }
 function f3 name="bare" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -330,7 +324,6 @@ function f3 name="bare" module=m0 kind=Method flags=[HasThis, HasExplicitName] t
     ReturnCall v5
 }
 function f4 name="held" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = String string="holder"
@@ -348,7 +341,6 @@ function f4 name="held" module=m0 kind=Method flags=[HasThis, HasExplicitName] t
     ReturnCall v12
 }
 function f5 name="same" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = GetModuleVariable variable=g1
@@ -363,7 +355,6 @@ function f5 name="same" module=m0 kind=Method flags=[HasThis, HasExplicitName] l
     Return v10
 }
 function f6 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=function flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -372,7 +363,7 @@ function f6 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] th
     v4 = Convert v3 declared={type=function flags=[IsExpected]}
     Return v4
 }
-function f7 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+function f7 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
     v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
@@ -384,9 +375,9 @@ function f7 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] th
 entry module=m0
 )IR"_s;
 
-static constexpr ASCIILiteral methodsInAHotLoop = R"IR(layout L0 kind=Instance name="Counter" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="total" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
+static constexpr ASCIILiteral methodsInAHotLoop = R"IR(layout L0 kind=Instance name="Counter" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="total" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
-variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g2 module=m0 declared={type=anything} flags=[IsImmutable]
 variable g3 module=m0 declared={type=anything} flags=[IsImmutable]
 variable g4 module=m0 declared={type=anything} flags=[IsImmutable]
@@ -428,12 +419,11 @@ function f1 name="Counter" module=m0 kind=BaseConstructor flags=[HasNewTarget, H
   b1():
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v3 = Convert v2 declared={type=L0} illTypedCause=FromLooseType
     v4 = CallDirect v3 function=f6
     Return v2
 }
 function f2 name="#step" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = PropGet v0 key="total"
@@ -445,7 +435,6 @@ function f2 name="#step" module=m0 kind=Method flags=[HasThis, HasExplicitName] 
     Return v7
 }
 function f3 name="#half" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = PropGet v0 key="total"
@@ -456,7 +445,6 @@ function f3 name="#half" module=m0 kind=Getter flags=[HasThis, HasExplicitName] 
     Return v5
 }
 function f4 name="#reset" module=m0 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Convert v1 declared={type=number flags=[IsExpected]}
@@ -465,7 +453,6 @@ function f4 name="#reset" module=m0 kind=Setter flags=[HasThis, HasExplicitName]
     Return v4
 }
 function f5 name="run" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Integer
@@ -515,7 +502,7 @@ function f5 name="run" module=m0 kind=Method flags=[HasThis, HasExplicitName] le
     v36 = Convert v6 declared={type=number flags=[IsExpected]}
     Return v36
 }
-function f6 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+function f6 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
     v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
@@ -530,11 +517,11 @@ function f6 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] th
 entry module=m0
 )IR"_s;
 
-static constexpr ASCIILiteral subclassMadeByAFunction = R"IR(layout L0 kind=Instance name="K" module=m0 constructor=f2 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#p"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}, {key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
+static constexpr ASCIILiteral subclassMadeByAFunction = R"IR(layout L0 kind=Instance name="K" module=m0 constructor=f2 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#p"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}, {key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
 layout L1 kind=Instance module=m0 base=L0 constructor=f6 fields=[{key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage]
 variable g0 name="K" module=m0 declared={type=function|absent} flags=[IsImmutable]
 variable g1 module=m0 declared={type=function} flags=[IsImmutable]
-variable g2 module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g2 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g3 module=m0 declared={type=anything} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -635,12 +622,11 @@ function f2 name="K" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b1():
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v3 = Convert v2 declared={type=L0} illTypedCause=FromLooseType
     v4 = CallDirect v3 function=f8
     Return v2
 }
 function f3 name="#m" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g2
@@ -653,7 +639,6 @@ function f3 name="#m" module=m0 kind=Method flags=[HasThis, HasExplicitName] thi
     Return v7
 }
 function f4 name="read" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g2
@@ -670,24 +655,23 @@ function f5 name="has" module=m0 kind=Method flags=[HasExplicitName] length=1 th
     v3 = Convert v2 declared={type=boolean flags=[IsExpected]}
     Return v3
 }
-function f6 module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+function f6 module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     Jump -> next b1()
   b1():
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L1
-    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = Convert v4 declared={type=L1} illTypedCause=FromLooseType
     v6 = CallDirect v5 function=f9
     Return v4
 }
 function f7 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = PropGet v0 key="b"
     v2 = Convert v1 declared={type=number flags=[IsExpected]}
     Return v2
 }
-function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
     v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
@@ -703,7 +687,7 @@ function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] th
     v11 = Undefined
     Return v11
 }
-function f9 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+function f9 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
     v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():

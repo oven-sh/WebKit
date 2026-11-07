@@ -1,0 +1,33 @@
+# const steps = process.argv.length > 2 ? Symbol.iterator : Symbol.unscopables;  typeof Array.prototype[steps];
+# Two constants meet in the key: it is no longer one name. The read stays a read under a key that nobody knows: every member of the holder is asked for.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link accesses mechanisms=all
+# CHECK-NOT: access f0 v10 under
+# RUN(LACKED): lacked
+# LACKED: lacked ArrayPrototypeAt
+# RUN(LOOK): features mechanisms=all
+# LOOK: by ArrayPrototypeAt unnamed at f0 v10
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="argv"
+    v2 = PropGet v1 key="length"
+    v3 = Integer integer=2
+    v4 = Greater v2, v3
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Builtin builtin=SymbolIterator
+    Jump -> next b3(v6)
+  b2():
+    v7 = Builtin builtin=SymbolUnscopables
+    Jump -> next b3(v7)
+  b3(v8: anything):
+    v9 = Builtin builtin=ArrayPrototype
+    v10 = ElemGet v9, v8
+    v11 = TypeOf v10
+    Return v11
+}

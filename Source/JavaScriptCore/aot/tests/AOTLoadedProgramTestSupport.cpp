@@ -10,13 +10,16 @@
 
 #include "AOTBuildContext.h"
 #include "AOTChildProcess.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTImageLoading.h"
+#include "AOTNativeTestReasons.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -61,24 +64,19 @@ LoadedProgram::~LoadedProgram()
 
 static Vector<uint8_t> compileOnThisThread(ASCIILiteral programText, std::initializer_list<ASCIILiteral> optionWords)
 {
-    Wire::CompileOptions options = makeDefaultCompileOptions();
+    Wire::CompileOptions options = makeOptionsOfTestedProgram();
     options.executableIdentity = executableIdentityOfTests;
     for (ASCIILiteral word : optionWords)
         AOT_TEST_CHECK(!applyOptionWord(options, word));
     BuildContext build(options);
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
-    if (!program) {
-        build.diagnostics().finish(nullptr);
-        Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
-        failNativeTest(__FILE__, __LINE__, "the IR text is a valid program");
-    }
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), build);
+    if (!program)
+        failBecauseTextIsNoProgram(__FILE__, __LINE__, build, optionWordsOfReason(optionWords));
 
-    std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-    if (output->image.isEmpty()) {
-        Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        failNativeTest(__FILE__, __LINE__, "the program compiles");
-    }
-    return WTF::move(output->image);
+    std::unique_ptr<CompileOutput> output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfProcess());
+    if (!output->hasImage())
+        failBecauseThereIsNoImage(__FILE__, __LINE__, *output, optionWordsOfReason(optionWords));
+    return Vector<uint8_t>(output->section(Wire::ResultSection::Image));
 }
 
 Vector<uint8_t> compileProgramText(ASCIILiteral programText, std::initializer_list<ASCIILiteral> optionWords)
@@ -90,7 +88,6 @@ Vector<uint8_t> compileProgramText(ASCIILiteral programText, std::initializer_li
     return image;
 }
 
-// The pages after the copy stand for what follows the image in the segment of an executable.
 static std::span<const uint8_t> leakAlignedCopy(std::span<const uint8_t> bytes)
 {
     std::span copy = unsafeMakeSpan(static_cast<uint8_t*>(fastAlignedMalloc(imageAlignment(), bytes.size() + imageAlignment())), bytes.size());
@@ -98,7 +95,6 @@ static std::span<const uint8_t> leakAlignedCopy(std::span<const uint8_t> bytes)
     return copy;
 }
 
-// On Linux, on macOS and on Windows nothing makes the copy executable: the code is mapped from the file, as it is for an executable. The file stays open for as long as the process lives.
 static std::optional<ImageFile> fileToMapCodeFrom(const String& path)
 {
 #if OS(DARWIN) || OS(LINUX)
@@ -173,14 +169,14 @@ void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, Loade
     runInChildProcess(testName, file.path());
 }
 
-void runWithLoadedProgramThatStops(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body, ASCIILiteral lastWords)
+void runWithLoadedProgramThatStops(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body, ASCIILiteral lastWords, std::initializer_list<ASCIILiteral> optionWords)
 {
     if (Options::aotImagePath()) {
         runWithLoadedProgram(testName, programText, body);
         return;
     }
 
-    TemporaryFile file(".image"_s, compileProgramText(programText).span());
+    TemporaryFile file(".image"_s, compileProgramText(programText, optionWords).span());
     ChildProcessLauncher launcher(String(programPath()), { });
     Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), makeString("--aotImagePath="_s, file.path()) };
     ChildProcessResult result = launcher.run(arguments.span());

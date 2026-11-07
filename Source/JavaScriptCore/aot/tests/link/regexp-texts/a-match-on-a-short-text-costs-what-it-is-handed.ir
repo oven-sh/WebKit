@@ -1,0 +1,30 @@
+# The list follows from the program alone. A match on a short text costs what it is handed, not the most that a match of its pattern on a text of that length could ever cost: that only says whether it is entered at all.
+# const kind = /^ *([a-z]+) *;/, subject = "text ; charset and no more.";   new RegExp("a" + kind.test(subject) + kind.test(subject) + kind.test(subject) + kind.test(subject))
+# Three terms that vary on 27 characters: four such matches are some dozens of steps.
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /atruetruetruetrue/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = NewRegExp pattern="^ *([a-z]+) *;"
+    v2 = String string="text ; charset and no more."
+    v3 = String string="a"
+    v4 = PropGet v1 key="test"
+    v5 = Call v4, v1, v2 calleeKey="test"
+    v6 = Add v3, v5
+    v7 = PropGet v1 key="test"
+    v8 = Call v7, v1, v2 calleeKey="test"
+    v9 = Add v6, v8
+    v10 = PropGet v1 key="test"
+    v11 = Call v10, v1, v2 calleeKey="test"
+    v12 = Add v9, v11
+    v13 = PropGet v1 key="test"
+    v14 = Call v13, v1, v2 calleeKey="test"
+    v15 = Add v12, v14
+    v16 = Construct v0, -, v15
+    v17 = NewArray v16 contents=anything
+    Return v17
+}

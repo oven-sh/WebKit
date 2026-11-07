@@ -1,0 +1,30 @@
+# outside a loop only a type that the source declares is worth a test. Of `n` nothing is written, so the same seven operators stay closed and nothing is tested
+# function poly(n) { return ((((((n * n) * n) * n) * n) * n) * n) * n; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-7: = Mul {{*}}form=Generic
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses
+# NEVER-NOT: TypeTest
+# NEVER-NOT: form=Numbers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="poly" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    Return v7
+}

@@ -1,0 +1,58 @@
+# const original = String.prototype.replace; String.prototype.replace = (() => { asked++; return "mocked"; }).bind(null); for (let i = 0; i < 300; i++) out = original.call("abc", /b/, () => "X"); print(out, asked)
+# With a pattern and a function the call goes to an operation of the run time, which calls the engine's own function, so that a stack trace lists its frame. It fetched that function off String.prototype, by its name,
+# when it ran: the original called what a test had laid in its place. A bound function, like a spy, is no JavaScript function to the engine, which was all that the operation asked.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell mechanisms=all
+# CHECK: aXc 0
+# CHECK-NEXT: exited with 0
+
+replaceablebuiltin member=StringPrototypeReplace
+variable g0 name="asked" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="String" [isFreeName]
+    v2 = PropGet v1 key="prototype"
+    v3 = PropGet v2 key="replace"
+    v4 = Integer
+    PutModuleVariable v4 variable=g0
+    v6 = NewClosure function=f1
+    v7 = PropGet v6 key="bind"
+    v8 = Null
+    v9 = Call v7, v6, v8 calleeKey="bind"
+    PropSet v2, v9 key="replace"
+    v11 = String string="abc"
+    v12 = NewRegExp pattern="b"
+    v13 = NewClosure function=f2
+    v14 = String string=""
+    Jump -> next b1(v4, v14)
+  b1(v15, v16):
+    LoopHint
+    v18 = Integer integer=300
+    v19 = Less v15, v18
+    Branch v19 -> taken b2(), notTaken b3()
+  b2():
+    v20 = Call v3, v11, v12, v13
+    v21 = Increment v15
+    Jump -> next b1(v21, v20)
+  b3():
+    v22 = PropGet v0 key="print" [isFreeName]
+    v23 = GetModuleVariable variable=g0
+    v24 = Call v22, -, v16, v23
+    Return v24
+}
+function f1 name="mocked" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Increment v0
+    PutModuleVariable v1 variable=g0
+    v3 = String string="mocked"
+    Return v3
+}
+function f2 name="replacer" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="X"
+    Return v0
+}

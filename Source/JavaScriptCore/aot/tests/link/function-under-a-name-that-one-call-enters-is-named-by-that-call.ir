@@ -1,0 +1,52 @@
+# A function that lies under a name and that the listed calls alone enter has those calls for referrers, and whoever makes its closure. Nobody else comes to it: at no other call is the value its closure, whatever a guess makes of the receiver.
+# const a = { run() {} }, b = { run() {} };  function useA(o) { return o.run(); }  function useB(o) { return o.run(); }  useA(a); useB(b);
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known one-callee {{*}} takes-arrivals
+# CHECK: referrers f0, f3
+# CHECK: function f2 callers-known one-callee {{*}} takes-arrivals
+# CHECK: referrers f0, f4
+# CHECK-NOT: group
+# RUN(NONE): link functions mechanisms=all
+# NONE-NOT: in-queue-from-start
+
+layout L0 module=m0 fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f2
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f3
+    v7 = Call v6, -, v2 calleeName="useA"
+    v8 = NewClosure function=f4
+    v9 = Call v8, -, v5 calleeName="useB"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="run" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="run" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="useA" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0 calleeKey="run"
+    Return v2
+}
+function f4 name="useB" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0 calleeKey="run"
+    Return v2
+}

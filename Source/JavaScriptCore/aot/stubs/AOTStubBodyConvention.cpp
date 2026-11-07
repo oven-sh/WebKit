@@ -8,15 +8,22 @@
 
 #if ENABLE(AOT)
 
+#include "AOTConvention.h"
+
 namespace JSC { namespace AOT {
 
 static_assert([] {
     for (unsigned index = 0; index < StubBodyConvention::maxNumberOfOperandGPRs; ++index) {
-        if (!noOverlap(StubBodyConvention::operandGPR(index), instanceGPR, cellCageBaseGPR))
+        if (StubBodyConvention::operandGPR(index) != directArgumentGPR(index) || !noOverlap(StubBodyConvention::operandGPR(index), instanceGPR, cellCageBaseGPR))
+            return false;
+    }
+    for (unsigned index = 0; index < StubBodyConvention::maxNumberOfOperandFPRs; ++index) {
+        if (StubBodyConvention::operandFPR(index) != directArgumentFPR(index))
             return false;
     }
     return true;
 }());
+static_assert(StubBodyConvention::maxNumberOfOperandGPRs <= numberOfDirectArgumentGPRs && StubBodyConvention::maxNumberOfOperandFPRs <= numberOfDirectArgumentFPRs);
 static_assert(StubBodyConvention::resultGPR(0) != StubBodyConvention::resultGPR(1));
 
 RegisterSet StubBodyConvention::registersClobberedByCalls()

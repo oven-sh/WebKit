@@ -1,0 +1,9 @@
+# the same program with typed operations withheld: no read stands behind a guard, and none is asked
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = PropGet {{*}}key="limit"
+# CHECK: = NewObject
+# CHECK: = PropGet {{*}}key="label"
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: = AreMembersUnchanged
+# PROGRAM-OF: guard-of-a-class-outlives-the-allocation-of-another.ir

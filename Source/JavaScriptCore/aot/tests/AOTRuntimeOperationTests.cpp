@@ -9,47 +9,56 @@
 
 #include "AOTChildProcess.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTGrowingText.h"
 #include "AOTHost.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTOpcode.h"
 #include "AOTOperationCallScope.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaOperations.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTTemporaryFile.h"
 #include "AOTVector.h"
 #include "ClonedArguments.h"
+#include "Completion.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
-#include "JSSet.h"
 #include "ObjectConstructor.h"
 #include "OperationResult.h"
 #include "Options.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
-#include <bit>
+#include <stdlib.h>
 #include <type_traits>
 #include <wtf/DataLog.h>
+#include <wtf/FileSystem.h>
 #include <wtf/HashSet.h>
+#include <wtf/ProcessID.h>
 #include <wtf/SetForScope.h>
 #include <wtf/Threading.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT {
 
-static constexpr ASCIILiteral callsAreCountedTest = "runtime-operations/calls-are-counted-with-counts-path"_s;
-static constexpr ASCIILiteral callsAreNotCountedTest = "runtime-operations/calls-are-not-counted-by-default"_s;
+static constexpr ASCIILiteral callsThroughRuntimeTableTest = "runtime-operations/operations-are-called-through-the-table"_s;
 static constexpr ASCIILiteral unusedEntriesTrapTest = "runtime-operations/unused-entries-trap"_s;
 static constexpr ASCIILiteral unmappedArgumentsTest = "runtime-operations/unmapped-arguments-come-from-frame-and-rest"_s;
-static constexpr ASCIILiteral readsOfArgumentsTest = "runtime-operations/reads-of-arguments-that-were-never-created"_s;
 static constexpr ASCIILiteral appendElementsTest = "runtime-operations/append-elements"_s;
 static constexpr ASCIILiteral arrayLiteralsTest = "runtime-operations/array-literals-are-pristine-and-contiguous"_s;
-static constexpr ASCIILiteral listsOfMembersTest = "runtime-operations/lists-of-members-have-the-storage-that-arrays-of-the-realm-have"_s;
 static constexpr ASCIILiteral badTimeStopsTest = "runtime-operations/a-realm-with-an-image-that-begins-to-have-a-bad-time-stops"_s;
 static constexpr ASCIILiteral pushesAndHolesTest = "runtime-operations/pushes-and-holes"_s;
+static constexpr ASCIILiteral growingTextTest = "runtime-operations/a-text-that-is-added-to-grows-in-a-buffer"_s;
+static constexpr ASCIILiteral partsOfOtherWidthTest = "runtime-operations/a-growing-text-takes-parts-whose-characters-have-changed-width"_s;
 static constexpr ASCIILiteral deferredTerminationTest = "runtime-operations/poll-throws-deferred-termination-after-the-deferral"_s;
 static constexpr ASCIILiteral pollInCallStubTest = "runtime-operations/poll-in-call-stub-leaves-pending-out-of-memory-error"_s;
+static constexpr ASCIILiteral callsAreCountedTest = "runtime-operations/calls-are-counted-under-a-counts-path"_s;
+static constexpr ASCIILiteral callsAreNotCountedTest = "runtime-operations/calls-are-not-counted-by-default"_s;
+static constexpr ASCIILiteral countsAtExitTest = "runtime-operations/counts-are-written-once-when-the-process-exits"_s;
+static constexpr ASCIILiteral countsPathNamesProcessTest = "runtime-operations/counts-path-names-the-process"_s;
+static constexpr ASCIILiteral vmWithoutImageCountsTest = "runtime-operations/a-vm-without-an-image-counts-what-it-interprets"_s;
 
 static constexpr ASCIILiteral programText =
     "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
@@ -128,16 +137,6 @@ static void collectingOperationNeedsCollectingEntry()
     AOT_TEST_CHECK(!numberOfHiddenCollections);
 }
 
-static void entriesAreNamedAfterWhatTheyHold()
-{
-    AOT_TEST_CHECK(nameOf(Entry::operationAOTValueAdd) == "operationAOTValueAdd"_s);
-    AOT_TEST_CHECK(nameOf(Entry::operationAOTLookupExceptionHandler) == "operationAOTLookupExceptionHandler"_s);
-    AOT_TEST_CHECK(nameOf(Entry::operationArrayIndexOfValueInt32OrContiguous) == "operationArrayIndexOfValueInt32OrContiguous"_s);
-    AOT_TEST_CHECK(nameOf(Entry::HandleException) == "HandleException"_s);
-    AOT_TEST_CHECK(nameOf(Entry::VirtualCallTrampoline) == "VirtualCallTrampoline"_s);
-    AOT_TEST_CHECK(nameOf(Entry::RawToString) == "RawToString"_s);
-}
-
 static void entryNamesAreDistinct()
 {
     HashSet<ASCIILiteral> names;
@@ -165,7 +164,7 @@ static void checkUnusedEntriesTrap(LoadedProgram& program)
     void* trap = nullptr;
     for (unsigned index = 0; index < numberOfEntries; ++index) {
         Entry entry = static_cast<Entry>(index);
-        if ((!isOperation(entry) && !isRawOperation(entry)) || isUsedByImage(entry))
+        if (!isOperation(entry) || isUsedByImage(entry))
             continue;
         AOT_TEST_CHECK(entryIn(vm, entry));
         AOT_TEST_CHECK(!trap || entryIn(vm, entry) == trap);
@@ -288,46 +287,14 @@ static void checkUnmappedArgumentsOfEveryCount(LoadedProgram& program)
         cells->push(realm, jsNumber(3));
         checkUnmappedArgumentsFromRest(program, cells, std::array { JSValue(realm), jsNumber(3) });
 
-        // No arguments object is alive here, and the next round finds the Structure of the last one again.
         vm.heap.collectSync(CollectionScope::Full);
     }
 }
 
-static void checkReadsOfArguments(LoadedProgram& program)
+static void checkCallsThroughRuntimeTable(LoadedProgram& program)
 {
-    VM& vm = program.vm();
-    JSArray* list = createArrayOfNumbers(program.realm(), 10, 2);
-    auto read = [&](JSValue property) {
-        return JSValue::decode(callFromNativeCode(program, operationAOTGetFromArguments, list, JSValue::encode(property)));
-    };
-    AOT_TEST_CHECK(read(jsNumber(0)) == jsNumber(10));
-    AOT_TEST_CHECK(read(jsNumber(1)) == jsNumber(11));
-    AOT_TEST_CHECK(read(jsNumber(2)).isUndefined());
-    AOT_TEST_CHECK(read(jsNontrivialString(vm, "length"_s)) == jsNumber(2));
-    AOT_TEST_CHECK(read(jsNontrivialString(vm, "nameNobodyHas"_s)).isUndefined());
-}
-
-static void checkCallsAreCounted(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    AOT_TEST_CHECK(Options::aotCountsPath());
-    AOT_TEST_CHECK(vm.aotState().runtimeTable->countsCalls());
-
-    uint64_t countBefore = operationCallCount(vm, Entry::operationAOTValueAdd);
-    uint64_t otherCountBefore = operationCallCount(vm, Entry::operationAOTValueSub);
     AOT_TEST_CHECK(addThroughTable(program, jsNumber(1), jsNumber(2)) == jsNumber(3));
     AOT_TEST_CHECK(addThroughTable(program, jsNumber(3), jsNumber(4)) == jsNumber(7));
-    AOT_TEST_CHECK(operationCallCount(vm, Entry::operationAOTValueAdd) == countBefore + 2);
-    AOT_TEST_CHECK(operationCallCount(vm, Entry::operationAOTValueSub) == otherCountBefore);
-}
-
-static void checkCallsAreNotCounted(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    AOT_TEST_CHECK(!Options::aotCountsPath());
-    AOT_TEST_CHECK(!vm.aotState().runtimeTable->countsCalls());
-    AOT_TEST_CHECK(addThroughTable(program, jsNumber(1), jsNumber(2)) == jsNumber(3));
-    AOT_TEST_CHECK(!operationCallCount(vm, Entry::operationAOTValueAdd));
 }
 
 static Vector<EncodedJSValue> elementsOf(JSGlobalObject* realm, JSArray* array)
@@ -359,36 +326,6 @@ static void checkAppendElements(LoadedProgram& program)
     }
 }
 
-static void checkListsOfMembers(LoadedProgram& program)
-{
-    Realms& realms = program.realms();
-    JSGlobalObject* realm = program.realm();
-    struct SetAndMembers {
-        ASCIILiteral set;
-        ASCIILiteral members;
-    };
-    static constexpr SetAndMembers cases[] = {
-        { "new Set()"_s, "[]"_s },
-        { "new Set([1, 2, 3])"_s, "[1, 2, 3]"_s },
-        { "new Set([1.5, 2.5])"_s, "[1.5, 2.5]"_s },
-        { "new Set([true, 1, null])"_s, "[true, 1, null]"_s },
-    };
-    for (const auto& [source, membersSource] : cases) {
-        JSObject* set = realms.object(realm, source);
-        Vector<EncodedJSValue> members = elementsOf(realm, realms.array(realm, membersSource));
-
-        auto* list = dynamicDowncast<JSArray>(callFromNativeCode(program, operationAOTNewArrayOfMembers, set, static_cast<uint64_t>(ArrayWithInt32)));
-        AOT_TEST_CHECK_FOR_SOURCE(list && elementsOf(realm, list) == members, source);
-        AOT_TEST_CHECK_FOR_SOURCE(!hasAnyArrayStorage(list->indexingType()), source);
-
-        JSArray* target = realms.array(realm, "[0].slice()"_s);
-        callFromNativeCode(program, operationAOTAppendMembers, target, set);
-        members.insert(0, JSValue::encode(jsNumber(0)));
-        AOT_TEST_CHECK_FOR_SOURCE(elementsOf(realm, target) == members, source);
-        AOT_TEST_CHECK_FOR_SOURCE(!hasAnyArrayStorage(target->indexingType()), source);
-    }
-}
-
 static void haveABadTime(LoadedProgram& program)
 {
     program.realm()->haveABadTime(program.vm());
@@ -414,10 +351,257 @@ static void checkPushesAndHoles(LoadedProgram& program)
     AOT_TEST_CHECK(JSValue::decode(callFromNativeCode(program, operationAOTArrayPush, array, JSValue::encode(jsNumber(11)))) == jsNumber(2));
     AOT_TEST_CHECK(callFromNativeCode(program, operationAOTAppendHole, array) == array);
     AOT_TEST_CHECK(array->length() == 3 && !array->canGetIndexQuickly(2u));
-    AOT_TEST_CHECK(JSValue::decode(callFromNativeCode(program, operationAOTArrayPushNumber, array, std::bit_cast<uint64_t>(1.5))) == jsNumber(4));
+    AOT_TEST_CHECK(JSValue::decode(callFromNativeCode(program, operationAOTArrayPush, array, JSValue::encode(jsNumber(1.5)))) == jsNumber(4));
     AOT_TEST_CHECK(elementsOf(realm, array) == Vector<EncodedJSValue>({ JSValue::encode(jsNumber(10)), JSValue::encode(jsNumber(11)), JSValue::encode(jsUndefined()), JSValue::encode(jsNumber(1.5)) }));
     AOT_TEST_CHECK(!hasAnyArrayStorage(array->indexingType()));
     array->validatePristine(program.vm());
+}
+
+static JSString* joinFromNativeCode(LoadedProgram& program, JSString* left, JSString* right)
+{
+    return uncheckedDowncast<JSString>(callFromNativeCode(program, operationAOTConcat, static_cast<JSCell*>(left), static_cast<JSCell*>(right)));
+}
+
+static String charactersOf(JSString* string)
+{
+    if (string->is8Bit()) {
+        WTF::Vector<Latin1Character> characters(string->length());
+        string->resolveToBuffer(characters.mutableSpan());
+        return String(characters.span());
+    }
+    WTF::Vector<char16_t> characters(string->length());
+    string->resolveToBuffer(characters.mutableSpan());
+    return String(characters.span());
+}
+
+static String repeated(ASCIILiteral piece, unsigned times)
+{
+    StringBuilder text;
+    for (unsigned i = 0; i < times; ++i)
+        text.append(piece);
+    return text.toString();
+}
+
+static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
+{
+    constexpr unsigned numberOfPieces = 10 * minAdditionsToGrowingText;
+    constexpr unsigned numberOfPiecesOfOlderText = 4 * minAdditionsToGrowingText;
+    constexpr unsigned maxNumberOfBuffers = 4;
+    VM& vm = program.vm();
+    Instance& instance = program.instance();
+    JSString* piece = jsNontrivialString(vm, "ab"_s);
+
+    JSString* text = piece;
+    JSString* older = nullptr;
+    JSString* lastBuffer = nullptr;
+    unsigned numberOfBuffers = 0;
+    for (unsigned count = 2; count <= numberOfPieces; ++count) {
+        text = joinFromNativeCode(program, text, piece);
+        AOT_TEST_CHECK(canGrowInPlace(instance, text) == (count - 2 >= minAdditionsToGrowingText));
+        if (count == numberOfPiecesOfOlderText)
+            older = text;
+        if (!canGrowInPlace(instance, text))
+            continue;
+        JSString* buffer = uncheckedDowncast<JSRopeString>(text)->substringBase();
+        numberOfBuffers += buffer != lastBuffer;
+        lastBuffer = buffer;
+    }
+    AOT_TEST_CHECK(numberOfBuffers == maxNumberOfBuffers);
+    AOT_TEST_CHECK(charactersOf(text) == repeated("ab"_s, numberOfPieces));
+
+    JSString* longPiece = jsNontrivialString(vm, repeated("0123456789"_s, 100 * minLengthOfGrowingText));
+    JSString* longText = piece;
+    for (unsigned additions = 0; additions < minAdditionsToGrowingText; ++additions) {
+        longText = joinFromNativeCode(program, longText, additions == 1 ? longPiece : piece);
+        AOT_TEST_CHECK(longText->isNonSubstringRope());
+    }
+    AOT_TEST_CHECK(canGrowInPlace(instance, joinFromNativeCode(program, longText, piece)));
+
+    AOT_TEST_CHECK(!canGrowInPlace(instance, older) && charactersOf(older) == repeated("ab"_s, numberOfPiecesOfOlderText));
+    JSString* other = joinFromNativeCode(program, older, jsNontrivialString(vm, "XY"_s));
+    AOT_TEST_CHECK(charactersOf(other) == makeString(repeated("ab"_s, numberOfPiecesOfOlderText), "XY"_s));
+    AOT_TEST_CHECK(charactersOf(text) == repeated("ab"_s, numberOfPieces) && canGrowInPlace(instance, text));
+
+    JSString* doubled = joinFromNativeCode(program, text, text);
+    AOT_TEST_CHECK(charactersOf(doubled) == repeated("ab"_s, 2 * numberOfPieces) && canGrowInPlace(instance, doubled) && canGrowInPlace(instance, text));
+
+    const char16_t wideCharacters[] = { 0x20ac, 0x20ac };
+    String wide { std::span<const char16_t> { wideCharacters } };
+    JSString* widened = joinFromNativeCode(program, doubled, jsNontrivialString(vm, wide));
+    AOT_TEST_CHECK(!widened->is8Bit() && canGrowInPlace(instance, widened));
+    JSString* longer = joinFromNativeCode(program, widened, piece);
+    AOT_TEST_CHECK(uncheckedDowncast<JSRopeString>(longer)->substringBase() == uncheckedDowncast<JSRopeString>(widened)->substringBase());
+    AOT_TEST_CHECK(charactersOf(longer) == makeString(repeated("ab"_s, 2 * numberOfPieces), wide, "ab"_s));
+    AOT_TEST_CHECK(charactersOf(doubled) == repeated("ab"_s, 2 * numberOfPieces));
+
+    JSString* inBuffer = joinFromNativeCode(program, doubled, piece);
+    JSString* belowRopes = inBuffer;
+    String expected = charactersOf(inBuffer);
+    for (unsigned count = 0; count < 100; ++count) {
+        belowRopes = jsString(program.realm(), belowRopes, jsString(program.realm(), jsString(program.realm(), piece, piece), jsNontrivialString(vm, "cd"_s)));
+        expected = makeString(expected, "ababcd"_s);
+    }
+    AOT_TEST_CHECK(!canGrowInPlace(instance, belowRopes) && canGrowInPlace(instance, inBuffer));
+    JSString* written = joinFromNativeCode(program, belowRopes, piece);
+    AOT_TEST_CHECK(canGrowInPlace(instance, written) && !canGrowInPlace(instance, inBuffer));
+    AOT_TEST_CHECK(uncheckedDowncast<JSRopeString>(written)->substringBase() == uncheckedDowncast<JSRopeString>(inBuffer)->substringBase());
+    AOT_TEST_CHECK(charactersOf(written) == makeString(expected, "ab"_s) && charactersOf(belowRopes) == expected);
+
+    AOT_TEST_CHECK(longer->value(program.realm()).data == charactersOf(joinFromNativeCode(program, widened, piece)) && !longer->isRope());
+
+    constexpr unsigned numberOfPiecesBetweenCollections = 100000;
+    constexpr size_t maxNumberOfCellsLeft = 100;
+    text = doubled;
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    size_t numberOfCellsBefore = vm.heap.objectCount();
+    for (unsigned count = 0; count < numberOfPiecesBetweenCollections; ++count)
+        text = joinFromNativeCode(program, text, piece);
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(vm.heap.objectCount() < numberOfCellsBefore + maxNumberOfCellsLeft);
+    AOT_TEST_CHECK(text->length() == 2 * (2 * numberOfPieces + numberOfPiecesBetweenCollections));
+}
+
+static String copyIn16Bits(const String& text)
+{
+    std::span<char16_t> characters;
+    Ref<StringImpl> copy = StringImpl::createUninitialized(text.length(), characters);
+    StringView(text).getCharacters(characters);
+    return String(WTF::move(copy));
+}
+
+static void checkGrowingTextTakesPartsWhoseCharactersHaveChangedWidth(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    Instance& instance = program.instance();
+    JSString* piece = jsNontrivialString(vm, "ab"_s);
+    WTF::Vector<AtomString> names;
+    unsigned numberOfTexts = 0;
+    auto nextText = [&](unsigned length) {
+        StringBuilder text;
+        text.append('~', 10 + numberOfTexts++);
+        while (text.length() < length)
+            text.append('z');
+        return text.toString().left(length);
+    };
+    auto makeNarrow = [&](unsigned length) {
+        JSString* string = jsNontrivialString(vm, nextText(length));
+        AOT_TEST_CHECK(string->is8Bit() && !string->isRope());
+        return string;
+    };
+    auto makeWide = [&](unsigned length) {
+        JSString* string = jsNontrivialString(vm, copyIn16Bits(nextText(length)));
+        AOT_TEST_CHECK(!string->is8Bit() && !string->isRope());
+        return string;
+    };
+    auto takeCharactersOfName = [&](JSString* string, const String& name) {
+        names.append(AtomString(name));
+        AOT_TEST_CHECK(names.last().is8Bit() == name.is8Bit());
+        AOT_TEST_CHECK(string->toExistingAtomString(realm).data == names.last().impl());
+        AOT_TEST_CHECK(!string->isRope() && string->is8Bit() == name.is8Bit());
+    };
+    auto turnWide = [&](JSString* string) {
+        AOT_TEST_CHECK(string->is8Bit());
+        takeCharactersOfName(string, copyIn16Bits(charactersOf(string)));
+    };
+    auto turnNarrow = [&](JSString* string) {
+        AOT_TEST_CHECK(!string->is8Bit());
+        takeCharactersOfName(string, String::make8Bit(charactersOf(string).span16()));
+    };
+    auto bufferOf = [&](JSString* text) {
+        AOT_TEST_CHECK(canGrowInPlace(instance, text));
+        return uncheckedDowncast<JSRopeString>(text)->substringBase();
+    };
+    auto append = [&](JSString* text, std::initializer_list<JSString*> pieces) {
+        JSString* grown = tryAppendToGrowingText(instance, text, std::span<JSString* const> { pieces.begin(), pieces.size() });
+        AOT_TEST_CHECK(grown);
+        return grown;
+    };
+
+    JSString* text = piece;
+    while (!canGrowInPlace(instance, text))
+        text = joinFromNativeCode(program, text, piece);
+    JSString* buffer = bufferOf(text);
+    String expected = charactersOf(text);
+    AOT_TEST_CHECK(text->is8Bit());
+
+    for (unsigned length : { 2u, 3u, 8u, 16u, 17u, 40u }) {
+        JSString* part = makeNarrow(length);
+        JSString* joined = jsString(realm, text, part);
+        expected = makeString(expected, charactersOf(part), "ab"_s);
+        turnWide(part);
+        AOT_TEST_CHECK(joined->isNonSubstringRope() && joined->is8Bit());
+        text = append(joined, { piece });
+        AOT_TEST_CHECK(text->is8Bit() && bufferOf(text) == buffer && charactersOf(text) == expected);
+    }
+
+    {
+        JSString* first = makeNarrow(17);
+        JSString* second = makeNarrow(40);
+        JSString* third = makeNarrow(5);
+        JSString* added = jsString(realm, jsString(realm, first, piece), jsString(realm, second, third, first));
+        JSString* handedOver = jsString(realm, jsString(realm, third, second), piece);
+        JSString* joined = jsString(realm, text, added);
+        expected = makeString(expected, charactersOf(added), charactersOf(handedOver));
+        for (JSString* leaf : { first, second, third })
+            turnWide(leaf);
+        AOT_TEST_CHECK(joined->is8Bit() && handedOver->is8Bit() && handedOver->isNonSubstringRope());
+        text = append(joined, { handedOver });
+        AOT_TEST_CHECK(text->is8Bit() && bufferOf(text) == buffer && charactersOf(text) == expected);
+        text = append(text, { third });
+        AOT_TEST_CHECK(!text->is8Bit() && bufferOf(text) != buffer && charactersOf(text) == makeString(expected, charactersOf(third)));
+    }
+
+    {
+        text = joinFromNativeCode(program, piece, piece);
+        while (!canGrowInPlace(instance, text))
+            text = joinFromNativeCode(program, text, piece);
+        buffer = bufferOf(text);
+        expected = charactersOf(text);
+        JSString* whole = makeNarrow(40);
+        JSString* cut = jsSubstring(realm, whole, 3, 30);
+        JSString* other = jsSubstring(realm, whole, 20, 19);
+        JSString* joined = jsString(realm, text, cut);
+        expected = makeString(expected, charactersOf(cut), charactersOf(other), charactersOf(cut));
+        turnWide(whole);
+        AOT_TEST_CHECK(cut->isSubstring() && cut->is8Bit() && other->isSubstring() && other->is8Bit());
+        text = append(joined, { other, cut });
+        AOT_TEST_CHECK(text->is8Bit() && bufferOf(text) == buffer && charactersOf(text) == expected);
+    }
+
+    {
+        JSString* rope = makeNarrow(17);
+        expected = charactersOf(rope);
+        for (unsigned additions = 0; additions < minAdditionsToGrowingText; ++additions) {
+            JSString* part = makeNarrow(17 + additions % 3);
+            rope = jsString(realm, rope, part);
+            expected = makeString(expected, charactersOf(part));
+            turnWide(part);
+        }
+        AOT_TEST_CHECK(rope->is8Bit() && !canGrowInPlace(instance, rope));
+        text = append(rope, { piece });
+        AOT_TEST_CHECK(text->is8Bit() && canGrowInPlace(instance, text) && charactersOf(text) == makeString(expected, "ab"_s));
+    }
+
+    {
+        const char16_t beyondLatin1[] = { 0x2713, 0x2713 };
+        text = joinFromNativeCode(program, text, jsNontrivialString(vm, String { std::span<const char16_t> { beyondLatin1 } }));
+        buffer = bufferOf(text);
+        expected = charactersOf(text);
+        AOT_TEST_CHECK(!text->is8Bit());
+        JSString* narrow = makeNarrow(17);
+        JSString* turnsWide = makeNarrow(18);
+        JSString* turnsNarrow = makeWide(19);
+        JSString* cut = jsSubstring(realm, turnsNarrow, 2, 15);
+        JSString* added = jsString(realm, jsString(realm, narrow, turnsWide), jsString(realm, turnsNarrow, cut));
+        JSString* joined = jsString(realm, text, added);
+        expected = makeString(expected, charactersOf(added), charactersOf(cut), charactersOf(turnsNarrow));
+        turnWide(turnsWide);
+        turnNarrow(turnsNarrow);
+        AOT_TEST_CHECK(cut->isSubstring() && !cut->is8Bit());
+        text = append(joined, { cut, turnsNarrow });
+        AOT_TEST_CHECK(!text->is8Bit() && bufferOf(text) == buffer && charactersOf(text) == expected);
+    }
 }
 
 static void checkPollThrowsDeferredTerminationAfterTheDeferral(LoadedProgram& program)
@@ -437,7 +621,6 @@ static void checkPollThrowsDeferredTerminationAfterTheDeferral(LoadedProgram& pr
     vm.clearHasTerminationRequest();
 }
 
-// No collection has run inside the polled call.
 static void checkPollInCallStubLeavesPendingOutOfMemoryError(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -450,6 +633,129 @@ static void checkPollInCallStubLeavesPendingOutOfMemoryError(LoadedProgram& prog
     vm.traps().setNeedsOutOfMemoryError(false);
 }
 
+static void checkCallsAreCounted(LoadedProgram& program)
+{
+    const RuntimeCounts* counts = program.vm().aotState().counts.get();
+    AOT_TEST_CHECK(counts);
+    AOT_TEST_CHECK(countsCallsOf(Entry::operationAOTValueAdd) && countsCallsOf(Entry::operationAOTValueSub));
+    AOT_TEST_CHECK(!countsCallsOf(Entry::HandleException));
+    uint64_t additions = counts->numberOfCalls(Entry::operationAOTValueAdd);
+    uint64_t subtractions = counts->numberOfCalls(Entry::operationAOTValueSub);
+    checkCallsThroughRuntimeTable(program);
+    AOT_TEST_CHECK(counts->numberOfCalls(Entry::operationAOTValueAdd) == additions + 2);
+    AOT_TEST_CHECK(counts->numberOfCalls(Entry::operationAOTValueSub) == subtractions);
+}
+
+static void checkCallsAreNotCounted(LoadedProgram& program)
+{
+    AOT_TEST_CHECK(!Options::aotCountsPath());
+    AOT_TEST_CHECK(!program.vm().aotState().counts);
+    auto add = untagCFunctionPtr<decltype(&operationAOTValueAdd), OperationPtrTag>(entryIn(program.vm(), Entry::operationAOTValueAdd));
+    AOT_TEST_CHECK(add == &operationAOTValueAdd);
+}
+
+static void checkVMWithoutImageCounts(LoadedProgram&)
+{
+    Thread::create("VM without an image"_s, [] {
+        Image::useNoneOnThisThread();
+        RefPtr<VM> vm = VM::create();
+        JSLockHolder locker(*vm);
+        const RuntimeCounts* counts = vm->aotState().counts.get();
+        AOT_TEST_CHECK(!vm->hasCompiledCode() && counts);
+        JSGlobalObject* realm = JSGlobalObject::create(*vm, JSGlobalObject::createStructure(*vm, jsNull()));
+        uint64_t functions = counts->valueOf(RuntimeCounterID::InterpretedFunctionCode);
+        NakedPtr<Exception> exception;
+        evaluate(realm, makeSource("(function () { return 1; })()"_s, SourceOrigin { }, SourceTaintedOrigin::Untainted), JSValue(), exception);
+        AOT_TEST_CHECK(!exception);
+        AOT_TEST_CHECK(counts->valueOf(RuntimeCounterID::InterpretedGlobalCode) == 1);
+        AOT_TEST_CHECK(counts->valueOf(RuntimeCounterID::InterpretedFunctionCode) > functions);
+        vm = nullptr;
+    })->waitForCompletion();
+}
+
+static String textOfCounts(const String& path)
+{
+    auto bytes = FileSystem::readEntireFile(path);
+    return bytes ? String::fromUTF8(bytes->span()) : String();
+}
+
+static unsigned numberOfLinesThatEndWith(const String& text, ASCIILiteral end)
+{
+    unsigned number = 0;
+    for (StringView line : StringView(text).split('\n'))
+        number += line.endsWith(end);
+    return number;
+}
+
+static String runChildThatCounts(ASCIILiteral test, const String& suffixOfCountsPath = emptyString())
+{
+    TemporaryFile image(".image"_s, compileProgramText(programText).span());
+    TemporaryFile counts(".counts"_s, { });
+    ChildProcessLauncher launcher(String(programPath()), { });
+    Vector<String> arguments {
+        String(nativeSubcommandName), String(singleProcessFlag), String(test),
+        makeString("--aotImagePath="_s, image.path()), makeString("--aotCountsPath="_s, counts.path(), suffixOfCountsPath),
+    };
+    ChildProcessResult result = launcher.run(arguments.span());
+    if (!result.exitedWith(0)) {
+        dataLogLn(result.output);
+        dataLogLn("The process that counts ", result.description());
+        failNativeTest(__FILE__, __LINE__, test.characters());
+    }
+    return textOfCounts(counts.path());
+}
+
+static void callsAreCountedUnderCountsPath()
+{
+    if (Options::aotImagePath()) {
+        runWithLoadedProgram(callsAreCountedTest, programText, checkCallsAreCounted);
+        return;
+    }
+    String text = runChildThatCounts(callsAreCountedTest);
+    AOT_TEST_CHECK(numberOfLinesThatEndWith(text, "\toperation:operationAOTValueAdd"_s) == 1);
+    AOT_TEST_CHECK(numberOfLinesThatEndWith(text, "0\toperation:operationAOTValueSub"_s) == 1);
+    AOT_TEST_CHECK(!numberOfLinesThatEndWith(text, "\toperation:HandleException"_s));
+    AOT_TEST_CHECK(numberOfLinesThatEndWith(text, "\tcounter:InterpretedFunctionCode"_s) == 1);
+}
+
+static void callsAreNotCountedByDefault()
+{
+    runWithLoadedProgram(callsAreNotCountedTest, programText, checkCallsAreNotCounted);
+}
+
+static void countsAreWrittenOnceWhenProcessExits()
+{
+    if (Options::aotImagePath()) {
+        runWithLoadedProgram(countsAtExitTest, programText, [](LoadedProgram&) {
+            AOT_TEST_CHECK(textOfCounts(String::fromUTF8(byteCast<char>(Options::aotCountsPath()))).isEmpty());
+            exit(EXIT_SUCCESS);
+        });
+        return;
+    }
+    AOT_TEST_CHECK(numberOfLinesThatEndWith(runChildThatCounts(countsAtExitTest), "\tcounter:InterpretedFunctionCode"_s) == 1);
+}
+
+static void countsPathNamesProcess()
+{
+    if (Options::aotImagePath()) {
+        runWithLoadedProgram(countsPathNamesProcessTest, programText, [](LoadedProgram&) { });
+        String written = makeStringByReplacingAll(String::fromUTF8(byteCast<char>(Options::aotCountsPath())), "%p"_s, String::number(getCurrentProcessID()));
+        AOT_TEST_CHECK(numberOfLinesThatEndWith(textOfCounts(written), "\tcounter:InterpretedFunctionCode"_s) == 1);
+        AOT_TEST_CHECK(FileSystem::deleteFile(written));
+        return;
+    }
+    AOT_TEST_CHECK(runChildThatCounts(countsPathNamesProcessTest, ".%p"_s).isEmpty());
+}
+
+static void vmWithoutImageCountsWhatItInterprets()
+{
+    if (Options::aotImagePath()) {
+        runWithLoadedProgram(vmWithoutImageCountsTest, programText, checkVMWithoutImageCounts);
+        return;
+    }
+    AOT_TEST_CHECK(numberOfLinesThatEndWith(runChildThatCounts(vmWithoutImageCountsTest), "\tcounter:InterpretedGlobalCode"_s) == 2);
+}
+
 static void unusedEntriesTrap()
 {
     runWithLoadedProgram(unusedEntriesTrapTest, programText, checkUnusedEntriesTrap);
@@ -458,11 +764,6 @@ static void unusedEntriesTrap()
 static void unmappedArgumentsComeFromFrameAndRest()
 {
     runWithLoadedProgram(unmappedArgumentsTest, programText, checkUnmappedArgumentsOfEveryCount);
-}
-
-static void readsOfArgumentsThatWereNeverCreated()
-{
-    runWithLoadedProgram(readsOfArgumentsTest, programText, checkReadsOfArguments);
 }
 
 static void appendElements()
@@ -475,11 +776,6 @@ static void arrayLiteralsArePristineAndContiguous()
     runWithLoadedProgram(arrayLiteralsTest, programText, checkArrayLiterals);
 }
 
-static void listsOfMembersHaveTheStorageThatArraysOfTheRealmHave()
-{
-    runWithLoadedProgram(listsOfMembersTest, programText, checkListsOfMembers);
-}
-
 static void realmWithImageThatBeginsToHaveABadTimeStops()
 {
     runWithLoadedProgramThatStops(badTimeStopsTest, programText, haveABadTime, "AOT: the realm of a compiled program is having a bad time"_s);
@@ -490,7 +786,16 @@ static void pushesAndHoles()
     runWithLoadedProgram(pushesAndHolesTest, programText, checkPushesAndHoles);
 }
 
-// A build with assertions checks in the child that somebody looks for an exception behind every call that may throw.
+static void textThatIsAddedToGrowsInBuffer()
+{
+    runWithLoadedProgram(growingTextTest, programText, checkTextThatIsAddedToGrowsInBuffer);
+}
+
+static void growingTextTakesPartsWhoseCharactersHaveChangedWidth()
+{
+    runWithLoadedProgram(partsOfOtherWidthTest, programText, checkGrowingTextTakesPartsWhoseCharactersHaveChangedWidth);
+}
+
 static void pollThrowsDeferredTerminationAfterTheDeferral()
 {
     if (Options::aotImagePath()) {
@@ -517,38 +822,9 @@ static void pollInCallStubLeavesPendingOutOfMemoryError()
     runWithLoadedProgram(pollInCallStubTest, programText, checkPollInCallStubLeavesPendingOutOfMemoryError);
 }
 
-static void callsAreNotCountedByDefault()
+static void operationsAreCalledThroughRuntimeTable()
 {
-    runWithLoadedProgram(callsAreNotCountedTest, programText, checkCallsAreNotCounted);
-}
-
-static void callsAreCountedWithCountsPath()
-{
-    if (Options::aotImagePath()) {
-        runWithLoadedProgram(callsAreCountedTest, programText, checkCallsAreCounted);
-        return;
-    }
-
-    TemporaryFile image(".image"_s, compileProgramText(programText).span());
-    TemporaryFile counts(".counts"_s, { });
-    ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments {
-        String(nativeSubcommandName), String(singleProcessFlag), String(callsAreCountedTest),
-        makeString("--aotImagePath="_s, image.path()), makeString("--aotCountsPath="_s, counts.path()),
-    };
-    ChildProcessResult result = launcher.run(arguments.span());
-    if (!result.exitedWith(0)) {
-        dataLogLn(result.output);
-        dataLogLn("The process that counts calls ", result.description());
-        failNativeTest(__FILE__, __LINE__, callsAreCountedTest.characters());
-    }
-}
-
-static void callCountIsZeroWithoutImage()
-{
-    Realms realms;
-    AOT_TEST_CHECK(!realms.vm().aotState().runtimeTable);
-    AOT_TEST_CHECK(!operationCallCount(realms.vm(), Entry::operationAOTValueAdd));
+    runWithLoadedProgram(callsThroughRuntimeTableTest, programText, checkCallsThroughRuntimeTable);
 }
 
 std::span<const NativeTest> runtimeOperationTests()
@@ -558,21 +834,23 @@ std::span<const NativeTest> runtimeOperationTests()
         { "operationMayShareNameWithRuntimeOperation"_s, operationMayShareNameWithRuntimeOperation },
         { "entryWithoutOperationHasNone"_s, entryWithoutOperationHasNone },
         { "collectingOperationNeedsCollectingEntry"_s, collectingOperationNeedsCollectingEntry },
-        { "runtime-operations/entries-are-named-after-what-they-hold"_s, entriesAreNamedAfterWhatTheyHold },
         { "runtime-operations/entry-names-are-distinct"_s, entryNamesAreDistinct },
         { unusedEntriesTrapTest, unusedEntriesTrap },
-        { callsAreNotCountedTest, callsAreNotCountedByDefault },
-        { callsAreCountedTest, callsAreCountedWithCountsPath },
-        { "runtime-operations/call-count-is-zero-without-image"_s, callCountIsZeroWithoutImage },
+        { callsThroughRuntimeTableTest, operationsAreCalledThroughRuntimeTable },
         { unmappedArgumentsTest, unmappedArgumentsComeFromFrameAndRest },
-        { readsOfArgumentsTest, readsOfArgumentsThatWereNeverCreated },
         { appendElementsTest, appendElements },
         { arrayLiteralsTest, arrayLiteralsArePristineAndContiguous },
-        { listsOfMembersTest, listsOfMembersHaveTheStorageThatArraysOfTheRealmHave },
         { badTimeStopsTest, realmWithImageThatBeginsToHaveABadTimeStops },
         { pushesAndHolesTest, pushesAndHoles },
+        { growingTextTest, textThatIsAddedToGrowsInBuffer },
+        { partsOfOtherWidthTest, growingTextTakesPartsWhoseCharactersHaveChangedWidth },
         { deferredTerminationTest, pollThrowsDeferredTerminationAfterTheDeferral },
         { pollInCallStubTest, pollInCallStubLeavesPendingOutOfMemoryError },
+        { callsAreCountedTest, callsAreCountedUnderCountsPath },
+        { callsAreNotCountedTest, callsAreNotCountedByDefault },
+        { countsAtExitTest, countsAreWrittenOnceWhenProcessExits },
+        { countsPathNamesProcessTest, countsPathNamesProcess },
+        { vmWithoutImageCountsTest, vmWithoutImageCountsWhatItInterprets },
     };
     return tests;
 }

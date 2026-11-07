@@ -52,15 +52,12 @@ void generateNewPromise(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTNewPromise, { .returns = OperationCall::Returns::Value, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false });
 }
 
-// The promise, the handler where the operation takes it, the derived promise.
 StubSignature signatureOfPromiseThen(StubKey key)
 {
     const bool isOnFulfilled = static_cast<PromiseHandler>(key.form()) == PromiseHandler::OnFulfilled;
     return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(isOnFulfilled ? StubRegister::A2 : StubRegister::A3), gprOf(StubRegister::A4) });
 }
 
-// JSPromise::performPromiseThen while no async context is to be captured. A pending promise without a reaction takes the handler in its own two words: setInlineHandlerReaction.
-// A fulfilled promise queues the job that calls onFulfilled.
 void generatePromiseThen(StubAssembler& jit)
 {
     const bool isOnFulfilled = static_cast<PromiseHandler>(jit.key().form()) == PromiseHandler::OnFulfilled;
@@ -91,7 +88,6 @@ void generatePromiseThen(StubAssembler& jit)
 
     takesNoInlineReaction.link(&jit);
     if (isOnFulfilled) {
-        // queueMicrotask(vm, PromiseReactionJob, Fulfilled, the derived promise, the handler, the value, undefined).
         const JobRegisters job { jit.allocateScratch(StubRegister::T9), jit.allocateScratch(StubRegister::R0), jit.allocateScratch(StubRegister::T12), word };
         RELEASE_ASSERT(noOverlap(promise, handler, derived, other, job.queue, job.slot, job.next, job.scratch, instanceGPR));
         emitBranchUnlessHolds(jit, awaitedIsFulfilled, { InvalidGPRReg, promise, word, other }, needsOperation);
@@ -143,7 +139,6 @@ void emitFulfillPromise(StubAssembler& jit, GPRReg promise, GPRReg value, GPRReg
         jit.lshift64(word, TrustedImm32(numberOfFlagBits), other);
         jit.urshift64(TrustedImm32(numberOfFlagBits), other);
     };
-    // The flags that a settled promise keeps, with the new state. Then the two words.
     auto settle = [&] {
         jit.move(TrustedImm64(static_cast<int64_t>(firstFunctionIsCalledBit)), other);
         jit.and64(other, word);
@@ -163,13 +158,11 @@ void emitFulfillPromise(StubAssembler& jit, GPRReg promise, GPRReg value, GPRReg
     JumpList isFulfilled;
     isFulfilled.append(jit.jump());
 
-    // The flags say that the promise is pending and handled and which reaction it has. The resolving functions may have been made and called or not.
     hasReaction.link(&jit);
     jit.urshift64(word, TrustedImm32(promiseFlagsShift), other);
     jit.and32(TrustedImm32(~static_cast<int32_t>(JSPromise::isFirstResolvingFunctionCalledFlag)), other);
     Jump hasNoHandler = jit.branch32(CCallHelpers::NotEqual, other, TrustedImm32(flagsOfReaction(JSPromise::InlineReactionKind::FulfillHandler)));
 
-    // settleInlineHandler: queueMicrotask(vm, PromiseReactionJob, Fulfilled, the promise that the handler's result settles, the handler, the value).
     emitReserveJob(jit, job, needsEngine);
     jit.load64(Address(promise, JSPromise::offsetOfPacked()), word);
     loadCellOfReaction();
@@ -182,7 +175,6 @@ void emitFulfillPromise(StubAssembler& jit, GPRReg promise, GPRReg value, GPRReg
     emitPublishJob(jit, InternalMicrotask::PromiseReactionJob, JSPromise::Status::Fulfilled, job);
     isFulfilled.append(jit.jump());
 
-    // settleInlineInternalMicrotask for the three tasks that resume compiled code: queueMicrotask(vm, task, Fulfilled, undefined, the value, the coroutine, the async context it captured).
     hasNoHandler.link(&jit);
     jit.and32(TrustedImm32(JSPromise::inlineReactionMicrotaskMask), other, task);
     jit.and32(TrustedImm32(~static_cast<int32_t>(JSPromise::inlineReactionMicrotaskMask | JSPromise::inlineReactionAsyncContextFlag)), other);
@@ -192,7 +184,6 @@ void emitFulfillPromise(StubAssembler& jit, GPRReg promise, GPRReg value, GPRReg
         resumesCompiledCode.append(jit.branch32(CCallHelpers::Equal, task, TrustedImm32(static_cast<int32_t>(resuming) << JSPromise::inlineReactionMicrotaskShift)));
     needsEngine.append(jit.branch32(CCallHelpers::NotEqual, task, TrustedImm32(static_cast<int32_t>(InternalMicrotask::AsyncGeneratorYieldAwaited) << JSPromise::inlineReactionMicrotaskShift)));
     resumesCompiledCode.link(&jit);
-    // Without the flag the cell would be the job's first argument. These tasks have none.
     loadCellOfReaction();
     Jump hasNoCell = jit.branchTest64(CCallHelpers::Zero, other);
     jit.lshift64(word, TrustedImm32(1), other);
@@ -208,7 +199,6 @@ void emitFulfillPromise(StubAssembler& jit, GPRReg promise, GPRReg value, GPRReg
     jit.store64(value, argumentOfJob(job.slot, 1));
     jit.load64(Address(promise, JSPromise::offsetOfSlot()), other);
     jit.store64(other, argumentOfJob(job.slot, 2));
-    // The first word of the job: the realm, the task and the status.
     jit.urshift64(word, TrustedImm32(promiseFlagsShift + JSPromise::inlineReactionMicrotaskShift), other);
     jit.and32(TrustedImm32(JSPromise::inlineReactionMicrotaskMask >> JSPromise::inlineReactionMicrotaskShift), other);
     jit.or32(TrustedImm32(static_cast<int32_t>(JSPromise::Status::Fulfilled) << 8), other);
@@ -227,7 +217,6 @@ void emitRunPromiseAllResolveJob(StubAssembler& jit, const HeadJobRegisters& hea
     const GPRReg butterfly = word;
     RELEASE_ASSERT(noOverlap(queue, slot, word, context, values, value, index, scratch, instanceGPR));
 
-    // The array was made with a place for every element. Nobody but the jobs has seen it.
     auto loadOperands = [&](JumpList* otherwise) {
         jit.load64(argumentOfJob(slot, 0), context);
         jit.load64(Address(context, JSPromiseCombinatorsGlobalContext::offsetOfValues()), values);
@@ -249,7 +238,6 @@ void emitRunPromiseAllResolveJob(StubAssembler& jit, const HeadJobRegisters& hea
     needsNoBarrier.link(&jit);
     Jump isNotLast = jit.branch64(CCallHelpers::NotEqual, Address(context, JSPromiseCombinatorsGlobalContext::offsetOfRemainingElementsCount()), TrustedImm32(1));
 
-    // The last one: the promise is fulfilled with the array, which takes every register. Nobody looks at the array before the element is in it.
     const GPRReg promise = context;
     jit.load64(Address(context, JSPromiseCombinatorsGlobalContext::offsetOfPromise()), promise);
     emitFulfillPromise(jit, promise, values, scratch, { queue, slot, value, word }, isLeftToJobLoop);
@@ -267,7 +255,6 @@ void emitRunPromiseAllResolveJob(StubAssembler& jit, const HeadJobRegisters& hea
     isDone.link(&jit);
 }
 
-// The function of the frame pointer returns next, and the waiter is the one SavedFrame that waits for its result, which is no thenable.
 static void emitHandOverToWaiter(StubAssembler& jit, GPRReg waiter, GPRReg value, const JobRegisters& registers, JumpList& needsOperation, const ScopedLambda<void(GPRReg)>& loadAsyncContext, const ScopedLambda<void()>& beforeHandOver)
 {
     const AwaitRegisters conditionRegisters { InvalidGPRReg, InvalidGPRReg, registers.queue, registers.slot };
@@ -292,7 +279,7 @@ static void emitHandOverToWaiter(StubAssembler& jit, GPRReg waiter, GPRReg value
     isHandedOver.link(&jit);
 }
 
-StubSignature signatureOfReturnAsyncResult(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+StubSignature signatureOfReturnAsyncResult(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }).fillingOperandInFront(1); }
 
 void generateReturnAsyncResult(StubAssembler& jit)
 {
@@ -308,7 +295,6 @@ void generateReturnAsyncResult(StubAssembler& jit)
     RELEASE_ASSERT(result == gprOf(firstStubOperandRegister));
 
     JumpList slowCases;
-    // The driver as the function got it: undefined where the caller awaits the call itself. The operation takes no promise as null.
     Jump hasPromise = jit.branchIfCell(promise);
     jit.move(TrustedImm32(0), promise);
     emitBranchIfMayBeThenable(jit, value, structure, scratch, slowCases);
@@ -318,7 +304,6 @@ void generateReturnAsyncResult(StubAssembler& jit)
     jit.move(value, result);
     jit.returnToCaller();
 
-    // The caller has awaited the call without a promise in between.
     hasBeenSuspended.link(&jit);
     jit.loadPtr(Address(fp), scratch);
     jit.loadPtr(Address(scratch, static_cast<int>(CallFrameSlot::callee) * static_cast<int>(sizeof(Register))), scratch);
@@ -343,14 +328,12 @@ void generateReturnAsyncResult(StubAssembler& jit)
     valueIsNotCell.link(&jit);
     jit.returnToCaller();
 
-    // The barrier takes its owner in the result register and preserves it.
     needsBarrier.link(&jit);
     jit.emitFunctionPrologue();
     jit.callStub(writeBarrier());
     jit.emitFunctionEpilogue();
     jit.returnToCaller();
 
-    // The one reaction of the promise resumes a function of this instance. What follows is JSPromise::tryFulfillTakingInlineJob, or fulfillPromise where the job is queued.
     auto emitHandOverToWaiterOfPromise = [&](const ScopedLambda<void(GPRReg)>& loadAsyncContext) {
         emitBranchIfMayBeThenable(jit, value, structure, scratch, slowCases);
         jit.load64(Address(promise, JSPromise::offsetOfSlot()), waiter);
@@ -370,7 +353,6 @@ void generateReturnAsyncResult(StubAssembler& jit)
         jit.move(TrustedImm64(JSValue::ValueUndefined), asyncContext);
     });
 
-    // The same reaction with the async context that the waiter captured in the place of the cell.
     hasOtherBits.link(&jit);
     constexpr unsigned numberOfFlagBits = 64 - promiseFlagsShift;
     jit.urshift64(TrustedImm32(promiseFlagsShift), scratch);
@@ -381,7 +363,6 @@ void generateReturnAsyncResult(StubAssembler& jit)
         jit.urshift64(TrustedImm32(numberOfFlagBits), asyncContext);
     });
 
-    // Not a tail call: the operation finds the async function's frame as the caller of the stub's frame.
     slowCases.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTResolvePromiseOrReturnResult, { });
 }

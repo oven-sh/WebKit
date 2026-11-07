@@ -1,0 +1,16 @@
+# `view.length` in a test run. %TypedArray%.prototype hangs under no name of the global object: one comes to it from Int32Array.prototype alone. In a test run the lock of a member that a test may replace is left to the
+# program: where nobody writes the member it is locked at the start and is a constant in the code. The members of this prototype were left out of that, so every `view.length` of a test run was a lookup by name, in every
+# turn of a loop, and ran other code as far as the walk knew, while the run time refused every store to them all the same.
+# PROGRAM-OF: getter-read-off-an-object-as-its-class-makes-it.ir
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: walk f3 f4 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: PropGet
+# CHECK-NOT: IsPristine
+# CHECK: = GetTypedArrayLength
+# CHECK-LABEL: code f4:Body
+# CHECK: = IsPristine {{*}}builtinClass=Float64Array
+# CHECK: = GetTypedArrayLength
+# CHECK: = PropGet {{*}}key="length"
+# RUN(LOCKS): locks
+# LOCKS: locked TypedArrayPrototypeLength constant

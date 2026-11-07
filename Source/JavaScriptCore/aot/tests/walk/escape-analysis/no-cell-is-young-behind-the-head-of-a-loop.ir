@@ -1,0 +1,70 @@
+# the poll at the head of the loop may collect, and nothing else between the making and the store does: the store in the loop keeps its barrier
+# neither object reaches code that nobody has seen, so Link proves the field filled and the layout closed: the store in the loop is typed with nothing known of the cell
+# function turns(v) { const o = { x: v }; for (let i = 0; i < 10; i++) o.x = v; return o.x; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject
+# CHECK: = LoopHint
+# CHECK: = PutSlot{{*}}key="x"
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEVER-NOT: OwnerIsYoung
+# the store stands above the poll of the turn and above what lays the cell in a variable: both come round to it, so the head itself ends the cell
+# function published(v) { const o = { x: v }; let i = 0; do { o.x = v; kept = o; i++; } while (i < 10); return v; }
+# RUN(ROUND): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# ROUND-LABEL: code f2:Body
+# ROUND: isLoopHead=true
+# ROUND: = PutSlot{{*}}key="x"
+# ROUND: = LoopHint
+# RUN(ROUNDNOT): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# ROUNDNOT-NOT: OwnerIsYoung
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="kept" module=m0 declared={type=anything}
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    Return v5
+}
+function f1 name="turns" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Integer integer=0
+    v4 = Integer integer=10
+    Jump -> next b1(v3)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v4
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    PropSet v2, v0 key="x" mode=Strict
+    v9 = Increment v5
+    Jump -> next b1(v9)
+  b3():
+    v10 = PropGet v2 key="x"
+    Return v10
+}
+function f2 name="published" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Integer integer=0
+    v4 = Integer integer=10
+    Jump -> next b1(v3)
+  b1(v5):
+    PropSet v2, v0 key="x" mode=Strict
+    PutModuleVariable v2 variable=g0
+    LoopHint
+    v9 = Increment v5
+    v10 = Less v9, v4
+    Branch v10 -> taken b1(v9), notTaken b2()
+  b2():
+    Return v0
+}

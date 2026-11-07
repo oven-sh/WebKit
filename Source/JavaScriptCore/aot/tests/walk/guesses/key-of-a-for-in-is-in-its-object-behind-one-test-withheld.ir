@@ -1,0 +1,7 @@
+# the same functions with guesses withheld: both questions are asked as they are written
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = ElemHas
+# RUN(NEVER): walk f1 f2 mechanisms=none+TypedOperations
+# NEVER-NOT: IsEnumeratorCurrent
+# PROGRAM-OF: key-of-a-for-in-is-in-its-object-behind-one-test.ir

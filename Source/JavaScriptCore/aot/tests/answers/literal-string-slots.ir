@@ -1,0 +1,141 @@
+# const first = { kind: "num", value: 3 }; const second = { kind: "neg", value: 4 }; const third = { kind: "add", left: 1 };
+# function describe(node) { if (node.kind === "num") return "a number"; if (node.kind === "neg") return "a negation"; return "neither"; }
+# function show(node) { report(node.kind); report(node.kind + "!"); report(node.kind.length); }
+# function kindOf(any) { return any.kind; }
+# function retag(node, text) { if (text === "num" || text === "neg") node.kind = text; }
+# report(describe(first)); report(describe(second)); show(first); show(second); report(kindOf(first)); report(kindOf(other)); report(JSON.stringify(third)); report(describe(third));
+# const made = { kind: "neg", value: 5 }; retag(made, glued); report(describe(made));
+# Written strings are all that reaches `kind`. Whoever wants the string gets it: the hook, a sum, a length, a read by name beside an object of the shell, native code.
+# `glued` is a string that the shell has put together, so it is no cell of the program's texts. Stored behind the two comparisons, it equals "num" like any other.
+# RUN: run-in-shell globalThis.report = value => print(typeof value + " " + value); globalThis.other = { kind: "else" }; globalThis.glued = ["nu", "m"].join("");
+# CHECK: string a number
+# CHECK-NEXT: string a negation
+# CHECK-NEXT: string num
+# CHECK-NEXT: string num!
+# CHECK-NEXT: number 3
+# CHECK-NEXT: string neg
+# CHECK-NEXT: string neg!
+# CHECK-NEXT: number 3
+# CHECK-NEXT: string num
+# CHECK-NEXT: string else
+# CHECK-NEXT: string {"kind":"add","left":1}
+# CHECK-NEXT: string neither
+# CHECK-NEXT: string a number
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 fields=[{key="kind" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="value" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 fields=[{key="kind" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="left" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="num"
+    v3 = Integer integer=3
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = String string="neg"
+    v7 = Integer integer=4
+    v8 = NewObject -, v6, v7 layout=L0 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = String string="add"
+    v11 = Integer integer=1
+    v12 = NewObject -, v10, v11 layout=L1 fields=[0, 1]
+    v13 = FinishObject v12
+    v14 = NewClosure function=f1
+    v15 = Call v14, -, v5 calleeName="describe" [isNeverInlined]
+    v16 = Call v1, -, v15 calleeName="report"
+    v17 = Call v14, -, v9 calleeName="describe" [isNeverInlined]
+    v18 = Call v1, -, v17 calleeName="report"
+    v19 = NewClosure function=f2
+    v20 = Call v19, -, v5 calleeName="show" [isNeverInlined]
+    v21 = Call v19, -, v9 calleeName="show" [isNeverInlined]
+    v22 = NewClosure function=f3
+    v23 = Call v22, -, v5 calleeName="kindOf" [isNeverInlined]
+    v24 = Call v1, -, v23 calleeName="report"
+    v25 = PropGet v0 key="other" [isFreeName]
+    v26 = Call v22, -, v25 calleeName="kindOf" [isNeverInlined]
+    v27 = Call v1, -, v26 calleeName="report"
+    v28 = Builtin builtin=JSON
+    v29 = PropGet v28 key="stringify"
+    v30 = Convert v29 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v31 = Call v30, v28, v13 calleeKey="stringify" calleeName="JSON.stringify"
+    v32 = Call v1, -, v31 calleeName="report"
+    v33 = Call v14, -, v13 calleeName="describe" [isNeverInlined]
+    v34 = Call v1, -, v33 calleeName="report"
+    v35 = Integer integer=5
+    v36 = NewObject -, v6, v35 layout=L0 fields=[0, 1]
+    v37 = FinishObject v36
+    v38 = NewClosure function=f4
+    v39 = PropGet v0 key="glued" [isFreeName]
+    v40 = Call v38, -, v37, v39 calleeName="retag" [isNeverInlined]
+    v41 = Call v14, -, v37 calleeName="describe" [isNeverInlined]
+    v42 = Call v1, -, v41 calleeName="report"
+    v43 = Undefined
+    Return v43
+}
+function f1 name="describe" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="kind"
+    v2 = String string="num"
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = String string="a number"
+    Return v4
+  b2():
+    v5 = PropGet v0 key="kind"
+    v6 = String string="neg"
+    v7 = StrictEq v5, v6
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = String string="a negation"
+    Return v8
+  b4():
+    v9 = String string="neither"
+    Return v9
+}
+function f2 name="show" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="report" [isFreeName]
+    v3 = PropGet v0 key="kind"
+    v4 = Call v2, -, v3 calleeName="report"
+    v5 = PropGet v1 key="report" [isFreeName]
+    v6 = PropGet v0 key="kind"
+    v7 = String string="!"
+    v8 = Add v6, v7
+    v9 = Call v5, -, v8 calleeName="report"
+    v10 = PropGet v1 key="report" [isFreeName]
+    v11 = PropGet v0 key="kind"
+    v12 = PropGet v11 key="length"
+    v13 = Call v10, -, v12 calleeName="report"
+    v14 = Undefined
+    Return v14
+}
+function f3 name="kindOf" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="kind"
+    Return v1
+}
+function f4 name="retag" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="num"
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    Jump -> next b4(v4)
+  b2():
+    v5 = String string="neg"
+    v6 = StrictEq v1, v5
+    Branch v6 -> taken b3(| 0), notTaken b5()
+  b3(v7):
+    Jump -> next b4(v7)
+  b4(v8):
+    PropSet v0, v8 key="kind"
+    Jump -> next b5()
+  b5():
+    v10 = Undefined
+    Return v10
+}

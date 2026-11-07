@@ -1,0 +1,11 @@
+# the same function with typed operations withheld: each comparison is walked where it is written, and each operator branches on its left side
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = StrictEq
+# CHECK: Branch
+# CHECK: = StrictEq
+# CHECK: Branch
+# CHECK: = StrictEq
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: Switch
+# PROGRAM-OF: row-of-alternatives-that-answers-is-one-switch.ir

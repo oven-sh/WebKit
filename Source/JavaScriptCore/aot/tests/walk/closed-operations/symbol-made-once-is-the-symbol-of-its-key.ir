@@ -1,0 +1,61 @@
+# const depth = Symbol("depth"); class Point { x = 7; [depth] = 5 } function depthOf(point: Point) { return point[depth] } depthOf(new Point())
+# The call of Symbol runs once, so it gives the symbol that the image holds under the key of the field. Were it a symbol of its own, no look under it would find the field:
+# the value would lie beside its slot, and what the run time does for the holders of a field under a symbol (PropertyCaches::prepareHoldersBeforeLookupsUnder()) would never be done.
+# It is the same whatever is withheld.
+# RUN: walk f0 mechanisms=none
+# CHECK-LABEL: code f0:Body
+# CHECK: [[symbol]]: symbol("depth")@m0:0 {{*}} = KeyConstant key=symbol("depth")@m0:0
+# CHECK: PutModuleVariable [[symbol]] variable=g0
+# RUN(NEVER): walk f0 mechanisms=none
+# NEVER-NOT: calleeName="Symbol"
+# RUN(ALL): walk f0 mechanisms=all
+# ALL-LABEL: code f0:Body
+# ALL: = KeyConstant key=symbol("depth")@m0:0
+# RUN(NOCALL): walk f0 mechanisms=all
+# NOCALL-NOT: overload=Symbol
+# RUN(NOVALUE): walk f0 mechanisms=all
+# NOVALUE-NOT: calleeName="Symbol"
+
+layout L0 kind=Instance name="Point" module=m0 constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key=symbol("depth")@m0:0 declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+variable g0 module=m0 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=string|symbol flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="depth"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    v3 = Convert v2 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f1
+    v6 = NewClosure function=f2
+    v7 = NewClass v6 layout=L0
+    v8 = ToPropertyKey v3
+    PutModuleVariable v8 variable=g1
+    v10 = FinishClass v7 layout=L0
+    v11 = Construct v10 calleeName="Point"
+    v12 = Call v5, -, v11 calleeName="depthOf" [isNeverInlined]
+    v13 = Builtin builtin=GlobalThis
+    PropSet v13, v12 key="answer" mode=Strict
+    v15 = Undefined
+    Return v15
+}
+function f1 name="depthOf" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="Point" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0} illTypedCause=FromLooseType
+    v4 = Integer integer=7
+    PropDefine v3, v4 key="x"
+    v6 = GetModuleVariable variable=g1
+    v7 = Integer integer=5
+    ElemDefine v3, v6, v7
+    Return v3
+}
+entry module=m0

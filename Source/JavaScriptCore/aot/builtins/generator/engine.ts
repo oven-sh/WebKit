@@ -1,5 +1,3 @@
-// What WebKit's own build makes of the table: the files that the engine is compiled with, and a table for the programs that it links.
-// Nothing here reads a file of Bun's natives.
 import { join, resolve } from "node:path";
 import { loadSchema, type Schema } from "../../ir/generator/load.ts";
 import { buildModel } from "./build-model.ts";
@@ -31,15 +29,12 @@ const standInHostListName = "JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_DECL
 const standInHostOwnPropertiesName = "JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_OWN_PROPERTIES";
 
 export interface EngineCode {
-  /** What the engine is compiled with. Only the engine's declarations decide what is in it, whichever host the model has. */
   engine: Map<string, string>;
-  /** The table, as WebKit's own build compiles it. */
   table: Map<string, string>;
 }
 
 const singleRoot = (root: string): { Engine: string; Host: string } => ({ Engine: root, Host: root });
 
-/** `pathsLeftOut`: what this engine is built without, such as "ShadowRealm" where ENABLE(SHADOW_REALM) is off. */
 export async function collectEngine(
   javaScriptCore: string,
   problems: Problems,
@@ -69,6 +64,13 @@ export function engineFeaturesOf(declarations: readonly SourcedDeclaration[]): T
 
 export function emitEngineCode(model: TableModel, schema: Schema, features: readonly TableFeature[]): EngineCode {
   const ids = emitCppIds(model);
+  const otherFilesOfTable = new Map([
+    [arraysHeader, emitCppArraysHeader(model, engineListStampOf(ids))],
+    ["AOTBuiltinTableAttachments.cpp", emitCppAttachments(model, features)],
+    ["AOTBuiltinTableNames.cpp", emitCppNames(model)],
+    ["AOTBuiltinTableOverloads.cpp", emitCppOverloads(model)],
+    ["AOTBuiltinTableTypes.cpp", emitCppTypes(model)],
+  ]);
   return {
     engine: new Map([
       ["AOTBuiltinFeatures.h", emitCppFeatures(model, features)],
@@ -78,12 +80,8 @@ export function emitEngineCode(model: TableModel, schema: Schema, features: read
       ["AOTBuiltinTableWords.h", emitCppWords(schema)],
     ]),
     table: new Map([
-      [arraysHeader, emitCppArraysHeader(model, engineListStampOf(ids))],
-      ["AOTBuiltinTableAttachments.cpp", emitCppAttachments(model, features)],
-      ["AOTBuiltinTableBuiltins.cpp", emitCppBuiltins(model)],
-      ["AOTBuiltinTableNames.cpp", emitCppNames(model)],
-      ["AOTBuiltinTableOverloads.cpp", emitCppOverloads(model)],
-      ["AOTBuiltinTableTypes.cpp", emitCppTypes(model)],
+      ...otherFilesOfTable,
+      ["AOTBuiltinTableBuiltins.cpp", emitCppBuiltins(model, [...otherFilesOfTable.values()])],
     ]),
   };
 }

@@ -1,0 +1,77 @@
+# `this` of a class as a map of descriptors: the initializers of its fields have stored into it in a body of their own, in front of whatever the constructor stores.
+#   function Point() { this.x = 0; }
+#   class Props { late = { value: "text" }; constructor() { this.early = { value: 1 }; Object.defineProperties(Point.prototype, this); } }
+#   function read(point) { return point.late; }  new Props();  sink(read(new Point()));
+# When the scan took any object that the body makes for a map in sight, it named the keys that this body stores ("early") and dropped the record under no key:
+# `late` was held never to be defined on Point.prototype, and `typeof new Point().late` was folded to "undefined". SILENTLY: no check of the run time sees it.
+# RUN: link functions mechanisms=all
+# CHECK: function f2 callers-known
+# RUN(NEVER): link functions layouts mechanisms=all
+# NEVER-NOT: function f2 {{*}}result=undefined
+# NEVER-NOT: layout L1 {{*}}prototype-object-settled
+
+layout L0 kind=Instance name="Props" module=m0 constructor=f3 fields=[{key="late" declared={type=anything} flags=[IsRequired]}, {key="early" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="Point" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 module=m0 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="Point" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f3
+    v3 = NewClass v2 layout=L0
+    PutModuleVariable v3 variable=g1
+    v5 = FinishClass v3 layout=L0
+    v6 = Convert v5 declared={type=f3 flags=[IsFromCompiler]}
+    v7 = Construct v6 calleeName="Props"
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="sink" [isFreeName]
+    v10 = GetModuleVariable variable=g0
+    v11 = Construct v10 calleeName="Point"
+    v12 = Call v1, -, v11 calleeName="read"
+    v13 = Call v9, -, v12 calleeName="sink"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="Point" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="late"
+    Return v1
+}
+function f3 name="Props" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0}
+    v4 = CallDirect v3 function=f4
+    v5 = Integer integer=1
+    v6 = NewObject -, v5 layout=L2 fields=[0]
+    v7 = FinishObject v6
+    PropSet v3, v7 key="early"
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectDefineProperties
+    v11 = GetModuleVariable variable=g0
+    v12 = PropGet v11 key="prototype"
+    v13 = Call v10, v9, v12, v3 calleeName="Object.defineProperties"
+    Return v3
+}
+function f4 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = String string="text"
+    v3 = NewObject -, v2 layout=L2 fields=[0]
+    v4 = FinishObject v3
+    PropDefine v1, v4 key="late"
+    v6 = Undefined
+    Return v6
+}

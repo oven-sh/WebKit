@@ -7,6 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCode.h"
+#include "AOTFacts.h"
+#include "AOTFamilies.h"
 #include "AOTID.h"
 #include "AOTNativeTest.h"
 #include <wtf/HashMap.h>
@@ -39,8 +42,9 @@ static void idReservesAbsentAndDeletedValues()
     checkReservedValuesOfEach<ValueID, BlockID>();
     checkReservedValuesOfEach<StringID, PropertyKeyID, FunctionID, LayoutID, VariableID, ModuleID, ModuleFailureID, TypeID, TypeSiteID, EvalScopeID, DataID, ExpectedResultID>();
     checkReservedValuesOfEach<LayoutSetID, CalleeSetID>();
-    checkReservedValuesOfEach<AccessSiteID, AllocationSiteID, AllocationClassID>();
-    checkReservedValuesOfEach<FieldAccessID, AllocationID, RegExpRecordID, SiteCacheID, GlobalBindingID, GuardBitID>();
+    checkReservedValuesOfEach<RegExpRecordID>();
+    checkReservedValuesOfEach<FamilyID>();
+    checkReservedValuesOfEach<EdgeID>();
 }
 
 static void idHashIsIntegerHashOfIndex()

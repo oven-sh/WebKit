@@ -1,0 +1,124 @@
+# a text that grows in one loop and goes on growing in the next stays in its builder between the two: one begin in front of the first, one finish behind the second
+# function two(n) { let s = ""; for (let i = 0; i < n; i++) s += i; for (let j = 0; j < n; j++) s += j; return s; }
+# function read(n, log) { let s = ""; for (let i = 0; i < n; i++) s += i; log(s); for (let j = 0; j < n; j++) s += j; return s; }   somebody reads the text between the loops, so it is finished on the edge and begun anew
+# function skip(n, first) { let s = ""; if (first) for (let i = 0; i < n; i++) s += i; for (let j = 0; j < n; j++) s += j; return s; }   written so that two edges enter the second loop, and one of them brings a string
+# each function is handed to code that nobody has seen
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: StringBuilderBegin
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderFinish
+# CHECK: isLoopHead=true
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderFinish
+# CHECK: isLoopHead=true
+# CHECK-NOT: StringBuilderBegin
+# CHECK: StringBuilderFinish
+# RUN(READ): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# READ-LABEL: code f2:Body
+# READ: StringBuilderBegin
+# READ: isLoopHead=true
+# READ: StringBuilderFinish
+# READ: StringBuilderBegin
+# READ: isLoopHead=true
+# READ: StringBuilderFinish
+# RUN(SKIP): walk f3 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# SKIP-LABEL: code f3:Body
+# SKIP: StringBuilderBegin
+# SKIP: isLoopHead=true
+# SKIP: StringBuilderFinish
+# SKIP: StringBuilderBegin
+# SKIP: isLoopHead=true
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="two" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Add v3, v4
+    v8 = Increment v4
+    Jump -> next b1(v7, v8)
+  b3():
+    v9 = Integer
+    Jump -> next b4(v3, v9)
+  b4(v10, v11):
+    LoopHint
+    v13 = Less v11, v0
+    Branch v13 -> taken b5(), notTaken b6()
+  b5():
+    v14 = Add v10, v11
+    v15 = Increment v11
+    Jump -> next b4(v14, v15)
+  b6():
+    Return v10
+}
+function f2 name="read" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=""
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v4, v5
+    v9 = Increment v5
+    Jump -> next b1(v8, v9)
+  b3():
+    v10 = Call v1, -, v4
+    v11 = Integer
+    Jump -> next b4(v4, v11)
+  b4(v12, v13):
+    LoopHint
+    v15 = Less v13, v0
+    Branch v15 -> taken b5(), notTaken b6()
+  b5():
+    v16 = Add v12, v13
+    v17 = Increment v13
+    Jump -> next b4(v16, v17)
+  b6():
+    Return v12
+}
+function f3 name="skip" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=""
+    v3 = Integer
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(v2, v3), notTaken b3(v2, v3)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b3(v5, v3)
+  b2():
+    v9 = Add v5, v6
+    v10 = Increment v6
+    Jump -> next b1(v9, v10)
+  b3(v11, v12):
+    LoopHint
+    v14 = Less v12, v0
+    Branch v14 -> taken b4(), notTaken b5()
+  b4():
+    v15 = Add v11, v12
+    v16 = Increment v12
+    Jump -> next b3(v15, v16)
+  b5():
+    Return v11
+}

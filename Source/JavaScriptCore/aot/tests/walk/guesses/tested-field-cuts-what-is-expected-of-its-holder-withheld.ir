@@ -1,0 +1,9 @@
+# the same program with guesses withheld: nothing is tested that the program does not test, and both reads go by name
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = PropGet {{*}}key="radius"
+# CHECK: = PropGet {{*}}key="side"
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: = GetSlot
+# NEVER-NOT: = ShapeTest
+# PROGRAM-OF: tested-field-cuts-what-is-expected-of-its-holder.ir

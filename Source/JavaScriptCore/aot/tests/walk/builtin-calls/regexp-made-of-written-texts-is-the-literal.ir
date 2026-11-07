@@ -1,0 +1,90 @@
+# `new RegExp("a+", "g")`, `RegExp("a+")`: both texts are written, so the call is the literal, which has a record and code in the image. The run time parses nothing.
+# function made() { return new RegExp("a+", "g"); }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewRegExp pattern="a+" regExpFlags=[Global]
+# RUN(NOCALL): walk f1 mechanisms=all
+# NOCALL-NOT: CallInline
+# NOCALL-NOT: Construct
+# function called() { return RegExp("a+"); }
+# RUN(CALLED): walk f2 mechanisms=all
+# CALLED-LABEL: code f2:Body
+# CALLED: = NewRegExp pattern="a+"
+# The image holds code for it: /a+/ with and without g have one record, /^b$/i another.
+# RUN(CODE): compile RegExpsCompiled mechanisms=all
+# CODE: statistic RegExpsCompiled 2
+# A text that is joined of written texts is written: function joined() { return new RegExp("^" + "b" + "$", "i"); }
+# RUN(JOINED): walk f3 mechanisms=all
+# JOINED-LABEL: code f3:Body
+# JOINED: = NewRegExp pattern=made "^b$" regExpFlags=[IgnoreCase]
+# No RegExp can be made of the text: the call stays, and throws where it stands. function broken() { return new RegExp("("); }
+# RUN(BROKEN): walk f4 mechanisms=all
+# BROKEN-LABEL: code f4:Body
+# BROKEN-NOT: NewRegExp pattern
+# BROKEN: inlineBuiltin=NewRegExp
+# Nor with such flags: function doubled() { return new RegExp("a", "gg"); }
+# RUN(DOUBLED): walk f5 mechanisms=all
+# DOUBLED-LABEL: code f5:Body
+# DOUBLED-NOT: NewRegExp pattern
+# Withheld, the construction is made as it is written.
+# RUN(WITHHELD): walk f1 mechanisms=all-BuiltinCalls
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD-NOT: NewRegExp
+# WITHHELD: = Construct
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="made" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp @11
+    v1 = String string="a+" @12
+    v2 = String string="g" @13
+    v3 = Construct v0, -, v1, v2 calleeName="RegExp" @14
+    Return v3 @15
+}
+function f2 name="called" module=m0 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp @21
+    v1 = String string="a+" @22
+    v2 = Call v0, -, v1 calleeName="RegExp" @23
+    Return v2 @24
+}
+function f3 name="joined" module=m0 position=30 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp @31
+    v1 = String string="^" @32
+    v2 = String string="b" @33
+    v3 = Add v1, v2 @34
+    v4 = String string="$" @35
+    v5 = Add v3, v4 @36
+    v6 = String string="i" @37
+    v7 = Construct v0, -, v5, v6 calleeName="RegExp" @38
+    Return v7 @39
+}
+function f4 name="broken" module=m0 position=40 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp @41
+    v1 = String string="(" @42
+    v2 = Construct v0, -, v1 calleeName="RegExp" @43
+    Return v2 @44
+}
+function f5 name="doubled" module=m0 position=50 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp @51
+    v1 = String string="a" @52
+    v2 = String string="gg" @53
+    v3 = Construct v0, -, v1, v2 calleeName="RegExp" @54
+    Return v3 @55
+}

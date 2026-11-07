@@ -1,0 +1,55 @@
+# `list.toString()` calls the join that it finds: native code looks the member up by name. The row that takes a list as its class makes it joins the elements in line and says nothing of `join`: in an executable the member is locked.
+# A test run may replace it, and the bit of the cell speaks of the list's own names alone. So where a member of the objects above the class is open, no row takes an instance as its class makes it.
+# a.test.js: Array.prototype.join = fake; function text(a, b) { const list = []; list.push(a); return list.toString(); }
+# OPTIONS: admit=ReplacedBuiltins
+# RUN(OPEN): walk f1 mechanisms=all
+# OPEN-LABEL: code f1:Body
+# OPEN-NOT: inlineBuiltin=ArrayJoin
+# Control: nothing above a map is replaced: function mapped(k) { const map = new Map(); map.set(k, 1); return map.get(k); }
+# RUN(SHUT): walk f2 mechanisms=all
+# SHUT-LABEL: code f2:Body
+# SHUT: overload=MapPrototypeGet
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: = PropGet
+# And Link says that the call may run other code: what it knows of `text` is no longer that of the row in line.
+# RUN(LOCKS): locks open
+# LOCKS: open ArrayPrototypeJoin left-open-for-tests
+
+replaceablebuiltin member=ArrayPrototypeJoin
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype
+    v1 = NewClosure function=f3
+    PropSet v0, v1 key="join"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = NewClosure function=f1
+    v6 = NewClosure function=f2
+    v7 = Call v4, -, v5, v6
+    Return v7
+}
+function f1 name="text" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = PropGet v1 key="toString"
+    v3 = Call v2, v1 calleeKey="toString" calleeName="list.toString"
+    Return v3
+}
+function f2 name="mapped" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Map
+    v2 = Construct v1, - calleeName="Map"
+    v3 = PropGet v2 key="set"
+    v4 = Integer integer=1
+    v5 = Call v3, v2, v0, v4 calleeKey="set" calleeName="map.set"
+    v6 = PropGet v2 key="get"
+    v7 = Call v6, v2, v0 calleeKey="get" calleeName="map.get"
+    Return v7
+}
+function f3 name="fake" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="replaced"
+    Return v0
+}

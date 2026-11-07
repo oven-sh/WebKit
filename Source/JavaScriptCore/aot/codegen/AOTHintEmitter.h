@@ -7,23 +7,27 @@
 
 #if ENABLE(AOT)
 
-#include "AOTChooseCallingConventions.h"
 #include "AOTOperationEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
 class HintEmitter final : public OperationEmitter {
 public:
-    explicit HintEmitter(CodeGenerator&);
+    explicit HintEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateLoopHint(const ValueContext&);
     void generateReleaseHint(const ValueContext&);
+    void release(ValueID);
+    void generateEndLifeOfCell(const ValueContext&);
+    void generateGuessFailsUnasked(const ValueContext&);
+    bool endsLivesAtRunTime();
+    void endLifeOf(const OperationContext&, ValueID cell);
+    void noteThatCellIsLent(const ValueContext& made, CellPointer);
+    void stopWhereLifeHasEnded(const OperationContext&, CellPointer);
     void pollWhereNoFrameIsSetUp(const OperationContext&);
 
 private:
     void emitPoll(const ValueContext&);
-
-    EntryParameterFinder m_entryParameters;
 };
 
 } } } // namespace JSC::AOT::Typed

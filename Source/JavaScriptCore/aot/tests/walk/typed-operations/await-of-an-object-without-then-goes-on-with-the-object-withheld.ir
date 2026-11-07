@@ -1,0 +1,8 @@
+# the same functions with typed operations withheld: the function goes on with what the job hands back, of which nothing is known
+# RUN: walk f1:CoroutineBody mechanisms=none
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# CHECK: = PropGet {{*}}key="x"
+# RUN(NEVER): walk f1:CoroutineBody mechanisms=none
+# NEVER-NOT: = GetSlot
+# PROGRAM-OF: await-of-an-object-without-then-goes-on-with-the-object.ir

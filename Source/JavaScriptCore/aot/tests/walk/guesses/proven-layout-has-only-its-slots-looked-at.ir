@@ -1,0 +1,42 @@
+# the object was made here, so its layout is proven for good and no test asks for it. Unseen code has had it, so what has become of its slots is not proven: they are looked at, and that is the whole guess
+# function list(sink) { const o: Point = { x: sink, y: sink }; sink(o); return [o.x, o.y, o.x]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# CHECK: = IsSlotFilled {{*}}key="x"
+# CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
+# CHECK: = IsSlotFilled {{*}}key="y"
+# CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
+# RUN(SHAPE): walk f1 mechanisms=none+TypedOperations+Guesses
+# SHAPE-NOT: ShapeTest
+# RUN(TYPED): walk f1 mechanisms=none+TypedOperations+Guesses
+# TYPED-COUNT-3: = GetSlot {{*}}level=Proven
+# TYPED-NOT: = GetSlot
+# RUN(CLOSED): walk f1 mechanisms=none+TypedOperations+Guesses
+# CLOSED-COUNT-3: = PropGet
+# CLOSED-NOT: = PropGet
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="list" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    PropDefine v1, v0 key="x"
+    PropDefine v1, v0 key="y"
+    v4 = FinishObject v1
+    v5 = Call v0, -, v4
+    v6 = PropGet v4 key="x"
+    v7 = PropGet v4 key="y"
+    v8 = PropGet v4 key="x"
+    v9 = NewArray v6, v7, v8 contents=anything
+    Return v9
+}

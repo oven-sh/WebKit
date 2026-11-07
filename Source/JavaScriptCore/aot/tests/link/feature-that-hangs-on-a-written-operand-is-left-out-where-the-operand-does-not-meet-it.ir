@@ -1,0 +1,20 @@
+# Intl.supportedValuesOf("calendar")
+# RUN(KEPT): features
+# KEPT: feature IntlOther by IntlSupportedValuesOf
+# RUN(GONE): features
+# GONE-NOT: feature IntlCollation by IntlSupportedValuesOf
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Intl" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Intl) flags=[IsExpected]}
+    v3 = PropGet v2 key="supportedValuesOf"
+    v4 = Convert v3 declared={type=builtin(IntlSupportedValuesOf) flags=[IsExpected]}
+    v5 = String string="calendar"
+    v6 = Call v4, v2, v5 calleeKey="supportedValuesOf" calleeName="Intl.supportedValuesOf"
+    v7 = Undefined
+    Return v7
+}

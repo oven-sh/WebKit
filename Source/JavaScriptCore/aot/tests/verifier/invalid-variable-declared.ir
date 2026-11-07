@@ -1,5 +1,4 @@
 # the declared position of a variable: an int32 promise has an int32 type, and an expected type may be any type
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidVariable 1
 

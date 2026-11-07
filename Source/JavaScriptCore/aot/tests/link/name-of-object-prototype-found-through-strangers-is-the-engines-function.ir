@@ -1,0 +1,56 @@
+# If a lookup through a lost value or a family that goes on above the classes found "something unseen" on Object.prototype, every object that ever met a stranger would escape at the first `+`, `==` or template it may be an operand of:
+# the conversion looks for valueOf and toString, which no record has
+# function first(c) { return c ? { x: "a", p: 0 } : { x: true, q: 0 }; }  report("" + first(flag));  report(first(flag).hasOwnProperty("q"));
+# What is found there is the engine's own function, which nobody can replace, as a read through one layout finds it. Whoever calls it goes by its row
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.0 "x" proven=string writers-known
+# CHECK: field L1.0 "x" proven=true writers-known
+# CHECK: layout L0 changes=[]
+# CHECK: layout L1 changes=[]
+# RUN(ANSWER): run-in-shell globalThis.flag = false; globalThis.report = value => print(String(value));
+# ANSWER: [object Object]
+# ANSWER-NEXT: true
+# ANSWER-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none globalThis.flag = false; globalThis.report = value => print(String(value));
+# NONE: [object Object]
+# NONE-NEXT: true
+# NONE-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = PropGet v0 key="report" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v1 calleeName="first"
+    v5 = String string=""
+    v6 = Add v5, v4
+    v7 = Call v2, -, v6 calleeName="report"
+    v8 = Call v3, -, v1 calleeName="first"
+    v9 = PropGet v8 key="hasOwnProperty"
+    v10 = String string="q"
+    v11 = Call v9, v8, v10 calleeKey="hasOwnProperty" calleeName="hasOwnProperty"
+    v12 = Call v2, -, v11 calleeName="report"
+    Return v12
+}
+function f1 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = String string="a"
+    v3 = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    Jump -> next b3(v4)
+  b2():
+    v5 = Boolean boolean=true
+    v6 = NewObject -, v5, v1 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    Jump -> next b3(v7)
+  b3(v8):
+    Return v8
+}

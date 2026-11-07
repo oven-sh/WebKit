@@ -54,7 +54,7 @@ public:
     static void* tryReserveRandomWindow(size_t, size_t alignment, OSAllocator::Usage, bool isWritable);
     // Every window that is drawn lies between these two. What code knows by a constant address lies outside.
 #if ASAN_ENABLED
-    // Below lie the shadow of the address sanitizer and AOT::CheckedFrameCells::startOfRange.
+    // Below lies the shadow of the address sanitizer.
     static constexpr uintptr_t lowestRandomAddress = 33 * 1024 * GB;
 #else
     static constexpr uintptr_t lowestRandomAddress = 64 * GB;

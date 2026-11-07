@@ -18,7 +18,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-class ScratchRealms;
+class ScratchRealm;
 
 struct FormatterOption {
     String name;
@@ -27,7 +27,6 @@ struct FormatterOption {
     double number { 0 };
 };
 
-// `new Intl.DateTimeFormat("en-US", { year: "numeric" })`, `new Intl.NumberFormat("de")`, or the formatter that a call of toLocaleString makes for itself.
 struct FormatterRequest {
     FormatPatternKind kind;
     String locale;
@@ -37,15 +36,12 @@ struct FormatterRequest {
     IntlDateTimeFormat::Defaults defaults { IntlDateTimeFormat::Defaults::Date };
 };
 
-// The patterns of a build. Each request is planned once, whichever thread asks first.
 class FormatPatternPlans {
     WTF_MAKE_NONCOPYABLE(FormatPatternPlans);
 public:
     FormatPatternPlans() = default;
 
-    // A FormatPatternHeader and what follows it, in words. Null where ICU has to format: a calendar, digits, a field or a rounding that a pattern does not have,
-    // or a pattern that writes another text than ICU for one of the samples.
-    const WTF::Vector<uint32_t>* planFor(ScratchRealms&, const FormatterRequest&);
+    const WTF::Vector<uint32_t>* planFor(ScratchRealm& ofThisThread, const FormatterRequest&);
 
 private:
     Lock m_lock;

@@ -89,4 +89,5 @@ export default b.declarations(
       "@@toPrimitive": symbolValue,
     },
   }),
+  (["Symbol.asyncDispose", "Symbol.dispose"] as const).flatMap(path => b.extend(path, { marks: ["IsKeyReadOnlyByRowsThatNameIt"] })),
 );

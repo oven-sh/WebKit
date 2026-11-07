@@ -77,7 +77,7 @@ auto BBQJIT::emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint64
         else {
             uint64_t finalOffset = constantPointer + uoffset;
             if (finalOffset <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) && B3::Air::Arg::isValidAddrForm(B3::Air::Move, static_cast<int32_t>(finalOffset), accessWidth)) {
-                switch (m_info.memoryModeForAccess(memoryIndex, m_mode)) {
+                switch (memoryModeForAccess(memoryIndex)) {
                 case MemoryMode::BoundsChecking: {
                     m_jit.move(TrustedImmPtr(constantPointer + boundary), wasmScratchGPR);
                     recordJumpToThrowException(ExceptionType::OutOfBoundsMemoryAccess, m_jit.branchPtr(RelationalCondition::AboveOrEqual, wasmScratchGPR, boundsCheckingSizeRegister));
@@ -104,7 +104,7 @@ auto BBQJIT::emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint64
     ASSERT(pointerLocation.isGPR());
 
     // FIXME: for clarity we should probably rename m_mode to m_memory0Mode or something similar
-    switch (m_info.memoryModeForAccess(memoryIndex, m_mode)) {
+    switch (memoryModeForAccess(memoryIndex)) {
     case MemoryMode::BoundsChecking: {
         // We're not using signal handling only when the memory is not shared.
         // Regardless of signaling, we must check that no memory access exceeds the current memory size.
@@ -577,10 +577,7 @@ void BBQJIT::emitCCall(Func function, std::span<const Value> arguments)
     prepareForExceptions();
     saveValuesAcrossCallAndPassArguments(arguments, callInfo, functionRTT.get());
 
-    // Materialize address of native function and call register
-    void* taggedFunctionPtr = tagCFunctionPtr<void*, OperationPtrTag>(function);
-    m_jit.move(TrustedImmPtr(std::bit_cast<uintptr_t>(taggedFunctionPtr)), wasmScratchGPR);
-    m_jit.call(wasmScratchGPR, OperationPtrTag);
+    emitCallOfOperation(tagCFunctionPtr<void*, OperationPtrTag>(function));
 }
 
 template<typename Func>
@@ -607,10 +604,7 @@ void BBQJIT::emitCCall(Func function, std::span<const Value> arguments, Value& r
     prepareForExceptions();
     saveValuesAcrossCallAndPassArguments(arguments, callInfo, functionRTT.get());
 
-    // Materialize address of native function and call register
-    void* taggedFunctionPtr = tagCFunctionPtr<void*, OperationPtrTag>(function);
-    m_jit.move(TrustedImmPtr(std::bit_cast<uintptr_t>(taggedFunctionPtr)), wasmScratchGPR);
-    m_jit.call(wasmScratchGPR, OperationPtrTag);
+    emitCallOfOperation(tagCFunctionPtr<void*, OperationPtrTag>(function));
 
     Location resultLocation;
     switch (result.type()) {

@@ -1,0 +1,9 @@
+# the same function with typed operations withheld: the ramp makes the promise in front of the call, and the stub returns the result
+# RUN: walk f1 mechanisms=none
+# CHECK: code f1:Body {
+# CHECK: [[promise]]: {{*}} = NewPromise
+# CHECK: = CallDirect {{*}}function=f1 role=CoroutineBody
+# RUN(BODY): walk f1:CoroutineBody mechanisms=none
+# BODY: code f1:CoroutineBody {
+# BODY: = ReturnAsyncResult
+# PROGRAM-OF: ramp-of-an-async-function-in-which-nothing-suspends.ir

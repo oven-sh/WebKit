@@ -31,7 +31,6 @@ void mapImageFromOptions();
 void addShellFunctions(VM&, JSGlobalObject*);
 std::span<const ASCIILiteral> shellFunctionNames();
 bool isKeyOfCompiledModule(const String&);
-// Null for a key that names no module of the image, or with an exception.
 JSPromise* fetchCompiledModule(JSGlobalObject*, const String& key);
 void addMissingImportMetaFunctions(JSGlobalObject*, JSObject* importMeta);
 extern const ModuleHost moduleHost;

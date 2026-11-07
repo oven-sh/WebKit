@@ -36,14 +36,12 @@ struct BuiltinDirectFunctionBinding;
 struct BuiltinNativeFunctionBinding;
 
 struct BuiltinWords {
-    static constexpr unsigned numberOfOwnSlotStructures = 16;
-
     ObjectBuiltinWords objects;
-    uint8_t* locationStates;
+    uint8_t* classesWrittenAbove;
+    uint8_t* membersWritten;
+    uint8_t* namesOnHolders;
+    uint8_t someClassOfViewsWasWrittenAbove;
     EncodedJSValue* hostValues;
-    uint32_t ownSlotStructureIDs[numberOfOwnSlotStructures];
-    // A bit for each of them that was looked for: a read that compares with several asks about all of them at once.
-    uint32_t ownSlotStructuresLookedFor;
 };
 
 struct BuiltinBindingWords {
@@ -51,7 +49,6 @@ struct BuiltinBindingWords {
     const BuiltinNativeFunctionBinding* nativeFunctionsOfHost;
 };
 
-static_assert(BuiltinWords::numberOfOwnSlotStructures <= 32);
 static_assert(sizeof(ObjectCreateCacheEntry) == 16);
 static_assert(!OBJECT_OFFSETOF(ObjectCreateCacheEntry, prototype));
 static_assert(std::has_single_bit(ObjectBuiltinWords::objectCreateSize));

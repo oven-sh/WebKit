@@ -1,0 +1,124 @@
+# function starts(path: string, dir: string) { if (path.startsWith(dir + "/")) return 2; return path.startsWith(dir); }
+# While `path.startsWith(dir + "/")` is walked part by part the join stands for `dir`. If it still did behind the meeting of the arms, the call on the failing edge would count as the question that led there,
+# and be folded to false: "src2/a" with "src" starts with it. No body out of the front end shows it today: a landing block that only jumps lies between a Branch and the code.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetStringCodeUnit
+# CHECK: inlineBuiltin=StringStartsWith
+# function ends(path: string, name: string) { if (path.endsWith("/" + name)) return 2; return path.endsWith(name); }
+# RUN(ENDS): walk f2 mechanisms=all
+# ENDS-LABEL: code f2:Body
+# ENDS: = GetStringCodeUnit
+# ENDS: inlineBuiltin=StringEndsWith
+# function holds(path: string, dir: string) { if (path.includes(dir + "/")) return 2; return path.includes(dir); }
+# RUN(HOLDS): walk f3 mechanisms=all
+# HOLDS-LABEL: code f3:Body
+# HOLDS: inlineBuiltin=StringIncludes
+# HOLDS: inlineBuiltin=StringIncludes
+# function equals(path: string, dir: string) { if (path === dir + "/") return 2; return path === dir; }
+# RUN(EQUALS): walk f4 mechanisms=all
+# EQUALS-LABEL: code f4:Body
+# EQUALS: = StrictEq
+# EQUALS: = StrictEq
+# As the first, behind tests: function untyped(path, dir) { if (typeof path !== "string" || typeof dir !== "string") return; if (path.startsWith(dir + "/")) return 2; return path.startsWith(dir); }
+# RUN(UNTYPED): walk f5 mechanisms=all
+# UNTYPED-LABEL: code f5:Body
+# UNTYPED: = GetStringCodeUnit
+# UNTYPED: StringPrototypeStartsWith
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="starts" module=m0 length=2 thisType={type=anything} parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = PropGet v0 key="startsWith"
+    v3 = String string="/"
+    v4 = Add v1, v3
+    v5 = Call v2, v0, v4 calleeKey="startsWith"
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Integer integer=2
+    Return v6
+  b2():
+    v7 = PropGet v0 key="startsWith"
+    v8 = Call v7, v0, v1 calleeKey="startsWith"
+    Return v8
+}
+function f2 name="ends" module=m0 length=2 thisType={type=anything} parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = PropGet v0 key="endsWith"
+    v3 = String string="/"
+    v4 = Add v3, v1
+    v5 = Call v2, v0, v4 calleeKey="endsWith"
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Integer integer=2
+    Return v6
+  b2():
+    v7 = PropGet v0 key="endsWith"
+    v8 = Call v7, v0, v1 calleeKey="endsWith"
+    Return v8
+}
+function f3 name="holds" module=m0 length=2 thisType={type=anything} parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = PropGet v0 key="includes"
+    v3 = String string="/"
+    v4 = Add v1, v3
+    v5 = Call v2, v0, v4 calleeKey="includes"
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Integer integer=2
+    Return v6
+  b2():
+    v7 = PropGet v0 key="includes"
+    v8 = Call v7, v0, v1 calleeKey="includes"
+    Return v8
+}
+function f4 name="equals" module=m0 length=2 thisType={type=anything} parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = String string="/"
+    v3 = Add v1, v2
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=2
+    Return v5
+  b2():
+    v6 = StrictEq v0, v1
+    Return v6
+}
+function f5 name="untyped" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = TypeTest v1 testedType=string
+    Branch v4 -> taken b2(| 0), notTaken b5()
+  b2(v5):
+    v6 = PropGet v3 key="startsWith"
+    v7 = String string="/"
+    v8 = Add v5, v7
+    v9 = Call v6, v3, v8 calleeKey="startsWith"
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Integer integer=2
+    Return v10
+  b4():
+    v11 = PropGet v3 key="startsWith"
+    v12 = Call v11, v3, v5 calleeKey="startsWith"
+    Return v12
+  b5():
+    v13 = Undefined
+    Return v13
+}

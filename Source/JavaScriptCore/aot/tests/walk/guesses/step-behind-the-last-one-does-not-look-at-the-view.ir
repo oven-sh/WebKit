@@ -1,0 +1,76 @@
+# An iterator that has answered done answers done for ever, and does not look at the view again. Over one byte the step of `b` ends the iteration, the default takes the memory away, and `c` is undefined: no TypeError.
+# function take(view: Uint8Array, buffer: ArrayBuffer) { const [a, b = (buffer.transfer(), 7), c] = view; sink(a, b, c); }
+# the records of f1 are what the front end writes of that line
+# a view that has lost its memory has the length 0, so a step that finds an element asks nothing more. The step that finds none asks for the memory only while the position is not the one behind every end.
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: [[behindEveryEnd]]: 34359738368 {{*}} = Integer
+# CHECK: [[position]]: int[0, 34359738368] @Int64):
+# CHECK: [[inside]]: boolean {{*}} = Less [[position]], [[length]] form=Integers
+# CHECK: Branch [[inside]] -> taken [[reading]](), notTaken [[ending]]()
+# CHECK: [[ending]]()
+# CHECK: [[goesOn]]: boolean {{*}} = Less [[position]], [[behindEveryEnd]] form=Integers
+# CHECK: Branch [[goesOn]] -> taken [[asking]](), notTaken [[asked]]()
+# CHECK: [[asking]]()
+# CHECK: RequireAttachedTypedArray
+# CHECK: Jump -> next [[asked]]()
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: [[behindEveryEnd]]: 34359738368 {{*}} = Integer
+# ALL: [[position]]: int[0, 34359738368] @Int64):
+# ALL: [[inside]]: boolean {{*}} = Less [[position]], [[length]] form=Integers
+# ALL: Branch [[inside]] -> taken [[reading]](), notTaken [[ending]]()
+# ALL: [[ending]]()
+# ALL: [[goesOn]]: boolean {{*}} = Less [[position]], [[behindEveryEnd]] form=Integers
+# ALL: Branch [[goesOn]] -> taken [[asking]](), notTaken [[asked]]()
+# ALL: [[asking]]()
+# ALL: RequireAttachedTypedArray
+# ALL: Jump -> next [[asked]]()
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="take" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|ArrayBuffer flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array, v1: undefined|null|ArrayBuffer):
+    v2 = IteratorOpen v0 elementCount=3 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b6():
+    v3 = IteratorResume v2 stepIndex=0
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    v6 = IteratorResume v2 stepIndex=1
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    v9 = TypeTest v8 testedType=undefined
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v10) handler=b6():
+    v11 = PropGet v1 key="transfer"
+    v12 = Call v11, v1 calleeKey="transfer" calleeName="buffer.transfer"
+    v13 = Integer integer=7
+    Jump -> next b4(v13)
+  b3(v14) handler=b6():
+    Jump -> next b4(v14)
+  b4(v15) handler=b6():
+    v16 = IteratorResume v2 stepIndex=2
+    v17 = ResultAt v16
+    v18 = ResultAt v16 index=1
+    Jump -> next b5()
+  b5():
+    IteratorClose v2
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="sink" [isFreeName]
+    v22 = Call v21, -, v5, v15, v18
+    v23 = Undefined
+    Return v23
+  b6() role=IterationCleanup subject=v2:
+    v24 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v24
+}

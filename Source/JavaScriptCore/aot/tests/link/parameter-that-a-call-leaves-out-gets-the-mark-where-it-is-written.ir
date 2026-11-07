@@ -1,0 +1,38 @@
+# a parameter that is written with `absent` tells what the caller left out from undefined: a direct call and a generic entry hand it the mark. So the mark is among what Link proves of it.
+# The function names itself, so its body goes by what Link has proven and not by what its callers have left
+# function asks(value = <absent>) { return <value is absent> ? "left out" : asks(); }  print(asks(1))
+# RUN: link functions mechanisms=all
+# CHECK: function f1
+# CHECK-NEXT: parameter 0 {{*}}proven={{*}}absent
+# RUN(ANSWER): run-in-shell
+# ANSWER: left out
+# ANSWER-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell mechanisms=none
+# CLOSED: left out
+# CLOSED-NEXT: exited with 0
+
+variable g0 name="asks" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = Integer integer=1
+    v4 = Call v2, -, v3 calleeName="asks"
+    v5 = Call v1, -, v4
+    Return v5
+}
+function f1 name="asks" module=m0 thisType={type=anything} parameters=[{type=anything|absent}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything|absent):
+    v1 = TypeTest v0 testedType=absent
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = String string="left out"
+    Return v3
+  b2(v4):
+    v5 = GetModuleVariable variable=g0
+    v6 = Call v5 calleeName="asks"
+    Return v6
+}

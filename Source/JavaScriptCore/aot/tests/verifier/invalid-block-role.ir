@@ -1,5 +1,4 @@
 # the entry block is ordinary, a cleanup of an iteration or of a disposal names its subject, and no other block has one
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidBlockRole 6
 

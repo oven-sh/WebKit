@@ -1,0 +1,11 @@
+# the same functions with loop invariants withheld: no text lies in a builder, neither in the frame nor in the heap, and the string comes round
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = Add
+# RUN(NEVER): walk f1 f2 mechanisms=none+TypedOperations
+# NEVER-NOT: StringBuilder
+# RUN(NONE): walk f2 mechanisms=none
+# NONE-NOT: StringBuilder
+# PROGRAM-OF: builder-of-a-text-that-grows-lies-in-the-frame.ir

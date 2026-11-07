@@ -1,0 +1,61 @@
+# `for (; i < length && $hasContiguousIndex(array, i); i++) callback($getOwnContiguousIndex(array, i))`: the test loads the element to see that it is there, and leads to its arms by itself.
+# The read stands in the arm that finds the element, with nothing but names in between: it takes what the test loaded. One load of the storage and one of an element in the loop.
+# The records are what the front end writes for such a text, less the positions.
+# RUN: emit f1 mechanisms=all
+# CHECK: JSArray_butterfly
+# CHECK-NOT: JSArray_butterfly
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="each"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="each" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1()
+  b1():
+    v3 = ToObject v0 message="no object"
+    v4 = PropGet v3 key="length"
+    v5 = ToLength v4
+    v6 = Integer
+    v7 = Convert v6 declared={type=undefined|number}
+    v8 = HasJSType v3
+    v9 = ToBoolean v8
+    Branch v9 -> taken b2(| 0), notTaken b9(| 0)
+  b2(v10):
+    Jump -> next b3(v7)
+  b3(v11: undefined|number):
+    LoopHint
+    v13 = Less v11, v5
+    Branch v13 -> taken b4(), notTaken b8()
+  b4():
+    v14 = Convert v3 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+    v15 = Convert v11 declared={type=int flags=[IsFromCompiler, IsClaim]}
+    v16 = HasContiguousIndex v14, v15
+    v17 = ToBoolean v16
+    Branch v17 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v18):
+    Jump -> next b6()
+  b6():
+    v19 = Convert v3 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+    v20 = Convert v11 declared={type=int flags=[IsFromCompiler, IsClaim]}
+    v21 = GetOwnContiguousIndex v19, v20
+    v22 = Call v1, v2, v21, v11, v3
+    v23 = Increment v11
+    v24 = Convert v23 declared={type=undefined|number}
+    Jump -> next b3(v24)
+  b7(v25):
+    Jump -> next b8()
+  b8():
+    v26 = Undefined
+    Return v26
+  b9(v27):
+    v28 = Undefined
+    Return v28
+}

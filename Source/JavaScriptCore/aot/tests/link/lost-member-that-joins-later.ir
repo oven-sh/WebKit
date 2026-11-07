@@ -1,0 +1,72 @@
+# If the field of a layout were tied to the stores and reads through lost values only when those were first looked at, a layout that is lost later would miss the store, and its field would be proven a string while it holds null
+# function put(e) { e.x = null; }  function look(o) { return o.x; }  const a = { x: "s", a: 0 }, b = { x: "s", b: 0 }, c = { x: "s", c: 0 }, d = { x: "s", d: 0 }, e = { x: "s", e: 0 }, f = { x: "s", f: 0 };  put(a); put(b); put(d); put(e); put(f);  look(b); look(c); look(d); look(e); look(f);
+# Five layouts meet at each of the two places, one more than a set takes, so they are lost. The third layout is lost at `look`, not at `put`. A lost value is an object of some member, so the store at `put` reaches it too, in whichever order the worklist comes to the two places.
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: function f1 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4|L5
+# CHECK: function f2 callers-known one-callee {{*}}result=undefined|null|string
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4|L5
+# CHECK: field L0.0 "x" proven=null|string writers-known
+# CHECK: field L1.0 "x" proven=null|string writers-known
+# CHECK: field L2.0 "x" proven=null|string writers-known
+# CHECK: field L3.0 "x" proven=null|string writers-known
+# CHECK: field L4.0 "x" proven=null|string writers-known
+# CHECK: field L5.0 "x" proven=null|string writers-known
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[]
+# CHECK: layout L2 {{*}}changes=[]
+# CHECK: layout L3 {{*}}changes=[]
+# CHECK: layout L4 {{*}}changes=[]
+# CHECK: layout L5 {{*}}changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}]
+layout L4 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=anything} flags=[IsRequired]}]
+layout L5 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="f" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="s"
+    v1 = Integer integer=0
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = NewObject -, v0, v1 layout=L2 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = NewObject -, v0, v1 layout=L3 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = NewObject -, v0, v1 layout=L4 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = NewObject -, v0, v1 layout=L5 fields=[0, 1]
+    v13 = FinishObject v12
+    v14 = NewClosure function=f1
+    v15 = Call v14, -, v3 calleeName="put"
+    v16 = Call v14, -, v5 calleeName="put"
+    v17 = Call v14, -, v9 calleeName="put"
+    v18 = Call v14, -, v11 calleeName="put"
+    v19 = Call v14, -, v13 calleeName="put"
+    v20 = NewClosure function=f2
+    v21 = Call v20, -, v5 calleeName="look"
+    v22 = Call v20, -, v7 calleeName="look"
+    v23 = Call v20, -, v9 calleeName="look"
+    v24 = Call v20, -, v11 calleeName="look"
+    v25 = Call v20, -, v13 calleeName="look"
+    v26 = Undefined
+    Return v26
+}
+function f1 name="put" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="look" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

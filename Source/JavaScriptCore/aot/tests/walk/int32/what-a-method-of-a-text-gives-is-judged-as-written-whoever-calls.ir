@@ -1,0 +1,39 @@
+# what a method of a text gives is judged by the rows of the method, by what is written of the text and by what is written of the arguments, whoever calls: the one call in sight passes 1, the walk folds the call to one number,
+# and a code unit at an int32 that may lie outside the text is reported all the same. A place in a text, or -1, is an int32
+# const text = "text";  function code(i: int32): int32 { return text.charCodeAt(i); }  function place(part: string): int32 { return text.indexOf(part); }  code(1); place("x");
+# DIAGNOSTIC: UnprovenInt32 1
+# RUN: walk f1 f2 mechanisms=all
+# CHECK: the walk of f1:Body failed
+# RUN(NONE): walk f1 f2 mechanisms=none
+# NONE-LABEL: code f2:Body
+
+variable g0 name="code" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="place" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @8
+    v1 = Integer integer=1 @8
+    v2 = Call v0, -, v1 calleeName="code" @8
+    v3 = GetModuleVariable variable=g1 @9
+    v4 = String string="x" @9
+    v5 = Call v3, -, v4 calleeName="place" @9
+    Return v2 @9
+}
+function f1 name="code" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = String string="text" @1
+    v2 = PropGet v1 key="charCodeAt" @1
+    v3 = Call v2, v1, v0 calleeKey="charCodeAt" calleeName="text.charCodeAt" @1
+    v4 = Convert v3 declared={type=i32 flags=[IsInt32Promise]} @2
+    Return v4 @2
+}
+function f2 name="place" module=m0 length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=number}] {
+  b0(v0: string):
+    v1 = String string="text" @3
+    v2 = PropGet v1 key="indexOf" @3
+    v3 = Call v2, v1, v0 calleeKey="indexOf" calleeName="text.indexOf" @3
+    v4 = Convert v3 declared={type=i32 flags=[IsInt32Promise]} @4
+    Return v4 @4
+}

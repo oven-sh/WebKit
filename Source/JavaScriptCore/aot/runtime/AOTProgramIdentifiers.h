@@ -33,12 +33,10 @@ namespace AOT {
 class Image;
 
 struct ProgramSymbol {
-    // Zero in an entry that is not in use.
     uint32_t number;
     UniquedStringImpl* uid;
 };
 
-// The identifiers that are no atoms of the image, by number: symbols and private names, which are made at run time, and the empty text, whose atom is the engine's.
 struct ProgramSymbols {
     static constexpr uint32_t numberOfEntriesFor(uint32_t numberOfPlaces) { return numberOfPlaces + numberOfPlaces / 2 + 1; }
 
@@ -60,33 +58,26 @@ class ProgramIdentifiers {
     WTF_MAKE_NONCOPYABLE(ProgramIdentifiers);
     WTF_MAKE_TZONE_ALLOCATED(ProgramIdentifiers);
 public:
-    // With the identifiers of the VM: those of one realm of an image that runs in several. A symbol that the program creates is the realm's own, every other name is the VM's.
     ProgramIdentifiers(VM&, const Image&, ProgramIdentifiers* ofVM = nullptr);
     ~ProgramIdentifiers();
 
     uint32_t count() const { return m_count; }
 #if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    // The atoms of the image, read-only: the name with the number n is identifiers() + n. A header whose length is zero is no name, and symbols() has the uid of that number.
     UniquedStringImpl* identifiers() const { return m_atoms; }
 #endif
     const ProgramSymbols& symbols() const { return m_symbols; }
-    // An instance points at the symbols() of its realm.
     static ProgramIdentifiers& owning(const ProgramSymbols& symbols) { return *std::bit_cast<ProgramIdentifiers*>(std::bit_cast<uintptr_t>(&symbols) - OBJECT_OFFSETOF(ProgramIdentifiers, m_symbols)); }
     bool isOfOneRealm() const { return m_ofVM; }
+    bool isSymbolOfRealm(uint32_t number) const { return (m_ofVM || m_realmsCreateTheirSymbols) && isCreatedSymbol(number); }
     void didGainInstance() { ++m_numberOfInstances; }
     bool didLoseLastInstance() { return !--m_numberOfInstances; }
 
-    // Null for the number 0 only.
     ALWAYS_INLINE UniquedStringImpl* uid(uint32_t number);
     ALWAYS_INLINE Identifier identifier(uint32_t number) { return Identifier::fromUid(m_vm, uid(number)); }
-    // Null for a symbol or a private name that uid() has not made yet.
     UniquedStringImpl* tryGetIdentifierConcurrently(uint32_t number) const;
-    // Exact once createEngineSymbols() has run: every other symbol the program names exists only after uid() created it.
     JS_EXPORT_PRIVATE std::optional<uint32_t> numberOf(UniquedStringImpl*) const;
     void createEngineSymbols();
 
-    // Under what a heap snapshot shows a variable of an environment, by its record in the image, and what a closure holds, by the number of the closure and the slot.
-    // The thread of the VM names them before the snapshot. The collector's threads read the names while it is taken.
     void nameForHeapSnapshots(const void* variable, const AtomString& name) { m_namesOfVariables.set(variable, name); }
     void nameForHeapSnapshots(uint32_t closureNumber, uint32_t slot, const AtomString& name) { m_namesOfCaptures.set(keyOfCapture(closureNumber, slot), name); }
     UniquedStringImpl* nameInHeapSnapshots(const void* variable) const
@@ -101,9 +92,7 @@ public:
     }
 
     static String textOf(const Image&, uint32_t number);
-    // What the atom table asks before it makes an atom. Text made at run time that equals a name of the image is that name.
     static AtomStringImpl* findAtom(StringView, unsigned hash);
-    // For native code that has the text of a name as characters of its own. Null if no image has the text. Asked again about the same characters, wherever they lie, it hashes nothing.
     AtomStringImpl* findAtomOfNativeText(std::span<const Latin1Character>);
 
 private:
@@ -139,7 +128,6 @@ private:
     ProgramIdentifiers* const m_ofVM;
     const bool m_realmsCreateTheirSymbols;
     unsigned m_numberOfInstances { 0 };
-    // Only the thread of the VM changes the table, with the lock held. It and its stubs read the table without the lock, every other thread with it.
     ProgramSymbols m_symbols;
     mutable Lock m_symbolsLock;
     UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_numbersOfSymbols WTF_GUARDED_BY_LOCK(m_symbolsLock);
@@ -164,7 +152,6 @@ ALWAYS_INLINE UniquedStringImpl* ProgramIdentifiers::uid(uint32_t number)
 }
 
 ALWAYS_INLINE ProgramIdentifiers& identifiersOf(const Instance& instance) { return ProgramIdentifiers::owning(*instance.image.programSymbols); }
-// Those of the VM where the realm runs no image. Null while the VM ends.
 JS_EXPORT_PRIVATE ProgramIdentifiers* identifiersOfRealm(VM&, JSGlobalObject* realmOrNull);
 
 JS_EXPORT_PRIVATE Identifier enginePrivateName(VM&, const String& text);

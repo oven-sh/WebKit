@@ -1,0 +1,98 @@
+# function scaleOf(s) { return s.scale; }  function setScale(s, v) { s.scale = v; return v; }  function hasScale(s) { return "scale" in s; }
+# in each the text tests `s`, which may be anything, for Circle | Square, two members of a family of four that keep `scale` at different offsets. What passes is read, stored to and asked by its slot. What fails goes by name: whichever way a value takes, the answer is the same.
+# a Circle has every name of a Ring, so those two are a family and keep radius and width at one offset each: the scale of a Circle lies behind the end of a Square. Circle | Square cuts across that family, so it is none.
+# the shell makes the objects by the program's own makers and does to them what ends a slot: it deletes the property, lays an accessor or a value that is read only in its place, freezes the object, closes it, lays a setter above it, wraps it in a proxy.
+# at the end the shell does the same deeds with functions of its own text: every row is the same.
+# LIBRARY: own
+# RUN: run-in-shell (function () { "use strict"; globalThis.publish = (scaleOf, setScale, hasScale, circle, square, dot) => { const attempt = f => { try { return String(f()); } catch (error) { return "throws " + error.constructor.name; } }; const makers = [() => circle(2, 3), () => square(5), () => dot(), () => ({ scale: 7 }), () => Object.create(circle(1, 9)), () => null, () => undefined, () => 5, () => "text", () => Object.freeze(circle(2, 3)), () => Object.freeze(square(5)), () => { const c = circle(2, 3); delete c.scale; return c; }, () => { const s = square(5); delete s.scale; return s; }, () => { const s = square(5); delete s.scale; s.scale = 6; return s; }, () => { const s = square(5); let held = 8; Object.defineProperty(s, "scale", { get() { return held; }, set(v) { held = v + 1; }, configurable: true, enumerable: true }); return s; }, () => { const c = circle(2, 3); Object.defineProperty(c, "scale", { value: 4, writable: false }); return c; }, () => { const c = circle(2, 3); delete c.scale; Object.setPrototypeOf(c, { set scale(v) { this.seen = v; }, get scale() { return "above"; } }); return c; }, () => { const s = square(5); s.extra = 1; s.more = 2; return s; }, () => { const s = square(5); delete s.scale; return Object.preventExtensions(s); }, () => new Proxy(circle(2, 3), { get(target, key) { return key === "scale" ? "trapped" : target[key]; }, has() { return false; }, set() { return true; } })]; const rows = kit => { const said = []; for (let m = 0; m < makers.length; m++) { for (let turn = 0; turn < 40; turn++) { const value = makers[m](); const row = attempt(() => kit.scaleOf(value)) + "," + attempt(() => kit.hasScale(value)) + "," + attempt(() => kit.setScale(value, 11)) + "," + attempt(() => kit.scaleOf(value)) + "," + attempt(() => kit.hasScale(value)) + "," + attempt(() => Object.keys(value).join("|")) + "," + attempt(() => value.seen); if (!turn || turn === 39) said.push(m + ": " + row); } } return said; }; const got = rows({ scaleOf, setScale, hasScale }); const expected = rows({ scaleOf: s => s.scale, setScale: (s, v) => { s.scale = v; return v; }, hasScale: s => "scale" in s }); let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("row " + got[n] + " and not " + expected[n]); } print(same + " of " + expected.length); }; })();
+# CHECK: 40 of 40
+# CHECK-NEXT: exited with 0
+# the shell gets hold of the objects, so no slot is proven filled: the one read looks at its slot itself. A set of layouts that is no family once had no typed form, and the read went by name
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: = GetSlot {{*}}key="scale" receivers=[L2, L3] level=Expected
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L2 CompiledObject
+# PLAN: slot 1 "radius" {{*}}offset=[[second]]
+# PLAN: layout L3 CompiledObject
+# PLAN: slot 1 "scale" {{*}}offset=[[second]]
+
+layout L0 name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L1 name="Dot" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Circle" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="radius" declared={type=anything} flags=[IsRequired]}, {key="width" declared={type=anything} flags=[IsRequired]}, {key="scale" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Square" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="scale" declared={type=anything} flags=[IsRequired]}, {key="side" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L4 name="Ring" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="radius" declared={type=anything} flags=[IsRequired]}, {key="width" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+variable g0 name="kept" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    v9 = String string="ring"
+    v10 = NewObject -, v9, v9, v9 layout=L4 fields=[0, 1, 2]
+    v11 = FinishObject v10
+    PutModuleVariable v11 variable=g0
+    Return v8
+}
+function f1 name="scaleOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L2|L3
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = PropGet v2 key="scale"
+    Return v3
+  b2(v4):
+    v5 = PropGet v4 key="scale"
+    Return v5
+}
+function f2 name="setScale" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=L2|L3
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    PropSet v3, v1 key="scale"
+    Return v1
+  b2(v5):
+    PropSet v5, v1 key="scale"
+    Return v1
+}
+function f3 name="hasScale" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L2|L3
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = PropHas v2 key="scale"
+    Return v3
+  b2(v4):
+    v5 = PropHas v4 key="scale"
+    Return v5
+}
+function f4 name="circle" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="circle"
+    v3 = NewObject -, v2, v0, v0, v1 layout=L2 fields=[0, 1, 2, 3]
+    v4 = FinishObject v3
+    Return v4
+}
+function f5 name="square" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="square"
+    v2 = NewObject -, v1, v0, v0 layout=L3 fields=[0, 1, 2]
+    v3 = FinishObject v2
+    Return v3
+}
+function f6 name="dot" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="dot"
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}

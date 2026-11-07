@@ -1,0 +1,23 @@
+# a parameter of the entry is no constant, whatever the one caller in sight passes: Link holds no texts
+# function show(value, locale) { return value.toLocaleString(locale); }  show(1, "de");
+# RUN: locales
+# CHECK: locale unknown NumberPrototypeToLocaleString at f1 v3
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = String string="de"
+    v3 = Call v0, -, v1, v2
+    Return v3
+}
+function f1 name="show" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="toLocaleString"
+    v3 = Call v2, v0, v1 calleeKey="toLocaleString"
+    Return v3
+}

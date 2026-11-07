@@ -124,6 +124,7 @@ export function dumpType(type: ModelType): DumpedType {
   const { integers } = type;
   return {
     isAnything: type.isAnything,
+    isMadeOfListedClasses: type.isMadeOfListedClasses,
     hasAnyObject: type.hasAnyObject,
     hasAnyFunction: type.hasAnyFunction,
     hasPlainData: type.hasPlainData,
@@ -154,7 +155,7 @@ function dumpPlace(place: ModelPlace): DumpedPlace {
     case "ResultField":
       return { place: "ResultField", index: place.index, holdsOnlyWhatIsStored: place.holdsOnlyWhatIsStored };
     case "NewValue":
-      return { place: "NewValue", type: dumpType(place.type) };
+      return { place: "NewValue", type: dumpType(place.type), holdsWhatIsThrown: place.holdsWhatIsThrown };
     case "Member":
       return {
         place: "Member",
@@ -163,7 +164,7 @@ function dumpPlace(place: ModelPlace): DumpedPlace {
         firstStep: place.firstStep,
       };
     case "NativeCell":
-      return { place: "NativeCell", cell: place.cell.text };
+      return { place: "NativeCell", cell: place.cell.text, holdsOnlyWhatIsStored: place.holdsOnlyWhatIsStored };
   }
 }
 
@@ -310,6 +311,7 @@ export function dumpOverload(overload: ModelOverload): DumpedOverload {
     readsStateBeforeConversions: flags.includes("ReadsStateBeforeConversions"),
     isSpecialCase: flags.includes("IsSpecialCase"),
     ...(flags.includes("ResultIsDeclaredOnly") ? { resultIsDeclaredOnly: true as const } : {}),
+    ...(flags.includes("ResultIsHeld") ? { resultIsHeld: true as const } : {}),
     reads: [...effects.reads],
     writes: [...effects.writes],
     transfers: flow.transfers.map(dumpTransfer),

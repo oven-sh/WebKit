@@ -1,0 +1,133 @@
+# Jar and Tin, two of the three classes below Base, and a plain function come to one parameter; Pot, the third, comes nowhere. Constructors of one family that meet fold to "the constructors of the family", and a type does
+# not say who came: a stranger that comes LATER loses every constructor of the family, Pot too. Where the stranger was there at once, Jar and Tin were lost one by one and Pot was not: one program, two answers, by the time of arrival.
+# The narrow answer cannot be had in every order. The wide one can: constructors of one tree of families that are lost take along the nearest family that holds them.
+# This file and its twin differ only in the length of the way by which the plain function comes (none | three calls).
+# RUN: link held functions mechanisms=all
+# CHECK: function f2 {{*}}in-queue-from-start
+# CHECK: function f3 {{*}}in-queue-from-start
+# CHECK: function f4 {{*}}in-queue-from-start
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[]
+layout L1 kind=Instance name="Jar" module=m0 base=L0 constructor=f2 fields=[] supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Tin" module=m0 base=L0 constructor=f3 fields=[] supertypes=[L0] flags=[HasHeritage]
+layout L3 kind=Instance name="Pot" module=m0 base=L0 constructor=f4 fields=[] supertypes=[L0] flags=[HasHeritage]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = ResolveHeritage v2
+    v8 = NewClosure function=f3
+    v9 = NewClass v8, v2, v7 layout=L2
+    v10 = FinishClass v9 layout=L2
+    v11 = ResolveHeritage v2
+    v12 = NewClosure function=f4
+    v13 = NewClass v12, v2, v11 layout=L3
+    v14 = FinishClass v13 layout=L3
+    v15 = NewClosure function=f5
+    v16 = NewClosure function=f6
+    v17 = NewClosure function=f7
+    v18 = NewClosure function=f8
+    v19 = NewClosure function=f9
+    v20 = NewClosure function=f10
+    v21 = NewClosure function=f11
+    v22 = NewClosure function=f12
+    v23 = Call v15, -, v6 calleeName="look"
+    v24 = Call v15, -, v10 calleeName="look"
+    v25 = NewClosure function=f13
+    v26 = Call v25, -, v17
+    v27 = NewClosure function=f14
+    v28 = Call v27, -, v26
+    v29 = NewClosure function=f15
+    v30 = Call v29, -, v28
+    v31 = Call v15, -, v30 calleeName="look"
+    v32 = Call v16, -, v18 calleeName="run"
+    v33 = Call v16, -, v19 calleeName="run"
+    v34 = Call v16, -, v20 calleeName="run"
+    v35 = Call v16, -, v21 calleeName="run"
+    v36 = Call v16, -, v22 calleeName="run"
+    v37 = Undefined
+    Return v37
+}
+function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="Jar" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="Tin" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f4 name="Pot" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L3 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}
+function f5 name="look" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeOf v0
+    Return v1
+}
+function f6 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return v1
+}
+function f7 name="plain" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f8 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f9 name="two" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f10 name="three" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f11 name="four" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f12 name="five" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f13 name="pass13" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f14 name="pass14" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f15 name="pass15" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

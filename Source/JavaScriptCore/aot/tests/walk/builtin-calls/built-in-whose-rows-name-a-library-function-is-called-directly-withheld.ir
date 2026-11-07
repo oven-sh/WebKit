@@ -1,0 +1,8 @@
+# the same program with calls of built-ins withheld: the call goes by the value
+# LIBRARY: own
+# RUN: walk f1 mechanisms=none+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# RUN(NEVER): walk f1 mechanisms=none+DirectCalls
+# NEVER-NOT: CallDirect
+# PROGRAM-OF: built-in-whose-rows-name-a-library-function-is-called-directly.ir

@@ -1,0 +1,146 @@
+# function Base(a) { this.a = a; }
+# class Below extends Base { constructor(a, b) { super(a); this.b = b; } }
+# function run(count) { let total = 0; for (let i = 0; i < count; i++) { const item = new Below(i & 1023, 2); total += item.a + item.b; } return total; }
+# RUN(ANSWER): run-in-shell globalThis.count = 10;
+# ANSWER: 65
+# ANSWER-NEXT: 55
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Below" module=m0 base=L0 constructor=f3 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 kind=Instance name="Named" module=m0 constructor=f4 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="maker" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L3 kind=Instance name="BelowNamed" module=m0 base=L2 constructor=f6 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L2 originField=0}, {key="maker" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L2 originField=1}] supertypes=[L2] flags=[HasHeritage] ownFieldCount=1
+variable g0 name="Below" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 name="BelowNamed" module=m0 declared={type=absent|f6 flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = ResolveHeritage v1
+    v5 = NewClosure function=f3
+    v6 = NewClass v5, v1, v4 layout=L1
+    v7 = FinishClass v6 layout=L1
+    v8 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v8 variable=g0
+    v10 = NewClosure function=f4
+    v11 = Convert v10 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f5
+    v13 = Convert v12 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = ResolveHeritage v11
+    v15 = NewClosure function=f6
+    v16 = NewClass v15, v11, v14 layout=L3
+    v17 = FinishClass v16 layout=L3
+    v18 = Convert v17 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v18 variable=g1
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="count" [isFreeName]
+    v22 = Builtin builtin=Number
+    v23 = Call v22, -, v21 calleeName="Number"
+    v24 = Call v3, -, v23 calleeName="run"
+    v25 = PropGet v20 key="print" [isFreeName]
+    v26 = Call v25, -, v24
+    v27 = Call v13, -, v23 calleeName="runNamed"
+    v28 = Call v25, -, v27
+    v29 = Undefined
+    Return v29
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v2, v1 key="a"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="run" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Convert v0 declared={type=number flags=[IsExpected]}
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = GetModuleVariable variable=g0
+    v11 = CheckInitialized v10 name="Below"
+    v12 = Integer integer=1023
+    v13 = BitAnd v6, v12
+    v14 = Integer integer=2
+    v15 = Construct v11, -, v13, v14 calleeName="Below"
+    v16 = Convert v15 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v17 = PropGet v16 key="a"
+    v18 = PropGet v16 key="b"
+    v19 = Add v17, v18
+    v20 = Add v5, v19
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    v22 = Increment v6
+    v23 = Convert v22 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v21, v23)
+  b3():
+    v24 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v24
+}
+function f3 name="Below" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: anything, v3: anything):
+    v4 = GetSuperBase v0
+    v5 = SuperConstruct v4, v1, v2 layout=L1
+    v6 = Convert v5 declared={type=L1} illTypedCause=FromLooseType
+    PropSet v6, v3 key="b"
+    Return v6
+}
+function f4 name="Named" module=m0 flags=[HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2, v1: function, v2: anything):
+    v3 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v3, v2 key="a"
+    PropSet v3, v1 key="maker"
+    v6 = Undefined
+    Return v6
+}
+function f5 name="runNamed" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Convert v0 declared={type=number flags=[IsExpected]}
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = GetModuleVariable variable=g1
+    v11 = CheckInitialized v10 name="BelowNamed"
+    v12 = Integer integer=1023
+    v13 = BitAnd v6, v12
+    v14 = Integer integer=2
+    v15 = Construct v11, -, v13, v14 calleeName="BelowNamed"
+    v16 = Convert v15 declared={type=undefined|null|L3 flags=[IsExpected]}
+    v17 = PropGet v16 key="a"
+    v18 = PropGet v16 key="maker"
+    v19 = PropGet v18 key="length"
+    v20 = Add v17, v19
+    v21 = Add v5, v20
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    v23 = Increment v6
+    v24 = Convert v23 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v22, v24)
+  b3():
+    v25 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v25
+}
+function f6 name="BelowNamed" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L3 {
+  b0(v0: function, v1: anything, v2: anything, v3: anything):
+    v4 = GetSuperBase v0
+    v5 = SuperConstruct v4, v1, v2 layout=L3
+    v6 = Convert v5 declared={type=L3} illTypedCause=FromLooseType
+    PropSet v6, v3 key="b"
+    Return v6
+}

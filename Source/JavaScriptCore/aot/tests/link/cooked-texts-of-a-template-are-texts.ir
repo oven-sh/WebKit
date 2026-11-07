@@ -1,0 +1,21 @@
+# If undefined lay among the cooked texts of every template, `strings[0]` in a tag function would be a text or undefined for each of them, and every join of what it gives would have to ask
+# function tag(strings) { return strings; }  tag`a${1}b`;
+# Each text that is written is a valid one, so each has a cooked text.
+# RUN: summary f0
+# CHECK: edge Constant string -> Contents
+# RUN(NONE): summary f0
+# NONE-NOT: Constant undefined|string
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}]
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0 calleeName="tag"
+    Return v2
+}
+function f1 name="tag" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

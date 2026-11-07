@@ -1,0 +1,49 @@
+# a function of the library whose row says that it is called as a stub is, and that takes and returns in the registers of a stub's body, saves what it writes: a loop that calls it keeps its values in registers
+# function has(list, x) { return list.indexOf(x) + list.includes(x) }
+# f2 stands for indexOf and returns by itself. f3 stands for includes and leaves by a jump to f4, which would write what the callers of f3 keep: it saves nothing
+# LIBRARY: own
+# RUN: plan units mechanisms=none+DirectCalls
+# CHECK: unit f2:Body {{*}}saves-registers-of-callers
+# RUN(NEVER): plan units mechanisms=none+DirectCalls
+# NEVER-NOT: unit f1:Body {{*}}saves-registers-of-callers
+# NEVER-NOT: unit f3:Body {{*}}saves-registers-of-callers
+# NEVER-NOT: unit f4:Body {{*}}saves-registers-of-callers
+# RUN(WITHHELD): plan units mechanisms=none
+# WITHHELD-NOT: saves-registers-of-callers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=ArraySearchIncludes function=f3
+runtimefunction id=ArraySearchIndexOf function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="has" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=ArrayPrototypeIndexOf
+    v3 = Call v2, v0, v1 calleeKey="indexOf" calleeName="indexOf"
+    v4 = Builtin builtin=ArrayPrototypeIncludes
+    v5 = Call v4, v0, v1 calleeKey="includes" calleeName="includes"
+    v6 = Add v3, v5
+    Return v6
+}
+function f2 name="indexOf" role=Library flags=[HasThis] length=1 enclosingRuntimeFunction=ArraySearchIndexOf thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer integer=-1
+    Return v3
+}
+function f3 name="includes" role=Library flags=[HasThis] length=1 enclosingRuntimeFunction=ArraySearchIncludes thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = CallDirect v1 function=f4
+    ReturnCall v3
+}
+function f4 name="includesNaN" role=Library length=1 enclosingRuntimeFunction=ArraySearchIncludes thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = StrictEq v0, v0
+    Return v1
+}

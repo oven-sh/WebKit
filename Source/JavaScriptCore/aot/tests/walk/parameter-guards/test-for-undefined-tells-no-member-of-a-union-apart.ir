@@ -1,0 +1,97 @@
+# function sum(list, rounds) { let total = 0; if (list !== undefined) { for (let i = 0; i < rounds; i++) total += list.length; } return total; }   with `undefined | string | number[]` expected of `list`
+# The body asks a test of the type of the parameter, and that test passes every member of the union or none: behind it `list.length` is as little typed as in front. A guard that let all of the union through would have nothing
+# that leans on it, and there was none: every copy of such a helper lost its typed body and built its loops twice (the bundle of the TypeScript compiler: 2,226 loops more, GenerateCode of a test run +4.2%).
+# It keeps the guard for the member that one test tells. undefined, which the body itself sends another way, passes too: such a helper is handed undefined as often as a list, and a guard for the list alone
+# sent every such call into the slow version. null, for which the body does not ask, does not pass: it would stand beside the list in all of the loop, and the loop would be built twice.
+# f2 asks for a number, which no member is: the same.
+# f3 tells the members apart and leans on neither arm, and reads the length in front of the test in a loop: with all of the union let through too little leans, and the guard for the list still pays.
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:ParameterGuard {{*}} tests (undefined|Array<number>, number)
+# CHECK: unit f2:ParameterGuard {{*}} tests (Array<number>, number)
+# CHECK: unit f3:ParameterGuard {{*}} tests (Array<number>, number)
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: ([[list]]: undefined|Array<number>{{*}}entry=0
+# WALK: = GetArrayLength
+# RUN(CLOSED): walk f1:Body mechanisms=all
+# CLOSED-NOT: PropGet
+# RUN(ONCE): walk f1:Body mechanisms=all
+# ONCE: LoopHint
+# ONCE-NOT: LoopHint
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="sum1" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
+  b0(v0: undefined|null|string|Array<number>, v1: number):
+    v2 = Integer
+    v3 = TypeTest v0 testedType=undefined
+    Branch v3 -> taken b4(), notTaken b1(| 0)
+  b1(v4):
+    v5 = NarrowByTest v0, v4
+    Jump -> next b2(v2, v2)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(), notTaken b5(v6)
+  b3():
+    v10 = PropGet v5 key="length"
+    v11 = Add v6, v10
+    v12 = Increment v7
+    Jump -> next b2(v11, v12)
+  b4():
+    Jump -> next b5(v2)
+  b5(v13: number):
+    Return v13
+}
+function f2 name="sum2" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
+  b0(v0: undefined|null|string|Array<number>, v1: number):
+    v2 = Integer
+    v3 = TypeTest v0 testedType=number
+    Branch v3 -> taken b4(), notTaken b1(| 0)
+  b1(v4):
+    v5 = NarrowByTest v0, v4
+    Jump -> next b2(v2, v2)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(), notTaken b5(v6)
+  b3():
+    v10 = PropGet v5 key="length"
+    v11 = Add v6, v10
+    v12 = Increment v7
+    Jump -> next b2(v11, v12)
+  b4():
+    Jump -> next b5(v2)
+  b5(v13: number):
+    Return v13
+}
+function f3 name="sizeThenKind" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
+  b0(v0: undefined|null|string|Array<number>, v1: number):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3: number, v4: number):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v0 key="length"
+    v8 = Add v3, v7
+    v9 = Increment v4
+    Jump -> next b1(v8, v9)
+  b3():
+    v10 = TypeTest v0 testedType=string
+    Branch v10 -> taken b4(), notTaken b5()
+  b4():
+    Return v2
+  b5():
+    Return v3
+}

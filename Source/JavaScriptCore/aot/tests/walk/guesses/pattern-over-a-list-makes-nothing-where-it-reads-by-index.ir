@@ -1,0 +1,51 @@
+# `[o.a, o.b] = values`: code runs between the steps, so each step asks anew which of the two it is. A step stands under the close of its own iteration: where `next` throws, the close has to find the iteration done.
+# So the arm of the protocol keeps its three words in memory: in a list that it makes where it opens the iteration, and that a parameter brings to the steps and the closes. It alone has the list: a word is one load or one store.
+# The arm that reads by index makes nothing and looks at none of it.
+# function two(values: number[], o) { [o.a, o.b] = values; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: [[undefined]]: undefined {{*}} = Undefined
+# CHECK: [[asMade]]: boolean {{*}} = IsPristine [[proven]] builtinClass=Array aspects=[Storage, Names]
+# CHECK: Branch [[asMade]]
+# CHECK: Jump -> next [[opened]]([[proven]], [[undefined]])
+# CHECK: ([[list]]: undefined|Array{{*}}, [[state]]: undefined|Array{{*}}):
+# CHECK: [[words]]: Array {{*}} = NewArray {{*}}, {{*}}, {{*}} contents=anything
+# CHECK: Jump -> next [[opened]]([[undefined]], [[words]])
+# CHECK: = TypeTest [[list]] testedType=Array
+# CHECK: = TypeTest [[state]] testedType=Array
+# CHECK: = GetArrayElement {{*}}arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, isPresent]
+# CHECK: PutArrayElement {{*}}arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, storageIsWritable]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses
+# NEVER-NOT: NewHeapWords
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="two" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: anything):
+    v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = IteratorResume v2 stepIndex=0
+    v4 = ResultAt v3 index=1
+    PropSet v1, v4 key="a"
+    v6 = IteratorResume v2 stepIndex=1
+    v7 = ResultAt v6 index=1
+    PropSet v1, v7 key="b"
+    Jump -> next b2()
+  b2():
+    IteratorClose v2
+    v10 = Undefined
+    Return v10
+  b3() role=IterationCleanup subject=v2:
+    v11 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v11
+}

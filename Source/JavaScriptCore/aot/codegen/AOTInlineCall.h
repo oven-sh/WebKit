@@ -31,8 +31,6 @@ public:
         , m_overload(builtinCall->overload())
         , m_receiver(builtinCall->receiverOperand())
         , m_arguments(builtinCall->argumentsOperands())
-        , m_accessSite(builtinCall->accessSite())
-        , m_allocationSite(builtinCall->allocationSite())
     {
     }
 
@@ -44,8 +42,6 @@ public:
         , m_overload(tryCallInline->overload())
         , m_receiver(tryCallInline->receiverOperand())
         , m_arguments(tryCallInline->argumentsOperands())
-        , m_accessSite(tryCallInline->accessSite())
-        , m_allocationSite(tryCallInline->allocationSite())
     {
     }
 
@@ -56,7 +52,6 @@ public:
 
     InlineBuiltin builtin() const { return m_builtin; }
     BuiltinOverloadID overload() const { return m_overload; }
-    unsigned numberOfParameters() const { return m_parameters.size(); }
     uint32_t parameterWord(unsigned index) const { return m_parameters[index]; }
     template<typename Enum> Enum parameter(unsigned index) const { return static_cast<Enum>(m_parameters[index]); }
 
@@ -66,8 +61,6 @@ public:
     ValueID argument(unsigned index) const { return m_arguments[index]; }
     ValueID argumentOrNull(unsigned index) const { return index < m_arguments.size() ? m_arguments[index] : ValueID(); }
 
-    AccessSiteID accessSite() const { return m_accessSite; }
-    AllocationSiteID allocationSite() const { return m_allocationSite; }
 
 private:
     friend class OperationEmitter;
@@ -80,8 +73,6 @@ private:
     BuiltinOverloadID m_overload;
     ValueID m_receiver;
     std::span<const ValueID> m_arguments;
-    AccessSiteID m_accessSite;
-    AllocationSiteID m_allocationSite;
     mutable LBasicBlock m_missBlock { nullptr };
 };
 

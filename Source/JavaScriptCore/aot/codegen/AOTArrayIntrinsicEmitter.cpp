@@ -8,27 +8,18 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTBarrierEmitter.h"
+#include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTElementEmitterAllocation.h"
-#include "AOTRuntimeValidation.h"
-#include "AOTThreshold.h"
-#include "AOTValueIdentity.h"
+#include "AOTSweep.h"
 #include "JSType.h"
-#include <algorithm>
 #include <bit>
 #include <optional>
+#include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-static constexpr const ArrayStorageForm& int32s = arrayStorageFormOf(ArrayStorage::Int32);
-static constexpr const ArrayStorageForm& doubles = arrayStorageFormOf(ArrayStorage::Double);
-static constexpr const ArrayStorageForm& contiguous = arrayStorageFormOf(ArrayStorage::Contiguous);
-
-static_assert(int32s.hole == contiguous.hole && int32s.element != Representation::Double && contiguous.element == Representation::JSValue);
-static_assert(doubles.element == Representation::Double);
-static_assert(!remembersOwnerOf(Opcode::TryPutByValDirect), "the owner barrier runs only on the path that stores, so it cannot cover an earlier store");
-static_assert(!remembersOwnerOf(Opcode::TryPutIndex), "tryStoreElement remembers the stored element, not the array");
 
 void ArrayIntrinsicEmitter::generateIsPristineArray(const ValueContext& value)
 {
@@ -46,7 +37,6 @@ void ArrayIntrinsicEmitter::generateIsPristineArray(const ValueContext& value)
 
 void ArrayIntrinsicEmitter::generateArrayStorageKind(const ValueContext& value)
 {
-    // The three shapes lie two apart in the order of their kinds, and the shape below them is of no kind.
     static_assert(int32s.shape + 2 == doubles.shape && doubles.shape + 2 == contiguous.shape && int32s.shape >= 2);
     static_assert(!static_cast<int32_t>(ArrayStorage::Other) && static_cast<int32_t>(ArrayStorage::Int32) == 1 && static_cast<int32_t>(ArrayStorage::Double) == 2 && static_cast<int32_t>(ArrayStorage::Contiguous) == 3);
     Word32 shape = elements().indexingMode(in<CellPointer>(value->arrayOperand()), arrayStorageTestMask);
@@ -56,12 +46,13 @@ void ArrayIntrinsicEmitter::generateArrayStorageKind(const ValueContext& value)
 
 void ArrayIntrinsicEmitter::generateGetDoubleIndex(const ValueContext& value)
 {
+    static_assert(doubles.element == Representation::Double);
     CellPointer array = in<CellPointer>(value->arrayOperand());
     Integer index = integerOperand(value->positionOperand());
     LBasicBlock otherwise = newBlock();
     Join<Number> join(m_out);
     branchUnless(elements().hasShape(elements().indexingMode(array, arrayStorageTestMask), doubles), otherwise);
-    ArrayElements storage = elements().elementsOf(array);
+    ArrayElements storage = elements().elementsOf(value, array);
     branchUnless(below(index, elements().publicLength(storage)), otherwise);
     join.add(elements().loadRawElement(doubles, storage, index).as<Number>());
 
@@ -70,16 +61,16 @@ void ArrayIntrinsicEmitter::generateGetDoubleIndex(const ValueContext& value)
     define(value, join.finish());
 }
 
-Boxed ArrayIntrinsicEmitter::contiguousElementOrEmpty(CellPointer array, Integer index)
+Boxed ArrayIntrinsicEmitter::contiguousElementOrEmpty(const ValueContext& access, CellPointer array, Integer index)
 {
+    static_assert(int32s.hole == contiguous.hole && int32s.element != Representation::Double && contiguous.element == Representation::JSValue);
     LBasicBlock otherwise = newBlock();
     Join<Boxed> join(m_out);
     Word32 shape = elements().indexingMode(array, arrayStorageTestMask);
-    // One comparison for the two shapes: the distance from the lower one is nothing or the one bit between them.
     constexpr IndexingType distance = contiguous.shape - int32s.shape;
     static_assert(contiguous.shape > int32s.shape && hasOneBitSet(distance));
     branchUnless(Condition(m_out.testIsZero32(m_out.sub(shape.value(), int32s.shape), ~static_cast<int32_t>(distance))), otherwise);
-    ArrayElements storage = elements().elementsOf(array);
+    ArrayElements storage = elements().elementsOf(access, array);
     branchUnless(below(index, elements().publicLength(storage)), otherwise);
     Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, index)));
     ensureStillAliveHere(array);
@@ -90,27 +81,100 @@ Boxed ArrayIntrinsicEmitter::contiguousElementOrEmpty(CellPointer array, Integer
     return join.finish();
 }
 
+LValue ArrayIntrinsicEmitter::elementFoundByTestInFront(const ValueContext& read)
+{
+    if (!generator().testThatFoundElement)
+        return nullptr;
+    auto behindNames = [&](ValueID id) {
+        while (operationAt(id).opcode == Opcode::Narrowed || operationAt(id).opcode == Opcode::AssumeType)
+            id = operationAt(id).valueOperand();
+        return id;
+    };
+    const Operation& test = operationAt(generator().testThatFoundElement);
+    if (behindNames(test.arrayOperand()) != behindNames(read->arrayOperand()) || behindNames(test.positionOperand()) != behindNames(read->positionOperand()))
+        return nullptr;
+
+    BlockID asked = m_code.blockOf(generator().testThatFoundElement);
+    for (BlockID block = read.block();;) {
+        for (ValueID id : m_code.valuesOf(block)) {
+            if (id == read.id())
+                break;
+            if (operationAt(id).opcode != Opcode::Narrowed && operationAt(id).opcode != Opcode::AssumeType)
+                return nullptr;
+        }
+        BlockID above = generator().singlePredecessorOf(block);
+        if (!above)
+            return nullptr;
+        const Terminator& end = m_code.at(above).terminator;
+        if (above == asked)
+            return end.isConditionalBranch() && end.conditionOperand() == generator().testThatFoundElement && m_code.at(end.taken()).to == block ? generator().elementFound : nullptr;
+        if (end.kind != TerminatorKind::Jump)
+            return nullptr;
+        block = above;
+    }
+}
+
 void ArrayIntrinsicEmitter::generateHasContiguousIndex(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    Boxed element = contiguousElementOrEmpty(array, integerOperand(value->positionOperand()));
+    if (value.isBranchCondition()) {
+        const BranchTargets& targets = value.branchTargets();
+        Integer index = integerOperand(value->positionOperand());
+        auto goOnIf = [&](Condition condition) {
+            LBasicBlock next = newBlock();
+            branch(condition, { normalEdge(next), targets.notTaken });
+            m_out.appendToContinuation(next);
+        };
+        constexpr IndexingType distance = contiguous.shape - int32s.shape;
+        if (!value->storageOperand() || elements().testsEveryPosition())
+            goOnIf(Condition(m_out.testIsZero32(m_out.sub(elements().indexingMode(array, arrayStorageTestMask).value(), int32s.shape), ~static_cast<int32_t>(distance))));
+        ArrayElements storage = elements().elementsOf(value, array);
+        if (!value->isInBounds() || elements().testsEveryPosition())
+            goOnIf(below(index, elements().publicLength(storage)));
+        Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, index)));
+        ensureStillAliveHere(array);
+        generator().testThatFoundElement = value.id();
+        generator().elementFound = element.value();
+        branch(isNotEmpty(element), targets);
+        return;
+    }
+    Boxed element = contiguousElementOrEmpty(value, array, integerOperand(value->positionOperand()));
     define(value, isNotEmpty(element));
 }
 
 void ArrayIntrinsicEmitter::generateGetContiguousIndex(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    Boxed element = contiguousElementOrEmpty(array, integerOperand(value->positionOperand()));
+    Boxed element = contiguousElementOrEmpty(value, array, integerOperand(value->positionOperand()));
     Condition isFilled = isNotEmpty(element);
     defineAs(value, select(isFilled, element, undefined()), typeOf(value.id()));
 }
 
-// For an array that the library made, filled and handed to nothing else: its form holds, and it holds the index.
+Integer ArrayIntrinsicEmitter::positionThatLibraryVouchesFor(const ValueContext& value, const ArrayElements& storage, const ArrayStorageForm& form, AccessVouchedFor access)
+{
+    Integer index = integerOperand(value->positionOperand());
+    if (elements().testsEveryPosition()) {
+        bool writes = access == AccessVouchedFor::Writes;
+        Word32 mode = elements().indexingMode(storage.array, writes ? IndexingShapeAndWritabilityMask : arrayStorageTestMask);
+        Condition hasKind = writes ? elements().hasWritableShape(mode, form) : elements().hasShape(mode, form);
+        if (form.holdsCells)
+            hasKind = writes ? isOneOfBoxedForms(mode, int32s.indexingType, contiguous.indexingType) : isOneOfBoxedForms(mode, int32s.shape, contiguous.shape);
+        elements().stopUnlessInside(value, hasKind);
+        elements().stopUnlessInside(value, below(index, elements().publicLength(storage)));
+    } else
+        build().statistics().count(StatisticID::RangeChecksRemoved);
+    return index;
+}
+
 void ArrayIntrinsicEmitter::generateGetOwnContiguousIndex(const ValueContext& value)
 {
+    if (LValue found = elementFoundByTestInFront(value)) {
+        defineAs(value, Boxed(found), typeOf(value.id()));
+        return;
+    }
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    ArrayElements storage = elements().elementsOf(array);
-    Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, integerOperand(value->positionOperand()))));
+    ArrayElements storage = elements().elementsOf(value, array);
+    Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, positionThatLibraryVouchesFor(value, storage, contiguous, AccessVouchedFor::Reads))));
     ensureStillAliveHere(array);
     defineAs(value, element, typeOf(value.id()));
 }
@@ -118,67 +182,81 @@ void ArrayIntrinsicEmitter::generateGetOwnContiguousIndex(const ValueContext& va
 void ArrayIntrinsicEmitter::generateGetOwnDoubleIndex(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    ArrayElements storage = elements().elementsOf(array);
-    define(value, elements().loadRawElement(doubles, storage, integerOperand(value->positionOperand())).as<Number>());
+    ArrayElements storage = elements().elementsOf(value, array);
+    define(value, elements().loadRawElement(doubles, storage, positionThatLibraryVouchesFor(value, storage, doubles, AccessVouchedFor::Reads)).as<Number>());
 }
 
 void ArrayIntrinsicEmitter::generateGetOwnInt32Index(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    ArrayElements storage = elements().elementsOf(array);
-    define(value, Word32(m_out.load32(elements().elementOfUnknownForm(storage, integerOperand(value->positionOperand())))));
+    ArrayElements storage = elements().elementsOf(value, array);
+    define(value, Word32(m_out.load32(elements().elementOfUnknownForm(storage, positionThatLibraryVouchesFor(value, storage, int32s, AccessVouchedFor::Reads)))));
 }
 
 void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ValueID stored = value->valueOperand();
-    Operand rawElement = get(stored);
-    // The storage may be of int32: see loadBoxedElement().
-    m_out.store64(rawElement.as<Boxed>().value(), elements().elementOfUnknownForm(elements().elementsOf(array), integerOperand(value->positionOperand())));
-    barrierAfterStore(value, array, rawElement, typeOf(stored));
+    Boxed rawElement = in<Boxed>(stored);
+    ArrayElements storage = elements().elementsOf(value, array);
+    m_out.store64(rawElement.value(), elements().elementOfUnknownForm(storage, positionThatLibraryVouchesFor(value, storage, contiguous, AccessVouchedFor::Writes)));
+    barrierAfterStore(value, array, typeOf(stored));
 }
 
 void ArrayIntrinsicEmitter::generatePutOwnDoubleIndex(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    elements().storeRawElement(doubles, elements().elementsOf(array), integerOperand(value->positionOperand()), get(value->valueOperand()));
+    ArrayElements storage = elements().elementsOf(value, array);
+    elements().storeRawElement(doubles, storage, positionThatLibraryVouchesFor(value, storage, doubles, AccessVouchedFor::Writes), in<Number>(value->valueOperand()));
 }
 
-// Over an integer: the upper half of the word is the tag of every int32, and stays.
 void ArrayIntrinsicEmitter::generatePutOwnInt32Index(const ValueContext& value)
 {
     static_assert(std::endian::native == std::endian::little);
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    m_out.store32(low32(integerOperand(value->valueOperand())).value(), elements().elementOfUnknownForm(elements().elementsOf(array), integerOperand(value->positionOperand())));
+    ArrayElements storage = elements().elementsOf(value, array);
+    Integer index = positionThatLibraryVouchesFor(value, storage, int32s, AccessVouchedFor::Writes);
+    m_out.store32(low32(integerOperand(value->valueOperand())).value(), elements().elementOfUnknownForm(storage, index));
 }
 
 void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArrayStorageForm& form)
 {
+    RELEASE_ASSERT(form.kind != ArrayStorage::Int32);
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    Integer index = integerOperand(value->positionOperand());
     ValueID stored = value->valueOperand();
-    Operand rawElement = get(stored);
-    LBasicBlock isInvalid = newBlock();
-    LBasicBlock isValid = newBlock();
-    branchUnless(elements().hasWritableShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), form), isInvalid);
-    ArrayElements storage = elements().elementsOf(array);
-    branch(below(index, elements().publicLength(storage)), { normalEdge(isValid), rareEdge(isInvalid) });
-
-    m_out.appendTo(isInvalid);
-    callVoidOperation(value, RuntimeOperation::ReportValidationFailure, { boxCell(array), word32(static_cast<int32_t>(ValidationFailureKind::ValueType)), word32(m_id.index()), word32(value.id().index()) }, { .isOnRarePath = true });
-    m_out.unreachable();
-
-    m_out.appendTo(isValid);
-    elements().storeRawElement(form, storage, index, rawElement);
-    if (form.holdsCells)
-        barrierAfterStore(value, array, rawElement, typeOf(stored));
+    Operand rawElement = generator().getIn(stored, form.element);
+    ArrayElements storage = elements().elementsOf(value, array);
+    Integer position = positionThatLibraryVouchesFor(value, storage, form, AccessVouchedFor::Writes);
+    if (!form.holdsCells) {
+        elements().storeRawElement(form, storage, position, rawElement);
+        return;
+    }
+    ValueID made = stored;
+    while (operationAt(made).opcode == Opcode::Narrowed)
+        made = operationAt(made).valueOperand();
+    if (operationAt(made).opcode != Opcode::Box && operationAt(made).opcode != Opcode::Integer)
+        rawElement = emitter<ConversionEmitter>().inFormOfType(rawElement, typeOf(stored));
+    m_out.store64(rawElement.as<Boxed>().value(), elements().elementOfUnknownForm(storage, position));
+    barrierAfterStore(value, array, typeOf(stored));
 }
 
 const ArrayStorageForm& ArrayIntrinsicEmitter::formToConstruct(const ValueContext& value) const
 {
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
-    return form ? *form : contiguous;
+    return form ? *form : int32s;
+}
+
+const ArrayStorageForm* ArrayIntrinsicEmitter::findFormOfListFilled(const ValueContext& value) const
+{
+    const Operation& born = m_code.at(rootOfCellInSweptCode(m_code, value->arrayOperand()));
+    if (born.opcode == Opcode::NewArrayLike && hasArrayStorageForm(born.arrayStorage()))
+        return findArrayStorageForm(born.arrayStorage());
+    return value->opcode == Opcode::TryPutByValDirect ? findArrayStorageForm(value->arrayStorage()) : nullptr;
+}
+
+bool ArrayIntrinsicEmitter::isMadeLikeSource(const ValueContext& value) const
+{
+    return value->sourceOperand() && !typeOf(value->sourceOperand()).isUndefinedOrNull() && !findArrayStorageForm(value->arrayStorage());
 }
 
 CellPointer ArrayIntrinsicEmitter::sourceOrNull(ValueID id)
@@ -204,35 +282,14 @@ CellPointer ArrayIntrinsicEmitter::sourceOrNull(ValueID id)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
-    case Representation::LiteralString:
         return null;
     case Representation::Unchosen:
     case Representation::RawWord:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-// The next operation copies as many elements into the array as it has. Only casts stand between the two, so nothing runs and nobody else has the array.
-bool ArrayIntrinsicEmitter::isFilledByCopyBehind(const ValueContext& allocation) const
-{
-    if (allocation.opcode() != Opcode::NewContiguousArray)
-        return false;
-    std::span<const ValueID> values = m_function.at(allocation.block()).values.span();
-    auto next = std::ranges::find(values, allocation.id());
-    RELEASE_ASSERT(next != values.end());
-    for (++next; next != values.end(); ++next) {
-        const Value& value = m_function.at(*next);
-        if (value.opcode == Opcode::AssumeType)
-            continue;
-        return value.opcode == Opcode::TryCopyFilledElements && value.countOperand() == allocation->lengthOperand()
-            && sameObjectThroughCasts(m_function, value.arrayOperand()).valueInFrontOfFacts() == allocation.id();
-    }
-    return false;
 }
 
 void ArrayIntrinsicEmitter::newArrayOfHoles(const ValueContext& value, Integer length, ValueID source, const ArrayStorageForm& form, uint32_t flags)
@@ -242,16 +299,12 @@ void ArrayIntrinsicEmitter::newArrayOfHoles(const ValueContext& value, Integer l
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
     ArrayAllocationEmitter allocation(generator());
-    bool isFilledByCopy = isFilledByCopyBehind(value);
-    // The operation gives the array this length too, unless the number is its capacity.
-    bool setsLengthBehindJoin = !isFilledByCopy && !(flags & NewArrayWithHolesFlag::lengthIsCapacity);
-    join.add(allocation.allocateArrayOfHoles(value, length, form, slowPath, isFilledByCopy ? ElementsBelowLength::NotCleared : ElementsBelowLength::Cleared, setsLengthBehindJoin ? LengthIsSetBy::Caller : LengthIsSetBy::Allocation));
+    join.add(allocation.allocateArrayOfHoles(value, length, form, slowPath, ElementsBelowLength::Cleared, LengthIsSetBy::Caller));
 
     m_out.appendTo(slowPath);
     join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { sourceOrNull(source), length, word32(form.indexingType), word32(flags) }, { .isOnRarePath = true }));
     CellPointer array = join.finish();
-    if (setsLengthBehindJoin)
-        allocation.setLengthOfNewArray(array, length);
+    allocation.setLengthOfNewArray(array, length);
     define(value, array);
 }
 
@@ -264,42 +317,48 @@ void ArrayIntrinsicEmitter::generateNewArrayLike(const ValueContext& value)
 {
     const Type& length = typeOf(value->lengthOperand());
     bool isEmpty = length.isInteger() && length.integers == Range::one(0);
-    newArrayOfHoles(value, isEmpty ? integer(0) : integerOperand(value->lengthOperand()), value->sourceOperand(), formToConstruct(value), 0);
-}
+    Integer count = isEmpty ? integer(0) : integerOperand(value->lengthOperand());
+    if (!isMadeLikeSource(value)) {
+        newArrayOfHoles(value, count, value->sourceOperand(), formToConstruct(value), 0);
+        return;
+    }
 
-void ArrayIntrinsicEmitter::generateNewArrayWithCapacity(const ValueContext& value)
-{
-    Integer capacity = integerOperand(value->lengthOperand());
-    Integer maxCapacity = integer(static_cast<int64_t>(build().limit(LimitID::MaxFusedArrayCapacity)));
-    Integer length = select(below(capacity, maxCapacity), capacity, maxCapacity);
-    newArrayOfHoles(value, length, value->sourceOperand(), formToConstruct(value), NewArrayWithHolesFlag::lengthIsCapacity);
+    LBasicBlock slowPath = newBlock();
+    LBasicBlock isMadeOfNoList = newBlock();
+    Join<CellPointer> join(m_out);
+    ArrayAllocationEmitter allocation(generator());
+    CellPointer source = sourceOrNull(value->sourceOperand());
+    branchUnless(Condition(m_out.notNull(source.value())), isMadeOfNoList);
+    branchUnless(hasCellType(source, ArrayType), isMadeOfNoList);
+    std::optional<Integer> roomOfEmptyList;
+    if (isEmpty && value->roomOperand())
+        roomOfEmptyList = integerOperand(value->roomOperand());
+    allocation.allocateListLike(value, source, count, roomOfEmptyList, isMadeOfNoList, scopedLambda<void(CellPointer)>([&](CellPointer list) {
+        join.add(list);
+    }));
+
+    m_out.appendTo(isMadeOfNoList);
+    join.add(allocation.allocateArrayOfHoles(value, count, contiguous, slowPath));
+
+    m_out.appendTo(slowPath);
+    join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { source, count, word32(contiguous.indexingType), word32(0) }, { .isOnRarePath = true }));
+    define(value, join.finish());
 }
 
 Integer ArrayIntrinsicEmitter::lengthOfArrayStoredInto(const ValueContext& value, const ArrayElements& storage)
 {
     if (!value->lengthOperand())
         return elements().publicLength(storage);
-    Integer length = integerOperand(value->lengthOperand());
-    if (!generator().validatesOrChecksProofs())
-        return length;
-    LBasicBlock isInvalid = newBlock();
-    LBasicBlock isValid = newBlock();
-    branch(equal(length, elements().publicLength(storage)), { normalEdge(isValid), rareEdge(isInvalid) });
-
-    m_out.appendTo(isInvalid);
-    callVoidOperation(value, RuntimeOperation::ReportValidationFailure, { boxCell(storage.array), word32(static_cast<int32_t>(ValidationFailureKind::ValueType)), word32(m_id.index()), word32(value.id().index()) }, { .isOnRarePath = true });
-    m_out.unreachable();
-
-    m_out.appendTo(isValid);
-    return length;
+    return integerOperand(value->lengthOperand());
 }
 
 void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
 {
-    const ArrayStorageForm& form = formToConstruct(value);
     CellPointer array = in<CellPointer>(value->arrayOperand());
     Integer index = integerOperand(value->positionOperand());
     ValueID stored = value->valueOperand();
+    const ArrayStorageForm* formOfList = findFormOfListFilled(value);
+    const ArrayStorageForm& form = formOfList ? *formOfList : contiguous;
     LBasicBlock otherwise = newBlock();
     std::optional<Operand> rawElement = elements().rawElementToStore(form, stored, otherwise);
     if (!rawElement) {
@@ -315,7 +374,7 @@ void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
     branchUnless(below(index, lengthOfArrayStoredInto(value, storage)), otherwise);
     elements().storeRawElement(form, storage, index, *rawElement);
     if (form.holdsCells)
-        barrierAfterStore(value, array, *rawElement, typeOf(stored));
+        barrierAfterStore(value, array, typeOf(stored));
     join.add(boolean(true));
 
     m_out.appendTo(otherwise);
@@ -330,26 +389,6 @@ void ArrayIntrinsicEmitter::generateTryPutIndex(const ValueContext& value)
     define(value, elements().tryStoreElement(value, array, index, value->valueOperand()));
 }
 
-// Asks what putInBounds() asks and answers false to a no, so it may store into an array that the program holds. A NaN that it stores reads as a hole.
-void ArrayIntrinsicEmitter::generateTryPutDoubleIndex(const ValueContext& value)
-{
-    CellPointer array = in<CellPointer>(value->arrayOperand());
-    Integer index = integerOperand(value->positionOperand());
-    Operand rawElement = get(value->valueOperand());
-    LBasicBlock otherwise = newBlock();
-    Join<Condition> join(m_out);
-    branchUnless(elements().hasWritableShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), doubles), otherwise);
-    ArrayElements storage = elements().elementsOf(array);
-    branchUnless(below(index, elements().publicLength(storage)), otherwise);
-    elements().storeRawElement(doubles, storage, index, rawElement);
-    join.add(boolean(true));
-
-    m_out.appendTo(otherwise);
-    join.add(boolean(false));
-    define(value, join.finish());
-}
-
-// No poll and no barrier stands in the loop: it calls nothing, and whoever makes it runs the barrier behind it.
 template<typename Functor>
 void ArrayIntrinsicEmitter::forEachPositionBelow(Integer count, const Functor& functor)
 {
@@ -360,7 +399,7 @@ void ArrayIntrinsicEmitter::forEachPositionBelow(Integer count, const Functor& f
     m_out.jump(loop);
 
     m_out.appendTo(loop);
-    Integer position(m_out.phi(B3::Int64, start));
+    Integer position(m_out.phi(Machine::Int64, start));
     branch(below(position, count), { normalEdge(element), normalEdge(done) });
 
     m_out.appendTo(element);
@@ -371,7 +410,6 @@ void ArrayIntrinsicEmitter::forEachPositionBelow(Integer count, const Functor& f
     m_out.appendTo(done);
 }
 
-// One comparison for the two forms that hold boxed values: the distance from the lower one is nothing or the one bit between them.
 Condition ArrayIntrinsicEmitter::isOneOfBoxedForms(Word32 mode, IndexingType ofIntegers, IndexingType ofValues)
 {
     IndexingType distance = ofValues - ofIntegers;
@@ -379,9 +417,7 @@ Condition ArrayIntrinsicEmitter::isOneOfBoxedForms(Word32 mode, IndexingType ofI
     return Condition(m_out.testIsZero32(m_out.sub(mode.value(), ofIntegers), ~static_cast<int32_t>(distance)));
 }
 
-// Into an array that the library has just made with room for boxed values and handed to nobody, out of one that the program holds. False where that one has storage of another kind,
-// is shorter, or has a hole or undefined among them: the new array is then left empty, for its elements may never have been cleared. A number out of storage for doubles is boxed.
-// Nothing has run since the array was made, so the collector has not marked it: no barrier.
+// No barrier: nothing has run since `array` was allocated, so the collector has not marked it. The barrier would have fenced: so a fence keeps these stores in front of the store that hands `array` on.
 void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
@@ -404,7 +440,6 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
             LBasicBlock mayBeGap = newBlock();
             LBasicBlock isValue = newBlock();
             Boxed word(m_out.load64(elements().elementOfUnknownForm(from, position)));
-            // One test for the two: the hole is no bit at all, and undefined has two bits, one of which is null.
             static_assert(!contiguous.hole && JSValue::ValueUndefined == (JSValue::ValueNull | JSValue::UndefinedTag));
             m_out.branch(m_out.testIsZero64(word.value(), ~static_cast<int64_t>(JSValue::ValueUndefined)), rareEdge(mayBeGap), normalEdge(isValue));
 
@@ -425,7 +460,6 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
         branchUnless(belowOrEqual(count, elements().publicLength(from)), otherwise);
         forEachPositionBelow(count, [&](Integer position) {
             Number number = elements().loadRawElement(doubles, from, position).as<Number>();
-            // In this storage NaN means a hole.
             branchUnless(equal(number, number), otherwise);
             m_out.store64(elements().boxRawElement(doubles, number).value(), elements().elementOfUnknownForm(to, position));
         });
@@ -434,6 +468,7 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
 
     m_out.appendTo(copied);
     ensureStillAliveHere(source);
+    emitter<BarrierEmitter>().fenceAfterInitialization();
     join.add(boolean(true));
 
     m_out.appendTo(otherwise);
@@ -442,9 +477,6 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
     define(value, join.finish());
 }
 
-// Out of an array of boxed values that the library made and filled, into one that the program holds. False where that one is shorter or has no writable storage of the three kinds.
-// Storage for integers takes them as they are: it is never younger than the values. Storage for doubles may be: convertStorageOfNumbers() makes it of storage for any value while the program's
-// code runs. So it asks each value, and answers false at the first that is no number: whoever asks then stores all of them the ordinary way.
 void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
@@ -491,14 +523,87 @@ void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
     define(value, join.finish());
 }
 
-void ArrayIntrinsicEmitter::generateGrowNewArray(const ValueContext& value)
+// No barrier: nothing has run since `array` was allocated, so the collector has not marked it. The barrier would have fenced: so a fence keeps these stores in front of the store that hands `array` on.
+void ArrayIntrinsicEmitter::generateTryFillNewArray(const ValueContext& value)
 {
-    callVoidOperation(value, RuntimeOperation::GrowNewArray, { in<CellPointer>(value->arrayOperand()), integerOperand(value->lengthOperand()) });
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    LBasicBlock otherwise = newBlock();
+    Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
+    auto fill = [&](const ArrayStorageForm& form, Operand filler) {
+        ArrayElements storage = elements().elementsOf(array);
+        forEachPositionBelow(elements().publicLength(storage), [&](Integer position) {
+            elements().storeRawElement(form, storage, position, filler);
+        });
+        emitter<BarrierEmitter>().fenceAfterInitialization();
+    };
+
+    if (const ArrayStorageForm* form = findFormOfListFilled(value)) {
+        std::optional<Operand> filler = elements().rawElementToStore(*form, value->valueOperand(), otherwise);
+        if (!filler) {
+            m_out.jump(otherwise);
+            m_out.appendTo(otherwise);
+            define(value, boolean(false));
+            return;
+        }
+        Join<Condition> join(m_out);
+        branchUnless(elements().hasWritableShape(mode, *form), otherwise);
+        fill(*form, *filler);
+        join.add(boolean(true));
+
+        m_out.appendTo(otherwise);
+        join.add(boolean(false));
+        define(value, join.finish());
+        return;
+    }
+
+    Boxed filler = in<Boxed>(value->valueOperand());
+    LBasicBlock takesFiller = newBlock();
+    LBasicBlock mayHoldIntegers = newBlock();
+    LBasicBlock isNoInteger = newBlock();
+    LBasicBlock isFraction = newBlock();
+    LBasicBlock isAnyValue = newBlock();
+    Join<Condition> join(m_out);
+    branch(elements().hasWritableShape(mode, contiguous), { normalEdge(takesFiller), normalEdge(mayHoldIntegers) });
+
+    m_out.appendTo(mayHoldIntegers);
+    branchUnless(elements().hasWritableShape(mode, int32s), otherwise);
+    branch(isInt32(filler), { normalEdge(takesFiller), normalEdge(isNoInteger) });
+
+    m_out.appendTo(isNoInteger);
+    branch(isNumber(filler), { normalEdge(isFraction), normalEdge(isAnyValue) });
+
+    m_out.appendTo(isFraction);
+    Number fraction = unboxDouble(filler);
+    branchUnless(equal(fraction, fraction), isAnyValue);
+    elements().widenStorageOfIntegers(array, doubles, otherwise);
+    {
+        ArrayElements storage = elements().elementsOf(array);
+        Integer length = elements().publicLength(storage);
+        forEachPositionBelow(length, [&](Integer position) {
+            elements().storeRawElement(doubles, storage, position, fraction);
+        });
+        forEachPositionBelow(sub(elements().vectorLength(storage), length), [&](Integer position) {
+            elements().storeRawElement(doubles, storage, add(length, position), elements().rawHole(doubles));
+        });
+    }
+    join.add(boolean(true));
+
+    m_out.appendTo(isAnyValue);
+    elements().widenStorageOfIntegers(array, contiguous, otherwise);
+    m_out.jump(takesFiller);
+
+    m_out.appendTo(takesFiller);
+    fill(contiguous, filler);
+    join.add(boolean(true));
+
+    m_out.appendTo(otherwise);
+    join.add(boolean(false));
+    define(value, join.finish());
 }
 
 void ArrayIntrinsicEmitter::generateTruncateNewArray(const ValueContext& value)
 {
-    AOT_THRESHOLD(int64_t, smallUnusedCapacity, 8);
+    static constexpr int64_t smallUnusedCapacity = 8;
     CellPointer array = in<CellPointer>(value->arrayOperand());
     Integer length = integerOperand(value->lengthOperand());
     LBasicBlock slowPath = newBlock();
@@ -506,7 +611,6 @@ void ArrayIntrinsicEmitter::generateTruncateNewArray(const ValueContext& value)
     static_assert(ArrayWithInt32 + 2 == ArrayWithDouble && ArrayWithDouble + 2 == ArrayWithContiguous, "an array has no mode between these");
     branchUnless(belowOrEqual(sub(elements().indexingMode(array, IndexingShapeAndWritabilityMask), ArrayWithInt32), ArrayWithContiguous - ArrayWithInt32), slowPath);
     ArrayElements storage = elements().elementsOf(array);
-    // Below a length that is above the capacity this wraps to more than any length.
     Integer unusedCapacity = sub(elements().publicLength(storage), length);
     Condition leavesLittleUnused = belowOrEqual(unusedCapacity, smallUnusedCapacity);
     branchUnless(logicalOr(leavesLittleUnused, belowOrEqual(unusedCapacity, length)), slowPath);

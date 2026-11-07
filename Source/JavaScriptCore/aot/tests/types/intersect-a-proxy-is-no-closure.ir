@@ -2,12 +2,15 @@
 # RUN: intersect
 # CHECK: t0 & t1 = never
 # CHECK: t1 & t0 = never
-# CHECK: t1 & t3 = function
+# CHECK: t1 & t3 = Proxy
 # CHECK: t2 & t0 = f1
 # CHECK: t2 & t1 = Proxy
 # CHECK: t3 & t1 = Proxy
 # CHECK: laws hold
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="types" parameters=[{type=f1}, {type=Proxy}, {type=f1|Proxy}, {type=function}] results=[{type=undefined}]
-function f1 name="listed" results=[{type=anything}]
+function f0 name="types" role=Signature parameters=[{type=f1}, {type=Proxy}, {type=f1|Proxy}, {type=function}] results=[{type=undefined}]
+function f1 name="listed" results=[{type=anything}] {
+    Return
+}
+entry module=m0

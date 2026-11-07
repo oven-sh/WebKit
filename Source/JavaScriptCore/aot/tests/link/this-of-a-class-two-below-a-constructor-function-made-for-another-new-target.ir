@@ -1,0 +1,59 @@
+# If what `super()` gives for a new target from outside the row were the result of the constructor at the top of the row whatever that is, `this` in `Low` would be proven undefined: a class at the top answers with the object that it makes, a plain function answers with what it returns
+# function Root() { this.a = 1; }  class Middle extends Root { constructor() { super(); this.b = 2; } }  class Low extends Middle { constructor() { super(); this.c = 3; } }  class Stranger { }  construct Low with Stranger for new.target
+# Nobody writes `new Low`, so nothing is made through its constructor for a class of the row. Where the top of the row is a plain function, `super()` gives what the constructor above answers with, as it does wherever the new target is not handed up a row of classes.
+# RUN: link functions mechanisms=all
+# CHECK: function f3 {{*}}result=object?UnseenCode
+
+layout L0 kind=Instance name="Root" module=m0 constructor=f1 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Middle" module=m0 base=L0 constructor=f2 fields=[{key="b" declared={type=anything}}] supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Low" module=m0 base=L1 constructor=f3 fields=[{key="c" declared={type=anything}}] supertypes=[L0, L1] flags=[HasHeritage]
+layout L3 kind=Instance name="Stranger" module=m0 constructor=f4
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f2
+    v3 = NewClass v2, v0, v1 layout=L1
+    v4 = FinishClass v3 layout=L1
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6, v4, v5 layout=L2
+    v8 = FinishClass v7 layout=L2
+    v9 = NewClosure function=f4
+    v10 = NewClass v9 layout=L3
+    v11 = FinishClass v10 layout=L3
+    v12 = Construct v8, v11
+    v13 = Undefined
+    Return v13
+}
+function f1 name="Root" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="Middle" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    v4 = Integer integer=2
+    PropSet v3, v4 key="b"
+    Return v3
+}
+function f3 name="Low" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    v4 = Integer integer=3
+    PropSet v3, v4 key="c"
+    Return v3
+}
+function f4 name="Stranger" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L3 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3
+    Return v2
+}

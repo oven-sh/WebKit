@@ -34,10 +34,8 @@
 #include "AOTCompiledCall.h"
 #include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
-#include "AOTNativeCallValidation.h"
 #include "AOTRemovableFeature.h"
-#include "AOTRuntimeCounters.h"
-#include "AOTRuntimeValidation.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTStackTrace.h"
 #include "AOTUnwinding.h"
 #include "AOTVMState.h"
@@ -112,6 +110,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 #include "JSWebAssemblyInstance.h"
+#include "WasmCodeInImage.h"
 #include "WasmContext.h"
 #include "WebAssemblyFunction.h"
 #endif
@@ -289,7 +288,7 @@ JSValue evaluateDirectEval(JSGlobalObject* globalObject, JSValue program, const 
     DirectEvalSite site { caller.callFrame, caller.scope, caller.thisValue, caller.codeBlockWithCache, caller.cache, caller.callSite };
     return evaluateDirectEvalAt(globalObject, program, site, [&]() -> const DirectEvalCaller& {
 #if ENABLE(AOT)
-        AOT::count(globalObject->vm(), AOT::RuntimeCounterID::DirectEvalsParsed);
+        AOT::countEvent(globalObject->vm(), AOT::RuntimeCounterID::DirectEvalsParsed);
 #endif
         return caller;
     });
@@ -852,11 +851,8 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
     if (vm.hasCompiledCode()) [[unlikely]] {
         if (skippedFrames < framesToSkip && vm.aotState().frameOfImportThatAsksLoader == callFrame) [[unlikely]]
             ++skippedFrames;
-        bool validates = AOT::validatesRuntime(vm) && results.isEmpty() && framesToSkip == skippedFrames && !filter;
         if (caller || !AOT::tryGetStackTrace(vm, owner, results, framesToSkip - skippedFrames, maxStackSize, filter))
             appendStackTrace(owner, results, { .callFrame = callFrame, .framesToSkip = framesToSkip - skippedFrames, .caller = caller, .filter = filter }, maxStackSize);
-        if (validates) [[unlikely]]
-            AOT::validateFrames(vm, owner, results, maxStackSize, caller);
         return;
     }
 #endif
@@ -986,11 +982,11 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
     };
 
 #if ENABLE(AOT)
-    bool listsEachRunAtOnce = !start.compiledFramesBelow && !start.visitsEachCompiledFrame;
+    bool listsEachRunAtOnce = !start.compiledFramesBelow;
     AOT::ShownFrameFilter shownFrameFilter(!!start.compiledFrameExit);
     auto appendCompiledFrames = [&] (StackVisitor& visitor) {
         EntryFrame* currentEntryFrame = visitor->entryFrame();
-        AOT::RunListing listing { owner, maxResultsSize, framesToSkip - std::min(skippedFrames, framesToSkip), foundCaller ? nullptr : caller, start.filter };
+        AOT::RunListing listing { maxResultsSize, framesToSkip - std::min(skippedFrames, framesToSkip), foundCaller ? nullptr : caller, start.filter };
         IterationStatus status = AOT::appendShownFramesOfRun(vm, visitor.compiledFrames(), shownFrameFilter, results, listing);
         skippedFrames = framesToSkip - listing.framesToSkip;
         foundCaller = !listing.caller;
@@ -1063,23 +1059,6 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
                     break;
                 }
                 }
-#if ENABLE(AOT)
-            } else if (visitor->isCompiledFrame()) {
-                const AOT::CompiledFrame& frame = visitor->compiledFrame();
-                AOT::RunningImageScope imageOfFrame(vm.aotState(), frame.instance->program);
-                if (visitor->isOfConstructedFunctionThatLeft())
-                    appendIfWanted(StackFrame(*visitor.compiledFrames().constructedFunctionThatLeft()));
-                else if (visitor->isOfBuiltinCalledByCompiledFrame())
-                    appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false, false, false, false, false, AOT::leavesByTailCall(frame.calledBuiltin) }));
-                else if (visitor.compiledFrames().isAtFailedTailCall() && !visitor->isConstructCall()) // A function that was constructed makes no tail calls.
-                    appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, false, false, true }));
-                else {
-                    std::optional<JSObject*> callee = visitor.compiledFrames().recordedCallee();
-                    appendIfWanted(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, visitor.compiledFrames().calleeWasEntered(), callee && !*callee }, callee.value_or(nullptr)));
-                }
-                if (Options::useAsyncStackTrace() && !frame.inlineFrame && AOT::FunctionDescription(frame.function).isAsync() && visitor.compiledFrames().isAboveFramesThatWait())
-                    entryFrameWhoseContextWaits = currentEntryFrame;
-#endif
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
             } else if (!!visitor->codeBlock())
 #else
@@ -1290,7 +1269,13 @@ CatchInfo::CatchInfo(const Wasm::HandlerInfo* handler, const Wasm::Callee* calle
             m_tryDepthForThrow = handler->m_tryDepth;
         } else {
 #if ENABLE(JIT)
-            m_nativeCode = Wasm::Thunks::singleton().stub(Wasm::catchInWasmThunkGenerator).template retagged<ExceptionHandlerPtrTag>().code();
+            CodePtr<ExceptionHandlerPtrTag> runway;
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+            // Where code comes from an image, nothing generates a thunk.
+            if (Options::runsCompiledImage())
+                runway = Wasm::CodeInImage::catchRunwayFor(handler->m_nativeCode.untaggedPtr());
+#endif
+            m_nativeCode = runway ? runway : Wasm::Thunks::singleton().stub(Wasm::catchInWasmThunkGenerator).template retagged<ExceptionHandlerPtrTag>().code();
             m_nativeCodeForDispatchAndCatch = handler->m_nativeCode;
 #endif
         }
@@ -1802,30 +1787,6 @@ failedJSONP:
     JSC_END_REMOVABLE_ENTRY_POINT
 }
 
-#if ENABLE(AOT)
-// Never inlined: executeCall and executeConstruct would otherwise have words in their frames that only a validated call writes, and the
-// conservative scan reads whatever an earlier call left in them.
-template<CodeSpecializationKind kind>
-static NEVER_INLINE EncodedJSValue enterNativeFunctionUnderValidation(JSGlobalObject* globalObject, JSObject* callee, JSValue thisValueOrNewTarget, const ArgList& args, TaggedNativeFunction nativeFunction, ProtoCallFrame& protoCallFrame, bool& didRunCode)
-{
-    VM& vm = globalObject->vm();
-    if (!AOT::validatesNativeCalls(vm)) {
-        // Nothing says what the callee is, so it counts as code where it has run some.
-        bool didEnterVMBefore = std::exchange(vm.didEnterVM, false);
-        EncodedJSValue result = vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame);
-        didRunCode = vm.didEnterVM;
-        vm.didEnterVM |= didEnterVMBefore;
-        return result;
-    }
-    AOT::NativeCallValidationScope validation(vm, { globalObject, callee, kind, thisValueOrNewTarget, args });
-    EncodedJSValue result = vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame);
-    if constexpr (kind == CodeSpecializationKind::CodeForCall)
-        validation.didReturn(JSValue::decode(result));
-    didRunCode = validation.finishAndAskWhetherCodeRan();
-    return result;
-}
-#endif
-
 // Never inlined: executeCall would otherwise have words in its frame that only a call of a bound function writes, and the
 // conservative scan reads whatever an earlier call left in them.
 NEVER_INLINE JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, JSCell* context, const ArgList& args)
@@ -1936,15 +1897,6 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
         return JSValue::decode(vmEntryToWasm(uncheckedDowncast<WebAssemblyFunction>(function)->jsToWasm(ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame));
 #endif
 
-#if ENABLE(AOT)
-    if (AOT::validatesRuntime(vm)) [[unlikely]] {
-        bool didRunCode = true;
-        EncodedJSValue result = enterNativeFunctionUnderValidation<CodeSpecializationKind::CodeForCall>(globalObject, function, thisValue, args, nativeFunction, protoCallFrame, didRunCode);
-        if (!didRunCode)
-            clobberizeValidator.release();
-        return JSValue::decode(result);
-    }
-#endif
     return JSValue::decode(vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame));
 }
 
@@ -2024,17 +1976,8 @@ JSValue Interpreter::executeConstructAllowingPrimitiveResult(JSObject* construct
     if (isJSConstruct) {
         ASSERT(jitCode == constructData.js.functionExecutable->generatedJITCodeForConstruct().ptr());
         result = vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame);
-    } else {
-#if ENABLE(AOT)
-        if (AOT::validatesRuntime(vm)) [[unlikely]] {
-            bool didRunCode = true;
-            result = enterNativeFunctionUnderValidation<CodeSpecializationKind::CodeForConstruct>(globalObject, constructor, newTarget, args, constructData.native.function, protoCallFrame, didRunCode);
-            if (!didRunCode)
-                clobberizeValidator.release();
-        } else
-#endif
-            result = vmEntryToNative(constructData.native.function.taggedPtr(), &vm, &protoCallFrame);
-    }
+    } else
+        result = vmEntryToNative(constructData.native.function.taggedPtr(), &vm, &protoCallFrame);
 
     RETURN_IF_EXCEPTION(throwScope, { });
     return JSValue::decode(result);

@@ -1,0 +1,53 @@
+# class Context { path = "/"; code = 200; status = code => { this.code = code; }; last = 1; constructor(path) { this.path = path; } }
+# The arrow captures `this`, so `status` and `last` are filled for nobody's proof (SummaryConstruction::Key::isFilled). The object lists them all the same when the constructor goes on behind the initializer.
+# If the test in front of `this.path = path` asked for the word that lists `path` and `code` alone, it would fail in every construction, and the store would go by a stub.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:
+# That the cell lists nothing where it has just been made is known without a test.
+# CHECK-NOT: HasKeyOrder {{*}} layout=L0 [hasNoFlags] traits
+# CHECK: HasKeyOrder {{*}} layout=L0 fields=[0, 1, 2, 3] [hasNoFlags] traits
+
+layout L0 kind=Instance name="Context" module=m0 constructor=f1 fields=[{key="path" declared={type=anything} flags=[IsRequired]}, {key="code" declared={type=anything} flags=[IsRequired]}, {key="status" declared={type=anything} flags=[IsRequired]}, {key="last" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = FinishClass v1 layout=L0
+    v4 = Builtin builtin=GlobalThis
+    PropSet v4, v3 key="Context"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="Context" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0}
+    v5 = CallDirect v4 function=f2
+    PropSet v4, v1 key="path"
+    Return v4
+}
+function f2 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = String string="/"
+    PropDefine v1, v2 key="path"
+    v4 = Integer integer=200
+    PropDefine v1, v4 key="code"
+    v6 = NewClosure v0 function=f3
+    PropDefine v1, v6 key="status"
+    v8 = Integer integer=1
+    PropDefine v1, v8 key="last"
+    v10 = Undefined
+    Return v10
+}
+function f3 name="status" module=m0 kind=Arrow length=1 captures=[{type=L0 variableName="this"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="code"
+    v3 = Undefined
+    Return v3
+}

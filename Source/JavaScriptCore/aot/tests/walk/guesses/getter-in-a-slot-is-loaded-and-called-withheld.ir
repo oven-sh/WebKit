@@ -1,0 +1,10 @@
+# the same read without guesses, and without direct calls: no typed form reads such a slot, and the read stays as written
+# RUN: walk f2 mechanisms=all-Guesses
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: GetSlotGetter
+# CHECK: = PropGet {{*}}key="a"
+# RUN(CALLS): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots+Guesses
+# CALLS-LABEL: code f2:Body
+# CALLS-NOT: GetSlotGetter
+# CALLS: = PropGet {{*}}key="a"
+# PROGRAM-OF: getter-in-a-slot-is-loaded-and-called.ir

@@ -11,19 +11,7 @@
 #include <wtf/HashTraits.h>
 #include <wtf/Hasher.h>
 
-// Compacting a function gives its values other numbers, and whoever has kept a number from before names another value with it, or none.
-// With assertions on, the number of a value carries how often its function had been renumbered when the function handed it out, and the function asks for that where it is handed back.
-#define AOT_STAMPS_VALUE_IDS ASSERT_ENABLED
-
 namespace JSC { namespace AOT { namespace Typed {
-
-// A functor that was run for the parts of a record may have moved the table that holds the record. Whoever ran it reads the record once more, so the address sanitizer stops that at the first part.
-ALWAYS_INLINE void touchForAddressSanitizer([[maybe_unused]] const void* record)
-{
-#if ASAN_ENABLED
-    static_cast<void>(*static_cast<const volatile uint8_t*>(record));
-#endif
-}
 
 struct ValueIDTag;
 
@@ -32,11 +20,7 @@ class ID {
 public:
     static constexpr uint32_t hashTableDeletedIndex = UINT32_MAX - 1;
     static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
-    static constexpr bool carriesStamp = AOT_STAMPS_VALUE_IDS && std::is_same_v<Tag, ValueIDTag>;
-    static constexpr unsigned bitsOfIndex = carriesStamp ? 26 : 32;
-    static constexpr uint32_t largestIndex = carriesStamp ? (1u << 26) - 1 : hashTableDeletedIndex - 1;
-    // No stamp: the number was made from an integer, and nobody asks where it is from. The stamp of all ones is left to the two values that are no numbers.
-    static constexpr unsigned numberOfStamps = 62;
+    static constexpr uint32_t largestIndex = hashTableDeletedIndex - 1;
 
     constexpr ID() = default;
     constexpr ID(std::nullptr_t) { }
@@ -51,15 +35,7 @@ public:
     {
         RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(value <= largestIndex);
     }
-    static constexpr ID withStamp(size_t index, unsigned stamp)
-    {
-        ID id(index);
-        if constexpr (carriesStamp)
-            id.m_value |= stamp << bitsOfIndex;
-        return id;
-    }
 
-    // For whoever keeps numbers in words of its own.
     static constexpr ID fromBits(uint32_t bits)
     {
         ID id;
@@ -71,15 +47,7 @@ public:
     constexpr explicit operator bool() const { return m_value != UINT32_MAX; }
     constexpr uint32_t index() const
     {
-        if constexpr (carriesStamp)
-            return m_value >= hashTableDeletedIndex ? m_value : m_value & largestIndex;
         return m_value;
-    }
-    constexpr unsigned stamp() const
-    {
-        if constexpr (carriesStamp)
-            return m_value >= hashTableDeletedIndex ? 0 : m_value >> bitsOfIndex;
-        return 0;
     }
     unsigned hash() const { return intHash(index()); }
     friend constexpr bool operator==(ID a, ID b) { return a.index() == b.index(); }
@@ -109,7 +77,6 @@ public:
     explicit operator bool() const { return !!m_root; }
     friend bool operator==(RootThroughCasts, RootThroughCasts) = default;
     friend bool operator==(RootThroughCasts root, ValueID value) { return root.m_root == value; }
-    ValueID valueInFrontOfFacts() const { return m_root; }
 
 private:
     ValueID m_root;
@@ -130,15 +97,7 @@ using ExpectedResultID = ID<struct ExpectedResultIDTag>;
 
 using LayoutSetID = ID<struct LayoutSetIDTag>;
 using CalleeSetID = ID<struct CalleeSetIDTag>;
-using AccessSiteID = ID<struct AccessSiteIDTag>;
-using AllocationSiteID = ID<struct AllocationSiteIDTag>;
-using AllocationClassID = ID<struct AllocationClassIDTag>;
-using FieldAccessID = ID<struct FieldAccessIDTag>;
-using AllocationID = ID<struct AllocationIDTag>;
 using RegExpRecordID = ID<struct RegExpRecordIDTag>;
-using SiteCacheID = ID<struct SiteCacheIDTag>;
-using GlobalBindingID = ID<struct GlobalBindingIDTag>;
-using GuardBitID = ID<struct GuardBitIDTag>;
 
 } } } // namespace JSC::AOT::Typed
 

@@ -8,85 +8,54 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTCFG.h"
+#include "AOTCode.h"
+#include "AOTEffects.h"
 #include "AOTEmitterList.h"
+#include "AOTFacts.h"
 #include "AOTHeaps.h"
-#include "AOTIR.h"
-#include "AOTInstanceLayout.h"
+#include "AOTIRProgram.h"
 #include "AOTOperand.h"
 #include "AOTOperationContext.h"
-#include "AOTVector.h"
-#include <bit>
+#include "AOTPlan.h"
+#include "AOTRepresentationRules.h"
+#include "AOTTypeArena.h"
+#include <array>
 #include <memory>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
+#include <wtf/Function.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT {
 
-class StringConstantNumbering;
+class MentionList;
 class StubCatalog;
 
 namespace Typed {
 
-class ArrivalSiteNumbers;
-class BranchCounterNumbers;
-class CallingConventions;
-class DerivedFunctions;
-class EffectSummaries;
-class FlowResults;
-class FrameAllocation;
-class FrameMaps;
-class FunctionAnalyses;
-class Heat;
-class LiteralStringTable;
-class Placement;
-class PromisedResults;
-class StackChecks;
-class TypeArena;
 struct CodeRecords;
-struct ValueLocation;
+struct FormAtPlace;
 
 struct CodeGenerationInputs {
     const Program& program;
-    const Placement& placement;
-    const FlowResults& flow;
-    const Heat& heat;
-    const EffectSummaries& effects;
-    const DerivedFunctions& derivedFunctions;
-    const CallingConventions& conventions;
-    const StackChecks& stackChecks;
-    const FrameAllocation& frameAllocation;
-    const LiteralStringTable& literalStrings;
+    const Facts& facts;
+    const Plan& plan;
     const StubCatalog& stubCatalog;
-    const StringConstantNumbering& stringConstants;
-    InstanceSizes instanceSizes;
-    const BranchCounterNumbers& branchCounters;
-    const ArrivalSiteNumbers& arrivalSites;
-    const PromisedResults& promisedResults;
-    // computeEffectSummariesByOperandTypes(), in a validating build.
-    const EffectSummaries* effectsByOperandTypes { nullptr };
+    const AOTHeaps& heaps;
 };
 
 struct FunctionInputs {
     BuildContext& build;
     TypeArena& types;
     const CodeGenerationInputs& program;
-    FunctionID id;
-    const Function& function;
-    FunctionAnalyses& analyses;
-    const FrameMaps& frameMaps;
+    const Code& code;
 };
 
 struct PinnedValues {
-    // An int32 read out of a list's storage, and the word it was read as: the same int32, boxed.
     UncheckedKeyHashMap<LValue, LValue> wordsOfInt32Elements;
     LValue instance { nullptr };
     LValue instancePrefix { nullptr };
-    LValue statics { nullptr };
     LValue numberTag { nullptr };
     LValue notCellMask { nullptr };
     LValue cellCageBase { nullptr };
@@ -94,37 +63,27 @@ struct PinnedValues {
 
 enum class GenerationResult : uint8_t { Failed, Generated };
 
-// --aot-drop-guard, in the functions that --aot-disable-in names.
-std::optional<DroppedGuard> droppedGuardIn(const RecordedOptions&, FunctionID);
-
-inline B3::Origin b3OriginOf(ValueID id)
+inline Machine::Origin machineOriginOf(ValueID id)
 {
-    return B3::Origin(std::bit_cast<DFG::Node*>(id ? static_cast<uintptr_t>(id.index()) + 1 : 0));
+    return Machine::Origin(id ? id.index() + 1 : 0);
 }
 
-inline ValueID valueOfOrigin(B3::Origin origin)
+inline constexpr uint32_t firstOriginOfTerminators = 0xFFFFFE00;
+
+inline Machine::Origin machineOriginOf(TerminatorKind kind)
 {
-    uintptr_t bits = std::bit_cast<uintptr_t>(origin.dfgOrigin());
-    return bits ? ValueID(static_cast<uint32_t>(bits - 1)) : ValueID();
+    return Machine::Origin(firstOriginOfTerminators + static_cast<uint32_t>(kind));
 }
 
-constexpr B3::FrequencyClass b3FrequencyClassOf(Expected<BlockFrequency> frequency)
+inline ValueID valueOfOrigin(Machine::Origin origin)
 {
-    switch (frequency.predicted()) {
-    case BlockFrequency::Normal:
-        return B3::FrequencyClass::Normal;
-    case BlockFrequency::Unlikely:
-        return B3::FrequencyClass::Unlikely;
-    case BlockFrequency::Rare:
-        return B3::FrequencyClass::Rare;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+    return origin && origin.bits() < firstOriginOfTerminators ? ValueID(origin.bits() - 1) : ValueID();
 }
 
 class CodeGenerator {
     WTF_MAKE_NONCOPYABLE(CodeGenerator);
 public:
-    CodeGenerator(const FunctionInputs&, B3::Procedure&, CodeRecords&);
+    CodeGenerator(const FunctionInputs&, Machine::Procedure&, CodeRecords&);
     ~CodeGenerator();
 
     GenerationResult run();
@@ -132,83 +91,119 @@ public:
     const FunctionInputs& inputs() const LIFETIME_BOUND { return m_inputs; }
     BuildContext& build() { return m_inputs.build; }
     const Program& program() const { return m_inputs.program.program; }
-    const Function& function() const { return m_inputs.function; }
-    FunctionAnalyses& analyses() { return m_inputs.analyses; }
-    B3::Procedure& procedure() { return m_proc; }
-    AOTHeaps& heaps() { return m_heaps; }
+    const Facts& facts() const { return m_inputs.program.facts; }
+    const Plan& plan() const { return m_inputs.program.plan; }
+    const Code& code() const { return m_inputs.code; }
+    BlockID singlePredecessorOf(BlockID block) const { return m_singlePredecessors[block.index()]; }
+    ValueID testThatFoundElement;
+    LValue elementFound { nullptr };
+    CodeUnit unit() const { return code().unit(); }
+    const Function& function() const;
+    Machine::Procedure& procedure() { return m_proc; }
+    const AOTHeaps& heaps() const { return m_inputs.program.heaps; }
     Output& out() LIFETIME_BOUND { return m_out; }
     PinnedValues& pinned() LIFETIME_BOUND { return m_pinned; }
     CodeRecords& records() { return m_records; }
-    bool validates() const { return m_validates; }
-    bool checksProofs() const { return m_checksProofs; }
-    bool validatesOrChecksProofs() const { return m_validates || m_checksProofs; }
-    // Whether a call leaves alone the registers it says it keeps is a question about the back end. The answer takes about a kilobyte of code at each call.
-    bool checksKeptRegisters() const { return m_checksKeptRegisters; }
-    bool forcesGCSlowPaths() const { return m_forcesGCSlowPaths; }
-    bool hasGuardForWritableStorage(const ValueContext& store);
+    MentionList& mentions() { return m_mentions; }
     ValueID operationBeingGenerated() const { return m_operation ? m_operation->valueID() : ValueID(); }
+    BlockID blockBeingGenerated() const { return m_operation ? m_operation->block() : BlockID(); }
 
-    const Type& typeOf(ValueID id) const { return program().at(function().at(id).type); }
-    // Of an operand: the form in which the operation that is being generated takes it.
-    Representation representationOf(ValueID) const;
+    const Operation& operationAt(ValueID id) const LIFETIME_BOUND { return code().at(id); }
+    Opcode opcodeOf(ValueID id) const { return code().at(id).opcode; }
+    TypeID typeIDOf(ValueID id) const { return code().at(id).type; }
+    Representation representationOf(ValueID id) const { return code().at(id).representation; }
+    Type typeOf(ValueID id) const { return m_inputs.types.at(typeIDOf(id)); }
 
-    // An operand in the form in which the operation that is being generated takes it.
-    Operand get(ValueID) const;
-    // In that form, whoever asks: an operation reads what another has read, and the other took it in a form of its own.
-    Operand getIn(ValueID, Representation);
-    Operand getAsDefined(ValueID) const;
-    // For the one user of an operation that leaves its code to the user: from here on the user finds the operands of that operation in the forms in which it takes them.
-    void takeOperandsOf(ValueID operationLeftToUser);
-    // Generates a value that generateValue() has passed over, and what it is computed from. Does nothing for a value that is there.
-    void generateValueLeftToUser(const OperationContext& user, ValueID);
-    void define(const ValueContext&, Operand);
+    bool suspends() const { return m_proc.traits().savesFrameOnSuspend; }
+    bool hasHandlers() const { return code().hasHandlers(); }
+    bool isInLoop(BlockID block) const { return code().at(block).isInLoop; }
+    bool isStoredIntoByName(ValueID) const;
+    bool takesOpenForm(const OperationContext&, StateOfKnowledge = StateOfKnowledge::Always) const;
+    bool takesFormOfLoops(const OperationContext&, StateOfKnowledge = StateOfKnowledge::Always) const;
+    bool paysForCodeInLine(BlockID block) const { return isInLoop(block); }
+    bool laterBarrierCovers(ValueID store) const { return code().marksOf(store).contains(SweepMark::LaterBarrierCovers); }
+    bool ownerIsYoung(ValueID store) const { return !m_keepsValuesInHeapFrame && code().marksOf(store).contains(SweepMark::OwnerIsYoung); }
+    bool laterFenceCovers(ValueID allocation) const { return !m_keepsValuesInHeapFrame && code().marksOf(allocation).contains(SweepMark::LaterFenceCovers); }
+    bool isDeferredClosure(ValueID id) const { return isDeferredClosure(code().at(id)); }
+    const PlacedSlot* slotOfScopeReadInPlaceOfClosure(ValueID id, const Operation& read) const
+    {
+        if (read.opcode != Opcode::GetDeferredClosureSlot) [[likely]]
+            return nullptr;
+        return slotOfScopeReadInPlaceOfClosureSlow(id, read);
+    }
+    void noteClosureWhoseLifeEndsBehind(ValueID closure, ValueID call) { m_closuresWhoseLivesEndBehindCalls.append({ closure, call }); }
+    void noteObjectWhoseLifeEndsBehind(ValueID object, ValueID call) { m_closuresWhoseLivesEndBehindCalls.append({ object, call }); }
+    const PlacedSlot* slotOfScopeOfClosureWithoutValue(ValueID closure) const { return closure == m_closureReadForItsScope ? m_slotOfScopeOfClosureRead : nullptr; }
+    const Effects& effectsOf(const OperationContext& context LIFETIME_BOUND) const
+    {
+        if (!context.m_hasEffects)
+            computeEffectsOf(context);
+        return context.m_effects;
+    }
+
+    Operand get(ValueID id) { return get(id, code().at(id)); }
+    LValue wordOf(ValueID id) const { return m_values[id.index()]; }
+    void nameAgain(ValueID id, LValue lowered) { m_values[id.index()] = lowered; }
+    bool keepsValuesInHeapFrame() const { return m_keepsValuesInHeapFrame; }
+    void saveFramesOfGenerators() { m_savesFramesOfGenerators = true; }
+    void leaveFailuresWithHeapFrameUnsaid() { m_leavesFailuresWithHeapFrameUnsaid = true; }
+    std::span<const BlockID> order() const { return m_order; }
+    BlockID onlyPredecessorOf(BlockID block) const { return m_singlePredecessors[block.index()]; }
+    bool blockDominates(BlockID above, BlockID below);
+    Operand getIn(ValueID id, Representation wanted)
+    {
+        if (wanted == Representation::Void)
+            return { wanted, nullptr };
+        const Operation& operation = code().at(id);
+        if (isSameWord(operation.representation, wanted)) [[likely]]
+            return { wanted, get(id, operation).value };
+        return makeInWantedForm(id, operation, wanted);
+    }
+    bool holdsAnyNaN(ValueID id) const { return m_followsNumbersOutOfBytes && m_valuesHoldingAnyNaN.quickGet(id.index()); }
+    Operand getWithAnyNaN(ValueID);
+    bool isCarriedBoxed(ValueID id) const { return m_carriesParametersBoxed && m_parametersCarriedBoxed.quickGet(id.index()); }
+    ValueID sumBoxedBy(const Operation& box) const
+    {
+        if (box.opcode != Opcode::Box || box.representation != Representation::JSValue || m_followsNumbersOutOfBytes)
+            return { };
+        if (code().at(box.valueOperand()).representation != Representation::Double) [[likely]]
+            return { };
+        return sumBoxedBySlow(box);
+    }
+    Number settleNaNOf(const ValueContext&, Number);
+    void define(const ValueContext& value, Operand result)
+    {
+        RELEASE_ASSERT(!value.isBranchCondition());
+        defineValue(value.id(), value.representation(), result);
+    }
     void defineTest(const ValueContext&, Condition);
     void defineResults(const ValueContext&, std::span<const Operand>);
     Operand resultAt(ValueID producer, uint32_t index) const;
     void defineParameter(ValueID parameter, Operand);
+    bool goesOnInBlockOfEntry(BlockID id) const { return id == m_onlyEntryBlock && !m_firstBlockHasOtherWaysIn; }
+    void defineParameterAsPassed(ValueID parameter, Operand);
+    void goOnInBlockOfEntry(BlockID);
 
     LBasicBlock blockFor(BlockID) const;
-    B3::FrequentedBlock edgeTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
+    BlockEdge edgeTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
     void jumpTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
-    // For a terminator that leads to all of these blocks and to which the code of the first does for every one of them: that code goes here, and nothing enters the blocks.
-    void generateInPlaceOfBlocks(std::span<const BlockID>);
-    void passHandlerArguments(const Target& handler);
+    void passHandlerArguments(const Edge& handler);
 
     void generateBranchCondition(const TerminatorContext&, ValueID condition, BranchTargets);
-    void generateReturnedCall(const TerminatorContext&, ValueID call);
-
-    // The block ends with the call and a test of its result for a type that the callee promises: the return stands for the test, and the test is made at the landing.
-    bool calleeTestsResultOf(const ValueContext& call) const;
-    // The landing is empty. It gives the two values that the meeting of the return and the landing takes from either, and jumps there.
-    struct LandingOfMisfit {
-        LBasicBlock landing { nullptr };
-        LBasicBlock meeting { nullptr };
-        LValue result { nullptr };
-        LValue hasTestedType { nullptr };
+    ValueID readLeftToBranchOnItsTruth(BlockID, std::span<const ValueID> values, ValueID test);
+    struct WaysOfTruth {
+        BranchTargets targets;
+        bool areOfObjectAndNothing { false };
     };
-    void setLandingOfMisfit(ValueID call, const LandingOfMisfit&);
-    std::optional<LandingOfMisfit> takeLandingOfMisfit(ValueID call);
-
-    ValueID nullishCheckBehindFailedTest(BlockID) const;
-    void generateNullishCheckBehindFailedTest(BlockID, ValueID check);
+    std::optional<WaysOfTruth> waysOfTruthOf(const ValueContext& read) const;
+    void generateReturnedCall(const TerminatorContext&, ValueID call);
 
     template<typename T> T& emitter();
 
-    // Under --aot-drop-guard every guard is tested as ever, and one that fails says so on stderr, once. The dropped one then goes on as if it had passed.
-    struct GuardUnderTest {
-        uint32_t ordinal { 0 };
-        bool isDropped { false };
-    };
-    std::optional<GuardUnderTest> takeGuardUnderTest(const ValueContext&);
-    BranchTargets targetsOf(const ValueContext&, const GuardUnderTest&);
-
-    void fail(const OperationContext&, InternalErrorKind, const String& detail = { });
+    Subject subjectOf(const OperationContext&) const;
+    COLD NEVER_INLINE void fail(const OperationContext&, InternalErrorKind, const String& detail = { });
     void failAtLimit(const OperationContext&, LimitID, uint64_t needed);
     bool hasFailed() const { return m_hasFailed; }
-    bool isValidatedWhereLookedAt(ValueID);
-    bool hasTypeOnlyBehindTest(ValueID parameter);
-    // B3 may compute the lowered value ahead of every test: whether the type holds there too.
-    bool holdsTypeWhereverComputed(ValueID);
 
     class InitializationScope {
         WTF_MAKE_NONCOPYABLE(InitializationScope);
@@ -218,127 +213,267 @@ public:
 
     private:
         CodeGenerator& m_generator;
-        B3::AbstractHeapRepository::DecorationMark m_begin;
     };
 
     bool isInitializingCell() const { return m_initializationDepth; }
-    bool isPassingHandlerArguments() const { return m_isPassingHandlerArguments; }
 
 private:
-    struct Emitters;
-    class OperationScope;
+    struct EmittersMade {
+#define AOT_DECLARE_EMITTER_POINTER(Class) Class* pointerTo##Class { nullptr };
+        FOR_EACH_AOT_EMITTER(AOT_DECLARE_EMITTER_POINTER)
+#undef AOT_DECLARE_EMITTER_POINTER
+    };
     struct ResultRange {
-        uint32_t first;
-        uint32_t count;
-    };
-    struct ConvertedOperand {
-        ValueID id;
-        Operand operand;
-    };
-    // A form of a value that was made where every later operation of the block finds it.
-    struct SharedForm {
-        ValueID source;
-        Operand operand;
-        uint32_t previousOfSource;
-    };
-    struct IncomingOperand {
-        Operand operand;
-        // None for a result that the terminator declares.
-        ValueID source;
-        // Of what the edge itself gives: its type is that on the edge.
-        std::optional<EdgeResultPosition> result { };
-    };
-    struct ExemptStores {
-        B3::AbstractHeapRepository::DecorationMark begin;
-        B3::AbstractHeapRepository::DecorationMark end;
-    };
+        static constexpr uint32_t none = UINT32_MAX;
 
+        explicit operator bool() const { return first != none; }
+
+        uint32_t first { none };
+        uint32_t count { 0 };
+    };
+    struct WayIntoBlock {
+        BlockID to;
+        BlockID from;
+    };
+    struct SubtreeOfDominators {
+        uint32_t first;
+        uint32_t size;
+    };
+    using OperationDispatchers = std::array<void (*)(CodeGenerator&, const ValueContext&), numberOfEnumerators<Opcode>>;
+    using TerminatorDispatchers = std::array<void (*)(CodeGenerator&, const TerminatorContext&), numberOfEnumerators<TerminatorKind>>;
+
+    template<typename T> T& makeEmitter();
+    bool isDeferredClosure(const Operation& definition) const
+    {
+        if (definition.opcode != Opcode::NewClosure && definition.opcode != Opcode::Narrowed) [[likely]]
+            return false;
+        return isDeferredClosureSlow(definition);
+    }
+    bool isDeferredClosureSlow(const Operation&) const;
+    const PlacedSlot* slotOfScopeReadInPlaceOfClosureSlow(ValueID, const Operation&) const;
+    ValueID m_closureReadForItsScope;
+    Vector<std::pair<ValueID, ValueID>, 2> m_closuresWhoseLivesEndBehindCalls;
+    const PlacedSlot* m_slotOfScopeOfClosureRead { nullptr };
+    void computeEffectsOf(const OperationContext&) const;
+    bool hasResults(size_t indexOfValue) const { return !m_resultRanges.empty() && m_resultRanges[indexOfValue]; }
+    FormAtPlace sayFormNamedFor(const OperationContext&, StateOfKnowledge) const;
     bool recordSitesWithoutCode();
+    void orderBlocks();
+    bool isProvenToDominate(BlockID home, BlockID user) const { return m_userOfHomesProven == user && m_homesProven[home.index() % m_homesProven.size()] == home; }
+    void verifyThatDefinitionDominates(ValueID, BlockID home, BlockID user);
+    bool dominates(BlockID home, BlockID user);
+    void findDominators();
+    void numberDominatorTree();
     void createBlocks();
     void createPhis();
-    void generateBlock(BlockID);
-    void generateContentsOf(BlockID);
-    bool isHandedOnByJumpAlone(BlockID, const Block&, ValueID);
-    bool isAwaitedAtOnce(std::span<const ValueID> valuesOfBlock, size_t index) const;
-    void generateValue(BlockID, const Block&, ValueID, bool isAwaitedAtOnce = false);
-    void generateTerminator(BlockID, const Block&);
-    void dispatch(const ValueContext&);
-    void dispatch(const TerminatorContext&);
-    void finishProcedure();
-
+    bool isReadByBoxAlone(BlockID home, ValueID parameter, unsigned stepsLeft) const;
+    ValueID sumBoxedBySlow(const Operation& box) const;
+    bool waitsForBoxOfSum(ValueID, const Operation&) const;
+    void followNumbersOutOfBytes();
+    bool letsAnyNaNInto(ValueID parameter);
+    bool goesOnBehindJump(size_t positionInOrder) const;
+    bool leavesOutBlockThatNothingLeadsTo(BlockID);
+    void generateBlock(BlockID id) { generateBlock(id, code().at(id)); }
+    void generateBlock(BlockID, const Block&);
+    void enterBlockOfBodyWithHeapFrame(BlockID, const Block&);
+    ValueID testReadByBranchAlone(BlockID, const Terminator&) const;
+    ValueID testReadByBranchBehindJumpAlone(BlockID, const Block&) const;
+    bool isAwaitedAtOnce(const Operation& call, std::span<const ValueID> valuesOfBlock, size_t index) const;
+    void generateValue(BlockID, ValueID, const Operation&, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind);
+    void generateTerminator(BlockID, const Block&, bool generatesCondition);
     void generate(const ValueContext&);
-    void verifyElementGuard(const ValueContext&);
-    ValueLocation locationOfParameter(ValueID) const;
-    void defineValue(ValueID, Operand);
-    void passArguments(Edge, const Target&, std::span<const Operand> declaredResults);
-    void passArgument(ValueID parameter, const IncomingOperand&);
-    IncomingOperand takeIncomingOperand(Edge, uint32_t parameterIndex, std::span<const Operand>& declaredResults) const;
+    void declareAccessesOf(const OperationContext& context)
+    {
+        if (m_checksAllocation) [[unlikely]]
+            declareAccessesSlow(context);
+    }
+    void declareAccessesSlow(const OperationContext&);
+    static const OperationDispatchers& operationDispatchers();
+    void dispatch(const ValueContext& value) { m_operationDispatchers[static_cast<size_t>(value.opcode())](*this, value); }
+    void dispatchWatched(const ValueContext&);
+    template<Opcode> void dispatchOperation(const ValueContext&);
+    static const TerminatorDispatchers& terminatorDispatchers();
+    void dispatch(const TerminatorContext& terminator) { m_terminatorDispatchers[static_cast<size_t>(terminator.kind())](*this, terminator); }
+    template<TerminatorKind> void dispatchTerminator(const TerminatorContext&);
 
-    template<typename Operation> void convertOperandsOf(const OperationContext&, const Operation&);
-    enum class EarlierValue : bool { IsNotLookedFor, MayStandIn };
-    Operand convert(const OperationContext&, ValueID source, Operand, const Type&, Representation wanted, EarlierValue = EarlierValue::MayStandIn);
-    std::optional<Operand> onlyValueOf(const Type&, Representation);
-    Operand makeConstantIn(const OperationContext&, ValueID constant, Representation);
-    ValueID findSameValueMadeBefore(ValueID source, Representation wanted);
-    ValueID onlyValueArrivingAt(ValueID parameter);
-    std::optional<Operand> findSharedForm(ValueID source, Representation) const;
-    void shareForm(ValueID source, Operand);
-    void dropSharedFormsSince(size_t mark);
-    void forgetSharedForms() { m_firstSharedFormInReach = m_sharedForms.size(); }
-    void publishKnownProperties(ValueID, LValue);
-    void publishKnownPropertiesOfConvertedValue(ValueID, Operand);
-    void publishKnownProperties(ValueID, Operand, bool isConverted);
-    void publishInductionVariables();
-    void checkInlineStores(const OperationContext&, const B3::AbstractHeapRepository::DecorationMark&);
+    const Edge* handlerOf(BlockID block) const
+    {
+        // What is made in a landing pad for the parameters of the handler must not lead back to the pad.
+        if (m_isPassingHandlerArguments || m_isAheadOfWhatMayThrow)
+            return nullptr;
+        if (block == m_blockOfCachedHandler) [[likely]]
+            return m_cachedHandler;
+        return handlerEdgeOf(block, code().at(block));
+    }
+    const Edge* handlerEdgeOf(BlockID id, const Block& block) const
+    {
+        if (!block.handler) [[likely]]
+            return nullptr;
+        EdgeID handler = code().handlerOf(id);
+        return handler ? &code().at(handler) : nullptr;
+    }
+    Operand get(ValueID id, const Operation& operation)
+    {
+        Representation representation = operation.representation;
+        RELEASE_ASSERT(representation != Representation::Unchosen);
+        if (representation == Representation::Void)
+            return { };
+        BlockID home = operation.block();
+        if (!home)
+            return makeConstant(id, operation);
+        if (BlockID user = blockBeingGenerated(); user && user != home && home != m_onlyEntryBlock && !isProvenToDominate(home, user))
+            verifyThatDefinitionDominates(id, home, user);
+        LValue lowered = m_values[id.index()];
+        if (!lowered) [[unlikely]]
+            return zeroInPlaceOfValueOfFailedCode(representation);
+        if (representation == Representation::Double && (m_carriesParametersBoxed || m_followsNumbersOutOfBytes)) [[unlikely]]
+            return getNumberInFormKept(id, lowered);
+        return { representation, lowered };
+    }
+    Operand zeroInPlaceOfValueOfFailedCode(Representation);
+    Operand getNumberInFormKept(ValueID, LValue lowered);
+    Operand makeInWantedForm(ValueID, const Operation&, Representation wanted);
+    Operand makeConstant(ValueID, const Operation&);
+    void defineValue(ValueID id, Representation representation, Operand operand)
+    {
+        if (m_definitionTaken) [[unlikely]] {
+            *m_definitionTaken = operand;
+            return;
+        }
+        RELEASE_ASSERT(operand.representation == representation);
+        if (operand.representation == Representation::Void)
+            return;
+        LValue& lowered = m_values[id.index()];
+        RELEASE_ASSERT(!lowered && operand.value && operand.value->type() == machineTypeOf(operand.representation));
+        lowered = operand.value;
+    }
+    BlockEdge edgeLeavingTurnLaidOut(const Block& blockAtEnd);
+    BlockEdge edgeThatPassesArguments(const TerminatorContext&, const Edge&, std::span<const Operand> declaredResults);
+    void passArguments(const Edge&, std::span<const ValueID> parameters, std::span<const Operand> declaredResults);
+    void passArgument(ValueID parameter, Operand);
+    void failToPassArgument(ValueID parameter, Representation found, Representation wanted);
     bool currentBlockIsOpen() const;
-
-    Subject subjectOf(const OperationContext&) const;
+    struct SumOfIntegers {
+        size_t indexOfParameter { 0 };
+        ValueID sum;
+        ValueID termAsNumber;
+        ValueID term;
+        LValue added { nullptr };
+    };
+    struct CountedLoop {
+        size_t positionOfHead { 0 };
+        Vector<BlockID, 4> turn;
+        Vector<size_t, 4> positionsOfTurn;
+        ValueID counter;
+        ValueID bound;
+        Opcode relation { Opcode::Less };
+        int64_t step { 1 };
+        int64_t mostTurns { 0 };
+        ValueID poll;
+        Vector<ValueID, 2> flatStrings;
+        Vector<SumOfIntegers, 2> sumsOfIntegers;
+    };
+    std::optional<CountedLoop> findCountedLoopAt(size_t positionInOrder) const;
+    void layOutTurns(const CountedLoop&);
+    void keepArgumentsForNextTurn(const Edge&);
+    bool leavesTurnLaidOut(BlockID target) const { return m_headOfTurnsLaidOut && target != m_headOfTurnsLaidOut && !std::ranges::contains(m_turnLaidOut, target); }
+    void findSumsOfIntegers(CountedLoop&, const Edge& back) const;
+    bool addToSumOfIntegers(ValueID);
     void failAtLimit(LimitID, uint64_t needed, const Subject&);
 
     const FunctionInputs m_inputs;
-    B3::Procedure& m_proc;
-    AOTHeaps& m_heaps;
+    Machine::Procedure& m_proc;
     CodeRecords& m_records;
+    MentionList& m_mentions;
+    const TypingContext m_typing;
+    const OperationDispatchers& m_operationDispatchers;
+    const TerminatorDispatchers& m_terminatorDispatchers;
     Output m_out;
+    const bool m_checksAllocation;
+    const bool m_checksEffects;
+    const uint32_t m_rowThatSaysLess;
+    bool m_watchesOperations { false };
+    bool m_notesForms { false };
+    bool m_mayReleaseBehindLastReads { false };
+    bool m_mayLendCells { false };
+    bool m_keepsValuesInHeapFrame { false };
+    bool m_savesFramesOfGenerators { false };
+    bool m_looksBehindEachOperation { false };
+    bool m_leavesFailuresWithHeapFrameUnsaid { false };
     PinnedValues m_pinned;
-    Vector<LValue> m_values;
-    bool m_valuesOutliveNoSuspension { false };
-    const OperationContext* m_operation { nullptr };
-    Vector<ConvertedOperand, 4> m_convertedOperands;
-    Vector<SharedForm> m_sharedForms;
-    // By the index of the source: one more than the index of its newest form, or zero.
-    Vector<uint32_t> m_newestSharedFormOf;
-    size_t m_firstSharedFormInReach { 0 };
-    bool m_isPassingHandlerArguments { false };
-    Vector<BlockID> m_blockOfParameter;
-    // Takes what the operation that is being generated defines, in place of the table of values.
-    Operand* m_definitionTaken { nullptr };
-    Vector<std::optional<ResultRange>> m_resultRanges;
+    std::span<LValue> m_values;
+    std::span<ResultRange> m_resultRanges;
     Vector<Operand> m_results;
-    Vector<LBasicBlock> m_blocks;
-    Vector<ExemptStores, 2> m_exemptStores;
-    std::unique_ptr<Emitters> m_emitters;
-    std::optional<DroppedGuard> m_droppedGuard;
-    ValueID m_callWithLandingOfMisfit;
-    LandingOfMisfit m_landingOfMisfit;
-    std::optional<BitVector> m_valuesValidatedWhereLookedAt;
-    std::optional<BitVector> m_parametersTypedOnlyBehindTest;
-    Vector<uint32_t> m_numberOfGuardsSeen;
+    std::span<LBasicBlock> m_blocks;
+    bool m_nextBlockGoesOnHere { false };
+    Vector<LBasicBlock, 4> m_blocksLeftOut;
+    BlockID m_headOfTurnsLaidOut;
+    ValueID m_readLeftToBranch;
+    Vector<Operand, 8> m_argumentsForNextTurn;
+    std::span<const BlockID> m_turnLaidOut;
+    WTF::Function<LBasicBlock()> m_blockLeavingTurnLaidOut;
+    Vector<SumOfIntegers, 2> m_sumsOfIntegers;
+    std::span<const BlockID> m_order;
+    std::span<BlockID> m_singlePredecessors;
+    std::span<ScopeFork> m_scopeAtEndOfBlock;
+    BlockID m_onlyEntryBlock;
+    bool m_firstBlockHasOtherWaysIn { false };
+    Vector<WayIntoBlock, 16> m_waysIntoJoins;
+    std::span<uint32_t> m_places;
+    std::span<uint32_t> m_dominatorsByPlace;
+    std::span<SubtreeOfDominators> m_subtreesByPlace;
+    std::array<BlockID, 4> m_homesProven;
+    BlockID m_userOfHomesProven;
+    std::optional<DominatorsOfCode> m_dominators;
+    BlockID m_blockOfCachedHandler;
+    const Edge* m_cachedHandler { nullptr };
+    const OperationContext* m_operation { nullptr };
+    Operand* m_definitionTaken { nullptr };
+    EmittersMade m_emitters;
     unsigned m_initializationDepth { 0 };
-    bool m_validates { false };
-    bool m_checksProofs { false };
-    bool m_runsOutOfMemoryWhenCounted { false };
-    bool m_checksKeptRegisters { false };
-    bool m_forcesGCSlowPaths { false };
+    bool m_isPassingHandlerArguments { false };
+    bool m_isAheadOfWhatMayThrow { false };
     bool m_hasFailed { false };
-    BitVector m_blocksGeneratedElsewhere;
+    bool m_carriesParametersBoxed { false };
+    BitVector m_parametersCarriedBoxed;
+    bool m_followsNumbersOutOfBytes { false };
+    BitVector m_valuesHoldingAnyNaN;
+    BitVector m_valuesReadForBitsOfNaN;
+    BitVector m_blocksBegun;
 };
 
-#define AOT_DECLARE_EMITTER_ACCESSOR(Class) template<> Class& CodeGenerator::emitter<Class>();
-FOR_EACH_AOT_EMITTER(AOT_DECLARE_EMITTER_ACCESSOR)
-#undef AOT_DECLARE_EMITTER_ACCESSOR
+#define AOT_DEFINE_EMITTER_ACCESSOR(Class) \
+    template<> Class& CodeGenerator::makeEmitter<Class>(); \
+    template<> inline Class& CodeGenerator::emitter<Class>() \
+    { \
+        if (Class* made = m_emitters.pointerTo##Class) [[likely]] \
+            return *made; \
+        return makeEmitter<Class>(); \
+    }
+FOR_EACH_AOT_EMITTER(AOT_DEFINE_EMITTER_ACCESSOR)
+#undef AOT_DEFINE_EMITTER_ACCESSOR
 
-ValueID valueOwnedByTerminator(const Terminator&);
+inline ValueID valueOwnedByTerminator(const Terminator& terminator)
+{
+    switch (terminator.kind) {
+    case TerminatorKind::TestAndBranch:
+        return terminator.conditionOperand();
+    case TerminatorKind::ReturnCall:
+        return terminator.callOperand();
+    case TerminatorKind::Jump:
+    case TerminatorKind::Branch:
+    case TerminatorKind::Switch:
+    case TerminatorKind::SwitchString:
+    case TerminatorKind::Return:
+    case TerminatorKind::Throw:
+    case TerminatorKind::Rethrow:
+    case TerminatorKind::Unreachable:
+    case TerminatorKind::SwitchOnShape:
+    case TerminatorKind::TryCallInline:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 } } } // namespace JSC::AOT::Typed
 

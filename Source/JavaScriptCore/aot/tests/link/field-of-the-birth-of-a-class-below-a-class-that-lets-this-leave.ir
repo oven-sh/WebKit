@@ -1,0 +1,6 @@
+# the constructor above has let `this` be seen, so nothing that the constructor below stores is filled. The row of constructors goes on to its end for the birth: what the class below stores is of the birth
+# PROGRAM-OF: filled-field-of-a-derived-class-whose-base-lets-this-leave.ir
+# RUN: link fields mechanisms=all
+# CHECK: field L1.0 "b" {{*}}of-birth
+# RUN(NEVER): link fields mechanisms=all
+# NEVER-NOT: field L1.0 "b" {{*}}filled

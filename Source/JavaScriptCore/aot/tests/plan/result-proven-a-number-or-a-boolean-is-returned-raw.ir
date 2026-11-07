@@ -1,0 +1,134 @@
+# the Body of a function whose result Link proves a number, an int32 or a boolean returns it raw: whoever calls it directly takes the word as it is, and the entry by value boxes it
+# function half(n) { return n / 2 }  function bits(n) { return n | 0 }  function isBig(n) { return n > 2 }  function unsigned(n) { return n >>> 0 }
+# function positive(n) { if (n > 0) return n }  async function later(n) { return n * 2 }  function Made() { return new.target === undefined ? 1 : 2 }
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:Body ({{*}}) -> (Double)
+# CHECK-NEXT: unit f1:GenericCallEntry -> f1:Body
+# CHECK: unit f2:Body ({{*}}) -> (Int32)
+# CHECK: unit f3:Body ({{*}}) -> (Boolean)
+# An integer past int32 is returned as the double that it is
+# CHECK: unit f4:Body ({{*}}) -> (Double)
+# Undefined on one path: raw too, in the form that holds a number or undefined
+# CHECK: unit f5:Body ({{*}}) -> (OptionalDouble)
+# What a coroutine returns goes into its promise
+# CHECK: unit f6:Body ({{*}}) -> (JSValue)
+# CHECK: unit f6:CoroutineBody ({{*}}) -> (JSValue)
+# Whoever constructs asks whether the body has handed back an object
+# CHECK: unit f7:Body ({{*}}) -> (JSValue)
+# CHECK: unit f7:GenericConstructEntry -> f7:Body
+# function inner(n) { return n / 2 }  function outer(n) { return inner(n) }  sink(outer)
+# Anybody may call outer, so it returns a boxed value, and nobody but its call in tail position takes what inner returns: boxed too, that call is a jump
+# CHECK: unit f8:Body ({{*}}) -> (JSValue)
+# CHECK: unit f9:Body ({{*}}) -> (JSValue)
+# RUN(JUMPS): walk f9 mechanisms=-Inlining
+# JUMPS: [[call]]: {{*}} @JSValue = CallDirect {{*}}function=f8
+# JUMPS-NEXT: ReturnCall [[call]]
+# Only a direct call takes a raw result, and only unboxed numbers make one
+# RUN(BOXED): plan units mechanisms=-UnboxedNumbers
+# BOXED-NOT: -> (Double)
+# BOXED-NOT: -> (Int32)
+# BOXED-NOT: -> (Boolean)
+# BOXED-NOT: -> (OptionalDouble)
+# RUN(CLOSED): plan units mechanisms=-DirectCalls
+# CLOSED-NOT: -> (Double)
+# CLOSED-NOT: -> (Int32)
+# CLOSED-NOT: -> (Boolean)
+# CLOSED-NOT: -> (OptionalDouble)
+
+variable g0 name="half" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="bits" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="isBig" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="unsigned" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="positive" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="later" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="Made" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="inner" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Double number=3.5
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="half"
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v3, -, v0 calleeName="bits"
+    v5 = GetModuleVariable variable=g2
+    v6 = Call v5, -, v0 calleeName="isBig"
+    v7 = GetModuleVariable variable=g3
+    v8 = Call v7, -, v0 calleeName="unsigned"
+    v9 = GetModuleVariable variable=g4
+    v10 = Call v9, -, v0 calleeName="positive"
+    v11 = GetModuleVariable variable=g5
+    v12 = Call v11, -, v0 calleeName="later"
+    v13 = GetModuleVariable variable=g6
+    v14 = Call v13 calleeName="Made"
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="sink" [isFreeName]
+    v17 = NewClosure function=f9
+    v18 = Call v16, -, v2, v4, v6, v8, v10, v12, v14, v17
+    Return v18
+}
+function f1 name="half" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    Return v2
+}
+function f2 name="bits" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    Return v2
+}
+function f3 name="isBig" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Greater v0, v1
+    Return v2
+}
+function f4 name="unsigned" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = URShift v0, v1
+    Return v2
+}
+function f5 name="positive" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Greater v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Undefined
+    Return v3
+}
+function f6 name="later" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}
+function f7 name="Made" module=m0 flags=[HasNewTarget] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+function f8 name="inner" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    Return v2
+}
+function f9 name="outer" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g7
+    v2 = Call v1, -, v0 calleeName="inner"
+    ReturnCall v2
+}

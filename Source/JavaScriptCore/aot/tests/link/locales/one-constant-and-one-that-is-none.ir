@@ -1,0 +1,21 @@
+# two calls of one method: each is looked at by itself, so the written tag of the first does not stand for the second
+# (1).toLocaleString("de"); (1).toLocaleString(globalThis.input);
+# RUN: locales
+# CHECK: locale unknown NumberPrototypeToLocaleString at f0 v5
+# RUN(TAG): locales
+# TAG: locale constant "de" NumberPrototypeToLocaleString at f0 v1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = String string="de" @32
+    v2 = PropGet v0 key="toLocaleString"
+    v3 = Call v2, v0, v1 calleeKey="toLocaleString" @17
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="input" [isFreeName] @72
+    v6 = PropGet v0 key="toLocaleString"
+    v7 = Call v6, v0, v5 calleeKey="toLocaleString" @57
+    Return v7
+}

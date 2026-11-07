@@ -1,0 +1,75 @@
+# The read of `lazy` is tied in Link's first round; the two closures come out of calls, so they reach the operations that lay them a round later: the field has been asked before the accessor is laid.
+# Nobody will ask again, so whoever lays an accessor looks at what the field's node has by then: an edge out of it, an observer of another kind, something that has arrived. If it only waited, f1 and f2 would never be entered and the read would stop the program.
+# f5, f6: the same two roads on a record that nobody asks: they stay out.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: function f2 unreached
+# CHECK: function f5 unreached
+# CHECK: function f6 unreached
+
+layout L0 module=m0 fields=[{key="lazy" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="lazy" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f3
+    v2 = Call v1 calleeName="giveGetter"
+    DefineGetter v0, v2 key="lazy"
+    v4 = NewClosure function=f4
+    v5 = Call v4 calleeName="giveSetter"
+    DefineSetter v0, v5 key="lazy"
+    v7 = FinishObject v0
+    v8 = PropGet v7 key="lazy"
+    v9 = NewObject layout=L1
+    v10 = NewClosure function=f7
+    v11 = Call v10 calleeName="giveOtherGetter"
+    DefineGetter v9, v11 key="lazy"
+    v13 = NewClosure function=f8
+    v14 = Call v13 calleeName="giveOtherSetter"
+    DefineSetter v9, v14 key="lazy"
+    v16 = FinishObject v9
+    v17 = Undefined
+    Return v17
+}
+function f1 name="lazy" module=m0 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="lazy" module=m0 kind=Setter length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f3 name="giveGetter" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    Return v0
+}
+function f4 name="giveSetter" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f5 name="lazy" module=m0 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f6 name="lazy" module=m0 kind=Setter length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f7 name="giveOtherGetter" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f5
+    Return v0
+}
+function f8 name="giveOtherSetter" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f6
+    Return v0
+}

@@ -501,8 +501,10 @@ void LinkBuffer::linkCode(MacroAssembler& macroAssembler, JITCompilationEffort e
 #if CPU(X86_64)
     if (m_records && (m_policy.recordsLinkedSites || m_policy.shortensJumps)) [[unlikely]] {
         macroAssembler.m_assembler.assignJumpKinds();
-        if (m_policy.shortensJumps)
+        if (m_policy.shortensJumps) {
             m_records->jumpShifts = macroAssembler.m_assembler.shortenJumps();
+            indexX86JumpShifts(m_records->jumpShifts.span(), m_records->firstJumpShiftByStretch);
+        }
     }
 #endif
     allocate(macroAssembler, effort);
@@ -629,13 +631,16 @@ void LinkBuffer::takeRecords(MacroAssembler& macroAssembler)
         return;
     m_records->emittedJumps = macroAssembler.m_assembler.takeEmittedJumps();
     Vector<X86LinkedJump> jumps = macroAssembler.m_assembler.takeLinkedJumps();
-    m_records->linkedSites.reserveInitialCapacity(jumps.size());
+    ASSERT(m_records->linkedSites.isEmpty());
+    m_records->linkedSites.grow(jumps.size());
+    LinkedSite* site = m_records->linkedSites.mutableSpan().data();
     for (const X86LinkedJump& jump : jumps) {
         bool isConditional = jump.kind == X86JumpKind::Conditional;
         RelocationKind kind = jump.isShort
             ? (isConditional ? RelocationKind::ShortConditionalJump : RelocationKind::ShortJump)
             : (isConditional ? RelocationKind::ConditionalJump : RelocationKind::Jump);
-        m_records->linkedSites.append(LinkedSite { jump.from - MacroAssembler::relocationSize(kind), jump.to, kind });
+        uint32_t length = jump.isShort ? X86JumpShortener::shortJumpLength : X86JumpShortener::longJumpLength(jump.kind);
+        *site++ = LinkedSite { jump.from - length, jump.to, kind };
     }
 #endif
 }
@@ -789,13 +794,6 @@ NEVER_INLINE void LinkBuffer::finalizeRecords()
         RELEASE_ASSERT(previous.offset + MacroAssembler::relocationSize(previous.kind) <= linkedSites[i].offset);
     }
 }
-
-#if CPU(X86_64)
-uint32_t LinkBuffer::jumpShiftAt(uint32_t offset) const
-{
-    return shortenedJumpShiftAt(m_records->jumpShifts.span(), offset, m_records->jumpShiftCursor);
-}
-#endif
 
 #else
 

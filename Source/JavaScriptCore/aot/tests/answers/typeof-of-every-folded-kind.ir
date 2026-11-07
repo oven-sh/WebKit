@@ -1,0 +1,196 @@
+# `typeof` of a value that folds is the text that the engine answers, whatever the kind of the value, and a text that one function takes twice is there both times
+# function kinds() { report(typeof 0.5, typeof 0.25, typeof 1, typeof 2, typeof "a", typeof "b", typeof true, typeof false, typeof undefined, typeof undefined, typeof null, typeof null, typeof 1n, typeof 2n,
+#   typeof Symbol.iterator, typeof Symbol.hasInstance, typeof function nothing() {}, typeof function nothing() {}, typeof Math, typeof JSON); }
+# function byTruth(x) { if (x) return "yes"; return "no"; }
+# kinds(); kinds();
+# var ofNamespace = typeof Math === "object", first = ofNamespace ? "http://localhost" : "https://example.com";   and once more, into `second`
+# var ofText = typeof "a" === "string", third = ofText ? "dev" : "prod";   and once more, into `fourth`
+# report(first, second, third, fourth); report(byTruth(1), byTruth(0), byTruth(1), byTruth(0));
+# The text is what the front end writes where it folds: each step that it has folded stands beside its constant, and nobody reads the step.
+# Every kind comes twice in one function, and so does every text behind a flag: the word of a literal's cell is zero until the first taker has the cell made, and the second taker is the one that went wrong.
+# The first call of `kinds` is the first run of all eight texts, the second finds the words filled. `byTruth` hands back the word of a literal, which is looked at and then made a cell.
+# The stored programs have `process` where this has `Math`: the shell has no host to make it. The program that runs in Bun is test/aot/parallel/ordinary-foldable-code/typeof-of-every-folded-kind.js.
+# RUN: run-in-shell globalThis.report = (...texts) => print(texts.join());
+# CHECK: number,number,number,number,string,string,boolean,boolean,undefined,undefined,object,object,bigint,bigint,symbol,symbol,function,function,object,object
+# CHECK-NEXT: number,number,number,number,string,string,boolean,boolean,undefined,undefined,object,object,bigint,bigint,symbol,symbol,function,function,object,object
+# CHECK-NEXT: http://localhost,http://localhost,dev,dev
+# CHECK-NEXT: yes,no,yes,no
+# CHECK-NEXT: exited with 0
+
+variable g0 name="ofNamespace" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="first" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="ofNamespaceAgain" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="second" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="ofText" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="third" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="ofTextAgain" module=m0 declared={type=anything} initialization=Undefined
+variable g7 name="fourth" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v2 calleeName="kinds"
+    v4 = Call v2 calleeName="kinds"
+    v5 = Builtin builtin=Math
+    v6 = TypeOf v5
+    v7 = String string="object"
+    v8 = String string="object"
+    v9 = StrictEq v7, v8
+    v10 = Boolean boolean=true
+    PutModuleVariable v10 variable=g0
+    v12 = GetModuleVariable variable=g0
+    v13 = Boolean boolean=true
+    v14 = ToBoolean v13
+    v15 = Boolean boolean=true
+    v16 = String string="http://localhost"
+    v17 = String string="http://localhost"
+    PutModuleVariable v17 variable=g1
+    v19 = Builtin builtin=Math
+    v20 = TypeOf v19
+    v21 = String string="object"
+    v22 = String string="object"
+    v23 = StrictEq v21, v22
+    v24 = Boolean boolean=true
+    PutModuleVariable v24 variable=g2
+    v26 = GetModuleVariable variable=g2
+    v27 = Boolean boolean=true
+    v28 = ToBoolean v27
+    v29 = Boolean boolean=true
+    v30 = String string="http://localhost"
+    v31 = String string="http://localhost"
+    PutModuleVariable v31 variable=g3
+    v33 = String string="a"
+    v34 = TypeOf v33
+    v35 = String string="string"
+    v36 = String string="string"
+    v37 = StrictEq v35, v36
+    v38 = Boolean boolean=true
+    PutModuleVariable v38 variable=g4
+    v40 = GetModuleVariable variable=g4
+    v41 = Boolean boolean=true
+    v42 = ToBoolean v41
+    v43 = Boolean boolean=true
+    v44 = String string="dev"
+    v45 = String string="dev"
+    PutModuleVariable v45 variable=g5
+    v47 = String string="a"
+    v48 = TypeOf v47
+    v49 = String string="string"
+    v50 = String string="string"
+    v51 = StrictEq v49, v50
+    v52 = Boolean boolean=true
+    PutModuleVariable v52 variable=g6
+    v54 = GetModuleVariable variable=g6
+    v55 = Boolean boolean=true
+    v56 = ToBoolean v55
+    v57 = Boolean boolean=true
+    v58 = String string="dev"
+    v59 = String string="dev"
+    PutModuleVariable v59 variable=g7
+    v61 = GetModuleVariable variable=g1
+    v62 = String string="http://localhost"
+    v63 = GetModuleVariable variable=g3
+    v64 = String string="http://localhost"
+    v65 = GetModuleVariable variable=g5
+    v66 = String string="dev"
+    v67 = GetModuleVariable variable=g7
+    v68 = String string="dev"
+    v69 = Call v1, -, v62, v64, v66, v68 calleeName="report"
+    v70 = NewClosure function=f3
+    v71 = Integer integer=1
+    v72 = Call v70, -, v71 calleeName="byTruth" [isNeverInlined]
+    v73 = Integer
+    v74 = Call v70, -, v73 calleeName="byTruth" [isNeverInlined]
+    v75 = Call v70, -, v71 calleeName="byTruth" [isNeverInlined]
+    v76 = Call v70, -, v73 calleeName="byTruth" [isNeverInlined]
+    v77 = Call v1, -, v72, v74, v75, v76 calleeName="report"
+    v78 = Undefined
+    Return v78
+}
+function f1 name="kinds" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Double number=0.5
+    v3 = TypeOf v2
+    v4 = String string="number"
+    v5 = Double number=0.25
+    v6 = TypeOf v5
+    v7 = String string="number"
+    v8 = Integer integer=1
+    v9 = TypeOf v8
+    v10 = String string="number"
+    v11 = Integer integer=2
+    v12 = TypeOf v11
+    v13 = String string="number"
+    v14 = String string="a"
+    v15 = TypeOf v14
+    v16 = String string="string"
+    v17 = String string="b"
+    v18 = TypeOf v17
+    v19 = String string="string"
+    v20 = Boolean boolean=true
+    v21 = TypeOf v20
+    v22 = String string="boolean"
+    v23 = Boolean boolean=false
+    v24 = TypeOf v23
+    v25 = String string="boolean"
+    v26 = Undefined
+    v27 = TypeOf v26
+    v28 = String string="undefined"
+    v29 = Undefined
+    v30 = TypeOf v29
+    v31 = String string="undefined"
+    v32 = Null
+    v33 = TypeOf v32
+    v34 = String string="object"
+    v35 = Null
+    v36 = TypeOf v35
+    v37 = String string="object"
+    v38 = BigInt digits="1"
+    v39 = TypeOf v38
+    v40 = String string="bigint"
+    v41 = BigInt digits="2"
+    v42 = TypeOf v41
+    v43 = String string="bigint"
+    v44 = Builtin builtin=SymbolIterator
+    v45 = TypeOf v44
+    v46 = String string="symbol"
+    v47 = Builtin builtin=SymbolHasInstance
+    v48 = TypeOf v47
+    v49 = String string="symbol"
+    v50 = NewClosure function=f2
+    v51 = TypeOf v50
+    v52 = String string="function"
+    v53 = NewClosure function=f2
+    v54 = TypeOf v53
+    v55 = String string="function"
+    v56 = Builtin builtin=Math
+    v57 = TypeOf v56
+    v58 = String string="object"
+    v59 = Builtin builtin=JSON
+    v60 = TypeOf v59
+    v61 = String string="object"
+    v62 = Call v1, -, v4, v7, v10, v13, v16, v19, v22, v25, v28, v31, v34, v37, v40, v43, v46, v49, v52, v55, v58, v61 calleeName="report"
+    v63 = Undefined
+    Return v63
+}
+function f2 name="nothing" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="byTruth" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = String string="yes"
+    Return v2
+  b2():
+    v3 = String string="no"
+    Return v3
+}

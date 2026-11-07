@@ -1,0 +1,64 @@
+# function spelled(limit) { let seen = "", sum = 0; outer: for (let i = 0; i < 16; i++) { seen += "k"; for (let j = 0; j < 3; j++) { if (i + j === limit) break outer; sum += j * i; } } return seen + sum; }
+# a text grows in a loop, a second loop inside it writes nothing, and a break leaves both from the inner one: the string is made on that edge.
+# What is built on an edge stands in no loop that the edge leaves: the look at the inner loop need not have counted on the string. The walk is not given up for it: the verifier refuses a second walk.
+# the function is handed to code that nobody has seen
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: StringBuilderBegin
+# CHECK: StringBuilderFinish
+# RUN(SHELL): run-in-shell globalThis.sink = spelled => { print(spelled(4) + " " + spelled(100)); };
+# SHELL: kkk5 kkkkkkkkkkkkkkkk360
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="spelled" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v1, v2, v3)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = Integer integer=16
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b8()
+  b2():
+    v10 = String string="k"
+    v11 = Add v4, v10
+    v12 = Integer
+    Jump -> next b3(v5, v12)
+  b3(v13, v14):
+    LoopHint
+    v16 = Integer integer=3
+    v17 = Less v14, v16
+    Branch v17 -> taken b4(), notTaken b6()
+  b4():
+    v18 = Add v6, v14
+    v19 = StrictEq v18, v0
+    Branch v19 -> taken b7(), notTaken b5()
+  b5():
+    v20 = Mul v14, v6
+    v21 = Add v13, v20
+    v22 = Increment v14
+    Jump -> next b3(v21, v22)
+  b6():
+    v23 = Increment v6
+    Jump -> next b1(v11, v13, v23)
+  b7():
+    Jump -> next b9(v11, v13)
+  b8():
+    Jump -> next b9(v4, v5)
+  b9(v24, v25):
+    v26 = Add v24, v25
+    Return v26
+}

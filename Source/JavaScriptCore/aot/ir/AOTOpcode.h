@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTIRForm.h"
 #include "AOTSchemaEnums.h"
 #include <array>
 #include <bit>
@@ -19,7 +18,47 @@ namespace JSC { namespace AOT { namespace Typed {
 using OperandUses = OptionSet<OperandUse>;
 using Protocols = OptionSet<Protocol>;
 
-inline constexpr uint32_t numberOfInlineOperands = 3;
+constexpr bool everyOperandUseIsInExactlyOneOf(std::initializer_list<OperandUses> sets)
+{
+    OperandUses every;
+    for (OperandUse use : allMembersOf<OperandUse>)
+        every.add(use);
+    OperandUses found;
+    for (OperandUses set : sets) {
+        if (found.containsAny(set))
+            return false;
+        found.add(set);
+    }
+    return found == every;
+}
+
+inline constexpr OperandUses usesThatNeverReturnOperand {
+    OperandUse::Inspects, OperandUse::Retains, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::ReadsContents,
+    OperandUse::WritesContents, OperandUse::RetainsContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom,
+    OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype,
+    OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+};
+static_assert(everyOperandUseIsInExactlyOneOf({ OperandUse::Returns, usesThatNeverReturnOperand }));
+
+inline constexpr OperandUses usesThatCallOperand { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly };
+inline constexpr OperandUses usesThatReachBeyondOperand { OperandUse::AppliesTransitively, OperandUse::AppliesToContents };
+inline constexpr OperandUses usesThatStoreByKey { OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::TakesDescriptor };
+inline constexpr OperandUses usesThatChangeShape { OperandUse::DefinesName, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype };
+inline constexpr OperandUses usesThatAddNoEffects {
+    OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::RetainsContents, OperandUse::MovesElements,
+};
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCallOperand, usesThatReachBeyondOperand, usesThatStoreByKey, usesThatChangeShape, usesThatAddNoEffects, OperandUse::PassesToUserCode }));
+
+inline constexpr OperandUses usesThatChangeOperand {
+    OperandUse::WritesContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom,
+    OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype,
+};
+inline constexpr OperandUses usesThatNeedNoHeap {
+    OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly,
+    OperandUse::RetainsContents, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+};
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatChangeOperand, OperandUse::ReadsContents, usesThatNeedNoHeap }));
+
 inline constexpr uint32_t numberOfInlinePayloadWords = 3;
 
 constexpr bool mustBeDefinition(OperandKind kind)
@@ -95,21 +134,31 @@ private:
 using OpcodeSet = EnumeratorBitSet<Opcode, numberOfEnumerators<Opcode>>;
 using TerminatorKindSet = EnumeratorBitSet<TerminatorKind, numberOfEnumerators<TerminatorKind>>;
 
+template<typename Holder> concept HoldsOpcode = requires(const Holder& holder) { holder.opcode(); } || requires(const Holder& holder) { holder.opcode; };
+template<typename Holder> concept HoldsTerminatorKind = requires(const Holder& holder) { holder.kind(); } || requires(const Holder& holder) { holder.kind; };
+
+template<HoldsOpcode Operation>
+constexpr Opcode opcodeOf(const Operation& operation)
+{
+    if constexpr (requires { operation.opcode(); })
+        return operation.opcode();
+    else
+        return operation.opcode;
+}
+
+template<HoldsTerminatorKind Terminator>
+constexpr TerminatorKind terminatorKindOf(const Terminator& terminator)
+{
+    if constexpr (requires { terminator.kind(); })
+        return terminator.kind();
+    else
+        return terminator.kind;
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #include "AOTSchemaOperations.h"
 
-namespace JSC { namespace AOT { namespace Typed {
-
-constexpr bool isLegalIn(Opcode opcode, IRForm form) { return formsOf(opcode).contains(form); }
-constexpr bool isLegalIn(TerminatorKind kind, IRForm form) { return formsOf(kind).contains(form); }
-
-constexpr bool provesForever(Proof proof) { return proof != Proof::None && lastsOf(proof) == ProofLifetime::Forever; }
-constexpr bool provesForStretch(Proof proof) { return lastsOf(proof) == ProofLifetime::Stretch; }
-
-// A fact is made where it begins to hold, and makes no code. Whoever names it stays behind it.
-constexpr bool makesFact(Opcode opcode) { return opcode == Opcode::Entered || opcode == Opcode::Specified; }
-
-} } } // namespace JSC::AOT::Typed
+#include "AOTOpcodeSets.h"
 
 #endif // ENABLE(AOT)

@@ -1,0 +1,132 @@
+# What ends the rehearsal is a count of what it has made, 256 * 1024 * 1024 bytes, and nothing that the heap says: what a heap holds hangs on the memory of the host and on when its collector has run, and the list of texts would hang on them too.
+# The texts that built-ins give are counted by their characters. They are paid for too, so one file makes 134 MB of them at most; the count is the program's.
+# Three files, each: const text = "abcdefgh" doubled 17 times (1,048,576 characters); for (let n = 0; n < 100; n++) text.toUpperCase(); new RegExp("m0".toUpperCase()): the third passes the room.
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /M0/
+# CHECK: text /M1/
+# CHECK-NOT: text /M2/
+
+module m0 path="/a.js" displayPath="a.js" body=f0
+module m1 path="/b.js" displayPath="b.js" body=f1
+module m2 path="/c.js" displayPath="c.js" body=f2
+module m3 path="/main.js" displayPath="main.js" body=f3 requests=[{target=m0 completes=true}, {target=m1 completes=true}, {target=m2 completes=true}]
+entry module=m3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abcdefgh"
+    v1 = Add v0, v0
+    v2 = Add v1, v1
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = Add v15, v15
+    v17 = Add v16, v16
+    v18 = PropGet v17 key="toUpperCase"
+    v19 = Integer
+    Jump -> next b1(v19)
+  b1(v20: anything):
+    LoopHint
+    v22 = Call v18, v17 calleeKey="toUpperCase"
+    v23 = Increment v20
+    v24 = Integer integer=100
+    v25 = Less v23, v24
+    Branch v25 -> taken b1(v23), notTaken b2()
+  b2():
+    v26 = String string="m0"
+    v27 = PropGet v26 key="toUpperCase"
+    v28 = Call v27, v26 calleeKey="toUpperCase"
+    v29 = Builtin builtin=RegExp
+    v30 = Construct v29, -, v28
+    Return v30
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abcdefgh"
+    v1 = Add v0, v0
+    v2 = Add v1, v1
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = Add v15, v15
+    v17 = Add v16, v16
+    v18 = PropGet v17 key="toUpperCase"
+    v19 = Integer
+    Jump -> next b1(v19)
+  b1(v20: anything):
+    LoopHint
+    v22 = Call v18, v17 calleeKey="toUpperCase"
+    v23 = Increment v20
+    v24 = Integer integer=100
+    v25 = Less v23, v24
+    Branch v25 -> taken b1(v23), notTaken b2()
+  b2():
+    v26 = String string="m1"
+    v27 = PropGet v26 key="toUpperCase"
+    v28 = Call v27, v26 calleeKey="toUpperCase"
+    v29 = Builtin builtin=RegExp
+    v30 = Construct v29, -, v28
+    Return v30
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abcdefgh"
+    v1 = Add v0, v0
+    v2 = Add v1, v1
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = Add v15, v15
+    v17 = Add v16, v16
+    v18 = PropGet v17 key="toUpperCase"
+    v19 = Integer
+    Jump -> next b1(v19)
+  b1(v20: anything):
+    LoopHint
+    v22 = Call v18, v17 calleeKey="toUpperCase"
+    v23 = Increment v20
+    v24 = Integer integer=100
+    v25 = Less v23, v24
+    Branch v25 -> taken b1(v23), notTaken b2()
+  b2():
+    v26 = String string="m2"
+    v27 = PropGet v26 key="toUpperCase"
+    v28 = Call v27, v26 calleeKey="toUpperCase"
+    v29 = Builtin builtin=RegExp
+    v30 = Construct v29, -, v28
+    Return v30
+}
+function f3 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

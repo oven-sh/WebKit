@@ -1,0 +1,40 @@
+# function point() { return { kind: "point", at: [0, 1], more: { deep: true } }; }  function table() { return { a: 1, .. r: 18 }; }  function loose() { return { kind: "loose" }; } with a layout that the plan keeps no cells of
+# A tree of constant data is made anew by each evaluation. One call of the run time makes it out of the table of the image: some hundred instructions, however small it is.
+# A tree of at most sixteen nodes, each of whose objects is a cell with a slot for each member, is written out: an allocation in line for each object and list, which lists constants. It claims nothing, and the walk sees what the objects hold.
+# A larger tree stays one call.
+# RUN: walk f1 f2 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: [[at]]: {{*}} = NewArray {{*}}, {{*}} contents=anything
+# CHECK: [[more]]: {{*}} = NewObject -, {{*}} layout=L1
+# CHECK: = NewObject -, {{*}} layout=L0
+# CHECK-LABEL: code f2:Body
+# CHECK: = Data data=d1 {{*}}encoding=ReadOnlyTree
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: = Data
+
+layout L0 module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="at" declared={type=anything} flags=[IsRequired]}, {key="more" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+layout L1 module=m0 fields=[{key="deep" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=anything} flags=[IsRequired]}, {key="f" declared={type=anything} flags=[IsRequired]}, {key="g" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}, {key="i" declared={type=anything} flags=[IsRequired]}, {key="j" declared={type=anything} flags=[IsRequired]}, {key="k" declared={type=anything} flags=[IsRequired]}, {key="l" declared={type=anything} flags=[IsRequired]}, {key="m" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}, {key="o" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}] ownFieldCount=16
+data d0 root=Object{layout=L0 members=[{key="kind" value=String{value="point"}}, {key="at" value=Array{contents=anything elements=[Number{}, Number{value=1}]}}, {key="more" value=Object{layout=L1 members=[{key="deep" value=Boolean{value=true}}]}}]} module=m0
+data d1 root=Object{layout=L2 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=1}}, {key="c" value=Number{value=1}}, {key="d" value=Number{value=1}}, {key="e" value=Number{value=1}}, {key="f" value=Number{value=1}}, {key="g" value=Number{value=1}}, {key="h" value=Number{value=1}}, {key="i" value=Number{value=1}}, {key="j" value=Number{value=1}}, {key="k" value=Number{value=1}}, {key="l" value=Number{value=1}}, {key="m" value=Number{value=1}}, {key="n" value=Number{value=1}}, {key="o" value=Number{value=1}}, {key="p" value=Number{value=1}}]} module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="point" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    Return v0
+}
+function f2 name="table" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Data data=d1
+    Return v0
+}

@@ -1,0 +1,40 @@
+# the same as behind-code-that-nobody-names.ir, but some function of the program throws. It is called behind the store and handed to nobody.
+# What nobody names may be any function of the program that is reached, so some run may end in front of the store: a warning
+# function read(bag) { return bag.level; } function fail() { throw 1; } read({}); Array.prototype.push = () => {}; read(seed); fail();
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]} namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="read" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="fail" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @1
+    v1 = NewDictionary @1
+    v2 = Call v0, -, v1 calleeName="read" @1
+    v3 = Builtin builtin=ArrayPrototype @2
+    v4 = NewClosure function=f2 @2
+    PropSet v3, v4 key="push" @3
+    v6 = Builtin builtin=GlobalThis @4
+    v7 = PropGet v6 key="seed" [isFreeName] @4
+    v8 = Call v0, -, v7 calleeName="read" @4
+    v9 = GetModuleVariable variable=g1 @5
+    v10 = Call v9, - calleeName="fail" @5
+    Return v10 @5
+}
+function f1 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="level" @101
+    Return v1 @102
+}
+function f2 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @103
+    Return v0 @104
+}
+function f3 name="fail" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1 @105
+    Throw v0 @106
+}

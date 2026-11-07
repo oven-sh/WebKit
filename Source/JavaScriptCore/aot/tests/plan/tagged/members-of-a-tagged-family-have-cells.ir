@@ -1,0 +1,18 @@
+# a member of a tagged family that Link has seen made gets a cell and a shape of its own. It lists what its maker lists at the maker's places, and behind that what its interface declares
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject
+# CHECK: slot 0 "kind" {{*}}offset=[[kind]]
+# CHECK: slot 1 "pos" {{*}}offset=[[pos]]
+# CHECK: layout L5 None never-allocated
+# CHECK: layout [[num]] CompiledObject {{*}}shapes=
+# CHECK: slot 0 "kind" {{*}}offset=[[kind]]
+# CHECK: slot 1 "pos" {{*}}offset=[[pos]]
+# CHECK: "value"
+# CHECK: layout [[str]] CompiledObject {{*}}shapes=
+# CHECK: "text"
+# CHECK: layout [[level]] CompiledObject {{*}}shapes=
+# CHECK: "level"
+# RUN(WITHHELD): plan layouts mechanisms=all-TypedSlots
+# WITHHELD: layout L5 None never-allocated
+# WITHHELD: layout [[member]] {{*}}never-allocated
+# PROGRAM-OF: ../../walk/typed-slots/new-with-a-known-tag-makes-the-member.ir

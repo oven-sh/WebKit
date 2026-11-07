@@ -1,0 +1,117 @@
+# The list follows from the program alone, and the texts of a file do not hang on its neighbors. join lays its separator between all places; replace with a pattern that goes on, and replaceAll, lay the filler over every find:
+# what they give may be as long as the product of two sizes that are each paid for. What would pass the longest text that anybody keeps is not made.
+# neighbor.js: const separator = doubled("s", 19); for (let turn = 0; turn < 300; turn++) ["a", "b", "c", "d", "e", "f", "g", "h", "i"].join(separator);   Four million characters a turn would end the rehearsal for every file.   (doubled(text, k): text = text + text, k times)
+# routes.js: export function route(path) { return new RegExp("^" + path); } . main.js: route("shops");
+# The finds are counted, not guessed: a long text laid into a long text at one find is made as ever: new RegExp("l".toUpperCase() + (doubled("ab", 12) + "name").replace(/name/g, doubled("v", 9)).length).
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /L8704/
+# CHECK: text /^shops/
+
+module m0 path="/neighbor.js" displayPath="neighbor.js" body=f0
+module m1 path="/routes.js" displayPath="routes.js" body=f1 exports=[{name="route" variable=g0}]
+module m2 path="/main.js" displayPath="main.js" body=f3 requests=[{target=m0 completes=true}, {target=m1 completes=true}]
+entry module=m2
+variable g0 name="route" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="s"
+    v1 = Add v0, v0
+    v2 = Add v1, v1
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = Add v15, v15
+    v17 = Add v16, v16
+    v18 = Add v17, v17
+    v19 = Add v18, v18
+    v20 = String string="a"
+    v21 = String string="b"
+    v22 = String string="c"
+    v23 = String string="d"
+    v24 = String string="e"
+    v25 = String string="f"
+    v26 = String string="g"
+    v27 = String string="h"
+    v28 = String string="i"
+    v29 = NewArray v20, v21, v22, v23, v24, v25, v26, v27, v28 contents=anything
+    v30 = PropGet v29 key="join"
+    v31 = Integer
+    Jump -> next b1(v31)
+  b1(v32: anything):
+    LoopHint
+    v34 = Call v30, v29, v19 calleeKey="join"
+    v35 = Increment v32
+    v36 = Integer integer=300
+    v37 = Less v35, v36
+    Branch v37 -> taken b1(v35), notTaken b2()
+  b2():
+    v38 = Undefined
+    Return v38
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f2 name="route" module=m1 position=10 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="^"
+    v2 = Add v1, v0
+    v3 = Builtin builtin=RegExp
+    v4 = Construct v3, -, v2
+    Return v4
+}
+function f3 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = String string="shops"
+    v2 = Call v0, -, v1
+    v3 = String string="ab"
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = String string="name"
+    v17 = Add v15, v16
+    v18 = String string="v"
+    v19 = Add v18, v18
+    v20 = Add v19, v19
+    v21 = Add v20, v20
+    v22 = Add v21, v21
+    v23 = Add v22, v22
+    v24 = Add v23, v23
+    v25 = Add v24, v24
+    v26 = Add v25, v25
+    v27 = Add v26, v26
+    v28 = NewRegExp pattern="name" regExpFlags=[Global]
+    v29 = PropGet v17 key="replace"
+    v30 = Call v29, v17, v28, v27 calleeKey="replace"
+    v31 = PropGet v30 key="length"
+    v32 = String string="l"
+    v33 = PropGet v32 key="toUpperCase"
+    v34 = Call v33, v32 calleeKey="toUpperCase"
+    v35 = Builtin builtin=RegExp
+    v36 = Add v34, v31
+    v37 = Construct v35, -, v36
+    Return v37
+}

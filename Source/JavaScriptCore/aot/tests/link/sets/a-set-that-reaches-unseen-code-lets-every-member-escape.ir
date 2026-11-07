@@ -1,0 +1,43 @@
+# If only one member escaped where a set reaches unseen code, that code could store into an object of the other member while the compiled program still trusts what Link proved of its fields. If more than the members escaped, one call of the host would open the whole program
+# function hand(o) { return sink(o); }  hand({ x: 1, p: 1 });  hand({ x: 1, q: 1 });  const home = { x: 1, r: 1 };
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: function f1
+# CHECK-NEXT: parameter 0 expected=L0|L1
+# CHECK: field L2.0 "x" proven=i32 writers-known
+# CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L1 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L2 changes=[] stays-with-compiled-code
+# RUN(NEVER): link functions fields layouts mechanisms=all
+# NEVER-NOT: proven=L
+# NEVER-NOT: field L0.0 "x" proven
+# NEVER-NOT: field L1.0 "x" proven
+# NEVER-NOT: layout L0 {{*}}stays-with-compiled-code
+# NEVER-NOT: layout L1 {{*}}stays-with-compiled-code
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v2 calleeName="hand"
+    v9 = Call v7, -, v4 calleeName="hand"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="hand" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="sink"
+    Return v3
+}

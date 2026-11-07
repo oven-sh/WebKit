@@ -1,0 +1,59 @@
+# no turn changes the object, and the shape word of an object is written once. So the test of the guessed shape stands in front of the loop, which is built twice.
+# Where the test fails the closed copy runs: rare blocks, which count as outside of loops, and the read as it is written. Where it passes the shape is proven all round:
+# the look at that copy sees no closed arm, so nothing in it writes the field, and the read stands in front of the loop too. What the loop hands on behind it arrives in a parameter
+# function sum(o: Box, n) { let s = 0; for (let i = 0; i < n; i++) s = [s, o.x]; return s; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK: mechanisms TypedOperations,Guesses,LoopInvariants,Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: [[test]]: boolean @Boolean = ShapeTest {{*}}L0
+# CHECK-NEXT: Branch [[test]] ->
+# CHECK: ([[closedSum]]: {{*}}) frequency=Rare isLoopHead=true:
+# CHECK: notTaken [[behind]]([[closedSum]])
+# CHECK: = PropGet {{*}}key="x"
+# CHECK: = GetSlot {{*}}key="x"
+# CHECK: ([[typedSum]]: {{*}}) isInLoop=true isLoopHead=true:
+# CHECK-NOT: Test {{*}}L0
+# CHECK-NOT: key="x"
+# CHECK: notTaken [[behind]]([[typedSum]])
+# CHECK: [[behind]]([[sum]]: {{*}}):
+# CHECK-NEXT: Return [[sum]]
+
+layout L0 name="Box" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="kept" module=m0 declared={type=anything}
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    v5 = Integer integer=1
+    PropDefine v4, v5 key="x"
+    v7 = FinishObject v4
+    PutModuleVariable v7 variable=g0
+    Return v3
+}
+function f1 name="sum" module=m0 length=2 thisType={type=anything} parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=L0}
+    v3 = TypeTest v1 testedType=i32
+    Branch v3 -> taken b1(| 0), notTaken b5()
+  b1(v4):
+    v5 = Integer
+    Jump -> next b2(v5, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v7, v4
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = PropGet v2 key="x"
+    v11 = NewArray v6, v10 contents=anything
+    v12 = Increment v7
+    Jump -> next b2(v11, v12)
+  b4():
+    Return v6
+  b5():
+    Return v1
+}

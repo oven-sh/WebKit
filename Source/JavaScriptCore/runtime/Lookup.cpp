@@ -68,6 +68,11 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             // LazyProperty::callFunc) so it can't return with one pending.
             DeferTerminationForAWhile deferScope(vm);
 #if ENABLE(AOT)
+            std::optional<AOT::MakingOfMemberForLook> making;
+            if (vm.hasCompiledCode()) [[unlikely]]
+                making.emplace(slot.internalMethodType() != PropertySlot::InternalMethodType::Get);
+#endif
+#if ENABLE(AOT)
             // Compiled code may hold the object already. The property is that object.
             JSObject* madeAhead = vm.hasCompiledCode() && !isAccessor ? AOT::RuntimeHooks::takeStaticPropertyMadeAhead(thisObject, propertyName.uid()) : nullptr;
             if (madeAhead) [[unlikely]] {
@@ -87,8 +92,9 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             JSValue standIn = vm.hasCompiledCode() && !isAccessor ? AOT::takeStandInForMemberLeftOut(thisObject->realm(), String(propertyName.uid())) : JSValue();
             if (!standIn)
                 return false;
-            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-            thisObject->putDirect(vm, propertyName, standIn, attributesForStructure(entry->attributes()));
+            // Nothing is stored: the property stays unmade, and a read behind this look asks its builder again.
+            slot.setValue(thisObject, attributesForStructure(entry->attributes()), standIn);
+            return true;
 #else
             return false;
 #endif

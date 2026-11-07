@@ -167,7 +167,7 @@ public:
         auto integers = [&] {
             has(BuiltinTypeFlag::HasOnlyIntegers) ? object("minimum"_s, type.integers.minimum, "maximum"_s, type.integers.maximum) : write(Null { });
         };
-        object("isAnything"_s, has(BuiltinTypeFlag::IsAnything), "hasAnyObject"_s, has(BuiltinTypeFlag::HasAnyObject), "hasAnyFunction"_s, has(BuiltinTypeFlag::HasAnyFunction),
+        object("isAnything"_s, has(BuiltinTypeFlag::IsAnything), "isMadeOfListedClasses"_s, has(BuiltinTypeFlag::IsMadeOfListedClasses), "hasAnyObject"_s, has(BuiltinTypeFlag::HasAnyObject), "hasAnyFunction"_s, has(BuiltinTypeFlag::HasAnyFunction),
             "hasPlainData"_s, has(BuiltinTypeFlag::HasPlainData), "primitives"_s, type.primitives, "integers"_s, integers, "stringLiterals"_s, type.stringLiterals,
             "freshness"_s, type.freshness, "parts"_s, type.parts);
     }
@@ -199,7 +199,7 @@ public:
             members("index"_s, place.fieldIndex, "holdsOnlyWhatIsStored"_s, place.holdsOnlyWhatIsStored);
             break;
         case BuiltinPlaceKind::NewValue:
-            members("type"_s, place.newValueType);
+            members("type"_s, place.newValueType, "holdsWhatIsThrown"_s, place.holdsWhatIsThrown);
             break;
         case BuiltinPlaceKind::Member: {
             auto path = [&] {
@@ -211,7 +211,7 @@ public:
             break;
         }
         case BuiltinPlaceKind::NativeCell:
-            members("cell"_s, PlainName { place.nativeCell });
+            members("cell"_s, PlainName { place.nativeCell }, "holdsOnlyWhatIsStored"_s, place.holdsOnlyWhatIsStored);
             break;
         }
         close('}');
@@ -292,6 +292,8 @@ public:
             "readsStateBeforeConversions"_s, has(BuiltinOverloadFlag::ReadsStateBeforeConversions), "isSpecialCase"_s, has(BuiltinOverloadFlag::IsSpecialCase));
         if (overload.resultIsDeclaredOnly())
             members("resultIsDeclaredOnly"_s, true);
+        if (overload.resultIsHeld())
+            members("resultIsHeld"_s, true);
         members("reads"_s, overload.effects.reads, "writes"_s, overload.effects.writes, "transfers"_s, overload.flow.transfers, "callbacks"_s, overload.flow.callbacks,
             "propertyActions"_s, overload.flow.propertyActions, "handlerCalls"_s, overload.flow.handlerCalls, "implementation"_s, overload.code.implementation, "model"_s, overload.code.model);
         close('}');

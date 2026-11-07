@@ -1,0 +1,43 @@
+# If a construction with a new target of its own counted like `super()`, the object would be of the class of the new target while the constructor of that class never ran: its fields would count as filled and be empty
+# class A { constructor() { this.a = 1; } }  class B extends A { constructor() { super(); this.b = 2; } }  new B();  construct A with B for new.target
+# `super()` hands the new target of its own body up the written row, and nothing escapes by it. Any other new target that is written escapes, and its class with it: no field of it is filled.
+# RUN: link fields layouts mechanisms=all
+# CHECK: layout L1 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# RUN(NEVER): link fields mechanisms=all
+# NEVER-NOT: "a" {{*}}filled
+# NEVER-NOT: "b" {{*}}filled
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1 fields=[{key="a" declared={type=anything}}] ownFieldCount=1
+layout L1 kind=Instance name="B" module=m0 base=L0 constructor=f2 fields=[{key="b" declared={type=anything}}, {key="a" declared={type=anything} flags=[IsInherited] originLayout=L0 originField=0}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = Construct v6
+    v8 = Construct v2, v6
+    v9 = Undefined
+    Return v9
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="a"
+    Return v2
+}
+function f2 name="B" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    v4 = Integer integer=2
+    PropSet v3, v4 key="b"
+    Return v3
+}

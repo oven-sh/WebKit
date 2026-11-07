@@ -16,10 +16,6 @@ namespace JSC {
 
 class CCallHelpers;
 
-namespace B3 {
-class StackmapGenerationParams;
-}
-
 namespace AOT { namespace Typed {
 
 class FrameMapEmitter final : public OperationEmitter {
@@ -31,11 +27,10 @@ public:
         Vector<FrameSlotKind, 8> kinds;
     };
 
-    Roots appendRoots(B3::PatchpointValue*, const ValueContext& suspension);
-    static std::optional<uint64_t> siteWordFor(FrameMapRecords&, const B3::StackmapGenerationParams&, const Roots&, unsigned promiseChild);
-    static bool savesDeadPreservedRegister(const B3::StackmapGenerationParams&);
-    // In front of a call that clobbers calleeSavesClobberedAtSuspensions(): a callee stores the saved registers that it uses, and that word would go on naming a dead object.
-    static void releaseSavedRegisters(CCallHelpers&, const B3::StackmapGenerationParams&);
+    Roots appendRoots(Machine::PatchOperation*, const ValueContext& suspension);
+    static std::optional<uint64_t> siteWordFor(FrameMapRecords&, const Machine::PatchParameters&, const Roots&, unsigned promiseChild);
+    static bool savesDeadPreservedRegister(const Machine::PatchParameters&);
+    static void releaseSavedRegisters(CCallHelpers&, const Machine::PatchParameters&);
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -2,7 +2,7 @@ import * as b from "bun-builtins-table";
 
 const receiver = b.string.loose.refusing(b.null);
 const position = b.integer.loose.optional;
-const characters = [b.readAsCharacters];
+const characters = b.inspected;
 const maximumLength = 2 ** 31 - 1;
 const propertyLookup = ["ObjectFields", "NamedProperties", "ShapeWords", "PrototypeLinks"];
 
@@ -101,7 +101,6 @@ const indexSearch = (inlineBuiltin: string, startingPosition: b.TableType) =>
     implementation: b.inline(inlineBuiltin, { otherwise: b.hostCall }),
   }) satisfies b.FunctionField;
 
-// A text of a length that every string may have is never refused.
 const padded = (inlineBuiltin: string, nativeSymbol: string) =>
   [
     {
@@ -138,14 +137,14 @@ const padded = (inlineBuiltin: string, nativeSymbol: string) =>
     },
   ] satisfies b.FunctionField[];
 
-const converted = (implementation: b.ImplementationSpec) =>
+const converted = (inlineBuiltin: string) =>
   ({
     this: receiver,
     returns: b.string,
     capability: "heap",
     throws: b.propagated,
     deterministic: true,
-    implementation,
+    implementation: b.inline(inlineBuiltin, { otherwise: b.hostCall }),
   }) satisfies b.FunctionField;
 
 const trimmed = (inlineBuiltin: string) =>
@@ -157,7 +156,7 @@ const trimmed = (inlineBuiltin: string) =>
     deterministic: true,
     uses: { this: characters },
     substringOf: "this",
-    implementation: b.inline(inlineBuiltin),
+    implementation: b.inline(inlineBuiltin, { otherwise: b.hostCall }),
   }) satisfies b.FunctionField;
 
 const localeCase = (nativeSymbol: string) =>
@@ -222,7 +221,6 @@ export default b.declarations(
         returns: b.string,
         capability: "heap",
         throws: b.propagated,
-        appendForm: "CallStringConstructorAppend",
         implementation: b.inline("CallStringConstructor", { otherwise: b.hostCall }),
       },
       {
@@ -283,6 +281,9 @@ export default b.declarations(
     proto: {
       at: {
         ...indexedRead("StringAt", "index", b.union(b.string, b.undefined)),
+        length: 1,
+        boxedCallStub: "StringAt",
+        nativeSymbols: ["stringProtoFuncAt"],
         mutability: "ConstantUnlessWritten",
         substringOf: "this",
       },
@@ -339,6 +340,8 @@ export default b.declarations(
       },
       lastIndexOf: {
         ...indexSearch("StringLastIndexOf", b.f64.loose.optional),
+        length: 1,
+        boxedCallStub: "StringLastIndexOf",
         usesFeature: "StringLastIndexOf",
         nativeSymbols: ["stringProtoFuncLastIndexOf"],
       },
@@ -350,6 +353,8 @@ export default b.declarations(
         deterministic: true,
         uses: { this: characters },
         usesFeature: "StringWellFormed",
+        length: 0,
+        boxedCallStub: "StringIsWellFormed",
         nativeSymbols: ["stringProtoFuncIsWellFormed"],
         implementation: b.inline("StringIsWellFormed", { otherwise: b.hostCall }),
       },
@@ -418,15 +423,19 @@ export default b.declarations(
       },
       slice: {
         ...range("StringSlice", "end"),
-        appendForm: "StringSliceAppend",
         length: 2,
         boxedCallStub: "StringSlice",
         nativeSymbols: ["stringProtoFuncSlice"],
       },
-      substr: { ...range("StringSubstr", "length"), privateAlias: true },
+      substr: {
+        ...range("StringSubstr", "length"),
+        privateAlias: true,
+        length: 2,
+        boxedCallStub: "StringSubstr",
+        nativeSymbols: ["stringProtoFuncSubstr"],
+      },
       substring: {
         ...range("StringSubstring", "end"),
-        appendForm: "StringSubstringAppend",
         length: 2,
         boxedCallStub: "StringSubstring",
         nativeSymbols: ["stringProtoFuncSubstring"],
@@ -434,19 +443,19 @@ export default b.declarations(
       toLocaleLowerCase: localeCase("stringProtoFuncToLocaleLowerCase"),
       toLocaleUpperCase: localeCase("stringProtoFuncToLocaleUpperCase"),
       toLowerCase: {
-        ...converted(b.inline("StringToLowerCase")),
+        ...converted("StringToLowerCase"),
         length: 0,
         boxedCallStub: "StringToLowerCase",
         nativeSymbols: ["stringProtoFuncToLowerCase"],
       },
       toUpperCase: {
-        ...converted(b.inline("StringToUpperCase")),
+        ...converted("StringToUpperCase"),
         length: 0,
         boxedCallStub: "StringToUpperCase",
         nativeSymbols: ["stringProtoFuncToUpperCase"],
       },
       toWellFormed: {
-        ...converted(b.inline("StringToWellFormed", { otherwise: b.hostCall })),
+        ...converted("StringToWellFormed"),
         usesFeature: "StringWellFormed",
         nativeSymbols: ["stringProtoFuncToWellFormed"],
       },
@@ -496,7 +505,6 @@ export default b.declarations(
   b.same("String.prototype.trimLeft", "String.prototype.trimStart"),
   b.same("String.prototype.trimRight", "String.prototype.trimEnd"),
 
-  // core-js 2 counts U+180E as white space, finds that the engine does not, and replaces all five.
   b.replacedByPackages(
     "String.prototype.trim",
     "String.prototype.trimEnd",

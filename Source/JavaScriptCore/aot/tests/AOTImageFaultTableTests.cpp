@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCodeSites.h"
 #include "AOTImageSiteTestBodies.h"
 #include "AOTOperationData.h"
 #include "AOTStubsExceptions.h"
@@ -47,7 +48,7 @@ static void appendFault(CodeSketch& sketch, Vector<ExpectedFault>& faults, uint3
     SiteDescription& sites = sketch.code().sites;
     if (words.isEmpty()) {
         uint32_t offset = sketch.pinned(word, wordsInLoopPoll);
-        sites.pollSites.append(PollSite { offset, !hasFrame });
+        sites.rareLists.ensure().pollSites.append(PollSite { offset, !hasFrame });
         faults.append(ExpectedFault { offset, FaultSiteKind::LoopPoll, hasFrame, { } });
         return;
     }
@@ -225,6 +226,13 @@ static void testFaultSitesSecondWords()
             return { i };
         return { i, 5 };
     });
+    for (uint32_t first : { 0x80u, 0xff00u, 0xffff00u, 0xfffffe00u }) {
+        checkFramedBodyFaults(300, [&](unsigned i) -> FaultWords {
+            if (i % 5 == 4)
+                return { i };
+            return { i, i % 7 ? first + i : 5u };
+        });
+    }
 }
 
 static void testFaultSitesThirdWords()
@@ -309,12 +317,11 @@ static void testHandlersMerging()
 
 static void testHandlersSizes()
 {
-    constexpr std::array<std::array<uint32_t, 3>, 6> cases { { { 1, 15, 3 }, { 254, 255, 5 }, { 255, 1, 4 }, { 1, 256, 4 }, { 65535, 1, 5 }, { 1, 65536, 5 } } };
+    constexpr std::array<std::array<uint32_t, 3>, 7> cases { { { 1, 15, 3 }, { 1, 16, 4 }, { 254, 255, 5 }, { 255, 1, 4 }, { 1, 256, 4 }, { 65535, 1, 5 }, { 1, 65536, 5 } } };
     for (auto [site, target, size] : cases)
         AOT_TEST_CHECK(checkEncodedHandlers(handlersAt({ { site, target } })).size() == size);
 }
 
-// In a large body the sites lie side by side and few landing pads take turns, however far into the body they are.
 static void testHandlersOfLargeBody()
 {
     constexpr uint32_t count = 1000;
@@ -371,7 +378,7 @@ static void testHandlersThroughImage()
     for (unsigned i = 0; i < 3; ++i)
         appendCall(sketch, sites, i);
     uint32_t landingPad = sketch.end();
-    sketch.code().sites.handlers.append(SiteHandler { 2, landingPad, HandlerType::Catch });
+    sketch.code().sites.rareLists.ensure().handlers.append(SiteHandler { 2, landingPad, HandlerType::Catch });
 
     BodiesImage built(3, bodies(sketch.take(), bodyWithCalls(2, 3).code));
     const Image& table = built.table();

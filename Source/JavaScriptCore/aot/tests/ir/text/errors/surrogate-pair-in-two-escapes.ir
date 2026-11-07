@@ -1,5 +1,5 @@
 # A surrogate pair is one code point and has one escape
-# RUN: print
+# RUN: verify
 # DIAGNOSTIC: StringNotCanonical
 
 module m0 path="main.js" displayPath="main.js"

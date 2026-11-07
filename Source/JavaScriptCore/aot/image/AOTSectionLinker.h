@@ -17,17 +17,10 @@
 
 namespace JSC { namespace AOT {
 
-enum class UnitSharing : uint8_t {
-    Unique,
-    Copyable,
-};
-
 struct LinkUnit {
     std::span<const uint8_t> bytes;
     std::span<const Relocation> relocations;
     uint32_t alignment { 1 };
-    UnitSharing sharing { UnitSharing::Unique };
-    // A unique unit that is data lies behind everything else, whatever its place in SectionLinkInputs::units.
     bool isData { false };
 };
 
@@ -36,15 +29,10 @@ struct UnitTarget {
     uint32_t offset { 0 };
 };
 
-using PlacedUnit = UnitTarget;
-
-// uniqueUnitOffsets is indexed like SectionLinkInputs::units. The entry of a Copyable unit is 0: copies has its offsets.
 struct LinkedSection {
     Vector<uint8_t> bytes;
     Vector<uint32_t> uniqueUnitOffsets;
-    Vector<PlacedUnit> copies;
     uint32_t numberOfVeneers { 0 };
-    // A multiple of SectionLinkInputs::dataAlignment. All code lies in front of it, and behind it lie the unique units that are data and nothing else.
     uint32_t dataOffset { 0 };
 };
 

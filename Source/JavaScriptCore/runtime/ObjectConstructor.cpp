@@ -282,22 +282,25 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorKeys, (JSGlobalObject* globalObject, C
     RELEASE_AND_RETURN(scope, JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
 }
 
-void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source)
+// goesOnKeyByKey is to a compiled target what !targetCanPerformFastPut is to an ordinary one: behind a source that objectAssignFast() would refuse, every later source of the call gives its names first and then its symbols.
+static void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source, bool& goesOnKeyByKey)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    if (target->structure()->isCompiledStructure()) {
+    if (target->structure()->isCompiledStructure() && !goesOnKeyByKey) {
         // As for an ordinary target that takes properties directly.
         if (source->hasNonReifiedStaticProperties() && AOT::PropertyWalk::testIntegrity(target, AOT::PropertyWalk::Integrity::NonExtensible) == AOT::PropertyWalk::Presence::Absent) {
             source->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        bool didAssign = AOT::PropertyWalk::tryAssign(vm, target, source);
+        bool didAssign = AOT::PropertyWalk::tryAssign(vm, target, source, goesOnKeyByKey);
         RETURN_IF_EXCEPTION(scope, void());
         if (didAssign)
             return;
     }
+#else
+    UNUSED_PARAM(goesOnKeyByKey);
 #endif
 
     // [[GetOwnPropertyNames]], [[Get]] etc. could modify target object and invalidate this assumption.
@@ -331,6 +334,12 @@ void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target,
         target->putInline(globalObject, propertyName, value, putPropertySlot);
         RETURN_IF_EXCEPTION(scope, void());
     }
+}
+
+void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source)
+{
+    bool goesOnKeyByKey = false;
+    objectAssignGeneric(globalObject, vm, target, source, goesOnKeyByKey);
 }
 
 JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -407,6 +416,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
 
     Vector<UniquedStringImpl*, 8> properties;
     MarkedArgumentBuffer values;
+    bool goesOnKeyByKey = false;
     for (unsigned i = 1; i < argsCount; ++i) {
         JSValue sourceValue = callFrame->uncheckedArgument(i);
         if (sourceValue.isUndefinedOrNull())
@@ -427,7 +437,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
         }
 
         targetCanPerformFastPut = false;
-        objectAssignGeneric(globalObject, vm, target, source);
+        objectAssignGeneric(globalObject, vm, target, source, goesOnKeyByKey);
         RETURN_IF_EXCEPTION(scope, { });
     }
     return JSValue::encode(target);

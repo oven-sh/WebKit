@@ -1,0 +1,123 @@
+# what charCodeAt gives is a number only because it is NaN outside the text. Whoever builds the read has the code unit as an integer, with -1 outside, and comparisons and switches go by that. The reads are built by the rules for texts, without which every function here stays on numbers and texts
+# each comparison is the condition of a Branch whose edge hands the char code on. A comparison whose edges hand nothing on is taken by the rules for texts, which are asked first and go by typed operations alone
+# function isSpace(s, i) { if (typeof s !== "string" || !isInt32(i)) return 0; const c = s.charCodeAt(i); if (c === 32) return c; return 0; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = StrictEq {{*}}form=Integers
+# function isDigit(s, i) { if (typeof s !== "string" || !isInt32(i)) return 0; const c = s.charCodeAt(i); if (c < 58) return c; return 0; } NaN lies below nothing, so -1 is read as the greatest uint32. The first shift and the first relation of the unit are the test of the bounds in the read
+# RUN(DIGIT): walk f2 mechanisms=all
+# DIGIT-LABEL: code f2:Body
+# DIGIT: = GetStringCodeUnit
+# DIGIT: = URShift
+# DIGIT: = Less {{*}}form=Integers
+# function isItsPlace(s, i) { if (typeof s !== "string" || !isInt32(i)) return 0; const c = s.charCodeAt(i); if (c === i) return c; return 0; } -1 stands for NaN, which equals nothing, so beside an integer that may be -1 the number itself is compared
+# RUN(MINUS): walk f3 mechanisms=all
+# MINUS-NOT: = StrictEq {{*}}form=Integers
+# RUN(NUMBER): walk f3 mechanisms=all
+# NUMBER-LABEL: code f3:Body
+# NUMBER: = StrictEq {{*}}form=Numbers
+# function kind(s, i) { if (typeof s !== "string" || !isInt32(i)) return 0; switch (s[i]) { case "a": return 1; case "b": return 2; case "ab": return 3; } return 4; }
+# RUN(KIND): walk f4 mechanisms=all
+# KIND-LABEL: code f4:Body
+# KIND: Switch {{*}}cases=[97, 98, -4]
+# RUN(NOTEXTS): walk f4 mechanisms=all
+# NOTEXTS-NOT: SwitchString
+# RUN(WITHHELD): walk f1 f4 mechanisms=all-UnboxedNumbers-TypedSlots
+# WITHHELD-NOT: = StrictEq {{*}}form=Integers
+# WITHHELD-NOT: cases=[97
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="isSpace" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="charCodeAt"
+    v7 = Call v6, v3, v5 calleeKey="charCodeAt"
+    v8 = Integer integer=32
+    v9 = StrictEq v7, v8
+    Branch v9 -> taken b4(| 0), notTaken b3()
+  b3():
+    v10 = Integer
+    Return v10
+  b4(v11):
+    Return v11
+}
+function f2 name="isDigit" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="charCodeAt"
+    v7 = Call v6, v3, v5 calleeKey="charCodeAt"
+    v8 = Integer integer=58
+    v9 = Less v7, v8
+    Branch v9 -> taken b4(| 0), notTaken b3()
+  b3():
+    v10 = Integer
+    Return v10
+  b4(v11):
+    Return v11
+}
+function f3 name="isItsPlace" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="charCodeAt"
+    v7 = Call v6, v3, v5 calleeKey="charCodeAt"
+    v8 = StrictEq v7, v5
+    Branch v8 -> taken b4(| 0), notTaken b3()
+  b3():
+    v9 = Integer
+    Return v9
+  b4(v10):
+    Return v10
+}
+function f4 name="kind" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = ElemGet v3, v5
+    SwitchString v6 strings=["a", "b", "ab"] -> case b4(), case b5(), case b6(), otherwise b7()
+  b3():
+    v7 = Integer
+    Return v7
+  b4():
+    v8 = Integer integer=1
+    Return v8
+  b5():
+    v9 = Integer integer=2
+    Return v9
+  b6():
+    v10 = Integer integer=3
+    Return v10
+  b7():
+    v11 = Integer integer=4
+    Return v11
+}

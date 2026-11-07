@@ -1,0 +1,52 @@
+# a store under a symbol on an object whose layout does not list it made an extra property, and the layout one that may gain a property: no read of any name off such an object went without a look
+# const depth = Symbol("depth");  function setDepth(point, value) { point[depth] = value; }  function depthOf(point) { return point[depth]; }
+# const point = { x: "a" };  setDepth(point, 7);  depthOf(point);
+# the call of Symbol runs once, so the key is the one symbol: it names a field that Link appends, as a text does. L1 is there so that the table has the key
+# RUN: link accesses fields layouts mechanisms=all
+# CHECK: access f1 v3 under symbol("depth")@m0:0
+# CHECK: field L0.0 "x" proven={{*}} writers-known written-at-construction-alone
+# CHECK-NEXT: field L0.1 symbol("depth")@m0:0 appended proven=i32 writers-known
+# CHECK: layout L0 changes=[]
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L0 CompiledObject
+# PLAN: slot 1 symbol("depth")@m0:0 appended
+# with Link's tables at their defaults nothing is appended
+# RUN(NONE): link fields mechanisms=none
+# NONE-NOT: appended
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: exited with 0
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key=symbol("depth")@m0:0 declared={type=anything}}] flags=[IsNeverAllocated]
+variable g0 name="depth" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="depth"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    PutModuleVariable v2 variable=g0
+    v4 = String string="a"
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewClosure function=f1
+    v8 = NewClosure function=f2
+    v9 = Integer integer=7
+    v10 = Call v7, -, v6, v9 calleeName="setDepth"
+    v11 = Call v8, -, v6 calleeName="depthOf"
+    Return v11
+}
+function f1 name="setDepth" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    ElemSet v0, v2, v1 mode=Strict
+    v4 = Undefined
+    Return v4
+}
+function f2 name="depthOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v0, v1
+    Return v2
+}

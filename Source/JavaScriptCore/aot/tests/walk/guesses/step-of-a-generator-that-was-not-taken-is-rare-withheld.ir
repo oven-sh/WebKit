@@ -1,0 +1,7 @@
+# the same function with calls of built-ins withheld: no body is resumed in the place of a call, so there is no such edge
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls
+# NEVER-NOT: StepGenerator
+# PROGRAM-OF: step-of-a-generator-that-was-not-taken-is-rare.ir

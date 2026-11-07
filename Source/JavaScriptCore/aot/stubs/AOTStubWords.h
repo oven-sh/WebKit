@@ -39,6 +39,7 @@ static_assert(OBJECT_OFFSETOF(BoxedCallEntry, targets) == BoxedCallEntry::offset
 struct StubWords {
     static constexpr unsigned numberOfBoxedCallEntries = 128;
     static constexpr unsigned boxedCallHashShift = 4;
+    static constexpr unsigned numberOfCompiledMethodsOfArray = 13;
 
     static constexpr unsigned indexOfBoxedCall(uintptr_t nativeFunctionBits) { return (nativeFunctionBits >> boxedCallHashShift) % numberOfBoxedCallEntries; }
 
@@ -51,6 +52,7 @@ struct StubWords {
 #endif
     const void* closureEntrypoint;
     const void* slimClosureEntrypoint;
+    uint64_t wordsOfCompiledMethodsOfArray[numberOfCompiledMethodsOfArray];
 };
 static_assert(std::is_trivially_default_constructible_v<StubWords>);
 static_assert(std::has_single_bit(StubWords::numberOfBoxedCallEntries));

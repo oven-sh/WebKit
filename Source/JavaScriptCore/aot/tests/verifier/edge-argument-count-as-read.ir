@@ -1,5 +1,4 @@
 # in a program as read: the arguments and the edge results of an edge are as many as the parameters of its target
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: EdgeArgumentCountMismatch 5
 

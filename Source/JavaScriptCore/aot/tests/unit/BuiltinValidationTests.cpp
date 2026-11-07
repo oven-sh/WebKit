@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTChildProcess.h"
 #include "AOTVector.h"
@@ -187,6 +188,17 @@ static void testEntryThatIsAnInstanceOfAnotherClassIsReported()
     });
 }
 
+static void testCellOfAnotherTypeIsNoInstanceOfClassThatSharesItsCellType()
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    Realms realms;
+    AOT_TEST_CHECK(table.at(BuiltinClasses::Object).instanceTest == BuiltinInstanceTest::None);
+    AOT_TEST_CHECK(passesInstanceTest(table, BuiltinClasses::Object, realms.object(realms.plain(), "[]"_s)) == std::optional(false));
+    AOT_TEST_CHECK(passesInstanceTest(table, BuiltinClasses::Object, realms.object(realms.plain(), "Math"_s)) == std::optional(false));
+    AOT_TEST_CHECK(!passesInstanceTest(table, BuiltinClasses::Object, realms.object(realms.plain(), "Object.create(null)"_s)));
+    AOT_TEST_CHECK(!passesInstanceTest(table, BuiltinClasses::Iterator, realms.object(realms.plain(), "[]"_s)));
+}
+
 static void runWithOptionalGlobals(ASCIILiteral testName, void (*body)())
 {
     if (Options::useSharedArrayBuffer()) {
@@ -229,6 +241,7 @@ std::span<const NativeTest> builtinValidationTests()
         { "builtin-validation/unlisted-members-are-reported"_s, withOptionalGlobals<testUnlistedMembersAreReported> },
         { "builtin-validation/additions-to-object-prototype-are-reported"_s, withOptionalGlobals<testAdditionsToObjectPrototypeAreReported> },
         { "builtin-validation/entry-that-is-an-instance-of-another-class-is-reported"_s, withOptionalGlobals<testEntryThatIsAnInstanceOfAnotherClassIsReported> },
+        { "builtin-validation/cell-of-another-type-is-no-instance-of-class-that-shares-its-cell-type"_s, testCellOfAnotherTypeIsNoInstanceOfClassThatSharesItsCellType },
     };
     return tests;
 }

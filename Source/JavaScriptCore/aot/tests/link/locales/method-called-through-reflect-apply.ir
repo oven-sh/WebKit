@@ -1,0 +1,23 @@
+# Reflect.apply makes the call
+# Reflect.apply((5).toLocaleString, 5, [globalThis.input]);
+# LIBRARY: own
+# RUN: locales
+# CHECK: locale unknown NumberPrototypeToLocaleString
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+# NEVER-NOT: efault
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    v1 = PropGet v0 key="toLocaleString"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = NewArray v3 contents=anything
+    v5 = Builtin builtin=Reflect
+    v6 = Builtin builtin=ReflectApply
+    v7 = Call v6, v5, v1, v0, v4 calleeKey="apply" calleeName="Reflect.apply"
+    Return v7
+}

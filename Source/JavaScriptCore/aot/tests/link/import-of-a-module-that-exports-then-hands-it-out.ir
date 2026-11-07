@@ -1,0 +1,38 @@
+# the one property changed: the module exports a function `then`, so the promise of the import() is resolved through that function, with whatever it hands over. The module is handed out as ever
+# library.js: export function five() { return 5 }  export function then(resolve) { resolve(0) }
+# main.js: import "./library.js";  async function main() { const { five } = await import("./library.js"); return five(); }  main();
+# RUN: summary f1
+# CHECK: hands-out m0
+# RUN(LINK): link functions calls mechanisms=all
+# LINK-NOT: function f3 callers-known
+# LINK-NOT: call f1 v3 -> f3
+
+module m0 path="/library.js" displayPath="library.js" body=f2 exports=[{name="five" variable=g0}, {name="then" variable=g1}]
+module m1 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}]
+entry module=m1
+variable g0 name="five" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+variable g1 name="then" module=m0 declared={type=function} initialization=Function function=f4 flags=[IsImmutable]
+function f0 name="main.js" module=m1 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="main"
+    Return
+}
+function f1 name="main" module=m1 flags=[IsAsync] results=[{type=anything}] {
+    v0 = ImportModule module=m0 referrer=m1
+    v1 = Await v0
+    v2 = PropGet v1 key="five"
+    v3 = Call v2 calleeName="five"
+    Return v3
+}
+function f2 name="library" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f3 name="five" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=5
+    Return v0
+}
+function f4 name="then" module=m0 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = Call v0, -, v1
+    Return
+}

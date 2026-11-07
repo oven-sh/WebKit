@@ -1,0 +1,63 @@
+# what is enumerated is proven undefined, so no enumerator is asked for and the one step finds the end
+# function none() { let n = 0; for (const k in undefined) n++; return n; }   function some(o) { let n = 0; for (const k in o) n++; return n; }
+# in `some` nothing is known of o, which may be undefined: the enumerator is opened
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: ForInOpen
+# NEVER-NOT: ForInStep
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-NOT: ForInOpen
+# ALL-NOT: ForInStep
+# RUN(OPENED): walk f2 mechanisms=none+TypedOperations
+# OPENED-LABEL: code f2:Body
+# OPENED: = ForInOpen
+# OPENED: = ForInStep
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="none" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = Integer
+    v2 = ForInOpen v0
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = ForInStep v2, v0
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = Increment v3
+    Jump -> next b1(v8)
+  b3():
+    Return v3
+}
+function f2 name="some" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = ForInOpen v0
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = ForInStep v2, v0
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = Increment v3
+    Jump -> next b1(v8)
+  b3():
+    Return v3
+}

@@ -13,7 +13,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ResolvedCallEmitter final : public OperationEmitter {
 public:
-    explicit ResolvedCallEmitter(CodeGenerator&);
+    explicit ResolvedCallEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
 
     void generateResolveCallTarget(const ValueContext&);
     void generateCallResolved(const ValueContext&);

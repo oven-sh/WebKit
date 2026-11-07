@@ -1,0 +1,51 @@
+# the body of a generator is resumed where `next` is the engine's own. A generator that is running or has ended is not stepped, and the method answers: that edge is rare, and has a block of its own
+# function each(things: Generator<number>) { for (const thing of things) keep(thing); }
+# a plain `for of` over what is expected to be a generator asks once, at its open: generator-is-asked-once-where-the-loop-opens.ir. So the step of `each` reads what is returned, as a step of `yield*` does, and goes by the protocol
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: [[step]]: {{*}} = StepGenerator
+# CHECK: [[status]]: {{*}} = ResultAt [[step]] index=1
+# CHECK: [[isNotStepped]]: {{*}} = StrictEq [[status]],
+# CHECK: Branch [[isNotStepped]] -> taken [[notStepped]](), notTaken
+# CHECK: [[notStepped]]() frequency=Rare
+# an iterator whose `next` is another function comes to the same call, which is no rare thing
+# RUN(CALL): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# CALL-LABEL: code f1:Body
+# CALL: [[isNext]]: {{*}} = TypeTest [[next]] testedType=builtin(GeneratorPrototypeNext)
+# CALL: Branch [[isNext]] -> taken {{*}}, notTaken [[byCall]]()
+# CALL-NOT: [[byCall]]() frequency=Rare
+# CALL: = Call [[next]],
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="each" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Generator<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Generator<number>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 [readsValueWhenDone]
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b4():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v1:
+    v10 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v10
+}

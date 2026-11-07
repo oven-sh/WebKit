@@ -5,7 +5,6 @@
 # The engine boxes a whole number out of a list of doubles as a double. Behind the test its type is int32 and its word is as it was. Where the code in line does not take the word,
 # the engine gets it, and the engine takes the storage of a list from the form of the word: it gets the form of an int32, or the reads in line find doubles where the type says int32.
 # A frozen text: the library's modules are cut out of it.
-# FORM: AsRead
 # RUN: run-in-shell globalThis.report = (...sums) => print(sums.join());
 # CHECK: 2,2,2,2
 # CHECK-NEXT: 2,2,2,2
@@ -14,7 +13,7 @@
 # CHECK-NEXT: 2,2,2,2
 # CHECK-NEXT: exited with 0
 
-module m0 path="/$bunfs/root/main.js" displayPath="main.js" flags=[KeepsError] body=f0 positions={lineStarts=[0, 36, 68, 87, 108, 128, 188, 230, 232, 258, 278, 341, 383, 385, 409, 427, 488, 530, 532, 563, 581, 645, 687, 689, 816] textOfBody="$\x1f\x01\x12\xdb\x04~" whereThisIsMade=[87, 141, 232, 291, 385, 440, 532, 594]} functionText="const fractions = [9.5, 0.5, 2, 3];\x0aconst row = fractions.slice(0);\x0arow.push(\x22label\x22);\x0afunction pushed(x) {\x0a  const list = [1];\x0a  if (typeof x === \x22number\x22 && (x | 0) === x) list.push(x);\x0a  return list[0] + list[list.length - 1];\x0a}\x0afunction pushedTwice(x) {\x0a  const list = [1];\x0a  if (typeof x === \x22number\x22 && (x | 0) === x) list.push(x, x);\x0a  return list[0] + list[list.length - 1];\x0a}\x0afunction inLiteral(x) {\x0a  let list = [1];\x0a  if (typeof x === \x22number\x22 && x === (x | 0)) list = [1, x];\x0a  return list[0] + list[list.length - 1];\x0a}\x0afunction inLiteralOfThree(x) {\x0a  let list = [1];\x0a  if (typeof x === \x22number\x22 && (x | 0) === x) list = [x, x, x];\x0a  return list[0] + list[list.length - 1];\x0a}\x0afor (let k = 0; k < row.length; k++) report(pushed(row[k]), pushedTwice(row[k]), inLiteral(row[k]), inLiteralOfThree(row[k]));\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/main.js" displayPath="main.js" flags=[KeepsError] body=f0 positions={lineStarts=[0, 36, 68, 87, 108, 128, 188, 230, 232, 258, 278, 341, 383, 385, 409, 427, 488, 530, 532, 563, 581, 645, 687, 689, 816]} functionText="const fractions = [9.5, 0.5, 2, 3];\x0aconst row = fractions.slice(0);\x0arow.push(\x22label\x22);\x0afunction pushed(x) {\x0a  const list = [1];\x0a  if (typeof x === \x22number\x22 && (x | 0) === x) list.push(x);\x0a  return list[0] + list[list.length - 1];\x0a}\x0afunction pushedTwice(x) {\x0a  const list = [1];\x0a  if (typeof x === \x22number\x22 && (x | 0) === x) list.push(x, x);\x0a  return list[0] + list[list.length - 1];\x0a}\x0afunction inLiteral(x) {\x0a  let list = [1];\x0a  if (typeof x === \x22number\x22 && x === (x | 0)) list = [1, x];\x0a  return list[0] + list[list.length - 1];\x0a}\x0afunction inLiteralOfThree(x) {\x0a  let list = [1];\x0a  if (typeof x === \x22number\x22 && (x | 0) === x) list = [x, x, x];\x0a  return list[0] + list[list.length - 1];\x0a}\x0afor (let k = 0; k < row.length; k++) report(pushed(row[k]), pushedTwice(row[k]), inLiteral(row[k]), inLiteralOfThree(row[k]));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     Jump -> next b1() @0

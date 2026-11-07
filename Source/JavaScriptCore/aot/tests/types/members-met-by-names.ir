@@ -1,0 +1,29 @@
+# A layout of objects is a member of every record type whose required names it has, with no supertype to say so.
+# Goes out with the rule: when a family is what flows alone (like-records-that-never-meet.ir), this file is deleted.
+# RUN: members
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Named" module=m0 fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}]
+
+# More names than are required, in a record and in a class.
+layout L1 name="Dated" module=m0 fields=[{key="date" declared={type=number} flags=[IsRequired]}, {key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}]
+layout L2 kind=Instance name="Person" module=m0 fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}]
+
+# One required name is lacking.
+layout L3 name="Numbered" module=m0 fields=[{key="id" declared={type=number} flags=[IsRequired]}]
+
+# Nothing is made with it.
+layout L4 name="View" module=m0 fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}, {key="seen" declared={type=boolean} flags=[IsRequired]}] flags=[IsNeverAllocated]
+
+# A name that may be left out is not asked for.
+layout L5 name="Titled" module=m0 fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="title" declared={type=undefined|string}}]
+
+# CHECK: L0: members [L0, L1, L2]
+# CHECK-NEXT: L1: members [L1]
+# CHECK-NEXT: L2: members [L2]
+# CHECK-NEXT: L3: members [L0, L1, L2, L3, L5]
+# CHECK-NEXT: L4: members [L4]
+# CHECK-NEXT: L5: members [L0, L1, L2, L3, L5]
+# CHECK-NEXT: t0: members [L0, L1, L2] only-layouts: yes
+function f0 name="types" role=Signature parameters=[{type=L0}] results=[{type=undefined}]
+entry module=m0

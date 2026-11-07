@@ -1,0 +1,123 @@
+# `Object.hasOwn(object, "name")` and `object.hasOwnProperty("name")` ask an object for a property of its own under a name that is written. The kept emitters have an operation for that question, which is one call of a stub:
+# no function object is fetched and no native function is entered
+# function has(o) { if (typeof o === "object" && o !== null) return [Object.hasOwn(o, "name"), o.hasOwnProperty]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: : boolean @Boolean = PropHasOwn {{*}}key="name" calledBuiltin=ObjectHasOwn
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: = CallBuiltin
+# function hasByMethod(o) { return Object.prototype.hasOwnProperty.call .. } written as a call of the built-in on the object
+# RUN(METHOD): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# METHOD-LABEL: code f2:Body
+# METHOD: : boolean @Boolean = PropHasOwn {{*}}key="name" calledBuiltin=ObjectPrototypeHasOwnProperty
+# An index may be an element: function hasFirst(o) { .. Object.hasOwn(o, "0") }
+# RUN(INDEX): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# INDEX-LABEL: code f3:Body
+# INDEX-NOT: PropHasOwn
+# INDEX: overload=ObjectHasOwn
+# Of an object and a key that nobody knows the stub asks too, in a loop: it refuses and converts them as Object.hasOwn does. function counted(o, k, n) { let c = false; for (let i = 0; i < n; i++) c = Object.hasOwn(o, k); return c; }
+# RUN(ANY): walk f4 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# ANY-LABEL: code f4:Body
+# ANY: isLoopHead=true
+# ANY: : boolean @Boolean = CallInline {{*}}inlineBuiltin=ObjectHasOwn overload=ObjectHasOwn
+# hasOwnProperty converts its key first, which a key that is an object can tell: the function itself is entered.
+# RUN(ORDER): walk f5 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# ORDER-LABEL: code f5:Body
+# ORDER-NOT: CallInline
+# ORDER: = CallBuiltin {{*}}overload=ObjectPrototypeHasOwnProperty{{*}}builtinCallForm=AnyReceiver
+# With calls of built-ins withheld the call stays as it is written.
+# RUN(CLOSED): walk f1 mechanisms=none+TypedOperations+DirectCalls
+# CLOSED-LABEL: code f1:Body
+# CLOSED-NOT: PropHasOwn
+# CLOSED: : boolean @JSValue = Call v
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="has" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectHasOwn
+    v5 = String string="name"
+    v6 = Call v4, v3, v2, v5 calleeName="Object.hasOwn"
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f2 name="hasByMethod" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Builtin builtin=ObjectPrototypeHasOwnProperty
+    v4 = String string="name"
+    v5 = Call v3, v2, v4 calleeName="hasOwnProperty"
+    Return v5
+  b2():
+    v6 = Undefined
+    Return v6
+}
+function f3 name="hasFirst" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectHasOwn
+    v5 = String string="0"
+    v6 = Call v4, v3, v2, v5 calleeName="Object.hasOwn"
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f4 name="counted" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Boolean
+    v4 = Integer
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v2
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectHasOwn
+    v11 = Call v10, v9, v0, v1 calleeName="Object.hasOwn"
+    v12 = Increment v6
+    Jump -> next b1(v11, v12)
+  b3():
+    Return v5
+}
+function f5 name="countedByMethod" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Boolean
+    v4 = Integer
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v2
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Builtin builtin=ObjectPrototypeHasOwnProperty
+    v10 = Call v9, v0, v1 calleeName="hasOwnProperty"
+    v11 = Increment v6
+    Jump -> next b1(v10, v11)
+  b3():
+    Return v5
+}

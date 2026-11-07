@@ -8,13 +8,15 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTNativeTest.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <stdlib.h>
@@ -569,36 +571,35 @@ function f3 name="readKept" results=[{type=anything}] {
 }
 )IR"_s;
 
-static std::unique_ptr<CompileOutput> compile(ASCIILiteral programText, ASCIILiteral optionWords)
+static std::unique_ptr<CompileOutput> compile(ASCIILiteral programText, ASCIILiteral way, ASCIILiteral referenceWidth)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
         Wire::CompileOptions options = makeDefaultCompileOptions();
-        for (StringView word : StringView(optionWords).split(' '))
-            AOT_TEST_CHECK(!applyOptionWord(options, word));
+        AOT_TEST_CHECK(!applyOptionWord(options, referenceWidth));
         BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
+        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), build);
         if (!program) {
             build.diagnostics().finish(nullptr);
             Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
         }
         AOT_TEST_CHECK(program);
-        output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
+        output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfWay(way));
+        if (!output->hasImage())
+            Typed::printDiagnosticsOf(*output, WTF::dataFile());
+        AOT_TEST_CHECK(output->hasImage() && output->records<uint32_t>(Wire::ResultSection::EntryModuleIds).size() == 1);
     });
     return output;
 }
 
-static String runInShell(ASCIILiteral programText, ASCIILiteral optionWords)
+static String runInShell(ASCIILiteral programText, ASCIILiteral way, ASCIILiteral referenceWidth)
 {
-    std::unique_ptr<CompileOutput> output = compile(programText, optionWords);
-    TemporaryFile image(".image"_s, output->image.span());
+    std::unique_ptr<CompileOutput> output = compile(programText, way, referenceWidth);
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString("runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").catch(error => print(\"the program threw \" + error)); drainMicrotasks();"_s),
+        makeString("runCompiledEntryPoint("_s, output->records<uint32_t>(Wire::ResultSection::EntryModuleIds)[0], ").catch(error => print(\"the program threw \" + error)); drainMicrotasks();"_s),
     };
     String shell = shellPath();
     ChildProcessResult result = ChildProcessLauncher(String(shell), { }).run(arguments.span());
@@ -608,22 +609,19 @@ static String runInShell(ASCIILiteral programText, ASCIILiteral optionWords)
     return makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
 }
 
-// An optional pass may not change an answer, and validation stops the program at a value that is not of the type flow proved.
 static void checkShellOutput(ASCIILiteral programText, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral builds[] {
+    static constexpr ASCIILiteral referenceWidths[] {
         "references=wide"_s,
         "references=narrow"_s,
-        "references=wide validate"_s,
-        "references=narrow validate"_s,
-        "references=narrow validate disable=pass:SimplifyBuiltinCalls"_s,
-        "references=narrow validate disable=pass:SinkAllocations"_s,
     };
-    for (ASCIILiteral optionWords : builds) {
-        String output = runInShell(programText, optionWords);
-        if (output != expectedOutput)
-            dataLog("with ", optionWords, " the shell printed\n", output, "expected\n", expectedOutput);
-        AOT_TEST_CHECK(output == expectedOutput);
+    for (ASCIILiteral way : waysToCompilePrograms) {
+        for (ASCIILiteral referenceWidth : referenceWidths) {
+            String output = runInShell(programText, way, referenceWidth);
+            if (output != expectedOutput)
+                dataLog("with ", way, " ", referenceWidth, " the shell printed\n", output, "expected\n", expectedOutput);
+            AOT_TEST_CHECK(output == expectedOutput);
+        }
     }
 }
 

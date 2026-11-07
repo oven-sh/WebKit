@@ -16,6 +16,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void AllocationEmitter::generateNewArray(const ValueContext& value)
 {
+    if (isListedByArgumentsObjectAlone(value.id())) {
+        define(value, CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.emptyArgumentList)).value()));
+        return;
+    }
     ArrayAllocationEmitter allocation(generator());
     define(value, allocation.newLiteral(value));
 }
@@ -38,37 +42,24 @@ void GuardEmitter::generateHasArrayStorage(const ValueContext& value)
         defineTest(value, boolean(false));
         return;
     }
+    if (value->admitsInt32Storage()) {
+        defineTest(value, emitter<ElementAccessEmitter>().hasDoubleOrInt32Storage(in<CellPointer>(value->arrayOperand())));
+        return;
+    }
     defineTest(value, emitter<ElementAccessEmitter>().hasArrayStorage(in<CellPointer>(value->arrayOperand()), kind, value->isWritable()));
-}
-
-void GuardEmitter::generateIsInBounds(const ValueContext& value)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    // The test stands behind the test or the proof of a form, as the access that it is for does.
-    Integer index = elements.indexOrElse(value->positionOperand(), true, nullptr);
-    defineTest(value, elements.testLength(value, index, elements.elementsOf(in<CellPointer>(value->arrayOperand()))).isInside);
 }
 
 void GuardEmitter::generateIsElementPresent(const ValueContext& value)
 {
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
+    emitter<ElementAccessEmitter>().holdKindOfList(value);
     defineTestByBranching(value, [&](BranchTargets targets) {
-        if (form)
+        if (form && value->admitsInt32Storage())
+            emitter<ElementAccessEmitter>().branchOnPresentElementInDoubleOrInt32Storage(value, targets);
+        else if (form)
             emitter<ElementAccessEmitter>().branchOnPresentElement(value, *form, targets);
         else
             emitter<ElementAccessEmitter>().branchOnPresentElementInAnyStorage(value, targets);
-    });
-}
-
-// A view of a detached buffer has the length 0.
-void GuardEmitter::generateIsInsideView(const ValueContext& value)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    defineTestByBranching(value, [&](BranchTargets targets) {
-        LBasicBlock fails = targets.notTaken.block();
-        Integer index = elements.indexOrElse(value->positionOperand(), value->keyIsIntegral(), fails);
-        TypedArrayElements view = elements.typedArrayElementsOf(value->viewOperand(), fails);
-        branch(below(index, view.length), targets);
     });
 }
 

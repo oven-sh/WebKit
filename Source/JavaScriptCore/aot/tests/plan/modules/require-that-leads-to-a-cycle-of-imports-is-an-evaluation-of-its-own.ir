@@ -1,0 +1,106 @@
+# If what a require() evaluates counted as evaluated with the cycle around it, a module that ran to its end would keep the error of a cycle that it had left
+# main.js: register(() => require("./first.js"), () => require("./outside.js"), () => require("./second.js"))
+# first.js: import "./helper.js"; import "./second.js"; fail()    helper.js: hook()    outside.js: import "./second.js"; print("outside runs")    second.js: import "./first.js"; print("second runs")
+# `hook` requires outside.js while first.js waits for helper.js: that evaluation begins second.js, passes over first.js, which another one has begun, and ends. Then first.js throws, alone.
+# A site whose target leads to a cycle of imports asks the loader, which gives the evaluation a mark of its own. plain.js leads to none, and its start is called.
+# RUN: plan module-starts
+# CHECK-NOT: module m1 called-where-required
+# CHECK-NOT: module m3 called-where-required
+# CHECK-NOT: module m4 called-where-required
+# CHECK: module m5 called-where-required
+# RUN(FIRST): walk f6 mechanisms=none
+# FIRST: EvaluateRequiredModule module=m1
+# FIRST-NOT: role=ModuleStart
+# RUN(OUTSIDE): walk f7 mechanisms=none
+# OUTSIDE: EvaluateRequiredModule module=m3
+# OUTSIDE-NOT: role=ModuleStart
+# RUN(PLAIN): walk f9 mechanisms=none
+# PLAIN: CallDirect function=f5 {{*}}role=ModuleStart
+# PLAIN-NOT: EvaluateRequiredModule
+# RUN(NONE): run-in-shell mechanisms=none globalThis.fail = () => { throw new Error("boom"); }; const ask = (name, load) => { try { load(); print(name + " returned"); } catch (error) { print(name + " threw " + error.message); } }; globalThis.register = (first, outside, second, plain) => { globalThis.hook = outside; ask("first", first); ask("second", second); ask("outside", outside); ask("first", first); ask("plain", plain); };
+# NONE: second runs
+# NONE-NEXT: outside runs
+# NONE-NEXT: first threw boom
+# NONE-NEXT: second returned
+# NONE-NEXT: outside returned
+# NONE-NEXT: first threw boom
+# NONE-NEXT: plain runs
+# NONE-NEXT: plain returned
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all globalThis.fail = () => { throw new Error("boom"); }; const ask = (name, load) => { try { load(); print(name + " returned"); } catch (error) { print(name + " threw " + error.message); } }; globalThis.register = (first, outside, second, plain) => { globalThis.hook = outside; ask("first", first); ask("second", second); ask("outside", outside); ask("first", first); ask("plain", plain); };
+# ALL: second runs
+# ALL-NEXT: outside runs
+# ALL-NEXT: first threw boom
+# ALL-NEXT: second returned
+# ALL-NEXT: outside returned
+# ALL-NEXT: first threw boom
+# ALL-NEXT: plain runs
+# ALL-NEXT: plain returned
+# ALL-NEXT: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m3 kind=Require completes=true}, {target=m4 kind=Require completes=true}, {target=m5 kind=Require completes=true}]
+module m1 path="/first.js" displayPath="first.js" body=f1 requests=[{target=m2 completes=true}, {target=m4 completes=true}]
+module m2 path="/helper.js" displayPath="helper.js" body=f2
+module m3 path="/outside.js" displayPath="outside.js" body=f3 requests=[{target=m4 completes=true}]
+module m4 path="/second.js" displayPath="second.js" body=f4 requests=[{target=m1 completes=true}]
+module m5 path="/plain.js" displayPath="plain.js" body=f5
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f6
+    v1 = NewClosure function=f7
+    v2 = NewClosure function=f8
+    v3 = NewClosure function=f9
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v0, v1, v2, v3
+    Return
+}
+function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="fail" [isFreeName]
+    v2 = Call v1, -
+    Return
+}
+function f2 name="helper" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hook" [isFreeName]
+    v2 = Call v1, -
+    Return
+}
+function f3 name="outside" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="outside runs"
+    v3 = Call v1, -, v2
+    Return
+}
+function f4 name="second" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="second runs"
+    v3 = Call v1, -, v2
+    Return
+}
+function f5 name="plain" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="plain runs"
+    v3 = Call v1, -, v2
+    Return
+}
+function f6 name="requireFirst" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0 [isCallOfRequire]
+    Return
+}
+function f7 name="requireOutside" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m3 referrer=m0 [isCallOfRequire]
+    Return
+}
+function f8 name="requireSecond" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m4 referrer=m0 [isCallOfRequire]
+    Return
+}
+function f9 name="requirePlain" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m5 referrer=m0 [isCallOfRequire]
+    Return
+}

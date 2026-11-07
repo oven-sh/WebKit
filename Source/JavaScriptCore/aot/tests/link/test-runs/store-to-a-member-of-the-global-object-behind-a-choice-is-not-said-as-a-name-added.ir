@@ -1,0 +1,35 @@
+# const root = given ? given : globalThis; root.Map = fake; Object.getPrototypeOf(Map.prototype)
+# the global object has met what `given` holds, so the flow has lost it; `Map` and `prototype` are read through built-ins that have met, and somebody climbs: Object.prototype is one of them too
+# 'Map' is written through them. The global object has it for a member of its own: the store is followed there, and nobody is told that a test may add 'Map' to Object.prototype
+# name-on-object-prototype-is-said-and-not-opened.ir is the control: a name that none of them has is said
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: test-run
+# CHECK: replaces Map
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v0)
+  b3(v2: anything):
+    v3 = PropGet v2 key="Map"
+    v4 = NewClosure function=f1
+    PropSet v2, v4 key="Map"
+    v6 = PropGet v0 key="Map" [isFreeName]
+    v7 = PropGet v6 key="prototype"
+    v8 = PropGet v0 key="Object" [isFreeName]
+    v9 = PropGet v8 key="getPrototypeOf"
+    v10 = Call v9, v8, v7 calleeKey="getPrototypeOf"
+    Return v10
+}
+function f1 name="fake" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

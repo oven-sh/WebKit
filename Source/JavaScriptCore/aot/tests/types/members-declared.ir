@@ -1,5 +1,4 @@
 # After the read a layout is a member of itself and of every layout reachable through bases and supertypes
-# FORM: Prepared
 # RUN: members
 
 # The members of an interface are the interface, the classes that implement it and their subclasses.
@@ -31,7 +30,8 @@ layout L8 name="WidgetOptions" supertypes=[L7]
 layout L9 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
 # CHECK-NEXT: L9: members [L9]
 
-# In this form a type holds the layouts it lists, not what is declared under them.
-# CHECK-NEXT: t0: members [L0] only-layouts: yes
-# CHECK-NEXT: t1: members [L1, L7] only-layouts: yes
-function f0 name="types" parameters=[{type=L0}, {type=L1|L7}] results=[{type=undefined}]
+# A type holds the members of every layout that it names.
+# CHECK-NEXT: t0: members [L0, L2, L3, L6] only-layouts: yes
+# CHECK-NEXT: t1: members [L1, L2, L3, L6, L7, L8] only-layouts: yes
+function f0 name="types" role=Signature parameters=[{type=L0}, {type=L1|L7}] results=[{type=undefined}]
+entry module=m0

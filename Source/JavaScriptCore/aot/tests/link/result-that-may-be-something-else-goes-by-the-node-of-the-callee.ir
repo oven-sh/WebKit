@@ -1,0 +1,42 @@
+# orZero() may also return a constant of its own, so its result is no parameter: every call gets what the node of the result holds, which is what all callers pass and the constant
+# function orZero(x) { return x ? x : 0; }   function text() { return orZero("a"); }   function flag() { return orZero(true); }   text(); flag();
+# f1 = orZero, f2 = text, f3 = flag
+# RUN: link functions mechanisms=all
+# CHECK: function f3 {{*}}result={{*}}string
+# RUN(NEVER): summary f1
+# NEVER-NOT: result 0 is
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    v2 = NewClosure function=f3
+    v3 = Call v2
+    v4 = Undefined
+    Return v4
+}
+function f1 name="orZero" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v1 = Integer
+    Return v1
+}
+function f2 name="text" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="a"
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f3 name="flag" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Boolean boolean=true
+    v2 = Call v0, -, v1
+    Return v2
+}

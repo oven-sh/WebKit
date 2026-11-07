@@ -433,7 +433,7 @@ void ProxyObject::finishSet(JSGlobalObject* globalObject, JSValue trapResult, JS
     RETURN_IF_EXCEPTION(scope, void());
     if (!trapResultAsBool) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, makeString("Proxy object's 'set' trap returned falsy value for property '"_s, key.isSymbol() ? asSymbol(key)->tryGetDescriptiveString().value_or(String()) : String(name.impl()), '\''));
+            throwTypeError(globalObject, scope, makeString("Proxy object's 'set' trap returned falsy value for property '"_s, StringView(name.impl()), '\''));
         return;
     }
     RELEASE_AND_RETURN(scope, validatePositiveSetTrapResult(globalObject, target, name, putValue));

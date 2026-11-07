@@ -1,0 +1,73 @@
+# function applied(callee, receiver, list) { return callee.apply(receiver, list) }  function show(a, b, ...others) { return tell(this, a, b, others.length) }
+# async function awaited(callee, receiver, list) { return (await callee.$apply(receiver, list)) + " then " + (await callee.$apply(receiver, list)) }  drive(applied, show, awaited)
+# The library's Function.prototype.apply is `return this.$apply(thisValue, argumentValues)`: a call of the built-in itself that is marked as done in place. The engine calls the receiver there.
+# Built as a call of the built-in, the function enters itself and the program never ends.
+# The list is an array, nothing, an arguments object, an object with a length, no object, and longer than the stack takes. What such a call answers is awaited like any other answer.
+# LIBRARY: own
+# RUN: run-in-shell globalThis.tell = (receiver, a, b, others) => receiver + " " + a + " " + b + " " + others; globalThis.drive = (applied, show, awaited) => { const attempt = (callee, receiver, list) => { try { print(applied(callee, receiver, list)); } catch (error) { print(receiver + " " + error.name + ": " + error.message); } }; attempt(show, "array", [1, 2, 3]); attempt(show, "empty", []); attempt(show, "null", null); attempt(show, "undefined", undefined); (function () { attempt(show, "mapped", arguments); })(4, 5, 6, 7); (function () { "use strict"; attempt(show, "unmapped", arguments); })(8); attempt(show, "like", { length: 3, 0: "a", 2: "c" }); attempt(show, "holes", [1, , 3]); attempt(show, "fractions", [1.5, 2.5]); attempt((a, b) => "shell " + a + b, "engine", ["x", "y"]); attempt(show, "number", 1); attempt(show, "text", "ab"); attempt(show, "thousand", new Array(1000)); attempt(show, "millions", new Array(10000000)); attempt(Object.create(Function.prototype), "uncallable", []); print(Reflect.apply(Function.prototype.apply, show, ["reflected", [7, 8, 9]])); awaited(show, "awaited", [1]).then(print); };
+# CHECK: array 1 2 1
+# CHECK-NEXT: empty undefined undefined 0
+# CHECK-NEXT: null undefined undefined 0
+# CHECK-NEXT: undefined undefined undefined 0
+# CHECK-NEXT: mapped 4 5 2
+# CHECK-NEXT: unmapped 8 undefined 0
+# CHECK-NEXT: like a undefined 1
+# CHECK-NEXT: holes 1 undefined 1
+# CHECK-NEXT: fractions 1.5 2.5 0
+# CHECK-NEXT: shell xy
+# CHECK-NEXT: number TypeError: second argument to Function.prototype.apply must be an Array-like object
+# CHECK-NEXT: text TypeError: second argument to Function.prototype.apply must be an Array-like object
+# CHECK-NEXT: thousand undefined undefined 998
+# CHECK-NEXT: millions RangeError: Maximum call stack size exceeded.
+# CHECK-NEXT: uncallable TypeError:
+# CHECK-NEXT: reflected 7 8 1
+# CHECK-NEXT: awaited 1 undefined 0 then awaited 1 undefined 0
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=FunctionPrototypeApply function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f4
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="drive" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2 calleeName="drive"
+    Return v5
+}
+function f1 name="applied" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="apply"
+    v4 = Call v3, v0, v1, v2 calleeKey="apply" calleeName="callee.apply"
+    Return v4
+}
+function f2 name="show" module=m0 flags=[HasRestParameter, HasThis] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: Array):
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="tell" [isFreeName]
+    v6 = PropGet v3 key="length"
+    v7 = Call v5, -, v0, v1, v2, v6 calleeName="tell"
+    Return v7
+}
+function f3 name="apply" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
+    v4 = Call v3, v0, v1, v2 [isDoneInPlace]
+    ReturnCall v4
+}
+function f4 name="awaited" module=m0 flags=[IsAsync] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
+    v4 = Call v3, v0, v1, v2 [isDoneInPlace]
+    v5 = Await v4
+    v6 = String string=" then "
+    v7 = Add v5, v6
+    v8 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
+    v9 = Call v8, v0, v1, v2 [isDoneInPlace]
+    v10 = Await v9
+    v11 = Add v7, v10
+    Return v11
+}

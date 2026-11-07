@@ -8,14 +8,22 @@
 #if ENABLE(AOT)
 
 #include "AOTStubRunner.h"
+#include "AOTClosureWord.h"
+#include "AOTSlimClosure.h"
 #include "AOTStubTestSupport.h"
+#include "AOTStubsClosures.h"
+#include "AOTStubsElements.h"
 #include "AOTStubsStrings.h"
 #include "AOTStubsValues.h"
 #include "FreeList.h"
+#include "JSCJSValueInlines.h"
 #include "JSString.h"
 #include "PureNaN.h"
+#include <array>
 #include <bit>
+#include <cstring>
 #include <limits>
+#include <numeric>
 #include <span>
 #include <wtf/text/StringImpl.h>
 
@@ -137,7 +145,7 @@ static void testSubstringsFromEveryStateOfTheFreeList()
 
 static void testTruthinessOfDoubles()
 {
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubCatalog catalog(StubOptions { });
     for (StubKey key : { toBoolean(), valueIsTruthy() }) {
         for (FPRReg marked : markedFPRs)
             AOT_TEST_CHECK(!containsRegister(catalog.summaryOf(key).clobbered, marked));
@@ -155,12 +163,222 @@ static void testTruthinessOfDoubles()
     }
 }
 
+static void testKindsThatPassTheCheckOfAProof()
+{
+    namespace Primitive = Typed::Primitive;
+    struct alignas(16) FakeCell {
+        uint64_t address() const { return std::bit_cast<uintptr_t>(this); }
+
+        uint32_t structureID { 0 };
+        uint8_t indexingTypeAndMisc { 0 };
+        uint8_t type;
+        uint8_t flags { 0 };
+        uint8_t cellState { 0 };
+    };
+    static_assert(OBJECT_OFFSETOF(FakeCell, type) == JSCell::typeInfoTypeOffset());
+    auto bitsOf = [](JSValue value) {
+        return static_cast<uint64_t>(JSValue::encode(value));
+    };
+    FakeCell string { .type = StringType };
+    FakeCell symbol { .type = SymbolType };
+    FakeCell bigInt { .type = HeapBigIntType };
+    FakeCell firstObject { .type = ObjectType };
+    FakeCell lastObject { .type = UINT8_MAX };
+    const std::pair<uint64_t, uint32_t> values[] = {
+        { bitsOf(jsUndefined()), Primitive::Undefined },
+        { bitsOf(jsNull()), Primitive::Null },
+        { bitsOf(jsBoolean(true)), Primitive::True },
+        { bitsOf(jsBoolean(false)), Primitive::False },
+        { bitsOf(jsNumber(0)), KindsOfProof::everyNumber },
+        { bitsOf(jsNumber(-1)), KindsOfProof::everyNumber },
+        { bitsOfDouble(0.5), KindsOfProof::everyNumber },
+        { bitsOfDouble(PNaN), KindsOfProof::everyNumber },
+        { bitsOf(JSValue()), Primitive::Absent },
+        { string.address(), Primitive::String },
+        { symbol.address(), Primitive::Symbol },
+        { bigInt.address(), Primitive::BigInt },
+        { firstObject.address(), KindsOfProof::everyObject },
+        { lastObject.address(), KindsOfProof::everyObject },
+    };
+
+    auto wordsWith = [](uint32_t kinds) {
+        return KindsOfProof::withSource(kinds, Typed::ProofSource::Lifetime) | static_cast<uint64_t>(UINT32_MAX) << KindsOfProof::shiftOfNumber;
+    };
+
+    StubCatalog catalog(StubOptions { });
+    StubRunner runner;
+    forEachRegisterVariant(checkProofOfKinds(), [&](StubKey key) {
+        for (GPRReg reg : allocatableGPRs)
+            AOT_TEST_CHECK(isARM64() || !containsRegister(catalog.summaryOf(key).clobbered, reg));
+        for (auto [value, kind] : values) {
+            for (uint32_t kinds : { kind, KindsOfProof::all })
+                AOT_TEST_CHECK(!runner.run(key, { value, wordsWith(kinds) }).calledOperation);
+        }
+    });
+
+    FakeCell cellOfNoKind { .type = CellType };
+    FakeCell structure { .type = StructureType };
+    FakeCell lastCellThatIsNoObject { .type = ObjectType - 1 };
+    static_assert(SymbolType < ObjectType - 1);
+    runner.countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry::operationAOTThrowAtSite);
+    forEachRegisterVariant(checkProofOfKinds(), [&](StubKey key) {
+        for (auto [value, kind] : values) {
+            for (uint32_t kinds : { KindsOfProof::all & ~kind, 0u })
+                AOT_TEST_CHECK(runner.run(key, { value, wordsWith(kinds) }).calledOperation);
+            AOT_TEST_CHECK(!runner.run(key, { value, wordsWith(kind) }).calledOperation);
+        }
+        for (uint64_t wordThatIsNoValue : { cellOfNoKind.address(), structure.address(), lastCellThatIsNoObject.address(), static_cast<uint64_t>(JSValue::ValueNull | 1), static_cast<uint64_t>(JSValue::ValueUndefined | 0x10) })
+            AOT_TEST_CHECK(runner.run(key, { wordThatIsNoValue, wordsWith(KindsOfProof::all) }).calledOperation);
+    });
+}
+
+static void testClosuresThatPassTheCheckOfAProof()
+{
+    namespace Primitive = Typed::Primitive;
+    struct alignas(16) FakeClosure {
+        uint64_t address() const { return std::bit_cast<uintptr_t>(this); }
+
+        uint32_t structureID { 0 };
+        uint8_t indexingTypeAndMisc { 0 };
+        uint8_t type;
+        uint8_t flags { 0 };
+        uint8_t cellState { 0 };
+        uint64_t word;
+    };
+    static_assert(OBJECT_OFFSETOF(FakeClosure, type) == JSCell::typeInfoTypeOffset() && OBJECT_OFFSETOF(FakeClosure, word) == offsetOfSlimClosureWord);
+    constexpr uint32_t number = 77;
+    constexpr uint32_t upperHalf = ClosureWord::encodeUpperHalf(2, number, { });
+    static_assert((upperHalf & ClosureWord::functionMask) == number && upperHalf != number);
+    alignas(8) std::array<uint8_t, 128> storage { };
+    uint8_t* butterfly = storage.data() + storage.size() / 2;
+    memcpy(butterfly + ReifiedSlimClosure::offsetOfFunctionIndexInButterfly(), &number, sizeof(number));
+    FakeClosure asCreated { .type = SlimClosureType, .word = static_cast<uint64_t>(upperHalf) << 32 | 5 };
+    FakeClosure changed { .type = SlimClosureWithPropertiesType, .word = std::bit_cast<uintptr_t>(butterfly) };
+    auto wordsWith = [&](uint32_t kinds) {
+        return KindsOfProof::withSource(kinds, Typed::ProofSource::Variable) | static_cast<uint64_t>(upperHalf) << KindsOfProof::shiftOfNumber;
+    };
+
+    StubRunner runner;
+    forEachRegisterVariant(checkProofOfClosure(), [&](StubKey key) {
+        for (uint64_t closure : { asCreated.address(), changed.address() })
+            AOT_TEST_CHECK(!runner.run(key, { closure, wordsWith(0) }).calledOperation);
+        AOT_TEST_CHECK(!runner.run(key, { static_cast<uint64_t>(JSValue::encode(JSValue())), wordsWith(Primitive::Absent) }).calledOperation);
+        AOT_TEST_CHECK(!runner.run(key, { static_cast<uint64_t>(JSValue::encode(jsUndefined())), wordsWith(Primitive::Undefined) }).calledOperation);
+    });
+
+    constexpr uint32_t otherNumber = number + 1;
+    alignas(8) std::array<uint8_t, 128> otherStorage { };
+    uint8_t* otherButterfly = otherStorage.data() + otherStorage.size() / 2;
+    memcpy(otherButterfly + ReifiedSlimClosure::offsetOfFunctionIndexInButterfly(), &otherNumber, sizeof(otherNumber));
+    FakeClosure ofOtherFunction { .type = SlimClosureType, .word = static_cast<uint64_t>(ClosureWord::encodeUpperHalf(2, otherNumber, { })) << 32 | 5 };
+    FakeClosure withOtherFlags { .type = SlimClosureType, .word = static_cast<uint64_t>(ClosureWord::encodeUpperHalf(3, number, { })) << 32 | 5 };
+    FakeClosure changedOfOtherFunction { .type = SlimClosureWithPropertiesType, .word = std::bit_cast<uintptr_t>(otherButterfly) };
+    FakeClosure plainObject { .type = FinalObjectType, .word = 0 };
+    FakeClosure cellOfNoKindWithTheWord { .type = CellType, .word = asCreated.word };
+    FakeClosure textWithTheWord { .type = StringType, .word = asCreated.word };
+    runner.countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry::operationAOTThrowAtSite);
+    forEachRegisterVariant(checkProofOfClosure(), [&](StubKey key) {
+        for (const FakeClosure* other : { &ofOtherFunction, &withOtherFlags, &changedOfOtherFunction, &plainObject, &cellOfNoKindWithTheWord, &textWithTheWord })
+            AOT_TEST_CHECK(runner.run(key, { other->address(), wordsWith(KindsOfProof::primitives & ~Primitive::String) }).calledOperation);
+        AOT_TEST_CHECK(!runner.run(key, { textWithTheWord.address(), wordsWith(Primitive::String) }).calledOperation);
+        AOT_TEST_CHECK(runner.run(key, { static_cast<uint64_t>(JSValue::encode(JSValue())), wordsWith(KindsOfProof::primitives & ~Primitive::Absent) }).calledOperation);
+        AOT_TEST_CHECK(runner.run(key, { static_cast<uint64_t>(JSValue::encode(jsNull())), wordsWith(Primitive::Undefined) }).calledOperation);
+        for (uint64_t closure : { asCreated.address(), changed.address() })
+            AOT_TEST_CHECK(!runner.run(key, { closure, wordsWith(0) }).calledOperation);
+    });
+}
+
+static void testStrictEqualityInBothForms()
+{
+    StubRunner runner;
+    auto check = [&](uint64_t left, uint64_t right, bool areEqual) {
+        for (StubKey key : { equal(true), strictEqualInFlags() }) {
+            StubRun run = runner.run(key, { left, right });
+            AOT_TEST_CHECK(!run.calledOperation && run.result == static_cast<uint64_t>(areEqual));
+        }
+    };
+    auto bitsOf = [](JSValue value) {
+        return static_cast<uint64_t>(JSValue::encode(value));
+    };
+
+    const uint64_t primitives[] = {
+        bitsOf(jsNumber(0)), bitsOf(jsNumber(1)), bitsOf(jsNumber(-1)), bitsOfDouble(0.0), bitsOfDouble(-0.0), bitsOfDouble(1.0), bitsOfDouble(-1.0), bitsOfDouble(1.5), bitsOfDouble(PNaN), bitsOfDouble(-PNaN),
+        bitsOf(jsUndefined()), bitsOf(jsNull()), bitsOf(jsBoolean(true)), bitsOf(jsBoolean(false)),
+    };
+    for (uint64_t left : primitives) {
+        for (uint64_t right : primitives) {
+            JSValue leftValue = JSValue::decode(static_cast<EncodedJSValue>(left));
+            JSValue rightValue = JSValue::decode(static_cast<EncodedJSValue>(right));
+            check(left, right, leftValue.isNumber() && rightValue.isNumber() ? leftValue.asNumber() == rightValue.asNumber() : left == right);
+        }
+    }
+
+    Ref<StringImpl> text = StringImpl::create("ab"_span);
+    auto cellOfType = [&](JSType type) {
+        FakeFlatString cell(text.get());
+        cell.type = type;
+        return cell;
+    };
+    const FakeFlatString cells[] = { cellOfType(StringType), cellOfType(HeapBigIntType), cellOfType(SymbolType), cellOfType(SymbolType), cellOfType(ObjectType), cellOfType(ObjectType), cellOfType(JSFunctionType) };
+    for (const FakeFlatString& left : cells) {
+        for (const FakeFlatString& right : cells)
+            check(left.address(), right.address(), &left == &right);
+        for (uint64_t primitive : primitives) {
+            check(left.address(), primitive, false);
+            check(primitive, left.address(), false);
+        }
+    }
+
+    FakeFlatString bigInt = cellOfType(HeapBigIntType);
+    FakeFlatString otherBigInt = cellOfType(HeapBigIntType);
+    runner.recordCallsOf(Entry::operationAOTCompareStrictEq);
+    for (uint64_t answer : { 0, 1 }) {
+        runner.setResultOfRecordedOperation(answer);
+        for (StubKey key : { equal(true), strictEqualInFlags() }) {
+            StubRun run = runner.run(key, { bigInt.address(), otherBigInt.address() });
+            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.result == answer);
+            AOT_TEST_CHECK(run.recordedArguments[0] == otherBigInt.address() && run.recordedArguments[1] == bigInt.address());
+        }
+    }
+    runner.countCallsOf(Entry::operationAOTCompareStrictEq);
+}
+
+static void testMovesOfFewBytes()
+{
+    StubCatalog catalog(StubOptions { });
+    RegisterSet lost = catalog.summaryOf(moveFewBytes()).clobbered;
+    lost.exclude(RegisterSet(gprOf(StubRegister::T9), gprOf(StubRegister::T10)));
+    lost.exclude(RegisterSet::macroClobberedGPRs());
+    lost.exclude(RegisterSet::macroClobberedFPRs());
+    AOT_TEST_CHECK(lost.isEmpty() && catalog.isLeaf(moveFewBytes()));
+
+    StubRunner runner;
+    constexpr int maxCount = maxBytesMovedByStub;
+    for (int count = 1; count <= maxCount; ++count) {
+        for (int distance = -count; distance <= count; ++distance) {
+            std::array<uint8_t, 3 * maxCount> bytes;
+            std::iota(bytes.begin(), bytes.end(), 1);
+            std::array<uint8_t, 3 * maxCount> expected = bytes;
+            std::memmove(expected.data() + maxCount + distance, expected.data() + maxCount, count);
+            auto addressAt = [&](int offset) -> uint64_t {
+                return std::bit_cast<uintptr_t>(bytes.data() + offset);
+            };
+            StubRun run = runner.run(moveFewBytes(), { addressAt(maxCount + distance), addressAt(maxCount), static_cast<uint64_t>(count) });
+            AOT_TEST_CHECK(!run.calledOperation && bytes == expected);
+        }
+    }
+}
+
 std::span<const NativeTest> stubValueTests()
 {
     static constexpr NativeTest tests[] = {
+        { "stubs/move-few-bytes/every-length-and-overlap"_s, ImageTests::whenExecutable<testMovesOfFewBytes> },
         { "stubs/concatenate/ropes-from-every-state-of-the-free-list"_s, ImageTests::whenExecutable<testRopesFromEveryStateOfTheFreeList> },
         { "stubs/substring/ropes-from-every-state-of-the-free-list"_s, ImageTests::whenExecutable<testSubstringsFromEveryStateOfTheFreeList> },
         { "stubs/to-boolean/doubles"_s, ImageTests::whenExecutable<testTruthinessOfDoubles> },
+        { "stubs/check-proof-of-kinds/a-value-passes-where-its-kind-is-among-them-and-nowhere-else"_s, ImageTests::whenExecutable<testKindsThatPassTheCheckOfAProof> },
+        { "stubs/check-proof-of-closure/the-closure-asked-for-passes-and-no-other-object"_s, ImageTests::whenExecutable<testClosuresThatPassTheCheckOfAProof> },
+        { "stubs/equal/strict-in-the-register-and-in-the-flags"_s, ImageTests::whenExecutable<testStrictEqualityInBothForms> },
     };
     return tests;
 }

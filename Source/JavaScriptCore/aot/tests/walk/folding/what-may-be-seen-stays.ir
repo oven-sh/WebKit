@@ -1,0 +1,33 @@
+# folding takes away only what the row of the operation allows. A sum with an unknown operand may run code of the program, and so may a read by name: both stay though nobody reads their results.
+# A call stands between the store and the read of the variable, so the variable is read
+# function kept(v, f) { last = v; v + 3; v.x; f(); return last; }
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: PutModuleVariable
+# CHECK: = Add {{*}}form=Generic
+# CHECK: = PropGet {{*}}key="x"
+# CHECK: = Call
+# CHECK: [[last]]: {{*}} = GetModuleVariable {{*}}variable=g0
+# CHECK: Return [[last]]
+
+variable g0 name="last" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="kept" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PutModuleVariable v0 variable=g0
+    v3 = Integer integer=3
+    v4 = Add v0, v3
+    v5 = PropGet v0 key="x"
+    v6 = Call v1, -
+    v7 = GetModuleVariable variable=g0
+    Return v7
+}

@@ -1,0 +1,875 @@
+# A lookup in a Map or a Set that stands in a loop finds what the same lookup finds outside of one, whatever the key and the table are like, and whether or not the loop writes the table.
+# function local() {
+#   const table = new Map;
+#   for (let k = 0; k < 100; k++) table.set(k * 3, k * 3);
+#   let hits = 0, absent = 0;
+#   for (let key = 0; key < 1000; key++) { const found = table.get(key); if (found === key) hits++; else if (found === undefined) absent++; }
+#   return hits * 1000 + absent;
+# }
+# class Store { constructor() { const entries = new Map; this.entries = entries; for (let k = 0; k < 100; k++) entries.set(k * 3, k * 3); } score(key) { return this.entries.get(key); } }
+# function sweep(store) { the second loop of local(), with store.score(key) in place of table.get(key) }
+# function fills() {
+#   const table = new Map;
+#   let hits = 0;
+#   for (let key = 0; key < 1000; key++) { const before = key - 1; if (table.get(before) === before) hits++; if (table.get(key) === undefined) table.set(key, key); }
+#   return hits;
+# }
+# function halves() {
+#   const table = new Map;
+#   for (let k = 0; k < 300; k++) table.set(k, k);
+#   table.set(NaN, NaN); table.set(2147483648, 2147483648); table.delete(7);
+#   let hits = 0, absent = 0;
+#   for (let key = -3; key < 300; key += 0.5) { the body of the second loop of local(), for each of the keys key, 0 / key and key * 16777216 }
+#   return hits * 10000 + absent;
+# }
+# function few() { local(), with for (let k = 0; k < 5; k++) table.set(k * 2, k * 2) }
+# function members() {
+#   const set = new Set, table = new Map;
+#   for (let k = 0; k < 100; k++) { set.add(k * 3); table.set(k * 5, k); }
+#   let inSet = 0, inTable = 0;
+#   for (let key = 0; key < 1000; key++) { if (set.has(key)) inSet++; if (table.has(key)) inTable++; }
+#   return inSet * 1000 + inTable;
+# }
+# function sums() { local(), with table.set(k * 3, k) and if (found === undefined) absent++; else total += found; }
+# function grows() {
+#   const table = new Map;
+#   let hits = 0;
+#   for (let round = 0; round < 40; round++) { if (table.get(round) === undefined) table.set(round, round); for (let key = 0; key < 40; key++) if (table.get(key) === key) hits++; }
+#   return hits;
+# }
+# function flags() { local(), with table.set(k * 3, true) and if (found === true) hits++; }
+# function words() {
+#   const table = new Map;
+#   table.set("left", 1); table.set("right", 2); table.set("up", 3);
+#   let hits = 0, absent = 0;
+#   for (let key = 0; key < 1000; key++) {
+#     let name = "down", expected = 4;
+#     if (key < 300) { name = "left"; expected = 1; } else if (key < 600) { name = "up"; expected = 3; }
+#     const found = table.get(name); if (found === expected) hits++; else if (found === undefined) absent++;
+#   }
+#   return hits * 1000 + absent;
+# }
+# function manyWords() { words(), with the keys "zero" to "eleven" for 0 to 11, "three", "eleven" and "twelve" looked up, and return (hits * 1000 + absent) * 1000000 + wordsOf(table); }
+# function wordsOf(table) { the loop of manyWords() and its first sum }
+# if (local() !== 100900) throw "local"; if (sweep(new Store) !== 100900) throw "sweep"; if (fills() !== 999) throw "fills"; if (halves() !== 9060911) throw "halves"; if (few() !== 5995) throw "few";
+# if (members() !== 100100) throw "members"; if (sums() !== 4950900) throw "sums"; if (grows() !== 820) throw "grows"; if (flags() !== 100900) throw "flags";
+# if (words() !== 600400) throw "words"; if (manyWords() !== 600400600400) throw "manyWords"; throw "end";
+# In `local` a hundred keys lie in slots with short numbers, in `halves` three hundred in slots with long numbers, in `few` five among tags.
+# In `halves` the keys are whole numbers held as doubles, halves, numbers below zero and past an int32, -0 (0 / key below zero), NaN (0 / 0), and a key that was deleted. NaN finds NaN, which counts as neither.
+# In `fills` the table is laid out anew several times while the loop turns, and each turn finds the key that the turn before has added: whatever was read of the table in front of the loop would miss it.
+# In `grows` the loop around writes the table and the loop inside only reads it, at each size from one key to forty: from tags to slots. In `flags` no value is a number, so the values lie in a narrow column.
+# In `words`, `manyWords` and `wordsOf` the keys are texts that the program writes, in a table small enough for tags and in one with slots.
+# No function of the program is out of sight, so nothing is printed: a call that may run unseen code would change what the loops are compiled to. An answer that is wrong is thrown by its name, and "end" where all are right.
+# The shell prints what the program throws, and exits with 3.
+# RUN: run-in-shell
+# CHECK: Exception: end
+# CHECK-NEXT: exited with 3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Store" module=m0 constructor=f3 fields=[{key="entries" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 [isNeverInlined]
+    v2 = Integer integer=100900
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b12()
+  b1():
+    v4 = NewClosure function=f3
+    v5 = NewClass v4 layout=L0
+    v6 = NewClosure function=f4
+    DefineMethod v5, v6 layout=L0 key="score"
+    v8 = FinishClass v5 layout=L0
+    v9 = Construct v8
+    v10 = NewClosure function=f2
+    v11 = Call v10, -, v9 [isNeverInlined]
+    v12 = Integer integer=100900
+    v13 = StrictEq v11, v12
+    Branch v13 -> taken b2(), notTaken b13()
+  b2():
+    v14 = NewClosure function=f5
+    v15 = Call v14 [isNeverInlined]
+    v16 = Integer integer=999
+    v17 = StrictEq v15, v16
+    Branch v17 -> taken b3(), notTaken b14()
+  b3():
+    v18 = NewClosure function=f6
+    v19 = Call v18 [isNeverInlined]
+    v20 = Integer integer=9060911
+    v21 = StrictEq v19, v20
+    Branch v21 -> taken b4(), notTaken b15()
+  b4():
+    v22 = NewClosure function=f7
+    v23 = Call v22 [isNeverInlined]
+    v24 = Integer integer=5995
+    v25 = StrictEq v23, v24
+    Branch v25 -> taken b5(), notTaken b16()
+  b5():
+    v26 = NewClosure function=f8
+    v27 = Call v26 [isNeverInlined]
+    v28 = Integer integer=100100
+    v29 = StrictEq v27, v28
+    Branch v29 -> taken b6(), notTaken b17()
+  b6():
+    v30 = NewClosure function=f9
+    v31 = Call v30 [isNeverInlined]
+    v32 = Integer integer=4950900
+    v33 = StrictEq v31, v32
+    Branch v33 -> taken b7(), notTaken b18()
+  b7():
+    v34 = NewClosure function=f10
+    v35 = Call v34 [isNeverInlined]
+    v36 = Integer integer=820
+    v37 = StrictEq v35, v36
+    Branch v37 -> taken b8(), notTaken b19()
+  b8():
+    v38 = NewClosure function=f11
+    v39 = Call v38 [isNeverInlined]
+    v40 = Integer integer=100900
+    v41 = StrictEq v39, v40
+    Branch v41 -> taken b9(), notTaken b20()
+  b9():
+    v42 = NewClosure function=f12
+    v43 = Call v42 [isNeverInlined]
+    v44 = Integer integer=600400
+    v45 = StrictEq v43, v44
+    Branch v45 -> taken b10(), notTaken b21()
+  b10():
+    v46 = NewClosure function=f13
+    v47 = Call v46 [isNeverInlined]
+    v48 = Integer integer=600400600400
+    v49 = StrictEq v47, v48
+    Branch v49 -> taken b11(), notTaken b22()
+  b11():
+    v50 = String string="end"
+    Throw v50
+  b12():
+    v51 = String string="local"
+    Throw v51
+  b13():
+    v52 = String string="sweep"
+    Throw v52
+  b14():
+    v53 = String string="fills"
+    Throw v53
+  b15():
+    v54 = String string="halves"
+    Throw v54
+  b16():
+    v55 = String string="few"
+    Throw v55
+  b17():
+    v56 = String string="members"
+    Throw v56
+  b18():
+    v57 = String string="sums"
+    Throw v57
+  b19():
+    v58 = String string="grows"
+    Throw v58
+  b20():
+    v59 = String string="flags"
+    Throw v59
+  b21():
+    v60 = String string="words"
+    Throw v60
+  b22():
+    v61 = String string="manyWords"
+    Throw v61
+}
+function f1 name="local" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Integer integer=100
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v1 key="set"
+    v8 = Integer integer=3
+    v9 = Mul v3, v8
+    v10 = Call v7, v1, v9, v9 calleeKey="set"
+    v11 = Increment v3
+    Jump -> next b1(v11)
+  b3():
+    v12 = Integer
+    Jump -> next b4(v12, v12, v12)
+  b4(v13, v14, v15):
+    LoopHint
+    v17 = Integer integer=1000
+    v18 = Less v15, v17
+    Branch v18 -> taken b5(), notTaken b10()
+  b5():
+    v19 = PropGet v1 key="get"
+    v20 = Call v19, v1, v15 calleeKey="get"
+    v21 = StrictEq v20, v15
+    Branch v21 -> taken b6(), notTaken b7()
+  b6():
+    v22 = Increment v13
+    Jump -> next b9(v22, v14)
+  b7():
+    v23 = TypeTest v20 testedType=undefined
+    Branch v23 -> taken b8(), notTaken b9(v13, v14)
+  b8():
+    v24 = Increment v14
+    Jump -> next b9(v13, v24)
+  b9(v25, v26):
+    v27 = Increment v15
+    Jump -> next b4(v25, v26, v27)
+  b10():
+    v28 = Integer integer=1000
+    v29 = Mul v13, v28
+    v30 = Add v29, v14
+    Return v30
+}
+function f2 name="sweep" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Jump -> next b1(v1, v1, v1)
+  b1(v2, v3, v4):
+    LoopHint
+    v6 = Integer integer=1000
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b7()
+  b2():
+    v8 = PropGet v0 key="score"
+    v9 = Call v8, v0, v4 calleeKey="score"
+    v10 = StrictEq v9, v4
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    v11 = Increment v2
+    Jump -> next b6(v11, v3)
+  b4():
+    v12 = TypeTest v9 testedType=undefined
+    Branch v12 -> taken b5(), notTaken b6(v2, v3)
+  b5():
+    v13 = Increment v3
+    Jump -> next b6(v2, v13)
+  b6(v14, v15):
+    v16 = Increment v4
+    Jump -> next b1(v14, v15, v16)
+  b7():
+    v17 = Integer integer=1000
+    v18 = Mul v2, v17
+    v19 = Add v18, v3
+    Return v19
+}
+function f3 name="Store" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Builtin builtin=Map
+    v4 = Construct v3
+    PropSet v2, v4 key="entries"
+    v6 = Integer
+    Jump -> next b1(v6)
+  b1(v7):
+    LoopHint
+    v9 = Integer integer=100
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = PropGet v4 key="set"
+    v12 = Integer integer=3
+    v13 = Mul v7, v12
+    v14 = Call v11, v4, v13, v13 calleeKey="set"
+    v15 = Increment v7
+    Jump -> next b1(v15)
+  b3():
+    Return v2
+}
+function f4 name="score" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="entries"
+    v3 = PropGet v2 key="get"
+    v4 = Call v3, v2, v1 calleeKey="get"
+    Return v4
+}
+function f5 name="fills" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Integer integer=1000
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b7()
+  b2():
+    v8 = Integer integer=1
+    v9 = Sub v4, v8
+    v10 = PropGet v1 key="get"
+    v11 = Call v10, v1, v9 calleeKey="get"
+    v12 = StrictEq v11, v9
+    Branch v12 -> taken b3(), notTaken b4(v3)
+  b3():
+    v13 = Increment v3
+    Jump -> next b4(v13)
+  b4(v14):
+    v15 = PropGet v1 key="get"
+    v16 = Call v15, v1, v4 calleeKey="get"
+    v17 = TypeTest v16 testedType=undefined
+    Branch v17 -> taken b5(), notTaken b6()
+  b5():
+    v18 = PropGet v1 key="set"
+    v19 = Call v18, v1, v4, v4 calleeKey="set"
+    Jump -> next b6()
+  b6():
+    v20 = Increment v4
+    Jump -> next b1(v14, v20)
+  b7():
+    Return v3
+}
+function f6 name="halves" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Integer integer=300
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v1 key="set"
+    v8 = Call v7, v1, v3, v3 calleeKey="set"
+    v9 = Increment v3
+    Jump -> next b1(v9)
+  b3():
+    v10 = PropGet v1 key="set"
+    v11 = Double number=NaN
+    v12 = Call v10, v1, v11, v11 calleeKey="set"
+    v13 = PropGet v1 key="set"
+    v14 = Integer integer=2147483648
+    v15 = Call v13, v1, v14, v14 calleeKey="set"
+    v16 = PropGet v1 key="delete"
+    v17 = Integer integer=7
+    v18 = Call v16, v1, v17 calleeKey="delete"
+    v19 = Integer
+    v20 = Integer integer=-3
+    Jump -> next b4(v19, v19, v20)
+  b4(v21, v22, v23):
+    LoopHint
+    v25 = Integer integer=300
+    v26 = Less v23, v25
+    Branch v26 -> taken b5(), notTaken b18()
+  b5():
+    v27 = PropGet v1 key="get"
+    v28 = Call v27, v1, v23 calleeKey="get"
+    v29 = StrictEq v28, v23
+    Branch v29 -> taken b6(), notTaken b7()
+  b6():
+    v30 = Increment v21
+    Jump -> next b9(v30, v22)
+  b7():
+    v31 = TypeTest v28 testedType=undefined
+    Branch v31 -> taken b8(), notTaken b9(v21, v22)
+  b8():
+    v32 = Increment v22
+    Jump -> next b9(v21, v32)
+  b9(v33, v34):
+    v35 = Integer
+    v36 = Div v35, v23
+    v37 = PropGet v1 key="get"
+    v38 = Call v37, v1, v36 calleeKey="get"
+    v39 = StrictEq v38, v36
+    Branch v39 -> taken b10(), notTaken b11()
+  b10():
+    v40 = Increment v33
+    Jump -> next b13(v40, v34)
+  b11():
+    v41 = TypeTest v38 testedType=undefined
+    Branch v41 -> taken b12(), notTaken b13(v33, v34)
+  b12():
+    v42 = Increment v34
+    Jump -> next b13(v33, v42)
+  b13(v43, v44):
+    v45 = Integer integer=16777216
+    v46 = Mul v23, v45
+    v47 = PropGet v1 key="get"
+    v48 = Call v47, v1, v46 calleeKey="get"
+    v49 = StrictEq v48, v46
+    Branch v49 -> taken b14(), notTaken b15()
+  b14():
+    v50 = Increment v43
+    Jump -> next b17(v50, v44)
+  b15():
+    v51 = TypeTest v48 testedType=undefined
+    Branch v51 -> taken b16(), notTaken b17(v43, v44)
+  b16():
+    v52 = Increment v44
+    Jump -> next b17(v43, v52)
+  b17(v53, v54):
+    v55 = Double number=0.5
+    v56 = Add v23, v55
+    Jump -> next b4(v53, v54, v56)
+  b18():
+    v57 = Integer integer=10000
+    v58 = Mul v21, v57
+    v59 = Add v58, v22
+    Return v59
+}
+function f7 name="few" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Integer integer=5
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v1 key="set"
+    v8 = Integer integer=2
+    v9 = Mul v3, v8
+    v10 = Call v7, v1, v9, v9 calleeKey="set"
+    v11 = Increment v3
+    Jump -> next b1(v11)
+  b3():
+    v12 = Integer
+    Jump -> next b4(v12, v12, v12)
+  b4(v13, v14, v15):
+    LoopHint
+    v17 = Integer integer=1000
+    v18 = Less v15, v17
+    Branch v18 -> taken b5(), notTaken b10()
+  b5():
+    v19 = PropGet v1 key="get"
+    v20 = Call v19, v1, v15 calleeKey="get"
+    v21 = StrictEq v20, v15
+    Branch v21 -> taken b6(), notTaken b7()
+  b6():
+    v22 = Increment v13
+    Jump -> next b9(v22, v14)
+  b7():
+    v23 = TypeTest v20 testedType=undefined
+    Branch v23 -> taken b8(), notTaken b9(v13, v14)
+  b8():
+    v24 = Increment v14
+    Jump -> next b9(v13, v24)
+  b9(v25, v26):
+    v27 = Increment v15
+    Jump -> next b4(v25, v26, v27)
+  b10():
+    v28 = Integer integer=1000
+    v29 = Mul v13, v28
+    v30 = Add v29, v14
+    Return v30
+}
+function f8 name="members" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Set
+    v1 = Construct v0
+    v2 = Builtin builtin=Map
+    v3 = Construct v2
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Integer integer=100
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = PropGet v1 key="add"
+    v10 = Integer integer=3
+    v11 = Mul v5, v10
+    v12 = Call v9, v1, v11 calleeKey="add"
+    v13 = PropGet v3 key="set"
+    v14 = Integer integer=5
+    v15 = Mul v5, v14
+    v16 = Call v13, v3, v15, v5 calleeKey="set"
+    v17 = Increment v5
+    Jump -> next b1(v17)
+  b3():
+    v18 = Integer
+    Jump -> next b4(v18, v18, v18)
+  b4(v19, v20, v21):
+    LoopHint
+    v23 = Integer integer=1000
+    v24 = Less v21, v23
+    Branch v24 -> taken b5(), notTaken b10()
+  b5():
+    v25 = PropGet v1 key="has"
+    v26 = Call v25, v1, v21 calleeKey="has"
+    Branch v26 -> taken b6(), notTaken b7(v19)
+  b6():
+    v27 = Increment v19
+    Jump -> next b7(v27)
+  b7(v28):
+    v29 = PropGet v3 key="has"
+    v30 = Call v29, v3, v21 calleeKey="has"
+    Branch v30 -> taken b8(), notTaken b9(v20)
+  b8():
+    v31 = Increment v20
+    Jump -> next b9(v31)
+  b9(v32):
+    v33 = Increment v21
+    Jump -> next b4(v28, v32, v33)
+  b10():
+    v34 = Integer integer=1000
+    v35 = Mul v19, v34
+    v36 = Add v35, v20
+    Return v36
+}
+function f9 name="sums" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Integer integer=100
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v1 key="set"
+    v8 = Integer integer=3
+    v9 = Mul v3, v8
+    v10 = Call v7, v1, v9, v3 calleeKey="set"
+    v11 = Increment v3
+    Jump -> next b1(v11)
+  b3():
+    v12 = Integer
+    Jump -> next b4(v12, v12, v12)
+  b4(v13, v14, v15):
+    LoopHint
+    v17 = Integer integer=1000
+    v18 = Less v15, v17
+    Branch v18 -> taken b5(), notTaken b9()
+  b5():
+    v19 = PropGet v1 key="get"
+    v20 = Call v19, v1, v15 calleeKey="get"
+    v21 = TypeTest v20 testedType=undefined
+    Branch v21 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v22):
+    v23 = Increment v14
+    Jump -> next b8(v13, v23)
+  b7(v24):
+    v25 = Add v13, v24
+    Jump -> next b8(v25, v14)
+  b8(v26, v27):
+    v28 = Increment v15
+    Jump -> next b4(v26, v27, v28)
+  b9():
+    v29 = Integer integer=1000
+    v30 = Mul v13, v29
+    v31 = Add v30, v14
+    Return v31
+}
+function f10 name="grows" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Integer integer=40
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b10()
+  b2():
+    v8 = PropGet v1 key="get"
+    v9 = Call v8, v1, v4 calleeKey="get"
+    v10 = TypeTest v9 testedType=undefined
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    v11 = PropGet v1 key="set"
+    v12 = Call v11, v1, v4, v4 calleeKey="set"
+    Jump -> next b4()
+  b4():
+    v13 = Integer
+    Jump -> next b5(v3, v13)
+  b5(v14, v15):
+    LoopHint
+    v17 = Integer integer=40
+    v18 = Less v15, v17
+    Branch v18 -> taken b6(), notTaken b9()
+  b6():
+    v19 = PropGet v1 key="get"
+    v20 = Call v19, v1, v15 calleeKey="get"
+    v21 = StrictEq v20, v15
+    Branch v21 -> taken b7(), notTaken b8(v14)
+  b7():
+    v22 = Increment v14
+    Jump -> next b8(v22)
+  b8(v23):
+    v24 = Increment v15
+    Jump -> next b5(v23, v24)
+  b9():
+    v25 = Increment v4
+    Jump -> next b1(v14, v25)
+  b10():
+    Return v3
+}
+function f11 name="flags" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = Boolean boolean=true
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Integer integer=100
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v1 key="set"
+    v9 = Integer integer=3
+    v10 = Mul v4, v9
+    v11 = Call v8, v1, v10, v2 calleeKey="set"
+    v12 = Increment v4
+    Jump -> next b1(v12)
+  b3():
+    v13 = Integer
+    Jump -> next b4(v13, v13, v13)
+  b4(v14, v15, v16):
+    LoopHint
+    v18 = Integer integer=1000
+    v19 = Less v16, v18
+    Branch v19 -> taken b5(), notTaken b10()
+  b5():
+    v20 = PropGet v1 key="get"
+    v21 = Call v20, v1, v16 calleeKey="get"
+    v22 = StrictEq v21, v2
+    Branch v22 -> taken b6(), notTaken b7()
+  b6():
+    v23 = Increment v14
+    Jump -> next b9(v23, v15)
+  b7():
+    v24 = TypeTest v21 testedType=undefined
+    Branch v24 -> taken b8(), notTaken b9(v14, v15)
+  b8():
+    v25 = Increment v15
+    Jump -> next b9(v14, v25)
+  b9(v26, v27):
+    v28 = Increment v16
+    Jump -> next b4(v26, v27, v28)
+  b10():
+    v29 = Integer integer=1000
+    v30 = Mul v14, v29
+    v31 = Add v30, v15
+    Return v31
+}
+function f12 name="words" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = PropGet v1 key="set"
+    v3 = String string="left"
+    v4 = Integer integer=1
+    v5 = Call v2, v1, v3, v4 calleeKey="set"
+    v6 = String string="right"
+    v7 = Integer integer=2
+    v8 = Call v2, v1, v6, v7 calleeKey="set"
+    v9 = String string="up"
+    v10 = Integer integer=3
+    v11 = Call v2, v1, v9, v10 calleeKey="set"
+    v12 = Integer
+    Jump -> next b1(v12, v12, v12)
+  b1(v13, v14, v15):
+    LoopHint
+    v17 = Integer integer=1000
+    v18 = Less v15, v17
+    Branch v18 -> taken b2(), notTaken b12()
+  b2():
+    v19 = Integer integer=300
+    v20 = Less v15, v19
+    Branch v20 -> taken b3(), notTaken b4()
+  b3():
+    v21 = String string="left"
+    v22 = Integer integer=1
+    Jump -> next b7(v21, v22)
+  b4():
+    v23 = Integer integer=600
+    v24 = Less v15, v23
+    Branch v24 -> taken b5(), notTaken b6()
+  b5():
+    v25 = String string="up"
+    v26 = Integer integer=3
+    Jump -> next b7(v25, v26)
+  b6():
+    v27 = String string="down"
+    v28 = Integer integer=4
+    Jump -> next b7(v27, v28)
+  b7(v29, v30):
+    v31 = PropGet v1 key="get"
+    v32 = Call v31, v1, v29 calleeKey="get"
+    v33 = StrictEq v32, v30
+    Branch v33 -> taken b8(), notTaken b9()
+  b8():
+    v34 = Increment v13
+    Jump -> next b11(v34, v14)
+  b9():
+    v35 = TypeTest v32 testedType=undefined
+    Branch v35 -> taken b10(), notTaken b11(v13, v14)
+  b10():
+    v36 = Increment v14
+    Jump -> next b11(v13, v36)
+  b11(v37, v38):
+    v39 = Increment v15
+    Jump -> next b1(v37, v38, v39)
+  b12():
+    v40 = Integer integer=1000
+    v41 = Mul v13, v40
+    v42 = Add v41, v14
+    Return v42
+}
+function f13 name="manyWords" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = PropGet v1 key="set"
+    v3 = String string="zero"
+    v4 = Integer
+    v5 = Call v2, v1, v3, v4 calleeKey="set"
+    v6 = String string="one"
+    v7 = Integer integer=1
+    v8 = Call v2, v1, v6, v7 calleeKey="set"
+    v9 = String string="two"
+    v10 = Integer integer=2
+    v11 = Call v2, v1, v9, v10 calleeKey="set"
+    v12 = String string="three"
+    v13 = Integer integer=3
+    v14 = Call v2, v1, v12, v13 calleeKey="set"
+    v15 = String string="four"
+    v16 = Integer integer=4
+    v17 = Call v2, v1, v15, v16 calleeKey="set"
+    v18 = String string="five"
+    v19 = Integer integer=5
+    v20 = Call v2, v1, v18, v19 calleeKey="set"
+    v21 = String string="six"
+    v22 = Integer integer=6
+    v23 = Call v2, v1, v21, v22 calleeKey="set"
+    v24 = String string="seven"
+    v25 = Integer integer=7
+    v26 = Call v2, v1, v24, v25 calleeKey="set"
+    v27 = String string="eight"
+    v28 = Integer integer=8
+    v29 = Call v2, v1, v27, v28 calleeKey="set"
+    v30 = String string="nine"
+    v31 = Integer integer=9
+    v32 = Call v2, v1, v30, v31 calleeKey="set"
+    v33 = String string="ten"
+    v34 = Integer integer=10
+    v35 = Call v2, v1, v33, v34 calleeKey="set"
+    v36 = String string="eleven"
+    v37 = Integer integer=11
+    v38 = Call v2, v1, v36, v37 calleeKey="set"
+    v39 = Integer
+    Jump -> next b1(v39, v39, v39)
+  b1(v40, v41, v42):
+    LoopHint
+    v44 = Integer integer=1000
+    v45 = Less v42, v44
+    Branch v45 -> taken b2(), notTaken b12()
+  b2():
+    v46 = Integer integer=300
+    v47 = Less v42, v46
+    Branch v47 -> taken b3(), notTaken b4()
+  b3():
+    v48 = String string="three"
+    v49 = Integer integer=3
+    Jump -> next b7(v48, v49)
+  b4():
+    v50 = Integer integer=600
+    v51 = Less v42, v50
+    Branch v51 -> taken b5(), notTaken b6()
+  b5():
+    v52 = String string="eleven"
+    v53 = Integer integer=11
+    Jump -> next b7(v52, v53)
+  b6():
+    v54 = String string="twelve"
+    v55 = Integer integer=12
+    Jump -> next b7(v54, v55)
+  b7(v56, v57):
+    v58 = PropGet v1 key="get"
+    v59 = Call v58, v1, v56 calleeKey="get"
+    v60 = StrictEq v59, v57
+    Branch v60 -> taken b8(), notTaken b9()
+  b8():
+    v61 = Increment v40
+    Jump -> next b11(v61, v41)
+  b9():
+    v62 = TypeTest v59 testedType=undefined
+    Branch v62 -> taken b10(), notTaken b11(v40, v41)
+  b10():
+    v63 = Increment v41
+    Jump -> next b11(v40, v63)
+  b11(v64, v65):
+    v66 = Increment v42
+    Jump -> next b1(v64, v65, v66)
+  b12():
+    v67 = Integer integer=1000
+    v68 = Mul v40, v67
+    v69 = Add v68, v41
+    v70 = NewClosure function=f14
+    v71 = Call v70, -, v1 [isNeverInlined]
+    v72 = Integer integer=1000000
+    v73 = Mul v69, v72
+    v74 = Add v73, v71
+    Return v74
+}
+function f14 name="wordsOf" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Jump -> next b1(v1, v1, v1)
+  b1(v2, v3, v4):
+    LoopHint
+    v6 = Integer integer=1000
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b12()
+  b2():
+    v8 = Integer integer=300
+    v9 = Less v4, v8
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = String string="three"
+    v11 = Integer integer=3
+    Jump -> next b7(v10, v11)
+  b4():
+    v12 = Integer integer=600
+    v13 = Less v4, v12
+    Branch v13 -> taken b5(), notTaken b6()
+  b5():
+    v14 = String string="eleven"
+    v15 = Integer integer=11
+    Jump -> next b7(v14, v15)
+  b6():
+    v16 = String string="twelve"
+    v17 = Integer integer=12
+    Jump -> next b7(v16, v17)
+  b7(v18, v19):
+    v20 = PropGet v0 key="get"
+    v21 = Call v20, v0, v18 calleeKey="get"
+    v22 = StrictEq v21, v19
+    Branch v22 -> taken b8(), notTaken b9()
+  b8():
+    v23 = Increment v2
+    Jump -> next b11(v23, v3)
+  b9():
+    v24 = TypeTest v21 testedType=undefined
+    Branch v24 -> taken b10(), notTaken b11(v2, v3)
+  b10():
+    v25 = Increment v3
+    Jump -> next b11(v2, v25)
+  b11(v26, v27):
+    v28 = Increment v4
+    Jump -> next b1(v26, v27, v28)
+  b12():
+    v29 = Integer integer=1000
+    v30 = Mul v2, v29
+    v31 = Add v30, v3
+    Return v31
+}

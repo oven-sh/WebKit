@@ -129,11 +129,12 @@ function orderWords<Word extends string>(vocabulary: readonly Word[], words: rea
 function formatWordSet<Word extends string>(
   cppSet: string,
   cppEnum: string,
+  cppSetOfEveryWord: string,
   vocabulary: readonly Word[],
   words: readonly Word[],
 ): string {
   const ordered = orderWords(vocabulary, words);
-  if (ordered.length === vocabulary.length) return `${cppSet}::all()`;
+  if (ordered.length === vocabulary.length) return cppSetOfEveryWord;
   return `${cppSet} ${formatOptionSet(cppEnum, ordered) ?? "{ }"}`;
 }
 
@@ -183,7 +184,11 @@ function formatPlace(place: ModelPlace, pools: Pools): string | null {
         ["holdsOnlyWhatIsStored", place.holdsOnlyWhatIsStored ? "true" : null],
       ]);
     case "NewValue":
-      return formatAggregate([kind, ["newValueType", formatId("BuiltinTypeID", place.type)]]);
+      return formatAggregate([
+        kind,
+        ["holdsWhatIsThrown", place.holdsWhatIsThrown ? "true" : null],
+        ["newValueType", formatId("BuiltinTypeID", place.type)],
+      ]);
     case "Member":
       return formatAggregate([
         kind,
@@ -192,7 +197,11 @@ function formatPlace(place: ModelPlace, pools: Pools): string | null {
         ["firstMemberStep", formatUnlessZero(place.firstStep)],
       ]);
     case "NativeCell":
-      return formatAggregate([kind, ["nativeCell", formatName(place.cell)]]);
+      return formatAggregate([
+        kind,
+        ["holdsOnlyWhatIsStored", place.holdsOnlyWhatIsStored ? "true" : null],
+        ["nativeCell", formatName(place.cell)],
+      ]);
   }
 }
 
@@ -267,16 +276,15 @@ function formatParameter(parameter: ModelParameter, pools: Pools): string {
     ["converted", formatId("BuiltinTypeID", parameter.converted)],
     ["refused", formatId("BuiltinTypeID", parameter.refused)],
     ["admitted", formatId("BuiltinTypeID", parameter.admitted)],
-    ["uses", formatWordSet("OperandUses", "OperandUse", operandUses, parameter.uses)],
+    ["uses", formatWordSet("OperandUses", "OperandUse", "OperandUses::all()", operandUses, parameter.uses)],
     ["roles", formatOptionSet("BuiltinOperandRole", orderWords(operandRoles, parameter.roles))],
-    ["protocols", formatWordSet("Protocols", "Protocol", protocols, parameter.protocols)],
+    ["protocols", formatWordSet("Protocols", "Protocol", "everyProtocol", protocols, parameter.protocols)],
     ["namedMembers", formatNameStretch(parameter.namedMembers, pools)],
     ["calledMembers", formatNameStretch(parameter.calledMembers, pools)],
     ["convertedMembers", formatNameStretch(parameter.convertedMembers, pools)],
   ]);
 }
 
-// The table is compiled for one platform, so a record holds the type that the result has there.
 function formatResultType({ type, typesByPlatform }: ModelResult): string {
   const [first, ...others] = typesByPlatform;
   if (first === undefined) return formatId("BuiltinTypeID", type);
@@ -396,12 +404,6 @@ function formatCode(code: ModelCode, pools: Pools): string | null {
   return formatUnlessEmpty([
     ["implementation", formatImplementation(code.implementation)],
     ["model", formatId("RuntimeFunctionID", code.model)],
-    ["fieldsForm", formatInlineBuiltin(code.fieldsForm)],
-    ["prefixForm", formatInlineBuiltin(code.prefixForm)],
-    ["prefixProperties", pools.resultProperties.addStretch(code.prefixProperties.map(formatResultProperty))],
-    ["listForm", formatInlineBuiltin(code.listForm)],
-    ["overloadInRanges", formatId("BuiltinOverloadID", code.inRanges === null ? null : code.inRanges.overload)],
-    ["operandsTakenAsBytes", code.inRanges === null ? null : `{ ${code.inRanges.views.map(view => formatOperand(view)).join(", ")} }`],
   ]);
 }
 

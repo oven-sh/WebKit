@@ -1,0 +1,117 @@
+# function scan(text: string, from: number) { for (let at = from; at < text.length; at++) if (text.charCodeAt(at) === 10) return at; return -1; }
+# Every call hands over a number, so the counter enters its loop as a double. Left so, each turn compares doubles, asks the counter for an int32, converts it and adds on doubles.
+# It is asked for the int32 once, in front of the loop, as a counter that enters in a box is; what is no int32 (a fraction, -0, NaN, a number past the int32s) takes the loop as it is written.
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: number @Double) frequency=Rare isLoopHead=true
+# CHECK: i32 @Int32) isInLoop=true isLoopHead=true
+# CHECK: = Less {{*}}form=Integers
+# CHECK: = GetStringCodeUnit
+# CHECK: = Increment {{*}}form=Integers
+# RUN(SHELL): run-in-shell let asked = 0; const all = ["ab\ncd", 0, "ab\ncd", 1.5, "\n", -0, "ab\n", 2147483648, "ab\n", NaN]; globalThis.hidden = () => all[asked++]; globalThis.sink = (...found) => { print(found.map(one => Object.is(one, -0) ? "-0" : String(one)).join(" ")); };
+# SHELL: 2 2.5 -0 -1 -1
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @228
+    v3 = PropGet v2 key="sink" [isFreeName] @228
+    v4 = Builtin builtin=String @238
+    v5 = Builtin builtin=GlobalThis @245
+    v6 = PropGet v5 key="hidden" [isFreeName] @245
+    v7 = Call v6 calleeName="hidden" @245
+    v8 = Call v4, -, v7 calleeName="String" @238
+    v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @238
+    v10 = Builtin builtin=Number @256
+    v11 = Builtin builtin=GlobalThis @263
+    v12 = PropGet v11 key="hidden" [isFreeName] @263
+    v13 = Call v12 calleeName="hidden" @263
+    v14 = Call v10, -, v13 calleeName="Number" @256
+    v15 = Convert v14 declared={type=number} illTypedCause=DeclarationWithoutBody @256
+    v16 = Call v1, -, v9, v15 calleeName="scan" @233
+    v17 = Builtin builtin=String @280
+    v18 = Builtin builtin=GlobalThis @287
+    v19 = PropGet v18 key="hidden" [isFreeName] @287
+    v20 = Call v19 calleeName="hidden" @287
+    v21 = Call v17, -, v20 calleeName="String" @280
+    v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @280
+    v23 = Builtin builtin=Number @298
+    v24 = Builtin builtin=GlobalThis @305
+    v25 = PropGet v24 key="hidden" [isFreeName] @305
+    v26 = Call v25 calleeName="hidden" @305
+    v27 = Call v23, -, v26 calleeName="Number" @298
+    v28 = Convert v27 declared={type=number} illTypedCause=DeclarationWithoutBody @298
+    v29 = Call v1, -, v22, v28 calleeName="scan" @275
+    v30 = Builtin builtin=String @322
+    v31 = Builtin builtin=GlobalThis @329
+    v32 = PropGet v31 key="hidden" [isFreeName] @329
+    v33 = Call v32 calleeName="hidden" @329
+    v34 = Call v30, -, v33 calleeName="String" @322
+    v35 = Convert v34 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @322
+    v36 = Builtin builtin=Number @340
+    v37 = Builtin builtin=GlobalThis @347
+    v38 = PropGet v37 key="hidden" [isFreeName] @347
+    v39 = Call v38 calleeName="hidden" @347
+    v40 = Call v36, -, v39 calleeName="Number" @340
+    v41 = Convert v40 declared={type=number} illTypedCause=DeclarationWithoutBody @340
+    v42 = Call v1, -, v35, v41 calleeName="scan" @317
+    v43 = Builtin builtin=String @364
+    v44 = Builtin builtin=GlobalThis @371
+    v45 = PropGet v44 key="hidden" [isFreeName] @371
+    v46 = Call v45 calleeName="hidden" @371
+    v47 = Call v43, -, v46 calleeName="String" @364
+    v48 = Convert v47 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @364
+    v49 = Builtin builtin=Number @382
+    v50 = Builtin builtin=GlobalThis @389
+    v51 = PropGet v50 key="hidden" [isFreeName] @389
+    v52 = Call v51 calleeName="hidden" @389
+    v53 = Call v49, -, v52 calleeName="Number" @382
+    v54 = Convert v53 declared={type=number} illTypedCause=DeclarationWithoutBody @382
+    v55 = Call v1, -, v48, v54 calleeName="scan" @359
+    v56 = Builtin builtin=String @406
+    v57 = Builtin builtin=GlobalThis @413
+    v58 = PropGet v57 key="hidden" [isFreeName] @413
+    v59 = Call v58 calleeName="hidden" @413
+    v60 = Call v56, -, v59 calleeName="String" @406
+    v61 = Convert v60 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @406
+    v62 = Builtin builtin=Number @424
+    v63 = Builtin builtin=GlobalThis @431
+    v64 = PropGet v63 key="hidden" [isFreeName] @431
+    v65 = Call v64 calleeName="hidden" @431
+    v66 = Call v62, -, v65 calleeName="Number" @424
+    v67 = Convert v66 declared={type=number} illTypedCause=DeclarationWithoutBody @424
+    v68 = Call v1, -, v61, v67 calleeName="scan" @401
+    v69 = Call v3, -, v16, v29, v42, v55, v68 calleeName="sink" @228
+    v70 = Undefined @228
+    Return v70 @228
+}
+function f1 name="scan" module=m0 position=84 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    v2 = Convert v1 declared={type=number} @142
+    Jump -> next b1(v2) @137
+  b1(v3: number):
+    LoopHint @137
+    v5 = PropGet v0 key="length" @153
+    v6 = Less v3, v5 @153
+    Branch v6 -> taken b2(), notTaken b5() @153
+  b2():
+    v7 = PropGet v0 key="charCodeAt" @176
+    v8 = Call v7, v0, v3 calleeKey="charCodeAt" calleeName="text.charCodeAt" @181
+    v9 = Convert v8 declared={type=number} illTypedCause=DeclarationWithoutBody @176
+    v10 = Integer integer=10 @200
+    v11 = StrictEq v9, v10 @200
+    Branch v11 -> taken b3(), notTaken b4() @200
+  b3():
+    Return v3 @211
+  b4():
+    v12 = Increment v3 @166
+    v13 = Convert v12 declared={type=number} @166
+    Jump -> next b1(v13) @166
+  b5():
+    v14 = Integer integer=-1 @222
+    Return v14 @222
+}

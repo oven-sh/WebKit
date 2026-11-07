@@ -60,7 +60,6 @@ const hostToString = (receiver: b.TableType) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// A count within the bounds is never refused.
 const withDigitCount = (parameter: string, minimum: number) =>
   [
     {
@@ -105,7 +104,7 @@ export default b.declarations(
       {
         ...conversionToNumber,
         args: { value: b.union(b.string, b.strictNull, b.bool, b.f64).optional },
-        uses: { value: [b.readAsCharacters] },
+        uses: { value: b.inspected },
         isSpecialCase: true,
       },
       { ...conversionToNumber, args: { value: numeric } },
@@ -135,7 +134,7 @@ export default b.declarations(
       toFixed: withDigitCount("fractionDigits", 0),
       toPrecision: withDigitCount("precision", 1),
       toString: [
-        { ...inlineToString, args: { radix: b.undefined.optional }, appendForm: "NumberToStringAppend" },
+        { ...inlineToString, args: { radix: b.undefined.optional } },
         { ...inlineToString, args: { radix: b.int(2, 36) }, isSpecialCase: true },
         { ...inlineToString, args: { radix: b.integer.loose }, throws: true },
         hostToString(numberObject),
@@ -209,6 +208,5 @@ export default b.declarations(
     },
   }),
 
-  // core-js 2 counts U+180E as white space, finds that the engine does not, and replaces both.
   b.replacedByPackages("Number.parseFloat", "Number.parseInt"),
 );

@@ -27,12 +27,8 @@ constexpr unsigned numberOfStubFamilies = 0
 #undef v
     ;
 
-// KeepsNoRegisters: it has a frame, and behind the call it reads no register that a C function may write. So the stub saves none around an operation: a dead register may hold a pointer.
-// KeepsNoFPRs: it has a frame, and behind the call it reads no floating-point register that a C function may write. So the stub saves none of those around an operation.
-enum class CallerFrame : uint8_t { HasFrame, Frameless, StubFrame, KeepsNoRegisters, KeepsNoFPRs };
-constexpr bool hasFrameAndKeepsFewerRegisters(CallerFrame callerFrame) { return callerFrame == CallerFrame::KeepsNoRegisters || callerFrame == CallerFrame::KeepsNoFPRs; }
+enum class CallerFrame : uint8_t { HasFrame, Frameless, StubFrame, KeepsNoFPRs };
 
-// A stub of such a family takes the frame pointer register at its entry for the frame of the function that calls it, so that function has a frame record.
 constexpr bool readsFrameRecordOfCaller(StubFamily family)
 {
     switch (family) {
@@ -47,7 +43,6 @@ constexpr bool readsFrameRecordOfCaller(StubFamily family)
     }
 }
 
-// A tail call by value gives up the frame that says which closure runs above it. The stubs that make one have a form of their own: StubAssembler::checkStackBeforeEnteringCallee().
 enum class CallPosition : uint8_t { Ordinary, Tail };
 
 class StubKey {
@@ -97,7 +92,6 @@ public:
     constexpr StubKey withCallerFrame(CallerFrame callerFrame) const { return withField(callerFrameShift, callerFrameWidth, static_cast<uint64_t>(callerFrame)); }
     constexpr StubKey withCount(unsigned count) const { return withField(countShift, countWidth, count); }
     constexpr StubKey withOperandRegister(GPRReg reg) const { return withField(operandRegisterShift, operandRegisterWidth, static_cast<uint64_t>(Reg(reg).index()) + 1); }
-    constexpr StubKey withoutOperandRegister() const { return withField(operandRegisterShift, operandRegisterWidth, 0); }
     constexpr StubKey withImmediate(uint32_t immediate) const { return withField(hasImmediateShift, hasImmediateWidth, 1).withField(immediateShift, immediateWidth, immediate); }
     constexpr StubKey withoutImmediate() const { return withField(hasImmediateShift, hasImmediateWidth, 0).withField(immediateShift, immediateWidth, 0); }
     constexpr StubKey withFamily(StubFamily family) const { return withField(familyShift, familyWidth, static_cast<uint64_t>(family) + 1); }

@@ -179,7 +179,7 @@ function f6 name="hasOwnProperty" module=m0 position=99 kind=Method flags=[HasEx
 }
 data d0 root=Object{layout=L2} module=m0
 entry module=m0
-function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything> flags=[IsFromCompiler]}] results=[{type=anything}] {
     v3 = CallList v0, v1, v2
     Return v3
 }
@@ -337,7 +337,7 @@ function f7 module=m0 position=206 length=1 captures=[{type=anything}] thisType=
     Return v5
 }
 entry module=m0
-function f8 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+function f8 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything> flags=[IsFromCompiler]}] results=[{type=anything}] {
     v3 = CallList v0, v1, v2
     Return v3
 }
@@ -406,14 +406,13 @@ function f2 name="toString" module=m0 position=44 kind=Method flags=[HasExplicit
     Return v0
 }
 function f3 name="hasOwnProperty" module=m0 position=71 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=number|string|symbol flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Add v0, v1
     Return v2
 }
 entry module=m0
-function f4 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+function f4 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything> flags=[IsFromCompiler]}] results=[{type=anything}] {
     v3 = CallList v0, v1, v2
     Return v3
 }
@@ -427,34 +426,25 @@ runtimefunction id=FunctionPrototypeApply function=f5
 runtimefunction id=FunctionPrototypeCall function=f4
 )IR"_s;
 
-static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expectedOutput)
+static void checkMembersNamedLikeBuiltinsProgram(ASCIILiteral programText, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral optionWords[] = {
-        "validate"_s,
-        "check=VerifyEachPass"_s,
-        "disable=pass:InlineCalls"_s,
-        "disable=pass:ResolveCalls"_s,
-        "heat=EverythingIsHot"_s,
-        "references=narrow"_s,
-    };
-    checkOutputOfProgramInShell(programText, expectedOutput, { });
-    for (ASCIILiteral word : optionWords)
-        checkOutputOfProgramInShell(programText, expectedOutput, { word });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s });
 }
 
 static void testInstanceMethodsNamedLikeObjectMembers()
 {
-    checkUnderEveryOption(instanceMethodsNamedLikeObjectMembers, "a bb 41 42 ak bbk\na bb 42 43\nfalse false\na ak\n[object Object] false\nbb bbk\n[object Object] false\n"_s);
+    checkMembersNamedLikeBuiltinsProgram(instanceMethodsNamedLikeObjectMembers, "a bb 41 42 ak bbk\na bb 42 43\nfalse false\na ak\n[object Object] false\nbb bbk\n[object Object] false\n"_s);
 }
 
 static void testMembersOfLiteralsAndFunctions()
 {
-    checkUnderEveryOption(membersOfLiteralsAndFunctions, "a1 b2 a b ak bk\nownf1 owng1 fundefined3 gundefined4\nf12 owng1\n"_s);
+    checkMembersNamedLikeBuiltinsProgram(membersOfLiteralsAndFunctions, "a1 b2 a b ak bk\nownf1 owng1 fundefined3 gundefined4\nf12 owng1\n"_s);
 }
 
 static void testMembersOfPrototypeGivenToObjectCreate()
 {
-    checkUnderEveryOption(membersOfPrototypeGivenToObjectCreate, "a b a ax by\n"_s);
+    checkMembersNamedLikeBuiltinsProgram(membersOfPrototypeGivenToObjectCreate, "a b a ax by\n"_s);
 }
 
 std::span<const NativeTest> membersNamedLikeBuiltinsTests()

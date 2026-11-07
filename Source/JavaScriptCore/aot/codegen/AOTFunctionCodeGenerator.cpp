@@ -8,421 +8,345 @@
 
 #if ENABLE(AOT)
 
-#include "AOTASANShadowChecks.h"
-#include "AOTBackEndReport.h"
-#include "AOTChooseCallingConventions.h"
-#include "AOTClaimChecks.h"
 #include "AOTCodeDescription.h"
-#include "AOTCodeSizeMap.h"
-#include "AOTEffectSummaries.h"
-#include "AOTElideStackChecks.h"
+#include "AOTCurrentWork.h"
 #include "AOTEntryEmitter.h"
-#include "AOTFrameMaps.h"
-#include "AOTFunctionAnalyses.h"
 #include "AOTFunctionKinds.h"
-#include "AOTHeat.h"
+#include "AOTIRProgram.h"
 #include "AOTImageBuilder.h"
 #include "AOTImageFormat.h"
-#include "AOTImpliedBranchMerging.h"
-#include "AOTIntegerUpdatesInMemory.h"
-#include "AOTPhiNarrowing.h"
-#include "AOTPrimitiveEmitter.h"
-#include "AOTRepresentationRules.h"
-#include "AOTSort.h"
-#include "AOTStronglyConnectedComponents.h"
+#include "AOTMachineAllocation.h"
+#include "AOTMachineFrame.h"
+#include "AOTMachineOrder.h"
+#include "AOTMachinePrinter.h"
+#include "AOTMachineBuilder.h"
+#include "AOTMachineChecker.h"
+#include "AOTStraightEmitter.h"
 #include "AOTStubAssembler.h"
-#include "AOTThrowEmitter.h"
-#include "AOTVector.h"
-#include "AirCode.h"
-#include "AirLimits.h"
-#include "B3Generate.h"
 #include "CPU.h"
 #include "StackAlignment.h"
 #include <limits>
-#include <wtf/DataLog.h>
-#include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/MakeString.h>
-
-#ifndef AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
-#error "AOTRuntimeTable.h must define AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE."
-#endif
+#include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(defaultLimitValue(LimitID::MaxFrameSizeInBytes, hostArchitecture()) == std::numeric_limits<decltype(ImageFrame::frameSizeInUnits)>::max() * stackAlignmentBytes());
-static_assert(B3::AirLimits::maxFrameSizeWithPushedRegisters / sizeof(CPURegister) <= ImageFrame::maxCalleeSavesStart);
-static_assert(B3::AirLimits::maxBytesBelowFrameRecord / sizeof(CPURegister) <= ImageFrame::maxCalleeSavesStart);
-static_assert(B3::AirLimits::maxBytesAboveFrameRecord / stackAlignmentBytes() <= ImageFrame::maxUnitsAboveFrameRecord);
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionCodeGenerator);
-
-// A loop is seldom reached on every way through its function: the test in front of it alone halves what is estimated for it. So the answer is not rounded up to a whole depth of loops.
-static double leastFrequencyOfWarmCode(const CodeGenerationInputs& inputs, FunctionID id)
+static bool runsMachineChecks(const BuildContext& build)
 {
-    auto isWarmAt = [&](double frequency) {
-        return !isCold(inputs.heat.classOf(inputs.program, id, frequency)).predicted();
-    };
-    for (double warm = 1; warm <= 1000; warm *= frequencyConstants.iterationsPerLoop) {
-        if (!isWarmAt(warm))
-            continue;
-        if (warm == 1)
-            return warm;
-        double cold = warm / frequencyConstants.iterationsPerLoop;
-        for (unsigned step = 0; step < 8; ++step) {
-            double middle = (cold + warm) / 2;
-            (isWarmAt(middle) ? warm : cold) = middle;
-        }
-        return warm;
-    }
-    return std::numeric_limits<double>::infinity();
+#if ASSERT_ENABLED || ASAN_ENABLED
+    UNUSED_PARAM(build);
+    return true;
+#else
+    return build.options().verifiesMachineCode;
+#endif
 }
 
-FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, FunctionID id, const Function& function, const FrameMaps& frameMaps)
+Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGenerationInputs& inputs, const Code& code)
 {
-    bool savesFrameOnSuspend = frameMaps.numberOfSuspensions() || function.role == FunctionRole::CoroutineBody;
-    // The stubs that suspend a function return in the place of its frame and drop nothing above its return address.
-    RELEASE_ASSERT(!savesFrameOnSuspend || !inputs.conventions.of(inputs.program, id).spillsArgumentRegisters);
+    CodeUnit unit = code.unit();
+    const CallingConventions& conventions = inputs.plan.conventions();
+    bool isBodyThatMaySuspend = isBodyOfCoroutine(unit.role, conventions.isCoroutine(unit.function)) && !conventions.of(unit.function).coroutineNeverSuspends;
+    bool savesFrameOnSuspend = code.hasSuspensions() || isBodyThatMaySuspend;
+    RELEASE_ASSERT(!savesFrameOnSuspend || !conventions.spillsArgumentRegisters(unit));
+    RELEASE_ASSERT(!savesFrameOnSuspend || !conventions.savesRegistersOfCallers(unit));
     return {
-        .function = findFunctionAsRead(&inputs.program, id),
-        .convention = function.role == FunctionRole::StubBody ? BackEndConvention::StubBody : BackEndConvention::Function,
         .savesFrameOnSuspend = savesFrameOnSuspend,
-        .readsCallerFrame = readsCallerFrame(inputs, id, function),
-        .isAsync = function.has(FunctionFlags::IsAsync),
-        .rejectsOnThrow = rejectsOnThrow(inputs.program, function),
-        .hasHandlers = std::ranges::any_of(function.blocks, [](const Block& block) { return !!block.handler; }),
-        .smallestFrameTestedAtSetup = smallestFrameTestedAtSetup(inputs.stackChecks.of(id)),
-        .isCold = isCold(inputs.heat.of(inputs.program, id)).predicted(),
-        .runsOnce = inputs.heat.of(inputs.program, id).predicted() == HeatClass::RunsOnce,
-        .isHot = isHot(inputs.heat.of(inputs.program, id)).predicted(),
-        .returnsAreUnlikely = !savesFrameOnSuspend && !function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }),
-        .leastFrequencyOfWarmCode = leastFrequencyOfWarmCode(inputs, id),
+        .hasHandlers = code.hasHandlers(),
+        .rejectsOnThrow = rejectsOnThrow(inputs.program, conventions, unit),
+        .savesRegistersOfCallers = conventions.savesRegistersOfCallers(unit),
+        .usesNarrowReferences = !inputs.plan.usesWideReferences(),
+        .fallsIntoWhatLiesBehind = unit.role == CodeRole::ParameterGuard,
+        .chargesForCalleeSaves = isX86_64(),
+        .mayOmitFrameRecord = isX86_64(),
+        .checksAllocation = runsMachineChecks(build),
+        .ordersBlocksAsWhenOrderedAgain = hasFlag(build.options().testing, Wire::TestingSwitch::OrderBlocksAgain),
+        .notesRangesOfOrigins = hasFlag(build.options().reports, ReportSet::Flow) || !build.options().logging.mapFilePath.isNull(),
+        .features = build.targetFeatures(),
     };
 }
 
-static BitVector findAirBlocksReachedWithoutRareEdge(const B3::Air::Code& code)
+static void enterStepOfCodeGeneration(ASCIILiteral step)
 {
-    BitVector reachedBlocks(code.size());
-    Vector<B3::Air::BasicBlock*, 16> worklist;
-    auto follow = [&](const B3::Air::FrequentedBlock& edge) {
-        if (!edge.isRare() && !reachedBlocks.quickSet(edge.block()->index()))
-            worklist.append(edge.block());
-    };
-    for (const B3::Air::FrequentedBlock& entrypoint : code.entrypoints())
-        follow(entrypoint);
-    while (!worklist.isEmpty()) {
-        for (const B3::Air::FrequentedBlock& successor : worklist.takeLast()->successors())
-            follow(successor);
-    }
-    return reachedBlocks;
+    currentWorkOfThread().step.store(step.characters(), std::memory_order_relaxed);
 }
 
-struct RareAirBlocks {
-    double frequencyOf(const B3::Air::BasicBlock* block) const { return block->frequency() * (factorsOfLoops.isEmpty() ? 1 : factorsOfLoops[block->index()]); }
+namespace {
 
-    BitVector rare;
-    Vector<double> factorsOfLoops;
-    uint64_t blocksFollowed { 0 };
+struct OperationsGivenToEmitters {
+    uint64_t count { 0 };
+    bool prologueMayCollect { false };
 };
 
-// The estimate takes the share of every rare edge on the way to a loop off each of its turns. A call that enters the loop runs them all:
-// there the loop is entered as often as the last block on the way that no rare edge leads to.
-static Vector<double> findFactorsOfLoopsBehindRareEdges(const B3::Air::Code& code, const BitVector& reachedBlocks, const StronglyConnectedComponents& components, uint64_t& blocksFollowed)
-{
-    Vector<double> frequenciesInFront(FillWith { }, code.size(), 0.0);
-    Vector<B3::Air::BasicBlock*, 16> worklist;
-    auto follow = [&](double frequency, B3::Air::BasicBlock* block) {
-        if (reachedBlocks.quickGet(block->index()) || frequenciesInFront[block->index()] >= frequency)
-            return;
-        frequenciesInFront[block->index()] = frequency;
-        worklist.append(block);
-        ++blocksFollowed;
-    };
-    for (B3::Air::BasicBlock* block : code) {
-        if (!reachedBlocks.quickGet(block->index()))
-            continue;
-        for (B3::Air::BasicBlock* successor : block->successorBlocks())
-            follow(block->frequency(), successor);
-    }
-    // The highest is followed first and as far as it leads, so nothing is followed once more with a higher one. The copy of a separated loop is entered at each of its unlikely paths.
-    AOT::sort(worklist, { }, [&](const B3::Air::BasicBlock* block) {
-        return frequenciesInFront[block->index()];
-    });
-    while (!worklist.isEmpty()) {
-        B3::Air::BasicBlock* block = worklist.takeLast();
-        for (B3::Air::BasicBlock* successor : block->successorBlocks())
-            follow(frequenciesInFront[block->index()], successor);
-    }
+} // anonymous namespace
 
-    Vector<double> frequenciesWhereEntered(FillWith { }, components.numberOfComponents, 0.0);
-    for (B3::Air::BasicBlock* block : code) {
-        for (B3::Air::BasicBlock* successor : block->successorBlocks()) {
-            uint32_t component = components.componentOf[successor->index()];
-            if (components.isInCycle.quickGet(successor->index()) && components.componentOf[block->index()] != component)
-                frequenciesWhereEntered[component] = std::max<double>(frequenciesWhereEntered[component], successor->frequency());
+static OperationsGivenToEmitters lookAtOperationsGivenToEmitters(const Facts& facts, const Code& code)
+{
+    OperationsGivenToEmitters operations;
+    FunctionID function = code.function();
+    bool looksForCollection = facts.effectsOnReturn(function).mayCollect || facts.effectsOnThrow(function).mayCollect;
+    uint32_t numberOfBlocks = code.numberOfBlocks();
+    for (uint32_t index = 0; index < numberOfBlocks; ++index) {
+        std::span<const ValueID> values = code.valuesOf(BlockID(index));
+        operations.count += values.size();
+        if (!looksForCollection)
+            continue;
+        for (ValueID value : values) {
+            if (!code.at(value).traits().mayCollect())
+                continue;
+            operations.prologueMayCollect = true;
+            looksForCollection = false;
+            break;
         }
     }
-    Vector<double> factors(FillWith { }, code.size(), 1.0);
-    for (size_t blockIndex : components.isInCycle) {
-        double frequencyWhereEntered = frequenciesWhereEntered[components.componentOf[blockIndex]];
-        if (frequencyWhereEntered > 0)
-            factors[blockIndex] = std::max(1.0, frequenciesInFront[blockIndex] * frequencyConstants.iterationsPerLoop / frequencyWhereEntered);
-    }
-    return factors;
+    return operations;
 }
 
-// A loop behind a rare edge is entered rarely and then runs as often as any other loop, so it is not rare code.
-static RareAirBlocks findRareAirBlocks(const B3::Air::Code& code)
+static uint64_t countMachineOperationsInOrder(const Machine::Order& order)
 {
-    BitVector rareBlocks(code.size());
-    BitVector reachedBlocks = findAirBlocksReachedWithoutRareEdge(code);
-    auto forEachLikelySuccessorAmongRareBlocks = [&](B3::Air::BasicBlock* block, const auto& functor) {
-        for (const B3::Air::FrequentedBlock& successor : block->successors()) {
-            if (!successor.isRare() && !reachedBlocks.quickGet(successor.block()->index()))
-                functor(successor.block()->index());
+    uint64_t count = 0;
+    for (const Machine::Block* block : order.blocksInOrder())
+        count += block->phis().size() + block->size() + block->upsilons().size();
+    return count;
+}
+
+static InternalErrorKind internalErrorKindOfMachineFailure(Machine::FailureKind kind)
+{
+    switch (kind) {
+    case Machine::FailureKind::MalformedProcedure:
+        return InternalErrorKind::MalformedMachineProcedure;
+    case Machine::FailureKind::OutOfRegisters:
+        return InternalErrorKind::OutOfRegisters;
+    case Machine::FailureKind::AccessOutsideDeclaredEffects:
+        return InternalErrorKind::StoreOutsideDeclaredEffects;
+    case Machine::FailureKind::RegisterLacksItsValue:
+        return InternalErrorKind::RegisterLacksItsValue;
+    case Machine::FailureKind::SpillSlotLacksItsValue:
+        return InternalErrorKind::SpillSlotLacksItsValue;
+    case Machine::FailureKind::FrameAddressAcrossSuspension:
+        return InternalErrorKind::FrameAddressAcrossSuspension;
+    case Machine::FailureKind::NarrowReferenceWithoutPointer:
+        return InternalErrorKind::NarrowReferenceWithoutPointer;
+    case Machine::FailureKind::InnerPointerWithoutOwner:
+        return InternalErrorKind::InnerPointerWithoutOwner;
+    case Machine::FailureKind::NeedsFrameWhereNoneIsSetUp:
+        return InternalErrorKind::FrameNeededWhereNoneIsSetUp;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static void reportFailureOfMachineProcedure(BuildContext& build, const Program& program, const Code& code, const Machine::Procedure& procedure)
+{
+    const Machine::Failure& failure = *procedure.failure();
+
+    StringPrintStream text;
+    text.print(failure.kind);
+    if (failure.operation < procedure.numberOfOperations()) {
+        text.print(": ");
+        Machine::printOperation(text, procedure, procedure.operationAt(failure.operation));
+    }
+
+    InternalError error {
+        .kind = internalErrorKindOfMachineFailure(failure.kind),
+        .function = code.function(),
+        .location = program.at(code.function()).declarationLocation(),
+        .detail = text.toString(),
+    };
+    ValueID value = valueOfOrigin(failure.origin);
+    if (value && value.index() < code.numberOfValues()) {
+        const Operation& operation = code.at(value);
+        Wire::SourceLocation location = code.locationOf(program, operation.origin());
+        if (hasModule(location))
+            error.location = location;
+        if (hasModule(error.location)) {
+            error.block = operation.block();
+            error.value = value;
+            error.operation = nameOf(operation.opcode);
         }
-    };
-
-    // Every cycle has an edge that does not lead to a later block.
-    bool mayHaveCycle = false;
-    for (B3::Air::BasicBlock* block : code) {
-        if (reachedBlocks.quickGet(block->index()))
-            continue;
-        rareBlocks.quickSet(block->index());
-        forEachLikelySuccessorAmongRareBlocks(block, [&](unsigned successorIndex) {
-            mayHaveCycle |= successorIndex <= block->index();
-        });
     }
-    if (!mayHaveCycle)
-        return { WTF::move(rareBlocks), { } };
-
-    Vector<Vector<uint32_t, 2>> likelySuccessors(code.size());
-    for (size_t blockIndex : rareBlocks) {
-        forEachLikelySuccessorAmongRareBlocks(code[blockIndex], [&](unsigned successorIndex) {
-            likelySuccessors[blockIndex].append(successorIndex);
-        });
-    }
-    StronglyConnectedComponents components = computeStronglyConnectedComponents(code.size(), [&](unsigned block) -> const Vector<uint32_t, 2>& {
-        return likelySuccessors[block];
-    });
-    rareBlocks.exclude(components.isInCycle);
-    uint64_t blocksFollowed = 0;
-    Vector<double> factors = findFactorsOfLoopsBehindRareEdges(code, reachedBlocks, components, blocksFollowed);
-    return { WTF::move(rareBlocks), WTF::move(factors), blocksFollowed };
+    build.diagnostics().add(error);
 }
 
-uint64_t countBlocksFollowedBehindRareEdges(const B3::Air::Code& code)
-{
-    return findRareAirBlocks(code).blocksFollowed;
-}
-
-BlockColdnessRule::BlockColdnessRule(const CodeGenerationInputs& inputs, FunctionID id)
-    : m_inputs(inputs)
-    , m_id(id)
-    , m_activations(inputs.heat.activationsOf(inputs.program, id).predicted())
-    // Nothing says that a compact function runs, and a failed test at an entrance is expected of no call.
-    , m_isExpectedNotToBeEntered(inputs.heat.isCompact(inputs.program, id).predicted() || inputs.program.at(id).runsOnlyBehindFailedTest())
-{
-}
-
-BlockColdness BlockColdnessRule::of(double frequency, bool isRare) const
-{
-    double heat = m_activations * frequency;
-    Expected<HeatClass> heatClass = m_inputs.heat.classOf(m_inputs.program, m_id, frequency);
-    // A shared sequence costs a call and a return each time it runs.
-    bool isExpectedNotToRun = isCold(heatClass).predicted() && !m_inputs.heat.isColdByLimitAlone(heat).predicted();
-    return {
-        .isCold = isExpectedNotToRun || (isRare && !isHot(heatClass).predicted()),
-        // In a function that is expected to run, what lies behind a rare edge is rare by an estimate only: a test that rests on a guess fails at every call or at none.
-        .isRarelyRun = (isRare && isExpectedNotToRun) || heatClass.predicted() == HeatClass::RunsOnce || m_isExpectedNotToBeEntered,
-    };
-}
-
-ColdAirBlocks findColdAirBlocks(const CodeGenerationInputs& inputs, FunctionID id, const B3::Air::Code& code)
-{
-    BlockColdnessRule rule(inputs, id);
-    RareAirBlocks blocks = findRareAirBlocks(code);
-    ColdAirBlocks result { BitVector(code.size()), BitVector(code.size()) };
-    for (B3::Air::BasicBlock* block : code) {
-        BlockColdness coldness = rule.of(blocks.frequencyOf(block), blocks.rare.quickGet(block->index()));
-        if (coldness.isCold)
-            result.cold.quickSet(block->index());
-        if (coldness.isRarelyRun)
-            result.rarelyRun.quickSet(block->index());
-    }
-    return result;
-}
-
-static BitVector findNarrowReferences(const Function& function)
-{
-    BitVector references;
-    for (uint32_t index = 0; index < function.values.size(); ++index) {
-        if (function.values[index].representation == Representation::Cell32)
-            references.set(index);
-    }
-    return references;
-}
-
-static BitVector findParametersWithoutObjects(const Program& program, const Function& function)
-{
-    BitVector parameters;
-    for (uint32_t index = 0; index < function.values.size(); ++index) {
-        if (function.values[index].opcode != Opcode::Parameter)
-            continue;
-        const Type& type = program.typeOf(function, ValueID(index));
-        if (type.isJavaScriptValue() && !type.hasObjects())
-            parameters.set(index);
-    }
-    return parameters;
-}
-
-static void appendClientPhases(B3::Policy& policy, const Program& program, const Function& function, const FunctionBackEndTraits& traits)
-{
-    policy.clientPhases.append(carryWholeNumbersAsIntegersBeforeOptimization());
-    policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
-    policy.clientPhases.append(keepListLengthsInRegistersAfterOptimization());
-    policy.loops.clientHoistsOutOfLoops = isLengthOfList;
-    policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());
-    policy.clientPhases.append(updateIntegersInMemoryAfterOptimization(program, function));
-    if (traits.savesFrameOnSuspend)
-        policy.clientPhases.append(materializeSlotBasesLate());
-#if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
-    policy.clientPhases.append(checkASANShadowBeforeAccesses());
-#endif
-}
-
-std::unique_ptr<FunctionCodeGenerator> FunctionCodeGenerator::create(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, FunctionID id, CodeGenerationTotals& totals)
-{
-    std::unique_ptr<FunctionCodeGenerator> generator(new FunctionCodeGenerator(worker, inputs, id, totals));
-    if (!generator->generateB3())
-        return nullptr;
-    return generator;
-}
-
-FunctionCodeGenerator::FunctionCodeGenerator(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, FunctionID id, CodeGenerationTotals& totals)
+FunctionCodeGenerator::FunctionCodeGenerator(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, const Code& code, CodeGenerationTotals& totals, FramesOfGenerators framesOfGenerators)
     : m_worker(worker)
     , m_inputs(inputs)
-    , m_id(id)
-    , m_function(inputs.program.at(id))
+    , m_code(code)
+    , m_statistics(worker.build.statistics().countersOfCurrentThread())
     , m_relocations(m_jit, worker.build.assemblerPolicy())
-    , m_relocationLowering(ImageRelocationLowering::instanceRuntimeTable(), m_relocations)
-    , m_records(inputs.stubCatalog, m_relocations, totals)
+    , m_records(inputs.stubCatalog, m_relocations, totals, &worker.arena.objectKeptAcrossResets<RememberedStubKeys>())
+    , m_framesOfGenerators(framesOfGenerators)
+    , m_procedure(worker.arena, inputs.heaps.tree(), machineTraitsOf(worker.build, inputs, code))
 {
 }
 
-bool FunctionCodeGenerator::generateB3()
+CompiledCode FunctionCodeGenerator::run()
+{
+    if (!appendOperations())
+        return { };
+    return emitCode();
+}
+
+bool FunctionCodeGenerator::appendOperations()
 {
     BuildContext& build = m_worker.build;
-    const AOT::CompileOptions& options = build.options();
-    const Program& program = m_inputs.program;
 
-    AnalysisContext context { build, program, &m_inputs.flow, &m_inputs.effects, m_id };
-    FunctionAnalyses analyses(context, m_function);
-    FrameMaps frameMaps = computeFrameMaps(program, m_function, analyses);
+    StackCheck stackCheck = m_code.holdsCallThatPlanHasNotCounted() ? StackCheck::Required : m_inputs.plan.conventions().stackCheckOf(m_code.unit());
+    setStackCheckGenerator(m_procedure, stackCheck, m_records.frame, m_stackChecks);
+    OperationsGivenToEmitters operations = lookAtOperationsGivenToEmitters(m_inputs.facts, m_code);
+    m_stackChecks.functionMayCollect = operations.prologueMayCollect;
 
-    FunctionBackEndTraits traits = computeBackEndTraits(m_inputs, m_id, m_function, frameMaps);
-    B3::Policy policy = b3PolicyFor(build, traits, m_relocationLowering);
-    policy.clientPhases.append(throwWhereTrapsAreCertain(m_records, m_inputs.stubCatalog));
-    policy.clientPhases.append(dissolveBirthsOfFrameCells(m_records.hasBirthsOfFrameCells, options.verifiesAfterEveryPass));
-    appendClientPhases(policy, program, m_function, traits);
-    if (traits.savesFrameOnSuspend && options.verifiesProgram)
-        policy.clientPhases.append(validateFrameAddresses(m_frameAddressViolations, frameMaps.suspensionValues(), findParametersWithoutObjects(program, m_function)));
-    if (!options.recorded.useWideReferences() && !options.recorded.has(TestingSwitch::DropReferenceGuards)) {
-        NarrowReferenceOrigins origins { findNarrowReferences(m_function), &m_records.operationsWithCompressedOperand };
-        if (std::optional<DroppedGuard> dropped = droppedGuardIn(options.recorded, m_id)) {
-            origins.ordinalOfDroppedGuard = dropped->ordinal;
-            for (uint32_t index = 0; index < m_function.values.size(); ++index) {
-                if (m_function.values[index].opcode == dropped->opcode)
-                    origins.originsOfDroppedGuard.set(index);
-            }
-        }
-        policy.clientPhases.append(guardNarrowReferences(m_numberOfLateReferenceGuards, WTF::move(origins)));
-    }
-    policy.validation.keepsOriginsOfTrappingAccesses = options.validatesReferences;
-    if (options.validatesReferences && !options.recorded.useWideReferences())
-        policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), &m_records.operationsWithCompressedOperand }));
-    if (options.checksClaimsToBackEnd) {
-        checkClaimsAtRunTime(policy, m_id, m_records.slotsOfFrameCells);
-        m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
-    }
-    if (options.checksMovedLoads || options.checksDecidedComparisons) {
-        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests, { .loads = options.checksMovedLoads, .decidedComparisons = options.checksDecidedComparisons, .reportsComeBack = options.keepsGoingBehindFailedVerifications });
-        m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
-    }
-#if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
-    m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportPoisonedAccess));
-#endif
-    m_records.stubCalls.setCaller(m_id);
-    m_records.stubCalls.setChecksPreservedRegisters(options.validatesBackEnd);
-    if (build.validates()) {
-        reportBrokenKnownProperties(policy, m_id);
-        m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
-        m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportValidationFailure));
-    }
+    bool unitReadsCallerFrame = readsCallerFrame(m_inputs, m_code);
+    m_records.frame.readsCallerFrame = unitReadsCallerFrame;
 
-    m_procedure = makeUnique<B3::Procedure>(policy, &m_worker.scratch);
-    B3::Procedure& proc = *m_procedure;
-    pinRegisters(proc);
-    if (build.shouldDump(m_id))
-        proc.setName(makeString('#', m_id.index(), '#'));
-    if (options.writesCodeSizeMap()) [[unlikely]]
-        proc.setNeedsPCToOriginMap();
-    setStackCheckGenerator(proc, m_inputs.stackChecks.of(m_id), m_records.frame, m_stackChecks);
-    EffectsOnEdges effectsOnCall = m_inputs.effects.of(m_id).onCall();
-    m_stackChecks.functionMayCollect = effectsOnCall.normal.mayCollect || effectsOnCall.handler.mayCollect;
-
-    m_records.frame.readsCallerFrame = traits.readsCallerFrame;
-    CodeGenerator generator(FunctionInputs { build, m_worker.types, m_inputs, m_id, m_function, analyses, frameMaps }, proc, m_records);
-    if (generator.run() == GenerationResult::Failed)
+    CodeGenerator generator(FunctionInputs { build, m_worker.types, m_inputs, m_code }, m_procedure, m_records);
+    if (m_framesOfGenerators == FramesOfGenerators::AreSaved)
+        generator.saveFramesOfGenerators();
+    else if (!runsMachineChecks(build))
+        generator.leaveFailuresWithHeapFrameUnsaid();
+    GenerationResult result = generator.run();
+    m_keepsValuesInHeapFrame = generator.keepsValuesInHeapFrame();
+    if (result == GenerationResult::Failed) {
+        m_isToBeGeneratedAgain = m_keepsValuesInHeapFrame && !runsMachineChecks(build);
         return false;
-    RELEASE_ASSERT(m_records.frame.savesFrameOnSuspend <= traits.savesFrameOnSuspend);
-    RELEASE_ASSERT(m_records.frame.readsCallerFrame == traits.readsCallerFrame);
-
-    if (options.logging.dumpsB3Graph && build.shouldDump(m_id)) [[unlikely]] {
-        dataLogLn("AOT B3:\n", proc);
-        proc.setShouldDumpIR();
     }
+    if (m_procedure.failure() || (m_keepsValuesInHeapFrame && !runsMachineChecks(build) && !Machine::checkThatDefinitionsDominateUses(m_procedure))) {
+        reportFailureOfProcedure();
+        return false;
+    }
+    RELEASE_ASSERT(m_records.frame.savesFrameOnSuspend <= m_procedure.traits().savesFrameOnSuspend);
+    RELEASE_ASSERT(m_records.frame.readsCallerFrame == unitReadsCallerFrame);
+
+    m_statistics.count(StatisticID::OperationsEmitted, operations.count);
     return true;
 }
 
-CompiledCode FunctionCodeGenerator::finish()
+void FunctionCodeGenerator::appendStraightBody(StraightEmitter& emitter)
 {
-    CompiledCode code;
-    if (!m_procedure->report().failure)
-        code = emitCode();
-    if (reportBackEnd())
-        return { };
+    CodeUnit unit = m_code.unit();
+    setStackCheckGenerator(m_procedure, emitter.entersUnits() ? StackCheck::Required : m_inputs.plan.conventions().stackCheckOf(unit), m_records.frame, m_stackChecks);
+    m_stackChecks.functionMayCollect = m_inputs.facts.effectsOnReturn(unit.function).mayCollect || m_inputs.facts.effectsOnThrow(unit.function).mayCollect;
+    m_records.frame.readsCallerFrame = readsCallerFrame(m_inputs, m_code);
+    m_records.sites.inlineCallSites.append(0);
+
+    Machine::Builder builder(m_procedure);
+    builder.appendTo(m_procedure.addEntrypoint(primaryEntry));
+    Machine::StackSlot* slots = m_procedure.addStackSlot(std::max<unsigned>((emitter.numberOfSlots() + 1) & ~1u, 2) * sizeof(EncodedJSValue));
+    m_procedure.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(emitter.wordsOfScratchArea() * sizeof(EncodedJSValue)));
+
+    const ArgumentLocations* locations = m_worker.arena.create<ArgumentLocations>(m_inputs.plan.conventions().locationsOf(m_inputs.program, unit));
+    Vector<Machine::ConstrainedValue, 8> passed;
+    for (const ArgumentLocation& location : locations->parameters) {
+        if (location.kind == ArgumentLocation::Kind::GPR || location.kind == ArgumentLocation::Kind::FPR)
+            passed.append(Machine::ConstrainedValue(builder.argumentRegister(location.reg), Machine::ValueRep::reg(location.reg)));
+    }
+    if (AOT::hasFlag(m_worker.build.options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime)) [[unlikely]]
+        countEntryIntoCode(builder.patch(Machine::Void));
+    Machine::PatchOperation* patch = builder.patch(Machine::Void);
+    for (const Machine::ConstrainedValue& value : passed)
+        patch->append(value);
+    patch->effects.terminal = true;
+    patch->setNeedsFrameRecord(true);
+    RegisterSet clobbered = registersClobberedByCompiledCalls();
+    clobbered.merge(RegisterSet::macroClobberedGPRs());
+    patch->clobberLate(clobbered);
+    patch->setGenerator([emitter = &emitter, slots, locations](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        RELEASE_ASSERT(params.frameIsSetUp() && slots->offsetFromFP() == -static_cast<intptr_t>(slots->byteSize()));
+        emitter->generate(jit, *locations, params.frame().bytesBelowFrameRecord());
+    });
+}
+
+std::optional<CompiledCode> FunctionCodeGenerator::runStraight(const BodyIndex& index)
+{
+    StraightEmitter emitter(m_worker.build, m_worker.types, m_inputs, m_code.unit(), index, m_records, m_worker.arena);
+    appendStraightBody(emitter);
+    RELEASE_ASSERT(!m_procedure.failure());
+    m_straightEmitter = &emitter;
+    CompiledCode code = emitCode();
+    if (emitter.hasFailed())
+        return std::nullopt;
     return code;
+}
+
+CompiledCode FunctionCodeGenerator::runEntryWrittenByHand(std::span<const QuestionOfEntry> questions)
+{
+    CodeUnit unit = m_code.unit();
+    setStackCheckGenerator(m_procedure, StackCheck::CoveredByCallers, m_records.frame, m_stackChecks);
+    m_records.sites.inlineCallSites.append(0);
+
+    Machine::Builder builder(m_procedure);
+    builder.appendTo(m_procedure.addEntrypoint(primaryEntry));
+    ArgumentLocations locations = m_inputs.plan.conventions().locationsOf(m_inputs.program, unit);
+    Vector<Machine::ConstrainedValue, 8> passed;
+    for (const ArgumentLocation& location : locations.parameters) {
+        if (location.kind == ArgumentLocation::Kind::GPR || location.kind == ArgumentLocation::Kind::FPR)
+            passed.append(Machine::ConstrainedValue(builder.argumentRegister(location.reg), Machine::ValueRep::reg(location.reg)));
+    }
+    if (AOT::hasFlag(m_worker.build.options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime)) [[unlikely]]
+        countEntryIntoCode(builder.patch(Machine::Void));
+    Machine::PatchOperation* patch = builder.patch(Machine::Void);
+    for (const Machine::ConstrainedValue& value : passed)
+        patch->append(value);
+    patch->effects.terminal = true;
+    patch->setRunsWithoutFrame(true);
+    RegisterSet clobbered = registersClobberedByCompiledCalls();
+    clobbered.merge(RegisterSet::macroClobberedGPRs());
+    patch->clobberLate(clobbered);
+    patch->setGenerator([this, unit, questions](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        emitEntryWrittenByHand(jit, m_inputs, m_records, unit, questions, params.frameIsSetUp());
+    });
+    RELEASE_ASSERT(!m_procedure.failure());
+    return emitCode();
 }
 
 CompiledCode FunctionCodeGenerator::emitCode()
 {
     BuildContext& build = m_worker.build;
-    const AOT::CompileOptions& options = build.options();
-    B3::Procedure& proc = *m_procedure;
 
-    if (options.recorded.has(TestingSwitch::OverwriteDeadValuesAtCollections))
-        overwriteDeadValuesAtSafepoints(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()));
-    // Checks that a build adds to the generated code read addresses in ways that no product does.
-    bool isCodeOfProduct = !AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE && !options.checksClaimsToBackEnd && !options.checksMovedLoads && !options.checksDecidedComparisons;
-    if (options.validatesReferences && isX86_64() && isCodeOfProduct)
-        findInnerPointerViolations(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()), m_innerPointerFindings);
+    enterStepOfCodeGeneration("allocate"_s);
+    if (m_stackChecks.stackCheck == StackCheck::CoveredByCallers && !m_records.frame.needsStackCheckForTailCalls)
+        m_procedure.setLargestFrameSetUpWithoutStackCheck(maxFrameSizeWithoutStackCheck);
+    Machine::prepareForGeneration(m_procedure);
+    if (m_procedure.failure()) {
+        reportFailureOfProcedure();
+        return { };
+    }
+    if (!frameFitsImage())
+        return { };
 
-    ColdAirBlocks coldBlocks = findColdAirBlocks(m_inputs, m_id, proc.code());
-    m_records.units.setColdBlocks(WTF::move(coldBlocks.cold), WTF::move(coldBlocks.rarelyRun));
-    proc.code().setInstObserver(&m_records.observer);
+    const Machine::Allocation& allocation = m_procedure.allocation();
+    m_statistics.count(StatisticID::MachineOperationsAppended, m_procedure.numberOfOperations());
+    m_statistics.count(StatisticID::MachineOperationsScanned, countMachineOperationsInOrder(m_procedure.order()));
+    m_statistics.count(StatisticID::LoopsRotated, m_procedure.order().numberOfLoopsRotated());
+    m_statistics.count(StatisticID::MachineOperationsAllocated, allocation.numberOfOperationsAllocated());
+    m_statistics.count(StatisticID::ValuesSpilled, allocation.spills().size());
+    m_statistics.count(StatisticID::InnerPointersAcrossSafepoints, m_procedure.numberOfInnerPointersAcrossSafepoints());
 
+    enterStepOfCodeGeneration("encode"_s);
     readTagsFromInstance(m_jit);
-    emitEntryPreambles(m_jit, m_inputs, m_id, m_records);
+    CCallHelpers::Jump fromFusedCallEntry = emitEntryPreambles(m_jit, m_inputs, m_code.unit(), m_records);
     CCallHelpers::Label bodyStart = m_jit.label();
-    B3::generate(proc, m_jit);
-    RELEASE_ASSERT(!CCallHelpers::differenceBetween(bodyStart, proc.code().entrypointLabel(0)));
-    bool preamblesHavePrimaryEntry = m_records.entries.containsIf([](const RecordedEntry& entry) {
-        return entry.id == primaryEntry;
-    });
-    if (!preamblesHavePrimaryEntry)
-        m_records.entries.insert(0, RecordedEntry { primaryEntry, proc.code().entrypointLabel(0) });
-    emitStackOverflowPaths(m_jit, m_records, m_stackChecks);
-    CCallHelpers::Label paddingStart = m_jit.label();
+    m_relocations.reserveRoomFor(allocation.numberOfOperationsAllocated());
+    Machine::generate(m_procedure, m_jit, m_relocations);
+    if (m_straightEmitter && m_straightEmitter->hasFailed())
+        return { };
+    if (m_procedure.failure()) {
+        reportFailureOfProcedure();
+        return { };
+    }
+    const CallingConventions& conventions = m_inputs.plan.conventions();
+    bool holdsFusedCallEntry = conventions.holdsFusedCallEntry(m_code.unit());
+    bool isGuard = m_code.unit().role == CodeRole::ParameterGuard;
+    bool preambleFallsThrough = m_records.frame.spillsArgumentRegisters || (holdsFusedCallEntry && !isGuard);
+    RELEASE_ASSERT(!preambleFallsThrough || !CCallHelpers::differenceBetween(bodyStart, m_procedure.entrypointLabel(0)));
+    if (fromFusedCallEntry.isSet())
+        fromFusedCallEntry.linkTo(m_procedure.entrypointLabel(0), &m_jit);
+    else if (holdsFusedCallEntry && isGuard)
+        m_records.entries.append(RecordedEntry { fusedCallEntry, m_procedure.entrypointLabel(0) });
+    m_statistics.count(StatisticID::MachineOperationsEncoded, m_procedure.numberOfOperationsEncoded());
+    m_statistics.count(StatisticID::NullChecksFoldedIntoAccesses, m_procedure.numberOfTrapsTakenOver());
+
+    if (!m_stackChecks.pending.isEmpty())
+        emitStackOverflowPaths(m_jit, m_records, m_stackChecks);
     emitPadding(m_jit);
     m_jit.padBeforePatch();
 
@@ -431,12 +355,7 @@ CompiledCode FunctionCodeGenerator::emitCode()
         reportLinkFailure(LinkFailure::OutOfMemory);
         return { };
     }
-    if (!frameFitsImage())
-        return { };
-
-    buffer.finalize(options.logging.dumpsDisassembly && build.shouldDump(m_id), "AOT code"_s);
-    if (proc.report().failure)
-        return { };
+    buffer.finalize(false, "AOT code"_s);
 
     auto relocations = m_relocations.link(buffer, &build);
     if (!relocations) {
@@ -444,60 +363,80 @@ CompiledCode FunctionCodeGenerator::emitCode()
         return { };
     }
 
-    CompiledCode code = describeCode(build, m_inputs, m_id, m_function, m_records, EmittedCode { buffer, &proc, m_stackChecks, paddingStart, WTF::move(*relocations) });
-    if (!code.frame.hasFrame())
-        build.statistics().count(StatisticID::FunctionsWithoutFrame);
-    if (proc.code().frameLayout().coverage == B3::Air::FrameCoverage::SomePaths)
-        build.statistics().count(StatisticID::FunctionsWithFrameOnSomePaths);
-    if (code.frame.isEnteredWithoutStackCheck)
-        build.statistics().count(StatisticID::FunctionsEnteredWithoutStackCheck);
-    if (options.writesCodeSizeMap()) [[unlikely]]
-        code.sizesByOperation = makeString(describeCodeSize(m_inputs.program, m_function, proc.pcToOriginMap(), buffer), describeBranches(m_inputs, m_id, m_function, build.recordedOptions()));
-    return code;
+    CompiledCode compiled = describeCode(build, m_inputs, m_code, m_records, EmittedCode { buffer, m_procedure, m_stackChecks, WTF::move(*relocations) });
+    if (m_worker.types.hasMadeTexts())
+        copyMadeTextsMentionedBy(compiled.body, m_worker.types);
+    return compiled;
+}
+
+void FunctionCodeGenerator::reportFailureOfProcedure()
+{
+    if (m_keepsValuesInHeapFrame && !runsMachineChecks(m_worker.build)) {
+        m_isToBeGeneratedAgain = true;
+        return;
+    }
+    reportFailureOfMachineProcedure(m_worker.build, m_inputs.program, m_code, m_procedure);
 }
 
 bool FunctionCodeGenerator::frameFitsImage()
 {
     BuildContext& build = m_worker.build;
-    unsigned frameSize = m_procedure->frameSize();
-    RegisterAtOffsetList calleeSaves = m_procedure->calleeSaveRegisterAtOffsetList();
+    const Machine::Frame& frame = m_procedure.frame();
+    const RegisterAtOffsetList& calleeSaves = frame.calleeSaveRegisterAtOffsetList();
     RELEASE_ASSERT(!calleeSaves.registerCount() || -calleeSaves.at(0).offset() / static_cast<ptrdiff_t>(sizeof(CPURegister)) <= static_cast<ptrdiff_t>(ImageFrame::maxCalleeSavesStart));
-    if (!build.exceeds(LimitID::MaxFrameSizeInBytes, frameSize, { .function = m_id }))
+
+    unsigned frameSize = frame.frameSize();
+    RELEASE_ASSERT(!(frameSize % stackAlignmentBytes()));
+    if (frameSize <= build.limit(LimitID::MaxFrameSizeInBytes))
         return true;
-    build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::FrameTooLarge, .function = m_id, .limit = LimitID::MaxFrameSizeInBytes, .count = frameSize });
+    build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::FrameTooLarge, .function = m_code.function(), .limit = LimitID::MaxFrameSizeInBytes, .count = frameSize });
     return false;
 }
 
 void FunctionCodeGenerator::reportLinkFailure(LinkFailure failure)
 {
-    AOT::reportLinkFailure(failure, m_id, m_worker.build);
+    AOT::reportLinkFailure(failure, m_code.function(), m_worker.build);
 }
 
-bool FunctionCodeGenerator::reportBackEnd()
+CompiledCode generateCode(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, const Code& code, CodeGenerationTotals& totals)
 {
-    BuildContext& build = m_worker.build;
-    const B3::CompilationReport& report = m_procedure->report();
-    BackEndReport collected = collectBackEndReport(report, m_frameAddressViolations.span(), build.options().collectsDeclines());
-    // Every narrow reference must be in a form that the scan of the stack finds. That a pointer lies beside it is asked for by a check of its own.
-    if (!build.options().validatesReferenceGuards) {
-        m_narrowReferenceFindings.violations.removeAllMatching([](const NarrowReferenceViolation& violation) {
-            return violation.kind == NarrowReferenceViolationKind::HasNoPointer;
-        });
+    worker.arena.reset();
+    RELEASE_ASSERT(code.isSwept());
+
+    CurrentWorkScope work(inputs.program, code.function(), "emit"_s);
+    {
+        FunctionCodeGenerator generator(worker, inputs, code, totals);
+        CompiledCode compiled = generator.run();
+        if (!generator.isToBeGeneratedAgain()) [[likely]]
+            return compiled;
     }
-    appendFindings(collected, m_narrowReferenceFindings.violations.span());
-    appendFindings(collected, m_innerPointerFindings.violations.span());
-    build.statistics().count(StatisticID::InnerPointersAcrossSafepoints, m_innerPointerFindings.numberOfPointersAcrossSafepoints);
-    build.statistics().count(StatisticID::NarrowReferencesAcrossSafepoints, m_narrowReferenceFindings.numberOfReferencesAcrossSafepoints);
-    build.statistics().count(StatisticID::NarrowReferenceGuards, m_numberOfLateReferenceGuards);
-    build.statistics().count(StatisticID::NarrowReferencesStoredInFrames, m_narrowReferenceFindings.numberOfReferencesStoredInFrame);
-    if (uint32_t kept = report.countOf(B3::Counter::ColdUsesKeptThroughSecondSplit); kept && Options::airDumpPhaseStats()) [[unlikely]] {
-        const Program& program = m_inputs.program;
-        // The body of a module has no name.
-        auto textOf = [&](StringID id) { return id ? byteCast<char8_t>(program.strings[id]) : std::span<const char8_t>(); };
-        dataLogLn("cold uses kept through a second split: ", kept, ", between two defs: ", report.countOf(B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs), ", in f", m_id.index(), " ",
-            textOf(m_function.name), " (", textOf(program.pathForLineColumns(m_function.module)), ":", program.lineColumnFor(m_function.module, m_function.position).line, ")");
-    }
-    return AOT::reportBackEnd(build, m_id, m_function, collected, report);
+    worker.arena.reset();
+    FunctionCodeGenerator generator(worker, inputs, code, totals, FramesOfGenerators::AreSaved);
+    return generator.run();
+}
+
+std::optional<CompiledCode> generateEntryWrittenByHand(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, const Code& code, NOESCAPE const ScopedLambda<TypeID(unsigned)>& typeAskedOfEntryParameter, CodeGenerationTotals& totals)
+{
+    std::optional<Vector<QuestionOfEntry, 4>> questions = findQuestionsOfEntryWrittenByHand(inputs, worker.types, code.unit(), typeAskedOfEntryParameter);
+    if (!questions)
+        return std::nullopt;
+    worker.arena.reset();
+    CurrentWorkScope work(inputs.program, code.function(), "emit"_s);
+    FunctionCodeGenerator generator(worker, inputs, code, totals);
+    return generator.runEntryWrittenByHand(questions->span());
+}
+
+bool hasStraightForm(const CodeGenerationInputs& inputs, CodeUnit unit, const BodyIndex& index)
+{
+    return StraightEmitter::covers(inputs, unit, index);
+}
+
+std::optional<CompiledCode> generateStraightCode(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, const Code& code, const BodyIndex& index, CodeGenerationTotals& totals)
+{
+    worker.arena.reset();
+    CurrentWorkScope work(inputs.program, code.function(), "emit"_s);
+    FunctionCodeGenerator generator(worker, inputs, code, totals);
+    return generator.runStraight(index);
 }
 
 } } } // namespace JSC::AOT::Typed

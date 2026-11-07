@@ -1,5 +1,5 @@
 # Primitive kinds unite bit by bit, two ranges to the range that covers both
-# RUN: union
+# RUN: union undefined null true false int[0,9] int[20,29] double string never absent int whole fractional
 # CHECK: t0 | t0 = undefined
 # CHECK: t0 | t1 = undefined|null
 # CHECK: t0 | t9 = undefined|absent
@@ -15,4 +15,5 @@
 # CHECK: laws hold
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="types" parameters=[{type=undefined}, {type=null}, {type=true}, {type=false}, {type=int[0, 9]}, {type=int[20, 29]}, {type=double}, {type=string}, {type=never}, {type=absent}, {type=int}, {type=whole}, {type=fractional}] results=[{type=undefined}]
+function f0 name="types" role=Signature results=[{type=undefined}]
+entry module=m0

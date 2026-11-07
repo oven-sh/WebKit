@@ -1,0 +1,6 @@
+# the same function with guesses withheld: nothing is expected of anything, and the length is read by name in every turn
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = GetStringLength
+# CHECK: = PropGet {{*}}key="length"
+# PROGRAM-OF: result-of-a-call-is-expected-as-the-rows-give-it.ir

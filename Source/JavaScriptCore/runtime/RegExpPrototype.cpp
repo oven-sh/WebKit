@@ -48,7 +48,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncExec);
+JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncExec);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncCompile);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncToString);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoGetterGlobal);

@@ -308,6 +308,8 @@ public:
 
     unsigned computeCodeHashImpl() const;
 
+    void setExceptionHandlersInImage(FixedVector<HandlerInfo>&& handlers) { m_exceptionHandlers = WTF::move(handlers); }
+
 protected:
     OptimizingJITCallee(Wasm::CompilationMode mode, FunctionSpaceIndex index, std::pair<const Name*, RefPtr<NameSection>>&& name, Ref<IPIntCallee>&& profiledCallee)
         : JITCallee(mode, index, WTF::move(name))

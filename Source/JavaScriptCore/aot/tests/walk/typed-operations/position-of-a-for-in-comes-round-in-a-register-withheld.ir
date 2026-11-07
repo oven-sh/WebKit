@@ -1,0 +1,6 @@
+# the same functions with typed operations withheld: the position of every for-in lies in a cell of heap words
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewHeapWords
+# CHECK: = ForInStep
+# PROGRAM-OF: position-of-a-for-in-comes-round-in-a-register.ir

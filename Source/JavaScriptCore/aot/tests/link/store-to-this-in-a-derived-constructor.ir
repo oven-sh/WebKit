@@ -1,0 +1,54 @@
+# If a store to what `super()` answers counted as a store on an unknown object, as in the first version, the class and every class below it would get all five changes and no known writers. If it counted as a store after construction, the field could never be read from in front of a call
+# class A { }  class B extends A { constructor(v) { super(); this.b = v; } }  function get(p) { return p.b; }  get(new B("a"));
+# The body did not make the object, so the store is a record on the result of the call, marked as part of the construction. The new target is an operand of the call and escapes nowhere.
+# RUN: summary f2
+# CHECK: call c0 v4 {{*}}new-target=Parameter 1 () constructs
+# CHECK: access {{*}} v5 Store c0.0 "b" <- Parameter 2 at-construction
+# RUN(KEPT): summary f2
+# KEPT-NOT: Parameter 1 -> Unknown
+# KEPT-NOT: Parameter 2 -> Unknown
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f2 callers-known one-callee
+# LINK: function f3 callers-known one-callee {{*}}result=string
+# LINK-NEXT: parameter 0 {{*}}proven=L
+# LINK: field L1.0 "b" proven=string writers-known written-at-construction-alone filled
+# LINK: layout L1 family=[[family]] changes=[]
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1
+layout L1 kind=Instance name="B" module=m0 base=L0 constructor=f2 fields=[{key="b" declared={type=anything}}] supertypes=[L0] flags=[HasHeritage]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = String string="a"
+    v8 = Construct v6, -, v7
+    v9 = NewClosure function=f3
+    v10 = Call v9, -, v8 calleeName="get"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="B" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1 layout=L1
+    PropSet v4, v2 key="b"
+    Return v4
+}
+function f3 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="b"
+    Return v1
+}

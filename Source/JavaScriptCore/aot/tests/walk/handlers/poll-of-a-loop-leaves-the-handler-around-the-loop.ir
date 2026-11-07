@@ -1,0 +1,84 @@
+# a loop stands under a handler from outside of it, and no likely turn may collect or add a field. Nothing comes to be owed in a turn: a poll in front of the loop throws what is owed there, and the poll of the head leaves the error owed, so the head has no handler edge
+# function sum(n) { if (typeof n !== "number") return n; let s = 0; try { for (let i = 0; i < n; i++) s += i; } catch (e) { return e; } return s; }
+# function asks(n) { .. for (let i = 0; i < n; i++) s += n.step; .. }       a read by name may run code that collects: the poll of the head stays as it is, and none stands in front
+# both are handed to sink, and the test of the program proves the number
+# RUN: walk f1 mechanisms=none+TypedOperations+Handlers
+# CHECK: mechanisms TypedOperations,Handlers
+# CHECK-LABEL: code f1:Body
+# CHECK: = LoopHint [throwsOwedError]
+# CHECK: isLoopHead=true
+# CHECK: = LoopHint {{*}}LeavesOwedError
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Handlers
+# NEVER-NOT: isLoopHead=true handler=
+# RUN(KEPT): walk f2 mechanisms=none+TypedOperations+Handlers
+# KEPT-LABEL: code f2:Body
+# KEPT: isLoopHead=true handler=
+# KEPT: = LoopHint
+# RUN(KEPTNEVER): walk f2 mechanisms=none+TypedOperations+Handlers
+# KEPTNEVER-NOT: throwsOwedError
+# KEPTNEVER-NOT: LeavesOwedError
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: LeavesOwedError
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b6()
+  b1(v2):
+    v3 = Integer
+    Jump -> next b2()
+  b2() handler=b7():
+    Jump -> next b3(v3, v3)
+  b3(v4, v5) handler=b7():
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b4(), notTaken b5()
+  b4() handler=b7():
+    v8 = Add v4, v5
+    v9 = Increment v5
+    Jump -> next b3(v8, v9)
+  b5():
+    Return v4
+  b6():
+    Return v0
+  b7() role=CatchHandler:
+    v10 = CatchValue
+    Return v10
+}
+function f2 name="asks" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b6()
+  b1(v2):
+    v3 = Integer
+    Jump -> next b2()
+  b2() handler=b7():
+    Jump -> next b3(v3, v3)
+  b3(v4, v5) handler=b7():
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b4(), notTaken b5()
+  b4() handler=b7():
+    v8 = PropGet v0 key="step"
+    v9 = Increment v5
+    Jump -> next b3(v8, v9)
+  b5():
+    Return v4
+  b6():
+    Return v0
+  b7() role=CatchHandler:
+    v10 = CatchValue
+    Return v10
+}

@@ -12,16 +12,16 @@
 #include "AOTPrimitives.h"
 #include "AOTRepresentation.h"
 #include "AOTType.h"
-#include "AOTVector.h"
+#include "AOTTypeArena.h"
 #include "ArrayBufferSharingMode.h"
 #include "JSType.h"
 #include <optional>
-#include <wtf/PrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class Plan;
+
 enum class TypeTestVerdict : uint8_t { NeedsTest, AlwaysPasses, NeverPasses };
-// Covers objects only: an IsSymbol test in cellTests applies under every verdict.
 enum class ObjectsVerdict : uint8_t { NeedTest, DoNotOccur, AllPass, AllFail };
 
 struct CellTest {
@@ -34,7 +34,7 @@ struct CellTest {
     PropertyKeyID symbol { };
     ArrayBufferSharingMode sharingMode { ArrayBufferSharingMode::Default };
     ModuleID module { };
-    LayoutID classLayout { };
+    bool asksForInstance { false };
 
     static CellTest isObject() { return { .kind = CellTestKind::IsObject }; }
 };
@@ -56,14 +56,17 @@ struct TypeTestPlan {
     bool someCellPasses() const { return (passingPrimitives & cellPrimitives) || !cellTests.isEmpty() || objects == ObjectsVerdict::AllPass; }
     bool everyCellPasses() const { return !(failingPrimitives & cellPrimitives) && stringLiterals.isEmpty() && (objects == ObjectsVerdict::DoNotOccur || objects == ObjectsVerdict::AllPass); }
     bool everyNonCellPasses() const { return !(failingPrimitives & ~cellPrimitives) && !integers; }
-    bool looksIntoCells() const { return verdict == TypeTestVerdict::NeedsTest && cellsOccur() && someCellPasses() && !everyCellPasses(); }
-
-    void dump(PrintStream&) const;
 };
 
-TypeTestPlan computeTypeTestPlan(const Program&, TypeID from, Representation, TypeID to);
-TypeTestPlan computeTypeTestPlanFromAnything(const Program&, const Type& to);
-TypeTestPlan computeTypeTestPlanOfBoxedValue(const Program&, const Type& from, const Type& to);
+struct TypeTestContext {
+    const Plan& plan;
+    bool programHasOneInstance;
+};
+
+bool holdsOnlyCompiledObjects(TypeReader, const Plan&, const Type&);
+
+TypeTestPlan computeTypeTestPlan(TypeArena&, const TypeTestContext&, TypeID from, Representation, TypeID to);
+TypeTestPlan computeTypeTestPlanFromAnything(TypeReader, const Type& to);
 
 } } } // namespace JSC::AOT::Typed
 

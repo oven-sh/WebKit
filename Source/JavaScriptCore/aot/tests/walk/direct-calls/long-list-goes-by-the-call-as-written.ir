@@ -1,0 +1,119 @@
+# a call with a list lays the list out on the stack, and throws in front of the callee where the list finds no room. A callee that is handed the list itself as its rest parameter, or nothing of it, would take any list
+# so the direct call stands behind a test of the length, and a list that is longer than a call can write out goes by the call as written, out of the way
+# function count(...all) { return all.length }  function nothing() { return 0 }
+# function returned(list) { return count(...list) }
+# Both ways leave by a tail call
+# RUN: walk f3 mechanisms=none+DirectCalls
+# CHECK-LABEL: code f3:Body
+# CHECK: [[list]]: Array {{*}} = NewArray
+# CHECK: [[length]]: {{*}} = GetArrayLength [[list]]
+# CHECK: [[short]]: boolean {{*}} = LessEq
+# CHECK: Branch [[short]] -> taken [[direct]](), notTaken [[written]]()
+# CHECK: [[direct]]():
+# CHECK: [[entered]]: {{*}} = CallDirect {{*}}function=f1
+# CHECK: ReturnCall [[entered]]
+# CHECK: [[written]]() frequency=Rare:
+# CHECK-NEXT: [[called]]: {{*}} = CallList {{*}}, -, [[list]] calleeName="count"
+# CHECK-NEXT: ReturnCall [[called]]
+# function added(list) { return count(...list) + 1 }
+# The two ways meet behind the call
+# RUN(ADDED): walk f4 mechanisms=none+DirectCalls
+# ADDED-LABEL: code f4:Body
+# ADDED: [[short]]: boolean {{*}} = LessEq
+# ADDED: Branch [[short]] -> taken [[direct]](), notTaken [[written]]()
+# ADDED: [[direct]]():
+# ADDED: [[entered]]: {{*}} = CallDirect {{*}}function=f1
+# ADDED: Jump -> next [[behind]]([[entered]])
+# ADDED: [[written]]() frequency=Rare:
+# ADDED-NEXT: [[called]]: {{*}} = CallList
+# ADDED-NEXT: Jump -> next [[behind]]([[called]])
+# ADDED: [[behind]]([[result]]:
+# ADDED: = Add [[result]],
+# function ignored(list) { return nothing(...list) }
+# RUN(IGNORED): walk f5 mechanisms=none+DirectCalls
+# IGNORED-LABEL: code f5:Body
+# IGNORED: = GetArrayLength
+# IGNORED: = CallDirect function=f2
+# IGNORED: = CallList
+# function listed(a, b) { return count(...[a, b]) }
+# The control: the text says how long the list is, so nothing is asked
+# RUN(LISTED): walk f6 mechanisms=none+DirectCalls
+# LISTED-LABEL: code f6:Body
+# LISTED-NOT: GetArrayLength
+# LISTED-NOT: CallList
+# LISTED: [[entered]]: {{*}} = CallDirect {{*}}function=f1
+# LISTED: ReturnCall [[entered]]
+# with every mechanism on the lengths are compared as integers. The callee returns a raw number and the caller, which anybody may call, a boxed one: the direct call comes back and boxes, the rare way is a jump
+# RUN(ALL): walk f3 mechanisms=all
+# ALL-LABEL: code f3:Body
+# ALL: = LessEq {{*}}form=Integers
+# ALL: [[entered]]: {{*}} @Double = CallDirect {{*}}function=f1
+# ALL-NEXT: [[boxed]]: {{*}} @JSValue = Box [[entered]]
+# ALL-NEXT: Return [[boxed]]
+# ALL: [[called]]: {{*}} @JSValue = CallList
+# ALL-NEXT: ReturnCall [[called]]
+# with direct calls withheld there is the call as written and no test
+# RUN(CLOSED): walk f3 mechanisms=none
+# CLOSED-LABEL: code f3:Body
+# CLOSED-NOT: GetArrayLength
+# CLOSED: [[called]]: {{*}} = CallList
+# CLOSED-NEXT: ReturnCall [[called]]
+
+variable g0 name="count" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="nothing" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="count" module=m0 flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+function f2 name="nothing" module=m0 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer
+    Return v0
+}
+function f3 name="returned" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = NewArray contents=anything
+    AppendSpread v2, v0
+    v4 = CallList v1, -, v2 calleeName="count"
+    ReturnCall v4
+}
+function f4 name="added" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = NewArray contents=anything
+    AppendSpread v2, v0
+    v4 = CallList v1, -, v2 calleeName="count"
+    v5 = Integer integer=1
+    v6 = Add v4, v5
+    Return v6
+}
+function f5 name="ignored" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = NewArray contents=anything
+    AppendSpread v2, v0
+    v4 = CallList v1, -, v2 calleeName="nothing"
+    ReturnCall v4
+}
+function f6 name="listed" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = NewArray v0, v1 contents=anything
+    v4 = CallList v2, -, v3 calleeName="count"
+    ReturnCall v4
+}

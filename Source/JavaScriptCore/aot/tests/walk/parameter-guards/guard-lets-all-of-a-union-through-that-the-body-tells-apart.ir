@@ -1,0 +1,80 @@
+# what is expected of `string | number[]` is the list, because no one test tells a text or a list, so a guard for it sent every text into the slow version: 1,500 instructions a turn in the place of 30.
+# Where the body asks which member it has, the guard lets all that is written through: each arm has its proof, no member runs in the slow version, and the tally goes round as a number.
+# A body that only asks (isText) leans on nothing and has no guard. A body that never asks (size) keeps the guard for the list
+# function count(value: string | number[], rounds: number) { let total = 0; for (let i = 0; i < rounds; i++) total += typeof value === "string" ? value.length : value.length; return total; }
+# function isText(value: string | number[]) { return typeof value === "string"; }   function size(value: string | number[], rounds: number) { .. total += value.length .. }
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:ParameterGuard {{*}} tests (undefined|null|string|Array<number>, number)
+# CHECK: unit f3:ParameterGuard {{*}} tests (Array<number>, number)
+# RUN(NEVER): plan units mechanisms=all
+# NEVER-NOT: unit f2:ParameterGuard
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: ([[value]]: undefined|null|string|Array<number>{{*}}entry=0
+# WALK: ([[total]]: int|whole @Double, {{*}}isInLoop=true isLoopHead=true
+# RUN(LENGTHS): walk f1:Body mechanisms=all
+# LENGTHS: = GetStringLength
+# LENGTHS: = GetArrayLength
+# RUN(CLOSED): walk f1:Body mechanisms=all
+# CLOSED-NOT: PropGet
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
+  b0(v0: undefined|null|string|Array<number>, v1: number):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3: number, v4: number):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b6()
+  b2():
+    v7 = TypeTest v0 testedType=string
+    Branch v7 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v8):
+    v9 = NarrowByTest v0, v8
+    v10 = PropGet v9 key="length"
+    v11 = Add v3, v10
+    Jump -> next b5(v11)
+  b4(v12):
+    v13 = NarrowByTest v0, v12
+    v14 = PropGet v13 key="length"
+    v15 = Add v3, v14
+    Jump -> next b5(v15)
+  b5(v16: number):
+    v17 = Increment v4
+    Jump -> next b1(v16, v17)
+  b6():
+    Return v3
+}
+function f2 name="isText" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
+  b0(v0: undefined|null|string|Array<number>):
+    v1 = TypeTest v0 testedType=string
+    Return v1
+}
+function f3 name="size" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
+  b0(v0: undefined|null|string|Array<number>, v1: number):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3: number, v4: number):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v0 key="length"
+    v8 = Add v3, v7
+    v9 = Increment v4
+    Jump -> next b1(v8, v9)
+  b3():
+    Return v3
+}

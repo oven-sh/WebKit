@@ -1,0 +1,127 @@
+# If a read through `super` let its receiver escape, as the row's `retains` says, every class with a `super.x` in a method would escape with the classes around it: no member would have a function, and both layouts could change in all five ways
+# class Base { name() { return "b"; }  get size() { return this; }  set size(v) { } }  class Derived extends Base { name() { return super.name(); }  get size() { return super.size; }  set size(v) { super.size = v; }  lay(v) { super.other = v; } }
+# const d = new Derived();  d.name();  d.size;  d.size = "s";
+# `d.size = "s"` comes to the setter, through the family as through one layout, so it adds no property. Nothing may change.
+# `lay` is never called here: where a store through `super` comes to no accessor it lays the property on the receiver, and Link lets the receiver go: store-through-super-that-finds-no-setter.ir.
+# RUN: summary f5 f6
+# CHECK-LABEL: summary f5
+# CHECK: access [[read]] v3 Read [[base]] this=Parameter 0 "name" -> [[read]]
+# CHECK-NOT: Parameter 0 -> Unknown
+# CHECK-LABEL: summary f6
+# CHECK: access [[other]] v3 Read [[above]] this=Parameter 0 "size" -> [[other]]
+# CHECK-NOT: Parameter 0 -> Unknown
+# RUN(STORE): summary f8
+# STORE: access [[store]] v4 Store [[from]] this=Parameter 0 "size" <- Parameter 1
+# STORE-NOT: Parameter 0 -> Unknown
+# STORE-NOT: Parameter 1 -> Unknown
+# RUN(LINK): link calls functions members layouts mechanisms=all
+# LINK: call f5 v4 -> f2
+# LINK: function f3 callers-known {{*}}result=L1
+# LINK-NEXT: parameter 0 {{*}}proven=L1
+# LINK: function f7 callers-known
+# LINK-NEXT: parameter 0 {{*}}proven=L1
+# LINK-NEXT: parameter 1 {{*}}proven=string
+# LINK: member L0 Prototype 0 Method "name" function=f2 writers-known
+# LINK: member L0 Prototype 1 Getter "size" function=f3 writers-known
+# LINK: member L0 Prototype 2 Setter "size" function=f7 writers-known
+# LINK: member L1 Prototype 0 Method "name" function=f5 writers-known
+# LINK: member L1 Prototype 1 Getter "size" function=f6 writers-known
+# LINK: member L1 Prototype 2 Setter "size" function=f8 writers-known
+# LINK: layout L0 {{*}}changes=[]
+# LINK: layout L1 {{*}}changes=[]
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1
+layout L1 kind=Instance name="Derived" module=m0 base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
+variable g0 name="Derived" module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="name"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 methodKind=Getter index=1 key="size"
+    v6 = NewClosure function=f7
+    DefineMethod v1, v6 layout=L0 methodKind=Setter index=2 key="size"
+    v8 = FinishClass v1 layout=L0
+    v9 = ResolveHeritage v8
+    v10 = NewClosure function=f4
+    v11 = NewClass v10, v8, v9 layout=L1
+    PutModuleVariable v11 variable=g0
+    v13 = NewClosure function=f5
+    DefineMethod v11, v13 layout=L1 key="name"
+    v15 = NewClosure function=f6
+    DefineMethod v11, v15 layout=L1 methodKind=Getter index=1 key="size"
+    v17 = NewClosure function=f8
+    DefineMethod v11, v17 layout=L1 methodKind=Setter index=2 key="size"
+    v19 = NewClosure function=f9
+    DefineMethod v11, v19 layout=L1 index=3 key="lay"
+    v21 = FinishClass v11 layout=L1
+    v22 = Construct v21
+    v23 = PropGet v22 key="name"
+    v24 = Call v23, v22 calleeKey="name"
+    v25 = PropGet v22 key="size"
+    v26 = String string="s"
+    PropSet v22, v26 key="size"
+    v28 = Undefined
+    Return v28
+}
+function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="name" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="b"
+    Return v1
+}
+function f3 name="size" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="Derived" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f5 name="name" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="name"
+    v4 = Call v3, v0 calleeName="super.name"
+    Return v4
+}
+function f6 name="size" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="size"
+    Return v3
+}
+function f7 name="size" module=m0 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f8 name="size" module=m0 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = GetSuperBase v2 homeKind=ClassPrototype
+    SuperSet v3, v0, v1 key="size"
+    v5 = Undefined
+    Return v5
+}
+function f9 name="lay" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = GetSuperBase v2 homeKind=ClassPrototype
+    SuperSet v3, v0, v1 key="other"
+    v5 = Undefined
+    Return v5
+}

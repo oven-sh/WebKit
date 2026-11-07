@@ -1,0 +1,91 @@
+# let calls = 0;  function line(text: string) { calls++; const p: { line: number } = JSON.parse(text); return p.line; }  function lineOfBare(text: string) { calls++; return parse<{ line: number }>(text).line; }
+# The text holds a record of another shape, a text, a number, a list. Nothing is filtered at the call.
+# Each reader counts in front of the call. Wherever its test stands, it counts once a call and parses once.
+# RUN: run-in-shell globalThis.report = value => print(String(value));
+# CHECK: 1
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: 5
+# CHECK-NEXT: 1
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: 10
+# CHECK-NEXT: exited with 0
+
+expectedresult x0 type=undefined|null|L0
+layout L0 module=m0 fields=[{key="line" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="calls" module=m0 declared={type=number|absent}
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Integer
+    PutModuleVariable v2 variable=g0
+    v4 = String string="{\"line\":1}"
+    v5 = String string="{\"other\":2,\"more\":3}"
+    v6 = String string="\"text\""
+    v7 = String string="5"
+    v8 = String string="[7]"
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v4 calleeName="line"
+    v11 = Call v1, -, v10 calleeName="report"
+    v12 = Call v9, -, v5 calleeName="line"
+    v13 = Call v1, -, v12 calleeName="report"
+    v14 = Call v9, -, v6 calleeName="line"
+    v15 = Call v1, -, v14 calleeName="report"
+    v16 = Call v9, -, v7 calleeName="line"
+    v17 = Call v1, -, v16 calleeName="report"
+    v18 = Call v9, -, v8 calleeName="line"
+    v19 = Call v1, -, v18 calleeName="report"
+    v20 = GetModuleVariable variable=g0
+    v21 = CheckInitialized v20 name="calls"
+    v22 = Call v1, -, v21 calleeName="report"
+    v23 = NewClosure function=f2
+    v24 = Call v23, -, v4 calleeName="lineOfBare"
+    v25 = Call v1, -, v24 calleeName="report"
+    v26 = Call v23, -, v5 calleeName="lineOfBare"
+    v27 = Call v1, -, v26 calleeName="report"
+    v28 = Call v23, -, v6 calleeName="lineOfBare"
+    v29 = Call v1, -, v28 calleeName="report"
+    v30 = Call v23, -, v7 calleeName="lineOfBare"
+    v31 = Call v1, -, v30 calleeName="report"
+    v32 = Call v23, -, v8 calleeName="lineOfBare"
+    v33 = Call v1, -, v32 calleeName="report"
+    v34 = GetModuleVariable variable=g0
+    v35 = CheckInitialized v34 name="calls"
+    v36 = Call v1, -, v35 calleeName="report"
+    Return v36
+}
+function f1 name="line" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: string):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="calls"
+    v3 = Increment v2
+    v4 = Convert v3 declared={type=number}
+    PutModuleVariable v4 variable=g0
+    v6 = Builtin builtin=JSON
+    v7 = PropGet v6 key="parse"
+    v8 = Call v7, v6, v0 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v10 = PropGet v9 key="line"
+    Return v10
+}
+function f2 name="lineOfBare" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: string):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="calls"
+    v3 = Increment v2
+    v4 = Convert v3 declared={type=number}
+    PutModuleVariable v4 variable=g0
+    v6 = Builtin builtin=JSON
+    v7 = PropGet v6 key="parse"
+    v8 = Call v7, v6, v0 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0
+    v9 = PropGet v8 key="line"
+    Return v9
+}

@@ -9,6 +9,9 @@
 
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinIDs.h"
+#include "AOTBuiltinModules.h"
+#include "AOTBuiltinTable.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTOperationArguments.h"
@@ -21,11 +24,18 @@
 #include "AOTState.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
+#include "ArrayConstructor.h"
+#include "ClonedArguments.h"
+#include "CommonSlowPathsInlines.h"
 #include "IteratorOperations.h"
 #include "JSArrayIterator.h"
+#include "JSArrayIteratorInlines.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSCInlines.h"
+#include "JSMapIterator.h"
 #include "JSPropertyNameEnumeratorInlines.h"
+#include "JSSetIterator.h"
+#include "JSStringIteratorInlines.h"
 #include <span>
 
 namespace JSC { namespace AOT {
@@ -42,9 +52,7 @@ JSPropertyNameEnumerator* enumeratorFor(JSGlobalObject* globalObject, JSValue va
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (Object* compiled = compiledObjectOrNull(object))
         RELEASE_AND_RETURN(scope, compiled->propertyNameEnumerator(globalObject));
-    // The enumerator lists the own names from the structure that the object has when it is asked for.
     PropertyWalk::materializeLazyProperties(vm, object);
-    // No enumerator is kept for a dictionary.
     if (object->structure()->isDictionary()) [[unlikely]]
         flattenForListing(vm, object);
     RELEASE_AND_RETURN(scope, JSC::propertyNameEnumerator(globalObject, object));
@@ -77,56 +85,336 @@ EnumeratedKey findEnumeratedKey(JSGlobalObject* globalObject, JSPropertyNameEnum
     return { key, mode == JSPropertyNameEnumerator::IndexedMode ? index : indexedLength + index };
 }
 
-static void destructureIterable(JSGlobalObject* globalObject, JSValue iterable, std::span<EncodedJSValue> elements)
+static bool isIteratedAsListsAre(JSArray* list)
+{
+    if (list->isIteratorProtocolFastAndNonObservable())
+        return true;
+    JSGlobalObject* realm = list->realm();
+    VM& vm = realm->vm();
+    if (!realm->isArrayPrototypeIteratorProtocolFastAndNonObservable() || list->structure()->mayInterceptIndexedAccesses() || list->getDirectOffset(vm, vm.propertyNames->iteratorSymbol) != invalidOffset)
+        return false;
+    DeferTerminationForAWhile deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    for (JSValue above = list->getPrototypeDirect(); above != JSValue(realm->arrayPrototype());) {
+        JSObject* object = above.getObject();
+        if (!object || (object->type() != ObjectType && object->type() != FinalObjectType) || object->structure()->typeInfo().overridesGetPrototype())
+            return false;
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool isFound = object->methodTable()->getOwnPropertySlot(object, realm, vm.propertyNames->iteratorSymbol, slot);
+        scope.assertNoException();
+        if (isFound)
+            return false;
+        above = object->getPrototypeDirect();
+    }
+    return true;
+}
+
+static bool isReadByIndexWhereNoHoleIsMet(JSValue iterable)
+{
+    JSArray* list = iterable.isCell() ? dynamicDowncast<JSArray>(iterable.asCell()) : nullptr;
+    if (!list || !isIteratedAsListsAre(list))
+        return false;
+    switch (list->indexingType() & IndexingShapeMask) {
+    case UndecidedShape:
+    case Int32Shape:
+    case DoubleShape:
+    case ContiguousShape:
+        return true;
+    default:
+        return false;
+    }
+}
+
+namespace {
+
+bool isReadByIndexUnseen(JSValue iterable)
+{
+    return isReadByIndexWhereNoHoleIsMet(iterable) && !asArray(iterable)->structure()->holesMustForwardToPrototype(asArray(iterable));
+}
+
+enum class WordingOfIteration : uint8_t { Pattern, Spread };
+
+class IterationInRunTime {
+public:
+    IterationInRunTime(Instance& instance, JSGlobalObject* globalObject)
+        : m_instance(instance)
+        , m_globalObject(globalObject)
+        , m_vm(globalObject->vm())
+    {
+    }
+
+    bool open(JSValue iterable, WordingOfIteration);
+    bool tryOpenUnseen(JSValue iterable);
+    bool step(JSValue&);
+    void close();
+
+private:
+    enum class Stepper : uint8_t { Protocol, ArrayIterator, MapIterator, SetIterator, StringIterator };
+
+    bool isOwnFunctionOfEngine(JSValue, BuiltinID);
+    Stepper findStepper();
+
+    Instance& m_instance;
+    JSGlobalObject* m_globalObject;
+    VM& m_vm;
+    JSValue m_iterator;
+    JSValue m_next;
+    Stepper m_stepper { Stepper::Protocol };
+    WordingOfIteration m_wording { WordingOfIteration::Pattern };
+};
+
+bool IterationInRunTime::tryOpenUnseen(JSValue iterable)
+{
+    if (!iterable.isCell())
+        return false;
+    JSCell* cell = iterable.asCell();
+    switch (cell->type()) {
+    case ArrayType:
+        if (!isIteratedAsListsAre(uncheckedDowncast<JSArray>(cell)))
+            return false;
+        m_iterator = JSArrayIterator::create(m_vm, m_globalObject->arrayIteratorStructure(), uncheckedDowncast<JSArray>(cell), IterationKind::Values);
+        m_stepper = Stepper::ArrayIterator;
+        return true;
+    case JSMapType:
+        if (uncheckedDowncast<JSMap>(cell)->realm() != m_globalObject || !uncheckedDowncast<JSMap>(cell)->isIteratorProtocolFastAndNonObservable())
+            return false;
+        m_iterator = JSMapIterator::create(m_vm, m_globalObject->mapIteratorStructure(), uncheckedDowncast<JSMap>(cell), IterationKind::Entries);
+        m_stepper = Stepper::MapIterator;
+        return true;
+    case JSSetType:
+        if (!uncheckedDowncast<JSSet>(cell)->isIteratorProtocolFastAndNonObservable())
+            return false;
+        m_iterator = JSSetIterator::create(m_vm, m_globalObject->setIteratorStructure(), uncheckedDowncast<JSSet>(cell), IterationKind::Values);
+        m_stepper = Stepper::SetIterator;
+        return true;
+    case StringType:
+        if (!m_globalObject->isStringPrototypeIteratorProtocolFastAndNonObservable())
+            return false;
+        m_iterator = JSStringIterator::create(m_vm, m_globalObject->stringIteratorStructure(), uncheckedDowncast<JSString>(cell));
+        m_stepper = Stepper::StringIterator;
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IterationInRunTime::isOwnFunctionOfEngine(JSValue value, BuiltinID builtin)
+{
+    return value.isCell() && value.asCell() == m_instance.state->builtinCells->findObject(builtin);
+}
+
+IterationInRunTime::Stepper IterationInRunTime::findStepper()
+{
+    if (!m_iterator.isCell())
+        return Stepper::Protocol;
+    switch (m_iterator.asCell()->type()) {
+    case JSMapIteratorType:
+        return isOwnFunctionOfEngine(m_next, Builtins::MapIteratorPrototypeNext) ? Stepper::MapIterator : Stepper::Protocol;
+    case JSSetIteratorType:
+        return isOwnFunctionOfEngine(m_next, Builtins::SetIteratorPrototypeNext) ? Stepper::SetIterator : Stepper::Protocol;
+    case JSStringIteratorType:
+        return isOwnFunctionOfEngine(m_next, Builtins::StringIteratorPrototypeNext) ? Stepper::StringIterator : Stepper::Protocol;
+    case JSArrayIteratorType:
+        return isJSArray(uncheckedDowncast<JSArrayIterator>(m_iterator.asCell())->iteratedObject()) && isOwnFunctionOfEngine(m_next, Builtins::ArrayIteratorPrototypeNext) ? Stepper::ArrayIterator : Stepper::Protocol;
+    default:
+        return Stepper::Protocol;
+    }
+}
+
+bool IterationInRunTime::open(JSValue iterable, WordingOfIteration wording)
+{
+    auto scope = DECLARE_THROW_SCOPE(m_vm);
+    m_wording = wording;
+    if (tryOpenUnseen(iterable))
+        return true;
+
+    JSValue method = iterable.get(m_globalObject, m_vm.propertyNames->iteratorSymbol);
+    RETURN_IF_EXCEPTION(scope, false);
+    switch (wording) {
+    case WordingOfIteration::Pattern:
+        if (auto validation = validateIterable(m_vm, iterable, method); validation != IterableValidationResult::Valid) [[unlikely]] {
+            throwTypeError(m_globalObject, scope, getIteratorErrorMessage(validation, iterable));
+            return false;
+        }
+        break;
+    case WordingOfIteration::Spread:
+        if (!method.isCallable()) [[unlikely]] {
+            throwException(m_globalObject, scope, createSpreadIteratorNotFunctionError(m_globalObject));
+            return false;
+        }
+        break;
+    }
+
+    JSValue iterator = iterable;
+    if (!iterable.isObject() || !isOwnFunctionOfEngine(method, Builtins::IteratorPrototypeSymbolIterator)) {
+        iterator = call(m_globalObject, method, JSC::getCallData(method), iterable, ArgList());
+        RETURN_IF_EXCEPTION(scope, false);
+        if (wording == WordingOfIteration::Pattern && !iterator.isObject()) [[unlikely]] {
+            throwException(m_globalObject, scope, createIteratorResultNotObjectError(m_globalObject));
+            return false;
+        }
+    }
+    m_iterator = iterator;
+    m_next = m_iterator.get(m_globalObject, m_vm.propertyNames->next);
+    RETURN_IF_EXCEPTION(scope, false);
+    m_stepper = findStepper();
+    return true;
+}
+
+bool IterationInRunTime::step(JSValue& value)
+{
+    auto scope = DECLARE_THROW_SCOPE(m_vm);
+    switch (m_stepper) {
+    case Stepper::ArrayIterator:
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<JSArrayIterator>(m_iterator.asCell())->next(m_globalObject, value));
+    case Stepper::MapIterator:
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<JSMapIterator>(m_iterator.asCell())->next(m_globalObject, value));
+    case Stepper::SetIterator:
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<JSSetIterator>(m_iterator.asCell())->next(m_globalObject, value));
+    case Stepper::StringIterator: {
+        JSString* piece = uncheckedDowncast<JSStringIterator>(m_iterator.asCell())->nextWithAdvance(m_globalObject, m_vm);
+        RETURN_IF_EXCEPTION(scope, false);
+        value = piece;
+        return piece;
+    }
+    case Stepper::Protocol:
+        break;
+    }
+
+    if (!m_next.isCallable()) [[unlikely]] {
+        throwNotAFunctionError(m_globalObject, scope, m_next);
+        return false;
+    }
+    JSValue result = call(m_globalObject, m_next, JSC::getCallData(m_next), m_iterator, ArgList());
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!result.isObject()) [[unlikely]] {
+        throwException(m_globalObject, scope, m_wording == WordingOfIteration::Spread ? createSpreadResultNotObjectError(m_globalObject) : createIteratorResultNotObjectError(m_globalObject));
+        return false;
+    }
+    JSValue done = asObject(result)->get(m_globalObject, m_vm.propertyNames->done);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (done.toBoolean(m_globalObject))
+        return false;
+    value = asObject(result)->get(m_globalObject, m_vm.propertyNames->value);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+void IterationInRunTime::close()
+{
+    auto scope = DECLARE_THROW_SCOPE(m_vm);
+    JSValue method = m_iterator.get(m_globalObject, m_vm.propertyNames->returnKeyword);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (method.isUndefinedOrNull())
+        return;
+    if (!method.isCallable()) [[unlikely]] {
+        throwNotAFunctionError(m_globalObject, scope, method);
+        return;
+    }
+    JSValue result = call(m_globalObject, method, JSC::getCallData(method), m_iterator, ArgList());
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!result.isObject()) [[unlikely]]
+        throwException(m_globalObject, scope, createIteratorResultNotObjectError(m_globalObject));
+}
+
+} // namespace
+
+static JSFunction* makeFunctionOfLibrary(JSGlobalObject*, BuiltinID);
+
+static ALWAYS_INLINE JSFunction* functionOfLibrary(JSGlobalObject* globalObject, JSCell*& kept, BuiltinID helper)
+{
+    if (!kept) [[unlikely]]
+        kept = makeFunctionOfLibrary(globalObject, helper);
+    return uncheckedDowncast<JSFunction>(kept);
+}
+
+static ALWAYS_INLINE bool mayBeSteppedByRunTime(JSValue iterable)
+{
+    if (!iterable.isCell())
+        return true;
+    switch (iterable.asCell()->type()) {
+    case StringType:
+    case ArrayType:
+    case DerivedArrayType:
+    case JSMapType:
+    case JSSetType:
+    case JSArrayIteratorType:
+    case JSMapIteratorType:
+    case JSSetIteratorType:
+    case JSStringIteratorType:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void destructureIterable(Instance& instance, JSGlobalObject* globalObject, JSValue iterable, std::span<EncodedJSValue> elements)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    for (EncodedJSValue& element : elements)
-        element = JSValue::encode(jsUndefined());
-    JSValue method = iterable.get(globalObject, vm.propertyNames->iteratorSymbol);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (auto validation = validateIterable(vm, iterable, method); validation != IterableValidationResult::Valid) [[unlikely]] {
-        throwTypeError(globalObject, scope, getIteratorErrorMessage(validation, iterable));
-        return;
-    }
-    JSValue iterator = call(globalObject, method, JSC::getCallData(method), iterable, ArgList());
-    RETURN_IF_EXCEPTION(scope, void());
-    if (!iterator.isObject()) [[unlikely]] {
-        throwException(globalObject, scope, createIteratorResultNotObjectError(globalObject));
-        return;
-    }
-    JSValue next = asObject(iterator)->get(globalObject, vm.propertyNames->next);
-    RETURN_IF_EXCEPTION(scope, void());
-    for (EncodedJSValue& element : elements) {
-        if (!next.isCallable()) [[unlikely]] {
-            throwNotAFunctionError(globalObject, scope, next);
+    if (isReadByIndexWhereNoHoleIsMet(iterable)) {
+        JSArray* list = asArray(iterable);
+        size_t length = std::min<size_t>(list->length(), elements.size());
+        size_t index = 0;
+        for (; index < length; ++index) {
+            JSValue element = list->tryGetIndexQuickly(static_cast<unsigned>(index));
+            if (!element && list->structure()->holesMustForwardToPrototype(list))
+                break;
+            elements[index] = JSValue::encode(element ? element : jsUndefined());
+        }
+        if (index == length) {
+            std::ranges::fill(elements.subspan(length), JSValue::encode(jsUndefined()));
             return;
         }
-        JSValue result = iteratorStep(globalObject, { iterator, next });
-        RETURN_IF_EXCEPTION(scope, void());
-        if (result.isFalse())
+    }
+    for (EncodedJSValue& element : elements)
+        element = JSValue::encode(jsUndefined());
+
+    IterationInRunTime iteration(instance, globalObject);
+    if (!iteration.tryOpenUnseen(iterable)) {
+        if (!elements.empty() && !mayBeSteppedByRunTime(iterable)) {
+            if (JSFunction* takes = functionOfLibrary(globalObject, instance.iteration.functionThatTakesFromIterable, Builtins::CompilerHelpersTakeFromIterable)) {
+                MarkedArgumentBuffer arguments;
+                arguments.append(iterable);
+                arguments.append(jsNumber(static_cast<uint32_t>(elements.size())));
+                ASSERT(!arguments.hasOverflowed());
+                JSValue taken = call(globalObject, takes, JSC::getCallData(takes), jsUndefined(), arguments);
+                RETURN_IF_EXCEPTION(scope, void());
+                JSArray* list = asArray(taken);
+                if (list->length() && list->getIndexQuickly(0) == JSValue(vm.orderedHashTableSentinel())) [[unlikely]] {
+                    if (list->length() == 1)
+                        throwTypeError(globalObject, scope, getIteratorErrorMessage(validateIterable(vm, iterable, jsUndefined()), iterable));
+                    else
+                        throwNotAFunctionError(globalObject, scope, list->getIndexQuickly(1));
+                    return;
+                }
+                size_t length = std::min<size_t>(list->length(), elements.size());
+                for (size_t index = 0; index < length; ++index)
+                    elements[index] = JSValue::encode(list->getIndexQuickly(static_cast<unsigned>(index)));
+                return;
+            }
+        }
+        bool isOpen = iteration.open(iterable, WordingOfIteration::Pattern);
+        EXCEPTION_ASSERT(!!scope.exception() == !isOpen);
+        if (!isOpen)
             return;
-        JSValue value = iteratorValue(globalObject, result);
+    }
+    for (EncodedJSValue& element : elements) {
+        JSValue value;
+        bool hasValue = iteration.step(value);
         RETURN_IF_EXCEPTION(scope, void());
+        if (!hasValue)
+            return;
         element = JSValue::encode(value);
     }
-    JSValue close = iterator.get(globalObject, vm.propertyNames->returnKeyword);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (close.isUndefinedOrNull())
-        return;
-    if (!close.isCallable()) [[unlikely]] {
-        throwNotAFunctionError(globalObject, scope, close);
-        return;
-    }
-    JSValue result = call(globalObject, close, JSC::getCallData(close), iterator, ArgList());
-    RETURN_IF_EXCEPTION(scope, void());
-    if (!result.isObject()) [[unlikely]]
-        throwException(globalObject, scope, createIteratorResultNotObjectError(globalObject));
+    RELEASE_AND_RETURN(scope, iteration.close());
 }
 
 void initializeIterationWords(Instance& instance)
 {
     instance.iteration.emptyEnumerator = instance.vm->emptyPropertyNameEnumerator();
+    instance.iteration.functionThatAppendsIterable = nullptr;
+    instance.iteration.functionThatTakesFromIterable = nullptr;
 }
 
 static uint32_t placeAmongListsWithoutNames(Structure* structure)
@@ -135,7 +423,6 @@ static uint32_t placeAmongListsWithoutNames(Structure* structure)
     return (structure->indexingType() & IndexingShapeMask) >> 1 & (ArrayWords::numberOfStructuresWithoutNames - 1);
 }
 
-// An array without holes and without named properties, on it or on its prototype chain, has an enumerator that only records the number of indexes. Arrays with the same Structure and length share it.
 static JSPropertyNameEnumerator* enumeratorOfListWithoutNames(Instance& instance, JSArray* list)
 {
     VM& vm = *instance.vm;
@@ -156,7 +443,6 @@ static JSPropertyNameEnumerator* enumeratorOfListWithoutNames(Instance& instance
     return enumerator;
 }
 
-// An object's enumerated keys only change with its Structure, unless it is a dictionary, has elements, or implements its own property lookup. An array only does that for `length`, which no loop enumerates.
 static bool otherNamesRequireAnotherStructure(Structure* structure)
 {
     if (structure->isDictionary() || hasIndexedProperties(structure->indexingType()))
@@ -220,7 +506,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTEnumeratorGetByVal, EncodedJSValue, (Instan
 JSC_DEFINE_JIT_OPERATION(operationAOTDestructureIterable, void, (Instance* instance, EncodedJSValue iterable, uint32_t count, EncodedJSValue* results))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDestructureIterable);
-    destructureIterable(globalObject, JSValue::decode(iterable), unsafeMakeSpan(results, count));
+    destructureIterable(*instance, globalObject, JSValue::decode(iterable), unsafeMakeSpan(results, count));
     OPERATION_RETURN(scope);
 }
 
@@ -262,7 +548,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowNotIterable, void, (Instance* instance
     OPERATION_RETURN(scope);
 }
 
-// A surrogate pair makes one element. The width of the characters is that of their storage now.
 size_t numberOfElementsSpreadFrom(JSGlobalObject* globalObject, JSString* string)
 {
     VM& vm = globalObject->vm();
@@ -282,10 +567,10 @@ size_t numberOfElementsSpreadFrom(JSGlobalObject* globalObject, JSString* string
     return count;
 }
 
-// What the engine's spread lists in one piece: a text, or a view whose iteration nothing has replaced.
-JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTooLongForList, void, (Instance* instance, JSCell* source))
+static void throwIfTooLongForList(JSGlobalObject* globalObject, JSCell* source)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowIfTooLongForList);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     size_t count = 0;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(source)) {
         if (!view->isOutOfBounds() && view->isIteratorProtocolFastAndNonObservable())
@@ -295,11 +580,139 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTooLongForList, void, (Instance* ins
         count = string->length();
         if (count > IndexingHeader::maximumLength && !string->is8Bit()) {
             count = numberOfElementsSpreadFrom(globalObject, string);
-            OPERATION_RETURN_IF_EXCEPTION(scope);
+            RETURN_IF_EXCEPTION(scope, void());
         }
     }
     if (count > IndexingHeader::maximumLength)
         throwOutOfMemoryError(globalObject, scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTooLongForList, void, (Instance* instance, JSCell* source))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowIfTooLongForList);
+    throwIfTooLongForList(globalObject, source);
+    OPERATION_RETURN(scope);
+}
+
+static JSFunction* makeFunctionOfLibrary(JSGlobalObject* globalObject, BuiltinID helper)
+{
+    for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
+        if (std::ranges::find(function.implements, helper) != function.implements.end())
+            return builtinFunction(globalObject, function.id.index());
+    }
+    return nullptr;
+}
+
+
+static bool tryAppendElementsOfArguments(JSGlobalObject* globalObject, JSArray* target, ClonedArguments* arguments)
+{
+    if (!arguments->isIteratorProtocolFastAndNonObservable() || !hasContiguous(arguments->indexingType()))
+        return false;
+    uint32_t length = arguments->getDirect(clonedArgumentsLengthPropertyOffset).asInt32();
+    Butterfly* butterfly = arguments->butterfly();
+    if (length > butterfly->publicLength() || static_cast<uint64_t>(target->length()) + length > MAX_STORAGE_VECTOR_LENGTH)
+        return false;
+    std::span<const EncodedJSValue> elements(std::bit_cast<const EncodedJSValue*>(butterfly->contiguous().data()), length);
+    bool holdsInt32Alone = true;
+    bool holdsNumbersAlone = true;
+    for (EncodedJSValue element : elements) {
+        if (!element)
+            return false;
+        JSValue value = JSValue::decode(element);
+        holdsInt32Alone &= value.isInt32();
+        holdsNumbersAlone &= value.isNumber() && value.asNumber() == value.asNumber();
+    }
+    IndexingType kind = holdsNumbersAlone && hasDouble(target->indexingType()) ? ArrayWithDouble : holdsInt32Alone ? ArrayWithInt32 : ArrayWithContiguous;
+    return !length || target->appendMemcpy(globalObject, globalObject->vm(), target->length(), kind, elements);
+}
+
+static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSArray* target, JSValue iterable)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (iterable.isCell()) {
+        JSCell* cell = iterable.asCell();
+        if (isReadByIndexUnseen(iterable))
+            RELEASE_AND_RETURN(scope, appendElementsOfList(globalObject, target, asArray(iterable)));
+        if (cell->isString() || isTypedArrayType(cell->type())) {
+            throwIfTooLongForList(globalObject, cell);
+            RETURN_IF_EXCEPTION(scope, void());
+            JSCellButterfly* listed = CommonSlowPaths::trySpreadFast(globalObject, cell);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (listed) {
+                JSArray* list = CommonSlowPaths::allocateNewArrayBuffer(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(listed->indexingMode()), listed);
+                RELEASE_AND_RETURN(scope, appendElementsOfList(globalObject, target, list));
+            }
+        } else if (!isJSArray(cell)) {
+            if (cell->type() == JSMapIteratorType && uncheckedDowncast<JSMapIterator>(cell)->kind() == IterationKind::Entries && tryAppendPairsLeftIn(globalObject, target, uncheckedDowncast<JSMapIterator>(cell)))
+                return;
+            if (cell->type() == JSMapType && uncheckedDowncast<JSMap>(cell)->isIteratorProtocolFastAndNonObservable() && tryAppendPairsOfMap(globalObject, target, uncheckedDowncast<JSMap>(cell)))
+                return;
+            if (cell->type() == ClonedArgumentsType) {
+                bool isAppended = tryAppendElementsOfArguments(globalObject, target, uncheckedDowncast<ClonedArguments>(cell));
+                RETURN_IF_EXCEPTION(scope, void());
+                if (isAppended)
+                    return;
+            }
+            JSArray* list = tryCreateArrayFromIterableFast(globalObject, iterable);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (list) {
+                if (auto* members = dynamicDowncast<JSMapIterator>(cell))
+                    members->close(vm);
+                else if (auto* members = dynamicDowncast<JSSetIterator>(cell))
+                    members->close(vm);
+                RELEASE_AND_RETURN(scope, appendElementsOfList(globalObject, target, list));
+            }
+        }
+    }
+
+    IterationInRunTime iteration(instance, globalObject);
+    if (!mayBeSteppedByRunTime(iterable)) {
+        if (JSFunction* appends = functionOfLibrary(globalObject, instance.iteration.functionThatAppendsIterable, Builtins::CompilerHelpersAppendIterable)) {
+            MarkedArgumentBuffer arguments;
+            arguments.append(target);
+            arguments.append(iterable);
+            ASSERT(!arguments.hasOverflowed());
+            scope.release();
+            call(globalObject, appends, JSC::getCallData(appends), jsUndefined(), arguments);
+            return;
+        }
+    }
+    bool isOpen = iteration.open(iterable, WordingOfIteration::Spread);
+    EXCEPTION_ASSERT(!!scope.exception() == !isOpen);
+    if (!isOpen)
+        return;
+    MarkedArgumentBuffer values;
+    while (true) {
+        JSValue value;
+        bool hasValue = iteration.step(value);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!hasValue)
+            break;
+        values.append(value);
+    }
+    if (values.hasOverflowed() || static_cast<uint64_t>(target->length()) + values.size() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    if (values.isEmpty())
+        return;
+    ArgList listed(values);
+    bool isAppended = target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, std::span<const EncodedJSValue>(listed.data(), listed.size()));
+    RETURN_IF_EXCEPTION(scope, void());
+    if (isAppended)
+        return;
+    for (size_t index = 0; index < values.size(); ++index) {
+        target->push(globalObject, values.at(index));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTAppendIterable, void, (Instance* instance, JSCell* array, EncodedJSValue iterable))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendIterable);
+    appendIterable(*instance, globalObject, cellArgument<JSArray>(array, Entry::operationAOTAppendIterable), JSValue::decode(iterable));
     OPERATION_RETURN(scope);
 }
 

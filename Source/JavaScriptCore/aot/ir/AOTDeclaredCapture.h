@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The position of what a closure holds for its function, and what the source calls the variable that it is a copy of, if it is one. A heap snapshot shows the name.
 struct DeclaredCapture : DeclaredType {
     constexpr DeclaredCapture() = default;
     DeclaredCapture(const DeclaredType& declared, StringID variableName = { })

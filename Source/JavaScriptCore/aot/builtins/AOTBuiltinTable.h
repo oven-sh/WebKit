@@ -42,6 +42,13 @@ using Protocols = OptionSet<Protocol>;
 using AbstractHeaps = EnumSet<AbstractHeap>;
 using PristineAspectSet = OptionSet<PristineAspects>;
 
+inline constexpr Protocols everyProtocol = [] {
+    Protocols protocols;
+    for (Protocol protocol : allMembersOf<Protocol>)
+        protocols.add(protocol);
+    return protocols;
+}();
+
 constexpr bool isObjectKind(BuiltinKind kind)
 {
     switch (kind) {
@@ -61,8 +68,6 @@ constexpr bool isObjectKind(BuiltinKind kind)
 }
 
 inline constexpr OptionSet<BuiltinPlatform> everyBuiltinPlatform { BuiltinPlatform::Darwin, BuiltinPlatform::Linux, BuiltinPlatform::Windows, BuiltinPlatform::FreeBSD, BuiltinPlatform::Android };
-
-inline constexpr OptionSet<BuiltinArchitecture> everyBuiltinArchitecture { BuiltinArchitecture::ARM64, BuiltinArchitecture::X86_64 };
 
 struct BuiltinTarget {
     BuiltinPlatform platform;
@@ -126,6 +131,7 @@ enum class BuiltinTypeFlag : uint8_t {
     HasAnyFunction = 1 << 2,
     HasPlainData = 1 << 3,
     HasOnlyIntegers = 1 << 4,
+    IsMadeOfListedClasses = 1 << 5,
 };
 
 constexpr bool isCalledAfterReturn(BuiltinCallbackTimes times)
@@ -151,14 +157,7 @@ enum class RuntimeModuleFlag : uint8_t {
     HasOpenNamespace = 1 << 1,
     ListsAllExports = 1 << 2,
     IsPublic = 1 << 3,
-};
-
-enum class BuiltinHostReadContext : uint8_t {
-    EntryPoint,
-    Worker,
-    Preload,
-    Plugin,
-    TestFile,
+    NativeCodeReadsEveryExport = 1 << 4,
 };
 
 struct BuiltinIntegerRange {
@@ -265,6 +264,7 @@ struct BuiltinPlace {
     BuiltinSlotID slot { };
     uint16_t fieldIndex { 0 };
     bool holdsOnlyWhatIsStored { false };
+    bool holdsWhatIsThrown { false };
     BuiltinTypeID newValueType { };
     bool isSettled { false };
     BuiltinNameStretch memberPath { };
@@ -327,7 +327,7 @@ struct BuiltinParameter {
     BuiltinTypeID admitted { };
     OperandUses uses { OperandUses::all() };
     OptionSet<BuiltinOperandRole> roles { };
-    Protocols protocols { Protocols::all() };
+    Protocols protocols { everyProtocol };
     BuiltinNameStretch namedMembers { };
     BuiltinNameStretch calledMembers { };
     BuiltinNameStretch convertedMembers { };
@@ -349,7 +349,6 @@ struct BuiltinResult {
     std::optional<BuiltinOperand> iteratedOperand { };
     IterationKind iterationKind { IterationKind::Values };
     std::optional<BuiltinOperand> prototypeSource { };
-    // It answers whether this operand was made as an instance of one of the classes of that type.
     std::optional<BuiltinOperand> testedOperand { };
     BuiltinTypeID testedType { };
     BuiltinRecordStretch<BuiltinResultProperty, BuiltinRecordPool::ResultProperties> properties { };
@@ -396,13 +395,6 @@ inline bool entersNativeCode(const BuiltinImplementation& implementation) { retu
 struct BuiltinCode {
     BuiltinImplementation implementation { };
     RuntimeFunctionID model { };
-    std::optional<InlineBuiltin> fieldsForm { };
-    std::optional<InlineBuiltin> prefixForm { };
-    BuiltinRecordStretch<BuiltinResultProperty, BuiltinRecordPool::ResultProperties> prefixProperties { };
-    std::optional<InlineBuiltin> listForm { };
-    // Native code takes nothing but the bytes of these operands. The other overload does the same with a part of each: where the parts start and end, in bytes, are its last arguments.
-    BuiltinOverloadID overloadInRanges { };
-    std::array<std::optional<BuiltinOperand>, 3> operandsTakenAsBytes { };
 };
 
 struct BuiltinOverload {
@@ -420,6 +412,7 @@ struct BuiltinOverload {
     constexpr bool onlyPropagatesErrors() const { return flags.contains(BuiltinOverloadFlag::OnlyPropagatesErrors); }
     constexpr bool isUndeclared() const { return flags.contains(BuiltinOverloadFlag::IsUndeclared); }
     constexpr bool resultIsDeclaredOnly() const { return flags.contains(BuiltinOverloadFlag::ResultIsDeclaredOnly); }
+    constexpr bool resultIsHeld() const { return flags.contains(BuiltinOverloadFlag::ResultIsHeld); }
     constexpr bool hasTypedResult() const { return result.typedResultForm != TypedResultForm::None; }
 
     constexpr RuntimeFunctionID libraryFunction() const
@@ -445,7 +438,7 @@ struct BuiltinPackedOverload {
     uint16_t flow { 0 };
     uint16_t code { 0 };
 };
-static_assert(sizeof(BuiltinPackedOverload) == 18);
+static_assert(sizeof(BuiltinPackedOverload) == 20);
 
 extern const BuiltinResult builtinTableResultsOfOverloads[];
 extern const BuiltinEffects builtinTableEffectsOfOverloads[];
@@ -518,7 +511,6 @@ struct Builtin {
     bool isNamedByText { false };
     bool isAddedAtFirstRead { false };
     bool isAddedAsEnumerable { false };
-    // A data property of which the table says that it is there and no more: each overload that reads it answers with any type. The run time asks, which holds no overloads.
     bool isReadWithoutType { false };
 };
 
@@ -531,12 +523,9 @@ struct BuiltinSlot {
     std::optional<uint8_t> indexInType { };
     AbstractHeap heap;
     BuiltinTypeID holds { };
-};
-
-struct BuiltinPropertyMaker {
-    BuiltinName name;
-    BuiltinID holder { };
-    BuiltinName member;
+    std::optional<uint8_t> internalField { };
+    bool holdsWhatStepsHandOut { false };
+    bool holdsWhatIsThrown { false };
 };
 
 struct BuiltinClass {
@@ -553,12 +542,10 @@ struct BuiltinClass {
     BuiltinPristineTest pristineTest { BuiltinPristineTest::Mark };
     bool hasClosureInstances { false };
     bool instancesAreEntries { false };
+    bool keepsStructuresOfClassesBelow { false };
     bool definesCharactersOnNewInstances { false };
     bool listsNamesDefinedOnNewInstances { false };
     std::span<const BuiltinName> namesDefinedOnNewInstances { };
-    std::span<const BuiltinResultProperty> typesOfNamesDefinedOnNewInstances { };
-    std::span<const BuiltinPropertyMaker> makersOfNamesDefinedOnNewInstances { };
-    std::span<const BuiltinName> namesReadToDescribeInstances { };
     bool constructorOnlyReadsPrototypeOfNewTarget { false };
     BuiltinName constructorAdder { };
     std::span<const BuiltinSlotID> slots { };
@@ -588,8 +575,12 @@ struct BuiltinCondition {
     bool objectNobodyKnowsIsWritten { false };
     bool testsReplaceBuiltins { false };
     BuiltinID programStores { };
+    BuiltinID isAskedForOtherNames { };
+    std::span<const BuiltinName> valuesServed { };
+    std::span<const BuiltinName> methodsServed { };
 
     BuiltinName firstText() const { return !isOneOf.empty() ? isOneOf.front() : !startsWith.empty() ? startsWith.front() : BuiltinName(); }
+    BuiltinName nameToldUnder() const { return hasProperty ? hasProperty : firstText(); }
     bool isAboutWhatProgramReplaces() const { return testsReplaceBuiltins || programStores; }
 };
 
@@ -664,37 +655,19 @@ struct BuiltinHostObject {
     std::span<const BuiltinHostObjectField> fields { };
     std::span<const BuiltinHostObjectInternalField> internalFields { };
     bool keepsStringsOfStoredValues { false };
-    // For each of these names the object has an accessor whose getter and setter are native code.
     std::span<const BuiltinName> nativeAccessors { };
-    // The build reads what lies under these names, so native code locks them in a compiled program. The holder is the member that hands out the object.
     std::span<const BuiltinName> lockedNames { };
     BuiltinID holder { };
-    // The systems on which native code makes the object.
     OptionSet<BuiltinPlatform> platforms { everyBuiltinPlatform };
-};
-
-struct BuiltinNamedMemberCall {
-    BuiltinName name { };
-    std::span<const BuiltinPlace> arguments { };
-};
-
-struct BuiltinHostMethodCall {
-    BuiltinName name { };
-    BuiltinName nativeCell { };
-    const BuiltinHostCall* call { nullptr };
 };
 
 inline constexpr size_t maxLiteralPartNames = 4;
 
 struct BuiltinForms {
     BuiltinID builtin { };
-    std::optional<InlineBuiltin> appendForm { };
-    BuiltinID jsonTextForm { };
-    std::optional<BuiltinOperand> jsonTextArgument { };
     BuiltinID literalPartsForm { };
     std::optional<BuiltinOperand> literalPartsArgument { };
     std::array<BuiltinName, maxLiteralPartNames> literalPartNames { };
-    BuiltinID bodyBytesForm { };
 };
 
 struct BuiltinBoxedCall {
@@ -746,31 +719,37 @@ struct BuiltinClosedKeys {
     std::span<const BuiltinName> openNames { };
 };
 
-struct BuiltinNamesReadByNativeCode {
-    BuiltinID holder { };
-    std::span<const BuiltinName> names { };
-    std::span<const BuiltinName> namesOnlyInspected { };
-};
-
 enum class BuiltinMark : uint8_t {
     IsAddedByOption,
     MayBeAbsent,
     EvaluatesTextInGlobalScope,
     HoldsLoader,
     IsSpy,
-    IsNotEnumerable,
-    IsReplacedBySetter,
     RunsWaitingJobs,
     IsCalledWithoutStartupLoads,
     InstancesHaveMethodCalledWithStartupLoads,
+    InstancesArePrintedByCodeOfTheirOwn,
+    PrintsWhatHandlersAnswer,
     LoadsCodeWithoutJSAccess,
-    AnswersNullAsItsPrototype,
     ReadLoadsCodeByName,
     HoldsPathOfMainModule,
+    IsReplacedByHostThatSaysSo,
     IsResolverThatLoaderCalls,
     IsRequireThatLoaderCalls,
-    InstancesArePrintedWithoutTheirGetters,
     MayTerminateProcess,
+    MocksModule,
+    ExtendsMatchers,
+    FakesTimers,
+    IsReplacedByFakeTimers,
+    RunsCodeThatLocksDoNotBind,
+    RunsCodeWithLoader,
+    HandsOutWhatNativeCodeHolds,
+    RegistersPreparationOfHolders,
+    AnswersWithPathOfModule,
+    IsKeyReadOnlyByRowsThatNameIt,
+    LaysOperandAbovePrototype,
+    HandsOutNoOtherHostObject,
+    IsDeletedWhenModuleOfLibraryLoads,
 };
 
 struct BuiltinMarkedEntry {
@@ -795,14 +774,8 @@ struct RuntimeModuleData {
     RuntimeModuleID id { };
     BuiltinID namespaceObject { };
     OptionSet<RuntimeModuleFlag> flags { };
-};
-
-struct BuiltinHostRead {
-    BuiltinHostReadContext context { BuiltinHostReadContext::EntryPoint };
-    BuiltinName exportName { };
-    BuiltinHostReadUse use { BuiltinHostReadUse::Inspected };
-    BuiltinID passedTo { };
-    uint8_t argumentIndex { 0 };
+    std::span<const BuiltinName> exportsHeldByNamespace { };
+    std::span<const BuiltinName> exportsReadByNativeCode { };
 };
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -864,13 +837,13 @@ struct BuiltinTableNames {
 struct BuiltinTableAttachments {
     std::span<const BuiltinFeatureUse> featureUses { };
     std::span<const BuiltinUnseenCode> unseenCode { };
+    std::span<const BuiltinUnseenCode> instancesThatAnswerEveryName { };
     std::span<const BuiltinModuleLoad> moduleLoads { };
     std::span<const BuiltinModuleLoad> startupLoads { };
     std::span<const BuiltinCalledFunction> calledFunctions { };
     std::span<const BuiltinCalledFunction> startupCalledFunctions { };
     std::span<const BuiltinHostObject> hostObjects { };
-    std::span<const BuiltinNamedMemberCall> namedMemberCalls { };
-    std::span<const BuiltinHostMethodCall> hostMethodCalls { };
+    std::span<const BuiltinName> nativeCellsFilledByCalledFunctions { };
     std::span<const BuiltinForms> forms { };
     std::span<const BuiltinBoxedCall> boxedCalls { };
     std::span<const BuiltinNumberConstant> numberConstants { };
@@ -885,12 +858,10 @@ struct BuiltinTableRuntime {
     std::span<const RuntimeFunctionID> functionsCalledWithStartupLoads { };
     std::span<const BuiltinName> namesOfHostMethodsCallingStartupLoads { };
     std::span<const RuntimeFunctionID> moduleLoaderFunctions { };
-    std::span<const BuiltinHostRead> hostReads { };
     std::span<const BuiltinID> lockedObjects { };
     std::span<const BuiltinMarkedEntry> marks { };
     std::span<const BuiltinLoaderOfMachineCode> loadersOfMachineCode { };
     std::span<const BuiltinClosedKeys> closedKeys { };
-    std::span<const BuiltinNamesReadByNativeCode> namesReadByNativeCode { };
     std::span<const BuiltinID> lockedMembers { };
     std::span<const BuiltinRealmStructure> realmStructures { };
 };
@@ -922,12 +893,9 @@ extern const BuiltinModuleLoad builtinTableModuleLoads[];
 extern const BuiltinCalledFunction builtinTableCalledFunctions[];
 extern const BuiltinCalledFunction builtinTableStartupCalledFunctions[];
 extern const BuiltinHostObject builtinTableHostObjects[];
-extern const BuiltinNamedMemberCall builtinTableNamedMemberCalls[];
-extern const BuiltinHostMethodCall builtinTableHostMethodCalls[];
 extern const BuiltinForms builtinTableForms[];
 extern const BuiltinNameClasses builtinTableClassesByMemberName[];
 extern const BuiltinClassTokenStorage builtinTableClassTokens;
-// One per entry of runtimeFunctions(), in the same order. Runtime functions are only named in IR text.
 extern const BuiltinTexts builtinTableRuntimeFunctionTokens;
 
 struct BuiltinMemberLookup {
@@ -971,9 +939,17 @@ public:
     unsigned nameCount() const { return m_data.names.textNames.size() + m_data.names.symbolNames.size() + m_data.names.registeredSymbolNames.size(); }
     unsigned moduleCount() const { return m_data.runtime.modules.size(); }
 
-    JS_EXPORT_PRIVATE const Builtin& at(BuiltinID) const;
+    ALWAYS_INLINE const Builtin& at(BuiltinID id) const
+    {
+        RELEASE_ASSERT(id.index() < m_data.builtins.size());
+        return m_data.builtins[id.index()];
+    }
     const BuiltinOverload& at(BuiltinOverloadID) const;
-    const BuiltinClass& at(BuiltinClassID) const;
+    ALWAYS_INLINE const BuiltinClass& at(BuiltinClassID id) const
+    {
+        RELEASE_ASSERT(id.index() < m_data.classes.size());
+        return m_data.classes[id.index()];
+    }
     const BuiltinSlot& at(BuiltinSlotID) const;
     const BuiltinLayout& at(BuiltinLayoutID) const;
     const BuiltinType& at(BuiltinTypeID) const;
@@ -999,17 +975,18 @@ public:
     BuiltinID findOwnPropertyOfInstances(BuiltinClassID, BuiltinName) const;
     bool listsOwnPropertiesOfNewInstances(BuiltinClassID) const;
     bool mayDefineOnNewInstances(BuiltinClassID, BuiltinName) const;
-    BuiltinTypeID typeOfNameDefinedOnNewInstances(BuiltinClassID, BuiltinName) const;
+    JS_EXPORT_PRIVATE bool ignoresReceiver(BuiltinID) const;
     bool definesCharactersOnNewInstances(BuiltinClassID) const;
     std::span<const BuiltinClassID> classesWithInstanceMember(BuiltinName) const;
 
     BuiltinClassID receiverClassOf(BuiltinID) const;
     bool isSameOrSubclassOf(BuiltinClassID, BuiltinClassID ancestor) const;
+    bool onlyEntriesInheritFrom(BuiltinID canonicalPrototype) const;
+    bool isObjectOfClass(BuiltinID canonical) const;
     TypedArrayType typedArrayTypeOf(BuiltinClassID) const;
     BuiltinClassID typedArrayClassOf(BuiltinClassID) const;
     BuiltinSlotID findSlot(BuiltinClassID, BuiltinName) const;
     BuiltinSlotID findSlot(BuiltinClassID, ContentsSlot) const;
-    BuiltinSlotID slotInType(BuiltinClassID, unsigned indexInType) const;
     unsigned numberOfSlotsInType(BuiltinClassID) const;
 
     BuiltinID rootOf(BuiltinID) const;
@@ -1018,16 +995,10 @@ public:
     BuiltinID namespaceOf(RuntimeModuleID id) const { return at(id).namespaceObject; }
     bool existsOn(BuiltinID id, BuiltinPlatform platform) const { return at(id).platforms.contains(platform); }
     bool isLocationOfLockedObject(BuiltinID) const;
-    // A locked member that a test run may unlock: a function or an accessor under a name that neither the language nor a call reads by itself.
     JS_EXPORT_PRIVATE bool canBeReplacedInTestRuns(BuiltinID) const;
-    // An object that takes no new names, and a text that a test run may open on it. No name: a text that the table does not have.
     JS_EXPORT_PRIVATE bool canTakeNameInTestRuns(BuiltinID holder, BuiltinName) const;
     JS_EXPORT_PRIVATE bool isHostFunctionOfEngine(BuiltinID) const;
-    // Of the engine or of the host. A realm that locks its built-ins gives every native function one structure, which keeps the prototype.
-    bool isNativeFunction(BuiltinID) const;
     JS_EXPORT_PRIVATE bool isFunctionOfEngine(BuiltinID) const;
-    // `formatter.format`: the accessor answers a function that it has bound to the receiver, the same at every read. What a call of that function does stands among the overloads of the accessor.
-    bool answersFunctionBoundToReceiver(BuiltinID member) const { return at(member).kind == BuiltinKind::Accessor && dispatchOf(member, BuiltinCallMode::Call); }
     bool hasLockedPrototypeLink(BuiltinID holder) const { return at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) || isFunctionOfEngine(holder) || closesOnlyNamesOfCalls(holder); }
     bool closesOnlyNamesOfCalls(BuiltinID holder) const { return at(holder).kind == BuiltinKind::Constructor && !at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) && !closedKeysOf(holder).empty(); }
     bool closesIndexKeys(BuiltinID holder) const { return at(holder).flags.contains(BuiltinFlag::IsLockedObject) || (at(holder).flags.contains(BuiltinFlag::HasLockedMembers) && at(holder).kind == BuiltinKind::Prototype); }
@@ -1037,16 +1008,18 @@ public:
     std::span<const BuiltinName> openNamesOf(BuiltinID holder) const;
     bool isClosedKey(BuiltinID holder, BuiltinName) const;
     JS_EXPORT_PRIVATE bool isClosedOnHostFunctions(BuiltinName) const;
-    const BuiltinNamesReadByNativeCode* namesReadByNativeCode(BuiltinID holder) const;
 
     std::span<const BuiltinFeatureUse> featureUsesOf(BuiltinID) const;
     std::span<const BuiltinModuleLoad> moduleLoadsOf(BuiltinID) const;
     std::span<const BuiltinCalledFunction> calledFunctionsOf(BuiltinID) const;
+    Vector<const BuiltinCondition*, 8> conditionsOnLightForms() const;
     const BuiltinUnseenCode* unseenCodeOf(BuiltinID) const;
+    const BuiltinCondition* conditionOnInstancesThatAnswerEveryName(BuiltinID constructor) const;
     bool letsInUnseenCode(BuiltinID) const;
     bool letsInUnseenCodeWhenCalled(BuiltinID) const;
     const BuiltinForms* formsOf(BuiltinID) const;
     std::optional<BuiltinBoxedStub> boxedCallStubOf(BuiltinID) const;
+    Vector<BuiltinID, 4> membersThatHoldMethodOf(BuiltinBoxedStub) const;
     std::span<const BuiltinBoxedCall> boxedCalls() const { return m_data.attachments.boxedCalls; }
 
     std::span<const BuiltinID> lockedObjects() const { return m_data.runtime.lockedObjects; }
@@ -1060,11 +1033,11 @@ public:
     std::span<const RuntimeFunctionID> functionsCalledWithStartupLoads() const { return m_data.runtime.functionsCalledWithStartupLoads; }
     std::span<const BuiltinCalledFunction> startupCalledFunctions() const;
     std::span<const BuiltinHostObject> hostObjects() const;
-    const BuiltinNamedMemberCall* callOfMemberNamed(BuiltinName) const;
-    std::span<const BuiltinHostMethodCall> hostMethodCalls() const;
+    std::span<const BuiltinName> nativeCellsFilledByCalledFunctions() const;
+    bool isPrintedByFormatter(BuiltinID, const BuiltinParameter&) const;
+    bool formatterWalksInstancesOf(BuiltinClassID) const;
     std::span<const BuiltinName> namesOfHostMethodsCallingStartupLoads() const { return m_data.runtime.namesOfHostMethodsCallingStartupLoads; }
     std::span<const RuntimeFunctionID> moduleLoaderFunctions() const { return m_data.runtime.moduleLoaderFunctions; }
-    std::span<const BuiltinHostRead> hostReads() const { return m_data.runtime.hostReads; }
     std::span<const BuiltinName> keysReadBy(Protocol) const;
 
     BuiltinName nameOf(std::span<const uint8_t> utf8) const;
@@ -1109,19 +1082,20 @@ private:
     const BuiltinTableData& m_data;
 };
 
-// The table as one build sees it. In a test run the members that the tests replace are ConstantUnlessWritten, as Date.now is everywhere.
 class BuiltinTableOfBuild {
     WTF_MAKE_NONCOPYABLE(BuiltinTableOfBuild);
 public:
     explicit BuiltinTableOfBuild(const BuiltinTable&);
 
     const BuiltinTable& table() const LIFETIME_BOUND { return m_table; }
-    // `members` ascend. Leaves out a locked member that canBeReplacedInTestRuns() refuses. `holdersOfNewNames`: the objects that get a name of their own opened, which the caller keeps.
     void unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames);
     std::span<const BuiltinID> unlockedMembers() const LIFETIME_BOUND { return m_unlockedMembers.span(); }
+    void unlockForTestRun(std::span<const BuiltinID> members, std::span<const BuiltinID> membersThatStayLocked, std::span<const BuiltinID> holdersOfNewNames);
+    std::span<const BuiltinID> membersWhoseLockIsLeftToProgram() const LIFETIME_BOUND { return m_membersWhoseLockIsLeftToProgram.span(); }
 
 private:
     void lockByNames(BuiltinID wholeObject);
+    void lockEveryWholeObjectByNames();
 
     BuiltinTableData m_data;
     Vector<Builtin> m_builtins;
@@ -1130,6 +1104,7 @@ private:
     Vector<BuiltinClosedKeys> m_closedKeys;
     Vector<Vector<BuiltinName>> m_closedSymbols;
     Vector<BuiltinID> m_unlockedMembers;
+    Vector<BuiltinID> m_membersWhoseLockIsLeftToProgram;
     BuiltinTable m_table;
 };
 

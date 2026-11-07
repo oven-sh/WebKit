@@ -1,0 +1,34 @@
+# If two to four layouts that no declared family holds became any object where they meet, a read off what lies there would be a read by name, though each of them is known and the name lies in a slot of those that have it.
+# const o = which ? { a: 7, b: 7 } : which1 ? { b: 7, c: 7 } : { c: 7, d: 7 };  return o.b;
+# RUN: walk f0 mechanisms=all-EscapeAnalysis
+# CHECK: ([[met]]: L0|L1|L2 
+# CHECK: = GetSlotOrUndefined [[met]] key="b" receivers=[L0, L1, L2] level=Proven
+# RUN(NEVER): walk f0 mechanisms=all-EscapeAnalysis
+# NEVER-NOT: = PropGet {{*}}key="b"
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L2 module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="which" [isFreeName]
+    v2 = Integer integer=7
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = NewObject -, v2, v2 layout=L2 fields=[0, 1]
+    v8 = FinishObject v7
+    Branch v1 -> taken b3(v4), notTaken b1()
+  b1():
+    v9 = PropGet v0 key="which1" [isFreeName]
+    Branch v9 -> taken b3(v6), notTaken b2()
+  b2():
+    Jump -> next b3(v8)
+  b3(v10):
+    v11 = PropGet v10 key="b" @10
+    Return v11
+}

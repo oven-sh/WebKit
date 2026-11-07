@@ -1,0 +1,32 @@
+# A function's own name becomes a text where somebody reads `name`.
+# sink(function constructor() {}); sink(function () {}[given]("return 7"));
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup name-read "constructor"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = PropGet v0 key="given" [isFreeName]
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v3
+    v5 = NewClosure function=f1
+    v6 = ElemGet v5, v2
+    v7 = String string="return 7"
+    v8 = Call v6, v5, v7
+    v9 = Call v1, -, v8
+    v10 = Undefined
+    Return v10
+}
+function f1 name="held" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="constructor" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

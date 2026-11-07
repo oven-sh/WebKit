@@ -1336,8 +1336,17 @@ public:
         }
     }
 
+    // Code for an image makes in a register what other code reads from a table of the process that generates it.
+    bool makesConstantsInRegisters() const { return policy().recordsProcessAddresses; }
+
     void negateDouble(FPRegisterID src, FPRegisterID dst)
     {
+        if (makesConstantsInRegisters()) {
+            ASSERT(src != fpTempRegister && dst != fpTempRegister);
+            move64ToDouble(TrustedImm64(std::bit_cast<int64_t>(-0.0)), fpTempRegister);
+            xorDouble(fpTempRegister, src, dst);
+            return;
+        }
         alignas(16) static constexpr double negativeZeroConstants[] = { -0.0, -0.0 };
         static_assert(sizeof(negativeZeroConstants) == 16);
         move(TrustedImmPtr(negativeZeroConstants), scratchRegister());
@@ -1352,6 +1361,12 @@ public:
 
     void negateFloat(FPRegisterID src, FPRegisterID dst)
     {
+        if (makesConstantsInRegisters()) {
+            ASSERT(src != fpTempRegister && dst != fpTempRegister);
+            move32ToFloat(TrustedImm32(std::bit_cast<int32_t>(-0.0f)), fpTempRegister);
+            xorFloat(fpTempRegister, src, dst);
+            return;
+        }
         alignas(16) static constexpr float negativeZeroConstants[] = { -0.0f, -0.0f, -0.0f, -0.0f };
         static_assert(sizeof(negativeZeroConstants) == 16);
         move(TrustedImmPtr(negativeZeroConstants), scratchRegister());
@@ -9148,8 +9163,14 @@ public:
             0x1.0p+31f,
             0x1.0p+31f,
         };
-        move(TrustedImmPtr(masks), scratchGPR);                                 // scratchGPR = minimum positive-overflow integer 0x80000000
-        m_assembler.vcmpnltps_mrr(0, scratchGPR, scratchFPR1, scratchFPR2);     // scratchFPR2 = positive-overflow mask by checking src >= 0x80000000
+        if (makesConstantsInRegisters()) {
+            move(TrustedImm32(std::bit_cast<int32_t>(masks[0])), scratchGPR);
+            vectorSplatInt32(scratchGPR, scratchFPR2);
+            m_assembler.vcmpps_rrr(X86Assembler::PackedCompareCondition::GreaterThanOrEqualAndOrdered, scratchFPR2, scratchFPR1, scratchFPR2);
+        } else {
+            move(TrustedImmPtr(masks), scratchGPR);                             // scratchGPR = minimum positive-overflow integer 0x80000000
+            m_assembler.vcmpnltps_mrr(0, scratchGPR, scratchFPR1, scratchFPR2); // scratchFPR2 = positive-overflow mask by checking src >= 0x80000000
+        }
 
         m_assembler.vcvttps2dq_rr(scratchFPR1, scratchFPR1);                    // convert scratchFPR1 to integer with overflow saturated to 0x80000000
 
@@ -9178,12 +9199,19 @@ public:
             2147483647.0f,
             2147483647.0f,
         };
-        move(TrustedImmPtr(masks), scratchGPR);                             // scratchGPR = f[0x80000000]x4
+        if (!makesConstantsInRegisters())
+            move(TrustedImmPtr(masks), scratchGPR);                         // scratchGPR = f[0x80000000]x4
 
         m_assembler.vmovaps_rr(dest, scratchFPR2);
-        m_assembler.vsubps_mrr(0, scratchGPR, scratchFPR2, scratchFPR2);    // scratchFPR2 = f[lane - 0x80000000]x4
-
-        m_assembler.vcmpnltps_mrr(0, scratchGPR, scratchFPR2, scratchFPR1); // scratchFPR1 = mask for [lane >= 0xFFFFFFFF]x4
+        if (makesConstantsInRegisters()) {
+            move(TrustedImm32(std::bit_cast<int32_t>(masks[0])), scratchGPR);
+            vectorSplatInt32(scratchGPR, scratchFPR1);
+            m_assembler.vsubps_rrr(scratchFPR1, scratchFPR2, scratchFPR2);
+            m_assembler.vcmpps_rrr(X86Assembler::PackedCompareCondition::GreaterThanOrEqualAndOrdered, scratchFPR1, scratchFPR2, scratchFPR1);
+        } else {
+            m_assembler.vsubps_mrr(0, scratchGPR, scratchFPR2, scratchFPR2);    // scratchFPR2 = f[lane - 0x80000000]x4
+            m_assembler.vcmpnltps_mrr(0, scratchGPR, scratchFPR2, scratchFPR1); // scratchFPR1 = mask for [lane >= 0xFFFFFFFF]x4
+        }
 
         m_assembler.vcvttps2dq_rr(scratchFPR2, scratchFPR2);                // scratchFPR2 = i[lane - 0x80000000]x4 with satruated lane 0x80000000 for int32 overflow
 
@@ -9209,8 +9237,15 @@ public:
         using PackedCompareCondition = X86Assembler::PackedCompareCondition;
 
         m_assembler.vcmppd_rrr(PackedCompareCondition::EqualAndOrdered, src, src, scratchFPR);
-        move(TrustedImmPtr(masks), scratchGPR);
-        m_assembler.vandpd_mrr(0, scratchGPR, scratchFPR, scratchFPR);
+        if (makesConstantsInRegisters()) {
+            ASSERT(src != fpTempRegister && dest != fpTempRegister && scratchFPR != fpTempRegister);
+            move(TrustedImm64(std::bit_cast<int64_t>(masks[0])), scratchGPR);
+            vectorSplatInt64(scratchGPR, fpTempRegister);
+            m_assembler.vandpd_rrr(fpTempRegister, scratchFPR, scratchFPR);
+        } else {
+            move(TrustedImmPtr(masks), scratchGPR);
+            m_assembler.vandpd_mrr(0, scratchGPR, scratchFPR, scratchFPR);
+        }
         m_assembler.vminpd_rrr(scratchFPR, src, dest);
         m_assembler.vcvttpd2dq_rr(dest, dest);
     }
@@ -9226,13 +9261,25 @@ public:
             0x1.0p+52,
             0x1.0p+52,
         };
-        move(TrustedImmPtr(masks), scratchGPR);
+        if (!makesConstantsInRegisters())
+            move(TrustedImmPtr(masks), scratchGPR);
 
         m_assembler.vxorpd_rrr(scratchFPR, scratchFPR, scratchFPR);
         m_assembler.vmaxpd_rrr(scratchFPR, src, dest);
-        m_assembler.vminpd_mrr(0, scratchGPR, dest, dest);
-        m_assembler.vroundpd_rr(dest, dest, RoundingType::TowardZero);
-        m_assembler.vaddpd_mrr(sizeof(double) * 2, scratchGPR, dest, dest);
+        if (makesConstantsInRegisters()) {
+            ASSERT(src != fpTempRegister && dest != fpTempRegister && scratchFPR != fpTempRegister);
+            move(TrustedImm64(std::bit_cast<int64_t>(masks[0])), scratchGPR);
+            vectorSplatInt64(scratchGPR, fpTempRegister);
+            m_assembler.vminpd_rrr(fpTempRegister, dest, dest);
+            m_assembler.vroundpd_rr(dest, dest, RoundingType::TowardZero);
+            move(TrustedImm64(std::bit_cast<int64_t>(masks[2])), scratchGPR);
+            vectorSplatInt64(scratchGPR, fpTempRegister);
+            m_assembler.vaddpd_rrr(fpTempRegister, dest, dest);
+        } else {
+            m_assembler.vminpd_mrr(0, scratchGPR, dest, dest);
+            m_assembler.vroundpd_rr(dest, dest, RoundingType::TowardZero);
+            m_assembler.vaddpd_mrr(sizeof(double) * 2, scratchGPR, dest, dest);
+        }
         m_assembler.vshufps_i8rrr(0x88, scratchFPR, dest, dest);
     }
 
@@ -9436,8 +9483,13 @@ public:
         move(TrustedImm32(high32Bits), scratchGPR);
         vectorSplatInt32(scratchGPR, scratchFPR);
         m_assembler.vunpcklps_rrr(scratchFPR, input, dest);
-        move(TrustedImmPtr(masks), scratchGPR);
-        loadVector(Address(scratchGPR), scratchFPR);
+        if (makesConstantsInRegisters()) {
+            move(TrustedImm64(std::bit_cast<int64_t>(masks[0])), scratchGPR);
+            vectorSplatInt64(scratchGPR, scratchFPR);
+        } else {
+            move(TrustedImmPtr(masks), scratchGPR);
+            loadVector(Address(scratchGPR), scratchFPR);
+        }
         m_assembler.vsubpd_rrr(scratchFPR, dest, dest);
     }
 
@@ -10309,6 +10361,61 @@ public:
         return start;
     }
 
+    // Instructions of the kinds Number32 and InstanceAccess vary in length, so the site is the number itself: the last four bytes of the instruction.
+    Label moveNumber32WithPatch(RegisterID dest)
+    {
+        m_assembler.movl_i32r(patchableNumberPlaceholder, dest);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label loadInstanceWord8(RegisterID instance, RegisterID dest)
+    {
+        m_assembler.movzbl_mr(patchableNumberPlaceholder, instance, dest);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label loadInstanceWord32(RegisterID instance, RegisterID dest)
+    {
+        m_assembler.movl_mr_disp32(patchableNumberPlaceholder, instance, dest);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label loadInstanceWord64(RegisterID instance, RegisterID dest)
+    {
+        m_assembler.movq_mr_disp32(patchableNumberPlaceholder, instance, dest);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label loadInstanceDouble(RegisterID instance, FPRegisterID dest)
+    {
+        m_assembler.movsd_mr(patchableNumberPlaceholder, instance, dest);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label storeInstanceWord8(RegisterID source, RegisterID instance)
+    {
+        m_assembler.movb_rm(source, patchableNumberPlaceholder, instance);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label storeInstanceWord32(RegisterID source, RegisterID instance)
+    {
+        m_assembler.movl_rm_disp32(source, patchableNumberPlaceholder, instance);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label storeInstanceWord64(RegisterID source, RegisterID instance)
+    {
+        m_assembler.movq_rm_disp32(source, patchableNumberPlaceholder, instance);
+        return zeroAndLabelPatchableNumber();
+    }
+
+    Label storeInstanceDouble(FPRegisterID source, RegisterID instance)
+    {
+        m_assembler.movsd_rm(source, patchableNumberPlaceholder, instance);
+        return zeroAndLabelPatchableNumber();
+    }
+
     static constexpr unsigned relocationSize(RelocationKind kind)
     {
         switch (kind) {
@@ -10326,6 +10433,9 @@ public:
         case RelocationKind::InstanceOffset:
             return 7;
         case RelocationKind::Distance32:
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
+        case RelocationKind::NumberWord:
             return 4;
         case RelocationKind::ConditionalJumpThenNop:
         case RelocationKind::TestBitJump:
@@ -10347,6 +10457,7 @@ public:
         case RelocationKind::Load64:
         case RelocationKind::Distance32:
         case RelocationKind::InstanceOffset:
+        case RelocationKind::InstanceAccess:
             return nearJumpRange;
         case RelocationKind::ShortJump:
         case RelocationKind::ShortConditionalJump:
@@ -10355,6 +10466,8 @@ public:
         case RelocationKind::TestBitJump:
         case RelocationKind::TestBitJumpThenNop:
         case RelocationKind::InvertedJumpThenJump:
+        case RelocationKind::Number32:
+        case RelocationKind::NumberWord:
             return 0;
         }
         RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -10391,6 +10504,9 @@ public:
         case RelocationKind::TestBitJumpThenNop:
         case RelocationKind::InvertedJumpThenJump:
         case RelocationKind::InstanceOffset:
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
+        case RelocationKind::NumberWord:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -10401,14 +10517,33 @@ public:
         size_t size = relocationSize(kind);
         RELEASE_ASSERT(size && size <= code.size() && site <= code.size() - size);
         std::span<uint8_t> instructions = code.subspan(site, size);
-        if (kind == RelocationKind::InstanceOffset) {
-            if (!isRepresentableAs<int32_t>(target))
+        switch (kind) {
+        case RelocationKind::InstanceOffset:
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
+        case RelocationKind::NumberWord:
+            // The target is the 32 bits of the number, zero-extended, so a negative distance from the instance does not fit in an int32_t here. The CPU sign-extends a displacement.
+            if (!isRepresentableAs<uint32_t>(target))
                 return false;
-            WTF::unalignedStore<int32_t>(instructions.last(sizeof(int32_t)).data(), static_cast<int32_t>(target));
+            WTF::unalignedStore<uint32_t>(instructions.last(sizeof(uint32_t)).data(), static_cast<uint32_t>(target));
             return true;
+        case RelocationKind::Call:
+        case RelocationKind::Jump:
+        case RelocationKind::ShortJump:
+        case RelocationKind::ConditionalJump:
+        case RelocationKind::ShortConditionalJump:
+        case RelocationKind::ConditionalJumpThenNop:
+        case RelocationKind::TestBitJump:
+        case RelocationKind::TestBitJumpThenNop:
+        case RelocationKind::InvertedJumpThenJump:
+        case RelocationKind::AddressNear:
+        case RelocationKind::AddressFar:
+        case RelocationKind::Load64:
+        case RelocationKind::Distance32:
+            RELEASE_ASSERT(target <= code.size());
+            return setRelocationDistance(kind, instructions, static_cast<int64_t>(target) - static_cast<int64_t>(site));
         }
-        RELEASE_ASSERT(target <= code.size());
-        return setRelocationDistance(kind, instructions, static_cast<int64_t>(target) - static_cast<int64_t>(site));
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     static void clearRelocation(RelocationKind kind, std::span<uint8_t> instructions)
@@ -10424,6 +10559,9 @@ public:
         case RelocationKind::AddressFar:
         case RelocationKind::Load64:
         case RelocationKind::InstanceOffset:
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
+        case RelocationKind::NumberWord:
             WTF::unalignedStore<int32_t>(instructions.last(sizeof(int32_t)).data(), 0);
             return;
         case RelocationKind::ShortJump:
@@ -10445,6 +10583,20 @@ public:
     JS_EXPORT_PRIVATE static CPUFeatureSet collectCPUFeatures();
 
 private:
+    // Too large for a one-byte displacement, so an encoder that picks the form by the value writes four bytes as well.
+    static constexpr int32_t patchableNumberPlaceholder = 0x12345678;
+
+    // The instruction just emitted must end in the placeholder: no immediate may follow a displacement.
+    Label zeroAndLabelPatchableNumber()
+    {
+        auto& buffer = m_assembler.buffer();
+        std::span<uint8_t> number = WTF::unsafeMakeSpan(static_cast<uint8_t*>(buffer.data()), buffer.codeSize()).last(sizeof(int32_t));
+        RELEASE_ASSERT(WTF::unalignedLoad<int32_t>(number.data()) == patchableNumberPlaceholder);
+        WTF::unalignedStore<int32_t>(number.data(), 0);
+        // Only a Jump makes a Label of a place other than the end of the buffer.
+        return Jump(buffer.label().labelAtOffset(-static_cast<int>(sizeof(int32_t)))).label();
+    }
+
     // If lzcnt is not available, use this after BSR
     // to count the leading zeros.
     void clz64AfterBsr(RegisterID dst)

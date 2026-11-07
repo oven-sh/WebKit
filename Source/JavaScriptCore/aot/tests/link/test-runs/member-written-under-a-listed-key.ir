@@ -1,0 +1,28 @@
+# a member that a file of the tests spells beside a store is on the wire. It is open by that word, whatever the flow finds, and the facts do not list it a second time
+# a.test.js: Math.imul = () => 7; Math.imul(given, given)
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: locks open
+# CHECK-NOT: locked MathImul
+# CHECK: open MathImul left-open-for-tests
+# RUN(NEVER): test-run
+# NEVER-NOT: replaces MathImul
+
+replaceablebuiltin member=MathImul
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Math" [isFreeName]
+    v2 = NewClosure function=f1
+    PropSet v1, v2 key="imul"
+    v4 = PropGet v1 key="imul"
+    v5 = PropGet v0 key="given" [isFreeName]
+    v6 = Call v4, v1, v5, v5 calleeKey="imul"
+    Return v6
+}
+function f1 name="fake" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

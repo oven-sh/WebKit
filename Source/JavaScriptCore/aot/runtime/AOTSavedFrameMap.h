@@ -20,8 +20,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// The first word, a byte each: how many words list values, narrow references, other live words. Then the flags. Those words follow, in that order.
-// Where a number does not fit its byte, the three numbers are the three words behind the first.
 class SavedFrameMap {
 public:
     static constexpr uint32_t listsEveryLiveWordBit = 1u << 24;
@@ -49,7 +47,6 @@ public:
         return SavedFrameMap(words.data(), bits.first(numberOfValueWords), bits.subspan(numberOfValueWords, numberOfNarrowReferenceWords), bits.subspan(numberOfValueWords + numberOfNarrowReferenceWords, numberOfOtherLiveWordWords), header & listsEveryLiveWordBit);
     }
 
-    // What tryCreate() accepted.
     static SavedFrameMap fromFirstWord(const uint32_t* firstWord) { return *tryCreate(unsafeMakeSpan(firstWord, SIZE_MAX / sizeof(uint32_t)), 0); }
     const uint32_t* firstWord() const { return m_firstWord; }
     size_t numberOfWords() const { return m_otherLiveWordBits.data() + m_otherLiveWordBits.size() - m_firstWord; }
@@ -68,7 +65,6 @@ public:
     template<typename Functor>
     bool forEachOtherLiveWord(const Functor& functor) const { return forEachSetBit(m_otherLiveWordBits, functor); }
 
-    // Of location 0, if the frame has it, and of the locations from first to last: those that hold nothing live. None where the map does not list every live word.
     template<typename Functor>
     bool forEachDeadWord(bool hasLocationZero, uint32_t first, uint32_t last, const Functor& functor) const
     {
@@ -102,13 +98,11 @@ private:
 
     static uint32_t wordAt(std::span<const uint32_t> bits, size_t index) { return index < bits.size() ? bits[index] : 0; }
 
-    // A bit for each of the locations from 32 * index on.
     uint32_t liveWordsAt(uint32_t index) const
     {
         uint32_t liveWords = wordAt(m_valueBits, index) | wordAt(m_otherLiveWordBits, index);
         if (m_narrowReferenceBits.empty())
             return liveWords;
-        // Location l holds the narrow locations 2 * l - 1 and 2 * l.
         uint64_t halves = wordAt(m_narrowReferenceBits, 2 * index) | static_cast<uint64_t>(wordAt(m_narrowReferenceBits, 2 * index + 1)) << 32;
         uint64_t bits = halves | halves << 1 | (index ? wordAt(m_narrowReferenceBits, 2 * index - 1) >> 31 : 0);
         bits &= 0x5555555555555555ULL;
@@ -147,7 +141,6 @@ class SavedFrameMapBuilder {
 public:
     void addValue(uint32_t location) { set(m_valueBits, location); }
     void addNarrowReference(uint32_t narrowLocation) { set(m_narrowReferenceBits, narrowLocation); }
-    // A word that holds no reference, and that the function may read before it writes it, if it goes on from here.
     void addOtherLiveWord(uint32_t location) { set(m_otherLiveWordBits, location); }
     void setListsEveryLiveWord() { m_listsEveryLiveWord = true; }
     bool listsReferenceIn(uint32_t location) const { return isSet(m_valueBits, location) || isSet(m_narrowReferenceBits, 2 * location) || (location && isSet(m_narrowReferenceBits, 2 * location - 1)); }

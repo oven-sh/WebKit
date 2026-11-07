@@ -1,0 +1,12 @@
+# the key of the access is a text that the body itself writes, and Link lists the access under that name: the walk takes it through the chain as the access by name, so it gets whatever form a written `node.kind` gets
+# function kindOf(node) { let k = "kind"; return node[k]; }   function setKind(node, v) { let k = "kind"; node[k] = v; }
+# that form is the slot, because Link went by the name and the layout stays closed. The walk alone can read the name off the body too, but behind a Link that saw a store under any key: a closed PropGet and PropSet
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot{{*}}key="kind"
+# CHECK-LABEL: code f2:Body
+# CHECK: PutSlot{{*}}key="kind"
+# RUN(NEVER): walk f1 f2 mechanisms=all
+# NEVER-NOT: ElemGet
+# NEVER-NOT: ElemSet
+# PROGRAM-OF: ../../link/key-made-of-constants-is-a-name.ir

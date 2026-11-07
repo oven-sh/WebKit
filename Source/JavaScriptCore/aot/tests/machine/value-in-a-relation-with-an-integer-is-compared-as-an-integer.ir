@@ -1,0 +1,85 @@
+# function below(x, y) { const n = y | 0; return x < n ? 1 : 2; }   function atLeast(x, y) { const n = y | 0; return n <= x ? 1 : 2; }
+# function count(end) { let i = 0; while (i < end) i++; return i; }
+# One side is an integer by its type and no literal. It stays an integer: the value is asked for the tag of an int32 first, and two integers are compared. For a value that is no int32 the int32 is boxed and one stub asked, in the cold part.
+# The counter of a loop that nothing bounds is stepped on doubles, for 2^53 + 1 is rounded, and comes round as a double. It is no int32 by its type: it is compared in 64 bits, behind one conversion that tests nothing.
+# RUN: walk f1 f2 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: [[n]]: {{*}} @Int32 = BitOr
+# CHECK-NEXT: = Less {{*}}, [[n]] form=NumberAndValue
+# CHECK-LABEL: code f2:Body
+# CHECK: [[n]]: {{*}} @Int32 = BitOr
+# CHECK-NEXT: = LessEq [[n]], {{*}} form=NumberAndValue
+# RUN(NEVER): walk f1 f2 mechanisms=none+TypedOperations
+# NEVER-NOT: @Double
+# RUN(EMIT): emit f1:Body mechanisms=none+TypedOperations
+# EMIT-LABEL: unit f1:Body
+# EMIT: = LessThan(
+# EMIT-NEXT: = Branch(
+# EMIT: = Patch(
+# EMIT-NEXT: = Trunc(
+# EMIT-NEXT: = Branch(
+# RUN(NODOUBLE): emit f1:Body mechanisms=none+TypedOperations
+# NODOUBLE-NOT: = IToD(
+# RUN(COUNT): walk f3 mechanisms=all
+# COUNT-LABEL: code f3:Body
+# COUNT: ([[i]]: {{*}} @Double{{*}} isLoopHead=true
+# COUNT: [[integer]]: {{*}} @Int64 = NumberToInteger [[i]]
+# COUNT: = Less [[integer]], {{*}} form=NumberAndValue
+# COUNT: = Increment [[i]] form=Numbers
+# RUN(TURNS): run-in-shell globalThis.sink = (below, atLeast, count) => { const ends = [0, 1, 7, 7.5, -3, NaN, "4", null, undefined, { valueOf() { return 3; } }]; let said = ""; for (let i = 0; i < ends.length; i++) said += (i ? " " : "") + count(ends[i]); print(said); };
+# TURNS: 0 1 7 8 0 0 4 0 0 3
+# RUN(SHELL): run-in-shell globalThis.sink = (below, atLeast) => { const values = [79, 80, 81, -1, 0, -0, 79.5, 80.5, 2147483647, -2147483648, 4294967376, NaN, Infinity, -Infinity, "79", "81", "x", "", null, undefined, true, false, { valueOf() { return 79; } }, { valueOf() { return 81; } }, [79], [81]]; let said = ""; for (let i = 0; i < values.length; i++) said += (i ? " " : "") + below(values[i], 80) + atLeast(values[i], 80); print(said); };
+# SHELL: 12 21 21 12 12 12 12 21 21 12 21 22 21 12 12 21 22 12 12 22 12 12 12 21 12 21
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="below" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = Less v0, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    Return v5
+  b2():
+    v6 = Integer integer=2
+    Return v6
+}
+function f2 name="atLeast" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = LessEq v3, v0
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    Return v5
+  b2():
+    v6 = Integer integer=2
+    Return v6
+}
+function f3 name="count" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Increment v2
+    Jump -> next b1(v5)
+  b3():
+    Return v2
+}

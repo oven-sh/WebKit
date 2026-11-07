@@ -28,7 +28,7 @@ private:
     };
 
     static BitField bitFieldOf(DateField);
-    TypedPointer fieldAt(CellPointer date, ptrdiff_t offset);
+    const Machine::AbstractHeap& cachedDateTimeIn(TimeZone) const;
 };
 
 } } } // namespace JSC::AOT::Typed

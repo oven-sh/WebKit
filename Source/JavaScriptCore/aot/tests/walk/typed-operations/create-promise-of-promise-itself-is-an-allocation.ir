@@ -1,0 +1,51 @@
+# createPromise of the one built-in Promise reads a `prototype` that nobody can replace: the promise is allocated where the operation stands
+# function make() { return $createPromise(Promise); }  function makeOf(C) { return $createPromise(C); }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewPromise
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: = CreatePromise
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = NewPromise
+# any other constructor has to be asked for its `prototype`
+# RUN(OTHER): walk f2 mechanisms=all
+# OTHER-LABEL: code f2:Body
+# OTHER: = CreatePromise
+# RUN(ASKED): walk f2 mechanisms=all
+# ASKED-NOT: = NewPromise
+# function makeOfArray() { return $createPromise(Array); }
+# RUN(BUILTIN): walk f3 mechanisms=all
+# BUILTIN-LABEL: code f3:Body
+# BUILTIN: = CreatePromise
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="make" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise
+    v1 = CreatePromise v0
+    Return v1
+}
+function f2 name="makeOf" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CreatePromise v0
+    Return v1
+}
+function f3 name="makeOfArray" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = CreatePromise v0
+    Return v1
+}

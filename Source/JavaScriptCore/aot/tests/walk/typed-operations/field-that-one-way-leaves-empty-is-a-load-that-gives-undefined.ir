@@ -1,0 +1,54 @@
+# one way through the constructor leaves the field out, and no class of the row answers to the name: the read is a load that gives undefined for the empty slot, in straight code too. It is no guess and no closed read
+# class P { constructor(v) { if (typeof v === "string") this.x = v; } }  function get(p) { return p.x; }  function set(p, v) { p.x = v; }  const p = new P("a"); get(p); set(p, "b");
+# RUN: walk f2 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# CHECK-LABEL: code f2:Body
+# CHECK: : undefined|string {{*}} = GetSlotOrUndefined {{*}}key="x"
+# RUN(STORE): walk f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# STORE-LABEL: code f3:Body
+# STORE: PutSlotOrAdd {{*}}key="x"
+# RUN(NEVER): walk f2 f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# NEVER-NOT: = PropGet
+# NEVER-NOT: PropSet
+# NEVER-NOT: = GetSlot v
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = String string="a"
+    v4 = Construct v2, -, v3
+    v5 = NewClosure function=f2
+    v6 = Call v5, -, v4 calleeName="get"
+    v7 = NewClosure function=f3
+    v8 = String string="b"
+    v9 = Call v7, -, v4, v8 calleeName="set"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="P" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = TypeTest v1 testedType=string
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v1 key="x"
+    Jump -> next b2()
+  b2():
+    Return v3
+}
+function f2 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f3 name="set" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}

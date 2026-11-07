@@ -8,16 +8,15 @@
 #if ENABLE(AOT)
 
 #include "AOTStubFrontEnds.h"
-#include "AOTStubKey.h"
-#include "AOTThreshold.h"
 
 namespace JSC { namespace AOT {
 
 enum class ConstructSyntax : uint8_t { NewExpression, SuperCall };
 
-AOT_THRESHOLD(unsigned, maxArgumentCountOfUntestedHostFrame, 16);
+inline constexpr unsigned maxArgumentCountOfUntestedHostFrame = 16;
 
 PreludeExit emitCreatePromisePrelude(StubAssembler&);
+PreludeExit emitGetClassPrototypePrelude(StubAssembler&);
 PreludeExit emitGetConstructPrototypePrelude(StubAssembler&);
 PreludeExit emitGetSuperBasePrelude(StubAssembler&);
 

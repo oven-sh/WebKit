@@ -1,0 +1,160 @@
+# the proven ranges of its operands leave a function of Math less to do than its row does: an operand is the answer, an operand drops out, or a plain operator does the same
+# function floored(v) { if (!isInt32(v)) return v; return [Math.floor(v), Math.abs(v & 255), Math.max(v & 255, 0), Math.max(v, v), Math.fround(v & 255)]; }
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArray
+# RUN(NEVER): walk f1 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# NEVER-NOT: = Call
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-NOT: = Call
+# function negative(v) { if (!isInt32(v)) return v; return Math.abs(-1 - (v & 255)); }
+# RUN(NEGATIVE): walk f2 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# NEGATIVE-LABEL: code f2:Body
+# NEGATIVE: = Negate {{*}}form=Integers
+# NEGATIVE-NOT: = Call
+# function hash(x) { if (typeof x !== "number") return x; return Math.imul(x, 31); } the code in line takes two int32, and the function converts as `| 0` does
+# RUN(HASH): walk f3 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# HASH-LABEL: code f3:Body
+# HASH: = ToInt32
+# HASH: = CallInline {{*}}inlineBuiltin=MathImul
+# function small(v) { if (!isInt32(v)) return v; return Math.imul(v & 255, 31); } a product that stays an int32 is the product
+# RUN(SMALL): walk f4 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# SMALL-LABEL: code f4:Body
+# SMALL: = Mul {{*}}form=Integers
+# SMALL-NOT: = Call
+# function squared(x) { if (typeof x !== "number") return x; return Math.pow(x, 2); }
+# RUN(SQUARED): walk f5 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# SQUARED-LABEL: code f5:Body
+# SQUARED: = Mul
+# SQUARED-NOT: = Call
+# function atLeastZero(x) { if (typeof x !== "number") return x; return Math.max(x, 0); } NaN among the operands is the answer, and -0 lies below 0
+# RUN(NUMBER): walk f6 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# NUMBER-LABEL: code f6:Body
+# NUMBER: = CallInline {{*}}inlineBuiltin=MathMax
+# function distance(v) { if (!isInt32(v)) return v; return Math.abs(v); } of 0 the negation is -0
+# RUN(EITHER): walk f7 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# EITHER-LABEL: code f7:Body
+# EITHER: = CallInline
+# EITHER-NOT: = Negate
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = Call v1, -, v2, v3, v4, v5, v6, v7, v8
+    Return v9
+}
+function f1 name="floored" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Builtin builtin=Math
+    v4 = Builtin builtin=MathFloor
+    v5 = Call v4, v3, v2 calleeKey="floor" calleeName="Math.floor"
+    v6 = Integer integer=255
+    v7 = BitAnd v2, v6
+    v8 = Builtin builtin=MathAbs
+    v9 = Call v8, v3, v7 calleeKey="abs" calleeName="Math.abs"
+    v10 = Builtin builtin=MathMax
+    v11 = Integer
+    v12 = Call v10, v3, v7, v11 calleeKey="max" calleeName="Math.max"
+    v13 = Call v10, v3, v2, v2 calleeKey="max" calleeName="Math.max"
+    v14 = Builtin builtin=MathFround
+    v15 = Call v14, v3, v7 calleeKey="fround" calleeName="Math.fround"
+    v16 = NewArray v5, v9, v12, v13, v15 contents=anything
+    Return v16
+  b2(v17):
+    Return v17
+}
+function f2 name="negative" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=255
+    v4 = BitAnd v2, v3
+    v5 = Integer integer=-1
+    v6 = Sub v5, v4
+    v7 = Builtin builtin=Math
+    v8 = Builtin builtin=MathAbs
+    v9 = Call v8, v7, v6 calleeKey="abs" calleeName="Math.abs"
+    Return v9
+  b2(v10):
+    Return v10
+}
+function f3 name="hash" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Builtin builtin=Math
+    v4 = Builtin builtin=MathImul
+    v5 = Integer integer=31
+    v6 = Call v4, v3, v2, v5 calleeKey="imul" calleeName="Math.imul"
+    Return v6
+  b2(v7):
+    Return v7
+}
+function f4 name="small" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=255
+    v4 = BitAnd v2, v3
+    v5 = Builtin builtin=Math
+    v6 = Builtin builtin=MathImul
+    v7 = Integer integer=31
+    v8 = Call v6, v5, v4, v7 calleeKey="imul" calleeName="Math.imul"
+    Return v8
+  b2(v9):
+    Return v9
+}
+function f5 name="squared" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Builtin builtin=Math
+    v4 = Builtin builtin=MathPow
+    v5 = Integer integer=2
+    v6 = Call v4, v3, v2, v5 calleeKey="pow" calleeName="Math.pow"
+    Return v6
+  b2(v7):
+    Return v7
+}
+function f6 name="atLeastZero" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Builtin builtin=Math
+    v4 = Builtin builtin=MathMax
+    v5 = Integer
+    v6 = Call v4, v3, v2, v5 calleeKey="max" calleeName="Math.max"
+    Return v6
+  b2(v7):
+    Return v7
+}
+function f7 name="distance" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Builtin builtin=Math
+    v4 = Builtin builtin=MathAbs
+    v5 = Call v4, v3, v2 calleeKey="abs" calleeName="Math.abs"
+    Return v5
+  b2(v6):
+    Return v6
+}

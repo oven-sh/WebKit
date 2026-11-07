@@ -13,7 +13,6 @@
 #include "AOTImage.h"
 #include "AOTImageFormat.h"
 #include "AOTLinkedFunctions.h"
-#include "AOTProgramTables.h"
 #include "AOTSort.h"
 #include "AOTStubKey.h"
 #include "AOTStubsPolls.h"
@@ -24,6 +23,7 @@
 #include <array>
 #include <bit>
 #include <limits>
+#include <wtf/FastMalloc.h>
 #include <wtf/Lock.h>
 #include <wtf/StdLibExtras.h>
 
@@ -56,7 +56,6 @@ struct SiteWithCode {
     uint32_t firstReadColumnDelta { 0 };
 };
 
-// What CallSiteDetails::frame holds in a row of the kind FirstRead: the frame of a read that has a site, or the columns from a read without one to the site of the row, which is plain and in the frame of the site in front.
 struct FirstReadDetails {
     static FirstReadDetails decode(uint32_t bits) { return { !!(bits & 1), bits >> 1 }; }
     uint32_t encode() const { return value << 1 | hasNoSite; }
@@ -84,22 +83,68 @@ struct StreamHead : CallSiteHead {
     const uint8_t* checkpoints { nullptr };
 };
 
+struct CallSiteScratch {
+    Vector<SiteWithCode, 32> returnSites;
+    Vector<SiteWithCode, 32> laterRunOfReturnSites;
+    Vector<uint8_t> head;
+    Vector<uint8_t> frames;
+    Vector<uint8_t> checkpoints;
+    Vector<uint8_t> sites;
+};
+
 } // anonymous namespace
 
 std::optional<uint32_t> endOfLastReturnSite(const CompiledCode& code)
 {
-    std::optional<uint32_t> end;
-    forEachReturnAddress(code, [&](uint32_t returnOffset, OptionalIndex) {
-        end = end ? std::max(*end, returnOffset) : returnOffset;
+    bool hasReturnSite = false;
+    uint32_t end = 0;
+    forEachReturnAddress(code, [&](uint32_t returnOffset, OptionalIndex) ALWAYS_INLINE_LAMBDA {
+        hasReturnSite = true;
+        end = std::max(end, returnOffset);
     });
-    return end;
+    return hasReturnSite ? std::optional(end) : std::nullopt;
 }
 
-static Vector<SiteWithCode, 32> collectReturnSites(const CompiledCode& code)
+static void mergeRunsOfReturnSites(SiteWithCode* first, SiteWithCode* middle, SiteWithCode* last, Vector<SiteWithCode, 32>& laterRun)
 {
-    Vector<SiteWithCode, 32> returnSites;
+    laterRun.shrink(0);
+    laterRun.append(std::span<const SiteWithCode>(middle, last));
+    const SiteWithCode* firstOfLaterRun = laterRun.span().data();
+    const SiteWithCode* endOfLaterRun = firstOfLaterRun + laterRun.size();
+    SiteWithCode* endOfEarlierRun = middle;
+    SiteWithCode* place = last;
+    while (endOfLaterRun != firstOfLaterRun) {
+        if (endOfEarlierRun != first && endOfLaterRun[-1].returnOffset < endOfEarlierRun[-1].returnOffset)
+            *--place = *--endOfEarlierRun;
+        else
+            *--place = *--endOfLaterRun;
+    }
+}
+
+static void sortReturnSitesKeepingEqualOffsetsInOrder(CallSiteScratch& scratch)
+{
+    SiteWithCode* first = scratch.returnSites.mutableSpan().data();
+    SiteWithCode* last = first + scratch.returnSites.size();
+    SiteWithCode* endOfFirstRun = std::ranges::is_sorted_until(first, last, { }, &SiteWithCode::returnOffset);
+    if (endOfFirstRun == last)
+        return;
+    SiteWithCode* endOfSecondRun = std::ranges::is_sorted_until(endOfFirstRun, last, { }, &SiteWithCode::returnOffset);
+    if (std::ranges::is_sorted_until(endOfSecondRun, last, { }, &SiteWithCode::returnOffset) != last) {
+        AOT::stableSortInLine(scratch.returnSites, { }, &SiteWithCode::returnOffset);
+        return;
+    }
+    mergeRunsOfReturnSites(first, endOfFirstRun, endOfSecondRun, scratch.laterRunOfReturnSites);
+    if (endOfSecondRun != last)
+        mergeRunsOfReturnSites(first, endOfSecondRun, last, scratch.laterRunOfReturnSites);
+}
+
+static void collectReturnSites(CallSiteScratch& scratch, const CompiledCode& code)
+{
+    Vector<SiteWithCode, 32>& returnSites = scratch.returnSites;
+    returnSites.shrink(0);
+    returnSites.reserveCapacity(code.body.returnSites.size() + code.body.firstReadSites.size() + code.sites.faultingAccesses.size() + code.sites.rareLists->pollSites.size());
     std::span<const FirstReadSite> firstReadSites = code.body.firstReadSites.span();
-    forEachReturnAddress(code, [&](uint32_t returnOffset, OptionalIndex site) {
+    forEachReturnAddress(code, [&](uint32_t returnOffset, OptionalIndex site) ALWAYS_INLINE_LAMBDA {
         bool hasFirstRead = !firstReadSites.empty() && firstReadSites.front().returnOffset == returnOffset;
         if (!site) {
             RELEASE_ASSERT(!hasFirstRead);
@@ -116,12 +161,17 @@ static Vector<SiteWithCode, 32> collectReturnSites(const CompiledCode& code)
         returnSites.append({ returnOffset, *site, false, firstReadColumnDelta });
     });
     RELEASE_ASSERT(firstReadSites.empty());
-    AOT::stableSortInLine(returnSites, { }, &SiteWithCode::returnOffset);
-    // findCallSite() hands a return address the site in front of it only if that site says nothing but where it is.
-    for (size_t i = 1; i < returnSites.size(); ++i)
-        RELEASE_ASSERT(returnSites[i].site != returnSites[i - 1].site || !std::ranges::binary_search(code.sites.flaggedSites, returnSites[i].site, { }, &FlaggedSite::site));
-    returnSites.shrink(std::ranges::unique(returnSites, { }, &SiteWithCode::site).begin() - returnSites.begin());
-    return returnSites;
+    sortReturnSitesKeepingEqualOffsetsInOrder(scratch);
+    const SiteWithCode* inOrder = returnSites.span().data();
+    bool repeatsSite = false;
+    for (size_t i = 1; i < returnSites.size(); ++i) {
+        if (inOrder[i].site != inOrder[i - 1].site)
+            continue;
+        RELEASE_ASSERT(!std::ranges::binary_search(code.sites.flaggedSites, inOrder[i].site, { }, &FlaggedSite::site));
+        repeatsSite = true;
+    }
+    if (repeatsSite)
+        returnSites.shrink(std::ranges::unique(returnSites, { }, &SiteWithCode::site).begin() - returnSites.begin());
 }
 
 static size_t inlineFrameCount(const SiteDescription& sites)
@@ -129,28 +179,33 @@ static size_t inlineFrameCount(const SiteDescription& sites)
     return sites.inlineFrames.isEmpty() ? 0 : sites.inlineFrames.size() - 1;
 }
 
-static void appendSites(Vector<uint8_t>& stream, const CompiledCode& code, std::span<const SiteWithCode> returnSites)
+static void encodeSites(CallSiteScratch& scratch, const CompiledCode& code)
 {
     const SiteDescription& sites = code.sites;
+    std::span<const SiteWithCode> returnSites = scratch.returnSites.span();
     size_t numberOfInlineFrames = inlineFrameCount(sites);
     std::span<const FlaggedSite> flaggedSites = sites.flaggedSites.span();
+    const SitePosition* positions = sites.positions.begin();
     uint32_t previousOffset = 0;
     unsigned previousFrame = 0;
     bool previousIsFirstRead = false;
     uint32_t number = sites.numberOfSitesWithoutCode;
-    Vector<uint8_t> siteBytes;
-    siteBytes.reserveInitialCapacity(2 * returnSites.size());
+    scratch.checkpoints.shrink(0);
+    scratch.sites.shrink(0);
+    scratch.sites.grow(returnSites.size() * CallSiteRow::maxSize);
+    uint8_t* firstSiteByte = scratch.sites.mutableSpan().data();
+    WriterOfReservedBytes siteBytes(firstSiteByte);
     unsigned writtenCount = 0;
     for (auto [offset, site, isFirstRead, firstReadColumnDelta] : returnSites) {
         ++number;
         RELEASE_ASSERT(site == number);
         RELEASE_ASSERT(previousIsFirstRead ? offset == previousOffset : offset > previousOffset);
         if (writtenCount && !(writtenCount % SiteCheckpoint::sitesBetween)) {
-            SiteCheckpoint checkpoint { static_cast<uint32_t>(previousOffset / codeOffsetUnit), static_cast<uint32_t>(siteBytes.size()), previousFrame };
-            stream.append(asByteSpan(checkpoint));
+            SiteCheckpoint checkpoint { static_cast<uint32_t>(previousOffset / codeOffsetUnit), static_cast<uint32_t>(siteBytes.end() - firstSiteByte), previousFrame };
+            scratch.checkpoints.append(asByteSpan(checkpoint));
         }
         ++writtenCount;
-        unsigned frame = sites.positions[number].inlineFrame;
+        unsigned frame = positions[number].inlineFrame;
         RELEASE_ASSERT(frame <= numberOfInlineFrames);
         while (!flaggedSites.empty() && flaggedSites.front().site < number)
             flaggedSites = flaggedSites.subspan(1);
@@ -173,21 +228,24 @@ static void appendSites(Vector<uint8_t>& stream, const CompiledCode& code, std::
         previousFrame = frame;
         previousIsFirstRead = isFirstRead;
     }
-    stream.appendVector(siteBytes);
+    scratch.sites.shrink(siteBytes.end() - firstSiteByte);
 }
 
-static void encodeStream(Vector<uint8_t>& stream, const CompiledCode& code, size_t numberOfFunctions)
+static void encodeStream(Vector<uint8_t>& stream, CallSiteScratch& scratch, const CompiledCode& code, size_t numberOfFunctions)
 {
     const SiteDescription& sites = code.sites;
     std::span<const PrologueCheck> prologueChecks = code.frame.prologueChecks.span();
-    for (const Relocation& relocation : code.body.relocations) {
-        if (relocation.space != SymbolSpace::Stub || !isPollAtPrologue(code.body.stubKeys[relocation.symbol]))
-            continue;
-        RELEASE_ASSERT(code.frame.prologueChecks.containsIf([&](const PrologueCheck& check) {
-            return check.callOffset == relocation.offset;
-        }));
+    for (size_t i = 1; i < prologueChecks.size(); ++i)
+        RELEASE_ASSERT(prologueChecks[i - 1].callOffset < prologueChecks[i].callOffset);
+    if (std::ranges::any_of(code.body.stubKeys, isPollAtPrologue)) {
+        for (const Relocation& relocation : code.body.relocations) {
+            if (relocation.space != SymbolSpace::Stub || !isPollAtPrologue(code.body.stubKeys[relocation.symbol]))
+                continue;
+            RELEASE_ASSERT(std::ranges::binary_search(prologueChecks, relocation.offset, { }, &PrologueCheck::callOffset));
+        }
     }
-    Vector<SiteWithCode, 32> returnSites = collectReturnSites(code);
+    collectReturnSites(scratch, code);
+    const Vector<SiteWithCode, 32>& returnSites = scratch.returnSites;
     RELEASE_ASSERT(sites.positions.size() == 1 + static_cast<size_t>(sites.numberOfSitesWithoutCode) + returnSites.size());
     if (returnSites.isEmpty() && prologueChecks.empty())
         return;
@@ -195,50 +253,51 @@ static void encodeStream(Vector<uint8_t>& stream, const CompiledCode& code, size
     CallSiteHead head;
     head.numberOfSites = returnSites.size();
     head.hasPrologueChecks = !prologueChecks.empty();
-    for (const PrologueCheck& check : prologueChecks) {
-        RELEASE_ASSERT(head.prologueChecks.isEmpty() || head.prologueChecks.last().callOffset < check.callOffset);
+    head.prologueChecks.reserveInitialCapacity(prologueChecks.size());
+    for (const PrologueCheck& check : prologueChecks)
         head.prologueChecks.append({ .callOffset = check.callOffset, .resumeOffset = check.resumeOffset });
-    }
     head.numberOfSitesWithoutCode = sites.numberOfSitesWithoutCode;
-    Vector<uint8_t> frames;
     if (sites.hasEncodedInlineFrames()) {
-        const Vector<InlineFrame>& inlineFrames = sites.inlineFrames;
+        std::span<const InlineFrame> inlineFrames = sites.inlineFrames.span();
         RELEASE_ASSERT(inlineFrames.size() - 1 <= sites.numberOfSitesWithoutCode);
+        scratch.frames.shrink(0);
+        scratch.frames.grow((inlineFrames.size() - 1) * InlineFrameRow::maxSize);
+        uint8_t* firstFrameByte = scratch.frames.mutableSpan().data();
+        WriterOfReservedBytes frames(firstFrameByte);
         for (unsigned frame = 1; frame < inlineFrames.size(); ++frame) {
             RELEASE_ASSERT(inlineFrames[frame].parent < frame);
             RELEASE_ASSERT(inlineFrames[frame].callSite == sites.numberOfSitesWithoutCode - (inlineFrames.size() - 1) + frame);
             BuiltinID calledBuiltin = inlineFrames[frame].calledBuiltin;
-            FunctionID function = calledBuiltin ? functionInFramesOf(calledBuiltin, numberOfFunctions) : code.body.callees[inlineFrames[frame].callee];
+            FunctionID function = calledBuiltin ? functionInFramesOf(calledBuiltin, numberOfFunctions) : code.body.callees[inlineFrames[frame].callee].function;
+            RELEASE_ASSERT(function);
             InlineFrameRow { .isTailCall = inlineFrames[frame].isTailCall, .isConstruct = inlineFrames[frame].isConstruct, .parent = inlineFrames[frame].parent, .function = function }.append(frames);
         }
         head.hasInlineFrames = true;
         head.numberOfInlineFrames = inlineFrameCount(sites);
-        head.inlineFrames = frames.span();
+        head.inlineFrames = std::span<const uint8_t>(firstFrameByte, frames.end());
     }
-    head.append(stream);
-    appendSites(stream, code, returnSites.span());
+    scratch.head.shrink(0);
+    head.append(scratch.head);
+    encodeSites(scratch, code);
+    stream.reserveInitialCapacity(scratch.head.size() + scratch.checkpoints.size() + scratch.sites.size());
+    stream.append(scratch.head.span());
+    stream.append(scratch.checkpoints.span());
+    stream.append(scratch.sites.span());
 }
 
 Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions& functions, size_t numberOfFunctions, BuildContext& context)
 {
     Vector<Vector<uint8_t>> streams(functions.size());
-    forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned position) {
-        encodeStream(streams[position], functions[position], numberOfFunctions);
+    ChunksOfIndices chunks = divideIntoChunks(static_cast<unsigned>(functions.size()));
+    forEachIndexInParallel(context.parallelLoops(), chunks.size(), [&](unsigned chunk) {
+        CallSiteScratch scratch;
+        for (unsigned position = chunks.firstIndexOf[chunk]; position < chunks.firstIndexOf[chunk + 1]; ++position)
+            encodeStream(streams[position], scratch, functions[position], numberOfFunctions);
     });
-    uint64_t largestSiteCount = 0;
-    uint64_t largestInlineFrameCount = 0;
-    uint64_t numberOfSites = 0;
     uint64_t numberOfInlineFrames = 0;
-    for (const CompiledCode& code : functions) {
-        largestSiteCount = std::max<uint64_t>(largestSiteCount, code.sites.positions.size() - 1);
-        largestInlineFrameCount = std::max<uint64_t>(largestInlineFrameCount, inlineFrameCount(code.sites));
-        numberOfSites += code.sites.positions.size() - 1;
+    for (const CompiledCode& code : functions)
         numberOfInlineFrames += inlineFrameCount(code.sites);
-    }
-    context.statistics().count(StatisticID::CallSitesEmitted, numberOfSites);
     context.statistics().count(StatisticID::InlineFramesEmitted, numberOfInlineFrames);
-    context.statistics().count(StatisticID::LargestSiteCountInFunction, largestSiteCount);
-    context.statistics().count(StatisticID::LargestInlineFrameCountInFunction, largestInlineFrameCount);
     return streams;
 }
 
@@ -331,8 +390,6 @@ void InlineFrameReader::decode(const Image& image, uint32_t function, unsigned l
         m_frames.unsafeAppendWithoutCapacityCheck(InlineFrameRecord { row, CallSiteIndex(++callSite) });
     }
     m_rest.count -= last - numberOfDecodedFrames;
-    if (m_decoded)
-        m_decoded->m_numberOfFramesDecoded += last - numberOfDecodedFrames;
 }
 
 SiteFrames::SiteFrames(const Image& image, uint32_t function)
@@ -402,7 +459,6 @@ static std::optional<CallSiteRecord> findCallSite(const StreamHead* head, uint32
     uint64_t number = head->numberOfSitesWithoutCode;
     unsigned frame = 0;
     uint64_t count = head->numberOfSites;
-    // The comparison is strict so that the scan starts before the first of two reads at one offset, even when a checkpoint separates them.
     uint64_t precedingCount = 0;
     for (uint64_t end = SiteCheckpoint::numberFor(count); precedingCount < end;) {
         uint64_t middle = precedingCount + (end - precedingCount) / 2;
@@ -421,7 +477,6 @@ static std::optional<CallSiteRecord> findCallSite(const StreamHead* head, uint32
         number += precedingCount * SiteCheckpoint::sitesBetween;
         count -= precedingCount * SiteCheckpoint::sitesBetween;
     }
-    // A return address without a site of its own has the site in front of it, unless that one says more than where it is.
     bool hasSiteInFront = false;
     uint64_t numberInFront = 0;
     unsigned frameInFront = 0;
@@ -459,14 +514,6 @@ std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t retu
     return findCallSite(&*head, returnOffset);
 }
 
-std::optional<CalleeOfSite> Image::calleeOfSiteAt(uint32_t function, CallSiteIndex site) const
-{
-    const ImageFunction& record = this->function(function);
-    if (!record.has(ImageFunctionFlag::HasCalleesOfSites)) [[likely]]
-        return std::nullopt;
-    return SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables).data()).calleeOfSiteAt(site.bits());
-}
-
 std::optional<FunctionID> Image::constructedCalleeAt(uint32_t function, CallSiteIndex site) const
 {
     const ImageFunction& record = this->function(function);
@@ -496,7 +543,6 @@ ReturnSiteInfo Image::returnSiteInfoAt(uint32_t function, uint32_t returnOffset)
 
 std::optional<PrologueCheck> Image::prologueCheckAt(const void* returnAddress) const
 {
-    // Looks up a byte of the call itself: the call may be the last instruction of its body, so the return address may belong to the next body.
     CodeLocation location = locate(static_cast<const uint8_t*>(returnAddress) - 1);
     if (location.kind != CodeKind::Function)
         return std::nullopt;
@@ -562,21 +608,6 @@ std::optional<HandlerRecord> findHandler(std::span<const uint8_t> handlers, Call
     return std::nullopt;
 }
 
-bool catchesExceptions(const Image& image, uint32_t function)
-{
-    const ImageFunction& record = image.function(function);
-    if (!record.has(ImageFunctionFlag::HasHandlers))
-        return false;
-    std::span<const uint8_t> handlers = SideTableParts::read(record, image.section<uint8_t>(ImageSection::SideTables).data()).handlers;
-    const uint8_t* cursor = handlers.data();
-    const uint8_t* end = cursor + handlers.size();
-    while (cursor < end) {
-        if (HandlerRecord { 0, HandlerRow::read(cursor).type }.catchesExceptions())
-            return true;
-    }
-    return false;
-}
-
 static constexpr size_t maxZerosInFrontOfStart = 3;
 static_assert(sitesBetweenPositionCheckpoints * (maxZerosInFrontOfStart + ConstructionStartRow::maxSize + PositionRow::maxSize) <= std::numeric_limits<uint16_t>::max(), "a checkpoint stores the size of a run of positions in 16 bits");
 
@@ -618,42 +649,43 @@ static uint32_t sourceNumber(const SitePosition& position)
     return position.source ? position.source.index() + 1 : 0;
 }
 
-static void appendPosition(Vector<uint8_t>& stream, PositionState& last, const SitePosition& position)
+static void appendConstructionStart(WriterOfReservedBytes& stream, const SitePosition& position, const SiteConstructionStart& constructionStart)
 {
-    uint32_t source = sourceNumber(position);
-    bool startsOnSameLine = position.constructionStartLine == position.line;
-    bool startsInFront = startsOnSameLine ? position.constructionStartColumn < position.column : position.constructionStartLine < position.line;
-    if (position.startIsWhereWritten) {
-        // The same row behind three zeros, counted forward from the site.
-        bool startsBehind = startsOnSameLine ? position.constructionStartColumn > position.column : position.constructionStartLine > position.line;
+    bool startsOnSameLine = constructionStart.line == position.line;
+    bool startsInFront = startsOnSameLine ? constructionStart.column < position.column : constructionStart.line < position.line;
+    if (constructionStart.isWhereWritten) {
+        bool startsBehind = startsOnSameLine ? constructionStart.column > position.column : constructionStart.line > position.line;
         if (startsBehind) {
             for (size_t zeros = 0; zeros < maxZerosInFrontOfStart; ++zeros)
                 stream.append(0);
             ConstructionStartRow start { .isOnSameLine = startsOnSameLine };
             if (startsOnSameLine)
-                start.columnsBack = position.constructionStartColumn - position.column;
+                start.columnsBack = constructionStart.column - position.column;
             else {
-                start.linesBack = position.constructionStartLine - position.line;
-                start.column = position.constructionStartColumn;
+                start.linesBack = constructionStart.line - position.line;
+                start.column = constructionStart.column;
             }
             start.append(stream);
         }
-    } else if (position.constructionStartLine && (startsInFront || position.startIsForCallers)) {
-        // That a site has a place for callers says what the site is, so it is written wherever that place lies.
+    } else if (constructionStart.line && (startsInFront || constructionStart.isForCallers)) {
         stream.append(0);
-        // No row begins with a zero: a start on another line is at least one line back.
-        if (position.startIsForCallers)
+        if (constructionStart.isForCallers)
             stream.append(0);
         startsOnSameLine |= !startsInFront;
         ConstructionStartRow start { .isOnSameLine = startsOnSameLine };
         if (startsOnSameLine)
-            start.columnsBack = startsInFront ? position.column - position.constructionStartColumn : 0;
+            start.columnsBack = startsInFront ? position.column - constructionStart.column : 0;
         else {
-            start.linesBack = position.line - position.constructionStartLine;
-            start.column = position.constructionStartColumn;
+            start.linesBack = position.line - constructionStart.line;
+            start.column = constructionStart.column;
         }
         start.append(stream);
     }
+}
+
+static void appendPosition(WriterOfReservedBytes& stream, PositionState& last, const SitePosition& position)
+{
+    uint32_t source = sourceNumber(position);
     PositionRow row { .isOnSameLine = position.line == last.line && source == last.source };
     if (row.isOnSameLine)
         row.columnChange = static_cast<int64_t>(position.column) - last.column;
@@ -664,7 +696,9 @@ static void appendPosition(Vector<uint8_t>& stream, PositionState& last, const S
         row.column = position.column;
     }
     row.append(stream);
-    last = { position.line, position.column, source };
+    last.line = position.line;
+    last.column = position.column;
+    last.source = source;
 }
 
 OwnPosition OwnPosition::of(const SiteDescription& sites)
@@ -672,49 +706,83 @@ OwnPosition OwnPosition::of(const SiteDescription& sites)
     return { sites.positions[0].line, sourceNumber(sites.positions[0]) };
 }
 
-void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, const uint8_t* callSites, OwnPosition ofFunctionInFront)
+void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, const uint8_t*, OwnPosition ofFunctionInFront)
+{
+    Vector<uint8_t> roomForPositions;
+    encodePositions(stream, roomForPositions, sites, ofFunctionInFront);
+}
+
+void encodePositions(Vector<uint8_t>& stream, Vector<uint8_t>& roomForPositions, const SiteDescription& sites, OwnPosition ofFunctionInFront)
 {
     RELEASE_ASSERT(!sites.positions.isEmpty());
+    const SitePosition* positionsOfSites = sites.positions.begin();
     size_t count = sites.positions.size();
     size_t numberOfInlineFrames = inlineFrameCount(sites);
     size_t numberOfSitesWithoutCode = sites.numberOfSitesWithoutCode;
     RELEASE_ASSERT(numberOfInlineFrames <= numberOfSitesWithoutCode && numberOfSitesWithoutCode < count);
     bool followsInlineFrames = sites.hasEncodedInlineFrames();
-    // The decoder's only way to learn the frame of a site.
-    SiteFrames frames(followsInlineFrames ? callSites : nullptr);
+    const InlineFrame* inlineFrames = sites.inlineFrames.begin();
+    std::span<const SiteConstructionStart> constructionStarts = sites.rareLists->constructionStarts.span();
+    size_t numberOfSuspensionSites = numberOfSitesWithoutCode - numberOfInlineFrames;
+    auto frameOf = [&](size_t site) -> unsigned {
+        if (!followsInlineFrames)
+            return 0;
+        if (site > numberOfSitesWithoutCode)
+            return positionsOfSites[site].inlineFrame;
+        return site > numberOfSuspensionSites ? inlineFrames[site - numberOfSuspensionSites].parent : 0;
+    };
 
-    PositionState start { sites.positions[0].line, sites.positions[0].column, sourceNumber(sites.positions[0]) };
+    PositionState start { positionsOfSites[0].line, positionsOfSites[0].column, sourceNumber(positionsOfSites[0]) };
     Vector<uint8_t> checkpoints;
-    Vector<uint8_t> positions;
-    size_t lastRunEnd = 0;
+    constexpr size_t maxSizeOfPosition = maxZerosInFrontOfStart + ConstructionStartRow::maxSize + PositionRow::maxSize;
+    roomForPositions.shrink(0);
+    roomForPositions.grow((count - 1) * maxSizeOfPosition);
+    uint8_t* firstPositionByte = roomForPositions.mutableSpan().data();
+    WriterOfReservedBytes positions(firstPositionByte);
+    const uint8_t* lastRunEnd = firstPositionByte;
     Vector<PositionState, 8> states;
     states.fill(start, followsInlineFrames ? numberOfInlineFrames + 1 : 1);
+    Vector<uint32_t, 8> checkpointsOfStates;
+    checkpointsOfStates.fill(0, states.size());
+    uint32_t numberOfCheckpoints = 0;
     for (size_t site = 1; site < count; ++site) {
         if (!(site % sitesBetweenPositionCheckpoints)) {
-            size_t bytesSinceLast = positions.size() - lastRunEnd;
-            ASSERT(bytesSinceLast <= sitesBetweenPositionCheckpoints * (maxZerosInFrontOfStart + ConstructionStartRow::maxSize + PositionRow::maxSize));
+            size_t bytesSinceLast = positions.end() - lastRunEnd;
+            ASSERT(bytesSinceLast <= sitesBetweenPositionCheckpoints * maxSizeOfPosition);
             checkpoints.append(static_cast<uint8_t>(bytesSinceLast));
             checkpoints.append(static_cast<uint8_t>(bytesSinceLast >> 8));
-            lastRunEnd = positions.size();
-            states.fill(start);
+            lastRunEnd = positions.end();
+            ++numberOfCheckpoints;
         }
-        appendPosition(positions, states[frames.next()], sites.positions[site]);
+        unsigned frame = frameOf(site);
+        if (std::exchange(checkpointsOfStates[frame], numberOfCheckpoints) != numberOfCheckpoints)
+            states[frame] = start;
+        if (!constructionStarts.empty() && constructionStarts.front().site == site) {
+            appendConstructionStart(positions, positionsOfSites[site], constructionStarts.front());
+            constructionStarts = constructionStarts.subspan(1);
+        }
+        appendPosition(positions, states[frame], positionsOfSites[site]);
     }
+    RELEASE_ASSERT(constructionStarts.empty());
 
+    size_t sizeOfPositions = positions.end() - firstPositionByte;
     bool hasCheckpoints = !checkpoints.isEmpty();
     bool isInOtherSource = start.source != ofFunctionInFront.source;
+    std::array<uint8_t, PositionsHead::maxSize> roomForHead;
+    WriterOfReservedBytes head(roomForHead.data());
     PositionsHead {
         .followsInlineFrames = followsInlineFrames,
         .hasCheckpoints = hasCheckpoints,
-        .size = checkpoints.size() + positions.size(),
+        .size = checkpoints.size() + sizeOfPositions,
         .isInOtherSource = isInOtherSource,
         .lineChange = start.line - (isInOtherSource ? 0 : static_cast<int64_t>(ofFunctionInFront.line)),
         .sourceChange = static_cast<int64_t>(start.source) - ofFunctionInFront.source,
-        .column = sites.positions[0].column,
+        .column = positionsOfSites[0].column,
         .count = hasCheckpoints ? count : 0,
-    }.append(stream);
+    }.append(head);
+    stream.append(std::span<const uint8_t>(roomForHead.data(), head.end()));
     stream.appendVector(checkpoints);
-    stream.appendVector(positions);
+    stream.append(std::span<const uint8_t>(firstPositionByte, sizeOfPositions));
 }
 
 static PositionsEntry readEntry(const uint8_t*& cursor, OwnPosition& ofFunctionInFront)
@@ -819,12 +887,14 @@ std::optional<SourcePosition> decodePosition(const Image& image, uint32_t functi
 }
 
 static Lock rememberedPositionsLock;
-static constinit std::array<RememberedPosition, 64> rememberedPositions WTF_GUARDED_BY_LOCK(rememberedPositionsLock) { };
+static constexpr size_t numberOfRememberedPositions = 1024;
+static RememberedPosition* rememberedPositions WTF_GUARDED_BY_LOCK(rememberedPositionsLock);
 
 void forgetRememberedPositions()
 {
     Locker locker { rememberedPositionsLock };
-    rememberedPositions.fill({ });
+    if (rememberedPositions)
+        std::fill_n(rememberedPositions, numberOfRememberedPositions, RememberedPosition { });
 }
 
 static std::optional<SourcePosition> findPosition(const Image& image, uint32_t function, CallSiteIndex site)
@@ -844,20 +914,12 @@ static std::optional<SourcePosition> findPosition(const Image& image, uint32_t f
 
 std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex site) const
 {
-    if (function >= header().counts.functions) [[unlikely]] {
-        std::optional<SourcePosition> position;
-        uint32_t placesInFront = function - header().counts.functions;
-        forEachTailCallPlace(programTables().placesOfTailCalls(), [&](const TailCallPlace& place) {
-            if (placesInFront--)
-                return IterationStatus::Continue;
-            position = SourcePosition { { place.line, place.column }, place.sourcePlusOne ? ModuleID(place.sourcePlusOne - 1) : ModuleID() };
-            return IterationStatus::Done;
-        });
-        return position;
-    }
-    RememberedPosition& remembered = rememberedPositions[(function * 31 + site.bits()) % rememberedPositions.size()];
+    size_t place = (function * 31 + site.bits()) % numberOfRememberedPositions;
     {
         Locker locker { rememberedPositionsLock };
+        if (!rememberedPositions)
+            rememberedPositions = static_cast<RememberedPosition*>(fastZeroedMalloc(numberOfRememberedPositions * sizeof(RememberedPosition)));
+        const RememberedPosition& remembered = rememberedPositions[place];
         if (remembered.image == this && remembered.function == function && remembered.site == site.bits())
             return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID(), remembered.constructionStart, remembered.startIsForCallers, remembered.startIsWhereWritten };
     }
@@ -867,7 +929,7 @@ std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex
         position = SourcePosition { { position->lineColumn.line, position->lineColumn.column - firstReadColumnDelta }, position->source };
     if (position) {
         Locker locker { rememberedPositionsLock };
-        remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers, position->startIsWhereWritten };
+        rememberedPositions[place] = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers, position->startIsWhereWritten };
     }
     return position;
 }

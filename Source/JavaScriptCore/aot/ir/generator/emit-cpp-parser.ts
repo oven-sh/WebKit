@@ -1,4 +1,4 @@
-import { engineFieldsOf, engineRecordNameOf, engineTypeOf, listFirstWord } from "./cpp-types.ts";
+import { engineFieldsOf, engineRecordNameOf, engineTypeOf } from "./cpp-types.ts";
 import { closureOfZeroTests, presenceTest, printedTypes, zeroFunctions } from "./emit-cpp-printer.ts";
 import { caseWords, convertedTypes } from "./emit-cpp-reader.ts";
 import {
@@ -24,17 +24,22 @@ import type {
   SchemaType,
   Variant,
 } from "./model.ts";
-import { fieldsOf, innermostKindOf, isId, isNested, isWireType, nameOf, payloadWordsOf } from "./model.ts";
+import {
+  entriesOf,
+  fieldsOf,
+  innermostKindOf,
+  isId,
+  isNested,
+  isWireType,
+  nameOf,
+  payloadWordsOf,
+  wireParametersOf,
+} from "./model.ts";
 import { cppIdTypeName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
 import { SchemaError } from "./source.ts";
 
 const brackets = "TokenKind::LeftBracket, TokenKind::RightBracket";
-
-const idValueParsers: ReadonlyMap<string, string> = new Map([
-  ["LayoutSet", "parser.parseLayoutSet()"],
-  ["CalleeSet", "parser.parseCalleeSet()"],
-]);
 
 const patchTranslators: ReadonlyMap<string, string> = new Map([["Type", "type"]]);
 
@@ -96,12 +101,9 @@ function parserHeader(schema: Schema): string[] {
 
 function parsedWord(kind: Kind): string {
   switch (kind.tag) {
-    case "Id": {
-      const value = idValueParsers.get(kind.id.name);
-      if (value !== undefined) return `${value}.index()`;
+    case "Id":
       if (kind.id.record?.isCustomText) return `parser.parse${kind.id.name}Word()`;
       return kind.id.isEngine ? "parser.parseUInt32()" : `parser.parseIDWord(IDPrefix::${kind.id.name})`;
-    }
     case "External":
       return kind.external.form === "id" ? `parser.parse${kind.external.name}().index()` : "parser.parseUInt32()";
     case "Enum":
@@ -139,7 +141,7 @@ function parsedValue(kind: Kind, inAbi = false): string {
   }
   switch (kind.tag) {
     case "Id":
-      return idValueParsers.get(kind.id.name) ?? `${cppIdTypeName(kind.id.name)}(${parsedWord(kind)})`;
+      return `${cppIdTypeName(kind.id.name)}(${parsedWord(kind)})`;
     case "External":
       return kind.external.form === "id"
         ? `parser.parse${kind.external.name}()`
@@ -180,9 +182,11 @@ function parsedList(body: Lines): string[] {
   return [`parser.parseList(${brackets}, [&] {`, ...indent(body), "});"];
 }
 
-function nestedCall(kind: NestedKind, wire: string, engine: string): string {
+function nestedCall(kind: NestedKind, wire: string, engine: string | null): string {
   if (kind.tag === "Variant") return `parseVariant(parser, ${wire});`;
-  return `parser.parseRecord([&] { parseFields(parser, ${hasEngineFields(kind) ? `${wire}, ${engine}` : wire}); });`;
+  if (!hasEngineFields(kind)) return `parser.parseRecord([&] { parseFields(parser, ${wire}); });`;
+  if (engine === null) return `parser.parseRecord([&] { parseWireHalf(parser, ${wire}); });`;
+  return `parser.parseRecord([&] { parseFields(parser, ${wire}, ${engine}); });`;
 }
 
 function engineNestedCall(kind: NestedKind, target: string): string {
@@ -191,7 +195,7 @@ function engineNestedCall(kind: NestedKind, target: string): string {
     : `parser.parseRecord([&] { parseFields(parser, ${target}); });`;
 }
 
-function parseWireSpan(field: Field, element: Kind, engine: string | null): string[] {
+function parseWireSpan(element: Kind, engine: string | null): string[] {
   if (element.tag === "Scalar" && element.scalar === "Byte") return ["Wire::Span span = parser.parseByteString();"];
   if (!isNested(element)) {
     return [
@@ -201,32 +205,25 @@ function parseWireSpan(field: Field, element: Kind, engine: string | null): stri
     ];
   }
   const name = nameOf(element);
-  const hasEngine = hasEngineFields(element);
-  if (hasEngine && engine === null) {
-    throw new SchemaError(
-      field.location,
-      `field ${field.name}: a wire variant cannot hold ${name}, which has engine fields`,
-    );
-  }
+  const keepsEngineFields = engine !== null && hasEngineFields(element);
   return [
     `Vector<Wire::${name}> elements;`,
     ...parsedList([
       `Wire::${name} element;`,
-      ...(hasEngine ? [`${engineTypeOf(element)} engineElement;`] : []),
-      nestedCall(element, "element", "engineElement"),
+      ...(keepsEngineFields ? [`${engineTypeOf(element)} engineElement;`] : []),
+      nestedCall(element, "element", keepsEngineFields ? "engineElement" : null),
       "elements.append(element);",
-      ...(hasEngine ? [`${engine}.append(WTF::move(engineElement));`] : []),
+      ...(keepsEngineFields ? [`${engine}.append(WTF::move(engineElement));`] : []),
     ]),
     `Wire::Span span = parser.builder().appendRecords<Wire::${name}>(elements.span());`,
   ];
 }
 
-function parseWireField(field: Field): string[] {
+function parseWireField(field: Field, engineRecord: string | null): string[] {
   const kind = field.kind;
   const target = `wire.${field.name}`;
-  const engine = `engineFields.${field.name}`;
-  if (kind.tag === "Span")
-    return guarded(field.name, [...parseWireSpan(field, kind.element, engine), `${target} = span;`]);
+  const engine = engineRecord === null ? null : `${engineRecord}.${field.name}`;
+  if (kind.tag === "Span") return guarded(field.name, [...parseWireSpan(kind.element, engine), `${target} = span;`]);
   if (isNested(kind)) return guarded(field.name, [nestedCall(kind, target, engine)]);
   if (kind.tag === "Scalar" && kind.scalar === "Int64")
     return guarded(field.name, [`${target} = parser.parseInt64();`]);
@@ -262,7 +259,7 @@ function cppFunction(signature: string, body: Lines, parametersIfEmpty: Lines = 
 
 function wireRecordFunction(record: SchemaRecord): string[] {
   const body = engineFieldsOf(record).flatMap(field =>
-    field.isEngine ? parseEngineField(field, "engineFields", false) : parseWireField(field),
+    field.isEngine ? parseEngineField(field, "engineFields", false) : parseWireField(field, "engineFields"),
   );
   const engineParameter = record.hasEngineFields ? `, ${engineRecordNameOf(record)}& engineFields` : "";
   return cppFunction(`void parseFields(TextParser& parser, Wire::${record.name}& wire${engineParameter})`, body, [
@@ -275,12 +272,16 @@ function wireCaseField(field: Field, word: number): string[] {
   const kind = field.kind;
   const low = `wire.words[${word}]`;
   const high = `wire.words[${word + 1}]`;
-  if (kind.tag === "Span")
-    return guarded(field.name, [
-      ...parseWireSpan(field, kind.element, null),
-      `${low} = span.start;`,
-      `${high} = span.count;`,
-    ]);
+  if (kind.tag === "Span") {
+    const { element } = kind;
+    if (isNested(element) && hasEngineFields(element)) {
+      throw new SchemaError(
+        field.location,
+        `field ${field.name}: a wire variant cannot hold ${nameOf(element)}, which has engine fields`,
+      );
+    }
+    return guarded(field.name, [...parseWireSpan(element, null), `${low} = span.start;`, `${high} = span.count;`]);
+  }
   const bits = parsedBits(kind);
   if (bits === null) return guarded(field.name, [`${low} = ${parsedWord(kind)};`]);
   return guarded(field.name, [
@@ -417,88 +418,7 @@ function recordParserSource(schema: Schema): string[] {
   return cppSource(['"AOTIRParserInternal.h"', '"AOTSchemaWalkers.h"', "<bit>"], inNamespace("Typed", body));
 }
 
-const entryHelpers = `struct PatchTarget {
-    FunctionID function;
-    BlockID block;
-    ValueID value;
-};
-
-enum class PatchedWord : uint8_t { Unchanged, Type };
-
-static Instruction& instructionAt(PatchContext& context, const PatchTarget& target)
-{
-    Function& function = context.program.at(target.function);
-    if (target.value)
-        return function.edit(target.value);
-    return function.edit(target.block).terminator;
-}
-
-UNUSED_FUNCTION static void patchWord(TextParser& parser, const PatchTarget& target, unsigned word, uint32_t parsed, PatchedWord kind = PatchedWord::Unchanged)
-{
-    parser.addPatch([target, word, parsed, kind](PatchContext& context) {
-        uint32_t translated = parsed;
-        if (kind == PatchedWord::Type)
-            translated = context.type(parsed).index();
-        instructionAt(context, target).setPayloadWordAt(word, translated);
-    });
-}
-
-UNUSED_FUNCTION static void patchWordPair(TextParser& parser, const PatchTarget& target, unsigned word, uint64_t parsed)
-{
-    parser.addPatch([target, word, parsed](PatchContext& context) {
-        instructionAt(context, target).setPayloadWordPairAt(word, parsed);
-    });
-}
-
-UNUSED_FUNCTION static void patchOperand(TextParser& parser, const PatchTarget& target, uint32_t operandIndex, uint32_t parsed)
-{
-    parser.addPatch([target, operandIndex, parsed](PatchContext& context) {
-        instructionAt(context, target).setOperand(operandIndex, ValueID(parsed));
-    });
-}
-
-template<typename Record>
-static void patchRecord(TextParser& parser, const PatchTarget& target, unsigned firstWord, const Record& parsed)
-{
-    parser.addPatch([target, firstWord, parsed](PatchContext& context) {
-        encodePayloadRecord(instructionAt(context, target), firstWord, parsed);
-    });
-}
-
-template<typename Record>
-static void patchEngineFields(TextParser& parser, const PatchTarget& target, unsigned firstWord, const Record& parsed)
-{
-    parser.addPatch([target, firstWord, parsed](PatchContext& context) {
-        Instruction& instruction = instructionAt(context, target);
-        auto record = decodePayloadRecord<Record>(instruction, firstWord);
-        applyEngineFields(context, parsed, record);
-        encodePayloadRecord(instruction, firstWord, record);
-    });
-}
-
-template<typename Record>
-static void patchEngineFieldsOfList(TextParser& parser, const PatchTarget& target, unsigned firstWord, Vector<Record>&& parsed)
-{
-    parser.addPatch([target, firstWord, parsed = WTF::move(parsed)](PatchContext& context) {
-        Instruction& instruction = instructionAt(context, target);
-        PayloadListView<Record> list(instruction.payloadListFrom(firstWord));
-        Vector<Record> records;
-        for (size_t i = 0; i < list.size(); ++i) {
-            records.append(list[i]);
-            applyEngineFields(context, parsed[i], records.last());
-        }
-        instruction.setPayloadListFrom(firstWord, encodePayloadList(records.span()).span());
-    });
-}
-
-UNUSED_FUNCTION static void patchList(TextParser& parser, const PatchTarget& target, unsigned firstWord, Vector<uint32_t>&& words)
-{
-    parser.addPatch([target, firstWord, words = WTF::move(words)](PatchContext& context) {
-        instructionAt(context, target).setPayloadListFrom(firstWord, words.span());
-    });
-}
-
-static void appendWordPair(TextParser& parser, uint64_t bits)
+const entryHelpers = `static void appendWordPair(TextParser& parser, uint64_t bits)
 {
     parser.code().append(static_cast<uint32_t>(bits));
     parser.code().append(static_cast<uint32_t>(bits >> 32));
@@ -556,12 +476,38 @@ static void appendVariadicOperands(TextParser& parser, const OperandWords& opera
     }
 }`.split("\n");
 
-function defaultWireWord(isOptional: boolean): string {
-  return isOptional ? "Wire::none" : "0u";
+function wireHalfOf(record: SchemaRecord): Field[] {
+  return engineFieldsOf(record).filter(field => !field.isEngine);
 }
 
-function patchedKind(kind: Kind): string {
-  return kind.tag === "Id" && patchTranslators.has(kind.id.name) ? `, PatchedWord::${kind.id.name}` : "";
+function recordsParsedByWireHalf(schema: Schema): SchemaRecord[] {
+  const calleesFirst: SchemaRecord[] = [];
+  const seen = new Set<SchemaRecord>();
+  const visit = (kind: Kind): void => {
+    const inner = innermostKindOf(kind);
+    if (inner.tag !== "Record" || !inner.record.hasEngineFields || seen.has(inner.record)) return;
+    seen.add(inner.record);
+    for (const field of wireHalfOf(inner.record)) visit(field.kind);
+    calleesFirst.push(inner.record);
+  };
+  for (const entry of entriesOf(schema).filter(candidate => candidate.isWire)) {
+    for (const parameter of wireParametersOf(entry)) {
+      if (parameter.tag === "Payload") visit(parameter.kind);
+    }
+  }
+  return calleesFirst;
+}
+
+function wireHalfFunction(record: SchemaRecord): string[] {
+  return cppFunction(
+    `static void parseWireHalf(TextParser& parser, Wire::${record.name}& wire)`,
+    wireHalfOf(record).flatMap(field => parseWireField(field, null)),
+    ["parser", "wire"],
+  );
+}
+
+function defaultWireWord(isOptional: boolean): string {
+  return isOptional ? "Wire::none" : "0u";
 }
 
 function parseListElements(element: Kind, target: string): string[] {
@@ -581,7 +527,7 @@ function parseListElements(element: Kind, target: string): string[] {
   ];
 }
 
-function parseStreamList(entry: Entry, parameter: PayloadField, element: Kind): string[] {
+function parseStreamList(parameter: PayloadField, element: Kind): string[] {
   if (!isNested(element) || !isWireType(element)) {
     const words = payloadWordsOf(element);
     return scoped([
@@ -591,46 +537,34 @@ function parseStreamList(entry: Entry, parameter: PayloadField, element: Kind): 
       "parser.code().appendVector(words);",
     ]);
   }
-  const engineType = engineTypeOf(element);
-  const hasEngine = hasEngineFields(element);
   const elementStatements = [
     `Wire::${nameOf(element)} element;`,
-    ...(hasEngine ? [`${engineType} engineElement;`] : []),
-    nestedCall(element, "element", "engineElement"),
+    nestedCall(element, "element", null),
     "appendWireRecord(parser, element);",
     "++count;",
-    ...(hasEngine ? ["engineElements.append(WTF::move(engineElement));"] : []),
   ];
   return scoped([
     "size_t countPosition = parser.code().size();",
     "parser.code().append(0);",
     "uint32_t count = 0;",
-    ...(hasEngine ? [`Vector<${engineType}> engineElements;`] : []),
     ...guarded(parameter.name, parsedList(elementStatements)),
     "parser.code()[countPosition] = count;",
-    ...(hasEngine
-      ? [`patchEngineFieldsOfList<${engineType}>(parser, target, ${listFirstWord(entry)}, WTF::move(engineElements));`]
-      : []),
   ]);
 }
 
-function parseStreamPayload(entry: Entry, parameter: PayloadField): string[] {
+function parseStreamPayload(parameter: PayloadField): string[] {
   const kind = parameter.kind;
   const accepted = `parser.acceptField(${cppLiteral(parameter.name)})`;
-  if (kind.tag === "List") return parseStreamList(entry, parameter, kind.element);
+  if (kind.tag === "List") return parseStreamList(parameter, kind.element);
   if (isNested(kind)) {
-    const engineType = engineTypeOf(kind);
     if (!isWireType(kind)) {
       const parse = guarded(parameter.name, [engineNestedCall(kind, "record")]);
-      return scoped([`${engineType} record;`, ...parse, "appendPayloadRecord(parser.code(), record);"]);
+      return scoped([`${engineTypeOf(kind)} record;`, ...parse, "appendPayloadRecord(parser.code(), record);"]);
     }
-    const hasEngine = hasEngineFields(kind);
     return scoped([
       `Wire::${nameOf(kind)} wire;`,
-      ...(hasEngine ? [`${engineType} engineFields;`] : []),
-      ...guarded(parameter.name, [nestedCall(kind, "wire", "engineFields")]),
+      ...guarded(parameter.name, [nestedCall(kind, "wire", null)]),
       "appendWireRecord(parser, wire);",
-      ...(hasEngine ? [`patchEngineFields<${engineType}>(parser, target, ${parameter.firstWord}, engineFields);`] : []),
     ]);
   }
   const bits = parsedBits(kind);
@@ -638,43 +572,13 @@ function parseStreamPayload(entry: Entry, parameter: PayloadField): string[] {
   return [`parser.code().append(${accepted} ? ${parsedWord(kind)} : ${defaultWireWord(parameter.isOptional)});`];
 }
 
-function parseEnginePayload(entry: Entry, parameter: PayloadField): string[] {
-  const kind = parameter.kind;
-  const word = parameter.firstWord;
-  if ((kind.tag === "List" || isNested(kind)) && namesTypes(kind)) {
-    const problem = `engine field ${parameter.name} of ${entry.name} holds a type id inside a list or a record, which a patch does not translate`;
-    throw new SchemaError(parameter.location, problem);
-  }
-  if (kind.tag === "List") {
-    return guarded(parameter.name, [
-      "Vector<uint32_t> words;",
-      ...parsedList(parseListElements(kind.element, "words")),
-      `patchList(parser, target, ${listFirstWord(entry)}, WTF::move(words));`,
-    ]);
-  }
-  if (isNested(kind)) {
-    const patch = `patchRecord(parser, target, ${word}, record);`;
-    return guarded(parameter.name, [`${engineTypeOf(kind)} record;`, engineNestedCall(kind, "record"), patch]);
-  }
-  const bits = parsedBits(kind);
-  if (bits !== null) return guarded(parameter.name, [`patchWordPair(parser, target, ${word}, ${bits});`]);
-  return guarded(parameter.name, [`patchWord(parser, target, ${word}, ${parsedWord(kind)}${patchedKind(kind)});`]);
-}
-
 function parseEntry(entry: Entry): string[] {
+  if (!entry.isWire) return ["parser.fail();", "break;"];
   const statements: string[] = [];
   let position = 0;
-  for (const parameter of entry.parameters) {
+  for (const parameter of wireParametersOf(entry)) {
     if (parameter.tag === "Payload") {
-      statements.push(
-        ...(parameter.isEngine ? parseEnginePayload(entry, parameter) : parseStreamPayload(entry, parameter)),
-      );
-    } else if (parameter.isEngine && parameter.isVariadic) {
-      continue;
-    } else if (parameter.isEngine) {
-      statements.push(
-        ...guarded(parameter.name, [`patchOperand(parser, target, ${parameter.index}, parser.parseValueUseWord());`]),
-      );
+      statements.push(...parseStreamPayload(parameter));
     } else if (parameter.isVariadic) {
       statements.push(`appendVariadicOperands(parser, operands, ${position});`);
     } else {
@@ -689,20 +593,16 @@ function parseEntry(entry: Entry): string[] {
   return [...statements, "break;"];
 }
 
-function entryFunction(entries: readonly Entry[], enumName: string, subject: string, isTerminator: boolean): string[] {
+function entryFunction(entries: readonly Entry[], enumName: string, subject: string): string[] {
   return [
     `void parseFields(TextParser& parser, ${enumName} ${subject})`,
     "{",
-    ...indent([
-      `PatchTarget target { parser.currentFunction(), parser.currentBlock(), ${isTerminator ? "{ }" : "parser.currentValue()"} };`,
-      "OperandWords operands = parseOperands(parser);",
-      `switch (${subject}) {`,
-    ]),
+    ...indent(["OperandWords operands = parseOperands(parser);", `switch (${subject}) {`]),
     ...groupedCases(
       enumName,
       entries.map(entry => ({ label: entry.name, body: parseEntry(entry) })),
     ),
-    `${indentation}}`,
+    ...indent(["}", ...conditional("parser.atField()", ["parser.fail();"])]),
     "}",
   ];
 }
@@ -710,8 +610,9 @@ function entryFunction(entries: readonly Entry[], enumName: string, subject: str
 function entryParserSource(schema: Schema): string[] {
   const body = blocks(
     entryHelpers,
-    entryFunction(schema.operations, "Opcode", "opcode", false),
-    entryFunction(schema.terminators, "TerminatorKind", "kind", true),
+    ...recordsParsedByWireHalf(schema).map(wireHalfFunction),
+    entryFunction(schema.operations, "Opcode", "opcode"),
+    entryFunction(schema.terminators, "TerminatorKind", "kind"),
   );
   return cppSource(['"AOTIRParserInternal.h"', "<algorithm>", "<array>", "<bit>"], inNamespace("Typed", body));
 }

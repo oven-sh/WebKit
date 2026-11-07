@@ -1,0 +1,12 @@
+# the same program with guesses withheld, and with calls of built-ins withheld: no test stands at the open, and the iteration goes by the protocol; no step follows the last and no close finds it done, so its words are values and no cell is made
+# PROGRAM-OF: generator-is-asked-once-where-the-loop-opens.ir
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls+BuiltinCalls
+# WITHHELD-NOT: IsUnmodifiedGenerator
+# WITHHELD-NOT: StepGenerator
+# RUN(CELL): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls+BuiltinCalls
+# CELL: key="next"
+# RUN(NOCELL): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls+BuiltinCalls
+# NOCELL-NOT: NewHeapWords
+# RUN(BUILTINS): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls
+# BUILTINS-NOT: IsUnmodifiedGenerator
+# BUILTINS-NOT: StepGenerator

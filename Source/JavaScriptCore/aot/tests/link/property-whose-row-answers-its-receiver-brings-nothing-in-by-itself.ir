@@ -1,0 +1,21 @@
+# const Maker = Array[Symbol.species];
+# Nothing is asked of what the read gives: nothing of the library comes in.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="ArrayConstructor.js" displayPath="ArrayConstructor.js" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayConstructorFrom function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = PropGet v0 key=@@species
+    v2 = Undefined
+    Return v2
+}
+function f1 name="from" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=ArrayConstructorFrom thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

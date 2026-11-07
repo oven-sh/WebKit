@@ -1,0 +1,6 @@
+# the same program with folding withheld: the comparison is asked twice, and both sides of the second branch are walked
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = Less
+# CHECK: = Call
+# PROGRAM-OF: branch-decided-on-the-way-is-a-jump.ir

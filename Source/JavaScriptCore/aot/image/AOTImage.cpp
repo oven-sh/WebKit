@@ -11,7 +11,6 @@
 #include "AOTRegExpRecord.h"
 #include "AOTStubBlob.h"
 #include "AOTStubDescriptor.h"
-#include "AOTTraceFrame.h"
 #include "JSCellButterfly.h"
 #include "MarkedBlockCage.h"
 #include "Options.h"
@@ -19,7 +18,6 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
-#include <wtf/CheckedArithmetic.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
@@ -37,7 +35,6 @@ std::atomic<const Image*> Image::s_lastPublished { nullptr };
 
 static thread_local const Image* t_currentImage { nullptr };
 static thread_local bool t_usesNoImage { false };
-// Of a process with one image: a thread that has named none runs that one, or helps a thread that does.
 static std::atomic<const Image*> s_onlyImage { nullptr };
 static Lock s_publishedImagesLock;
 static Vector<const Image*>& publishedImages() WTF_REQUIRES_LOCK(s_publishedImagesLock)
@@ -117,7 +114,7 @@ using ImageStringHeaderOrRecord = ImageStringHeader;
 #endif
 
 static constexpr size_t elementSizes[] = {
-#define AOT_SIZE_OF_ELEMENT(name, Element, statistic) sizeof(Element),
+#define AOT_SIZE_OF_ELEMENT(name, Element) sizeof(Element),
     FOR_EACH_AOT_IMAGE_SECTION(AOT_SIZE_OF_ELEMENT)
 #undef AOT_SIZE_OF_ELEMENT
 };
@@ -128,6 +125,8 @@ static bool hasMatchingHeapOptions(const ImageHeader& header)
     return std::bit_cast<uint64_t>(header.heap.sizeClassProgression) == std::bit_cast<uint64_t>(Options::sizeClassProgressionWithAOT())
         && header.heap.markedBlockCageShift == MarkedBlockCage::shift;
 }
+
+static_assert(offsetof(ProgramTables, instanceSizes) + offsetof(InstanceSizes, sizeOfMethodTable) == 24, "Bun's test/aot/cli/compiled-image.ts lists this member");
 
 static uint64_t endOfCodePart(uint32_t offset, uint32_t size)
 {
@@ -161,8 +160,6 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
         if (range.offset % imageSectionAlignment || range.offset < end || rangeEnd > header.codeOffset)
             return false;
         if (range.size % elementSizes[index])
-            return false;
-        if (static_cast<ImageSection>(index) == ImageSection::MethodTable && range.size && range.offset % imagePageSize)
             return false;
         end = rangeEnd;
     }
@@ -208,14 +205,16 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
         && closures.omittedWordCount <= closures.first
         && closures.first <= closures.end
         && numberOfElements(ImageSection::ClosureWords) == closures.end - closures.omittedWordCount
-        && numberOfElements(ImageSection::StringConstants) == tables.instanceSizes.numberOfStringCells
-        && header.numbers.firstStringHeader <= header.numbers.endOfIdentifiers
+        && numberOfElements(ImageSection::StringConstants) == 2 * static_cast<uint64_t>(tables.instanceSizes.numberOfStringCells)
+        && numberOfElements(ImageSection::NamesOfSites) == tables.instanceSizes.numberOfSiteCaches
+        && tables.globalBindings().size() == tables.instanceSizes.numberOfGlobalBindings
+        && tables.instanceSizes.sizeOfMethodTable <= rangeOf(ImageSection::MethodTable).size
+        && (!tables.instanceSizes.sizeOfMethodTable || !(rangeOf(ImageSection::MethodTable).offset % imagePageSize))
         && header.numbers.endOfIdentifiers <= header.numbers.endOfStringHeaders
         && numberOfElements(ImageSection::Identifiers) == header.numbers.endOfIdentifiers
-        && numberOfElements(ImageSection::StringHeaders) >= header.numbers.endOfStringHeaders - header.numbers.firstStringHeader;
+        && numberOfElements(ImageSection::StringHeaders) >= header.numbers.endOfStringHeaders;
 }
 
-// The word `cpu` names another CPU than the engine's own. RecordedOptions::isCompatibleWithProcess() asks whether this one has what the image needs.
 static bool hasStampOfThisRuntime(const ImageHeader& header, size_t size, const std::array<uint8_t, 16>& identity)
 {
     if (header.stamp == imageStamp(CPUFeatureSet::buildTarget(), identity))
@@ -298,7 +297,7 @@ std::unique_ptr<Image> Image::create(std::span<const uint8_t> bytes, const uint8
     return std::unique_ptr<Image>(new Image(bytes, code));
 }
 
-void Image::publish(std::unique_ptr<Image>&& unpublishedImage, std::span<const uint8_t> allImages)
+void Image::publish(std::unique_ptr<Image>&& unpublishedImage)
 {
     std::unique_ptr<Image> image = WTF::move(unpublishedImage);
     RELEASE_ASSERT(image);
@@ -306,7 +305,7 @@ void Image::publish(std::unique_ptr<Image>&& unpublishedImage, std::span<const u
     Vector<const Image*>& images = publishedImages();
     image->m_number = images.size();
     if (images.isEmpty()) {
-        JSCellButterfly::setStorageOutsideHeap(allImages.empty() ? image->m_bytes : allImages);
+        JSCellButterfly::setStorageOutsideHeap(image->m_bytes);
         Thread::setSurvivesFailedCreation();
     }
     RELEASE_ASSERT(JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data())) && JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data() + image->m_bytes.size() - 1)));
@@ -316,74 +315,6 @@ void Image::publish(std::unique_ptr<Image>&& unpublishedImage, std::span<const u
     s_onlyImage.store(images.isEmpty() ? image.get() : nullptr, std::memory_order_release);
     s_current.store(images.isEmpty() ? image.get() : differsByThread(), std::memory_order_release);
     images.append(image.release());
-}
-
-void Image::publishAbove(const Image& first, std::unique_ptr<Image>&& unpublishedImage)
-{
-    std::unique_ptr<Image> image = WTF::move(unpublishedImage);
-    RELEASE_ASSERT(image && &first.first() == &first);
-    Locker locker { s_publishedImagesLock };
-    Vector<const Image*>& images = publishedImages();
-    const Image& below = first.last();
-    image->m_number = images.size();
-    image->m_first = &first;
-    image->m_position = below.m_position + 1;
-    image->m_layoutIndicesBelow = WTF::checkedSum<uint32_t>(below.m_layoutIndicesBelow, below.programTables().numberOfLayoutIndices);
-    // The table of modules ends with a record that is no module.
-    image->m_modulesBelow = WTF::checkedSum<uint32_t>(below.m_modulesBelow, below.programTables().modules().size() - 1);
-    RELEASE_ASSERT(JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data())) && JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data() + image->m_bytes.size() - 1)));
-    image->m_publishedBefore = s_lastPublished.load(std::memory_order_relaxed);
-    s_lastPublished.store(image.get(), std::memory_order_release);
-    // Which of the images a thread runs changes as calls go from one to the other.
-    g_imagesShareRealms = true;
-    s_current.store(differsByThread(), std::memory_order_release);
-    below.m_above.store(image.get(), std::memory_order_release);
-    images.append(image.release());
-}
-
-const Image& Image::last() const
-{
-    const Image* image = this;
-    while (const Image* above = image->above())
-        image = above;
-    return *image;
-}
-
-const Image* Image::atPosition(unsigned position) const
-{
-    const Image* image = m_first;
-    while (image && image->m_position != position)
-        image = image->above();
-    return image;
-}
-
-const Image* Image::findInListByCodeAddress(const void* address) const
-{
-    for (const Image* image = m_first; image; image = image->above()) {
-        if (std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->m_code) < image->header().codeSize)
-            return image;
-    }
-    return nullptr;
-}
-
-const Image& Image::holderInListOf(const void* address) const
-{
-    for (const Image* image = m_first; image; image = image->above()) {
-        if (std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->m_bytes.data()) < image->m_bytes.size())
-            return *image;
-    }
-    // What a build has not put into the bytes of an image belongs to the one that asks.
-    return *this;
-}
-
-const Image& Image::holderOfStringHeader(uint32_t number) const
-{
-    const Image* image = m_first;
-    while (number >= image->header().numbers.endOfStringHeaders) {
-        image = image->above();
-        RELEASE_ASSERT(image);
-    }
-    return *image;
 }
 
 std::span<const uint8_t> Image::ffiDirectory() const
@@ -458,7 +389,6 @@ const void* Image::stubAddress(StubKey key) const
     return sharedCodeCopy(0) + address->offset;
 }
 
-// The family is the most significant part of a key, so the stubs of a family lie side by side, by form and then by count.
 std::span<const StubAddressInImage> Image::stubAddressesOf(StubFamily family) const
 {
     auto addresses = std::ranges::equal_range(stubAddressesSortedWith(family), family, { }, [](const StubAddressInImage& address) {
@@ -489,7 +419,6 @@ bool Image::hasFrameAtReturnOffset(uint32_t function, const SideTableParts& part
     if (!returnOffset)
         return false;
     if constexpr (!hasFixedInstructionSize) {
-        // The fault handler makes the address of a faulting instruction plus sizeOfNearCall the return address, whatever the length of the instruction.
         constexpr uint8_t opcodeOfNearCall = 0xe8;
         if (returnOffset >= sizeOfNearCall && codeOf(function)[returnOffset - sizeOfNearCall] != opcodeOfNearCall) {
             std::optional<FaultSite> fault = faultSiteAt(codeOf(function) + (returnOffset - sizeOfNearCall));
@@ -500,11 +429,11 @@ bool Image::hasFrameAtReturnOffset(uint32_t function, const SideTableParts& part
     return parts.hasFrameAt(returnOffset - 1);
 }
 
-static std::span<const uint8_t> bytesOf(const StringImpl& string) { return string.is8Bit() ? asBytes(string.span8()) : asBytes(string.span16()); }
+static std::span<const uint8_t> characterBytesOf(const StringImpl& string) { return string.is8Bit() ? asBytes(string.span8()) : asBytes(string.span16()); }
 
 bool Image::containsCharactersOf(const StringImpl& string) const
 {
-    uintptr_t characters = std::bit_cast<uintptr_t>(bytesOf(string).data());
+    uintptr_t characters = std::bit_cast<uintptr_t>(characterBytesOf(string).data());
     return characters - std::bit_cast<uintptr_t>(m_bytes.data()) < m_bytes.size();
 }
 
@@ -513,11 +442,10 @@ bool isCompiledCodePC(const void* pc)
     return !!imageCodeOffset(pc);
 }
 
-// Asked by a process that is crashing too, on any of its threads: where images share realms the word of the thread may name another image, or none.
 static const Image* imageWithCodeAt(const void* address)
 {
     const Image* image = Image::current();
-    if (!image || image->sharesRealms()) [[unlikely]]
+    if (!image) [[unlikely]]
         return Image::findByCodeAddress(address);
     return image;
 }

@@ -9,12 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinCells.h"
-#include "AOTCheckedFrameCells.h"
 #include "AOTClassTable.h"
 #include "AOTClassToken.h"
 #include "AOTClosure.h"
 #include "AOTErrorMessages.h"
-#include "AOTHeapHooks.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"
@@ -25,9 +23,9 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTPendingStars.h"
+#include "AOTPropertyWalk.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTRuntimeTable.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "AOTThisAllocationInlines.h"
 #include "AOTUnwinding.h"
@@ -38,6 +36,7 @@
 #include "JSCellButterfly.h"
 #include "Symbol.h"
 #include <algorithm>
+#include <ranges>
 #include <wtf/text/SymbolImpl.h>
 
 namespace JSC { namespace AOT {
@@ -47,13 +46,6 @@ static const LayoutData& classLayoutAt(const ClassTable& classes, uint32_t class
     const LayoutData* classLayout = classes.classWithIndex(classIndex);
     RELEASE_ASSERT(classLayout);
     return *classLayout;
-}
-
-// What these operations make on demand stays on the heap and names the function: the prototype object as its constructor, the remembered allocation as its owner.
-static ALWAYS_INLINE void validateFunctionIsNotInFrame(VM& vm, const JSCell* functionCell)
-{
-    if (validatesRuntime(vm) || CheckedFrameCells::isInUse()) [[unlikely]]
-        validateFunctionCellIsNotInFrame(vm, functionCell);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTResolveHeritage, EncodedJSValue, (Instance* instance, EncodedJSValue heritage))
@@ -68,7 +60,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewClass, JSCell*, (Instance* instance, uin
     AOT_OPERATION_BEGIN(instance, entry);
     ClassTable& classes = instance->state->objects->classes;
     Closure* closure = cellArgument<Closure>(objectArgument(constructor, entry), entry);
-    validateFunctionIsNotInFrame(vm, closure);
     const LayoutData& classLayout = classLayoutAt(classes, requestAt<NewClassRequest>(instance, request).classIndex);
     RELEASE_ASSERT(closure->function() == FunctionID(classLayout.classData().classConstructor));
     closure = classes.classObjectForEvaluation(closure, classLayout);
@@ -81,11 +72,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetClassPrototype, JSCell*, (Insta
 {
     constexpr Entry entry = Entry::operationAOTGetClassPrototype;
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
-    validateFunctionIsNotInFrame(vm, classObject);
-    JSValue prototype = cellArgument<Closure>(classObject, entry)->prototypeProperty(vm);
-    if (!prototype || !prototype.isObject()) [[unlikely]]
+    JSCell* result = instance->state->objects->classes.prototypeOfClassObject(vm, cellArgument<Closure>(classObject, entry));
+    if (!result) [[unlikely]]
         crashOnWrongOperand(entry);
-    JSCell* result = asObject(prototype);
     OPERATION_RETURN(scope, result);
 }
 
@@ -112,12 +101,10 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototy
     constexpr Entry entry = Entry::operationAOTGetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
     JSObject* target = objectArgument(newTarget, entry);
-    validateFunctionIsNotInFrame(vm, target);
     if (auto* closure = dynamicDowncast<Closure>(target); closure && Instance::owning(closure) == instance && FunctionTables::hasPrototypePropertyAtCreation(closure->kind())) {
         ClassTable& classes = instance->state->objects->classes;
         JSObject* prototype = classes.prototypeForInstancesOf(vm, closure);
         classes.rememberPlaceOfPrototypeProperty(vm, closure, prototype);
-        // The first construction defines the class of a constructor function, which arms the guards that its stores are compiled under.
         if (const LayoutData* classLayout = classes.classConstructedBy(classes.functionOfOwnClosure(*closure)); classLayout && !classes.isDefinedByClass(*classLayout)) {
             DeferGCForAWhile deferGC(vm);
             classes.classPrototypeOfInstances(vm, *classLayout);
@@ -126,7 +113,6 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototy
     }
     JSValue prototype = target->get(globalObject, vm.propertyNames->prototype);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    instance->state->objects->classes.rememberPrototypeOfClassOfOtherImage(vm, target, prototype);
     if (prototype.isObject())
         OPERATION_RETURN(scope, asObject(prototype));
     JSGlobalObject* realm = getFunctionRealm(globalObject, target);
@@ -138,29 +124,29 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
 {
     constexpr Entry entry = Entry::operationAOTSetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
-    DeferGC deferGC(vm);
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]]
+        vm.heap.cage().tryTakeBackOutOfMemoryError(vm);
     ObjectModel& objects = *instance->state->objects;
-    // The stub that looks at the prototype first has allocated nothing.
     Object* allocated = object ? cellArgument<Object>(object, entry) : uncheckedDowncast<Object>(objects.structures.allocate(vm, allocation));
-    JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField, allocation);
+    size_t numberOfStructuresBefore = objects.structures.numberOfStructuresMade();
+    JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField);
     if (result == allocated)
         objects.structures.predictStructure(vm, allocation, uncheckedDowncast<CompiledStructure>(result->structure()));
-    OPERATION_RETURN(scope, result);
+    if (Object* made = !object && holdsNoField ? compiledObjectOrNull(result) : nullptr; made && objects.structures.structureIDOf(allocation) != made->structureID() && objects.structures.numberOfStructuresMade() == numberOfStructuresBefore)
+        objects.classes.rememberInstanceBelow(vm, allocation, cellArgument<JSObject>(prototype, entry), *made, result == allocated ? instance->state->tables.allocations()[allocation].size() : made->layout().size);
+    vm.writeBarrier(result);
+    OPERATION_RETURN(scope, newCellForCompiledCode(vm, result));
 }
 
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisSlow(Instance*, JSCell* constructor, JSCell* newTarget);
-static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createCompiledThis(Instance*, JSCell* constructor, JSCell* newTarget);
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisOfOtherNewTarget(Instance*, JSCell* constructor, JSCell* newTarget);
 
-// `new f()`: asks nothing about a second function, so what it looks at fits the registers that a call may clobber and it saves none.
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSCell*, (Instance* instance, JSCell* constructor, JSCell* newTarget))
 {
     if (constructor != newTarget) [[unlikely]]
         [[clang::musttail]] return createThisOfOtherNewTarget(instance, constructor, newTarget);
     VM& vm = *instance->vm;
-    if (Structure* structure = rememberedStructureOfThis(vm, newTarget, newTarget)) [[likely]] {
-        if (compiledLayoutOrNull(structure))
-            [[clang::musttail]] return createCompiledThis(instance, constructor, newTarget);
+    if (Structure* structure = rememberedStructureOfThis(vm, newTarget, newTarget); structure && !compiledLayoutOrNull(structure)) {
         if (JSObject* object = tryCreateFinalObjectInline(vm, structure)) [[likely]]
             return { object, nullptr };
     }
@@ -170,20 +156,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSCell*, (Instance* instance, J
 static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisOfOtherNewTarget(Instance* instance, JSCell* constructor, JSCell* newTarget)
 {
     VM& vm = *instance->vm;
-    if (Structure* structure = rememberedStructureOfThis(vm, constructor, newTarget)) [[likely]] {
-        if (compiledLayoutOrNull(structure))
-            [[clang::musttail]] return createCompiledThis(instance, constructor, newTarget);
+    if (Structure* structure = rememberedStructureOfThis(vm, constructor, newTarget); structure && !compiledLayoutOrNull(structure)) {
         if (JSObject* object = tryCreateFinalObjectInline(vm, structure)) [[likely]]
             return { object, nullptr };
     }
-    [[clang::musttail]] return createThisSlow(instance, constructor, newTarget);
-}
-
-static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createCompiledThis(Instance* instance, JSCell* constructor, JSCell* newTarget)
-{
-    Structure* structure = uncheckedDowncast<JSFunction>(newTarget)->rareData()->compiledAllocationStructure();
-    if (JSObject* object = tryCreateCompiledObjectInline(*instance, structure, *compiledLayoutOrNull(structure))) [[likely]]
-        return { object, nullptr };
     [[clang::musttail]] return createThisSlow(instance, constructor, newTarget);
 }
 
@@ -192,8 +168,6 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisSlow(Inst
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCreateThis);
     JSObject* constructorObject = cellArgument<JSObject>(constructor, Entry::operationAOTCreateThis);
     JSObject* newTargetObject = cellArgument<JSObject>(newTarget, Entry::operationAOTCreateThis);
-    validateFunctionIsNotInFrame(vm, constructorObject);
-    validateFunctionIsNotInFrame(vm, newTargetObject);
     OPERATION_RETURN(scope, instance->state->objects->classes.createThis(globalObject, constructorObject, newTargetObject));
 }
 
@@ -201,6 +175,7 @@ JSCellButterfly* ClassToken::create(VM& vm, const LayoutData& classLayout)
 {
     JSCellButterfly* butterfly = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, firstNameSlot + classLayout.numberOfFields);
     butterfly->setIndex(vm, classIndexSlot, jsNumber(classLayout.index));
+    vm.aotState().someClassHasPrivateNames = true;
     return butterfly;
 }
 
@@ -218,14 +193,12 @@ static PropertyOffset offsetAt(int32_t location)
     return static_cast<PropertyOffset>(firstOutOfLineOffset + offsetInButterfly(firstOutOfLineOffset) - location / static_cast<int32_t>(sizeof(EncodedJSValue)));
 }
 
-// The object whose Structure says where the private names lie that no field holds. A class whose parent the compiler does not know has a layout without the parent's names: its instances keep them among their extra properties.
 static JSObject* holderOfNamesWithoutField(JSObject* object)
 {
     Object* compiledObject = compiledObjectOrNull(object);
     return compiledObject ? extraPropertiesIfMade(*compiledObject) : object;
 }
 
-// The offset of the value, if a record for the object's Structure says that the object has the name and belongs to this evaluation.
 static std::optional<PropertyOffset> findInKnownStructure(JSCellButterfly* token, uint32_t field, JSObject* object)
 {
     JSValue records = token->get(ClassToken::knownStructuresSlot);
@@ -263,7 +236,6 @@ static void addKnownStructure(VM& vm, JSCellButterfly* token, uint32_t field, St
     }
 }
 
-// What compiled code does by itself for the next object of the Structure. The name is the declared one, and the Structure before lacks it and every name that this evaluation has made for itself so far.
 static void rememberDefinition(VM& vm, JSCellButterfly* token, uint32_t field, Structure* before, Structure* after, std::optional<PropertyOffset> brand)
 {
     JSValue records = token->get(ClassToken::knownStructuresSlot);
@@ -294,7 +266,6 @@ static void rememberDefinition(VM& vm, JSCellButterfly* token, uint32_t field, S
     }
 }
 
-// The layout of the object has no field for the name. Compiled code does the same for the next object of the Structure `before`: that Structure says which layout it is, and its successor names the Structure that the extra properties come to.
 static void rememberDefinitionAmongExtraProperties(VM& vm, JSCellButterfly* token, uint32_t field, Object& object, const CompiledStructure& before, JSObject* extraBefore, Structure* extraStructureBefore, std::optional<PropertyOffset> brand)
 {
     JSObject* extra = extraPropertiesIfMade(object);
@@ -306,7 +277,6 @@ static void rememberDefinitionAmongExtraProperties(VM& vm, JSCellButterfly* toke
     const CompiledStructure& after = object.compiledStructure();
     if (!after.extraPropertiesSlot() || after.extraPropertiesStructureID() != extra->structureID())
         return;
-    // The first name lies in the first word of the cell that compiled code makes.
     if (!extraBefore && (extra->structure()->transitionOffset() != 0 || brand))
         return;
     rememberDefinition(vm, token, field, extraStructureBefore, extra->structure(), brand);
@@ -320,7 +290,6 @@ static unsigned placeOfStructureWithoutName(StructureID structure, uint32_t fiel
     return ((structure.bits() >> 4) + field) % numberOfStructuresWithoutNames * 2;
 }
 
-// An object that is no compiled object has the properties that its Structure lists, unless that is a dictionary: a Structure that lacks a name lacks it for ever. The token keeps the Structure, so its number is given to no other.
 static bool isKnownToLackName(JSCellButterfly* token, uint32_t field, JSObject* object)
 {
     JSValue places = token->get(ClassToken::structuresWithoutNamesSlot);
@@ -348,17 +317,18 @@ static const LayoutData& declaringLayoutOf(State& state, JSCellButterfly* token)
 static const LayoutData& declaringLayoutOf(State& state, const Object& object, JSCellButterfly* token)
 {
     const LayoutData& layout = object.layout();
-    // Every image numbers its classes from nought: an object of another image is of no class of this one, whatever the number of its layout.
-    if (state.sharesRealm && !object.isDescribedBy(state)) [[unlikely]]
-        return declaringLayoutOf(state, token);
     return layout.index == token->get(ClassToken::classIndexSlot).asUInt32() ? layout : declaringLayoutOf(state, token);
 }
 
-// A read may not allocate, so whoever defines a name outside a field makes the records.
 static void ensureRecordsOfKnownStructures(VM& vm, State& state, JSCellButterfly* token)
 {
     if (!token->get(ClassToken::knownStructuresSlot)) [[unlikely]]
         token->setIndex(vm, ClassToken::knownStructuresSlot, JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, ClassToken::slotOfRecord(declaringLayoutOf(state, token).numberOfFields, 0)));
+}
+
+static bool objectsWithoutLayoutTakeNamesOfEvaluation(const LayoutData& declaringLayout)
+{
+    return declaringLayout.classData().privateNamesAreKnownToTexts && declaringLayout.evaluation() != EvaluationState::ProvenOnce;
 }
 
 static const FieldData& declaredFieldOf(const LayoutData& declaringLayout, uint32_t fieldIndex)
@@ -369,7 +339,6 @@ static const FieldData& declaredFieldOf(const LayoutData& declaringLayout, uint3
     return declared;
 }
 
-// Null for a class that declares no brand of its own. A brand that the layout inherits from a base class does not count, nor does the room for the brand of a parent that the class may have, which no object is required to fill.
 static const FieldData* brandOf(State& state, const LayoutData& classLayout, JSCellButterfly* token)
 {
     constexpr int32_t noBrandField = -1;
@@ -414,7 +383,8 @@ static Symbol* privateNameOf(VM& vm, State& state, JSCellButterfly* token, uint3
     return name;
 }
 
-// Each realm that runs the image evaluates the class for itself. An object of another realm has the layouts of the image and was made by that realm's evaluation.
+static constexpr unsigned attributesOfNameWithoutField = static_cast<unsigned>(PropertyAttribute::DontEnum);
+
 static bool isOfRealmOf(const State& state, const Object& object)
 {
     return object.structure()->realm() == state.instance.globalObject;
@@ -424,7 +394,6 @@ struct PrivateProperty {
     const FieldData* field { nullptr };
     JSValue value;
     bool isInSlot { false };
-    // Only for a property of an ordinary object or of the extra properties.
     PropertyOffset offset { invalidOffset };
     unsigned attributes { 0 };
 };
@@ -492,17 +461,14 @@ static PrivateLocation locatePrivateName(VM& vm, State& state, JSObject* object,
     return location;
 }
 
-// What the next access to an object of the same Structure need not look for again.
 static void rememberLocation(VM& vm, JSObject* object, JSCellButterfly* token, uint32_t fieldIndex, const PrivateLocation& found)
 {
     JSObject* holder = holderOfNamesWithoutField(object);
-    if (!holder || !found.name || found.property.attributes || !isValidOffset(found.property.offset) || holder->structure()->isDictionary())
+    if (!holder || !found.name || (found.property.attributes & ~attributesOfNameWithoutField) || !isValidOffset(found.property.offset) || holder->structure()->isDictionary())
         return;
-    // The declared name is shared by all evaluations of the class, and the brand tells them apart. A name that this evaluation has made for itself needs no brand, nor does a class that is evaluated once.
     bool needsBrand = found.name == found.declaredName && found.hasBrand && !found.isOfOnlyEvaluation;
     if (needsBrand && !isValidOffset(found.brand.offset))
         return;
-    // Compiled code stores at a remembered location and tells the Structure nothing.
     if (holder->structure()->mayHaveImmutableProperties())
         return;
     holder->structure()->didReplaceProperty(found.property.offset);
@@ -527,7 +493,6 @@ static const FieldData* fieldUnderDeclaredName(VM& vm, State& state, const Objec
     return place.field;
 }
 
-// The declared name is shared by all evaluations of the class, and the brand tells them apart. A class that is evaluated once has nothing to tell apart.
 static bool wasMadeByEvaluation(VM& vm, State& state, const Object& object, const LayoutData& declaringLayout, JSCellButterfly* token)
 {
     if (!isOfRealmOf(state, object)) [[unlikely]]
@@ -541,7 +506,6 @@ static bool wasMadeByEvaluation(VM& vm, State& state, const Object& object, cons
     return brandField && object.readInline(*brandField) == JSValue(token);
 }
 
-// The usual access: an object of compiled code that keeps the name in the slot of its field, in the evaluation of the class that made the object.
 static const FieldData* fieldOfEvaluation(VM& vm, State& state, const Object& object, JSCellButterfly* token, uint32_t fieldIndex)
 {
     const LayoutData& declaringLayout = declaringLayoutOf(state, object, token);
@@ -551,12 +515,11 @@ static const FieldData* fieldOfEvaluation(VM& vm, State& state, const Object& ob
     return field;
 }
 
-// What the stub of a read does by itself for the next object of the layout.
 static void rememberFieldOfOtherLayout(State& state, const Object& object, JSCellButterfly* token, uint32_t fieldIndex, const FieldData& field)
 {
     uint32_t layoutOfObject = object.layout().index;
     uint32_t declaringClass = token->get(ClassToken::classIndexSlot).asUInt32();
-    if (layoutOfObject == declaringClass || (state.sharesRealm && !object.isDescribedBy(state)) || declaringLayoutOf(state, token).evaluation() != EvaluationState::ProvenOnce)
+    if (layoutOfObject == declaringClass || declaringLayoutOf(state, token).evaluation() != EvaluationState::ProvenOnce)
         return;
     state.instance.classes.privateFieldPlaces[indexOfPrivateFieldPlace(layoutOfObject, fieldIndex)] = { static_cast<uint64_t>(layoutOfObject) << 32 | declaringClass, fieldIndex, 0, &field, 0 };
 }
@@ -584,7 +547,6 @@ static bool tryStoreIntoFilledSlot(VM& vm, State& state, JSObject* base, JSCellB
     return field && object->isInSlot(*field) && object->tryStore(vm, *field, stored);
 }
 
-// The usual definition: an object of compiled code whose slot for the field is still empty, in the evaluation of the class that made the object. Everything else, and every error, is left to the caller.
 static bool tryDefineInEmptySlot(VM& vm, State& state, JSObject* base, JSCellButterfly* token, uint32_t fieldIndex, JSValue defined)
 {
     Object* object = compiledObjectOrNull(base);
@@ -595,24 +557,23 @@ static bool tryDefineInEmptySlot(VM& vm, State& state, JSObject* base, JSCellBut
     const FieldData* field = fieldUnderDeclaredName(vm, state, *object, declaringLayout, declared);
     if (!field || findFieldProperty(vm, *object, *field))
         return false;
-    // The brand is what makes the object one of the evaluation.
     if (declared.isBrand() ? defined != JSValue(token) : !wasMadeByEvaluation(vm, state, *object, declaringLayout, token))
         return false;
     return tryCreateField(vm, state, *object, *field, defined);
 }
 
-// An ordinary object whose Structure has taken the name before. A Structure that leads on by adding a name has not got the name, so nothing is looked up.
 static bool tryDefineByExistingTransition(VM& vm, State& state, JSObject* base, JSCellButterfly* token, uint32_t fieldIndex, JSValue defined)
 {
     if (compiledObjectOrNull(base) || privateNameIfCreated(token, fieldIndex) || !token->get(ClassToken::knownStructuresSlot) || base->hasFrozenElementsInPlace())
         return false;
     const LayoutData& declaringLayout = declaringLayoutOf(state, token);
     const FieldData& declared = declaredFieldOf(declaringLayout, fieldIndex);
-    // The brand is what makes the object one of the evaluation. Whether an object that has a brand is one is left to the caller.
+    if (objectsWithoutLayoutTakeNamesOfEvaluation(declaringLayout))
+        return false;
     if (declared.isBrand() ? defined != JSValue(token) : !!brandOf(state, declaringLayout, token))
         return false;
     Structure* before = base->structure();
-    if (!base->tryPutDirectByExistingTransition(vm, state.objects->layouts.nameOf(vm, declared), defined, static_cast<unsigned>(PropertyAttribute::None)))
+    if (!base->tryPutDirectByExistingTransition(vm, state.objects->layouts.nameOf(vm, declared), defined, attributesOfNameWithoutField))
         return false;
     rememberDefinition(vm, token, fieldIndex, before, base->structure(), std::nullopt);
     return true;
@@ -670,7 +631,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateHas, EncodedJSValue, (Instance* inst
         OPERATION_RETURN(scope, JSValue::encode(jsBoolean(false)));
     PrivateLocation location = locatePrivateName(vm, *instance->state, holder, classToken, field);
     rememberLocation(vm, holder, classToken, field, location);
-    // Under the declared name the brand says which evaluation of the class an object belongs to, and the brand is in the object.
     if (!location.name && !location.compiledObject && !location.underDeclaredName.value && !holder->structure()->isDictionary())
         rememberStructureWithoutName(vm, classToken, field, holder->structure());
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(!!location.name)));
@@ -708,18 +668,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateSet, void, (Instance* instance, Enco
     }
     Object* compiledObject = location.compiledObject;
     if (!compiledObject) {
-        Structure* structure = base->structure();
-        if (!location.property.attributes && !structure->mayHaveImmutableProperties()) [[likely]] {
-            structure->didReplaceProperty(location.property.offset);
-            base->putDirectOffset(vm, location.property.offset, stored);
-            OPERATION_RETURN(scope);
-        }
-        PutPropertySlot slot(base, true);
-        base->setPrivateField(globalObject, location.name, stored, slot);
+        base->structure()->didReplaceProperty(location.property.offset);
+        base->putDirectOffset(vm, location.property.offset, stored);
     } else if (!location.property.isInSlot)
-        compiledObject->putDirectFromNativeCode(vm, location.name, stored, static_cast<unsigned>(PropertyAttribute::None));
+        compiledObject->putDirectFromNativeCode(vm, location.name, stored, attributesOfNameWithoutField);
     else if (!compiledObject->tryStore(vm, *location.property.field, stored))
-        compiledObject->moveFieldToExtraProperties(vm, *location.property.field, { stored, static_cast<unsigned>(PropertyAttribute::None) }, SlotExitReason::StoreOfOtherType);
+        compiledObject->moveFieldToExtraProperties(vm, *location.property.field, { stored, attributesOfNameWithoutField }, SlotExitReason::StoreOfOtherType);
     OPERATION_RETURN(scope);
 }
 
@@ -729,7 +683,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
     AOT_OPERATION_BEGIN(instance, entry);
     State& state = *instance->state;
     JSCellButterfly* classToken = cellArgument<JSCellButterfly>(token, entry);
-    // A constructor of the host may answer `new` with a primitive, which a class below it then has as `this`.
     if (!JSValue::decode(object).isObject()) [[unlikely]] {
         throwException(globalObject, scope, JSC::createNotAnObjectError(globalObject, JSValue::decode(object)));
         OPERATION_RETURN(scope);
@@ -748,38 +701,265 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
     }
     if (isBrand && defined != JSValue(classToken)) [[unlikely]]
         crashOnWrongOperand(entry);
-    bool canUseDeclaredName = !location.underDeclaredName.value && (isBrand || location.belongsToEvaluation);
+    bool takesNameOfEvaluation = !location.compiledObject && objectsWithoutLayoutTakeNamesOfEvaluation(declaringLayoutOf(state, classToken));
+    bool canUseDeclaredName = !takesNameOfEvaluation && !location.underDeclaredName.value && (isBrand || location.belongsToEvaluation);
     UniquedStringImpl* uid = canUseDeclaredName ? location.declaredName : &privateNameOf(vm, state, classToken, field)->uid();
     if (Object* compiledObject = location.compiledObject) {
         const FieldData* own = canUseDeclaredName ? location.underDeclaredName.field : nullptr;
         if (!own || !tryCreateField(vm, compiledObject->state(), *compiledObject, *own, defined)) {
+            if (own && !state.objects->layouts.accept(*own, defined))
+                validateMutation(vm, *compiledObject, *own, ObjectMutation::StoreOfOtherType);
             const CompiledStructure& before = compiledObject->compiledStructure();
             bool hadExtraProperties = compiledObject->hasExtraProperties();
             JSObject* extraBefore = extraPropertiesIfMade(*compiledObject);
             Structure* extraStructureBefore = extraBefore ? extraBefore->structure() : instance->realm.emptyExtraPropertiesStructure;
-            compiledObject->putDirectFromNativeCode(vm, uid, defined, static_cast<unsigned>(PropertyAttribute::None));
+            vm.aotState().somePrivateNameLiesBesideFields = true;
+            compiledObject->putDirectFromNativeCode(vm, uid, defined, attributesOfNameWithoutField);
             ensureRecordsOfKnownStructures(vm, state, classToken);
             bool needsBrand = !isBrand && location.hasBrand;
             if (!own && canUseDeclaredName && hadExtraProperties == !!extraBefore && (!needsBrand || isValidOffset(location.brand.offset)))
                 rememberDefinitionAmongExtraProperties(vm, classToken, field, *compiledObject, before, extraBefore, extraStructureBefore, needsBrand ? std::optional(location.brand.offset) : std::nullopt);
         }
     } else {
-        // A private name is no property, so a frozen array takes one. The structure of an array whose elements were frozen in place admits nothing more, that of the ordinary frozen form does.
         if (base->hasFrozenElementsInPlace()) [[unlikely]]
             base->moveFrozenElementsToSparseMap(vm);
         Structure* before = base->structure();
-        if (!base->tryPutDirectByExistingTransition(vm, uid, defined, static_cast<unsigned>(PropertyAttribute::None))) [[unlikely]] {
+        vm.aotState().somePrivateNameLiesBesideFields = true;
+        if (!base->tryPutDirectByExistingTransition(vm, uid, defined, attributesOfNameWithoutField)) [[unlikely]] {
             PutPropertySlot slot(base, true);
-            base->definePrivateField(globalObject, uid, defined, slot);
+            base->definePrivateField(globalObject, uid, defined, slot, attributesOfNameWithoutField);
         }
         ensureRecordsOfKnownStructures(vm, state, classToken);
-        // A field of a class that has a brand goes under the declared name in the objects of this evaluation alone, which the brand in the object tells.
         bool needsBrand = !isBrand && location.hasBrand;
+        if (takesNameOfEvaluation)
+            rememberDefinition(vm, classToken, field, before, base->structure(), std::nullopt);
         if (canUseDeclaredName && (!needsBrand || isValidOffset(location.brand.offset)))
             rememberDefinition(vm, classToken, field, before, base->structure(), needsBrand ? std::optional(location.brand.offset) : std::nullopt);
     }
     ensureStillAliveHere(classToken);
     OPERATION_RETURN(scope);
+}
+
+static JSCellButterfly* classTokenOrNull(State& state, JSValue value)
+{
+    JSCellButterfly* token = value && value.isCell() ? dynamicDowncast<JSCellButterfly>(value.asCell()) : nullptr;
+    if (!token || token->length() < ClassToken::firstNameSlot || !token->get(ClassToken::classIndexSlot).isUInt32())
+        return nullptr;
+    uint32_t index = token->get(ClassToken::classIndexSlot).asUInt32();
+    const LayoutData* layout = index < state.tables.numberOfLayoutIndices ? state.objects->classes.classWithIndex(index) : nullptr;
+    return layout && token->length() == ClassToken::firstNameSlot + layout->numberOfFields ? token : nullptr;
+}
+
+struct NameOfEvaluation {
+    JSCellButterfly* token { nullptr };
+    uint32_t field { 0 };
+};
+
+static void findNameAmongThoseOf(State& state, JSValue value, UniquedStringImpl* name, NameOfEvaluation& found)
+{
+    JSCellButterfly* token = found.token ? nullptr : classTokenOrNull(state, value);
+    uint32_t numberOfFields = token ? declaringLayoutOf(state, token).numberOfFields : 0;
+    for (uint32_t field = 0; field < numberOfFields; ++field) {
+        Symbol* symbol = privateNameIfCreated(token, field);
+        if (symbol && &symbol->uid() == name)
+            found = { token, field };
+    }
+}
+
+Symbol* ClassToken::tryNameForText(VM& vm, State& state, JSValue value, UniquedStringImpl* declaredName)
+{
+    JSCellButterfly* token = classTokenOrNull(state, value);
+    if (!token)
+        return nullptr;
+    const LayoutData& declaringLayout = declaringLayoutOf(state, token);
+    if (declaringLayout.evaluation() == EvaluationState::ProvenOnce)
+        return nullptr;
+    for (const FieldData& field : declaringLayout.fields()) {
+        if (!field.isPrivate() || state.objects->layouts.nameOf(vm, field) != declaredName)
+            continue;
+        vm.aotState().someTextKnowsPrivateNames = true;
+        return privateNameOf(vm, state, token, declaringLayout.indexOf(field));
+    }
+    return nullptr;
+}
+
+UniquedStringImpl* ClassToken::declaredNameUnder(VM& vm, Object& holder, UniquedStringImpl* nameOfEvaluation)
+{
+    State& state = holder.state();
+    NameOfEvaluation found;
+    for (const FieldData& field : holder.layout().fields()) {
+        if (field.isBrand())
+            findNameAmongThoseOf(state, findFieldProperty(vm, holder, field).valueOrAccessor, nameOfEvaluation, found);
+    }
+    JSObject* extra = !found.token && vm.aotState().somePrivateNameLiesBesideFields ? extraPropertiesIfMade(holder) : nullptr;
+    if (extra && !extra->structure()->isQuickPropertyAccessAllowedForEnumeration()) {
+        extra->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            if (PropertyName(entry.key()).isPrivateName())
+                findNameAmongThoseOf(state, extra->getDirect(entry.offset()), nameOfEvaluation, found);
+            return !found.token;
+        });
+    }
+    if (!found.token)
+        return nullptr;
+    PrivateLocation location = locatePrivateName(vm, state, &holder, found.token, found.field);
+    return location.name == location.declaredName ? location.name : nullptr;
+}
+
+UniquedStringImpl* ClassToken::nameBesideFields(VM& vm, const Object& allocated, const FieldData& field, bool holderIsCompiled)
+{
+    State& state = allocated.state();
+    vm.aotState().somePrivateNameLiesBesideFields = true;
+    UniquedStringImpl* declaredName = state.objects->layouts.nameOf(vm, field);
+    for (const FieldData& brand : allocated.layout().fields()) {
+        JSCellButterfly* token = !holderIsCompiled && brand.isBrand() ? classTokenOrNull(state, findFieldProperty(vm, allocated, brand).valueOrAccessor) : nullptr;
+        const LayoutData* declaringLayout = token ? &declaringLayoutOf(state, token) : nullptr;
+        if (!declaringLayout || !objectsWithoutLayoutTakeNamesOfEvaluation(*declaringLayout))
+            continue;
+        for (const FieldData& declared : declaringLayout->fields()) {
+            if (declared.isPrivate() && state.objects->layouts.nameOf(vm, declared) == declaredName)
+                return &privateNameOf(vm, state, token, declaringLayout->indexOf(declared))->uid();
+        }
+    }
+    return declaredName;
+}
+
+enum class AboveProxies : bool { IsNotLookedAt, IsLookedAt };
+
+static size_t collectObjectsThatLookupComesTo(JSGlobalObject* globalObject, JSObject* lowest, AboveProxies aboveProxies, MarkedArgumentBuffer& objects)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    std::optional<size_t> numberBelowProxies;
+    for (JSObject* object = lowest; object;) {
+        bool isProxy = object->type() == ProxyObjectType;
+        if (isProxy && !numberBelowProxies)
+            numberBelowProxies = objects.size();
+        if (isProxy && aboveProxies == AboveProxies::IsNotLookedAt)
+            break;
+        if (!isProxy)
+            objects.append(object);
+        JSValue above = isProxy ? object->getPrototype(globalObject) : object->getPrototypeDirect();
+        RETURN_IF_EXCEPTION(scope, 0);
+        object = above.isObject() ? asObject(above) : nullptr;
+    }
+    return numberBelowProxies.value_or(objects.size());
+}
+
+static void collectClassTokens(VM& vm, State& state, const MarkedArgumentBuffer& objects, MarkedArgumentBuffer& tokens)
+{
+    auto add = [&](JSValue value) {
+        JSCellButterfly* token = classTokenOrNull(state, value);
+        for (size_t index = 0; token && index < tokens.size(); ++index) {
+            if (tokens.at(index) == JSValue(token))
+                token = nullptr;
+        }
+        if (token)
+            tokens.append(token);
+    };
+    for (size_t index = 0; index < objects.size(); ++index) {
+        JSObject* object = asObject(objects.at(index));
+        if (Object* compiledObject = compiledObjectOrNull(object)) {
+            for (const FieldData& field : compiledObject->layout().fields() | std::views::reverse) {
+                if (field.isBrand())
+                    add(findFieldProperty(vm, *compiledObject, field).valueOrAccessor);
+            }
+        }
+        JSObject* holder = vm.aotState().somePrivateNameLiesBesideFields ? holderOfNamesWithoutField(object) : nullptr;
+        if (!holder || holder->structure()->isQuickPropertyAccessAllowedForEnumeration())
+            continue;
+        holder->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            if (PropertyName(entry.key()).isPrivateName())
+                add(holder->getDirect(entry.offset()));
+            return true;
+        });
+    }
+}
+
+static JSValue findPrivateFieldAmong(VM& vm, State& state, const MarkedArgumentBuffer& objects, size_t numberBelowProxies, JSCellButterfly* token, uint32_t field)
+{
+    for (size_t index = 0; index < objects.size(); ++index) {
+        if (PrivateLocation location = locatePrivateName(vm, state, asObject(objects.at(index)), token, field); location.name)
+            return index < numberBelowProxies ? location.property.value : jsUndefined();
+    }
+    return { };
+}
+
+template<typename Functor>
+static void forEachWrittenPrivateFieldOn(JSGlobalObject* globalObject, JSObject* lowest, const Functor& functor)
+{
+    VM& vm = globalObject->vm();
+    if (!vm.aotState().someClassHasPrivateNames)
+        return;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Instance* instance = Instance::of(globalObject);
+    if (JSGlobalObject* realm = lowest->structure()->realm(); !instance && realm)
+        instance = Instance::of(realm);
+    if (!instance || !instance->state)
+        return;
+    State& state = *instance->state;
+    MarkedArgumentBuffer objects;
+    size_t numberBelowProxies = collectObjectsThatLookupComesTo(globalObject, lowest, AboveProxies::IsLookedAt, objects);
+    RETURN_IF_EXCEPTION(scope, void());
+    MarkedArgumentBuffer tokens;
+    collectClassTokens(vm, state, objects, tokens);
+    if (objects.hasOverflowed() || tokens.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    for (size_t index = 0; index < tokens.size(); ++index) {
+        JSCellButterfly* token = uncheckedDowncast<JSCellButterfly>(tokens.at(index).asCell());
+        const LayoutData& declaringLayout = declaringLayoutOf(state, token);
+        for (uint32_t field = 0; field < declaringLayout.numberOfFields; ++field) {
+            const FieldData& declared = declaringLayout.fields()[field];
+            JSValue held = declared.isWrittenPrivateName ? findPrivateFieldAmong(vm, state, objects, numberBelowProxies, token, field) : JSValue();
+            if (held && functor(state, token, field, declared, held) == IterationStatus::Done)
+                return;
+        }
+    }
+}
+
+unsigned PropertyWalk::countPrivateFieldsOfCompiledClasses(JSGlobalObject* globalObject, JSObject* lowest)
+{
+    unsigned count = 0;
+    forEachWrittenPrivateFieldOn(globalObject, lowest, [&](State&, JSCellButterfly*, uint32_t, const FieldData&, JSValue) {
+        ++count;
+        return IterationStatus::Continue;
+    });
+    return count;
+}
+
+bool PropertyWalk::matchPrivateFieldsOfCompiledClasses(JSGlobalObject* globalObject, JSObject* object, JSObject* pattern, const ScopedLambda<bool(JSValue ofObject, JSValue ofPattern)>& matches)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool everyFieldMatches = true;
+    MarkedArgumentBuffer objects;
+    forEachWrittenPrivateFieldOn(globalObject, pattern, [&](State& state, JSCellButterfly* token, uint32_t field, const FieldData& declared, JSValue ofPattern) {
+        if (objects.isEmpty()) {
+            collectObjectsThatLookupComesTo(globalObject, object, AboveProxies::IsNotLookedAt, objects);
+            scope.assertNoException();
+        }
+        if (objects.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            everyFieldMatches = false;
+            return IterationStatus::Done;
+        }
+        JSValue ofObject = findPrivateFieldAmong(vm, state, objects, objects.size(), token, field);
+        auto letsNothingGo = [](JSValue value) { return !value.isCell() || value.isString() || value.isHeapBigInt(); };
+        if (!ofObject)
+            everyFieldMatches = false;
+        else if (declared.isKeptFromComparisons && (!letsNothingGo(ofPattern) || !letsNothingGo(ofObject))) {
+            const ImageText& text = state.instance.program->text();
+            throwException(globalObject, scope, createComparisonOfPrivateFieldRefusedError(globalObject, text.createString(text.identifier(declared.name).text())));
+            everyFieldMatches = false;
+        } else {
+            bool matched = matches(ofObject, ofPattern);
+            everyFieldMatches = !scope.exception() && matched;
+        }
+        return everyFieldMatches ? IterationStatus::Continue : IterationStatus::Done;
+    });
+    RETURN_IF_EXCEPTION(scope, false);
+    return everyFieldMatches;
 }
 
 } } // namespace JSC::AOT

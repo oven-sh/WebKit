@@ -22,7 +22,6 @@ void loadSubstringBaseAndOffset(StubAssembler& jit, GPRReg string, GPRReg base, 
 {
     using CompactFibers = JSRopeString::CompactFibers;
     RELEASE_ASSERT(noOverlap(string, base, offset));
-    // The six bytes of fiber 1 end a word that begins two bytes in front of them, inside the length.
     constexpr int32_t bytesInFrontOfFiber1 = sizeof(uint64_t) - 6;
     static_assert(CompactFibers::widthOfFiber1LowerInLengthWord == 32 && CompactFibers::shiftOfFiber2InUpperWord == 16 && JSRopeString::offsetOfFiber2() == JSRopeString::offsetOfFiber1Lower() + 4);
     static_assert(std::endian::native == std::endian::little && JSRopeString::offsetOfFiber1Lower() - bytesInFrontOfFiber1 >= JSRopeString::offsetOfLength());
@@ -93,13 +92,13 @@ static void loadZeroExtended(StubAssembler& jit, unsigned width, auto address, G
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// visit(width, addressIn) emits code for one word of that many bytes, at addressIn(start) for each of the starts.
-static void forEachWordCovering(StubAssembler& jit, std::initializer_list<GPRReg> starts, GPRReg size, const auto& visit)
+static void forEachWordCovering(StubAssembler& jit, std::initializer_list<GPRReg> starts, GPRReg size, const auto& visit, StartsOfEqualBytes startsOfEqualBytes = StartsOfEqualBytes::EndAnywhere)
 {
     auto atStart = [](GPRReg bytes) {
         return Address(bytes);
     };
     JumpList isDone;
+    JumpList isDoneWithStartsInPlace;
 
     constexpr int32_t wordSize = sizeof(uint64_t);
     Jump isShorter = jit.branch32(CCallHelpers::Below, size, TrustedImm32(wordSize));
@@ -126,16 +125,21 @@ static void forEachWordCovering(StubAssembler& jit, std::initializer_list<GPRReg
         visit(width, [&](GPRReg bytes) {
             return BaseIndex(bytes, size, CCallHelpers::TimesOne, -width);
         });
-        isDone.append(jit.jump());
+        isDoneWithStartsInPlace.append(jit.jump());
     }
 
     isShorter.link(&jit);
     isDone.append(jit.branchTest32(CCallHelpers::Zero, size));
     visit(1, atStart);
+    isDoneWithStartsInPlace.link(&jit);
+    if (startsOfEqualBytes == StartsOfEqualBytes::EndBehindBytes) {
+        for (GPRReg start : starts)
+            jit.addPtr(size, start);
+    }
     isDone.link(&jit);
 }
 
-void branchIfBytesDiffer(StubAssembler& jit, const ComparedBytes& compared, JumpList& differ, DifferingWords differingWords)
+void branchIfBytesDiffer(StubAssembler& jit, const ComparedBytes& compared, JumpList& differ, DifferingWords differingWords, StartsOfEqualBytes startsOfEqualBytes)
 {
     auto [first, second, size, firstWord, secondWord] = compared;
     RELEASE_ASSERT(noOverlap(first, second, size, firstWord, secondWord));
@@ -149,7 +153,7 @@ void branchIfBytesDiffer(StubAssembler& jit, const ComparedBytes& compared, Jump
 #endif
         loadZeroExtended(jit, width, addressIn(second), secondWord);
         differ.append(jit.branch64(CCallHelpers::NotEqual, firstWord, secondWord));
-    });
+    }, startsOfEqualBytes);
     UNUSED_PARAM(differingWords);
 }
 
@@ -161,7 +165,6 @@ void branchUnlessASCIIOutsideRange(StubAssembler& jit, const ScannedBytes& scann
     constexpr uint64_t oneInEachByte = 0x0101010101010101ULL;
     constexpr uint64_t topBitOfEachByte = 0x80 * oneInEachByte;
 
-    // Added to an ASCII byte, the addend sets the top bit from the given byte on, and carries nothing into the next byte.
     jit.move(TrustedImm64((0x80 - first) * oneInEachByte), addendForFirst);
     jit.move(TrustedImm64((0x80 - (last + 1)) * oneInEachByte), addendForLast);
     forEachWordCovering(jit, { bytes }, size, [&](unsigned width, auto addressIn) {
@@ -178,7 +181,6 @@ void flattenSubject(StubAssembler& jit, GPRReg string, std::initializer_list<GPR
 {
     const GPRReg exception = jit.reuseScratch(StubRegister::T9);
     RELEASE_ASSERT(std::ranges::find(preservedGPRs, exception) == preservedGPRs.end());
-    // The frame record is also what aligns sp for the call on x86-64.
     jit.emitFunctionPrologue();
     jit.preserving(preservedGPRs, [&] {
         jit.move(string, operationArgumentGPR(1));

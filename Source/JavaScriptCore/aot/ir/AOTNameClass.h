@@ -26,33 +26,6 @@ constexpr bool mayBeElementKey(NameClass nameClass)
     return nameClass == NameClass::Index || nameClass == NameClass::CanonicalNumericString;
 }
 
-enum class NameAccessPath : uint8_t { Ordinary, ByKey, Length, FunctionMethod, LastIndex };
-
-constexpr NameAccessPath accessPathOf(NameClass nameClass)
-{
-    switch (nameClass) {
-    case NameClass::Ordinary:
-    case NameClass::Proto:
-    case NameClass::Constructor:
-    case NameClass::ObjectPrototypeMember:
-    case NameClass::Prototype:
-    case NameClass::Then:
-    case NameClass::ToJSON:
-        return NameAccessPath::Ordinary;
-    case NameClass::Index:
-    case NameClass::CanonicalNumericString:
-        return NameAccessPath::ByKey;
-    case NameClass::Length:
-        return NameAccessPath::Length;
-    case NameClass::CallOrApply:
-    case NameClass::Bind:
-        return NameAccessPath::FunctionMethod;
-    case NameClass::LastIndex:
-        return NameAccessPath::LastIndex;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
 constexpr bool isSymbolKind(PropertyKeyKind kind)
 {
     switch (kind) {

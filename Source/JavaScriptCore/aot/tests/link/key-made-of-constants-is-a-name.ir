@@ -1,0 +1,50 @@
+# if an access under a key that the body itself writes counted as one under any key, as it did, the store would reach every field, might name the prototype link and would let the layout escape
+# function kindOf(node) { let k = "kind"; return node[k]; }   function setKind(node, v) { let k = "kind"; node[k] = v; }   const n = { kind: "a", size: 1 };  setKind(n, "b");  kindOf(n);
+# the scan leaves the access under the name, Link goes by the name, and the walk is told to build it by the name
+# RUN: summary f1 f2 mechanisms=all
+# CHECK: access [[read]] v2 Read Parameter 0 "kind" -> [[read]]
+# CHECK: under-constant-key v2 "kind"
+# CHECK: v3 Store Parameter 0 "kind" <- Parameter 1
+# CHECK: under-constant-key v3 "kind"
+# RUN(LINK): link accesses fields layouts mechanisms=all
+# LINK: access f1 v2 under "kind"
+# LINK-NEXT: access f2 v3 under "kind"
+# LINK: field L0.0 "kind" proven=string writers-known
+# which integer is proven of `size` is another row's business (i32, and 1 where the types of numbers are exact): that the store does not come to it shows in what stands behind the type
+# LINK: field L0.1 "size" proven={{*}} writers-known written-at-construction-alone
+# LINK: layout L0 changes=[]
+# with Folding withheld the scan asks nothing of constants, and the access goes by the value of its key
+# RUN(WITHHELD): summary f1 mechanisms=-Folding
+# WITHHELD: v2 Read Parameter 0 [
+# RUN(NEVER): summary f1 f2 mechanisms=-Folding
+# NEVER-NOT: under-constant-key
+
+layout L0 module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = String string="b"
+    v7 = Call v5, -, v3, v6 calleeName="setKind"
+    v8 = Call v4, -, v3 calleeName="kindOf"
+    Return v8
+}
+function f1 name="kindOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="kind"
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="setKind" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="kind"
+    ElemSet v0, v2, v1 mode=Strict
+    v4 = Undefined
+    Return v4
+}

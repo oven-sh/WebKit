@@ -5,7 +5,6 @@ const storage = "TypedArrayStorage";
 
 const maximumBufferLength = b.checked(2 ** 32, "MAX_ARRAY_BUFFER_SIZE");
 const bufferLength = b.int(0, maximumBufferLength);
-// An element takes eight bytes at most.
 const lengthOfAnyElementSize = b.int(0, 2 ** 29);
 const indexOrNotFound = b.int(-1, maximumBufferLength);
 const element = b.union(b.f64, b.bigint);
@@ -332,7 +331,7 @@ export default b.declarations(
         capability: "heap",
         throws: true,
         readsStateBeforeConversions: true,
-        uses: { this: [readsElements], separator: [b.readAsCharacters] },
+        uses: { this: [readsElements], separator: b.inspected },
         implementation: b.hostCall,
       },
       map: copyingTraversal(convertedByNativeCode, "BeforeCallbacks"),
@@ -400,6 +399,7 @@ export default b.declarations(
         returns: b.string,
         capability: "js",
         throws: true,
+        reads: ["ExternalState"],
         uses: { this: [readsElements], locales: [b.readAsLocale, b.retained], options: [b.retained] },
         usesFeature: ["ElementsToLocaleString", "IntlNumberFormat", "IntlUnits", "IntlDateTimeFormat"],
         implementation: b.compiled("TypedArrayPrototype", "toLocaleString"),
@@ -442,25 +442,25 @@ export default b.declarations(
     ...textCodec("uint8ArrayConstructorFromBase64"),
     args: { string: b.string, options: decodingOptions },
     returns: b.instance("Uint8Array").exactly.fresh,
-    uses: { string: [b.readAsCharacters], options: b.inspected },
+    uses: { string: b.inspected, options: b.inspected },
   }),
   b.static("Uint8Array.fromHex", {
     ...textCodec("uint8ArrayConstructorFromHex"),
     args: { string: b.string },
     returns: b.instance("Uint8Array").exactly.fresh,
-    uses: { string: [b.readAsCharacters] },
+    uses: { string: b.inspected },
   }),
   b.method("Uint8Array.prototype.setFromBase64", {
     ...textCodec("uint8ArrayPrototypeSetFromBase64"),
     args: { string: b.string, options: decodingOptions },
     returns: b.ordinaryObjectOf("ReadAndWrittenCounts").fresh,
-    uses: { this: changesElements, string: [b.readAsCharacters], options: b.inspected },
+    uses: { this: changesElements, string: b.inspected, options: b.inspected },
   }),
   b.method("Uint8Array.prototype.setFromHex", {
     ...textCodec("uint8ArrayPrototypeSetFromHex"),
     args: { string: b.string },
     returns: b.ordinaryObjectOf("ReadAndWrittenCounts").fresh,
-    uses: { this: changesElements, string: [b.readAsCharacters] },
+    uses: { this: changesElements, string: b.inspected },
   }),
   b.method("Uint8Array.prototype.toBase64", {
     ...textCodec("uint8ArrayPrototypeToBase64"),
@@ -474,7 +474,6 @@ export default b.declarations(
     uses: { this: [readsElements] },
   }),
 
-  // `core-js/actual` replaces them without a test, from 3.35 to 3.37.
   b.replacedByPackages(
     "Uint8Array.fromBase64",
     "Uint8Array.fromHex",

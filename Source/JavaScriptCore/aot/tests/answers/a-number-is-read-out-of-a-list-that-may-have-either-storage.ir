@@ -1,0 +1,77 @@
+# const clock = { read(since) { return since ? [since[0] + 1, since[1] + 0.5] : [1, 2]; } };
+# function spent(since) { const duration = clock.read(since); return duration[0] * 1000 + duration[1] / 1e6; }
+# print(spent(clock.read()));
+# print(spent(undefined));
+# The list is one of whole numbers or one of doubles, so the read asks a boxed element for its type before it makes a raw number of it. The question has blocks of its own: a compiler with assertions died here (hasEdgeBetween in appendToArm).
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 2000.0000025
+# ALL-NEXT: 1000.000002
+# RUN(CALLS): run-in-shell mechanisms=-Inlining
+# CALLS: 2000.0000025
+# CALLS-NEXT: 1000.000002
+
+layout L0 module=m0 fields=[{key="read" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+variable g0 name="clock" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f2
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="print" [isFreeName]
+    v8 = PropGet v4 key="read"
+    v9 = Call v8, v4 calleeKey="read" calleeName="clock.read"
+    v10 = Call v1, -, v9 calleeName="spent"
+    v11 = Call v7, -, v10 calleeName="print"
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="print" [isFreeName]
+    v14 = Undefined
+    v15 = Call v1, -, v14 calleeName="spent"
+    v16 = Call v13, -, v15 calleeName="print"
+    v17 = Undefined
+    Return v17
+}
+function f1 name="spent" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="clock"
+    v3 = PropGet v2 key="read"
+    v4 = Call v3, v2, v0 calleeKey="read" calleeName="clock.read"
+    v5 = Integer
+    v6 = ElemGet v4, v5
+    v7 = Integer integer=1000
+    v8 = Mul v6, v7
+    v9 = Integer integer=1
+    v10 = ElemGet v4, v9
+    v11 = Integer integer=1000000
+    v12 = Div v10, v11
+    v13 = Add v8, v12
+    Return v13
+}
+function f2 name="read" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer
+    v4 = ElemGet v0, v3
+    v5 = Integer integer=1
+    v6 = Add v4, v5
+    v7 = Integer integer=1
+    v8 = ElemGet v0, v7
+    v9 = Double number=0.5
+    v10 = Add v8, v9
+    v11 = NewArray v6, v10 contents=anything
+    Jump -> next b3(v11)
+  b2(v12):
+    v13 = Data data=d0
+    Jump -> next b3(v13)
+  b3(v14):
+    Return v14
+}
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}]} module=m0
+entry module=m0

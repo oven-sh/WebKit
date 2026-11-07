@@ -27,12 +27,11 @@ class RecordChecker;
 struct DeclaredCapture;
 template<typename> struct PayloadWords;
 
-// Any flag of a position but the one that says of which kind its type is.
 struct PositionMark {
     consteval PositionMark(PositionFlags flag)
         : flag(flag)
     {
-        if (flag == PositionFlags::IsExpected)
+        if (flag == PositionFlags::IsExpected || flag == PositionFlags::IsFromCompiler)
             onlyEstablishAndExpectChangeTheKindOfPosition();
     }
 
@@ -41,13 +40,12 @@ struct PositionMark {
     PositionFlags flag;
 };
 
-// The type of a position: a parameter, a result, a field, a variable, a capture, the target of a conversion.
-// Established: every store into the position is held to the type. Expected: the position takes whatever arrives.
 struct DeclaredType {
     constexpr DeclaredType() = default;
     explicit DeclaredType(ProvenInEveryVersion proven, TypeSiteID site = { })
         : site(site)
         , type(proven)
+        , flags(PositionFlags::IsFromCompiler)
     {
     }
     explicit DeclaredType(ExpectedType expected, TypeSiteID site = { })
@@ -58,9 +56,10 @@ struct DeclaredType {
     }
 
     bool isExpected() const { return flags.contains(PositionFlags::IsExpected); }
-    std::optional<ProvenInEveryVersion> established() const { return isExpected() ? std::nullopt : std::optional(Proven::byPosition(type)); }
+    bool isEstablished() const { return flags.contains(PositionFlags::IsFromCompiler) && !isExpected(); }
+    bool isGuarded() const { return !flags.containsAny({ PositionFlags::IsFromCompiler, PositionFlags::IsExpected }); }
+    std::optional<ProvenInEveryVersion> established() const { return isEstablished() ? std::optional(Proven::byCompiler(type)) : std::nullopt; }
     ExpectedType expected() const { return ExpectedType(type); }
-    // For printers, tables and comparisons of declarations. It says nothing of a value.
     TypeID written() const { return type; }
     OptionSet<PositionFlags> writtenFlags() const { return flags; }
 
@@ -68,6 +67,7 @@ struct DeclaredType {
     {
         type = proven;
         flags.remove(PositionFlags::IsExpected);
+        flags.add(PositionFlags::IsFromCompiler);
     }
     void expect(ExpectedType expected)
     {
@@ -75,7 +75,6 @@ struct DeclaredType {
         flags.add(PositionFlags::IsExpected);
     }
 
-    // The kind stays: what is proven of an established position is expected of an expected one.
     void changeType(ProvenInEveryVersion proven) { type = proven; }
 
     bool has(PositionMark mark) const { return flags.contains(mark.flag); }

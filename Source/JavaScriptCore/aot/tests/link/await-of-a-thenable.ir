@@ -1,0 +1,40 @@
+# If a wait took an object with a `then` of its own for what comes back, the function behind the wait would be typed by the object, while what arrives is whatever that `then` hands to the function it is passed
+# async function use(t) { return get(await t); }  function get(v) { return v; }  use({ then(r) { r(1); } });
+# `then` is found, so it is entered, with functions that nobody has seen. What it hands to them leaves by that call, and the wait gives anything.
+# RUN: link functions mechanisms=all
+# CHECK: function f2 callers-known one-callee
+# CHECK-NEXT: parameter 0
+# CHECK-NOT: proven=
+# CHECK: function f3
+
+layout L0 module=m0 fields=[{key="then" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v2 calleeName="use"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="use" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    v2 = NewClosure function=f2
+    v3 = Call v2, -, v1 calleeName="get"
+    Return v3
+}
+function f2 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="then" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1
+    v3 = Undefined
+    Return v3
+}

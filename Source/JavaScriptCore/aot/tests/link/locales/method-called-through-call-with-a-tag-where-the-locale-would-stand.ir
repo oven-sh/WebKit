@@ -1,0 +1,21 @@
+# call() hands its arguments on one place further to the left. At the site stands the call of call(), whose second argument is a written tag: it is what the method compares with, and the locale is the third, which nobody knows
+# String.prototype.localeCompare.call("a", "de", globalThis.input);
+# LIBRARY: own
+# RUN: locales
+# CHECK: locale unknown StringPrototypeLocaleCompare
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=StringPrototypeLocaleCompare [isNotReadFromHolder]
+    v1 = String string="a"
+    v2 = String string="de"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="input" [isFreeName]
+    v5 = PropGet v0 key="call"
+    v6 = Call v5, v0, v1, v2, v4 calleeKey="call"
+    Return v6
+}

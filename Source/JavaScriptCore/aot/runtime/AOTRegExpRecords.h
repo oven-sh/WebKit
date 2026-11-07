@@ -71,7 +71,6 @@ public:
     template<typename Visitor> void visitRoots(Visitor&);
 
 private:
-    // By the number of the record in this image and the flags. Where several images run, a cell finds a record by its pattern, which may be that of another image.
     const ImageRegExp* m_records { nullptr };
     UncheckedKeyHashMap<uint64_t, RegExp*, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_cells;
     Vector<RegExp*> m_cellsInOrderOfCreation;

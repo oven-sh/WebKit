@@ -15,7 +15,7 @@ class ErrorBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit ErrorBuiltinEmitter(CodeGenerator&);
 
-    void generateNewError(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_ERROR_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 };
 
 } } } // namespace JSC::AOT::Typed

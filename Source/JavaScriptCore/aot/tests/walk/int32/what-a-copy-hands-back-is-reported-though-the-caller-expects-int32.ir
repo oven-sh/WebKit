@@ -1,0 +1,25 @@
+# function size(): int32 { return box.size; }  size();  The one call has the body as a copy in line, and nobody walks the body by itself.
+# Of what a copy hands back, what the caller expects of the answer is stated. Of `size()` the caller expects the callee's own `int32`: stated of `box.size` the promise would vouch for itself,
+# and the build would go through with 1.5 in an int32.
+# DIAGNOSTIC: UnprovenInt32 1
+# RUN: walk f0 mechanisms=all
+# CHECK: the walk of f0:Body failed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @1
+    v2 = Call v1 calleeName="size" @2
+    v3 = Convert v2 declared={type=i32} @2
+    Return v3 @2
+}
+function f1 name="size" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=i32 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @3
+    v1 = PropGet v0 key="box" [isFreeName] @3
+    v2 = PropGet v1 key="size" @3
+    v3 = Convert v2 declared={type=i32 flags=[IsInt32Promise]} @4
+    Return v3 @4
+}

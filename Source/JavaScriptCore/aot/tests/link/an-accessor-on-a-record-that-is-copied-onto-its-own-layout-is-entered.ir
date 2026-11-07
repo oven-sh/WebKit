@@ -1,0 +1,33 @@
+# const holder = { get lazy() { return 1; }, set lazy(v) {} };  Object.assign({}, holder);
+# The front end gives the empty literal the layout of the record that is copied into it. So the copy reads each field and stores into the same field of the same layout: an edge from a node to itself, which is no edge.
+# The copy runs the getter all the same: it observes the node that it reads, and whoever observes a field asks it. If it did not, f1 would be left out of the executable and the copy would stop the program.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+layout L0 module=m0 fields=[{key="lazy" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    DefineGetter v0, v1 key="lazy"
+    v3 = NewClosure function=f2
+    DefineSetter v0, v3 key="lazy"
+    v5 = FinishObject v0
+    v6 = NewObject layout=L0
+    CopyDataProperties v6, v5
+    v8 = FinishObject v6
+    v9 = Undefined
+    Return v9
+}
+function f1 name="lazy" module=m0 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="lazy" module=m0 kind=Setter length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}

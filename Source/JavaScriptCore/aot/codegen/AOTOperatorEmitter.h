@@ -9,7 +9,7 @@
 
 #include "AOTOperationEmitter.h"
 #include "AOTStubsArithmetic.h"
-#include "AOTVector.h"
+#include "AOTStubsPropertyKeys.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -18,15 +18,6 @@ enum class ArithmeticOperator : uint8_t { Add, Sub, Mul, Div, Mod, Pow };
 enum class BitwiseOperator : uint8_t { And, Or, Xor, LeftShift, RightShift, UnsignedRightShift };
 enum class UnaryOperator : uint8_t { Negate, Increment, Decrement, BitNot };
 enum class Relation : uint8_t { Less, LessOrEqual, Greater, GreaterOrEqual };
-
-struct WholeRemainder {
-    Number number;
-    Operand whole;
-    Operand zeroWhereWholeIsZero;
-    Condition isNumber;
-    Operand dividend;
-    uint64_t powerOfTwoDivisor { 0 };
-};
 
 class OperatorEmitter final : public OperationEmitter {
 public:
@@ -57,12 +48,13 @@ public:
     void generateGreaterEq(const ValueContext& value) { generateRelation(value, Relation::GreaterOrEqual); }
     void generateEq(const ValueContext& value) { generateEquality(value, false); }
     void generateStrictEq(const ValueContext& value) { generateEquality(value, true); }
+    void generateIntegerBound(const ValueContext&);
+    void generateNumberOrNaN(const ValueContext&);
     void generateToNumeric(const ValueContext&);
     void generateToNumber(const ValueContext&);
     void generateInstanceOf(const ValueContext&);
+    bool leaveOperandToInstanceOf(const ValueContext& read, InstanceOfOperand, NumberedImmediate);
     void generateHasInPrototypeChain(const ValueContext&);
-    bool fetchesPrototypeItself(ValueID builtin);
-    bool comparesOnlyTextOf(ValueID string);
     void generateToBoolean(const ValueContext&);
     void generateLogicalNot(const ValueContext&);
     void generateTypeOf(const ValueContext&);
@@ -73,9 +65,8 @@ public:
     void generateToThis(const ValueContext&);
 
     Number pow(Number, Number);
+    Boxed boxedSum(ValueID sum);
     CellPointer toString(const OperationContext&, Operand, const Type&);
-    std::optional<Integer> wholeRemainderAsIndex(ValueID position, LBasicBlock isNotAnIndex);
-    bool leavesRemainderToTest(ValueID remainder) { return !!findRemainderLeftToTest(remainder); }
     Operand failWithZero(const ValueContext&);
 
 private:
@@ -87,12 +78,14 @@ private:
     template<typename Functor> Operand convertedToNumber(const ValueContext&, const Functor& convertValue);
 
     Number asNumericOperand(ValueID);
+    Number asNumericOperandWithAnyNaN(ValueID);
     Number asNumber(Operand, const Type&);
     Number asNumberLikeOperand(ValueID);
     template<typename Functor> Operand withIntegerOperand(const ValueContext&, const Functor&);
-    template<typename T, typename Functor> T passingOrConverted(Boxed, const TypeTestPlan&, const Functor& convert);
+    template<typename T, typename Functor> T passingOrConverted(Boxed, const TypeTestPlan&, Form formOfConversion, const Functor& convert);
 
     LValue callBinaryStub(const ValueContext&, BinaryOperator, Boxed left, Boxed right);
+    bool standsInRareBlock(const ValueContext& value) const { return m_code.at(value.block()).frequency == BlockFrequency::Rare; }
     Operand arithmeticOnIntegers(const ValueContext&, ArithmeticOperator);
     Operand arithmeticOnCheckedIntegers(const ValueContext&, ArithmeticOperator);
     Number arithmeticOnNumbers(ArithmeticOperator, Number, Number);
@@ -105,41 +98,23 @@ private:
     Operand unaryOnCheckedIntegers(const ValueContext&, UnaryOperator);
     Operand unaryOnNumbers(UnaryOperator, ValueID operand);
     Word32 bitwiseOnWords(BitwiseOperator, Word32, Word32);
-    template<typename Functor> Word32 int32ConvertedOnce(const ValueContext& user, ValueID number, bool needsLowestBitsAlone, const Functor& convert);
 
-    // Without a relation the operands are compared for equality.
     template<typename T> Condition compare(std::optional<Relation>, T, T);
     void generateComparisonOfNumbers(const ValueContext&, std::optional<Relation>);
-    bool tryGenerateComparisonOfWholeRemainder(const ValueContext&, std::optional<Relation>);
     Condition relationOnStringCells(const ValueContext&, Relation, CellPointer left, CellPointer right);
     Condition relationOnNullableStrings(const ValueContext&, Relation);
-    Condition relationOnValues(const ValueContext&, Relation);
+    enum class ValueInRelation : uint8_t { MayBeInt32, IsNoInt32 };
+    Condition relationOnValues(const ValueContext&, Relation, ValueInRelation = ValueInRelation::MayBeInt32);
+    bool generateRelationOfIntegerAndValue(const ValueContext&, Relation);
+    bool generateRelationOfBoxedNumberAndValue(const ValueContext&, Relation);
+    bool generateRelationOfValuesThatAreLikelyInt32s(const ValueContext&, Relation);
 
-    struct Int32OfNumber {
-        BlockID block;
-        Word32 word;
-        bool hasLowestBitsAlone;
-        // Once it is listed by its block: the nearest earlier conversion in a block that dominates this one.
-        uint32_t conversionAbove { UINT32_MAX };
+    struct OperandLeftToInstanceOf {
+        ValueID read;
+        InstanceOfOperand operand;
+        NumberedImmediate number;
     };
-    struct Int32sOfNumber {
-        Vector<Int32OfNumber, 1> conversions;
-        // The positions of the first conversions, by the number of their block in the dominator tree. Empty while the conversions are few.
-        Vector<uint32_t> byBlock;
-    };
-    const Int32OfNumber* findInt32ConvertedBefore(Int32sOfNumber&, BlockID, bool needsLowestBitsAlone);
-    UncheckedKeyHashMap<uint32_t, Int32sOfNumber, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_int32OfNumbers;
-
-    struct RemainderLeftToTest {
-        ValueID dividend;
-        int32_t divisor;
-        std::optional<int64_t> comparedWith;
-    };
-    std::optional<RemainderLeftToTest> findRemainderLeftToTest(ValueID remainder);
-    bool tryGenerateTestOfRemainder(const ValueContext& test, ValueID remainder);
-    const WholeRemainder* findWholeRemainder(ValueID number);
-    Number asTermOfSum(ValueID term, ValueID otherTerm);
-    UncheckedKeyHashMap<uint32_t, WholeRemainder, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_wholeRemainders;
+    std::optional<OperandLeftToInstanceOf> m_operandLeftToInstanceOf;
 };
 
 } } } // namespace JSC::AOT::Typed

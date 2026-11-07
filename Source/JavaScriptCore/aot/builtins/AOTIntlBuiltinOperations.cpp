@@ -42,7 +42,6 @@ namespace JSC { namespace AOT {
 struct FormatPatternState {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FormatPatternState);
     UncheckedKeyHashMap<const FormatPatternHeader*, UTCOffsetOfStretch> utcOffsetsByPattern;
-    // Of an Object.prototype that was found to have none of the names that a formatter reads from its options.
     Weak<Structure> objectPrototypeWithoutOptions;
 };
 
@@ -82,7 +81,6 @@ std::optional<uint64_t> digestOfThisICU()
         if (isSaid)
             memcpy(stamp.timeZoneDataVersion, timeZoneDataVersion, strlen(timeZoneDataVersion));
 #if OS(DARWIN)
-        // ICU belongs to the system there, and a system may change its data and keep its versions.
         size_t size = sizeof(stamp.systemBuild);
         isSaid = isSaid && !sysctlbyname("kern.osversion", stamp.systemBuild, &size, nullptr, 0);
 #endif
@@ -104,7 +102,6 @@ static ALWAYS_INLINE bool isMadeByThisICU(const FormatPatternHeader& header)
     return digest && header.digestOfICU[0] == static_cast<uint32_t>(*digest) && header.digestOfICU[1] == static_cast<uint32_t>(*digest >> 32);
 }
 
-// A literal inherits from Object.prototype, and a formatter asks its options for each of these names.
 static NEVER_INLINE bool findsNoOptionOnObjectPrototype(JSGlobalObject* globalObject, Structure* structure)
 {
     static constexpr ASCIILiteral names[] = {
@@ -144,7 +141,6 @@ static ALWAYS_INLINE String writeWithPattern(const FormatPatternHeader& header, 
     std::span<const CharacterType> written { buffer, end };
     if constexpr (std::is_same_v<CharacterType, char16_t>)
         return String(written);
-    // ICU hands out 16-bit texts whatever they hold, and a program can tell: Bun.inspect breaks a list of them elsewhere.
     std::span<char16_t> destination;
     String text = String::createUninitialized(written.size(), destination);
     StringImpl::copyCharacters(destination, written);
@@ -321,17 +317,22 @@ static std::pair<JSValue, JSValue> formatterArgumentsOf(JSGlobalObject* globalOb
     return { locale, options };
 }
 
-static void setUpFromArguments(JSGlobalObject* globalObject, IntlDateTimeFormat& formatter, const FormatPatternHeader& header)
+static void setUpFormatter(JSGlobalObject* globalObject, IntlDateTimeFormat& formatter, const FormatPatternHeader& header, JSValue locale, JSValue options)
 {
-    auto [locale, options] = formatterArgumentsOf(globalObject, header);
     uint8_t requiredComponentAndDefaults = header.requiredComponentAndDefaults;
     formatter.initializeDateTimeFormat(globalObject, locale, options, static_cast<IntlDateTimeFormat::RequiredComponent>(requiredComponentAndDefaults >> 4), static_cast<IntlDateTimeFormat::Defaults>(requiredComponentAndDefaults & 0xf));
 }
 
-static void setUpFromArguments(JSGlobalObject* globalObject, IntlNumberFormat& formatter, const FormatPatternHeader& header)
+static void setUpFormatter(JSGlobalObject* globalObject, IntlNumberFormat& formatter, const FormatPatternHeader&, JSValue locale, JSValue options)
+{
+    formatter.initializeNumberFormat(globalObject, locale, options);
+}
+
+template<typename Formatter>
+static void setUpFromArguments(JSGlobalObject* globalObject, Formatter& formatter, const FormatPatternHeader& header)
 {
     auto [locale, options] = formatterArgumentsOf(globalObject, header);
-    formatter.initializeNumberFormat(globalObject, locale, options);
+    setUpFormatter(globalObject, formatter, header, locale, options);
 }
 
 template<typename Formatter>
@@ -355,7 +356,6 @@ JSObject* newNumberFormatFromArguments(JSGlobalObject* globalObject, const Forma
     return newFormatterFromArguments<IntlNumberFormat>(globalObject, globalObject->numberFormatStructure(), *header);
 }
 
-// The `format` function of a formatter that has a pattern is bound to these as well as to the formatter.
 enum class BoundToPattern : uint8_t {
     Header,
     TimeZoneIDAtCreation,
@@ -416,7 +416,6 @@ static String tryFormatWithPatternOf(JSGlobalObject*, const IntlNumberFormat& fo
 static JSC_DECLARE_HOST_FUNCTION(formatDateTimeBoundToPattern);
 static JSC_DECLARE_HOST_FUNCTION(formatNumberBoundToPattern);
 
-// The pattern is read from the formatter, never from the arguments, which a caller could forge.
 JSC_DEFINE_HOST_FUNCTION(formatDateTimeBoundToPattern, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -469,7 +468,6 @@ static void bindFormatToPattern(JSGlobalObject* globalObject, Formatter& formatt
     formatter.setBoundFormat(vm, format);
 }
 
-// Where the formatter has options, operationAOTSetUpFormatterWithOptions follows at once.
 template<typename Formatter>
 static ALWAYS_INLINE JSCell* newFormatterWithPattern(JSGlobalObject* globalObject, Structure* structure, const FormatPatternHeader* header, NativeFunction function)
 {
@@ -495,10 +493,11 @@ static JSCell* newNumberFormatWithPattern(JSGlobalObject* globalObject, const Fo
 }
 
 template<typename Formatter>
-static void setUpWithOptions(JSGlobalObject* globalObject, JSCell* cell)
+static void setUpWithOptions(JSGlobalObject* globalObject, JSCell* cell, EncodedJSValue options)
 {
     auto& formatter = *uncheckedDowncast<Formatter>(cell);
-    setUpFromArguments(globalObject, formatter, *patternOf(formatter).header);
+    const FormatPatternHeader& header = *patternOf(formatter).header;
+    setUpFormatter(globalObject, formatter, header, jsString(globalObject->vm(), FormatterArgumentsReader(header).readText()), JSValue::decode(options));
 }
 
 static ALWAYS_INLINE bool hasStructure(EncodedJSValue encodedValue, Structure* structure)
@@ -592,13 +591,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewFormatterWithPattern, JSCell*, 
     OPERATION_RETURN(scope, callRemovable<RemovableFeature::IntlDateTimeFormat, RemovedFeatureStub::Abort, newDateTimeFormatWithPattern>(globalObject, header));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTSetUpFormatterWithOptions, void, (Instance* instance, JSCell* formatter))
+JSC_DEFINE_JIT_OPERATION(operationAOTSetUpFormatterWithOptions, void, (Instance* instance, JSCell* formatter, EncodedJSValue options))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetUpFormatterWithOptions);
     if (formatter->inherits<IntlNumberFormat>())
-        callRemovable<RemovableFeature::IntlNumberFormat, RemovedFeatureStub::Abort, setUpWithOptions<IntlNumberFormat>>(globalObject, formatter);
+        callRemovable<RemovableFeature::IntlNumberFormat, RemovedFeatureStub::Abort, setUpWithOptions<IntlNumberFormat>>(globalObject, formatter, options);
     else
-        callRemovable<RemovableFeature::IntlDateTimeFormat, RemovedFeatureStub::Abort, setUpWithOptions<IntlDateTimeFormat>>(globalObject, formatter);
+        callRemovable<RemovableFeature::IntlDateTimeFormat, RemovedFeatureStub::Abort, setUpWithOptions<IntlDateTimeFormat>>(globalObject, formatter, options);
     OPERATION_RETURN(scope);
 }
 

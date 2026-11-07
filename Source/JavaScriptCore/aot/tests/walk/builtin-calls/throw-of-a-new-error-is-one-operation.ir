@@ -1,0 +1,92 @@
+# an error of the engine that is made for one throw alone, with a message that is written, is made and thrown by one operation
+# function refuse() { throw new TypeError("bad input"); }
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: ThrowNewError {{*}}errorKind=TypeError message="bad input"
+# RUN(NEVER): walk f1 mechanisms=none+DirectCalls+BuiltinCalls
+# NEVER-NOT: Throw v
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: ThrowNewError
+# a handler of the unit takes the object from the throw as written: function caught() { try { throw new TypeError("bad input"); } catch (e) { return e; } }
+# RUN(CAUGHT): walk f2 mechanisms=none+DirectCalls+BuiltinCalls
+# CAUGHT-NOT: ThrowNewError
+# RUN(CAUGHTAS): walk f2 mechanisms=none+DirectCalls+BuiltinCalls
+# CAUGHTAS-LABEL: code f2:Body
+# CAUGHTAS: Throw v
+# nobody knows the message: function refuseWith(text) { throw new TypeError(text); }
+# RUN(UNKNOWN): walk f3 mechanisms=none+DirectCalls+BuiltinCalls
+# UNKNOWN-NOT: ThrowNewError
+# RUN(UNKNOWNAS): walk f3 mechanisms=none+DirectCalls+BuiltinCalls
+# UNKNOWNAS-LABEL: code f3:Body
+# UNKNOWNAS: Throw v
+# the message is a text that nobody knows, so the construction goes by one row: function refuseWithText(what) { throw new TypeError("bad " + what); }
+# RUN(JOINED): walk f5 mechanisms=none+DirectCalls+BuiltinCalls
+# JOINED-NOT: ThrowNewError
+# RUN(JOINEDAS): walk f5 mechanisms=none+DirectCalls+BuiltinCalls
+# JOINEDAS-LABEL: code f5:Body
+# JOINEDAS: Throw v
+# somebody else has the error: function noted() { const e = new TypeError("bad input"); sink(e); throw e; }
+# RUN(NOTED): walk f4 mechanisms=none+DirectCalls+BuiltinCalls
+# NOTED-NOT: ThrowNewError
+# RUN(NOTEDAS): walk f4 mechanisms=none+DirectCalls+BuiltinCalls
+# NOTEDAS-LABEL: code f4:Body
+# NOTEDAS: Throw v
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="refuse" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=TypeError
+    v1 = String string="bad input"
+    v2 = Construct v0, -, v1 calleeName="TypeError"
+    Throw v2
+}
+function f2 name="caught" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b2():
+    v0 = Builtin builtin=TypeError
+    v1 = String string="bad input"
+    v2 = Construct v0, -, v1 calleeName="TypeError"
+    Throw v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+function f3 name="refuseWith" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=TypeError
+    v2 = Construct v1, -, v0 calleeName="TypeError"
+    Throw v2
+}
+function f4 name="noted" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=TypeError
+    v1 = String string="bad input"
+    v2 = Construct v0, -, v1 calleeName="TypeError"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v2
+    Throw v2
+}
+function f5 name="refuseWithText" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=TypeError
+    v2 = String string="bad "
+    v3 = Add v2, v0
+    v4 = Construct v1, -, v3 calleeName="TypeError"
+    Throw v4
+}

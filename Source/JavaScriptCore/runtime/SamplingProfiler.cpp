@@ -732,7 +732,7 @@ static ALWAYS_INLINE BytecodeIndex LEGACY_NODELETE tryGetBytecodeIndex(unsigned 
 #if ENABLE(AOT)
 using CompiledSitePositions = UncheckedKeyHashMap<uint64_t, std::optional<AOT::SourcePosition>>;
 
-static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStackFrame& machineFrame, std::optional<AOT::Typed::FunctionID> innerEntry, AOT::ShownFrameFilter& shownFrames, CompiledSitePositions& sitePositions, Vector<SamplingProfiler::StackFrame>& frames)
+static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStackFrame& machineFrame, AOT::ShownFrameFilter& shownFrames, CompiledSitePositions& sitePositions, Vector<SamplingProfiler::StackFrame>& frames)
 {
     AOT::CompiledFunctionID code = machineFrame.compiledCode;
     auto append = [&](const AOT::TraceFrame& compiledFrame) -> SamplingProfiler::StackFrame& {
@@ -740,12 +740,6 @@ static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStack
         frames.last().compiledFrame = compiledFrame;
         return frames.last();
     };
-
-    if (innerEntry) {
-        append({ code, *innerEntry, CallSiteIndex(), false, false });
-        shownFrames = AOT::ShownFrameFilter(true);
-        return;
-    }
 
     if (auto site = image.callSiteAt(code.index(), machineFrame.compiledCodeOffset)) {
         AOT::forEachShownFrame(code, *site, shownFrames, [&](const AOT::TraceFrame& compiledFrame) {
@@ -1005,8 +999,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
 #endif
 #if ENABLE(AOT)
             } else if (unprocessedStackFrame.compiledCode) {
-                const AOT::Image& image = *m_vm.aotState().image;
-                appendCompiledFrames(image, unprocessedStackFrame, i ? std::nullopt : image.innerEntryContaining(unprocessedStackTrace.topPC), shownFrames, compiledSitePositions, stackTrace.frames);
+                appendCompiledFrames(*m_vm.aotState().image, unprocessedStackFrame, shownFrames, compiledSitePositions, stackTrace.frames);
                 continue;
 #endif
             } else if (unprocessedStackFrame.cCodePC) {

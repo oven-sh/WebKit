@@ -13,7 +13,6 @@
 #include "AOTObjectWords.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeTable.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTUnwinding.h"
 #include "DeferGC.h"
 #include "DeferTermination.h"
@@ -29,44 +28,7 @@
 
 namespace JSC { namespace AOT {
 
-class OperationValidationScope {
-    WTF_FORBID_HEAP_ALLOCATION;
-    WTF_MAKE_NONCOPYABLE(OperationValidationScope);
-public:
-    ALWAYS_INLINE OperationValidationScope(VM& vm, Entry entry)
-        : m_vm(vm)
-    {
-#if ASSERT_ENABLED
-        if (!permissionsOf(entry).mayCollect)
-            m_assertNoGC.emplace();
-#endif
-        if (validatesRuntime(vm)) [[unlikely]]
-            open(vm, entry);
-    }
-
-    // Whether the run time validates is settled before the first operation runs.
-    ALWAYS_INLINE ~OperationValidationScope()
-    {
-        if (validatesRuntime(m_vm)) [[unlikely]]
-            close(m_vm);
-    }
-
-private:
-    static void open(VM&, Entry);
-    static void close(VM&);
-
-    VM& m_vm;
-#if ASSERT_ENABLED
-    std::optional<AssertNoGC> m_assertNoGC;
-#endif
-};
-#if !ASSERT_ENABLED
-// A collection scans the frame of the operation that asks for it. A word there that nobody writes names what an earlier call left in it.
-static_assert(sizeof(OperationValidationScope) == sizeof(void*));
-#endif
-
 #if OS(WINDOWS) && CPU(X86_64)
-// There __builtin_frame_address(0) is the low end of the frame. DECLARE_CALL_FRAME says why rbp is named.
 #define AOT_FRAME_RECORD_OF_THIS_FUNCTION() \
     ({ \
         asm volatile("" : : : "rbp"); \
@@ -76,13 +38,9 @@ static_assert(sizeof(OperationValidationScope) == sizeof(void*));
 #define AOT_FRAME_RECORD_OF_THIS_FUNCTION() std::bit_cast<JSC::CallerFrameAndPC*>(__builtin_frame_address(0))
 #endif
 
-// An operation finds its caller's frame directly above its own, so a wrapper enters the operation with a jump, not a call.
-// MUST_TAIL_CALL expands to nothing on Windows, but clang guarantees the tail call there too when caller and callee have the same signature.
 #define AOT_MUST_TAIL_CALL [[clang::musttail]]
 
 #if ASSERT_ENABLED
-// Where assertions are on, the run-time table calls an operation that is declared not to collect through a function that holds one of these.
-// The frame of that function lies between the frame of the operation and the frame of the caller.
 class NoCollectionGuard {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(NoCollectionGuard);
@@ -101,7 +59,7 @@ public:
     }
 
 private:
-    static thread_local CallerFrameAndPC* s_frameRecord;
+    static inline thread_local CallerFrameAndPC* s_frameRecord { nullptr };
 
     CallerFrameAndPC* m_outerFrameRecord;
     AssertNoGC m_assertNoGC;
@@ -139,7 +97,6 @@ struct CallWithoutCollection<operation, Result(Arguments...) noexcept(isNoexcept
     UNUSED_VARIABLE(globalObject); \
     VM& vm = *(instance)->vm; \
     AOTOperationPrologueCallFrameTracer tracer(vm, frameRecordOfOperation); \
-    JSC::AOT::OperationValidationScope validationScope(vm, entry); \
     auto scope = declaredScope; \
     UNUSED_VARIABLE(scope)
 
@@ -159,16 +116,23 @@ struct CallWithoutCollection<operation, Result(Arguments...) noexcept(isNoexcept
     static_assert(!JSC::AOT::isDeclaredNotToCollect(entry), "an operation that is declared not to collect begins with AOT_OPERATION_BEGIN_WITHOUT_COLLECTION"); \
     AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry)
 
-// The operation puts collections off while it runs. An error is a new object, and what takes the exception runs the collection.
 #define AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry) \
     static_assert(JSC::AOT::isDeclaredNotToCollect(entry)); \
     AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry); \
     DeferGCForAWhile deferGC(vm)
 
-// A value that the program throws exists already. Only where somebody inspects exceptions is one made for it, and that road puts collections off itself.
 #define AOT_OPERATION_BEGIN_THROW_OF_VALUE(instance, entry) \
     static_assert((entry) == JSC::AOT::Entry::operationAOTThrow || (entry) == JSC::AOT::Entry::operationAOTThrowAfterCleanup); \
     AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry)
+
+void collectInPlaceOfPollBehindOperation(VM&, JSCell* madeByOperation);
+
+ALWAYS_INLINE JSCell* newCellForCompiledCode(VM& vm, JSCell* cell)
+{
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]]
+        collectInPlaceOfPollBehindOperation(vm, cell);
+    return cell;
+}
 
 ALWAYS_INLINE Identifier identifierAt(Instance* instance, unsigned number) { return identifiersOf(*instance).identifier(number); }
 
@@ -182,7 +146,6 @@ ALWAYS_INLINE void prepareInlineAllocation(Instance* instance, InlineAllocation 
     data.allocator = subspaceFor<CellType>(*instance->vm)->allocatorFor(sizeof(CellType), AllocatorForMode::EnsureAllocator).localAllocator();
 }
 
-// A stub that finds no cell for a rope leaves its work to an operation. An operation that can answer without making a rope calls this, so that the stub finds cells the next time.
 ALWAYS_INLINE void leaveCellsForRopes(Instance* instance)
 {
     void* allocator = instance->prefix().ropeStringAllocator;

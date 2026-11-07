@@ -1,0 +1,11 @@
+# a callee whose summary is no larger than the call costs is walked in line: its read stands in the caller under a frame of its own, and there is no call
+# function one(v) { return v.x; }  function caller(v) { const a = one(v); return a + a; }
+# RUN: walk f2 mechanisms=none+DirectCalls+Inlining
+# CHECK: mechanisms DirectCalls,Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK: frame 1 callee=f1
+# CHECK: = PropGet {{*}}key="x"
+# RUN(NEVER): walk f2 mechanisms=none+DirectCalls+Inlining
+# NEVER-NOT: CallDirect
+# NEVER-NOT: = Call v
+# PROGRAM-OF: ../direct-calls/callee-found-by-binding.ir

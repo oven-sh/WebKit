@@ -1,0 +1,123 @@
+# a primitive has no property of its own but what its class lists for its instances, and the prototype objects of the engine are locked. So a method that is read off a proven text is found when the program is built:
+# the read is the built-in itself, which nobody takes, and the call goes by its row
+# function codeAt(s, i) { if (typeof s === "string" && typeof i === "number") return [s.charCodeAt(i)]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetStringCodeUnit
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: PropGet
+# The method as a value: function methodOf(s) { if (typeof s === "string") return s.charCodeAt; }
+# RUN(VALUE): walk f2 mechanisms=none+TypedOperations
+# VALUE-LABEL: code f2:Body
+# VALUE-NOT: PropGet
+# VALUE: : builtin(StringPrototypeCharCodeAt) {{*}} = Builtin builtin=StringPrototypeCharCodeAt
+# Undefined and null throw, in the words of the read. A check that throws so stands in front, and behind it the text is proven: function ofMaybe(s) { if (typeof s === "string" || s === undefined) return s.charCodeAt; }
+# RUN(MAYBE): walk f3 mechanisms=none+TypedOperations
+# MAYBE-LABEL: code f3:Body
+# MAYBE: : string {{*}} = RequireObjectCoercible {{*}}name="charCodeAt"
+# MAYBE-NOT: PropGet
+# MAYBE: = Builtin builtin=StringPrototypeCharCodeAt
+# An object of the class String may have a property of its own under the name: function ofObject(s) { if (s instanceof String) return s.charCodeAt; }
+# RUN(OBJECT): walk f4 mechanisms=none+TypedOperations
+# OBJECT-LABEL: code f4:Body
+# OBJECT: : anything{{*}} = PropGet {{*}}key="charCodeAt"
+# The length of a text is its own: function lengthOf(s) { if (typeof s === "string") return s.length; }
+# RUN(LENGTH): walk f5 mechanisms=none+TypedOperations
+# LENGTH-LABEL: code f5:Body
+# LENGTH: = GetStringLength
+# Where the text may be undefined the check that throws in the words of the read stands in front, and the length is read off the text behind it: function lengthOfMaybe(s) { if (typeof s === "string" || s === undefined) return s.length; }
+# RUN(MAYBELENGTH): walk f6 mechanisms=none+TypedOperations
+# MAYBELENGTH-LABEL: code f6:Body
+# MAYBELENGTH: : string {{*}} = RequireObjectCoercible {{*}}name="length"
+# MAYBELENGTH: = GetStringLength
+# With typed operations withheld the read stays as it is written, and the call still finds its callee by it.
+# RUN(CLOSED): walk f1 mechanisms=none+DirectCalls+BuiltinCalls
+# CLOSED-LABEL: code f1:Body
+# CLOSED: = PropGet {{*}}key="charCodeAt"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="codeAt" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="charCodeAt"
+    v7 = Call v6, v3, v5 calleeKey="charCodeAt" calleeName="s.charCodeAt"
+    v8 = NewArray v7 contents=anything
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f2 name="methodOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="charCodeAt"
+    Return v3
+  b2():
+    v4 = Undefined
+    Return v4
+}
+function f3 name="ofMaybe" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined|string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="charCodeAt"
+    Return v3
+  b2():
+    v4 = Undefined
+    Return v4
+}
+function f4 name="ofObject" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=String
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="charCodeAt"
+    Return v3
+  b2():
+    v4 = Undefined
+    Return v4
+}
+function f5 name="lengthOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="length"
+    Return v3
+  b2():
+    v4 = Undefined
+    Return v4
+}
+function f6 name="lengthOfMaybe" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined|string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="length"
+    Return v3
+  b2():
+    v4 = Undefined
+    Return v4
+}

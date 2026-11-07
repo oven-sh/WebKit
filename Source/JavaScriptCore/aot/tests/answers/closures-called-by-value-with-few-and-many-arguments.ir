@@ -1,0 +1,65 @@
+# The shell calls closures by value: with the arguments that are declared, with fewer, with `this`, with captures, and with more words than there are registers
+# function first(a) { return a }  function second(a, b) { return b }  function self() { return this }  function twice(n: number) { return n + n }  function seven() { return 7 }
+# function make(c0, c1) { return function all(p0, p1, p2, p3) { return sink(c0, c1, this, p0, p1, p2, p3) } }
+# print(register(first, second, self, twice, seven, make)(10, 20))
+# RUN(SHELL): run-in-shell globalThis.sink = (...all) => all.join(); globalThis.register = (first, second, self, twice, seven, make) => { const o = { }; const all = make("a", "b"); print(first(5), first(), second(1, 2), second(1), self.call(o) === o, twice(4), twice("x"), seven()); print(all.call("t", 1, 2, 3, 4), all.call("t", 1), make("c", "d").call("u", 5, 6, 7, 8, 9)); print(first.name, second.name, self.name, twice.name, all.name, second.length, all.length, first === second); return second; };
+# SHELL: 5 undefined 2 undefined true 8 xx 7
+# SHELL-NEXT: a,b,t,1,2,3,4 a,b,t,1,,, c,d,u,5,6,7,8
+# SHELL-NEXT: first second self twice all 2 4 false
+# SHELL-NEXT: 20
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="register" [isFreeName]
+    v8 = Call v7, -, v0, v1, v2, v3, v4, v5 calleeName="register"
+    v9 = Integer integer=10
+    v10 = Integer integer=20
+    v11 = Call v8, -, v9, v10
+    v12 = PropGet v6 key="print" [isFreeName]
+    v13 = Call v12, -, v11 calleeName="print"
+    Return v13
+}
+function f1 name="first" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="second" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f3 name="self" module=m0 flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="twice" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+function f5 name="seven" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f6 name="make" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure v0, v1 function=f7
+    Return v2
+}
+function f7 name="all" module=m0 flags=[HasThis, HasExplicitName] length=4 captures=[{type=anything variableName="c0"}, {type=anything variableName="c1"}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName]
+    v9 = Call v8, -, v0, v1, v2, v3, v4, v5, v6 calleeName="sink"
+    Return v9
+}

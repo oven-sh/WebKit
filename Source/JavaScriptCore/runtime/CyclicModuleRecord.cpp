@@ -907,6 +907,9 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
     // 8. Let execList be a new empty List.
     // (Note: it's safe to use a Vector instead of a MarkedArgumentsBuffer here because all the contents are accessed through WriteBarriers starting at `this`.)
     Vector<CyclicModuleRecord*, 8> execList;
+#if ENABLE(AOT)
+    EnsureStillAliveScope keepsParentsAlive(this);
+#endif
     // 9. Perform GatherAvailableAncestors(module, execList).
     gatherAvailableAncestors(this, execList);
     // 10. Assert: All elements of execList have their [[AsyncEvaluationOrder]] field set to an integer, [[PendingAsyncDependencies]] field set to 0, and [[EvaluationError]] field set to EMPTY.

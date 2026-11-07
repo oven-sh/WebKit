@@ -1,0 +1,72 @@
+# main.js: import "./routes.js";
+# routes.js: import app from "./app.js";   app.get("/users");   app.get("/posts");
+# app.js: export default { routes: [], get(path) { this.routes[this.routes.length] = new RegExp("^" + path + "$"); } };
+# Nobody asks for a variable of routes.js, and nobody names the method that makes the patterns. In the start of the program the loader runs what a module imports before its body, in the order in which that is written.
+# RUN: regexp-texts mechanisms=all
+# CHECK-COUNT-2: text /^/
+# CHECK-NOT: text /
+# RUN(POSTS): regexp-texts mechanisms=all
+# POSTS: text /^/posts$/
+# RUN(USERS): regexp-texts mechanisms=all
+# USERS: text /^/users$/
+
+module m0 path="app.js" displayPath="app.js" body=f0 namespaceLayout=L(m0)
+module m1 path="routes.js" displayPath="routes.js" body=f2 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+module m2 path="main.js" displayPath="main.js" body=f3 requests=[{target=m1 completes=true}] namespaceLayout=L(m2)
+entry module=m2
+layout L0 module=m0 position=15 fields=[{key="get" declared={type=anything} flags=[IsRequired, IsMethod]}, {key="routes" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="default" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Data data=d0 @25
+    v1 = NewClosure function=f1 @29
+    v2 = NewObject -, v0, v1 layout=L0 fields=[1, 0] @15
+    v3 = FinishObject v2 @15
+    PutModuleVariable v3 variable=g0 @15
+    v5 = Undefined @15
+    Return v5 @15
+}
+function f1 name="get" module=m0 position=29 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @29
+  b1():
+    v2 = PropGet v0 key="routes" @41
+    v3 = PropGet v0 key="routes" @53
+    v4 = PropGet v3 key="length" @58
+    v5 = Builtin builtin=RegExp @79
+    v6 = String string="^" @86
+    v7 = Add v6, v1 @92
+    v8 = String string="$" @99
+    v9 = Add v7, v8 @99
+    v10 = Construct v5, -, v9 calleeName="RegExp" @79
+    ElemSet v2, v4, v10 @46
+    v12 = Undefined @46
+    Return v12 @46
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = GetModuleVariable variable=g0 @28
+    v1 = CheckInitialized v0 name="app" @28
+    v2 = PropGet v1 key="get" @28
+    v3 = String string="/users" @36
+    v4 = Call v2, v1, v3 calleeKey="get" calleeName="app.get" @32
+    v5 = GetModuleVariable variable=g0 @47
+    v6 = CheckInitialized v5 name="app" @47
+    v7 = PropGet v6 key="get" @47
+    v8 = String string="/posts" @55
+    v9 = Call v7, v6, v8 calleeKey="get" calleeName="app.get" @51
+    v10 = Undefined @47
+    Return v10 @47
+}
+function f3 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Undefined @0
+    Return v0 @0
+}

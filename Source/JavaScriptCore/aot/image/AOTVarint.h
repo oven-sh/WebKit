@@ -9,6 +9,8 @@
 
 #include "AOTVector.h"
 #include <bit>
+#include <cstring>
+#include <span>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -18,6 +20,37 @@ inline void appendVarint(Vector<uint8_t>& bytes, uint64_t value)
 {
     while (value >= 0x80) {
         bytes.append(static_cast<uint8_t>(value) | 0x80);
+        value >>= 7;
+    }
+    bytes.append(static_cast<uint8_t>(value));
+}
+
+class WriterOfReservedBytes {
+public:
+    explicit WriterOfReservedBytes(uint8_t* firstReservedByte)
+        : m_end(firstReservedByte)
+    {
+    }
+
+    uint8_t* end() const { return m_end; }
+
+    void append(uint8_t byte) { *m_end++ = byte; }
+    void append(std::span<const uint8_t> bytes)
+    {
+        if (bytes.empty())
+            return;
+        memcpy(m_end, bytes.data(), bytes.size());
+        m_end += bytes.size();
+    }
+
+private:
+    uint8_t* m_end;
+};
+
+inline void appendVarint(WriterOfReservedBytes& bytes, uint64_t value)
+{
+    while (value >= 0x80) {
+        bytes.append(static_cast<uint8_t>(value | 0x80));
         value >>= 7;
     }
     bytes.append(static_cast<uint8_t>(value));

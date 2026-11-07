@@ -1,0 +1,91 @@
+# function* guarded() { try { yield 1; yield 2; } catch { } }
+# function sum() { let total = 0; for (const value of guarded()) total += value; return total; }
+# function none() { guarded(); return 3; }
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN(ANSWER): run-in-shell
+# ANSWER: 3 3
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="sum"
+    v2 = NewClosure function=f2
+    v3 = Call v2 calleeName="none"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="console" [isFreeName]
+    v6 = PropGet v5 key="log"
+    v7 = Call v6, v5, v1, v3 calleeKey="log" calleeName="console.log"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="sum" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f3
+    v1 = Call v0 calleeName="guarded"
+    v2 = IteratorOpen v1
+    v3 = Integer
+    Jump -> next b2(v3)
+  b2(v4: anything):
+    LoopHint
+    v6 = IteratorResume v2
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    Return v4
+  b4():
+    Jump -> next b5()
+  b5() handler=b6():
+    v9 = Add v4, v8
+    Jump -> next b2(v9)
+  b6() role=IterationCleanup subject=v2:
+    v10 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v10
+}
+function f2 name="none" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0 calleeName="guarded"
+    v2 = Integer integer=3
+    Return v2
+}
+function f3 name="guarded" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    Jump -> next b1()
+  b1():
+    InitialYield
+    Jump -> next b2()
+  b2() handler=b9():
+    v3 = Integer integer=1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b3(), case b4(), otherwise b5()
+  b3() handler=b9():
+    Throw v5
+  b4():
+    Return v5
+  b5() handler=b9():
+    v7 = Integer integer=2
+    v8 = Yield v7
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b6(), case b7(), otherwise b8()
+  b6() handler=b9():
+    Throw v9
+  b7():
+    Return v9
+  b8():
+    v11 = Undefined
+    Return v11
+  b9() role=CatchHandler:
+    v12 = CatchValue
+    v13 = Undefined
+    Return v13
+}

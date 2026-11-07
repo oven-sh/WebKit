@@ -1,0 +1,64 @@
+# abstract class Shape { }  class Circle, Square extends Shape  type Point, Line, Text, Mark
+# A circle and four strangers arrive at `any` and are united; the square never meets them. What met cuts across the class with what extends it, so the forest behind the flow does not admit it, and it holds more layouts than a set takes:
+# no reader of types is made for such a proof. It stays any object, and the circle keeps the family of its class.
+# RUN: link families functions layouts mechanisms=all
+# CHECK: family [[shape]] [{{*}}L1, L2]
+# CHECK-NOT: family {{*}}L3
+# CHECK: function f2 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=object
+# CHECK: layout L1 family=[[shape]] changes=[]
+# CHECK: layout L3 changes=[]
+
+layout L0 kind=Instance name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L1 name="Circle" module=m0 fields=[{key="r" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Square" module=m0 fields=[{key="s" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Line" module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="Text" module=m0 fields=[{key="z" declared={type=anything} flags=[IsRequired]}]
+layout L6 name="Mark" module=m0 fields=[{key="w" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="area" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="any" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject layout=L1
+    PropDefine v1, v0 key="r"
+    v3 = FinishObject v1
+    v4 = NewObject layout=L2
+    PropDefine v4, v0 key="s"
+    v6 = FinishObject v4
+    v7 = NewObject layout=L3
+    PropDefine v7, v0 key="x"
+    v9 = FinishObject v7
+    v10 = NewObject layout=L4
+    PropDefine v10, v0 key="y"
+    v12 = FinishObject v10
+    v13 = NewObject layout=L5
+    PropDefine v13, v0 key="z"
+    v15 = FinishObject v13
+    v16 = NewObject layout=L6
+    PropDefine v16, v0 key="w"
+    v18 = FinishObject v16
+    v19 = GetModuleVariable variable=g0
+    v20 = Call v19, -, v3 calleeName="area"
+    v21 = Call v19, -, v6 calleeName="area"
+    v22 = GetModuleVariable variable=g1
+    v23 = Call v22, -, v3 calleeName="any"
+    v24 = Call v22, -, v9 calleeName="any"
+    v25 = Call v22, -, v12 calleeName="any"
+    v26 = Call v22, -, v15 calleeName="any"
+    v27 = Call v22, -, v18 calleeName="any"
+    Return v0
+}
+function f1 name="area" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f2 name="any" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}

@@ -129,7 +129,6 @@ export function pathOfNativeBinding(kind: NativeCallKind, file: string, symbol: 
   return `${nativeBindingPrefix}${kind}:${file}:${symbol}`;
 }
 
-// No object holds the functions that native bindings make. Each has an entry here, which the entry of its binding names.
 export const nativeFunctionsPath: BuiltinPath = "%NativeFunctions%";
 
 export function pathOfNativeFunction(file: string, symbol: string): BuiltinPath {

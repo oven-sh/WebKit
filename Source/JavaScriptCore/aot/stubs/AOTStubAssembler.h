@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTASANShadowChecks.h"
 #include "AOTRelocation.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubBlob.h"
@@ -16,7 +15,9 @@
 #include "AOTStubFrames.h"
 #include "AOTStubRecording.h"
 #include "AOTVector.h"
+#include "AllowMacroScratchRegisterUsage.h"
 #include "CCallHelpers.h"
+#include "DisallowMacroScratchRegisterUsage.h"
 #include "StackAlignment.h"
 #include <array>
 #include <initializer_list>
@@ -38,10 +39,8 @@ namespace AOT {
 struct OperationCall {
     enum class Returns : uint8_t { Value, Void, Double, Pair };
     enum class FirstArgument : uint8_t { Instance, GlobalObject, VM, None };
-    // CallerSavedGPRsAndFewFPRs: of the floating-point registers, those that a call of an accessor keeps. For a stub that may also call one, so its caller has lost the others anyway.
     enum class Saves : uint8_t { Nothing, CallerSavedGPRs, CallerSavedGPRsAndFewFPRs, CallerSavedRegisters };
 
-    // operationArgumentGPR(1 .. count) are passed in memory: the second argument is countWord, the third their address.
     struct SpilledArguments {
         unsigned count;
         uint32_t countWord;
@@ -56,9 +55,7 @@ struct OperationCall {
     FirstArgument firstArgument { FirstArgument::Instance };
     Saves saves { Saves::Nothing };
     bool checksException { true };
-    // For an operation that allocates. If an allocation fails, the operation goes on with the reserve, and the poll throws the error at the call site.
     bool pollsBeforeReturning { false };
-    // Set after the registers are saved, so a call that saves them leaves the argument registers as they were.
     std::optional<GPRReg> secondArgumentIn { };
     std::optional<GPRReg> thirdArgumentIn { };
     std::optional<GPRReg> fourthArgumentIn { };
@@ -68,11 +65,9 @@ struct OperationCall {
     std::optional<SpilledArguments> spilledArguments { };
 };
 
-// The stub that calls an operation of this run time that allocates throws the error of a failed allocation, even if the operation cannot throw otherwise.
 constexpr bool mayFailToAllocate(Entry entry, OperationCall::FirstArgument firstArgument)
 {
     switch (entry) {
-    // These take the pending exception and throw nothing.
     case Entry::operationAOTCatch:
     case Entry::operationAOTCatchException:
     case Entry::operationAOTCatchValueAndException:
@@ -86,16 +81,53 @@ struct PreservingCall {
     StubCallee callee { StubCallee::CompiledCode };
     bool returnsValue { true };
     bool checksException { true };
-    // The stub has not written it, so it is saved with the registers of the caller or by the callee.
-    std::optional<GPRReg> cellToKeep { };
-    // Emits what stands in front of the return, where the frame is gone, the registers of the caller are back and nothing was thrown.
+    std::array<std::optional<GPRReg>, 3> cellsToKeep { };
     const ScopedLambda<void()>* emitBeforeReturn { nullptr };
+    std::span<const GPRReg> registersThatCalleeLoses { };
+};
+
+class OwnedScratchRegister {
+    WTF_MAKE_NONCOPYABLE(OwnedScratchRegister);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    explicit OwnedScratchRegister(CCallHelpers& jit)
+        : m_register(jit.scratchRegister())
+    {
+#if CPU(X86_64)
+        m_forbidsAssembler.emplace(jit);
+#endif
+    }
+
+    OwnedScratchRegister(CCallHelpers& jit, GPRReg handedOn)
+        : m_register(handedOn)
+    {
+        if (handedOn != registerToHandOn)
+            return;
+        jit.scratchRegister();
+#if CPU(X86_64)
+        m_forbidsAssembler.emplace(jit);
+#endif
+    }
+
+#if CPU(X86_64)
+    static constexpr GPRReg registerToHandOn = CCallHelpers::s_scratchRegister;
+#else
+    static constexpr GPRReg registerToHandOn = CCallHelpers::dataTempRegister;
+#endif
+
+    GPRReg gpr() const { return m_register; }
+    operator GPRReg() const { return m_register; }
+
+private:
+    GPRReg m_register;
+#if CPU(X86_64)
+    std::optional<DisallowMacroScratchRegisterUsage<CCallHelpers>> m_forbidsAssembler;
+#endif
 };
 
 void readTagsFromInstance(CCallHelpers&);
 RegisterSet floatingPointRegistersLostToAccessors(StubCallee);
 
-// Who reads the registers that a stub saves around an operation that it returns behind.
 enum class SavedRegistersAreRead : bool { ByCallerAlone, BeforeReturnToo };
 
 class StubAssembler final : public CCallHelpers {
@@ -106,9 +138,7 @@ public:
     StubRecording generate(StubKey body);
     StubRecording generateForTesting(StubKey body, const ScopedLambda<void(StubAssembler&)>& generator) { return generateBody(body, generator); }
 
-    // As a generator sees it: that the caller keeps no registers changes how an operation is called, and nothing else.
     StubKey key() const;
-    bool callerKeepsNoRegisters() const { return m_key.callerFrame() == CallerFrame::KeepsNoRegisters; }
     bool callerKeepsNoFPRs() const { return m_key.callerFrame() == CallerFrame::KeepsNoFPRs; }
     const StubSignature& signature() const { return m_signature; }
     const StubOptions& options() const { return m_options; }
@@ -122,26 +152,23 @@ public:
     FPRReg resultFPR() const;
     GPRReg immediate() const;
 
+    GPRReg scratchRegister() = delete;
     GPRReg allocateScratch(StubRegister);
     FPRReg allocateScratch(FPRReg);
-    // The register is not clobbered: every path restores it before an exit. The check follows emission order, not control flow.
     void saveFPR(FPRReg, GPRReg);
     void restoreFPR(FPRReg, GPRReg);
     GPRReg clobberOperand(unsigned);
     GPRReg reuseScratch(StubRegister);
-    // clobberOperand for an operand of the signature, reuseScratch for any other register.
+    GPRReg savedScratch(StubRegister);
     GPRReg clobberRegister(GPRReg);
     GPRReg clobberRegister(StubRegister stubRegister) { return clobberRegister(gprOf(stubRegister)); }
     bool canAllocate(StubRegister) const;
-    // For code that another generator emits through the base class.
     void recordClobbers(RegisterSet);
 
     template<typename Functor> void preserving(std::span<const GPRReg>, const Functor&);
     template<typename Functor> void preserving(std::initializer_list<GPRReg> saved, const Functor& functor) { preserving(std::span<const GPRReg>(saved.begin(), saved.end()), functor); }
     template<typename Functor> void preservingRegistersClobberedBy(StubCallee callee, bool hasResult, const Functor& functor) { preservingRegistersClobberedBy(callee, hasResult, { }, functor); }
-    // What is in lostAnyway is neither stored nor loaded.
     template<typename Functor> void preservingRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, const Functor&);
-    // For a stub that has no frame record, with the stack as at its entry.
     template<typename Functor> void preservingCallerSavedRegisters(bool hasResult, const Functor& functor) { preservingCallerSavedRegisters(hasResult, { }, functor); }
     template<typename Functor> void preservingCallerSavedRegisters(bool hasResult, const RegisterSet& lostAnyway, const Functor&);
     template<typename Functor> void withSavedRegisters(const RegisterSet&, const Functor&);
@@ -156,15 +183,13 @@ public:
     void tailCallOperation(Entry entry, OperationCall::FirstArgument firstArgument) { emitOperationTailCall(entry, firstArgument); }
     void tailCallOperation(GPRReg offsetInRuntimeTable, OperationCall::FirstArgument firstArgument) { emitOperationTailCall(offsetInRuntimeTable, firstArgument); }
     void callLeaf(Entry, unsigned bytesPushed = 0);
-    // In the head of a call of an operation: the call goes to this one, which takes the same arguments.
     void jumpToOperationCallOf(Entry);
     void jumpToCallOfOperation(Entry);
+    void jumpToStubTakingImmediate();
 
     void exitOnMiss(Entry cachingOperation, const OperationCall&);
-    void exitOnCannot(Entry finisher, RuntimeCounterID reason, GPRReg reasonArgument, const OperationCall&);
+    void exitOnCannot(Entry finisher, const OperationCall&);
 
-    void callEngineThunk(Entry pointer, GPRReg scratch);
-    void callCode(CodeSymbol);
 
     void callStub(StubKey);
     void jumpToStub(StubKey target) { linkToStub(jump(), target); }
@@ -174,14 +199,16 @@ public:
     void returnStubAddress(StubKey);
     void loadLabelAddress(Label, GPRReg);
     void jumpThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers);
-    void callThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers);
+    void callThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers, GPRReg scratch);
 
-    // In place of the assembler's own, which pads with breakpoints on ARM64.
     void align();
+    void alignWhatStandsBehind(unsigned size);
     void bindEntry(StubKey entry) { bindEntryAt(entry, label()); }
     Label bindReturnLabel(StubFrameKind);
 
     void returnToCaller();
+    void boxBooleanAtEveryReturn() { m_boxesBooleanAtEveryReturn = true; }
+    void goOnAtEveryReturnIn(std::optional<StubKey> stub) { m_stubBehindEveryReturn = stub; }
 #if CPU(X86_64)
     void emitFramelessCallerEpilogue();
 #else
@@ -193,13 +220,10 @@ public:
     void pollBeforeReturningFromNativeCode();
     void pollBeforeReturningFromOperation(Label afterPoll);
     Jump branchIfNonZeroOrPollIsDue(GPRReg value, GPRReg scratch);
-    // For a frame that ends at the address in the register.
     void checkStackBeforeEntering(GPRReg endOfFrame);
-    // The next thing is a jump into the code of the function object in calleeGPR, with the stack as at the entry of this stub.
     void checkStackBeforeEnteringCallee();
     CallPosition callPosition() const { return m_callPosition; }
     void setCallPosition(CallPosition position) { m_callPosition = position; }
-    // In a frame of this stub, ahead of the call that returns to the label. What the poll throws leaves the frame as if the callee had thrown it.
     void pollBeforeCall(Label returnSite);
     static Address limitOfTailCallsByValue();
     static Address softStackLimitWord();
@@ -215,7 +239,6 @@ public:
 
     void addOutOfLinePart(Function<void(StubAssembler&)>&& part) { m_outOfLineParts.append(WTF::move(part)); }
 
-    // These hide the base's, so that no transfer of control goes unrecorded.
     Call call(GPRReg, PtrTag);
     Call call(Address, PtrTag);
     void farJump(GPRReg, PtrTag);
@@ -224,50 +247,6 @@ public:
     Call nearCall() = delete;
     Call nearTailCall() = delete;
     Call threadSafePatchableNearCall() = delete;
-
-#if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
-#define AOT_FOR_EACH_STUB_MEMORY_ACCESS(v) \
-    v(load8, 1, Read) v(load8SignedExtendTo32, 1, Read) v(load16, 2, Read) v(load16Unaligned, 2, Read) v(load16SignedExtendTo32, 2, Read) \
-    v(load32, 4, Read) v(load32SignedExtendTo64, 4, Read) v(load64, 8, Read) v(loadPtr, 8, Read) v(loadFloat, 4, Read) v(loadDouble, 8, Read) \
-    v(loadPair64, 16, Read) v(loadVector, 16, Read) \
-    v(branch8, 1, Read) v(branch16, 2, Read) v(branch32, 4, Read) v(branch64, 8, Read) v(branchPtr, 8, Read) \
-    v(branchTest8, 1, Read) v(branchTest16, 2, Read) v(branchTest32, 4, Read) v(branchTest64, 8, Read) v(branchTestPtr, 8, Read) \
-    v(branchTestBit32, 4, Read) v(branchTestBit64, 8, Read) v(compare32, 4, Read) v(test32, 4, Read) \
-    v(compareOnFlags32, 4, Read) v(compareOnFlags64, 8, Read) v(testOnFlags64, 8, Read) \
-    v(convertInt32ToDouble, 4, Read) v(convertInt64ToDouble, 8, Read) v(convertFloatToDouble, 4, Read) \
-    v(addDouble, 8, Read) v(subDouble, 8, Read) v(mulDouble, 8, Read) v(divDouble, 8, Read) v(mul32, 4, Read) \
-    v(store8, 1, Write) v(store16, 2, Write) v(store32, 4, Write) v(store64, 8, Write) v(storePtr, 8, Write) v(storeFloat, 4, Write) v(storeDouble, 8, Write) \
-    v(storePair64, 16, Write) v(storeValue, 8, Write) \
-    v(add8, 1, Update) v(add32, 4, Update) v(add64, 8, Update) v(addPtr, 8, Update) v(sub32, 4, Update) v(sub64, 8, Update) \
-    v(and32, 4, Update) v(and64, 8, Update) v(or32, 4, Update) v(or64, 8, Update) v(xor32, 4, Update) v(xor64, 8, Update) \
-    v(neg32, 4, Update) v(neg64, 8, Update) v(not32, 4, Update) v(not64, 8, Update) \
-    v(branchAdd32, 4, Update) v(branchAdd64, 8, Update) v(branchSub32, 4, Update) v(branchMul32, 4, Update) v(atomicXchg32, 4, Update)
-
-#define AOT_DEFINE_CHECKED_STUB_MEMORY_ACCESS(name, size, kind) \
-    template<typename... Arguments> decltype(auto) name(Arguments... arguments) \
-    { \
-        checkASANShadow<size, MemoryAccess::kind>(arguments...); \
-        return CCallHelpers::name(arguments...); \
-    }
-    AOT_FOR_EACH_STUB_MEMORY_ACCESS(AOT_DEFINE_CHECKED_STUB_MEMORY_ACCESS)
-#undef AOT_DEFINE_CHECKED_STUB_MEMORY_ACCESS
-#undef AOT_FOR_EACH_STUB_MEMORY_ACCESS
-
-#define AOT_FOR_EACH_STUB_CELL_BYTE_TEST(v) \
-    v(branchIfType, typeInfoTypeOffset) v(branchIfNotType, typeInfoTypeOffset) v(branchIfObject, typeInfoTypeOffset) v(branchIfNotObject, typeInfoTypeOffset) \
-    v(branchIfString, typeInfoTypeOffset) v(branchIfNotString, typeInfoTypeOffset) v(branchIfSymbol, typeInfoTypeOffset) v(branchIfNotSymbol, typeInfoTypeOffset) \
-    v(barrierBranchWithoutFence, cellStateOffset)
-
-#define AOT_DEFINE_CHECKED_STUB_CELL_BYTE_TEST(name, offset) \
-    template<typename... Arguments> Jump name(GPRReg cell, Arguments... arguments) \
-    { \
-        checkASANShadow<1, MemoryAccess::Read>(Address(cell, JSCell::offset())); \
-        return CCallHelpers::name(cell, arguments...); \
-    }
-    AOT_FOR_EACH_STUB_CELL_BYTE_TEST(AOT_DEFINE_CHECKED_STUB_CELL_BYTE_TEST)
-#undef AOT_DEFINE_CHECKED_STUB_CELL_BYTE_TEST
-#undef AOT_FOR_EACH_STUB_CELL_BYTE_TEST
-#endif
 
     struct BoundEntry {
         StubKey key;
@@ -283,23 +262,6 @@ public:
     [[nodiscard]] bool linkCallsAndAddresses(LinkBuffer&);
 
 private:
-#if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
-    enum class MemoryAccess : uint8_t { Read, Write, Update };
-
-    template<unsigned size, MemoryAccess access, typename... Arguments>
-    void checkASANShadow(const Arguments&... arguments)
-    {
-        size_t remaining = sizeof...(Arguments);
-        auto check = [&]<typename Argument>(const Argument& argument) {
-            --remaining;
-            if constexpr (std::is_same_v<Argument, Address> || std::is_same_v<Argument, BaseIndex>)
-                emitASANShadowCheck(*this, argument, size, access == MemoryAccess::Write || (access == MemoryAccess::Update && !remaining));
-        };
-        (check(arguments), ...);
-    }
-#endif
-
-    // An entry, or the register that has the offset of an entry in the run-time table.
     using CalledOperation = Variant<Entry, GPRReg>;
 
     struct SavedRegisterArea {
@@ -345,7 +307,7 @@ private:
 
     void storePreservedRegisters(std::span<const GPRReg>);
     void loadPreservedRegisters(std::span<const GPRReg>);
-    SavedRegisterArea storeRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway);
+    SavedRegisterArea storeRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep = { });
     void loadSavedRegisters(const SavedRegisterArea&);
 
     void loadEntry(Entry, GPRReg);
@@ -359,20 +321,16 @@ private:
     OperationToCall setUpOperationCall(const CalledOperation&, const OperationCall&);
     void prepareCallOperation();
     void emitOperationCallAndReturn(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead);
-    bool resultsComeFromOperation(const OperationCall&) const;
     bool resultsInFPRsComeFromOperation(const OperationCall&) const;
     void emitOperationCallSavingNothing(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
     void emitOperationCallSavingRegisters(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
     void emitOperationTailCall(const CalledOperation&, OperationCall::FirstArgument);
 
-    void emitStackAlignmentCheck();
     void emitStubCall(StubKey, StubReference::Kind = StubReference::Kind::Call);
     void pollIfBelow(Address limit, StubKey poll);
     void pollAtStubEntry(StubKey poll, StubReference::Kind = StubReference::Kind::Call);
     void bindEntryAt(StubKey, Label);
     Label labelOf(StubKey entry) const;
-    void checkReturnsFlags(RelationalCondition) const;
-    void checkReturnsFlags() const;
 
     const StubOptions m_options;
     const StubCatalog& m_catalog;
@@ -386,11 +344,14 @@ private:
     RegisterSet m_clobberedOperands;
     RegisterSet m_borrowedFPRs;
     Vector<RegisterSet, 4> m_savedRegisterStack;
+    bool m_boxesBooleanAtEveryReturn { false };
+    std::optional<StubKey> m_stubBehindEveryReturn;
     Vector<Function<void(StubAssembler&)>> m_outOfLineParts;
 
     Vector<BoundEntry> m_boundEntries;
     Vector<BoundReturnLabel> m_boundReturnLabels;
     HashMap<uint64_t, Label> m_entryLabels;
+    Label m_headOfBody;
     Vector<PendingJump> m_pendingJumps;
     Vector<PendingCall> m_pendingCalls;
     Vector<PendingStubAddress> m_pendingStubAddresses;
@@ -401,7 +362,7 @@ private:
 inline StubKey StubAssembler::key() const
 {
     ASSERT(m_key.hasFamily());
-    return hasFrameAndKeepsFewerRegisters(m_key.callerFrame()) ? m_key.withCallerFrame(CallerFrame::HasFrame) : m_key;
+    return callerKeepsNoFPRs() ? m_key.withCallerFrame(CallerFrame::HasFrame) : m_key;
 }
 
 inline GPRReg StubAssembler::operand(unsigned index) const
@@ -468,7 +429,6 @@ void StubAssembler::preservingCallerSavedRegisters(bool hasResult, const Registe
 {
 #if CPU(X86_64)
     emitFunctionPrologue();
-    // The size of the save area aligns the stack of a stub that has pushed nothing, and the prologue pushed one register.
     subPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
     preservingRegistersClobberedBy(StubCallee::Operation, hasResult, lostAnyway, [&](unsigned bytes) {
         functor(bytes + 2 * static_cast<unsigned>(sizeof(CPURegister)));

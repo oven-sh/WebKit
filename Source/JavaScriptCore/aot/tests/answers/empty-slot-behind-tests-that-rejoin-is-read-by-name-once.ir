@@ -1,0 +1,50 @@
+# function Sym(a) { this.a = a; }
+# Sym.prototype = Sym.prototype; show(Sym); let s = new Sym(size); show(0); const early = s.late; s.late = size; show(s); show(early);
+# RUN(EMPTY): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x !== "function") print(JSON.stringify(x)); };
+# EMPTY: 0
+# EMPTY-NEXT: {"a":3,"late":3}
+# EMPTY-NEXT: undefined
+# EMPTY-NEXT: exited with 0
+# RUN(INHERITED): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x !== "function") print(JSON.stringify(x)); else x.prototype.late = 7; };
+# INHERITED: 0
+# INHERITED-NEXT: {"a":3,"late":3}
+# INHERITED-NEXT: 7
+# INHERITED-NEXT: exited with 0
+# RUN(BELOW): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x !== "function") print(JSON.stringify(x)); else x.prototype = { late: 8 }; };
+# BELOW: 0
+# BELOW-NEXT: {"a":3,"late":3}
+# BELOW-NEXT: 8
+# BELOW-NEXT: exited with 0
+
+layout L0 kind=Instance name="Sym" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="late" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="Sym" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="s" module=m0 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="size" [isFreeName]
+    v2 = PropGet v0 key="show" [isFreeName]
+    v3 = GetModuleVariable variable=g0
+    v4 = PropGet v3 key="prototype"
+    PropSet v3, v4 key="prototype"
+    v6 = Call v2, -, v3 calleeName="show"
+    v7 = Construct v3, -, v1 calleeName="Sym"
+    PutModuleVariable v7 variable=g1
+    v9 = Integer
+    v10 = Call v2, -, v9 calleeName="show"
+    v11 = GetModuleVariable variable=g1
+    v12 = PropGet v11 key="late"
+    PropSet v11, v1 key="late"
+    v14 = Call v2, -, v11 calleeName="show"
+    v15 = Call v2, -, v12 calleeName="show"
+    Return v15
+}
+function f1 name="Sym" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v2, v1 key="a"
+    v4 = Undefined
+    Return v4
+}

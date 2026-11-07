@@ -1,0 +1,37 @@
+# If what a rest parameter gathers escaped, as in the second version, every object that is passed to a function with `...rest` would lose what is known of it
+# function all(...list) { return list[0]; }  function get(o) { return o.x; }  get(all({ x: "a", only: 0 }));
+# The entry of the function makes the list: one site for the function. Whoever enters stores what the list gathers into its elements.
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: function f1 callers-known one-callee {{*}}result=undefined|L0
+# CHECK-NEXT: parameter 0 {{*}}proven=Array
+# CHECK: function f2 callers-known one-callee {{*}}result=string
+# CHECK: field L0.0 "x" proven=string writers-known written-at-construction-alone
+# CHECK: layout L0 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="only" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Integer integer=0
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3 calleeName="all"
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v5 calleeName="get"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="all" module=m0 flags=[HasRestParameter] length=0 thisType={type=anything} parameters=[{type=Array<anything> flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

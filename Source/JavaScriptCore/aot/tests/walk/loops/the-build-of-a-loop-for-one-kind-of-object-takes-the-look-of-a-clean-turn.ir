@@ -1,0 +1,237 @@
+# function areas(shape: Shape, turns: number) { let total = 0; for (let i = 0; i < turns; i++) total += shape.area(); return total; }     class Square extends Shape, class Rect extends Shape
+# The loop is built once for a Square and once for a Rect, behind a test of the shape. In such a build every test of a turn that fails begins the turn again in the closed build, so the turn runs no other code.
+# The look that knows this was refused: a second copy of a loop pays only where something leaves the turns. But here the closed build stands already and a typed one costs nothing more.
+# So the fields were read and the area was worked out in every turn, with up to four tests and a box: 19 instructions a turn for one.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest
+# CHECK: = ShapeTest
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: = GetSlot {{*}}key="side"
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = GetSlot
+# CHECK: = Add {{*}}form=Numbers
+# CHECK: = GetSlot {{*}}key="w"
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = GetSlot
+# CHECK: = Add {{*}}form=Numbers
+# RUN(SHELL): run-in-shell globalThis.hidden = () => 3; globalThis.sink = sum => { print(String(sum)); };
+# SHELL: 60
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Shape" module=m0 position=99 constructor=f2
+layout L1 kind=Instance name="Square" module=m0 position=140 base=L0 constructor=f3 fields=[{key="side" declared={type=number} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 kind=Instance name="Rect" module=m0 position=266 base=L0 constructor=f5 fields=[{key="w" declared={type=number} flags=[IsRequired]}, {key="h" declared={type=number} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=2
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @84
+    v3 = NewClass v2 layout=L0 @84
+    PutModuleVariable v3 variable=g0 @84
+    v5 = FinishClass v3 layout=L0 @84
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @84
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @84
+    v8 = ResolveHeritage v7 @155
+    v9 = NewClosure function=f3 @134
+    v10 = NewClass v9, v7, v8 layout=L1 @134
+    PutModuleVariable v10 variable=g1 @134
+    v12 = NewClosure function=f4 @209
+    DefineMethod v10, v12 layout=L1 key="area" @209
+    v14 = FinishClass v10 layout=L1 @134
+    v15 = Convert v14 declared={type=f3 flags=[IsFromCompiler]} @134
+    v16 = Convert v14 declared={type=f3 flags=[IsFromCompiler]} @134
+    v17 = ResolveHeritage v7 @279
+    v18 = NewClosure function=f5 @260
+    v19 = NewClass v18, v7, v17 layout=L2 @260
+    PutModuleVariable v19 variable=g2 @260
+    v21 = NewClosure function=f6 @348
+    DefineMethod v19, v21 layout=L2 key="area" @348
+    v23 = FinishClass v19 layout=L2 @260
+    v24 = Convert v23 declared={type=f5 flags=[IsFromCompiler]} @260
+    v25 = Convert v23 declared={type=f5 flags=[IsFromCompiler]} @260
+    v26 = Integer integer=2 @561
+    v27 = Construct v16, -, v26 calleeName="Square" @554
+    v28 = Integer integer=2 @574
+    v29 = Integer integer=3 @577
+    v30 = Construct v25, -, v28, v29 calleeName="Rect" @569
+    v31 = NewArray v27, v30 contents=undefined|null|L0 @549
+    v32 = Convert v31 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} @549
+    v33 = Integer @592
+    v34 = Convert v33 declared={type=number} @592
+    v35 = Integer @612
+    v36 = Convert v35 declared={type=number} @612
+    Jump -> next b1(v34, v36) @604
+  b1(v37: number, v38: number):
+    LoopHint @604
+    v40 = Integer integer=4 @623
+    v41 = Less v38, v40 @623
+    Branch v41 -> taken b2(), notTaken b3() @623
+  b2():
+    v42 = Integer integer=1 @663
+    v43 = BitAnd v38, v42 @663
+    v44 = ElemGet v32, v43 @648
+    v45 = Builtin builtin=GlobalThis @668
+    v46 = PropGet v45 key="hidden" [isFreeName] @668
+    v47 = Call v46 calleeName="hidden" @668
+    v48 = Convert v47 declared={type=number} illTypedCause=Assertion @668
+    v49 = Call v1, -, v44, v48 calleeName="areas" @642
+    v50 = Add v37, v49 @642
+    v51 = Convert v50 declared={type=number} @635
+    v52 = Increment v38 @626
+    v53 = Convert v52 declared={type=number} @626
+    Jump -> next b1(v51, v53) @626
+  b3():
+    v54 = Builtin builtin=GlobalThis @689
+    v55 = PropGet v54 key="sink" [isFreeName] @689
+    v56 = Call v55, -, v37 calleeName="sink" @689
+    v57 = Undefined @689
+    Return v57 @689
+}
+function f1 name="areas" module=m0 position=393 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = Integer @451
+    v3 = Convert v2 declared={type=number} @451
+    v4 = Integer @467
+    v5 = Convert v4 declared={type=number} @467
+    Jump -> next b1(v3, v5) @463
+  b1(v6: number, v7: number):
+    LoopHint @463
+    v9 = Less v7, v1 @474
+    Branch v9 -> taken b2(), notTaken b3() @474
+  b2():
+    v10 = PropGet v0 key="area" @495
+    v11 = Call v10, v0 calleeKey="area" calleeName="shape.area" @501
+    v12 = Add v6, v11 @495
+    v13 = Convert v12 declared={type=number} @486
+    v14 = Increment v7 @481
+    v15 = Convert v14 declared={type=number} @481
+    Jump -> next b1(v13, v15) @481
+  b3():
+    Return v6 @516
+}
+function f2 name="Shape" module=m0 position=99 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @99
+    v2 = NewObject v1 layout=L0 @99
+    v3 = Convert v2 declared={type=L0} @99
+    Return v3 @99
+}
+function f3 name="Square" module=m0 position=174 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: number):
+    v3 = Absent @175
+    v4 = GetSuperBase v0 @198
+    v5 = SuperConstruct v4, v1 layout=L1 @198
+    v6 = Convert v5 declared={type=L1} @198
+    v7 = TypeTest v3 testedType=absent @198
+    Branch v7 -> taken b1(| 0), notTaken b9(| 0) @198
+  b1(v8):
+    v9 = CallDirect v6 function=f7 @198
+    PropSet v6, v2 key="side" @175
+    v11 = Undefined @198
+    v12 = TypeTest v11 testedType=object @198
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @198
+  b2(v13):
+    Jump -> next b7(v13) @198
+  b3(v14):
+    v15 = TypeTest v14 testedType=undefined @198
+    Branch v15 -> taken b4(| 0), notTaken b8(| 0) @198
+  b4(v16):
+    v17 = TypeTest v6 testedType=absent @198
+    Branch v17 -> taken b5(| 0), notTaken b6(| 0) @198
+  b5(v18):
+    v19 = NewRuntimeError runtimeError=UninitializedThis @198
+    Throw v19 @198
+  b6(v20):
+    Jump -> next b7(v20) @198
+  b7(v21):
+    Return v21 @198
+  b8(v22):
+    v23 = NewRuntimeError runtimeError=DerivedConstructorResult name="Square" @198
+    Throw v23 @198
+  b9(v24):
+    v25 = NewRuntimeError runtimeError=ThisAlreadyBound @198
+    Throw v25 @198
+}
+function f4 name="area" module=m0 position=209 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L1} results=[{type=number}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="side" @233
+    v2 = PropGet v0 key="side" @245
+    v3 = Mul v1, v2 @245
+    v4 = Convert v3 declared={type=number} @245
+    Return v4 @245
+}
+function f5 name="Rect" module=m0 position=298 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: number, v3: number):
+    v4 = Absent @317
+    v5 = GetSuperBase v0 @337
+    v6 = SuperConstruct v5, v1 layout=L2 @337
+    v7 = Convert v6 declared={type=L2} @337
+    v8 = TypeTest v4 testedType=absent @337
+    Branch v8 -> taken b1(| 0), notTaken b9(| 0) @337
+  b1(v9):
+    v10 = CallDirect v7 function=f8 @337
+    PropSet v7, v2 key="w" @299
+    PropSet v7, v3 key="h" @317
+    v13 = Undefined @337
+    v14 = TypeTest v13 testedType=object @337
+    Branch v14 -> taken b2(| 0), notTaken b3(| 0) @337
+  b2(v15):
+    Jump -> next b7(v15) @337
+  b3(v16):
+    v17 = TypeTest v16 testedType=undefined @337
+    Branch v17 -> taken b4(| 0), notTaken b8(| 0) @337
+  b4(v18):
+    v19 = TypeTest v7 testedType=absent @337
+    Branch v19 -> taken b5(| 0), notTaken b6(| 0) @337
+  b5(v20):
+    v21 = NewRuntimeError runtimeError=UninitializedThis @337
+    Throw v21 @337
+  b6(v22):
+    Jump -> next b7(v22) @337
+  b7(v23):
+    Return v23 @337
+  b8(v24):
+    v25 = NewRuntimeError runtimeError=DerivedConstructorResult name="Rect" @337
+    Throw v25 @337
+  b9(v26):
+    v27 = NewRuntimeError runtimeError=ThisAlreadyBound @337
+    Throw v27 @337
+}
+function f6 name="area" module=m0 position=348 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L2} results=[{type=number}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="w" @372
+    v2 = PropGet v0 key="h" @381
+    v3 = Mul v1, v2 @381
+    v4 = Convert v3 declared={type=number} @381
+    Return v4 @381
+}
+function f7 module=m0 position=140 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @140
+    v2 = Undefined @175
+    PropDefine v1, v2 key="side" @175
+    v4 = Undefined @140
+    Return v4 @140
+}
+function f8 module=m0 position=266 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L2} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @266
+    v2 = Undefined @299
+    PropDefine v1, v2 key="w" @299
+    v4 = Undefined @317
+    PropDefine v1, v4 key="h" @317
+    v6 = Undefined @266
+    Return v6 @266
+}
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f9]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f9]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

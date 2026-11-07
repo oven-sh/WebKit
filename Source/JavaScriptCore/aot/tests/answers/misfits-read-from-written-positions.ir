@@ -1,0 +1,131 @@
+# type Line = { line: number };  let current: Line, seen = 0;  function lineOfVariable() { const it = current; seen++; return it.line; }  the same over a captured variable, and over a capture
+# What lies in a variable of a module, in a captured variable and in a capture is not what the program writes that it is: an object of another layout, a text, a number. The body of the module puts it there, which tests nothing.
+# Each reader counts between the read and the use. Wherever its test stands, it counts once a call and answers what the object holds under the name.
+# RUN: run-in-shell globalThis.report = value => print(String(value));
+# CHECK: 1
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: 4
+# CHECK-NEXT: 1
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: 4
+# CHECK-NEXT: 1
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="line" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="other" declared={type=number} flags=[IsRequired]}, {key="more" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L2 kind=Environment module=m0 fields=[{key=@"0" declared={type=undefined|null|absent|L0 flags=[OmitsNull, OmitsUndefined]} variableName="current"}, {key=@"1" declared={type=number|absent} variableName="seen"}] ownFieldCount=2
+variable g0 name="current" module=m0 declared={type=undefined|null|absent|L0 flags=[OmitsNull, OmitsUndefined]}
+variable g1 name="seen" module=m0 declared={type=number|absent}
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Integer integer=2
+    v6 = Integer integer=3
+    v7 = NewObject -, v5, v6 layout=L1 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = String string="text"
+    v10 = Integer integer=5
+    v11 = Integer
+    PutModuleVariable v11 variable=g1
+    v13 = NewClosure function=f1
+    v14 = Convert v4 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    PutModuleVariable v14 variable=g0
+    v16 = Call v13 calleeName="lineOfVariable"
+    v17 = Call v1, -, v16 calleeName="report"
+    v18 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    PutModuleVariable v18 variable=g0
+    v20 = Call v13 calleeName="lineOfVariable"
+    v21 = Call v1, -, v20 calleeName="report"
+    v22 = Convert v9 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    PutModuleVariable v22 variable=g0
+    v24 = Call v13 calleeName="lineOfVariable"
+    v25 = Call v1, -, v24 calleeName="report"
+    v26 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    PutModuleVariable v26 variable=g0
+    v28 = Call v13 calleeName="lineOfVariable"
+    v29 = Call v1, -, v28 calleeName="report"
+    v30 = GetModuleVariable variable=g1
+    v31 = CheckInitialized v30 name="seen"
+    v32 = Call v1, -, v31 calleeName="report"
+    v33 = NewObject layout=L2
+    PutEnvironmentField v33, v11 layout=L2 field=1
+    v35 = NewClosure v33 function=f2
+    v36 = Convert v4 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    PutEnvironmentField v33, v36 layout=L2
+    v38 = Call v35 calleeName="lineOfCaptured"
+    v39 = Call v1, -, v38 calleeName="report"
+    v40 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    PutEnvironmentField v33, v40 layout=L2
+    v42 = Call v35 calleeName="lineOfCaptured"
+    v43 = Call v1, -, v42 calleeName="report"
+    v44 = Convert v9 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    PutEnvironmentField v33, v44 layout=L2
+    v46 = Call v35 calleeName="lineOfCaptured"
+    v47 = Call v1, -, v46 calleeName="report"
+    v48 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    PutEnvironmentField v33, v48 layout=L2
+    v50 = Call v35 calleeName="lineOfCaptured"
+    v51 = Call v1, -, v50 calleeName="report"
+    v52 = GetEnvironmentField v33 layout=L2 field=1
+    v53 = CheckInitialized v52 name="seen"
+    v54 = Call v1, -, v53 calleeName="report"
+    v55 = Convert v4 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v56 = NewClosure v55 function=f3
+    v57 = Call v56 calleeName="lineOfCapture"
+    v58 = Call v1, -, v57 calleeName="report"
+    v59 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v60 = NewClosure v59 function=f3
+    v61 = Call v60 calleeName="lineOfCapture"
+    v62 = Call v1, -, v61 calleeName="report"
+    v63 = Convert v9 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v64 = NewClosure v63 function=f3
+    v65 = Call v64 calleeName="lineOfCapture"
+    v66 = Call v1, -, v65 calleeName="report"
+    v67 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v68 = NewClosure v67 function=f3
+    v69 = Call v68 calleeName="lineOfCapture"
+    v70 = Call v1, -, v69 calleeName="report"
+    Return v69
+}
+function f1 name="lineOfVariable" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="current"
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="seen"
+    v4 = Increment v3
+    v5 = Convert v4 declared={type=number}
+    PutModuleVariable v5 variable=g1
+    v7 = PropGet v1 key="line"
+    Return v7
+}
+function f2 name="lineOfCaptured" module=m0 kind=Arrow flags=[IsChecked] captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2
+    v2 = CheckInitialized v1 name="current"
+    v3 = GetEnvironmentField v0 layout=L2 field=1
+    v4 = CheckInitialized v3 name="seen"
+    v5 = Increment v4
+    v6 = Convert v5 declared={type=number}
+    PutEnvironmentField v0, v6 layout=L2 field=1
+    v8 = PropGet v2 key="line"
+    Return v8
+}
+function f3 name="lineOfCapture" module=m0 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined] variableName="kept"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="line"
+    Return v1
+}

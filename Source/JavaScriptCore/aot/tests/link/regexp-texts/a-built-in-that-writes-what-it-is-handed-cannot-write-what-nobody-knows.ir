@@ -1,0 +1,45 @@
+# The list follows from the program alone. What nobody knows is told by its structure: a built-in that writes what it is handed would move that structure, and every number that nobody knows would be a known object from then on, for this file and every later one. It is frozen.
+# Object.seal([7].flat()[0]); const twice = [0].flat()[0] * 2; new RegExp((twice ? "some" : "none").toUpperCase() + "q");   ([7].flat()[0]: flat is not entered: nobody knows what it gives.)
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /NONEq/
+# CHECK: text /SOMEq/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectSeal
+    v1 = Integer integer=7
+    v2 = NewArray v1 contents=anything
+    v3 = PropGet v2 key="flat"
+    v4 = Call v3, v2 calleeKey="flat"
+    v5 = Integer
+    v6 = ElemGet v4, v5
+    v7 = Call v0, -, v6
+    v8 = Integer integer=0
+    v9 = NewArray v8 contents=anything
+    v10 = PropGet v9 key="flat"
+    v11 = Call v10, v9 calleeKey="flat"
+    v12 = Integer
+    v13 = ElemGet v11, v12
+    v14 = Integer integer=2
+    v15 = Mul v13, v14
+    v16 = ToBoolean v15
+    Branch v16 -> taken b1(), notTaken b2()
+  b1():
+    v17 = String string="some"
+    v18 = PropGet v17 key="toUpperCase"
+    v19 = Call v18, v17 calleeKey="toUpperCase"
+    Jump -> next b3(v19)
+  b2():
+    v20 = String string="none"
+    v21 = PropGet v20 key="toUpperCase"
+    v22 = Call v21, v20 calleeKey="toUpperCase"
+    Jump -> next b3(v22)
+  b3(v23: anything):
+    v24 = Builtin builtin=RegExp
+    v25 = String string="q"
+    v26 = Add v23, v25
+    v27 = Construct v24, -, v26
+    Return v27
+}

@@ -1,0 +1,39 @@
+# The native code that converts an instance of one of the engine's classes looks members up by name: Array.prototype.toString() calls the `join` that it finds. A test run may write that member, and what lies there then gets the list as `this`:
+# nobody knows what the list holds from then on
+# "a".concat({ tag: "text" })      (1.25).toLocaleString("en-US", { tag: "text" })      const list = [1, 1]; "a".concat(list); list[0]
+# row-that-asks-an-operand-in-a-test-run-that-lays-and-writes-nothing-keeps-it.ir is the twin: the same records without the last line
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link accesses mechanisms=all
+# CHECK-NOT: read f0 v19 proven=undefined|i32
+# RUN(MADE): link accesses mechanisms=all
+# MADE-NOT: receiver-as-made f0 v19
+
+layout L0 module=m0 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="text"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = String string="a"
+    v4 = PropGet v3 key="concat"
+    v5 = Call v4, v3, v2 calleeKey="concat"
+    v6 = NewObject -, v0 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    v8 = Double number=1.25
+    v9 = PropGet v8 key="toLocaleString"
+    v10 = String string="en-US"
+    v11 = Call v9, v8, v10, v7 calleeKey="toLocaleString"
+    v12 = PropGet v2 key="tag"
+    v13 = PropGet v7 key="tag"
+    v14 = Integer integer=1
+    v15 = NewArray v14, v14
+    v16 = PropGet v3 key="concat"
+    v17 = Call v16, v3, v15 calleeKey="concat"
+    v18 = Integer
+    v19 = ElemGet v15, v18
+    Return v19
+}
+replaceablebuiltin member=ArrayPrototypeJoin

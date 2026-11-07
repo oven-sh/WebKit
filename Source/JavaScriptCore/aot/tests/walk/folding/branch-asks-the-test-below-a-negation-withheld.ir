@@ -1,0 +1,6 @@
+# the same functions with folding withheld: the branch asks the negation, as it is written
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: [[no]]: {{*}} = LogicalNot
+# CHECK: Branch [[no]] -> taken
+# PROGRAM-OF: branch-asks-the-test-below-a-negation.ir

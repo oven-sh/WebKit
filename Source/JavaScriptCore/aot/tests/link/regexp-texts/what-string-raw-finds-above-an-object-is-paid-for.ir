@@ -1,0 +1,24 @@
+# The list follows from the program alone. String.raw reads raw wherever it lies: String.raw(Object.create({ raw: { length: 4294967295 } }));
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /A/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=1 fields=[{key="length" declared={type=anything}}] ownFieldCount=1
+layout L1 module=m0 position=2 fields=[{key="raw" declared={type=anything}}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = String string="a"
+    v2 = PropGet v1 key="toUpperCase"
+    v3 = Call v2, v1 calleeKey="toUpperCase"
+    v4 = Construct v0, -, v3
+    v5 = Integer integer=4294967295
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = Builtin builtin=ObjectCreate
+    v9 = Call v8, -, v7
+    v10 = Builtin builtin=StringRaw
+    v11 = Call v10, -, v9
+    Return v4
+}

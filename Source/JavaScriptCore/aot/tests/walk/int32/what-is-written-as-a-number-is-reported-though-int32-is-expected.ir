@@ -1,0 +1,29 @@
+# what is read out of a place that is written as a number asks for a proof, whatever a guess would ask it for. The body takes the read into a bit operator, so int32 is EXPECTED of it, and a test stands behind every guess. None stands behind the report: reported
+# class Cursor { line: number }  function lineOf(c: Cursor): int32 { const line = c.line; sink(line & 255); return line; }
+# DIAGNOSTIC: UnprovenInt32 1
+# What is written of a parameter comes by Link, so the run has every mechanism. The build has an error, so no unit is printed
+# RUN: walk f1 mechanisms=all
+# CHECK: the walk of f1:Body failed
+
+layout L0 module=m0 fields=[{key="line" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @1
+    v1 = PropGet v0 key="sink" [isFreeName] @1
+    v2 = NewClosure function=f1 @1
+    v3 = Call v1, -, v2 @1
+    Return v3 @1
+}
+function f1 name="lineOf" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=number}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="line" @2
+    v2 = Integer integer=255 @2
+    v3 = BitAnd v1, v2 @2
+    v4 = Builtin builtin=GlobalThis @2
+    v5 = PropGet v4 key="sink" [isFreeName] @2
+    v6 = Call v5, -, v3 @2
+    v7 = Convert v1 declared={type=i32 flags=[IsInt32Promise]} @3
+    Return v7 @3
+}

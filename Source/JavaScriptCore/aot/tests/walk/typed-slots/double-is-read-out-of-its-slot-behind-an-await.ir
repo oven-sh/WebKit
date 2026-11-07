@@ -1,0 +1,45 @@
+# what a slot holds is decided for the whole program, so no suspension changes it. The object is kept in a variable, so it is not fresh. Behind the await the field is stored into and read, and the read gives a raw double.
+# That the slot is filled is known at a point alone: the store behind the await shows it, so the read is GetSlot
+# let kept; async function wait(p) { const o = kept = { x: 1.5 }; await p; o.x = 2.5; return o.x * 2.5; }
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# CHECK: mechanisms TypedOperations,UnboxedNumbers,TypedSlots
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = NewObject {{*}}layout=L0
+# CHECK: [[o]]: {{*}} = FinishObject
+# CHECK: = AwaitBySavingFrame
+# CHECK: PutSlot{{*}} [[o]]
+# CHECK: @Double = GetSlot [[o]]
+# RUN(WITHHELD): walk f1:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers
+# WITHHELD-LABEL: code f1:CoroutineBody
+# WITHHELD: = AwaitBySavingFrame
+# WITHHELD-NOT: @Double = GetSlot
+# WITHHELD: = GetSlot
+# RUN(PLAN): plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# PLAN: slot 0 "x" OptionalDouble Inline
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="kept" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="wait" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = NewObject layout=L0
+    PropDefine v2, v1 key="x"
+    v4 = FinishObject v2
+    PutModuleVariable v4 variable=g0
+    v6 = Await v0
+    v7 = Double number=2.5
+    PropSet v4, v7 key="x"
+    v9 = PropGet v4 key="x"
+    v10 = Mul v9, v7
+    Return v10
+}

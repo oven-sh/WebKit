@@ -18,13 +18,18 @@ public:
     FOR_EACH_AOT_INLINE_BUILTIN_IN_MAP_SET_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
 private:
-    enum class WeakLookup : uint8_t { MapGet, MapFind, MapHas, SetHas };
+    enum class WeakLookup : uint8_t { MapGet, MapHas, SetHas };
+    struct WeakProbe {
+        LBasicBlock found;
+        LBasicBlock absent;
+        LValue bucket;
+    };
 
     void createFromIterable(const InlineCall&, HashTableOwner);
     void clear(const InlineCall&, HashTableOwner);
     void createIterator(const InlineCall&, HashTableOwner);
     void lookUpWeakTable(const InlineCall&, WeakLookup);
-    void probeWeakTable(const InlineCall&, WeakLookup, CellPointer table, Boxed key, ValueID getBehindHas);
+    WeakProbe probeWeakTable(WeakLookup, CellPointer table, Boxed key, const Type& typeOfKey);
 };
 
 } } } // namespace JSC::AOT::Typed

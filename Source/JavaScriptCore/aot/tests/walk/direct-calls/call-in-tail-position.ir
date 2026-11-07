@@ -1,0 +1,32 @@
+# a direct call whose result is returned at once ends the block as a ReturnCall: the emitters make a jump of it
+# function one(v) { return v.x; }  function caller(v) { "use strict"; return one(v); }
+# RUN: walk f2 mechanisms=none+DirectCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: [[call]]: {{*}} = CallDirect {{*}}function=f1
+# CHECK: ReturnCall [[call]]
+# RUN(CLOSED): walk f2 mechanisms=none
+# CLOSED: [[call]]: {{*}} = Call v
+# CLOSED: ReturnCall [[call]]
+
+variable g0 name="one" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="one" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="caller" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="one"
+    ReturnCall v2
+}

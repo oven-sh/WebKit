@@ -1,0 +1,271 @@
+# class Context { a = 1; b = 2; c = 3; d = 4; e = 5; f = 6; text = (n: number) => this.a + n; json = (n: number) => this.b + n; constructor(a: number) { this.a = a; } }
+# function first(n: number) { const made = new Context(n); globalThis.kept = made; return made; }   function second(n: number) { const made = new Context(n + 1); globalThis.kept = made; return made; }
+# class Late { a = 1; .. f = 6; id = note(this); constructor(a: number) { this.a = a; } }   function late(n: number) { return new Late(n); }   function lateAgain(n: number) { return new Late(n + 1); }
+# class Early { id = note(this); a = 1; .. f = 6; constructor(a: number) { this.a = a; } }   function early(n: number) { return new Early(n); }   function earlyAgain(n: number) { return new Early(n + 1); }
+# RUN(ANSWER): run-in-shell globalThis.note = (made) => Object.keys(made).length;
+# ANSWER: 11
+# ANSWER-NEXT: 12
+# ANSWER-NEXT: 6
+# ANSWER-NEXT: 5
+# ANSWER-NEXT: 0
+# ANSWER-NEXT: 6
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Instance name="Context" module=m0 constructor=f3 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}, {key="e" declared={type=number} flags=[IsRequired]}, {key="f" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=undefined|null|function|f5 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="json" declared={type=undefined|null|function|f6 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=8
+layout L1 kind=Instance name="Late" module=m0 constructor=f9 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}, {key="e" declared={type=number} flags=[IsRequired]}, {key="f" declared={type=number} flags=[IsRequired]}, {key="id" declared={type=anything} flags=[IsRequired]}] ownFieldCount=7
+layout L2 kind=Instance name="Early" module=m0 constructor=f13 fields=[{key="id" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}, {key="e" declared={type=number} flags=[IsRequired]}, {key="f" declared={type=number} flags=[IsRequired]}] ownFieldCount=7
+variable g0 name="Context" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 name="Late" module=m0 declared={type=absent|f9 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 name="Early" module=m0 declared={type=absent|f13 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 name="note" module=m0 declared={type=anything}
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f7
+    v3 = NewClosure function=f8
+    v4 = NewClosure function=f11
+    v5 = NewClosure function=f12
+    v6 = NewClosure function=f3
+    v7 = NewClass v6 layout=L0
+    v8 = FinishClass v7 layout=L0
+    v9 = Convert v8 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v9 variable=g0
+    v11 = NewClosure function=f9
+    v12 = NewClass v11 layout=L1
+    v13 = FinishClass v12 layout=L1
+    v14 = Convert v13 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v14 variable=g1
+    v16 = NewClosure function=f13
+    v17 = NewClass v16 layout=L2
+    v18 = FinishClass v17 layout=L2
+    v19 = Convert v18 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v19 variable=g2
+    v21 = Builtin builtin=Function
+    v22 = String string="return globalThis.note"
+    v23 = Construct v21, -, v22
+    v24 = Call v23
+    PutModuleVariable v24 variable=g3
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="print" [isFreeName]
+    v28 = Integer integer=1
+    v29 = Call v0, -, v28 calleeName="first" [isNeverInlined]
+    v30 = Convert v29 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v31 = PropGet v30 key="text"
+    v32 = Integer integer=10
+    v33 = Call v31, v30, v32 calleeKey="text" calleeName="first(1).text"
+    v34 = Call v27, -, v33 calleeName="print"
+    v35 = Integer integer=2
+    v36 = Call v1, -, v35 calleeName="second" [isNeverInlined]
+    v37 = Convert v36 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v38 = PropGet v37 key="json"
+    v39 = Call v38, v37, v32 calleeKey="json" calleeName="second(2).json"
+    v40 = Call v27, -, v39 calleeName="print"
+    v41 = Integer integer=3
+    v42 = Call v2, -, v41 calleeName="late" [isNeverInlined]
+    v43 = Convert v42 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v44 = PropGet v43 key="id"
+    v45 = Call v27, -, v44 calleeName="print"
+    v46 = Integer integer=4
+    v47 = Call v3, -, v46 calleeName="lateAgain" [isNeverInlined]
+    v48 = Convert v47 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v49 = PropGet v48 key="a"
+    v50 = Call v27, -, v49 calleeName="print"
+    v51 = Integer integer=5
+    v52 = Call v4, -, v51 calleeName="early" [isNeverInlined]
+    v53 = Convert v52 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v54 = PropGet v53 key="id"
+    v55 = Call v27, -, v54 calleeName="print"
+    v56 = Integer integer=6
+    v57 = Call v5, -, v56 calleeName="earlyAgain" [isNeverInlined]
+    v58 = Convert v57 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v59 = PropGet v58 key="f"
+    v60 = Call v27, -, v59 calleeName="print"
+    v61 = Undefined
+    Return v61
+}
+function f1 name="first" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="Context"
+    v3 = Construct v2, -, v0 calleeName="Context"
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v5 = Builtin builtin=GlobalThis
+    PropSet v5, v4 key="kept"
+    Return v4
+}
+function f2 name="second" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    v3 = GetModuleVariable variable=g0
+    v4 = CheckInitialized v3 name="Context"
+    v5 = Construct v4, -, v2 calleeName="Context"
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v7 = Builtin builtin=GlobalThis
+    PropSet v7, v6 key="kept"
+    Return v6
+}
+function f3 name="Context" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f4
+    PropSet v4, v1 key="a"
+    Return v4
+}
+function f4 module=m0 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number}
+    PropDefine v1, v3 key="a"
+    v5 = Integer integer=2
+    v6 = Convert v5 declared={type=number}
+    PropDefine v1, v6 key="b"
+    v8 = Integer integer=3
+    v9 = Convert v8 declared={type=number}
+    PropDefine v1, v9 key="c"
+    v11 = Integer integer=4
+    v12 = Convert v11 declared={type=number}
+    PropDefine v1, v12 key="d"
+    v14 = Integer integer=5
+    v15 = Convert v14 declared={type=number}
+    PropDefine v1, v15 key="e"
+    v17 = Integer integer=6
+    v18 = Convert v17 declared={type=number}
+    PropDefine v1, v18 key="f"
+    v20 = NewClosure v0 function=f5
+    v21 = Convert v20 declared={type=undefined|null|function|f5 flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v1, v21 key="text"
+    v23 = NewClosure v0 function=f6
+    v24 = Convert v23 declared={type=undefined|null|function|f6 flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v1, v24 key="json"
+    v26 = Undefined
+    Return v26
+}
+function f5 name="text" module=m0 kind=Arrow flags=[IsChecked] length=1 captures=[{type=L0 variableName="this"}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number):
+    v2 = PropGet v0 key="a"
+    v3 = Add v2, v1
+    v4 = Convert v3 declared={type=number}
+    Return v4
+}
+function f6 name="json" module=m0 kind=Arrow flags=[IsChecked] length=1 captures=[{type=L0 variableName="this"}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number):
+    v2 = PropGet v0 key="b"
+    v3 = Add v2, v1
+    v4 = Convert v3 declared={type=number}
+    Return v4
+}
+function f7 name="late" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="Late"
+    v3 = Construct v2, -, v0 calleeName="Late"
+    v4 = Convert v3 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    Return v4
+}
+function f8 name="lateAgain" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    v3 = GetModuleVariable variable=g1
+    v4 = CheckInitialized v3 name="Late"
+    v5 = Construct v4, -, v2 calleeName="Late"
+    v6 = Convert v5 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    Return v6
+}
+function f9 name="Late" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f10
+    PropSet v4, v1 key="a"
+    Return v4
+}
+function f10 module=m0 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number}
+    PropDefine v1, v3 key="a"
+    v5 = Integer integer=2
+    v6 = Convert v5 declared={type=number}
+    PropDefine v1, v6 key="b"
+    v8 = Integer integer=3
+    v9 = Convert v8 declared={type=number}
+    PropDefine v1, v9 key="c"
+    v11 = Integer integer=4
+    v12 = Convert v11 declared={type=number}
+    PropDefine v1, v12 key="d"
+    v14 = Integer integer=5
+    v15 = Convert v14 declared={type=number}
+    PropDefine v1, v15 key="e"
+    v17 = Integer integer=6
+    v18 = Convert v17 declared={type=number}
+    PropDefine v1, v18 key="f"
+    v20 = GetModuleVariable variable=g3
+    v21 = Call v20, -, v0 calleeName="note"
+    PropDefine v1, v21 key="id"
+    v23 = Undefined
+    Return v23
+}
+function f11 name="early" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="Early"
+    v3 = Construct v2, -, v0 calleeName="Early"
+    v4 = Convert v3 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    Return v4
+}
+function f12 name="earlyAgain" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    v3 = GetModuleVariable variable=g2
+    v4 = CheckInitialized v3 name="Early"
+    v5 = Construct v4, -, v2 calleeName="Early"
+    v6 = Convert v5 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    Return v6
+}
+function f13 name="Early" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    v4 = Convert v3 declared={type=L2} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f14
+    PropSet v4, v1 key="a"
+    Return v4
+}
+function f14 module=m0 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L2} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = GetModuleVariable variable=g3
+    v3 = Call v2, -, v0 calleeName="note"
+    PropDefine v1, v3 key="id"
+    v5 = Integer integer=1
+    v6 = Convert v5 declared={type=number}
+    PropDefine v1, v6 key="a"
+    v8 = Integer integer=2
+    v9 = Convert v8 declared={type=number}
+    PropDefine v1, v9 key="b"
+    v11 = Integer integer=3
+    v12 = Convert v11 declared={type=number}
+    PropDefine v1, v12 key="c"
+    v14 = Integer integer=4
+    v15 = Convert v14 declared={type=number}
+    PropDefine v1, v15 key="d"
+    v17 = Integer integer=5
+    v18 = Convert v17 declared={type=number}
+    PropDefine v1, v18 key="e"
+    v20 = Integer integer=6
+    v21 = Convert v20 declared={type=number}
+    PropDefine v1, v21 key="f"
+    v23 = Undefined
+    Return v23
+}

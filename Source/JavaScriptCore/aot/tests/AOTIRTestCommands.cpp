@@ -4,61 +4,29 @@
  */
 
 #include "config.h"
-#include "AOTTestCommand.h"
+#include "AOTTestHarness.h"
 
 #if ENABLE(AOT)
 
-#include "AOTFunctionAnalyses.h"
+#include "AOTBodyIndex.h"
+#include "AOTBodyVerifier.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTIRParser.h"
 #include "AOTIRPrinter.h"
-#include "AOTInt32Proof.h"
-#include "AOTResultRuleMonotonicity.h"
-#include "AOTResultRules.h"
+#include "AOTProgramFile.h"
+#include "AOTProgramVerifier.h"
 #include "AOTSupportTestCommands.h"
-#include "AOTTypeArena.h"
-#include "AOTTypePropagation.h"
+#include "AOTTestRunner.h"
 #include "AOTVector.h"
-#include "AOTVerifier.h"
 #include <algorithm>
-#include <climits>
 #include <wtf/BitVector.h>
-#include <wtf/HashSet.h>
+#include <wtf/CommaPrinter.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static std::optional<FunctionID> parseFunctionWord(const Program& program, StringView word)
-{
-    if (word.length() < 2 || word[0] != 'f')
-        return std::nullopt;
-    std::optional<uint32_t> index = parseTestNumber<uint32_t>(word.substring(1));
-    if (!index || *index >= program.functions.size())
-        return std::nullopt;
-    return FunctionID(*index);
-}
-
-static std::optional<Vector<FunctionID>> parseFunctionWords(TestCommandContext& context, std::span<const String> words)
-{
-    const Program& program = *context.program;
-    Vector<FunctionID> functions;
-    if (words.empty()) {
-        for (size_t index = 0; index < program.functions.size(); ++index)
-            functions.append(FunctionID(index));
-        return functions;
-    }
-    for (const String& word : words) {
-        std::optional<FunctionID> function = parseFunctionWord(program, word);
-        if (!function) {
-            printBadArgument(context.out, word);
-            return std::nullopt;
-        }
-        functions.append(*function);
-    }
-    return functions;
-}
-
-static Vector<StringView> linesOf(StringView text)
+static Vector<StringView> splitIntoLines(StringView text)
 {
     Vector<StringView> lines;
     for (StringView line : text.splitAllowingEmptyEntries('\n'))
@@ -66,7 +34,7 @@ static Vector<StringView> linesOf(StringView text)
     return lines;
 }
 
-static StringView lineAt(const Vector<StringView>& lines, size_t index)
+static StringView lineAtOrEmpty(const Vector<StringView>& lines, size_t index)
 {
     return index < lines.size() ? lines[index] : StringView();
 }
@@ -77,18 +45,31 @@ static void printRoundTripComparison(PrintStream& out, const String& firstText, 
         out.println("round trip: same"_s);
         return;
     }
-    Vector<StringView> first = linesOf(firstText);
-    Vector<StringView> second = linesOf(secondText);
+    Vector<StringView> first = splitIntoLines(firstText);
+    Vector<StringView> second = splitIntoLines(secondText);
     size_t numberOfSharedLines = std::min(first.size(), second.size());
     size_t index = 0;
     while (index < numberOfSharedLines && first[index] == second[index])
         ++index;
     out.println("round trip: differs at line "_s, index + 1);
-    out.println("first: "_s, lineAt(first, index));
-    out.println("second: "_s, lineAt(second, index));
+    out.println("first: "_s, lineAtOrEmpty(first, index));
+    out.println("second: "_s, lineAtOrEmpty(second, index));
 }
 
-static void runRoundTrip(TestCommandContext& context)
+static void printRoundTripComparisonOfBytes(PrintStream& out, std::span<const uint8_t> first, std::span<const uint8_t> second)
+{
+    size_t numberOfSharedBytes = std::min(first.size(), second.size());
+    size_t offset = 0;
+    while (offset < numberOfSharedBytes && first[offset] == second[offset])
+        ++offset;
+    if (offset == first.size() && offset == second.size()) {
+        out.println("round trip of bytes: same"_s);
+        return;
+    }
+    out.println("round trip of bytes: differs at byte "_s, offset, " of "_s, first.size(), " and "_s, second.size());
+}
+
+static void runRoundTripIRCommand(TestCommandContext& context)
 {
     std::span<const String> words = context.arguments;
     PrintedFields fields = PrintedFields::All;
@@ -101,12 +82,13 @@ static void runRoundTrip(TestCommandContext& context)
         return;
     }
 
+    const Program& program = *context.program;
     StringPrintStream first;
-    printProgram(first, *context.program, fields);
+    printProgram(first, program, fields);
     String firstText = first.toString();
-    context.out.print(firstText);
+    printProgram(context.out, program, fields);
 
-    std::unique_ptr<Program> again = parseProgram(firstText, context.form, context.build, VerifierInputs { .isOptimizing = context.isOptimizing });
+    std::unique_ptr<Program> again = parseProgram(firstText, context.build);
     if (!again) {
         context.out.println("round trip: does not parse"_s);
         return;
@@ -114,448 +96,471 @@ static void runRoundTrip(TestCommandContext& context)
     StringPrintStream second;
     printProgram(second, *again, fields);
     printRoundTripComparison(context.out, firstText, second.toString());
+    if (fields == PrintedFields::All)
+        printRoundTripComparisonOfBytes(context.out, program.buffer(), again->buffer());
 }
 
-static void runPrint(TestCommandContext& context)
+static void runPrintIRCommand(TestCommandContext& context)
 {
-    std::span<const String> words = context.arguments;
-    if (words.empty()) {
-        printProgram(context.out, *context.program);
+    const Program& program = *context.program;
+    if (context.arguments.empty()) {
+        printProgram(context.out, program);
         return;
     }
-    std::optional<Vector<FunctionID>> functions = parseFunctionWords(context, words);
+    std::optional<Vector<FunctionID>> functions = functionsNamedBy(program, context.arguments, context.out);
     if (!functions)
         return;
     for (FunctionID id : *functions)
-        printFunction(context.out, *context.program, id, context.program->at(id));
+        printFunction(context.out, program, id);
 }
 
-static void typeFunction(const Program& program, FunctionID id, Function& function, TypeArena& types, BuildContext& build)
+static void runVerifyIRCommand(TestCommandContext& context)
 {
-    FunctionAnalyses analyses(AnalysisContext { build, program, nullptr, nullptr, id }, function);
-    typeValuesFromNever({ program, id, function, analyses, types, build });
-}
-
-static void typeProgramAsRead(Program& program, BuildContext& build)
-{
-    TypeArena types(program.types);
-    for (size_t index = 0; index < program.functions.size(); ++index) {
-        Function& function = program.functions[index];
-        if (function.hasBody())
-            typeFunction(program, FunctionID(index), function, types, build);
-    }
-}
-
-static void runVerify(TestCommandContext& context)
-{
-    PlacedTableSizes unboundedSizes { UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
-    VerifierInputs inputs { .placed = &unboundedSizes };
-    for (const String& word : context.arguments) {
-        if (word == "optimizing"_s)
-            inputs.isOptimizing = true;
-        else if (word == "casts-name-their-facts"_s)
-            inputs.castsNameTheirFacts = true;
-        else {
-            printBadArgument(context.out, word);
-            return;
-        }
-    }
-
-    if (context.form == IRForm::AsRead)
-        typeProgramAsRead(*context.program, context.build);
-    if (verifyProgram(*context.program, context.form, context.build, inputs))
-        context.out.println("valid"_s);
-}
-
-static void printTypeAndExpectedType(PrintStream& out, const TypingContext& typing, ValueID id)
-{
-    const Value& value = typing.function.at(id);
-    out.print("v"_s, id.index(), ": "_s);
-    printType(out, typing.program, value.type);
-    if (TypeID expected = value.expected().predicted()) {
-        out.print(" ~ "_s);
-        printType(out, typing.program, expected);
-    }
-    out.print("\n"_s);
-}
-
-static void printResultTypes(PrintStream& out, const TypingContext& typing, ValueID id)
-{
-    const Value& value = typing.function.at(id);
-    std::optional<uint32_t> numberOfResults = numberOfResultsOf(typing.program, typing.function, value);
-    if (!numberOfResults) {
-        if (resultRuleOf(value.opcode) != ResultRule::None)
-            printTypeAndExpectedType(out, typing, id);
+    if (!context.arguments.empty()) {
+        printBadArgument(context.out, context.arguments.front());
         return;
     }
-    for (uint32_t resultIndex = 0; resultIndex < *numberOfResults; ++resultIndex) {
-        out.print("v"_s, id.index(), "."_s, resultIndex, ": "_s);
-        printType(out, typing.program, computeResultType(typing, value, resultIndex));
-        out.print("\n"_s);
-    }
-}
-
-static void printResultTypesOfFunction(TestCommandContext& context, FunctionID id, TypeArena& types)
-{
-    const Program& program = *context.program;
-    Function function = program.at(id);
-    typeFunction(program, id, function, types, context.build);
-
-    context.out.println("function f"_s, id.index());
-    TypingContext typing { program, function, types };
-    for (const Block& block : function.blocks) {
-        for (ValueID parameter : block.parameters)
-            printTypeAndExpectedType(context.out, typing, parameter);
-        for (ValueID value : block.values)
-            printResultTypes(context.out, typing, value);
-    }
-}
-
-static void runResultTypes(TestCommandContext& context)
-{
-    std::optional<Vector<FunctionID>> functions = parseFunctionWords(context, context.arguments);
-    if (!functions)
-        return;
-
-    TypeArena types(context.program->types);
-    for (FunctionID id : *functions) {
-        if (context.program->at(id).hasBody())
-            printResultTypesOfFunction(context, id, types);
-    }
-}
-
-static void printBounds(PrintStream& out, const NumberBounds& bounds)
-{
-    switch (bounds.kind) {
-    case BoundsKind::Unknown:
-        out.print("unknown "_s, nameOf(bounds.failure));
-        break;
-    case BoundsKind::None:
-        out.print("no number"_s);
-        break;
-    case BoundsKind::Integers:
-        out.print("integers ["_s, bounds.range.minimum, ", "_s, bounds.range.maximum, "]"_s);
-        break;
-    case BoundsKind::Reals:
-        out.print("reals ["_s, bounds.range.minimum, ", "_s, bounds.range.maximum, "]"_s);
-        break;
-    }
-    out.println(bounds.mayBeNullish ? " or nullish"_s : ""_s);
-}
-
-static void printInt32BoundsOfFunction(TestCommandContext& context, FunctionID id, TypeArena& types)
-{
-    const Program& program = *context.program;
-    Function function = program.at(id);
-    FunctionAnalyses analyses(AnalysisContext { context.build, program, nullptr, nullptr, id }, function);
-    typeValuesFromNever({ program, id, function, analyses, types, context.build });
-
-    context.out.println("function f"_s, id.index());
-    Int32Prover prover({ program, function, analyses, types, context.build });
-    for (const Block& block : function.blocks) {
-        for (ValueID value : block.values) {
-            const Value& request = function.at(value);
-            if (request.opcode != Opcode::Convert || !request.declared().has(PositionFlags::IsInt32Promise))
-                continue;
-            context.out.print("v"_s, value.index(), ": "_s);
-            printBounds(context.out, prover.boundsOf(request.valueOperand()));
-        }
-    }
-}
-
-static void runInt32Bounds(TestCommandContext& context)
-{
-    std::optional<Vector<FunctionID>> functions = parseFunctionWords(context, context.arguments);
-    if (!functions)
-        return;
-
-    TypeArena types(context.program->types);
-    for (FunctionID id : *functions) {
-        if (context.program->at(id).hasBody())
-            printInt32BoundsOfFunction(context, id, types);
-    }
-}
-
-void BrokenResultRule::dump(PrintStream& out, const Program& program, const Function& function) const
-{
-    out.print("v", value.index(), " ", nameOf(function.at(value).opcode), " operand ", operandIndex, ": ");
-    printType(out, program, narrowOperand);
-    out.print(" gives ");
-    printType(out, program, resultOfNarrowOperand);
-    switch (law) {
-    case Law::NarrowerOperandGivesNarrowerResult:
-        out.print(", ");
-        printType(out, program, wideOperand);
-        out.print(" gives ");
-        break;
-    case Law::BothPathsAgree:
-        out.print(" by type ids, by the rule ");
-        break;
-    }
-    printType(out, program, resultOfWideOperand);
-}
-
-static void runLawsOfResultRules(TestCommandContext& context)
-{
-    std::optional<Vector<FunctionID>> functions = parseFunctionWords(context, context.arguments);
-    if (!functions)
-        return;
 
     const Program& program = *context.program;
-    TypeArena types(context.program->types);
-    ShapesWithMonotoneResult checkedShapes;
-    for (FunctionID id : *functions) {
-        if (!program.at(id).hasBody())
-            continue;
-        Function function = program.at(id);
-        typeFunction(program, id, function, types, context.build);
-        std::optional<BrokenResultRule> found = findBrokenResultRule(program, function, types, checkedShapes);
-        context.out.print("function f"_s, id.index(), ": "_s);
-        if (found)
-            found->dump(context.out, program, function);
+    if (verifyRecords(program, context.build) && verifyBodies(program, context.build)) {
+        context.out.println("verified"_s);
+        return;
+    }
+
+    context.build.diagnostics().finish(&program);
+    printDiagnostics(context.build.diagnostics(), context.out);
+    reopenDiagnostics(context.build);
+}
+
+namespace {
+
+template<typename IDType>
+struct IDOrNone {
+    ASCIILiteral prefix;
+    IDType id;
+
+    void dump(PrintStream& out) const
+    {
+        if (id)
+            out.print(prefix, id.index());
         else
-            context.out.print("every rule keeps both laws"_s);
-        context.out.println();
+            out.print("none"_s);
     }
-}
-
-#define FOR_EACH_LAW_OF_TYPES(v) \
-    v(SubsetHoldsItself) \
-    v(MeetLiesInFirst) \
-    v(MeetLiesInSecond) \
-    v(MeetIsTheSameBothWays) \
-    v(MeetIsWrittenTheSameBothWays) \
-    v(MeetWithItselfIsItself) \
-    v(MeetHoldsWhatLiesInBoth) \
-    v(CastLiesInFirst) \
-    v(CastLiesInSecond) \
-    v(CastWithItselfIsItself) \
-    v(CastHoldsWhatLiesInBoth) \
-    v(JoinHoldsFirst) \
-    v(JoinHoldsSecond) \
-    v(JoinIsTheSameBothWays) \
-    v(JoinIsWrittenTheSameBothWays) \
-    v(JoinWithItselfIsItself) \
-    v(JoinLiesInWhatHoldsBoth) \
-    v(DifferenceLiesInFirst) \
-    v(DifferenceMeetsSecondNowhere) \
-    v(DifferenceWithItselfIsNever) \
-    v(DifferenceHoldsWhatSecondLacks) \
-    v(DifferenceAndSecondHoldFirst) \
-    v(OverlapIsTheSameBothWays) \
-    v(WhatLiesInsideOverlaps) \
-    v(WhatDoesNotOverlapMeetsNowhere) \
-    v(WhatOverlapsMeetsSomewhere)
-
-enum class LawOfTypes : uint8_t {
-#define DECLARE_LAW(name) name,
-    FOR_EACH_LAW_OF_TYPES(DECLARE_LAW)
-#undef DECLARE_LAW
 };
 
-static ASCIILiteral nameOf(LawOfTypes law)
+} // anonymous namespace
+
+static IDOrNone<ValueID> idOrNone(ValueID id) { return { "v"_s, id }; }
+static IDOrNone<BlockID> idOrNone(BlockID id) { return { "b"_s, id }; }
+static IDOrNone<LoopID> idOrNone(LoopID id) { return { "loop"_s, id }; }
+
+template<typename Range>
+static void printIDList(PrintStream& out, const Range& ids)
 {
-    switch (law) {
-#define NAME_LAW(name) case LawOfTypes::name: return #name ## _s;
-    FOR_EACH_LAW_OF_TYPES(NAME_LAW)
-#undef NAME_LAW
-    }
-    return "?"_s;
+    out.print("["_s);
+    CommaPrinter blank(" "_s);
+    for (auto id : ids)
+        out.print(blank, idOrNone(id));
+    out.print("]"_s);
 }
 
-class LawsOfTypes {
-public:
-    LawsOfTypes(PrintStream& out, Program& program, Vector<Type>&& corpus)
-        : m_out(out)
-        , m_program(program)
-        , m_types(program.types)
-        , m_corpus(WTF::move(corpus))
-        , m_numberOfTypes(m_corpus.size())
-    {
-    }
-
-    LawsOfTypes(PrintStream& out, Program& program, unsigned mostTypes)
-        : m_out(out)
-        , m_program(program)
-        , m_types(program.types)
-    {
-        HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> shapes;
-        m_numberOfTypes = program.types.size();
-        for (bool takesShapesSeen : { false, true }) {
-            for (unsigned index = 0; index < m_numberOfTypes && m_corpus.size() < mostTypes; ++index) {
-                const Type& type = program.types.at(TypeID(index));
-                if (!type.isJavaScriptValue())
-                    continue;
-                if (takesShapesSeen ? m_corpus.contains(type) : !shapes.add(shapeOf(type)).isNewEntry)
-                    continue;
-                m_corpus.append(type);
-            }
-        }
-    }
-
-    unsigned run()
-    {
-        size_t size = m_corpus.size();
-        Vector<BitVector> inside(size);
-        Vector<BitVector> overlaps(size);
-        for (size_t a = 0; a < size; ++a) {
-            for (size_t b = 0; b < size; ++b) {
-                if (liesIn(m_corpus[a], m_corpus[b]))
-                    inside[a].set(b);
-                if (m_corpus[a].overlaps(m_corpus[b], m_program))
-                    overlaps[a].set(b);
-            }
-        }
-        for (size_t a = 0; a < size; ++a) {
-            const Type& first = m_corpus[a];
-            expect(LawOfTypes::SubsetHoldsItself, inside[a].get(a), first, first, nullptr, first);
-            expect(LawOfTypes::MeetWithItselfIsItself, first.intersectWith(first, m_types) == first, first, first, nullptr, first.intersectWith(first, m_types));
-            expect(LawOfTypes::CastWithItselfIsItself, first.castTo(first, m_types) == first, first, first, nullptr, first.castTo(first, m_types));
-            expect(LawOfTypes::JoinWithItselfIsItself, first.unionWith(first, m_types) == first, first, first, nullptr, first.unionWith(first, m_types));
-            expect(LawOfTypes::DifferenceWithItselfIsNever, first.without(first, m_types).isNever(), first, first, nullptr, first.without(first, m_types));
-            for (size_t b = 0; b < size; ++b) {
-                const Type& second = m_corpus[b];
-                Type meet = first.intersectWith(second, m_types);
-                Type cast = first.castTo(second, m_types);
-                Type join = first.unionWith(second, m_types);
-                Type difference = first.without(second, m_types);
-
-                expect(LawOfTypes::MeetLiesInFirst, liesIn(meet, first), first, second, nullptr, meet);
-                expect(LawOfTypes::MeetLiesInSecond, liesIn(meet, second), first, second, nullptr, meet);
-                expect(LawOfTypes::CastLiesInFirst, liesIn(cast, first), first, second, nullptr, cast);
-                expect(LawOfTypes::CastLiesInSecond, liesIn(cast, second), first, second, nullptr, cast);
-                expect(LawOfTypes::JoinHoldsFirst, liesIn(first, join), first, second, nullptr, join);
-                expect(LawOfTypes::JoinHoldsSecond, liesIn(second, join), first, second, nullptr, join);
-                expect(LawOfTypes::DifferenceLiesInFirst, liesIn(difference, first), first, second, nullptr, difference);
-                expect(LawOfTypes::DifferenceMeetsSecondNowhere, difference.intersectWith(second, m_types).isNever(), first, second, nullptr, difference);
-                expect(LawOfTypes::DifferenceAndSecondHoldFirst, liesIn(first, difference.unionWith(second, m_types)), first, second, nullptr, difference);
-                expect(LawOfTypes::OverlapIsTheSameBothWays, overlaps[a].get(b) == overlaps[b].get(a), first, second, nullptr, meet);
-                expect(LawOfTypes::WhatLiesInsideOverlaps, !inside[a].get(b) || first.isNever() || overlaps[a].get(b), first, second, nullptr, meet);
-                expect(LawOfTypes::WhatDoesNotOverlapMeetsNowhere, overlaps[a].get(b) || meet.isNever(), first, second, nullptr, meet);
-                expect(LawOfTypes::WhatOverlapsMeetsSomewhere, !overlaps[a].get(b) || !meet.isNever(), first, second, nullptr, meet);
-                if (inside[a].get(b))
-                    expect(LawOfTypes::JoinLiesInWhatHoldsBoth, liesIn(join, second), first, second, nullptr, join);
-                if (a < b) {
-                    Type meetTurned = second.intersectWith(first, m_types);
-                    bool isTheSame = liesIn(meet, meetTurned) && liesIn(meetTurned, meet);
-                    expect(LawOfTypes::MeetIsTheSameBothWays, isTheSame, first, second, &meetTurned, meet);
-                    expect(LawOfTypes::MeetIsWrittenTheSameBothWays, !isTheSame || meet == meetTurned, first, second, &meetTurned, meet);
-                    Type joinTurned = second.unionWith(first, m_types);
-                    isTheSame = liesIn(join, joinTurned) && liesIn(joinTurned, join);
-                    expect(LawOfTypes::JoinIsTheSameBothWays, isTheSame, first, second, &joinTurned, join);
-                    expect(LawOfTypes::JoinIsWrittenTheSameBothWays, !isTheSame || join == joinTurned, first, second, &joinTurned, join);
-                }
-                for (size_t c = 0; c < size; ++c) {
-                    if (!inside[c].get(a))
-                        continue;
-                    const Type& third = m_corpus[c];
-                    if (inside[c].get(b)) {
-                        expect(LawOfTypes::MeetHoldsWhatLiesInBoth, liesIn(third, meet), first, second, &third, meet);
-                        expect(LawOfTypes::CastHoldsWhatLiesInBoth, liesIn(third, cast), first, second, &third, cast);
-                    }
-                    if (!overlaps[c].get(b) && !overlaps[b].get(c))
-                        expect(LawOfTypes::DifferenceHoldsWhatSecondLacks, liesIn(third, difference), first, second, &third, difference);
-                }
-            }
-        }
-
-        unsigned shapes = 0;
-        unsigned numberThatHold = 0;
-        m_out.println("laws of types: "_s, size, " of "_s, m_numberOfTypes, " types"_s);
-        for (size_t law = 0; law < std::size(m_broken); ++law) {
-            if (m_broken[law])
-                m_out.println("sum "_s, nameOf(static_cast<LawOfTypes>(law)), ": "_s, m_broken[law], " times in "_s, m_shapes[law], " shapes"_s);
-            else
-                ++numberThatHold;
-            shapes += m_shapes[law];
-        }
-        m_out.println(numberThatHold, " of "_s, std::size(m_broken), " laws hold"_s);
-        return shapes;
-    }
-
-private:
-    static constexpr size_t numberOfLaws = static_cast<size_t>(LawOfTypes::WhatOverlapsMeetsSomewhere) + 1;
-
-    bool liesIn(const Type& inner, const Type& outer) const { return inner.isSubsetOf(outer, m_program); }
-
-    static uint64_t mix(uint64_t hash, uint64_t word) { return (hash ^ word) * 1099511628211ull; }
-
-    static uint64_t shapeOf(const Type& type)
-    {
-        uint64_t hash = mix(14695981039346656037ull, type.primitives);
-        hash = mix(hash, type.anyObject | type.anyFunction << 1 | !!type.layouts << 2 | !type.stringLiterals.isEmpty() << 3 | !type.symbolLiterals.isEmpty() << 4 | !type.functions.isEmpty() << 5 | !type.builtins.isEmpty() << 6 | !type.regExpLiteralSet.isEmpty() << 7 | type.integers.isSubsetOf(Range::int32()) << 8);
-        for (const ClassPart& part : type.classes) {
-            hash = mix(hash, part.builtinClass.index());
-            hash = mix(hash, part.contentsAreProven | static_cast<uint64_t>(part.arrayStorage) << 1 | static_cast<uint64_t>(part.provenPristine.toRaw()) << 9 | static_cast<uint64_t>(part.writtenContents.size()) << 32);
-        }
-        return hash;
-    }
-
-    void expect(LawOfTypes law, bool holds, const Type& first, const Type& second, const Type* third, const Type& result)
-    {
-        if (holds)
-            return;
-        size_t index = static_cast<size_t>(law);
-        ++m_broken[index];
-        uint64_t shape = mix(mix(mix(mix(index, shapeOf(first)), shapeOf(second)), third ? shapeOf(*third) : 0), shapeOf(result));
-        if (!m_seen.add(shape).isNewEntry)
-            return;
-        ++m_shapes[index];
-        m_out.print("broken "_s, nameOf(law), " | a: "_s);
-        printType(m_out, m_program, first);
-        m_out.print(" | b: "_s);
-        printType(m_out, m_program, second);
-        if (third) {
-            m_out.print(" | c: "_s);
-            printType(m_out, m_program, *third);
-        }
-        m_out.print(" | gives: "_s);
-        printType(m_out, m_program, result);
-        m_out.println();
-    }
-
-    PrintStream& m_out;
-    const Program& m_program;
-    TypeArena m_types;
-    Vector<Type> m_corpus;
-    unsigned m_numberOfTypes { 0 };
-    uint64_t m_broken[numberOfLaws] { };
-    unsigned m_shapes[numberOfLaws] { };
-    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_seen;
-};
-
-unsigned listBrokenLawsOfTypes(PrintStream& out, Program& program, unsigned mostTypes)
+static void printSaturatingCount(PrintStream& out, uint32_t count, uint32_t saturatedCount)
 {
-    return LawsOfTypes(out, program, mostTypes).run();
+    if (count == saturatedCount)
+        out.print("many"_s);
+    else
+        out.print(count);
 }
 
-// The types that the test names. The table of types holds more: what the table of built-ins brings, which is not the same in every build.
-static void runLawsOfTypes(TestCommandContext& context)
+static void printOnlyUser(PrintStream& out, const std::optional<BodyUser>& user)
 {
-    Program& program = *context.program;
-    if (program.functions.isEmpty()) {
-        context.out.println("no function"_s);
+    if (!user) {
+        out.print("none"_s);
         return;
     }
-    Vector<Type> corpus;
-    for (const DeclaredType& parameter : program.functions[0].parameters) {
-        const Type& type = program.at(parameter.written());
-        if (type.isJavaScriptValue() && !corpus.contains(type))
-            corpus.append(type);
+    switch (user->kind) {
+    case BodyUseKind::Operand:
+        out.print(idOrNone(user->value));
+        return;
+    case BodyUseKind::TerminatorOperand:
+        out.print("terminator of "_s, idOrNone(user->block));
+        return;
+    case BodyUseKind::EdgeArgument:
+        out.print("edge of "_s, idOrNone(user->block));
+        return;
+    case BodyUseKind::EdgeProof:
+        out.print("proof of "_s, idOrNone(user->block));
+        return;
+    case BodyUseKind::HandlerArgument:
+        out.print("handler edge of "_s, idOrNone(user->block));
+        return;
+    case BodyUseKind::BlockSubject:
+        out.print("subject of "_s, idOrNone(user->block));
+        return;
     }
-    LawsOfTypes(context.out, program, WTF::move(corpus)).run();
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static void printBlockOfBodyIndex(PrintStream& out, const BodyIndex& index, BlockID id)
+{
+    out.print(idOrNone(id), " dominator: "_s, idOrNone(index.immediateDominator(id)));
+    if (index.isReachable(id))
+        out.print(" dominator number: "_s, index.dominatorNumber(id), " last below: "_s, index.lastDominatorNumberBelow(id));
+    else
+        out.print(" dominator number: none last below: none"_s);
+    out.print(" loop: "_s, idOrNone(index.loopOf(id)), " depth: "_s, index.loopDepthOf(id), " incoming edges: "_s);
+    printSaturatingCount(out, index.numberOfIncomingEdges(id), BodyIndex::maxCountedIncomingEdges);
+
+    out.print(" flags: ["_s);
+    CommaPrinter blank(" "_s);
+    if (index.isReachable(id))
+        out.print(blank, "Reachable"_s);
+    if (index.isLoopHead(id))
+        out.print(blank, "LoopHead"_s);
+    if (index.isEnteredByHandlerEdge(id))
+        out.print(blank, "EnteredByHandlerEdge"_s);
+    out.println("]"_s);
+}
+
+static void printValueOfBodyIndex(PrintStream& out, const BodyIndex& index, ValueID id)
+{
+    out.print(idOrNone(id), " "_s, nameOf(index.opcodeOf(id)), " block: "_s, idOrNone(index.blockOf(id)), " uses: "_s);
+    printSaturatingCount(out, index.useCount(id), BodyIndex::maxCountedUses);
+    out.print(" only user: "_s);
+    printOnlyUser(out, index.onlyUser(id));
+    out.println();
+}
+
+static void printLoopsNestedIn(PrintStream& out, const BodyIndex& index, LoopID parent)
+{
+    for (uint32_t number = parent ? parent.index() + 1 : 0; number < index.numberOfLoops(); ++number) {
+        LoopID id(number);
+        const BodyLoop& loop = index.loop(id);
+        if (loop.parent != parent)
+            continue;
+
+        Vector<BlockID> members;
+        for (uint32_t block = 0; block < index.numberOfBlocks(); ++block) {
+            if (index.isInLoop(BlockID(block), id))
+                members.append(BlockID(block));
+        }
+        for (uint32_t depth = 1; depth < loop.depth; ++depth)
+            out.print("  "_s);
+        out.print(idOrNone(id), " head: "_s, idOrNone(loop.head), " last: "_s, idOrNone(loop.last), " parent: "_s, idOrNone(loop.parent), " depth: "_s, loop.depth, " blocks: "_s);
+        printIDList(out, members);
+        out.println();
+        printLoopsNestedIn(out, index, id);
+    }
+}
+
+static void printBodyIndex(PrintStream& out, const BodyIndex& index)
+{
+    out.println("irreducible flow: "_s, index.hasIrreducibleFlow() ? "yes"_s : "no"_s);
+    out.print("dominator order: "_s);
+    printIDList(out, index.blocksInDominatorOrder());
+    out.println();
+
+    out.print("opcodes: ["_s);
+    CommaPrinter blank(" "_s);
+    index.opcodes().forEach([&](Opcode opcode) {
+        out.print(blank, nameOf(opcode));
+    });
+    out.println("]"_s);
+
+    for (uint32_t block = 0; block < index.numberOfBlocks(); ++block)
+        printBlockOfBodyIndex(out, index, BlockID(block));
+    for (uint32_t value = 0; value < index.numberOfValues(); ++value)
+        printValueOfBodyIndex(out, index, ValueID(value));
+
+    if (index.hasLoops())
+        printLoopsNestedIn(out, index, LoopID());
+    else
+        out.println("no loops"_s);
+}
+
+static void printEdgeResult(PrintStream& out, const BodyIndex& index, const BodyTerminator& terminator, const BodyEdgeResult& result)
+{
+    out.print(idOrNone(terminator.block()), " -> "_s, idOrNone(index.blockOf(result.parameter)), " proof: "_s, nameOf(result.proof), " test: "_s);
+    if (result.test)
+        out.print(idOrNone(result.test));
+    else
+        out.print("terminator"_s);
+    out.print(" subject: "_s, idOrNone(result.subject), " operand index: "_s, result.operandIndex);
+
+    if (!result.caseIndex)
+        out.print(" side: "_s, result.isOnTakenEdge ? "taken"_s : "notTaken"_s);
+    else if (terminator.hasCases() && *result.caseIndex == terminator.numberOfCases())
+        out.print(" case: otherwise"_s);
+    else
+        out.print(" case: "_s, *result.caseIndex);
+    out.println(" parameter: "_s, idOrNone(result.parameter));
+}
+
+static void printEdgeResults(PrintStream& out, const BodyIndex& index)
+{
+    bool hasEdgeResults = false;
+    for (uint32_t block = 0; block < index.numberOfBlocks(); ++block) {
+        BodyTerminator terminator = index.terminator(BlockID(block));
+        index.forEachEdgeResult(BlockID(block), [&](const BodyEdgeResult& result) {
+            hasEdgeResults = true;
+            printEdgeResult(out, index, terminator, result);
+        });
+    }
+    if (!hasEdgeResults)
+        out.println("no edge results"_s);
+}
+
+static void printBodyLiveness(PrintStream& out, const BodyIndex& index, BodyLiveness& liveness)
+{
+    if (!liveness.isComputedFor(index))
+        liveness.compute(index);
+    BodyLiveness secondAsker;
+    secondAsker.compute(index);
+
+    RELEASE_ASSERT(secondAsker.answersFromSameDataAs(liveness));
+
+    Vector<ValueID> live;
+    for (uint32_t block = 0; block < index.numberOfBlocks(); ++block) {
+        BlockID id(block);
+        live.shrink(0);
+        liveness.forEachLiveAtHead(id, [&](ValueID value) {
+            live.append(value);
+        });
+        out.print(idOrNone(id), " live at head: "_s);
+        printIDList(out, live);
+        out.println(" terminator at: "_s, idOrNone(index.block(id).endOfValues()));
+    }
+
+    for (uint32_t value = 0; value < index.numberOfValues(); ++value) {
+        ValueID id(value);
+        Opcode opcode = index.opcodeOf(id);
+        ValueID lastUse = liveness.lastUse(id);
+        out.print(idOrNone(id), " "_s, nameOf(opcode), " last use: "_s, idOrNone(lastUse == id ? ValueID() : lastUse));
+        if (maySuspend(opcode)) {
+            Vector<ValueID> liveAcross;
+            liveness.forEachLiveAcross(id, index.blockOf(id), [&](ValueID live) {
+                liveAcross.append(live);
+            });
+            out.print(" live across: "_s);
+            printIDList(out, liveAcross);
+        }
+        out.println();
+    }
+}
+
+static bool livenessIsWhatPlainComputationFinds(PrintStream& out, const BodyIndex& index, const BodyLiveness& liveness)
+{
+    uint32_t numberOfBlocks = index.numberOfBlocks();
+    uint32_t numberOfValues = index.numberOfValues();
+    auto forEachRead = [&](const BodyBlock& block, const auto& functor) {
+        uint32_t end = block.endOfValues().index();
+        block.forEachOutgoingEdge([&](BodyTarget target, bool) {
+            uint32_t parameter = index.block(target.block()).firstParameter().index();
+            for (ValueID argument : target.arguments()) {
+                ValueID taker(parameter++);
+                if (argument && !index.isReadByReleaseHintsAlone(taker))
+                    functor(argument, end);
+            }
+        });
+        if (block.terminator().isConditionalBranch()) {
+            index.forEachEdgeResult(block.id(), [&](const BodyEdgeResult& result) {
+                functor(result.subject, end);
+            });
+        }
+        block.terminator().forEachOperand([&](ValueID operand, uint32_t) {
+            functor(operand, end);
+        });
+        for (BodyValue value : block.values()) {
+            if (value.opcode() == Opcode::ReleaseHint)
+                continue;
+            value.forEachOperand([&](ValueID operand, uint32_t) {
+                functor(operand, value.id().index());
+            });
+        }
+        if (ValueID subject = block.subject())
+            functor(subject, block.firstValue().index());
+    };
+
+    Vector<BitVector> live(numberOfBlocks, [&](size_t) { return BitVector(numberOfValues); });
+    Vector<uint32_t> lastUses(numberOfValues, [](size_t value) { return static_cast<uint32_t>(value); });
+    for (bool hasChanged = true; hasChanged;) {
+        hasChanged = false;
+        for (uint32_t blockIndex = numberOfBlocks; blockIndex--;) {
+            if (!index.isReachable(BlockID(blockIndex)))
+                continue;
+            BodyBlock block = index.block(BlockID(blockIndex));
+            BitVector reached(numberOfValues);
+            block.forEachOutgoingEdge([&](BodyTarget target, bool) {
+                reached.merge(live[target.block().index()]);
+            });
+            forEachRead(block, [&](ValueID value, uint32_t position) {
+                reached.quickSet(value.index());
+                lastUses[value.index()] = std::max(lastUses[value.index()], position);
+            });
+            BitVector found(numberOfValues);
+            for (size_t value : reached) {
+                if (value < block.firstParameter().index())
+                    found.quickSet(value);
+            }
+            if (found != live[blockIndex]) {
+                live[blockIndex] = WTF::move(found);
+                hasChanged = true;
+            }
+        }
+    }
+    auto raise = [&](BlockID head, BlockID last) {
+        for (size_t value : live[head.index()])
+            lastUses[value] = std::max(lastUses[value], index.block(last).endOfValues().index());
+    };
+    if (!index.hasIrreducibleFlow()) {
+        for (uint32_t loop = 0; loop < index.numberOfLoops(); ++loop)
+            raise(index.loop(LoopID(loop)).head, index.loop(LoopID(loop)).last);
+    } else {
+        for (uint32_t blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
+            if (!index.isReachable(BlockID(blockIndex)))
+                continue;
+            index.block(BlockID(blockIndex)).forEachOutgoingEdge([&](BodyTarget target, bool) {
+                if (target.block().index() <= blockIndex)
+                    raise(target.block(), BlockID(blockIndex));
+            });
+        }
+    }
+
+    bool agrees = true;
+    auto differ = [&](ASCIILiteral what, uint32_t block, uint32_t value) {
+        if (agrees)
+            out.println("DIFFERS: "_s, what, " b"_s, block, " v"_s, value);
+        agrees = false;
+    };
+    for (uint32_t blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
+        BlockID id(blockIndex);
+        size_t numberFound = 0;
+        uint32_t former = 0;
+        liveness.forEachLiveAtHead(id, [&](ValueID value) {
+            if (!live[blockIndex].quickGet(value.index()))
+                differ("the plain way does not find live at the head of"_s, blockIndex, value.index());
+            if (numberFound++ && value.index() <= former)
+                differ("not ascending at the head of"_s, blockIndex, value.index());
+            former = value.index();
+        });
+        if (numberFound != live[blockIndex].bitCount())
+            differ("fewer are live than the plain way finds at the head of"_s, blockIndex, 0);
+        uint32_t first = numberOfValues / 3;
+        uint32_t end = numberOfValues - numberOfValues / 4;
+        size_t numberInStretch = 0;
+        liveness.forEachLiveAtHead(id, ValueID(first), ValueID(end), [&](ValueID value) {
+            ++numberInStretch;
+            if (value.index() < first || value.index() >= end)
+                differ("outside the stretch asked for at the head of"_s, blockIndex, value.index());
+        });
+        for (size_t value : live[blockIndex]) {
+            numberInStretch -= value >= first && value < end;
+            if (!liveness.isLiveAtHead(ValueID(static_cast<uint32_t>(value)), id))
+                differ("asked alone, not live at the head of"_s, blockIndex, static_cast<uint32_t>(value));
+        }
+        if (numberInStretch)
+            differ("the stretch holds another number of values at the head of"_s, blockIndex, first);
+    }
+    for (uint32_t value = 0; value < numberOfValues; ++value) {
+        if (liveness.lastUse(ValueID(value)).index() != lastUses[value])
+            differ("the last use, by the plain way in the place of the block,"_s, lastUses[value], value);
+    }
+    return agrees;
+}
+
+static void printFunctionHeading(IRPrinter& printer, FunctionID id)
+{
+    printer.beginLine("function"_s, IDPrefix::Function, id.index());
+    if (StringID name = printer.program().at(id).name)
+        printer.field("name"_s, name);
+    printer.endLine();
+}
+
+template<typename Functor>
+static void forEachBodyIndexNamedBy(TestCommandContext& context, const Functor& functor)
+{
+    const Program& program = *context.program;
+    std::optional<Vector<FunctionID>> functions = functionsNamedBy(program, context.arguments, context.out);
+    if (!functions)
+        return;
+
+    IRPrinter printer(context.out, program);
+    BodyIndexTable indexes(static_cast<uint32_t>(program.functions.size()), 1u);
+    for (FunctionID id : *functions) {
+        printFunctionHeading(printer, id);
+        const Function& function = program.at(id);
+        if (!function.hasBody()) {
+            context.out.println("no body"_s);
+            continue;
+        }
+        const BodyIndex* index = indexes.find(id);
+        functor(index ? *index : indexes.build(id, function, 0));
+    }
+}
+
+static void runBodyIndexCommand(TestCommandContext& context)
+{
+    forEachBodyIndexNamedBy(context, [&](const BodyIndex& index) {
+        printBodyIndex(context.out, index);
+    });
+}
+
+static void runEdgeResultsCommand(TestCommandContext& context)
+{
+    forEachBodyIndexNamedBy(context, [&](const BodyIndex& index) {
+        printEdgeResults(context.out, index);
+    });
+}
+
+static void runBodyLivenessCommand(TestCommandContext& context)
+{
+    BodyLiveness liveness;
+    forEachBodyIndexNamedBy(context, [&](const BodyIndex& index) {
+        printBodyLiveness(context.out, index, liveness);
+    });
+}
+
+static void runLivenessAgainstPlainComputationCommand(TestCommandContext& context)
+{
+    const Program& program = *context.program;
+    std::optional<Vector<FunctionID>> functions = functionsNamedBy(program, context.arguments, context.out);
+    if (!functions)
+        return;
+    constexpr uint64_t mostBits = uint64_t(1) << 33;
+    BodyIndexTable indexes(static_cast<uint32_t>(program.functions.size()), 1u);
+    BodyLiveness liveness;
+    unsigned numberThatAgree = 0;
+    unsigned numberTooLarge = 0;
+    for (FunctionID id : *functions) {
+        const Function& function = program.at(id);
+        if (!function.hasBody())
+            continue;
+        const BodyIndex& index = indexes.build(id, function, 0);
+        liveness.compute(index);
+        if (static_cast<uint64_t>(index.numberOfBlocks()) * index.numberOfValues() > mostBits) {
+            ++numberTooLarge;
+            continue;
+        }
+        if (livenessIsWhatPlainComputationFinds(context.out, index, liveness))
+            ++numberThatAgree;
+        else
+            context.out.println("in f"_s, id.index());
+    }
+    context.out.println(numberThatAgree, " bodies: the liveness is what the plain computation finds"_s);
+    if (numberTooLarge)
+        context.out.println(numberTooLarge, " bodies are too large for the plain computation"_s);
 }
 
 std::span<const TestCommand> irTestCommands()
 {
     static constexpr TestCommand commands[] = {
-        { "round-trip"_s, IRForm::AsRead, runRoundTrip },
-        { "print"_s, IRForm::AsRead, runPrint },
-        { "verify"_s, IRForm::AsRead, runVerify },
-        { "result-types"_s, IRForm::AsRead, runResultTypes },
-        { "laws-of-result-rules"_s, IRForm::AsRead, runLawsOfResultRules },
-        { "laws-of-types"_s, IRForm::AsRead, runLawsOfTypes },
-        { "int32-bounds"_s, IRForm::AsRead, runInt32Bounds },
+        { "print"_s, runPrintIRCommand, ProgramOfCommand::AsWritten, "[f..]"_s },
+        { "round-trip"_s, runRoundTripIRCommand, ProgramOfCommand::AsWritten, "[wire]"_s },
+        { "verify"_s, runVerifyIRCommand, ProgramOfCommand::AsWritten, ""_s },
+        { "body-index"_s, runBodyIndexCommand, ProgramOfCommand::AsWritten, "[f..]"_s },
+        { "edge-results"_s, runEdgeResultsCommand, ProgramOfCommand::AsWritten, "[f..]"_s },
+        { "liveness"_s, runBodyLivenessCommand, ProgramOfCommand::AsWritten, "[f..]"_s },
+        { "liveness-against-plain-computation"_s, runLivenessAgainstPlainComputationCommand, ProgramOfCommand::AsWritten, "[f..]"_s },
     };
     return commands;
 }

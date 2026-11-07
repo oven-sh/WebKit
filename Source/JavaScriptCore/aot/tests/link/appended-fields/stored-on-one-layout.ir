@@ -1,0 +1,57 @@
+# If a name that is stored on an object behind its allocation got no field, it would lie among the extra properties, where no read is ever typed. If the field claimed more than the stores bring, a read would be typed wrongly
+# const o = { a: 1 };  o.b = "s";  o.c = 2;  o.b = null;  const other = { a: 1 };  use(o.b, other.b)
+# The read off the layout that is never stored the name finds nothing: what is stored under a name on one layout is not found under it on another.
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: function f1
+# CHECK-NEXT: parameter 0 {{*}}proven=undefined|null|string
+# CHECK-NEXT: parameter 1 {{*}}proven=undefined
+# CHECK: field L0.0 "a"
+# CHECK-NEXT: field L0.1 "b" appended proven=null|string writers-known
+# CHECK-NEXT: field L0.2 "c" appended proven=i32 writers-known
+# CHECK-NEXT: field L1.0 "a"
+# CHECK-NOT: field L1.1
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[]
+# Each has a slot out of line, which costs an object nothing until it gets the property. The word of the Extension lies where the stubs look for it.
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L0 CompiledObject size=32 extension=24
+# PLAN: slot 1 "b" appended JSValue OutOfLine offset=8 record=1
+# PLAN-NEXT: slot 2 "c" appended JSValue OutOfLine offset=16 record=2
+# PLAN-NEXT: extension Cell32 Inline offset=16
+# PLAN-NEXT: extra-properties Cell32 Inline offset=20
+# PLAN-NEXT: layout L1 CompiledObject size=32 shapes
+# PLAN-NEXT: slot 0 "a"
+# PLAN-NEXT: extra-properties Cell32 Inline offset=16
+# With every mechanism withheld Link says nothing, and no layout has more than it lists.
+# RUN(NONE): plan layouts mechanisms=none
+# NONE-NOT: appended
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = String string="s"
+    PropSet v2, v3 key="b"
+    v5 = Integer integer=2
+    PropSet v2, v5 key="c"
+    v7 = Null
+    PropSet v2, v7 key="b"
+    v9 = NewObject -, v0 layout=L1 fields=[0]
+    v10 = FinishObject v9
+    v11 = PropGet v2 key="b"
+    v12 = PropGet v10 key="b"
+    v13 = NewClosure function=f1
+    v14 = Call v13, -, v11, v12 calleeName="use"
+    v15 = Undefined
+    Return v15
+}
+function f1 name="use" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
+}

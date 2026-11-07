@@ -35,8 +35,6 @@ void emitReturnDroppingSpilledArgumentRegisters(CCallHelpers&);
 
 void emitDropArgumentListFrames(CCallHelpers&, GPRReg scratch);
 void emitMoveStackWordsToArgumentListFrame(CCallHelpers&, unsigned numberOfWords, unsigned bytesAboveFrameRecord);
-// The stack pointer that emitMoveStackWordsToArgumentListFrame() would leave. Writes nothing.
-void emitFindStackPointerOfArgumentListFrame(CCallHelpers&, GPRReg result, GPRReg scratch, unsigned numberOfWords, unsigned bytesAboveFrameRecord);
 
 } } // namespace JSC::AOT
 

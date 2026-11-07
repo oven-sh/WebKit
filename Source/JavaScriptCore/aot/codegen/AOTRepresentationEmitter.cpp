@@ -10,7 +10,7 @@
 
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
-#include "AOTFunctionAnalyses.h"
+#include "AOTOperatorEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -19,42 +19,27 @@ RepresentationEmitter::RepresentationEmitter(CodeGenerator& generator)
 {
 }
 
-Operand RepresentationEmitter::convert(const OperationContext& context, Opcode conversion, ValueID sourceID, Operand source, const Type& type, Representation to)
+Operand RepresentationEmitter::convert(const OperationContext& context, Opcode conversion, Operand source, const Type& type, Representation to)
 {
     using enum Representation;
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    if (holdsAnyNaN(to)) {
-        Operand number = source.is<Number>() ? source : convert(context, conversion, sourceID, source, type, Double);
-        return Operand(to, number.value);
-    }
-    if (holdsAnyNaN(source.representation) && to != JSValue) {
-        source = conversion == Opcode::NumberToInteger ? Number(source.value) : conversions.withoutBitsOfAnyNaN(source);
-        if (to == Double)
-            return source;
-    }
     const Representation from = source.representation;
-
-    auto numberUnboxing = [&] {
-        using enum ConversionEmitter::NumberUnboxing;
-        if ((to != Double && to != OptionalDouble) || !sourceID || !analyses().cfg().hasCycle())
-            return Branches;
-        const NaturalLoops& loops = analyses().naturalLoops();
-        const NaturalLoop* loop = loops.innerMostLoopOf(context.block());
-        return loop && !loops.belongsTo(analyses().useLists().blockOf(sourceID), *loop) ? ComputesBothSides : Branches;
-    };
 
     switch (conversion) {
     case Opcode::Box:
-        if (to == JSValue && RepresentationSet { Void, Boolean, Int32, Int64, Double, DoubleWithPayload, ImpureDouble, OptionalInt64, OptionalDouble, Cell }.contains(from))
+        if (to == JSValue && RepresentationSet { Void, Boolean, Int32, Int64, Double, OptionalInt64, OptionalDouble, Cell }.contains(from))
             return conversions.box(context, source, type);
         if ((to == OptionalInt64 && RepresentationSet { Void, Int32, Int64 }.contains(from)) || (to == OptionalDouble && RepresentationSet { Void, Double, OptionalInt64 }.contains(from)))
             return conversions.toOptional(source, type, to);
         break;
     case Opcode::Unbox:
         if (from == JSValue && RepresentationSet { Boolean, Int32, Int64, Double, OptionalInt64, OptionalDouble, Cell }.contains(to))
-            return conversions.unbox(source.as<Boxed>(), type, to, numberUnboxing());
-        if (from == OptionalInt64 && to == Int32)
+            return conversions.unbox(source.as<Boxed>(), type, to);
+        if (from == OptionalInt64 && to == Int32) {
+            if (std::optional<Word32> narrow = narrowWordBehind(source.as<OptionalInteger>()))
+                return *narrow;
             return conversions.narrow(Integer(source.value));
+        }
         if ((from == OptionalInt64 && to == Int64) || (from == OptionalDouble && to == Double))
             return conversions.withoutMarkers(source);
         if (from == OptionalDouble && to == OptionalInt64)
@@ -83,14 +68,10 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
     case Opcode::Decode:
         if (from == Cell32 && (to == Cell || to == JSValue))
             return conversions.decode(source.as<NarrowReference>(), type, to);
-        if (from == LiteralString && (to == Cell || to == JSValue))
-            return Operand(to, conversions.boxLiteralString(context, source.as<LiteralStringWord>(), type).value());
         break;
     case Opcode::Compress:
         if (to == Cell32 && RepresentationSet { Void, Cell, JSValue }.contains(from))
             return conversions.compress(source, type);
-        if (to == LiteralString && RepresentationSet { Void, Cell, JSValue }.contains(from))
-            return conversions.toLiteralString(source, type);
         break;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -101,8 +82,17 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
 
 void RepresentationEmitter::generate(const ValueContext& value)
 {
-    ValueID source = value->valueOperand();
-    define(value, convert(value, value.opcode(), source, get(source), typeOf(source), value.representation()));
+    ValueID converted = value->valueOperand();
+    if (generator().isCarriedBoxed(converted)) [[unlikely]] {
+        RELEASE_ASSERT(value.opcode() == Opcode::Box && value.representation() == Representation::JSValue);
+        define(value, get(converted));
+        return;
+    }
+    if (ValueID sum = generator().sumBoxedBy(value.value())) [[unlikely]] {
+        define(value, emitter<OperatorEmitter>().boxedSum(sum));
+        return;
+    }
+    define(value, convert(value, value.opcode(), get(converted), typeOf(value.id()), value.representation()));
 }
 
 } } } // namespace JSC::AOT::Typed
