@@ -5283,7 +5283,7 @@ bool BBQJIT::faultHandlerCatchesNullAt(ptrdiff_t offsetOfAccess)
 bool BBQJIT::supportsLSE() const
 {
 #if CPU(ARM64)
-    return m_jit.supportsLSE();
+    return m_codeForImage ? m_jit.supportsLSE() : isARM64_LSE();
 #else
     return false;
 #endif

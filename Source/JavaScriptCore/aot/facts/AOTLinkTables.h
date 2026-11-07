@@ -350,6 +350,7 @@ struct LinkTables {
     std::unique_ptr<Families> familiesBehindFlow;
     BitVector exportsThatStayIn;
     BitVector modulesWhoseValueStaysIn;
+    BitVector modulesWhoseRecordIsHandedOutFrozen;
     LargeList<LinkedFunction> functions;
     LargeList<LinkedParameter> parameters;
     Vector<LinkedCall> calls;

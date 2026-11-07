@@ -393,6 +393,9 @@ protected:
     // Before the record is visible to anyone: adopts the graph and fills requestedModules() from it.
     void initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&&, uint32_t moduleIndex);
 #endif
+#if ENABLE(AOT)
+    void forgetCachedResolutions() { m_resolutionCache.clear(); }
+#endif
 
 private:
     struct ResolveQuery;

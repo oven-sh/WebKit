@@ -2372,6 +2372,9 @@ static LinkTables writeTablesOfProvingReading(Program& program, Mechanisms mecha
     LinkTables tables = conservativeLinkTables(program, flow.loops);
     tables.sizeOfFlow = flow.size();
     tables.modulesWhoseValueStaysIn = flow.modulesWhoseValueStaysInSight;
+    flow.stopUnlessRecordsHandedOutFrozenStayAsBorn();
+    tables.modulesWhoseRecordIsHandedOutFrozen = flow.modulesWhoseRecordIsHandedOutFrozen;
+    tables.modulesWhoseRecordIsHandedOutFrozen.filter(flow.modulesWhoseValueStaysInSight);
     tables.unseenCodeCanRun = flow.builtinsInReach().unseenCodeCanRun();
     tables.lookups = flow.builtinsInReach().takeLookups();
     tables.lookups.writesFollowedToBuiltins = flow.takeWritesFollowedToBuiltins();

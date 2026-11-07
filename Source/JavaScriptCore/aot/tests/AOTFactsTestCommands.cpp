@@ -1296,7 +1296,7 @@ static void printLinkedLayouts(IRPrinter& printer, const LinkTables& tables)
 static void printLinkedModules(IRPrinter& printer, const LinkTables& tables)
 {
     for (size_t index : tables.modulesWhoseValueStaysIn)
-        printer.out().println("module m"_s, index, " value-stays-with-compiled-code"_s);
+        printer.out().println("module m"_s, index, tables.modulesWhoseRecordIsHandedOutFrozen.get(index) ? " record-is-handed-out-frozen"_s : " value-stays-with-compiled-code"_s);
 }
 
 static void printFamiliesInFactsText(IRPrinter& printer, const Families& families)

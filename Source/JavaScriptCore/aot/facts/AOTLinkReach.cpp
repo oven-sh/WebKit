@@ -159,6 +159,7 @@ public:
     FlowNodeID sourceOfFamily(FamilyID id) const { return m_sourcesOfFamilies[id.index()]; }
     void makeSourceOfFamily(FamilyID, FlowNodeID);
     bool enterLibraryInReach();
+    void stopUnlessRecordsHandedOutFrozenStayAsBorn();
     BuiltinsInReach& builtinsInReach() { return m_builtinsInReach; }
     void finish();
 
@@ -216,6 +217,8 @@ private:
     void letGoWhatHostHandsOver(const BuiltinHostUses&);
     void loadLibraryModule(RuntimeModuleID);
     void letGoWhatNativeCodeReadsOffModules();
+    void handOutRecordsOfInternalFiles();
+    bool handsBackRecordThatStaysAsBorn(ModuleID);
     Vector<ModuleID> m_modulesThatNativeCodeReadsNamesOff;
     bool m_hasEnteredLoaderFunctionsForTestRun { false };
     bool m_hasEnteredLoaderFunctionsForValueOfHost { false };
@@ -289,6 +292,7 @@ private:
     BitVector m_functionsThatWaitToBeNamed;
     BitVector m_modulesWithEscapedExports;
     BitVector m_modulesWhoseValueStaysInSight;
+    BitVector m_layoutsOfRecordsHandedOut;
     Vector<ModuleID> m_facesThatWereFollowedAtFirst;
     Vector<uint32_t, 1> m_entriesThatHandHostNothing;
     bool m_showsWaysBetweenModuleObjects { false };
@@ -1108,7 +1112,8 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
         return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
     });
     m_flow.modulesWhoseValueStaysInSight = m_modulesWhoseValueStaysInSight;
-    if (!libraryRunsCompiledAlone)
+    m_flow.modulesWhoseRecordIsHandedOutFrozen = BitVector(m_program.modules.size());
+    if (m_program.admitsInspector)
         return;
 
     static constexpr OptionSet<ModuleFlags> flagsOfModulesHandedOut {
@@ -1118,6 +1123,8 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
     BitVector isAskedFor = modulesThatHostAsksFor(m_program);
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
         const Module& module = m_program.modules[index];
+        if (!libraryRunsCompiledAlone && module.kind != ModuleKind::RuntimeSource)
+            continue;
         if (module.kind == ModuleKind::CommonJs) {
             bool isReadBySitesAlone = module.body && module.exportsVariable && module.requireResult == RequireResult::ModuleExports && module.syntheticExports.isEmpty();
             bool hostLooksForNamesAlone = isReadBySitesAlone && !m_program.admitsInspector && std::ranges::contains(m_program.entries, ModuleID(index), &Entry::module)
@@ -1138,6 +1145,10 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
         const RuntimeModuleData& row = builtins.at(module.runtimeModule);
         if (row.flags.contains(RuntimeModuleFlag::NativeCodeReadsEveryExport))
             continue;
+        if (!libraryRunsCompiledAlone && row.flags.contains(RuntimeModuleFlag::IsPublic))
+            continue;
+        if (!libraryRunsCompiledAlone)
+            m_flow.modulesWhoseRecordIsHandedOutFrozen.quickSet(index);
         if (row.flags.contains(RuntimeModuleFlag::IsPublic) && std::ranges::any_of(module.syntheticExports, &SyntheticExport::isReplaceable))
             continue;
         m_modulesWhoseValueStaysInSight.quickSet(index);
@@ -1261,6 +1272,7 @@ void StateOfLinkReach::escapeValueOf(ModuleID id)
     if (!m_modulesWhoseValueStaysInSight.quickClear(id.index()))
         return;
     m_flow.modulesWhoseValueStaysInSight.quickClear(id.index());
+    m_flow.modulesWhoseRecordIsHandedOutFrozen.quickClear(id.index());
     if (VariableID exportsVariable = m_program.at(id).exportsVariable)
         escapeVariable(exportsVariable);
     if (ModuleID captured = commonJsModuleCapturedBy(m_program, m_program.at(id))) {
@@ -1440,6 +1452,53 @@ void StateOfLinkReach::letGoWhatNativeCodeReadsOffModules()
     }
 }
 
+bool StateOfLinkReach::handsBackRecordThatStaysAsBorn(ModuleID id)
+{
+    LinkType value = m_flow.typeAt(m_flow.result(m_program.at(id).body, 0));
+    bool staysAsBorn = value.functions == LinkType::Functions::None && value.classes == LinkType::Classes::None && !value.builtin && !value.holdsUnseen && !value.holdsLostBuiltins
+        && (value.objects == LinkType::Objects::None || value.objects == LinkType::Objects::Layout || value.objects == LinkType::Objects::Set);
+    if (!staysAsBorn)
+        return false;
+    m_flow.forEachLayoutOf(value, [&](LayoutID holder) {
+        const Layout& layout = m_program.at(holder);
+        staysAsBorn &= layout.kind == LayoutKind::Record && !m_flow.escapedLayouts.get(holder.index()) && (m_flow.possibleChanges[holder.index()] - LayoutChange::IsFrozen).isEmpty();
+        for (uint32_t field = 0; field < layout.fields.size(); ++field)
+            staysAsBorn &= !m_flow.fieldsWrittenAfterConstruction.get(cellOf(FieldReference { holder, field }));
+    });
+    return staysAsBorn;
+}
+
+void StateOfLinkReach::stopUnlessRecordsHandedOutFrozenStayAsBorn()
+{
+    for (size_t index : m_flow.modulesWhoseRecordIsHandedOutFrozen)
+        RELEASE_ASSERT(!m_modulesWhoseValueStaysInSight.quickGet(index) || handsBackRecordThatStaysAsBorn(ModuleID(static_cast<uint32_t>(index))));
+}
+
+void StateOfLinkReach::handOutRecordsOfInternalFiles()
+{
+    BitVector handedOut = m_flow.modulesWhoseRecordIsHandedOutFrozen;
+    for (size_t index : handedOut) {
+        ModuleID id(static_cast<uint32_t>(index));
+        FunctionID body = m_program.at(id).body;
+        if (!body || !m_modulesWhoseValueStaysInSight.quickGet(index)) {
+            escapeValueOf(id);
+            m_flow.modulesWhoseRecordIsHandedOutFrozen.quickClear(index);
+            continue;
+        }
+        if (!handsBackRecordThatStaysAsBorn(id)) {
+            escapeValueOf(id);
+            continue;
+        }
+        m_flow.forEachLayoutOf(m_flow.typeAt(m_flow.result(body, 0)), [&](LayoutID holder) {
+            if (!m_layoutsOfRecordsHandedOut.add(holder.index()))
+                return;
+            m_flow.note(LinkFlow::Note::ChangeOfLayout, holder.index(), static_cast<uint32_t>(LayoutChange::IsFrozen));
+            for (uint32_t field = 0; field < m_program.at(holder).fields.size(); ++field)
+                m_flow.addEdge(m_flow.field(FieldReference { holder, field }), m_flow.unseen());
+        });
+    }
+}
+
 void StateOfLinkReach::enterWhatUndeclaredNativeCodeCalls()
 {
     if (std::exchange(m_hasEnteredWhatUndeclaredNativeCodeCalls, true))
@@ -1598,6 +1657,7 @@ bool StateOfLinkReach::enterLibraryInReach()
     if (m_builtinsInReach.unseenCodeCanRun() && !m_builtinsInReach.holdsBackNamesFromRunTime())
         enterWhatUnseenCodeFinds();
     letGoWhatNativeCodeReadsOffModules();
+    handOutRecordsOfInternalFiles();
     bool somebodyCanBeHandedSomething = m_nativeCodeMayHoldObjects || m_flow.rowPassesWhatNobodyFollows() || m_builtinsInReach.unseenCodeCanRun();
     bool promisesHaveChanged = somebodyCanBeHandedSomething && m_flow.letPromisesBeHandedOut();
     bool hasEntered = holdersThatAreWatchedHaveComeOutOfSight || !m_steps.isEmpty() || !m_stepsThatOneThreadTakes.isEmpty() || !m_functionsToBringAlive.isEmpty() || !m_membersWrittenAfterAll.isEmpty() || promisesHaveChanged || entriesHaveComeToBeAskedForMore;
@@ -2298,6 +2358,11 @@ BuiltinsInReach& LinkFlow::builtinsInReach()
 {
     assertHasWhatIsSharedToItself();
     return stateOfLinkReach().builtinsInReach();
+}
+
+void LinkFlow::stopUnlessRecordsHandedOutFrozenStayAsBorn()
+{
+    stateOfLinkReach().stopUnlessRecordsHandedOutFrozenStayAsBorn();
 }
 
 bool LinkFlow::enterLibraryInReach()

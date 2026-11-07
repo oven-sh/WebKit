@@ -427,8 +427,9 @@ struct ImportOfHeldFileData {
 
 struct CompiledRuntimeModuleData {
     uint32_t registryID;
-    uint32_t module : 31;
+    uint32_t module : 30;
     uint32_t valueStaysWithCompiledCode : 1;
+    uint32_t recordIsHandedOutFrozen : 1;
 };
 
 struct StateOfLibraryModuleData {
