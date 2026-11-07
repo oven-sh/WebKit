@@ -453,8 +453,8 @@ void SpeculativeJIT::emitAllocateRawObject(GPRReg resultGPR, RegisteredStructure
         store32(TrustedImm32(numElements), Address(storageGPR, Butterfly::offsetOfPublicLength()));
     
     emitInitializeOutOfLineStorage(storageGPR, structure->outOfLineCapacity(), scratchGPR);
-    
-    mutatorFence(vm);
+
+    // No mutatorFence() here: the caller has more to store, and fences behind that.
 }
 
 void SpeculativeJIT::emitGetArgumentCount(InlineCallFrame* inlineCallFrame, GPRReg lengthGPR, bool includeThis)
@@ -8800,8 +8800,8 @@ void SpeculativeJIT::compileCreateRest(Node* node)
         transfer64(BaseIndex(argumentsStartGPR, arrayLengthGPR, TimesEight), BaseIndex(butterflyGPR, arrayLengthGPR, TimesEight));
         branch32(NotEqual, arrayLengthGPR, TrustedImm32(0)).linkTo(loop, this);
 
-        // We don't need a mutator fence here since the array cannot have been exposed to the GC yet, hence cannot be old gen. If this array were stored in an old gen object
-        // any of the values above would fenced by the writeBarrier of that store.
+        // compileAllocateNewArrayWithSize() fenced the array of holes. This one is for the elements stored since.
+        mutatorFence(vm());
 
         skipLoop.link(this);
         cellResult(arrayResultGPR, node);
@@ -9092,6 +9092,8 @@ void SpeculativeJIT::compileNewArray(Node* node)
             }
         }
 
+        mutatorFence(vm());
+
         // Yuck, we should *really* have a way of also returning the storageGPR. But
         // that's the least of what's wrong with this code. We really shouldn't be
         // allocating the array after having computed - and probably spilled to the
@@ -9213,6 +9215,7 @@ void SpeculativeJIT::compileNewArrayWithSpread(Node* node)
             addPtr(TrustedImm32(JSCellButterfly::offsetOfData()), butterflyGPR);
 
             emitAllocateJSObject<JSArray>(resultGPR, TrustedImmPtr(structure), butterflyGPR, scratch1GPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
+            mutatorFence(vm());
 
             addSlowPathGenerator(slowPathCall(slowCases, this, operationNewArrayBuffer, resultGPR, TrustedImmPtr(&vm()), structure, immutableButterflyGPR));
 
@@ -9295,6 +9298,9 @@ void SpeculativeJIT::compileNewArrayWithSpread(Node* node)
                 addPtr(TrustedImm32(1), indexGPR);
             }
         }
+
+        // compileAllocateNewArrayWithSize() fenced the array of holes. This one is for the elements stored since.
+        mutatorFence(vm());
 
         cellResult(resultGPR, node);
         return;
@@ -9496,7 +9502,6 @@ void SpeculativeJIT::compileArraySlice(Node* node)
         emitAllocateButterfly(storageResultGPR, scratchGPR, sizeGPR, scratch2GPR, resultGPR, slowCases);
         emitInitializeButterfly(storageResultGPR, scratchGPR, emptyValueGPR, scratchGPR);
         emitAllocateJSObject<JSArray>(resultGPR, tempValue, storageResultGPR, scratchGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
-        mutatorFence(vm());
 
         addSlowPathGenerator(makeUniqueWithoutFastMallocCheck<CallArrayAllocatorWithVariableStructureVariableSizeSlowPathGenerator>(
             slowCases, this, operationNewArrayWithSize, resultGPR, LinkableConstant::globalObject(*this, node), tempValue, sizeGPR, storageResultGPR));
@@ -9539,6 +9544,7 @@ void SpeculativeJIT::compileArraySlice(Node* node)
     branchPtr(Below, loadIndex, tempGPR).linkTo(loop, this);
 
     done.link(this);
+    mutatorFence(vm());
     cellResult(resultGPR, node);
 }
 
@@ -13971,6 +13977,8 @@ void SpeculativeJIT::compileMaterializeNewObject(Node* node)
         }
     }
 
+    mutatorFence(vm());
+
     cellResult(resultGPR, node);
 }
 
@@ -15228,6 +15236,7 @@ void SpeculativeJIT::compileNewArrayBuffer(Node* node)
         JumpList slowCases;
 
         emitAllocateJSObject<JSArray>(resultGPR, TrustedImmPtr(structure), TrustedImmPtr(array->toButterfly()), scratch1GPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
+        mutatorFence(vm());
 
         addSlowPathGenerator(slowPathCall(slowCases, this, operationNewArrayBuffer, result.gpr(), TrustedImmPtr(&vm()), structure, LinkableConstant(*this, array)));
 
@@ -15457,6 +15466,7 @@ void SpeculativeJIT::compileNewArrayWithButterfly(Node* node)
     JumpList slowCases;
 
     emitAllocateJSObject<JSArray>(resultGPR, TrustedImmPtr(structure), storageGPR, scratch1GPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
+    mutatorFence(vm());
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operationNewArrayWithSize, result.gpr(), LinkableConstant::globalObject(*this, node), structure, TrustedImm32(node->child1()->asInt32()), storageGPR));
 
@@ -15680,6 +15690,7 @@ void SpeculativeJIT::compileOwnPropertyKeysVariant(Node* node)
             addPtr(TrustedImm32(JSCellButterfly::offsetOfData()), scratchGPR);
 
             emitAllocateJSObject<JSArray>(resultGPR, TrustedImmPtr(arrayStructure), scratchGPR, structureGPR, scratch2GPR, slowButArrayBufferCases, SlowAllocationResult::UndefinedBehavior);
+            mutatorFence(vm());
 
             addSlowPathGenerator(slowPathCall(slowButArrayBufferCases, this, operationNewArrayBuffer, resultGPR, TrustedImmPtr(&vm()), arrayStructure, scratch3GPR));
 

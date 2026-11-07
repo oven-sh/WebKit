@@ -9809,6 +9809,7 @@ IGNORE_CLANG_WARNINGS_END
                 m_out.appendTo(useCacheCase, slowButArrayBufferCase);
                 RegisteredStructure arrayStructure = m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithContiguous));
                 LValue fastArray = allocateObject<JSArray>(arrayStructure, m_out.addPtr(cached, JSCellButterfly::offsetOfData()), slowButArrayBufferCase);
+                mutatorFence();
                 ValueFromBlock fastResult = m_out.anchor(fastArray);
                 m_out.jump(continuation);
 
