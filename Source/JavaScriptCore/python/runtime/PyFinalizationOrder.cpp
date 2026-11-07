@@ -717,9 +717,7 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
         }
     }
 
-    auto leadsTo = [&](unsigned node, unsigned target) {
-        return target != node && isLeft(target) && !nothingHolds[target];
-    };
+    // A reference counts if its head is another cell, is left, and is not one that nothing holds.
     // The circles: the components of more than one cell, one that others lead to before those. Of each cell, which it is in, and where.
     constexpr unsigned inNoCircle = none - 1;
     struct Circle {
@@ -746,6 +744,9 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
             circleOf(node) = inNoCircle;
     }
     bool someCircleHasCandidate = false;
+    // A candidate, or a cell from which references that count lead to one. Nothing else matters for the order: see the last pass. (What the search does not enter does not have the bit: no reference to it counts.)
+    FastBitVector leadsToCandidate;
+    leadsToCandidate.resize(count);
     ComponentSearch search;
     forEachComponent(search, std::views::iota(0u, count), places, [&](unsigned node) {
         return m_firstEdge[node];
@@ -754,6 +755,16 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
     }, [&](unsigned, unsigned edge) {
         return m_edges[edge];
     }, [&](std::span<const unsigned> cells) {
+        // (What it leads to has been found before it.)
+        bool leads = std::ranges::any_of(cells, [&](unsigned node) {
+            return isCandidate(node) || std::ranges::any_of(successors(node), [&](unsigned target) {
+                return leadsToCandidate[target];
+            });
+        });
+        if (leads) {
+            for (unsigned node : cells)
+                leadsToCandidate[node] = true;
+        }
         if (cells.size() == 1) {
             circleOf(cells[0]) = inNoCircle;
             return;
@@ -772,7 +783,7 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
         unsigned end = index + 1 < circles.size() ? circles[index + 1].firstMember : members.size();
         return members.span().subspan(circles[index].firstMember, end - circles[index].firstMember);
     };
-    // (What leadsTo() asks of the head beside this has been asked: such a cell is in no circle.)
+    // (Whether it counts has been asked but for this: what is not left, and what nothing holds, is in no circle.)
     auto isInnerReference = [&](unsigned node, unsigned edge, unsigned circle) {
         return circleOf(m_edges[edge]) == circle && m_edges[edge] != node;
     };
@@ -1398,18 +1409,31 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
         }
     }
 
-    // The last pass.
+    // The last pass. What leads to no candidate is left out of it, which in most heaps is nearly all: a candidate is taken when no other cell is free to go, and is free to go by then if every candidate has gone from
+    // which references that hold lead to it; a cell that leads to none lies on no such way. (What holds a cell that is not left out is not left out: it leads to what that leads to, or nothing holds it.)
+    auto isLeftOut = [&](unsigned node) {
+        return !leadsToCandidate[node] && !(isLeft(node) && nothingHolds[node]);
+    };
+#if ASSERT_ENABLED
+    for (unsigned node = 0; node < count; ++node) {
+        bool wasEntered = isLeft(node) && !nothingHolds[node];
+        ASSERT(leadsToCandidate[node] == (wasEntered && (isCandidate(node) || std::ranges::any_of(successors(node), [&](unsigned target) {
+            return target != node && leadsToCandidate[target];
+        }))));
+    }
+#endif
     FastBitVector holds; // By the number of the reference in m_edges.
     holds.resize(m_edges.size());
     holders.fill(0, count);
     for (unsigned node = 0; node < count; ++node) {
-        if (!isLeft(node))
+        if (isLeftOut(node))
             continue;
         unsigned circle = circleOf(node);
         bool isOpen = circle != inNoCircle && !holdsNothingTogether[circle];
         for (unsigned edge = m_firstEdge[node]; edge < m_firstEdge[node + 1]; ++edge) {
             unsigned target = m_edges[edge];
-            if (!leadsTo(node, target) || (circle != inNoCircle && circle == circleOf(target) && !(isOpen && !doesNotHold[edge])))
+            // (What has the bit is left, and is not one that nothing holds.)
+            if (target == node || !leadsToCandidate[target] || (circle != inNoCircle && circle == circleOf(target) && !(isOpen && !doesNotHold[edge])))
                 continue;
             ASSERT(!isOpen || circle != circleOf(target) || standsFor.isEmpty() || whatStandsFor(standsFor, placeOf(node)) != whatStandsFor(standsFor, placeOf(target))); // What is one does not hold itself.
             holds[edge] = true;
@@ -1449,6 +1473,9 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
     ASSERT(m_edges.size() < isOneWithOthers);
     for (unsigned index = 0; index < circles.size(); ++index) {
         auto cells = membersOf(index);
+        // (As one of its cells, so all.)
+        if (isLeftOut(cells[0]))
+            continue;
         if (holdsNothingTogether[index]) {
             for (unsigned node : cells) {
                 circles[index].cellsThatAreHeld += !!holders[node];
@@ -1473,7 +1500,7 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
         }
     }
     for (unsigned node = 0; node < count; ++node) {
-        if (isLeft(node) && !holders[node])
+        if (!holders[node] && !isLeftOut(node))
             isFreeToGo(node);
     }
     Vector<unsigned> result;

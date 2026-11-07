@@ -917,12 +917,18 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     the holder of `b`. (A search stops when it has accounted for every reference to its cell, so it does not know all that the cell reaches, and all the ways of opening a circle are to work out the same.)
     It takes no looks: which cells are one is noted where a reference is found not to hold. The holders are counted cell by cell as before, and a bit in the count says that a cell is one with others: where nothing is, that is
     all that is paid. Memory: 12 bytes for each cell that is in any circle, opened or not, from when two cells of a circle that is opened are found to be one; if it is not to be had they stay two, and the law does not hold
-    for them. The function by itself, compiled apart, before that and with it, in ms, medians of three. 4,000,000 cells that lie in memory as they hang together: nothing in a circle 215, 213; a tree of plain cells with links
-    to the parents 236, 253; pairs of objects with finalizers that know each other 348, 370; a doubly linked list of them 349, 352; tangles of 64 of them 1,099, 1,071; two tangles 4,209, 4,444. The same where they lie
-    scattered: nothing in a circle 2,646, 2,744; the tree 1,640, 1,748; the pairs 1,824, 1,938. A large circle of plain cells that is opened, and nearly all of which become one: 1,500,000 cells: a doubly linked list between
-    two objects 304, 329, scattered 1,197, 1,508; a tree with an object for its root, in a list, 366, 417, scattered 1,020, 1,122; 1,000,000 plain cells each of which knows the next and two others, in a ring with one object:
-    736, 1,042, scattered 1,091, 1,395. And very many small circles, each of which is now counted and let go as one, in the order of its holders and not where its cells lie: 4,000,000 cells in circles of one object and three
-    plain cells 366, 477, scattered 2,810, 3,364; in pairs of plain cells that know each other, one of each pair in a list with a name, with no object with a finalizer in any circle: 229, 263, scattered 1,473, 2,179.
+    for them.
+  - What leads to no object with a finalizer is left out where the holders are counted and the cells are let go, which in most heaps is nearly all of it: it lies on no way from one such object to another, so the order is the
+    same without it. That is one bit a cell, worked out as the circles are found: a circle, or a cell that is in none, is found after all that it leads to.
+    With both, the function by itself, compiled apart, before and now, in ms, medians of three. 4,000,000 cells that lie in memory as they hang together, and lead to no object with a finalizer: nothing in a circle 215, 191; a
+    tree of plain cells with links to the parents 236, 238; pairs of plain cells that know each other 229, 207. The same where they lie scattered: 2,646, 1,770; 1,640, 1,572; 1,473, 1,276. Where nearly every cell leads to one
+    (each plain cell refers to two earlier cells at random, every hundredth cell is an object with a finalizer) 1,198, 1,348, scattered 2,548, 2,541. All of them objects with finalizers: pairs that know each other 348, 372,
+    scattered 1,824, 1,875 (nothing becomes one there: the cells of each small circle are numbered once more, and each circle is looked at once more at the end); a doubly linked list 349, 358; tangles of 64: 1,099, 1,101; two
+    tangles 4,209, 4,449. It costs more where cells become one. A large circle of plain cells that is opened: 1,500,000 cells: a doubly linked list between two objects 304, 330, scattered 1,197, 1,275; a tree with an object
+    for its root, in a list, 366, 431, scattered 1,020, 1,173; 1,000,000 plain cells each of which knows the next and two others, in a ring with one object: 736, 1,020, scattered 1,091, 1,355. Very many small circles, each of
+    which is counted and let go as one, in the order of its holders and not where its cells lie: 4,000,000 cells in circles of one object and three plain cells 366, 477, scattered 2,810, 3,079; in pairs of plain cells that
+    know each other, one of each pair in a list that one object with a finalizer holds, each pair with such an object of its own: 219, 262, scattered 998, 1,908; in pairs of plain cells that know each other, each of which
+    refers to one object with a finalizer that has no name: 239, 294, scattered 1,560, 2,778.
   - That is worked out with the world stopped. **A circle of up to 64 cells is always opened, and as the rule says, whatever else is in the heap**: from each cell what it reaches among what is no nearer, as
     a set of bits: two looks at each reference of its cells (a third if it has two cells without a finalizer, to see which are one), some 64 steps for a cell, no memory but what cells that are one take. So a writer and its raw file never go short. Larger circles share a bound: 16,000,000 looks at their cells and
     the references inside them in all (`FinalizationQuestions::mostLooksAtInnerReferences`), the smallest first, by the number of those. Where such a circle has more than eight degrees of nearness, first by
@@ -941,7 +947,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     tangles of 2,000,000: 1.1, 6.0; two lists out of order: 2.1, 5.5; tangles of 64, all of which are opened: 0.6, 1.2 where each lies together in memory, 2.8, 7.8 where it lies scattered. So up to 21 times
     what it was, and at its worst 7.8 s where it was 2.8 s: for 4,000,000 objects with finalizers, the calls of which take longer than that. (Without the bound: 120 s.) In the engine, the whole end of a
     program with 1,000,000 objects takes 0.2 to 0.3 s longer for a list, a tree, or plain cells in a circle with one object with a finalizer; 2.1 to 3.2 s longer for a list out of order or a tangle (which
-    is as much again); no longer where no object with a finalizer is in a circle: a large cache beside an open log file. (Those are the figures of when the circles came to be opened. For what cells that count as one have added see above.)
+    is as much again); no longer where no object with a finalizer is in a circle: a large cache beside an open log file. (Those are the figures of when the circles came to be opened. For what has come since see above.)
     Memory for the circle in hand: 20 bytes for a reference inside it, 68 for a cell: 300 MB at the most, asked for before anything is done: if it is not to be had the circle is not opened.
   - Daemon threads are still running during the first of these steps, and in CPython they finalize what they drop themselves. So the step begins
     an era (`Runtime::m_era`, which each object with a finalizer is registered with; weak references have serial numbers): the main thread
