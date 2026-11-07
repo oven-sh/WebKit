@@ -1809,8 +1809,8 @@ answer; a `tp_dealloc` is the end of what C keeps in the object.
   body: what is still reachable then (C holds it in a static variable, JS holds it) gets its finalizer at most.
 - `tp_free` in a `tp_dealloc` does nothing: the memory is the collector's. Anywhere else (a constructor that gives up) it is the end of the instance: the reference that C got with it is gone, and no
   `tp_dealloc` is called. An instance whose type has a `tp_dealloc` owns a reference to its type, which `tp_dealloc` gives back, as in CPython; `__class__` assignment moves it.
-- **Memory.** Most of what C allocates hangs on an object whose `tp_dealloc` frees it, and that waits for a collection. So the heap is told of blocks of more than 256 bytes from `PyMem_*` and
-  `PyObject_*` (not `PyMem_Raw*`, which may be called without the GIL), as an embedder tells it of memory of which it cannot say on which cell it hangs. It does not collect there and then.
+- **Memory.** Most of what C allocates hangs on an object whose `tp_dealloc` frees it, and that waits for a collection. So the heap is told of what `PyMem_*` and `PyObject_*` allocate (not `PyMem_Raw*`, which may be called without the GIL), as an embedder tells it of memory of which it cannot say on which cell it
+  hangs: 8 KB at a time, so small blocks add up and cost nothing each. A block that `realloc` has left where it was counts for nothing more, one that has moved for its new size. It does not collect there and then.
 - **Where `tp_traverse` may be called:** where the collector can stop the thread, which is where C calls a function of the API that makes an object or runs code. Not in the functions that are
   quiet and make nothing: counts, `PyMem_*`, the type and the data of an object. (In CPython 3.12 and later: where code of Python's runs.)
 

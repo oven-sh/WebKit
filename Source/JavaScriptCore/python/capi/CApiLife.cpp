@@ -48,8 +48,11 @@ static ALWAYS_INLINE void* reallocateMemory(void* memory, size_t size)
 
 // Most of what C allocates hangs on an object, whose tp_dealloc frees it, and that waits for a collection. So collections have to come as this memory grows, not only as cells are
 // made: the heap is told, as an embedder tells it of memory of which it cannot say on which cell it hangs. (It forgets at each full collection. Nobody tells it of what is freed.)
-// By who has the GIL, which these functions demand, but for the Raw ones. Nobody is refused.
-static NEVER_INLINE void tellHeapOfLargeBlock(size_t size)
+// By who has the GIL, which these functions demand, but for the Raw ones. Nobody is refused. Each thread adds up what it has allocated, small blocks too, and tells when that has come to something.
+static constinit thread_local size_t t_bytesNotToldOf = 0;
+static constexpr size_t leastToTellOf = 8 * KB;
+
+static NEVER_INLINE void tellHeap()
 {
     Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
     if (!hasGIL(current))
@@ -57,15 +60,25 @@ static NEVER_INLINE void tellHeapOfLargeBlock(size_t size)
     // It does not collect here and now, but where a cell is next asked for. C may be half way through a change to an object (the new length is stored, the memory is being asked
     // for), and counts on it that nobody calls its tp_traverse meanwhile.
     DeferGCForAWhile deferGC(current->vm);
-    current->vm.heap.deprecatedReportExtraMemory(size);
+    current->vm.heap.deprecatedReportExtraMemory(std::exchange(t_bytesNotToldOf, 0));
 }
 
 static ALWAYS_INLINE void* tellingHeap(void* memory, size_t size)
 {
-    // (Less than that the heap does not want to hear of.)
-    if (memory && size > 256) [[unlikely]]
-        tellHeapOfLargeBlock(size);
+    if (memory) [[likely]] {
+        t_bytesNotToldOf += size;
+        if (t_bytesNotToldOf >= leastToTellOf) [[unlikely]]
+            tellHeap();
+    }
     return memory;
+}
+
+// A buffer that grows by small steps is reallocated thousands of times, and is not that many times its size. How large a block was nobody can tell here (fastMallocSize() knows on Darwin only). So
+// it counts when it has moved: an allocator moves a growing block when it has outgrown its size class, and those grow by a factor, so what is told adds up to a few times what is held.
+static ALWAYS_INLINE void* reallocateTellingHeap(void* memory, size_t size)
+{
+    void* result = reallocateMemory(memory, size);
+    return tellingHeap(result, result != memory ? size : 0);
 }
 
 PY_CAPI void* PyMem_Malloc(size_t size)
@@ -83,7 +96,7 @@ PY_CAPI void* PyMem_Calloc(size_t count, size_t size)
 PY_CAPI void* PyMem_Realloc(void* memory, size_t size)
 {
     CAPI_QUIET_AND_ASKS_NOBODY();
-    return tellingHeap(reallocateMemory(memory, size), size);
+    return reallocateTellingHeap(memory, size);
 }
 
 PY_CAPI void* PyMem_RawMalloc(size_t size)
@@ -119,7 +132,7 @@ PY_CAPI void* PyObject_Calloc(size_t count, size_t size)
 PY_CAPI void* PyObject_Realloc(void* memory, size_t size)
 {
     CAPI_QUIET_AND_ASKS_NOBODY();
-    return tellingHeap(reallocateMemory(memory, size), size);
+    return reallocateTellingHeap(memory, size);
 }
 
 PY_CAPI void PyMem_Free(void* memory)
@@ -151,9 +164,13 @@ static void freeObject(JSCell* cell)
     Body* body = Body::tryFromCellOfHandle(cell);
     if (!body || body->life() >= Body::Life::BeingDestroyed)
         return;
+    Interpreter& current = interpreter();
     didSeeSomebodyTake(body);
     body->setLife(Body::Life::Destroyed);
-    interpreter().counts.forget(body);
+    current.counts.forget(body);
+    // What follows in C is Py_DECREF(type): in CPython each instance owns a reference to its type. Here one whose type has no tp_dealloc owns none, because nobody would give it back.
+    if (!ownsReferenceToType(madeByExtension(body->type())))
+        retain(current, toC(body->type()));
 }
 
 // tp_free
