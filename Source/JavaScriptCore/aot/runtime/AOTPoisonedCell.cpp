@@ -61,10 +61,8 @@ struct CellLent {
 
 static Vector<CellLent>& cellsLentOnThisThread()
 {
-    static thread_local Vector<CellLent>* cells;
-    if (!cells)
-        cells = new Vector<CellLent>;
-    return *cells;
+    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local Vector<CellLent> cells;
+    return cells;
 }
 
 void PoisonedCell::noteThatCellIsLent(JSCell* cell, const void* frame, uint32_t function, uint32_t position)

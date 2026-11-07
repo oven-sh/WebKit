@@ -63,8 +63,6 @@ Identifier enginePrivateName(VM& vm, const String& text)
     Ref<PrivateSymbolImpl> symbol = PrivateSymbolImpl::create(*text.impl());
     Identifier name = Identifier::fromUid(vm, symbol.ptr());
     vm.propertyNames->appendExternalName(Identifier::fromString(vm, text), name);
-    SUPPRESS_UNCOUNTED_LOCAL auto* leaked = &symbol.leakRef();
-    UNUSED_VARIABLE(leaked);
     return name;
 }
 

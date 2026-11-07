@@ -37,12 +37,31 @@ struct PartsOfSharedArray {
         Node* children[widthOfBranch] { };
     };
 
+    static void release(Node* node, unsigned level)
+    {
+        if (!node || --node->numberOfOwners)
+            return;
+        if (level) {
+            for (Node* child : static_cast<Branch*>(node)->children)
+                release(child, level - 1);
+        }
+        fastFree(node);
+    }
+
+    struct PartsOfZerosOfThread {
+        ~PartsOfZerosOfThread()
+        {
+            for (unsigned level = maxHeight; level--;)
+                release(parts[level], level);
+        }
+
+        Node* parts[maxHeight] { };
+    };
+
     static Node** partsOfZeros()
     {
-        static thread_local Node** s_partsOfZeros = nullptr;
-        if (!s_partsOfZeros)
-            s_partsOfZeros = static_cast<Node**>(fastZeroedMalloc(sizeof(Node*) * maxHeight));
-        return s_partsOfZeros;
+        WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local PartsOfZerosOfThread s_partsOfZeros;
+        return s_partsOfZeros.parts;
     }
 };
 
@@ -300,16 +319,7 @@ private:
             std::copy_n(other.inlineRecords(), m_size, inlineRecords());
     }
 
-    static void release(Node* node, unsigned level)
-    {
-        if (!node || --node->numberOfOwners)
-            return;
-        if (level) {
-            for (Node* child : static_cast<Branch*>(node)->children)
-                release(child, level - 1);
-        }
-        fastFree(node);
-    }
+    static void release(Node* node, unsigned level) { Parts::release(node, level); }
 
     static void makeOwn(Node*& slot, unsigned level)
     {
