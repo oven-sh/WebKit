@@ -72,6 +72,7 @@
 #include "TemporalCoreTest.h"
 #include "TypedArrayCTest.h"
 #include "VMManagerStopTheWorldTest.h"
+#include "WindowsVMDecommitTest.h"
 
 #if defined(JSC_SUPPORTS_SWIFT) && JSC_SUPPORTS_SWIFT
 #include "SwiftTestingHarness.h"
@@ -1636,6 +1637,7 @@ int main(int argc, char* argv[])
         return failed;
 
     testCompareAndSwap();
+    testWindowsVMDecommit();
     startMultithreadedMultiVMExecutionTest();
     
     // Test garbage collection with a fresh context
