@@ -204,14 +204,16 @@ static bool isBeingEnded(Runtime& rt)
 // JS lets anything be the `name` of a function. Not this long, since the class is made where nothing can be ended.
 static constexpr unsigned longestNameOfMirror = 1000;
 
-// What type() takes for the name of a class without asking anybody, and a traceback can show on its line, with something in it that is seen. One that has no UTF-8 goes to the
+// What type() takes for the name of a class without asking anybody, and a traceback can show on its line behind "JS", with something in it that is seen. One that has no UTF-8 goes to the
 // codec's handler of errors, and a program can put its own in the place of 'strict'.
 static bool canNameClass(StringView name)
 {
     if (name.length() > longestNameOfMirror)
         return false;
     bool hasWhatIsSeen = false;
+    bool isJoiner = false;
     for (unsigned i = 0; i < name.length(); ++i) {
+        bool isFirst = !i;
         char16_t unit = name[i];
         // Control characters, and what ends a line.
         if (unit < 0x20 || (unit >= 0x7f && unit < 0xa0) || unit == 0x2028 || unit == 0x2029)
@@ -224,11 +226,17 @@ static bool canNameClass(StringView name)
         }
         // What is not seen and changes what is: the marks that turn the direction of the text, those of no width. But for the two joiners, which
         // the grammar of JS takes within a name: Persian and the scripts of India are written with them.
-        if (character >= 0x80 && u_charType(character) == U_FORMAT_CHAR && character != zeroWidthNonJoiner && character != zeroWidthJoiner)
+        isJoiner = character == zeroWidthNonJoiner || character == zeroWidthJoiner;
+        if (character >= 0x80 && u_charType(character) == U_FORMAT_CHAR && !isJoiner)
             return false;
-        hasWhatIsSeen |= !u_hasBinaryProperty(character, UCHAR_WHITE_SPACE) && !u_hasBinaryProperty(character, UCHAR_DEFAULT_IGNORABLE_CODE_POINT);
+        // A mark is seen on what it follows, and at the start that is the "S".
+        bool isMark = U_GET_GC_MASK(character) & U_GC_M_MASK;
+        if (isFirst && (isMark || isJoiner))
+            return false;
+        // (Nothing is assigned, or no more than room: blanks, the fillers of Hangul, the pattern of Braille without a dot.)
+        hasWhatIsSeen |= u_isgraph(character) && !isMark && !u_hasBinaryProperty(character, UCHAR_DEFAULT_IGNORABLE_CODE_POINT) && character != 0x2800;
     }
-    return hasWhatIsSeen;
+    return hasWhatIsSeen && !isJoiner;
 }
 
 // class name(*bases), in _js, which stands for the prototype. Null: it cannot be made. There may be next to no stack left, or memory. If it is
@@ -369,7 +377,7 @@ static String nameOfClassForPrototype(JSGlobalObject* globalObject, JSObject* pr
             return { };
         }
     }
-    if (text.isEmpty() || !canNameClass(text))
+    if (!canNameClass(text))
         return { };
     String result = tryMakeString("JS"_s, text);
     couldNotTell.lackedMeans |= result.isNull();
@@ -598,6 +606,10 @@ static constexpr bool goesWithClassOfJS(std::string_view name)
     }
     return true;
 }
+#define PY_COUNT_EXCEPTION(id, unused) + goesWithClassOfJS(#id)
+static_assert(0 FOR_EACH_PY_EXCEPTION(PY_COUNT_EXCEPTION) == 17);
+#undef PY_COUNT_EXCEPTION
+static_assert(goesWithClassOfJS("OSError") && goesWithClassOfJS("ConnectionResetError") && !goesWithClassOfJS("ValueError") && !goesWithClassOfJS("BaseException"));
 
 // What `_js.name` is in every process and in every thread, whatever the program has done to the globals: JSFileNotFoundError, and JSRangeError
 // for the RangeError that the engine throws. (The classes that go with those of Python's come first.) Null: there is none.
@@ -606,7 +618,7 @@ static PyType* exceptionClassNamedEverywhere(JSGlobalObject* globalObject, const
     Runtime& rt = runtime(globalObject);
     if (!name.startsWith("JS"_s))
         return nullptr;
-    String rest = name.substring(2);
+    StringView rest = StringView(name).substring(2);
     if (rest == "Error"_s)
         return rt.JSError();
     if (rest == "ThrownValue"_s)
