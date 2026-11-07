@@ -27,6 +27,7 @@
 
 #include "UserContentControllerIdentifier.h"
 #include "WebPageProxyIdentifier.h"
+#include <WebCore/ContentRuleListResults.h>
 #include <WebCore/ContentSecurityPolicyResponseHeaders.h>
 #include <WebCore/CrossOriginEmbedderPolicy.h>
 #include <WebCore/DocumentIsolationPolicy.h>
@@ -42,7 +43,6 @@
 namespace WebCore {
 class ContentSecurityPolicy;
 class OriginAccessPatterns;
-struct ContentRuleListResults;
 struct ContentSecurityPolicyClient;
 class ResourceError;
 class SecurityOrigin;
@@ -132,7 +132,7 @@ private:
     NetworkLoadChecker(NetworkProcess&, NetworkResourceLoader*, NetworkSchemeRegistry*, WebCore::FetchOptions&&, PAL::SessionID, std::optional<WebPageProxyIdentifier>, WebCore::HTTPHeaderMap&&, URL&&, DocumentURL&&,  RefPtr<WebCore::SecurityOrigin>&&, RefPtr<WebCore::SecurityOrigin>&& topOrigin, RefPtr<WebCore::SecurityOrigin>&& parentOrigin, WebCore::PreflightPolicy, String&& referrer, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, bool shouldCaptureExtraNetworkLoadMetrics, LoadType requestLoadType);
 
     WebCore::ContentSecurityPolicy* contentSecurityPolicy();
-    const WebCore::OriginAccessPatterns& LEGACY_NODELETE originAccessPatterns() const;
+    NODELETE const WebCore::OriginAccessPatterns& originAccessPatterns() const;
     bool isSameOrigin(const URL&, const WebCore::SecurityOrigin*) const;
     bool isChecking() const { return !!m_corsPreflightChecker; }
     bool isRedirected() const { return m_redirectCount; }

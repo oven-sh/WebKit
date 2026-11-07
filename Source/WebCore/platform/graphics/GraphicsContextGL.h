@@ -74,9 +74,6 @@ class ImageBuffer;
 class NativeImage;
 class PixelBuffer;
 
-#if ENABLE(VIDEO) && USE(AVFOUNDATION)
-class GraphicsContextGLCV;
-#endif
 #if ENABLE(VIDEO)
 class MediaPlayer;
 class VideoFrame;
@@ -1224,7 +1221,7 @@ public:
 
     class Client {
     public:
-        WEBCORE_EXPORT Client();
+        NODELETE WEBCORE_EXPORT Client();
         WEBCORE_EXPORT virtual ~Client();
         virtual void forceContextLost() = 0;
         virtual void addDebugMessage(GCGLenum, GCGLenum, GCGLenum, std::span<const char8_t> message) = 0;
@@ -1236,7 +1233,7 @@ public:
 
     void setClient(Client* client) { m_client = client; }
 
-    virtual std::optional<size_t> LEGACY_NODELETE estimatedMemoryCost() = 0;
+    NODELETE virtual std::optional<size_t> estimatedMemoryCost() = 0;
 
     // ========== WebGL 1 entry points.
     virtual void activeTexture(GCGLenum texture) = 0;
@@ -1682,7 +1679,9 @@ public:
     virtual void simulateEventForTesting(SimulatedEventForTesting) = 0;
 
 #if ENABLE(VIDEO)
-    virtual bool copyTextureFromVideoFrame(VideoFrame&, PlatformGLObject texture, GCGLint level, GCGLenum internalFormat, GCGLenum format, GCGLenum type, bool premultiplyAlpha, bool flipY) = 0;
+    // Like glCopyTextureCHROMIUM with the video frame as the source texture.
+    // Returns false if the copy is not possible, in which case the texture is not modified.
+    virtual bool copyTextureFromVideoFrame(VideoFrame&, PlatformGLObject texture, GCGLenum target, GCGLint level, GCGLenum internalFormat, GCGLenum type, bool unpackFlipY, bool unpackPremultiplyAlpha) = 0;
     WEBCORE_EXPORT virtual RefPtr<NativeImage> videoFrameToNativeImage(VideoFrame&);
 
     // Test-only. The outcome of the last copyTextureFromVideoFrame() call. Recorded for every call, not
@@ -1690,10 +1689,6 @@ public:
     using VideoUploadOutcome = GraphicsContextGLVideoUploadOutcome;
     using VideoUploadRecord = GraphicsContextGLVideoUploadRecord;
     WEBCORE_EXPORT virtual std::optional<VideoUploadRecord> lastVideoUploadForTesting();
-    // Test-only. When set, the caller does not fall back to another upload path when
-    // copyTextureFromVideoFrame() fails, so failures leave the texture unchanged where possible.
-    WEBCORE_EXPORT virtual void setVideoUploadHardwareOnlyForTesting(bool);
-    bool videoUploadHardwareOnlyForTesting() const { return m_videoUploadHardwareOnlyForTesting; }
     void recordVideoUploadForTesting(VideoUploadOutcome outcome, uint32_t pixelFormat) { m_lastVideoUploadForTesting = { m_lastVideoUploadForTesting.sequence + 1, outcome, pixelFormat }; }
 #endif
 
@@ -1710,7 +1705,7 @@ public:
 
     // Computes the bytes per image element for a format and type.
     // Returns zero if format or type is an invalid enum.
-    WEBCORE_EXPORT static unsigned LEGACY_NODELETE computeBytesPerGroup(GCGLenum format, GCGLenum type);
+    NODELETE WEBCORE_EXPORT static unsigned computeBytesPerGroup(GCGLenum format, GCGLenum type);
 
 
     struct PixelRectangleSizes {
@@ -1721,7 +1716,7 @@ public:
     };
     // Returns nullopt if width/height is negative or overflow happens or if format and type are invalid.
     // Also validates total bytes (imageBytes + initialSkipBytes)
-    static std::optional<PixelRectangleSizes> LEGACY_NODELETE computeImageSize(GCGLenum format, GCGLenum type, IntSize, GCGLsizei depth, const PixelStoreParameters&);
+    NODELETE static std::optional<PixelRectangleSizes> computeImageSize(GCGLenum format, GCGLenum type, IntSize, GCGLsizei depth, const PixelStoreParameters&);
 
     // Extracts the contents of the given PixelBuffer into the passed Vector,
     // packing the pixel data according to the given format and type,
@@ -1756,7 +1751,6 @@ protected:
     EnumSet<GCGLExtension> m_requestableExtensions;
 #if ENABLE(VIDEO)
     VideoUploadRecord m_lastVideoUploadForTesting;
-    bool m_videoUploadHardwareOnlyForTesting { false };
 #endif
 
 private:

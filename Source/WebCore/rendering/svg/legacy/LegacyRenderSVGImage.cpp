@@ -30,6 +30,7 @@
 #include "FloatQuad.h"
 #include "GraphicsContext.h"
 #include "HitTestResult.h"
+#include "ImageDrawDescriptor.h"
 #include "LayoutRepainter.h"
 #include "LegacyRenderSVGResource.h"
 #include "PointerEventsHitRules.h"
@@ -44,6 +45,7 @@
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
 #include "SVGVisitedRendererTracking.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -228,6 +230,13 @@ bool LegacyRenderSVGImage::nodeAtFloatPoint(const HitTestRequest& request, HitTe
     }
 
     return false;
+}
+
+void LegacyRenderSVGImage::forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>& function)
+{
+    LegacyRenderSVGModelObject::forEachStyleImage(function);
+    if (RefPtr image = imageResource().styleImage())
+        function(*image);
 }
 
 void LegacyRenderSVGImage::imageChanged(WrappedImagePtr, const IntRect*)

@@ -374,7 +374,7 @@ bool JSArray::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
     return JSObject::deleteProperty(thisObject, globalObject, propertyName, slot);
 }
 
-static int LEGACY_NODELETE compareKeysForQSort(const void* a, const void* b)
+NODELETE static int compareKeysForQSort(const void* a, const void* b)
 {
     unsigned da = *static_cast<const unsigned*>(a);
     unsigned db = *static_cast<const unsigned*>(b);
@@ -525,8 +525,7 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
 
         if (newLength < length) {
             // Copy any keys we might be interested in into a vector.
-            Vector<unsigned, 0, UnsafeVectorOverflow> keys;
-            keys.reserveInitialCapacity(std::min(map->size(), static_cast<size_t>(length - newLength)));
+            Vector<unsigned, 0, UnsafeVectorOverflow> keys(ReserveCapacityTag { }, std::min(map->size(), static_cast<size_t>(length - newLength)));
             SparseArrayValueMap::const_iterator end = map->end();
             for (SparseArrayValueMap::const_iterator it = map->begin(); it != end; ++it) {
                 unsigned index = it->index();

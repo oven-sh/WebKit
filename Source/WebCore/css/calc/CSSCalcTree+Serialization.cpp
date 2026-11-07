@@ -130,7 +130,7 @@ static constexpr unsigned sortPriorityBase = __COUNTER__;
 static constexpr unsigned errorSortPriority = std::numeric_limits<unsigned>::max() - 1;
 static constexpr unsigned otherSortPriority = std::numeric_limits<unsigned>::max();
 
-static unsigned LEGACY_NODELETE sortPriority(CSSUnitType unit)
+NODELETE static unsigned sortPriority(CSSUnitType unit)
 {
     // Sort order: number, percentage, dimension (by unit, ordered ASCII case-insensitively), other.
 
@@ -244,8 +244,7 @@ struct ChildRepresentation {
 
 static Vector<ChildRepresentation, 16> generateSortedChildrenMap(const Children& children)
 {
-    Vector<ChildRepresentation, 16> sortedChildrenMap;
-    sortedChildrenMap.reserveInitialCapacity(children.size());
+    Vector<ChildRepresentation, 16> sortedChildrenMap(ReserveCapacityTag { }, children.size());
 
     for (size_t i = 0; i < children.size(); ++i)
         sortedChildrenMap.append(ChildRepresentation { .index = i, .sortPriority = sortPriority(children[i]) });
@@ -258,7 +257,7 @@ static Vector<ChildRepresentation, 16> generateSortedChildrenMap(const Children&
 // MARK: Math Function
 // https://drafts.csswg.org/css-values-4/#serialize-a-math-function
 
-static double LEGACY_NODELETE clampValue(double value, CSS::Range range)
+NODELETE static double clampValue(double value, CSS::Range range)
 {
     value = std::isnan(value) ? 0 : value;
     return std::clamp(value, range.min, range.max);

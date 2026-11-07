@@ -35,7 +35,6 @@
 #include "WKBundlePageEditorClient.h"
 #include "WebFrame.h"
 #include "WebPage.h"
-#include "WebPageProxy.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"
 #include "WebUndoStep.h"
@@ -554,7 +553,7 @@ static bool getActionTypeForKeyEvent(KeyboardEvent* event, WKInputFieldActionTyp
     return true;
 }
 
-static API::InjectedBundle::FormClient::InputFieldAction LEGACY_NODELETE toInputFieldAction(WKInputFieldActionType action)
+NODELETE static API::InjectedBundle::FormClient::InputFieldAction toInputFieldAction(WKInputFieldActionType action)
 {
     switch (action) {
     case WKInputFieldActionTypeMoveUp:

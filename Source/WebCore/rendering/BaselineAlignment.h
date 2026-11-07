@@ -40,7 +40,7 @@ class RenderBox;
 // flex/grid to query a box's baseline outside any alignment context. They keep no per-context state, so
 // they live apart from the BaselineAlignmentState grouping machinery.
 struct BaselineAlignment {
-    static FontBaseline LEGACY_NODELETE dominantBaseline(WritingMode);
+    NODELETE static FontBaseline dominantBaseline(WritingMode);
     static WritingMode usedWritingModeForBaselineAlignment(LogicalBoxAxis alignmentContextAxis, WritingMode alignmentContainerWritingMode, WritingMode alignmentSubjectWritingMode);
     static LayoutUnit synthesizedBaseline(const RenderBox&, FontBaseline baselineType, WritingMode writingModeForSynthesis, BoxAxis lineDirection, BaselineSynthesisEdge);
 };
@@ -64,20 +64,20 @@ struct BaselineAlignment {
 class BaselineGroup {
     WTF_MAKE_TZONE_ALLOCATED(BaselineGroup);
 public:
-    BaselineGroup(FlowDirection, ItemPosition preference);
+    NODELETE BaselineGroup(FlowDirection, ItemPosition preference);
 
     // Determines whether a baseline-sharing group is compatible with an alignment subject,
     // based on its 'block-flow' and 'baseline-preference'
-    bool LEGACY_NODELETE isCompatible(FlowDirection, ItemPosition) const;
+    NODELETE bool isCompatible(FlowDirection, ItemPosition) const;
 
 private:
     // Determines whether the baseline-sharing group's associated block-flow is opposite (LR vs RL) to particular
     // alignment subject's writing-mode.
-    bool LEGACY_NODELETE isOppositeBlockFlow(FlowDirection) const;
+    NODELETE bool isOppositeBlockFlow(FlowDirection) const;
 
     // Determines whether the baseline-sharing group's associated block-flow is orthogonal (vertical vs horizontal)
     // to particular alignment subject's writing-mode.
-    bool LEGACY_NODELETE isOrthogonalBlockFlow(FlowDirection) const;
+    NODELETE bool isOrthogonalBlockFlow(FlowDirection) const;
 
     FlowDirection m_blockFlow;
     ItemPosition m_preference;
@@ -93,7 +93,7 @@ private:
 class BaselineAlignmentState {
     WTF_MAKE_TZONE_ALLOCATED(BaselineAlignmentState);
 public:
-    BaselineAlignmentState(LogicalBoxAxis alignmentContextAxis, WritingMode alignmentContainerWritingMode);
+    NODELETE BaselineAlignmentState(LogicalBoxAxis alignmentContextAxis, WritingMode alignmentContainerWritingMode);
 
     // Returns the index of the baseline-sharing group the subject belongs to, creating one if none is compatible.
     size_t sharedGroupIndex(WritingMode alignmentSubjectWritingMode, ItemPosition preference) const;

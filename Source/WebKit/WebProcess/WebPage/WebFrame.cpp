@@ -332,8 +332,7 @@ std::optional<FrameTreeNodeData> WebFrame::frameTreeData() const
         return std::nullopt;
     }
 
-    Vector<FrameTreeNodeData> children;
-    children.reserveInitialCapacity(m_coreFrame->tree().childCount());
+    Vector<FrameTreeNodeData> children(ReserveCapacityTag { }, m_coreFrame->tree().childCount());
     for (RefPtr child = m_coreFrame->tree().firstChild(); child; child = child->tree().nextSibling()) {
         RefPtr childWebFrame = WebFrame::fromCoreFrame(*child);
         if (!childWebFrame) {
@@ -566,6 +565,15 @@ void WebFrame::updateSandboxFlags(SandboxFlags sandboxFlags)
         provisionalFrame->updateSandboxFlags(sandboxFlags, Frame::NotifyUIProcess::No);
 }
 
+static bool shouldClearWindowNameOnReplacement(const WebCore::RemoteFrame& remoteFrame, const WebCore::LocalFrame& localFrame)
+{
+    if (!remoteFrame.isMainFrame() || remoteFrame.opener())
+        return false;
+
+    RefPtr document = localFrame.document();
+    return !document || !protect(document->securityOrigin())->isSameOriginAs(protect(remoteFrame.frameDocumentSecurityOriginOrOpaque()));
+}
+
 void WebFrame::commitProvisionalFrame()
 {
     RefPtr localFrame = std::exchange(m_provisionalFrame, nullptr);
@@ -602,7 +610,8 @@ void WebFrame::commitProvisionalFrame()
 
     m_coreFrame = localFrame.get();
     remoteFrame->setView(nullptr);
-    localFrame->tree().setSpecifiedName(remoteFrame->tree().specifiedName());
+    if (!shouldClearWindowNameOnReplacement(*remoteFrame, *localFrame))
+        localFrame->tree().setSpecifiedName(remoteFrame->tree().specifiedName());
 
     if (ownerRenderer)
         ownerRenderer->setWidget(localFrame->view());
@@ -765,7 +774,8 @@ void WebFrame::didReceivePolicyDecision(PolicyListenerIdentifier listenerID, Pol
                 provisionalDocumentLoader->setAgentClusterAssignment(policyDecision.agentClusterAssignment);
                 if (forNavigationAction)
                     provisionalDocumentLoader->setUnpartitionedStorageSite(WTF::move(policyDecision.unpartitionedStorageSite));
-            }
+            } else if (forNavigationAction && policyDecision.policyAction == PolicyAction::Use && loader.isWaitingForDelegatedBackForwardLoad())
+                loader.setDelegatedBackForwardLoadDecision({ policyDecision.navigationID, policyDecision.agentClusterAssignment, WTF::move(policyDecision.unpartitionedStorageSite) });
         }
     }
 
@@ -1028,8 +1038,7 @@ Ref<API::Array> WebFrame::childFrames()
     if (!size)
         return API::Array::create();
 
-    Vector<RefPtr<API::Object>> vector;
-    vector.reserveInitialCapacity(size);
+    Vector<RefPtr<API::Object>> vector(ReserveCapacityTag { }, size);
 
     for (RefPtr child = m_coreFrame->tree().firstChild(); child; child = child->tree().nextSibling()) {
         RefPtr webFrame = WebFrame::fromCoreFrame(*child);
@@ -1563,7 +1572,7 @@ std::optional<OptionSet<WebCore::AdvancedPrivacyProtections>> WebFrame::originat
 }
 
 #if ENABLE(CONTEXT_MENU_EVENT)
-static bool LEGACY_NODELETE isContextClick(const PlatformMouseEvent& event)
+NODELETE static bool isContextClick(const PlatformMouseEvent& event)
 {
 #if USE(APPKIT)
     return event.isContextMenuEvent();

@@ -67,6 +67,8 @@ public:
 
     bool addNativeImage(RemoteNativeImageReference, Ref<WebCore::NativeImage>);
     RefPtr<WebCore::NativeImage> readNativeImage(RemoteNativeImageReadReference&&, Seconds timeout);
+    // For stream message handlers: std::nullopt means that the handler should defer the message.
+    std::optional<RefPtr<WebCore::NativeImage>> readNativeImage(IPC::StreamServerConnection&, RemoteNativeImageReadReference&&);
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
@@ -76,11 +78,11 @@ public:
     WebCore::IOSurfacePool& ioSurfacePool() const { return m_ioSurfacePool; }
 #endif
 
-    void LEGACY_NODELETE didCreateImageBuffer(WebCore::RenderingPurpose, WebCore::RenderingMode);
-    void LEGACY_NODELETE didReleaseImageBuffer(WebCore::RenderingPurpose, WebCore::RenderingMode);
-    bool LEGACY_NODELETE reachedAcceleratedImageBufferLimit(WebCore::RenderingPurpose) const;
-    bool LEGACY_NODELETE reachedImageBufferForCanvasLimit() const;
-    WebCore::ImageBufferResourceLimits LEGACY_NODELETE getResourceLimitsForTesting() const;
+    NODELETE void didCreateImageBuffer(WebCore::RenderingPurpose, WebCore::RenderingMode);
+    NODELETE void didReleaseImageBuffer(WebCore::RenderingPurpose, WebCore::RenderingMode);
+    NODELETE bool reachedAcceleratedImageBufferLimit(WebCore::RenderingPurpose) const;
+    NODELETE bool reachedImageBufferForCanvasLimit() const;
+    NODELETE WebCore::ImageBufferResourceLimits getResourceLimitsForTesting() const;
 
     void lowMemoryHandler();
 

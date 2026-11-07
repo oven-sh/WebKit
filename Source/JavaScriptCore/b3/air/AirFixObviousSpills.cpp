@@ -438,7 +438,7 @@ private:
             });
     }
     
-    static bool LEGACY_NODELETE isSpillSlot(const Arg& arg)
+    NODELETE static bool isSpillSlot(const Arg& arg)
     {
         return arg.isStack() && arg.stackSlot()->isSpill();
     }
@@ -477,9 +477,9 @@ private:
             return slot && reg;
         }
         
-        friend bool LEGACY_NODELETE operator==(const RegSlot&, const RegSlot&) = default;
+        NODELETE friend bool operator==(const RegSlot&, const RegSlot&) = default;
 
-        bool LEGACY_NODELETE operator<(const RegSlot& other) const
+        NODELETE bool operator<(const RegSlot& other) const
         {
             // We ignore `mode` on purpose, see merge() for how we deal with it.
             return slot < other.slot || (slot == other.slot && reg < other.reg);
@@ -522,9 +522,9 @@ private:
             return slot;
         }
 
-        friend bool LEGACY_NODELETE operator==(const SlotConst&, const SlotConst&) = default;
+        NODELETE friend bool operator==(const SlotConst&, const SlotConst&) = default;
 
-        bool LEGACY_NODELETE operator<(const SlotConst& other) const
+        NODELETE bool operator<(const SlotConst& other) const
         {
             return slot < other.slot || (slot == other.slot && constant < other.constant);
         }
@@ -1025,11 +1025,11 @@ private:
             slotAliases.takeFrom(other.slotAliases);
         }
 
-        bool LEGACY_NODELETE isEmpty() const { return constRegs.isEmpty() && slotAliases.isEmpty(); }
+        NODELETE bool isEmpty() const { return constRegs.isEmpty() && slotAliases.isEmpty(); }
 
-        bool LEGACY_NODELETE hasNoSlotAlias() const { return slotAliases.isEmpty(); }
+        NODELETE bool hasNoSlotAlias() const { return slotAliases.isEmpty(); }
 
-        bool LEGACY_NODELETE hasNoRegAlias() const { return constRegs.isEmpty() && !slotAliases.hasAliasOfAnyReg(); }
+        NODELETE bool hasNoRegAlias() const { return constRegs.isEmpty() && !slotAliases.hasAliasOfAnyReg(); }
 
         void addAlias(const RegConst& newAlias)
         {
@@ -1046,18 +1046,18 @@ private:
         bool contains(const RegSlot& alias) const { return slotAliases.contains(alias); }
         bool contains(const SlotConst& alias) const { return slotAliases.contains(alias); }
 
-        std::optional<int64_t> LEGACY_NODELETE constantForReg(Reg reg) const
+        NODELETE std::optional<int64_t> constantForReg(Reg reg) const
         {
             if (!constRegs.contains(reg))
                 return std::nullopt;
             return constants[reg.index()];
         }
 
-        const RegSlot* LEGACY_NODELETE getRegSlot(StackSlot* slot) const { return slotAliases.getRegSlot(slot); }
+        NODELETE const RegSlot* getRegSlot(StackSlot* slot) const { return slotAliases.getRegSlot(slot); }
 
-        const SlotConst* LEGACY_NODELETE getSlotConst(StackSlot* slot) const { return slotAliases.getSlotConst(slot); }
+        NODELETE const SlotConst* getSlotConst(StackSlot* slot) const { return slotAliases.getSlotConst(slot); }
 
-        std::optional<int64_t> LEGACY_NODELETE constantFor(const Arg& arg)
+        NODELETE std::optional<int64_t> constantFor(const Arg& arg)
         {
             if (arg.isReg())
                 return constantForReg(arg.reg());

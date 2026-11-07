@@ -48,7 +48,7 @@ public:
 
     virtual CachedResourceHandle<CachedResource> requestModuleResource(Document&, const URL& sourceURL, FetchOptionsDestination, String&& integrity, std::optional<ServiceWorkersMode>, const URL& referrer) const;
 
-    static Ref<CachedScriptFetcher> LEGACY_NODELETE create(const AtomString& charset);
+    NODELETE static Ref<CachedScriptFetcher> create(const AtomString& charset);
 
 #if USE(BUN_JSC_ADDITIONS)
     Type fetcherType() const final { return Type::Cached; }

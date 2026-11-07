@@ -45,10 +45,6 @@
 #include <wtf/text/Base64.h>
 #include <wtf/text/MakeString.h>
 
-#if USE(CG)
-#include "ImageBufferCGPDFDocumentBackend.h"
-#endif
-
 #if USE(SKIA)
 #include "GLContext.h"
 #include "ImageBufferSkiaAcceleratedBackend.h"
@@ -107,15 +103,12 @@ RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingMode ren
     case RenderingMode::Unaccelerated:
         return create<ImageBufferPlatformBitmapBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
 
-    case RenderingMode::PDFDocument:
-#if USE(CG)
-        return ImageBuffer::create<ImageBufferCGPDFDocumentBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
-#else
-        return nullptr;
-#endif
-
     case RenderingMode::DisplayList:
         return ImageBuffer::create<ImageBufferDisplayListBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
+
+    case RenderingMode::PDFDocument:
+        // FIXME: PDFDocument is only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that it cannot be passed here.
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     ASSERT_NOT_REACHED();
@@ -314,7 +307,6 @@ void ImageBuffer::setBackend(std::unique_ptr<ImageBufferBackend>&& backend)
         return;
 
     m_backend = WTF::move(backend);
-    ++m_backendGeneration;
 }
 
 IntSize ImageBuffer::backendSize() const
@@ -483,20 +475,6 @@ void ImageBuffer::putPixelBuffer(const PixelBufferSourceView& pixelBuffer, const
     backend->putPixelBuffer(pixelBuffer, sourceRectScaled, destinationPointScaled, destinationFormat);
 }
 
-RefPtr<SharedBuffer> ImageBuffer::sinkIntoPDFDocument()
-{
-    if (auto* backend = m_backend.get())
-        return backend->sinkIntoPDFDocument();
-    return nullptr;
-}
-
-RefPtr<SharedBuffer> ImageBuffer::sinkIntoPDFDocument(RefPtr<ImageBuffer> source)
-{
-    if (!source)
-        return nullptr;
-    return source->sinkIntoPDFDocument();
-}
-
 bool ImageBuffer::isInUse() const
 {
     if (auto* backend = m_backend.get())
@@ -559,11 +537,6 @@ std::unique_ptr<ThreadSafeImageBufferFlusher> ImageBuffer::createFlusher()
     if (auto* backend = m_backend.get())
         return backend->createFlusher();
     return nullptr;
-}
-
-unsigned ImageBuffer::backendGeneration() const
-{
-    return m_backendGeneration;
 }
 
 std::optional<ImageBufferTransferHandle> SerializedImageBuffer::sinkIntoTransferHandle(std::unique_ptr<SerializedImageBuffer> buffer)

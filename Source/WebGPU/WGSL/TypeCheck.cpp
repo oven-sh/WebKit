@@ -167,6 +167,7 @@ public:
     [[nodiscard]] Result<void> visit(AST::Attribute&);
     [[nodiscard]] Result<void> visit(AST::AlignAttribute&);
     [[nodiscard]] Result<void> visit(AST::BindingAttribute&);
+    [[nodiscard]] Result<void> visit(AST::BlendSrcAttribute&);
     [[nodiscard]] Result<void> visit(AST::GroupAttribute&);
     [[nodiscard]] Result<void> visit(AST::IdAttribute&);
     [[nodiscard]] Result<void> visit(AST::LocationAttribute&);
@@ -230,8 +231,8 @@ private:
     [[nodiscard]] Result<void> introduceFunction(const AST::Identifier&, const Type*);
     [[nodiscard]] Result<void> convertValue(const SourceSpan&, const Type*, std::optional<ConstantValue>&);
 
-    void LEGACY_NODELETE evaluated(Evaluation);
-    void LEGACY_NODELETE inferred(const Type*);
+    NODELETE void evaluated(Evaluation);
+    NODELETE void inferred(const Type*);
     [[nodiscard]] bool unify(const Type*, const Type*);
 
     [[nodiscard]] Result<void> binaryExpression(const SourceSpan&, AST::Expression*, AST::BinaryOperation, AST::Expression&, AST::Expression&);
@@ -240,7 +241,7 @@ private:
     [[nodiscard]] Result<void> allocateSimpleConstructor(ASCIILiteral, TargetConstructor, const Validator&, Arguments&&...);
     [[nodiscard]] Result<void> allocateTextureStorageConstructor(ASCIILiteral, Types::TextureStorage::Kind);
 
-    bool LEGACY_NODELETE isModuleScope() const;
+    NODELETE bool isModuleScope() const;
 
     [[nodiscard]] Result<AccessMode> accessMode(AST::Expression&);
     [[nodiscard]] Result<TexelFormat> texelFormat(AST::Expression&);
@@ -782,8 +783,7 @@ Result<void> TypeChecker::visit(AST::Function& function)
         CHECK(visit(attribute));
     }
 
-    Vector<const Type*> parameters;
-    parameters.reserveInitialCapacity(function.parameters().size());
+    Vector<const Type*> parameters(ReserveCapacityTag { }, function.parameters().size());
     for (auto& parameter : function.parameters()) {
         CHECK(visitAttributes(parameter.attributes()));
         UNWRAP(parameterType, resolve(parameter.typeName()));
@@ -831,6 +831,8 @@ Result<void> TypeChecker::visit(AST::Attribute& attribute)
         return visit(uncheckedDowncast<AST::AlignAttribute>(attribute));
     case AST::NodeKind::BindingAttribute:
         return visit(uncheckedDowncast<AST::BindingAttribute>(attribute));
+    case AST::NodeKind::BlendSrcAttribute:
+        return visit(uncheckedDowncast<AST::BlendSrcAttribute>(attribute));
     case AST::NodeKind::GroupAttribute:
         return visit(uncheckedDowncast<AST::GroupAttribute>(attribute));
     case AST::NodeKind::IdAttribute:
@@ -867,6 +869,14 @@ Result<void> TypeChecker::visit(AST::BindingAttribute& attribute)
     UNWRAP(type, check(attribute.binding(), Constraints::ConcreteInteger, Evaluation::Constant));
     if (!type) [[unlikely]]
         TYPE_ERROR(attribute.span(), "@binding must be an i32 or u32 value"_s);
+    return { };
+}
+
+Result<void> TypeChecker::visit(AST::BlendSrcAttribute& attribute)
+{
+    UNWRAP(type, check(attribute.blendSrc(), Constraints::ConcreteInteger, Evaluation::Constant));
+    if (!type) [[unlikely]]
+        TYPE_ERROR(attribute.span(), "@blend_src must be an i32 or u32 value"_s);
     return { };
 }
 
@@ -2234,8 +2244,7 @@ Result<const Type*> TypeChecker::chooseOverload(ASCIILiteral kind, const SourceS
     if (!overload)
         return { nullptr };
 
-    Vector<const Type*> valueArguments;
-    valueArguments.reserveInitialCapacity(callArguments.size());
+    Vector<const Type*> valueArguments(ReserveCapacityTag { }, callArguments.size());
     for (unsigned i = 0; i < callArguments.size(); ++i) {
         UNWRAP(type, infer(callArguments[i], m_maxEvaluation));
         valueArguments.append(type);

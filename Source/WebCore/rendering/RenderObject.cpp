@@ -731,15 +731,11 @@ RenderBlock* RenderObject::containingBlockForPositionType(PositionType positionT
 
     if (positionType == PositionType::Absolute) {
         auto containingBlockForAbsolutePosition = [&] {
-            if (renderer.isInlineBox() && renderer.style().position() == PositionType::Relative) {
-                // A relatively positioned inline box forwards its absolute positioned descendants to
-                // its nearest non-anonymous containing block (to avoid having positioned objects list in inline boxes).
-                return renderer.parent() ? renderer.parent()->nearestNonAnonymousContainingBlockIncludingSelf() : nullptr;
-            }
             CheckedPtr ancestor = renderer.parent();
             while (ancestor && !ancestor->canContainAbsolutelyPositionedObjects())
                 ancestor = ancestor->parent();
-            // Make sure we only return non-anonymous RenderBlock as containing block.
+            // Make sure we only return non-anonymous RenderBlock as containing block (e.g. a relatively positioned inline box
+            // forwards its absolute positioned descendants to its nearest non-anonymous containing block).
             return ancestor ? ancestor->nearestNonAnonymousContainingBlockIncludingSelf() : nullptr;
         };
         return containingBlockForAbsolutePosition();
@@ -1012,7 +1008,7 @@ void RenderObject::repaintUsingContainer(SingleThreadWeakPtr<const RenderLayerMo
     }
 }
 
-static inline bool LEGACY_NODELETE fullRepaintIsScheduled(const RenderObject& renderer)
+NODELETE static inline bool fullRepaintIsScheduled(const RenderObject& renderer)
 {
     if (!renderer.view().usesCompositing() && !renderer.document().ownerElement())
         return false;
@@ -1689,9 +1685,7 @@ void RenderObject::getTransformFromContainer(const LayoutSize& offsetInContainer
     if (hasLayer() && (layer = downcast<RenderLayerModelObject>(*this).layer()) && layer->transform())
         transform.multiply(layer->currentTransform());
     else if (document().settings().layerBasedSVGEngineEnabled() && isSVGLayerAwareRenderer()) {
-        // Non-layered SVG elements: use the cached local transform. localTransform() is virtual,
-        // returning m_localTransform for RenderSVGModelObject and RenderSVGText, identity otherwise.
-        if (auto svgTransform = localTransform(); !svgTransform.isIdentity())
+        if (auto svgTransform = downcast<RenderLayerModelObject>(*this).nominalTransform(); !svgTransform.isIdentity())
             transform.multiply(TransformationMatrix(svgTransform));
     }
 
@@ -2552,7 +2546,7 @@ PointerEvents RenderObject::usedPointerEvents() const
     return style().usedPointerEvents();
 }
 
-static bool LEGACY_NODELETE intervalsSufficientlyOverlap(int startA, int endA, int startB, int endB)
+NODELETE static bool intervalsSufficientlyOverlap(int startA, int endA, int startB, int endB)
 {
     if (endA <= startA || endB <= startB)
         return false;
@@ -2767,7 +2761,7 @@ static void adjustTextDirectionForCoalescedGeometries(const SelectionEndpointDir
     }
 }
 
-static bool LEGACY_NODELETE shouldRenderSelectionOnSeparateLine(const RenderObject* currentRenderer)
+NODELETE static bool shouldRenderSelectionOnSeparateLine(const RenderObject* currentRenderer)
 {
     if (!currentRenderer)
         return false;
@@ -2781,7 +2775,7 @@ static bool LEGACY_NODELETE shouldRenderSelectionOnSeparateLine(const RenderObje
     return false;
 }
 
-static bool LEGACY_NODELETE hasAncestorWithSelectionOnSeparateLine(RenderObject* descendant, const RenderObject* stayWithin)
+NODELETE static bool hasAncestorWithSelectionOnSeparateLine(RenderObject* descendant, const RenderObject* stayWithin)
 {
     for (auto* current = descendant; current; current = current->parent()) {
         if (current->isOutOfFlowPositioned())
@@ -2794,7 +2788,7 @@ static bool LEGACY_NODELETE hasAncestorWithSelectionOnSeparateLine(RenderObject*
     return false;
 }
 
-static bool LEGACY_NODELETE shouldRenderPreviousSelectionOnSeparateLine(RenderObject* previousRenderer, const RenderObject* stayWithin)
+NODELETE static bool shouldRenderPreviousSelectionOnSeparateLine(RenderObject* previousRenderer, const RenderObject* stayWithin)
 {
     if (!previousRenderer || !stayWithin)
         return false;

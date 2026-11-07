@@ -125,6 +125,10 @@ public:
     WebCore::MediaPlayerIdentifier identifier() const { return m_id; }
     void invalidate();
 
+#if PLATFORM(COCOA)
+    std::optional<WebCore::FloatRect> hostedVideoLayerBoundsForTesting(WebCore::MediaPlayerClientIdentifier) const;
+#endif
+
     // Ensure that all previously queued messages to the content process have completed.
     Ref<WebCore::MediaPromise> commitAllTransactions();
 
@@ -367,7 +371,7 @@ private:
     void nativeImageForCurrentTime(CompletionHandler<void(std::optional<WTF::MachSendRight>&&, WebCore::ColorSpace)>&&);
     void colorSpace(CompletionHandler<void(WebCore::ColorSpace)>&&);
 #endif
-    void videoFrameForCurrentTimeIfChanged(CompletionHandler<void(std::optional<RemoteVideoFrameProxy::Properties>&&, bool)>&&);
+    void videoFrameForCurrentTimeIfChanged(RemoteVideoFrameReference, CompletionHandler<void(std::optional<RemoteVideoFrameProxy::Properties>&&, bool)>&&);
     void bitmapImageForCurrentTime(CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
 
     void setShouldDisableHDR(bool);
@@ -401,7 +405,7 @@ private:
     const Logger& logger() { return mediaPlayerLogger(); }
     uint64_t logIdentifier() { return mediaPlayerLogIdentifier(); }
     ASCIILiteral logClassName() const { return "RemoteMediaPlayerProxy"_s; }
-    WTFLogChannel& LEGACY_NODELETE logChannel() const;
+    NODELETE WTFLogChannel& logChannel() const;
 #endif
 
     Vector<Ref<RemoteAudioTrackProxy>> m_audioTracks;

@@ -2219,6 +2219,39 @@ TEST(WKWebExtension, URLOverridesParsing)
     EXPECT_FALSE(testExtension.hasOverrideNewTabPage);
 }
 
+TEST(WKWebExtension, MessageSerializationParsing)
+{
+    NSMutableDictionary *testManifestDictionary = [@{
+        @"manifest_version": @3,
+        @"name": @"Test",
+        @"description": @"Test",
+        @"version": @"1.0"
+    } mutableCopy];
+
+    auto *testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+
+    testManifestDictionary[@"message_serialization"] = @"structured_clone";
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+
+    testManifestDictionary[@"message_serialization"] = @"json";
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+
+    testManifestDictionary[@"message_serialization"] = @"xml";
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    EXPECT_EQ(testExtension.errors.count, 1ul);
+
+    testManifestDictionary[@"message_serialization"] = @123;
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    EXPECT_EQ(testExtension.errors.count, 1ul);
+
+    testManifestDictionary[@"message_serialization"] = @"";
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    EXPECT_EQ(testExtension.errors.count, 1ul);
+}
+
 TEST(WKWebExtension, ContentSecurityPolicyParsing)
 {
     NSMutableDictionary *testManifestDictionaryV2 = [@{
@@ -2760,6 +2793,36 @@ TEST(WKWebExtension, LoadFromDirectory)
     [manager.get().defaultTab.webView loadRequest:urlRequest];
 
     [manager run];
+}
+
+TEST(WKWebExtension, IconPathWithQueryFragmentAndEscapes)
+{
+    auto *iconData = Util::makePNGData(CGSizeMake(32, 32), @selector(blackColor));
+    auto *resources = @{ @"icon-32.png": iconData, @"my icon-32.png": iconData };
+
+    for (NSString *iconPath in @[ @"icon-32.png", @"icon-32.png?v=2#section", @"my%20icon-32.png", @"my icon-32.png" ]) {
+        NSDictionary *manifest = @{
+            @"manifest_version": @3,
+            @"name": @"Test",
+            @"description": @"Test",
+            @"version": @"1",
+            @"icons": @{ @"32": iconPath },
+        };
+
+        RetainPtr inMemoryExtension = adoptNS([[WKWebExtension alloc] _initWithManifestDictionary:manifest resources:resources]);
+        EXPECT_NOT_NULL([inMemoryExtension iconForSize:CGSizeMake(32, 32)]) << "in-memory icon path: " << iconPath.UTF8String;
+
+        auto *directoryURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString] isDirectory:YES];
+        [NSFileManager.defaultManager createDirectoryAtURL:directoryURL withIntermediateDirectories:YES attributes:nil error:nil];
+        [[NSJSONSerialization dataWithJSONObject:manifest options:0 error:nil] writeToURL:[directoryURL URLByAppendingPathComponent:@"manifest.json"] atomically:YES];
+        [iconData writeToURL:[directoryURL URLByAppendingPathComponent:@"icon-32.png"] atomically:YES];
+        [iconData writeToURL:[directoryURL URLByAppendingPathComponent:@"my icon-32.png"] atomically:YES];
+
+        RetainPtr directoryExtension = adoptNS([[WKWebExtension alloc] _initWithResourceBaseURL:directoryURL error:nullptr]);
+        EXPECT_NOT_NULL([directoryExtension iconForSize:CGSizeMake(32, 32)]) << "on-disk icon path: " << iconPath.UTF8String;
+
+        [NSFileManager.defaultManager removeItemAtURL:directoryURL error:nil];
+    }
 }
 
 TEST(WKWebExtension, LoadFromDirectoryWithoutTrailingSlash)

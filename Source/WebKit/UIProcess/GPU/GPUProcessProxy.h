@@ -95,7 +95,7 @@ class GPUProcessProxy final : public AuxiliaryProcessProxy {
 public:
     static void keepProcessAliveTemporarily();
     static Ref<GPUProcessProxy> getOrCreate();
-    static GPUProcessProxy* LEGACY_NODELETE singletonIfCreated();
+    NODELETE static GPUProcessProxy* singletonIfCreated();
     ~GPUProcessProxy();
 
     void createGPUProcessConnection(WebProcessProxy&, IPC::Connection::Handle&&, GPUProcessConnectionParameters&&);
@@ -162,7 +162,7 @@ public:
 
     void terminateForTesting();
     void webProcessConnectionCountForTesting(CompletionHandler<void(uint64_t)>&&);
-    void runDisplayListDataTestsForTesting(CompletionHandler<void(Vector<String>&&)>&&);
+    void runDisplayListDataTestsForTesting(Vector<Ref<WebCore::SharedBuffer>>&& webFonts, CompletionHandler<void(std::optional<Vector<String>>&&)>&&);
 
 #if PLATFORM(COCOA)
     static void setEnableMetalDebugDeviceInNewGPUProcessesForTesting(bool enable) { s_enableMetalDebugDeviceInNewGPUProcessesForTesting = enable; }

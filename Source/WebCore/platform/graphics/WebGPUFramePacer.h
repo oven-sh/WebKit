@@ -34,19 +34,19 @@ namespace WebCore {
 
 class WebGPUFramePacer {
 public:
-    WEBCORE_EXPORT WebGPUFramePacer();
+    NODELETE WEBCORE_EXPORT WebGPUFramePacer();
 
     WEBCORE_EXPORT void setDisplayNominalFramesPerSecond(FramesPerSecond);
 
     WEBCORE_EXPORT void recordFrame(Seconds frameDuration, Seconds presentStall, MonotonicTime presentTime);
 
-    WEBCORE_EXPORT std::optional<FramesPerSecond> LEGACY_NODELETE preferredFramesPerSecond(MonotonicTime now) const;
+    NODELETE WEBCORE_EXPORT std::optional<FramesPerSecond> preferredFramesPerSecond(MonotonicTime now) const;
 
     WEBCORE_EXPORT void reset();
 
 private:
     void rebuildDivisorLadder();
-    size_t LEGACY_NODELETE ladderIndexForDuration(Seconds) const;
+    NODELETE size_t ladderIndexForDuration(Seconds) const;
     void stepDownForStalls();
     void stepUpIfStallFree(MonotonicTime presentTime);
 

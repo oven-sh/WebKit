@@ -112,7 +112,7 @@ AVExperienceControllerFullscreenEnabled:
   condition: HAVE(AVEXPERIENCECONTROLLER)
   defaultValue:
     default: false
-    WebKit: true
+    WebKit: WebKit::defaultAVExperienceControllerFullscreenEnabled()
 
 AVFoundationEnabled:
   type: bool
@@ -2774,12 +2774,14 @@ HTMLEnhancedSelectMultipleAndListBoxEnabled:
 
 HTMLEnhancedSelectMultipleDropdownBoxEnabled:
   type: bool
-  status: testable
+  status: stable
   category: dom
   condition: PLATFORM(MAC)
   humanReadableName: "Enhanced HTML select element for multiple dropdown box"
   humanReadableDescription: "Render a select element with the multiple attribute and a size of 1 as a dropdown box"
-  defaultValue: false
+  defaultValue:
+    default: true
+    WebKitLegacy: false
 
 HTMLEnhancedSelectMultipleSelectedContentEnabled:
   type: bool
@@ -3636,6 +3638,14 @@ LazyImageLoadingEnabled:
     default: false
     WebKit: true
 
+LazyMediaLoadingEnabled:
+  type: bool
+  status: testable
+  category: html
+  humanReadableName: "Lazy media loading"
+  humanReadableDescription: "Enable lazy loading for audio and video elements via the loading attribute"
+  defaultValue: false
+
 LegacyEncryptedMediaAPIEnabled:
   type: bool
   status: embedder
@@ -4127,7 +4137,7 @@ MediaRecorderEnabled:
   defaultValue:
     default: false
     WebKit:
-      "PLATFORM(COCOA)": true
+      "USE(LIBWEBRTC)": WebKit::defaultPeerConnectionEnabledAvailable()
       "USE(GSTREAMER)": true
       default: false
   sharedPreferenceForWebProcess: true
@@ -5263,7 +5273,7 @@ RequestVideoFrameCallbackEnabled:
 RequiresPageVisibilityForVideoToBeNowPlaying:
   type: bool
   status: embedder
-  condition: ENABLE(REQUIRES_PAGE_VISIBILITY_FOR_NOW_PLAYING)
+  condition: PLATFORM(APPLETV)
   defaultValue:
     default: false
     WebKit: defaultRequiresPageVisibilityForVideoToBeNowPlaying()
@@ -5884,9 +5894,8 @@ ShouldRestrictBaseURLSchemes:
   type: bool
   status: embedder
   defaultValue:
-    default: false
+    default: true
     WebKitLegacy: WebKit::defaultShouldRestrictBaseURLSchemes()
-    WebCore: true
 
 ShouldSuppressTextInputFromEditingDuringProvisionalNavigation:
   type: bool
@@ -5970,14 +5979,6 @@ SiteIsolationEnabled:
   humanReadableDescription: "Put cross-origin iframes in a different process"
   defaultValue: false
   sharedPreferenceForWebProcess: true
-
-SiteIsolationGlobalDebuggerPauseEnabled:
-  type: bool
-  status: unstable
-  category: security
-  humanReadableName: "Site Isolation: hold all frames while debugging"
-  humanReadableDescription: "While Web Inspector is paused in a frame, hold the frames of the same page in other processes"
-  defaultValue: false
 
 SiteIsolationHighValueFraudTargetDomainsEnabled:
   type: bool
@@ -6710,7 +6711,7 @@ UseGPUProcessForDOMRenderingEnabled:
   category: dom
   humanReadableName: "GPU Process: DOM Rendering"
   humanReadableDescription: "Enable DOM rendering in GPU Process"
-  condition: ENABLE(GPU_PROCESS)
+  condition: ENABLE(GPU_PROCESS) && !PLATFORM(COCOA)
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: defaultUseGPUProcessForDOMRenderingEnabled()
   sharedPreferenceForWebProcess: true
@@ -6743,10 +6744,9 @@ UseGPUProcessForWebGLEnabled:
   status: internal
   humanReadableName: "GPU Process: WebGL"
   humanReadableDescription: "Process all WebGL operations in GPU Process"
-  condition: ENABLE(GPU_PROCESS) && ENABLE(WEBGL)
+  condition: ENABLE(GPU_PROCESS) && ENABLE(WEBGL) && !PLATFORM(COCOA)
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue:
-    "ENABLE(GPU_PROCESS_BY_DEFAULT) && ENABLE(GPU_PROCESS_WEBGL_BY_DEFAULT)": true
     "USE(GRAPHICS_LAYER_WC)": true
     default: false
   sharedPreferenceForWebProcess: true

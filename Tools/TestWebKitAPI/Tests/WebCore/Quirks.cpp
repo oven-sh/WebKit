@@ -168,6 +168,27 @@ TEST_F(QuirksTest, EmbeddedQuirksResolveFromTheDocumentURL)
 
     EXPECT_FALSE(resolveQuirksForTopURL("https://www.youtube-nocookie.com/embed/abc"_s).isBehaviorEnabled(WebCore::QuirkBehaviorID::NeedsYouTubeCaptionQuirk));
 }
+
+static bool cnameCloakingCookieCapExempt(ASCIILiteral firstPartyURLString, ASCIILiteral cnameHostName)
+{
+    auto patterns = WebCore::Quirks::cnameCloakingCookieCapExemptTargetPatterns(URL { firstPartyURLString });
+    return WebCore::Quirks::anyPatternMatchesCNAMETarget(patterns, String { cnameHostName });
+}
+
+TEST_F(QuirksTest, CNAMECloakingCookieCapIsSkippedOnlyBetweenDomainsOfOneOwner)
+{
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "www3.l.google.com"_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "www3.l.google.com."_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://music.youtube.com/"_s, "www3.l.google.com"_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.google.com/"_s, "www3.l.google.com"_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.google.com/"_s, "youtube.com"_s));
+
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "tracker.example"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.google.com/"_s, "tracker.example"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.example.com/"_s, "www3.l.google.com"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "evilgoogle.com"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.google.de/"_s, "www3.l.google.com"_s));
+}
 #endif
 
 static String shippedQuirkTableJSON()
@@ -1250,10 +1271,14 @@ TEST_F(QuirksTest, NeedsPartitionedCookies)
     };
 
     EXPECT_TRUE(needsPartitionedCookies("https://biller.billpaysite.com/pay"_s, false));
+    EXPECT_TRUE(needsPartitionedCookies("https://www.gradescope.com/courses/1"_s, false));
 
     EXPECT_FALSE(needsPartitionedCookies("https://biller.billpaysite.com/pay"_s, true));
     EXPECT_FALSE(needsPartitionedCookies("https://notbillpaysite.com/"_s, false));
     EXPECT_FALSE(needsPartitionedCookies("https://billpaysite.com.example.com/"_s, false));
+    EXPECT_FALSE(needsPartitionedCookies("https://www.gradescope.com/courses/1"_s, true));
+    EXPECT_FALSE(needsPartitionedCookies("https://notgradescope.com/"_s, false));
+    EXPECT_FALSE(needsPartitionedCookies("https://gradescope.com.example.com/"_s, false));
     EXPECT_FALSE(needsPartitionedCookies("https://www.example.com/"_s, false));
 }
 

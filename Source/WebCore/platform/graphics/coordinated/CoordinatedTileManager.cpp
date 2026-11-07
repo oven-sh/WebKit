@@ -37,6 +37,7 @@
 #include "ProcessCapabilities.h"
 #include "RenderingMode.h"
 #include <wtf/NumberOfCores.h>
+#include <wtf/SystemTracing.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
@@ -60,7 +61,7 @@ static bool canPerformAcceleratedRendering()
     return ProcessCapabilities::canUseAcceleratedBuffers() && PlatformDisplay::sharedDisplay().skiaGLContext();
 }
 
-unsigned CoordinatedTileManager::numberOfCPUPaintingThreads()
+unsigned CoordinatedTileManager::numberOfPaintingThreads()
 {
     static std::once_flag onceFlag;
     static unsigned numberOfThreads = 0;
@@ -68,7 +69,11 @@ unsigned CoordinatedTileManager::numberOfCPUPaintingThreads()
     std::call_once(onceFlag, [] {
         numberOfThreads = std::max(1, std::min(8, WTF::numberOfProcessorCores() / 2)); // By default, use half the CPU cores, capped at 8.
 
-        if (const char* envString = getenv("WEBKIT_SKIA_CPU_PAINTING_THREADS")) {
+        const char* envString = getenv("WEBKIT_SKIA_TILE_PAINTING_THREADS");
+        if (!envString)
+            envString = getenv("WEBKIT_SKIA_CPU_PAINTING_THREADS");
+
+        if (envString) {
             auto newValue = parseInteger<unsigned>(StringView::fromLatin1(envString));
             if (newValue && *newValue >= 1 && *newValue <= 8)
                 numberOfThreads = *newValue;
@@ -80,37 +85,9 @@ unsigned CoordinatedTileManager::numberOfCPUPaintingThreads()
     return numberOfThreads;
 }
 
-#if USE(TEXTURE_MAPPER)
-unsigned CoordinatedTileManager::numberOfGPUPaintingThreads()
-{
-    static std::once_flag onceFlag;
-    static unsigned numberOfThreads = 0;
-
-    std::call_once(onceFlag, [] {
-        // By default, use 2 GPU worker threads if there are four or more CPU cores, otherwise use 1 thread only.
-        numberOfThreads = WTF::numberOfProcessorCores() >= 4 ? 2 : 1;
-
-        if (const char* envString = getenv("WEBKIT_SKIA_GPU_PAINTING_THREADS")) {
-            auto newValue = parseInteger<unsigned>(StringView::fromLatin1(envString));
-            if (newValue && *newValue >= 1 && *newValue <= 4)
-                numberOfThreads = *newValue;
-            else
-                WTFLogAlways("The number of Skia/GPU painting threads is not between 1 and 4. Using the default value %u\n", numberOfThreads);
-        }
-    });
-
-    return numberOfThreads;
-}
-#endif
-
 static Ref<WorkerPool> createWorkerPool()
 {
-#if USE(TEXTURE_MAPPER)
-    if (canPerformAcceleratedRendering())
-        return WorkerPool::create("SkiaGPUWorker"_s, CoordinatedTileManager::numberOfGPUPaintingThreads());
-#endif
-
-    return WorkerPool::create("SkiaCPUWorker"_s, CoordinatedTileManager::numberOfCPUPaintingThreads());
+    return WorkerPool::create("SkiaWorker"_s, CoordinatedTileManager::numberOfPaintingThreads());
 }
 
 std::unique_ptr<CoordinatedTileManager> CoordinatedTileManager::create(sk_sp<GrContextThreadSafeProxy>&& threadSafeGrContext)
@@ -132,8 +109,11 @@ CoordinatedTileManager::~CoordinatedTileManager()
     }();
 
     for (auto& task : tasks) {
-        if (task.buffer->cancelPainting())
+        if (auto tileRenderingUpdateID = task.buffer->cancelPainting()) {
+            // FIXME: pass tileRenderingUpdateID to didPaintTile() when we support starting next rendering
+            // update while waiting for previous composition.
             task.layer->didPaintTile();
+        }
     }
 }
 
@@ -147,27 +127,37 @@ Ref<SkiaRecordingResult> CoordinatedTileManager::record(const GraphicsLayerCoord
     return m_paintingEngine->record(layer, recordRect, canPerformAcceleratedRendering() ? RenderingMode::Accelerated : RenderingMode::Unaccelerated, contentsOpaque, contentsScale, dirtyTilesCount);
 }
 
-Ref<CoordinatedTileBuffer> CoordinatedTileManager::scheduleReplay(const GraphicsLayerCoordinated& layer, const Ref<SkiaRecordingResult>& recording, const IntRect& tileRect, const IntRect& dirtyRect)
+Ref<CoordinatedTileBuffer> CoordinatedTileManager::scheduleReplay(const GraphicsLayerCoordinated& layer, const Ref<SkiaRecordingResult>& recording, const IntRect& tileRect, const IntRect& dirtyRect, unsigned distance)
 {
     Ref buffer = [&] -> Ref<CoordinatedTileBuffer> {
+        std::optional<uint64_t> tileRenderingUpdateID;
+        if (!distance)
+            tileRenderingUpdateID = m_currentRenderingUpdate;
+
         auto flags = recording->contentsOpaque() ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha;
         if (recording->renderingMode() == RenderingMode::Unaccelerated)
-            return CoordinatedUnacceleratedTileBuffer::create(dirtyRect.size(), flags);
+            return CoordinatedUnacceleratedTileBuffer::create(dirtyRect.size(), flags, distance, tileRenderingUpdateID);
 
-#if USE(TEXTURE_MAPPER)
-        return CoordinatedAcceleratedTileBuffer::create(dirtyRect.size(), flags);
-#else
-        return CoordinatedAcceleratedTileBuffer::create(threadSafeGrContext(), tileRect.size(), flags);
-#endif
+        return CoordinatedAcceleratedTileBuffer::create(threadSafeGrContext(), tileRect.size(), flags, distance, tileRenderingUpdateID);
     }();
 
     Ref platformLayer = layer.coordinatedPlatformLayer();
-    platformLayer->willPaintTile();
+    if (!distance) {
+        // FIXME: pass m_currentRenderingUpdate to willPaintTile() when we support starting next rendering
+        // update while waiting for previous composition.
+        platformLayer->willPaintTile();
+    }
 
+    WTFBeginSignpost(this, QueueTilePaintingTask);
     {
         Locker locker { m_paintingTaskQueueLock };
-        m_paintingTaskQueue.insert(0, { WTF::move(platformLayer), buffer.copyRef(), recording.copyRef(), tileRect, dirtyRect });
+        PaintingTaskPriority priority = { distance, m_nextTaskSequence++ };
+        size_t position = std::upper_bound(m_paintingTaskQueue.begin(), m_paintingTaskQueue.end(), priority, [](auto& priority, auto& task) {
+            return priority < task.priority;
+        }) - m_paintingTaskQueue.begin();
+        m_paintingTaskQueue.insert(position, { WTF::move(priority), WTF::move(platformLayer), buffer.copyRef(), recording.copyRef(), tileRect, dirtyRect });
     }
+    WTFEndSignpost(this, QueueTilePaintingTask);
 
     m_paintingWorkerPool->postTask([this] {
         auto task = [&] -> std::optional<PaintingTask> {
@@ -190,10 +180,39 @@ Ref<CoordinatedTileBuffer> CoordinatedTileManager::scheduleReplay(const Graphics
             break;
         }
 
-        task->buffer->completePainting();
-        task->layer->didPaintTile();
+        // FIXME: pass tileRenderingUpdateID to didPaintTile() when we support starting next rendering
+        // update while waiting for previous composition.
+        if (auto tileRenderingUpdateID = task->buffer->completePainting())
+            task->layer->didPaintTile();
+        else
+            task->layer->didPaintPreRenderedTile();
     });
     return buffer;
+}
+
+void CoordinatedTileManager::didFinishRenderingUpdate()
+{
+    if (!m_paintingTaskQueueNeedsUpdate)
+        return;
+
+    m_paintingTaskQueueNeedsUpdate = false;
+
+    WTFBeginSignpost(this, TilePaintingTaskQueueSort);
+
+    Locker locker { m_paintingTaskQueueLock };
+    m_paintingTaskQueue.removeAllMatching([](auto& task) {
+        if (task.buffer->paintingState() == CoordinatedTileBuffer::PaintingState::Cancelled)
+            return true;
+
+        task.priority.distance = task.buffer->distance();
+        return false;
+    });
+
+    std::sort(m_paintingTaskQueue.begin(), m_paintingTaskQueue.end(), [](auto& a, auto& b) {
+        return a.priority < b.priority;
+    });
+
+    WTFEndSignpost(this, TilePaintingTaskQueueSort);
 }
 
 #elif USE(CAIRO)
@@ -213,7 +232,7 @@ Ref<CoordinatedTileBuffer> CoordinatedTileManager::schedulePaint(GraphicsLayerCo
     FloatRect scaledDirtyRect(dirtyRect);
     scaledDirtyRect.scale(1 / contentsScale);
 
-    auto buffer = CoordinatedUnacceleratedTileBuffer::create(dirtyRect.size(), contentsOpaque ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha);
+    auto buffer = CoordinatedUnacceleratedTileBuffer::create(dirtyRect.size(), contentsOpaque ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha, 0, std::nullopt);
     m_paintingEngine->paint(layer, buffer.get(), dirtyRect, enclosingIntRect(scaledDirtyRect), IntRect { { }, dirtyRect.size() }, contentsScale);
     return buffer;
 }

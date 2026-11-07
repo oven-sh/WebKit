@@ -91,7 +91,6 @@ struct CSSParserContext {
     bool cssTextTransformMathAutoEnabled : 1 { false };
     bool cssFontSynthesisStyleObliqueOnlyEnabled : 1 { false };
     bool cssInternalAutoBaseParsingEnabled : 1 { false };
-    bool webkitMediaTextTrackDisplayQuirkEnabled : 1 { false };
     bool marginTrimInlineSupportsQuirkEnabled : 1 { false };
     bool cssMathDepthEnabled : 1 { false };
     bool openPseudoClassEnabled : 1 { false };
@@ -117,7 +116,7 @@ struct CSSParserContext {
     CSSParserContext(const Document&, const URL& baseURL, ASCIILiteral charset = ""_s);
     CSSParserContext(const Settings&);
 
-    void LEGACY_NODELETE setUASheetMode();
+    NODELETE void setUASheetMode();
 
     bool operator==(const CSSParserContext&) const = default;
 };

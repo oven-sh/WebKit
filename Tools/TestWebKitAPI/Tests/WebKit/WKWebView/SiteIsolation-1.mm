@@ -1290,6 +1290,66 @@ TEST(SiteIsolation, ScrollerStyleChangeUpdatesCrossOriginIframe)
     [NSNotificationCenter.defaultCenter postNotificationName:NSPreferredScrollerStyleDidChangeNotification object:nil];
 }
 
+// Remote snapshots record the frames into the GPU process, so the legacy scroll bars, which are drawn
+// into image buffers there, have to be drawn into image buffers with pixels.
+TEST(SiteIsolation, RemoteSnapshotIncludesLegacyScrollbars)
+{
+    static constexpr auto scrollerHTML = "<div id='scroller' style='width: 100px; height: 100px; overflow: scroll; background-color: rgb(0, 255, 0)'><div style='height: 1000px'></div></div>"_s;
+    HTTPServer server({
+        { "/mainframe"_s, { makeString("<body style='margin: 0'>"_s, scrollerHTML, "<iframe style='display: block; width: 200px; height: 200px; border: none;' src='https://webkit.org/iframe'></iframe></body>"_s) } },
+        { "/iframe"_s, { makeString("<body style='margin: 0'>"_s, scrollerHTML, "</body>"_s) } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    {
+        // Web processes take their scroller style from the UI process.
+        siteIsolationScrollerStyle = NSScrollerStyleLegacy;
+        ClassMethodSwizzler swizzler(NSScroller.class, @selector(preferredScrollerStyle), reinterpret_cast<IMP>(siteIsolationPreferredScrollerStyle));
+
+        RetainPtr configuration = server.httpsProxyConfiguration();
+        setFeatureEnabled(configuration.get(), @"RemoteSnapshottingEnabled", true);
+        setFeatureEnabled(configuration.get(), @"UseGPUProcessForDOMRenderingEnabled", true);
+        CGFloat viewSize = 400;
+        auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration, CGRectMake(0, 0, viewSize, viewSize));
+        [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/mainframe"]]];
+        [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
+        RetainPtr childFrame = [webView firstChildFrame];
+        EXPECT_NE([webView mainFrame].info._processIdentifier, [childFrame _processIdentifier]);
+
+        // Legacy scroll bars take up space. The scroll bar tracks start where the client area ends.
+        NSString *clientWidthScript = @"document.getElementById('scroller').clientWidth";
+        int clientWidth = [webView stringByEvaluatingJavaScript:clientWidthScript].intValue;
+        EXPECT_LT(clientWidth, 100);
+        EXPECT_EQ([webView stringByEvaluatingJavaScript:clientWidthScript inFrame:childFrame.get()].intValue, clientWidth);
+
+        RetainPtr snapshotConfiguration = adoptNS([[WKSnapshotConfiguration alloc] init]);
+        [snapshotConfiguration setRect:NSMakeRect(0, 0, viewSize, viewSize)];
+        [snapshotConfiguration setSnapshotWidth:@(viewSize)];
+
+        __block RetainPtr<CGImageRef> image;
+        __block bool done = false;
+        [webView takeSnapshotWithConfiguration:snapshotConfiguration.get() completionHandler:^(NSImage *snapshotImage, NSError *error) {
+            EXPECT_NULL(error);
+            image = Util::convertToCGImage(snapshotImage);
+            done = true;
+        }];
+        Util::run(&done);
+        ASSERT_NOT_NULL(image.get());
+
+        CGImagePixelReader reader { image.get() };
+        unsigned scale = reader.width() / viewSize;
+        unsigned trackMiddle = (clientWidth + 100) / 2;
+        // The main frame's scroller is at the top, and the iframe's scroller is right below it.
+        for (unsigned top : { 0, 100 }) {
+            EXPECT_WK_STREQ("rgb(0, 255, 0)", reader.cssColorAt(40 * scale, (top + 40) * scale));
+            EXPECT_WK_STRNE("rgb(0, 255, 0)", reader.cssColorAt(trackMiddle * scale, (top + 60) * scale));
+            EXPECT_WK_STRNE("rgb(0, 255, 0)", reader.cssColorAt(40 * scale, (top + trackMiddle) * scale));
+        }
+    }
+
+    // Put anything that observed the swizzled style back on the real one.
+    [NSNotificationCenter.defaultCenter postNotificationName:NSPreferredScrollerStyleDidChangeNotification object:nil];
+}
+
 TEST(SiteIsolation, OverlayScrollbarStyleChangeUpdatesCrossOriginIframe)
 {
     HTTPServer server({
@@ -1719,6 +1779,18 @@ TEST(SiteIsolation, AccessibilityRectsEnclosingSelectionOffsetInCrossOriginIfram
     expectRectInPositionedCrossOriginIframe(firstRect);
 }
 
+// Each process reports the text inputs in its own frames, and the UI process lists them in whatever order the
+// replies arrive, so sort them to give tests a stable order.
+static RetainPtr<NSArray<_WKTextInputContext *>> textInputContextsSortedByX(TestWKWebView *webView, CGRect rect)
+{
+    RetainPtr contexts = [webView synchronouslyRequestTextInputContextsInRect:rect];
+    return [contexts sortedArrayUsingComparator:^NSComparisonResult(_WKTextInputContext *a, _WKTextInputContext *b) {
+        if (CGRectGetMinX(a.boundingRect) == CGRectGetMinX(b.boundingRect))
+            return NSOrderedSame;
+        return CGRectGetMinX(a.boundingRect) < CGRectGetMinX(b.boundingRect) ? NSOrderedAscending : NSOrderedDescending;
+    }];
+}
+
 #if HAVE(UI_WK_DOCUMENT_CONTEXT)
 
 TEST(SiteIsolation, DocumentEditingContextInCrossOriginIframe)
@@ -1753,9 +1825,10 @@ TEST(SiteIsolation, DocumentEditingContextForTextInputOutsideFocusedCrossOriginI
 
     auto [webView, navigationDelegate, childFrame] = webViewWithFocusedCrossOriginIframe(server);
 
-    // A request that names a text input has to go to that input's process, not to the focused iframe's.
-    RetainPtr textInputContexts = [webView synchronouslyRequestTextInputContextsInRect:[webView bounds]];
-    ASSERT_GE([textInputContexts count], 1U);
+    // A request that names a text input has to go to that input's process, not to the focused iframe's. The
+    // iframe's body is editable too, and the main frame's input is the context to its left.
+    RetainPtr textInputContexts = textInputContextsSortedByX(webView.get(), [webView bounds]);
+    ASSERT_EQ(2U, [textInputContexts count]);
 
     RetainPtr request = adoptNS([[UIWKDocumentRequest alloc] init]);
     [request setFlags:UIWKDocumentRequestText];
@@ -1887,16 +1960,6 @@ TEST(SiteIsolation, RequestTextInputContextsInRectCoveringCrossOriginIframe)
     NSArray<_WKTextInputContext *> *contexts = synchronouslyRequestTextInputContextsInRect(webView.get(), [webView bounds]);
 
     EXPECT_EQ(1UL, [contexts count]);
-}
-
-static RetainPtr<NSArray<_WKTextInputContext *>> textInputContextsSortedByX(TestWKWebView *webView, CGRect rect)
-{
-    RetainPtr contexts = [webView synchronouslyRequestTextInputContextsInRect:rect];
-    return [contexts sortedArrayUsingComparator:^NSComparisonResult(_WKTextInputContext *a, _WKTextInputContext *b) {
-        if (CGRectGetMinX(a.boundingRect) == CGRectGetMinX(b.boundingRect))
-            return NSOrderedSame;
-        return CGRectGetMinX(a.boundingRect) < CGRectGetMinX(b.boundingRect) ? NSOrderedAscending : NSOrderedDescending;
-    }];
 }
 
 TEST(SiteIsolation, RequestTextInputContextsInRectCoveringOffsetCrossOriginIframes)
@@ -3077,6 +3140,136 @@ TEST(SiteIsolation, CaptionDisplaySettingsPreviewInCrossSiteIframe)
 #endif // PLATFORM(MAC) && ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)
 
 #if PLATFORM(MAC)
+
+static bool didShowCaptionDisplaySettingsMenu = false;
+static NSPoint capturedCaptionDisplaySettingsMenuLocation = NSZeroPoint;
+
+using CaptionDisplaySettingsTestBlock = void (^)(TestWKWebView *, WKFrameInfo *);
+
+static NSPoint loadAndCaptureCaptionDisplaySettingsMenuLocation(TestWKWebView *webView, TestNavigationDelegate *navigationDelegate, NSString *url, CaptionDisplaySettingsTestBlock prepare, CaptionDisplaySettingsTestBlock showCaptionDisplaySettings)
+{
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:url]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    RetainPtr childFrame = [webView firstChildFrame];
+
+    if (prepare)
+        prepare(webView, childFrame.get());
+
+    didShowCaptionDisplaySettingsMenu = false;
+    capturedCaptionDisplaySettingsMenuLocation = NSZeroPoint;
+    showCaptionDisplaySettings(webView, childFrame.get());
+    EXPECT_TRUE(Util::runFor(&didShowCaptionDisplaySettingsMenu, 5_s));
+    return capturedCaptionDisplaySettingsMenuLocation;
+}
+
+static void checkCaptionDisplaySettingsMenuLocationInCrossOriginIframe(const String& mainframeHTML, const String& subframeHTML, NSPoint expectedLocation, CaptionDisplaySettingsTestBlock showCaptionDisplaySettings, CaptionDisplaySettingsTestBlock prepare = nil)
+{
+    HTTPServer server({
+        { "/control"_s, { makeStringByReplacingAll(mainframeHTML, "domain2.com"_s, "domain1.com"_s) } },
+        { "/mainframe"_s, { mainframeHTML } },
+        { "/subframe"_s, { subframeHTML } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    setFeatureEnabled(configuration.get(), @"CaptionDisplaySettingsEnabled", true);
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration, CGRectMake(0, 0, 800, 600));
+
+    InstanceMethodSwizzler popUpSwizzler {
+        [NSMenu class],
+        @selector(popUpMenuPositioningItem:atLocation:inView:),
+        imp_implementationWithBlock(^(NSMenu *, NSMenuItem *, NSPoint location, NSView *) {
+            capturedCaptionDisplaySettingsMenuLocation = location;
+            didShowCaptionDisplaySettingsMenu = true;
+            return NO;
+        })
+    };
+
+    // The control page uses a same-origin iframe, which is in the main frame's process.
+    NSPoint controlLocation = loadAndCaptureCaptionDisplaySettingsMenuLocation(webView.get(), navigationDelegate.get(), @"https://domain1.com/control", prepare, showCaptionDisplaySettings);
+    EXPECT_NEAR(controlLocation.x, expectedLocation.x, 1);
+    EXPECT_NEAR(controlLocation.y, expectedLocation.y, 1);
+
+    NSPoint location = loadAndCaptureCaptionDisplaySettingsMenuLocation(webView.get(), navigationDelegate.get(), @"https://domain1.com/mainframe", prepare, showCaptionDisplaySettings);
+
+    // If the anchor bounds were left in the iframe's local root-view coordinates instead of being
+    // converted to main-frame view coordinates, the menu would be offset by the iframe's position.
+    EXPECT_NEAR(location.x, expectedLocation.x, 1);
+    EXPECT_NEAR(location.y, expectedLocation.y, 1);
+}
+
+static ASCIILiteral captionDisplaySettingsMainFrameHTML = "<body style='margin: 0'><iframe style='margin: 100px; width: 500px; height: 300px; border: none;' src='https://domain2.com/subframe'></iframe></body>"_s;
+static ASCIILiteral captionDisplaySettingsSubframeHTML = "<body style='margin: 0'><div id='target' style='position: absolute; left: 10px; top: 20px; width: 30px; height: 40px;'></div><video id='video'></video></body>"_s;
+
+// "bottom right" places the menu at the bottom-right corner of the anchor bounds regardless of the menu's size.
+static NSString * const showCaptionDisplaySettingsScript = @"video.showCaptionDisplaySettings({ positionArea: 'bottom right' }); true";
+
+// The bottom-right corner of #target: the iframe's offset (100, 100) plus the target's (10, 20) and size (30, 40).
+static constexpr NSPoint captionDisplaySettingsTargetBottomRightInWebView { 140, 160 };
+
+// A point inside the iframe, in window coordinates, and the same point in the (flipped) web view's coordinates.
+static constexpr NSPoint captionDisplaySettingsMousePointInWindow { 300, 350 };
+static constexpr NSPoint captionDisplaySettingsMousePointInWebView { 300, 250 };
+
+TEST(SiteIsolation, CaptionDisplaySettingsAnchorNodeInCrossOriginIframe)
+{
+    checkCaptionDisplaySettingsMenuLocationInCrossOriginIframe(captionDisplaySettingsMainFrameHTML, captionDisplaySettingsSubframeHTML, captionDisplaySettingsTargetBottomRightInWebView, ^(TestWKWebView *webView, WKFrameInfo *childFrame) {
+        [webView objectByEvaluatingJavaScript:@"video.showCaptionDisplaySettings({ anchorNode: target, positionArea: 'bottom right' }); true" inFrame:childFrame];
+    });
+}
+
+TEST(SiteIsolation, CaptionDisplaySettingsAnchorNodeInScrolledCrossOriginIframeWithScrolledMainFrame)
+{
+    checkCaptionDisplaySettingsMenuLocationInCrossOriginIframe(
+        "<body style='margin: 0; height: 2000px'><iframe style='display: block; margin-left: 100px; margin-top: 500px; width: 500px; height: 300px; border: none;' src='https://domain2.com/subframe'></iframe></body>"_s,
+        "<body style='margin: 0; height: 2000px'><div id='target' style='position: absolute; left: 10px; top: 520px; width: 30px; height: 40px;'></div><video id='video'></video></body>"_s,
+        captionDisplaySettingsTargetBottomRightInWebView,
+        ^(TestWKWebView *webView, WKFrameInfo *childFrame) {
+            [webView objectByEvaluatingJavaScript:@"video.showCaptionDisplaySettings({ anchorNode: target, positionArea: 'bottom right' }); true" inFrame:childFrame];
+        },
+        ^(TestWKWebView *webView, WKFrameInfo *childFrame) {
+            [webView objectByEvaluatingJavaScript:@"window.scrollTo(0, 400)"];
+            EXPECT_TRUE(Util::waitFor([&] {
+                return [[webView objectByEvaluatingJavaScript:@"window.scrollY"] intValue] == 400;
+            }));
+            [webView objectByEvaluatingJavaScript:@"window.scrollTo(0, 500)" inFrame:childFrame];
+            EXPECT_TRUE(Util::waitFor([&] {
+                return [[webView objectByEvaluatingJavaScript:@"window.scrollY" inFrame:childFrame] intValue] == 500;
+            }));
+            [webView waitForNextPresentationUpdate];
+        }
+    );
+}
+
+TEST(SiteIsolation, CaptionDisplaySettingsEventTargetInCrossOriginIframe)
+{
+    // Without an anchor node, the target of the current non-mouse event is used as the anchor.
+    checkCaptionDisplaySettingsMenuLocationInCrossOriginIframe(captionDisplaySettingsMainFrameHTML, captionDisplaySettingsSubframeHTML, captionDisplaySettingsTargetBottomRightInWebView, ^(TestWKWebView *webView, WKFrameInfo *childFrame) {
+        [webView objectByEvaluatingJavaScript:[NSString stringWithFormat:@"target.addEventListener('custom', () => { %@ }); target.dispatchEvent(new Event('custom')); true", showCaptionDisplaySettingsScript] inFrame:childFrame];
+    });
+}
+
+TEST(SiteIsolation, CaptionDisplaySettingsMouseEventLocationInCrossOriginIframe)
+{
+    // Without an anchor node, the location of the current mouse event is used as the anchor.
+    checkCaptionDisplaySettingsMenuLocationInCrossOriginIframe(captionDisplaySettingsMainFrameHTML, captionDisplaySettingsSubframeHTML, captionDisplaySettingsMousePointInWebView, ^(TestWKWebView *webView, WKFrameInfo *childFrame) {
+        [webView objectByEvaluatingJavaScript:[NSString stringWithFormat:@"addEventListener('mousedown', () => { %@ }); true", showCaptionDisplaySettingsScript] inFrame:childFrame];
+        [webView mouseDownAtPoint:captionDisplaySettingsMousePointInWindow simulatePressure:NO];
+        [webView mouseUpAtPoint:captionDisplaySettingsMousePointInWindow];
+    });
+}
+
+TEST(SiteIsolation, CaptionDisplaySettingsLastKnownMousePositionInCrossOriginIframe)
+{
+    // Without an anchor node or a current event, the last known mouse position is used as the anchor.
+    checkCaptionDisplaySettingsMenuLocationInCrossOriginIframe(captionDisplaySettingsMainFrameHTML, captionDisplaySettingsSubframeHTML, captionDisplaySettingsMousePointInWebView, ^(TestWKWebView *webView, WKFrameInfo *childFrame) {
+        [webView objectByEvaluatingJavaScript:@"window.didReceiveMouseMove = false; addEventListener('mousemove', () => { didReceiveMouseMove = true; }); true" inFrame:childFrame];
+        [webView mouseMoveToPoint:NSMakePoint(10, 10) withFlags:0];
+        [webView mouseMoveToPoint:captionDisplaySettingsMousePointInWindow withFlags:0];
+        EXPECT_TRUE(Util::waitFor([&] {
+            return [[webView objectByEvaluatingJavaScript:@"didReceiveMouseMove" inFrame:childFrame] boolValue];
+        }));
+        [webView objectByEvaluatingJavaScript:showCaptionDisplaySettingsScript inFrame:childFrame];
+    });
+}
 
 TEST(SiteIsolation, TranslatePopoverInCrossOriginIframe)
 {

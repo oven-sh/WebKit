@@ -36,7 +36,7 @@ namespace WebCore {
 // https://learn.microsoft.com/en-us/typography/opentype/spec/cpal
 class OpenTypeCPAL {
 public:
-    static std::optional<OpenTypeCPAL> LEGACY_NODELETE parse(std::span<const uint8_t> table LIFETIME_BOUND);
+    NODELETE static std::optional<OpenTypeCPAL> parse(std::span<const uint8_t> table LIFETIME_BOUND);
 
     size_t numberOfPalettes() const { return m_numberOfPalettes; }
 
@@ -47,7 +47,7 @@ public:
     Vector<Color> colorsForDarkBackground() const;
 
 private:
-    OpenTypeCPAL(std::span<const uint8_t> colorRecordIndices, std::span<const uint8_t> colorRecords, size_t numberOfPalettes, size_t numberOfEntries, std::optional<size_t> firstPaletteForLightBackground, std::optional<size_t> firstPaletteForDarkBackground);
+    NODELETE OpenTypeCPAL(std::span<const uint8_t> colorRecordIndices, std::span<const uint8_t> colorRecords, size_t numberOfPalettes, size_t numberOfEntries, std::optional<size_t> firstPaletteForLightBackground, std::optional<size_t> firstPaletteForDarkBackground);
 
     std::span<const uint8_t> m_colorRecordIndices;
     std::span<const uint8_t> m_colorRecords;

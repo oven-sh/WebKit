@@ -51,7 +51,7 @@ class DoublePoint {
 public:
     constexpr DoublePoint() = default;
     constexpr DoublePoint(double x, double y) : m_x(x), m_y(y) { }
-    WEBCORE_EXPORT DoublePoint(const IntPoint&);
+    NODELETE WEBCORE_EXPORT DoublePoint(const IntPoint&);
     explicit DoublePoint(const DoubleSize& size)
         : m_x(size.width()), m_y(size.height()) { }
 
@@ -97,8 +97,8 @@ public:
     }
 
 #if USE(CG)
-    WEBCORE_EXPORT DoublePoint(const CGPoint&);
-    WEBCORE_EXPORT operator CGPoint LEGACY_NODELETE () const;
+    NODELETE WEBCORE_EXPORT DoublePoint(const CGPoint&);
+    NODELETE WEBCORE_EXPORT operator CGPoint() const;
     CGPoint toCG() const { return static_cast<CGPoint>(*this); }
 #endif
 

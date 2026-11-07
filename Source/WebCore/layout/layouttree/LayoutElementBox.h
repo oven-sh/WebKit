@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include <WebCore/CachedImage.h>
 #include <WebCore/LayoutBox.h>
 
 namespace WebCore {
@@ -40,75 +39,36 @@ namespace Layout {
 
 class ElementBox : public Box {
 public:
-    enum class IsListMarkerImage : bool { No, Yes };
-
     // The render tree children, without excluded list markers. RenderView's box is the only child of the initial containing block.
     // Defined in RenderElement.h.
     inline const Box* firstChild() const;
-    const Box* LEGACY_NODELETE firstInFlowChild() const;
-    const Box* LEGACY_NODELETE firstInFlowOrFloatingChild() const;
-    const Box* LEGACY_NODELETE firstOutOfFlowChild() const;
+    NODELETE const Box* firstInFlowChild() const;
+    NODELETE const Box* firstInFlowOrFloatingChild() const;
+    NODELETE const Box* firstOutOfFlowChild() const;
     inline const Box* lastChild() const;
-    const Box* LEGACY_NODELETE lastInFlowChild() const;
-    const Box* LEGACY_NODELETE lastInFlowOrFloatingChild() const;
-    const Box* LEGACY_NODELETE lastOutOfFlowChild() const;
+    NODELETE const Box* lastInFlowChild() const;
+    NODELETE const Box* lastInFlowOrFloatingChild() const;
+    NODELETE const Box* lastOutOfFlowChild() const;
 
     bool hasChild() const { return firstChild(); }
     bool hasInFlowChild() const { return firstInFlowChild(); }
     bool hasInFlowOrFloatingChild() const { return firstInFlowOrFloatingChild(); }
-    bool LEGACY_NODELETE hasOutOfFlowChild() const;
+    NODELETE bool hasOutOfFlowChild() const;
 
-    void setBaselineForIntegration(LayoutUnit baseline) { m_baselineForIntegration = baseline; }
-    std::optional<LayoutUnit> baselineForIntegration() const { return m_baselineForIntegration; }
-
-    bool LEGACY_NODELETE hasIntrinsicWidth() const;
-    bool LEGACY_NODELETE hasIntrinsicHeight() const;
-    bool LEGACY_NODELETE hasIntrinsicRatio() const;
-    bool LEGACY_NODELETE hasNaturalWidth() const;
-    bool LEGACY_NODELETE hasNaturalHeight() const;
-    LayoutUnit LEGACY_NODELETE naturalWidth() const;
-    LayoutUnit LEGACY_NODELETE naturalHeight() const;
-    LayoutUnit LEGACY_NODELETE intrinsicWidth() const;
-    LayoutUnit LEGACY_NODELETE intrinsicHeight() const;
-    LayoutUnit LEGACY_NODELETE intrinsicRatio() const;
-    bool LEGACY_NODELETE hasAspectRatio() const;
-
-    void setIsListMarkerImage(IsListMarkerImage);
-
-    bool isListMarkerImage() const { return m_replacedData && m_replacedData->isListMarkerImage; }
-
+    // From the renderer.
+    bool isListMarkerImage() const;
     // FIXME: This is temporary until after list marker content is accessible by IFC (webkit.org/b/294342)
-    void setListMarkerLayoutBounds(std::pair<float, float> layoutBounds) { m_replacedData->layoutBounds = layoutBounds; }
-    std::pair<float, float> layoutBoundsForListMarker() const { return m_replacedData ? m_replacedData->layoutBounds : std::pair<float, float>(); }
-
-    // FIXME: This doesn't belong.
-    CachedImage* cachedImage() const { return m_replacedData ? m_replacedData->cachedImage : nullptr; }
+    std::pair<float, float> layoutBoundsForListMarker() const;
 
     // Null only for the initial containing block. Defined in RenderElement.h.
     inline RenderElement* rendererForIntegration() const;
 
 protected:
-    explicit ElementBox(Style::ComputedStyle&&, EnumSet<BaseTypeFlag> = { });
+    ElementBox(Style::ComputedStyle&&, ElementAttributes, EnumSet<BaseTypeFlag> = { });
     ~ElementBox();
 
 private:
-    friend class Box;
-
-    const Box& LEGACY_NODELETE initialContainingBlockChild() const;
-
-    struct ReplacedData {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ReplacedData);
-
-        bool isListMarkerImage { false };
-        std::pair<float, float> layoutBounds;
-
-        std::optional<LayoutSize> intrinsicSize;
-        std::optional<LayoutUnit> intrinsicRatio;
-        WeakPtr<CachedImage> cachedImage;
-    };
-
-    std::unique_ptr<ReplacedData> m_replacedData;
-    std::optional<LayoutUnit> m_baselineForIntegration;
+    NODELETE const Box& initialContainingBlockChild() const;
 };
 
 }

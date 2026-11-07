@@ -90,7 +90,7 @@ InteractionRegion::~InteractionRegion() = default;
 
 class InteractionRegionPathCache {
 public:
-    static InteractionRegionPathCache& LEGACY_NODELETE singleton();
+    NODELETE static InteractionRegionPathCache& singleton();
 
     std::optional<Path> get(const Image&, const IntRect&, ImageOrientation, const ImageRenditionOptions&);
     void add(const Image&, const IntRect&, ImageOrientation, const ImageRenditionOptions&, Path);
@@ -154,7 +154,7 @@ void InteractionRegion::clearCache()
     InteractionRegionPathCache::singleton().clear();
 }
 
-static bool LEGACY_NODELETE hasInteractiveCursorType(Element& element)
+NODELETE static bool hasInteractiveCursorType(Element& element)
 {
     auto* renderer = element.renderer();
     auto* style = renderer ? &renderer->style() : nullptr;
@@ -169,7 +169,7 @@ static bool LEGACY_NODELETE hasInteractiveCursorType(Element& element)
         || cursorType == CursorType::VerticalText;
 }
 
-static bool LEGACY_NODELETE shouldAllowElement(const Element& element)
+NODELETE static bool shouldAllowElement(const Element& element)
 {
     if (is<HTMLFieldSetElement>(element))
         return false;
@@ -266,7 +266,7 @@ static bool shouldAllowNonInteractiveCursorForElement(const Element& element)
     return false;
 }
 
-static bool LEGACY_NODELETE shouldGetOcclusion(const RenderElement& renderer)
+NODELETE static bool shouldGetOcclusion(const RenderElement& renderer)
 {
     if (auto* renderLayerModelObject = dynamicDowncast<RenderBox>(renderer)) {
         if (renderLayerModelObject->hasLayer() && renderLayerModelObject->layer()->isComposited())
@@ -494,6 +494,17 @@ static std::optional<std::pair<Ref<SVGSVGElement>, Ref<SVGGraphicsElement>>> fin
     return std::nullopt;
 }
 
+static RefPtr<Element> hostElementForGeneratedText(const RenderObject& renderer)
+{
+    if (!renderer.isRenderText())
+        return nullptr;
+
+    CheckedPtr ancestor = renderer.firstNonAnonymousAncestor();
+    if (!ancestor || !ancestor->isPseudoElement())
+        return nullptr;
+    return ancestor->generatingElement();
+}
+
 #if ENABLE(INTERACTION_REGION_TEXT_CONTENT)
 static String interactionRegionTextContentForNode(Node& node)
 {
@@ -508,19 +519,22 @@ std::optional<RenderedInteractionRegion> interactionRegionForRenderedRegion(cons
     if (bounds.isEmpty())
         return std::nullopt;
 
-    if (!regionRenderer.node())
-        return std::nullopt;
+    RefPtr regionNode = regionRenderer.node();
 
     // The decorations and the other properties read below aren't inherited. Text reads them from its parent.
     CheckedRef<const RenderObject> styleRenderer = regionRenderer.isRenderText() ? *regionRenderer.parent() : regionRenderer;
 
-    RefPtr originalElement = dynamicDowncast<Element>(regionRenderer.node());
+    RefPtr originalElement = dynamicDowncast<Element>(regionNode);
     if (originalElement && originalElement->isPseudoElement())
         return std::nullopt;
 
     RefPtr matchedElement = originalElement;
-    if (!matchedElement)
-        matchedElement = regionRenderer.node()->parentElement();
+    if (!regionNode) {
+        if (styleRenderer->style().isEffectivelyTransparent())
+            return std::nullopt;
+        matchedElement = hostElementForGeneratedText(regionRenderer);
+    } else if (!matchedElement)
+        matchedElement = regionNode->parentElement();
     if (!matchedElement)
         return std::nullopt;
 
@@ -849,7 +863,7 @@ std::optional<RenderedInteractionRegion> interactionRegionForRenderedRegion(cons
         clipPath,
         useContinuousCorners,
 #if ENABLE(INTERACTION_REGION_TEXT_CONTENT)
-        interactionRegionTextContentForNode(*regionRenderer.node())
+        regionNode ? interactionRegionTextContentForNode(*regionNode) : String { }
 #endif
     }, shapeIsInset, hasNoVisualBorders };
 }

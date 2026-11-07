@@ -628,7 +628,7 @@ void StubAssembler::returnFlags64(RelationalCondition condition, GPRReg left, GP
 void StubAssembler::returnFlagsTest32(GPRReg reg, TrustedImm32 mask)
 {
     checkReturnsFlags();
-    test32(reg, mask);
+    test32(m_signature.trueCondition, reg, mask);
     returnToCaller();
 }
 

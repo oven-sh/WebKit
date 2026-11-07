@@ -35,6 +35,7 @@ class CSSStyleSheet;
 class StyleRuleBase;
 class StyleRule;
 class StyleRuleWithNesting;
+class WebCoreOpaqueRoot;
 
 struct CSSParserContext;
 
@@ -67,7 +68,14 @@ public:
 
     Lock& opaqueRootLockForGC() const { return m_opaqueRootLockForGC; }
 
-    WEBCORE_EXPORT ExceptionOr<void> LEGACY_NODELETE setCssText(const String&);
+    // Computes the opaque root of this rule for the JS garbage collector. Called from the
+    // parallel GC marker threads as well as from the mutator, so it walks the parent links
+    // under opaqueRootLockForGC() and must never allocate, refcount or otherwise mutate the
+    // CSSOM. In particular it must not go through parentStyleSheet()/item(), which lazily
+    // create CSSOM wrappers and are main-thread only.
+    WEBCORE_EXPORT WebCoreOpaqueRoot opaqueRootForGCThread();
+
+    NODELETE WEBCORE_EXPORT ExceptionOr<void> setCssText(const String&);
 
 protected:
     explicit CSSRule(CSSStyleSheet*);

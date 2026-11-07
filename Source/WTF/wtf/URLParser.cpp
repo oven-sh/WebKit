@@ -3359,7 +3359,7 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
 template<typename SyntaxViolationHandler>
 URLParser::Latin1Buffer URLParser::percentDecodeImpl(std::span<const Latin1Character> input, NOESCAPE const SyntaxViolationHandler& syntaxViolationHandler)
 {
-    Latin1Buffer output;
+    Latin1Buffer output(ReserveCapacityTag { }, input.size());
     output.grow(input.size());
     size_t outputLength = 0;
     for (size_t i = 0; i < input.size(); ++i) {

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "LayerHostingContext.h"
+#include <WebCore/FloatRect.h>
 #include <WebCore/FloatSize.h>
 #include <WebCore/PlatformLayer.h>
 #include <wtf/CompletionHandler.h>
@@ -53,7 +54,9 @@ public:
     void setVideoLayerSizeFenced(const WebCore::FloatSize&, WTF::MachSendRightAnnotated&&, NOESCAPE CompletionHandler<void()>&& postCommitAction);
     WebCore::FloatSize videoLayerSize() const { return m_videoLayerSize; }
     void setVideoLayerSizeIfPossible();
-    void LEGACY_NODELETE setInitialVideoLayerSize(const WebCore::FloatSize&);
+    NODELETE void setInitialVideoLayerSize(const WebCore::FloatSize&);
+
+    std::optional<WebCore::FloatRect> rootLayerBoundsForTesting() const;
 
 private:
     Vector<HostingContextPromise::AutoRejectProducer> m_layerHostingContextRequests;

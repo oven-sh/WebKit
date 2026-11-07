@@ -74,19 +74,19 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CaptionUserPreferencesMediaAF);
 
-static std::unique_ptr<CaptionPreferencesDelegate>& LEGACY_NODELETE captionPreferencesDelegate()
+NODELETE static std::unique_ptr<CaptionPreferencesDelegate>& captionPreferencesDelegate()
 {
     static NeverDestroyed<std::unique_ptr<CaptionPreferencesDelegate>> delegate;
     return delegate.get();
 }
 
-static std::optional<CaptionUserPreferencesMediaAF::CaptionDisplayMode>& LEGACY_NODELETE cachedCaptionDisplayMode()
+NODELETE static std::optional<CaptionUserPreferencesMediaAF::CaptionDisplayMode>& cachedCaptionDisplayMode()
 {
     static NeverDestroyed<std::optional<CaptionUserPreferencesMediaAF::CaptionDisplayMode>> captionDisplayMode;
     return captionDisplayMode;
 }
 
-static std::optional<Vector<String>>& LEGACY_NODELETE cachedPreferredLanguages()
+NODELETE static std::optional<Vector<String>>& cachedPreferredLanguages()
 {
     static NeverDestroyed<std::optional<Vector<String>>> preferredLanguages;
     return preferredLanguages;
@@ -586,8 +586,7 @@ Vector<String> CaptionUserPreferencesMediaAF::preferredLanguages() const
     if (!captionLanguages.size())
         return preferredLanguages;
 
-    Vector<String> captionAndPreferredLanguages;
-    captionAndPreferredLanguages.reserveInitialCapacity(captionLanguages.size() + preferredLanguages.size());
+    Vector<String> captionAndPreferredLanguages(ReserveCapacityTag { }, captionLanguages.size() + preferredLanguages.size());
     captionAndPreferredLanguages.appendVector(WTF::move(captionLanguages));
     captionAndPreferredLanguages.appendVector(WTF::move(preferredLanguages));
     return captionAndPreferredLanguages;

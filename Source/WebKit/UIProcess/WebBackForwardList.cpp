@@ -30,6 +30,7 @@
 #include "BrowsingContextGroup.h"
 #include "LoadedWebArchive.h"
 #include "Logging.h"
+#include "SecurityFlags.h"
 #include "SessionState.h"
 #include "WebBackForwardCache.h"
 #include "WebBackForwardListCounts.h"
@@ -97,8 +98,15 @@ RefPtr<WebBackForwardListItem> WebBackForwardList::itemForID(BackForwardItemIden
     if (!m_page)
         return nullptr;
 
-    ASSERT(!WebBackForwardListItem::itemForID(identifier) || WebBackForwardListItem::itemForID(identifier)->pageID() == m_page->identifier());
-    return WebBackForwardListItem::itemForID(identifier);
+    auto* item = WebBackForwardListItem::itemForID(identifier);
+    if (!item)
+        return nullptr;
+
+    // The disable switch falls back to resolving against the process-global map without regard for which page owns the item.
+    if (SecurityFlags::radar183491061() && item->pageID() != m_page->identifier())
+        return nullptr;
+
+    return item;
 }
 
 void WebBackForwardList::pageClosed()
@@ -532,8 +540,7 @@ void WebBackForwardList::clear()
             didRemoveItem(m_entries[i]);
     }
 
-    Vector<Ref<WebBackForwardListItem>> removedItems;
-    removedItems.reserveInitialCapacity(size - 1);
+    Vector<Ref<WebBackForwardListItem>> removedItems(ReserveCapacityTag { }, size - 1);
     for (size_t i = 0; i < size; ++i) {
         if (m_currentIndex && i != *m_currentIndex)
             removedItems.append(WTF::move(m_entries[i]));
@@ -731,7 +738,7 @@ RefPtr<WebBackForwardListItem> WebBackForwardList::goForwardItemSkippingItemsWit
     return itemStartingAtIndexSkippingItemsAddedByJSWithoutUserGesture(NavigationDirection::Forward, *m_currentIndex).first;
 }
 
-static inline void LEGACY_NODELETE setBackForwardItemIdentifier(FrameState& frameState, BackForwardItemIdentifier itemID)
+NODELETE static inline void setBackForwardItemIdentifier(FrameState& frameState, BackForwardItemIdentifier itemID)
 {
     frameState.itemID = itemID;
     for (auto& child : frameState.children)
@@ -1170,8 +1177,7 @@ Ref<WebKit::WebBackForwardListItem> createItemFromState(const WebKit::BackForwar
 
 Vector<Ref<WebKit::WebBackForwardListItem>> createItemsFromState(const WebKit::BackForwardListState& state, WebKit::WebPageProxyIdentifier pageIdentifier)
 {
-    Vector<Ref<WebKit::WebBackForwardListItem>> items;
-    items.reserveInitialCapacity(state.items.size());
+    Vector<Ref<WebKit::WebBackForwardListItem>> items(ReserveCapacityTag { }, state.items.size());
     for (auto& itemState : borrow(state.items))
         items.append(createItemFromState(itemState, pageIdentifier));
     return items;

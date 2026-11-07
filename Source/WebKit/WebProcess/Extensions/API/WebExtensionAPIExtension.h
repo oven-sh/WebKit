@@ -30,6 +30,7 @@
 #include "JSWebExtensionAPIExtension.h"
 #include "WebExtensionAPIObject.h"
 
+OBJC_CLASS NSArray;
 OBJC_CLASS NSString;
 OBJC_CLASS NSURL;
 
@@ -57,7 +58,7 @@ public:
     JSValue *getBackgroundPage(JSContextRef);
     NSArray *getViews(JSContextRef, NSDictionary *filter, NSString **outExceptionString);
 
-    NSDictionary *LEGACY_NODELETE viewType();
+    NODELETE NSDictionary *viewType();
 #endif
 
 private:

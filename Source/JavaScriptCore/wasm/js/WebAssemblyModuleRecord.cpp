@@ -38,6 +38,7 @@
 #include "JSWebAssemblyInstance.h"
 #include "JSWebAssemblyLinkError.h"
 #include "JSWebAssemblyModule.h"
+#include "JSWebAssemblySuspendingWrapper.h"
 #include "JSWebAssemblyTag.h"
 #include "ObjectConstructor.h"
 #if USE(BUN_JSC_ADDITIONS)
@@ -48,6 +49,7 @@
 #include "WasmTypeDefinitionInlines.h"
 #include "WebAssemblyBuiltin.h"
 #include "WebAssemblyFunction.h"
+#include "WebAssemblySuspending.h"
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -278,6 +280,13 @@ NEVER_INLINE void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* glo
 
         switch (import.kind) {
         case Wasm::ExternalKind::Function: {
+            // If this is a WebAssembly.Suspending wrapper object, substitute an actual function.
+            // The function is created per import binding and can't be cached because it
+            // captures the creation realm, which is tied to the binding.
+            if (auto* wrapper = dynamicDowncast<JSWebAssemblySuspendingWrapper>(value)) {
+                value = createWebAssemblySuspendingFunction(vm, globalObject, wrapper->wrappedFunction());
+                RETURN_IF_EXCEPTION(scope, void());
+            }
             // 4. If i is a function import:
             // i. If IsCallable(v) is false, throw a WebAssembly.LinkError.
             if (!value.isCallable())

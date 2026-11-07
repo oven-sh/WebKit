@@ -171,7 +171,6 @@ set(WebKit_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIDevToolsInspectedWindow
     WebProcess/Extensions/Interfaces/WebExtensionAPIDevToolsNetwork
     WebProcess/Extensions/Interfaces/WebExtensionAPIDevToolsPanels
-    WebProcess/Extensions/Interfaces/WebExtensionAPIEvent
     WebProcess/Extensions/Interfaces/WebExtensionAPIExtension
     WebProcess/Extensions/Interfaces/WebExtensionAPILocalization
     WebProcess/Extensions/Interfaces/WebExtensionAPIMenus
@@ -193,6 +192,7 @@ set(WebKit_BINDINGS_IN_FILES
 
 set(WebKit_CPP_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIAlarms
+    WebProcess/Extensions/Interfaces/WebExtensionAPIEvent
     WebProcess/Extensions/Interfaces/WebExtensionAPINamespace
     WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime
     WebProcess/Extensions/Interfaces/WebExtensionAPIStorage
@@ -643,6 +643,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/Extensions/WebExtensionFrameParameters.serialization.in
     Shared/Extensions/WebExtensionMatchedRuleParameters.serialization.in
     Shared/Extensions/WebExtensionMenuItem.serialization.in
+    Shared/Extensions/WebExtensionMessage.serialization.in
     Shared/Extensions/WebExtensionMessageSenderParameters.serialization.in
     Shared/Extensions/WebExtensionMessageTargetParameters.serialization.in
     Shared/Extensions/WebExtensionNotification.serialization.in
@@ -950,7 +951,7 @@ if (NOT USE_FRAMEWORK_BUNDLES)
 endif ()
 
 if (NOT APPLE AND SWIFT_REQUIRED)
-    # Export-macro stubs, LEGACY_NODELETE=, WK_SUPPORTS_SWIFT_OBJCXX_INTEROP and the
+    # Export-macro stubs, NODELETE=, WK_SUPPORTS_SWIFT_OBJCXX_INTEROP and the
     # full ENABLE/HAVE/USE config-var set now come from
     # _WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS in WebKitMacros.cmake. Only
     # Linux-specific importer flags remain here.
@@ -997,6 +998,7 @@ endif ()
 
 if (SWIFT_REQUIRED)
     set(WebKit_SWIFT_INTEROP_SOURCES
+        Shared/IPCTester.cpp
         UIProcess/ProvisionalPageProxy.cpp
         UIProcess/RemotePageProxy.cpp
         UIProcess/WebBackForwardList.cpp
@@ -1013,6 +1015,9 @@ if (SWIFT_REQUIRED)
         list(APPEND WebKit_SWIFT_INTEROP_SOURCES
             UIProcess/API/ios/WKWebViewIOS.mm
             UIProcess/API/mac/WKWebViewMac.mm
+
+            UIProcess/PhoneNumberPossession/Cocoa/WebPhoneNumberPossessionCoordinatorProxyCocoa.mm
+
             UIProcess/ios/ViewGestureControllerIOS.mm
             UIProcess/mac/ViewGestureControllerMac.mm
             UIProcess/mac/WebViewImpl.mm
@@ -1059,6 +1064,11 @@ if (WebKit_PRIVATE_FRAMEWORK_HEADERS)
     if (NOT USE_HEADER_MAPS)
         list(APPEND WebKit_INTERFACE_DEPENDENCIES WebKit_CopyPrivateHeaders)
     endif ()
+endif ()
+
+# PlatformCocoa.cmake migrates WebCore and WebKitLegacy headers in beside these.
+if (TARGET WebKit_MigrateHeaders)
+    add_dependencies(WebKit_MigrateHeaders WebKit_CopyHeaders WebKit_CopyPrivateHeaders)
 endif ()
 
 # Helper macro which wraps the generate-message-receiver.py script
@@ -1125,6 +1135,7 @@ macro(GENERATE_MESSAGE_SOURCES _output_source _inputs)
             ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.py
             ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.tracking.in
             ${WEBKIT_DIR}/Scripts/webkit/parser.py
+            ${WEBKIT_DIR}/Scripts/webkit/swift_types.py
             ${WEBKIT_DIR}/Scripts/webkit/untrusted_origins.py
             ${_input_files}
             ${WebKitAdditions_MESSAGES_IN_FILES}
@@ -1298,6 +1309,7 @@ endif ()
 set(_serializers_stage_dir ${WebKit_DERIVED_SOURCES_DIR}/.serializers-stage)
 set(_serializers_outputs
     GeneratedSerializers.h
+    GeneratedSerializers.swift
     GeneratedSerializersShared.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersSharedExtensions.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     GeneratedSerializersSharedWebGPU.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
@@ -1336,6 +1348,7 @@ add_custom_command(
     MAIN_DEPENDENCY ${WEBKIT_DIR}/Scripts/generate-serializers.py
     DEPENDS
         ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.py
+        ${WEBKIT_DIR}/Scripts/webkit/swift_types.py
         ${WebKit_SERIALIZATION_DEPENDENCIES}
         ${WebKit_OPAQUE_IPC_TYPES_ADDITIONS_FILES}
         ${_serializers_input_files_rsp}
@@ -1553,14 +1566,24 @@ if (ENABLE_BACK_FORWARD_LIST_SWIFT)
         ${WebKit_DERIVED_SOURCES_DIR}/WebBackForwardListMessageReceiver.swift
         ${WEBKIT_DIR}/Platform/Logging.swift
         ${WEBKIT_DIR}/Shared/API/APIArray.swift
-        ${WEBKIT_DIR}/UIProcess/StdlibExtras.swift
         ${WEBKIT_DIR}/UIProcess/WebBackForwardList.swift
     )
 endif ()
 
+if (ENABLE_BACK_FORWARD_LIST_SWIFT OR APPLE)
+    list(APPEND WebKit_SOURCES
+        ${WEBKIT_DIR}/UIProcess/StdlibExtras.swift
+    )
+endif ()
+
 if (ENABLE_BACK_FORWARD_LIST_SWIFT OR ENABLE_IPC_TESTING_SWIFT)
+    set_source_files_properties(
+        ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.swift
+        PROPERTIES GENERATED TRUE)
     list(APPEND WebKit_SOURCES
         ${WEBKIT_DIR}/Platform/IPC/MessageCheck.swift
+        ${WEBKIT_DIR}/Platform/IPC/SwiftCoding.swift
+        ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.swift
     )
 endif ()
 
@@ -1629,7 +1652,7 @@ if (APPLE AND USE_LIBWEBRTC)
     add_dependencies(WebKit webrtc)
 endif ()
 
-if (SWIFT_REQUIRED AND WEBKIT_SDK_IS_MACOS)
+if (SWIFT_REQUIRED AND WEBKIT_PLATFORM_MAC)
     WEBKIT_ADD_SWIFT_PREWARM(WebKit SwiftPrewarmMac.swift)
 endif ()
 

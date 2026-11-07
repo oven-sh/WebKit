@@ -40,7 +40,7 @@ messages -> WebProcessProxy WantsDispatchMessage {
 #if ENABLE(GPU_PROCESS)
     CreateGPUProcessConnection(WebKit::GPUProcessConnectionIdentifier identifier, IPC::ConnectionHandle connectionHandle) AllowedWhenWaitingForSyncReply
     GPUProcessConnectionDidBecomeUnresponsive(WebKit::GPUProcessConnectionIdentifier identifier)
-    [EnabledBy=SiteIsolationEnabled] DrawFrameToSnapshot(WebCore::FrameIdentifier frameID, WebCore::IntRect rect, WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode) AllowedWhenWaitingForSyncReply
+    [EnabledBy=SiteIsolationEnabled] DrawFrameToSnapshot(WebCore::FrameIdentifier frameID, WebCore::IntRect rectRelativeToVisibleContent, WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode) AllowedWhenWaitingForSyncReply
 #endif
 
 #if ENABLE(MODEL_PROCESS)
@@ -90,7 +90,8 @@ messages -> WebProcessProxy WantsDispatchMessage {
     SystemBeep()
 
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
-    IsAXAuthenticated(struct WebKit::CoreIPCAuditToken auditToken) -> (bool authenticated) Synchronous
+    # The decision is opaque to WebKit; WebKitAdditions defines its values.
+    RequestAXAuthenticationDecision(struct WebKit::CoreIPCAuditToken requester) -> (uint32_t decision) Synchronous
 #endif
 
     AccessibilityModeDidChange(enum:uint8_t WebCore::AccessibilityMode mode)

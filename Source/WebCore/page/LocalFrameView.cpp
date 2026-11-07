@@ -3573,7 +3573,7 @@ void LocalFrameView::cancelScheduledTextFragmentIndicatorTimer()
     m_delayedTextFragmentIndicatorTimer.stop();
 }
 
-static void LEGACY_NODELETE adjustScrollRectToVisibleOptionsForHiddenOverflow(ScrollRectToVisibleOptions& options, const Style::ComputedStyle& style)
+NODELETE static void adjustScrollRectToVisibleOptionsForHiddenOverflow(ScrollRectToVisibleOptions& options, const Style::ComputedStyle& style)
 {
     if (options.allowScrollingOverflowHidden == AllowScrollingOverflowHidden::Yes)
         return;
@@ -4323,7 +4323,7 @@ void LocalFrameView::adjustTiledBackingCoverage()
 #endif
 }
 
-static bool LEGACY_NODELETE shouldEnableSpeculativeTilingDuringLoading(const LocalFrameView& view)
+NODELETE static bool shouldEnableSpeculativeTilingDuringLoading(const LocalFrameView& view)
 {
     auto* page = view.frame().page();
     return page && view.isVisuallyNonEmpty() && !page->progress().isMainLoadProgressing();
@@ -5957,7 +5957,8 @@ void LocalFrameView::paintContents(GraphicsContext& context, const IntRect& dirt
         if (m_frame->document()->printing())
             return false; // Printing, don't fill with warning color (can't remember why).
 
-        if (m_frame->ownerElement())
+        // Not ownerElement(): with Site Isolation, a subframe's owner element can be in another process.
+        if (!m_frame->isMainFrame())
             return false; // Subframe, don't fill with warning color.
 
         if (isTransparent())
@@ -7232,10 +7233,15 @@ FloatSize LocalFrameView::calculateSizeForCSSViewportUnitsOverride(std::optional
 
 FloatSize LocalFrameView::sizeForCSSDynamicViewportUnits() const
 {
+    bool useFixedLayout = this->useFixedLayout();
+
+    if (useFixedLayout && sizeForCSSSmallViewportUnits() == sizeForCSSLargeViewportUnits())
+        return fixedLayoutSize();
+
     if (m_layoutViewportOverrideRect)
         return m_layoutViewportOverrideRect->size();
 
-    if (useFixedLayout())
+    if (useFixedLayout)
         return fixedLayoutSize();
 
     if (m_frame->settings().visualViewportEnabled()) {

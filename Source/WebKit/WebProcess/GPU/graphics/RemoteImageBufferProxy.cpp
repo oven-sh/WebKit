@@ -31,7 +31,6 @@
 #include "GPUConnectionToWebProcessMessages.h"
 #include "IPCEvent.h"
 #include "ImageBufferRemoteDisplayListBackend.h"
-#include "ImageBufferRemotePDFDocumentBackend.h"
 #include "ImageBufferShareableBitmapBackend.h"
 #include "Logging.h"
 #include "RemoteImageBufferMessages.h"
@@ -48,7 +47,6 @@
 
 #if HAVE(IOSURFACE)
 #include "ImageBufferRemoteIOSurfaceBackend.h"
-#include "ImageBufferShareableMappedIOSurfaceBackend.h"
 #endif
 
 #if PLATFORM(COCOA)

@@ -62,9 +62,9 @@ struct ShapeOutside {
 
     ShapeOutside(CSS::Keyword::None) { }
     ShapeOutside(Shape&&);
-    ShapeOutside(ShapeBox&&);
-    ShapeOutside(ShapeAndShapeBox&&);
-    ShapeOutside(Image&&);
+    NODELETE ShapeOutside(ShapeBox&&);
+    NODELETE ShapeOutside(ShapeAndShapeBox&&);
+    NODELETE ShapeOutside(Image&&);
 
     bool isNone() const { return !m_value; }
 
@@ -107,7 +107,7 @@ private:
     public:
         using Kind = Variant<Shape, ShapeBox, ShapeAndShapeBox, Image>;
 
-        static Ref<Value> LEGACY_NODELETE create(Kind&&);
+        NODELETE static Ref<Value> create(Kind&&);
         ~Value();
 
         inline const BasicShape* shape() const;

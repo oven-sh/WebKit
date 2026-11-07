@@ -145,7 +145,7 @@ private:
     RunLoop::Timer m_expirationTimer;
 };
 
-static HashMap<FrameIdentifier, WeakRef<WebFrameProxy>>& LEGACY_NODELETE allFrames()
+NODELETE static HashMap<FrameIdentifier, WeakRef<WebFrameProxy>>& allFrames()
 {
     ASSERT(RunLoop::isMain());
     static NeverDestroyed<HashMap<FrameIdentifier, WeakRef<WebFrameProxy>>> map;
@@ -850,8 +850,7 @@ void WebFrameProxy::removeChildFrames()
 
 Vector<Ref<WebFrameProxy>> WebFrameProxy::takeChildFrames()
 {
-    Vector<Ref<WebFrameProxy>> frames;
-    frames.reserveInitialCapacity(m_childFrames.size());
+    Vector<Ref<WebFrameProxy>> frames(ReserveCapacityTag { }, m_childFrames.size());
     for (auto& child : m_childFrames)
         frames.append(child.copyRef());
     m_childFrames.clear();

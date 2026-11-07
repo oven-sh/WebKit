@@ -140,7 +140,7 @@ void enableGlobalsOfBuiltinTable()
 {
     if (!Options::aotImagePath())
         return;
-    Options::useSharedArrayBuffer() = true;
+    Options::alwaysUseSharedArrayBuffer() = true;
     Options::useTemporal() = true;
     Options::useExplicitResourceManagement() = true;
 }

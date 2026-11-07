@@ -58,6 +58,7 @@
 #include "WebCacheStorageProvider.h"
 #include "WebChromeClient.h"
 #include "WebCookieJar.h"
+#include "WebExtensionMatchPattern.h"
 #include "WebFileSystemStorageConnection.h"
 #include "WebFrame.h"
 #include "WebFrameMessages.h"
@@ -1864,7 +1865,7 @@ void WebProcess::prepareForPrinting(CompletionHandler<void(bool)>&& completionHa
 
 // Received by the process rather than a page, because the frame's page may have gone here since the
 // frame was painted, and a request that reached nothing would leave the snapshot waiting for it.
-void WebProcess::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const WebCore::IntRect& rect, RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode)
+void WebProcess::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode)
 {
     RefPtr frame = webFrame(frameID);
     RefPtr page = frame ? frame->page() : nullptr;
@@ -1872,7 +1873,7 @@ void WebProcess::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const Web
         abandonSnapshotFrame(snapshotIdentifier, frameID);
         return;
     }
-    page->drawFrameToSnapshot(frameID, rect, snapshotIdentifier, renderingMode);
+    page->drawFrameToSnapshot(frameID, rectRelativeToVisibleContent, snapshotIdentifier, renderingMode);
 }
 
 void WebProcess::abandonSnapshotFrame(RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID)
@@ -2425,7 +2426,7 @@ void WebProcess::grantUserMediaDeviceSandboxExtensions(MediaDeviceSandboxExtensi
         machBootstrapExtension->consume();
 }
 
-static inline void LEGACY_NODELETE checkDocumentsCaptureStateConsistency(const Vector<String>& extensionIDs)
+NODELETE static inline void checkDocumentsCaptureStateConsistency(const Vector<String>& extensionIDs)
 {
 #if ASSERT_ENABLED
     bool isCapturingAudio = std::ranges::any_of(Document::allDocumentsMap().values(), [](auto& document) {
@@ -2619,21 +2620,10 @@ void WebProcess::updateRemoteWorkerPreferences(const WebPreferencesStore& store)
 #endif
 
 #if PLATFORM(COCOA)
-    // Like WebPage, except that the drawing area type does not matter because the workers do not draw the DOM.
-    bool shouldBlockIOKit = store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForDOMRenderingEnabledKey())
-#if ENABLE(WEBGL)
-        && store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForWebGLEnabledKey())
-#endif
-        && store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForCanvasRenderingEnabledKey())
+    bool shouldBlockIOKit = store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForCanvasRenderingEnabledKey())
         && store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForMediaEnabledKey());
-    if (shouldBlockIOKit) {
-#if ENABLE(GPU_PROCESS)
-        // The workers do not draw the DOM, but without IOKit this process cannot map the image buffers
-        // either, which is what the GPU process DOM rendering means for the image buffers.
-        setUseGPUProcessForDOMRendering(true);
-#endif
+    if (shouldBlockIOKit)
         blockIOKit();
-    }
 #endif
 }
 
@@ -2650,7 +2640,7 @@ void WebProcess::setUseGPUProcessFromPreferences(const WebPreferencesStore& stor
 #endif
     setUseGPUProcessForCanvasRendering(store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForCanvasRenderingEnabledKey()));
     setUseGPUProcessForMedia(useGPUProcessForMedia);
-#if ENABLE(WEBGL)
+#if ENABLE(WEBGL) && !PLATFORM(COCOA)
     setUseGPUProcessForWebGL(store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForWebGLEnabledKey()));
 #endif
 }
@@ -2660,10 +2650,12 @@ void WebProcess::setUseGPUProcessForCanvasRendering(bool useGPUProcessForCanvasR
     m_useGPUProcessForCanvasRendering = useGPUProcessForCanvasRendering;
 }
 
+#if !PLATFORM(COCOA)
 void WebProcess::setUseGPUProcessForDOMRendering(bool useGPUProcessForDOMRendering)
 {
     m_useGPUProcessForDOMRendering = useGPUProcessForDOMRendering;
 }
+#endif
 
 void WebProcess::setUseGPUProcessForMedia(bool useGPUProcessForMedia)
 {
@@ -2749,7 +2741,11 @@ bool WebProcess::shouldUseRemoteRenderingFor(RenderingPurpose purpose)
     case RenderingPurpose::LayerBacking:
     case RenderingPurpose::Snapshot:
     case RenderingPurpose::ShareableSnapshot:
+#if PLATFORM(COCOA)
+        return true;
+#else
         return m_useGPUProcessForDOMRendering;
+#endif
     case RenderingPurpose::MediaPainting:
         return m_useGPUProcessForMedia;
     case RenderingPurpose::ShareableLocalSnapshot:
@@ -2759,7 +2755,7 @@ bool WebProcess::shouldUseRemoteRenderingFor(RenderingPurpose purpose)
     return false;
 }
 
-#if ENABLE(WEBGL)
+#if ENABLE(WEBGL) && !PLATFORM(COCOA)
 void WebProcess::setUseGPUProcessForWebGL(bool useGPUProcessForWebGL)
 {
     m_useGPUProcessForWebGL = useGPUProcessForWebGL;
@@ -2777,7 +2773,7 @@ bool WebProcess::shouldUseRemoteRenderingForWebGL() const
     return m_useGPUProcessForWebGL;
 #endif
 }
-#endif // ENABLE(WEBGL)
+#endif // ENABLE(WEBGL) && !PLATFORM(COCOA)
 
 #endif // ENABLE(GPU_PROCESS)
 

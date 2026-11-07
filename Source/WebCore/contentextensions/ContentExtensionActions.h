@@ -106,7 +106,7 @@ struct WEBCORE_EXPORT ModifyHeadersAction {
         friend bool operator==(const ModifyHeaderInfo&, const ModifyHeaderInfo&) = default;
         void serialize(Vector<uint8_t>&) const;
         static ModifyHeaderInfo deserialize(std::span<const uint8_t>);
-        static size_t LEGACY_NODELETE serializedLength(std::span<const uint8_t>);
+        NODELETE static size_t serializedLength(std::span<const uint8_t>);
         void applyToRequest(ResourceRequest&, HashMap<String, ModifyHeadersOperationType>&);
     };
 
@@ -135,7 +135,7 @@ struct WEBCORE_EXPORT ModifyHeadersAction {
     friend bool operator==(const ModifyHeadersAction&, const ModifyHeadersAction&) = default;
     void serialize(Vector<uint8_t>&) const;
     static ModifyHeadersAction deserialize(std::span<const uint8_t>);
-    static size_t LEGACY_NODELETE serializedLength(std::span<const uint8_t>);
+    NODELETE static size_t serializedLength(std::span<const uint8_t>);
     void applyToRequest(ResourceRequest&, HashMap<String, ModifyHeadersOperationType>&);
 };
 
@@ -171,7 +171,7 @@ struct WEBCORE_EXPORT RedirectAction {
                 friend bool operator==(const QueryKeyValue&, const QueryKeyValue&) = default;
                 void serialize(Vector<uint8_t>&) const;
                 static QueryKeyValue deserialize(std::span<const uint8_t>);
-                static size_t LEGACY_NODELETE serializedLength(std::span<const uint8_t>);
+                NODELETE static size_t serializedLength(std::span<const uint8_t>);
             };
 
             Vector<QueryKeyValue> addOrReplaceParams;
@@ -183,7 +183,7 @@ struct WEBCORE_EXPORT RedirectAction {
             friend bool operator==(const QueryTransform&, const QueryTransform&) = default;
             void serialize(Vector<uint8_t>&) const;
             static QueryTransform deserialize(std::span<const uint8_t>);
-            static size_t LEGACY_NODELETE serializedLength(std::span<const uint8_t>);
+            NODELETE static size_t serializedLength(std::span<const uint8_t>);
             void applyToURL(URL&) const;
         };
 
@@ -203,7 +203,7 @@ struct WEBCORE_EXPORT RedirectAction {
         friend bool operator==(const URLTransformAction&, const URLTransformAction&) = default;
         void serialize(Vector<uint8_t>&) const;
         static URLTransformAction deserialize(std::span<const uint8_t>);
-        static size_t LEGACY_NODELETE serializedLength(std::span<const uint8_t>);
+        NODELETE static size_t serializedLength(std::span<const uint8_t>);
         void applyToURL(URL&) const;
     };
     struct URLAction {
@@ -217,10 +217,9 @@ struct WEBCORE_EXPORT RedirectAction {
     enum class HashTableType : uint8_t { Empty, Deleted, Full } hashTableType;
     using ActionVariant = Variant<ExtensionPathAction, RegexSubstitutionAction, URLTransformAction, URLAction>;
     ActionVariant action;
+    uint32_t priority { 0 };
 
-    RedirectAction(ActionVariant&& action)
-        : hashTableType(HashTableType::Full)
-        , action(WTF::move(action)) { }
+    RedirectAction(ActionVariant&&, uint32_t priority = 0);
 
     enum EmptyValueTag { EmptyValue };
     enum DeletedValueTag { DeletedValue };
@@ -236,9 +235,12 @@ struct WEBCORE_EXPORT RedirectAction {
     friend bool operator==(const RedirectAction&, const RedirectAction&) = default;
     void serialize(Vector<uint8_t>&) const;
     static RedirectAction deserialize(std::span<const uint8_t>);
-    static size_t LEGACY_NODELETE serializedLength(std::span<const uint8_t>);
+    NODELETE static size_t serializedLength(std::span<const uint8_t>);
     void applyToRequest(ResourceRequest&, const URL&);
     void modifyURL(URL& originalURL, const URL& extensionBaseURL);
+
+    // Whether the redirect only removes query parameters, so it can be applied together with another one.
+    bool onlyRemovesQueryParameters() const;
 };
 
 struct ReportIdentifierAction : public ActionWithStringMetadata<ReportIdentifierAction> {
@@ -347,7 +349,7 @@ inline void add(Hasher& hasher, const RedirectAction::URLTransformAction& action
 
 inline void add(Hasher& hasher, const RedirectAction& action)
 {
-    add(hasher, action.action);
+    add(hasher, action.action, action.priority);
 }
 
 inline void add(Hasher& hasher, const ModifyHeadersAction& action)

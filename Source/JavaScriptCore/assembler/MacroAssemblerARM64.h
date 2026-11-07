@@ -1385,8 +1385,8 @@ public:
 
     void or32(TrustedImm32 imm, Address address)
     {
-        load32(address, getCachedDataTempRegisterIDAndInvalidate());
-        or32(imm, dataTempRegister, dataTempRegister);
+        load32(address, getCachedMemoryTempRegisterIDAndInvalidate());
+        or32(imm, memoryTempRegister, getCachedDataTempRegisterIDAndInvalidate());
         store32(dataTempRegister, address);
     }
 
@@ -1999,7 +1999,7 @@ public:
             return;
         }
         loadFloat(Address(src, offset.m_value), dest1);
-        loadFloat(Address(src, offset.m_value + 8), dest2);
+        loadFloat(Address(src, offset.m_value + 4), dest2);
     }
 
     void loadPairFloat(Address src, FPRegisterID dest1, FPRegisterID dest2)
@@ -2649,7 +2649,7 @@ public:
             return;
         }
         storeFloat(src1, Address(dest, offset.m_value));
-        storeFloat(src2, Address(dest, offset.m_value + 8));
+        storeFloat(src2, Address(dest, offset.m_value + 4));
     }
 
     void storePairFloat(FPRegisterID src1, FPRegisterID src2, Address dest)
@@ -2933,7 +2933,10 @@ public:
 
     void getEffectiveAddress(BaseIndex address, RegisterID dest)
     {
-        m_assembler.add<64>(dest, address.base, address.index, Assembler::LSL, address.scale);
+        if (address.extend == Extend::None)
+            m_assembler.add<64>(dest, address.base, address.index, Assembler::LSL, address.scale);
+        else
+            m_assembler.add<64>(dest, address.base, address.index, indexExtendType(address), address.scale);
         if (address.offset)
             add64(TrustedImm32(address.offset), dest);
     }
@@ -3283,7 +3286,7 @@ public:
 
     void loadVector(BaseIndex address, FPRegisterID dest)
     {
-        if (address.scale == TimesOne || address.scale == TimesEight) {
+        if (address.scale == TimesOne) {
             if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
                 m_assembler.ldr<128>(dest, baseGPR.value(), address.index, indexExtendType(address), address.scale);
                 return;
@@ -3370,7 +3373,7 @@ public:
 
     void loadFloat16(BaseIndex address, FPRegisterID dest)
     {
-        if (address.scale == TimesOne || address.scale == TimesFour) {
+        if (address.scale == TimesOne || address.scale == TimesTwo) {
             if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
                 m_assembler.ldr<16>(dest, baseGPR.value(), address.index, indexExtendType(address), address.scale);
                 return;
@@ -4209,7 +4212,7 @@ public:
 
     void storeVector(FPRegisterID src, BaseIndex address)
     {
-        if (address.scale == TimesOne || address.scale == TimesEight) {
+        if (address.scale == TimesOne) {
             if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
                 m_assembler.str<128>(src, baseGPR.value(), address.index, indexExtendType(address), address.scale);
                 return;
@@ -4232,7 +4235,7 @@ public:
 
     void storeFloat16(FPRegisterID src, BaseIndex address)
     {
-        if (address.scale == TimesOne || address.scale == TimesFour) {
+        if (address.scale == TimesOne || address.scale == TimesTwo) {
             if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
                 m_assembler.str<16>(src, baseGPR.value(), address.index, indexExtendType(address), address.scale);
                 return;
@@ -4384,7 +4387,7 @@ public:
 
     void pushToSave(Address address)
     {
-        load32(address, getCachedDataTempRegisterIDAndInvalidate());
+        load64(address, getCachedDataTempRegisterIDAndInvalidate());
         pushToSave(dataTempRegister);
     }
 
@@ -4938,8 +4941,8 @@ public:
 
     Jump branch64(RelationalCondition cond, AbsoluteAddress left, RegisterID right)
     {
-        load64(left.m_ptr, getCachedDataTempRegisterIDAndInvalidate());
-        return branch64(cond, dataTempRegister, right);
+        load64(left.m_ptr, getCachedMemoryTempRegisterIDAndInvalidate());
+        return branch64(cond, memoryTempRegister, right);
     }
 
     Jump branch64(RelationalCondition cond, Address left, RegisterID right)
@@ -5050,6 +5053,11 @@ public:
         }
     }
 
+    void test32(ResultCondition, RegisterID reg, TrustedImm32 mask = TrustedImm32(-1))
+    {
+        test32(reg, mask);
+    }
+
     Jump branch(ResultCondition cond)
     {
         return Jump(makeBranch(cond));
@@ -5110,7 +5118,7 @@ public:
             if ((cond == Zero) || (cond == NonZero))
                 return Jump(makeCompareAndBranch<64>(static_cast<ZeroCondition>(cond), reg));
             m_assembler.tst<64>(reg, reg);
-        } else if (hasOneBitSet(mask.m_value) && ((cond == Zero) || (cond == NonZero)))
+        } else if (hasOneBitSet(static_cast<int64_t>(mask.m_value)) && ((cond == Zero) || (cond == NonZero)))
             return Jump(makeTestBitAndBranch(reg, getLSBSet(mask.m_value), static_cast<ZeroCondition>(cond)));
         else {
             LogicalImmediate logicalImm = LogicalImmediate::create64(mask.m_value);
@@ -5120,10 +5128,9 @@ public:
                 return Jump(makeBranch(cond));
             }
 
-            // The forms that test a word in memory load it into dataTempRegister.
-            RegisterID maskRegister = reg == dataTempRegister ? getCachedMemoryTempRegisterIDAndInvalidate() : getCachedDataTempRegisterIDAndInvalidate();
-            signExtend32ToPtr(mask, maskRegister);
-            m_assembler.tst<64>(reg, maskRegister);
+            ASSERT(reg != dataTempRegister);
+            signExtend32ToPtr(mask, getCachedDataTempRegisterIDAndInvalidate());
+            m_assembler.tst<64>(reg, dataTempRegister);
         }
         return Jump(makeBranch(cond));
     }
@@ -5145,9 +5152,9 @@ public:
                 return Jump(makeBranch(cond));
             }
 
-            RegisterID maskRegister = reg == dataTempRegister ? getCachedMemoryTempRegisterIDAndInvalidate() : getCachedDataTempRegisterIDAndInvalidate();
-            move(mask, maskRegister);
-            m_assembler.tst<64>(reg, maskRegister);
+            ASSERT(reg != dataTempRegister);
+            move(mask, getCachedDataTempRegisterIDAndInvalidate());
+            m_assembler.tst<64>(reg, dataTempRegister);
         }
         return Jump(makeBranch(cond));
     }
@@ -5160,20 +5167,20 @@ public:
 
     Jump branchTest64(ResultCondition cond, Address address, TrustedImm32 mask = TrustedImm32(-1))
     {
-        load64(address, getCachedDataTempRegisterIDAndInvalidate());
-        return branchTest64(cond, dataTempRegister, mask);
+        load64(address, getCachedMemoryTempRegisterIDAndInvalidate());
+        return branchTest64(cond, memoryTempRegister, mask);
     }
 
     Jump branchTest64(ResultCondition cond, BaseIndex address, TrustedImm32 mask = TrustedImm32(-1))
     {
-        load64(address, getCachedDataTempRegisterIDAndInvalidate());
-        return branchTest64(cond, dataTempRegister, mask);
+        load64(address, getCachedMemoryTempRegisterIDAndInvalidate());
+        return branchTest64(cond, memoryTempRegister, mask);
     }
 
     Jump branchTest64(ResultCondition cond, AbsoluteAddress address, TrustedImm32 mask = TrustedImm32(-1))
     {
-        load64(address.m_ptr, getCachedDataTempRegisterIDAndInvalidate());
-        return branchTest64(cond, dataTempRegister, mask);
+        load64(address.m_ptr, memoryTempRegister);
+        return branchTest64(cond, memoryTempRegister, mask);
     }
 
     Jump branchTest8(ResultCondition cond, Address address, TrustedImm32 mask = TrustedImm32(-1))
@@ -7157,14 +7164,10 @@ public:
             // SDOT Vd.4S, Vn.16B, Vm.16B: for each i32 lane, accumulate sum of 4 signed 8-bit products.
             // SDOT accumulates into Vd, so we need addend in dest before the instruction.
             // Handle cases where dest overlaps with a or b to avoid clobbering inputs.
-            if (dest == a) {
-                moveVector(a, scratch1);
+            if (dest == a || dest == b) {
+                moveVector(dest, scratch1);
                 moveVector(addend, dest);
-                m_assembler.sdotv(dest, scratch1, b);
-            } else if (dest == b) {
-                moveVector(b, scratch1);
-                moveVector(addend, dest);
-                m_assembler.sdotv(dest, a, scratch1);
+                m_assembler.sdotv(dest, dest == a ? scratch1 : a, dest == b ? scratch1 : b);
             } else {
                 moveVector(addend, dest);
                 m_assembler.sdotv(dest, a, b);
@@ -7698,7 +7701,6 @@ public:
     void vectorSwizzle(FPRegisterID a, FPRegisterID control, FPRegisterID dest) { m_assembler.tbl(dest, a, control); }
     void vectorSwizzle2(FPRegisterID a, FPRegisterID b, FPRegisterID control, FPRegisterID dest)
     {
-        RELEASE_ASSERT(b == a + 1);
         m_assembler.tbl2(dest, a, b, control);
     }
 
@@ -8193,7 +8195,8 @@ protected:
 
             if ((addressAsInt & (~maskHalfWord0)) == (currentRegisterContents & (~maskHalfWord0))) {
                 m_assembler.movk<64>(memoryTempRegister, addressAsInt & maskHalfWord0, 0);
-                cachedMemoryTempRegister().setValue(reinterpret_cast<intptr_t>(address));
+                if (dest != memoryTempRegister)
+                    cachedMemoryTempRegister().setValue(reinterpret_cast<intptr_t>(address));
                 if constexpr (datasize == 16)
                     m_assembler.ldrh(dest, memoryTempRegister, ARM64Registers::zr);
                 else
@@ -8454,7 +8457,7 @@ protected:
     template<int datasize>
     void storeCond(RegisterID src, RegisterID dest, RegisterID result)
     {
-        m_assembler.stxr<datasize>(src, dest, result);
+        m_assembler.stxr<datasize>(result, src, dest);
     }
     
     template<int datasize>
@@ -8498,9 +8501,9 @@ protected:
         Jump done = jump();
         
         failure.link(this);
-        move(tmp, expectedAndResult);
         storeCondRel<datasize>(tmp, simpleAddress, result);
         branchTest32(NonZero, result).linkTo(reloop, this);
+        move(tmp, expectedAndResult);
         move(TrustedImm32(cond == Failure), result);
         
         done.link(this);
@@ -8621,8 +8624,11 @@ protected:
     RegisterID extractSimpleAddress(BaseIndex address)
     {
         RegisterID result = getCachedMemoryTempRegisterIDAndInvalidate();
-        lshift64(address.index, TrustedImm32(address.scale), result);
-        add64(address.base, result);
+        if (address.extend == Extend::None) {
+            lshift64(address.index, TrustedImm32(address.scale), result);
+            add64(address.base, result);
+        } else
+            m_assembler.add<64>(result, address.base, address.index, indexExtendType(address), address.scale);
         add64(TrustedImm32(address.offset), result);
         return result;
     }

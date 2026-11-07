@@ -76,13 +76,13 @@ enum class BytecodeCacheUpdatable : bool { No, Yes };
 
 // Offsets within an updatable executable record (the jsc shell's disk cache patches these fields in place).
 struct CachedFunctionExecutableOffsets {
-    static ptrdiff_t LEGACY_NODELETE codeBlockForCallOffset();
-    static ptrdiff_t LEGACY_NODELETE codeBlockForConstructOffset();
-    static ptrdiff_t LEGACY_NODELETE metadataOffset();
+    NODELETE static ptrdiff_t codeBlockForCallOffset();
+    NODELETE static ptrdiff_t codeBlockForConstructOffset();
+    NODELETE static ptrdiff_t metadataOffset();
 };
 
 struct CachedWriteBarrierOffsets {
-    static ptrdiff_t LEGACY_NODELETE ptrOffset();
+    NODELETE static ptrdiff_t ptrOffset();
 };
 
 struct CachedPtrOffsets {
@@ -307,7 +307,7 @@ public:
 
     ~Decoder();
 
-    VM& LEGACY_NODELETE vm() { return m_vm; }
+    NODELETE VM& vm() { return m_vm; }
     size_t size() const { return m_payloadSize; }
 
     ptrdiff_t offsetOf(const void* ptr) const { return static_cast<const uint8_t*>(ptr) - m_payload; }
@@ -317,7 +317,7 @@ public:
     CompactTDZEnvironmentMap::Handle handleForTDZEnvironment(CompactTDZEnvironment*) const;
     void setHandleForTDZEnvironment(CompactTDZEnvironment*, const CompactTDZEnvironmentMap::Handle&);
     void addLeafExecutable(const UnlinkedFunctionExecutable*, ptrdiff_t);
-    RefPtr<SourceProvider> LEGACY_NODELETE provider() const;
+    NODELETE RefPtr<SourceProvider> provider() const;
     // This decoder's payload in VM::persistentBytecodePayloads(), or 0: what a code block decoded from it needs to remember
     // (with its record's offset) to be decoded again later.
     uint16_t persistentPayloadIndex() const { return m_persistentPayloadIndex; }

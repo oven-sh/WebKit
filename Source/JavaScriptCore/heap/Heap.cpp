@@ -83,6 +83,9 @@
 #include "JSWeakMap.h"
 #include "JSWeakObjectRef.h"
 #include "JSWeakSet.h"
+#if ENABLE(WEBASSEMBLY)
+#include "JSWebAssemblySuspendingWrapper.h"
+#endif
 #include "MachineStackMarker.h"
 #include "MarkStackMergingConstraint.h"
 #include "MarkedBlockCage.h"
@@ -227,7 +230,7 @@ void recordType(TypeCountSet& set, JSCell* cell)
     set.add(typeName);
 }
 
-constexpr bool LEGACY_NODELETE measurePhaseTiming()
+NODELETE constexpr bool measurePhaseTiming()
 {
     return false;
 }
@@ -264,12 +267,12 @@ public:
     {
     }
     
-    void LEGACY_NODELETE setScope(std::optional<CollectionScope> scope)
+    NODELETE void setScope(std::optional<CollectionScope> scope)
     {
         m_scope = scope;
     }
     
-    void LEGACY_NODELETE setScope(JSC::Heap& heap)
+    NODELETE void setScope(JSC::Heap& heap)
     {
         setScope(heap.collectionScope());
     }
@@ -492,6 +495,7 @@ void Heap::shutDown()
     dataLogIf(Options::logGC(), "disabled collection, ");
 
     if (hadJoined) {
+        assertIsAccessHolder();
         waitForMembershipChange(m_collector->requestMembershipChange({ Collector::MembershipChange::Kind::Leave, this, nullptr }));
         dataLogIf(Options::logGC(), "left the collector, ");
     }
@@ -522,6 +526,23 @@ void Heap::lastChanceToFinalize()
 }
 
 #if ASSERT_ENABLED
+void Heap::assertIsAccessHolder() const
+{
+    ASSERT(currentThreadIsAccessHolder());
+}
+
+bool Heap::currentThreadIsAccessHolder() const
+{
+    if (!hasAccess())
+        return false;
+    if (vm().apiLock().isWebThreadAware()) {
+        // In iOS's legacy WebKit, the UI thread and WebThread share heap access: one of them acquired it, and whichever
+        // holds the web lock uses it. isMainThread() is true only on the thread holding that lock.
+        return isMainThread();
+    }
+    return m_accessHolderThreadUID.loadRelaxed() == Thread::currentSingleton().uid();
+}
+
 void Heap::assertIsMutatorOrMutatorIsStopped() const
 {
     if (worldIsStopped())
@@ -1585,7 +1606,7 @@ ASCIILiteral Heap::reasonNotToEvacuateAuxiliaryBlocksNow()
 #endif
     if (!vm.currentThreadIsHoldingAPILock())
         return "the caller does not hold the API lock"_s;
-    if (!hasHeapAccess())
+    if (!hasAccess())
         return "the caller has released heap access"_s;
     if (!m_isSafeToCollect || m_isShuttingDown)
         return "the heap is not ready for collections"_s;
@@ -1932,11 +1953,13 @@ void Heap::collect(Synchronousness synchronousness, GCRequest request)
     if (!m_isSafeToCollect)
         return;
 
+    ASSERT(vm().currentThreadIsHoldingAPILock());
+    assertIsAccessHolder();
+
     // A synchronous request needs a collection that starts after it; an asynchronous one doesn't.
     if (synchronousness == Async && m_collector->isSubsumedByQueuedRequest(request))
         return;
 
-    ASSERT(vm().currentThreadIsHoldingAPILock());
     RELEASE_ASSERT(vm().atomStringTable() == Thread::currentSingleton().atomStringTable());
 
     stopIfNecessary();
@@ -1953,6 +1976,8 @@ void Heap::collectNow(Synchronousness synchronousness, GCRequest request)
 
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
+
+    assertIsAccessHolder();
 
     switch (synchronousness) {
     case Async: {
@@ -2036,13 +2061,14 @@ void Heap::resumeThePeriphery()
     m_objectSpace.resumeAllocating();
 
     m_barriersExecuted = 0;
-    
+
     RELEASE_ASSERT(m_worldIsStopped);
     m_worldIsStopped = false;
 }
 
 bool Heap::stopTheMutator()
 {
+    m_collector->assertIsCollectorThread();
     for (;;) {
         unsigned oldState = m_worldState.load();
         // Only called by the collector thread when it is conducting.
@@ -2077,6 +2103,7 @@ bool Heap::stopTheMutator()
 
 NEVER_INLINE void Heap::resumeTheMutator()
 {
+    m_collector->assertIsCollectorThread();
     dataLogLnIf(HeapInternal::verbose, "Resuming the mutator.");
     for (;;) {
         unsigned oldState = m_worldState.load();
@@ -2099,6 +2126,7 @@ void Heap::stopIfNecessarySlow()
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
 
+    assertIsAccessHolder();
     stopIfNecessarySlow(m_worldState.load());
     m_mutatorDidRun = true;
 }
@@ -2212,6 +2240,8 @@ void Heap::acquireAccessSlow()
         RELEASE_ASSERT(!(oldState & stoppedBit));
         unsigned newState = oldState | hasAccessBit;
         if (m_worldState.compareExchangeWeak(oldState, newState)) {
+            noteAccessAcquired();
+            assertIsAccessHolder();
             handleNeedCollectionEpilogue();
             m_mutatorDidRun = true;
             stopIfNecessary();
@@ -2230,7 +2260,10 @@ void Heap::releaseAccessSlow()
         RELEASE_ASSERT(!(oldState & needCollectionEpilogueBit), oldState);
 
         if ((oldState & mutatorHasConnBit) && !m_collector->tryEnsureThreadForWork()) [[unlikely]] {
+            // releaseAccess() has noted the release already, and the conductor asserts that it holds access.
+            noteAccessAcquired();
             collectInMutatorThreadUntilDone();
+            noteAccessReleased();
             continue;
         }
 
@@ -2324,6 +2357,7 @@ void Heap::setNeedCollectionEpilogue()
 
 void Heap::waitWhileNeedCollectionEpilogue()
 {
+    m_collector->assertIsCollectorThread();
     for (;;) {
         unsigned oldState = m_worldState.load();
         if (!(oldState & needCollectionEpilogueBit)) {
@@ -2345,6 +2379,8 @@ void Heap::setMutatorWaiting()
 
 void Heap::clearMutatorWaiting()
 {
+    // The waiter, or the conductor serving it.
+    ASSERT(currentThreadIsAccessHolder() || m_collector->currentThreadIsConductor());
     unsigned oldState = m_worldState.exchangeAnd(~mutatorWaitingBit);
     if (oldState & mutatorWaitingBit) {
         RELEASE_ASSERT(oldState & hasAccessBit, oldState);
@@ -3036,6 +3072,7 @@ void Heap::collectIfNecessaryOrDefer(GCDeferralContext* deferralContext)
 
     if (!m_isSafeToCollect)
         return;
+    assertIsAccessHolder();
 
     switch (mutatorState()) {
     case MutatorState::Running:
@@ -3484,6 +3521,7 @@ void Heap::addMarkingConstraint(std::unique_ptr<MarkingConstraint> constraint)
     if (!Options::useGC()) [[unlikely]]
         return;
     ASSERT(!m_isShuttingDown);
+    assertIsAccessHolder();
     waitForMembershipChange(m_collector->requestMembershipChange({ Collector::MembershipChange::Kind::AddConstraint, this, WTF::move(constraint) }));
 }
 
@@ -3515,6 +3553,7 @@ void Heap::preventCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     if (!m_isSafeToCollect)
         return;
+    assertIsAccessHolder();
     
     // Stops the collectContinuously thread from starting a collection. Unlocked by allowCollection(),
     // see PreventCollectionScope.

@@ -49,7 +49,6 @@
 #include "MathVariant.h"
 #include "Range.h"
 #include "RenderBlockFlowInlines.h"
-#include "RenderCombineText.h"
 #include "RenderElementInlines.h"
 #include "RenderLayer.h"
 #include "RenderObjectInlines.h"
@@ -60,6 +59,7 @@
 #include "SVGElementTypeHelpers.h"
 #include "SelectionGeometry.h"
 #include "Settings.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include "SurrogatePairAwareTextIterator.h"
 #include "Text.h"
 #include "TextResourceDecoder.h"
@@ -101,7 +101,7 @@ struct SameSizeAsRenderText : public RenderObject, private Layout::InlineTextBox
     float candidateTextSize;
     float widths[4];
     String text;
-    uint32_t bitfields : 15;
+    uint32_t bitfields : 14;
 };
 
 static_assert(sizeof(RenderText) == sizeof(SameSizeAsRenderText), "RenderText should stay small");
@@ -122,7 +122,7 @@ private:
 
 using SecureTextTimerMap = SingleThreadWeakHashMap<RenderText, std::unique_ptr<SecureTextTimer>>;
 
-static SecureTextTimerMap& LEGACY_NODELETE secureTextTimers()
+NODELETE static SecureTextTimerMap& secureTextTimers()
 {
     static NeverDestroyed<SecureTextTimerMap> map;
     return map.get();
@@ -139,7 +139,7 @@ inline void SecureTextTimer::restart(unsigned offsetAfterLastTypedCharacter)
     startOneShot(1_s * m_renderer.settings().passwordEchoDurationInSeconds());
 }
 
-inline unsigned LEGACY_NODELETE SecureTextTimer::takeOffsetAfterLastTypedCharacter()
+NODELETE inline unsigned SecureTextTimer::takeOffsetAfterLastTypedCharacter()
 {
     unsigned offset = m_offsetAfterLastTypedCharacter;
     m_offsetAfterLastTypedCharacter = 0;
@@ -153,19 +153,13 @@ void SecureTextTimer::fired()
     m_renderer.setText(m_renderer.text(), true /* forcing setting text as it may be masked later */);
 }
 
-static HashMap<SingleThreadWeakRef<const RenderText>, String>& LEGACY_NODELETE originalTextMap()
+NODELETE static HashMap<SingleThreadWeakRef<const RenderText>, String>& originalTextMap()
 {
     static NeverDestroyed<HashMap<SingleThreadWeakRef<const RenderText>, String>> map;
     return map;
 }
 
-static HashMap<SingleThreadWeakRef<const RenderText>, SingleThreadWeakPtr<RenderBoxModelObject>>& LEGACY_NODELETE inlineWrapperForDisplayContentsMap()
-{
-    static NeverDestroyed<HashMap<SingleThreadWeakRef<const RenderText>, SingleThreadWeakPtr<RenderBoxModelObject>>> map;
-    return map;
-}
-
-static constexpr char16_t LEGACY_NODELETE convertNoBreakSpaceToSpace(char16_t character)
+NODELETE static constexpr char16_t convertNoBreakSpaceToSpace(char16_t character)
 {
     return character == noBreakSpace ? ' ' : character;
 }
@@ -343,7 +337,7 @@ String capitalize(const String& string, char32_t previousCharacter, const AtomSt
     return result == string ? string : result.toString();
 }
 
-static LayoutRect LEGACY_NODELETE snappedSelectionRect(const LayoutRect& selectionRect, float logicalRight, WritingMode writingMode)
+NODELETE static LayoutRect snappedSelectionRect(const LayoutRect& selectionRect, float logicalRight, WritingMode writingMode)
 {
     auto snappedSelectionRect = enclosingIntRect(selectionRect);
     LayoutUnit logicalWidth = snappedSelectionRect.width();
@@ -468,7 +462,7 @@ ASCIILiteral RenderText::renderName() const
     return "RenderText"_s;
 }
 
-Text* LEGACY_NODELETE RenderText::textNode() const
+NODELETE Text* RenderText::textNode() const
 {
     return downcast<Text>(RenderObject::node());
 }
@@ -489,17 +483,64 @@ bool RenderText::computeUseBackslashAsYenSymbol() const
 
 void RenderText::inheritStyleFromParent()
 {
+    if (inheritsStyleFromDisplayContentsParent())
+        return;
     CheckedPtr parentRenderer = parent();
     CheckedRef parentStyle = parentRenderer->style();
     auto& style = mutableStyle();
     style.inheritFrom(parentStyle);
     style.inheritUnicodeBidiFrom(parentStyle);
-    auto mayHaveFirstLineStyle = parentRenderer->mayHaveFirstLineStyle();
+    // Text lengths resolve like the lengths of the content it is in.
+    style.setUseSVGZoomRulesForLength(parentStyle->useSVGZoomRulesForLength());
+    auto mayHaveFirstLineStyle = parentRenderer->layoutBox().mayHaveFirstLineStyle();
     setMayHaveFirstLineStyle(mayHaveFirstLineStyle);
     // Measuring depends on the first-line font. It can change with the parent style or with a move to another parent,
     // which doesn't send styleDidChange.
     if (mayHaveFirstLineStyle)
         LayoutIntegration::BoxTreeUpdater::updateSimplifiedMeasuring(*this);
+}
+
+void RenderText::setStyleInheritedFromDisplayContentsParent(Style::ComputedStyle&& style)
+{
+    bool didChangeStyleSource = !inheritsStyleFromDisplayContentsParent();
+    setInheritsStyleFromDisplayContentsParent(true);
+    // The style doesn't come from the parent box, so neither does a first-line style.
+    setMayHaveFirstLineStyle(false);
+    auto oldStyle = mutableStyle().replace(WTF::move(style));
+    // A renderer that is not attached yet gets its first style notification on attach.
+    if (!parent())
+        return;
+    displayContentsParentStyleDidChange(oldStyle, didChangeStyleSource);
+}
+
+void RenderText::clearStyleInheritedFromDisplayContentsParent()
+{
+    if (!inheritsStyleFromDisplayContentsParent())
+        return;
+    setInheritsStyleFromDisplayContentsParent(false);
+    if (!parent())
+        return;
+    auto oldStyle = Style::ComputedStyle::clone(style());
+    inheritStyleFromParent();
+    displayContentsParentStyleDidChange(oldStyle, true);
+}
+
+void RenderText::displayContentsParentStyleDidChange(const Style::ComputedStyle& oldStyle, bool didChangeStyleSource)
+{
+    auto diff = Style::difference(oldStyle, style());
+    // Inline layout has simpler paths for text that inherits from its parent box.
+    bool needsLineLayoutInvalidation = didChangeStyleSource || diff == Style::DifferenceResult::Layout;
+    if (needsLineLayoutInvalidation && LayoutIntegration::BoxTreeUpdater::isInLiveFormattingContext(*this)) {
+        if (CheckedPtr container = LayoutIntegration::LineLayout::blockContainer(*this))
+            container->invalidateLineLayout(RenderBlockFlow::InvalidationReason::ContentChange);
+    }
+    if (diff == Style::DifferenceResult::Equal)
+        return;
+    // The text has no parent style change to take care of it.
+    repaint();
+    if (diff == Style::DifferenceResult::Overflow)
+        parent()->setNeedsLayoutForOverflowChange();
+    styleDidChange(diff, &oldStyle);
 }
 
 void RenderText::layoutBoxContentDidChange()
@@ -559,6 +600,13 @@ void RenderText::styleDidChange(Style::Difference diff, const Style::ComputedSty
         // The secure text disc depends on the font.
         if (fontChanged && newStyle.textSecurity() != TextSecurity::None)
             layoutBoxContentDidChange();
+        auto combinedTextMayHaveChanged = oldStyle->textCombine() != newStyle.textCombine()
+            || (newStyle.textCombine() != TextCombine::None && (fontChanged || oldStyle->writingMode() != newStyle.writingMode()));
+        if (combinedTextMayHaveChanged && LayoutIntegration::BoxTreeUpdater::updateCombinedText(*this) && LayoutIntegration::BoxTreeUpdater::isInLiveFormattingContext(*this)) {
+            // Combined text is a single inline item.
+            if (CheckedPtr container = LayoutIntegration::LineLayout::blockContainer(*this))
+                container->invalidateLineLayout(RenderBlockFlow::InvalidationReason::ContentChange);
+        }
     }
 
     // Accessibility reads the non-inherited properties of text from the parent.
@@ -575,8 +623,6 @@ void RenderText::willBeDestroyed()
 
     if (m_originalTextDiffersFromRendered)
         originalTextMap().remove(this);
-
-    setInlineWrapperForDisplayContents(nullptr);
 
     RenderObject::willBeDestroyed();
 }
@@ -610,6 +656,12 @@ Vector<IntRect> RenderText::absoluteRectsForRange(unsigned start, unsigned end, 
 // Full annotations are added in this class.
 void RenderText::collectSelectionGeometries(Vector<SelectionGeometry>& rects, unsigned start, unsigned end)
 {
+    CheckedPtr lineLayout = LayoutIntegration::LineLayout::containing(*this);
+    if (!lineLayout)
+        return;
+    // Selection extents span the lines of the block that establishes our inline formatting context.
+    CheckedRef formattingContextRoot = lineLayout->flow();
+
     for (auto textBox = InlineIterator::lineLeftmostTextBoxFor(*this); textBox; textBox = textBox.traverseNextTextBox()) {
         LayoutRect rect;
         if (start <= textBox->start() && textBox->end() <= end)
@@ -633,11 +685,10 @@ void RenderText::collectSelectionGeometries(Vector<SelectionGeometry>& rects, un
                 rect.shiftXEdgeTo(textBox->lineBox().logicalTop());
         }
 
-        RenderBlock* containingBlock = this->containingBlock();
         // Map rect, extended left to leftOffset, and right to rightOffset, through transforms to get minX and maxX.
-        LogicalSelectionOffsetCaches cache(*containingBlock);
-        LayoutUnit leftOffset = containingBlock->logicalLeftSelectionOffset(*containingBlock, LayoutUnit(textBox->logicalTop()), cache);
-        LayoutUnit rightOffset = containingBlock->logicalRightSelectionOffset(*containingBlock, LayoutUnit(textBox->logicalTop()), cache);
+        LogicalSelectionOffsetCaches cache(formattingContextRoot);
+        LayoutUnit leftOffset = formattingContextRoot->logicalLeftSelectionOffset(formattingContextRoot, LayoutUnit(textBox->logicalTop()), cache);
+        LayoutUnit rightOffset = formattingContextRoot->logicalRightSelectionOffset(formattingContextRoot, LayoutUnit(textBox->logicalTop()), cache);
         LayoutRect extentsRect = rect;
         if (textBox->isHorizontal()) {
             extentsRect.setX(leftOffset);
@@ -912,7 +963,7 @@ static PositionWithAffinity createPositionWithAffinityAfterAdjustingOffsetForBiD
 
         auto previousRun = run->nextLineLeftwardOnLineIgnoringLineBreak();
         if ((previousRun && previousRun->bidiLevel() == run->bidiLevel())
-            || run->renderer().containingBlock()->writingMode().bidiDirection() == run->direction()) // FIXME: left on 12CBA
+            || run->formattingContextRoot().writingMode().bidiDirection() == run->direction()) // FIXME: left on 12CBA
             return createPositionWithAffinityForBox(run, run->leftmostCaretOffset(), shouldAffinityBeDownstream);
 
         if (previousRun && previousRun->bidiLevel() > run->bidiLevel()) {
@@ -943,7 +994,7 @@ static PositionWithAffinity createPositionWithAffinityAfterAdjustingOffsetForBiD
 
     auto nextRun = run->nextLineRightwardOnLineIgnoringLineBreak();
     if ((nextRun && nextRun->bidiLevel() == run->bidiLevel())
-        || run->renderer().containingBlock()->writingMode().bidiDirection() == run->direction())
+        || run->formattingContextRoot().writingMode().bidiDirection() == run->direction())
         return createPositionWithAffinityForBox(run, run->rightmostCaretOffset(), shouldAffinityBeDownstream);
 
     // offset is on the right edge
@@ -1024,14 +1075,12 @@ PositionWithAffinity RenderText::positionForPoint(const LayoutPoint& point, HitT
     return createPositionWithAffinity(0, Affinity::Downstream);
 }
 
-static inline std::optional<float> LEGACY_NODELETE combineTextWidth(const RenderText& renderer, const FontCascade& fontCascade, const Style::ComputedStyle& style)
+NODELETE static inline std::optional<float> combineTextWidth(const RenderText& renderer, const FontCascade& fontCascade, const Style::ComputedStyle& style)
 {
-    if (style.textCombine() == TextCombine::None)
+    if (style.textCombine() == TextCombine::None || !renderer.layoutBox().isCombined())
         return { };
-    auto* combineTextRenderer = dynamicDowncast<RenderCombineText>(renderer);
-    if (!combineTextRenderer)
-        return { };
-    return combineTextRenderer->isCombined() ? std::make_optional(combineTextRenderer->combinedTextWidth(fontCascade)) : std::nullopt;
+    // Combined text takes 1em.
+    return fontCascade.size();
 }
 
 ALWAYS_INLINE float RenderText::widthFromCache(const FontCascade& fontCascade, unsigned start, unsigned length, float xPos, SingleThreadWeakHashSet<const Font>* fallbackFonts, GlyphOverflow* glyphOverflow, const Style::ComputedStyle& style) const
@@ -1206,7 +1255,7 @@ RenderText::Widths RenderText::trimmedIntrinsicLogicalWidths(float leadingWidth,
     return widths;
 }
 
-static inline bool LEGACY_NODELETE isSpaceAccordingToStyle(char16_t c, const Style::ComputedStyle& style)
+NODELETE static inline bool isSpaceAccordingToStyle(char16_t c, const Style::ComputedStyle& style)
 {
     return c == ' ' || (c == noBreakSpace && style.nbspMode() == NBSPMode::Space);
 }
@@ -1557,7 +1606,7 @@ void RenderText::computeMinMaxIntrinsicLogicalWidths(float leadingWidth, SingleT
     clearContentLogicalWidthsInvalidation();
 }
 
-template<typename CharacterType> static inline bool LEGACY_NODELETE containsOnlyCollapsibleWhitespace(std::span<const CharacterType> characters, const Style::ComputedStyle& style)
+template<typename CharacterType> NODELETE static inline bool containsOnlyCollapsibleWhitespace(std::span<const CharacterType> characters, const Style::ComputedStyle& style)
 {
     for (auto character : characters) {
         if (!style.isCollapsibleWhiteSpace(character))
@@ -1574,7 +1623,7 @@ bool RenderText::containsOnlyCollapsibleWhitespace() const
 }
 
 // FIXME: merge this with isCSSSpace somehow
-template<typename CharacterType> static inline bool LEGACY_NODELETE containsOnlyPossiblyCollapsibleWhitespace(std::span<const CharacterType> characters)
+template<typename CharacterType> NODELETE static inline bool containsOnlyPossiblyCollapsibleWhitespace(std::span<const CharacterType> characters)
 {
     for (auto character : characters) {
         if (!(character == '\n' || character == ' ' || character == '\t'))
@@ -1636,7 +1685,7 @@ void RenderText::setSelectionState(HighlightState state)
         containingBlock->setSelectionState(state);
 }
 
-static inline bool LEGACY_NODELETE isInlineFlowOrEmptyText(const RenderObject& renderer)
+NODELETE static inline bool isInlineFlowOrEmptyText(const RenderObject& renderer)
 {
     if (renderer.isInlineBox())
         return true;
@@ -1940,6 +1989,10 @@ void RenderText::updateRenderedText()
         container->invalidateLineLayout(RenderBlockFlow::InvalidationReason::ContentChange);
     };
     invalidateLineLayoutIfNeeded();
+
+    // Accessibility exposes the rendered text (e.g. the bullets of a password field), so it needs to hear about style driven changes too.
+    if (AXObjectCache* cache = document().existingAXObjectCache())
+        cache->deferTextChangedIfNeeded(protect(textNode()));
 }
 
 void RenderText::setText(const String& newContent, bool force)
@@ -2056,7 +2109,7 @@ LayoutRect RenderText::collectSelectionGeometriesForLineBoxes(const RenderLayerM
 
     if (selectionState() == HighlightState::None)
         return LayoutRect();
-    if (!containingBlock())
+    if (!LayoutIntegration::LineLayout::containing(*this))
         return LayoutRect();
 
     // Now calculate startPos and endPos for painting selection.
@@ -2236,30 +2289,6 @@ StringView RenderText::stringView(unsigned start, std::optional<unsigned> stop) 
     ASSERT(destination <= length());
     ASSERT(start <= destination);
     return StringView { text() }.substring(start, destination - start);
-}
-
-RenderBoxModelObject* RenderText::inlineWrapperForDisplayContents()
-{
-    ASSERT(m_hasInlineWrapperForDisplayContents == inlineWrapperForDisplayContentsMap().contains(this));
-
-    if (!m_hasInlineWrapperForDisplayContents)
-        return nullptr;
-    return inlineWrapperForDisplayContentsMap().get(this);
-}
-
-void RenderText::setInlineWrapperForDisplayContents(RenderBoxModelObject* wrapper)
-{
-    ASSERT(m_hasInlineWrapperForDisplayContents == inlineWrapperForDisplayContentsMap().contains(this));
-
-    if (!wrapper) {
-        if (!m_hasInlineWrapperForDisplayContents)
-            return;
-        inlineWrapperForDisplayContentsMap().remove(*this);
-        m_hasInlineWrapperForDisplayContents = false;
-        return;
-    }
-    inlineWrapperForDisplayContentsMap().add(*this, wrapper);
-    m_hasInlineWrapperForDisplayContents = true;
 }
 
 } // namespace WebCore

@@ -36,17 +36,17 @@ class RenderMultiColumnFlow;
 class RenderTreeBuilder::MultiColumn {
     WTF_MAKE_TZONE_ALLOCATED(MultiColumn);
 public:
-    MultiColumn(RenderTreeBuilder&);
+    NODELETE MultiColumn(RenderTreeBuilder&);
 
     void updateAfterDescendants(RenderBlockFlow&);
     // Some renderers (column spanners) are moved out of the flow thread to live among column
     // sets. If |child| is such a renderer, resolve it to the placeholder that lives at the original
     // location in the tree.
-    RenderObject* LEGACY_NODELETE resolveMovedChild(RenderFragmentedFlow& enclosingFragmentedFlow, RenderObject* beforeChild);
+    NODELETE RenderObject* resolveMovedChild(RenderFragmentedFlow& enclosingFragmentedFlow, RenderObject* beforeChild);
     void restoreColumnSpannersForContainer(RenderMultiColumnFlow&, const RenderElement& container);
     void multiColumnDescendantInserted(RenderMultiColumnFlow&, RenderObject& newDescendant);
     void multiColumnRelativeWillBeRemoved(RenderMultiColumnFlow&, RenderObject& relative, RenderTreeBuilder::CanCollapseAnonymousBlock);
-    static RenderObject* LEGACY_NODELETE adjustBeforeChildForMultiColumnSpannerIfNeeded(RenderObject& beforeChild);
+    NODELETE static RenderObject* adjustBeforeChildForMultiColumnSpannerIfNeeded(RenderObject& beforeChild);
 
 private:
     void createFragmentedFlow(RenderBlockFlow&);

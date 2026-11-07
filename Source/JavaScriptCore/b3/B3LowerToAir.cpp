@@ -296,7 +296,7 @@ private:
         }
     }
 
-    bool LEGACY_NODELETE shouldCopyPropagate(Value* value)
+    NODELETE bool shouldCopyPropagate(Value* value)
     {
         switch (value->opcode()) {
         case Trunc:
@@ -336,7 +336,7 @@ private:
         {
         }
         
-        void LEGACY_NODELETE swap(ArgPromise& other)
+        NODELETE void swap(ArgPromise& other)
         {
             std::swap(m_arg, other.m_arg);
             std::swap(m_value, other.m_value);
@@ -351,7 +351,7 @@ private:
             swap(other);
         }
         
-        ArgPromise& LEGACY_NODELETE operator=(ArgPromise&& other)
+        NODELETE ArgPromise& operator=(ArgPromise&& other)
         {
             swap(other);
             return *this;
@@ -363,7 +363,7 @@ private:
                 RELEASE_ASSERT(m_wasWrapped);
         }
         
-        void LEGACY_NODELETE setTraps(bool value)
+        NODELETE void setTraps(bool value)
         {
             m_traps = value;
         }
@@ -373,7 +373,7 @@ private:
             m_trapOrigin = value;
         }
 
-        static ArgPromise LEGACY_NODELETE tmp(Value* value)
+        NODELETE static ArgPromise tmp(Value* value)
         {
             ArgPromise result;
             result.m_value = value;
@@ -382,14 +382,14 @@ private:
 
         explicit operator bool() const { return m_arg || m_value; }
 
-        Arg::Kind LEGACY_NODELETE kind() const
+        NODELETE Arg::Kind kind() const
         {
             if (!m_arg && m_value)
                 return Arg::Tmp;
             return m_arg.kind();
         }
 
-        const Arg& LEGACY_NODELETE peek() const
+        NODELETE const Arg& peek() const
         {
             return m_arg;
         }
@@ -525,12 +525,12 @@ private:
         return tmp;
     }
 
-    ArgPromise LEGACY_NODELETE tmpPromise(Value* value)
+    NODELETE ArgPromise tmpPromise(Value* value)
     {
         return ArgPromise::tmp(value);
     }
 
-    Tmp LEGACY_NODELETE tmpForType(Type type)
+    NODELETE Tmp tmpForType(Type type)
     {
         return m_code.newTmp(bankForType(type));
     }
@@ -552,7 +552,7 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    bool LEGACY_NODELETE canBeInternal(Value* value)
+    NODELETE bool canBeInternal(Value* value)
     {
         // If one of the internal things has already been computed, then we don't want to cause
         // it to be recomputed again.
@@ -994,7 +994,7 @@ private:
         m_blockWithNextInterference = m_block;
     }
 
-    bool LEGACY_NODELETE isMergeableValue(Value* v, B3::Opcode b3Opcode)
+    NODELETE bool isMergeableValue(Value* v, B3::Opcode b3Opcode)
     { 
         if (v->opcode() != b3Opcode)
             return false;
@@ -1018,7 +1018,7 @@ private:
     }
 
     template<IsLegalOffset Int>
-    std::optional<unsigned> LEGACY_NODELETE scaleForShl(Value* shl, Int offset, std::optional<Width> width = std::nullopt)
+    NODELETE std::optional<unsigned> scaleForShl(Value* shl, Int offset, std::optional<Width> width = std::nullopt)
     {
         if (shl->opcode() != Shl)
             return std::nullopt;
@@ -1254,7 +1254,7 @@ private:
         return Arg();
     }
 
-    Arg LEGACY_NODELETE bitImm64(Value* value)
+    NODELETE Arg bitImm64(Value* value)
     {
         if (value->hasInt()) {
             int64_t intValue = value->asInt();
@@ -1274,7 +1274,7 @@ private:
         return Arg();
     }
 
-    Arg LEGACY_NODELETE fpImm64(Value* value)
+    NODELETE Arg fpImm64(Value* value)
     {
         if (value->hasInt()) {
             int64_t intValue = value->asInt();
@@ -1284,7 +1284,7 @@ private:
         return Arg();
     }
 
-    Arg LEGACY_NODELETE fpImm128(Value* value)
+    NODELETE Arg fpImm128(Value* value)
     {
         if (value->hasV128()) {
             auto v128Value = value->asV128();
@@ -1294,7 +1294,7 @@ private:
         return Arg();
     }
 
-    Arg LEGACY_NODELETE zeroReg()
+    NODELETE Arg zeroReg()
     {
         return Arg::zeroReg();
     }
@@ -1443,7 +1443,7 @@ private:
     }
 
     // By convention, we use Oops to mean "I don't know".
-    Air::Opcode LEGACY_NODELETE tryOpcodeForType(
+    NODELETE Air::Opcode tryOpcodeForType(
         Air::Opcode opcode32, Air::Opcode opcode64, Air::Opcode opcodeDouble, Air::Opcode opcodeFloat, Type type)
     {
         Air::Opcode opcode;
@@ -1468,12 +1468,12 @@ private:
         return opcode;
     }
 
-    Air::Opcode LEGACY_NODELETE tryOpcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
+    NODELETE Air::Opcode tryOpcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
     {
         return tryOpcodeForType(opcode32, opcode64, Air::Oops, Air::Oops, type);
     }
 
-    Air::Opcode LEGACY_NODELETE opcodeForType(
+    NODELETE Air::Opcode opcodeForType(
         Air::Opcode opcode32, Air::Opcode opcode64, Air::Opcode opcodeDouble, Air::Opcode opcodeFloat, Type type)
     {
         Air::Opcode opcode = tryOpcodeForType(opcode32, opcode64, opcodeDouble, opcodeFloat, type);
@@ -1481,7 +1481,7 @@ private:
         return opcode;
     }
 
-    Air::Opcode LEGACY_NODELETE opcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
+    NODELETE Air::Opcode opcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
     {
         return tryOpcodeForType(opcode32, opcode64, Air::Oops, Air::Oops, type);
     }
@@ -1514,7 +1514,7 @@ private:
         append(opcode, result);
     }
 
-    Air::Opcode LEGACY_NODELETE opcodeBasedOnShiftKind(B3::Opcode b3Opcode, 
+    NODELETE Air::Opcode opcodeBasedOnShiftKind(B3::Opcode b3Opcode, 
         Air::Opcode shl32, Air::Opcode shl64, 
         Air::Opcode sshr32, Air::Opcode sshr64, 
         Air::Opcode zshr32, Air::Opcode zshr64)
@@ -1859,7 +1859,7 @@ private:
         return Inst(move, m_value, tmp(value), dest);
     }
     
-    Air::Opcode LEGACY_NODELETE storeOpcode(Width width, Bank bank)
+    NODELETE Air::Opcode storeOpcode(Width width, Bank bank)
     {
         using namespace Air;
         switch (width) {
@@ -1922,7 +1922,7 @@ private:
     }
 
     template<Air::Opcode i8, Air::Opcode i16, Air::Opcode i32, Air::Opcode i64, Air::Opcode f32, Air::Opcode f64>
-    constexpr Air::Opcode LEGACY_NODELETE simdOpcode(SIMDLane lane)
+    NODELETE constexpr Air::Opcode simdOpcode(SIMDLane lane)
     {
         if (scalarTypeIsFloatingPoint(lane)) {
             switch (elementByteSize(lane)) {
@@ -1948,7 +1948,7 @@ private:
     }
 
     template<Air::Opcode unsignedI8, Air::Opcode signedI8, Air::Opcode unsignedI16, Air::Opcode signedI16, Air::Opcode i32, Air::Opcode i64, Air::Opcode f32, Air::Opcode f64>
-    constexpr Air::Opcode LEGACY_NODELETE simdOpcode(SIMDLane lane, SIMDSignMode signMode)
+    NODELETE constexpr Air::Opcode simdOpcode(SIMDLane lane, SIMDSignMode signMode)
     {
         if (scalarTypeIsFloatingPoint(lane)) {
             switch (elementByteSize(lane)) {
@@ -3116,14 +3116,14 @@ private:
 
         CompareChainNode() = default;
 
-        bool LEGACY_NODELETE isComparison() const { return type == COMPARE; }
-        bool LEGACY_NODELETE isLogicOp() const { return type == AND || type == OR; }
-        bool LEGACY_NODELETE isLegalFirstCombine() const
+        NODELETE bool isComparison() const { return type == COMPARE; }
+        NODELETE bool isLogicOp() const { return type == AND || type == OR; }
+        NODELETE bool isLegalFirstCombine() const
         {
             return left->isComparison() && right->isComparison();
         }
 
-        void LEGACY_NODELETE setCondition(MacroAssembler::RelationalCondition cond) {
+        NODELETE void setCondition(MacroAssembler::RelationalCondition cond) {
           ASSERT(isLogicOp());
           relCond = cond;
           if (requiresNegation) {
@@ -3132,7 +3132,7 @@ private:
           }
         }
 
-        void LEGACY_NODELETE markRequiresNegation()
+        NODELETE void markRequiresNegation()
         {
             if (isComparison()) {
                 // Immediately negate the condition for leaf nodes
@@ -3162,7 +3162,7 @@ private:
 
     class CompareSequence {
     public:
-        void LEGACY_NODELETE setInitialCompare(Air::Opcode opcode, Value* left, Value* right)
+        NODELETE void setInitialCompare(Air::Opcode opcode, Value* left, Value* right)
         {
             m_initialLeft = left;
             m_initialRight = right;
@@ -3170,22 +3170,22 @@ private:
             m_hasInitialCompare = true;
         }
 
-        bool LEGACY_NODELETE hasInitialCompare() const { return m_hasInitialCompare; }
-        Value* LEGACY_NODELETE initialLeft() const { return m_initialLeft; }
-        Value* LEGACY_NODELETE initialRight() const { return m_initialRight; }
-        Air::Opcode LEGACY_NODELETE initialOpcode() const { return m_initialOpcode; }
+        NODELETE bool hasInitialCompare() const { return m_hasInitialCompare; }
+        NODELETE Value* initialLeft() const { return m_initialLeft; }
+        NODELETE Value* initialRight() const { return m_initialRight; }
+        NODELETE Air::Opcode initialOpcode() const { return m_initialOpcode; }
 
         void addConditionalCompare(Air::Opcode opcode, MacroAssembler::RelationalCondition ccmpCondition, MacroAssembler::RelationalCondition defaultFlags, Value* left, Value* right)
         {
             m_conditionalCompares.append({ ccmpCondition, defaultFlags, left, right, opcode });
         }
 
-        const Vector<ConditionalCompare, 16>& LEGACY_NODELETE conditionalCompares() const
+        NODELETE const Vector<ConditionalCompare, 16>& conditionalCompares() const
         {
             return m_conditionalCompares;
         }
 
-        size_t LEGACY_NODELETE size() const { return m_conditionalCompares.size(); }
+        NODELETE size_t size() const { return m_conditionalCompares.size(); }
 
     private:
         Value* m_initialLeft { nullptr };
@@ -3197,7 +3197,7 @@ private:
 
 #if CPU(ARM64)
 
-    static bool LEGACY_NODELETE isComparisonOpcode(B3::Opcode opcode)
+    NODELETE static bool isComparisonOpcode(B3::Opcode opcode)
     {
         switch (opcode) {
         case Equal:
@@ -3216,7 +3216,7 @@ private:
         }
     }
 
-    static MacroAssembler::RelationalCondition LEGACY_NODELETE relationalConditionForOpcode(B3::Opcode opcode)
+    NODELETE static MacroAssembler::RelationalCondition relationalConditionForOpcode(B3::Opcode opcode)
     {
         switch (opcode) {
         case Equal:
@@ -3259,7 +3259,7 @@ private:
     //     └─────────────────┴─────┴─────┴─────┴─────┘
     // B3 LessThan maps to Below (ConditionLO = C==0) not LessThan (ConditionLT = N!=V)
     // B3 LessEqual maps to BelowOrEqual (ConditionLS = C==0 || Z==1) not LessThanOrEqual (ConditionLE = N!=V || Z==1)
-    static MacroAssembler::RelationalCondition LEGACY_NODELETE floatRelationalConditionForOpcode(B3::Opcode opcode)
+    NODELETE static MacroAssembler::RelationalCondition floatRelationalConditionForOpcode(B3::Opcode opcode)
     {
         switch (opcode) {
         case Equal:
@@ -3280,7 +3280,7 @@ private:
         }
     }
 
-    static Air::Opcode LEGACY_NODELETE compareOnFlagsOpcodeForType(B3::Type type)
+    NODELETE static Air::Opcode compareOnFlagsOpcodeForType(B3::Type type)
     {
         switch (type.kind()) {
         case Float:
@@ -3297,7 +3297,7 @@ private:
         }
     }
 
-    static Air::Opcode LEGACY_NODELETE compareConditionallyOnFlagsOpcodeForType(B3::Type type)
+    NODELETE static Air::Opcode compareConditionallyOnFlagsOpcodeForType(B3::Type type)
     {
         switch (type.kind()) {
         case Float:
@@ -3554,7 +3554,7 @@ private:
 
     // Check if an immediate can be encoded in a ccmp instruction.
     // ccmp supports 5-bit immediates (0-31 for ccmp, -31 to -1 for ccmn).
-    static bool LEGACY_NODELETE isValidConditionalCompareImmediate(int64_t value)
+    NODELETE static bool isValidConditionalCompareImmediate(int64_t value)
     {
         return -31 <= value && value <= 31;
     }
@@ -3562,7 +3562,7 @@ private:
     // Calculate the NZCV default flags for a condition.
     // This is what the flags will be set to if the ccmp predicate is false.
     // Strategy: set the MINIMUM flags needed to make the condition evaluate to true.
-    static unsigned LEGACY_NODELETE nzcvForCondition(MacroAssembler::RelationalCondition cond)
+    NODELETE static unsigned nzcvForCondition(MacroAssembler::RelationalCondition cond)
     {
         // NZCV bits: N=8, Z=4, C=2, V=1
         enum Flag : unsigned {
@@ -4385,12 +4385,12 @@ private:
         append(Move, m_edx, tmp(m_value));
     }
     
-    Air::Opcode LEGACY_NODELETE loadLinkOpcode(Width width, bool fence)
+    NODELETE Air::Opcode loadLinkOpcode(Width width, bool fence)
     {
         return fence ? OPCODE_FOR_WIDTH(LoadLinkAcq, width) : OPCODE_FOR_WIDTH(LoadLink, width);
     }
     
-    Air::Opcode LEGACY_NODELETE storeCondOpcode(Width width, bool fence)
+    NODELETE Air::Opcode storeCondOpcode(Width width, bool fence)
     {
         return fence ? OPCODE_FOR_WIDTH(StoreCondRel, width) : OPCODE_FOR_WIDTH(StoreCond, width);
     }

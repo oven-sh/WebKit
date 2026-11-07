@@ -199,7 +199,7 @@ GraphicsContext* RenderLayerFilters::beginFilterEffect(RenderElement& renderer, 
 
     auto filterScale = m_filterScale;
     if (usesSVGUserSpace)
-        filterScale = (m_filterScale * SVGTransformComputation(downcast<RenderLayerModelObject>(renderer)).calculateAccumulatedSVGAncestorTransformScale()).expandedTo(context.scaleFactor());
+        filterScale = (m_filterScale * SVGTransformComputation(downcast<RenderLayerModelObject>(renderer)).computeAccumulatedSVGAncestorTransformScale()).expandedTo(context.scaleFactor());
 
     auto geometry = FilterGeometry {
         .referenceBox = referenceBox,
@@ -239,7 +239,10 @@ GraphicsContext* RenderLayerFilters::beginFilterEffect(RenderElement& renderer, 
         return nullptr;
 
     Ref filter = *m_filter;
-    if (!filter->hasFilterThatMovesPixels())
+    // Like the legacy engine, paint the whole SVG source graphic, so the result does not depend on the dirty rect.
+    if (usesSVGUserSpace)
+        m_repaintRect = filterRegion;
+    else if (!filter->hasFilterThatMovesPixels())
         m_repaintRect = dirtyRect;
     else if (hasUpdatedBackingStore || !hasSourceImage())
         m_repaintRect = filterRegion;

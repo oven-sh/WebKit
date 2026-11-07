@@ -22,6 +22,7 @@
 #include "RenderProgress.h"
 
 #include "HTMLProgressElement.h"
+#include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderTheme.h"
@@ -114,7 +115,7 @@ void RenderProgress::updateAnimationState()
         m_animationTimer.stop();
 }
 
-HTMLProgressElement* LEGACY_NODELETE RenderProgress::progressElement() const
+NODELETE HTMLProgressElement* RenderProgress::progressElement() const
 {
     if (!element())
         return nullptr;

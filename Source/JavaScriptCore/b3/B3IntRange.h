@@ -58,12 +58,12 @@ public:
     }
 
     template<typename T>
-    static IntRange LEGACY_NODELETE top()
+    NODELETE static IntRange top()
     {
         return IntRange(std::numeric_limits<T>::min(), std::numeric_limits<T>::max());
     }
 
-    static IntRange LEGACY_NODELETE top(Type type)
+    NODELETE static IntRange top(Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -77,7 +77,7 @@ public:
     }
 
     template<typename T>
-    static IntRange LEGACY_NODELETE rangeForMask(T mask)
+    NODELETE static IntRange rangeForMask(T mask)
     {
         if (mask == static_cast<T>(-1))
             return top<T>();
@@ -88,7 +88,7 @@ public:
         return IntRange(0, mask);
     }
 
-    static IntRange LEGACY_NODELETE rangeForMask(int64_t mask, Type type)
+    NODELETE static IntRange rangeForMask(int64_t mask, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -102,7 +102,7 @@ public:
     }
 
     template<typename T>
-    static IntRange LEGACY_NODELETE rangeForZShr(int32_t shiftAmount)
+    NODELETE static IntRange rangeForZShr(int32_t shiftAmount)
     {
         std::make_unsigned_t<T> mask = 0;
         mask--;
@@ -110,7 +110,7 @@ public:
         return rangeForMask<T>(static_cast<T>(mask));
     }
 
-    static IntRange LEGACY_NODELETE rangeForZShr(int32_t shiftAmount, Type type)
+    NODELETE static IntRange rangeForZShr(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -123,8 +123,8 @@ public:
         }
     }
 
-    int64_t LEGACY_NODELETE min() const { return m_min; }
-    int64_t LEGACY_NODELETE max() const { return m_max; }
+    NODELETE int64_t min() const { return m_min; }
+    NODELETE int64_t max() const { return m_max; }
 
     void dump(PrintStream& out) const
     {
@@ -132,7 +132,7 @@ public:
     }
 
     template<typename T>
-    bool LEGACY_NODELETE couldOverflowAdd(const IntRange& other)
+    NODELETE bool couldOverflowAdd(const IntRange& other)
     {
         return sumOverflows<T>(m_min, other.m_min)
             || sumOverflows<T>(m_min, other.m_max)
@@ -140,7 +140,7 @@ public:
             || sumOverflows<T>(m_max, other.m_max);
     }
 
-    bool LEGACY_NODELETE couldOverflowAdd(const IntRange& other, Type type)
+    NODELETE bool couldOverflowAdd(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -153,7 +153,7 @@ public:
     }
 
     template<typename T>
-    bool LEGACY_NODELETE couldOverflowSub(const IntRange& other)
+    NODELETE bool couldOverflowSub(const IntRange& other)
     {
         return differenceOverflows<T>(m_min, other.m_min)
             || differenceOverflows<T>(m_min, other.m_max)
@@ -161,7 +161,7 @@ public:
             || differenceOverflows<T>(m_max, other.m_max);
     }
 
-    bool LEGACY_NODELETE couldOverflowSub(const IntRange& other, Type type)
+    NODELETE bool couldOverflowSub(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -174,7 +174,7 @@ public:
     }
 
     template<typename T>
-    bool LEGACY_NODELETE couldOverflowMul(const IntRange& other)
+    NODELETE bool couldOverflowMul(const IntRange& other)
     {
         return productOverflows<T>(m_min, other.m_min)
             || productOverflows<T>(m_min, other.m_max)
@@ -182,7 +182,7 @@ public:
             || productOverflows<T>(m_max, other.m_max);
     }
 
-    bool LEGACY_NODELETE couldOverflowMul(const IntRange& other, Type type)
+    NODELETE bool couldOverflowMul(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -195,7 +195,7 @@ public:
     }
 
     template<typename T>
-    IntRange LEGACY_NODELETE shl(int32_t shiftAmount)
+    NODELETE IntRange shl(int32_t shiftAmount)
     {
         shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
         T newMin = static_cast<T>(m_min) << static_cast<T>(shiftAmount);
@@ -210,7 +210,7 @@ public:
         return IntRange(newMin, newMax);
     }
 
-    IntRange LEGACY_NODELETE shl(int32_t shiftAmount, Type type)
+    NODELETE IntRange shl(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -224,7 +224,7 @@ public:
     }
 
     template<typename T>
-    IntRange LEGACY_NODELETE sShr(int32_t shiftAmount)
+    NODELETE IntRange sShr(int32_t shiftAmount)
     {
         shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
         T newMin = static_cast<T>(m_min) >> static_cast<T>(shiftAmount);
@@ -233,7 +233,7 @@ public:
         return IntRange(newMin, newMax);
     }
 
-    IntRange LEGACY_NODELETE sShr(int32_t shiftAmount, Type type)
+    NODELETE IntRange sShr(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -247,7 +247,7 @@ public:
     }
 
     template<typename T>
-    IntRange LEGACY_NODELETE zShr(int32_t shiftAmount)
+    NODELETE IntRange zShr(int32_t shiftAmount)
     {
         shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
 
@@ -268,7 +268,7 @@ public:
         return IntRange(newMin, newMax);
     }
 
-    IntRange LEGACY_NODELETE zShr(int32_t shiftAmount, Type type)
+    NODELETE IntRange zShr(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -282,14 +282,14 @@ public:
     }
 
     template<typename T>
-    IntRange LEGACY_NODELETE add(const IntRange& other)
+    NODELETE IntRange add(const IntRange& other)
     {
         if (couldOverflowAdd<T>(other))
             return top<T>();
         return IntRange(m_min + other.m_min, m_max + other.m_max);
     }
 
-    IntRange LEGACY_NODELETE add(const IntRange& other, Type type)
+    NODELETE IntRange add(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -303,14 +303,14 @@ public:
     }
 
     template<typename T>
-    IntRange LEGACY_NODELETE sub(const IntRange& other)
+    NODELETE IntRange sub(const IntRange& other)
     {
         if (couldOverflowSub<T>(other))
             return top<T>();
         return IntRange(m_min - other.m_max, m_max - other.m_min);
     }
 
-    IntRange LEGACY_NODELETE sub(const IntRange& other, Type type)
+    NODELETE IntRange sub(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -351,7 +351,7 @@ public:
     }
 
     template<typename T>
-    IntRange LEGACY_NODELETE sExt()
+    NODELETE IntRange sExt()
     {
         ASSERT(m_min >= INT32_MIN);
         ASSERT(m_max <= INT32_MAX);
@@ -405,7 +405,7 @@ public:
         return top<T>();
     }
 
-    IntRange LEGACY_NODELETE zExt32()
+    NODELETE IntRange zExt32()
     {
         ASSERT(m_min >= INT32_MIN);
         ASSERT(m_max <= INT32_MAX);

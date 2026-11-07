@@ -65,7 +65,6 @@
 #import "WebContextMenuProxy.h"
 #import "WebEventModifier.h"
 #import "WebFrameProxy.h"
-#import "WebPage.h"
 #import "WebPageLoadTiming.h"
 #import "WebPageMessages.h"
 #import "WebPageProxyInternals.h"
@@ -115,6 +114,8 @@
 #import <pal/spi/mac/QuarantineSPI.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/Borrow.h>
+#import <wtf/Box.h>
+#import <wtf/CallbackAggregator.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/cf/TypeCastsCF.h>
 #import <wtf/cf/VectorCF.h>
@@ -193,7 +194,7 @@ void WebPageProxy::didGeneratePageLoadTiming(const WebPageLoadTiming& timing)
         state->didGeneratePageLoadTiming(timing);
 }
 
-static bool LEGACY_NODELETE exceedsRenderTreeSizeSizeThreshold(uint64_t thresholdSize, uint64_t committedSize)
+NODELETE static bool exceedsRenderTreeSizeSizeThreshold(uint64_t thresholdSize, uint64_t committedSize)
 {
     const double thesholdSizeFraction = 0.5; // Empirically-derived.
     return committedSize > thresholdSize * thesholdSizeFraction;
@@ -1378,31 +1379,6 @@ void WebPageProxy::replaceImageForRemoveBackground(const ElementContext& element
 
 #endif
 
-bool WebPageProxy::useGPUProcessForDOMRenderingEnabled() const
-{
-    if (RetainPtr useGPUProcessForDOMRendering = [[NSUserDefaults standardUserDefaults] objectForKey:@"WebKit2GPUProcessForDOMRendering"])
-        return [useGPUProcessForDOMRendering boolValue];
-
-    if (protect(preferences())->useGPUProcessForDOMRenderingEnabled())
-        return true;
-
-    Ref configuration = m_configuration;
-#if ENABLE(REMOTE_LAYER_TREE_ON_MAC_BY_DEFAULT)
-    if (configuration->lockdownModeEnabled())
-        return true;
-#endif
-
-    HashSet<Ref<const WebPageProxy>> visitedPages;
-    visitedPages.add(*this);
-    for (RefPtr page = configuration->relatedPage(); page && !visitedPages.contains(*page); page = page->configuration().relatedPage()) {
-        if (protect(page->preferences())->useGPUProcessForDOMRenderingEnabled())
-            return true;
-        visitedPages.add(*page);
-    }
-
-    return false;
-}
-
 bool WebPageProxy::shouldForceForegroundPriorityForClientNavigation() const
 {
     // The client may request that we do client navigations at foreground priority, even if the
@@ -1952,7 +1928,18 @@ void WebPageProxy::createTextIndicatorForElementWithID(const String& elementID, 
         return;
     }
 
-    protect(legacyMainFrameProcess())->sendWithAsyncReply(Messages::WebPage::CreateTextIndicatorForElementWithID(elementID), WTF::move(completionHandler), webPageIDInMainFrameProcess());
+    auto mainFrameProcessResult = Box<RefPtr<WebCore::TextIndicator>>::create();
+    auto otherProcessesResult = Box<RefPtr<WebCore::TextIndicator>>::create();
+    Ref aggregator = CallbackAggregator::create([mainFrameProcessResult, otherProcessesResult, completionHandler = WTF::move(completionHandler)] mutable {
+        completionHandler(*mainFrameProcessResult ? WTF::move(*mainFrameProcessResult) : WTF::move(*otherProcessesResult));
+    });
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        auto result = &process == &legacyMainFrameProcess() ? mainFrameProcessResult : otherProcessesResult;
+        process.sendWithAsyncReply(Messages::WebPage::CreateTextIndicatorForElementWithID(elementID), [aggregator, result](RefPtr<WebCore::TextIndicator>&& textIndicator) {
+            if (textIndicator && !*result)
+                *result = WTF::move(textIndicator);
+        }, pageID);
+    });
 }
 
 void WebPageProxy::setTextIndicatorFromFrame(FrameIdentifier frameID, RefPtr<WebCore::TextIndicator>&& textIndicator, WebCore::TextIndicatorLifetime lifetime)

@@ -66,6 +66,8 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
         WI.SourceCode.addEventListener(WI.SourceCode.Event.SourceMapAdded, this._handleSourceCodeSourceMapAdded, this);
 
+        this._pauseSession = null;
+
         this._breakpointsEnabledSetting = new WI.Setting("breakpoints-enabled", true);
         this._asyncStackTraceDepthSetting = new WI.Setting("async-stack-trace-depth", 200);
 
@@ -351,6 +353,11 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         }
 
         return false;
+    }
+
+    get pauseSession()
+    {
+        return this._pauseSession;
     }
 
     get activeCallFrame()
@@ -1031,7 +1038,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
         this._ignoreBreakpointDisplayLocationDidChangeEvent = false;
 
-        this.dispatchEventToListeners(WI.DebuggerManager.Event.ScriptsCleared);
+        this.dispatchEventToListeners(WI.DebuggerManager.Event.ScriptsCleared, {target});
 
         // `paused` spans every target, so only resume if no other target is still paused.
         if (wasPaused && !this.paused)
@@ -1125,6 +1132,13 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         this._didResumeInternal(target);
     }
 
+    debuggerPauseSessionChanged(sessionId, state, stoppingTargetIds)
+    {
+        let isPaused = state === InspectorBackend.Enum.Target.DebuggerPauseSessionState.Paused;
+        this._pauseSession = isPaused ? {sessionId, stoppingTargetIds} : null;
+        this.dispatchEventToListeners(WI.DebuggerManager.Event.PauseSessionChanged, {sessionId, state, stoppingTargetIds});
+    }
+
     playBreakpointActionSound(breakpointActionIdentifier)
     {
         InspectorFrontendHost.beep();
@@ -1134,7 +1148,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
     {
         let targetData = this.dataForTarget(target);
 
-        // COMPATIBILITY (macOS X.Y, iOS X.Y): Older backends could report the same script more than once.
+        // COMPATIBILITY (macOS 27.0, iOS 27.0): Older backends could report the same script more than once.
         let existingScript = targetData.scriptForIdentifier(scriptIdentifier);
         if (existingScript) {
             console.assert(existingScript.url === (url || null));
@@ -1913,6 +1927,7 @@ WI.DebuggerManager.Event = {
     ProbeSetAdded: "debugger-manager-probe-set-added",
     ProbeSetRemoved: "debugger-manager-probe-set-removed",
     BlackboxChanged: "blackboxed-urls-changed",
+    PauseSessionChanged: "debugger-manager-pause-session-changed",
 };
 
 WI.DebuggerManager.PauseReason = {

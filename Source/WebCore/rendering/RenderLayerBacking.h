@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/BoxExtents.h>
 #include <WebCore/BoxSides.h>
 #include <WebCore/FloatPoint.h>
 #include <WebCore/FloatPoint3D.h>
@@ -33,6 +34,7 @@
 #include <WebCore/RenderLayer.h>
 #include <WebCore/RenderLayerCompositor.h>
 #include <WebCore/ScrollingCoordinator.h>
+#include <wtf/HashMap.h>
 #include <wtf/Platform.h>
 #include <wtf/Range.h>
 #include <wtf/TZoneMalloc.h>
@@ -132,8 +134,8 @@ public:
     bool backgroundLayerPaintsFixedRootBackground() const { return m_backgroundLayerPaintsFixedRootBackground; }
 
     bool hasSVGPaintOrderSegments() const { return !m_svgPaintOrderSegments.isEmpty(); }
-    GraphicsLayer* LEGACY_NODELETE svgSegmentLayerAfterCompositedChild(const RenderLayer&) const;
-    std::optional<WTF::Range<unsigned>> LEGACY_NODELETE svgSegmentRangeForGraphicsLayer(const GraphicsLayer&) const;
+    NODELETE GraphicsLayer* svgSegmentLayerAfterCompositedChild(const RenderLayer&) const;
+    NODELETE std::optional<WTF::Range<unsigned>> svgSegmentRangeForGraphicsLayer(const GraphicsLayer&) const;
 
 #if USE(SYSTEM_PREVIEW) && ENABLE(MODEL_PROCESS)
     GraphicsLayer* systemPreviewBadgeLayer() const { return m_systemPreviewBadgeLayer.get(); }
@@ -142,7 +144,7 @@ public:
     bool needsRepaintOnCompositedScroll() const;
 
     bool requiresBackgroundLayer() const { return m_requiresBackgroundLayer; }
-    void LEGACY_NODELETE setRequiresBackgroundLayer(bool);
+    NODELETE void setRequiresBackgroundLayer(bool);
 
     bool hasScrollingLayer() const { return m_scrollContainerLayer != nullptr; }
     GraphicsLayer* scrollContainerLayer() const { return m_scrollContainerLayer.get(); }
@@ -181,7 +183,7 @@ public:
 
     bool hasMaskLayer() const { return m_maskLayer; }
 
-    WEBCORE_EXPORT GraphicsLayer* LEGACY_NODELETE parentForSublayers() const;
+    NODELETE WEBCORE_EXPORT GraphicsLayer* parentForSublayers() const;
     GraphicsLayer* childForSuperlayers() const;
     GraphicsLayer* childForSuperlayersExcludingViewTransitions() const;
 
@@ -207,19 +209,21 @@ public:
     void contentChanged(ContentChangeType, const std::optional<FloatRect>&);
 
     // Interface to start and finish animations.
-    bool startAnimation(double timeOffset, const GraphicsLayerAnimation&, const BlendingKeyframes&);
+    bool startAnimation(double timeOffset, const GraphicsLayerAnimation&, const BlendingKeyframes&, const IntOutsets& filterAnimationOutsets);
     void animationPaused(double timeOffset, const String& name);
     void animationFinished(const String& name);
     void transformRelatedPropertyDidChange();
 
+    const IntOutsets& filterAnimationOutsets() const { return m_filterAnimationOutsets; }
+
 #if ENABLE(THREADED_ANIMATIONS)
-    const AcceleratedEffectStack* LEGACY_NODELETE acceleratedEffectStack() const;
+    NODELETE const AcceleratedEffectStack* acceleratedEffectStack() const;
     void updateAcceleratedEffectsAndBaseValues(HashSet<Ref<AcceleratedTimeline>>&);
 #endif
 
-    WEBCORE_EXPORT LayoutRect LEGACY_NODELETE compositedBounds() const;
+    NODELETE WEBCORE_EXPORT LayoutRect compositedBounds() const;
     // Returns true if changed.
-    bool LEGACY_NODELETE setCompositedBounds(const LayoutRect&);
+    NODELETE bool setCompositedBounds(const LayoutRect&);
     // Returns true if changed.
     bool updateCompositedBounds();
     
@@ -230,7 +234,7 @@ public:
     void updateEventRegion();
     
     bool needsEventRegionUpdate() const { return m_needsEventRegionUpdate; }
-    void LEGACY_NODELETE setNeedsEventRegionUpdate(bool needsUpdate = true);
+    NODELETE void setNeedsEventRegionUpdate(bool needsUpdate = true);
 #endif
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
@@ -419,7 +423,7 @@ private:
 
     void setBackgroundLayerPaintsFixedRootBackground(bool);
 
-    LayoutSize LEGACY_NODELETE contentOffsetInCompositingLayer() const;
+    NODELETE LayoutSize contentOffsetInCompositingLayer() const;
     LayoutSize offsetRelativeToRendererOriginForDescendantLayers() const;
     
     void ensureClippingStackLayers(LayerAncestorClippingStack&);
@@ -446,7 +450,7 @@ private:
 #endif
 
     // Return the opacity value that this layer should use for compositing.
-    float LEGACY_NODELETE compositingOpacity(float rendererOpacity) const;
+    NODELETE float compositingOpacity(float rendererOpacity) const;
     Color rendererBackgroundColor() const;
 
     bool isMainFrameRenderViewLayer() const;
@@ -481,6 +485,7 @@ private:
 
     bool shouldClipCompositedBounds() const;
     static IntOutsets intersectClipsSampledByFilters(const RenderLayer&, const RenderLayer& rootLayer, LayoutRect& clipRect);
+    void updateFilterAnimationOutsets();
 
     bool hasTiledBackingFlatteningLayer() const { return (m_childContainmentLayer && m_isFrameLayerWithTiledBacking); }
     GraphicsLayer* tileCacheFlatteningLayer() const { return m_isFrameLayerWithTiledBacking ? m_childContainmentLayer.get() : nullptr; }
@@ -490,11 +495,11 @@ private:
     
     void paintDebugOverlays(const GraphicsLayer*, GraphicsContext&);
 
-    static CSSPropertyID LEGACY_NODELETE graphicsLayerToCSSProperty(AnimatedProperty);
-    static AnimatedProperty LEGACY_NODELETE cssToGraphicsLayerProperty(CSSPropertyID);
+    NODELETE static CSSPropertyID graphicsLayerToCSSProperty(AnimatedProperty);
+    NODELETE static AnimatedProperty cssToGraphicsLayerProperty(CSSPropertyID);
 
     bool canIssueSetNeedsDisplay() const { return !paintsIntoWindow() && !paintsIntoCompositedAncestor(); }
-    float LEGACY_NODELETE pixelSnappingScaleFactor() const;
+    NODELETE float pixelSnappingScaleFactor() const;
     LayoutRect computeParentGraphicsLayerRect(const RenderLayer* compositedAncestor) const;
     LayoutRect computePrimaryGraphicsLayerRect(const RenderLayer* compositedAncestor, const LayoutRect& parentGraphicsLayerRect) const;
 
@@ -551,6 +556,12 @@ private:
     LayoutRect m_compositedBounds;
     LayoutSize m_subpixelOffsetFromRenderer; // This is the subpixel distance between the primary graphics layer and the associated renderer's bounds.
     LayoutSize m_compositedBoundsOffsetFromGraphicsLayer; // This is the subpixel distance between the primary graphics layer and the render layer bounds.
+
+    HashMap<String, IntOutsets> m_filterAnimationOutsetsByName;
+#if ENABLE(THREADED_ANIMATIONS)
+    IntOutsets m_filterAnimationOutsetsFromAcceleratedEffects;
+#endif
+    IntOutsets m_filterAnimationOutsets;
 
     Markable<ScrollingNodeID> m_viewportConstrainedNodeID;
     Markable<ScrollingNodeID> m_scrollingNodeID;

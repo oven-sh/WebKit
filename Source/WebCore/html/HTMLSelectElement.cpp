@@ -120,12 +120,12 @@ static const AtomString& listBoxSlotName()
 
 // Only attributes decide this, so that slotting does not depend on style. Where the select is not
 // rendered as the box type this implies, it is rendered natively, which does not use the slots.
-static bool LEGACY_NODELETE usesListBoxSlot(const HTMLSelectElement& select)
+NODELETE static bool usesListBoxSlot(const HTMLSelectElement& select)
 {
     return select.document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled() && !select.supportsPickerPseudoElement();
 }
 
-static bool LEGACY_NODELETE isFirstElementChildButton(const Node& child)
+NODELETE static bool isFirstElementChildButton(const Node& child)
 {
     return is<HTMLButtonElement>(child) && !child.previousElementSibling();
 }
@@ -134,10 +134,10 @@ class SelectSlotAssignment final : public NamedSlotAssignment {
 private:
     void hostChildElementDidChange(const Element&, ShadowRoot&) final;
     void didChangeSlotNamesOfShadowHostChildren(ShadowRoot&) final;
-    const AtomString& LEGACY_NODELETE slotNameForHostChild(const Node&) const final;
+    NODELETE const AtomString& slotNameForHostChild(const Node&) const final;
 };
 
-SUPPRESS_NODELETE static const AtomString& LEGACY_NODELETE optionSlotName(const Node* host)
+NODELETE SUPPRESS_NODELETE static const AtomString& optionSlotName(const Node* host)
 {
     auto* select = dynamicDowncast<HTMLSelectElement>(host);
     return select && usesListBoxSlot(*select) ? listBoxSlotName() : NamedSlotAssignment::defaultSlotName();
@@ -273,7 +273,7 @@ HTMLSelectElement* HTMLSelectElement::findOwnerSelect(ContainerNode* startNode, 
     return findOwnerSelect(startNode->parentNode(), excludeOptGroup);
 }
 
-static bool LEGACY_NODELETE hasBaseAppearance(const Style::ComputedStyle* style)
+NODELETE static bool hasBaseAppearance(const Style::ComputedStyle* style)
 {
     return style && style->usedAppearance() == StyleAppearance::Base;
 }
@@ -418,7 +418,7 @@ bool HTMLSelectElement::usesMenuList() const
     return true;
 #elif PLATFORM(MAC)
     if (m_multiple)
-        return m_size == 1 && document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled() && document().settings().htmlEnhancedSelectMultipleDropdownBoxEnabled();
+        return m_size == 1 && document().settings().htmlEnhancedSelectMultipleDropdownBoxEnabled();
     return m_size <= 1;
 #else
     return !m_multiple && m_size <= 1;
@@ -899,9 +899,16 @@ bool HTMLSelectElement::isMouseFocusable() const
     return HTMLFormControlElement::isMouseFocusable();
 }
 
+bool HTMLSelectElement::canHaveBaseAppearance() const
+{
+    if (m_multiple && usesMenuList())
+        return document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled();
+    return true;
+}
+
 bool HTMLSelectElement::supportsBaseAppearance(StyleAppearance appearance) const
 {
-    return appearance == StyleAppearance::Base || appearance == StyleAppearance::BaseSelect;
+    return (appearance == StyleAppearance::Base || appearance == StyleAppearance::BaseSelect) && canHaveBaseAppearance();
 }
 
 RenderPtr<RenderElement> HTMLSelectElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition& position)
@@ -1863,9 +1870,10 @@ void HTMLSelectElement::parseMultipleAttribute(const AtomString& value)
 {
     auto oldBoxType = boxType();
     bool oldMultiple = m_multiple;
+    bool couldHaveBaseAppearance = canHaveBaseAppearance();
     int oldSelectedIndex = selectedIndex();
     setSizeAndMultiple(m_size, !value.isNull());
-    if (oldBoxType != boxType())
+    if (oldBoxType != boxType() || couldHaveBaseAppearance != canHaveBaseAppearance())
         invalidateStyleAndRenderersForSubtree();
     if (oldMultiple != m_multiple) {
         if (oldSelectedIndex >= 0)

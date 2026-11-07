@@ -27,6 +27,7 @@
 #include <WebCore/LayoutRect.h>
 #include <WebCore/RectEdges.h>
 #include <WebCore/RenderLayerModelObject.h>
+#include <wtf/WeakListHashSet.h>
 
 namespace WebCore {
 
@@ -43,6 +44,7 @@ class GraphicsContext;
 class Image;
 class ImageBuffer;
 class ImageSizingContext;
+class RenderBox;
 class RenderTextFragment;
 class StickyPositionViewportConstraints;
 class TransformationMatrix;
@@ -61,6 +63,9 @@ enum class InterpolationQuality : uint8_t;
 
 using BoxSideSet = EnumSet<BoxSide>;
 using BorderEdges = RectEdges<BorderEdge>;
+using TrackedRendererListHashSet = SingleThreadWeakListHashSet<RenderBox>;
+
+enum class AvailableLogicalHeightType : bool { ExcludeMarginBorderPadding, IncludeMarginBorderPadding };
 
 // This class is the base for all objects that adhere to the CSS box model as described
 // at http://www.w3.org/TR/CSS21/box.html
@@ -80,7 +85,7 @@ public:
     LayoutSize relativePositionOffset() const;
 
     FloatRect constrainingRectForStickyPosition() const;
-    std::pair<const RenderBox&, const RenderLayer*> LEGACY_NODELETE enclosingClippingBoxForStickyPosition() const;
+    NODELETE std::pair<const RenderBox&, const RenderLayer*> enclosingClippingBoxForStickyPosition() const;
     void computeStickyPositionConstraints(StickyPositionViewportConstraints&, const FloatRect& constrainingRect) const;
     LayoutSize stickyPositionOffset() const;
 
@@ -105,6 +110,16 @@ public:
     virtual LayoutRect firstFragmentBorderBoxRect() const;
     virtual LayoutUnit paddingBoxLogicalWidth() const;
     virtual LayoutUnit paddingBoxLogicalHeight() const;
+    virtual LayoutUnit paddingBoxWidth() const;
+    virtual LayoutUnit paddingBoxHeight() const;
+    virtual LayoutUnit contentBoxLogicalWidth() const;
+    virtual LayoutUnit contentBoxLogicalHeight() const;
+    virtual LayoutUnit contentBoxWidth() const;
+    virtual LayoutUnit contentBoxHeight() const;
+    virtual LayoutSize contentBoxSize() const;
+    virtual LayoutUnit availableLogicalHeight(AvailableLogicalHeightType) const;
+    virtual std::optional<LayoutUnit> availableLogicalHeightForPercentageComputation() const;
+    virtual bool hasDefiniteLogicalHeightForPercentageResolutionFromStyle() const;
     void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed = nullptr) const override;
     LayoutSize offsetFromContainer(const RenderElement&, const LayoutPoint&, bool* offsetDependsOnPoint = nullptr) const override;
     void mapLocalToContainer(const RenderLayerModelObject* ancestorContainer, TransformState&, OptionSet<MapCoordinatesMode>, bool* wasFixed) const override;
@@ -207,13 +222,13 @@ public:
 
     void imageChanged(WrappedImagePtr, const IntRect* = nullptr) override;
 
-    bool LEGACY_NODELETE fixedBackgroundPaintsInLocalCoordinates() const;
+    NODELETE bool fixedBackgroundPaintsInLocalCoordinates() const;
     DecodingMode decodingModeForImageDraw(const Image&, const PaintInfo&) const;
 
     void paintMaskForTextFillBox(GraphicsContext&, const FloatRect&, const InlineIterator::InlineBoxIterator&, const LayoutRect&);
 
     // For RenderBlocks and inline boxes with m_style->pseudoElementType() == PseudoElementType::FirstLetter, this tracks their remaining text fragments
-    RenderTextFragment* LEGACY_NODELETE firstLetterRemainingText() const;
+    NODELETE RenderTextFragment* firstLetterRemainingText() const;
     void setFirstLetterRemainingText(RenderTextFragment&);
     void clearFirstLetterRemainingText();
 
@@ -224,6 +239,18 @@ public:
     RenderBlock* containingBlockForAutoHeightDetection(const Style::MinimumSize& logicalHeight) const;
     RenderBlock* containingBlockForAutoHeightDetection(const Style::MaximumSize& logicalHeight) const;
 
+    // Out-of-flow boxes this renderer is the containing block for.
+    void addOutOfFlowBox(RenderBox&);
+    static void removeOutOfFlowBox(const RenderBox&);
+    enum class ContainingBlockState : bool { NewContainingBlock, SameContainingBlock };
+    void removeOutOfFlowBoxes(const RenderElement*, ContainingBlockState = ContainingBlockState::SameContainingBlock);
+    NODELETE TrackedRendererListHashSet* outOfFlowBoxes() const LIFETIME_BOUND;
+    bool hasOutOfFlowBoxes() const
+    {
+        auto* renderers = outOfFlowBoxes();
+        return renderers && !renderers->isEmptyIgnoringNullReferences();
+    }
+    void markOutOfFlowBoxesForLayout(MarkingBehavior = MarkingBehavior::ContainingBlockChain);
     void removeOutOfFlowBoxesIfNeededOnStyleChange(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle);
 
 
@@ -250,8 +277,8 @@ private:
     RenderBlock* containingBlockForAutoHeightDetectionGeneric(const auto& logicalHeight) const;
 };
 
-bool LEGACY_NODELETE isEmptyInline(const RenderBoxModelObject&);
-RenderObject* LEGACY_NODELETE firstContentfulChild(RenderBoxModelObject&);
+NODELETE bool isEmptyInline(const RenderBoxModelObject&);
+NODELETE RenderObject* firstContentfulChild(RenderBoxModelObject&);
 
 WEBCORE_EXPORT LayoutUnit borderLeft(const RenderBoxModelObject&);
 WEBCORE_EXPORT LayoutUnit borderTop(const RenderBoxModelObject&);

@@ -1100,7 +1100,7 @@ webkit.org/b/309633 [ arm64 ] fast/text/hyphenate-locale.html [ Failure ]
 
 webkit.org/b/309634 [ arm64 ] http/tests/xmlhttprequest/binary-x-user-defined.html [ Failure ]
 
-webkit.org/b/313803 webkit.org/b/309635 [ arm64 ] webgl/2.0.y/conformance2/textures/video/tex-2d-r8-red-unsigned_byte.html [ Timeout ]
+webkit.org/b/313803 webkit.org/b/309635 [ arm64 ] webgl/2.0.y/conformance2/textures/video/tex-2d-r8-red-unsigned_byte.html [ Pass Timeout ]
 
 webkit.org/b/309636 [ arm64 ] webgl/tex-2d-video-no-change-wrap.html [ Pass Failure ]
 
@@ -1173,8 +1173,6 @@ webkit.org/b/313055 fast/canvas/image-buffer-backend-variants.html [ Pass Failur
 
 # Gardening 2026-06-27 (WPE x86_64, builder 40) https://bugs.webkit.org/show_bug.cgi?id=318036
 webkit.org/b/318034 [ x86_64 ] fast/canvas/image-potential-subsample.html [ Failure Pass ]
-
-webkit.org/b/318345 [ x86_64 ] media/track/video-track-configuration-mp4-default-colorspace.html [ Failure Pass ]
 
 webkit.org/b/318349 [ arm64 ] imported/w3c/web-platform-tests/largest-contentful-paint/image-TAO.sub.html [ Failure Pass ]
 
@@ -1290,7 +1288,6 @@ webkit.org/b/326318 imported/w3c/web-platform-tests/fullscreen/rendering/fullscr
 webkit.org/b/326318 imported/w3c/web-platform-tests/fullscreen/api/document-fullscreen-keyboard-lock-multiple-elements.window.html [ Failure Pass ]
 
 webkit.org/b/304278 [ Release ] inspector/worker/debugger-pause-subworker.html [ Failure Timeout ]
-webkit.org/b/328193 fast/forms/select/base/select-translated-option-content-repaint.html [ ImageOnlyFailure Pass ]
 webkit.org/b/328195 [ Debug ] inspector/dom-debugger/event-animation-frame-breakpoints.html [ Crash Pass ]
 webkit.org/b/322632 [ Release ] inspector/dom-debugger/dom-breakpoint-attribute-modified.html [ Pass Crash ]
 webkit.org/b/322632 [ Release ] inspector/dom-debugger/dom-breakpoint-node-removed-ancestor.html [ Pass Crash ]
@@ -1308,4 +1305,22 @@ webkit.org/b/329157 [ arm64 ] imported/w3c/web-platform-tests/html/browsers/brow
 
 webkit.org/b/329221 http/tests/misc/image-blocked-src-change.html [ Pass Crash ]
 
+webkit.org/b/329527 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/invalidation-during-onpaint.tentative.html [ ImageOnlyFailure Pass ]
 webkit.org/b/329530 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/selection-painted-overlay-path.tentative.html [ ImageOnlyFailure ]
+
+webkit.org/b/328381 imported/w3c/web-platform-tests/svg/text/scripted/range-getboundingclientrect-scaled.html [ Failure ]
+
+imported/w3c/web-platform-tests/svg/coordinate-systems/viewBox-fractional-valid.html [ ImageOnlyFailure ]
+
+webkit.org/b/329966 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/cors-check.https.html [ Crash Failure Pass Timeout ]
+webkit.org/b/329966 [ x86_64 ] imported/w3c/web-platform-tests/webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/no-cors.https.html [ Pass Timeout ]
+
+webkit.org/b/329967 [ arm64 ] fast/forms/time/time-editable-components/time-editable-components-keyboard-events.html [ Failure ]
+
+webkit.org/b/329968 [ arm64 ] media/track/texttrackcue/texttrackcue-adopt-node-display-tree-crash.html [ Pass Timeout ]
+
+webkit.org/b/329972 [ arm64 ] media/modern-media-controls/scrubber-support/scrubber-support-drag.html [ Pass Timeout ]
+
+webkit.org/b/310411 [ arm64 ] fast/events/site-isolation/event-timing-back-forward-cache-duration.html [ Pass Failure ]
+webkit.org/b/330312 [ arm64 ] accessibility/accessible-name-chain-depth-no-crash.html [ Timeout Pass ]
+webkit.org/b/330315 [ arm64 ] imported/w3c/web-platform-tests/webrtc-encoded-transform/script-metadata-transform.https.html [ Crash Pass ]

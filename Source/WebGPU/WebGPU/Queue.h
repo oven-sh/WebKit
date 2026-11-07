@@ -57,6 +57,16 @@ class TextureView;
 // the destination's, which has to stay a no-op rather than a transfer function round trip.
 std::optional<std::array<float, 9>> primariesConversionMatrixForPixelBuffer(CVPixelBufferRef, WebGPU::PredefinedColorSpace destination);
 
+// The HDR transfer functions which importExternalTexture() and copyExternalImageToTexture() decode
+// and tone map to SDR. Anything else is treated as SDR. The values are what the external texture
+// shader finds in the fourth column of its primaries conversion matrix, so they must not change.
+enum class HDRTransferFunction : uint8_t {
+    None = 0,
+    PQ = 1, // NOLINT
+    HLG = 2, // NOLINT
+};
+HDRTransferFunction hdrTransferFunctionForPixelBuffer(CVPixelBufferRef);
+
 // https://gpuweb.github.io/gpuweb/#gpuqueue
 // A device owns its default queue, not the other way around.
 class Queue final : public WebGPU::Queue {
@@ -109,7 +119,7 @@ public:
     id<MTLCommandEncoder> _Nullable encoderForBuffer(id<MTLCommandBuffer>) const;
     void clearTextureViewIfNeeded(TextureView&);
     void clearTextureViewIfNeeded(Texture&);
-    static bool LEGACY_NODELETE writeWillCompletelyClear(WebGPU::TextureDimension, uint32_t widthForMetal, uint32_t logicalSizeWidth, uint32_t heightForMetal, uint32_t logicalSizeHeight, uint32_t depthForMetal, uint32_t logicalSizeDepthOrArrayLayers);
+    NODELETE static bool writeWillCompletelyClear(WebGPU::TextureDimension, uint32_t widthForMetal, uint32_t logicalSizeWidth, uint32_t heightForMetal, uint32_t logicalSizeHeight, uint32_t depthForMetal, uint32_t logicalSizeDepthOrArrayLayers);
     void endEncoding(id<MTLCommandEncoder>, id<MTLCommandBuffer>) const;
 
     id<MTLBlitCommandEncoder> ensureBlitCommandEncoder();
@@ -141,7 +151,7 @@ private:
     bool validateWriteBuffer(const Buffer&, uint64_t bufferOffset, size_t) const;
 
 
-    bool LEGACY_NODELETE isIdle() const;
+    NODELETE bool isIdle() const;
     bool isSchedulingIdle() const { return m_submittedCommandBufferCount == m_scheduledCommandBufferCount; }
     id<MTLComputeCommandEncoder> _Nullable ensureStagedCopyEncoder();
     id<MTLComputePipelineState> _Nullable stagedCopyPipelineState();

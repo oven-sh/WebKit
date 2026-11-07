@@ -149,12 +149,12 @@ struct UTF16BufferTranslator {
         return WTF::equal(str.get(), buf.characters);
     }
 
-    static void translate(AtomStringTable::StringEntry& location, const UTF16Buffer& buf, unsigned hash)
+    static void translate(AtomStringTable::StringEntry* location, const UTF16Buffer& buf, unsigned hash)
     {
         Ref stringImpl = StringImpl::create8BitIfPossible(buf.characters);
         stringImpl->setHash(hash);
         stringImpl->setIsAtom(true);
-        location = &stringImpl.leakRef();
+        std::construct_at(location, &stringImpl.leakRef());
     }
 };
 
@@ -193,12 +193,12 @@ struct SubstringTranslator {
         return StringView(*buffer.baseString).substring(buffer.start, buffer.length);
     }
 
-    static void translate(AtomStringTable::StringEntry& location, const SubstringLocation& buffer, unsigned hash)
+    static void translate(AtomStringTable::StringEntry* location, const SubstringLocation& buffer, unsigned hash)
     {
         SUPPRESS_UNCOUNTED_ARG Ref stringImpl = StringImpl::createSubstringSharingImpl(*buffer.baseString, buffer.start, buffer.length);
         stringImpl->setHash(hash);
         stringImpl->setIsAtom(true);
-        location = &stringImpl.leakRef();
+        std::construct_at(location, &stringImpl.leakRef());
     }
 };
 
@@ -264,12 +264,12 @@ struct Latin1BufferTranslator {
         return WTF::equal(str.get(), buf.characters);
     }
 
-    static void translate(AtomStringTable::StringEntry& location, const Latin1Buffer& buf, unsigned hash)
+    static void translate(AtomStringTable::StringEntry* location, const Latin1Buffer& buf, unsigned hash)
     {
         Ref stringImpl = StringImpl::create(buf.characters);
         stringImpl->setHash(hash);
         stringImpl->setIsAtom(true);
-        location = &stringImpl.leakRef();
+        std::construct_at(location, &stringImpl.leakRef());
     }
 };
 
@@ -291,12 +291,12 @@ struct BufferFromStaticDataTranslator {
         return WTF::equal(str.get(), buf.characters);
     }
 
-    static void translate(AtomStringTable::StringEntry& location, const Buffer& buf, unsigned hash)
+    static void translate(AtomStringTable::StringEntry* location, const Buffer& buf, unsigned hash)
     {
         Ref stringImpl = StringImpl::createWithoutCopying(buf.characters);
         stringImpl->setHash(hash);
         stringImpl->setIsAtom(true);
-        location = &stringImpl.leakRef();
+        std::construct_at(location, &stringImpl.leakRef());
     }
 };
 
@@ -330,9 +330,9 @@ struct StaticStringAtomTranslator {
         return WTF::equal(str.get(), buf.characters);
     }
 
-    NODELETE static void translate(AtomStringTable::StringEntry& location, const Buffer& buf, unsigned)
+    NODELETE static void translate(AtomStringTable::StringEntry* location, const Buffer& buf, unsigned)
     {
-        location = const_cast<StringImpl*>(&buf.staticImpl);
+        std::construct_at(location, const_cast<StringImpl*>(&buf.staticImpl));
     }
 };
 

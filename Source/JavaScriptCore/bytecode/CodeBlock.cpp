@@ -2542,8 +2542,7 @@ ValueProfileAndVirtualRegisterBuffer* CodeBlock::ensureCatchLivenessIsComputedFo
 
     auto nextOffset = instructions().at(bytecodeIndex).next().offset();
     FastBitVector liveLocals = bytecodeLiveness.getLivenessInfoAtInstruction(this, BytecodeIndex(nextOffset));
-    Vector<VirtualRegister> liveOperands;
-    liveOperands.reserveInitialCapacity(liveLocals.bitCount());
+    Vector<VirtualRegister> liveOperands(ReserveCapacityTag { }, liveLocals.bitCount());
     liveLocals.forEachSetBit([&] (unsigned liveLocal) {
         liveOperands.append(virtualRegisterForLocal(liveLocal));
     });
@@ -2882,7 +2881,8 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
             jitData->invalidate();
         }
         if (!jitCode()->isUnlinked()) {
-            if (!jitCode()->dfgCommon()->invalidateLinkedCode()) {
+            ASSERT(reason != Profiler::JettisonDueToWeakReference || (vm.heap.currentThreadIsDoingGCWork() && !vm.heap.isMarked(this)));
+            if (!jitCode()->dfgCommon()->invalidateLinkedCode(reason)) {
                 // We've already been invalidated.
                 RELEASE_ASSERT(this != replacement() || (vm.heap.currentThreadIsDoingGCWork() && !vm.heap.isMarked(ownerExecutable())));
                 return;
@@ -3083,7 +3083,7 @@ double CodeBlock::optimizationThresholdScalingFactor() const
     return result;
 }
 
-static int32_t LEGACY_NODELETE clipThreshold(double threshold)
+NODELETE static int32_t clipThreshold(double threshold)
 {
     if (threshold < 1.0)
         return 1;

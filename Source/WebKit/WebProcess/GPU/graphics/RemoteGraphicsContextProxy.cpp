@@ -474,6 +474,17 @@ void RemoteGraphicsContextProxy::drawDotsForDocumentMarker(const FloatRect& rect
     send(Messages::RemoteGraphicsContext::DrawDotsForDocumentMarker(rect, style));
 }
 
+void RemoteGraphicsContextProxy::drawMeshGradient(MeshGradient& gradient, const FloatRect& destination)
+{
+    auto identifier = recordResourceUse(gradient);
+    if (!identifier)
+        return;
+
+    sendPendingDrawsIfNecessary();
+    appendStateChangeItemIfNecessary();
+    send(Messages::RemoteGraphicsContext::DrawMeshGradient(*identifier, destination));
+}
+
 void RemoteGraphicsContextProxy::drawEllipse(const FloatRect& rect)
 {
     sendPendingDrawsIfNecessary();
@@ -602,11 +613,16 @@ void RemoteGraphicsContextProxy::drawVideoFrame(const VideoFrame& frame, const F
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
 #if PLATFORM(COCOA)
+    RefPtr backend = m_renderingBackend;
+    RefPtr gpuProcessIPCConnection = backend ? backend->gpuProcessIPCConnection() : nullptr;
+    if (!gpuProcessIPCConnection)
+        return;
+
     Locker locker { m_sharedVideoFrameWriterLock };
     if (!m_sharedVideoFrameWriter)
         m_sharedVideoFrameWriter = makeUnique<SharedVideoFrameWriter>();
 
-    auto sharedVideoFrame = m_sharedVideoFrameWriter->write(frame, [&](auto& semaphore) {
+    auto sharedVideoFrame = m_sharedVideoFrameWriter->write(frame, *gpuProcessIPCConnection, [&](auto& semaphore) {
         send(Messages::RemoteGraphicsContext::SetSharedVideoFrameSemaphore { semaphore });
     }, [&](SharedMemory::Handle&& handle) {
         send(Messages::RemoteGraphicsContext::SetSharedVideoFrameMemory { WTF::move(handle) });
@@ -837,6 +853,17 @@ std::optional<RemoteGradientIdentifier> RemoteGraphicsContextProxy::recordResour
     }
 
     return renderingBackend->remoteResourceCacheProxy().recordGradientUse(gradient);
+}
+
+std::optional<RemoteMeshGradientIdentifier> RemoteGraphicsContextProxy::recordResourceUse(MeshGradient& gradient)
+{
+    RefPtr renderingBackend = m_renderingBackend.get();
+    if (!renderingBackend) [[unlikely]] {
+        ASSERT_NOT_REACHED();
+        return std::nullopt;
+    }
+
+    return renderingBackend->remoteResourceCacheProxy().recordMeshGradientUse(gradient);
 }
 
 std::optional<RemotePathImplIdentifier> RemoteGraphicsContextProxy::recordResourceUse(const WebCore::PathImpl& path)

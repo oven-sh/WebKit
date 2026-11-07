@@ -141,7 +141,7 @@ enum InsertionPhase : unsigned {
     SpillMoveFrom,
 };
 
-static bool LEGACY_NODELETE verbose() { return Options::airGreedyRegAllocVerbose(); }
+NODELETE static bool verbose() { return Options::airGreedyRegAllocVerbose(); }
 
 // Terminology / core data-structures:
 //
@@ -323,7 +323,7 @@ public:
         validate();
     }
 
-    inline void LEGACY_NODELETE validate()
+    NODELETE inline void validate()
     {
 #if ASSERT_ENABLED
         size_t size = 0;
@@ -387,17 +387,17 @@ public:
         validate();
     }
 
-    Intervals LEGACY_NODELETE intervals() const
+    NODELETE Intervals intervals() const
     {
         return { m_intervals, m_count };
     }
 
-    size_t LEGACY_NODELETE size() const
+    NODELETE size_t size() const
     {
         return m_size;
     }
 
-    bool LEGACY_NODELETE contains(Point point) const
+    NODELETE bool contains(Point point) const
     {
         for (auto& interval : intervals()) {
             if (interval.end() <= point)
@@ -407,7 +407,7 @@ public:
         return false;
     }
 
-    bool LEGACY_NODELETE overlaps(const LiveRange& other) const
+    NODELETE bool overlaps(const LiveRange& other) const
     {
         if (!m_count || !other.m_count || m_intervals[m_count - 1].end() <= other.m_intervals[0].begin() || other.m_intervals[other.m_count - 1].end() <= m_intervals[0].begin())
             return false;
@@ -525,7 +525,7 @@ private:
     static constexpr size_t tmpIndexShift = rangeSizeShift - tmpIndexBits;
     static_assert(!tmpIndexShift);
 
-    inline void LEGACY_NODELETE packPriority(uint64_t val, size_t numBits, size_t shift, bool reverse)
+    NODELETE inline void packPriority(uint64_t val, size_t numBits, size_t shift, bool reverse)
     {
         const uint64_t mask = (1ull << numBits) - 1;
         val &= mask;
@@ -551,9 +551,9 @@ public:
         packPriority(tmp.tmpIndex(), tmpIndexBits, tmpIndexShift, true);
     }
 
-    Tmp LEGACY_NODELETE tmp() { return m_tmp; }
+    NODELETE Tmp tmp() { return m_tmp; }
 
-    Stage LEGACY_NODELETE stage() const
+    NODELETE Stage stage() const
     {
         const uint64_t mask = (1 << stageBits) - 1;
         uint64_t stageReversed = m_priority >> stageShift;
@@ -568,7 +568,7 @@ public:
 
     // The packed priority is built so that a numerically greater value is more urgent, which is the
     // order PriorityQueue serves.
-    friend bool LEGACY_NODELETE operator<(const TmpPriority& left, const TmpPriority& right)
+    NODELETE friend bool operator<(const TmpPriority& left, const TmpPriority& right)
     {
         return left.m_priority < right.m_priority;
     }
@@ -598,7 +598,7 @@ public:
             , tmp(pair.second)
         { }
 
-        bool LEGACY_NODELETE operator<(const AllocatedInterval& other) const
+        NODELETE bool operator<(const AllocatedInterval& other) const
         {
             return this->interval.end() < other.interval.end();
         }
@@ -637,7 +637,7 @@ public:
             m_allocations.erase(interval);
     }
 
-    bool LEGACY_NODELETE hasConflict(const LiveRange& range, Width width)
+    NODELETE bool hasConflict(const LiveRange& range, Width width)
     {
         for (auto interval : range.intervals()) {
             if (m_allocations.hasOverlap(interval))
@@ -679,7 +679,7 @@ public:
         forEachConflictImpl(m_allocationsHigh64, range, func);
     }
 
-    bool LEGACY_NODELETE isEmpty() const
+    NODELETE bool isEmpty() const
     {
         return m_allocations.isEmpty() && m_allocationsHigh64.isEmpty();
     }
@@ -886,7 +886,7 @@ struct TmpData {
         return std::min(cost, maxSpillableSpillCost);
     }
 
-    void LEGACY_NODELETE validate()
+    NODELETE void validate()
     {
         ASSERT(!!assigned == (stage == Stage::Assigned));
         ASSERT(liveRange.intervals().isEmpty() == !liveRange.size());
@@ -1471,7 +1471,7 @@ public:
         }
     }
 
-    const List& LEGACY_NODELETE useDefs() const { return m_instPoints; }
+    NODELETE const List& useDefs() const { return m_instPoints; }
 
     void dump(PrintStream& out) const
     {
@@ -2618,7 +2618,7 @@ private:
         });
     }
 
-    bool LEGACY_NODELETE shouldSpillEverything()
+    NODELETE bool shouldSpillEverything()
     {
         if (!m_registerPolicy.spillsEverything)
             return false;
@@ -2712,55 +2712,55 @@ private:
         return m_code[findBlockIndexContainingPoint(point)];
     }
 
-    Point LEGACY_NODELETE positionOfHead(BasicBlock* block) const
+    NODELETE Point positionOfHead(BasicBlock* block) const
     {
         Point point = m_blockToHeadPoint[block];
         ASSERT(pointAtOffset(point, PointOffsets::Pre) == point);
         return point;
     }
 
-    Point LEGACY_NODELETE positionOfTail(BasicBlock* block)
+    NODELETE Point positionOfTail(BasicBlock* block)
     {
         Point point = positionOfHead(block) + block->size() * PointOffsets::PointsPerInst - 1;
         ASSERT(pointAtOffset(point, PointOffsets::Post) == point);
         return point;
     }
 
-    static size_t LEGACY_NODELETE instIndex(Point positionOfHead, Point point)
+    NODELETE static size_t instIndex(Point positionOfHead, Point point)
     {
         return (point - positionOfHead) / PointOffsets::PointsPerInst;
     }
 
-    static Point LEGACY_NODELETE pointAtOffset(Point point, PointOffsets offset)
+    NODELETE static Point pointAtOffset(Point point, PointOffsets offset)
     {
         static_assert(!(PointOffsets::PointsPerInst & (PointOffsets::PointsPerInst - 1)));
         return (point & ~(PointOffsets::PointsPerInst - 1)) + offset;
     }
 
-    static Point LEGACY_NODELETE positionOfEarly(Point positionOfHead, unsigned instIndex)
+    NODELETE static Point positionOfEarly(Point positionOfHead, unsigned instIndex)
     {
         ASSERT(!(positionOfHead % PointOffsets::PointsPerInst));
         return positionOfHead + instIndex * PointOffsets::PointsPerInst + PointOffsets::Early;
     }
 
-    static Point LEGACY_NODELETE positionOfLate(Point positionOfHead, unsigned instIndex)
+    NODELETE static Point positionOfLate(Point positionOfHead, unsigned instIndex)
     {
         ASSERT(!(positionOfHead % PointOffsets::PointsPerInst));
         return positionOfHead + instIndex * PointOffsets::PointsPerInst + PointOffsets::Late;
     }
 
-    static Point LEGACY_NODELETE positionOfEarly(Interval interval)
+    NODELETE static Point positionOfEarly(Interval interval)
     {
         return pointAtOffset(interval.begin(), PointOffsets::Early);
     }
 
-    static Interval LEGACY_NODELETE earlyInterval(Point positionOfEarly)
+    NODELETE static Interval earlyInterval(Point positionOfEarly)
     {
         ASSERT((positionOfEarly % PointOffsets::PointsPerInst) == PointOffsets::Early);
         return Interval(positionOfEarly);
     }
 
-    static Interval LEGACY_NODELETE lateInterval(Point positionOfEarly)
+    NODELETE static Interval lateInterval(Point positionOfEarly)
     {
         ASSERT((positionOfEarly % PointOffsets::PointsPerInst) == PointOffsets::Early);
         return Interval(positionOfEarly + (PointOffsets::Late - PointOffsets::Early));
@@ -2810,14 +2810,14 @@ private:
         return m_useCounts.isConstDef<bank>(AbsoluteTmpMapper<bank>::absoluteIndex(tmp));
     }
 
-    Reg LEGACY_NODELETE assignedReg(Tmp tmp)
+    NODELETE Reg assignedReg(Tmp tmp)
     {
         return m_map[tmp].assigned;
     }
 
     // Returns the stack slot a Tmp should use if spilled. Otherwise, returns nullptr.
     template<Bank bank>
-    StackSlot* LEGACY_NODELETE spillSlot(Tmp tmp)
+    NODELETE StackSlot* spillSlot(Tmp tmp)
     {
         TmpData& tmpData = m_map.get<bank>(tmp);
         if (tmpData.stage == Stage::Spilled) {
@@ -2828,7 +2828,7 @@ private:
         return nullptr;
     }
 
-    StackSlot* LEGACY_NODELETE spillSlot(Tmp tmp)
+    NODELETE StackSlot* spillSlot(Tmp tmp)
     {
         ASSERT(tmp.isGP() || tmp.isFP());
         return tmp.isGP() ? spillSlot<GP>(tmp) : spillSlot<FP>(tmp);
@@ -2842,7 +2842,7 @@ private:
         tmpData.spillSlotTableIndex = m_spillSlotTable.size() - 1;
     }
 
-    float LEGACY_NODELETE adjustedBlockFrequency(BasicBlock* block)
+    NODELETE float adjustedBlockFrequency(BasicBlock* block)
     {
         float freq = block->frequency();
         if (!m_fastBlocks.saw(block)) [[unlikely]]
@@ -2851,7 +2851,7 @@ private:
     }
 
     template<Bank bank>
-    Width LEGACY_NODELETE widthForConflicts(Tmp tmp)
+    NODELETE Width widthForConflicts(Tmp tmp)
     {
         if constexpr (bank == GP)
             return Width64;
@@ -3570,34 +3570,34 @@ private:
         static constexpr uint32_t isIndexBit = 1u << 31;
         static constexpr uint32_t indexMask = isIndexBit - 1;
 
-        static bool LEGACY_NODELETE isSingleton(EncodedTmpList idx) { return !(idx.m_value & isIndexBit); }
+        NODELETE static bool isSingleton(EncodedTmpList idx) { return !(idx.m_value & isIndexBit); }
 
-        static EncodedTmpList LEGACY_NODELETE encodeSingleton(Tmp tmp)
+        NODELETE static EncodedTmpList encodeSingleton(Tmp tmp)
         {
             unsigned tIdx = tmp.tmpIndex();
             ASSERT(tIdx < isIndexBit);
             return { tIdx };
         }
 
-        static Tmp LEGACY_NODELETE decodeSingleton(EncodedTmpList encoded)
+        NODELETE static Tmp decodeSingleton(EncodedTmpList encoded)
         {
             ASSERT(isSingleton(encoded));
             return Tmp::tmpForIndex(bank, encoded.m_value);
         }
 
-        static EncodedTmpList LEGACY_NODELETE encodeIndex(size_t index)
+        NODELETE static EncodedTmpList encodeIndex(size_t index)
         {
             ASSERT(index <= indexMask);
             return { isIndexBit | static_cast<uint32_t>(index) };
         }
 
-        static unsigned LEGACY_NODELETE decodeIndex(EncodedTmpList encoded)
+        NODELETE static unsigned decodeIndex(EncodedTmpList encoded)
         {
             ASSERT(!isSingleton(encoded));
             return encoded.m_value & indexMask;
         }
 
-        const TmpList& LEGACY_NODELETE decodeTmpList(EncodedTmpList encodedList) const
+        NODELETE const TmpList& decodeTmpList(EncodedTmpList encodedList) const
         {
             if (isSingleton(encodedList)) [[likely]] {
                 m_singletonScratch[0] = decodeSingleton(encodedList);
@@ -3742,9 +3742,9 @@ private:
                 makeMapIfLarge(allocator);
         }
 
-        std::span<const Tmp> LEGACY_NODELETE members() const { return { m_members, m_size }; }
-        size_t LEGACY_NODELETE size() const { return m_size; }
-        bool LEGACY_NODELETE isEmpty() const { return !m_size; }
+        NODELETE std::span<const Tmp> members() const { return { m_members, m_size }; }
+        NODELETE size_t size() const { return m_size; }
+        NODELETE bool isEmpty() const { return !m_size; }
         bool LEGACY_NODELETE hasMap() const { return !!m_liveness; }
         const LiveRange& LEGACY_NODELETE range() const { ASSERT(!hasMap()); return m_range; }
 
@@ -6889,7 +6889,7 @@ private:
         return trySplitIntoClusters<bank>(tmp, m_splitPolicy.splitsIntoClustersOverBlocks && !tmpData.isClusterOverBlocks && !tmpData.isOnStackInSomeBlocks ? ClusterReach::OverBlocks : ClusterReach::WithinBlock);
     }
 
-    static unsigned LEGACY_NODELETE stackSlotMinimumWidth(Width width)
+    NODELETE static unsigned stackSlotMinimumWidth(Width width)
     {
         if (width <= Width32)
             return 4;
@@ -6929,7 +6929,7 @@ private:
         tmpData.validate();
     }
 
-    bool LEGACY_NODELETE queueContainsOnlySpills()
+    NODELETE bool queueContainsOnlySpills()
     {
         for (auto& elem : m_queue) {
             if (elem.stage() != Stage::Spill)
@@ -7621,7 +7621,7 @@ private:
         dataLogLnIf(verbose(), "AroundLoop fixup: nonLoop=", nonLoopTmp, " loop=", loopTmp, " header=BB", *header);
     }
 
-    bool LEGACY_NODELETE mayBeCoalescable(Inst& inst)
+    NODELETE bool mayBeCoalescable(Inst& inst)
     {
         switch (inst.kind.opcode) {
         case Move:

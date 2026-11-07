@@ -1033,18 +1033,18 @@ void WebPageProxy::showPlaybackTargetPicker(bool hasVideo, const IntRect& elemen
         pageClient->showPlaybackTargetPicker(hasVideo, elementRect, policy, contextUID);
 }
 
-size_t WebPageProxy::computePagesForPrintingiOS(FrameIdentifier frameID, const PrintInfo& printInfo)
+PrintPageInfo WebPageProxy::computePageInfoForPrintingiOS(FrameIdentifier frameID, const PrintInfo& printInfo)
 {
     ASSERT_WITH_MESSAGE(!printInfo.snapshotFirstPage, "If we are just snapshotting the first page, we don't need a synchronous message to determine the page count, which is 1.");
 
     if (!hasRunningProcess())
-        return 0;
+        return { 0, printInfo.margin };
 
     RefPtr frame = WebFrameProxy::webFrame(frameID);
     launchPrintProcessIfNeeded(frame.get());
     auto sendResult = sendSyncToProcessContainingFrame(frameID, Messages::WebPage::ComputePagesForPrintingiOS(frameID, printInfo), Seconds::infinity());
-    auto [pageCount] = sendResult.takeReplyOr(0);
-    return pageCount;
+    auto [pageCount, computedPageMargin] = sendResult.takeReplyOr(0, printInfo.margin);
+    return { static_cast<size_t>(pageCount), computedPageMargin };
 }
 
 std::optional<IPC::Connection::AsyncReplyID> WebPageProxy::drawToPDFiOS(FrameIdentifier frameID, const PrintInfo& printInfo, size_t pageCount, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&& completionHandler)
@@ -1298,8 +1298,9 @@ void WebPageProxy::requestAdditionalItemsForDragSession(std::optional<WebCore::F
 
 void WebPageProxy::insertDroppedImagePlaceholders(const Vector<IntSize>& imageSizes, CompletionHandler<void(const Vector<IntRect>&, RefPtr<WebCore::TextIndicator>)>&& completionHandler)
 {
+    // The placeholders are inserted at the drop caret, which is in the process of the frame under the drop.
     if (hasRunningProcess())
-        protect(legacyMainFrameProcess())->sendWithAsyncReply(Messages::WebPage::InsertDroppedImagePlaceholders(imageSizes), WTF::move(completionHandler), webPageIDInMainFrameProcess());
+        sendWithAsyncReplyToProcessContainingFrame(internals().currentDragTargetFrameID, Messages::WebPage::InsertDroppedImagePlaceholders(imageSizes), Messages::WebPage::InsertDroppedImagePlaceholders::Reply { WTF::move(completionHandler) });
     else
         completionHandler({ }, nullptr);
 }

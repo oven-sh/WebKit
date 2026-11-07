@@ -15,6 +15,7 @@
 #include "B3VectorizeLoops.h"
 #include "Disassembler.h"
 #include "LinkBuffer.h"
+#include <wtf/StringPrintStream.h>
 
 namespace {
 

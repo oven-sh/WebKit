@@ -616,7 +616,7 @@ void WebChromeClient::rootFrameRemoved(const WebCore::LocalFrame& frame)
         drawingArea->removeRootFrame(frame.frameID());
 }
 
-static bool LEGACY_NODELETE shouldSuppressJavaScriptDialogs(LocalFrame& frame)
+NODELETE static bool shouldSuppressJavaScriptDialogs(LocalFrame& frame)
 {
     if (frame.opener() && frame.loader().stateMachine().isDisplayingInitialEmptyDocument() && frame.loader().provisionalDocumentLoader())
         return true;
@@ -1314,15 +1314,18 @@ RefPtr<GraphicsContextGL> WebChromeClient::createGraphicsContextGL(const Graphic
     WebProcess::singleton().initializePlatformDisplayIfNeeded();
     WebProcess::singleton().initializeVulkanIfNeeded();
 #endif
-#if ENABLE(GPU_PROCESS)
-    if (WebProcess::singleton().shouldUseRemoteRenderingForWebGL()) {
-        RefPtr page = m_page.get();
-        if (!page)
-            return nullptr;
-        return RemoteGraphicsContextGLProxy::create(attributes, page.releaseNonNull());
-    }
+#if ENABLE(GPU_PROCESS) && !PLATFORM(COCOA)
+    if (!WebProcess::singleton().shouldUseRemoteRenderingForWebGL())
+        return WebCore::createWebProcessGraphicsContextGL(attributes);
 #endif
+#if ENABLE(GPU_PROCESS)
+    RefPtr page = m_page.get();
+    if (!page)
+        return nullptr;
+    return RemoteGraphicsContextGLProxy::create(attributes, page.releaseNonNull());
+#else
     return WebCore::createWebProcessGraphicsContextGL(attributes);
+#endif
 }
 #endif
 
@@ -2766,7 +2769,7 @@ void WebChromeClient::showCaptionDisplaySettings(HTMLMediaElement& element, cons
 void WebChromeClient::didFinishContentChangeObserving(WebCore::LocalFrame& frame, WebCore::ContentChange observedContentChange)
 {
     if (RefPtr page = m_page.get())
-        page->didFinishContentChangeObserving(frame.frameID(), observedContentChange);
+        page->didFinishContentChangeObserving(frame.rootFrame().frameID(), observedContentChange);
 }
 #endif
 

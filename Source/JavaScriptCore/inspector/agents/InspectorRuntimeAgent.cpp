@@ -409,6 +409,8 @@ Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::Runtime::TypeDescription>>> 
 {
     static constexpr bool verbose = false;
 
+    JSLockHolder lock(m_vm);
+
     if (!m_vm.typeProfiler())
         return makeUnexpected("VM has no type information"_s);
 
@@ -464,8 +466,14 @@ void InspectorRuntimeAgent::didCreateFrontendAndBackend()
 
 void InspectorRuntimeAgent::willDestroyFrontendAndBackend(DisconnectReason reason)
 {
-    if (reason != DisconnectReason::InspectedTargetDestroyed && m_isTypeProfilingEnabled)
+    if (reason != DisconnectReason::InspectedTargetDestroyed || vmOutlivesInspectedTarget()) {
         setTypeProfilerEnabledState(false);
+        // Bun: a frontend that leaves does not take the control flow profiler with it. The body of a suspended generator or async function, and a
+        // module, get their code again in the mode of their first code. That code has op_profile_control_flow, and linking it needs the profiler.
+#if !USE(BUN_JSC_ADDITIONS)
+        setControlFlowProfilerEnabledState(false);
+#endif
+    }
 
     std::ignore = disable();
 }

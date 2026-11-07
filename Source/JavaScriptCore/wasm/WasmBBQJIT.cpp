@@ -4114,8 +4114,7 @@ void BBQJIT::prepareForExceptions()
                 jumpTable->at(index) = linkBuffer.locationOf<JSSwitchPtrTag>(*labels[index]);
         });
     } else {
-        Vector<std::tuple<uint32_t, size_t>, 16> runs;
-        runs.reserveInitialCapacity(runCount);
+        Vector<std::tuple<uint32_t, size_t>, 16> runs(ReserveCapacityTag { }, runCount);
         for (unsigned i = 0; i < targets.size(); ) {
             unsigned start = i;
             while (i < targets.size() && targets[i] == targets[start])
@@ -4419,8 +4418,7 @@ void BBQJIT::saveValuesAcrossCallAndPassArguments(const Args& arguments, const C
     }
 
     // Finally, we parallel-move arguments to the parameter locations.
-    WTF::Vector<Location, 8> parameterLocations;
-    parameterLocations.reserveInitialCapacity(callInfo.params.size());
+    WTF::Vector<Location, 8> parameterLocations(ReserveCapacityTag { }, callInfo.params.size());
     for (unsigned i = 0; i < callInfo.params.size(); i++) {
         auto type = signature.argumentType(i);
         auto parameterLocation = Location::fromArgumentLocation(callInfo.params[i], type.kind());
@@ -4481,10 +4479,8 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const RTT& sign
     ASSERT(callInfo.results.size() == wasmCallerInfo.results.size());
     ASSERT(arguments.size() == callInfo.params.size());
 
-    Vector<Value, 8> resolvedArguments;
-    resolvedArguments.reserveInitialCapacity(arguments.size() + isX86());
-    Vector<Location, 8> parameterLocations;
-    parameterLocations.reserveInitialCapacity(arguments.size() + isX86());
+    Vector<Value, 8> resolvedArguments(ReserveCapacityTag { }, arguments.size() + isX86());
+    Vector<Location, 8> parameterLocations(ReserveCapacityTag { }, arguments.size() + isX86());
 
     // Save the old Frame Pointer for later and make sure the return address gets saved to its canonical location.
     emitRestoreCalleeSaves();
@@ -4771,11 +4767,19 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
         Checked<int32_t> topSourceOffsetFromFP = static_cast<int32_t>(roundUpToMultipleOf<stackAlignmentBytes()>(topSource));
 
         m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfTargetInstance()), wasmScratchGPR);
-        Jump isSameInstance = m_jit.branchPtr(RelationalCondition::Equal, wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
+        // We need a restore frame if the wasm instance is different or if the call goes out to JS.
+        // In the latter case JS can grow wasm memory, invalidating memory base cached in a callee save register.
+        Jump needsRestoreFrame = m_jit.branchPtr(RelationalCondition::NotEqual, wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
+        // FIXME: consider overloading WasmCallableFunction::targetInstance to hold a JSFunction when the
+        // callee exits to JS. The instance comparison above would then fail for a JS import on its own and
+        // this second test could go away. See also OMGIRGenerator::emitIndirectCall().
+        m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
+        Jump skipRestoreFrame = branchIfCalleeNotWasmToJS(m_jit, wasmScratchGPR);
+        needsRestoreFrame.link(m_jit);
         emitRestoreInstanceFrameIfNeeded(m_jit, GPRInfo::wasmContextInstancePointer, callerStackSize, m_frameSize, topSourceOffsetFromFP, wasmScratchGPR, wasmBaseMemoryPointer);
         m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfTargetInstance()), GPRInfo::wasmContextInstancePointer);
         loadWebAssemblyGlobalState(wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);
-        isSameInstance.link(m_jit);
+        skipRestoreFrame.link(m_jit);
     }
 
     m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
@@ -4784,8 +4788,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
     Vector<Value, 8> resolvedArguments;
     const unsigned calleeArgument = 1;
     resolvedArguments.reserveInitialCapacity(arguments.size() + calleeArgument + isX86() * 2);
-    Vector<Location, 8> parameterLocations;
-    parameterLocations.reserveInitialCapacity(arguments.size() + calleeArgument + isX86() * 2);
+    Vector<Location, 8> parameterLocations(ReserveCapacityTag { }, arguments.size() + calleeArgument + isX86() * 2);
 
     // It's ok if we clobber our Wasm::Callee at this point since we can't hit a GC safepoint / throw an exception until we've tail called into the callee.
     // FIXME: We should just have addCallIndirect put this in the right place to begin with.

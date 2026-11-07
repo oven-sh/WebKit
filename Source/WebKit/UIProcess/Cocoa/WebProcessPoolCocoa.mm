@@ -239,14 +239,14 @@ static void registerUserDefaults()
     [[NSUserDefaults standardUserDefaults] registerDefaults:registrationDictionary.get()];
 }
 
-static std::optional<bool>& LEGACY_NODELETE cachedLockdownModeEnabledGlobally()
+NODELETE static std::optional<bool>& cachedLockdownModeEnabledGlobally()
 {
     static std::optional<bool> cachedLockdownModeEnabledGlobally;
     return cachedLockdownModeEnabledGlobally;
 }
 
 #if PLATFORM(MAC)
-static NSApplication* LEGACY_NODELETE NSAppSingleton()
+NODELETE static NSApplication* NSAppSingleton()
 {
     return NSApp;
 }
@@ -690,6 +690,12 @@ void WebProcessPool::accessibilityPreferencesChangedCallback(CFNotificationCente
     auto pool = extractWebProcessPool(observer);
     if (!pool)
         return;
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+    for (Ref process : pool->m_processes) {
+        for (Ref page : process->pages())
+            page->clearImageAnimationEnabledOverride();
+    }
+#endif
     pool->sendToAllProcesses(Messages::WebProcess::AccessibilityPreferencesDidChange(accessibilityPreferences()));
 }
 
@@ -1231,14 +1237,14 @@ int webProcessThroughputQOS()
     return qos;
 }
 
-static WeakHashSet<LockdownModeObserver>& LEGACY_NODELETE lockdownModeObservers()
+NODELETE static WeakHashSet<LockdownModeObserver>& lockdownModeObservers()
 {
     RELEASE_ASSERT(isMainRunLoop());
     static NeverDestroyed<WeakHashSet<LockdownModeObserver>> observers;
     return observers;
 }
 
-static std::optional<bool>& LEGACY_NODELETE isLockdownModeEnabledGloballyForTesting()
+NODELETE static std::optional<bool>& isLockdownModeEnabledGloballyForTesting()
 {
     static NeverDestroyed<std::optional<bool>> enabledForTesting;
     return enabledForTesting;

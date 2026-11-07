@@ -62,6 +62,7 @@
 
 namespace API {
 class AutomationSessionClient;
+class Navigation;
 }
 
 namespace Inspector {
@@ -78,6 +79,7 @@ struct Cookie;
 
 #if PLATFORM(COCOA)
 OBJC_CLASS NSArray;
+typedef struct CGImage* CGImageRef;
 typedef unsigned short unichar;
 #endif
 
@@ -156,7 +158,7 @@ public:
     public:
         static Ref<Debuggable> create(WebAutomationSession&);
 
-        void LEGACY_NODELETE sessionDestroyed();
+        NODELETE void sessionDestroyed();
 
     // Inspector::RemoteAutomationTarget API
     String name() const;
@@ -178,10 +180,13 @@ public:
 
     bool siteIsolationEnabled() const { return m_siteIsolationEnabled; }
 
-    WebProcessPool* LEGACY_NODELETE processPool() const;
+    NODELETE WebProcessPool* processPool() const;
     void setProcessPool(WebProcessPool*);
 
-    void navigationOccurredForFrame(const WebFrameProxy&);
+    // A same-document navigation is reported as such: it does not end a wait whose navigation was destroyed.
+    enum class NavigationNotification : bool { LoadEnded, SameDocumentNavigation };
+    void navigationOccurredForFrame(const WebFrameProxy&, API::Navigation* = nullptr, NavigationNotification = NavigationNotification::LoadEnded);
+    void navigationDestroyed(const WebPageProxy&, const API::Navigation&);
     void documentLoadedForFrame(const WebFrameProxy&, std::optional<WebCore::NavigationIdentifier>, WallTime timestamp);
     void loadCompletedForFrame(const WebFrameProxy&, std::optional<WebCore::NavigationIdentifier>, WallTime timestamp);
     void inspectorFrontendLoaded(const WebPageProxy&);
@@ -209,7 +214,7 @@ public:
     void didEnterFullScreenForPage(const WebPageProxy&);
     void didExitFullScreenForPage(const WebPageProxy&);
 
-    bool LEGACY_NODELETE shouldAllowGetUserMediaForPage(const WebPageProxy&) const;
+    NODELETE bool shouldAllowGetUserMediaForPage(const WebPageProxy&) const;
 
 #if ENABLE(REMOTE_INSPECTOR)
     String name() const { return m_sessionIdentifier; }
@@ -218,8 +223,8 @@ public:
     void disconnect(Inspector::FrontendChannel&);
 
     void init();
-    bool LEGACY_NODELETE isPaired() const;
-    bool LEGACY_NODELETE isPendingTermination() const;
+    NODELETE bool isPaired() const;
+    NODELETE bool isPendingTermination() const;
 #endif
 
     void terminate();
@@ -328,7 +333,7 @@ public:
 #endif
 
     // Event Simulation Support.
-    bool LEGACY_NODELETE isSimulatingUserInteraction() const;
+    NODELETE bool isSimulatingUserInteraction() const;
 #if ENABLE(WEBDRIVER_ACTIONS_API)
     SimulatedInputDispatcher& inputDispatcherForPage(WebPageProxy&);
     void runInteractionSequence(WebPageProxy&, std::optional<WebCore::FrameIdentifier>, Vector<SimulatedInputKeyFrame>&&, const HashMap<String, Ref<SimulatedInputSource>>& inputSources, SimulatedInputRunOptions, AutomationCompletionHandler&&);
@@ -365,9 +370,26 @@ private:
     Ref<Inspector::Protocol::Automation::BrowsingContext> buildBrowsingContextForPage(WebPageProxy&, WebCore::FloatRect windowFrame);
     void getNextContext(Vector<Ref<WebPageProxy>>&&, Ref<JSON::ArrayOf<Inspector::Protocol::Automation::BrowsingContext>>, Inspector::CommandCallback<Ref<JSON::ArrayOf<Inspector::Protocol::Automation::BrowsingContext>>>&&);
 
-    void waitForNavigationToCompleteOnPage(WebPageProxy&, Inspector::Protocol::Automation::PageLoadStrategy, Seconds, Inspector::CommandCallback<void>&&);
+    // A wait registered by a command that started a navigation completes for that navigation, or for one the
+    // UI process learned of later, which replaced it; a load that was already in flight (e.g. the initial
+    // about:blank of a new tab) cannot end it early. Once that navigation is destroyed without having reported
+    // its end, any load that is not an earlier one completes the wait. A wait without a navigation completes
+    // with the first navigation notification when it is for a same-document target, and otherwise with the
+    // notification its load strategy specifies.
+    struct PendingPageNavigationCallback {
+        RefPtr<API::Navigation> navigation;
+        bool isForSameDocumentNavigation { false };
+        bool navigationWasDestroyed { false };
+        Inspector::CommandCallback<void> callback;
+    };
+    enum class UnboundWaits : bool { Keep, Complete };
+    Vector<Inspector::CommandCallback<void>> takePendingPageNavigationCallbacks(HashMap<WebPageProxyIdentifier, Vector<PendingPageNavigationCallback>>&, const WebPageProxy&, API::Navigation* finishedNavigation, UnboundWaits, NavigationNotification = NavigationNotification::LoadEnded);
+    enum class SameDocumentNavigation : bool { No, Yes };
+    void waitForNavigationToCompleteOnPage(WebPageProxy&, Inspector::Protocol::Automation::PageLoadStrategy, Seconds, Inspector::CommandCallback<void>&&, RefPtr<API::Navigation>&& = nullptr, SameDocumentNavigation = SameDocumentNavigation::No);
+    void waitForHistoryTraversalToComplete(WebPageProxy&, Inspector::Protocol::Automation::PageLoadStrategy, Seconds, Inspector::CommandCallback<void>&&, RefPtr<API::Navigation>&&);
+    bool hasPendingNavigationCallbacks() const;
     void waitForNavigationToCompleteOnFrame(WebFrameProxy&, Inspector::Protocol::Automation::PageLoadStrategy, Seconds, Inspector::CommandCallback<void>&&);
-    void respondToPendingPageNavigationCallbacksWithTimeout(HashMap<WebPageProxyIdentifier, Vector<Inspector::CommandCallback<void>>>&);
+    void respondToPendingPageNavigationCallbacksWithTimeout(HashMap<WebPageProxyIdentifier, Vector<PendingPageNavigationCallback>>&);
     void respondToPendingFrameNavigationCallbacksWithTimeout(HashMap<WebCore::FrameIdentifier, Vector<Inspector::CommandCallback<void>>>&);
     void respondToPendingNavigationCallbacksWithSuccess(Vector<Inspector::CommandCallback<void>>&&);
     void loadTimerFired();
@@ -397,11 +419,11 @@ private:
 
     // Platform-dependent implementations.
 #if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
-    void LEGACY_NODELETE resetMouseState();
+    NODELETE void resetMouseState();
     void updateClickCount(MouseButton, const WebCore::IntPoint&, Seconds maxTime = 0.5_s, int maxDistance = 0);
-    void LEGACY_NODELETE updateLastPosition(const WebCore::IntPoint&, int maxDistance = 0);
+    NODELETE void updateLastPosition(const WebCore::IntPoint&, int maxDistance = 0);
     void platformSimulateMouseInteraction(WebPageProxy&, MouseInteraction, MouseButton, const WebCore::IntPoint& locationInViewport, OptionSet<WebEventModifier>, const String& pointerType);
-    static OptionSet<WebEventModifier> LEGACY_NODELETE platformWebModifiersFromRaw(WebPageProxy&, unsigned modifiers);
+    NODELETE static OptionSet<WebEventModifier> platformWebModifiersFromRaw(WebPageProxy&, unsigned modifiers);
 #endif
 #if ENABLE(WEBDRIVER_TOUCH_INTERACTIONS)
     // Simulates a single touch point being pressed, moved, and released.
@@ -420,6 +442,9 @@ private:
     // Get base64-encoded PNG data from a bitmap.
     static std::optional<String> platformGetBase64EncodedPNGData(WebCore::ShareableBitmap::Handle&&);
     static std::optional<String> platformGetBase64EncodedPNGData(const ViewSnapshot&);
+#if PLATFORM(COCOA)
+    static std::optional<String> platformGetBase64EncodedPNGData(CGImageRef);
+#endif
 
     // Save base64-encoded file contents to a local file path and return the path.
     // This reuses the basename of the remote file path so that the filename exposed to DOM API remains the same.
@@ -429,8 +454,8 @@ private:
     // The type parameter of the NSArray argument is platform-dependent.
     void sendSynthesizedEventsToPage(WebPageProxy&, NSArray *eventsToSend);
 
-    std::optional<unichar> LEGACY_NODELETE charCodeForVirtualKey(Inspector::Protocol::Automation::VirtualKey) const;
-    std::optional<unichar> LEGACY_NODELETE charCodeIgnoringModifiersForVirtualKey(Inspector::Protocol::Automation::VirtualKey) const;
+    NODELETE std::optional<unichar> charCodeForVirtualKey(Inspector::Protocol::Automation::VirtualKey) const;
+    NODELETE std::optional<unichar> charCodeIgnoringModifiersForVirtualKey(Inspector::Protocol::Automation::VirtualKey) const;
 
 #if ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
     // Where the WebDriver key table states a DOM identity for the key, attaches it to each of the
@@ -470,8 +495,8 @@ private:
     // reference reports "no such element" again instead of "stale element reference".
     HashMap<WebCore::FrameIdentifier, ListHashSet<String>> m_knownNodeReferences;
 
-    HashMap<WebPageProxyIdentifier, Vector<Inspector::CommandCallback<void>>> m_pendingNormalNavigationInBrowsingContextCallbacksPerPage;
-    HashMap<WebPageProxyIdentifier, Vector<Inspector::CommandCallback<void>>> m_pendingEagerNavigationInBrowsingContextCallbacksPerPage;
+    HashMap<WebPageProxyIdentifier, Vector<PendingPageNavigationCallback>> m_pendingNormalNavigationInBrowsingContextCallbacksPerPage;
+    HashMap<WebPageProxyIdentifier, Vector<PendingPageNavigationCallback>> m_pendingEagerNavigationInBrowsingContextCallbacksPerPage;
     HashMap<WebCore::FrameIdentifier, Vector<Inspector::CommandCallback<void>>> m_pendingNormalNavigationInBrowsingContextCallbacksPerFrame;
     HashMap<WebCore::FrameIdentifier, Vector<Inspector::CommandCallback<void>>> m_pendingEagerNavigationInBrowsingContextCallbacksPerFrame;
     HashMap<WebPageProxyIdentifier, Inspector::CommandCallback<void>> m_pendingInspectorCallbacksPerPage;

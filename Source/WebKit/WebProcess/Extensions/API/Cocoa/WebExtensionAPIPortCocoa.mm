@@ -50,7 +50,7 @@ namespace WebKit {
 
 using PortChannelPortMap = HashMap<WebExtensionPortChannelIdentifier, HashSet<WeakRef<WebExtensionAPIPort>>>;
 
-static PortChannelPortMap& LEGACY_NODELETE webExtensionPorts()
+NODELETE static PortChannelPortMap& webExtensionPorts()
 {
     static MainRunLoopNeverDestroyed<PortChannelPortMap> ports;
     return ports;
@@ -126,7 +126,7 @@ void WebExtensionAPIPort::setError(JSContextRef context, JSValueRef error)
     m_error = Protected(JSContextGetGlobalContext(context), error);
 }
 
-void WebExtensionAPIPort::postMessage(WebFrame& frame, const String& message, NSString **outExceptionString)
+void WebExtensionAPIPort::postMessage(WebFrame& frame, const WebExtensionMessage& message, NSString **outExceptionString)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/Port#postmessage
 
@@ -166,7 +166,7 @@ void WebExtensionAPIPort::disconnect()
     remove();
 }
 
-void WebExtensionAPIPort::fireMessageEventIfNeeded(id message, bool userGesture)
+void WebExtensionAPIPort::fireMessageEventIfNeeded(const WebExtensionMessage& message, bool userGesture)
 {
     if (isDisconnected() || isQuarantined() || !m_onMessage || m_onMessage->listeners().isEmpty())
         return;
@@ -187,7 +187,7 @@ void WebExtensionAPIPort::fireMessageEventIfNeeded(id message, bool userGesture)
         }
 
         listener->call(
-            toJSValueRef(globalContext, message),
+            message.toJSValue(globalContext),
             toJS(globalContext, this)
         );
     }
@@ -237,13 +237,11 @@ WebExtensionAPIEvent& WebExtensionAPIPort::onDisconnect()
     return *m_onDisconnect;
 }
 
-void WebExtensionContextProxy::dispatchPortMessageEvent(std::optional<WebPageProxyIdentifier> sendingPageProxyIdentifier, WebExtensionPortChannelIdentifier channelIdentifier, const String& messageJSON, bool userGesture)
+void WebExtensionContextProxy::dispatchPortMessageEvent(std::optional<WebPageProxyIdentifier> sendingPageProxyIdentifier, WebExtensionPortChannelIdentifier channelIdentifier, const WebExtensionMessage& message, bool userGesture)
 {
     auto ports = WebExtensionAPIPort::get(channelIdentifier);
     if (ports.isEmpty())
         return;
-
-    id message = parseJSON(messageJSON.createNSString().get(), { JSONOptions::FragmentsAllowed });
 
     for (Ref port : ports) {
         // Don't send the message to other ports in the same page as the sender.

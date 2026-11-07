@@ -67,10 +67,10 @@ public:
     {
     }
 
-    void LEGACY_NODELETE get(JSObject*, PropertySlot&) const;
+    NODELETE void get(JSObject*, PropertySlot&) const;
     void get(PropertyDescriptor&) const;
     bool put(JSGlobalObject*, JSValue thisValue, SparseArrayValueMap*, JSValue, bool shouldThrow);
-    JSValue LEGACY_NODELETE getNonSparseMode() const;
+    NODELETE JSValue getNonSparseMode() const;
     JSValue getConcurrently() const;
     JSValue get() const;
 
@@ -215,7 +215,8 @@ public:
     const_iterator end() const { return m_set.end(); }
 
     static constexpr ptrdiff_t offsetOfTable() { return OBJECT_OFFSETOF(SparseArrayValueMap, m_set) + Set::offsetOfTable(); }
-    static constexpr ptrdiff_t offsetOfTableSizeMask() { return Set::offsetOfTableSizeMask(); }
+    static constexpr ptrdiff_t offsetOfTableSize() { return Set::offsetOfTableSize(); }
+    static constexpr ptrdiff_t offsetOfHashShift() { return Set::offsetOfHashShift(); }
 
 private:
     Set m_set;

@@ -47,37 +47,37 @@ using WTF::Range;
 namespace WebCore {
 namespace Layout {
 
-static inline LayoutUnit LEGACY_NODELETE marginLineLeft(const Layout::BoxGeometry& boxGeometry, WritingMode writingMode)
+NODELETE static inline LayoutUnit marginLineLeft(const Layout::BoxGeometry& boxGeometry, WritingMode writingMode)
 {
     return writingMode.isBidiLTR() ? boxGeometry.marginStart() : boxGeometry.marginEnd();
 }
 
-static inline LayoutUnit LEGACY_NODELETE marginLineRight(const Layout::BoxGeometry& boxGeometry, WritingMode writingMode)
+NODELETE static inline LayoutUnit marginLineRight(const Layout::BoxGeometry& boxGeometry, WritingMode writingMode)
 {
     return writingMode.isBidiLTR() ? boxGeometry.marginEnd() : boxGeometry.marginStart();
 }
 
-static inline LayoutUnit LEGACY_NODELETE borderLineLeft(const Layout::BoxGeometry& boxGeometry, WritingMode writingMode)
+NODELETE static inline LayoutUnit borderLineLeft(const Layout::BoxGeometry& boxGeometry, WritingMode writingMode)
 {
     return writingMode.isBidiLTR() ? boxGeometry.borderStart() : boxGeometry.borderEnd();
 }
 
-static inline LayoutUnit LEGACY_NODELETE borderLineRight(const Layout::BoxGeometry& boxGeometry,  WritingMode writingMode)
+NODELETE static inline LayoutUnit borderLineRight(const Layout::BoxGeometry& boxGeometry,  WritingMode writingMode)
 {
     return writingMode.isBidiLTR() ? boxGeometry.borderEnd() : boxGeometry.borderStart();
 }
 
-static inline LayoutUnit LEGACY_NODELETE paddingLineLeft(const Layout::BoxGeometry& boxGeometry,  WritingMode writingMode)
+NODELETE static inline LayoutUnit paddingLineLeft(const Layout::BoxGeometry& boxGeometry,  WritingMode writingMode)
 {
     return writingMode.isBidiLTR() ? boxGeometry.paddingStart() : boxGeometry.paddingEnd();
 }
 
-static inline LayoutUnit LEGACY_NODELETE paddingLineRight(const Layout::BoxGeometry& boxGeometry,  WritingMode writingMode)
+NODELETE static inline LayoutUnit paddingLineRight(const Layout::BoxGeometry& boxGeometry,  WritingMode writingMode)
 {
     return writingMode.isBidiLTR() ? boxGeometry.paddingEnd() : boxGeometry.paddingStart();
 }
 
-static inline EnumSet<InlineDisplay::Box::PositionWithinInlineLevelBox> LEGACY_NODELETE isFirstLastBox(const InlineLevelBox& inlineBox)
+NODELETE static inline EnumSet<InlineDisplay::Box::PositionWithinInlineLevelBox> isFirstLastBox(const InlineLevelBox& inlineBox)
 {
     auto positionWithinInlineLevelBox = EnumSet<InlineDisplay::Box::PositionWithinInlineLevelBox> { };
     if (inlineBox.isFirstBox())
@@ -166,8 +166,14 @@ void InlineDisplayContentBuilder::appendTextDisplayBox(const Line::Run& lineRun,
     auto& text = lineRun.textContent();
     auto isContentful = true;
 
-    auto& textStyle = isFirstFormattedLine() ? inlineTextBox->parent().firstLineStyle() : inlineTextBox->parent().style();
-    m_contentHasInkOverflow = m_contentHasInkOverflow || textStyle.textDecorationLineInEffect() || !Style::shadowOutsetExtent(textStyle.textShadow(), textStyle.usedZoomForLength()).isZero() || textStyle.hasPositiveStrokeWidth() || style.fontCascade().letterSpacing() < 0 || !lineRun.glyphOverflow().isEmpty();
+    // A font of its own, as in a display: contents element, can take the text outside its parent inline box.
+    auto hasFontOfItsOwn = [&] {
+        if (!inlineTextBox->parent().isInlineBox())
+            return false;
+        auto& parentStyle = isFirstFormattedLine() ? inlineTextBox->parent().firstLineStyle() : inlineTextBox->parent().style();
+        return &style.fontCascade() != &parentStyle.fontCascade() && style.fontCascade() != parentStyle.fontCascade();
+    };
+    m_contentHasInkOverflow = m_contentHasInkOverflow || style.textDecorationLineInEffect() || !Style::shadowOutsetExtent(style.textShadow(), style.usedZoomForLength()).isZero() || style.hasPositiveStrokeWidth() || style.fontCascade().letterSpacing() < 0 || !lineRun.glyphOverflow().isEmpty() || hasFontOfItsOwn();
 
     float glyphOverflowTop = lineRun.glyphOverflow().top;
     float glyphOverflowBottom = lineRun.glyphOverflow().bottom;
@@ -182,26 +188,6 @@ void InlineDisplayContentBuilder::appendTextDisplayBox(const Line::Run& lineRun,
     }
 
     auto inkOverflow = textRunRect;
-
-    if (inlineTextBox->isCombined()) {
-        static auto objectReplacementCharacterString = NeverDestroyed<String> { span(objectReplacementCharacter) };
-        // The rendered text is the actual combined content, while the "original" one is blank.
-        boxes.append({ lineIndex()
-            , InlineDisplay::Box::Type::Text
-            , inlineTextBox
-            , lineRun.bidiLevel()
-            , textRunRect
-            , inkOverflow
-            , isFirstFormattedLine()
-            , lineRun.expansion()
-            , InlineDisplay::Box::Text { text.start, 1, objectReplacementCharacterString, content }
-            , isContentful
-            , isLineFullyTruncatedInBlockDirection()
-        });
-        boxes.last().setGlyphOverflow(glyphOverflowTop, glyphOverflowBottom);
-        return;
-    }
-
     auto adjustedContentToRender = [&] {
         return text.needsHyphen ? makeString(StringView(content).substring(text.start, text.length), style.hyphenString()) : String();
     };
@@ -568,9 +554,9 @@ public:
         m_displayBoxNodes.append({ });
     }
 
-    const Node& LEGACY_NODELETE root() const { return m_displayBoxNodes.first(); }
-    Node& LEGACY_NODELETE at(size_t index) { return m_displayBoxNodes[index]; }
-    const Node& LEGACY_NODELETE at(size_t index) const { return m_displayBoxNodes[index]; }
+    NODELETE const Node& root() const { return m_displayBoxNodes.first(); }
+    NODELETE Node& at(size_t index) { return m_displayBoxNodes[index]; }
+    NODELETE const Node& at(size_t index) const { return m_displayBoxNodes[index]; }
 
     size_t append(size_t parentNodeIndex, size_t childDisplayBoxIndex)
     {
@@ -992,7 +978,7 @@ void InlineDisplayContentBuilder::processBidiContent(const LineLayoutResult& lin
     closeInlineBoxes();
 }
 
-static inline size_t LEGACY_NODELETE runIndex(auto i, auto listSize, auto isBidiLTR)
+NODELETE static inline size_t runIndex(auto i, auto listSize, auto isBidiLTR)
 {
     if (isBidiLTR)
         return i;

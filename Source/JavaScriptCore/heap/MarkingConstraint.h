@@ -59,7 +59,7 @@ public:
     JS_EXPORT_PRIVATE const ASCIICString& abbreviatedName() const LIFETIME_BOUND { return m_abbreviatedName; }
     JS_EXPORT_PRIVATE const ASCIICString& name() const LIFETIME_BOUND { return m_name; }
     
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE resetStats();
+    NODELETE JS_EXPORT_PRIVATE void resetStats();
     
     JS_EXPORT_PRIVATE size_t lastVisitCount() const { return m_lastVisitCount; }
     

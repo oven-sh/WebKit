@@ -856,9 +856,10 @@ static void testTypedArraysInterceptIndexedStoresAfterIndexAccessorOnPrototype()
 
     JSObject* createdBefore = realms.object(locked, "var createdBefore = Object.create(new Uint8Array(4)); createdBefore[0] = 1; createdBefore"_s);
     JSArray* ordinary = realms.array(locked, "[1, 2].slice()"_s);
-    AOT_TEST_CHECK(realms.evaluate(locked, "var early = Object.create(new Uint8Array(4)); early[9] = 9; early[9] === 9"_s) == jsBoolean(true));
+    // A typed array takes the indexed stores of what is below it from the start: its Structure says so (325744@main), and no flag of the realm has to.
+    AOT_TEST_CHECK(realms.evaluate(locked, "var early = Object.create(new Uint8Array(4)); early[1] = 1; early[9] = 9; early[1] === 1 && !(9 in early)"_s) == jsBoolean(true));
     AOT_TEST_CHECK(!locked->typedArraysInterceptIndexedStores());
-    AOT_TEST_CHECK(!hasSlowPutArrayStorage(createdBefore->indexingType()));
+    AOT_TEST_CHECK(hasSlowPutArrayStorage(createdBefore->indexingType()));
 
     realms.evaluate(locked, "var watched = { }; var heir = Object.create(watched); Object.defineProperty(watched, 3, { set(value) { }, configurable: true })"_s);
     AOT_TEST_CHECK(!locked->isHavingABadTime());
@@ -871,7 +872,7 @@ static void testTypedArraysInterceptIndexedStoresAfterIndexAccessorOnPrototype()
     AOT_TEST_CHECK(realms.evaluate(locked, "var moved = [1]; Object.setPrototypeOf(moved, new Uint8Array(4)); moved[9] = 9; !(9 in moved) && Reflect.set(moved, 9, 9) && !(9 in moved)"_s) == jsBoolean(true));
     AOT_TEST_CHECK(realms.evaluate(locked, "var middle = { }; var below = Object.create(middle); below[0] = 1; Object.setPrototypeOf(middle, new Uint8Array(4)); below[9] = 9; !(9 in below)"_s) == jsBoolean(true));
     AOT_TEST_CHECK(!realms.plain()->typedArraysInterceptIndexedStores());
-    AOT_TEST_CHECK(realms.evaluate(realms.plain(), "var elsewhere = Object.create(new Uint8Array(4)); elsewhere[9] = 9; elsewhere[9] === 9"_s) == jsBoolean(true));
+    AOT_TEST_CHECK(realms.evaluate(realms.plain(), "var elsewhere = Object.create(new Uint8Array(4)); elsewhere[1] = 1; elsewhere[9] = 9; elsewhere[1] === 1 && !(9 in elsewhere)"_s) == jsBoolean(true));
 }
 
 static void testOneWalkCoversEveryPrototypeThatCanChange()
@@ -925,7 +926,7 @@ static void testStartUpCreatesNoClass(LoadedProgram& program)
     AOT_TEST_CHECK(!realm->dateStructureConcurrently() && !realm->weakMapStructureConcurrently() && !realm->weakSetStructureConcurrently());
     AOT_TEST_CHECK(!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Default));
     // Where the option is on, as in Bun and here, JSGlobalObject::init() puts SharedArrayBuffer on the global object of every realm.
-    AOT_TEST_CHECK(!!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared) == Options::useSharedArrayBuffer());
+    AOT_TEST_CHECK(!!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared) == Options::alwaysUseSharedArrayBuffer());
     AOT_TEST_CHECK(!realm->typedArrayStructureConcurrently(TypeUint8, false) && !realm->typedArrayStructureConcurrently(TypeFloat64, false) && !realm->typedArrayStructureConcurrently(TypeDataView, false));
     AOT_TEST_CHECK(!findExistingObject(realm, Identifier::fromString(program.realms().vm(), "Math"_s).impl()));
 }

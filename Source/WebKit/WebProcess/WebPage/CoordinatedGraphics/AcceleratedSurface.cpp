@@ -115,11 +115,6 @@ static bool useExplicitSync()
 AcceleratedSurface::AcceleratedSurface(WebPage& webPage, Function<void()>&& frameCompleteHandler, RenderingPurpose renderingPurpose)
     : m_webPage(webPage)
     , m_frameCompleteHandler(WTF::move(frameCompleteHandler))
-#if USE(TEXTURE_MAPPER)
-    , m_useSkia(renderingPurpose == RenderingPurpose::NonComposited)
-#else
-    , m_useSkia(true)
-#endif
     , m_id(generateID())
     , m_renderingPurpose(renderingPurpose)
 #if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
@@ -139,14 +134,8 @@ AcceleratedSurface::~AcceleratedSurface() = default;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AcceleratedSurface::RenderTarget);
 
-static uint64_t generateTargetID()
-{
-    static uint64_t identifier = 0;
-    return ++identifier;
-}
-
 AcceleratedSurface::RenderTarget::RenderTarget(AcceleratedSurface& surface, const IntSize& size)
-    : m_id(generateTargetID())
+    : m_id(RendererBufferIdentifier::generate())
     , m_surface(surface)
     , m_size(size)
 {
@@ -226,8 +215,7 @@ void AcceleratedSurface::RenderTargetShareableBuffer::initializeColorBuffer(EGLI
         glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, m_size.width(), m_size.height());
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, m_colorBuffer);
 
-    if (m_surface->useSkia())
-        createSkiaSurfaceForFramebuffer(m_fbo);
+    createSkiaSurfaceForFramebuffer(m_fbo);
 }
 
 void AcceleratedSurface::RenderTargetShareableBuffer::sendFrame(Vector<WebCore::IntRect, 1>&& damageRects)
@@ -240,12 +228,6 @@ void AcceleratedSurface::RenderTargetShareableBuffer::willRenderFrame()
     if (m_releaseFenceFD) {
         if (auto fence = GLFence::importFD(PlatformDisplay::sharedDisplay().glDisplay(), WTF::move(m_releaseFenceFD)))
             fence->serverWait();
-    }
-
-    if (!m_surface->useSkia()) {
-        glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-            LOG_ERROR("AcceleratedSurface was unable to construct a complete framebuffer");
     }
 }
 
@@ -265,8 +247,7 @@ void AcceleratedSurface::RenderTargetShareableBuffer::sync(bool useExplicitSync)
         m_renderingFenceFD = fence->exportFD();
         if (!m_renderingFenceFD)
             fence->clientWait();
-    } else if (!m_surface->useSkia())
-        glFlush();
+    }
 }
 
 void AcceleratedSurface::RenderTargetShareableBuffer::setReleaseFenceFD(UnixFileDescriptor&& releaseFence)
@@ -437,7 +418,7 @@ AcceleratedSurface::RenderTargetSHMImage::RenderTargetSHMImage(AcceleratedSurfac
 {
     if (m_surface->usesGL())
         initializeColorBuffer();
-    else if (m_surface->useSkia())
+    else
         m_skiaSurface = m_bitmap->createSurface();
 
     WebProcess::singleton().parentProcessConnection()->send(Messages::AcceleratedBackingStore::DidCreateSHMBuffer(m_id, WTF::move(bitmapHandle)), m_surface->surfaceID());
@@ -447,21 +428,16 @@ AcceleratedSurface::RenderTargetSHMImage::~RenderTargetSHMImage() = default;
 
 void AcceleratedSurface::RenderTargetSHMImage::didRenderFrame()
 {
-    if (m_surface->useSkia()) {
-        if (!m_skiaSurface)
-            return;
-
-        SkImageInfo info = SkImageInfo::Make(m_bitmap->size().width(), m_bitmap->size().height(), SkColorType::kBGRA_8888_SkColorType, SkAlphaType::kPremul_SkAlphaType);
-
-        if (m_surface->usesGL()) {
-            GLContext::ScopedGLContextCurrent scopedCurrent(*PlatformDisplay::sharedDisplay().skiaGLContext());
-            m_skiaSurface->readPixels(info, m_bitmap->mutableSpan().data(), m_bitmap->bytesPerRow(), 0, 0);
-        } else
-            m_skiaSurface->readPixels(info, m_bitmap->mutableSpan().data(), m_bitmap->bytesPerRow(), 0, 0);
+    if (!m_skiaSurface)
         return;
-    }
 
-    glReadPixels(0, 0, m_bitmap->size().width(), m_bitmap->size().height(), GL_BGRA, GL_UNSIGNED_BYTE, m_bitmap->mutableSpan().data());
+    SkImageInfo info = SkImageInfo::Make(m_bitmap->size().width(), m_bitmap->size().height(), SkColorType::kBGRA_8888_SkColorType, SkAlphaType::kPremul_SkAlphaType);
+
+    if (m_surface->usesGL()) {
+        GLContext::ScopedGLContextCurrent scopedCurrent(*PlatformDisplay::sharedDisplay().skiaGLContext());
+        m_skiaSurface->readPixels(info, m_bitmap->mutableSpan().data(), m_bitmap->bytesPerRow(), 0, 0);
+    } else
+        m_skiaSurface->readPixels(info, m_bitmap->mutableSpan().data(), m_bitmap->bytesPerRow(), 0, 0);
 }
 
 std::unique_ptr<AcceleratedSurface::RenderTarget> AcceleratedSurface::RenderTargetTexture::create(AcceleratedSurface& surface, const IntSize& size)
@@ -512,8 +488,7 @@ AcceleratedSurface::RenderTargetTexture::RenderTargetTexture(AcceleratedSurface&
     , m_texture(WTF::move(texture))
 {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_texture->id(), 0);
-    if (m_surface->useSkia())
-        createSkiaSurfaceForFramebuffer(m_fbo);
+    createSkiaSurfaceForFramebuffer(m_fbo);
 
     WebProcess::singleton().parentProcessConnection()->send(Messages::AcceleratedBackingStore::DidCreateDMABufBuffer(m_id, { size, format, WTF::move(fds), WTF::move(offsets), WTF::move(strides), modifier }, RendererBufferFormat::Usage::Rendering), m_surface->surfaceID());
 }
@@ -581,7 +556,7 @@ void AcceleratedSurface::RenderTargetWPEBackend::resize(const IntSize& size)
 
 void AcceleratedSurface::RenderTargetWPEBackend::willRenderFrame()
 {
-    if (m_surface->useSkia() && !m_skiaSurface) {
+    if (!m_skiaSurface) {
         GLint fbo;
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
         createSkiaSurfaceForFramebuffer(fbo);
@@ -831,7 +806,7 @@ AcceleratedSurface::RenderTarget* AcceleratedSurface::SwapChain::nextTarget()
     return m_lockedTargets[0].get();
 }
 
-void AcceleratedSurface::SwapChain::releaseTarget(uint64_t targetID, UnixFileDescriptor&& releaseFence)
+void AcceleratedSurface::SwapChain::releaseTarget(RendererBufferIdentifier targetID, UnixFileDescriptor&& releaseFence)
 {
 #if USE(WPE_RENDERER)
     ASSERT(m_type != Type::WPEBackend);
@@ -1078,9 +1053,6 @@ bool AcceleratedSurface::isOpaque() const
 
 SkCanvas* AcceleratedSurface::canvas()
 {
-    if (!m_useSkia)
-        return nullptr;
-
     if (auto* surface = m_target ? m_target->skiaSurface() : nullptr)
         return surface->getCanvas();
 
@@ -1101,9 +1073,6 @@ void AcceleratedSurface::willRenderFrame(const IntSize& size)
     m_target = m_swapChain.nextTarget();
     if (m_target)
         m_target->willRenderFrame();
-
-    if (sizeDidChange && !m_useSkia)
-        glViewport(0, 0, size.width(), size.height());
 }
 
 std::optional<Color> AcceleratedSurface::backgroundColor()
@@ -1123,27 +1092,6 @@ std::optional<SkColor> AcceleratedSurface::skiaClearColor(const OptionSet<WebCor
 
     return std::nullopt;
 }
-
-#if USE(TEXTURE_MAPPER)
-void AcceleratedSurface::clear(const OptionSet<WebCore::CompositionReason>& reasons)
-{
-    const auto backgroundColor = this->backgroundColor();
-    if (backgroundColor && !backgroundColor->isOpaque()) {
-        glClearColor(0, 0, 0, 0);
-        glClear(GL_COLOR_BUFFER_BIT);
-        return;
-    }
-
-    if (reasons.contains(CompositionReason::AsyncScrolling)) {
-        if (backgroundColor) {
-            auto [r, g, b, a] = backgroundColor->toResolvedColorComponentsInColorSpace(WebCore::ColorSpaceName::SRGB);
-            glClearColor(r, g, b, a);
-        } else
-            glClearColor(1, 1, 1, 1);
-        glClear(GL_COLOR_BUFFER_BIT);
-    }
-}
-#endif
 
 void AcceleratedSurface::didRenderFrame(TargetContents targetContents)
 {
@@ -1188,7 +1136,7 @@ const std::optional<Damage>& AcceleratedSurface::renderTargetDamage()
 #endif
 
 #if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
-void AcceleratedSurface::releaseBuffer(uint64_t targetID, UnixFileDescriptor&& releaseFence)
+void AcceleratedSurface::releaseBuffer(RendererBufferIdentifier targetID, UnixFileDescriptor&& releaseFence)
 {
 #if USE(WPE_RENDERER)
     ASSERT(m_swapChain.type() != SwapChain::Type::WPEBackend);

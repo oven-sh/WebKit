@@ -101,6 +101,7 @@ VPATH = \
     $(WebKit2)/UIProcess/Network/CustomProtocols \
     $(WebKit2)/UIProcess/Notifications \
     $(WebKit2)/UIProcess/PDF \
+    $(WebKit2)/UIProcess/PhoneNumberPossession \
     $(WebKit2)/UIProcess/RemoteLayerTree \
     $(WebKit2)/UIProcess/Storage \
     $(WebKit2)/UIProcess/UserContent \
@@ -206,6 +207,7 @@ MESSAGE_RECEIVERS = \
 	UIProcess/Media/RemoteMediaSessionCoordinatorProxy \
 	UIProcess/Media/RemoteMediaSessionManagerProxy \
 	UIProcess/Model/ModelProcessProxy \
+	UIProcess/PhoneNumberPossession/WebPhoneNumberPossessionCoordinatorProxy \
 	UIProcess/SpeechRecognitionRemoteRealtimeMediaSourceManager \
 	UIProcess/SpeechRecognitionServer \
 	UIProcess/XR/PlatformXRSystem \
@@ -367,6 +369,7 @@ GENERATE_MESSAGE_RECEIVER_SCRIPTS = \
     $(WebKit2)/Scripts/webkit/parser.py \
     $(WebKit2)/Scripts/webkit/opaque_ipc_types.py \
     $(WebKit2)/Scripts/webkit/opaque_ipc_types.tracking.in \
+    $(WebKit2)/Scripts/webkit/swift_types.py \
     $(WebKit2)/Scripts/webkit/untrusted_origins.py \
     $(WebKit2)/DerivedSources.make \
 #
@@ -789,6 +792,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/Extensions/WebExtensionFrameParameters.serialization.in \
 	Shared/Extensions/WebExtensionMatchedRuleParameters.serialization.in \
 	Shared/Extensions/WebExtensionMenuItem.serialization.in \
+	Shared/Extensions/WebExtensionMessage.serialization.in \
 	Shared/Extensions/WebExtensionMessageSenderParameters.serialization.in \
 	Shared/Extensions/WebExtensionMessageTargetParameters.serialization.in \
 	Shared/Extensions/WebExtensionNotification.serialization.in \
@@ -1047,10 +1051,11 @@ WEBCORE_SERIALIZATION_DESCRIPTION_FILES = \
 
 WEBCORE_SERIALIZATION_DESCRIPTION_FILES_FULLPATH := $(foreach I,$(WEBCORE_SERIALIZATION_DESCRIPTION_FILES),$(WebCorePrivateHeaders)/$I)
 
-all : IPC/GeneratedSerializers.h IPC/GeneratedSerializersShared.mm IPC/GeneratedSerializersSharedExtensions.mm IPC/GeneratedSerializersSharedWebGPU.mm IPC/GeneratedSerializersSharedWebCoreArgumentCodersAuth.mm IPC/GeneratedSerializersSharedWebCoreArgumentCodersMedia.mm IPC/GeneratedSerializersSharedWebCoreArgumentCodersNetwork.mm IPC/GeneratedSerializersSharedWebCoreArgumentCodersPayment.mm IPC/GeneratedSerializersSharedWebCoreArgumentCodersStorage.mm IPC/GeneratedSerializersWebProcess.mm IPC/GeneratedSerializersGPUProcess.mm IPC/GeneratedSerializersNetworkProcess.mm IPC/GeneratedSerializersPlatform.mm IPC/GeneratedSerializersModelProcess.mm IPC/GeneratedSerializersUIProcess.mm IPC/GeneratedSerializersCommon.mm IPC/GeneratedWebKitSecureCoding.h IPC/GeneratedWebKitSecureCoding.mm IPC/SerializedTypeInfo.mm IPC/WebKitPlatformGeneratedSerializers.mm
+all : IPC/GeneratedSerializers.h IPC/GeneratedSerializers.swift IPC/GeneratedSerializersShared.mm IPC/GeneratedSerializersSharedExtensions.mm IPC/GeneratedSerializersSharedWebGPU.mm IPC/GeneratedSerializersSharedWebCoreArgumentCodersAuth.mm IPC/GeneratedSerializersSharedWebCoreArgumentCodersMedia.mm IPC/GeneratedSerializersSharedWebCoreArgumentCodersNetwork.mm IPC/GeneratedSerializersSharedWebCoreArgumentCodersPayment.mm IPC/GeneratedSerializersSharedWebCoreArgumentCodersStorage.mm IPC/GeneratedSerializersWebProcess.mm IPC/GeneratedSerializersGPUProcess.mm IPC/GeneratedSerializersNetworkProcess.mm IPC/GeneratedSerializersPlatform.mm IPC/GeneratedSerializersModelProcess.mm IPC/GeneratedSerializersUIProcess.mm IPC/GeneratedSerializersCommon.mm IPC/GeneratedWebKitSecureCoding.h IPC/GeneratedWebKitSecureCoding.mm IPC/SerializedTypeInfo.mm IPC/WebKitPlatformGeneratedSerializers.mm
 
 GENERATED_SERIALIZERS_OUTPUT_FILES = \
     IPC/GeneratedSerializers.h \
+    IPC/GeneratedSerializers.swift \
     IPC/GeneratedSerializersShared.mm \
     IPC/GeneratedSerializersSharedExtensions.mm \
     IPC/GeneratedSerializersSharedWebGPU.mm \
@@ -1077,7 +1082,7 @@ GENERATED_SERIALIZERS_OUTPUT_PATTERNS = $(call to-pattern, $(GENERATED_SERIALIZE
 SERIALIZATION_ADDITIONS_FILES := $(foreach I,$(WEBKITADDITIONS_SERIALIZATION_IN_FILES),$(call find-webkitadditions-file,$I))
 OPAQUE_IPC_TYPES_ADDITIONS_FILES := $(call find-webkitadditions-file,OpaqueIPCTypesAdditions.tracking.in)
 
-$(GENERATED_SERIALIZERS_OUTPUT_PATTERNS) : $(WebKit2)/Scripts/generate-serializers.py $(SERIALIZATION_DESCRIPTION_FILES) $(SERIALIZATION_ADDITIONS_FILES) $(OPAQUE_IPC_TYPES_ADDITIONS_FILES) $(WebKit2)/DerivedSources.make $(WEBCORE_SERIALIZATION_DESCRIPTION_FILES_FULLPATH) $(WebKit2)/Scripts/webkit/opaque_ipc_types.py $(WebKit2)/Scripts/webkit/opaque_ipc_types.tracking.in
+$(GENERATED_SERIALIZERS_OUTPUT_PATTERNS) : $(WebKit2)/Scripts/generate-serializers.py $(SERIALIZATION_DESCRIPTION_FILES) $(SERIALIZATION_ADDITIONS_FILES) $(OPAQUE_IPC_TYPES_ADDITIONS_FILES) $(WebKit2)/DerivedSources.make $(WEBCORE_SERIALIZATION_DESCRIPTION_FILES_FULLPATH) $(WebKit2)/Scripts/webkit/opaque_ipc_types.py $(WebKit2)/Scripts/webkit/opaque_ipc_types.tracking.in $(WebKit2)/Scripts/webkit/swift_types.py
 	$(PYTHON) $(WebKit2)/Scripts/generate-serializers.py mm --split-by-directory --output-dir=IPC $(addprefix --opaque-ipc-types-tracking-file=,$(OPAQUE_IPC_TYPES_ADDITIONS_FILES)) $(filter %.serialization.in,$^)
 
 EXTENSIONS_DIR = $(WebKit2)/WebProcess/Extensions
@@ -1107,7 +1112,6 @@ EXTENSION_INTERFACES = \
     WebExtensionAPIDevToolsNetwork \
     WebExtensionAPIDevToolsPanels \
     WebExtensionAPIDOM \
-    WebExtensionAPIEvent \
     WebExtensionAPIExtension \
     WebExtensionAPILocalization \
     WebExtensionAPIMenus \
@@ -1136,6 +1140,7 @@ SUPPLEMENTAL_DEPENDENCY_FILE = WebExtensionSupplementalDependencies.txt
 
 CPP_EXTENSION_INTERFACES = \
 	WebExtensionAPIAlarms \
+    WebExtensionAPIEvent \
 	WebExtensionAPINamespace \
     WebExtensionAPIRuntime \
     WebExtensionAPIStorage \
@@ -1179,7 +1184,6 @@ WEBKIT_ADDITIONS_SWIFT_FILES = \
 	UIWindowScene+Extras.swift \
 	AppKitGesturesExtras.swift \
 	WKWebView+SystemTextExtraction.swift \
-	WKSExperienceController+Transitions.swift \
 #
 
 $(WEBKIT_ADDITIONS_SWIFT_FILES): %.swift : %.swift.in

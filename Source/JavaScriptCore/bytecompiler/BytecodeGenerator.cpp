@@ -2597,9 +2597,9 @@ void BytecodeGenerator::prepareLexicalScopeForNextForLoopIteration(VariableEnvir
     ASSERT(loopScope);
 
     struct SymbolTableNoLocks {
-        auto LEGACY_NODELETE begin() const { return symbolTable->begin(NoLockingNecessary); }
-        auto LEGACY_NODELETE end() const { return symbolTable->end(NoLockingNecessary); }
-        size_t LEGACY_NODELETE size() const { return symbolTable->scopeSize(); }
+        NODELETE auto begin() const { return symbolTable->begin(NoLockingNecessary); }
+        NODELETE auto end() const { return symbolTable->end(NoLockingNecessary); }
+        NODELETE size_t size() const { return symbolTable->scopeSize(); }
         SymbolTable* symbolTable;
     } symbolTableWithoutLocks { symbolTable };
 
@@ -4798,8 +4798,7 @@ void BytecodeGenerator::endSwitch(const Vector<Ref<Label>, 8>& labels, Expressio
         jumpTable.m_min = INT32_MAX;
         jumpTable.m_isList = true;
 
-        Vector<int32_t> branchOffsets;
-        branchOffsets.reserveInitialCapacity(labels.size() * 2);
+        Vector<int32_t> branchOffsets(ReserveCapacityTag { }, labels.size() * 2);
         UncheckedKeyHashSet<GenericHashKey<int32_t>> alreadyHandled;
 
         for (uint32_t i = 0; i < labels.size(); ++i) {
