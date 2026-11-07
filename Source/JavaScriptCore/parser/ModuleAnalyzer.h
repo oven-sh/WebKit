@@ -50,7 +50,13 @@ public:
 
     JSModuleRecord* moduleRecord() { return m_moduleRecord; }
 
-    void appendRequestedModule(const Identifier&, RefPtr<ScriptFetchParameters>&&, AbstractModuleRecord::ModulePhase = AbstractModuleRecord::ModulePhase::Evaluation);
+    void appendRequestedModule(const Identifier&, RefPtr<ScriptFetchParameters>&&, ImportAttributesListNode*, AbstractModuleRecord::ModulePhase = AbstractModuleRecord::ModulePhase::Evaluation);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Index-aligned with the module record's requestedModules(): the attributes list (null when the declaration has no
+    // `with` clause) of the declaration that created each request. The nodes belong to the analyzed ModuleProgramNode.
+    const Vector<ImportAttributesListNode*>& requestedModuleAttributesLists() const { return m_requestedModuleAttributesLists; }
+#endif
 
     void fail(std::tuple<ErrorType, String>&& errorMessage) { m_errorMessage = errorMessage; }
 
@@ -61,6 +67,9 @@ private:
     JSModuleRecord* m_moduleRecord;
     EnumeratedArray<AbstractModuleRecord::ModulePhase, UncheckedKeyHashSet<ModuleMapKey, ModuleMapHash>, AbstractModuleRecord::ModulePhase::Defer> m_requestedModules;
     std::tuple<ErrorType, String> m_errorMessage;
+#if USE(BUN_JSC_ADDITIONS)
+    Vector<ImportAttributesListNode*> m_requestedModuleAttributesLists;
+#endif
 };
 
 } // namespace JSC
