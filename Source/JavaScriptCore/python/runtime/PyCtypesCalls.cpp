@@ -351,6 +351,8 @@ static bool convertArgument(JSGlobalObject* globalObject, JSValue object, unsign
         if (result.kind == ForeignKind::Aggregate) {
             result.aggregate = infoOfInstance(globalObject, argument->keep.get());
             result.aggregateMemory = argument->pointer();
+            // The from_param() of a later argument may give the instance another class, and this one may go.
+            keeps.append(result.aggregate);
         }
         return true;
     }
