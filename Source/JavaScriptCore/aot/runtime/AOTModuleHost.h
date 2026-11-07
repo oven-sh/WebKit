@@ -124,6 +124,7 @@ bool isOriginOfCompiledFile(const Instance&, const SourceOrigin&);
 JS_EXPORT_PRIVATE bool holdsFormThatAttributeAsksFor(StringView publicPath);
 JS_EXPORT_PRIVATE bool mayHoldPathStartingWith(StringView start);
 JS_EXPORT_PRIVATE bool isLeftToCodeOutsideImage(StringView specifier, StringView directoryOfImporter);
+JS_EXPORT_PRIVATE String pathBesideFile(StringView file, StringView written);
 JS_EXPORT_PRIVATE String modulePath(ModuleID);
 String pathOfFileOfModule(ModuleID);
 String sourceProviderURL(ModuleID);

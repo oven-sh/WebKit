@@ -3547,20 +3547,40 @@ std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const
     return module;
 }
 
-static String pathBesideFile(StringView file, StringView written)
+String pathBesideFile(StringView file, StringView written)
 {
-    Vector<StringView, 16> segments;
-    for (StringView segment : file.left(file.reverseFind('/') + 1).split('/'))
-        segments.append(segment);
-    for (StringView segment : written.split('/')) {
-        if (segment == ".."_s && !segments.isEmpty())
-            segments.removeLast();
-        else if (segment != "."_s && segment != ".."_s)
-            segments.append(segment);
-    }
+    bool hasTwoSeparators = !file.startsWith('/') || file.startsWith("//"_s);
+    auto isSeparator = [&](char16_t unit) {
+        return unit == '/' || (unit == '\\' && hasTwoSeparators);
+    };
+    auto endOfSegment = [&](StringView text, unsigned place) {
+        while (place < text.length() && !isSeparator(text[place]))
+            ++place;
+        return place;
+    };
+    unsigned lengthOfRoot = 0;
+    if (file.length() > 1 && isASCIIAlpha(file[0]) && file[1] == ':')
+        lengthOfRoot = 2;
+    else if (file.length() > 1 && isSeparator(file[0]) && isSeparator(file[1]))
+        lengthOfRoot = std::min(file.length(), endOfSegment(file, endOfSegment(file, 2) + 1));
+    unsigned lengthOfDirectory = file.length();
+    while (lengthOfDirectory > lengthOfRoot && !isSeparator(file[lengthOfDirectory - 1]))
+        --lengthOfDirectory;
+    char16_t separator = lengthOfDirectory > lengthOfRoot ? file[--lengthOfDirectory] : '/';
     StringBuilder path;
-    for (StringView segment : segments)
-        path.append('/', segment);
+    path.append(file.left(lengthOfDirectory));
+    for (unsigned place = 0; place < written.length(); ++place) {
+        unsigned end = endOfSegment(written, place);
+        StringView segment = written.substring(place, end - place);
+        place = end;
+        if (segment == ".."_s) {
+            unsigned length = path.length();
+            while (length > lengthOfRoot && !isSeparator(path[length - 1]))
+                --length;
+            path.shrink(length > lengthOfRoot ? length - 1 : lengthOfRoot);
+        } else if (!segment.isEmpty() && segment != "."_s)
+            path.append(separator, segment);
+    }
     return path.toString();
 }
 
@@ -6741,7 +6761,7 @@ void didEndMock(JSGlobalObject* realm, ModuleID module, OriginalBehindEntryOfPro
     if (original == OriginalBehindEntryOfProgram::GoesWithPatch && modules->hasMockLaidOver(module))
         modules->forgetExportsBehindEntryOfProgram(module);
     modules->didMockTakeDataFileOutOfLoader(module);
-    if (modules->letsMockOverModuleThatHasRunStandForLoadInFlight(module))
+    if (modules->letsMockOverModuleThatHasRunStandForLoadInFlight(module, wasLaidOverMockOfPreload))
         return;
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
     bool isBack = wasLaidOverMockOfPreload && modules->bringBackMockKeptByImportersOfThisTestFile(module);

@@ -1549,7 +1549,7 @@ void CallInLinkCalls::callUnseen(UnknownIs unknownIs, ReceiverOfUnseenCode recei
 
     LinkFlow::UnknownByEscapeAlone unknownByEscapeAlone(level == 1, LinkFlow::UnknownByEscapeAlone::Marks::OfRule);
     callees().mayEnterUnseen = true;
-    if (!m_call.builtin && (m_shared || m_call.numberOfArguments || m_call.passesList) && !m_flow.codeAtWorkIsOfLibrary())
+    if (!m_call.builtin && (m_shared || m_call.numberOfArguments || m_call.passesList))
         m_flow.noteOperandsHandedToCalleeNobodyKnows();
     if (m_flow.testRuns().isTestRun() && m_call.numberOfArguments && m_summary.arguments[m_call.firstArgument] != noSummaryNode)
         m_flow.testRuns().noteCallOutOfSight(m_caller, m_call.site, nodeAt(m_summary.arguments[m_call.firstArgument]));
@@ -2958,6 +2958,8 @@ ValuesInLinkCalls CallInLinkCalls::passToLostFunctions(const Passed& passed, con
 ValuesInLinkCalls CallInLinkCalls::passToUnseen(const Passed& passed)
 {
     callees().mayEnterUnseen = true;
+    if ((!passed.arguments.isEmpty() || passed.list))
+        m_flow.noteOperandsHandedToCalleeNobodyKnows();
     escape(passed);
     throwAnything();
     return valuesOf(LinkType::anything());

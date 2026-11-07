@@ -348,7 +348,9 @@ void Modules::endMockThatStandsForLoadsInFlight(ModuleID module)
     m_modulesWithMockThatStandsForLoadsInFlight.clear(module.index());
     bool anotherWaits = m_modulesWithMockToRun.get(module.index());
     bool asksAgain = m_modulesWithMockThatAsksAgain.get(module.index());
-    AOT::didEndMock(m_instance.globalObject, module);
+    bool wasLaidOverMockOfPreload = !m_modulesWhoseEndPutOffBringsNoMockOfPreloadBack.get(module.index());
+    m_modulesWhoseEndPutOffBringsNoMockOfPreloadBack.clear(module.index());
+    AOT::didEndMock(m_instance.globalObject, module, OriginalBehindEntryOfProgram::GoesWithPatch, wasLaidOverMockOfPreload);
     scope.exception();
     if (anotherWaits)
         deferMock(module, asksAgain ? AfterFailure::AsksAgain : AfterFailure::KeepsError);

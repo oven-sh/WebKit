@@ -28,6 +28,7 @@
 #include "JSCInlines.h"
 #include "JSMicrotask.h"
 #include "JSModuleLoader.h"
+#include "MicrotaskQueueInlines.h"
 #include "ModuleGraphLoadingState.h"
 #include "ModuleLoadingContext.h"
 #include "ModuleRegistryEntry.h"

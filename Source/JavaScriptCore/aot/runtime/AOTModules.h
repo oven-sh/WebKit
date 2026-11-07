@@ -307,11 +307,12 @@ public:
     }
     bool standsForLoadsInFlight(ModuleID module) const { return m_modulesWithMockThatStandsForLoadsInFlight.get(module.index()); }
     void didGoOnBehindFactories() { m_importsBehindFactoriesHaveYetToGoOn = false; }
-    bool letsMockOverModuleThatHasRunStandForLoadInFlight(ModuleID module)
+    bool letsMockOverModuleThatHasRunStandForLoadInFlight(ModuleID module, bool wasLaidOverMockOfPreload)
     {
         if (m_endsMocksThatStandForLoadsInFlight || !m_modulesWhoseFactoryRuns.get(module.index()) || !isLeftAloneByMock(module) || importAsksFor(module))
             return false;
         letMockStandForLoadsInFlight(module);
+        m_modulesWhoseEndPutOffBringsNoMockOfPreloadBack.set(module.index(), !wasLaidOverMockOfPreload);
         return true;
     }
     void endMocksThatStandForLoadsInFlight();
@@ -1814,6 +1815,7 @@ private:
     Vector<ModuleID, 4> m_mockedModulesPassedOverByWalks;
     BitVector m_modulesWithMockToLetGo;
     BitVector m_modulesWithMockThatStandsForLoadsInFlight;
+    BitVector m_modulesWhoseEndPutOffBringsNoMockOfPreloadBack;
     bool m_importsBehindFactoriesHaveYetToGoOn { false };
     bool m_endsMocksThatStandForLoadsInFlight { false };
     BitVector m_modulesWhoseMockOfPreloadIsPatched;
