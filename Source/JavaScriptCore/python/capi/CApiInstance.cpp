@@ -125,9 +125,9 @@ void traverse(Body* body, const TraverseVisitor& visit)
         return;
     MadeByExtension* extension = madeByExtension(body->type());
     if (!body->isTracked) {
-        // A type that tells the collector nothing. The one reference of which the runtime knows all the same, because it has given it to the instance, is that to the type. (In CPython nobody tells of
-        // it: an instance that its own class leads to is never freed.)
-        if (!extension->slots[tp_traverse] && ownsReferenceToType(extension)) {
+        // Nobody tells the collector: the type does not, or C has not said PyObject_GC_Track() yet, or has taken it back. The one reference of which the runtime knows all the same, because it has given it to
+        // the instance, is that to the type. (In CPython nobody tells of it: an instance that its own class leads to is never freed.)
+        if (ownsReferenceToType(extension)) {
             if (auto* counts = interpreter().counts.find(body->type()))
                 visit(body->type(), *counts);
         }
