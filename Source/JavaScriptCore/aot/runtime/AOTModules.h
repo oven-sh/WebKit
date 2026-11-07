@@ -969,6 +969,7 @@ private:
     std::optional<ModuleID> findByName(const Identifier& key);
     enum class FormWithoutAttributes : bool { MayAnswer, IsAnotherModule };
     std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*, FormWithoutAttributes = FormWithoutAttributes::MayAnswer);
+    std::optional<ModuleID> findFormUnderWrittenName(JSString* name, const ScriptFetchParameters&);
     Identifier keyWithoutForm(ModuleID file);
     std::optional<ModuleID> findFormThatStatementLoaded(const Identifier& key, const ScriptFetchParameters&, std::optional<ModuleID> asked) const;
     bool wasImporterLoaded(ModuleID) const;

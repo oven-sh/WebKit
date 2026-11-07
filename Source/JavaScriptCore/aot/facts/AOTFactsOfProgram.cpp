@@ -1769,7 +1769,7 @@ void BodyLookOfProgramFacts::noteBuiltinsSpelledIn(const DataNode& node, const B
 
 void BodyLookOfProgramFacts::noteModuleSpelledBy(PropertyKeyID id, const BodyValue& value)
 {
-    if (m_rows.modulesOfLibrary.isEmpty())
+    if (!id || m_rows.modulesOfLibrary.isEmpty())
         return;
     const PropertyKey& key = m_program.at(id);
     if (key.kind != PropertyKeyKind::Text)

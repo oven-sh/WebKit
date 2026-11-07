@@ -3135,6 +3135,18 @@ std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const
     return module;
 }
 
+std::optional<ModuleID> Modules::findFormUnderWrittenName(JSString* name, const ScriptFetchParameters& fetchParameters)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!host().findModuleWithAttributes)
+        return std::nullopt;
+    String written = name->value(m_instance.globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!written.startsWith("./"_s) && !written.startsWith("../"_s))
+        return std::nullopt;
+    RELEASE_AND_RETURN(scope, host().findModuleWithAttributes(m_instance.globalObject, written, fetchParameters));
+}
+
 bool Modules::doOtherJobsWait() const
 {
     MicrotaskQueue& queue = m_instance.vm->defaultMicrotaskQueue();
@@ -3799,13 +3811,17 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (!fetchParameters)
         return fetchParameters.error();
+    std::optional<ModuleID> found = *fetchParameters ? findFormUnderWrittenName(text, **fetchParameters) : std::nullopt;
+    RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     Identifier key;
     {
         SetForScope isResolvingImportCall(m_instance.vm->aotState().isResolvingImportCall, true);
-        key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
+        if (!found)
+            key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
     }
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
-    std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : findByName(key);
+    if (!found)
+        found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : findByName(key);
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     if (found) {
         runDataFileAgainForImport(*found, ImportAnsweredBy::Loader);
