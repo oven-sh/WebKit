@@ -542,6 +542,11 @@ constants of the code, and the functions made after have the same code object as
 began in, so what is about a call (where its variables are, its lines, its monitor, `f_code`) is asked of its `CodeBlock` (`codeInfoOf(callFrame)`, `PyFrame::codeInfo()`), never of the function in the frame; the
 generators there are keep the body they were made with, and a generator is made with the body of the code that the call is in (`PyFunction::generatorBody()`). A builtin of JS's that calls the function again and again runs the new code from its next call on if it is linked to the code as a call site is
 (`CachedCall`: `sort()`, `replace()`, `new Set(iterable)`), and goes on in the old code until it returns if it has asked once what the function runs (`CallData`: `JSON.stringify(o, f)`, `JSON.parse(text, f)`, `map.set` under `new Map(iterable)`). Either way the arguments are bound by the code that has been entered.
+Code of JS's from the optimizing compilers calls what the function ran directly, if the function is the only one a place has seen or a constant, if all that the place has seen ran the same, if it is one of the few that the place has seen (the last tier: a switch, with a direct call for each), and where it is the target of a bound function or a getter or setter of which one of these holds. Code that is being compiled as the
+assignment comes would call the old code for good, and a place that knows its callees by what they run would send the others into the new code. So the assignment waits for the compilers and throws away the optimized
+code that names the function or the executable it had, not all there is. What the compiler builds on it has frozen (`DFG::Graph::freeze()`), and what is frozen is among the weak references or the constants of the `CodeBlock`
+(`registerFrozenValues()`): those are looked through. One thing the compiler reads by way of the executable without knowing the function: its text (`FunctionToString` is pure, so one may stand for two with the
+assignment between them). So the code that names `Function.prototype.toString` goes as well.
 
 **Exceptions** are JSC exceptions whose value is a `PyException`. The unwinder tells the runtime about each Python frame it
 passes (`addTracebackEntry`), which is how tracebacks are built. A frame that has not got as far as the program's own code

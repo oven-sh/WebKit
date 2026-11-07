@@ -8,6 +8,7 @@
 
 #include "BytecodeStructs.h"
 #include "CodeBlock.h"
+#include "DFGCommonData.h"
 #include "FunctionCodeBlock.h"
 #include "JSCInlines.h"
 #include "PreciseJumpTargetsInlines.h"
@@ -270,8 +271,9 @@ DEFINE_VISIT_CHILDREN(PyFunction);
 
 // JSC takes a function to keep the executable it was made with, and there is no setter. Who relies on it:
 // - call sites that are linked to the function jump to its code without looking: they are unlinked;
-// - code from the optimizing compilers that has the function for a constant may call the executable it had then: it is thrown away.
-//   (They never look into code written in Python, so that is all they can know about it.)
+// - code from the optimizing compilers that takes the function for a constant, or knows the functions it calls by their executable, calls that executable directly: it is thrown away.
+//   (They never look into code written in Python. Of the executable itself they take more than where to jump: the number of parameters for the frame of a direct call, whether it
+//   constructs, its intrinsic, its text. See below for how the code is found that has taken any of it.)
 // - a CachedCall is linked as a call site is, and takes what the function runs when it links itself again: CachedCall::relink();
 // - a MicrotaskCall is found by the executable that the function has when the microtask runs;
 // - a CallData says what the function ran when it was asked for, and a loop of the engine's may ask once for all its calls
@@ -309,13 +311,51 @@ void PyFunction::setCode(VM& vm, PyCode* code)
     if (CodeBlock* codeBlock = previous->codeBlockForCall())
         codeBlock->unlinkOrUpgradeIncomingCalls(vm, nullptr);
 #if ENABLE(DFG_JIT)
+    // Optimized code of JS's has direct calls of the executable, behind a check that the callee is this function or that it has that executable.
+    // - Such a call is linked for the first time by the executable that the compiler saw: on the compiler's thread (DirectCallLinkInfo::repatchSpeculatively()), and the main thread asks the
+    //   same executable again as the plan is finished, and puts the call on the list of those that come in (validateSpeculativeRepatchOnMainThread()). A plan that is under way now is
+    //   finished behind the unlinking above, and would call the old code for good.
+    // - A call that has been unlinked is linked again by what its callee has then. A check of the executable may stand for two calls (GetExecutable is pure): if the first of them
+    //   assigns, the second is linked to the new code, and then so is every other function that still has the old executable and comes by.
+    // What the compiler knows of a cell at compile time it knows of a cell that it has frozen (DFG::Graph::freeze()), and what is frozen is among the weak references or the constants of
+    // the block when the plan is finished (DFG::Graph::registerFrozenValues()). So the plans are finished, and the blocks go that have one of the two there. (Some of them only mention
+    // it, and a block that knows another function by the executable which the two share is still right. Structures are kept elsewhere: none stands for what a function runs.) What names
+    // a function at run time, a call site that is linked or a stub for several callees, has been unlinked.
+    // That leaves what the generated code reads by way of the executable of a function that the compiler knows nothing about. Two nodes do, and both are pure, so one may stand for two
+    // with the assignment between them. GetExecutable is only made to be compared with executables, which are frozen. FunctionToString has nothing to compare: it gives the text of
+    // whatever function it is handed. It is made in one place, for a call of Function.prototype.toString, behind the check that this is what is called
+    // (ByteCodeParser::handleIntrinsicCall()), so that function or its executable is frozen: the blocks that have one of those go as well.
+    // (A third such node, from a later JSC, would be missed here: DEFERRED.md.)
     vm.heap.completeAllJITPlans();
-    Vector<CodeBlock*> optimized;
+    auto isReliedOn = [&](JSCell* cell) {
+        if (cell == previous || cell == this)
+            return true;
+        ExecutableBase* executable = nullptr;
+        if (auto* function = dynamicDowncast<JSFunction>(cell))
+            executable = function->executable();
+        else
+            executable = dynamicDowncast<NativeExecutable>(cell);
+        return executable && executable->intrinsic() == FunctionToStringIntrinsic;
+    };
+    Vector<CodeBlock*> reliant;
     vm.heap.forEachCodeBlock([&](CodeBlock* codeBlock) {
-        if (JITCode::isOptimizingJIT(codeBlock->jitType()))
-            optimized.append(codeBlock);
+        // A block that has been thrown away may still be in a frame, and what it refers to weakly may be gone.
+        if (!JITCode::isOptimizingJIT(codeBlock->jitType()) || codeBlock->isJettisoned())
+            return;
+        for (auto& reference : codeBlock->jitCode()->dfgCommon()->m_weakReferences) {
+            if (isReliedOn(reference.get())) {
+                reliant.append(codeBlock);
+                return;
+            }
+        }
+        for (auto& constant : codeBlock->constantRegisters()) {
+            if (JSValue value = constant.get(); value.isCell() && isReliedOn(value.asCell())) {
+                reliant.append(codeBlock);
+                return;
+            }
+        }
     });
-    for (CodeBlock* codeBlock : optimized)
+    for (CodeBlock* codeBlock : reliant)
         codeBlock->jettison(Profiler::JettisonDueToUnprofiledWatchpoint);
 #endif
 }
