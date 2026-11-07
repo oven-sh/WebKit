@@ -1021,7 +1021,12 @@ static NEVER_INLINE PyTuple* buildCallArguments(JSGlobalObject* globalObject, Py
     PyTuple* result = PyTuple::create(globalObject, count);
     unsigned consumed = 0;
     for (unsigned i = 0; i < count; ++i) {
-        auto* item = PyTuple::from(paramFlags->at(i));
+        // validateParamFlags() has looked at them only if there were argtypes to hold them against, and those of the class that the function had then.
+        auto* item = PyTuple::tryFrom(paramFlags->at(i));
+        if (!item || !item->length() || !isInt(item->at(0))) {
+            raiseTypeError(globalObject, scope, "paramflags must be a sequence of (int [,string [,value]]) tuples"_s);
+            return nullptr;
+        }
         unsigned flag = static_cast<unsigned>(lowBitsOfInt(intValue(item->at(0))));
         JSValue name = item->length() > 1 ? item->at(1) : JSValue();
         JSValue defaultValue = item->length() > 2 ? item->at(2) : JSValue();
