@@ -24,8 +24,9 @@ namespace Python {
 // - Cells do not move, so the memory of a bytes or of a PyByteStorage stays where it is for as long as the cell lives.
 // - That of a bytearray stays where it is while the bytearray has exports, which keep it from being resized.
 // - JS may detach or shrink the memory of a typed array whenever it runs: in a callback, in the handler of a signal, in another
-//   thread while this one is in a system call. So a Buffer (not a memoryview, which may live long) pins the ArrayBuffer: until
-//   it is released, a transfer copies the memory instead of detaching it, and it cannot shrink.
+//   thread while this one is in a system call. So a Buffer pins the ArrayBuffer: until it is released, a transfer copies the
+//   memory instead of detaching it, and it cannot shrink. (Not a memoryview, which may live long; but for the one that ctypes
+//   keeps, PyMemoryView::pinMemoryOfJS().)
 //   Whoever has no Buffer, a memoryview among them, looks up where the memory is, and whether there is still enough of it,
 //   after anything that may have run code.
 //   (The memory of a typed array of up to 1000 items moves once, when the array is given its ArrayBuffer. That is when Python
@@ -279,6 +280,10 @@ public:
     bool wasReleasedItself() const { return !m_managedBuffer; }
     // There must be no exports.
     void release(JSGlobalObject*);
+    // For who keeps addresses of the memory for as long as he keeps the view (ctypes). An export holds memory of Python's. Memory of
+    // JS is held by a pin, which a view does not have: from now on this one pins it, until it is collected, released or not.
+    // (Not memory of WebAssembly: see above.)
+    void pinMemoryOfJS(JSGlobalObject*);
 
     // Where the first item is now. Null with an exception if JS took the memory away; null without if there is no memory.
     uint8_t* data(JSGlobalObject*) const;

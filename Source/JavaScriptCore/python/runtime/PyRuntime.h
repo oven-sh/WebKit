@@ -19,6 +19,7 @@
 
 namespace JSC {
 
+class ArrayBuffer;
 class CodeBlockSet;
 class ConservativeRoots;
 class JITStubRoutineSet;
@@ -875,9 +876,24 @@ public:
         Vector<JSCell*> m_cells;
         Vector<unsigned> m_free;
     };
-    // For the collector, with the world stopped, when marking is over and nothing has been freed yet.
+    // For the collector, with the world stopped, when marking is over and no cell has been freed yet.
     void reconcileWeakReferencesAtGCEnd();
     WeakCellTable scheduledTasks; // See registerTask() in PyAsyncio.cpp.
+    // See PyMemoryView::pinMemoryOfJS(). The view is not visited. An entry owns a pin of the memory, and a reference to it: when the
+    // list is gone through, the collector has let go of the memory of the arrays that have died.
+    class PinningView {
+    public:
+        PinningView(JSCell* view, ArrayBuffer& pinned); // It takes the pin over.
+        PinningView(PinningView&&);
+        ~PinningView();
+        JSCell* view;
+
+    private:
+        RefPtr<ArrayBuffer> m_memory;
+    };
+    Vector<PinningView> pinningViews;
+    size_t pinningViewsThatAreOld { 0 }; // So many, the first, have been through a collection.
+    void unpinMemoryOfDeadViews();
 
     // ---- The module gc (PyGC.cpp) ----
 

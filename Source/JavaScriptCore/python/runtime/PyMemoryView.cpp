@@ -1171,18 +1171,56 @@ static bool bufferGet(JSGlobalObject* globalObject, JSValue object, Buffer& buff
     return false;
 }
 
-// See PyBuffer.h. False: it is memory of WebAssembly, which may move when it grows, pinned or not.
-static bool bufferPinMemoryOfJS(Buffer& buffer)
+// See PyBuffer.h. Null: it is memory of WebAssembly, which may move when it grows, pinned or not.
+static ArrayBuffer* bufferPinMemoryOfJS(JSCell* owner)
 {
-    JSCell* owner = buffer.owner;
-    // A typed array has one since bufferGetFromJS(). To give it one now would move the memory away from under buffer.data.
+    // A typed array has one since bufferGetFromJS(). To give it one now would move the memory away from under the address that is known.
     RELEASE_ASSERT(owner->type() == ArrayBufferType || uncheckedDowncast<JSArrayBufferView>(owner)->hasArrayBuffer());
     ArrayBuffer* memory = owner->type() == ArrayBufferType ? uncheckedDowncast<JSArrayBuffer>(owner)->impl() : uncheckedDowncast<JSArrayBufferView>(owner)->possiblySharedBuffer();
     if (memory->isWasmMemory())
-        return false;
+        return nullptr;
     memory->pin();
-    buffer.pinned = memory;
-    return true;
+    return memory;
+}
+
+void PyMemoryView::pinMemoryOfJS(JSGlobalObject* globalObject)
+{
+    if (isReleased())
+        return;
+    JSCell* owner = m_managedBuffer->owner();
+    if (!owner || !bufferIsJSExporter(owner))
+        return;
+    if (ArrayBuffer* memory = bufferPinMemoryOfJS(owner))
+        runtime(globalObject).pinningViews.append(Runtime::PinningView { this, *memory });
+}
+
+Runtime::PinningView::PinningView(JSCell* view, ArrayBuffer& pinned)
+    : view(view)
+    , m_memory(&pinned)
+{
+}
+
+Runtime::PinningView::PinningView(PinningView&&) = default;
+
+Runtime::PinningView::~PinningView()
+{
+    if (m_memory)
+        m_memory->unpin();
+}
+
+// The pin lasts as long as the cell of the view: while anything at all refers to it, a word of a stack that looks like a reference
+// too. Not until the view is released. That may be the doing of a finalizer of Python's, and those have their turn when the
+// program cannot reach an object, whatever code written in C++ still holds; in an order; and what they finalize may come to life again.
+void Runtime::unpinMemoryOfDeadViews()
+{
+    // What a collection has left is old, and a collection of what is young leaves what is old alone.
+    size_t first = m_vm.heap.collectionScope() == CollectionScope::Eden ? pinningViewsThatAreOld : 0;
+    pinningViews.removeAllMatching([&](const PinningView& entry) {
+        return !m_vm.heap.isMarked(entry.view);
+    }, first);
+    if (pinningViews.capacity() > 16 && pinningViews.size() < pinningViews.capacity() / 4)
+        pinningViews.shrinkCapacity(pinningViews.size() * 2);
+    pinningViewsThatAreOld = pinningViews.size();
 }
 
 bool getBuffer(JSGlobalObject* globalObject, JSValue object, Buffer& buffer, unsigned flags)
@@ -1194,7 +1232,8 @@ bool getBuffer(JSGlobalObject* globalObject, JSValue object, Buffer& buffer, uns
     ASSERT_UNUSED(ok, ok);
     if (!buffer.owner || !bufferIsJSExporter(buffer.owner)) [[likely]]
         return true;
-    if (!bufferPinMemoryOfJS(buffer)) {
+    buffer.pinned = bufferPinMemoryOfJS(buffer.owner);
+    if (!buffer.pinned) {
         buffer.keepsGIL = true;
         ++runtime(globalObject).buffersThatKeepGIL;
     }
@@ -2519,7 +2558,7 @@ static std::optional<bool> memoryViewEquals(JSGlobalObject* globalObject, PyMemo
         if (failed(scope, bufferFillFromMemoryView(globalObject, held, buffer)))
             return false;
         if (buffer.owner && bufferIsJSExporter(buffer.owner))
-            bufferPinMemoryOfJS(buffer);
+            buffer.pinned = bufferPinMemoryOfJS(buffer.owner);
         operand.data = buffer.data;
         return true;
     };

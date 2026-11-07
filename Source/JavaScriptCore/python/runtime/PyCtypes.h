@@ -197,7 +197,8 @@ PyCTypeInfo* createInfo(JSGlobalObject*, PyType*);
 // Where the memory of an instance is.
 // - Its own, or that of the instance it is a part of: a PyByteStorage, which the collector frees and never moves.
 // - That of an object with a buffer (from_buffer): a memoryview, through which it is found again at each use. So it is noticed
-//   when the view has been released, or when JS has detached or shrunk the memory.
+//   when the view has been released, when memory of WebAssembly has grown, or when an audit hook had JS take the memory away
+//   before from_buffer() was through. But for that the memory stays: that of Python's is exported, that of JS is pinned.
 // - Anywhere (from_address, what a pointer points to, in_dll): nothing is known about it but the address.
 class PyCData : public PyObject {
 public:

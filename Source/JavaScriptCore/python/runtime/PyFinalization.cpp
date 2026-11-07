@@ -1003,6 +1003,7 @@ void Runtime::WeakCellTable::removeUnmarked(JSC::Heap& heap)
 void Runtime::reconcileWeakReferencesAtGCEnd()
 {
     scheduledTasks.removeUnmarked(m_vm.heap);
+    unpinMemoryOfDeadViews();
     m_typeLookupCache->removeUnmarked(m_vm.heap);
     if (CApi::isSetUpFor(*this))
         CApi::didFinishMarking(m_vm.heap);
