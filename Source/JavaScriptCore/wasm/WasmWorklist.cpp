@@ -165,10 +165,32 @@ void Worklist::enqueue(Ref<Plan> plan)
     dataLogLnIf(WasmWorklistInternal::verbose, "Enqueuing plan");
     bool multiThreaded = plan->multiThreaded();
     m_queue.enqueue({ multiThreaded ? Priority::Compilation : Priority::Preparation, nextTicket(),  WTF::move(plan) });
+#if ENABLE(AOT)
+    bool notified = multiThreaded ? m_planEnqueued->tryNotifyAll(locker) : m_planEnqueued->tryNotifyOne(locker);
+    if (notified)
+        return;
+
+    // The system refused a compiler thread (the limit on threads is reached). A thread that is alive takes the
+    // queue. Otherwise nobody would, and a synchronous compile would wait forever, so this thread compiles the
+    // queued plans itself.
+    for (auto& thread : m_threads) {
+        if (thread->hasUnderlyingThread(locker))
+            return;
+    }
+    Vector<Ref<Plan>> plans;
+    while (!m_queue.isEmpty() && m_queue.peek().priority != Priority::Shutdown)
+        plans.append(m_queue.dequeue().plan.releaseNonNull());
+    locker.unlockEarly();
+    for (auto& queuedPlan : plans) {
+        while (queuedPlan->hasWork())
+            queuedPlan->work();
+    }
+#else
     if (multiThreaded)
         m_planEnqueued->notifyAll(locker);
     else
         m_planEnqueued->notifyOne(locker);
+#endif
 }
 
 void Worklist::completePlanSynchronously(Plan& plan)
@@ -234,6 +256,11 @@ Worklist::~Worklist()
         Locker locker { *m_lock };
         m_queue.enqueue({ Priority::Shutdown, nextTicket(), nullptr });
         m_planEnqueued->notifyAll(locker);
+#if ENABLE(AOT)
+        // A thread that never got an underlying thread has nothing to join.
+        for (auto& thread : m_threads)
+            thread->tryStop(locker);
+#endif
     }
     for (unsigned i = 0; i < m_threads.size(); ++i)
         Ref { m_threads[i] }->join();

@@ -79,6 +79,12 @@ public:
     
     WTF_EXPORT_PRIVATE void notifyOne(const AbstractLocker&);
     WTF_EXPORT_PRIVATE void notifyAll(const AbstractLocker&);
+#if ENABLE(AOT)
+    // Like notifyOne() and notifyAll(), but where Thread::survivesFailedCreation() a thread the system refuses is
+    // left out and reported: false means the work has no thread to run on, and the caller does it itself.
+    WTF_EXPORT_PRIVATE bool tryNotifyOne(const AbstractLocker&);
+    WTF_EXPORT_PRIVATE bool tryNotifyAll(const AbstractLocker&);
+#endif
     
     // You can reuse this condition for other things, just as you would any other condition.
     // However, since conflating conditions could lead to thundering herd, it's best to avoid it.

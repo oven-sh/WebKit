@@ -175,8 +175,26 @@ WorkQueue& WorkQueue::mainSingleton()
 
 Ref<WorkQueue> WorkQueue::create(ASCIILiteral name, QOS qos)
 {
+#if ENABLE(AOT)
+    RefPtr<WorkQueue> queue = tryCreate(name, qos);
+    RELEASE_ASSERT(queue);
+    return queue.releaseNonNull();
+#else
     return adoptRef(*new WorkQueue(name, qos));
+#endif
 }
+
+#if ENABLE(AOT)
+RefPtr<WorkQueue> WorkQueue::tryCreate(ASCIILiteral name, QOS qos)
+{
+    Ref<WorkQueue> queue = adoptRef(*new WorkQueue(name, qos));
+#if !USE(COCOA_EVENT_LOOP)
+    if (!queue->m_runLoop)
+        return nullptr;
+#endif
+    return queue;
+}
+#endif
 
 WorkQueue::WorkQueue(ASCIILiteral name, QOS qos)
     : WorkQueueBase(name, Type::Serial, qos)

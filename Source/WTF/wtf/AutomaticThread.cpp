@@ -93,6 +93,50 @@ void AutomaticThreadCondition::notifyAll(const AbstractLocker& locker)
     }
 }
 
+#if ENABLE(AOT)
+bool AutomaticThreadCondition::tryNotifyOne(const AbstractLocker& locker)
+{
+#if USE(MIMALLOC)
+    for (auto& thread : m_threads) {
+        if (thread->isWaiting(locker) && !thread->m_isReleasingFreeMemory) {
+            thread->notify(locker);
+            return true;
+        }
+    }
+#endif
+
+    for (auto& thread : m_threads) {
+        if (thread->isWaiting(locker)) {
+            thread->notify(locker);
+            return true;
+        }
+    }
+
+    for (auto& thread : m_threads) {
+        // If this one is refused, the others are refused for the same reason: do not try them.
+        if (!thread->hasUnderlyingThread(locker))
+            return thread->tryEnsureUnderlyingThread(locker);
+    }
+
+    m_condition.notifyOne();
+    return true;
+}
+
+bool AutomaticThreadCondition::tryNotifyAll(const AbstractLocker& locker)
+{
+    m_condition.notifyAll();
+
+    bool startedAll = true;
+    for (auto& thread : m_threads) {
+        if (thread->isWaiting(locker))
+            thread->notify(locker);
+        else if (startedAll && !thread->hasUnderlyingThread(locker))
+            startedAll = thread->tryEnsureUnderlyingThread(locker);
+    }
+    return startedAll;
+}
+#endif
+
 void AutomaticThreadCondition::wait(Lock& lock)
 {
     m_condition.wait(lock);
