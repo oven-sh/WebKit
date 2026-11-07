@@ -433,7 +433,6 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    State& state = stateOf(globalObject);
 
     auto storeWith = [&](Accessor accessor) -> JSValue {
         Packed packed;
@@ -467,7 +466,7 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
                 return raiseTypeError(globalObject, scope, "expected "_s, type->nameInMessages(), " instance, got "_s, typeName(globalObject, object));
             RELEASE_AND_RETURN(scope, storeData(globalObject, type, accessor, place, object, size, bits));
         }
-        if (isNone(value) && isTypeOfMeta(type, state.pointerMeta.get())) {
+        if (isNone(value) && info && info->kind == TypeKind::Pointer) {
             uint8_t* memory = place.resolve(globalObject, sizeof(void*));
             RETURN_IF_EXCEPTION(scope, { });
             memset(memory, 0, sizeof(void*));
@@ -490,10 +489,9 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
         return keptObjects(globalObject, source);
     }
 
-    if (isTypeOfMeta(type, state.pointerMeta.get()) && source->type()->isSubtypeOf(state.arrayType.get())) {
+    if (PyCTypeInfo* pointerInfo = infoOf(globalObject, type); pointerInfo && pointerInfo->kind == TypeKind::Pointer) {
         PyCTypeInfo* arrayInfo = infoOfInstance(globalObject, source);
-        PyCTypeInfo* pointerInfo = infoOf(globalObject, type);
-        if (arrayInfo && pointerInfo && arrayInfo->proto.get() == pointerInfo->proto.get()) {
+        if (arrayInfo && arrayInfo->kind == TypeKind::Array && arrayInfo->proto.get() == pointerInfo->proto.get()) {
             uint8_t* from = source->memory(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             uint8_t* to = place.resolve(globalObject, sizeof(void*));

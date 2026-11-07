@@ -238,6 +238,14 @@ static JSValue memoryViewAt(JSGlobalObject* globalObject, void* pointer, int64_t
     RELEASE_AND_RETURN(scope, PyMemoryView::createForMemory(globalObject, owner, 0, static_cast<size_t>(size), isReadOnly));
 }
 
+// isinstance(value, metaclass). It says which __init__ may have run, and a metaclass derived from two says yes twice: what the class is, the kind of its info says.
+// So this decides who is turned away with which words, as in CPython, and never how many bytes are touched or what is read from an info.
+static bool isTypeOfMeta(JSValue value, PyType* meta)
+{
+    PyType* type = PyType::tryFrom(value);
+    return type && type->type()->isSubtypeOf(meta);
+}
+
 static JSValue castTo(JSGlobalObject* globalObject, void* pointer, JSValue source, JSValue type)
 {
     Runtime& rt = runtime(globalObject);
@@ -1004,7 +1012,6 @@ static NEVER_INLINE PyTuple* buildCallArguments(JSGlobalObject* globalObject, Py
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    State& state = stateOf(globalObject);
     auto* paramFlags = PyTuple::tryFrom(function->paramFlags.get());
     auto* argTypes = PyTuple::tryFrom(argTypesValue);
     if (!argTypes || !paramFlags || !argTypes->length() || paramFlags->length() != argTypes->length())
@@ -1052,7 +1059,12 @@ static NEVER_INLINE PyTuple* buildCallArguments(JSGlobalObject* globalObject, Py
                 return nullptr;
             }
             // An instance of what the pointer points to: from_param() will pass it by reference.
-            JSValue value = call(globalObject, isTypeOfMeta(type, state.arrayMeta.get()) ? type : info->proto.get());
+            JSValue target = info->kind == TypeKind::Array ? type : info->kind == TypeKind::Pointer ? info->proto.get() : JSValue();
+            if (!target) {
+                raiseTypeError(globalObject, scope, PyType::from(type)->nameInMessages(), " 'out' parameter points to no type"_s);
+                return nullptr;
+            }
+            JSValue value = call(globalObject, target);
             RETURN_IF_EXCEPTION(scope, nullptr);
             result->initializeAt(vm, i, value);
             break;

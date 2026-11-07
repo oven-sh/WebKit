@@ -433,12 +433,6 @@ extern const TypeDef fieldTypeDef;
 extern const TypeDef argTypeDef;
 extern const TypeDef thunkTypeDef;
 
-// isinstance(value, metaclass)
-ALWAYS_INLINE bool isTypeOfMeta(JSValue value, PyType* meta)
-{
-    PyType* type = PyType::tryFrom(value);
-    return type && type->type()->isSubtypeOf(meta);
-}
 ALWAYS_INLINE bool isInstanceOfData(JSValue value, PyType* type)
 {
     PyCData* data = PyCData::tryFrom(value);

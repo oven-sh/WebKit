@@ -1587,6 +1587,8 @@ What that rests on, each kept at one place:
 - **What `infoOf()` hands out is whole.** A `PyCTypeInfo` has the kind `None` until the `__init__` of the metaclass has written all that a kind promises (the comment on `infoOf()` says what), and
   `infoOf()`, through which everybody gets at it, does not hand out such a one. So a class whose `__init__` raised, which `__subclasses__()` of its base still has, is abstract; `createInfo()` sees that it
   has been begun, so a second `__init__` is the SystemError that CPython has.
+- **What a class is, the kind says**, not the metaclass: a metaclass derived from two of them is an instance of both, and one `__init__` has run. Who is turned away, and with which words, goes by the metaclass where
+  it does in CPython (`cast()`, an 'out' parameter); how many bytes are touched and what is read from an info never does. `proto` is read behind the kind that promises it, or by what takes anything.
 
 **`py_object`.** The eight bytes are a `PyObject*` as the C API has it (see there): what `id()` returns, for every object but a str, and 0 is NULL. The object is kept alive by `_objects`. Bits read from memory are handed out as an object if they are those of
 what `_objects` holds for that place; otherwise only after the heap has confirmed that they are those of a live cell of a kind that programs
