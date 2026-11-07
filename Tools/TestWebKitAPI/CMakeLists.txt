@@ -255,6 +255,7 @@ if (ENABLE_JAVASCRIPTCORE)
         Tests/JavaScriptCore/DisallowVMEntry.cpp
         Tests/JavaScriptCore/InspectorConsoleMessage.cpp
         Tests/JavaScriptCore/MarkedVector.cpp
+        Tests/JavaScriptCore/ParserArena.cpp
         Tests/JavaScriptCore/PropertySlot.cpp
         Tests/JavaScriptCore/RegularExpression.cpp
         Tests/JavaScriptCore/StrongBlock.cpp

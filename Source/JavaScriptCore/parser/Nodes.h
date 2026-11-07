@@ -2388,7 +2388,8 @@ namespace JSC {
         ExpressionNode* m_argument;
     };
 
-    class DefineFieldNode final : public StatementNode {
+    class DefineFieldNode final : public StatementNode, public ParserArenaDeletable {
+        JSC_MAKE_PARSER_ARENA_DELETABLE_ALLOCATED(DefineFieldNode);
     public:
         enum class Type { Name, PrivateName, ComputedName };
         DefineFieldNode(const JSTokenLocation&, const Identifier&, ExpressionNode*, Type);
