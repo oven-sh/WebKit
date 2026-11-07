@@ -399,6 +399,11 @@ WTF_EXPORT_PRIVATE void* malloc(Kind, size_t);
 WTF_EXPORT_PRIVATE void* zeroedMalloc(Kind, size_t);
 WTF_EXPORT_PRIVATE void* mallocArray(Kind, size_t numElements, size_t elementSize);
 
+// Whether the address lies in a range that only allocations of this kind come from. False where there is none.
+WTF_EXPORT_PRIVATE bool isInDedicatedRange(Kind, const void*);
+// How many allocations of this kind got memory elsewhere although the kind has such ranges.
+WTF_EXPORT_PRIVATE size_t allocationsOutsideDedicatedRange(Kind);
+
 } // namespace Gigacage
 
 #if !defined(NDEBUG)

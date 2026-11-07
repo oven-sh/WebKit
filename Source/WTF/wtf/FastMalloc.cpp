@@ -777,4 +777,14 @@ void* mallocArray(Kind kind, size_t numElements, size_t elementSize)
     return result;
 }
 
+bool isInDedicatedRange(Kind kind, const void* pointer)
+{
+    return bmalloc::api::isInDedicatedRange(pointer, bmalloc::heapKind(kind));
+}
+
+size_t allocationsOutsideDedicatedRange(Kind kind)
+{
+    return bmalloc::api::allocationsOutsideDedicatedRange(bmalloc::heapKind(kind));
+}
+
 } // namespace Gigacage
