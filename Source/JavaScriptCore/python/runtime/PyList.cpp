@@ -342,6 +342,16 @@ JSValue listGetSlow(JSArray* list, unsigned index)
     return entry->get();
 }
 
+// JS has said of an item that it cannot be deleted or written, or has given it a getter, or has forbidden to write the length: listTruncate() may raise
+// halfway, and what it takes away is more than a value.
+static bool hasItemsWithAttributes(JSArray* list)
+{
+    if (!hasAnyArrayStorage(list->indexingType()))
+        return false;
+    SparseArrayValueMap* map = list->butterfly()->arrayStorage()->m_sparseMap.get();
+    return map && (map->sparseMode() || map->lengthIsReadOnly());
+}
+
 // Once a prototype of the array has an accessor for an index (for Array.prototype that goes for every array of the realm), `a[i] = v`
 // and push() of JS ask it first where the array has nothing of its own: the setter gets the value, and the array keeps a hole. The
 // items of a list are nobody else's: they are defined.
@@ -1424,8 +1434,8 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     values.fill(vm, count, [&](JSValue* items) {
         listCopyTo({ items, count }, list);
     });
-    // Not one that JS has forbidden to grow, which could not be filled again.
-    bool staysFilled = !list->structure()->isStructureExtensible();
+    // Not one that JS has forbidden to grow, which could not be filled again, nor one that cannot be emptied.
+    bool staysFilled = !list->structure()->isStructureExtensible() || hasItemsWithAttributes(list);
     if (!staysFilled) {
         // From here on the items are nowhere but in `values`. It is not here that the host ends this, but in what is called below.
         DeferTerminationForAWhile deferred(vm);
@@ -1486,7 +1496,8 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
         // It has its items still, if the host has ended the sort. What is put into it may go to a setter of JS, which can be ended; nothing else
         // ends this halfway.
         RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
-        for (unsigned i = 0; i < count && i < list->length(); ++i) {
+        // In the order in which they were, if a comparison or a key has raised: that is as good as any.
+        for (unsigned i = 0; !failed && i < count && i < list->length(); ++i) {
             listSet(globalObject, list, i, valueData[i]);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
         }
