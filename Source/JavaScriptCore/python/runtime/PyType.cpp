@@ -237,15 +237,19 @@ void PyType::updateMaker()
 
 void PyType::updateMakers()
 {
-    updateMaker();
+    // What is left to do is in a list, not on the stack: classes derive from one another to any depth. Each is seen to once, however many ways lead to it.
     // (Not those that only have this one in an MRO of their own making.)
-    MarkedArgumentBuffer subclasses;
-    appendSubclassesTo(subclasses);
+    updateMaker();
+    MarkedArgumentBuffer types;
+    appendSubclassesTo(types);
+    UncheckedKeyHashSet<PyType*> seen;
     JSString* name = runtime(realm()).name(Special::New);
-    for (unsigned i = 0; i < subclasses.size(); ++i) {
-        PyType* subclass = PyType::from(subclasses.at(i));
-        if (!subclass->dict()->get(name))
-            subclass->updateMakers();
+    for (unsigned i = 0; i < types.size(); ++i) {
+        PyType* type = PyType::from(types.at(i));
+        if (!seen.add(type).isNewEntry || type->dict()->get(name))
+            continue;
+        type->updateMaker();
+        type->appendSubclassesTo(types);
     }
 }
 
