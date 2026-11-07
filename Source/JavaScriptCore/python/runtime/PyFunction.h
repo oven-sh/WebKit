@@ -142,8 +142,9 @@ public:
     JSValue annotations() const { return m_annotations.get(); } // Empty: not computed.
     JSValue annotate() const { return m_annotate.get(); } // Empty: none.
     JSValue typeParams() const { return m_typeParams.get(); } // Empty: ().
-    // What __code__ was set to. Null: it was not. For the body of generators: what the generator function had before it was set.
-    PyCode* assignedCode() const { return m_code.get(); }
+    // Of the body of generators whose function has been given other code since: the code object that the function had. Null for all else: the code
+    // object is that of the executable, PyCode::of().
+    PyCode* codeOfBodyLeftBehind() const { return m_code.get(); }
 
     void setClosure(VM& vm, PyTuple* value) { m_closure.setMayBeNull(vm, this, value); }
     void setDefaults(VM& vm, PyTuple* value) { m_defaults.setMayBeNull(vm, this, value); }

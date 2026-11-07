@@ -278,8 +278,8 @@ DEFINE_VISIT_CHILDREN(PyFunction);
 // - a MicrotaskCall is found by the executable that the function has when the microtask runs;
 // - a CallData says what the function ran when it was asked for, and a loop of the engine's may ask once for all its calls
 //   (JSON.stringify(o, f), `new Map(iterable)` for map.set). Such a loop goes on in the old code, as a call in progress does;
-// - `length` is a property of the function's own from when JS first asks for it: it is made anew. (That of f.bind(...) is made when it is first
-//   asked for, from what the function has then.)
+// - `length` and `name` are properties of the function's own from when JS first asks for them: they are made anew. (Those of f.bind(...) are
+//   made when they are first asked for, from what the function has then.)
 // So what is about a call is asked of the code that has been entered, from its first instruction on, and before: the interpreter's prologue counts the
 // entrances of the CodeBlock in the frame (entry_osr_function_for_call).
 // A call in progress goes on in the old code, which its frame keeps: see executableOf(). So do the generators there are.
@@ -287,12 +287,10 @@ void PyFunction::setCode(VM& vm, PyCode* code)
 {
     FunctionExecutable* previous = functionExecutable();
     FunctionExecutable* next = code->executable();
-    PyCode* previousCode = m_code.get();
-    m_code.set(vm, this, code);
     if (next == previous)
         return;
     if (PyFunction* body = m_generatorBody.get())
-        body->m_code.set(vm, body, previousCode ? previousCode : PyCode::of(globalObject(), previous));
+        body->m_code.set(vm, body, PyCode::of(globalObject(), previous));
 
     takeNamesFromCode();
     if (FunctionRareData* rareData = this->rareData())
@@ -304,9 +302,14 @@ void PyFunction::setCode(VM& vm, PyCode* code)
     ASSERT(functionExecutable() == next);
     m_info = next->unlinkedExecutable()->pythonCodeInfo();
     m_generatorBody.clear();
-    // (Nothing of the program's reaches that property: what JS defines, deletes or freezes goes to the attributes of Python's.)
-    if (FunctionRareData* rareData = this->rareData(); rareData && rareData->hasReifiedLength())
-        putDirect(vm, vm.propertyNames->length, jsNumber(originalLength(vm)), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
+    // (Nothing of the program's reaches these properties: what JS defines, deletes or freezes goes to the attributes of Python's.)
+    if (FunctionRareData* rareData = this->rareData()) {
+        constexpr unsigned attributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+        if (rareData->hasReifiedLength())
+            putDirect(vm, vm.propertyNames->length, jsNumber(originalLength(vm)), attributes);
+        if (rareData->hasReifiedName())
+            putDirect(vm, vm.propertyNames->name, jsString(vm, next->ecmaName().string()), attributes);
+    }
 
     if (CodeBlock* codeBlock = previous->codeBlockForCall())
         codeBlock->unlinkOrUpgradeIncomingCalls(vm, nullptr);
@@ -906,7 +909,6 @@ static JSValue functionNew(JSGlobalObject* globalObject, JSValue, JSValue code, 
     }
 
     PyFunction* function = PyFunction::create(globalObject, codeObject->executable(), PyDict::from(globals));
-    function->setCode(vm, codeObject);
     if (name && !isNone(name))
         function->setName(vm, strValue(name));
     if (defaults && !isNone(defaults))
@@ -1358,14 +1360,16 @@ PyCode* PyCode::of(JSGlobalObject* globalObject, FunctionExecutable* executable)
 PyCode* PyCode::createWithFlags(JSGlobalObject* globalObject, FunctionExecutable* executable, OptionSet<CodeFlag> flags)
 {
     VM& vm = getVM(globalObject);
-    FunctionExecutable* own = FunctionExecutable::create(vm, executable->topLevelExecutable(), executable->source(), executable->unlinkedExecutable(), executable->intrinsic(), executable->isInsideOrdinaryFunction());
-    // As UnlinkedFunctionExecutable::link() has it for code of Python's.
-    own->setNeverInline(true);
-    own->setNeverOptimize(true);
-    if (auto line = executable->overrideLineNumber())
-        own->setOverrideLineNumber(*line);
+    UnlinkedFunctionExecutable* unlinked = executable->unlinkedExecutable();
+    // Linked as the first was. link() is given the text that the code is in, and finds its own text startOffset() behind the start of that.
+    const SourceCode& source = executable->source();
+    SourceCode around(RefPtr<SourceProvider> { source.provider() }, source.startOffset() - unlinked->startOffset(), source.endOffset());
+    // (Code that is its own top level, from compile(): so is the copy, which need not keep the first. What is nested in them does: it was linked under it.)
+    ScriptExecutable* topLevel = executable->topLevelExecutable();
+    FunctionExecutable* own = unlinked->link(vm, topLevel == executable ? nullptr : topLevel, around, executable->overrideLineNumber(), executable->intrinsic(), executable->isInsideOrdinaryFunction());
+    ASSERT(own->source() == source);
     // What is nested in it is the same: the code objects in co_consts, of which replace(co_consts=...) may have put in others; the body of a generator.
-    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedExecutable()->codeBlocksDecodingCached(vm).first;
+    UnlinkedFunctionCodeBlock* codeBlock = unlinked->codeBlocksDecodingCached(vm).first;
     for (unsigned i = 0, count = codeBlock->numberOfFunctionExprs(); i < count; ++i)
         own->setPythonFunctionExpression(vm, i, count, executable->pythonFunctionExpression(vm, i, count, codeBlock->functionExpr(i)));
     return ofWithFlags(globalObject, own, flags);
@@ -1380,12 +1384,9 @@ PyCode* PyCode::ofWithFlags(JSGlobalObject* globalObject, FunctionExecutable* ex
 
 PyCode* codeOf(JSGlobalObject* globalObject, PyFunction* function)
 {
-    if (PyCode* code = function->assignedCode())
+    if (PyCode* code = function->codeOfBodyLeftBehind())
         return code;
-    function = function->codeOwner();
-    if (PyCode* code = function->assignedCode())
-        return code;
-    return PyCode::of(globalObject, function->functionExecutable());
+    return PyCode::of(globalObject, function->codeOwner()->functionExecutable());
 }
 
 PyCode* codeOf(JSGlobalObject* globalObject, PyFunction* function, FunctionExecutable* executable)
@@ -1672,7 +1673,8 @@ static bool codesAreEqual(JSGlobalObject* globalObject, PyCode* a, PyCode* b)
     RETURN_IF_EXCEPTION(scope, false);
     if (!sameName || a->flags() != b->flags() || codeGetFirstLineNo(globalObject, a) != codeGetFirstLineNo(globalObject, b))
         return false;
-    if (a->executable() == b->executable())
+    // (A copy, which differs by its flags if at all. What is nested in it is the same.)
+    if (a->executable()->unlinkedExecutable() == b->executable()->unlinkedExecutable())
         return true;
 
     CodeInfo& first = a->codeInfo();

@@ -61,7 +61,7 @@ PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* funct
     auto* generator = new (NotNull, allocateCell<PyGenerator>(vm, allocationSize(slotCount))) PyGenerator(vm, rt.structure<PyGenerator>(), type, kind, slotCount, function, body);
     generator->finishCreation(vm);
     // By the code that has been entered: see PyFunction::generatorBody().
-    JSCell* code = body->assignedCode() ? body->assignedCode() : function->functionExecutable()->pythonCodeObject();
+    JSCell* code = body->codeOfBodyLeftBehind() ? body->codeOfBodyLeftBehind() : function->functionExecutable()->pythonCodeObject();
     generator->isIterableCoroutine = code && uncheckedDowncast<PyCode>(code)->flags().contains(CodeFlag::IterableCoroutine);
     if (kind == Kind::Coroutine && rt.coroutineOriginTrackingDepth > 0) [[unlikely]]
         generator->m_origin.set(vm, generator, coroutineOrigin(globalObject, rt.coroutineOriginTrackingDepth));
