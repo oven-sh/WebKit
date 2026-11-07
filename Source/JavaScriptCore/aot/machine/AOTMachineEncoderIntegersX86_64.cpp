@@ -28,6 +28,7 @@ enum class X86IntegerShift : uint8_t {
     Left,
     ArithmeticRight,
     LogicalRight,
+    RotateRight,
 };
 
 enum class X86IntegerExtension : uint8_t {
@@ -477,6 +478,12 @@ static void encodeX86IntegerShift(Encoder& encoder, const Step& step, X86Integer
         else
             jit.urshift64(source, immediate, destination);
         return;
+    case X86IntegerShift::RotateRight:
+        if (is32)
+            jit.rotateRight32(source, immediate, destination);
+        else
+            jit.rotateRight64(source, immediate, destination);
+        return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -821,6 +828,9 @@ void Encoder::encodeInteger(const Step& step)
         return;
     case ZShr:
         encodeX86IntegerShift(*this, step, X86IntegerShift::LogicalRight);
+        return;
+    case RotR:
+        encodeX86IntegerShift(*this, step, X86IntegerShift::RotateRight);
         return;
 
     case SExt8:

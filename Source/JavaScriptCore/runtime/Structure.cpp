@@ -656,13 +656,12 @@ bool Structure::holesMustForwardToPrototypeSlow(JSObject* base) const
     return false;
 }
 
-// Compiled code asks the cell of an array one bit for its names and its elements.
+// Compiled code asks the cell of an array, a map or a set one bit for its names and its elements.
 void Structure::setPristineBits(PristineBits bits)
 {
     TypeInfo typeInfo = withoutPristine(this->typeInfo());
-    bool isArray = typeInfo.type() == ArrayType || typeInfo.type() == DerivedArrayType;
     TypeInfo::InlineTypeFlags flags = typeInfo.inlineTypeFlags();
-    if (bits.isPristine && (!isArray || bits.hasPristineElements))
+    if (bits.isPristine && (!pristineFlagOfCellCoversElements(typeInfo.type()) || bits.hasPristineElements))
         flags |= IsPristine;
     m_blob = TypeInfoBlob(indexingModeIncludingHistory(), TypeInfo(typeInfo.type(), flags, typeInfo.outOfLineTypeFlags()));
     m_outOfLineTypeFlags = typeInfo.outOfLineTypeFlags() | (bits.isPristine ? HasPristineNames >> numberOfInlineBits : 0);

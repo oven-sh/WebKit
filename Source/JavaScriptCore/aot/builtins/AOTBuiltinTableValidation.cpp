@@ -481,6 +481,28 @@ static void checkMembersAddedAtFirstRead(RealmComparison& comparison)
     });
 }
 
+static void checkMembersThatNoLoopLists(RealmComparison& comparison)
+{
+    VM& vm = comparison.vm();
+    auto& table = comparison.table;
+    forEachFoundObject(comparison, [&](BuiltinID holder, JSObject* object) {
+        if (table.at(holder).sameObjectAs)
+            return;
+        for (BuiltinID member : table.membersOf(holder)) {
+            const Builtin& entry = table.at(member);
+            if (!entry.name || entry.canBeListed || table.isSymbolName(entry.name) || !isExpectedInRealm(comparison, member))
+                continue;
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool isThere = object->methodTable()->getOwnPropertySlot(object, comparison.realm, table.identifierOf(vm, entry.name), slot);
+            if (scope.exception()) [[unlikely]]
+                scope.clearException();
+            else if (isThere && !(slot.attributes() & PropertyAttribute::DontEnum))
+                comparison.report(member, "is enumerable, and the table says that no loop over names lists it"_s);
+        }
+    });
+}
+
 static void checkClassInfo(RealmComparison& comparison, BuiltinClassID classID)
 {
     auto& table = comparison.table;
@@ -602,6 +624,7 @@ Vector<String> BuiltinTable::mismatches(JSGlobalObject* realm) const
     checkClosedHolders(comparison);
     checkMethodsCallingStartupLoads(comparison);
     checkMembersAddedAtFirstRead(comparison);
+    checkMembersThatNoLoopLists(comparison);
     checkClasses(comparison);
     checkInstanceTestsOfEntries(comparison);
     return WTF::move(comparison.mismatches);

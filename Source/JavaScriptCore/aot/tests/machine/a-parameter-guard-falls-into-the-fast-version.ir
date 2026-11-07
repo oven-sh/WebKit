@@ -1,5 +1,7 @@
 # the likely way through a guard ends in a jump to the fast version, which lies behind it in the image: Image takes the jump away. So the jump is the last thing in the unit, and what is not likely lies in front of the entry.
 # The guard has no frame and no stack check: it leaves by jumps with the arguments where they came
+# Under the words on proofs the guard asks what it unboxes, and a stop wants a frame.
+# REQUIRES: as-written
 # RUN: bytes f1:ParameterGuard mechanisms=all
 # CHECK: frame=none entries=2
 # CHECK-NOT: entry 0 at 0

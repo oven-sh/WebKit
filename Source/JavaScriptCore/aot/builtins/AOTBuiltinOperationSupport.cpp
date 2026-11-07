@@ -82,7 +82,7 @@ static bool isOriginalStructureOfLazyClass(JSGlobalObject* realm, Structure* str
 {
     if (structure->typeInfo().type() == JSDateType)
         return structure == realm->dateStructureConcurrently();
-    return realm->isOriginalTypedArrayStructure(structure, false);
+    return realm->isOriginalTypedArrayStructure(structure, false) || realm->isOriginalTypedArrayStructure(structure, true);
 }
 
 void markPristineIfOriginal(Instance& instance, JSObject* object)

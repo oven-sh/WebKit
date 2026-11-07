@@ -1,0 +1,120 @@
+# AN ACCESSOR LAID ON THE PROTOTYPE UNDER THE ASKED NAME ENDS THE GUARD OF `$findsNoMember` ITSELF: no other question stands in front of it here, so nothing but the guard of "missing" can turn the answer.
+# function Meter(level) { this.level = level; }
+# Meter.prototype.read = function () { return this.level; };
+# function ask(object) { return $findsNoMember(object, "missing") ? "lacks " + object.missing : "may hold " + object.missing; }            in a file of the library, expects a Meter
+# keep(Meter);
+# const asks = keep(ask);
+# print(asks(new Meter(1)), asks(new Meter(2)));
+# later(Meter);
+# print(asks(new Meter(3)), asks(new Meter(4)));
+# OPTIONS: mechanisms=all
+# RUN(FORM): walk f2
+# FORM: = FindsNoMember v0 key="missing" conditions=[{layout=L0 key="missing"}] receivers=[L0]
+# FORM-NOT: IsPlainInstanceOf
+# RUN(QUIET): run-in-shell keep = x => x; later = function () { };
+# QUIET: lacks undefined lacks undefined
+# QUIET-NEXT: lacks undefined lacks undefined
+# RUN(OTHER): run-in-shell keep = x => x; later = function (Meter) { Object.defineProperty(Meter.prototype, "other", { get() { return 9; } }); };
+# OTHER: lacks undefined lacks undefined
+# OTHER-NEXT: lacks undefined lacks undefined
+# RUN(ACCESSOR): run-in-shell keep = x => x; later = function (Meter) { Object.defineProperty(Meter.prototype, "missing", { get() { return 9; } }); };
+# ACCESSOR: lacks undefined lacks undefined
+# ACCESSOR-NEXT: may hold 9 may hold 9
+# RUN(VALUE): run-in-shell keep = x => x; later = function (Meter) { Meter.prototype["miss" + "ing"] = 8; };
+# VALUE: lacks undefined lacks undefined
+# VALUE-NEXT: may hold 8 may hold 8
+
+module m0 path="word.js" displayPath="word.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Meter" module=m0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=0 ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = PropGet v1 key="prototype" @46
+    v5 = NewClosure function=f3 @69
+    PropSet v4, v5 key="read" @52
+    v7 = Builtin builtin=GlobalThis @231
+    v8 = PropGet v7 key="keep" [isFreeName] @231
+    v9 = Call v8, -, v1 calleeName="keep" @231
+    v10 = Builtin builtin=GlobalThis @257
+    v11 = PropGet v10 key="keep" [isFreeName] @257
+    v12 = Call v11, -, v3 calleeName="keep" @257
+    v13 = Builtin builtin=GlobalThis @268
+    v14 = PropGet v13 key="print" [isFreeName] @268
+    v15 = Integer integer=1 @289
+    v16 = Construct v1, -, v15 calleeName="Meter" @283
+    v17 = Call v12, -, v16 calleeName="asks" @274
+    v18 = Integer integer=2 @309
+    v19 = Construct v1, -, v18 calleeName="Meter" @303
+    v20 = Call v12, -, v19 calleeName="asks" @294
+    v21 = Call v14, -, v17, v20 calleeName="print" @268
+    v22 = Builtin builtin=GlobalThis @315
+    v23 = PropGet v22 key="later" [isFreeName] @315
+    v24 = Call v23, -, v1 calleeName="later" @315
+    v25 = Builtin builtin=GlobalThis @329
+    v26 = PropGet v25 key="print" [isFreeName] @329
+    v27 = Integer integer=3 @350
+    v28 = Construct v1, -, v27 calleeName="Meter" @344
+    v29 = Call v12, -, v28 calleeName="asks" @335
+    v30 = Integer integer=4 @370
+    v31 = Construct v1, -, v30 calleeName="Meter" @364
+    v32 = Call v12, -, v31 calleeName="asks" @355
+    v33 = Call v26, -, v29, v32 calleeName="print" @329
+    v34 = Undefined @329
+    Return v34 @329
+}
+function f1 name="Meter" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = Undefined @24
+    Return v3 @24
+}
+function f2 name="ask" module=m2 position=105 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @135
+    v2 = Undefined @135
+    v3 = String string="missing" @158
+    v4 = FindsNoMember v0 key="missing" @135
+    v5 = ToBoolean v4 @135
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @135
+  b1(v6):
+    v7 = String string="lacks " @171
+    v8 = PropGet v0 key="missing" @182
+    v9 = Add v7, v8 @182
+    Jump -> next b3(v9) @182
+  b2(v10):
+    v11 = String string="may hold " @199
+    v12 = PropGet v0 key="missing" @213
+    v13 = Add v11, v12 @213
+    Jump -> next b3(v13) @213
+  b3(v14):
+    Return v14 @213
+}
+function f3 module=m0 position=69 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="level" @90
+    Return v1 @90
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

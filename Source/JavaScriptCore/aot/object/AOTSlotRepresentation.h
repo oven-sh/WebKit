@@ -68,6 +68,9 @@ static constexpr uint32_t minCell32 = MarkedBlockCage::minIndex;
 static constexpr uint32_t absentCell32 = 0;
 static constexpr uint32_t nullCell32 = 2;
 static constexpr uint32_t undefinedCell32 = 10;
+static constexpr int64_t placeOfAbsentKeyInMap = -1;
+static constexpr int64_t placeInMapThatIsNotTold = -2;
+static constexpr int64_t placeInMapHoldsNarrowValue = 1;
 static_assert(nullCell32 == JSValue::ValueNull && undefinedCell32 == JSValue::ValueUndefined && absentCell32 == JSValue::ValueEmpty);
 
 static constexpr uint32_t uncreatedDeferredClosure = 0;

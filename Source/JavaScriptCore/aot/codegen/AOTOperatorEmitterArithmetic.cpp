@@ -11,6 +11,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTPureOperations.h"
 #include "AOTRepresentationRules.h"
+#include "AOTThrowEmitter.h"
 #include "B3ComputeDivisionMagic.h"
 #include "CCallHelpers.h"
 #include "MathCommon.h"
@@ -21,6 +22,7 @@
 #include <limits>
 #include <type_traits>
 #include <wtf/Atomics.h>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 
@@ -115,13 +117,15 @@ public:
         auto [left, right] = operandsOf<T>(value);
         switch (op) {
         case ArithmeticOperator::Add:
-            return add(left, right);
+            return heldToWhatNumbersGive(value, op, left, right, add(left, right));
         case ArithmeticOperator::Sub:
-            return sub(left, right);
+            return heldToWhatNumbersGive(value, op, left, right, sub(left, right));
         case ArithmeticOperator::Mul:
-            return mul(left, right);
+            return heldToWhatNumbersGive(value, op, left, right, mul(left, right));
         case ArithmeticOperator::Mod:
-            return remainderOfNonNegative(left, right);
+            if (checksProofs())
+                emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalAnd(greaterThanOrEqual(left, constant<T>(0)), logicalAnd(isNotZero(right), lessThanOrEqual(left, constant<T>(typeOf(value->leftOperand()).integers.maximum)))), std::nullopt, ProofSource::OtherOperation);
+            return remainderOfNonNegative(left, right, typeOf(value->leftOperand()).integers.maximum);
         case ArithmeticOperator::Div:
         case ArithmeticOperator::Pow:
             break;
@@ -139,6 +143,18 @@ public:
         case ArithmeticOperator::Sub:
             return toNumber(sub(widened(left), widened(right)));
         case ArithmeticOperator::Mul: {
+            Range multiplicands = typeOf(value->leftOperand()).integers;
+            Range multipliers = typeOf(value->rightOperand()).integers;
+            if (productIsRoundedOnceFromIntegers(multiplicands, multipliers)) {
+                Integer exact = mul(widened(left, multiplicands), widened(right, multipliers));
+                Number product = toNumber(exact);
+                if (checksProofs()) {
+                    Number x = toNumber(left);
+                    Condition holds = logicalAnd(equal(mul(x, toNumber(right)), product), logicalOr(isNotZero(exact), greaterThanOrEqual(bitOr(left, right), constant<T>(0))));
+                    emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, holds, std::nullopt, ProofSource::OtherOperation);
+                }
+                return product;
+            }
             Number x = toNumber(left);
             return mul(x, toNumber(right));
         }
@@ -261,6 +277,23 @@ private:
         double quotientLimit;
     };
 
+    bool checksProofs() { return emittersCheckProofs(); }
+
+    template<typename T>
+    T heldToWhatNumbersGive(const ValueContext& value, ArithmeticOperator op, T left, T right, T result)
+    {
+        if (!checksProofs())
+            return result;
+        Number x = toNumber(left);
+        Number y = toNumber(right);
+        Number ofNumbers = op == ArithmeticOperator::Add ? add(x, y) : op == ArithmeticOperator::Sub ? sub(x, y) : mul(x, y);
+        Condition holds = equal(ofNumbers, toNumber(result));
+        if (op == ArithmeticOperator::Mul)
+            holds = logicalAnd(holds, logicalOr(isNotZero(result), greaterThanOrEqual(bitOr(left, right), constant<T>(0))));
+        emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, holds, std::nullopt, ProofSource::OtherOperation);
+        return result;
+    }
+
     static std::optional<SplitDivisor> splitDivisor(double divisor)
     {
         constexpr unsigned precision = std::numeric_limits<double>::digits;
@@ -315,18 +348,49 @@ private:
     {
         if (isStepByOne(value.opcode()))
             return { in<T>(value->valueOperand()), constant<T>(1) };
+        if (value.opcode() == Opcode::Mod) {
+            const Type& divisor = typeOf(value->rightOperand());
+            if (divisor.isInteger() && divisor.integers.isSingleValue()) {
+                build().statistics().count(StatisticID::RemaindersByDivisorsOfOneInteger);
+                if (checksProofs())
+                    emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, equal(in<T>(value->rightOperand()), constant<T>(divisor.integers.minimum)), std::nullopt, ProofSource::OtherOperation);
+                return { in<T>(value->leftOperand()), constant<T>(divisor.integers.minimum) };
+            }
+        }
         return { in<T>(value->leftOperand()), in<T>(value->rightOperand()) };
     }
 
+    static bool productIsRoundedOnceFromIntegers(Range left, Range right)
+    {
+        if (left.isEmpty() || right.isEmpty())
+            return false;
+        if ((left.minimum < 0 && right.contains(0)) || (right.minimum < 0 && left.contains(0)))
+            return false;
+        for (int64_t multiplicand : { left.minimum, left.maximum }) {
+            for (int64_t multiplier : { right.minimum, right.maximum }) {
+                if ((CheckedInt64(multiplicand) * multiplier).hasOverflowed())
+                    return false;
+            }
+        }
+        return true;
+    }
+
     Integer widened(Word32 value) { return signExtended(value); }
+    Integer widened(Word32 value, Range range) { return emitter<ConversionEmitter>().widen(value, range); }
+    Integer widened(Integer value, Range) { return value; }
     Integer widened(Integer value) { return value; }
 
     template<typename T>
-    T remainderOfNonNegative(T dividend, T divisor)
+    T remainderOfNonNegative(T dividend, T divisor, int64_t greatestDividend = std::numeric_limits<int64_t>::max())
     {
         if (std::optional<int64_t> magnitude = magnitudeOfConstantDivisor(divisor.value())) {
             if (hasOneBitSet(static_cast<uint64_t>(*magnitude)))
                 return bitAnd(dividend, constant<T>(*magnitude - 1));
+            if (greatestDividend >= 0 && greatestDividend - *magnitude < *magnitude) {
+                build().statistics().count(StatisticID::RemaindersOfDividendsBelowTwiceTheDivisor);
+                T lessened = sub(dividend, constant<T>(*magnitude));
+                return select(below(dividend, constant<T>(*magnitude)), dividend, lessened);
+            }
             return remainderByConstant(dividend, *magnitude);
         }
         return binary<T>(&Output::mod, dividend, divisor);
@@ -618,7 +682,21 @@ Number OperatorEmitter::asNumber(Operand operand, const Type& type)
     return select(conversions.isMarker(unboxed, nullMarker), 0, number);
 }
 
-Number OperatorEmitter::asNumericOperand(ValueID id)
+Number OperatorEmitter::asNumericOperand(ValueID id, const OperationContext* user)
+{
+    if (const Type& type = typeOf(id); type.isInteger() && type.integers.isSingleValue()) {
+        Number taken = number(static_cast<double>(type.integers.minimum));
+        if (!emittersCheckProofs())
+            return taken;
+        if (user) {
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(*user, equal(numericOperandAsItComes(id), taken), std::nullopt, ProofSource::OtherOperation);
+            return taken;
+        }
+    }
+    return numericOperandAsItComes(id);
+}
+
+Number OperatorEmitter::numericOperandAsItComes(ValueID id)
 {
     Representation representation = representationOf(id);
     if (constantsInFormOfUses.contains(opcodeOf(id))) {

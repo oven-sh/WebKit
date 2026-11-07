@@ -57,6 +57,7 @@ static uint16_t primitivesOfOperandKind(OperandKind kind)
     case OperandKind::StringBuilder:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
+    case OperandKind::Reciprocal:
     case OperandKind::BuilderCursor:
     case OperandKind::ViewVector:
     case OperandKind::ArrayStoragePointer:
@@ -100,6 +101,7 @@ TypeID widestTypeOf(TypeArena& types, OperandKind kind)
     case OperandKind::StringBuilder:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
+    case OperandKind::Reciprocal:
     case OperandKind::BuilderCursor:
     case OperandKind::ViewVector:
     case OperandKind::ArrayStoragePointer:
@@ -167,6 +169,7 @@ static bool recordHasOperandKind(TypeArena& types, TypeID id, const Type& type, 
     case OperandKind::StringBuilder:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
+    case OperandKind::Reciprocal:
     case OperandKind::BuilderCursor:
     case OperandKind::ViewVector:
     case OperandKind::ArrayStoragePointer:

@@ -1,0 +1,126 @@
+# what a loop iterates over is read by name off an object of which nothing is known: nothing is expected of it, so a list is tested for and read by index, and behind it stands the protocol.
+# the objects that the program itself makes hold a Set under that name. That is a word about the rest of the program, and how this function is compiled does not hang on it:
+# one more object written elsewhere, holding another kind under the same name, would have changed this function's code.
+# function make() { return { items: new Set(), either: new Set() }; }     function makeOther() { return { either: [] }; }
+# function ofItems(holder) { for (const item of holder.items) keep(item); }     ofEither: holder.either     ofNobody: holder.nobody
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: [[read]]: {{*}} = PropGet {{*}}key="items"
+# CHECK: = IsPristine {{*}}builtinClass=Array
+# CHECK: = GetArrayElement
+# RUN(NOTEST): walk f3 mechanisms=all
+# NOTEST-NOT: testedType=Set
+# RUN(NOTABLE): walk f3 mechanisms=all
+# NOTABLE-NOT: SetNext
+# RUN(PROTOCOL): walk f3 mechanisms=all
+# PROTOCOL: key="next"
+# RUN(EITHER): walk f4 mechanisms=all
+# EITHER: = IsPristine {{*}}builtinClass=Array
+# RUN(NOBODY): walk f5 mechanisms=all
+# NOBODY: = IsPristine {{*}}builtinClass=Array
+
+layout L0 module=m0 fields=[{key="either" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="either" declared={type=anything} flags=[IsRequired]}, {key="items" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Set
+    v1 = Construct v0 calleeName="Set"
+    v2 = Builtin builtin=Set
+    v3 = Construct v2 calleeName="Set"
+    v4 = NewObject -, v1, v3 layout=L1 fields=[1, 0]
+    v5 = FinishObject v4
+    Return v5
+}
+function f2 name="makeOther" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f3 name="ofItems" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="items"
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Undefined
+    Return v7
+  b3() handler=b4():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="keep" [isFreeName]
+    v10 = Call v9, -, v6
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v2:
+    v11 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v11
+}
+function f4 name="ofEither" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="either"
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Undefined
+    Return v7
+  b3() handler=b4():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="keep" [isFreeName]
+    v10 = Call v9, -, v6
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v2:
+    v11 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v11
+}
+function f5 name="ofNobody" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="nobody"
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Undefined
+    Return v7
+  b3() handler=b4():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="keep" [isFreeName]
+    v10 = Call v9, -, v6
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v2:
+    v11 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v11
+}

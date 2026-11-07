@@ -111,9 +111,25 @@ static std::optional<ThisPrototype> resolveThisPrototype(JSGlobalObject* globalO
     return result;
 }
 
-static Object* createWithoutFields(VM& vm, Structure* structure, const LayoutData& layout)
+void ClassTable::keepWordsOfObjectWithoutFields(const LayoutData& layout, const Object& born)
 {
-    return Object::create(vm, structure, layout, layout.size, orderWordOf(0, 0));
+    RELEASE_ASSERT(layout.size > sizeof(JSCell) && !(layout.size % sizeof(uint64_t)));
+    size_t numberOfWords = (layout.size - sizeof(JSCell)) / sizeof(uint64_t);
+    UniqueArray<uint64_t> words = makeUniqueArray<uint64_t>(numberOfWords);
+    memcpy(words.get(), reinterpret_cast<const uint8_t*>(&born) + sizeof(JSCell), numberOfWords * sizeof(uint64_t));
+    m_wordsOfObjectsWithoutFields.set(layout.index, WTF::move(words));
+}
+
+Object* ClassTable::createWithoutFields(VM& vm, Structure* structure, const LayoutData& layout)
+{
+    Object* object = Object::create(vm, structure, layout, layout.size, orderWordOf(0, 0));
+    CompiledStructure* compiled = uncheckedDowncast<CompiledStructure>(structure);
+    if (!compiled->wordsOfObjectWithoutFields()) {
+        if (!wordsOfObjectWithoutFields(layout))
+            keepWordsOfObjectWithoutFields(layout, *object);
+        compiled->setWordsOfObjectWithoutFields(wordsOfObjectWithoutFields(layout));
+    }
+    return object;
 }
 
 Object* ClassTable::createClassInstance(VM& vm, const LayoutData& classLayout, JSObject* prototype)
@@ -164,8 +180,21 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
             number = isWholeConstruction ? constructorIsNewTargetAndOnlyReturns : constructorIsNewTarget;
         }
         target->ensureRareData(vm)->setCompiledAllocation(vm, structure, number);
-    }
+    } else if (resolved->wasReadWithoutSideEffects && function && constructor == newTarget)
+        rememberThisBesideCallee(vm, newTarget, object->structure());
     return object;
+}
+
+void ClassTable::rememberThisBesideCallee(VM& vm, JSObject* callee, Structure* structureOfThis)
+{
+    Structure* structure = callee->structure();
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->isDictionary() ? invalidOffset : structure->get(vm, vm.propertyNames->prototype, attributes);
+    if (!isValidOffset(offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+        return;
+    uint32_t structureID = structure->id().bits();
+    m_placesOfPrototypeProperties[indexOfPlace(structureID)] = { structureID, offset };
+    m_thisBesideCallees[indexOfCalleeWithThisBeside(callee)] = { callee, structureOfThis };
 }
 
 JSFinalObject* ClassTable::createOrdinaryInstance(JSGlobalObject* realm, unsigned numberOfProperties, JSObject* prototype)
@@ -348,6 +377,8 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
     const LayoutData& allocatedClass = classOfInstances(allocatedLayout);
     const LayoutData* requested = isDefinedByClass(allocatedClass) ? classWithPrototype(prototype) : nullptr;
     if (!requested || requested->index == allocatedClass.index) {
+        if (!requested && isDefinedByClass(allocatedClass))
+            validateMutation(vm, *allocated, ObjectMutation::ChangePrototype);
         allocated->setPrototypeAtCreation(vm, prototype);
         return allocated;
     }

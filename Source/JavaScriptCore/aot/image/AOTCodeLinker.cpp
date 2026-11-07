@@ -177,9 +177,11 @@ struct CodeLinker {
         AOT_NAME_OF_NUMBER_SPACE(RegExpLiteralCell)
         AOT_NAME_OF_NUMBER_SPACE(TemplateObjectCell)
         AOT_NAME_OF_NUMBER_SPACE(ArrayProfile)
+        AOT_NAME_OF_NUMBER_SPACE(RowsOfReads)
         AOT_NAME_OF_NUMBER_SPACE(EnvironmentHandedBack)
         AOT_NAME_OF_NUMBER_SPACE(ClassGuard)
         AOT_NAME_OF_NUMBER_SPACE(ClassRank)
+        AOT_NAME_OF_NUMBER_SPACE(HeirLookedAt)
         AOT_NAME_OF_NUMBER_SPACE(ClosureFunction)
         AOT_NAME_OF_NUMBER_SPACE(ClosureCell)
         AOT_NAME_OF_NUMBER_SPACE(Allocation)
@@ -338,7 +340,7 @@ struct CodeLinker {
             if (symbol >= piece.stubKeys.size())
                 return fail(piece, relocation, "the code lists no such stub"_s);
             if (std::optional<uint32_t> offset = stubOffsets.find(piece.stubKeys[symbol]))
-                return piece.sharedCodeCopy + *offset - (relocation.entry == entryInFrontOfStub ? sizeOfMoveInFrontOfStub : 0);
+                return piece.sharedCodeCopy + *offset - sizeOfHeadOfStub(relocation.entry);
             context.diagnostics().add(InternalError { .kind = InternalErrorKind::CallToStubNotGenerated, .function = functionOf(piece), .count = relocation.offset });
             return std::nullopt;
         }

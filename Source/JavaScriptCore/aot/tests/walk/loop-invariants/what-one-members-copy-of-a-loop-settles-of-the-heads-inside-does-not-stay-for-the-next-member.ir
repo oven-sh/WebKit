@@ -12,8 +12,8 @@
 # CHECK: int[-1, 4294967294] @{{*}} = Sub
 # CHECK: int[-1, 4294967294] @{{*}}isLoopHead=true
 # CHECK: = GetTypedArrayLength
-# CHECK: int[-1, 17179869183] @{{*}} = Sub
-# CHECK: int[-1, 17179869183] @{{*}}isLoopHead=true
+# CHECK: int[-1, 536870911] @{{*}} = Sub
+# CHECK: int[-1, 536870911] @{{*}}isLoopHead=true
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -2,11 +2,24 @@
 # If `this` of Base were tested for all that is expected of it, the layouts of Base and of Below, every store of Base would stay closed, for the objects of Base too: 46 stores a request in node:http's ServerResponse,
 # below which light-my-request lays a function of its own in a module that may run again. The test asks for the part that has typed forms, and the objects of Below go through the closed arm.
 # function Base(a) { this.a = a; }  function make() { return function Below(a) { Base.call(this, a); }; }  publish(Base, new (make())(2), new (make())(3), new Base(1));
-# RUN: walk f1 mechanisms=all
-# CHECK-LABEL: code f1:Body
-# CHECK: ShapeTest v0 layouts=[L0]
-# CHECK: PropSet {{*}} key="a"
-# CHECK: PutSlotOrAdd {{*}} key="a" receivers=[L0]
+# The test stands in the guard of the parameters: it is asked once a call, the body gets `this` as an object of Base, and what fails it goes through the slow version. Without the guards it stands in the body.
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:SlowBody
+# CHECK: unit f1:ParameterGuard {{*}} tests (L0, -)
+# RUN(BODY): walk f1:Body mechanisms=all
+# BODY-LABEL: code f1:Body
+# BODY: (v0: L0{{*}}entry=0
+# BODY-NOT: ShapeTest
+# BODY: PutSlotOrAdd {{*}} key="a" receivers=[L0]
+# RUN(SLOW): walk f1:SlowBody mechanisms=all
+# SLOW-LABEL: code f1:SlowBody
+# SLOW: PropSet v0, v1 key="a"
+# SLOW-NOT: PutSlotOrAdd
+# RUN(INSIDE): walk f1 mechanisms=all-ParameterGuards
+# INSIDE-LABEL: code f1:Body
+# INSIDE: ShapeTest v0 layouts=[L0]
+# INSIDE: PropSet {{*}} key="a"
+# INSIDE: PutSlotOrAdd {{*}} key="a" receivers=[L0]
 
 layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
 layout L1 kind=Instance name="Below" module=m0 base=L0 constructor=f2 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction]

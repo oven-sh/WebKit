@@ -514,6 +514,37 @@ static void checkerRefusesPatchWithoutTheFrameItNeeds()
     expectCheckerRefusal(test, checkFrame, FailureKind::NeedsFrameWhereNoneIsSetUp, { patch });
 }
 
+static void checkerFindsOwnerOfStorageThatLandingPadReads()
+{
+    ProcedureTraits traits;
+    traits.hasHandlers = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    AbstractHeap storageOfOwner(test.heaps().argumentBuffer.index(), 0, OptionSet<HeapTrait> { HeapTrait::HoldsInnerPointer });
+    Operation* owner = out.opaque(test.argumentGPR(0));
+    Operation* storage = out.loadPtr(out.address(storageOfOwner, owner));
+    Block* continuation = out.newBlock();
+    Block* landingPad = out.newBlock();
+    RegisterMask callerSaved = callerSavedRegistersForCheckerTest(test);
+
+    PatchOperation* patch = appendPatchForCheckerTest(out, Void, { test.argumentGPR(1) });
+    out.appendSuccessor(normalEdge(continuation));
+    out.appendSuccessor(rareEdge(landingPad));
+    patch->clobberLateOnSuccessor(1, registerSetOf(callerSaved));
+    patch->effects.terminal = true;
+
+    out.appendTo(continuation);
+    out.ret(owner);
+    out.appendTo(landingPad);
+    PatchOperation* safepoint = appendPatchForCheckerTest(out, Void, { }, callerSaved);
+    out.ret(out.load64(out.address(test.heaps().argumentBuffer, storage, 2 * sizeof(uint64_t))));
+    AOT_CHECKER_TEST_CHECK(test, safepoint->effects.mayCollect && landingPad->isLandingPad() && storage->has(OperationFlag::IsInnerPointer));
+    prepareForCheckerTest(test);
+
+    const Order& order = test.procedure().order();
+    AOT_CHECKER_TEST_CHECK(test, order.headOf(landingPad) < order.headOf(continuation) && test.procedure().allocation().isSpilled(owner));
+}
+
 static void checkerRefusesNarrowReferenceWithoutPointer()
 {
     for (bool isMarkedBeforeAllocation : { true, false }) {
@@ -655,6 +686,7 @@ std::span<const NativeTest> machineCheckerTests()
         { "machine-checker/rare-region-does-not-save"_s, Machine::checkerRefusesRareRegionThatDoesNotSave },
         { "machine-checker/two-live-spills-in-one-slot"_s, Machine::checkerRefusesTwoLiveSpillsInOneSlot },
         { "machine-checker/patch-without-the-frame-it-needs"_s, Machine::checkerRefusesPatchWithoutTheFrameItNeeds },
+        { "machine-checker/owner-of-storage-that-a-landing-pad-reads"_s, Machine::checkerFindsOwnerOfStorageThatLandingPadReads },
         { "machine-checker/narrow-reference-without-its-pointer"_s, Machine::checkerRefusesNarrowReferenceWithoutPointer },
         { "machine-checker/shifted-narrow-reference-without-its-pointer"_s, Machine::checkerRefusesShiftedNarrowReferenceWithoutPointer },
         { "machine-checker/frame-address-read-late-by-a-suspension"_s, Machine::checkerRefusesFrameAddressReadLateBySuspension },

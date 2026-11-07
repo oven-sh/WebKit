@@ -335,7 +335,7 @@ void generatePutByIdOnce(StubAssembler& jit)
     const GPRReg entries = jit.allocateScratch(slotHeaderRegister);
     const GPRReg scratch = jit.allocateScratch(slotPayloadRegister);
     JumpList isNotInFieldTable;
-    storeFieldByTable(jit, { jit.operand(0), jit.immediate(), index, entries, true, false }, jit.operand(1), scratch, operationFor(mode), isNotInFieldTable);
+    storeFieldByTable(jit, { jit.operand(0), jit.immediate(), index, entries, false, false }, jit.operand(1), scratch, operationFor(mode), isNotInFieldTable);
     linkToSlotExit(jit, isNotInFieldTable, table, SlotExit::Uncached);
 }
 

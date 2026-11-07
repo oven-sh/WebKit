@@ -1,0 +1,32 @@
+# a read by name that asks its site alone, by itself. No walk runs: the Code is written out.
+# its stub counts the misses of its site and has the site filled: words of the run time, as the row of GetCachedGetter says of its own. The position gives it a site: without one it hands back the empty value.
+# RUN: emit-code
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Patch({{*}}Writes:{RuntimeState
+# -- code
+# code f1:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: absent|anything @JSValue = GetValueAtSiteOrAbsent v0 key="x" valueType=absent|anything traits=[mayTouchMemory] @5
+#     v2: boolean @Boolean = TypeTest v1 testedType=absent
+#     Branch v2 -> taken b1(), notTaken b2()
+#   b1() frequency=Rare:
+#     Return v0
+#   b2():
+#     v3: anything @JSValue = Narrowed v1, v2
+#     Return v3
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="asked" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}

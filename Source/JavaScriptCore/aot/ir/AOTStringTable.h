@@ -59,7 +59,7 @@ public:
     StringID textOfNull() const { return m_textOfNull; }
     StringID textOf(bool value) const { return value ? m_textOfTrue : m_textOfFalse; }
     NameClass nameClass(StringID id) const { return m_nameClasses[id.index()]; }
-    BuiltinName builtinName(StringID) const;
+    BuiltinName builtinName(StringID id) const { return m_builtinNames[id.index()]; }
     StringID stringOf(BuiltinName textName) const { return m_builtinNameStrings[textName.index()]; }
 
     bool isAllASCII(StringID) const;

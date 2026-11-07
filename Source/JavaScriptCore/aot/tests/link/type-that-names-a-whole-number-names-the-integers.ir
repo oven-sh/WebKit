@@ -1,8 +1,8 @@
 # `take(-0)`: -0 is a whole number that is no integer. A Set and the keys of a Map keep +0 for it, which is an integer, and the flow hands on what went in: so no type that Link hands to a table names the one without the other.
 # function take(x) { return x; }  take(-0);
 # RUN: link functions mechanisms=all
-# CHECK: function f1 {{*}}result=i32|whole
-# CHECK-NEXT: parameter 0 {{*}}proven=i32|whole
+# CHECK: function f1 {{*}}result=int|whole
+# CHECK-NEXT: parameter 0 {{*}}proven=int|whole
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

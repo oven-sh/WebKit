@@ -16,6 +16,7 @@
 #include "Allocator.h"
 #include "JSCJSValue.h"
 #include "Structure.h"
+#include "WeakGCMap.h"
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -71,7 +72,6 @@ public:
 private:
     struct CachedRecordPlan {
         uint32_t ordinaryStructureID { 0 };
-        uint32_t structureIDSeenOnce { 0 };
         RecordPlan recordPlan;
     };
     struct RecordPlanForNames {
@@ -79,7 +79,6 @@ private:
         std::unique_ptr<ObjectBuilderPlan> plan;
     };
     static constexpr size_t recordPlanCacheSize = 128;
-    static constexpr size_t maxRecordPlans = 256;
     using RecordPlanCache = std::array<CachedRecordPlan, recordPlanCacheSize>;
     static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> 4) % recordPlanCacheSize; }
 
@@ -100,7 +99,8 @@ private:
     bool m_hasParsedRecords { false };
     MadeInArena<RecordPlanCache> m_recordPlanCache;
     MadeInArena<JSONValueParser::LearnedNames> m_learnedNames;
-    Vector<RecordPlanForNames> m_recordPlans;
+    HashMap<uint32_t, Vector<RecordPlanForNames, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_recordPlans;
+    std::unique_ptr<WeakGCMap<Structure*, Structure>> m_structuresThatNoPlanFits;
     RefPtr<StringImpl> m_wideText;
     size_t m_sourceCapacity { 0 };
 };

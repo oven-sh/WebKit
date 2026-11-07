@@ -3,11 +3,11 @@
 # Without that each has a word of its own, and every resumption clears that word: the frames here were 128 and 112 bytes, and a large async function had 36,368 bytes, 33,376 of them cleared each time.
 # async function waits(make, awaited) { let last = make(make); try { make(last); last = make(make); .. eight times ..; return await awaited; } catch { return make(last); } }
 # function calls(make, other) { the same, with make(other) in the place of the await }
-# The last value of `waits` is held by the await, so it has no gap. checkAllocation() forgets a spill on an edge into its gap, and finds every pad served.
+# The last value of `waits` is held by the await, and has its gap like the others. checkAllocation() forgets a spill on an edge into its gap, and finds every pad served.
 # REQUIRES: not-windows
 # RUN: allocate f1:CoroutineBody f2:Body mechanisms=none
 # CHECK-LABEL: unit f1:CoroutineBody
-# CHECK-COUNT-8: 64 bits, gap
+# CHECK-COUNT-9: 64 bits, gap
 # CHECK-NOT: gap
 # CHECK-LABEL: unit f2:Body
 # CHECK-COUNT-9: 64 bits, gap

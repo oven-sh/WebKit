@@ -95,7 +95,7 @@ void initializeStubWords(Instance& instance)
         bool isFree = !entry.nativeFunction;
         if (isFree) {
             ++numberOfUsedEntries;
-            RELEASE_ASSERT(numberOfUsedEntries * 2 <= StubWords::numberOfBoxedCallEntries);
+            RELEASE_ASSERT(numberOfUsedEntries * 3 <= StubWords::numberOfBoxedCallEntries * 2);
             entry.nativeFunction = nativeFunction;
         }
 

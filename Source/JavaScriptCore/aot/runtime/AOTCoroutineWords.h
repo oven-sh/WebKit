@@ -24,6 +24,7 @@ struct CoroutineWords {
     uint64_t plainGeneratorHeader;
     uint32_t emptyGeneratorPrototypeStructureID;
     uint32_t emptyAsyncGeneratorPrototypeStructureID;
+    uint32_t structureIDsOfGeneratorsOfLibrary[2];
     JSCell* waiterToResume;
     EncodedJSValue waiterResolution;
     EncodedJSValue waiterAsyncContext;

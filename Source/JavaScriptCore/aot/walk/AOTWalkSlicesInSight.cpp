@@ -44,6 +44,7 @@ Reference buildSliceOfElementsInSight(Walker& walker, const SliceOfElementsInSig
     std::optional<uint32_t> end = boundOfSliceInSight(walker, asked.bounds.size() < 2 ? Reference() : asked.bounds[1], length, length);
     if (!start || !end)
         return { };
+    walker.checkWhatIsInSightOfList(asked.sliced, asked.origin);
 
     Draft literal(Opcode::NewArray, asked.origin);
     walker.chooseConservativeFields(literal);

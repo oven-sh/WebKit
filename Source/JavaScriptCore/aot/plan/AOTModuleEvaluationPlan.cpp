@@ -1214,6 +1214,11 @@ ModuleEvaluationPlan planModuleEvaluation(const Program& program, const Facts& f
         return plan.starts[start].body;
     });
 
+    for (const ModuleStart& start : plan.starts) {
+        if (start.body)
+            plan.bodiesWithStart.set(start.body.index());
+    }
+
     plan.modulesCalledWhereRequired = WTF::move(planner.isCalledWhereRequired);
     plan.modulesThatStartThemselves = WTF::move(planner.startsItself);
     plan.noRequireEvaluatesESModule = planner.noRequireEvaluatesESModule;
@@ -1243,6 +1248,8 @@ const ModuleStart* ModuleEvaluationPlan::findStart(ModuleID module) const
 
 const ModuleStart* ModuleEvaluationPlan::findStartOfBody(FunctionID body) const
 {
+    if (body && !m_parts.bodiesWithStart.get(body.index()))
+        return nullptr;
     auto place = std::ranges::lower_bound(m_parts.startsByBody, body, { }, [&](uint32_t start) {
         return m_parts.starts[start].body;
     });

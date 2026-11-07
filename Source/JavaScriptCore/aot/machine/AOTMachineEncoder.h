@@ -214,7 +214,7 @@ public:
     void storeToSpill(const Operation*);
     void storeSpilledValuesDefinedAtHead(Block*, const BlockPlace&);
     void setUpFrame(const Block*);
-    void leaveFrameIfSetUp();
+    void leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWords = { });
     void noteFrameState(bool isSetUp)
     {
         m_frameIsSetUp = isSetUp;
@@ -232,6 +232,7 @@ public:
     void runLatePaths();
     void linkPendingJumps();
     void findBlocksWithoutCode();
+    void findRareBlocksThatRepeatAnother(std::span<const uint32_t> layoutIndexesOfRareBlocksThatMoveAndJumpOn, std::span<const uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn);
     const Block* blockEnteredThrough(const Block* block) const { return m_blocksEntered[block->index()]; }
     void placeColdCodeNearItsJumps();
     bool hasCode(const Block* block) const { return blockEnteredThrough(block) == block; }
@@ -263,6 +264,8 @@ public:
     void addPendingJumps(const MacroAssembler::JumpList&, const Block*);
 
     std::span<const GPRReg> findRegistersThatSetupPushes(const Block*);
+    bool setupPushesSavesOfRareRegion(const Block* block) const { return !m_spillsPushedAtSetup.isEmpty() && !block->isEntry() && !m_allocation.isHeadOfFramedPart(block); }
+    std::span<const GPRReg> findRegistersThatTeardownPops(uint32_t beginOfSteps, uint32_t endOfSteps, uint32_t& endOfStepsAheadOfPops);
     bool setupHasPushed(SpillIndex spill) const { return !m_spillsPushedAtSetup.isEmpty() && std::ranges::find(m_spillsPushedAtSetup.span(), spill) != m_spillsPushedAtSetup.span().end(); }
 
     ALWAYS_INLINE AddressForm resolveAddress(const Operation* access, LeafCursor& leaves)
@@ -373,6 +376,7 @@ public:
     void encodeBranchOnTest(Block*, const Step&, const Operation* predicate);
     void encodeBranchOnOverflow(Block*, const Step&);
     void encodeSwitch(Block*, const Step&);
+    void encodeSwitchByBits(Block*, GPRReg value, Width, unsigned begin, unsigned end);
     void encodeSwitchThroughTable(Block*, GPRReg value, int64_t firstValue, uint64_t numberOfEntries);
     void encodeBinarySearch(Block*, GPRReg value, Width, std::span<const int64_t> values, unsigned firstSuccessor);
     void encodeReturn(const Step&);
@@ -454,6 +458,7 @@ public:
     bool m_frameRangeIsOpen { false };
     ArenaVector<GPRReg> m_registersPushedAtSetup;
     ArenaVector<SpillIndex> m_spillsPushedAtSetup;
+    ArenaVector<GPRReg> m_registersPoppedAtTeardown;
     MacroAssembler::Label m_teardownSharedByReturns;
     Origin m_origin;
     uint32_t m_operationOfOrigin { UINT32_MAX };

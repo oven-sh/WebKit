@@ -157,8 +157,13 @@ std::optional<unsigned> Modules::indexOfEndedMockSeenAt(ModuleID fileOrModule, u
 
 std::optional<unsigned> Modules::indexOfEndedMockSeenBy(ModuleID fileOrModule, ModuleID importer) const
 {
-    if (m_endedMocks.isEmpty() || m_importersThatGotOriginal.contains(static_cast<uint64_t>(fileOrModule.index()) << 32 | importer.index())) [[likely]]
+    if (m_endedMocks.isEmpty()) [[likely]]
         return std::nullopt;
+    if (auto got = m_importersThatGotOriginal.find(static_cast<uint64_t>(fileOrModule.index()) << 32 | importer.index()); got != m_importersThatGotOriginal.end()) {
+        auto anew = m_momentsLoadedAnew.find(importer);
+        if (!got->value.isGivenItNoMore || anew == m_momentsLoadedAnew.end() || anew->value.moment <= got->value.moment)
+            return std::nullopt;
+    }
     return indexOfEndedMockSeenAt(fileOrModule, momentLinked(importer));
 }
 
@@ -177,12 +182,28 @@ void Modules::appendNamesBehindStarsOf(ModuleID module, WTF::Vector<Identifier>&
     seen.quickSet(module.index());
     Vector<ModuleID, 8> pending { module };
     while (!pending.isEmpty()) {
-        for (const ModuleRequestData& request : m_table.requests(pending.takeLast())) {
+        ModuleID importer = pending.takeLast();
+        for (ModuleRequestData request : m_table.dynamicStars(importer)) {
             ModuleID source = moduleLoadedBy(request);
-            if (!request.isDynamicStarExport || seen.quickSet(source.index()))
+            bool wasSeen = seen.quickSet(source.index());
+            if (wasSeen && !m_mocks && m_endedMocks.isEmpty())
                 continue;
             const ModuleData& sourceData = data(source);
-            if (sourceData.capturesExports()) {
+            if (JSObject* ended = endedMockSeenBy(source, importer)) [[unlikely]] {
+                PropertyNameArrayBuilder listed(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                ended->methodTable()->getOwnPropertyNames(ended, realm, listed, DontEnumPropertiesMode::Exclude);
+                RETURN_IF_EXCEPTION(scope, void());
+                for (const Identifier& name : listed)
+                    names.append(name);
+            } else if (mockInPlace(source) && !seesMockOf(source, importer)) [[unlikely]] {
+                JSObject* own = namespaceOfModuleItself(source);
+                RETURN_IF_EXCEPTION(scope, void());
+                PropertyNameArrayBuilder listed(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                own->methodTable()->getOwnPropertyNames(own, realm, listed, DontEnumPropertiesMode::Include);
+                RETURN_IF_EXCEPTION(scope, void());
+                for (const Identifier& name : listed)
+                    names.append(name);
+            } else if (sourceData.capturesExports()) {
                 forEachCapturedExport(source, [&](const Identifier& name, JSValue) {
                     names.append(name);
                 });
@@ -198,7 +219,8 @@ void Modules::appendNamesBehindStarsOf(ModuleID module, WTF::Vector<Identifier>&
             } else {
                 for (const ModuleExportData& entry : m_table.exports(source))
                     names.append(identifier(entry.name));
-                pending.append(source);
+                if (!wasSeen)
+                    pending.append(source);
             }
         }
     }
@@ -211,6 +233,47 @@ bool Modules::hasNameBehindItsStars(ModuleID module, UniquedStringImpl* name)
     appendNamesBehindStarsOf(module, names);
     RETURN_IF_EXCEPTION(scope, false);
     return names.containsIf([&](const Identifier& each) { return each.impl() == name; });
+}
+
+JSObject* Modules::endedMockSeenBy(ModuleID mocked, ModuleID importer) const
+{
+    if (m_endedMocks.isEmpty()) [[likely]]
+        return nullptr;
+    ModuleID fileOrModule = m_table.fileBehindFace(mocked).value_or(mocked);
+    JSObject* ended = endedMock(fileOrModule, indexOfEndedMockSeenBy(fileOrModule, importer));
+    return ended != mockInPlace(fileOrModule) ? ended : nullptr;
+}
+
+bool Modules::keepsEndedMockOf(ModuleID module) const
+{
+    if (m_endedMocks.isEmpty()) [[likely]]
+        return false;
+    ModuleID named = moduleWithNamesOf(module);
+    return m_endedMocks.contains(m_table.fileBehindFace(named).value_or(named));
+}
+
+std::optional<bool> Modules::endedMockHasNameAsSeenBy(ModuleID mocked, ModuleID holder, const Identifier& name)
+{
+    if (!m_collectionOfNamesBehindStars) [[likely]]
+        return std::nullopt;
+    JSObject* ended = endedMockSeenBy(mocked, holder);
+    if (!ended)
+        return std::nullopt;
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& taken = m_collectionOfNamesBehindStars->namesOfEndedMocks;
+    size_t index = taken.findIf([&](const auto& each) { return each.first == ended; });
+    if (index == notFound) {
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        ended->methodTable()->getOwnPropertyNames(ended, m_instance.globalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        IdentifierSet own;
+        for (const Identifier& each : names)
+            own.add(each.impl());
+        index = taken.size();
+        taken.append({ ended, WTF::move(own) });
+    }
+    return taken[index].second.contains(name.impl());
 }
 
 JSObject* Modules::mockSeenBy(ModuleID mocked, ModuleID importer) const
@@ -242,7 +305,7 @@ JSObject* Modules::namespaceSeenBy(ModuleID module, ModuleID importer)
     ModuleID fileOrModule = fileOf(module);
     std::optional<unsigned> ended = indexOfEndedMockSeenBy(fileOrModule, importer);
     JSObject* seen = endedMock(fileOrModule, ended);
-    if (!seen || seen == mockInPlace(fileOrModule))
+    if (!seen || (seen == mockInPlace(fileOrModule) && !m_endedMocks.find(fileOrModule)->value[*ended].isKeptWhereImporterIsAskedForAgain))
         return moduleNamespace(module, ModulePhase::Evaluation);
     LoadedModule& held = ensureLoaded(fileOrModule);
     if (JSValue kept = held.namespacesOfEndedMocks ? held.namespacesOfEndedMocks->getDirectIndex(realm, *ended) : JSValue())
@@ -255,9 +318,18 @@ JSObject* Modules::namespaceSeenBy(ModuleID module, ModuleID importer)
     return object;
 }
 
-void Modules::linkAnewWhoeverReadsEndedMockBelow(ModuleID root)
+void Modules::noteLoadedAnew(ModuleID module, ModuleID root)
 {
     VMState& state = m_instance.vm->aotState();
+    m_momentsLoadedAnew.set(module, MomentLoadedAnew { ++state.momentOfLoads, state.momentOfTestFile, root });
+    m_modulesLoadedAnewWhoseNamesAreOwed.set(module.index());
+    m_modulesWithNoNamesOwedBelow.clearAll();
+    if (data(module).hasDynamicStarExport())
+        letGoOfNamespaceMadeUnderMock(module);
+}
+
+void Modules::linkAnewWhoeverReadsEndedMockBelow(ModuleID root)
+{
     BitVector seen(m_table.size());
     seen.quickSet(root.index());
     Vector<ModuleID, 32> work { root };
@@ -267,8 +339,8 @@ void Modules::linkAnewWhoeverReadsEndedMockBelow(ModuleID root)
         for (const ModuleRequestData& request : m_table.imports(module)) {
             ModuleID target = moduleLoadedBy(request);
             ModuleID mocked = m_table.fileBehindFace(target).value_or(target);
-            if (isLoaded && indexOfEndedMockSeenAt(mocked, momentLinked(module)) && !keepsEndedMockWhereItIsAskedForAgain(mocked, module))
-                m_momentsLoadedAnew.set(module, MomentLoadedAnew { ++state.momentOfLoads, state.momentOfTestFile, root });
+            if (isLoaded && indexOfEndedMockSeenBy(mocked, module) && !keepsEndedMockWhereItIsAskedForAgain(mocked, module))
+                noteLoadedAnew(module, root);
             if (!request.isHoisted && !request.isDeferred && !seen.quickSet(target.index()))
                 work.append(target);
         }
@@ -325,7 +397,7 @@ void Modules::forgetEndedMocksOfEarlierTestFiles()
 
 bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
 {
-    if (importsOriginalBesideMock(mocked, importer)) [[unlikely]]
+    if (importsOriginalBesideMock(mocked, importer) || keepsOriginalUnderLaterMock(mocked, importer)) [[unlikely]]
         return false;
     if (m_mocksOverModulesThatHaveRun.isEmpty()) [[likely]]
         return true;
@@ -387,6 +459,24 @@ bool Modules::bringBackMockKeptByImportersOfThisTestFile(ModuleID fileOrModule)
     return true;
 }
 
+LoadedUnderStandingMock Modules::loadedUnderStandingMockThatImportersKeep(ModuleID fileOrModule)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    auto noted = m_momentsWaitingMocksWereLaid.find(fileOrModule);
+    if (!mockInPlace(fileOrModule) || noted == m_momentsWaitingMocksWereLaid.end() || !noted->value.importersKeepMockThatStands)
+        return { };
+    LoadedUnderStandingMock loaded;
+    if (data(fileOrModule).kind != ModuleKind::CommonJs)
+        loaded.requiredValue = ensureLoaded(fileOrModule).isKeptByRequire ? ensureLoaded(fileOrModule).requiredValue.get() : JSValue();
+    else if (wasRequiredUnderMockInPlace(fileOrModule))
+        loaded.requiredValue = commonJSExports(fileOrModule);
+    if (ModuleID module = moduleWithExportsOf(fileOrModule); !loaded.requiredValue || ensureLoaded(module).wasImportedUnderMockInPlace) {
+        loaded.namespaceObject = moduleNamespace(module, ModulePhase::Evaluation);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return loaded;
+}
+
 bool Modules::keepsMockThatStandsWhileAnotherWaits(ModuleID mocked, ModuleID importer) const
 {
     ModuleID fileOrModule = m_table.fileBehindFace(mocked).value_or(mocked);
@@ -407,7 +497,7 @@ void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, 
         std::optional<unsigned> ended = laid ? keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0, exportsLeftOutOf(module)) : std::nullopt;
         if (ended)
             m_endedMocks.find(fileOrModule)->value[*ended].isKeptWhereImporterIsAskedForAgain = isKeptByImportersOfThisTestFile;
-        if (waiting && waiting->hadNamespace && waiting->moment == m_instance.vm->aotState().momentOfLoads) {
+        if (waiting && waiting->hadNamespace && (isKeptByImportersOfThisTestFile || waiting->moment == m_instance.vm->aotState().momentOfLoads)) {
             keepNamespacesMadeUnder(fileOrModule, module, earlier, ended);
             letGoOfNamespaceMadeUnderMock(module);
         }
@@ -436,6 +526,7 @@ void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, 
         m_momentsMocksOfPreloadWereLaid.set(fileOrModule, laid);
     }
     m_momentsStandingMocksWereLaid.set(fileOrModule, laid);
+    m_keysWithoutEntryBehindMock.clear(fileOrModule.index());
 }
 
 void Modules::keepMockThatStoodInPlace(ModuleID fileOrModule, ModuleID module, JSObject* endedMock, BitVector&& exportsLeftOut)
@@ -446,6 +537,26 @@ void Modules::keepMockThatStoodInPlace(ModuleID fileOrModule, ModuleID module, J
     std::optional<unsigned> ended = laid && (endedInThisTestFile || laid->isInPreload) ? keepEndedMock(fileOrModule, endedMock, *laid, 0, WTF::move(exportsLeftOut)) : std::nullopt;
     if (!m_momentsOfLoads.isEmpty())
         keepNamespacesMadeUnder(fileOrModule, module, endedMock, ended);
+}
+
+void Modules::keepMockForWhoeverWasLinkedUnderIt(ModuleID fileOrModule)
+{
+    ModuleID file = fileOf(fileOrModule);
+    ModuleID module = moduleWithExportsOf(file);
+    JSObject* mock = mockInPlace(file);
+    if (!mock || hasMockThatEnded(file))
+        return;
+    auto& moments = m_momentsStandingMocksWereLaid.contains(file) ? m_momentsStandingMocksWereLaid : m_momentsWaitingMocksWereLaid;
+    std::optional<MomentMockWasLaid> laid = moments.takeOptional(file);
+    if (!laid)
+        return;
+    std::optional<unsigned> ended = keepEndedMock(file, mock, *laid, 0, exportsLeftOutOf(module));
+    if (ended)
+        m_endedMocks.find(file)->value[*ended].isKeptWhereImporterIsAskedForAgain = true;
+    keepNamespacesMadeUnder(file, module, mock, ended);
+    letGoOfNamespaceMadeUnderMock(module);
+    laid->moment = momentOfNow().moment;
+    moments.set(file, *laid);
 }
 
 void Modules::bringBackNamespaceKeptFor(ModuleID fileOrModule, JSObject* mock)

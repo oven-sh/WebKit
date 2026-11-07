@@ -1,0 +1,45 @@
+# function found(re: RegExp, x) { return re.exec(x); }
+# RegExp.prototype.exec converts its subject before it reads anything of the RegExp (3. ToString, 4. RegExpBuiltinExec), and the code in line reads lastIndex and the pattern when it runs.
+# So with a receiver that is proven a RegExp the conversion is built in front, though it may run code, and the match is the code in line: no boxed call of the built-in.
+# That held for a RegExp written for the call alone.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[text]]: string @Cell = ToString v1
+# CHECK: = CallInline {{*}}[[text]] inlineBuiltin=RegExpExec overload=RegExpPrototypeExec/0
+# CHECK-NOT: builtinCallForm=AnyReceiver
+# test looks for `exec` on the RegExp BEHIND the conversion, which may have laid one there: it stays a call of the built-in: function tested(re: RegExp, x) { return re.test(x); }
+# RUN(TEST): walk f2 mechanisms=all
+# TEST-LABEL: code f2:Body
+# TEST-NOT: = ToString
+# TEST: = CallBuiltin {{*}}overload=RegExpPrototypeTest/0 builtinCallForm=AnyReceiver
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=1 fields=[]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewRegExp pattern="a+(b)"
+    v3 = NewRegExp pattern="(c)a"
+    v4 = String string="caab"
+    v5 = NewObject layout=L0
+    v6 = Call v0, -, v2, v4
+    v7 = Call v0, -, v3, v5
+    v8 = Call v1, -, v2, v4
+    v9 = Call v1, -, v3, v5
+    v10 = NewArray v6, v7, v8, v9 contents=anything
+    Return v10
+}
+function f1 name="found" module=m0 position=10 length=2 thisType={type=anything} parameters=[{type=RegExp}, {type=anything}] results=[{type=anything}] {
+  b0(v0: RegExp, v1: anything):
+    v2 = PropGet v0 key="exec" @11
+    v3 = Call v2, v0, v1 calleeKey="exec" calleeName="re.exec" @12
+    Return v3 @13
+}
+function f2 name="tested" module=m0 position=20 length=2 thisType={type=anything} parameters=[{type=RegExp}, {type=anything}] results=[{type=anything}] {
+  b0(v0: RegExp, v1: anything):
+    v2 = PropGet v0 key="test" @21
+    v3 = Call v2, v0, v1 calleeKey="test" calleeName="re.test" @22
+    Return v3 @23
+}

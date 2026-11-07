@@ -216,7 +216,7 @@ static std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(
         if (!everyMethodComesBack)
             return std::nullopt;
     }
-    if (!walker.isShown(receiver, proven))
+    if (!someReceiverHasNoRow && !walker.isShown(receiver, proven))
         return std::nullopt;
     return TableCallInUnionTableCalls { *selector, &receivers };
 }
@@ -264,6 +264,26 @@ static Reference narrowedByInUnionTableCalls(Walker& walker, Reference value, Re
     return walker.build(WTF::move(narrowed));
 }
 
+static uint32_t chooseSelectorInUnionTableCalls(Walker& walker, const Draft& written, uint32_t boxed)
+{
+    const CallingConventions& conventions = walker.plan().conventions();
+    if (boxed + 1 >= conventions.methodSelectors().size())
+        return boxed;
+    const MethodSelector& typed = conventions.methodSelector(boxed + 1);
+    if (!typed.isTyped || typed.family != conventions.methodSelector(boxed).family || typed.numberOfArguments != conventions.methodSelector(boxed).numberOfArguments)
+        return boxed;
+    if (typed.result != Representation::JSValue && walker.positions().resultOfSelector(TypeLevel::Proven, boxed + 1) != typed.typeOfResult)
+        return boxed;
+    const MethodFamily& family = conventions.familyOf(typed);
+    std::span<const Reference> arguments = written.argumentsOperands();
+    for (size_t place = 0; place < arguments.size(); ++place) {
+        TypeID taken = family.typesOfArguments[place];
+        if (taken && !walker.isShown(arguments[place], taken))
+            return boxed;
+    }
+    return boxed + 1;
+}
+
 constinit const OpcodeSet opcodesThatCallMethodThroughTableTakes { Opcode::Call };
 
 bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
@@ -299,6 +319,7 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
         Draft test(Opcode::ShapeTest, walker.originOf(call));
         test.setObjectOperand(receiver);
         test.setLayouts(walker.types().at(walker.types().forLayouts(planned->receivers->withRows.span())).layouts);
+        test.setAsksInFull(!walker.isShown(receiver, walker.typeOf(receiver)));
         passes = walker.build(WTF::move(test));
         if (!passes)
             return true;
@@ -314,6 +335,10 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
         walker.state().noteShape(receiver, walker.typeOf(receiver));
     }
 
+    if (walker.verifiesCode() && !walker.isShown(receiver, walker.typeOf(receiver))) {
+        walker.fail("a receiver of the method table is not shown to be what its type says"_s);
+        return true;
+    }
     walker.bind(read.id(), receiver);
     Draft asWritten = walker.draftOf(call);
     walker.bind(read.id(), Reference());
@@ -324,7 +349,7 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
     table.setReceiverOperand(receiver);
     table.setArgumentsOperands(asWritten.argumentsOperands());
     table.setKey(read.as<Opcode::PropGet>().key());
-    table.setSelector(planned->selector);
+    table.setSelector(chooseSelectorInUnionTableCalls(walker, asWritten, planned->selector));
     table.expected = asWritten.expected;
     table.inputValueGiven = asWritten.inputValueGiven;
 

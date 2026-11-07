@@ -64,17 +64,9 @@ ValueID BarrierEmitter::ownerOperandOf(const Operation& store) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool BarrierEmitter::liesOnlyInFrames(ValueID owner) const
-{
-    LayoutID environment = typeOf(owner).environment;
-    return environment && m_plan.layout(environment).liesOnlyInFrames;
-}
-
 bool BarrierEmitter::ownerIsInFrame(const Operation& store) const
 {
     ValueID owner = ownerOperandOf(store);
-    if (liesOnlyInFrames(owner))
-        return true;
     const Operation& definition = operationAt(definitionOf(owner));
     return Operation::opcodesWithStorage.contains(definition.opcode) && definition.storage() == AllocationStorage::Frame;
 }
@@ -96,16 +88,20 @@ BarrierEmitter::BarrierDecision BarrierEmitter::decide(const ValueContext& store
 
 bool BarrierEmitter::shouldEmitBarrier(const ValueContext& store, bool mayStoreCell)
 {
+    m_owesFenceBehindStores = false;
     switch (decide(store, mayStoreCell)) {
     case BarrierDecision::Emit:
         return true;
     case BarrierDecision::OwnerCannotBeMarked:
         // While the collector marks, the barrier that is left out would have fenced. So the store stays in front of the store that hands the cell on, as the stores that fill a new cell do.
         mutatorFence();
+        m_generator.noteThatOwnerIsRememberedBehind(store.id());
         return false;
     case BarrierDecision::OwnerIsInFrame:
-    case BarrierDecision::LaterBarrierCovers:
+        m_generator.noteThatOwnerIsRememberedBehind(store.id());
+        return false;
     case BarrierDecision::StoresNoCell:
+    case BarrierDecision::LaterBarrierCovers:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -114,11 +110,12 @@ bool BarrierEmitter::shouldEmitBarrier(const ValueContext& store, bool mayStoreC
 void BarrierEmitter::barrierAfterStore(const ValueContext& store, CellPointer owner, const Type& storedType)
 {
     if (!shouldEmitBarrier(store, storedType.hasCells() && !storesOnlyStringsOfVM(store.value()))) {
-        if (m_generator.ownerIsYoung(store.id()) && AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime))
+        if (m_generator.ownerIsYoung(store.id()) && (AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) || AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::EmittersAloneTestEveryPosition)))
             stopIfCellIsOldAndNotRemembered(store, owner);
         return;
     }
     barrier(store, owner);
+    m_generator.noteThatOwnerIsRememberedBehind(store.id());
 }
 
 void BarrierEmitter::stopIfCellIsOldAndNotRemembered(const ValueContext& store, CellPointer owner)
@@ -135,6 +132,7 @@ void BarrierEmitter::callBarrierStub(const OperationContext& context, StubKey ke
 
 void BarrierEmitter::barrier(const OperationContext& context, CellPointer owner)
 {
+    m_owesFenceBehindStores = false;
     LBasicBlock slowPath = newBlock();
     LBasicBlock continuation = newBlock();
     Condition isBeyondThreshold = isBeyondBarrierThreshold(owner);
@@ -207,7 +205,15 @@ void BarrierEmitter::fenceAfterInitialization()
 
 void BarrierEmitter::fenceAfterInitialization(const OperationContext& allocation)
 {
+    m_owesFenceBehindStores = false;
     if (allocation.valueID() && m_generator.laterFenceCovers(allocation.valueID()))
+        return;
+    mutatorFence();
+}
+
+void BarrierEmitter::fenceAfterLateStores()
+{
+    if (AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::FencesBehindLateStoresAreLeftOut)) [[unlikely]]
         return;
     mutatorFence();
 }

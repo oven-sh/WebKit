@@ -28,6 +28,7 @@ public:
 
 private:
     void generate(const ValueContext&);
+    Integer heldToWhatConversionGives(const OperationContext&, Number, Integer);
 };
 
 } } } // namespace JSC::AOT::Typed

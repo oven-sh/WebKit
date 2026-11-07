@@ -1,0 +1,85 @@
+# function rises(list) { let count = 0; for (let i = 1; i < list.length; i++) if (list[i - 1] <= list[i]) count++; return count; }
+# function meets(left, right) { let count = 0; for (let i = 0; i < left.length; i++) if (left[i] < right[i]) count++; return count; }      sink(rises, meets);
+# Nothing is known of what the lists hold. A relation beside a text or beside a value of which nothing is known says nothing of an element. Between two elements it is a sign: who orders what a list holds
+# mostly orders numbers, one test in front of the loop decides it for every turn, and a list of texts pays that one failing test an entry. Without it every turn of a loop over numbers goes by the stubs.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# RUN(MEETS): walk f2 mechanisms=all
+# MEETS-LABEL: code f2:Body
+# MEETS: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# RUN(SHELL): run-in-shell globalThis.sink = (rises, meets) => { for (const list of [[1, 2, 2, 5, 3], [0.5, 1.5, 1], ["a", "b", "a"], [], [1], [1, "2", 3], ["10", 9, "8"], [1, , 3]]) print(String(rises(list))); for (const [left, right] of [[[1, 5, 3], [2, 4, 3]], [["a", "c"], ["b", "b"]], [[1, 2], ["2", "1"]], [[1.5], []], [[1, 2, 3], [1.5, 2.5, 3.5]]]) print(String(meets(left, right))); };
+# SHELL: 3
+# SHELL: 1
+# SHELL: 1
+# SHELL: 0
+# SHELL: 0
+# SHELL: 2
+# SHELL: 0
+# SHELL: 0
+# SHELL: 1
+# SHELL: 1
+# SHELL: 1
+# SHELL: 0
+# SHELL: 3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="rises" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|string|Array):
+    v1 = Integer
+    v2 = Integer integer=1
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b5()
+  b2():
+    v8 = Decrement v4
+    v9 = ElemGet v0, v8
+    v10 = ElemGet v0, v4
+    v11 = LessEq v9, v10
+    Branch v11 -> taken b3(), notTaken b4(v3)
+  b3():
+    v12 = Increment v3
+    Jump -> next b4(v12)
+  b4(v13):
+    v14 = Increment v4
+    Jump -> next b1(v13, v14)
+  b5():
+    Return v3
+}
+function f2 name="meets" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|string|Array, v1: undefined|null|string|Array):
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = PropGet v0 key="length"
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    v9 = ElemGet v0, v5
+    v10 = ElemGet v1, v5
+    v11 = Less v9, v10
+    Branch v11 -> taken b3(), notTaken b4(v4)
+  b3():
+    v12 = Increment v4
+    Jump -> next b4(v12)
+  b4(v13):
+    v14 = Increment v5
+    Jump -> next b1(v13, v14)
+  b5():
+    Return v4
+}

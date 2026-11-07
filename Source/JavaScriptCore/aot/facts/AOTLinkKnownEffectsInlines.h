@@ -373,7 +373,7 @@ std::optional<uint32_t> CalleeSummarizerForLinkEffects::entryParameterAt(const T
 std::optional<LinkType> CalleeSummarizerForLinkEffects::typeExpectedOfParameter(FunctionID id, uint32_t entryParameter) const
 {
     std::span<const LinkedParameter> parameters = m_tables.parametersOf(id);
-    TypeID expected = entryParameter < parameters.size() ? parameters[entryParameter].expected : TypeID();
+    TypeID expected = entryParameter < parameters.size() ? parameters[entryParameter].writtenOrSeenToArrive() : TypeID();
     if (!expected || holdsOnlyPrimitives(expected))
         return std::nullopt;
     TypeReader reader(m_program);

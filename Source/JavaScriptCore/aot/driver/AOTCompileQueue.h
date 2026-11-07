@@ -40,7 +40,8 @@ public:
     JS_EXPORT_PRIVATE UnitQueue(const Typed::Program&, const Typed::CallingConventions&, const Typed::LinkTables&, Typed::Arrivals&, unsigned numberOfThreads);
     JS_EXPORT_PRIVATE ~UnitQueue();
 
-    JS_EXPORT_PRIVATE void mention(unsigned thread, Typed::CodeUnit);
+    JS_EXPORT_PRIVATE void mention(unsigned thread, Typed::CodeUnit, MentionKind = MentionKind::Call);
+    JS_EXPORT_PRIVATE void noteEntryByValue(unsigned thread, FunctionID, bool asksEveryTeller);
     JS_EXPORT_PRIVATE bool asksWhoMentions(Typed::CodeUnit) const;
     bool hasMentionedUnitsBehindSelector(uint32_t selector) const { return m_selectorsWhoseUnitsAreMentioned[selector].load(std::memory_order_acquire); }
     void didMentionUnitsBehindSelector(uint32_t selector) { m_selectorsWhoseUnitsAreMentioned[selector].store(true, std::memory_order_release); }
@@ -70,7 +71,7 @@ private:
     };
     static_assert(sizeof(UnitsOfThread) == 128);
 
-    enum class CycleState : uint8_t { Waiting, Ready, ReadyForSlowVersions, Done };
+    enum class CycleState : uint8_t { Waiting, Ready, ReadyForSlowVersions, ReadyForClosedEntries, Done };
     struct Cycle {
         std::atomic<uint32_t> numberOfCyclesAwaited;
         std::atomic<uint32_t> numberOfOpenUnits;
@@ -100,6 +101,11 @@ private:
     void wakeThreadUnlessOneIsLooking();
     bool beginCycle(unsigned thread, uint32_t cycle);
     bool beginSlowVersionsOfCycle(unsigned thread, uint32_t cycle);
+    bool beginClosedEntriesOfCycle(unsigned thread, uint32_t cycle);
+    bool isEntryThatMayBeClosed(Typed::CodeUnit unit) const { return m_link && !m_program.admitsInspector && Typed::isGenericEntry(unit.role) && m_link->entryByValueMayBeClosed(unit.function); }
+    void mentionEntriesOf(unsigned thread, FunctionID);
+    static constexpr uint8_t wordIsNamed = 1;
+    static constexpr uint8_t isEnteredByValue = 2;
     void finishCycle(unsigned thread, uint32_t cycle);
 
     const Typed::Program& m_program;
@@ -113,6 +119,7 @@ private:
     Vector<UnitBehindRoles> m_unitsBehindRoles;
     Vector<uint32_t> m_cyclesReadyFromStart;
     Vector<std::atomic<uint32_t>> m_isMentioned;
+    Vector<std::atomic<uint8_t>> m_whatIsKnownOfEntries;
     Vector<std::atomic<bool>> m_selectorsWhoseUnitsAreMentioned;
     Vector<std::atomic<const Vector<Typed::CodeUnit>*>> m_unitsThatAskAmongMentionedUnitsOfClasses;
     Vector<uint32_t> m_isSeed;

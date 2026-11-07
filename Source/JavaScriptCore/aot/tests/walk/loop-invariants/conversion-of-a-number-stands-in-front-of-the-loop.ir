@@ -7,13 +7,17 @@
 # REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = TypeTest {{*}}testedType=i32
-# CHECK: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=number
+# CHECK: [[test]]: boolean @Boolean = TypeTest v0 testedType=number
 # CHECK-NEXT: Branch [[test]] ->
 # CHECK: [[proven]]: number @JSValue = Narrowed {{*}}, [[test]]
 # CHECK: frequency=Rare isLoopHead=true
 # CHECK: = Mul {{*}}form=NumberAndValue
+# CHECK: [[head]]({{*}}isInLoop=true isLoopHead=true
+# CHECK-NOT: Unbox
+# CHECK: ():
+# CHECK-NOT: isInLoop
 # CHECK: [[raw]]: number @Double = Unbox [[proven]]
-# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NEXT: Jump -> next [[head]](
 # CHECK-NOT: Unbox
 # CHECK: = Mul {{*}}, [[raw]] form=Numbers
 

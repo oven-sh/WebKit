@@ -194,6 +194,77 @@ static void checkReverseFind()
             AOT_TEST_CHECK(reverseFind(subject, needle, INT32_MIN) == naiveReverseFind(subject, needle, 0));
         }
     }
+    for (ASCIILiteral wanted : { "a"_s, "ab"_s, "axb"_s, "a0123456789012345b"_s }) {
+        Text<CharacterType> needle = textOf<CharacterType>(wanted);
+        for (uint32_t length = 0; length <= 70; ++length) {
+            for (uint32_t place = 0; place <= length; ++place) {
+                Text<CharacterType> text;
+                for (uint32_t i = 0; i < length; ++i)
+                    text.append(static_cast<CharacterType>("ayb"[i % 3]));
+                if (place + needle.size() <= length) {
+                    for (uint32_t i = 0; i < needle.size(); ++i)
+                        text[place + i] = needle[i];
+                }
+                for (uint32_t position : { 0u, place ? place - 1 : 0u, place, std::min(place + 1, length), length })
+                    AOT_TEST_CHECK(reverseFind(text, needle, position) == naiveReverseFind(text, needle, position));
+            }
+        }
+    }
+    for (uint32_t lengthOfNeedle : { 1u, 2u, 31u, 32u, 33u, 34u, 70u }) {
+        Text<CharacterType> needle = repeated<CharacterType>('a', lengthOfNeedle);
+        needle.last() = 'b';
+        for (uint32_t length : { 33u, 48u, 64u, 65u, 100u, 200u }) {
+            for (uint32_t place = 0; place <= length; place += 7) {
+                for (CharacterType filler : { '.', 'a' }) {
+                    Text<CharacterType> text = repeated<CharacterType>(filler, length);
+                    if (place + needle.size() <= length) {
+                        for (uint32_t i = 0; i < needle.size(); ++i)
+                            text[place + i] = needle[i];
+                    }
+                    for (uint32_t position : { 0u, place ? place - 1 : 0u, place, length / 2, length }) {
+                        AOT_TEST_CHECK(reverseFind(text, needle, position) == naiveReverseFind(text, needle, position));
+                        AOT_TEST_CHECK(find(text, needle, position) == naiveFind(text, needle, position));
+                    }
+                }
+            }
+        }
+    }
+    for (ASCIILiteral unit : { "ab"_s, "a"_s, "aab"_s, "abaab"_s, "abcabcab"_s, "aabaabaaab"_s }) {
+        Text<CharacterType> letters = textOf<CharacterType>(unit);
+        for (uint32_t lengthOfNeedle : { 33u, 40u, 64u, 97u }) {
+            for (uint32_t turned : { 0u, 1u, 15u, 16u, 17u, lengthOfNeedle / 2, lengthOfNeedle - 3, lengthOfNeedle - 2, lengthOfNeedle }) {
+                Text<CharacterType> needle;
+                for (uint32_t i = 0; i < lengthOfNeedle; ++i)
+                    needle.append(letters[i % letters.size()]);
+                if (turned + 1 < lengthOfNeedle)
+                    std::swap(needle[turned], needle[turned + 1]);
+                for (uint32_t gap = lengthOfNeedle - 3; gap <= lengthOfNeedle + 3; ++gap) {
+                    Text<CharacterType> text;
+                    for (uint32_t i = 0; i < 1000; ++i)
+                        text.append(i % gap ? letters[i % letters.size()] : static_cast<CharacterType>('x'));
+                    for (uint32_t position : { 0u, 1u, 500u, 1000u }) {
+                        AOT_TEST_CHECK(reverseFind(text, needle, position) == naiveReverseFind(text, needle, position));
+                        AOT_TEST_CHECK(find(text, needle, position) == naiveFind(text, needle, position));
+                    }
+                }
+                for (uint32_t length : { 400u, 1000u }) {
+                    for (uint32_t place : { 0u, 1u, length / 3, length / 2 + 1, length - lengthOfNeedle - 1, length - lengthOfNeedle, length }) {
+                        Text<CharacterType> text;
+                        for (uint32_t i = 0; i < length; ++i)
+                            text.append(letters[i % letters.size()]);
+                        if (place + lengthOfNeedle <= length) {
+                            for (uint32_t i = 0; i < lengthOfNeedle; ++i)
+                                text[place + i] = needle[i];
+                        }
+                        for (uint32_t position : { 0u, 1u, place ? place - 1 : 0u, place, place + 1, length / 2, length }) {
+                            AOT_TEST_CHECK(reverseFind(text, needle, position) == naiveReverseFind(text, needle, position));
+                            AOT_TEST_CHECK(find(text, needle, position) == naiveFind(text, needle, position));
+                        }
+                    }
+                }
+            }
+        }
+    }
     Text<CharacterType> subject = textOf<CharacterType>("aaaaab"_s);
     AOT_TEST_CHECK(reverseFind(subject, textOf<CharacterType>("aaab"_s), 6) == 2);
     AOT_TEST_CHECK(reverseFind(subject, textOf<CharacterType>("aaab"_s), 1) == notFound);

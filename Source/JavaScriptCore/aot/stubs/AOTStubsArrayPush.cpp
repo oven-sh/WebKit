@@ -261,10 +261,19 @@ void generateAppendElements(StubAssembler& jit)
 
     targetHoldsInt32.link(&jit);
     loadKindOfSource();
+    Jump takesInt32OutOfValues = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(ContiguousShape));
     slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(Int32Shape)));
     forEachElement([&] {
         jit.load64(read, element);
         hasHole.append(jit.branchTest64(CCallHelpers::Zero, element));
+        jit.store64(element, written);
+    });
+    setLengthAndReturn();
+
+    takesInt32OutOfValues.link(&jit);
+    forEachElement([&] {
+        jit.load64(read, element);
+        hasHole.append(jit.branchIfNotInt32(element));
         jit.store64(element, written);
     });
     setLengthAndReturn();
@@ -416,6 +425,14 @@ void generateDestructureIterable(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTDestructureIterable, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
+StubSignature signatureOfAppendValuesOfMap(StubKey)
+{
+    StubSignature signature;
+    signature.addOperand(gprOf(StubRegister::A1));
+    signature.addOperand(gprOf(StubRegister::A2));
+    return signature;
+}
+
 StubSignature signatureOfAppendMembers(StubKey)
 {
     StubSignature signature;
@@ -424,8 +441,11 @@ StubSignature signatureOfAppendMembers(StubKey)
     return signature;
 }
 
-void generateAppendMembers(StubAssembler& jit)
+enum class ColumnAppended : bool { Keys, Values };
+
+static void generateAppendColumn(StubAssembler& jit, ColumnAppended appended)
 {
+    const bool takesValues = appended == ColumnAppended::Values;
     const GPRReg array = jit.operand(0);
     const GPRReg set = jit.operand(1);
     const GPRReg newLength = jit.allocateScratch(StubRegister::T9);
@@ -452,6 +472,10 @@ void generateAppendMembers(StubAssembler& jit)
     slowPath.append(jit.branchTest8(CCallHelpers::NonZero, flags, TrustedImm32(CompactTable::keysAreInImage)));
     jit.load32(Address(table, CompactTable::offsetOfAliveCount()), newLength);
     Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, newLength);
+    if (takesValues) {
+        slowPath.append(jit.branch32(CCallHelpers::NotEqual, newLength, Address(table, CompactTable::offsetOfUsed())));
+        slowPath.append(jit.branchTest8(CCallHelpers::Zero, Address(table, CompactTable::offsetOfValueWidth()), TrustedImm32(static_cast<int32_t>(CompactTable::Width::Narrow) | static_cast<int32_t>(CompactTable::Width::Wide))));
+    }
     jit.loadPtr(Address(array, JSObject::butterflyOffset()), target);
     jit.load32(lengthOfTarget, position);
     jit.add32(position, newLength);
@@ -462,10 +486,29 @@ void generateAppendMembers(StubAssembler& jit)
     jit.lshift64(member, column);
     jit.add64(table, column);
     jit.addPtr(TrustedImm32(CompactTable::offsetOfIndex()), column);
+    if (takesValues) {
+        jit.load32(Address(table, CompactTable::offsetOfCapacity()), member);
+        Jump keysAreWide = jit.branchTest8(CCallHelpers::NonZero, flags, TrustedImm32(CompactTable::keysAreWide));
+        jit.lshift64(member, TrustedImm32(2), member);
+        Jump isBehindKeys = jit.jump();
+        keysAreWide.link(&jit);
+        jit.lshift64(member, TrustedImm32(3), member);
+        isBehindKeys.link(&jit);
+        jit.add64(member, column);
+    }
+    auto branchIfColumnIs = [&](bool wide) {
+        CCallHelpers::ResultCondition asked = wide ? CCallHelpers::NonZero : CCallHelpers::Zero;
+        if (takesValues)
+            return jit.branchTest8(asked, Address(table, CompactTable::offsetOfValueWidth()), TrustedImm32(static_cast<int32_t>(CompactTable::Width::Wide)));
+        return jit.branchTest8(asked, flags, TrustedImm32(CompactTable::keysAreWide));
+    };
 
     auto forEachMember = [&](bool keysAreWide, NOESCAPE const Invocable<void()> auto& store, NOESCAPE const Invocable<void()> auto& finish) {
-        jit.load32(Address(table, CompactTable::offsetOfUsed()), used);
-        Jump hasDeletedEntries = jit.branch32(CCallHelpers::NotEqual, used, Address(table, CompactTable::offsetOfAliveCount()));
+        Jump hasDeletedEntries;
+        if (!takesValues) {
+            jit.load32(Address(table, CompactTable::offsetOfUsed()), used);
+            hasDeletedEntries = jit.branch32(CCallHelpers::NotEqual, used, Address(table, CompactTable::offsetOfAliveCount()));
+        }
         jit.lshift64(position, TrustedImm32(keysAreWide ? 3 : 2), member);
         jit.subPtr(member, column);
         Label copy = jit.label();
@@ -477,6 +520,8 @@ void generateAppendMembers(StubAssembler& jit)
         jit.add32(TrustedImm32(1), position);
         jit.branch32(CCallHelpers::Below, position, newLength).linkTo(copy, &jit);
         finish();
+        if (takesValues)
+            return;
 
         hasDeletedEntries.link(&jit);
         jit.move(TrustedImm32(0), entry);
@@ -509,7 +554,7 @@ void generateAppendMembers(StubAssembler& jit)
     Jump targetHoldsInt32 = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(Int32Shape));
     slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(ContiguousShape)));
     jit.store32(newLength, lengthOfTarget);
-    Jump keysAreWide = jit.branchTest8(CCallHelpers::NonZero, flags, TrustedImm32(CompactTable::keysAreWide));
+    Jump keysAreWide = branchIfColumnIs(true);
     forEachMember(false, [&] {
         Jump isImmediate = jit.branch32(CCallHelpers::Below, member, TrustedImm32(minCell32));
         decodeCell32(jit, member, member);
@@ -527,14 +572,14 @@ void generateAppendMembers(StubAssembler& jit)
     jit.jumpToStub(writeBarrier());
 
     targetHoldsInt32.link(&jit);
-    slowPath.append(jit.branchTest8(CCallHelpers::Zero, flags, TrustedImm32(CompactTable::keysAreWide)));
+    slowPath.append(branchIfColumnIs(false));
     forEachMember(true, [&] {
         findsOtherKind.append(jit.branchIfNotInt32(member));
         jit.store64(member, written);
     }, setLengthAndReturn);
 
     targetHoldsDoubles.link(&jit);
-    slowPath.append(jit.branchTest8(CCallHelpers::Zero, flags, TrustedImm32(CompactTable::keysAreWide)));
+    slowPath.append(branchIfColumnIs(false));
     forEachMember(true, [&] {
         Jump isInt32 = jit.branchIfInt32(member);
         findsOtherKind.append(jit.branchIfNotNumber(member));
@@ -569,7 +614,17 @@ void generateAppendMembers(StubAssembler& jit)
     jit.jump().linkTo(start, &jit);
 
     slowPath.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTAppendMembers, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
+    jit.callOperationAndReturn(takesValues ? Entry::operationAOTAppendValuesOfMap : Entry::operationAOTAppendMembers, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
+}
+
+void generateAppendMembers(StubAssembler& jit)
+{
+    generateAppendColumn(jit, ColumnAppended::Keys);
+}
+
+void generateAppendValuesOfMap(StubAssembler& jit)
+{
+    generateAppendColumn(jit, ColumnAppended::Values);
 }
 
 } } // namespace JSC::AOT

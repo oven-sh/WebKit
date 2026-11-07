@@ -8,12 +8,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsBoxedCallsOfStrings.h"
+#include "AOTStubsCallHost.h"
 #include "AOTStubsStrings.h"
 #include "JSCallee.h"
 #include "JSString.h"
@@ -30,8 +32,12 @@ static void checkRealmOfCalleeInBoxedCallsOfLanguage(StubAssembler& jit, GPRReg 
     StubFamily family = jit.key().family();
     if (family == StubFamily::CallMethodOfBuiltinClass || family == StubFamily::TryCallMethodOfBuiltinClass || family == StubFamily::CallMethodThatMayBeUnread)
         return;
+    JumpList isOfThisInstance;
+    if (jit.key().family() == StubFamily::CallBoxedBuiltin)
+        isOfThisInstance.append(jit.branch64(CCallHelpers::Below, calleeGPR, TrustedImm32(limitOfNumbersOfBuiltinCells)));
     jit.loadPtr(Address(calleeGPR, JSCallee::offsetOfScopeChain()), scratch);
     callsHostFunction.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+    isOfThisInstance.link(&jit);
 }
 
 void emitStringIsWellFormed(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
@@ -155,6 +161,7 @@ void emitCallOfBooleanConstructor(StubAssembler& jit, GPRReg scratch)
     constexpr GPRReg value = argumentGPR(0);
     const GPRReg classInfo = jit.allocateScratch(StubRegister::T9);
     RELEASE_ASSERT(noOverlap(scratch, classInfo, calleeGPR, thisGPR, instanceGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3)));
+    JumpList isAnotherFunction;
     JumpList callsFunction;
 
     auto returnBoolean = [&](bool answer) {
@@ -169,10 +176,10 @@ void emitCallOfBooleanConstructor(StubAssembler& jit, GPRReg scratch)
 
     loadStructure(jit, calleeGPR, scratch);
     jit.loadRuntimePointer(Entry::BooleanConstructorClassInfo, classInfo);
-    callsFunction.append(jit.branchPtr(CCallHelpers::NotEqual, Address(scratch, Structure::classInfoOffset()), classInfo));
+    isAnotherFunction.append(jit.branchPtr(CCallHelpers::NotEqual, Address(scratch, Structure::classInfoOffset()), classInfo));
     if (!jit.key().count()) {
         returnBoolean(false);
-        callsFunction.link(&jit);
+        isAnotherFunction.link(&jit);
         return;
     }
 
@@ -198,7 +205,53 @@ void emitCallOfBooleanConstructor(StubAssembler& jit, GPRReg scratch)
     loadStringLength(jit, value, scratch, scratch);
     returnWhetherIsNotZero(scratch);
 
-    callsFunction.link(&jit);
+    jit.linkToStub(callsFunction, callHostFunction(jit.key().count()));
+    isAnotherFunction.link(&jit);
+}
+
+void emitCallOfNumberOrStringConstructor(StubAssembler& jit, GPRReg scratch)
+{
+    constexpr GPRReg value = argumentGPR(0);
+    const GPRReg classInfo = jit.reuseScratch(StubRegister::T9);
+    RELEASE_ASSERT(noOverlap(scratch, classInfo, calleeGPR, thisGPR, instanceGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3)));
+    const bool takesValue = jit.key().count();
+    JumpList callsFunction;
+
+    loadStructure(jit, calleeGPR, scratch);
+    jit.loadPtr(Address(scratch, Structure::classInfoOffset()), scratch);
+    jit.loadRuntimePointer(Entry::NumberConstructorClassInfo, classInfo);
+    Jump isNotNumberConstructor = jit.branchPtr(CCallHelpers::NotEqual, scratch, classInfo);
+    if (!takesValue)
+        callsFunction.append(jit.jump());
+    else {
+        Jump isNoNumber = jit.branchTest64(CCallHelpers::Zero, value, numberTag);
+        jit.move(value, jit.result());
+        jit.returnToCaller();
+        isNoNumber.link(&jit);
+        callsFunction.append(jit.branchIfNotCell(value));
+        callsFunction.append(jit.branchIfNotType(value, StringType));
+        jit.move(value, jit.reuseScratch(StubRegister::A1));
+        jit.callOperationAndReturn(Entry::operationAOTNumberOfAnyValue, { });
+    }
+
+    isNotNumberConstructor.link(&jit);
+    jit.loadRuntimePointer(Entry::StringConstructorClassInfo, classInfo);
+    Jump isAnotherFunction = jit.branchPtr(CCallHelpers::NotEqual, scratch, classInfo);
+    if (!takesValue)
+        callsFunction.append(jit.jump());
+    else {
+        Jump isNumber = jit.branchTest64(CCallHelpers::NonZero, value, numberTag);
+        callsFunction.append(jit.branchIfNotCell(value));
+        callsFunction.append(jit.branchIfNotType(value, StringType));
+        jit.move(value, jit.result());
+        jit.returnToCaller();
+        isNumber.link(&jit);
+        jit.move(value, jit.reuseScratch(StubRegister::A1));
+        jit.callOperationAndReturn(Entry::operationAOTStringOfAnyValue, { });
+    }
+
+    jit.linkToStub(callsFunction, callHostFunction(jit.key().count()));
+    isAnotherFunction.link(&jit);
 }
 
 } } // namespace JSC::AOT

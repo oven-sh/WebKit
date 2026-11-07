@@ -104,8 +104,9 @@ static std::optional<E> findMember(StringView written)
 template<typename F>
 static void addFlag(F& set, F flag)
 {
-    static_assert(isFlagWord<F> && sizeof(F) == sizeof(uint32_t));
-    set = static_cast<F>(static_cast<uint32_t>(set) | static_cast<uint32_t>(flag));
+    static_assert(isFlagWord<F>);
+    using Word = std::underlying_type_t<F>;
+    set = static_cast<F>(static_cast<Word>(set) | static_cast<Word>(flag));
 }
 
 template<typename Functor>
@@ -141,8 +142,25 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::DelayOtherFlowRules:
     case Wire::TestingSwitch::KeepsCellsOutOfFrames:
     case Wire::TestingSwitch::TestsEveryPosition:
+    case Wire::TestingSwitch::EmittersAloneTestEveryPosition:
+    case Wire::TestingSwitch::QuestionsInFrontOfTurnsLaidOutAreTakenToHold:
+    case Wire::TestingSwitch::EnoughTurnsAreTakenToBeLeftForTurnsLaidOut:
+    case Wire::TestingSwitch::CallsMadeInFrontOfTurnsAreMadeAgainInThem:
+    case Wire::TestingSwitch::EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands:
+    case Wire::TestingSwitch::NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN:
     // A false bound on purpose, for the red control of that: isKnownToLieInsideList().
     case Wire::TestingSwitch::PositionsAreTakenToLieInside:
+    case Wire::TestingSwitch::ReadsBehindTestsOfLengthsAreLeftOut:
+    case Wire::TestingSwitch::VariablesThatBoundAreTakenToBeAsInFront:
+    case Wire::TestingSwitch::GuardsAndFactsAreTakenToHold:
+    case Wire::TestingSwitch::OneRowSpeaksForAllThatCallMayTake:
+    case Wire::TestingSwitch::NothingIsDoneToFreshLists:
+    case Wire::TestingSwitch::FencesBehindLateStoresAreLeftOut:
+    case Wire::TestingSwitch::DividendsOfReciprocalsAreTakenToFit32Bits:
+    case Wire::TestingSwitch::BoundsOfCountersAreRoundedTheOtherWay:
+    case Wire::TestingSwitch::Int32sGoIntoListsInTheBoxesTheyCameIn:
+    case Wire::TestingSwitch::SweepTurnsBranchThatDecidesIntoJump:
+    case Wire::TestingSwitch::SweepLetsGoEdgeThatIsTaken:
     case Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded:
     case Wire::TestingSwitch::ArgumentsOfUnseenCodeDoNotLeave:
     case Wire::TestingSwitch::CheckEffectsAtRunTime:
@@ -158,6 +176,8 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::GiveLinkMore:
     case Wire::TestingSwitch::ShuffleChoices:
     case Wire::TestingSwitch::OrderBlocksAgain:
+    case Wire::TestingSwitch::WalksUnitsBy:
+    case Wire::TestingSwitch::CutWalksOfLoopsShort:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -211,8 +231,22 @@ static std::optional<uint32_t> parseRowThatSaysLess(StringView written)
         found.part = Typed::PartOfEffects::Throws;
     else if (matchesName(*part, "ThrowsByRule"_s))
         found.part = Typed::PartOfEffects::ThrowsByRule;
+    else if (matchesName(*part, "RangeOfResult"_s))
+        found.part = Typed::PartOfEffects::RangeOfResult;
+    else if (matchesName(*part, "KindOfResult"_s))
+        found.part = Typed::PartOfEffects::KindOfResult;
+    else if (matchesName(*part, "ContentsOfResult"_s))
+        found.part = Typed::PartOfEffects::ContentsOfResult;
+    else if (matchesName(*part, "TestsOfGuard"_s))
+        found.part = Typed::PartOfEffects::TestsOfGuard;
     else if (matchesName(*part, "ShapesKnown"_s))
         found.part = Typed::PartOfEffects::ShapesKnown;
+    else if (matchesName(*part, "ShapesOfField"_s))
+        found.part = Typed::PartOfEffects::ShapesOfField;
+    else if (matchesName(*part, "MiddleShapesOfField"_s))
+        found.part = Typed::PartOfEffects::MiddleShapesOfField;
+    else if (matchesName(*part, "WhatIsSeen"_s))
+        found.part = Typed::PartOfEffects::WritesWhatIsSeen;
     else if (auto heap = findMember<Typed::AbstractHeap>(*part)) {
         found.part = Typed::PartOfEffects::Writes;
         found.heap = *heap;
@@ -258,9 +292,49 @@ static std::optional<uint32_t> parseRowThatSaysLess(StringView written)
             return std::nullopt;
         found.kind = Typed::KindOfEffectsRow::Builtin;
         found.row = static_cast<uint16_t>(builtin);
-    } else
+    } else if (matchesName(kind, "MarkOfTurns"_s) && row == "all"_s)
+        found.kind = Typed::KindOfEffectsRow::MarkOfTurns;
+    else
+        return std::nullopt;
+    bool speaksOfResult = found.part == Typed::PartOfEffects::RangeOfResult || found.part == Typed::PartOfEffects::KindOfResult || found.part == Typed::PartOfEffects::ContentsOfResult;
+    bool speaksOfRuleOfOperation = found.part == Typed::PartOfEffects::KindOfResult && found.kind == Typed::KindOfEffectsRow::Operation;
+    if (speaksOfResult && found.kind != Typed::KindOfEffectsRow::Builtin && !speaksOfRuleOfOperation)
+        return std::nullopt;
+    if (found.part == Typed::PartOfEffects::TestsOfGuard && found.kind != Typed::KindOfEffectsRow::Callee)
         return std::nullopt;
     return found.encode();
+}
+
+static std::optional<String> takeWayForcedOnUnits(Wire::CompileOptions& options, StringView written)
+{
+    auto [way, numbers] = splitOptionText(written, ':');
+    options.wayForcedOnUnits = way == "NothingCarried"_s ? 1 : way == "Closed"_s ? 2 : 0;
+    if (!options.wayForcedOnUnits)
+        return String("WalksUnitsBy takes NothingCarried or Closed, then :<n>:<seed> for one unit in n"_s);
+    auto [period, seed] = splitOptionText(numbers.value_or("1"_s), ':');
+    auto units = parseNumber<uint32_t>(period);
+    if (!units)
+        return notANumberSentence(period);
+    if (!*units)
+        return String("one unit in n is walked that way, and n is at least 1"_s);
+    options.periodOfUnitsWalkedThatWay = *units;
+    return seed ? takeSeedOfShuffles(options, *seed) : std::nullopt;
+}
+
+static std::optional<String> takeHearingsThatCutWalks(Wire::CompileOptions& options, StringView written)
+{
+    auto [period, phase] = splitOptionText(written, ':');
+    auto hearings = parseNumber<uint32_t>(period);
+    if (!hearings)
+        return notANumberSentence(period);
+    auto first = parseNumber<uint32_t>(phase.value_or("0"_s));
+    if (!first)
+        return notANumberSentence(*phase);
+    if (*first >= *hearings)
+        return String("CutWalksOfLoopsShort takes <n>:<k>: of n operations heard the k-th cuts, and k is less than n"_s);
+    options.periodOfHearingsThatCutWalks = *hearings;
+    options.phaseOfHearingsThatCutWalks = *first;
+    return std::nullopt;
 }
 
 static std::optional<String> applyTesting(Wire::CompileOptions& options, const OptionWord& word, StringView value)
@@ -289,6 +363,16 @@ static std::optional<String> applyTesting(Wire::CompileOptions& options, const O
                 return sentence;
             numbers = std::nullopt;
         }
+        if (*testingSwitch == Wire::TestingSwitch::WalksUnitsBy) {
+            if (auto sentence = takeWayForcedOnUnits(options, numbers.value_or(""_s)))
+                return sentence;
+            numbers = std::nullopt;
+        }
+        if (*testingSwitch == Wire::TestingSwitch::CutWalksOfLoopsShort) {
+            if (auto sentence = takeHearingsThatCutWalks(options, numbers.value_or("1"_s)))
+                return sentence;
+            numbers = std::nullopt;
+        }
         if (numbers)
             return makeString(name, " takes no number"_s);
         addFlag(options.testing, *testingSwitch);
@@ -308,9 +392,7 @@ static bool engineHonorsCheck(Wire::CheckSet check)
 {
     switch (check) {
     case Wire::CheckSet::Validate:
-    case Wire::CheckSet::ValidateReferences:
     case Wire::CheckSet::VerifyEachStage:
-    case Wire::CheckSet::ValidateReferenceGuards:
     case Wire::CheckSet::FlowFixpoint:
     case Wire::CheckSet::LastWalksOfLoopsAlone:
     case Wire::CheckSet::WalksOfLoopsThatFitAgain:
@@ -319,6 +401,8 @@ static bool engineHonorsCheck(Wire::CheckSet check)
     case Wire::CheckSet::KeepGoing:
     case Wire::CheckSet::VerifyEachPass:
     case Wire::CheckSet::ValidateBackEnd:
+    case Wire::CheckSet::ValidateReferences:
+    case Wire::CheckSet::ValidateReferenceGuards:
     case Wire::CheckSet::UsedValuesAreListed:
     case Wire::CheckSet::ClaimsToBackEnd:
     case Wire::CheckSet::MovedLoads:

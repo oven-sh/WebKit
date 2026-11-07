@@ -31,13 +31,13 @@ function f2 name="store" parameters=[{type=anything}, {type=anything}] results=[
 }
 )IR"_s;
 
-#define ACCESS_DICTIONARIES R"JS(
+#define ACCESS_DICTIONARIES COUNTED_CALLS(R"("GetByIdAndCache", "GetById", "GetGeneric", "PutByIdAndCache", "PutById")") R"JS(
 const repeat = access => {
     let answer;
     for (let i = 0; i < 400; i++) answer = access(i);
     return answer;
 };
-const printLastAnswer = (what, access) => print(what + ": " + repeat(access));
+const printLastAnswer = (what, access) => { const before = countedCalls(); print(what + ": " + repeat(access) + servedBy(before, 400)); };
 const create = () => {
     const object = {};
     object["other"] = 1;
@@ -93,6 +93,12 @@ globalThis.publish = (read, store) => {
 static void testCacheableDictionaryFilesWhatItHolds()
 {
     checkOutputOfProgramInShell(programText, OUTPUT_OF_CACHEABLE_DICTIONARIES ""_s, { }, ACCESS_DICTIONARIES STATEMENTS_WITH_CACHEABLE_DICTIONARIES ""_s, { "--useDollarVM=1"_s });
+    checkServicesInShell(__FILE__, __LINE__, programText, OUTPUT_OF_CACHEABLE_DICTIONARIES ""_s, ACCESS_DICTIONARIES STATEMENTS_WITH_CACHEABLE_DICTIONARIES ""_s, wordsOfCaches, "cccccccocn"_s, { }, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s });
+}
+
+static void testCacheableDictionaryIsServedAsItWas()
+{
+    checkServicesInShell(__FILE__, __LINE__, programText, OUTPUT_OF_CACHEABLE_DICTIONARIES ""_s, ACCESS_DICTIONARIES STATEMENTS_WITH_CACHEABLE_DICTIONARIES ""_s, wordsOfCaches, "cccccccccn"_s, { }, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s });
 }
 
 #define STATEMENTS_WITH_UNCACHEABLE_DICTIONARIES R"JS(
@@ -143,12 +149,14 @@ globalThis.publish = (read, store) => {
 static void testUncacheableDictionaryFilesNothing()
 {
     checkOutputOfProgramInShell(programText, OUTPUT_OF_UNCACHEABLE_DICTIONARIES ""_s, { }, ACCESS_DICTIONARIES STATEMENTS_WITH_UNCACHEABLE_DICTIONARIES ""_s, { "--useDollarVM=1"_s });
+    checkServicesInShell(__FILE__, __LINE__, programText, OUTPUT_OF_UNCACHEABLE_DICTIONARIES ""_s, ACCESS_DICTIONARIES STATEMENTS_WITH_UNCACHEABLE_DICTIONARIES ""_s, wordsOfCaches, "cooooooooooo"_s, { }, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s });
 }
 
 std::span<const NativeTest> dictionaryAccessByNameProgramTests()
 {
     static constexpr NativeTest tests[] = {
         { "dictionary-access-by-name/programs/cacheable-dictionary-files-what-it-holds"_s, testCacheableDictionaryFilesWhatItHolds },
+        { "dictionary-access-by-name/programs/cacheable-dictionary-is-served-as-it-was"_s, testCacheableDictionaryIsServedAsItWas, "reads by name: a name deleted from a cacheable dictionary is asked of the object at every read; the compiler before this one filed that it is absent"_s },
         { "dictionary-access-by-name/programs/uncacheable-dictionary-files-nothing"_s, testUncacheableDictionaryFilesNothing },
     };
     return tests;

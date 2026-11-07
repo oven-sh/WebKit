@@ -35,6 +35,7 @@ using ArgumentMoves = ListOfUnit<uint64_t, 8>;
 
 inline constexpr uint64_t hasImmediate = 1ull << 32;
 inline constexpr uint64_t immediateIsMention = 1ull << 33;
+inline constexpr uint64_t mentionNamesSiblingOfCallee = 1ull << 34;
 inline constexpr size_t numberOfHeaderWords = 2;
 
 inline void appendArgumentMove(ArgumentMoves& moves, GPRReg destination, ArgumentSource source, uint64_t payload)
@@ -178,17 +179,18 @@ public:
     uint32_t call(CCallHelpers&, StubKey, std::optional<uint32_t> immediate, OptionalIndex site, const ArgumentMoves&, OptionalIndex firstReadSite = { });
     uint32_t callWithImmediateOfSite(CCallHelpers&, StubKey, std::optional<uint32_t> immediate, OptionalIndex site, const ArgumentMoves&);
     uint32_t call(CCallHelpers&, StubKey, NumberedImmediate, OptionalIndex site, const ArgumentMoves&, OptionalIndex firstReadSite = { });
-    void enterNextStubInFront(Reg filledByCallee)
+    void enterNextStubInFront(Reg filledByCallee, Reg movedIntoResultByCallee)
     {
         RELEASE_ASSERT(filledByCallee);
         m_registerFilledInFrontOfNextCall = filledByCallee;
+        m_registerMovedIntoResultInFrontOfNextCall = movedIntoResultByCallee;
     }
     void callForTwoReads(CCallHelpers&, StubKey, OptionalIndex firstRead, OptionalIndex secondRead);
     void tailCall(CCallHelpers&, StubKey);
     void tailCall(CCallHelpers&, StubKey, uint32_t immediate);
     void tailCall(CCallHelpers&, StubKey, NumberedImmediate);
     void callFunction(CCallHelpers&, Typed::CodeUnit callee, uint16_t entry, OptionalIndex site);
-    void callRegister(CCallHelpers&, GPRReg address, OptionalIndex site);
+    uint32_t callRegister(CCallHelpers&, GPRReg address, OptionalIndex site);
     void jumpToFunction(CCallHelpers&, Typed::CodeUnit callee, uint16_t entry);
     void moveAddressOfFunction(Typed::CodeUnit callee, uint16_t entry, GPRReg destination);
     void moveAddressOfStub(CCallHelpers&, StubKey, std::optional<uint32_t> immediate, GPRReg destination);
@@ -208,6 +210,7 @@ private:
     uint32_t indexOf(Typed::CodeUnit);
     uint32_t emitCall(CCallHelpers&, StubKey called, CodeSymbol, const RecordedCall&);
     Reg m_registerFilledInFrontOfNextCall;
+    Reg m_registerMovedIntoResultInFrontOfNextCall;
     void emitJump(CodeSymbol);
 
     const StubCatalog& m_catalog;

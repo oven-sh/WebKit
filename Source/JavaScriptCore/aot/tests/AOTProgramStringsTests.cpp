@@ -83,7 +83,7 @@ static String japanese()
 static uint32_t constantNumberOf(StringView wanted)
 {
     for (uint32_t number = 0; number < imageText().numberOfStringConstants(); ++number) {
-        if (imageText().equals(imageText().stringConstant(number), wanted))
+        if (ImageStringWord word = imageText().stringConstant(number); word.hasText() && imageText().view(word) == wanted)
             return number;
     }
     failNativeTest(__FILE__, __LINE__, "the text is a string constant of the image");

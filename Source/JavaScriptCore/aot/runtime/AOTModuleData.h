@@ -392,6 +392,13 @@ struct NameOfStatementData {
     StringID nameString() const { return StringID(name); }
 };
 
+struct StarAsWrittenData {
+    uint32_t module;
+    uint32_t target;
+    uint32_t place : 31;
+    uint32_t isFollowed : 1;
+};
+
 struct ModuleFailureData {
     static constexpr uint32_t isAbsentExportBit = 1u << 31;
     static constexpr uint32_t isAskedByExportStatementBit = 1u << 30;
@@ -502,6 +509,7 @@ static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatement
 static_assert(sizeof(AmbiguousExportData) == 8 && isImageRecord<AmbiguousExportData>);
 static_assert(sizeof(SourceStampData) == 12 && isImageRecord<SourceStampData>);
 static_assert(sizeof(NameOfStatementData) == 8 && isImageRecord<NameOfStatementData>);
+static_assert(sizeof(StarAsWrittenData) == 12 && isImageRecord<StarAsWrittenData>);
 static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
 static_assert(sizeof(ImportOfHeldFileData) == 8 && isImageRecord<ImportOfHeldFileData>);
 static_assert(sizeof(StateOfLibraryModuleData) == 12 && isImageRecord<StateOfLibraryModuleData>);
@@ -558,6 +566,7 @@ private:
     v(sourceStamps, SourceStampData) \
     v(moduleFailures, ModuleFailureData) \
     v(namesOfStatements, NameOfStatementData) \
+    v(starsAsWritten, StarAsWrittenData) \
     v(modulesByPath, uint16_t) \
     v(modulesByHashOfPath, uint32_t) \
     v(firstModulesByHashOfPath, uint16_t) \
@@ -566,6 +575,7 @@ private:
     v(modulesThatLoadCompiledFilesAlone, uint32_t) \
     v(modulesThatFindBuiltinsReadOnly, uint32_t) \
     v(modulesReachedUnderOtherNames, uint32_t) \
+    v(modulesThatDependOnMoreThanSource, uint32_t) \
     v(asyncFunctionsWithoutAwait, uint32_t) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(compiledRuntimeModules, CompiledRuntimeModuleData) \

@@ -1,6 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { clashesOfStubRegisters } from "./stub-registers.ts";
 
 const listFile = "aot/codegen/AOTReadsThatAssume.txt";
 const stampFile = "AOTReadsThatAssumeChecked.h";
@@ -127,6 +128,7 @@ if (values["print-counts"]) {
 const { listed, problems } = readList(readFileSync(join(javascriptcore, listFile), "utf8"));
 if (!hasTeeth(found)) problems.push("aot/codegen/generator/reads-that-assume.ts does not notice a place too many or too few: it checks nothing.");
 problems.push(...compare(found, listed));
+problems.push(...clashesOfStubRegisters(join(javascriptcore, "aot", "stubs")));
 if (problems.length) {
   console.error(problems.join("\n"));
   process.exit(1);

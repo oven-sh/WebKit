@@ -4,7 +4,7 @@
 # When the store ended at the setter, what is stored reached no node and the layout got no such name: the run time stopped at "AddProperty of an object of layout L1: the compiler has proven that it never happens".
 # Two places decide it: the flow, which leads what is stored to whoever reads the name, and the writer of the layouts' tables, which says that such an object may gain a property.
 # RUN: link functions layouts mechanisms=all
-# CHECK: function f4 {{*}}result=undefined|i32
+# CHECK: function f4 {{*}}result=undefined|int[0, 2147483647]
 # CHECK: layout L1 {{*}}changes=[GainsProperty]
 
 layout L0 kind=Instance name="Base" module=m0 constructor=f2

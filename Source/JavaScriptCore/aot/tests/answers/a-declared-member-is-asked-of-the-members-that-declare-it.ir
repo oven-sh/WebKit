@@ -5,8 +5,8 @@
 # OPTIONS: mechanisms=all
 # LIBRARY: own
 # RUN(WALK): walk f4 mechanisms=all
-# WALK: FindsDeclaredMember {{*}}key="first" receivers=[L0, L1]
-# WALK: FindsDeclaredMember {{*}}key="second" receivers=[L1]
+# WALK: FindsDeclaredMember {{*}}key="first" {{*}}receivers=[L0, L1]
+# WALK: FindsDeclaredMember {{*}}key="second" {{*}}receivers=[L1]
 # RUN(NOTHING): run-in-shell early = function () { }; change = function () { };
 # NOTHING: - - - - - -
 # NOTHING-NEXT: - - - - - -

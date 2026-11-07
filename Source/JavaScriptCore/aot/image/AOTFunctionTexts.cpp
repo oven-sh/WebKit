@@ -12,6 +12,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "ResourceExhaustion.h"
 #include <algorithm>
 #include <atomic>
 #include <limits>
@@ -111,6 +112,59 @@ static void writeRunsOfText(const ParallelLoops& loops, std::span<const std::spa
     forEachIndexInParallel(loops, static_cast<unsigned>(runs.size()), [&](unsigned run) {
         if (placed.storesOwnBytes(run))
             memcpySpan(text.subspan(placed.offsets[run]), runs[run]);
+    });
+}
+
+static Vector<Vector<uint8_t>> compressBlocksOfText(const ParallelLoops& loops, const HostFunctionTexts& host, std::span<const uint8_t> text)
+{
+    Vector<Vector<uint8_t>> blocks((text.size() + sizeOfBlockOfText - 1) / sizeOfBlockOfText);
+    forEachIndexInParallel(loops, static_cast<unsigned>(blocks.size()), [&](unsigned index) {
+        size_t offset = static_cast<size_t>(index) * sizeOfBlockOfText;
+        std::span<const uint8_t> block = text.subspan(offset, std::min<size_t>(sizeOfBlockOfText, text.size() - offset));
+        Vector<uint8_t>& compressed = blocks[index];
+        compressed.grow(host.mostBytesCompressed(block.size()));
+        size_t written = host.compress(compressed.mutableSpan(), block);
+        RELEASE_ASSERT_RESOURCE_AVAILABLE(written, MemoryExhaustion, "The host could not compress a block of text.");
+        compressed.shrink(written);
+    });
+    return blocks;
+}
+
+struct TextLaidInBlocks {
+    bool isCompressed() const { return !blocks.isEmpty(); }
+    size_t sizeAsLaid(const PlacedRunsOfText& placed) const { return isCompressed() ? endsOfBlocks.last() : placed.size; }
+
+    Vector<Vector<uint8_t>> blocks;
+    Vector<uint32_t> endsOfBlocks;
+};
+
+static TextLaidInBlocks layTextInBlocks(const ParallelLoops& loops, const HostFunctionTexts& host, std::span<const std::span<const uint8_t>> runs, const PlacedRunsOfText& placed)
+{
+    TextLaidInBlocks laid;
+    if (!host.mostBytesCompressed || !host.compress)
+        return laid;
+    Vector<uint8_t> text;
+    text.grow(placed.size);
+    writeRunsOfText(loops, runs, placed, text.mutableSpan());
+    laid.blocks = compressBlocksOfText(loops, host, text.span());
+    uint64_t end = 0;
+    for (const Vector<uint8_t>& block : laid.blocks) {
+        end += block.size();
+        laid.endsOfBlocks.append(static_cast<uint32_t>(end));
+    }
+    if (end + laid.endsOfBlocks.sizeInBytes() + sizeof(uint32_t) >= placed.size)
+        return { };
+    return laid;
+}
+
+static void writeTextAsLaid(const ParallelLoops& loops, std::span<const std::span<const uint8_t>> runs, const PlacedRunsOfText& placed, const TextLaidInBlocks& laid, std::span<uint8_t> bytes)
+{
+    if (!laid.isCompressed()) {
+        writeRunsOfText(loops, runs, placed, bytes);
+        return;
+    }
+    forEachIndexInParallel(loops, static_cast<unsigned>(laid.blocks.size()), [&](unsigned index) {
+        memcpySpan(bytes.subspan(index ? laid.endsOfBlocks[index - 1] : 0), laid.blocks[index].span());
     });
 }
 
@@ -375,6 +429,7 @@ static void setEmptyQuotedTexts(TableEncoder& encoder)
     encoder.part.setTableRange(ProgramTableIndex::quotedTextGroups, encoder.part.allocate(0, alignof(QuotedTextGroupData)), 0);
     encoder.part.setTableRange(ProgramTableIndex::quotedTextRows, encoder.part.allocate(0), 0);
     encoder.part.setTableRange(ProgramTableIndex::textOfQuotes, encoder.part.allocate(0), 0);
+    encoder.part.setTableRange(ProgramTableIndex::blocksOfTextOfQuotes, encoder.part.allocate(0, alignof(uint32_t)), 0);
 }
 
 static void encodeQuotedTexts(TableEncoder& encoder, StepTimes& times)
@@ -442,13 +497,26 @@ static void encodeQuotedTexts(TableEncoder& encoder, StepTimes& times)
         return;
     }
 
-    encoder.part.reserveRoomFor(sizeOfGroups + sizeOfRows + placed.size + 4 * sizeof(uint64_t));
+    const HostFunctionTexts& host = encoder.build.functionTexts();
+    TextLaidInBlocks laid = layTextInBlocks(loops, host, runs.span(), placed);
+    if (host.mostBytesCompressed && host.compress)
+        times.didFinish("compress quoted texts"_s);
+    size_t sizeAsLaid = laid.sizeAsLaid(placed);
+    Vector<uint32_t> blocksOfText;
+    if (laid.isCompressed()) {
+        blocksOfText.append(static_cast<uint32_t>(placed.size));
+        blocksOfText.appendVector(laid.endsOfBlocks);
+    }
+
+    encoder.part.reserveRoomFor(sizeOfGroups + sizeOfRows + sizeAsLaid + blocksOfText.sizeInBytes() + 5 * sizeof(uint64_t));
     uint32_t offsetOfGroups = encoder.part.allocateUnfilled(sizeOfGroups, alignof(QuotedTextGroupData));
+    uint32_t offsetOfBlocks = encoder.part.appendUnshared(asBytes(blocksOfText.span()), alignof(uint32_t));
     uint32_t offsetOfRows = encoder.part.allocateUnfilled(sizeOfRows);
-    uint32_t offsetOfText = encoder.part.allocateUnfilled(placed.size);
+    uint32_t offsetOfText = encoder.part.allocateUnfilled(sizeAsLaid);
+    encoder.part.setTableRange(ProgramTableIndex::blocksOfTextOfQuotes, offsetOfBlocks, static_cast<uint32_t>(blocksOfText.size()));
     encoder.part.setTableRange(ProgramTableIndex::quotedTextGroups, offsetOfGroups, static_cast<uint32_t>(numberOfGroups));
     encoder.part.setTableRange(ProgramTableIndex::quotedTextRows, offsetOfRows, static_cast<uint32_t>(sizeOfRows));
-    encoder.part.setTableRange(ProgramTableIndex::textOfQuotes, offsetOfText, static_cast<uint32_t>(placed.size));
+    encoder.part.setTableRange(ProgramTableIndex::textOfQuotes, offsetOfText, static_cast<uint32_t>(sizeAsLaid));
     std::span<uint8_t> groups = encoder.part.bytesAt(offsetOfGroups, sizeOfGroups);
     std::span<uint8_t> rows = encoder.part.bytesAt(offsetOfRows, sizeOfRows);
     forEachIndexInParallel(loops, numberOfModules, [&](unsigned index) {
@@ -459,7 +527,7 @@ static void encodeQuotedTexts(TableEncoder& encoder, StepTimes& times)
         memcpySpan(rows.subspan(module.offsetOfRows), module.rows.span());
         module = { };
     });
-    writeRunsOfText(loops, runs.span(), placed, encoder.part.bytesAt(offsetOfText, placed.size));
+    writeTextAsLaid(loops, runs.span(), placed, laid, encoder.part.bytesAt(offsetOfText, sizeAsLaid));
     times.didFinish("write quoted texts"_s);
 }
 
@@ -524,13 +592,22 @@ void encodeFunctionTexts(TableEncoder& encoder)
         }
     });
 
-    encoder.part.reserveRoomFor(entries.sizeInBytes() + placed.size + sizeof(FunctionTexts) + 4 * sizeof(uint64_t));
+    TextLaidInBlocks laid = layTextInBlocks(loops, host, runs.span(), placed);
+    if (host.mostBytesCompressed && host.compress)
+        times.didFinish("compress function texts"_s);
+    const Vector<uint32_t>& endsOfBlocks = laid.endsOfBlocks;
+    size_t sizeAsLaid = laid.sizeAsLaid(placed);
+
+    encoder.part.reserveRoomFor(entries.sizeInBytes() + endsOfBlocks.sizeInBytes() + sizeAsLaid + sizeof(FunctionTexts) + 4 * sizeof(uint64_t));
     uint32_t entriesOffset = encoder.part.appendUnshared(asBytes(entries.span()), alignof(FunctionTextEntry));
-    uint32_t textOffset = encoder.part.allocateUnfilled(placed.size, 1);
-    writeRunsOfText(loops, runs.span(), placed, encoder.part.bytesAt(textOffset, placed.size));
-    uint32_t record = encoder.part.setTable(ProgramTableIndex::functionTexts, Vector<FunctionTexts, 1> { FunctionTexts { static_cast<uint32_t>(entries.size()), entriesOffset, textOffset } });
+    uint32_t endsOfBlocksOffset = !laid.isCompressed() ? 0 : encoder.part.appendUnshared(asBytes(endsOfBlocks.span()), alignof(uint32_t));
+    uint32_t textOffset = encoder.part.allocateUnfilled(sizeAsLaid, 1);
+    writeTextAsLaid(loops, runs.span(), placed, laid, encoder.part.bytesAt(textOffset, sizeAsLaid));
+    uint32_t record = encoder.part.setTable(ProgramTableIndex::functionTexts, Vector<FunctionTexts, 1> { FunctionTexts { static_cast<uint32_t>(entries.size()), entriesOffset, textOffset, static_cast<uint32_t>(laid.blocks.size()), endsOfBlocksOffset, static_cast<uint32_t>(placed.size) } });
     encoder.part.link(record, &FunctionTexts::entriesOffset);
     encoder.part.link(record, &FunctionTexts::textOffset);
+    if (laid.isCompressed())
+        encoder.part.link(record, &FunctionTexts::endsOfBlocksOffset);
     forEachIndexInParallel(loops, static_cast<unsigned>(textsOfHost.size()), [&](unsigned index) {
         textsOfHost[index] = { };
     });

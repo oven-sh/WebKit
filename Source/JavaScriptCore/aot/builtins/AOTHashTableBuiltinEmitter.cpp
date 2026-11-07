@@ -139,6 +139,14 @@ Operand HashTableBuiltinEmitter::search(const OperationContext& context, ValueID
     return lookUpByStub(context, table, key, lookupStubFor(owner, answer, comparison), answer);
 }
 
+Integer HashTableBuiltinEmitter::findPlace(const OperationContext& context, ValueID map, ValueID keyOfSearch)
+{
+    CellPointer table = cellOperand(map);
+    KeyComparison comparison = keyComparisonForType(typeOf(keyOfSearch));
+    Boxed key = normalizedKey(context, keyOfSearch);
+    return Integer(callStub(context, findKeyInMap(comparison), { table.value(), key.value() }).first);
+}
+
 void HashTableBuiltinEmitter::lookUp(const InlineCall& call, HashTableOwner owner, LookupAnswer answer)
 {
     Operand found = search(call.context(), call.receiver(), call.argument(0), owner, answer);

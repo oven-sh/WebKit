@@ -17,7 +17,7 @@ const matchProperties = {
   groups: b.union(b.object, b.undefined),
   indices: b.union(b.object, b.undefined),
 };
-const newArrayOf = (element: b.TableType) => b.instance("Array").holding({ element }).fresh;
+const newArrayOf = (element: b.TableType) => b.instance("Array").exactly.holding({ element }).fresh;
 
 const characters = b.inspected;
 const patternText = b.inspected;

@@ -26,6 +26,7 @@
 #include "AOTShapeTestEmitter.h"
 #include "AOTSlotAccessEmitter.h"
 #include "AOTSlotEmitter.h"
+#include "AOTStaleAnswers.h"
 #include "AOTStubsArrays.h"
 #include "AOTStubsElements.h"
 #include "AOTThrowEmitter.h"
@@ -62,9 +63,14 @@ static bool isGuessedAccessToView(Opcode opcode)
     return opcode == Opcode::GetTypedArrayElement || opcode == Opcode::PutTypedArrayElement;
 }
 
+static bool storesInViewOfSeveralKinds(const Operation& access)
+{
+    return access.opcode == Opcode::PutTypedArrayElement && access.typedArrayType() == NotTypedArray;
+}
+
 static bool guessedElementAccessHasTypedSide(const Operation& access)
 {
-    return !isGuessedAccessToView(access.opcode) || hasInlineElementAccess(access.typedArrayType());
+    return !isGuessedAccessToView(access.opcode) || hasInlineElementAccess(access.typedArrayType()) || storesInViewOfSeveralKinds(access);
 }
 
 static ArrayStorageFormList formsOfGuessedAccess(ElementAccessEmitter& elements, const ValueContext& access)
@@ -102,7 +108,7 @@ static Operand ownElementOfGuessedArrayOrElse(ElementAccessEmitter& elements, Ou
     return element;
 }
 
-CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxed object, LayoutSetID receivers, LBasicBlock failure)
+CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxed object, LayoutSetID receivers, LBasicBlock failure, const FieldAccess* readBehindTest, std::optional<CellPointer>* baseOfSlot)
 {
     Type known = typeOf(value->objectOperand());
     CellPointer cell = unboxCell(object);
@@ -116,7 +122,11 @@ CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxe
             isPresentCell = logicalAnd(isPresentCell, isNotEmpty(object));
         branchUnless(isPresentCell, failure);
     }
-    branchUnless(emitter<ShapeTestEmitter>().hasShapeIn(cell, receivers, known, marked), failure);
+    bool isHeldAgainstEveryShape = marked == MarkedObjects::AreRefused || !known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow) || !holdsOnlyCompiledObjects(types(), m_plan, known);
+    if (readBehindTest && isHeldAgainstEveryShape)
+        *baseOfSlot = emitter<SlotAccessEmitter>().baseOfSlotWhereOneTableTellsShapeAndDistance(cell, *readBehindTest, receivers, marked != MarkedObjects::Pass, failure);
+    if (!baseOfSlot || !*baseOfSlot)
+        branchUnless(emitter<ShapeTestEmitter>().hasShapeIn(cell, receivers, known, marked), failure);
     if (!hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known))
         branchUnless(emitter<GuardEmitter>().belongsToInstance(cell), failure);
     return cell;
@@ -134,7 +144,8 @@ CellPointer GuessedAccessEmitter::elementsOwnerOrElse(const ValueContext& value,
     }
     CellPointer owner = unboxCell(object);
     if (isView) {
-        branchUnless(hasCellType(owner, typeForTypedArrayType(value->typedArrayType())), failure);
+        if (!storesInViewOfSeveralKinds(value.value()))
+            branchUnless(hasCellType(owner, typeForTypedArrayType(value->typedArrayType())), failure);
         return owner;
     }
 
@@ -214,16 +225,26 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     std::optional<Join<Boxed>> join;
     if (!ways)
         join.emplace(m_out);
+    bool asksObjectAgain = accesses.verifiesFastPathAnswers(key) && m_program.at(key).kind != PropertyKeyKind::PrivateName;
+    auto askedAgainOfObject = [&](Boxed answered) {
+        if (asksObjectAgain)
+            callVoidOperation(value, RuntimeOperation::StopAtStaleAnswer, { object, answered, identifierNumber(key), word32(static_cast<int32_t>(kindAndStubOfAnswer(KindOfAnswer::Value, StubThatAnswers::TypedReadByName))) });
+        return answered;
+    };
     auto foundInSlot = [&](Boxed found) {
         if (asksWhatSlotsHold && heldBySlots)
             emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, hasType(found, typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, askedOfWhatSlotsHold)), found, ProofSource::Field);
-        return found;
+        return askedAgainOfObject(found);
     };
 
     LayoutSetID holders = membersWithFieldAmong(access, value->receivers());
-    CellPointer cell = receiverOrElse(value, object, holders, failure);
-    bool receiverBearsNoMark = emitter<ShapeTestEmitter>().lastTestRefusesMarkedObjects();
-    CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(cell, access, holders);
+    std::optional<CellPointer> baseByOneTable;
+    CellPointer cell = receiverOrElse(value, object, holders, failure, &access, &baseByOneTable);
+    if (baseByOneTable || emitter<ShapeTestEmitter>().lastTestIsHeldAgainstEveryShape())
+        access.layoutsThatTestInCodeLetThrough = holders;
+    bool letsMarkedObjectsPass = (value.opcode() == Opcode::GetSlot || value.opcode() == Opcode::GetSlotOrUndefined) && value->receiverMayBeInBirth();
+    bool receiverBearsNoMark = baseByOneTable ? !letsMarkedObjectsPass : emitter<ShapeTestEmitter>().lastTestRefusesMarkedObjects();
+    CellPointer base = baseByOneTable ? *baseByOneTable : emitter<SlotAccessEmitter>().baseOfSlot(cell, access, holders);
     if (slot.representation == SlotRepresentation::DeferredClosure) {
         NarrowReference word(m_out.load32(slots.addressOf(base, slot, location, extensionWord)));
         branchUnless(above(word, NarrowReference(m_out.constInt32(absentDeferredClosure))), failure);
@@ -240,9 +261,10 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
             join->add(foundInSlot(conversions.box(value, slots.loadSlot(base, slot, location, extensionWord, loaded), loaded)));
     } else {
         LBasicBlock slotIsEmpty = readsEmptySlotAsUndefined ? newBlock() : nullptr;
-        if (value.opcode() != Opcode::GetSlot || !value->isFilledWhereShapeFits() || !receiverBearsNoMark)
-            continueGuessedAccessIf(m_out, slots.holdsValue(base, slot, location, extensionWord), slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure));
-        Operand loaded = slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
+        bool asksWhetherSlotIsFilled = value.opcode() != Opcode::GetSlot || !value->isFilledWhereShapeFits() || !receiverBearsNoMark;
+        Operand loaded = asksWhetherSlotIsFilled
+            ? slots.loadSlotOrLeaveIfEmpty(base, slot, location, extensionWord, slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure))
+            : slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
         if (ways)
             branch(emitter<TruthinessEmitter>().isTruthy(value, loaded, held), ways->targets);
         else
@@ -256,7 +278,7 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
             if (ways)
                 m_out.jump(ways->targets.notTaken);
             else
-                join->add(undefined());
+                join->add(askedAgainOfObject(undefined()));
         }
     }
 
@@ -318,6 +340,8 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
     LBasicBlock done = newBlock();
 
     CellPointer cell = receiverOrElse(value, object, holders, failure);
+    if (emitter<ShapeTestEmitter>().lastTestIsHeldAgainstEveryShape())
+        access.layoutsThatTestInCodeLetThrough = holders;
     bool mayCreate = value.opcode() == Opcode::PutSlotOrAdd;
     branchUnless(hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(cell), mayCreate ? orderWordIntegrityBits | orderWordHasFieldOutsideSlot : orderWordIntegrityBits), failure);
     if (mayCreate) {
@@ -345,6 +369,7 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
         m_out.appendTo(done);
     };
 
+    slotAccesses.askObjectWhatStandsInWayOfStore(value, cell);
     slotAccesses.markCellIfMarkerReplacesRawValue(cell, access, storedValue);
     bool isWrittenInLine = true;
     if (mayCreate) {
@@ -393,14 +418,37 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
     finish();
 }
 
+bool GuessedAccessEmitter::unitReckonsWithElement(const ValueContext& read)
+{
+    static constexpr OpcodeSet reckoners = operatorsThatMakeNumbers | allSums | allRelations | allBitwiseOperators;
+    if (!m_reckonersAreKnown) {
+        m_reckonersAreKnown = true;
+        const Code& code = generator().code();
+        for (uint32_t block = 0; block < code.numberOfBlocks(); ++block) {
+            for (ValueID id : code.valuesOf(BlockID(block))) {
+                const Operation& user = code.at(id);
+                bool reckons = reckoners.contains(user.opcode) || (user.opcode == Opcode::Unbox && user.representation != Representation::Cell)
+                    || (user.opcode == Opcode::TypeTest && types().at(user.testedType()).hasOnlyPrimitives(Primitive::Number));
+                if (!reckons)
+                    continue;
+                user.forEachOperand([&](ValueID operand, uint32_t) {
+                    m_isReckonedWith.set(operand.index());
+                });
+            }
+        }
+    }
+    return m_isReckonedWith.get(read.id().index());
+}
+
 void GuessedAccessEmitter::readElementOfProvenList(const ValueContext& value)
 {
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     CellPointer list = in<CellPointer>(value->arrayOperand());
-    bool keyIsRawNumber = representationOf(value->positionOperand()) == Representation::Double;
+    bool keyIsOptionalNumber = representationOf(value->positionOperand()) == Representation::OptionalDouble;
+    bool keyIsRawNumber = keyIsOptionalNumber || representationOf(value->positionOperand()) == Representation::Double;
     bool keyIsBoxed = !keyIsRawNumber && !typeOf(value->positionOperand()).isInteger();
     LBasicBlock outOfLine = newBlock();
-    Integer index = keyIsBoxed ? signExtended(indexOrElse(in<Boxed>(value->positionOperand()), outOfLine)) : elements.indexOrElse(value->positionOperand(), true, keyIsRawNumber ? outOfLine : nullptr);
+    Integer index = keyIsBoxed ? signExtended(indexOrElse(in<Boxed>(value->positionOperand()), outOfLine)) : elements.indexOrElse(value->positionOperand(), !keyIsRawNumber || typeOf(value->positionOperand()).isNumberWithoutFraction(), keyIsRawNumber ? outOfLine : nullptr);
     ArrayElements storage = elements.elementsOf(list);
     Join<Boxed> join(m_out);
 
@@ -417,8 +465,12 @@ void GuessedAccessEmitter::readElementOfProvenList(const ValueContext& value)
     };
     if (!findArrayStorageForm(value->arrayStorage())) {
         LBasicBlock holdsBoxed = newBlock();
-        LBasicBlock holdsUnboxed = isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(value->arrayOperand())) ? newBlock() : nullptr;
-        m_out.branch(elements.holdsBoxedElements(list).value(), normalEdge(holdsBoxed), holdsUnboxed ? normalEdge(holdsUnboxed) : rareEdge(outOfLine));
+        bool isDeclaredToHoldNumbers = isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(value->arrayOperand()));
+        bool isReckonedWithInLoop = !isDeclaredToHoldNumbers && generator().paysForCodeInLine(value.block()) && (typeOf(value.id()).primitives & Primitive::Number) && unitReckonsWithElement(value);
+        LBasicBlock holdsUnboxed = isDeclaredToHoldNumbers || isReckonedWithInLoop ? newBlock() : nullptr;
+        if (isReckonedWithInLoop)
+            build().statistics().count(StatisticID::BoxedReadsInLoopsWithAnArmForDoubles);
+        m_out.branch(elements.holdsBoxedElements(list).value(), normalEdge(holdsBoxed), isDeclaredToHoldNumbers ? normalEdge(holdsUnboxed) : rareEdge(holdsUnboxed ? holdsUnboxed : outOfLine));
         if (holdsUnboxed) {
             m_out.appendTo(holdsUnboxed);
             continueGuessedAccessIf(m_out, elements.hasArrayStorage(list, ArrayStorage::Double), rareEdge(outOfLine));
@@ -437,6 +489,8 @@ void GuessedAccessEmitter::readElementOfProvenList(const ValueContext& value)
     m_out.appendTo(outOfLine);
     if (keyIsBoxed)
         join.add(emitter<AccessEmitter>().getByVal(value, in<Boxed>(value->arrayOperand()), in<Boxed>(value->positionOperand())));
+    else if (keyIsOptionalNumber)
+        join.add(emitter<AccessEmitter>().getByVal(value, in<Boxed>(value->arrayOperand()), emitter<ConversionEmitter>().boxNumberByStub(in<OptionalNumber>(value->positionOperand()))));
     else if (keyIsRawNumber)
         join.add(emitter<AccessEmitter>().getByVal(value, in<Boxed>(value->arrayOperand()), emitter<ConversionEmitter>().boxNumberByStub(in<Number>(value->positionOperand()))));
     else
@@ -451,11 +505,12 @@ void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
     Representation representation = value.representation();
     Type result = typeOf(value.id());
     LBasicBlock outOfLine = newBlock();
-    Integer index = elements.indexOrElse(value->positionOperand(), true, nullptr);
+    bool keyIsRawNumber = representationOf(value->positionOperand()) == Representation::Double;
+    Integer index = elements.indexOrElse(value->positionOperand(), true, keyIsRawNumber ? outOfLine : nullptr);
     ArrayElements storage = elements.elementsOf(list);
     OperandJoin join(m_out, representation);
     bool isWhole = types().at(types().withoutPrimitives(typeIDOf(value.id()), Primitive::Undefined)).isNumberWithoutFraction();
-    ArrayStorageFormList forms { &arrayStorageFormOf(isWhole ? ArrayStorage::Int32 : ArrayStorage::Double), &arrayStorageFormOf(isWhole ? ArrayStorage::Double : ArrayStorage::Int32) };
+    ArrayStorageFormList forms { &arrayStorageFormOf(isWhole ? ArrayStorage::Int32 : ArrayStorage::Double), &arrayStorageFormOf(isWhole ? ArrayStorage::Double : ArrayStorage::Int32), &arrayStorageFormOf(ArrayStorage::Contiguous) };
     elements.forEachFormByShape(elements.indexingMode(list, arrayStorageTestMask), &ElementAccessEmitter::hasShape, forms, outOfLine, [&](const ArrayStorageForm& form) {
         LengthTest test = elements.testLength(value, index, storage);
         if (!value->isInBounds())
@@ -467,7 +522,9 @@ void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
 
     m_out.appendTo(outOfLine);
     elements.stopUnlessListIsAsMadeWhereNothingIsFound(value, list);
-    Boxed answer(callStub(value, testsForItself(value) ? arrayGetAtIndex(AOT::ArrayRead::OfAnyList) : arrayGetAtIndex(), { list.value(), index.value() }).first);
+    Boxed answer = keyIsRawNumber
+        ? emitter<AccessEmitter>().getByVal(value, in<Boxed>(value->arrayOperand()), emitter<ConversionEmitter>().boxNumberByStub(in<Number>(value->positionOperand())))
+        : Boxed(callStub(value, testsForItself(value) ? arrayGetAtIndex(AOT::ArrayRead::OfAnyList) : arrayGetAtIndex(), { list.value(), index.value() }).first);
     elements.stopUnlessElementIsOf(value, answer, typeIDOf(value.id()));
     join.add(emitter<ConversionEmitter>().unbox(answer, result, representation));
     define(value, join.finish());
@@ -477,7 +534,7 @@ bool GuessedAccessEmitter::tryReadNumberOfProvenList(const ValueContext& value)
 {
     if (value.opcode() != Opcode::GetArrayElement || (value.representation() != Representation::Double && value.representation() != Representation::OptionalDouble) || findArrayStorageForm(value->arrayStorage()))
         return false;
-    if (!readTakesIndexOfProvenList(types(), typeIDOf(value->arrayOperand()), typeIDOf(value->positionOperand())))
+    if (!numberOfProvenListIsReadUnboxed(types(), typeIDOf(value->arrayOperand()), typeIDOf(value->positionOperand()), representationOf(value->positionOperand()), testsForItself(value)))
         return false;
     readNumberOfProvenList(value);
     return true;
@@ -534,8 +591,11 @@ void GuessedAccessEmitter::storeInProvenListUnderAnyKey(const ValueContext& valu
     ValueID stored = value->valueOperand();
     LBasicBlock outOfLine = newBlock();
     LBasicBlock continuation = newBlock();
-    Integer index = signExtended(indexOrElse(in<Boxed>(value->positionOperand()), outOfLine));
+    bool keyIsOptionalNumber = representationOf(value->positionOperand()) == Representation::OptionalDouble;
+    bool keyIsRawNumber = keyIsOptionalNumber || representationOf(value->positionOperand()) == Representation::Double;
+    Integer index = keyIsRawNumber ? elements.indexOrElse(value->positionOperand(), typeOf(value->positionOperand()).isNumberWithoutFraction(), outOfLine) : signExtended(indexOrElse(in<Boxed>(value->positionOperand()), outOfLine));
     ArrayElements storage = elements.elementsOf(list);
+    build().statistics().count(StatisticID::StoresUnderAnyKeyThatRaiseTheLengthInLine);
     elements.forEachFormByShape(elements.indexingMode(list, IndexingShapeAndWritabilityMask), &ElementAccessEmitter::hasWritableShape, formsOfGuessedAccess(elements, value), outOfLine, [&](const ArrayStorageForm& form) {
         std::optional<Operand> rawElement = elements.rawElementToStore(form, stored, outOfLine);
         if (!rawElement) {
@@ -543,7 +603,14 @@ void GuessedAccessEmitter::storeInProvenListUnderAnyKey(const ValueContext& valu
             return;
         }
         LengthTest test = elements.testLength(index, storage);
-        branchUnless(test.isInside, outOfLine);
+        LBasicBlock liesInside = newBlock();
+        LBasicBlock liesBehind = newBlock();
+        m_out.branch(test.isInside.value(), normalEdge(liesInside), normalEdge(liesBehind));
+        m_out.appendTo(liesBehind);
+        branchUnless(below(test.indexInside, elements.vectorLength(storage)), outOfLine);
+        elements.setPublicLength(storage, add(test.indexInside, integer(1)));
+        m_out.jump(liesInside);
+        m_out.appendTo(liesInside);
         elements.storeRawElement(form, storage, test.indexInside, *rawElement);
         if (form.holdsCells && typeOf(stored).hasCells()) {
             Boxed storedElement = rawElement->as<Boxed>();
@@ -553,7 +620,15 @@ void GuessedAccessEmitter::storeInProvenListUnderAnyKey(const ValueContext& valu
     }, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
 
     m_out.appendTo(outOfLine);
-    emitter<AccessEmitter>().putByVal(value, in<Boxed>(value->arrayOperand()), in<Boxed>(value->positionOperand()), in<Boxed>(stored), AccessEmitter::putModeOf(value->mode()));
+    if (keyIsRawNumber && !keyIsOptionalNumber && value->mode() == ECMAMode::Strict) {
+        build().statistics().count(StatisticID::StoresUnderRawNumbersByStubOfLists);
+        const Type& storedType = typeOf(stored);
+        bool mayConvertToDouble = storedType.isNumberLike() && !storedType.isInt32() && storedType.primitives & Primitive::FractionalNumber;
+        callStub(value, arrayPutAtNumber(mayConvertToDouble ? AOT::ArrayStoredValue::Number : AOT::ArrayStoredValue::Value), { list.value(), in<Boxed>(stored).value(), in<Number>(value->positionOperand()).value() });
+    } else {
+        Boxed key = keyIsOptionalNumber ? emitter<ConversionEmitter>().boxNumberByStub(in<OptionalNumber>(value->positionOperand())) : keyIsRawNumber ? emitter<ConversionEmitter>().boxNumberByStub(in<Number>(value->positionOperand())) : in<Boxed>(value->positionOperand());
+        emitter<AccessEmitter>().putByVal(value, in<Boxed>(value->arrayOperand()), key, in<Boxed>(stored), AccessEmitter::putModeOf(value->mode()));
+    }
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -594,7 +669,17 @@ void GuessedAccessEmitter::generateElementStore(const ValueContext& value)
 
     CellPointer owner = elementsOwnerOrElse(value, object, failure);
     Word32 index = indexOrElse(position, failure);
-    if (storesInView) {
+    if (storesInViewOfSeveralKinds(value.value())) {
+        branchUnless(isNumber(stored), failure);
+        Number element = numberToDouble(stored);
+        TypedArrayElements storage = elements.typedArrayElementsOf(owner, failure);
+        Integer indexInView = signExtended(index);
+        branchUnless(below(indexInView, storage.length), failure);
+        elements.forEachKindOfView(value, owner, scopedLambda<void(TypedArrayType)>([&](TypedArrayType kind) {
+            elements.storeTypedArrayElement(storage, indexInView, kind, element);
+            m_out.jump(done);
+        }));
+    } else if (storesInView) {
         TypedArrayType type = value->typedArrayType();
         Operand element;
         if (isClamped(type)) {

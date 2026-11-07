@@ -13,6 +13,7 @@
 #include "AOTRepresentationRules.h"
 #include "AOTTypeArena.h"
 #include "AOTWalkNumberGuesses.h"
+#include <limits>
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -79,6 +80,38 @@ void prepareOperandsForFormNumbers(Walker& walker, Draft& draft)
     }
 }
 
+static Reference buildRemainderByReciprocalMadeInFrontOfLoop(Walker& walker, const Draft& remainder)
+{
+    constexpr Range dividendsOfReciprocal { 0, std::numeric_limits<uint32_t>::max() };
+    constexpr Range divisorsOfReciprocal { 1, std::numeric_limits<int32_t>::max() };
+    std::optional<uint32_t> loop = walker.has(Mechanism::LoopInvariants) ? walker.innermostOpenLoop() : std::nullopt;
+    Reference dividend = remainder.operand(OperandIndex::Mod::left);
+    Reference divisor = remainder.operand(OperandIndex::Mod::right);
+    if (!loop || !divisor.isValue() || !walker.standsInFrontOfOpenLoop(*loop, divisor) || walker.standsInFrontOfOpenLoop(*loop, dividend))
+        return { };
+    Type dividends = walker.types().at(walker.typeOf(dividend));
+    Type divisors = walker.types().at(walker.typeOf(divisor));
+    if (!dividends.isInteger() || (!dividends.integers.isSubsetOf(dividendsOfReciprocal) && !walker.takesDividendsOfReciprocalsToFit32Bits()) || !divisors.isInteger() || !divisors.integers.isSubsetOf(divisorsOfReciprocal) || divisors.integers.isSingleValue())
+        return { };
+
+    Draft inFront(Opcode::ReciprocalOfDivisor, remainder.origin());
+    walker.chooseConservativeFields(inFront);
+    inFront.setDivisorOperand(divisor);
+    Reference reciprocal = walker.build(WTF::move(inFront));
+    if (!reciprocal || !walker.standsInFrontOfOpenLoop(*loop, reciprocal))
+        return { };
+
+    Draft byReciprocal(Opcode::RemainderByReciprocal, remainder.origin());
+    walker.chooseConservativeFields(byReciprocal);
+    byReciprocal.setDividendOperand(dividend);
+    byReciprocal.setDivisorOperand(divisor);
+    byReciprocal.setReciprocalOperand(reciprocal);
+    Reference built = walker.build(WTF::move(byReciprocal));
+    if (built)
+        walker.count(StatisticID::RemaindersByReciprocalsMadeInFrontOfLoops);
+    return built;
+}
+
 bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     OperatorForm form = formAllowedForTypedOperator(walker, value.opcode(), value, inputs);
@@ -99,7 +132,8 @@ bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const Inputs
     if (sumStaysBoxed(walker, value, draft))
         draft.representation = Representation::JSValue;
     Origin origin = draft.origin();
-    walker.bind(value.id(), boxedUnlessNumbersAreUnboxed(walker, walker.build(WTF::move(draft)), origin));
+    Reference byReciprocal = value.opcode() == Opcode::Mod && form == OperatorForm::Integers ? buildRemainderByReciprocalMadeInFrontOfLoop(walker, draft) : Reference();
+    walker.bind(value.id(), boxedUnlessNumbersAreUnboxed(walker, byReciprocal ? byReciprocal : walker.build(WTF::move(draft)), origin));
     return true;
 }
 

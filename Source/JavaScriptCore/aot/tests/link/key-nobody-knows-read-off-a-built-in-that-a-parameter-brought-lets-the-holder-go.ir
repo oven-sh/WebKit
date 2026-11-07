@@ -1,0 +1,22 @@
+# function get(o) { return o[JSON.parse('"eval"')]; } typeof get(globalThis);
+# RUN: features
+# CHECK: feature Interpreter
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = Call v0, -, v1 calleeName="get"
+    v3 = TypeOf v2
+    Return v3
+}
+function f1 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=JSON
+    v2 = Builtin builtin=JSONParse
+    v3 = String string="\"eval\""
+    v4 = Call v2, v1, v3 calleeName="JSON.parse"
+    v5 = ElemGet v0, v4
+    Return v5
+}

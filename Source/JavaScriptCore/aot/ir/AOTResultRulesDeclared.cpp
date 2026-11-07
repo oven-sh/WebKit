@@ -505,9 +505,6 @@ TypeID tryTypeOfContentsRead(const TypingContext& context, TypeID containerID, C
         Vector<TypeID, 16> typesInObjects;
         bool everyObjectAnswers = context.types.at(container.objects).allOf([&](ObjectID object) {
             TypeID contents = tryTypeOfTypedArrayContents(builtins, objects.classOf(object), slot);
-            bool isPrediction = objects.traitsOf(object).contains(ObjectTrait::IsMerged);
-            if (!contents && !(isProof && isPrediction))
-                contents = context.positions.contents(context.level, object, slot);
             if (!contents)
                 return false;
             if (typesInObjects.isEmpty() || typesInObjects.last() != contents)
@@ -618,7 +615,7 @@ TypeID typeOfElementRead(const TypingContext& context, TypeID container, TypeID 
     return known ? known : context.types.anything(UnknownSeed::ContentsOfEscapedObject);
 }
 
-TypeID tryTypeOfArrayElementRead(const TypingContext& context, TypeID array, ArrayStorage storage, bool findsElement, bool readsHoleAsNaN)
+TypeID tryTypeOfArrayElementRead(const TypingContext& context, TypeID array, ArrayStorage storage, bool admitsInt32Storage, bool findsElement, bool readsHoleAsNaN)
 {
     TypeID element = tryTypeOfContentsRead(context, array, ContentsSlot::Element);
     if (element && !findsElement)
@@ -632,7 +629,12 @@ TypeID tryTypeOfArrayElementRead(const TypingContext& context, TypeID array, Arr
     if (findsElement)
         stored = context.types.withoutPrimitives(stored, Primitive::Undefined);
     TypeID result = element ? context.types.intersectionOf(element, stored) : stored;
-    return readsHoleAsNaN ? context.types.withPrimitives(result, Primitive::WholeNumber) : result;
+    if (context.level == TypeLevel::Proven && (storage == ArrayStorage::Int32 || admitsInt32Storage))
+        result = context.types.unionOf(result, TypeTable::int32);
+    bool mayBeFraction = context.at(result).holdsFractionsWithoutBounds();
+    if (!readsHoleAsNaN)
+        return mayBeFraction && holdsOnlyNumbers(storage) ? context.types.withPrimitives(result, Primitive::Number) : result;
+    return context.types.withPrimitives(result, mayBeFraction ? Primitive::Number : Primitive::WholeNumber);
 }
 
 static bool mayHoldInstancesOfClassesBelowPromise(const TypingContext& context, const Type& type)
@@ -657,10 +659,10 @@ static TypeID tryExpectedTypeOfAwaitedObjects(const TypingContext& context, Type
             fulfillment = context.types.unionOf(fulfillment, value);
         return !!value;
     };
-    bool everyPromiseAnswers = context.types.at(awaited.objects).allOf([&](ObjectID object) {
-        return objects.classOf(object) != BuiltinClasses::Promise || addFulfillment(context.positions.contents(context.level, object, ContentsSlot::Value));
+    bool namesNoPromise = context.types.at(awaited.objects).allOf([&](ObjectID object) {
+        return objects.classOf(object) != BuiltinClasses::Promise;
     });
-    if (!everyPromiseAnswers)
+    if (!namesNoPromise)
         return { };
     for (const ClassPart& part : context.types.at(awaited.unnamedClasses)) {
         if (part.builtinClass != BuiltinClasses::Promise)

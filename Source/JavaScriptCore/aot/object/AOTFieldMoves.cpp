@@ -142,6 +142,7 @@ std::optional<AcceptedValue> acceptInSlot(Object& target, const FieldData& to, J
 
 static uint32_t offsetOfInlineProperty(PropertyOffset offset)
 {
+    static_assert(JSObject::offsetOfInlineStorage() + firstOutOfLineOffset * sizeof(EncodedJSValue) <= std::numeric_limits<decltype(FieldMovePlan::BoxedWordMove::to)>::max());
     ASSERT(isInlineOffset(offset));
     return JSObject::offsetOfInlineStorage() + offsetInInlineStorage(offset) * sizeof(EncodedJSValue);
 }

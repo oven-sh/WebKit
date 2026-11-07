@@ -15,10 +15,12 @@
 #include "AOTClosureTable.h"
 #include "AOTCompiledCallee.h"
 #include "AOTEffectsNet.h"
+#include "AOTErrorMessages.h"
 #include "AOTFunctionTables.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
+#include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCachesAnswers.h"
@@ -39,6 +41,8 @@
 #include <utility>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/Scope.h>
+#include <wtf/SetForScope.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -59,6 +63,7 @@ struct NamesThatDifferOnClassHolders {
     Vector<uint32_t, 4> numbers;
     Vector<uint32_t, 4> numbersOfPlainValues;
     bool someHasNoNumber { false };
+    bool someSeesAccesses { false };
 
     void add(std::optional<uint32_t> key)
     {
@@ -206,7 +211,8 @@ static void storeBitOfClassGuard(State& state, const LayoutData& classLayout, Cl
     if (*bit.byte != byteBefore) {
         bool isCountedFromBeginning = side == ClassSide::Prototype && classLayout.classData().guardsOfNamesAwaitBeginning && numberOfBit != classLayout.classData().guardBit[static_cast<size_t>(side)];
         RELEASE_ASSERT(!isCountedFromBeginning || state.objects->classes.guardsHaveBegun(classLayout));
-        countChangeOfClassGuard(state, numberOfBit, holds);
+        if (!isCountedFromBeginning || !state.objects->classes.countsGuardsOfNamesBehindArming(classLayout))
+            countChangeOfClassGuard(state, numberOfBit, holds);
         state.countWriteForEffectsNet(countOfChangeOfClassGuard(holds));
         if (!holds)
             countEvent(*state.instance.vm, RuntimeCounterID::ClassGuardBitsEnded);
@@ -226,27 +232,32 @@ void ClassTable::beginGuardsSlowCase(const LayoutData& classLayout)
 {
     m_classesWhoseGuardsHaveBegun.set(m_tables.rankOfClass(classLayout.index));
     if (const LayoutData* above = assumedBaseOf(classLayout); above && !guardsHaveBegun(*above)) {
-        if (isDefinedByClass(*above) || isClassOfCreatedObjects(*above))
+        if (isDefinedByClass(*above) || isClassOfCreatedObjects(*above) || m_beginsGuardsOfFunctionsNotMadeYet)
             beginGuardsSlowCase(*above);
         else
             classPrototypeOfInstances(*m_state.instance.vm, *above);
     }
     if (BitOfClassGuard guardOfPrototypeSide = bitOfClassGuard(m_state, classLayout, ClassSide::Prototype); guardOfPrototypeSide.byte) {
         RELEASE_ASSERT(guardOfPrototypeSide.mask != maskOfClassGuardsBegun);
-        *guardOfPrototypeSide.byte |= maskOfClassGuardsBegun;
+        if (!m_beginsGuardsOfFunctionsNotMadeYet)
+            *guardOfPrototypeSide.byte |= maskOfClassGuardsBegun;
         m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::GuardsOfMembersArmedOrBegun);
     }
-    if (!classLayout.classData().guardsOfNamesAwaitBeginning)
-        return;
+    if (classLayout.classData().guardsOfNamesAwaitBeginning && !countsGuardsOfNamesBehindArming(classLayout))
+        countGuardsOfNamesThatDoNotHold(classLayout);
+}
+
+void ClassTable::countGuardsOfNamesThatDoNotHold(const LayoutData& classLayout)
+{
     Vector<uint32_t, 16> bits;
-    for (const NamedClassGuardData& guard : guardsOfNamesInClassRecord(m_tables, classLayout, ClassSide::Prototype))
-        bits.append(guard.numberOfBit());
+    for (const NamedClassGuardData& guard : guardsOfNamesInClassRecord(m_tables, classLayout, ClassSide::Prototype)) {
+        if (!bitOfClassGuardSaysThatItHolds(classLayout, ClassSide::Prototype, bitOfClassGuardWithNumber(m_state, guard.numberOfBit())))
+            bits.append(guard.numberOfBit());
+    }
     AOT::sort(bits);
     bits.shrink(bits.size() - std::ranges::unique(bits).size());
-    for (uint32_t numberOfBit : bits) {
-        if (!bitOfClassGuardSaysThatItHolds(classLayout, ClassSide::Prototype, bitOfClassGuardWithNumber(m_state, numberOfBit)))
-            countChangeOfClassGuard(m_state, numberOfBit, false);
-    }
+    for (uint32_t numberOfBit : bits)
+        countChangeOfClassGuard(m_state, numberOfBit, false);
 }
 
 static bool classGuardOfSideHolds(const State& state, const LayoutData& classLayout, ClassSide side)
@@ -400,11 +411,6 @@ void endClassGuardsOfName(State& state, const LayoutData& classLayout, ClassSide
     countEvent(*state.instance.vm, RuntimeCounterID::ClassesLookedAtToEndGuardsOfNames, numberOfClassesLookedAt);
 }
 
-void didEvaluateClassAgain(State& state, const LayoutData& classLayout)
-{
-    state.objects->classes.disarmMemberGuards(classLayout);
-}
-
 static bool isLazyClassHolder(JSObject* holder, ClassSide side)
 {
     switch (side) {
@@ -533,19 +539,44 @@ static StateOfClassHolder stateOfCompiledClassHolder(VM& vm, State& state, const
     JSObject* extraProperties = extraPropertiesIfMade(holder);
     if (state.objects->classes.isDefinedByClass(classLayout) || holder.isInFrame() || &holder.state() != &state || (holder.hasExtraProperties() && !extraProperties))
         return StateOfClassHolder::Differs;
-    for (const MethodData& method : methodsInClassRecord(classLayout, side)) {
+    std::span<const MethodData> methods = methodsInClassRecord(classLayout, side);
+    for (const MethodData& method : methods) {
         if (method.flags & methodHasComputedName)
             return StateOfClassHolder::Differs;
-        namesThatDiffer.add(static_cast<uint32_t>(method.name));
     }
-    for (const FieldData& field : holder.layout().fields())
-        namesThatDiffer.add(static_cast<uint32_t>(field.name));
+    constexpr unsigned attributesThatTakeStores = PropertyAttribute::ReadOnly | PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue;
+    for (const FieldData& field : holder.layout().fields()) {
+        if (field.isPrivate() || field.isAccessor() || holder.attributesOf(field) & attributesThatTakeStores) {
+            namesThatDiffer.add(static_cast<uint32_t>(field.name));
+            namesThatDiffer.someSeesAccesses |= !field.isPrivate();
+        } else
+            namesThatDiffer.numbersOfPlainValues.append(static_cast<uint32_t>(field.name));
+    }
+    Vector<uint32_t, 8> namesHeldAsDeclared;
     if (extraProperties) {
         const ProgramIdentifiers& identifiers = identifiersOf(state.instance);
         extraProperties->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-            namesThatDiffer.add(identifiers.numberOf(entry.key()));
+            std::optional<uint32_t> key = identifiers.numberOf(entry.key());
+            ClassTable::DeclaredMember member;
+            bool isDeclared = false;
+            for (const MethodData& method : methods) {
+                if (key && method.name == *key) {
+                    member.define(method);
+                    isDeclared = true;
+                }
+            }
+            if (isDeclared && holdsMemberOfClassRecord(state, extraProperties->getDirect(entry.offset()), entry.attributes(), member)) {
+                namesHeldAsDeclared.append(*key);
+                return true;
+            }
+            namesThatDiffer.add(key);
+            namesThatDiffer.someSeesAccesses |= ClassTable::seesAccesses(entry.attributes());
             return true;
         });
+    }
+    for (const MethodData& method : methods) {
+        if (!namesHeldAsDeclared.contains(static_cast<uint32_t>(method.name)))
+            namesThatDiffer.add(static_cast<uint32_t>(method.name));
     }
     return StateOfClassHolder::AsDeclared;
 }
@@ -598,14 +629,17 @@ static StateOfClassHolder stateOfClassHolder(VM& vm, State& state, const LayoutD
             declaredNamesFound.append(*key);
             if (holdsMemberOfClassRecord(state, value, entry.attributes(), member))
                 return true;
+            namesThatDiffer.someSeesAccesses |= ClassTable::seesAccesses(entry.attributes());
             if (mayBeDefinedLater)
                 isUnfinished = true;
             else
                 namesThatDiffer.add(key);
             return true;
         }
-        if (isImplicitMemberOfClassHolder(vm, side, entry.key()))
+        if (isImplicitMemberOfClassHolder(vm, side, entry.key())) {
+            namesThatDiffer.someSeesAccesses |= side == ClassSide::Prototype && ClassTable::seesAccesses(entry.attributes());
             return true;
+        }
         if (key && std::ranges::binary_search(namesOfStaticFields, *key))
             return true;
         size_t numberOfMembers = numberOfComputedNameMembersInProperty(state, methods, value, entry.attributes());
@@ -613,6 +647,7 @@ static StateOfClassHolder stateOfClassHolder(VM& vm, State& state, const LayoutD
         if (numberOfMembers)
             return true;
         constexpr unsigned attributesThatTakeStores = PropertyAttribute::ReadOnly | PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue;
+        namesThatDiffer.someSeesAccesses |= ClassTable::seesAccesses(entry.attributes());
         if (key && !(entry.attributes() & attributesThatTakeStores))
             namesThatDiffer.numbersOfPlainValues.append(*key);
         else
@@ -634,6 +669,18 @@ static StateOfClassHolder stateOfClassHolder(VM& vm, State& state, const LayoutD
     if (isDefinedByClass)
         return isUnfinished || lacksDeclaredName || lacksMemberWithoutName ? StateOfClassHolder::MayStillBeDefined : StateOfClassHolder::AsDeclared;
     return lacksMemberWithoutName ? StateOfClassHolder::Differs : StateOfClassHolder::AsDeclared;
+}
+
+static bool holdsClassObjectUnderConstructor(VM& vm, State& state, const LayoutData& classLayout, JSObject* prototype)
+{
+    if (isLazyClassHolder(prototype, ClassSide::Prototype))
+        return true;
+    if (compiledObjectOrNull(prototype))
+        return false;
+    constexpr unsigned attributesOfNoPlainValue = PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue;
+    unsigned attributes = 0;
+    JSValue held = prototype->getDirect(vm, vm.propertyNames->constructor, attributes);
+    return held && !(attributes & attributesOfNoPlainValue) && held.isCell() && held.asCell() == registeredClassObjectOf(state, classLayout);
 }
 
 static const LayoutData* classAboveOnSide(const ClassTable& classes, const LayoutData& classLayout, ClassSide side)
@@ -791,6 +838,15 @@ static NameOnPrototypeHolder findNameOnPrototypeHolder(VM& vm, State& state, con
 void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, HolderState holderState)
 {
     ASSERT(holder);
+    bool countsBehindArming = side == ClassSide::Prototype && layout.classData().guardsOfNamesAwaitBeginning && !guardsHaveBegun(layout);
+    if (countsBehindArming)
+        m_classesThatCountGuardsOfNamesBehindArming.set(m_tables.rankOfClass(layout.index));
+    auto countWhatDoesNotHold = makeScopeExit([&] {
+        if (!countsBehindArming)
+            return;
+        m_classesThatCountGuardsOfNamesBehindArming.clear(m_tables.rankOfClass(layout.index));
+        countGuardsOfNamesThatDoNotHold(layout);
+    });
     beginGuards(layout);
     if (classHolderReportsAsPrototype(*this, layout, side)) {
         holder->didBecomePrototype(vm);
@@ -839,6 +895,8 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
         return;
     }
 
+    if (std::optional<uint32_t> constructorKey = identifiersOf(m_state.instance).numberOf(vm.propertyNames->constructor.impl()); constructorKey && side == ClassSide::Prototype && !isMadeAsDeclared && !isDefinedByClass(layout) && !holdsClassObjectUnderConstructor(vm, m_state, layout, holder))
+        namesThatDiffer.add(constructorKey);
     addNamesThatLookupsComeToAbove(layout, side, namesThatDifferAbove, namesThatDiffer);
     for (uint32_t name : namesThatDiffer.numbers)
         endClassGuardsOfName(m_state, layout, side, name);
@@ -846,6 +904,8 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
         endClassGuardsOfName(m_state, layout, side, name, GuardsOfNameToEnd::StoresStillPass);
     if (namesThatDiffer.someHasNoNumber)
         endClassGuardsOfName(m_state, layout, side, std::nullopt);
+    if (namesThatDiffer.someSeesAccesses && m_classWhoseModuleEnds != &layout)
+        didLayWhatSeesAccesses(vm, layout, side);
     if (stateOfHolder == StateOfClassHolder::MayStillBeDefined)
         return;
 
@@ -972,6 +1032,54 @@ static ASCIILiteral nameOfHolderMutation(HolderMutation mutation)
     CRASH_WITH_INFO(classLayout.index, static_cast<uint32_t>(side), static_cast<uint32_t>(mutation));
 }
 
+static void throwChangeOfClassHolderTakenBack(VM& vm, State& state, HolderMutation mutation)
+{
+    auto change = [&]() -> ASCIILiteral {
+        switch (mutation) {
+        case HolderMutation::ReplaceMember:
+            return "replace this member of the class"_s;
+        case HolderMutation::DeleteMember:
+            return "delete this member of the class"_s;
+        case HolderMutation::AddName:
+            return "add this name to the class"_s;
+        case HolderMutation::ChangePrototype:
+            return "change what the class extends"_s;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!scope.exception())
+        throwTypeError(state.instance.globalObject, scope, changeThatCompiledCodeRulesOutMessage(change()));
+}
+
+static bool takeBackChangeOfMember(VM& vm, State& state, JSObject* holder, UniquedStringImpl* uid, HolderMutation mutation, const ClassTable::DeclaredMember& declared)
+{
+    if (!isAskedByCodeThatInspectorBrought(vm, state.instance))
+        return false;
+    JSGlobalObject* realm = state.instance.globalObject;
+    if (mutation == HolderMutation::AddName) {
+        VM::DeletePropertyModeScope removesWhatIsNotConfigurable(vm, VM::DeletePropertyMode::IgnoreConfigurable);
+        DeletePropertySlot slot;
+        if (!holder->methodTable()->deleteProperty(holder, realm, PropertyName(uid), slot))
+            return false;
+        throwChangeOfClassHolderTakenBack(vm, state, mutation);
+        return true;
+    }
+    for (const MethodData* row : { declared.method, declared.getter, declared.setter }) {
+        if (row && !FunctionID(row->function))
+            return false;
+    }
+    auto closureOf = [&](const MethodData* row) -> JSObject* {
+        return row ? asObject(state.objects->closures.closure(vm, FunctionID(row->function))) : nullptr;
+    };
+    if (declared.method)
+        holder->putDirect(vm, PropertyName(uid), closureOf(declared.method), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    else
+        holder->putDirectAccessor(realm, PropertyName(uid), GetterSetter::create(vm, realm, closureOf(declared.getter), closureOf(declared.setter)), PropertyAttribute::Accessor | PropertyAttribute::DontEnum);
+    throwChangeOfClassHolderTakenBack(vm, state, mutation);
+    return true;
+}
+
 static bool holdsFunctionsOfMemberInClassRecord(JSValue value, unsigned attributes, const ClassTable::DeclaredMember& member)
 {
     auto isFunctionOfRow = [](const JSCell* closure, const MethodData& row) {
@@ -1008,6 +1116,23 @@ static bool isHolderOfSideOfClass(const ClassTable& classes, JSObject* object, c
     return classOfLazyHolder && classOfLazyHolder->index == classLayout.index;
 }
 
+bool ClassTable::nobodyHearsOfValueUnder(const LayoutData& layout, ClassSide side, UniquedStringImpl* uid) const
+{
+    const CommonIdentifiers& names = *m_state.instance.vm->propertyNames;
+    if (uid->isSymbol() || uid == names.prototype.impl() || uid == names.name.impl() || uid == names.length.impl() || uid == names.displayName.impl() || parseIndex(PropertyName(uid)))
+        return false;
+    if (!hasNoGuardLeft(layout, side) && !m_sidesWhereNamesEnded.get(indexOfGuard(layout, side)))
+        return false;
+    std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
+    if (key && m_state.tables.someClassGuardNames(*key))
+        return false;
+    for (const LayoutData* current = &layout; current; current = assumedBaseOf(*current)) {
+        if (hasComputedMemberNames(*current) || (key && declaresMember(*current, side, *key)))
+            return false;
+    }
+    return true;
+}
+
 void ClassTable::holdMemberToProof(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid)
 {
     if (!layout.classData().isChangedInSightAlone(side) || vm.aotState().nativeTestChangesObjectsUnseen)
@@ -1031,11 +1156,14 @@ void ClassTable::holdMemberToProof(VM& vm, const LayoutData& layout, ClassSide s
         }
         return isDeclared;
     };
+    DeclaredMember declared;
     auto stopUnlessStaticFieldMayAnswer = [&](HolderMutation mutation) {
         for (const LayoutData* current = side == ClassSide::Static ? &layout : nullptr; current; current = assumedBaseOf(*current)) {
-            if (current->classData().hasStaticFieldUnderComputedKey || staticField(*current, uid))
+            if (staticField(*current, uid))
                 return;
         }
+        if (takeBackChangeOfMember(vm, m_state, holder, uid, mutation, declared))
+            return;
         crashOnFalseProofOfClassHolder(layout, side, mutation);
     };
     auto isLaidHereOutsideRecord = [&] {
@@ -1046,7 +1174,6 @@ void ClassTable::holdMemberToProof(VM& vm, const LayoutData& layout, ClassSide s
 
     unsigned attributes = 0;
     JSValue value = holder->getDirect(vm, PropertyName(uid), attributes);
-    DeclaredMember declared;
     bool mayBeStoredOver = false;
     bool isDeclaredHere = findRowsIn(layout, declared, mayBeStoredOver);
     if (!isDeclaredHere && (!value || isLaidHereOutsideRecord()))
@@ -1084,8 +1211,15 @@ void ClassTable::holdLinkToProof(VM& vm, const LayoutData& layout, ClassSide sid
     JSObject* parent = holder->getPrototypeDirect().getObject();
     const LayoutData* above = assumedBaseOf(layout);
     bool linkIsWrittenByClasses = isDefinedByClass(layout) && (above ? isDefinedByClass(*above) : layout.assumedBase() == LayoutData::noBase);
-    if (linkIsWrittenByClasses && (above ? !parent || !isHolderOfSideOfClass(*this, parent, *above, side) : parent != aboveEveryClass))
+    if (linkIsWrittenByClasses && (above ? !parent || !isHolderOfSideOfClass(*this, parent, *above, side) : parent != aboveEveryClass)) {
+        JSObject* written = above ? registeredHolderOf(vm, m_state, *above, side) : aboveEveryClass;
+        if (written && isAskedByCodeThatInspectorBrought(vm, m_state.instance)) {
+            holder->setPrototypeDirect(vm, written);
+            throwChangeOfClassHolderTakenBack(vm, m_state, HolderMutation::ChangePrototype);
+            return;
+        }
         crashOnFalseProofOfClassHolder(layout, side, HolderMutation::ChangePrototype);
+    }
 }
 
 void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide side, uint32_t index, JSObject* holder, UniquedStringImpl* uid, JSObject* function)
@@ -1133,6 +1267,94 @@ void ClassTable::didFreezeHolder(VM& vm, const LayoutData& layout, ClassSide sid
             endClassGuardsOfName(m_state, layout, side, key, GuardsOfNameToEnd::ReadsStillFind);
         return true;
     });
+}
+
+bool ClassTable::seesAccesses(unsigned attributes)
+{
+    return attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue;
+}
+
+bool ClassTable::holdsMemberOfRecordUnder(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid) const
+{
+    if (m_memberBeingDefined.classLayout && m_memberBeingDefined.classLayout->index == layout.index && m_memberBeingDefined.side == side && m_memberBeingDefined.uid == uid)
+        return true;
+    std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
+    if (!key || compiledObjectOrNull(holder))
+        return false;
+    DeclaredMember member;
+    for (const MethodData& method : methodsInClassRecord(layout, side)) {
+        if (!(method.flags & methodHasComputedName) && method.name == *key)
+            member.define(method);
+    }
+    unsigned attributes = 0;
+    JSValue value = holder->getDirect(vm, uid, attributes);
+    return (member.method || member.isAccessor()) && holdsMemberOfClassRecord(m_state, value, attributes, member);
+}
+
+static std::optional<uint32_t> numberOfWordOnWhatSeesAccesses(VM& vm, State& state)
+{
+    Identifier word = Identifier::fromString(vm, "what sees a read or a store above"_s);
+    return identifiersOf(state.instance).numberOf(word.impl());
+}
+
+static bool someFunctionOfRowIsNotMadeYet(State& state, const LayoutData& layout)
+{
+    const ClassTable& classes = state.objects->classes;
+    for (const LayoutData* current = &layout; current && !classes.isDefinedByClass(*current) && !ClassTable::isClassOfCreatedObjects(*current) && !classes.classPrototypeIfExists(*current); current = classes.assumedBaseOf(*current)) {
+        bool statementsSetItUp = !methodsInClassRecord(*current, ClassSide::Prototype).empty() || classes.assumedBaseOf(*current);
+        if (statementsSetItUp && classes.hasOneClassObject(*current) && !state.objects->closures.closureIfCreated(FunctionID(current->classData().classConstructor)))
+            return true;
+    }
+    return false;
+}
+
+void ClassTable::letGuardsBeAskedForAgain()
+{
+    for (const LayoutData* layout : std::exchange(m_classesThatWaitForFunctions, { })) {
+        if (BitOfClassGuard guardOfPrototypeSide = bitOfClassGuard(m_state, *layout, ClassSide::Prototype); guardOfPrototypeSide.byte)
+            *guardOfPrototypeSide.byte &= static_cast<uint8_t>(~maskOfClassGuardsBegun);
+    }
+}
+
+void ClassTable::beginGuardsAheadOfFirstObject(VM& vm, const LayoutData& layout)
+{
+    if (someFunctionOfRowIsNotMadeYet(m_state, layout)) {
+        SetForScope beginsGuardsOfFunctionsNotMadeYet(m_beginsGuardsOfFunctionsNotMadeYet, true);
+        beginGuards(layout);
+        if (!m_classesThatWaitForFunctions.contains(&layout))
+            m_classesThatWaitForFunctions.append(&layout);
+    } else
+        classPrototypeOfInstances(vm, layout);
+    if (BitOfClassGuard guardOfPrototypeSide = bitOfClassGuard(m_state, layout, ClassSide::Prototype); guardOfPrototypeSide.byte)
+        *guardOfPrototypeSide.byte |= maskOfClassGuardsBegun;
+}
+
+void ClassTable::beginGuardsAtEndOfModule(VM& vm, const LayoutData& layout)
+{
+    if (!m_classesAtOrAboveGuardOfWordOnWhatSeesAccesses) {
+        BitVector& classes = m_classesAtOrAboveGuardOfWordOnWhatSeesAccesses.emplace();
+        std::optional<uint32_t> word = numberOfWordOnWhatSeesAccesses(vm, m_state);
+        if (word && m_state.tables.someClassGuardNames(*word)) {
+            m_numberOfWordOnWhatSeesAccesses = word;
+            for (const ClassBelowWithGuardOfNameData& listed : std::ranges::equal_range(m_state.tables.classesBelowWithGuardsOfNames(), *word, { }, &ClassBelowWithGuardOfNameData::name)) {
+                for (const LayoutData* current = listed.side() == ClassSide::Prototype ? classWithIndex(listed.classLayout()) : nullptr; current; current = assumedBaseOf(*current))
+                    classes.set(m_tables.rankOfClass(current->index));
+            }
+        }
+    }
+    if (!m_numberOfWordOnWhatSeesAccesses)
+        return;
+    if (!m_classesAtOrAboveGuardOfWordOnWhatSeesAccesses->get(m_tables.rankOfClass(layout.index)) && guardsOfNameInClassRecord(m_state.tables, layout, ClassSide::Prototype, *m_numberOfWordOnWhatSeesAccesses).empty())
+        return;
+    SetForScope classWhoseModuleEnds(m_classWhoseModuleEnds, &layout);
+    classPrototypeOfInstances(vm, layout);
+}
+
+void ClassTable::didLayWhatSeesAccesses(VM& vm, const LayoutData& layout, ClassSide side)
+{
+    if (hasNoGuardLeft(layout, side))
+        return;
+    endClassGuardsOfName(m_state, layout, side, numberOfWordOnWhatSeesAccesses(vm, m_state));
 }
 
 void ClassTable::didChangePrototypeLink(const LayoutData& layout, ClassSide side)
@@ -1266,6 +1488,7 @@ void ClassTable::didChangeInstancePrototype(VM& vm, const LayoutData& instanceLa
     if (!m_classesWithInstanceBelowOtherPrototype.add(layout.index).isNewEntry)
         return;
     forgetWhatCreatedFieldsHide();
+    MethodTableUpdate update(*this);
     for (const NamedClassGuardData& guard : guardsOfNamesInClassRecord(m_tables, layout, ClassSide::Prototype)) {
         auto dependents = std::ranges::equal_range(m_tables.methodTableDependents(), guard.numberOfBit(), { }, &MethodTableDependentData::guardBit);
         if (!dependents.empty())

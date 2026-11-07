@@ -34,7 +34,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 static constexpr uint64_t imageMagic = 0x3130544f414e5542ULL;
-static constexpr uint32_t imageFormatVersion = 3;
+static constexpr uint32_t imageFormatVersion = 4;
 static constexpr size_t imagePageSize = std::max<size_t>(CeilingOnPageSize, 16 * KB);
 static constexpr size_t imageFunctionAlignment = isX86() ? 2 : sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
@@ -124,6 +124,7 @@ enum class ImageFlag : uint32_t {
     IsBuiltWithLibrary = 1 << 6,
     ShowsEntriesOfRequireCache = 1 << 7,
     RunsEntryPointsAgain = 1 << 8,
+    LetsGlobalObjectGo = 1 << 9,
     StoresPathOfMainModule = 1 << 10,
     RefusesOriginalsBesideMocks = 1 << 12,
 };

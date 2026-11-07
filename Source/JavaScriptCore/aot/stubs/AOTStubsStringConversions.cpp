@@ -53,6 +53,39 @@ void generateConcatenateKeyOfPair(StubAssembler& jit)
     const GPRReg first = jit.operand(0);
     const GPRReg second = jit.operand(1);
     const GPRReg set = jit.result();
+    JumpList isTextOfInteger;
+    if (!jit.options().useWideReferences) {
+        const GPRReg place = jit.allocateScratch(StubRegister::T9);
+        JumpList isNoInteger;
+        isNoInteger.append(jit.branchPtr(CCallHelpers::NotEqual, Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), second));
+        Jump isInteger = jit.branchIfInt32(first);
+        isNoInteger.append(jit.branchIfNotCell(first));
+        isNoInteger.append(jit.branchIfNotType(first, StringType));
+        returnResult(jit, first);
+        isInteger.link(&jit);
+        Jump isSmall = jit.branch32(CCallHelpers::Below, first, TrustedImm32(NumericStrings::cacheSize));
+        isNoInteger.append(jit.branchTest32(CCallHelpers::Signed, first));
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.integerKeys)), set);
+        isTextOfInteger.append(jit.branchTestPtr(CCallHelpers::Zero, set));
+        jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.integerKeyMask)), place);
+        jit.and64(first, place);
+        jit.load64(BaseIndex(set, place, CCallHelpers::TimesEight), set);
+        jit.move(set, place);
+        jit.urshift64(TrustedImm32(32), place);
+        isTextOfInteger.append(jit.branch32(CCallHelpers::NotEqual, place, first));
+        jit.zeroExtend32ToWord(set, set);
+        isTextOfInteger.append(jit.branchTest32(CCallHelpers::Zero, set));
+        decodeCell32(jit, set, set);
+        jit.returnToCaller();
+        isSmall.link(&jit);
+        jit.zeroExtend32ToWord(first, place);
+        jit.lshift64(TrustedImm32(1), place);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.smallIntStrings)), set);
+        jit.loadPtr(BaseIndex(set, place, CCallHelpers::TimesEight, NumericStrings::StringWithJSString::offsetOfJSString()), set);
+        isTextOfInteger.append(jit.branchTestPtr(CCallHelpers::Zero, set));
+        jit.returnToCaller();
+        isNoInteger.link(&jit);
+    }
 #if CPU(X86_64)
     locateKeysOfPair(jit, first, second, set, InvalidGPRReg);
 #else
@@ -67,6 +100,15 @@ void generateConcatenateKeyOfPair(StubAssembler& jit)
         hasOtherFirst.link(&jit);
         hasOtherSecond.link(&jit);
     }
+    if (!jit.options().useWideReferences) {
+        JumpList isNoTextBehindNothing;
+        isNoTextBehindNothing.append(jit.branchPtr(CCallHelpers::NotEqual, Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), first));
+        isNoTextBehindNothing.append(jit.branchIfNotCell(second));
+        isNoTextBehindNothing.append(jit.branchIfNotType(second, StringType));
+        returnResult(jit, second);
+        isNoTextBehindNothing.link(&jit);
+    }
+    isTextOfInteger.link(&jit);
     auto use = static_cast<ConcatenatedKeyForm>(jit.key().form()) == ConcatenatedKeyForm::Name ? UseOfJoinedText::LikelyName : UseOfJoinedText::LikelyKey;
     jit.callOperationAndReturn(Entry::operationAOTConcatenatePair, {
         .returns = OperationCall::Returns::Value,

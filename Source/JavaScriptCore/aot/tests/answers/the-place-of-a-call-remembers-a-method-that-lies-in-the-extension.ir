@@ -1,0 +1,182 @@
+# const later = (fill, held) => () => (held || fill((held = { exports: {} }).exports), held.exports);
+# const whole = later(exports => { exports.add = function (a, b) { return a + b | 0; }; exports.low = a => a & 15; exports.rate = 3; exports.high = a => a >> 4; });
+# const withoutLow = later(exports => { exports.add = (a, b) => a - b | 0; exports.high = a => a >> 3; });
+# const bare = later(exports => { });
+# function run(x, turns) { let sum = 0; for (let i = 0; i < turns; i++) sum = (sum + x.low(i) + x.high(i) + x.add(i, 1)) | 0; return sum; }
+# sink(run, whole, withoutLow, bare);
+# The object is born empty and a helper stores its methods: some lie in the cell, the rest in its extension. The place of a call by name remembered a method in the cell alone: one in the extension
+# missed at every call and was found by the layout's table (17 + 52 instructions against 15). It is remembered now (by structure; the operand is the shift that brings the bit of the field's granule to the sign):
+# the extension's bitmap is looked at at every call, so an object of the same structure that lacks the method, has lost it or has no extension at all is a miss, never another field.
+# RUN(ANSWER): run-in-shell mechanisms=all globalThis.sink = (run, whole, withoutLow, bare) => { const attempt = (x, turns) => { try { return run(x, turns); } catch (error) { return error.constructor.name; } }; const first = whole(); print(attempt(first, 300), attempt(first, 300)); print(attempt(withoutLow(), 300), attempt(bare(), 300), attempt(first, 300)); first.low = a => 1; print(attempt(first, 300)); first.low = 5; print(attempt(first, 300)); delete first.low; print(attempt(first, 300)); first.low = a => 2; print(attempt(first, 300)); delete first.high; print(attempt(first, 300)); first.high = a => 3; print(attempt(first, 300)); Object.defineProperty(first, "low", { get() { return a => 4; }, configurable: true }); print(attempt(first, 300)); const other = { low: a => 5, high: a => 6, add: (a, b) => 7 }; print(attempt(other, 300), attempt(first, 300), attempt(Object.create(first), 300), attempt(Object.freeze(first), 300)); };
+# ANSWER: 50040 50040
+# ANSWER: TypeError TypeError 50040
+# ANSWER: 48114
+# ANSWER: TypeError
+# ANSWER: TypeError
+# ANSWER: 48414
+# ANSWER: TypeError
+# ANSWER: 46650
+# ANSWER: 47250
+# ANSWER: 5400 47250 47250 47250
+# ANSWER: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 position=69 place=69
+layout L1 module=m0 position=58 fields=[{key="exports" declared={type=anything} flags=[IsRequired]}] place=58 ownFieldCount=1
+layout L2 kind=Environment module=m0 fields=[{key=@"0" declared={type=undefined|null|L1 flags=[IsExpected]} flags=[IsRequired] variableName="held"}] place=25 ownFieldCount=1
+data d0 root=Object{layout=L1 members=[{key="exports" value=Object{layout=L0}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @14
+    v3 = NewClosure function=f3 @120
+    v4 = Call v2, -, v3 calleeName="later" @114
+    v5 = NewClosure function=f4 @288
+    v6 = Call v2, -, v5 calleeName="later" @282
+    v7 = NewClosure function=f5 @387
+    v8 = Call v2, -, v7 calleeName="later" @381
+    v9 = Builtin builtin=GlobalThis @542
+    v10 = PropGet v9 key="sink" [isFreeName] @542
+    v11 = Call v10, -, v1, v4, v6, v8 calleeName="sink" @542
+    v12 = Undefined @542
+    Return v12 @542
+}
+function f1 name="run" module=m0 position=404 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer @439
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @439
+    v4 = Integer @455
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @455
+    Jump -> next b1(v3, v5) @451
+  b1(v6, v7):
+    LoopHint @451
+    v9 = Less v7, v1 @462
+    Branch v9 -> taken b2(), notTaken b3() @462
+  b2():
+    v10 = PropGet v0 key="low" @487
+    v11 = Call v10, v0, v7 calleeKey="low" calleeName="x.low" @489
+    v12 = Add v6, v11 @487
+    v13 = PropGet v0 key="high" @498
+    v14 = Call v13, v0, v7 calleeKey="high" calleeName="x.high" @500
+    v15 = Add v12, v14 @498
+    v16 = PropGet v0 key="add" @510
+    v17 = Integer integer=1 @519
+    v18 = Call v16, v0, v7, v17 calleeKey="add" calleeName="x.add" @512
+    v19 = Add v15, v18 @510
+    v20 = Integer @525
+    v21 = BitOr v19, v20 @525
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]} @474
+    v23 = Increment v7 @469
+    v24 = Convert v23 declared={type=number flags=[IsExpected]} @469
+    Jump -> next b1(v22, v24) @469
+  b3():
+    Return v6 @535
+}
+function f2 name="later" module=m0 position=14 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: undefined|null|L1):
+    v2 = NewObject -, v1 layout=L2 fields=[0] @21
+    v3 = NewClosure v2, v0 function=f6 @30
+    Return v3 @30
+}
+function f3 module=m0 position=120 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = NewClosure function=f7 @147
+    PropSet v0, v1 key="add" @133
+    v3 = NewClosure function=f8 @200
+    PropSet v0, v3 key="low" @186
+    v5 = Integer integer=3 @228
+    PropSet v0, v5 key="rate" @213
+    v7 = NewClosure function=f9 @246
+    PropSet v0, v7 key="high" @231
+    v9 = Undefined @231
+    Return v9 @231
+}
+function f4 module=m0 position=288 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = NewClosure function=f10 @315
+    PropSet v0, v1 key="add" @301
+    v3 = NewClosure function=f11 @351
+    PropSet v0, v3 key="high" @336
+    v5 = Undefined @336
+    Return v5 @336
+}
+function f5 module=m0 position=387 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Undefined @387
+    Return v1 @387
+}
+function f6 module=m0 position=30 kind=Arrow captures=[{type=env L2 flags=[IsFromCompiler]}, {type=undefined|null|function flags=[IsExpected] variableName="fill"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L2, v1: undefined|null|function):
+    v2 = GetEnvironmentField v0 layout=L2 @37
+    v3 = ToBoolean v2 @37
+    Branch v3 -> taken b2(), notTaken b1(| 0) @37
+  b1(v4):
+    v5 = Data data=d0 @58
+    v6 = Convert v5 declared={type=undefined|null|L1 flags=[IsExpected]} @51
+    PutEnvironmentField v0, v6 layout=L2 @51
+    v8 = PropGet v5 key="exports" @58
+    v9 = Call v1, -, v8 calleeName="fill" @45
+    Jump -> next b2() @45
+  b2():
+    v10 = GetEnvironmentField v0 layout=L2 @85
+    v11 = PropGet v10 key="exports" @85
+    Return v11 @85
+}
+function f7 module=m0 position=147 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1 @176
+    v3 = Integer @180
+    v4 = BitOr v2, v3 @180
+    Return v4 @180
+}
+function f8 module=m0 position=200 kind=Arrow length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = Integer integer=15 @209
+    v2 = BitAnd v0, v1 @209
+    Return v2 @209
+}
+function f9 module=m0 position=246 kind=Arrow length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = Integer integer=4 @256
+    v2 = RShift v0, v1 @256
+    Return v2 @256
+}
+function f10 module=m0 position=315 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v0, v1 @329
+    v3 = Integer @333
+    v4 = BitOr v2, v3 @333
+    Return v4 @333
+}
+function f11 module=m0 position=351 kind=Arrow length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = Integer integer=3 @361
+    v2 = RShift v0, v1 @361
+    Return v2 @361
+}
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f17 visibility=Private

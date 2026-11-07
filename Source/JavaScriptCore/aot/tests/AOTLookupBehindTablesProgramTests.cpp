@@ -123,12 +123,14 @@ function f16 name="shared" kind=Method flags=[HasThis] thisType={type=anything} 
 }
 )IR"_s;
 
-#define ASK_QUESTIONS R"JS(
+#define ASK_QUESTIONS COUNTED_CALLS(R"("GetById", "GetByIdAndCache", "GetGeneric", "GetByVal", "GetByValGeneric", "GetByValAndCache", "GetWithProxyTrap", "HasWithProxyTrap", "InByIdAndCache", "InByValGeneric", "InByValAndCache", "HasOwnByIdAndCache", "HasOwnByValAndCache", "PutByValGeneric", "PutByValAndCache", "PutByValAndCacheSloppy")") R"JS(
 // ask(n) says whether the nth answer is right.
 const verdict = (ask, count = 12) => {
+    const before = countedCalls();
     let wrong = 0;
     for (let n = 0; n < count; n++) wrong += ask(n) ? 0 : 1;
-    return wrong ? "WRONG " + wrong + " times" : "right";
+    const made = countedCalls() - before;
+    return wrong ? "WRONG " + wrong + " times" : !countsCalls ? "right" : !made ? "objects" : made >= count ? "operations" : "a few operations";
 };
 const printAnswers = (kind, answers) => {
     let line = "";
@@ -235,10 +237,12 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
 static constexpr OptionWords shellOptions = { "--useDollarVM=1"_s };
 
 #define CHECK_OUTPUT(statements, output) checkOutputOfProgramInShell(programText, output ""_s, { }, ASK_QUESTIONS statements ""_s, shellOptions)
+#define CHECK_SERVICES(statements, output, letters) checkServicesInShell(__FILE__, __LINE__, programText, output ""_s, ASK_QUESTIONS statements ""_s, wordsOfLookups, letters, { }, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s })
 
 static void testOrdinaryObjectsAnswer()
 {
     CHECK_OUTPUT(STATEMENTS_ASKING_ORDINARY_OBJECTS, OUTPUT_OF_ORDINARY_OBJECTS);
+    CHECK_SERVICES(STATEMENTS_ASKING_ORDINARY_OBJECTS, OUTPUT_OF_ORDINARY_OBJECTS, "ooooooooooooooooooo(nonnfnn)"_s);
 }
 
 #define STATEMENTS_ASKING_BY_TEXTS R"JS(
@@ -285,6 +289,12 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 static void testTextsThatAreNoAtomsAreNames()
 {
     CHECK_OUTPUT(STATEMENTS_ASKING_BY_TEXTS, OUTPUT_OF_TEXTS);
+    CHECK_SERVICES(STATEMENTS_ASKING_BY_TEXTS, OUTPUT_OF_TEXTS, "o(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)nnnoooooooooooooooonnn"_s);
+}
+
+static void testTextsThatAreNoAtomsAreServedAsTheyWere()
+{
+    CHECK_SERVICES(STATEMENTS_ASKING_BY_TEXTS, OUTPUT_OF_TEXTS, "oooooooooooooooonnnoooooooooooooooonnn"_s);
 }
 
 #define STATEMENTS_ASKING_FULL_TABLES R"JS(
@@ -314,6 +324,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
 static void testFullTablesAnswer()
 {
     CHECK_OUTPUT(STATEMENTS_ASKING_FULL_TABLES, OUTPUT_OF_FULL_TABLES);
+    CHECK_SERVICES(STATEMENTS_ASKING_FULL_TABLES, OUTPUT_OF_FULL_TABLES, "oo"_s);
 }
 
 #define STATEMENTS_ASKING_BY_SYMBOLS R"JS(
@@ -346,6 +357,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 static void testSymbolsAreNames()
 {
     CHECK_OUTPUT(STATEMENTS_ASKING_BY_SYMBOLS, OUTPUT_OF_SYMBOLS);
+    CHECK_SERVICES(STATEMENTS_ASKING_BY_SYMBOLS, OUTPUT_OF_SYMBOLS, "oooo"_s);
 }
 
 #define STATEMENTS_STORING_BY_KEY R"JS(
@@ -407,6 +419,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 static void testStoresReplaceOwnValues()
 {
     CHECK_OUTPUT(STATEMENTS_STORING_BY_KEY, OUTPUT_OF_STORES);
+    CHECK_SERVICES(STATEMENTS_STORING_BY_KEY, OUTPUT_OF_STORES, "ooooonnnnnn"_s);
 }
 
 #define STATEMENTS_ADDING_BY_KEY R"JS(
@@ -547,6 +560,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 static void testStoresAddToDictionaries()
 {
     CHECK_OUTPUT(STATEMENTS_ADDING_BY_KEY, OUTPUT_OF_ADDITIONS);
+    CHECK_SERVICES(STATEMENTS_ADDING_BY_KEY, OUTPUT_OF_ADDITIONS, "ooooooooonnnnnnnnnnnnnnnnnnnnnn"_s);
 }
 
 #define STATEMENTS_GROWING_DICTIONARIES R"JS(
@@ -555,7 +569,9 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
     // A text becomes a name where it is first stored under. The object that it is stored in here dies.
     const asName = text => { ({ })[text] = 0; return text; };
     const grow = (object, howMany, keyAt = k => asName(nameAt(k))) => {
+        const before = countedCalls();
         for (let k = 0; k < howMany; k++) storeByKey(object, keyAt(k), { k });
+        return countedCalls() - before;
     };
     const isWhole = (object, howMany, first = 0) => {
         let k = first;
@@ -565,14 +581,14 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
         }
         return k === howMany && !hasByKey(object, nameAt(howMany));
     };
-    const check = (what, isRight) => print(what + ": " + (isRight ? "right" : "WRONG"));
+    const check = (what, isRight, made = 0, most = 0) => print(what + ": " + (!isRight ? "WRONG" : !countsCalls ? "right" : made <= most ? "a few operations" : made + " operations"));
     for (const howMany of [5, 40, 128, 129, 700]) {
         for (const prototype of [null, Object.prototype]) {
             const object = Object.create(prototype);
             $vm.toCacheableDictionary(object);
-            grow(object, howMany);
+            const made = grow(object, howMany);
             fullGC();
-            check(howMany + " names " + (prototype ? "below Object.prototype" : "without a prototype"), isWhole(object, howMany));
+            check(howMany + " names " + (prototype ? "below Object.prototype" : "without a prototype"), isWhole(object, howMany), made, 12 + howMany / 8);
         }
     }
     {
@@ -658,6 +674,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 static void testDictionariesGrownByStoresAreWhole()
 {
     CHECK_OUTPUT(STATEMENTS_GROWING_DICTIONARIES, OUTPUT_OF_GROWTH);
+    CHECK_SERVICES(STATEMENTS_GROWING_DICTIONARIES, OUTPUT_OF_GROWTH, "ffffffffffffffffffffffff"_s);
 }
 
 #define STATEMENTS_GIVING_NAMES_AGAIN R"JS(
@@ -715,11 +732,12 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
     const twice = ask => verdict(ask, 2);
     const values = [7, -1.5, "text", null, true, undefined, { }];
     let wrong = 0;
+    const callsBefore = countedCalls();
     for (let k = 0; k < values.length; k++) {
         const record = makeRecord(values[k], k);
         wrong += readByKey(record, "kept") === values[k] && readByKey(record, "count") === k ? 0 : 1;
     }
-    print("fields of a record by key: " + (wrong ? "WRONG " + wrong + " times" : "right"));
+    print("fields of a record by key: " + (wrong ? "WRONG " + wrong + " times" : !countsCalls ? "right" : countedCalls() == callsBefore ? "objects" : "operations"));
     const method = WithMethod.prototype.shared;
     const kinds = {
         "a record without the name": n => ({ object: makeRecord(n, n), isRight: value => value === undefined, has: false, hasOwn: false }),
@@ -732,8 +750,11 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
         "an ordinary object below an instance with a getter": n => { const object = fresh(construct(WithGetter)); return { object, isRight: value => value === object, has: true, hasOwn: false }; },
         "an ordinary object below an instance without the name": n => ({ object: fresh(construct(WithNeither)), isRight: value => value === undefined, has: false, hasOwn: false }),
     };
+    const countsHere = countsCalls;
+    const filedAtOnce = { "a method of the class": true, "a getter of the class": true, "a class without the name": true };
     for (const kind in kinds) {
         const make = kinds[kind];
+        countsCalls = countsHere && !filedAtOnce[kind];
         printAnswers(kind, {
             "read": twice(n => { const made = make(n); return made.isRight(read(made.object)); }),
             "in": twice(n => { const made = make(n); return has(made.object) === made.has; }),
@@ -743,6 +764,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
             "hasOwn by key": twice(n => { const made = make(n); return hasOwnByKey(made.object, "shared") === made.hasOwn; }),
         });
     }
+    countsCalls = countsHere;
     printAnswers("a record given the name later", {
         "store by key": twice(n => { const object = makeRecord(n, n); object.shared = n; storeByKey(object, "shared", n + 1); return object.shared === n + 1; }),
     });
@@ -766,6 +788,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 static void testCompiledObjectsAnswer()
 {
     CHECK_OUTPUT(STATEMENTS_ASKING_COMPILED_OBJECTS, OUTPUT_OF_COMPILED_OBJECTS);
+    CHECK_SERVICES(STATEMENTS_ASKING_COMPILED_OBJECTS, OUTPUT_OF_COMPILED_OBJECTS, "oo...oooooo"_s);
 }
 
 #define STATEMENTS_ASKING_A_PROXY_BEHIND_COLLECTIONS R"JS(
@@ -784,6 +807,7 @@ globalThis.publish = (read, has) => {
 static void testWhatIsFiledForAProxyOutlivesCollections()
 {
     CHECK_OUTPUT(STATEMENTS_ASKING_A_PROXY_BEHIND_COLLECTIONS, OUTPUT_OF_A_PROXY_BEHIND_COLLECTIONS);
+    CHECK_SERVICES(STATEMENTS_ASKING_A_PROXY_BEHIND_COLLECTIONS, OUTPUT_OF_A_PROXY_BEHIND_COLLECTIONS, "o"_s);
 }
 
 static constexpr ASCIILiteral textOfProgramThatNamesNoProxy = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
@@ -893,6 +917,7 @@ globalThis.publish = (read, has, store, readByKey, hasByKey, storeByKey) => {
 static void testAProxyHandedToAProgramThatMakesNoneIsAnswered()
 {
     checkOutputOfProgramInShell(textOfProgramThatNamesNoProxy, OUTPUT_OF_PROXIES_HANDED_OVER ""_s, { }, ASK_QUESTIONS STATEMENTS_HANDING_PROXIES_OVER ""_s, shellOptions);
+    checkServicesInShell(__FILE__, __LINE__, textOfProgramThatNamesNoProxy, OUTPUT_OF_PROXIES_HANDED_OVER ""_s, ASK_QUESTIONS STATEMENTS_HANDING_PROXIES_OVER ""_s, wordsOfLookups, "fnnfn"_s, { }, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s });
 }
 
 std::span<const NativeTest> lookupBehindTablesProgramTests()
@@ -900,6 +925,7 @@ std::span<const NativeTest> lookupBehindTablesProgramTests()
     static constexpr NativeTest tests[] = {
         { "lookup-behind-tables/programs/ordinary-objects-answer"_s, testOrdinaryObjectsAnswer },
         { "lookup-behind-tables/programs/texts-that-are-no-atoms-are-names"_s, testTextsThatAreNoAtomsAreNames },
+        { "lookup-behind-tables/programs/texts-that-are-no-atoms-are-served-as-they-were"_s, testTextsThatAreNoAtomsAreServedAsTheyWere, "reads by key: a text of two to sixteen characters made of character codes enters the run time a few times in twelve reads; the compiler before this one asked the objects alone"_s },
         { "lookup-behind-tables/programs/full-tables-answer"_s, testFullTablesAnswer },
         { "lookup-behind-tables/programs/symbols-are-names"_s, testSymbolsAreNames },
         { "lookup-behind-tables/programs/stores-replace-own-values"_s, testStoresReplaceOwnValues },

@@ -65,6 +65,8 @@ public:
     void didMakeHeldOrderAfterFindingOne(const LayoutData&);
 
     JSCellButterfly* keysInOrder(VM&, const LayoutData&, uint32_t orderWord, KeyListKind = KeyListKind::Strings);
+    JSCellButterfly* tryCreateKeyList(VM&, const LayoutData&, std::span<const uint16_t> entries, KeyListKind);
+    JSCellButterfly* tryCreateAndRememberKeyList(VM&, const LayoutData&, uint32_t orderWord, KeyListKind listed);
     std::optional<std::span<const FieldAsProperty>> propertiesInOrder(VM&, const LayoutData&, uint32_t orderWord, Object::SymbolKeys = Object::SymbolKeys::Skip);
     JSPropertyNameEnumerator* enumerator(const LayoutData&, uint32_t orderWord, StructureChain* prototypeChain) const;
     void setEnumerator(VM&, const LayoutData&, uint32_t orderWord, JSPropertyNameEnumerator*, StructureChain* prototypeChain);

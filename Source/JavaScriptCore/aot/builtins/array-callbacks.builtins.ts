@@ -4,7 +4,7 @@ const self = b.operand("this");
 const element = b.slot("this", "element");
 const elementOrUndefined = b.union(element, b.undefined);
 const callbackResult = b.callbackResult("callback");
-const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh;
+const newArrayOf = (elements: b.TableType) => b.instance("Array").exactly.holding({ element: elements }).fresh;
 const operandCodeEffects = { capability: "js", throws: true, runsOnlyOperandCode: true } as const;
 const methodsWrittenTwice = new Set(["every", "filter", "find", "findIndex", "forEach", "map", "reduce", "some"]);
 const textOnList = (name: string) => (methodsWrittenTwice.has(name) ? `${name}OfList` : name);
@@ -73,10 +73,11 @@ const foundArrayIndex: Outcome = { returns: b.int(-1, b.checked(2 ** 32 - 1, "UI
 const foundIndex: Outcome = { returns: b.int(-1, Number.MAX_SAFE_INTEGER), result: "Tested" };
 
 const arrayFromSpecies = b.union(b.instance("Array").dense, b.object).freshUnlessSpecies;
+const arrayFromSpeciesWithHoles = b.union(b.instance("Array"), b.object).freshUnlessSpecies;
 const elementOfResult = b.resultSlot("element");
 
 const speciesResult = (result: b.CallbackResultUse, ...receiverUses: readonly b.UseSpec[]): Outcome => ({
-  returns: result === "Escapes" ? b.object : arrayFromSpecies,
+  returns: result === "Escapes" ? b.object : result === "Stored" ? arrayFromSpeciesWithHoles : arrayFromSpecies,
   result,
   resultTo: result === "Stored" ? elementOfResult : undefined,
   receiverUses: [b.runs("Species"), ...receiverUses],
@@ -349,7 +350,7 @@ export default b.declarations(
   traversalMethod(
     "map",
     arrayWithDefaultSpecies,
-    { returns: newArrayOf(callbackResult).dense, result: "Stored", resultTo: b.resultSlot("element"), receiverUses: b.inspected },
+    { returns: newArrayOf(callbackResult), result: "Stored", resultTo: b.resultSlot("element"), receiverUses: b.inspected },
     speciesResult("Stored"),
   ),
   traversalMethod(

@@ -22,6 +22,7 @@
 #include "SlotVisitorInlines.h"
 #include "StructureChain.h"
 #include "Symbol.h"
+#include "VMInlines.h"
 #include <algorithm>
 #include <cstddef>
 #include <wtf/FastMalloc.h>
@@ -38,7 +39,6 @@ namespace JSC { namespace AOT {
 static_assert(defaultLimitValue(LimitID::FieldsInKeyOrder, hostArchitecture()) == maxFieldsInOrder);
 static_assert(maxKeyOrdersPerLayout <= UINT16_MAX);
 
-// This limit is deliberately below maxKeyOrdersPerLayout: it bounds the memory that the orders added to one layout can take. The orders of the image take none of it, and Plan leaves that many numbers free.
 static constexpr uint32_t maxOrdersPerLayout = defaultLimitValue(LimitID::KeyOrdersPerLayout, hostArchitecture());
 static_assert(maxOrdersPerLayout <= maxKeyOrdersPerLayout);
 
@@ -494,30 +494,18 @@ std::optional<std::span<const FieldAsProperty>> KeyOrderTable::propertiesInOrder
     return created->fields();
 }
 
-JSCellButterfly* KeyOrderTable::keysInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord, KeyListKind kind)
+JSCellButterfly* KeyOrderTable::tryCreateKeyList(VM& vm, const LayoutData& layout, std::span<const uint16_t> entries, KeyListKind kind)
 {
-    orderWord &= orderAndCountMask;
-    auto publish = [&](JSCellButterfly* list) {
-        uint32_t shapeWord = keyListWordOf(shapeWordOf(layout.shape), kind);
-        if (hasKeyListsInTable(kind, m_tables.numberOfShapes))
-            m_state.instance.objects.keyLists[indexOfKeyList(shapeWord, orderWord)] = { orderWord, shapeWord, list };
-        return list;
-    };
-    KeyListKind listedKind = kind == KeyListKind::StringsAndSymbols && !layout.hasFieldsWithSymbolKeys ? KeyListKind::Strings : kind;
-    uint32_t key = orderWord + static_cast<uint32_t>(listedKind) * listsSymbolKeys;
-    if (auto* known = m_storage->keyLists.find(layout.shape, key))
-        return publish(known->value);
     RuntimeLayoutTable& layouts = m_state.objects->layouts;
-    std::span<const uint16_t> entries = entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord));
     Vector<uint16_t, 16> listed;
     for (uint16_t index : entries) {
         if (index >= layout.numberOfFields || layout.fields()[index].attributes())
             return nullptr;
-        if (listedKind != KeyListKind::Symbols && layouts.hasStringKey(layout.fields()[index]))
+        if (kind != KeyListKind::Symbols && layouts.hasStringKey(layout.fields()[index]))
             listed.append(index);
     }
     size_t numberOfStrings = listed.size();
-    if (listedKind != KeyListKind::Strings) {
+    if (kind != KeyListKind::Strings) {
         for (uint16_t index : entries) {
             if (layouts.hasSymbolKey(layout.fields()[index]))
                 listed.append(index);
@@ -530,12 +518,35 @@ JSCellButterfly* KeyOrderTable::keysInOrder(VM& vm, const LayoutData& layout, ui
         UniquedStringImpl* name = layouts.nameOf(vm, layout.fields()[listed[i]]);
         list->setIndex(vm, i, i < numberOfStrings ? JSValue(jsOwnedString(vm, String(name))) : JSValue(Symbol::create(vm, static_cast<SymbolImpl&>(*name))));
     }
-    {
-        Locker locker { m_state.caches->lock() };
-        m_storage->keyLists.add({ layout.shape, key, list });
-        m_writes.recordAll();
-    }
-    return publish(list);
+    return list;
+}
+
+NEVER_INLINE JSCellButterfly* KeyOrderTable::tryCreateAndRememberKeyList(VM& vm, const LayoutData& layout, uint32_t orderWord, KeyListKind listed)
+{
+    JSCellButterfly* list = tryCreateKeyList(vm, layout, entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord)), listed);
+    if (!list)
+        return nullptr;
+    Locker locker { m_state.caches->lock() };
+    m_storage->keyLists.add({ layout.shape, orderWord + static_cast<uint32_t>(listed) * listsSymbolKeys, list });
+    m_writes.recordAll();
+    return list;
+}
+
+JSCellButterfly* KeyOrderTable::keysInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord, KeyListKind kind)
+{
+    orderWord &= orderAndCountMask;
+    auto publish = [&](JSCellButterfly* list) {
+        uint32_t shapeWord = keyListWordOf(shapeWordOf(layout.shape), kind);
+        if (hasKeyListsInTable(kind, m_tables.numberOfShapes))
+            m_state.instance.objects.keyLists[indexOfKeyList(shapeWord, orderWord)] = { orderWord, shapeWord, list };
+        return list;
+    };
+    KeyListKind listedKind = kind == KeyListKind::StringsAndSymbols && !layout.hasFieldsWithSymbolKeys ? KeyListKind::Strings : kind;
+    uint32_t key = orderWord + static_cast<uint32_t>(listedKind) * listsSymbolKeys;
+    if (auto* known = m_storage->keyLists.find(layout.shape, key)) [[likely]]
+        return publish(known->value);
+    JSCellButterfly* list = tryCreateAndRememberKeyList(vm, layout, orderWord, listedKind);
+    return list ? publish(list) : nullptr;
 }
 
 bool KeyOrderTable::positionsExtraKeys(const LayoutData& layout, uint32_t orderWord, uint32_t numberOfExtraKeys)
@@ -736,7 +747,8 @@ static bool reportsEveryChangeOfKeys(JSObject* prototype)
 
 void KeyOrderTable::publishEnumerator(const Object& object, JSPropertyNameEnumerator* enumerator)
 {
-    if (enumerator->cachedStructureID() != object.structureID())
+    bool listsNothing = enumerator == m_state.instance.vm->emptyPropertyNameEnumerator();
+    if (!listsNothing && enumerator->cachedStructureID() != object.structureID())
         return;
     ChainObjects chain;
     for (JSObject* prototype = object.getPrototypeDirect().getObject(); prototype; prototype = prototype->getPrototypeDirect().getObject()) {

@@ -87,6 +87,7 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
     BitVector layoutsOfDictionaries = findDictionariesOfPreparedProgram(program, facts);
     Typed::noteLayoutsOfDictionaries(program, layoutsOfDictionaries);
 
+    program.types.keepAddressesOfTypes();
     prepared.plan = Typed::planProgram(program, facts, build);
     program.types.freeze();
     times.didFinish("plan"_s);

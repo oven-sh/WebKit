@@ -8,16 +8,20 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTCode.h"
 #include "AOTCodeDescription.h"
 #include "AOTCompiledCode.h"
 #include "AOTFormsSaid.h"
 #include "AOTIRPrinter.h"
+#include "AOTMachineAllocation.h"
+#include "AOTMachineOrder.h"
 #include "AOTMachinePrinter.h"
 #include "AOTPlan.h"
 #include "AOTStubDescriptor.h"
 #include "AOTSweep.h"
 #include "AOTTypeText.h"
+#include <algorithm>
 #include <wtf/ASCIICType.h>
 #include <wtf/CommaPrinter.h>
 #include <wtf/EnumTraits.h>
@@ -25,6 +29,7 @@
 #include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StringPrintStream.h>
+#include <wtf/text/StringToIntegerConversion.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -136,7 +141,144 @@ static void runMachineAllocateCommand(TestCommandContext& context)
 
 static void runMachineFrameCommand(TestCommandContext& context)
 {
-    printProceduresOfMachineUnits(context, MachineState::Prepared, Machine::printFrame);
+    StagedBuild stage = context.stage();
+    std::optional<Vector<CodeUnit>> units = unitsOfMachineCommand(context, stage);
+    if (!units)
+        return;
+    for (CodeUnit unit : *units) {
+        printHeadingOfMachineUnit(context.out, unit);
+        context.out.println();
+        const Machine::Procedure* procedure = stage.machineOperations(unit, MachineState::Prepared);
+        if (!procedure) {
+            context.out.println(lineOfFailedMachineCommand);
+            if (const Machine::Procedure* refused = stage.refusedMachineOperations())
+                context.out.print(*refused);
+            return;
+        }
+        Machine::printFrame(context.out, *procedure);
+        unsigned sizeOfFramePrinted = procedure->frame().bytesBelowFrameRecord();
+        const CompiledCode* code = stage.plan() ? stage.compiledCode(unit) : nullptr;
+        if (code && code->frame.hasFrame() && code->frame.frameSizeInBytes != sizeOfFramePrinted)
+            context.out.println("the build makes this unit another way: size = "_s, code->frame.frameSizeInBytes);
+    }
+}
+
+namespace {
+
+struct StepsCounted {
+    void count(const Machine::Procedure& procedure, const Machine::Block* block)
+    {
+        const Machine::Allocation& allocation = procedure.allocation();
+        std::span<const Machine::Step> steps = allocation.steps();
+        const bool isLikely = procedure.order().of(block).layoutPart == Machine::LayoutPart::Likely;
+        auto countRange = [&](uint32_t begin, uint32_t end) {
+            for (uint32_t index = begin; index < end && index < steps.size(); ++index) {
+                const Machine::Step& step = steps[index];
+                const bool executes = step.kind == Machine::StepKind::Execute;
+                const bool isSaved = executes && step.operation->type() != Machine::Void && allocation.isStoredBehindDefinition(step.operation);
+                if (!isLikely) {
+                    elsewhere += 1 + isSaved;
+                    continue;
+                }
+                ++(executes ? operations : moves);
+                moves += isSaved;
+                patches += executes && step.operation->opcode() == Machine::Patch;
+            }
+        };
+        const Machine::BlockSteps& range = allocation.stepsOf(block);
+        countRange(range.begin, range.end);
+        countRange(range.beginOfEdgeMoves, range.endOfEdgeMoves);
+        if (range.terminator < steps.size())
+            countRange(range.terminator, range.terminator + 1);
+    }
+
+    uint32_t operations { 0 };
+    uint32_t patches { 0 };
+    uint32_t moves { 0 };
+    uint32_t elsewhere { 0 };
+};
+
+struct BoundsOfSteps {
+    bool areGiven { false };
+    Vector<uint32_t, 4> most;
+    size_t next { 0 };
+};
+
+} // anonymous namespace
+
+static thread_local BoundsOfSteps boundsOfSteps;
+
+static void printStepsCounted(PrintStream& out, ASCIILiteral what, const StepsCounted& counted, ASCIILiteral elsewhere)
+{
+    if (!boundsOfSteps.areGiven) {
+        out.println(what, ": operations "_s, counted.operations, ", patches "_s, counted.patches, ", moves "_s, counted.moves, elsewhere, counted.elsewhere);
+        return;
+    }
+    if (boundsOfSteps.next == boundsOfSteps.most.size()) {
+        out.println(what, ": no bound is given for it"_s);
+        return;
+    }
+    uint32_t most = boundsOfSteps.most[boundsOfSteps.next++];
+    if (counted.operations + counted.moves <= most)
+        out.println(what, ": at most "_s, most);
+    else
+        out.println(what, ": "_s, counted.operations + counted.moves, " operations and moves, over "_s, most);
+}
+
+static bool takeBoundsOfSteps(TestCommandContext& context)
+{
+    constexpr ASCIILiteral word = "most:"_s;
+    boundsOfSteps = { };
+    if (context.arguments.empty() || !context.arguments[0].startsWith(word))
+        return true;
+    boundsOfSteps.areGiven = true;
+    for (StringView number : StringView(context.arguments[0]).substring(word.length()).split(',')) {
+        std::optional<uint32_t> most = parseInteger<uint32_t>(number);
+        if (!most) {
+            context.out.println("bad argument "_s, context.arguments[0]);
+            return false;
+        }
+        boundsOfSteps.most.append(*most);
+    }
+    context.arguments = context.arguments.subspan(1);
+    return true;
+}
+
+static void printLoopsOfProcedure(PrintStream& out, const Machine::Procedure& procedure)
+{
+    const Machine::Order& order = procedure.order();
+    std::span<const Machine::Loop> loops = order.loops();
+    for (uint32_t loop = 0; loop < loops.size(); ++loop) {
+        if (std::ranges::any_of(loops, [&](const Machine::Loop& other) { return other.parent == loop; }))
+            continue;
+        StepsCounted inLoop;
+        for (const Machine::Block* block : order.blocksInLayout()) {
+            if (order.of(block).loop == loop && !order.of(block).isRare())
+                inLoop.count(procedure, block);
+        }
+        if (inLoop.operations || inLoop.moves || inLoop.elsewhere)
+            printStepsCounted(out, "loop"_s, inLoop, ", unlikely "_s);
+    }
+}
+
+static void printStepsOfProcedure(PrintStream& out, const Machine::Procedure& procedure)
+{
+    StepsCounted inUnit;
+    for (const Machine::Block* block : procedure.order().blocksInLayout())
+        inUnit.count(procedure, block);
+    printStepsCounted(out, "steps"_s, inUnit, ", unlikely or rare "_s);
+}
+
+static void runMachineLoopsCommand(TestCommandContext& context)
+{
+    if (takeBoundsOfSteps(context))
+        printProceduresOfMachineUnits(context, MachineState::Prepared, printLoopsOfProcedure);
+}
+
+static void runMachineStepsCommand(TestCommandContext& context)
+{
+    if (takeBoundsOfSteps(context))
+        printProceduresOfMachineUnits(context, MachineState::Prepared, printStepsOfProcedure);
 }
 
 static void runMachineEmitCodeCommand(TestCommandContext& context)
@@ -170,6 +312,52 @@ static void runMachineEmitCodeCommand(TestCommandContext& context)
         return;
     }
     Machine::printProcedure(context.out, *procedure);
+}
+
+static void runMachineEmitFormsOfAccessesToElementsCommand(TestCommandContext& context)
+{
+    const TestSection* section = context.findSection("code"_s);
+    if (!section) {
+        context.out.println("error: the file has no section `code`"_s);
+        return;
+    }
+    StagedBuild stage = context.stage();
+    const Plan* plan = stage.plan();
+    if (!plan) {
+        context.out.println(lineOfFailedMachineCommand);
+        return;
+    }
+    static constexpr std::array opcodes { Opcode::HasArrayStorage, Opcode::IsElementPresent, Opcode::GetArrayElement };
+    for (Opcode opcode : opcodes) {
+        for (ArrayStorage kind : allMembersOf<ArrayStorage>) {
+            for (unsigned flags = 0; flags < (opcode == Opcode::HasArrayStorage ? 4u : 2u); ++flags) {
+                bool admitsInt32Storage = flags & 1;
+                bool isWritable = flags & 2;
+                String storage = kind == ArrayStorage::Other ? emptyString() : makeString(" arrayStorage="_s, nameOf(kind));
+                String words = !flags ? emptyString() : makeString(" ["_s, isWritable ? "isWritable"_s : ""_s, flags == 3 ? ", "_s : ""_s, admitsInt32Storage ? "admitsInt32Storage"_s : ""_s, ']');
+                context.out.print(nameOf(opcode), storage, words, ": "_s);
+                if (!accessToElementsHasCode(opcode, kind, admitsInt32Storage, isWritable)) {
+                    context.out.println("no code"_s);
+                    continue;
+                }
+                String text = section->text;
+                for (Opcode other : opcodes) {
+                    text = makeStringByReplacingAll(text, makeString("$storageOf"_s, nameOf(other)), other == opcode ? storage : other == Opcode::HasArrayStorage ? String(" arrayStorage=Double"_s) : emptyString());
+                    text = makeStringByReplacingAll(text, makeString("$flagsOf"_s, nameOf(other)), other == opcode ? words : emptyString());
+                }
+                Code code;
+                String error = parseCode(CodeTextContext { stage.program(), stage.types() }, text, code);
+                if (!error.isNull()) {
+                    context.out.println("error in the Code's text: "_s, error);
+                    continue;
+                }
+                RoomsOfSweep rooms;
+                Sweep sweep(rooms);
+                sweep.run(SweepInputs { stage.program(), *stage.facts(), *plan, stage.types() }, code);
+                context.out.println(stage.machineOperationsOf(code, MachineState::Appended) ? "code"_s : "THE TABLE SAYS CODE AND THE EMITTER HAS NONE"_s);
+            }
+        }
+    }
 }
 
 NamesInBytesText::NamesInBytesText(PrintStream& out, const Program& program)
@@ -413,6 +601,7 @@ static WordOfMentionKey wordOfMentionKeyAt(NumberSpace space, std::span<const ui
             return WordOfMentionKey::Number;
         return key[index - 1] == static_cast<uint32_t>(NumberSpace::Name) ? WordOfMentionKey::Key : WordOfMentionKey::Text;
     case NumberSpace::ClassRank:
+    case NumberSpace::HeirLookedAt:
     case NumberSpace::EnvironmentHandedBack:
         return WordOfMentionKey::Layout;
     case NumberSpace::SiteCache:
@@ -421,6 +610,8 @@ static WordOfMentionKey wordOfMentionKeyAt(NumberSpace space, std::span<const ui
         return index + 2 == key.size() ? WordOfMentionKey::Key : WordOfMentionKey::Number;
     case NumberSpace::ArrayProfile:
         return index + 1 < key.size() ? wordOfPlaceInMentionKeyAt(index) : WordOfMentionKey::Number;
+    case NumberSpace::RowsOfReads:
+        return index ? WordOfMentionKey::Number : WordOfMentionKey::Function;
     case NumberSpace::ClosureFunction:
     case NumberSpace::ClosureCell:
         return WordOfMentionKey::Function;
@@ -527,6 +718,19 @@ void NamesInBytesText::printKeyOfMention(NumberSpace space, std::span<const uint
         }
         return;
     }
+    if (space == NumberSpace::ClassGuard && isRowOfClassGuardCountsKey(key)) {
+        m_out.print(" row of counts of"_s);
+        forEachSlotInRowOfClassGuardCountsKey(key, [&](uint32_t, std::span<const uint32_t> slot) {
+            m_out.print(" ["_s);
+            forEachGuardInSlotOfRowOfClassGuardCounts(slot, [&](std::span<const uint32_t> guard) {
+                m_out.print("("_s);
+                printKeyOfMention(space, guard);
+                m_out.print(")"_s);
+            });
+            m_out.print("]"_s);
+        });
+        return;
+    }
     if (space == NumberSpace::ClassGuard && isClassGuardCountKey(key)) {
         m_out.print(" count of"_s);
         forEachGuardInClassGuardCountKey(key, [&](std::span<const uint32_t> guard) {
@@ -594,7 +798,7 @@ void NamesInBytesText::printSymbol(const CodeBody& body, const Relocation& reloc
             return;
         }
         printStubInBytesText(m_out, body.stubKeys[index].withoutImmediate());
-        m_out.print(" immediate ("_s);
+        m_out.print(body.stubKeys[index].immediate() ? " immediate ("_s : " under ("_s);
         printMention(body, numbered->mention);
         m_out.print(")"_s);
         return;
@@ -718,7 +922,10 @@ static void printListsOfBodyInBytesText(NamesInBytesText& names, const CodeBody&
     for (const Relocation& relocation : body.relocations) {
         out.print("  relocation "_s, relocation.offset, " "_s, WTF::enumName(relocation.kind), " "_s);
         names.printSymbol(body, relocation);
-        out.println(relocation.space == SymbolSpace::Stub && relocation.entry == entryInFrontOfStub ? ", entered in front"_s : ""_s);
+        if (relocation.space == SymbolSpace::Stub && relocation.entry == entryInFrontOfStubThatDoesTwoMoves)
+            out.println(", entered in front of two moves"_s);
+        else
+            out.println(relocation.space == SymbolSpace::Stub && relocation.entry == entryInFrontOfStub ? ", entered in front"_s : ""_s);
     }
     for (uint32_t index = 0; index < body.mentions.size(); ++index) {
         bool isNamedByCode = std::ranges::any_of(body.relocations, [&](const Relocation& relocation) {
@@ -1144,10 +1351,13 @@ std::span<const TestCommand> machineTestCommands()
     static constexpr TestCommand commands[] {
         { "emit"_s, runMachineEmitCommand, ProgramOfCommand::WithLibrary, "unit.."_s },
         { "emit-code"_s, runMachineEmitCodeCommand, ProgramOfCommand::WithLibrary },
+        { "emit-forms-of-accesses-to-elements"_s, runMachineEmitFormsOfAccessesToElementsCommand, ProgramOfCommand::WithLibrary },
         { "order"_s, runMachineOrderCommand, ProgramOfCommand::WithLibrary, "unit.."_s },
         { "liveness-of-operations"_s, runMachineLivenessCommand, ProgramOfCommand::WithLibrary, "unit.."_s },
         { "allocate"_s, runMachineAllocateCommand, ProgramOfCommand::WithLibrary, "unit.."_s },
         { "frame"_s, runMachineFrameCommand, ProgramOfCommand::WithLibrary, "unit.."_s },
+        { "loops"_s, runMachineLoopsCommand, ProgramOfCommand::WithLibrary, "[most:n,n..] unit.."_s },
+        { "steps"_s, runMachineStepsCommand, ProgramOfCommand::WithLibrary, "[most:n,n..] unit.."_s },
         { "bytes"_s, runMachineBytesCommand, ProgramOfCommand::WithLibrary, "unit.."_s },
         { "bytes-by-form"_s, runMachineBytesByFormCommand, ProgramOfCommand::WithLibrary, "[says=operation:form] role.."_s },
         { "named-forms"_s, runMachineNamedFormsCommand, ProgramOfCommand::None, "operation.."_s },

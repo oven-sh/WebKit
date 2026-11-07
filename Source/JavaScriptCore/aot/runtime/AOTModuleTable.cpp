@@ -112,6 +112,12 @@ std::span<const NameOfStatementData> ModuleTable::namesOfStatements(ModuleID mod
     return { ofModule.begin(), ofModule.end() };
 }
 
+std::span<const StarAsWrittenData> ModuleTable::starsAsWritten(ModuleID module) const
+{
+    auto ofModule = std::ranges::equal_range(m_tables->starsAsWritten(), module.index(), { }, &StarAsWrittenData::module);
+    return { ofModule.begin(), ofModule.end() };
+}
+
 bool ModuleTable::isAmbiguousExport(ModuleID module, StringView name) const
 {
     return std::ranges::any_of(ambiguousExports(module), [&](const AmbiguousExportData& entry) {

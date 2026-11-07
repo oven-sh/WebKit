@@ -16,6 +16,7 @@
 #include "AOTStubsPrimitiveFastPaths.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTTypeTable.h"
+#include "AOTThrowEmitter.h"
 #include "AOTTypeTestPlan.h"
 #include "PureNaN.h"
 
@@ -75,6 +76,24 @@ Operand OperatorEmitter::failWithZero(const ValueContext& value)
     return emitter<ConstantEmitter>().zeroOf(value.representation());
 }
 
+void OperatorEmitter::defineHeldToItsType(const ValueContext& value, Operand result)
+{
+    bool walkHasAsked = (m_code.role() == CodeRole::Body || m_code.role() == CodeRole::CoroutineBody) && AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime);
+    if (!walkHasAsked && emittersCheckProofs() && numberRepresentations.contains(result.representation)) {
+        const TypeTestPlan& plan = typeTestPlanFor(widestTypeOf(result.representation), result.representation, typeIDOf(value.id()));
+        if (plan.verdict != TypeTestVerdict::AlwaysPasses)
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, hasType(result, plan), std::nullopt, ProofSource::OtherOperation);
+    }
+    define(value, result);
+}
+
+static bool markersMayMeetInArithmetic(ArithmeticOperator op, const Type& left, const Type& right)
+{
+    constexpr uint16_t numberOrUndefined = Primitive::Number | Primitive::Undefined;
+    bool isOfMachine = op == ArithmeticOperator::Add || op == ArithmeticOperator::Sub || op == ArithmeticOperator::Mul || op == ArithmeticOperator::Div;
+    return isOfMachine && left.hasOnlyPrimitives(numberOrUndefined) && right.hasOnlyPrimitives(numberOrUndefined);
+}
+
 Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticOperator op)
 {
     ValueID left = value->leftOperand();
@@ -108,8 +127,12 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
             Number y = asNumericOperandWithAnyNaN(right);
             return generator().settleNaNOf(value, arithmeticOnNumbers(op, x, y));
         }
-        Number x = asNumericOperand(left);
-        Number y = asNumericOperand(right);
+        if (representationOf(left) == Representation::OptionalDouble && representationOf(right) == Representation::OptionalDouble && markersMayMeetInArithmetic(op, typeOf(left), typeOf(right))) {
+            build().statistics().count(StatisticID::ArithmeticOnMarkers);
+            return emitter<ConversionEmitter>().withoutPayload(arithmeticOnNumbers(op, Number(get(left).value), Number(get(right).value)));
+        }
+        Number x = asNumericOperand(left, &value);
+        Number y = asNumericOperand(right, &value);
         return arithmeticOnNumbers(op, x, y);
     }
     case OperatorForm::NumberAndValue:
@@ -351,7 +374,7 @@ Operand OperatorEmitter::convertedToNumber(const ValueContext& value, const Func
         return get(operand);
     case OperatorForm::Numbers:
         m_out.noteForm(Form::Open, StateOfKnowledge::Numbers);
-        return asNumericOperand(operand);
+        return asNumericOperand(operand, &value);
     case OperatorForm::NullableNumber:
         m_out.noteForm(Form::Open, StateOfKnowledge::NullableNumber);
         return asNumberLikeOperand(operand);
@@ -382,6 +405,10 @@ Operand OperatorEmitter::convertedToNumber(const ValueContext& value, const Func
 
 void OperatorEmitter::generateToNumber(const ValueContext& value)
 {
+    if (ValueID operand = value->valueOperand(); handsOnBitsOfNaN(value.value()) && generator().holdsAnyNaN(operand)) {
+        define(value, generator().settleNaNOf(value, generator().getWithAnyNaN(operand).as<Number>()));
+        return;
+    }
     define(value, convertedToNumber(value, [&](Boxed operand) -> Operand {
         m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
         return Number(callStub(value, toNumberAsDouble(), { operand.value() }).first);

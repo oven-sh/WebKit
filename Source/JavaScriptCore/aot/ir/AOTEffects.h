@@ -78,6 +78,7 @@ struct Effects {
     bool mayCallUnknownCode : 1 { true };
     bool maySuspend : 1 { true };
     bool mayBeTerminated : 1 { true };
+    bool writesObjectsMadeHereAlone : 1 { false };
 
     static constexpr Effects none()
     {
@@ -106,6 +107,8 @@ struct Effects {
 
     constexpr void merge(const Effects& other)
     {
+        if (other.writes.containsAny(perObjectHeaps))
+            writesObjectsMadeHereAlone = other.writesObjectsMadeHereAlone && (writesObjectsMadeHereAlone || !writes.containsAny(perObjectHeaps));
         reads.merge(other.reads);
         writes.merge(other.writes);
         mayThrow |= other.mayThrow;
@@ -124,6 +127,7 @@ struct Effects {
         mayCallUnknownCode &= other.mayCallUnknownCode;
         maySuspend &= other.maySuspend;
         mayBeTerminated &= other.mayBeTerminated;
+        writesObjectsMadeHereAlone &= other.writesObjectsMadeHereAlone;
     }
 
     constexpr Effects intersectedWith(const Effects& other) const
@@ -135,7 +139,8 @@ struct Effects {
             .mayCollect = mayCollect && other.mayCollect,
             .mayCallUnknownCode = mayCallUnknownCode && other.mayCallUnknownCode,
             .maySuspend = maySuspend && other.maySuspend,
-            .mayBeTerminated = mayBeTerminated && other.mayBeTerminated
+            .mayBeTerminated = mayBeTerminated && other.mayBeTerminated,
+            .writesObjectsMadeHereAlone = writesObjectsMadeHereAlone && other.writesObjectsMadeHereAlone
         };
         result.mayThrow &= other.mayThrow;
         return result;
@@ -149,7 +154,8 @@ struct Effects {
             && (!mayCollect || other.mayCollect)
             && (!mayCallUnknownCode || other.mayCallUnknownCode)
             && (!maySuspend || other.maySuspend)
-            && (!mayBeTerminated || other.mayBeTerminated);
+            && (!mayBeTerminated || other.mayBeTerminated)
+            && (!other.writesObjectsMadeHereAlone || writesObjectsMadeHereAlone || !writes.containsAny(perObjectHeaps));
     }
 
     friend constexpr bool operator==(const Effects&, const Effects&) = default;
@@ -191,6 +197,7 @@ public:
     constexpr bool isPure() const { return !m_bits; }
     constexpr bool isRemovableWhenUnused() const { return !(m_bits & (writesWhatIsSeen | throwsByRule | isTerminated | suspends | callsUnknownCode)); }
     constexpr bool isUnobservable() const { return isRemovableWhenUnused() && !mayThrow(); }
+    constexpr EffectTraits withoutThrowByRule() const { return fromBits(m_bits & ~throwsByRule); }
     constexpr bool mayThrow() const { return m_bits & throws; }
     constexpr bool mayThrowByRule() const { return m_bits & throwsByRule; }
     constexpr bool mayCollect() const { return m_bits & collects; }

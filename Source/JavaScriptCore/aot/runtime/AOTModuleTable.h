@@ -25,6 +25,60 @@
 
 namespace JSC { namespace AOT {
 
+class DynamicStars {
+public:
+    DynamicStars(std::span<const ModuleRequestData> requests, std::span<const StarAsWrittenData> asWritten)
+        : m_requests(requests)
+        , m_asWritten(asWritten)
+    {
+    }
+
+    bool placesAreWritten() const { return !m_asWritten.empty(); }
+    size_t numberOfPlaces() const { return m_asWritten.empty() ? m_requests.size() : m_asWritten.size(); }
+    std::optional<ModuleRequestData> at(size_t place) const
+    {
+        if (!m_asWritten.empty()) [[unlikely]]
+            return m_asWritten[place].isFollowed ? std::optional(ModuleRequestData::create(m_asWritten[place].target, false, true)) : std::nullopt;
+        return m_requests[place].isDynamicStarExport ? std::optional(m_requests[place]) : std::nullopt;
+    }
+
+    class Iterator {
+    public:
+        Iterator(const DynamicStars& stars, size_t place)
+            : m_stars(stars)
+            , m_place(place)
+        {
+            skipWhatIsNoStar();
+        }
+
+        ModuleRequestData operator*() const { return *m_stars.at(m_place); }
+        Iterator& operator++()
+        {
+            ++m_place;
+            skipWhatIsNoStar();
+            return *this;
+        }
+        bool operator==(const Iterator& other) const { return m_place == other.m_place; }
+
+    private:
+        void skipWhatIsNoStar()
+        {
+            while (m_place < m_stars.numberOfPlaces() && !m_stars.at(m_place))
+                ++m_place;
+        }
+
+        const DynamicStars& m_stars;
+        size_t m_place;
+    };
+
+    Iterator begin() const { return { *this, 0 }; }
+    Iterator end() const { return { *this, numberOfPlaces() }; }
+
+private:
+    std::span<const ModuleRequestData> m_requests;
+    std::span<const StarAsWrittenData> m_asWritten;
+};
+
 class ModuleTable {
 public:
     explicit ModuleTable(const ProgramTables&);
@@ -36,6 +90,7 @@ public:
     const ModuleData& data(ModuleID module) const { return m_modules[checkedIndex(module)]; }
     std::span<const ModuleRequestData> requests(ModuleID module) const { return listOf(m_tables->moduleRequests(), module, &ModuleData::firstRequest); }
     auto imports(ModuleID module) const { return requests(module) | std::views::filter(isImport); }
+    DynamicStars dynamicStars(ModuleID module) const { return { requests(module), m_tables->starsAsWritten().empty() ? std::span<const StarAsWrittenData> { } : starsAsWritten(module) }; }
     std::span<const ModuleRequestData> allRequests() const { return m_tables->moduleRequests(); }
     uint32_t endOfRequests(ModuleID module) const { return m_modules[checkedIndex(module) + 1].firstRequest; }
     ModuleNumbers linkRequests(ModuleID module) const { return listOf(allLinkRequests(), module, &ModuleData::firstLinkRequest); }
@@ -67,6 +122,7 @@ public:
     }
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
     std::span<const SyntheticExportData> syntheticExports(ModuleID module) const { return listOf(m_tables->syntheticExports(), module, &ModuleData::firstSyntheticExport); }
+    bool dependsOnMoreThanSource(ModuleID module) const { return std::ranges::binary_search(m_tables->modulesThatDependOnMoreThanSource(), module.index()); }
     std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }
     const ExportStatementData* findExportStatement(const RequiredNameData&) const;
     std::span<const AmbiguousExportData> ambiguousExports(ModuleID) const;
@@ -77,6 +133,7 @@ public:
     PathInUTF8 pathInUTF8(ModuleID) const;
     std::span<const NameOfStatementData> namesOfStatements(ModuleID) const;
     bool listsNamesOfStatements() const { return !m_tables->namesOfStatements().empty(); }
+    std::span<const StarAsWrittenData> starsAsWritten(ModuleID) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
     std::optional<ModuleFailureID> loadFailure(ModuleID) const;
 

@@ -49,10 +49,10 @@ static Reference buildTestOfWrittenEndForStringSearches(Walker& walker, Referenc
 
 static bool buildTestOfJoinedTextsForStringSearches(Walker& walker, const CallByOneRow& call, bool testsStart)
 {
-    if (call.call.opcode() != Opcode::Call || call.call.argumentsOperands().empty())
+    if (call.call.opcode() != Opcode::Call || call.writtenArguments().empty())
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID written = call.call.argumentsOperands()[0];
+    ValueID written = call.writtenArguments()[0];
     Reference joined = rootForStrings(walker, call.arguments[0]);
     if (!joined.isValue() || !index.hasOneUse(written) || rootForStrings(walker, walker.referenceBoundTo(written)) != joined)
         return false;
@@ -73,11 +73,12 @@ static bool buildTestOfJoinedTextsForStringSearches(Walker& walker, const CallBy
     if (!atEnd)
         return true;
 
-    Reference asBound = walker.referenceBoundTo(written);
-    walker.bind(written, atEnd);
     walker.bind(call.call.id(), { });
-    bool isCalled = callBuiltin(walker, call.call);
-    walker.bind(written, asBound);
+    bool isCalled;
+    {
+        Walker::StandIn partInPlaceOfWholeText(walker, written, atEnd);
+        isCalled = callBuiltin(walker, call.call);
+    }
     if (!isCalled)
         return false;
     Reference holdsOfPart = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.call.id());

@@ -7,7 +7,7 @@
 # CHECK-NOT: function f4 unreached
 # RUN(KEPT): link functions mechanisms=all
 # KEPT: function f3 callers-known
-# KEPT-NEXT: parameter 0 expected=i32 proven=i32
+# KEPT-NEXT: parameter 0 expected=i32 proven=int[0, 2147483647]
 
 module m0 path="/lib.js" displayPath="lib.js" body=f1 exports=[{name="rate" variable=g0}]
 module m1 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}]

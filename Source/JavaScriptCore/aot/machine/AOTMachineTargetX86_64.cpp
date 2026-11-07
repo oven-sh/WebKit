@@ -122,22 +122,6 @@ static_assert(JSValue::ValueNull < JSValue::ValueUndefined && JSValue::ValueUnde
 static_assert((undefinedCell32 << cell32Shift) < FaultSite::reach);
 static constexpr uint32_t x86TargetTrapReach = static_cast<uint32_t>(FaultSite::reach - (undefinedCell32 << cell32Shift));
 
-static bool x86TargetSwitchHasDenseRun(std::span<const int64_t> values)
-{
-    for (size_t begin = 0; begin + minCasesForJumpTable <= values.size(); ++begin) {
-        size_t numberOfCases = 1;
-        while (numberOfCases < minCasesForJumpTable) {
-            uint64_t distanceToNext = static_cast<uint64_t>(values[begin + numberOfCases]) - static_cast<uint64_t>(values[begin]);
-            if (distanceToNext >= maxEntriesOfJumpTablePerCase * (numberOfCases + 1))
-                break;
-            ++numberOfCases;
-        }
-        if (numberOfCases == minCasesForJumpTable)
-            return true;
-    }
-    return false;
-}
-
 RegisterFile registerFileFor(const ProcedureTraits& traits)
 {
     if (traits.savesRegistersOfCallers) {
@@ -212,6 +196,7 @@ bool acceptsMemoryDestination(const Operation& computation)
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
     case Clz:
     case PopCount:
     case Abs:
@@ -292,7 +277,7 @@ bool scaledSumAcceptsBase(const Operation& base)
 unsigned numberOfScratchGPRsOf(const ProcedureTraits& traits, const Operation& operation)
 {
     if (operation.opcode() == Switch)
-        return x86TargetSwitchHasDenseRun(operation.switchData().caseValues) ? 1 : 0;
+        return operation.switchData().caseValues.size() >= minCasesForJumpTable ? 1 : 0;
     if (operation.opcode() == PopCount)
         return MacroAssembler::supportsCountPopulation(traits.features) ? 0 : 1;
     return 0;

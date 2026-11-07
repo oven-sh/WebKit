@@ -444,6 +444,16 @@ static void rememberStepOfKeyOrder(State& state, const Object& object, Structure
         state.objects->structures.rememberStepOfKeyOrder(before, orderAndCountBefore, field, kind, object.structureID(), object.orderWord() & orderAndCountMask);
 }
 
+bool Object::tryRepeatCreationAtSlot(State& state, uint32_t slotKey)
+{
+    return sharesStepsOfKeyOrder(*this) && tryRepeatStepOfKeyOrder(vm(), state, *this, static_cast<uint16_t>(slotKey), StructureTable::KindOfStep::CreatesAtSlot);
+}
+
+void Object::rememberCreationAtSlot(State& state, StructureID before, uint32_t orderAndCountBefore, uint32_t slotKey) const
+{
+    rememberStepOfKeyOrder(state, *this, before, orderAndCountBefore, static_cast<uint16_t>(slotKey), StructureTable::KindOfStep::CreatesAtSlot);
+}
+
 static uint32_t countExtraKeys(State& state, const Object& object, JSObject* extra)
 {
     const CompiledStructure& structure = object.compiledStructure();
@@ -820,6 +830,7 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
         return nullptr;
     for (; nextExtraKey < extraKeys.size(); ++nextExtraKey)
         properties.append(extraKeys[nextExtraKey]);
+    countEvent(vm, RuntimeCounterID::PropertyListsMade);
     return &propertyLists.add({ structure->id(), shapeWord, orderAndCount, WTF::move(properties) });
 }
 
@@ -913,10 +924,25 @@ static JSCellButterfly* keysOfObjectWithExtraProperties(VM& vm, const Object& ob
     return list;
 }
 
+static NEVER_INLINE JSCellButterfly* keysOfSharedOrderWithoutNumber(VM& vm, const Object& object, KeyListKind kind)
+{
+    if (object.hasExtraProperties() || object.hasKeyOrderOfItsOwn())
+        return nullptr;
+    State& state = object.state();
+    StructureTable& structures = state.objects->structures;
+    uint32_t count = countOf(object.orderWord());
+    if (JSCellButterfly* known = structures.findKeysOfOrderWithoutNumber(object.structureID(), count, kind))
+        return known;
+    JSCellButterfly* list = state.objects->keyOrders.tryCreateKeyList(vm, object.layout(), object.keyOrder(state), kind);
+    if (list)
+        structures.rememberKeysOfOrderWithoutNumber(object.structureID(), count, kind, list);
+    return list;
+}
+
 JSCellButterfly* Object::keys(VM& vm, KeyListKind kind) const
 {
     if (!hasNumberedKeyOrder(*this))
-        return nullptr;
+        return keysOfSharedOrderWithoutNumber(vm, *this, kind);
     if (hasExtraProperties())
         return kind == KeyListKind::Symbols ? nullptr : keysOfObjectWithExtraProperties(vm, *this);
     State& state = this->state();
@@ -982,7 +1008,9 @@ static JSPropertyNameEnumerator* cachedEnumeratorOfObjectWithExtraProperties(VM&
 {
     DeferGC deferGC(vm);
     CachedPropertyList* list = listOfKeysFixedByStructure(vm, object);
-    if (!list || !list->enumerator || list->prototypeChain != prototypeChain || list->enumerator->cachedStructureID() != object.structureID())
+    if (!list || !list->enumerator || list->prototypeChain != prototypeChain)
+        return nullptr;
+    if (list->enumerator != vm.emptyPropertyNameEnumerator() && list->enumerator->cachedStructureID() != object.structureID())
         return nullptr;
     return list->enumerator;
 }
@@ -1011,7 +1039,7 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
 
     bool hasExtraProperties = this->hasExtraProperties();
     bool ownNamesAreFixed = enumerableNamesFollowFromStructureAndOrderWord(vm, *this);
-    bool isCacheable = ownNamesAreFixed && (hasExtraProperties || !compiledStructure().hasOtherPrototype());
+    bool isCacheable = ownNamesAreFixed && (hasExtraProperties || !compiledStructure().hasOtherPrototype() || getPrototypeDirect().isNull());
     StructureChain* prototypeChainBefore = nullptr;
     if (isCacheable) {
         prototypeChainBefore = structureBefore->prototypeChain(vm, globalObject, this);
@@ -1071,6 +1099,17 @@ CachedPropertyList& PropertyListCache::add(CachedPropertyList&& list)
     CachedPropertyList& place = (*m_entries)[placeOf(list.extraPropertiesStructureID, list.shapeWord, list.orderAndCount)];
     place = WTF::move(list);
     return place;
+}
+
+bool PropertyListCache::isSecondWalk(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
+{
+    if (m_walksWithoutList.testAndSet(WTF::intHash(static_cast<uint64_t>(extraPropertiesStructureID.bits()) << 32 | (shapeWord ^ std::rotl(orderAndCount, 16))) % numberOfWalksRemembered))
+        return true;
+    if (++m_numberOfWalksWithoutList > numberOfEntries) {
+        m_walksWithoutList.clearAll();
+        m_numberOfWalksWithoutList = 0;
+    }
+    return false;
 }
 
 KeptOwnKeys& PropertyListCache::ownKeysFor(StructureID structureID, uint32_t orderWord, bool listsSymbols)

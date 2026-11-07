@@ -12,6 +12,7 @@
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 
+
 namespace JSC { namespace AOT {
 
 class BuildContext;
@@ -57,9 +58,11 @@ public:
     void noteEvaluated(ModuleID);
     void noteNativeCodeMayHoldObjects();
     void noteNameRead(PropertyKeyID);
-    void noteNameCalled(PropertyKeyID);
+    void noteNameCalled(PropertyKeyID, bool mayPassOperands);
     void noteNameSpelledByProgram(PropertyKeyID);
     void noteReadUnderKeyNobodyKnows();
+    void noteReadUnderKeyNobodyKnowsOff(BuiltinID canonicalHolder);
+    void noteReadUnderNameThatLoopGave();
     void noteReadOfProgramUnderKeyNobodyKnows(FunctionID, ValueID);
     void noteRead(BuiltinID);
     void noteCalled(BuiltinID);
@@ -68,6 +71,10 @@ public:
     void noteLetGo(BuiltinID);
     void noteCalledOutOfSight(BuiltinID);
     void noteCalledWithoutRow(BuiltinID);
+    void noteCalledWithOperandsNobodyRead(BuiltinID);
+    void noteRowApplied(BuiltinID canonical, BuiltinOverloadID);
+    Vector<uint64_t> takeCallsWhoseRowsLinkTells();
+    void noteCallLeftToUnseen(FunctionID caller, ValueID site);
     void noteCallMayRunCode(BuiltinID);
     void noteOperandMayMeetCondition(BuiltinID, BuiltinName toldUnder);
     void noteCalledAtSite(FunctionID caller, ValueID site, bool isConstruction, BuiltinID row);
@@ -92,6 +99,7 @@ public:
     bool loaderOfHostMayRun() const;
     bool hostIsAskedForValueOfModule() const;
     bool unseenCodeCanRun() const;
+    bool loaderOfMachineCodeIsInUse() const;
     bool holdsBackNamesFromRunTime() const;
     Vector<ModuleID> takeModulesSpelledInTexts();
     bool letInNamesFromRunTime();
@@ -113,26 +121,34 @@ public:
     void noteOptionThatRunsCodePassed(BuiltinID);
     void noteLostBuiltinsReachUnseen();
     void noteInstanceAtUnseen(BuiltinClassID);
-    void noteObjectHandedToFormatter();
+    void noteInstanceHasEscaped(BuiltinClassID);
+    void noteInstanceHandedToFormatter(BuiltinClassID);
+    void noteObjectHandedToFormatter(bool isWalked);
+    void noteInstancesLoseTheirConstructor();
     void noteTypeHandedToHandler(BuiltinTypeID);
+    void noteUsedWhereFlowBroughtIt(BuiltinID);
+    void noteFoundWhereFlowBroughtHolder(BuiltinID, FunctionID reader);
+    void noteStandsAboveClass(BuiltinID, FunctionID constructor);
     void noteEntryHandsHostNothing(uint32_t entry);
     void noteHostMayFindSomethingAt(uint32_t entry);
+    void noteHostStartsByCallInSight(uint32_t entry);
     std::span<const FunctionID> functionsThatAnswerEveryNameOnInstances() const;
     void noteInstancesAnswerEveryNameWithObjects();
     bool isWorthFollowingToWrites(BuiltinID canonical) const { return m_builtinsWorthFollowingToWrites.quickGet(canonical.index()); }
 
     LookupsPastProgramObjects takeLookups();
+    void putBackLookups(const LookupsPastProgramObjects&);
+
+    bool mayHaveNameLaid(BuiltinID canonicalHolder, PropertyKeyID) const;
+    bool mayStillBeTakenForConstant(BuiltinID member) const;
 
 private:
-    bool mayHaveNameLaid(BuiltinID canonicalHolder, PropertyKeyID) const;
-
     std::unique_ptr<FactTables> m_tables;
     std::unique_ptr<LinkTables> m_linked;
     std::unique_ptr<InputsOfProgramFacts> m_inputs;
     std::unique_ptr<BuilderOfProgramFacts> m_builder;
     BitVector m_builtinsWorthFollowingToWrites;
     Vector<BuiltinID> m_membersWrittenAfterAll;
-    Vector<std::pair<BuiltinID, BuiltinID>> m_entriesBelowPrototypesOfEntries;
     Vector<NameOnHolder> m_namesTakenForUnlaid;
     Vector<NameOnHolder> m_namesLaidAfterAll;
     bool m_wasToldSomethingNew { true };

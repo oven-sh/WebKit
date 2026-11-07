@@ -59,9 +59,9 @@ static bool beganOrEndedAsDictionary(Structure* before, Structure* after)
     return after != before && (before->isDictionary() || after->isDictionary());
 }
 
-static void fileStore(Instance* instance, JSObject* base, Structure* structureBefore, const CachedName& name, const PutPropertySlot& slot, PutMode mode)
+static void fileStore(Instance* instance, JSObject* base, Structure* structureBefore, const CachedName& name, const PutPropertySlot& slot, PutMode mode, std::optional<uint32_t> orderWordBefore = std::nullopt)
 {
-    PropertyAnswer answer = classifyStore({ instance->globalObject, base, structureBefore, name.uid, slot, mode });
+    PropertyAnswer answer = classifyStore({ instance->globalObject, base, structureBefore, name.uid, slot, mode, orderWordBefore });
     instance->state->propertyCaches->cache({ structureBefore, name, accessFor(mode) }, WTF::move(answer));
     ensureStillAliveHere(structureBefore);
 }
@@ -176,6 +176,7 @@ JSValue getUnderKeyForReceiver(Instance* instance, JSObject* base, const Identif
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdAndCache, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t key, SiteCache))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetByIdAndCache);
+    ++instance->propertyCaches.slowPathReadCount;
     NamedAccess access { instance, identifierAt(instance, key), key };
     JSValue base = JSValue::decode(encodedBase);
     if (JSValue value = tryGetFromPermanentDictionary(instance, base, access.ident.impl()))
@@ -336,7 +337,7 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
         return;
     }
 
-    PropertyAnswer answer = classifyStore({ globalObject, asObject(cell), structureBefore, uid, slot, mode });
+    PropertyAnswer answer = classifyStore({ globalObject, asObject(cell), structureBefore, uid, slot, mode, object ? std::optional(orderWordBefore) : std::nullopt });
     if (object && answer.kind == PropertyAnswerKind::FieldCreation) {
         if (cell->structure() == structureBefore && !structureBefore->mayBePrototype() && takesAnyValue(*access.instance->image.tables, object->layout(), *answer.field) && orderGainedFieldAlone(object->state(), object->layout(), orderWordBefore, object->orderWord(), *answer.field))
             answer.orderWords = std::pair { orderWordBefore, object->orderWord() };
@@ -437,13 +438,37 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteCache, void, (Instance* in
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteAnswers, void, (Instance* instance, JSCell* base, uint32_t key, uint32_t distanceOfSite, uint32_t use))
 {
-    beginPeriodOfAnotherLength(instance);
     PropertyCaches& caches = *instance->state->propertyCaches;
     uint32_t place = caches.answersAtSites().placeAtDistanceFromInstance(distanceOfSite);
+    if (use & tablesAreFiledForSiteWithoutAnswers) {
+        if (base->isObject()) {
+            LeafOperationScope leaf(*instance->vm);
+            caches.fileOwnPlainValueUnlessFiled(asObject(base), key);
+        }
+        caches.answersAtSites().pointAtAnswersThatHoldNothingUnlessFilled(place);
+        return;
+    }
+    if (use & visitorHitFurtherAnswer) {
+        caches.answersAtSites().moveUpFurtherAnswer(place, base->structureID());
+        return;
+    }
+    beginPeriodOfAnotherLength(instance);
     if (!caches.answersAtSites().isDueForFilling(place))
         return;
     LeafOperationScope leaf(*instance->vm);
-    caches.fillSiteAnswers(place, base, key, static_cast<SiteUse>(use));
+    caches.fillSiteAnswers(place, base, key, static_cast<SiteUse>(use & ~stubOfSiteFollowsFurtherAnswers), use & stubOfSiteFollowsFurtherAnswers);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTClaimRowOfReads, size_t, (Instance* instance, EncodedJSValue base, EncodedJSValue* group))
+{
+    LeafOperationScope leaf(*instance->vm);
+    return std::bit_cast<size_t>(PropertyCaches::claimRowOfReads(JSValue::decode(base), *std::bit_cast<RowsOfReads*>(group)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindPlaceInRowOfReads, void, (Instance* instance, JSCell* base, uint32_t key, EncodedJSValue* row, uint32_t index))
+{
+    LeafOperationScope leaf(*instance->vm);
+    instance->state->propertyCaches->findPlaceInRowOfReads(base, key, *std::bit_cast<RowsOfReads::Row*>(row), index);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedConstructor))
@@ -581,7 +606,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (Instance* instance, Encode
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPutByVal);
     if (Object* object = compiledObjectOrNull(JSValue::decode(encodedBase))) {
         std::optional<uint32_t> index = JSValue::decode(encodedProperty).tryGetAsUint32Index();
-        if (index && !globalObject->isHavingABadTime() && !object->anyObjectInChainMayInterceptIndexedAccesses() && tryDefineElementOfCompiledObject(instance, object, *index, JSValue::decode(encodedValue)))
+        if (index && (object->hasExtraProperties() ? trySetElementOfCompiledObject(instance, object, *index, JSValue::decode(encodedValue)) : !object->needsSlowPutIndexing() && tryDefineElementOfCompiledObject(instance, object, *index, JSValue::decode(encodedValue))))
             OPERATION_RETURN(scope);
     }
     putByVal(instance, JSValue::decode(encodedBase), JSValue::decode(encodedProperty), JSValue::decode(encodedValue), isStrict);
@@ -687,6 +712,7 @@ static void putByValAndCache(Instance* instance, JSValue base, JSValue property,
     if (chainLetsStoresPass && !shouldFile && !name->impl()->isSymbol() && canCreateFieldInSlot(vm, *compiledObject, *field) && tryCreateField(vm, compiledObject->state(), *compiledObject, *field, value))
         return;
     Structure* structureBefore = WTF::opaque(object->structure());
+    std::optional<uint32_t> orderWordBefore = compiledObject ? std::optional(compiledObject->orderWord()) : std::nullopt;
     bool repeatsAddition = compiledObject || repeatsPropertyAddition(structureBefore, name->impl());
     if (compiledObject)
         Object::putWithKnownField(object, globalObject, *name, value, slot, field, chainLetsStoresPass);
@@ -697,7 +723,7 @@ static void putByValAndCache(Instance* instance, JSValue base, JSValue property,
     if (beganOrEndedAsDictionary(structureBefore, object->structure()))
         caches.didFileNothing();
     else if (shouldFile && (!isAddition || repeatsAddition))
-        fileStore(instance, object, structureBefore, cachedName, slot, mode);
+        fileStore(instance, object, structureBefore, cachedName, slot, mode, orderWordBefore);
     else if (isAddition)
         caches.didAddProperty(structureBefore, object->structure());
 }

@@ -930,6 +930,10 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
         if (attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue) || (isDefinition && attributes))
             return { };
         extra->putDirectOffset(vm, offset, value);
+        if (structure()->mayBePrototype()) [[unlikely]] {
+            countEvent(vm, RuntimeCounterID::ValuesReplacedOnCompiledPrototypes);
+            didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name.uid());
+        }
         return { ExtraPropertyStore::Replaced, offset };
     }
     if (isNotExtensible())
@@ -937,7 +941,8 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
     JSGlobalObject* realm = structure()->realm();
     if (!isDefinition && !storeCreatesOwnProperty(realm, structure(), this, name.uid(), isMadeAtRunTime ? StoredName::IsNotSpelledByProgram : StoredName::MayBeSpelledByProgram))
         return { };
-    willAddExtraProperty(vm, name, !isMadeAtRunTime);
+    if (!mayAddExtraProperty(vm, name, !isMadeAtRunTime))
+        return { };
     bool hadNone = !extra;
     if (hadNone)
         extra = constructEmptyObject(vm, Instance::of(realm)->realm.emptyExtraPropertiesStructure);
@@ -952,6 +957,15 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
         didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name.uid());
     return { ExtraPropertyStore::Added, slot.cachedOffset() };
+}
+
+bool Object::mayAddExtraProperty(VM& vm, PropertyName name, bool isSpelledByProgram)
+{
+    if (!name.isPrivateName() && !admitsMutation(vm, *this, ObjectMutation::AddProperty))
+        return false;
+    if (isSpelledByProgram)
+        state().objects->classes.didShadowMember(layout(), name.uid());
+    return true;
 }
 
 void Object::willAddExtraProperty(VM& vm, PropertyName name, bool isSpelledByProgram)

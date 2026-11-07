@@ -12,8 +12,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class KindOfEffectsRow : uint8_t { None, Operation, RuntimeOperation, Stub, Builtin, Callee, Summary };
-enum class PartOfEffects : uint8_t { None, RunsOtherCode, Throws, Writes, Collects, ThrowsByRule, ShapesKnown };
+enum class KindOfEffectsRow : uint8_t { None, Operation, RuntimeOperation, Stub, Builtin, Callee, Summary, MarkOfTurns };
+enum class PartOfEffects : uint8_t { None, RunsOtherCode, Throws, Writes, Collects, ThrowsByRule, RangeOfResult, WritesWhatIsSeen, KindOfResult, ContentsOfResult, TestsOfGuard, ShapesKnown, ShapesOfField, MiddleShapesOfField };
 
 inline constexpr std::array<AbstractHeap, 8> heapsOfDigestInEffectsNet {
     AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::ObjectFields, AbstractHeap::NamedProperties,
@@ -50,6 +50,7 @@ constexpr uint8_t secondLanesNotWrittenInEffectsNet(const Effects& effects)
     return lanes;
 }
 inline constexpr uint64_t asksForSecondDigestInEffectsNet = 1ull << 62;
+inline constexpr uint64_t asksForRestOfLastDigestInEffectsNet = 1ull << 60;
 inline constexpr uint32_t speaksOfSecondDigestInEffectsNet = 1u << 15;
 
 enum class CountInEffectsNet : uint8_t {
@@ -108,7 +109,13 @@ struct RowThatSaysLess {
             return;
         switch (part) {
         case PartOfEffects::None:
+        case PartOfEffects::RangeOfResult:
+        case PartOfEffects::KindOfResult:
+        case PartOfEffects::ContentsOfResult:
+        case PartOfEffects::TestsOfGuard:
         case PartOfEffects::ShapesKnown:
+        case PartOfEffects::ShapesOfField:
+        case PartOfEffects::MiddleShapesOfField:
             return;
         case PartOfEffects::RunsOtherCode:
             effects.mayCallUnknownCode = false;
@@ -118,6 +125,9 @@ struct RowThatSaysLess {
             return;
         case PartOfEffects::Writes:
             effects.writes.remove(AbstractHeapSet { heap });
+            return;
+        case PartOfEffects::WritesWhatIsSeen:
+            effects.writes = effects.writes.restrictedTo(heapsWhoseWritesNobodySees);
             return;
         case PartOfEffects::Collects:
             effects.mayCollect = false;

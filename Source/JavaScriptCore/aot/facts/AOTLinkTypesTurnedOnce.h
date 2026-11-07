@@ -22,7 +22,7 @@ public:
         if (!slots.empty()) {
             size_t mask = slots.size() - 1;
             for (size_t place = hash & mask; slots[place].isFilled; place = (place + 1) & mask) {
-                if (slots[place].type.holdsSameAs(type))
+                if (slots[place].type.holdsSameAs(type) && slots[place].type.counts == type.counts)
                     return slots[place].turned;
             }
         }
@@ -39,7 +39,7 @@ private:
     static ALWAYS_INLINE size_t hashOf(const LinkType& type)
     {
         LinkType::Words words = type.wordsWithoutShadows();
-        uint64_t hash = words[0] * 0x9e3779b97f4a7c15ull ^ words[1] * 0xc2b2ae3d27d4eb4full ^ words[2] * 0x165667b19e3779f9ull ^ words[3] * 0x27d4eb2f165667c5ull;
+        uint64_t hash = (words[0] + static_cast<uint8_t>(type.counts)) * 0x9e3779b97f4a7c15ull ^ words[1] * 0xc2b2ae3d27d4eb4full ^ words[2] * 0x165667b19e3779f9ull ^ words[3] * 0x27d4eb2f165667c5ull;
         return static_cast<size_t>(hash ^ hash >> 32);
     }
 

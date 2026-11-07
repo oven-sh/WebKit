@@ -14,6 +14,7 @@ import {
   entriesOf,
   fieldsOf,
   innermostKindOf,
+  isWideFlagWord,
   nameOf,
   scalarKinds,
   scalarPayloadWordsOf,
@@ -50,7 +51,7 @@ const externalMemberNamespaces: Readonly<Record<string, string>> = {
 
 export function underlyingTypeOf(type: SchemaEnum): string {
   const count = type.members.length;
-  if (type.isAbi) return "uint32_t";
+  if (type.isAbi) return isWideFlagWord(type) ? "uint64_t" : "uint32_t";
   if (type.isFlags) return count <= 8 ? "uint8_t" : count <= 16 ? "uint16_t" : "uint32_t";
   return count <= 256 ? "uint8_t" : "uint16_t";
 }

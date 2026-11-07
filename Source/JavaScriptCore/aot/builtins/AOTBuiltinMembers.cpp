@@ -70,6 +70,8 @@ BuiltinID findOwnMember(const Program& program, BuiltinID holder, PropertyKeyID 
 bool listsEveryMemberUnder(const Program& program, BuiltinID holder, PropertyKeyID key)
 {
     constexpr OptionSet<BuiltinFlag> flagsOfCompleteLists { BuiltinFlag::ListsAllMembers, BuiltinFlag::IsGlobalObject };
+    if (BuiltinName name = program.builtinNameOf(key); name && program.builtins().isClosedOnHostFunctions(name) && program.builtins().isNativeFunctionOfHost(holder))
+        return true;
     return program.builtins().at(holder).flags.containsAny(flagsOfCompleteLists) && program.at(key).kind != PropertyKeyKind::EnginePrivateName;
 }
 

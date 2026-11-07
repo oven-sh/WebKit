@@ -105,6 +105,8 @@ static bool takesOperandsAsWritten(const InlineBuiltinQuery& query)
         return true;
     case InlineBuiltin::ObjectCreate:
         return true;
+    case InlineBuiltin::CallNumberConstructor:
+        return query.standsInLoop;
     default:
         return false;
     }

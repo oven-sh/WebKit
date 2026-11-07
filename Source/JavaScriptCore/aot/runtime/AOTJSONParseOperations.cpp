@@ -36,6 +36,7 @@
 #include "ObjectConstructor.h"
 #include "ObjectInitializationScope.h"
 #include "TopExceptionScope.h"
+#include "WeakGCMapInlines.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -92,7 +93,7 @@ JSONValueParser::LearnedNames& JSONRuntime::learnedNames()
 
 const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* structure)
 {
-    if (structure->isDictionary())
+    if (structure->isDictionary() || (m_structuresThatNoPlanFits && m_structuresThatNoPlanFits->get(structure)))
         return nullptr;
     UniquedStringImpl* lastName = structure->transitionPropertyName();
     std::optional<uint32_t> lastNameNumber = lastName ? identifiersOf(m_instance).numberOf(lastName) : std::nullopt;
@@ -114,17 +115,34 @@ const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* 
     if (!hasOnlyPlainProperties || names.contains(nullptr) || names.last() != lastName)
         return nullptr;
 
-    for (const RecordPlanForNames& known : m_recordPlans) {
-        if (std::ranges::equal(known.names, names, { }, &RefPtr<UniquedStringImpl>::get))
-            return known.plan.get();
+    uint32_t hash = 0;
+    for (UniquedStringImpl* name : names)
+        hash = pairIntHash(hash, name->existingSymbolAwareHash());
+    hash >>= 1;
+    if (auto found = m_recordPlans.find(hash); found != m_recordPlans.end()) {
+        for (const RecordPlanForNames& known : found->value) {
+            if (std::ranges::equal(known.names, names, { }, &RefPtr<UniquedStringImpl>::get))
+                return known.plan.get();
+        }
     }
-    if (m_recordPlans.size() == maxRecordPlans)
+    bool imageHasEveryName = std::ranges::all_of(names, [&](UniquedStringImpl* name) {
+        return !!identifiersOf(m_instance).numberOf(name);
+    });
+    if (!imageHasEveryName)
         return nullptr;
-    m_recordPlans.append({ { }, ObjectBuilder::tryCreatePlanOfSmallestRecord(*m_instance.state, names.span(), [](const ObjectBuilderPlan&) { return true; }) });
-    m_recordPlans.last().names.appendContainerWithMapping(names, [](UniquedStringImpl* name) {
+    std::unique_ptr<ObjectBuilderPlan> plan = ObjectBuilder::tryCreatePlanOfSmallestRecord(*m_instance.state, names.span(), [](const ObjectBuilderPlan&) { return true; });
+    if (!plan) {
+        if (!m_structuresThatNoPlanFits)
+            m_structuresThatNoPlanFits = makeUnique<WeakGCMap<Structure*, Structure>>(vm);
+        m_structuresThatNoPlanFits->set(structure, structure);
+        return nullptr;
+    }
+    Vector<RecordPlanForNames, 1>& plansUnderHash = m_recordPlans.add(hash, Vector<RecordPlanForNames, 1> { }).iterator->value;
+    plansUnderHash.append({ { }, WTF::move(plan) });
+    plansUnderHash.last().names.appendContainerWithMapping(names, [](UniquedStringImpl* name) {
         return RefPtr { name };
     });
-    return m_recordPlans.last().plan.get();
+    return plansUnderHash.last().plan.get();
 }
 
 NEVER_INLINE JSONRuntime::RecordPlan JSONRuntime::findRecordPlan(VM& vm, Structure* ordinaryStructure)
@@ -132,15 +150,10 @@ NEVER_INLINE JSONRuntime::RecordPlan JSONRuntime::findRecordPlan(VM& vm, Structu
     if (!m_recordPlanCache)
         m_recordPlanCache.make();
     uint32_t id = ordinaryStructure->id().bits();
-    CachedRecordPlan& cached = (*m_recordPlanCache)[recordPlanCacheIndex(id)];
-    if (cached.structureIDSeenOnce != id) {
-        cached = { 0, id, { } };
-        return { };
-    }
     RecordPlan recordPlan;
     if (const ObjectBuilderPlan* plan = findOrCreateRecordPlan(vm, ordinaryStructure))
         recordPlan = { plan, m_instance.state->objects->structures.objectStructure(vm, plan->layout().shape) };
-    cached = { id, id, recordPlan };
+    (*m_recordPlanCache)[recordPlanCacheIndex(id)] = { id, recordPlan };
     return recordPlan;
 }
 
@@ -256,8 +269,8 @@ void JSONRuntime::clear()
         m_learnedNames->clear();
     if (m_recordPlanCache)
         m_recordPlanCache->fill({ });
-    for (const RecordPlanForNames& known : m_recordPlans) {
-        if (known.plan)
+    for (const Vector<RecordPlanForNames, 1>& plansUnderHash : m_recordPlans.values()) {
+        for (const RecordPlanForNames& known : plansUnderHash)
             known.plan->clearAcceptedStructures();
     }
     if (m_instance.json.sourceOwnerStackPointer)

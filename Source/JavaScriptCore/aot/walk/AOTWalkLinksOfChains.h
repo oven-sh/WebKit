@@ -66,6 +66,10 @@ extern const OpcodeSet opcodesThatOpenGuessAtTakes;
 inline constexpr OpcodeSet opcodesThatOpenGuessAtTakesInChains = opcodesOfFamily(OperationFamily::Access) | opcodesOfFamily(OperationFamily::PrivateAccess) | opcodesOfFamily(OperationFamily::Operator) | opcodesOfFamily(OperationFamily::ArrayIntrinsic)
     | OpcodeSet { Opcode::SuperConstruct, Opcode::SuperConstructList, Opcode::Call, Opcode::Construct, Opcode::CallList, Opcode::RequireObjectCoercible };
 GuessOpened openGuessAtOfItsOpcodes(Walker&, const BodyValue&);
+GuessOpened openGuessAtOnlyProvenHolderOfName(Walker&, const BodyValue&);
+bool tellRowsApartByKindOfStorage(Walker&, const BodyValue& read);
+inline constexpr OpcodeSet opcodesThatAskRowOnceWhereStretchStoresIntoItTakes { Opcode::ElemGet, Opcode::ElemSet };
+AOT_LINK_OF_WALK(askRowOnceWhereStretchStoresIntoIt, opcodesThatAskRowOnceWhereStretchStoresIntoItTakes)
 ALWAYS_INLINE GuessOpened openGuessAt(Walker& walker, const BodyValue& value) { return opcodesThatOpenGuessAtTakesInChains.contains(value.opcode()) ? openGuessAtOfItsOpcodes(walker, value) : GuessOpened::None; }
 template<Opcode known> ALWAYS_INLINE GuessOpened openGuessAt(Walker& walker, const BodyValueOf<known>& value) { return opcodesThatOpenGuessAtTakesInChains.contains(known) ? openGuessAtOfItsOpcodes(walker, value) : GuessOpened::None; }
 

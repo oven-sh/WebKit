@@ -1,0 +1,53 @@
+# function seeks(list, operand) { return list.indexOf(operand()); }      function finds(list, operand) { said = seeks(list, operand); }      sink(finds);
+# Nothing is expected of the receiver: the method is named by its key alone, so the read in front of the operand stays a whole read. The call stands in tail position in a function that is copied into its caller:
+# it comes back into the unit. By value it takes the door of the built-in class, as the same call in ordinary position does, and not the road of calls in tail position.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame 1 callee=f2
+# CHECK: = Call {{*}}methodOfReceiverAsMade=ArrayPrototypeIndexOf{{*}} tail
+# RUN(FINDS): bytes f1:Body mechanisms=all
+# FINDS-LABEL: unit f1:Body
+# FINDS-NOT: InTailPosition
+# FINDS: Call Stub CallMethodOfBuiltinClassByValue.ArrayIndexOf count 1
+# RUN(SHELL): run-in-shell const says = f => { try { f(); print(String(globalThis.said)); } catch (e) { print(e.name); } }; globalThis.sink = finds => { for (let turn = 0; turn < 2; turn++) { says(() => finds([3, "b", 5], () => "b")); says(() => finds("abcb", () => "b")); says(() => finds({ indexOf: x => x + "!" }, () => "b")); const seen = [3, "b"]; says(() => finds(seen, () => { seen.indexOf = () => "mine"; return "b"; })); says(() => finds(seen, () => "b")); says(() => finds(null, () => { print("ran"); return 1; })); says(() => finds(new (class extends Array { indexOf() { return -7; } })(), () => "b")); } };
+# SHELL: 1
+# SHELL: 1
+# SHELL: b!
+# SHELL: 1
+# SHELL: mine
+# SHELL: TypeError
+# SHELL: -7
+# SHELL: 1
+# SHELL: 1
+# SHELL: b!
+# SHELL: 1
+# SHELL: mine
+# SHELL: TypeError
+# SHELL: -7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="finds" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f2
+    v3 = Call v2, -, v0, v1 @100
+    v4 = Builtin builtin=GlobalThis
+    PropSet v4, v3 key="said"
+    v6 = Undefined
+    Return v6
+}
+function f2 name="seeks" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="indexOf" @110
+    v3 = Call v1, - @120
+    v4 = Call v2, v0, v3 calleeKey="indexOf" calleeName="list.indexOf" @130
+    ReturnCall v4
+}

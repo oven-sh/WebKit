@@ -22,6 +22,10 @@ public:
     void generateGetCollectionIteratorTable(const ValueContext&);
     void generatePutCollectionIteratorTable(const ValueContext&);
     void generateIsCollectionIteratorClosedMark(const ValueContext&);
+    void generateGetValueAtPlaceInMap(const ValueContext&);
+    void generateFindKeyInMap(const ValueContext&);
+    void generateMovesOfEntriesInCollections(const ValueContext&);
+    void generateTryPutValueAtPlaceInMap(const ValueContext&);
 
 private:
     enum class Collection : uint8_t { Map, Set };
@@ -36,6 +40,7 @@ private:
 
     void generateNext(Collection, const ValueContext&);
     InlineWidths inlineWidthsOf(Collection, ValueID collection);
+    Integer movesOfEntriesInCollections();
 
     ValueID m_forwardedTableRead;
     LValue m_forwardedTable { nullptr };

@@ -118,9 +118,8 @@ const ConstructionStart* Program::findConstructionReportedAt(ModuleID id, uint32
     return &*found;
 }
 
-BuiltinName Program::builtinNameOf(PropertyKeyID id) const
+BuiltinName Program::builtinNameOfKeyThatIsNoText(PropertyKeyID id, const PropertyKey& key) const
 {
-    const PropertyKey& key = at(id);
     switch (key.kind) {
     case PropertyKeyKind::Text:
         return strings.builtinName(key.text);
@@ -549,6 +548,7 @@ void Program::internBuiltinNameKeys()
         } else
             keys.append(arena.textKey(strings.stringOf(name)));
     }
+    m_derivedTables.keyOfWordOnWhatSeesAccesses = arena.textKey(strings.intern(StringView("what sees a read or a store above"_s)));
 }
 
 using ModuleOfNamespaceObject = std::pair<BuiltinID, ModuleID>;
@@ -661,10 +661,12 @@ static void appendFieldsOfNamespaceLayout(Program& program, LayoutID id, std::sp
 
 void Program::appendNamespaceLayouts(const ParallelLoops& loops)
 {
-    layouts.reserveCapacity(layouts.size() + static_cast<size_t>(std::ranges::count(modules, ModuleKind::SourceText, &Module::kind)));
+    layouts.reserveCapacity(layouts.size() + static_cast<size_t>(std::ranges::count_if(modules, [](const Module& module) {
+        return hasNamespaceLayout(module.kind);
+    })));
     for (size_t index = 0; index < modules.size(); ++index) {
         Module& module = modules[index];
-        if (module.kind != ModuleKind::SourceText)
+        if (!hasNamespaceLayout(module.kind))
             continue;
         RELEASE_ASSERT(!module.namespaceLayout);
         module.namespaceLayout = LayoutID(layouts.size());
@@ -757,6 +759,15 @@ LayoutID Program::layoutOfWholeNamespace(ModuleID id) const
     return module.exportRule == SyntheticExportRule::None ? module.namespaceLayout : LayoutID();
 }
 
+LayoutID Program::layoutOfNamespaceThatListsNoName(ModuleID id) const
+{
+    constexpr OptionSet<ModuleFlags> flagsOfModulesWithSeveralNamespaces { ModuleFlags::RunsAgain, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted };
+    const Module& module = at(id);
+    if (module.kind != ModuleKind::RuntimeSource || (module.flags.containsAny(flagsOfModulesWithSeveralNamespaces)) || !objectOfLibraryFileIsResultOfBody(*this, id))
+        return { };
+    return module.namespaceLayout;
+}
+
 static bool hasNumberInText(const Layout& layout)
 {
     return layout.kind != LayoutKind::BuiltinResult && layout.kind != LayoutKind::ModuleNamespace;
@@ -834,29 +845,39 @@ static Vector<Result> mapRecordsOnPool(const ParallelLoops& loops, const Vector<
 
 void Program::computeLocationBits(const ParallelLoops& loops)
 {
-    Vector<uint64_t> hashesOfPaths = mapRecordsOnPool<uint64_t>(loops, modules, [&](const Module& module) {
-        return addTextToContentHashOfRecord(strings, 0, module.path);
-    });
-    auto hashOfPathOf = [&](ModuleID id) -> uint64_t {
-        return id.index() < hashesOfPaths.size() ? hashesOfPaths[id.index()] : 0;
+    auto liesInModule = [&](ModuleID id) {
+        return id && id.index() < modules.size();
     };
+    m_derivedTables.locationBitsOfLayouts = mapRecordsOnPool<uint8_t>(loops, layouts, [&](const Layout& layout) -> uint8_t {
+        if (liesInModule(layout.module)) {
+            if (!layout.place)
+                return 0;
+            if (isEnvironmentKind(layout.kind))
+                return static_cast<uint8_t>(*layout.place & 63);
+            return locationBitOfContentHash(addToContentHashOfRecord(static_cast<uint64_t>(layout.kind), *layout.place));
+        }
+        uint64_t hash = addTextToContentHashOfRecord(strings, static_cast<uint64_t>(layout.kind), layout.name);
+        return locationBitOfContentHash(addToContentHashOfRecord(hash, static_cast<uint64_t>(layout.position) << 32 | layout.builtinLayout.index()));
+    });
+    Vector<uint32_t> fieldsOfEnvironmentsListedInFront(FillWith { }, modules.size(), 0u);
+    Vector<uint32_t> otherLayoutsListedInFront(FillWith { }, modules.size(), 0u);
+    for (size_t index = 0; index < layouts.size(); ++index) {
+        const Layout& layout = layouts[index];
+        if (layout.place || !liesInModule(layout.module))
+            continue;
+        uint32_t& listedInFront = (isEnvironmentKind(layout.kind) ? fieldsOfEnvironmentsListedInFront : otherLayoutsListedInFront)[layout.module.index()];
+        m_derivedTables.locationBitsOfLayouts[index] = static_cast<uint8_t>(listedInFront & 63);
+        listedInFront += isEnvironmentKind(layout.kind) ? std::max<uint32_t>(1, static_cast<uint32_t>(layout.fields.size())) : 1;
+    }
 
-    Vector<uint64_t> hashesOfLayouts = mapRecordsOnPool<uint64_t>(loops, layouts, [&](const Layout& layout) {
-        uint64_t hash = addToContentHashOfRecord(hashOfPathOf(layout.module), static_cast<uint64_t>(layout.kind));
-        hash = addTextToContentHashOfRecord(strings, hash, layout.name);
-        hash = addToContentHashOfRecord(hash, static_cast<uint64_t>(layout.position) << 32 | layout.builtinLayout.index());
-        return addToContentHashOfRecord(hash, hashOfPathOf(layout.namespaceOf));
-    });
-    m_derivedTables.locationBitsOfLayouts = hashesOfLayouts.map([](uint64_t hash) {
-        return locationBitOfContentHash(hash);
-    });
-
-    m_derivedTables.locationBitsOfVariables = mapRecordsOnPool<uint8_t>(loops, variables, [&](const Variable& variable) {
-        uint64_t hash = addTextToContentHashOfRecord(strings, hashOfPathOf(variable.module), variable.name);
-        if (variable.owner.index() < hashesOfLayouts.size())
-            hash = addToContentHashOfRecord(hash, hashesOfLayouts[variable.owner.index()]);
-        return locationBitOfContentHash(hash);
-    });
+    static_assert(!locationBitOfVariablesThatPlanAdds);
+    Vector<uint32_t> variablesListedInFront(FillWith { }, modules.size() + 1, 0u);
+    m_derivedTables.locationBitsOfVariables.grow(variables.size());
+    for (size_t index = 0; index < variables.size(); ++index) {
+        const Variable& variable = variables[index];
+        uint32_t listedInFront = variablesListedInFront[liesInModule(variable.module) ? variable.module.index() : modules.size()]++;
+        m_derivedTables.locationBitsOfVariables[index] = static_cast<uint8_t>(1 + variable.place.value_or(listedInFront) % 63);
+    }
 }
 
 ModuleID Program::compiledModuleOfNamespaceObject(BuiltinID canonical) const
@@ -952,6 +973,36 @@ BitVector functionsCalledByHost(const Program& program)
     return functionsCalledByHost(program, ParallelLoops(1));
 }
 
+FunctionID findNakedConstructorOf(const Program& program, BuiltinID builtin)
+{
+    if (!builtin)
+        return { };
+    FunctionID named;
+    for (const BuiltinOverload& overload : program.builtins().overloadsOf(program.builtins().canonicalID(builtin))) {
+        if (overload.mode != BuiltinCallMode::Construct)
+            continue;
+        const RuntimeFunctionEntry* held = findRuntimeFunction(program, overload.libraryFunction());
+        if (!held || !held->function || (named && named != held->function))
+            return { };
+        named = held->function;
+    }
+    if (!named)
+        return { };
+    const Function& function = program.at(named);
+    if (!function.has(FunctionFlags::IsNakedConstructor) || function.hasAny({ FunctionFlags::HasThis, FunctionFlags::TakesCallee }) || !function.captures.isEmpty())
+        return { };
+    return named;
+}
+
+FunctionID functionThatSorts(const Program& program)
+{
+    for (const BuiltinOverload& overload : program.builtins().overloadsOf(program.builtins().canonicalID(Builtins::ArrayPrototypeSort))) {
+        if (const RuntimeFunctionEntry* held = findRuntimeFunction(program, overload.libraryFunction()); held && held->function)
+            return held->function;
+    }
+    return { };
+}
+
 const RuntimeFunctionEntry* findRuntimeFunction(const Program& program, RuntimeFunctionID id)
 {
     if (!id)
@@ -1007,6 +1058,15 @@ bool isBundlerHelperNamedByProgram(const Program& program, ModuleID id)
             return false;
         return std::ranges::contains(importer.requests, id, &ModuleRequest::target) || std::ranges::contains(importer.requiredNames, id, &RequiredName::module);
     });
+}
+
+bool objectOfLibraryFileIsResultOfBody(const Program& program, ModuleID id)
+{
+    const Module& module = program.at(id);
+    if (module.requireResult != RequireResult::DefaultExport || module.exportRule != SyntheticExportRule::RuntimeModule || !module.body)
+        return false;
+    const Function& body = program.at(module.body);
+    return body.hasBody() && !body.isCoroutine() && body.results.size() == 1;
 }
 
 ModuleID compiledModuleWithObject(const Program& program, BuiltinID builtin)
@@ -1130,6 +1190,23 @@ bool namesWaysToModuleObjects(const Program& program)
 {
     return std::ranges::any_of(program.modules, [](const Module& module) {
         return module.flags.contains(ModuleFlags::NamesWayToModuleObjects);
+    });
+}
+
+bool parsersCouldMakeRecordsOf(const Program& program, LayoutID id)
+{
+    constexpr OptionSet<LayoutFlags> flagsOfOtherLayouts { LayoutFlags::HasHeritage, LayoutFlags::IsConstructorFunction, LayoutFlags::HasMembersWithoutLayout, LayoutFlags::IsTypeParameter, LayoutFlags::IsNeverAllocated, LayoutFlags::IsWrittenUnderDictionaryType, LayoutFlags::IsDerived, LayoutFlags::IsOfCreatedObject };
+    const Layout& layout = program.at(id);
+    if (layout.kind != LayoutKind::Record || layout.constructor || layout.base || layout.flags.containsAny(flagsOfOtherLayouts) || layout.fields.isEmpty())
+        return false;
+    return std::ranges::all_of(layout.fields, [&](const Field& field) {
+        if (!field.key)
+            return false;
+        TypeID written = field.declared.written();
+        if (!written)
+            return true;
+        Type type = program.at(written);
+        return type.isAnything() || !type.mayBeFunction();
     });
 }
 
