@@ -827,7 +827,7 @@ static bool leavesFieldOut(State& state, const LayoutData& layout, uint32_t orde
 {
     if (isOrderStoredOutOfLine(orderWord) || orderWord & orderWordHasFieldOutsideSlot)
         return false;
-    std::span<const uint16_t> listed = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord));
+    std::span<const uint16_t> listed = state.objects->keyOrders.entriesListedBy(layout, orderWord);
     return !WTF::find16(listed.data(), layout.indexOf(field), listed.size());
 }
 

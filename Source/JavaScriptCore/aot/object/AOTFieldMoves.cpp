@@ -325,7 +325,7 @@ static bool listFieldsMovedToOrdinaryCopy(VM& vm, State& state, const Object& so
     RuntimeLayoutTable& layouts = state.objects->layouts;
     const LayoutData& layout = source.layout();
     uint32_t orderWord = source.orderWord();
-    for (uint16_t index : state.objects->keyOrders.entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord))) {
+    for (uint16_t index : state.objects->keyOrders.entriesListedBy(layout, orderWord)) {
         if (index >= layout.numberOfFields)
             return false;
         const FieldData& field = layout.fields()[index];

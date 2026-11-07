@@ -43,9 +43,10 @@ std::span<const uint16_t> Object::keyOrder(State& state) const
     uint32_t word = orderWord();
     if (isOrderStoredOutOfLine(word)) {
         std::span<const uint16_t> held = compiledStructure().outOfLineKeyOrder();
+        RELEASE_ASSERT(countOf(word) <= held.size());
         return countOf(word) ? held.first(countOf(word)) : held;
     }
-    return state.objects->keyOrders.entriesInOrder(layout, orderOf(word)).first(countOf(word));
+    return state.objects->keyOrders.entriesListedBy(layout, word);
 }
 
 bool Object::isInKeyOrder(State& state, const FieldData& field) const

@@ -592,6 +592,7 @@ bool KeyOrderTable::positionsExtraKeys(const LayoutData& layout, uint32_t orderW
     if (order < layout.numberOfOrders)
         return !numberOfExtraKeys;
     const AddedOrder& added = *m_orders->addedOrder(layout, m_orders->ordersOf(layout), order);
+    RELEASE_ASSERT(countOf(orderWord) <= added.length);
     ExtraKeyCounter positioned(layout.numberOfFields);
     if (countOf(orderWord) == added.length && added.largestEntry < maxKeyOrderEntry) {
         if (added.largestEntry >= layout.numberOfFields)
@@ -692,6 +693,7 @@ std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layo
         return result;
     };
     auto entries = entriesInOrder(layout, order);
+    RELEASE_ASSERT(count <= entries.size());
     if (count < entries.size() && entries[count] == entry) [[likely]]
         return publish(orderWordOf(order, count + 1));
     StorageOfOrders& storage = m_orders;

@@ -270,8 +270,8 @@ static bool orderGainedFieldAlone(State& state, const LayoutData& layout, uint32
 {
     if (isOrderStoredOutOfLine(orderWordBefore) || isOrderStoredOutOfLine(orderWordAfter) || countOf(orderWordAfter) != countOf(orderWordBefore) + 1)
         return false;
-    std::span<const uint16_t> before = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderWordBefore)).first(countOf(orderWordBefore));
-    std::span<const uint16_t> after = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderWordAfter)).first(countOf(orderWordAfter));
+    std::span<const uint16_t> before = state.objects->keyOrders.entriesListedBy(layout, orderWordBefore);
+    std::span<const uint16_t> after = state.objects->keyOrders.entriesListedBy(layout, orderWordAfter);
     return std::ranges::equal(before, after.first(before.size())) && after.back() == layout.indexOf(field);
 }
 

@@ -1074,7 +1074,7 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     copy.excludedRunNumberPlusOne = excludedRunNumberPlusOne;
     copy.state = MappedCopy::State::IsNotServed;
     uint32_t orderWordOfSource = source.orderWord();
-    std::span<const uint16_t> entries = state.objects->keyOrders.entriesInOrder(sourceLayout, orderOf(orderWordOfSource)).first(countOf(orderWordOfSource));
+    std::span<const uint16_t> entries = state.objects->keyOrders.entriesListedBy(sourceLayout, orderWordOfSource);
     Vector<uint16_t, 32> keysAfter(target.keyOrder(state));
     BitVector isListed;
     for (uint16_t key : keysAfter) {

@@ -289,7 +289,7 @@ static JSCellButterfly* bindStar(VM& vm, State& state, JSGlobalObject* realm, St
     }
 
     uint32_t orderAndCount = star.orderAndCountOfSource();
-    std::span<const uint16_t> entriesOfSource = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderAndCount)).first(countOf(orderAndCount));
+    std::span<const uint16_t> entriesOfSource = state.objects->keyOrders.entriesListedBy(layout, orderAndCount);
     JSCellButterfly* bindings = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, static_cast<unsigned>(2 * (entriesOfSource.size() + bindingsOfSource.size())));
 
     unsigned end = 0;
@@ -464,7 +464,7 @@ static bool canGetPendingStars(const Object& target)
 
 static bool orderListsField(State& state, const LayoutData& layout, uint32_t orderAndCount, const FieldData& field)
 {
-    std::span<const uint16_t> listed = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderAndCount)).first(countOf(orderAndCount));
+    std::span<const uint16_t> listed = state.objects->keyOrders.entriesListedBy(layout, orderAndCount);
     uint16_t index = layout.indexOf(field);
     if (index < listed.size() && listed[index] == index)
         return true;
@@ -697,7 +697,7 @@ static void forEachNameOfSourceOfStar(VM& vm, State& state, Star star, const Inv
         functor(namesOfStars->keyOfEntry(static_cast<unsigned>(index) + 1));
     };
     uint32_t orderAndCount = star.orderAndCountOfSource();
-    std::span<const uint16_t> entries = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderAndCount)).first(countOf(orderAndCount));
+    std::span<const uint16_t> entries = state.objects->keyOrders.entriesListedBy(layout, orderAndCount);
     size_t next = Object::forEachPositionedKey(entries, layout.numberOfFields, numberOfNamesOfStars, [&](uint16_t index) {
         const FieldData& field = layout.fields()[index];
         if (!field.isPrivate() && !(field.flags & fieldIsNotEnumerable) && layouts.hasStringKey(field))

@@ -1,11 +1,17 @@
 # The list follows from the program alone. A built-in that the engine calls inside a built-in takes an operation as a closure does, also where it is handed nothing: an iterator whose next is Array never ends.
-# new RegExp("a".toUpperCase()); const it = Object.create(new Map().keys()); it.next = Array; [...it]
+# The loop stands in a function that nothing calls. Such a function is gone through from a start of its own, with a sixty-fourth of the operations that the body of the first file has.
+# export function f() { const made = new RegExp("a".toUpperCase()); const it = Object.create(new Map().keys()); it.next = Array; return [made, [...it]]; }
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /A/
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    Return v0
+}
+function f1 name="f" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=RegExp
     v1 = String string="a"
