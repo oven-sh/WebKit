@@ -30,6 +30,7 @@
 #include "TopExceptionScope.h"
 #include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
+#include <wtf/text/StringToIntegerConversion.h>
 
 namespace JSC {
 
@@ -732,6 +733,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
         .wantsPieces = areOfSeveralThreads,
         .holdersComeFirst = m_hasLetGoOfModules,
         .namespaces = m_namespacesOfModulesLetGoOf.span(),
+        .mostLooksAtInnerReferences = m_mostLooksAtInnerReferences,
     });
     m_isPuttingFinalizersInOrder = false;
 
@@ -1517,6 +1519,22 @@ UncheckedKeyHashSet<JSCell*> Runtime::whatOtherThreadsHold()
     });
 }
 
+// (In a function of its own: nothing of what it goes through is to be left in the frame of finalizeAllAtExit(), from which the collector is called.)
+NEVER_INLINE void Runtime::noteNamespacesOfModules()
+{
+    JSValue name;
+    JSValue module;
+    for (unsigned position = 0; modules()->next(position, name, module);) {
+        if (auto* pythonModule = PyModule::tryFrom(module); pythonModule && pythonModule->dict())
+            m_namespacesOfModulesLetGoOf.append(pythonModule->dict());
+    }
+    // -X finalization_order_looks=N, or sys._xoptions["finalization_order_looks"] = "N", lowers the bound: for tests of what is done where it is reached.
+    auto* options = PyDict::tryFrom(sysDict()->get(internString(m_vm, "_xoptions"_s)));
+    JSString* looks = options ? tryStrValue(options->get(internString(m_vm, "finalization_order_looks"_s))) : nullptr;
+    if (const StringImpl* impl = looks ? looks->tryGetValueImpl() : nullptr)
+        m_mostLooksAtInnerReferences = std::min(m_mostLooksAtInnerReferences, parseInteger<uint64_t>(StringView(impl)).value_or(m_mostLooksAtInnerReferences));
+}
+
 void Runtime::finalizeAllAtExit()
 {
     // The host exits from within a call that is owed (process.exit() in a finalizer): no other is made within it.
@@ -1569,14 +1587,7 @@ void Runtime::finalizeAllAtExit()
         m_namespacesOfModulesLetGoOf.clear();
         m_hasLetGoOfModules = false;
     });
-    {
-        JSValue name;
-        JSValue module;
-        for (unsigned position = 0; modules()->next(position, name, module);) {
-            if (auto* pythonModule = PyModule::tryFrom(module); pythonModule && pythonModule->dict())
-                m_namespacesOfModulesLetGoOf.append(pythonModule->dict());
-        }
-    }
+    noteNamespacesOfModules();
     modules()->clear(m_vm);
     m_hasLetGoOfModules = true;
     wipeStackBelow(m_globalObject);
@@ -1597,7 +1608,7 @@ void Runtime::finalizeAllAtExit()
                 (cell->classInfo() == Ctypes::PyCThunk::info() ? callbacksOfForeignCode : rest).append(cell);
         });
         if (rest.size() > 1) {
-            rest = orderWithHoldersFirst(m_vm.heap, rest.span(), m_namespacesOfModulesLetGoOf.span()).map([&](unsigned index) {
+            rest = orderWithHoldersFirst(m_vm.heap, rest.span(), m_namespacesOfModulesLetGoOf.span(), m_mostLooksAtInnerReferences).map([&](unsigned index) {
                 return rest[index];
             });
         }

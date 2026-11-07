@@ -738,13 +738,14 @@ PyTuple* ringOfDeque(PyRecord*, unsigned& head);
 // For the collector, when all that is reachable is marked, about the candidates: the objects with finalizers that are not marked.
 // See PyFinalizationOrder.cpp.
 struct FinalizationQuestions {
-    std::span<JSCell* const> askedAbout; // See isCyclicGarbageToFinalize.
+    std::span<JSCell* const> askedAbout { }; // See isCyclicGarbageToFinalize.
     bool looksAtAllThatDied { false }; // Only in a full collection.
     bool wantsGarbage { false };
     bool wantsToKnowWhatReferenceCountsWouldFree { false };
     bool wantsPieces { false }; // See oldestOfPiece.
     bool holdersComeFirst { false }; // Among what reference counts would not have freed, too. See DeadGraph::candidatesWithHoldersFirst().
-    std::span<PyDict* const> namespaces; // For that: dicts, dead or alive, in which for a candidate to have a name is to be held by nothing.
+    std::span<PyDict* const> namespaces { }; // For that: dicts, dead or alive, in which for a candidate to have a name is to be held by nothing.
+    uint64_t mostLooksAtInnerReferences { 16'000'000 }; // For that: the bound on what is more than linear.
     // Nothing but allFreedByReferenceCounts is wanted. So many of the first candidates are in a queue: an earlier collection has found them dead.
     bool wantsAllThatReferenceCountsWouldFree { false };
     unsigned candidatesInQueues { 0 };
@@ -779,7 +780,7 @@ struct FinalizationOrder {
 FinalizationOrder finalizationOrder(JSC::Heap&, SlotVisitor&, std::span<JSCell* const> candidates, const FinalizationQuestions&);
 // Outside a collection, for objects that are alive and are finalized all the same, given in the order in which they were made: that order, but what only other objects among them lead to not before
 // those. See DeadGraph::candidatesWithHoldersFirst(). No cell is allocated.
-Vector<unsigned> orderWithHoldersFirst(JSC::Heap&, std::span<JSCell* const> candidates, std::span<PyDict* const> namespaces);
+Vector<unsigned> orderWithHoldersFirst(JSC::Heap&, std::span<JSCell* const> candidates, std::span<PyDict* const> namespaces, uint64_t mostLooksAtInnerReferences);
 
 // function(generator, value) for what is in the variables of the generators, coroutines and async generators that are running, in
 // whatever thread: while one runs they are in the frame of its body, not in the generator.

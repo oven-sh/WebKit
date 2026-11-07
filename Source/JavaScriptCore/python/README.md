@@ -902,20 +902,31 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   - Where such objects hold one another, the circle is opened where the names lead into it. A reference does not hold what it refers to if that leads back to where the reference comes from by a way on which
     nothing is nearer to the names than it is itself; nearer: fewer objects with finalizers on the way from a namespace; at the same distance what has no finalizer; of two objects the younger, which is the wrapper
     if one of them is. So of `raw.owner = f` the writer goes first if the program has `f`, or has both in a list, and a tree with links to the parents goes from its root down. A reference that is on no circle
-    holds (unless it is to a namespace, or to an object with a finalizer that has a name of its own), what holds has no circle, and nothing depends on the order in which the collector comes to the cells. (A search from the names that took the first way into a circle for the way in
+    holds (unless it is to a namespace, or to an object with a finalizer that has a name of its own), what holds has no circle, and nothing depends on the order in which the collector comes to the cells (as far as
+    the bound below is not reached). (A search from the names that took the first way into a circle for the way in
     depended on that order, and let what lay behind the first of two holders go before the second.) All of it is finalized in one round: what has waited a round stands in the lists in the order that the
     round before has given it. Among what is still held when all else has gone (by JS, by a frame) only what the objects with finalizers lead to is looked at: a list with a name that holds them is not
     in it, and a circle that no way leads to is entered at its youngest.
-  - That is worked out with the world stopped, so there is a bound: 16,000,000 looks at references inside such circles in all (`mostLooksAtInnerReferences`), the smallest circles first. First by searches from each
-    cell, the nearest first, which in a list, a tree, a ring or a class that keeps its instances are over after a few cells each; if they run out of looks (four for each cell and reference), by division, which
-    takes three looks at each reference for each halving of the number of degrees of nearness, whatever the shape. Both work out the same (where assertions are on, both are gone, and compared). If the
-    looks do not suffice for all the halvings, neighbouring degrees count as one: the same rule with a coarser "nearer"; a circle of more than 2,000,000 cells is not opened: its objects go in the order of
-    making. The looks suffice for a tangle of 90,000 objects each of which knows three others, and for a list, a tree or a ring of 1,500,000.
-    The function by itself, compiled apart, on a busy machine, before and now, in ms, for 100,000 / 1,000,000 / 4,000,000 cells: nothing in a circle 5, 5 / 50, 54 / 203, 216; a tree of plain cells with links to
-    the parents 4, 4 / 58, 56 / 239, 235; the same with an object with a finalizer for its root, in a list, 4, 23 / 79, 292 / 329, 321; all of them objects with finalizers: a doubly linked list 5, 22 / 51,
-    243 / 212, 329; a tree 6, 26 / 65, 333 / 277, 390; a class that keeps its instances 9, 28 / 113, 352 / 521, 302; a doubly linked list that was not made in the order of its links 12, 53 / 428, 1,688 /
-    3,019, 4,400; each knows three others at random 11, 249 / 197, 2,446 / 1,664, 4,046. So up to 22 times what it was where memory is against it, and at its worst 4.4 s where it was 3.0 s. (Without the bound:
-    120 s.) Memory for the circle in hand: 20 bytes for a reference inside it, 64 for a cell: 290 MB at the most.
+  - That is worked out with the world stopped. **A circle of up to 64 cells is always opened, and as the rule says, whatever else is in the heap**: from each cell what it reaches among what is no nearer, as
+    a set of bits: two looks at each reference of its cells, some 64 steps for a cell, no memory. So a writer and its raw file never go short. Larger circles share a bound: 16,000,000 looks at their cells and
+    the references inside them in all (`FinalizationQuestions::mostLooksAtInnerReferences`), the smallest first, by the number of those. Where such a circle has more than eight degrees of nearness, first by
+    searches from each cell, the nearest first, which in a list, a tree, a ring or a class that keeps its instances are over after a few cells each; if they run out of looks (four for each cell and
+    reference), or there are fewer degrees, by division, which takes three looks at each reference for each halving of the number of degrees, whatever the shape. All the ways work out the same. (Where
+    assertions are on they are compared: in every small circle; in a larger one of up to 10,000 cells that is opened, if the searches come to an end. That is done to the side: the circle is then opened as in a
+    build without, on the same account.) If the looks do not suffice for all the halvings, neighbouring degrees count as one: the same rule with a coarser "nearer". A circle for which there are not twice as
+    many looks left as it has cells and inner references, or not eight for each cell, so any of more than 2,000,000 cells, is not opened, and costs nothing: its objects go in the order of making. The looks
+    suffice for a tangle of 90,000 objects each of which knows three others, and for a list, a tree or a ring of 1,500,000. As long as they do, nothing depends on the order in which the collector comes to the
+    cells or their references; behind that, on the order of a cell's own references, which the object fixes: so the order is the same from run to run. (`-X finalization_order_looks=N` lowers the bound: for tests.)
+    All this is done only at exit, from where the modules have gone: by every collection that comes then, the engine's own too, each with a bound of its own; the first finds nearly all.
+    The function by itself, compiled apart, on a busy machine, before and now, in ms, for 100,000 / 1,000,000 / 4,000,000 cells: nothing in a circle 6, 5 / 50, 49 / 205, 205; a tree of plain cells with links to
+    the parents 5, 6 / 59, 62 / 236, 234; the same with an object with a finalizer for its root, in a list, 4, 40 / 81, 273 / 335, 325; all of them objects with finalizers: pairs that know each other 6, 8 /
+    76, 92 / 367, 384; a doubly linked list 5, 20 / 53, 223 / 206, 342; a tree 6, 24 / 66, 326 / 271, 391; a class that keeps its instances 9, 25 / 112, 334 / 519, 317; a doubly linked list that was not
+    made in the order of its links 13, 51 / 437, 1,694 / 2,885, 4,444; each knows three others at random 11, 242 / 202, 2,172 / 1,711, 4,158. The worst that has been found, at 4,000,000 cells, in s: two
+    tangles of 2,000,000: 1.1, 6.0; two lists out of order: 2.1, 5.5; tangles of 64, all of which are opened: 0.6, 1.2 where each lies together in memory, 2.8, 7.8 where it lies scattered. So up to 21 times
+    what it was, and at its worst 7.8 s where it was 2.8 s: for 4,000,000 objects with finalizers, the calls of which take longer than that. (Without the bound: 120 s.) In the engine, the whole end of a
+    program with 1,000,000 objects takes 0.2 to 0.3 s longer for a list, a tree, or plain cells in a circle with one object with a finalizer; 2.1 to 3.2 s longer for a list out of order or a tangle (which
+    is as much again); no longer where no object with a finalizer is in a circle: a large cache beside an open log file.
+    Memory for the circle in hand: 20 bytes for a reference inside it, 64 for a cell: 290 MB at the most, asked for before anything is done: if it is not to be had the circle is not opened.
   - Daemon threads are still running during the first of these steps, and in CPython they finalize what they drop themselves. So the step begins
     an era (`Runtime::m_era`, which each object with a finalizer is registered with; weak references have serial numbers): the main thread
     is a caller as above that serves only what is of an earlier era, whoever made it. It takes more: beside what its own collections find, what the others owe when it comes, and again before each further

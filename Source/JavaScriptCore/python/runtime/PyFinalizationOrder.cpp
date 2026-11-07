@@ -99,11 +99,11 @@ public:
 
 private:
     static constexpr unsigned none = std::numeric_limits<unsigned>::max();
-    // The graph takes some 60 bytes for a cell, while the world is stopped, and when the modules have gone some 20 more, and up to 290 MB for the largest circle in which a candidate is
+    // The graph takes some 60 bytes for a cell, while the world is stopped, and when the modules have gone some 36 more, and up to 290 MB for the largest circle in which a candidate is
     // (candidatesWithHoldersFirst()). If more than this has died, only what the candidates reach is looked at, and beyond as many cells of that, what is reached is not looked into: it is taken to refer to nothing.
     static constexpr unsigned maxCells = 4'000'000;
     // See candidatesWithHoldersFirst().
-    static constexpr uint64_t mostLooksAtInnerReferences = 16'000'000;
+    static constexpr unsigned mostCellsOfSmallCircle = 64;
 
     enum Flag : uint8_t {
         Released = 1 << 0, // Reference counts would have freed it.
@@ -646,7 +646,9 @@ void forEachComponent(ComponentSearch& search, Vertices vertices, Vector<Compone
 //
 // How that is worked out. The strongly connected components, once. A component all of whose cells are equally near holds nothing together: none of its inner references holds. (Every component without a
 // candidate is one: through what is no candidate the level does not rise.) In any other, the question for a reference from u to v is whether u and v are strongly connected among the cells that are no
-// nearer than v. Two ways lead to the answer, and the first is tried first:
+// nearer than v. In a circle of up to 64 cells that is worked out as it stands: from each cell what it reaches among what is no nearer, as a set of bits. That takes two looks at each reference of its cells
+// and no memory, so it is done always: a writer and its raw file never go short, whatever else is in the heap. In a larger circle two ways lead to the answer; where there are more than eight degrees of
+// nearness the first is tried first:
 // - By searches, from the nearest cell to the farthest: from each, among what is no nearer, for the references to it. What has no inner reference left that holds is taken away. In a list, a tree with links to
 //   the parents, a ring, a class that keeps its instances, each search is over after a few cells. In a tangle each goes through all of it.
 // - By division. Add the cells from the farthest to the nearest: each inner reference has a time at which its two ends become strongly connected, and it does not hold if that is the time at which v is
@@ -654,14 +656,18 @@ void forEachComponent(ComponentSearch& search, Vertices vertices, Vector<Compone
 //   one (union-find); the references whose ends they join belong to the earlier half, the others to the later. That looks at each inner reference some three times for each halving of the number of
 //   different degrees of nearness in the component, whatever its shape.
 //
-// The world is stopped meanwhile, so there is a bound: so many looks at inner references in all (mostLooksAtInnerReferences), for the smallest circles first. The searches of a circle have four looks for each
-// of its cells and inner references, or what is left. If there are not enough left for all the halvings of the division, neighbouring degrees of nearness count as one: the rule is the same, with a coarser
-// "nearer". That takes references away from what holds, so that still has no circle. With no halving at all the circle holds nothing together, and its candidates go in the order in which they were made.
-// As long as the looks suffice nothing depends on the order in which the cells are come to. (How many looks a search takes does.)
-// What that is in time: see README.md. Memory, for the circle in hand: 20 bytes for an inner reference, 64 for a cell.
+// The world is stopped meanwhile, so for the larger circles there is a bound: so many looks at cells and inner references in all (FinalizationQuestions::mostLooksAtInnerReferences), for the smallest first, by
+// the number of their cells and inner references. One look at each is taken to begin with. A circle for which there are not twice as many left, or not eight for each cell, is left alone, and costs nothing. The
+// searches have four looks for each cell and inner reference, or what is left. If there are not enough left for all the halvings of the division, neighbouring degrees of nearness count as one: the rule is
+// the same, with a coarser "nearer". That takes references away from what holds, so that still has no circle. With no halving at all, as where it is left alone, the circle holds nothing together, and its
+// candidates go in the order in which they were made.
+// As long as the looks suffice nothing depends on the order in which the cells or their references are come to. Behind that, how many looks a search takes depends on the order of a cell's own references, which
+// the object fixes, not on where the cells lie: so the order is the same from run to run.
+// What that is in time: see README.md. Memory, for the circle in hand: 20 bytes for an inner reference, 64 for a cell, asked for beforehand: if it is not to be had the circle is left alone.
 Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
 {
     unsigned count = m_cells.size();
+    const uint64_t mostLooksAtInnerReferences = m_questions.mostLooksAtInnerReferences;
     auto isLeft = [&](unsigned node) {
         return !(m_flags[node] & Released);
     };
@@ -713,6 +719,7 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
     struct Circle {
         unsigned firstMember;
         unsigned youngestCandidate; // none: it has no candidate.
+        unsigned innerReferences { 0 }; // Only of those that are opened on the account: see below.
     };
     Vector<Circle> circles;
     Vector<unsigned> members;
@@ -751,12 +758,16 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                 youngest = node;
         }
         someCircleHasCandidate |= youngest != none;
-        circles.append({ static_cast<unsigned>(members.size()), youngest });
+        circles.append({ static_cast<unsigned>(members.size()), youngest, 0 });
         members.append(cells);
     });
     auto membersOf = [&](unsigned index) {
         unsigned end = index + 1 < circles.size() ? circles[index + 1].firstMember : members.size();
         return members.span().subspan(circles[index].firstMember, end - circles[index].firstMember);
+    };
+    // (What leadsTo() asks of the head beside this has been asked: such a cell is in no circle.)
+    auto isInnerReference = [&](unsigned node, unsigned edge, unsigned circle) {
+        return circleOf(m_edges[edge]) == circle && m_edges[edge] != node;
     };
     FastBitVector doesNotHold; // By the number of the reference in m_edges.
     FastBitVector holdsNothingTogether; // By the number of the circle.
@@ -798,11 +809,30 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
         };
         for (unsigned node : namespacesAndWhatHasName)
             beginAt(node);
-        // What nothing refers to. (order() has used up m_references.)
+        // What nothing refers to. (order() has used up m_references.) And by the way the inner references of the circles that are opened on the account, if the looks suffice: see below.
+        FastBitVector isInCircleOnAccount;
+        isInCircleOnAccount.resize(count);
+        for (unsigned index = 0; index < circles.size(); ++index) {
+            auto cells = membersOf(index);
+            if (circles[index].youngestCandidate == none || cells.size() <= mostCellsOfSmallCircle)
+                continue;
+            if (8 * static_cast<uint64_t>(cells.size()) > mostLooksAtInnerReferences) {
+                holdsNothingTogether[index] = true;
+                continue;
+            }
+            for (unsigned node : cells)
+                isInCircleOnAccount[node] = true;
+        }
         holders.fill(0, count);
         for (unsigned node = 0; node < count; ++node) {
             for (unsigned target : successors(node))
                 holders[target] += target != node;
+            if (!isInCircleOnAccount[node])
+                continue;
+            unsigned innerReferences = 0;
+            for (unsigned edge = m_firstEdge[node]; edge < m_firstEdge[node + 1]; ++edge)
+                innerReferences += isInnerReference(node, edge, circleOf(node));
+            circles[circleOf(node)].innerReferences += innerReferences;
         }
         for (unsigned node = 0; node < count; ++node) {
             if (!holders[node])
@@ -825,10 +855,8 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                     liesBehindEntry[node] = true;
                     worklist.append(node);
                 }
-                if (circles[index].youngestCandidate != none)
-                    entries.append(circles[index].youngestCandidate);
-                else
-                    entries.append(cells);
+                // (Through what is no candidate the level does not rise: without one, any cell does.)
+                entries.append(circles[index].youngestCandidate != none ? circles[index].youngestCandidate : cells[0]);
                 while (!worklist.isEmpty()) {
                     for (unsigned target : successors(worklist.takeLast())) {
                         if (level[target] != none || liesBehindEntry[target])
@@ -886,26 +914,96 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
         Vector<unsigned> reached;
         Vector<unsigned> free;
 
-        // The smallest first: a writer and its raw file are not to go short because of a monster beside them. (Of two alike the one with the younger candidate: that is a matter of the program, not of
-        // the order in which the cells were come to.)
-        Vector<unsigned> circlesToOpen;
-        for (unsigned index = 0; index < circles.size(); ++index) {
-            if (circles[index].youngestCandidate != none)
-                circlesToOpen.append(index);
-        }
-        std::ranges::sort(circlesToOpen, [&](unsigned a, unsigned b) {
-            size_t sizeOfA = membersOf(a).size();
-            size_t sizeOfB = membersOf(b).size();
-            return sizeOfA != sizeOfB ? sizeOfA < sizeOfB : circles[a].youngestCandidate > circles[b].youngestCandidate;
-        });
-        uint64_t looksLeft = mostLooksAtInnerReferences;
-        for (unsigned index : circlesToOpen) {
+        // The larger circles: the smallest first, by what is charged: one of a few hundred cells is not to go short because of a monster beside it. (Of two alike the one with the younger candidate: that is a
+        // matter of the program, not of the order in which the cells were come to.)
+        struct CircleToOpen {
+            unsigned circle;
+            unsigned cellsAndInnerReferences;
+        };
+        // From each cell what it reaches among what is no nearer, as a set of bits. A reference to it from one of those does not hold.
+        auto openSmallCircle = [&](unsigned index) {
             auto cells = membersOf(index);
             unsigned size = cells.size();
-            // What follows takes a look at each cell and each inner reference to begin with, and as many again, and more, to find anything out. (Every cell of a circle has an inner reference.)
-            if (looksLeft < 8 * static_cast<uint64_t>(size)) {
-                holdsNothingTogether[index] = true;
+            // They are numbered from the nearest to the farthest.
+            std::array<Near, mostCellsOfSmallCircle> nearestFirst;
+            std::array<uint64_t, mostCellsOfSmallCircle> referredToBy;
+            std::array<uint64_t, mostCellsOfSmallCircle> reachedFrom;
+            for (unsigned i = 0; i < size; ++i)
+                nearestFirst[i] = { nearness(cells[i]), cells[i] };
+            std::ranges::sort(std::span { nearestFirst }.first(size), { }, &Near::nearness);
+            for (unsigned i = 0; i < size; ++i)
+                numberInCircle(nearestFirst[i].cell) = i;
+            for (unsigned i = 0; i < size; ++i) {
+                unsigned node = nearestFirst[i].cell;
+                referredToBy[i] = 0;
+                for (unsigned edge = m_firstEdge[node]; edge < m_firstEdge[node + 1]; ++edge) {
+                    if (isInnerReference(node, edge, index))
+                        referredToBy[i] |= 1ull << numberInCircle(m_edges[edge]);
+                }
+            }
+            uint64_t noNearer = 0;
+            for (unsigned i = 0; i < size; ++i) {
+                if (!i || nearestFirst[i].nearness != nearestFirst[i - 1].nearness)
+                    noNearer = ~((1ull << i) - 1);
+                uint64_t reached = 1ull << i;
+                for (uint64_t toGoOnFrom = reached; toGoOnFrom;) {
+                    uint64_t found = referredToBy[std::countr_zero(toGoOnFrom)] & noNearer & ~reached;
+                    toGoOnFrom &= toGoOnFrom - 1;
+                    reached |= found;
+                    toGoOnFrom |= found;
+                }
+                reachedFrom[i] = reached;
+            }
+            for (unsigned i = 0; i < size; ++i) {
+                unsigned node = nearestFirst[i].cell;
+                for (unsigned edge = m_firstEdge[node]; edge < m_firstEdge[node + 1]; ++edge) {
+                    if (isInnerReference(node, edge, index) && ((reachedFrom[numberInCircle(m_edges[edge])] >> i) & 1))
+                        doesNotHold[edge] = true;
+                }
+            }
+        };
+        Vector<CircleToOpen> circlesToOpen;
+        for (unsigned index = 0; index < circles.size(); ++index) {
+            if (holdsNothingTogether[index])
                 continue;
+            size_t size = membersOf(index).size();
+            if (size <= mostCellsOfSmallCircle)
+                continue;
+            if (2 * (size + circles[index].innerReferences) > mostLooksAtInnerReferences)
+                holdsNothingTogether[index] = true;
+            else
+                circlesToOpen.append({ index, static_cast<unsigned>(size + circles[index].innerReferences) });
+        }
+        std::ranges::sort(circlesToOpen, [&](auto& a, auto& b) {
+            return a.cellsAndInnerReferences != b.cellsAndInnerReferences ? a.cellsAndInnerReferences < b.cellsAndInnerReferences : circles[a.circle].youngestCandidate > circles[b.circle].youngestCandidate;
+        });
+        // Room for all that a circle needs, before anything is done: nothing is to fail half way with the world stopped. What is too small goes first: the old and the new are never there together. They come in
+        // rising order, so twice as much is asked for, but no more than the largest needs.
+        size_t mostCells = 0;
+        size_t mostInnerReferences = 0;
+        for (auto& [index, cellsAndInnerReferences] : circlesToOpen) {
+            mostCells = std::max(mostCells, membersOf(index).size());
+            mostInnerReferences = std::max<size_t>(mostInnerReferences, circles[index].innerReferences);
+        }
+        auto hasRoomFor = [&](size_t cellCount, size_t innerReferenceCount) {
+            auto reserve = [](size_t needed, size_t most, auto&... vectors) {
+                return ([&] {
+                    if (vectors.capacity() >= needed)
+                        return true;
+                    vectors.clear();
+                    return vectors.tryReserveCapacity(std::max(needed, std::min(most, 2 * needed))) || vectors.tryReserveCapacity(needed);
+                }() && ...);
+            };
+            return reserve(innerReferenceCount, mostInnerReferences, inner, heads)
+                && reserve(cellCount + 1, mostCells + 1, byNearness, firstInner, time, parent, vertices, firstHead, endOfHeads, states, referencesLeft, searchThatCameToIt, reached, free);
+        };
+        auto open = [&](unsigned index, unsigned cellsAndInnerReferences, uint64_t& looksLeft) {
+            auto cells = membersOf(index);
+            unsigned size = cells.size();
+            // What follows takes a look at each cell and each inner reference to begin with, and as many again, and more, to find anything out.
+            if (looksLeft < 8 * static_cast<uint64_t>(size) || looksLeft < 2 * static_cast<uint64_t>(cellsAndInnerReferences) || !hasRoomFor(size, cellsAndInnerReferences - size)) {
+                holdsNothingTogether[index] = true;
+                return;
             }
             byNearness.shrink(0);
             for (unsigned i = 0; i < size; ++i) {
@@ -913,10 +1011,7 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                 byNearness.append({ nearness(cells[i]), i });
             }
             std::ranges::sort(byNearness, { }, &Near::nearness);
-            if (byNearness[0].nearness == byNearness.last().nearness) {
-                holdsNothingTogether[index] = true;
-                continue;
-            }
+            ASSERT(byNearness[0].nearness != byNearness.last().nearness); // (It has a candidate, and nothing else is as near as a candidate is.)
             time.resize(size);
             unsigned degrees = 1;
             for (unsigned place = size; place--;) {
@@ -925,35 +1020,27 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
             }
             inner.shrink(0);
             firstInner.resize(size + 1);
-            // (As many looks again are the least that finds anything out. This bounds the memory, too: the number of cells in the graph has a limit, that of the references has none.)
-            auto areTooMany = [&] {
-                return 2 * (size + inner.size()) > looksLeft;
-            };
-            for (unsigned i = 0; i < size && !areTooMany(); ++i) {
+            for (unsigned i = 0; i < size; ++i) {
                 unsigned node = cells[i];
                 firstInner[i] = inner.size();
-                for (unsigned edge = m_firstEdge[node]; edge < m_firstEdge[node + 1] && !areTooMany(); ++edge) {
-                    if (leadsTo(node, m_edges[edge]) && circleOf(m_edges[edge]) == index)
+                for (unsigned edge = m_firstEdge[node]; edge < m_firstEdge[node + 1]; ++edge) {
+                    if (isInnerReference(node, edge, index))
                         inner.append({ i, numberInCircle(m_edges[edge]), edge, 0 });
                 }
             }
             firstInner[size] = inner.size();
-            bool wereTooMany = areTooMany();
-            looksLeft -= size + inner.size();
-            if (wereTooMany) {
-                holdsNothingTogether[index] = true;
-                continue;
-            }
+            ASSERT(size + inner.size() == cellsAndInnerReferences);
+            looksLeft -= cellsAndInnerReferences;
 
             // First by searches, from the nearest cell to the farthest: from each, among what is no nearer, for the references to it. What has no inner reference left that holds is on no circle any
             // more, and is taken away, with what that frees in turn. In a list, a tree with links to the parents, a ring, each search is over after a few cells. In a tangle each goes through all of it:
             // so they have so many looks and no more. They work out what the division below does.
             auto openBySearches = [&] {
-                uint64_t looks = std::min<uint64_t>(looksLeft, 4 * (static_cast<uint64_t>(size) + inner.size()));
+                const uint64_t allowance = std::min<uint64_t>(looksLeft, 4 * static_cast<uint64_t>(cellsAndInnerReferences));
+                uint64_t looks = allowance;
+                // (What has been found stays: the division finds it again, with a coarser "nearer", too.)
                 auto giveUp = [&] {
-                    looksLeft -= std::min<uint64_t>(looksLeft, 4 * (static_cast<uint64_t>(size) + inner.size()));
-                    for (auto& reference : inner)
-                        doesNotHold[reference.edge] = false;
+                    looksLeft -= allowance;
                     return false;
                 };
                 constexpr unsigned isTakenAway = none;
@@ -1011,146 +1098,178 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                         }
                     }
                 }
-                looksLeft -= std::min<uint64_t>(looksLeft, 4 * (static_cast<uint64_t>(size) + inner.size())) - looks;
+                looksLeft -= allowance - looks;
                 return true;
             };
-            constexpr unsigned fewDegrees = 8;
-            bool beginsWithSearches = degrees > fewDegrees;
-#if ASSERT_ENABLED
-            // The two ways are to come to the same: in a circle that is not large both are gone.
-            Vector<unsigned> foundBySearches;
-            bool hasGoneBothWays = false;
-            if (size <= 10000) {
-                uint64_t looksLeftInTruth = std::exchange(looksLeft, std::numeric_limits<uint64_t>::max());
-                hasGoneBothWays = openBySearches();
-                uint64_t looksTaken = std::numeric_limits<uint64_t>::max() - std::exchange(looksLeft, looksLeftInTruth);
-                if (hasGoneBothWays) {
-                    for (auto& reference : inner) {
-                        if (doesNotHold[reference.edge])
-                            foundBySearches.append(reference.edge);
-                        doesNotHold[reference.edge] = false;
-                    }
-                    // (As in a build without this.)
-                    if (beginsWithSearches)
-                        looksLeft -= std::min(looksLeft, looksTaken);
-                    beginsWithSearches = false;
-                }
-            }
-#endif
-            if (beginsWithSearches && openBySearches())
-                continue;
 
             // Then by division. A halving of the number of degrees looks at each inner reference some three times. If there are not enough looks left for all the halvings, neighbouring degrees count as
             // one: the rule is the same, with a coarser "nearer". What holds is less then, so it still has no circle; and with no halving at all the circle holds nothing together.
-            unsigned halvings = 0;
-            while (degrees - 1 >> halvings)
-                ++halvings;
-            uint64_t looksForHalving = 3 * static_cast<uint64_t>(inner.size());
-            unsigned degreesInOne = 0; // As a power of two.
-            if (looksLeft / looksForHalving < halvings) {
-                degreesInOne = halvings - looksLeft / looksForHalving;
-                halvings -= degreesInOne;
-            }
-            looksLeft -= halvings * looksForHalving;
-            if (!halvings) {
-                holdsNothingTogether[index] = true;
-                continue;
-            }
-            parent.resize(size);
-            firstHead.resize(size);
-            endOfHeads.resize(size);
-            states.fill({ none, none }, size);
-            for (unsigned i = 0; i < size; ++i) {
-                time[i] >>= degreesInOne;
-                parent[i] = i;
-            }
-            for (auto& reference : inner)
-                reference.timeAndWhetherItLeadsNearer = std::max(time[reference.from], time[reference.to]) << 1 | (time[reference.from] <= time[reference.to]);
-            auto find = [&](unsigned i) {
-                while (parent[i] != i)
-                    i = parent[i] = parent[parent[i]];
-                return i;
-            };
-            spans.append({ 0, degrees - 1 >> degreesInOne, 0, static_cast<unsigned>(inner.size()) });
-            while (!spans.isEmpty()) {
-                Span span = spans.takeLast();
-                auto references = inner.mutableSpan().subspan(span.begin, span.end - span.begin);
-                if (references.empty())
-                    continue;
-                if (span.firstTime == span.lastTime) {
-                    // That is when their ends become one: for a reference that does not hold, as soon as its head is there.
-                    for (auto& reference : references) {
-                        if (reference.timeAndWhetherItLeadsNearer == (span.firstTime << 1 | 1))
-                            doesNotHold[reference.edge] = true;
-                        parent[find(reference.from)] = find(reference.to);
-                    }
-                    continue;
+            auto openByDivision = [&] {
+                unsigned halvings = 0;
+                while ((degrees - 1) >> halvings)
+                    ++halvings;
+                uint64_t looksForHalving = 3 * static_cast<uint64_t>(inner.size());
+                unsigned degreesInOne = 0; // As a power of two.
+                if (looksLeft / looksForHalving < halvings) {
+                    degreesInOne = halvings - looksLeft / looksForHalving;
+                    halvings -= degreesInOne;
                 }
-                unsigned middle = span.firstTime + (span.lastTime - span.firstTime) / 2;
-                vertices.shrink(0);
-                auto addVertex = [&](unsigned i) {
-                    if (states[i].number != none)
-                        return;
-                    states[i].number = 0;
-                    endOfHeads[i] = 0;
-                    vertices.append(i);
-                };
-                unsigned headCount = 0;
-                for (auto& reference : references) {
-                    // (From here on what stands for its ends is as good as they are.)
-                    reference.from = find(reference.from);
-                    reference.to = find(reference.to);
-                    if (reference.time() > middle)
-                        continue;
-                    addVertex(reference.from);
-                    addVertex(reference.to);
-                    ++endOfHeads[reference.from];
-                    ++headCount;
+                looksLeft -= halvings * looksForHalving;
+                if (!halvings)
+                    return false;
+                parent.resize(size);
+                firstHead.resize(size);
+                endOfHeads.resize(size);
+                states.fill({ none, none }, size);
+                for (unsigned i = 0; i < size; ++i) {
+                    time[i] >>= degreesInOne;
+                    parent[i] = i;
                 }
-                heads.resize(headCount);
-                unsigned sum = 0;
-                for (unsigned i : vertices) {
-                    states[i].number = none;
-                    firstHead[i] = sum;
-                    sum += std::exchange(endOfHeads[i], sum);
-                }
-                for (auto& reference : references) {
-                    if (reference.time() <= middle)
-                        heads[endOfHeads[reference.from]++] = reference.to;
-                }
-                unsigned componentsOfStep = 0;
-                forEachComponent(search, vertices.span(), states, [&](unsigned i) {
-                    return firstHead[i];
-                }, [&](unsigned i) {
-                    return endOfHeads[i];
-                }, [&](unsigned, unsigned position) {
-                    return heads[position];
-                }, [&](std::span<const unsigned> together) {
-                    for (unsigned i : together)
-                        states[i].number = componentsOfStep;
-                    ++componentsOfStep;
-                });
-                auto later = std::ranges::partition(references, [&](const Inner& reference) {
-                    return reference.time() <= middle && states[reference.from].number == states[reference.to].number;
-                });
-                for (unsigned i : vertices)
-                    states[i].number = none;
-                unsigned split = span.end - later.size();
-                // The earlier half first: the later one counts on what that has joined.
-                spans.append({ middle + 1, span.lastTime, split, span.end });
-                spans.append({ span.firstTime, middle, span.begin, split });
-            }
-#if ASSERT_ENABLED
-            if (hasGoneBothWays && !degreesInOne) {
-                size_t foundByDivision = 0;
                 for (auto& reference : inner)
-                    foundByDivision += doesNotHold[reference.edge];
-                ASSERT(foundByDivision == foundBySearches.size());
-                for (unsigned edge : foundBySearches)
-                    ASSERT(doesNotHold[edge]);
+                    reference.timeAndWhetherItLeadsNearer = std::max(time[reference.from], time[reference.to]) << 1 | (time[reference.from] <= time[reference.to]);
+                auto find = [&](unsigned i) {
+                    while (parent[i] != i)
+                        i = parent[i] = parent[parent[i]];
+                    return i;
+                };
+                spans.append({ 0, (degrees - 1) >> degreesInOne, 0, static_cast<unsigned>(inner.size()) });
+                while (!spans.isEmpty()) {
+                    Span span = spans.takeLast();
+                    auto references = inner.mutableSpan().subspan(span.begin, span.end - span.begin);
+                    if (references.empty())
+                        continue;
+                    if (span.firstTime == span.lastTime) {
+                        // That is when their ends become one: for a reference that does not hold, as soon as its head is there.
+                        for (auto& reference : references) {
+                            if (reference.timeAndWhetherItLeadsNearer == (span.firstTime << 1 | 1))
+                                doesNotHold[reference.edge] = true;
+                            parent[find(reference.from)] = find(reference.to);
+                        }
+                        continue;
+                    }
+                    unsigned middle = span.firstTime + (span.lastTime - span.firstTime) / 2;
+                    vertices.shrink(0);
+                    auto addVertex = [&](unsigned i) {
+                        if (states[i].number != none)
+                            return;
+                        states[i].number = 0;
+                        endOfHeads[i] = 0;
+                        vertices.append(i);
+                    };
+                    unsigned headCount = 0;
+                    for (auto& reference : references) {
+                        // (From here on what stands for its ends is as good as they are.)
+                        reference.from = find(reference.from);
+                        reference.to = find(reference.to);
+                        if (reference.time() > middle)
+                            continue;
+                        addVertex(reference.from);
+                        addVertex(reference.to);
+                        ++endOfHeads[reference.from];
+                        ++headCount;
+                    }
+                    heads.resize(headCount);
+                    unsigned sum = 0;
+                    for (unsigned i : vertices) {
+                        states[i].number = none;
+                        firstHead[i] = sum;
+                        sum += std::exchange(endOfHeads[i], sum);
+                    }
+                    for (auto& reference : references) {
+                        if (reference.time() <= middle)
+                            heads[endOfHeads[reference.from]++] = reference.to;
+                    }
+                    unsigned componentsOfStep = 0;
+                    forEachComponent(search, vertices.span(), states, [&](unsigned i) {
+                        return firstHead[i];
+                    }, [&](unsigned i) {
+                        return endOfHeads[i];
+                    }, [&](unsigned, unsigned position) {
+                        return heads[position];
+                    }, [&](std::span<const unsigned> together) {
+                        for (unsigned i : together)
+                            states[i].number = componentsOfStep;
+                        ++componentsOfStep;
+                    });
+                    auto later = std::ranges::partition(references, [&](const Inner& reference) {
+                        return reference.time() <= middle && states[reference.from].number == states[reference.to].number;
+                    });
+                    for (unsigned i : vertices)
+                        states[i].number = none;
+                    unsigned split = span.end - later.size();
+                    // The earlier half first: the later one counts on what that has joined.
+                    spans.append({ middle + 1, span.lastTime, split, span.end });
+                    spans.append({ span.firstTime, middle, span.begin, split });
+                }
+                return true;
+            };
+#if ASSERT_ENABLED
+            // The two ways are to come to the same: in a circle that is not large both are gone beforehand, with all the looks that they want, and what they leave is put back: the circle is then opened
+            // as in a build without this, on the same account.
+            if (size <= 10000) {
+                uint64_t looksLeftInTruth = std::exchange(looksLeft, std::numeric_limits<uint64_t>::max());
+                auto takeWhatWasFound = [&] {
+                    Vector<unsigned> found;
+                    for (auto& reference : inner) {
+                        if (doesNotHold[reference.edge])
+                            found.append(reference.edge);
+                        doesNotHold[reference.edge] = false;
+                    }
+                    std::ranges::sort(found);
+                    return found;
+                };
+                if (openBySearches()) {
+                    auto foundBySearches = takeWhatWasFound();
+                    auto innerAsItWas = inner;
+                    bool hasOpened = openByDivision();
+                    ASSERT_UNUSED(hasOpened, hasOpened);
+                    ASSERT(takeWhatWasFound() == foundBySearches);
+                    inner = WTF::move(innerAsItWas);
+                }
+                looksLeft = looksLeftInTruth;
             }
 #endif
+            constexpr unsigned fewDegrees = 8;
+            if (degrees > fewDegrees && openBySearches())
+                return;
+            if (!openByDivision())
+                holdsNothingTogether[index] = true;
+        };
+        for (unsigned index = 0; index < circles.size(); ++index) {
+            auto cells = membersOf(index);
+            if (holdsNothingTogether[index] || cells.size() > mostCellsOfSmallCircle)
+                continue;
+            openSmallCircle(index);
+#if ASSERT_ENABLED
+            // The other ways are to come to the same. (So a build with assertions goes all three in every small circle.)
+            unsigned innerReferences = 0;
+            auto takeWhatWasFound = [&] {
+                Vector<unsigned> found;
+                innerReferences = 0;
+                for (unsigned node : cells) {
+                    for (unsigned edge = m_firstEdge[node]; edge < m_firstEdge[node + 1]; ++edge) {
+                        innerReferences += isInnerReference(node, edge, index);
+                        if (doesNotHold[edge])
+                            found.append(edge);
+                        doesNotHold[edge] = false;
+                    }
+                }
+                return found;
+            };
+            auto foundWithSets = takeWhatWasFound();
+            uint64_t allTheLooksThatItTakes = std::numeric_limits<uint64_t>::max();
+            open(index, cells.size() + innerReferences, allTheLooksThatItTakes);
+            bool hadRoom = !holdsNothingTogether[index];
+            holdsNothingTogether[index] = false;
+            auto foundOtherwise = takeWhatWasFound();
+            ASSERT(!hadRoom || foundOtherwise == foundWithSets);
+            for (unsigned edge : foundWithSets)
+                doesNotHold[edge] = true;
+#endif
         }
+        uint64_t looksLeft = mostLooksAtInnerReferences;
+        for (auto& [index, cellsAndInnerReferences] : circlesToOpen)
+            open(index, cellsAndInnerReferences, looksLeft);
     }
 
     FastBitVector holds; // By the number of the reference in m_edges.
@@ -1455,9 +1574,9 @@ FinalizationOrder finalizationOrder(JSC::Heap& heap, SlotVisitor& marker, std::s
     return DeadGraph(heap, marker, candidates, questions).order();
 }
 
-Vector<unsigned> orderWithHoldersFirst(JSC::Heap& heap, std::span<JSCell* const> candidates, std::span<PyDict* const> namespaces)
+Vector<unsigned> orderWithHoldersFirst(JSC::Heap& heap, std::span<JSCell* const> candidates, std::span<PyDict* const> namespaces, uint64_t mostLooksAtInnerReferences)
 {
-    return DeadGraph(heap, candidates, { .namespaces = namespaces }).orderOfTheLiving();
+    return DeadGraph(heap, candidates, { .namespaces = namespaces, .mostLooksAtInnerReferences = mostLooksAtInnerReferences }).orderOfTheLiving();
 }
 
 } // namespace Python

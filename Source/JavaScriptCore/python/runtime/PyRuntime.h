@@ -1366,6 +1366,8 @@ private:
     bool m_hasLetGoOfModules { false };
     // Not visited: a collection takes out what it finds dead, when it has put the finalizers in order.
     Vector<PyDict*> m_namespacesOfModulesLetGoOf;
+    uint64_t m_mostLooksAtInnerReferences { 16'000'000 }; // See DeadGraph::candidatesWithHoldersFirst().
+    void noteNamespacesOfModules();
     void* m_stackWhereUnaskedCallsBegan { nullptr };
     uint32_t m_threadWhereSignalHandlerRaised { noThread }; // In one of the calls it owed, which has not returned yet.
     bool m_hasKeptWhatSignalHandlerRaised { false };
