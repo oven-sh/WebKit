@@ -1680,6 +1680,20 @@ FinalizationOrder DeadGraph::order()
             if (m_flags[node] & Released)
                 result.allFreedByReferenceCounts.append(m_cells[node]);
         }
+        if (m_questions.wantsWhatWaitsForThat) {
+            Vector<unsigned> waiting;
+            for (unsigned node = 0; node < count; ++node) {
+                if (!(m_flags[node] & Released) && rank[node]) {
+                    m_flags[node] |= Waits;
+                    waiting.append(node);
+                }
+            }
+            flagAllReachedFrom(WTF::move(waiting), Waits);
+            for (unsigned i = 0; i < m_candidateCount; ++i) {
+                if ((m_flags[i] & (Released | Waits)) == Waits)
+                    result.later.append(i);
+            }
+        }
         return result;
     }
 

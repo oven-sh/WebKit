@@ -1763,7 +1763,14 @@ answer; a `tp_dealloc` is the end of what C keeps in the object.
   type that the extension has made (which it is if that has died too): the same data, the same slots. That base is marked already, so the body marks nothing by its type, and the class dies like
   anything else. The counted reference moves with it, as for an assignment to `__class__` (`moveToClass()`). What the class added to the instance is in the face and ends with it. A body that is taken back
   (B, or somebody is seen to take it) has a face that is marked, and the face names the class: the body is of that class again, and the reference moves back.
-- *B. Taking back.* The marker has come to rest again. A face that is marked now is led to by what a body holds (body -> list -> face); or, if the collection goes on beside the program,
+- *Who is still held keeps its face.* A dead instance to which C owns a reference is held by another dead instance, in its data: any other owner would have kept it alive. That one's `tp_dealloc` is still to
+  run, owns the reference, and may look at what it holds or hand it on. So L marks the face of such a body, and B takes it back with all that it holds: it is whole, with its class, its attributes and its weak
+  references, until it has been given back, and goes in the collection that finds it dead with no reference of C's left. The same for a cycle to which something leads that reference counts would have freed
+  (parent -> child, and `child.me = child`): in CPython the parent goes at once and the collector comes later, so such garbage is left as it is, weak references and all, and comes up again when its holder has gone
+  (`finalizationOrder()`: what waits). Two exceptions. *The holder is cyclic garbage itself*: CPython's collector lets the weak references die first and then clears one object after the other, the `__dict__` of
+  an instance of a class among them, so what a `tp_clear` or a `tp_dealloc` finds in another piece of the garbage hangs on the order there too. And *a face that has nothing of its own*: the class stays, and gives
+  its instances no `__dict__`, no weak references and no `__slots__`. Whoever asks for one gets a new one. That is every instance of C's own types, so a chain from C to C goes in one turn.
+- *B. Taking back.* The marker has come to rest again. A face that is marked now is led to by what a body holds (body -> list -> face); or L has marked it; or, if the collection goes on beside the program,
   somebody has taken it by a weak reference. Nobody can tell which. Its body is alive again, **and so is every body that it holds, with its face, and so on**: an instance that lives
   keeps what it holds whole. That marks faces, so the marker goes on and comes here again.
 - *E. When that collection ends* the face of a body that is still let go of is not marked: it is dead as any cell is dead. Whoever knew its address has been told, or is told when its

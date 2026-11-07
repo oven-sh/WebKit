@@ -755,6 +755,8 @@ struct FinalizationQuestions {
     uint64_t mostLooksAtInnerReferences { 16'000'000 }; // For that: the bound on what is more than linear.
     // Nothing but allFreedByReferenceCounts is wanted. So many of the first candidates are in a queue: an earlier collection has found them dead.
     bool wantsAllThatReferenceCountsWouldFree { false };
+    // And with that, in `later`: the candidates that are not among it, and that a candidate among it reaches.
+    bool wantsWhatWaitsForThat { false };
     unsigned candidatesInQueues { 0 };
 };
 struct FinalizationOrder {

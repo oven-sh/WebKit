@@ -25,8 +25,9 @@
 //     holds is marked, as for any body that is marked: C will give it back in tp_dealloc. Its class is not, if that has died with it: see "The class of a body that is let go of".
 //     What reference counts would not have freed (it is in a cycle, or hangs off one) CPython's collector would have found, and the first thing it does is done here, with the world stopped: the
 //     weak references of Python's to it die.
-//  B  TAKING BACK. The marker has come to rest again. A face that is marked now is led to by what a body holds (body -> list -> face); or, if the collection goes on beside the program, somebody
-//     has taken it by a weak reference. Nobody can tell which. Its body is alive again, AND SO IS EVERY BODY THAT IT HOLDS, with its face, and so on: an instance that lives keeps
+//     One that another dead instance holds in its data, and whose face would be missed, is not let go of yet: see "Who is still held keeps its face".
+//  B  TAKING BACK. The marker has come to rest again. A face that is marked now is led to by what a body holds (body -> list -> face); or L has marked it; or, if the collection goes on beside the
+//     program, somebody has taken it by a weak reference. Nobody can tell which. Its body is alive again, AND SO IS EVERY BODY THAT IT HOLDS, with its face, and so on: an instance that lives keeps
 //     what it holds whole. That marks faces, so the marker goes on, and comes here again.
 //  E  WHEN THAT COLLECTION ENDS the face of a body that is still let go of is not marked: it is dead as any cell is dead, and is about to be freed. Whoever knew its address without marking
 //     it has been told, or is told as its block is swept, in whatever way JSC and Bun tell him of any cell. The body has no face from now on.
@@ -100,6 +101,24 @@ static PyType* classForItsEnd(SlotVisitor& visitor, PyType* type)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// WHO IS STILL HELD KEEPS ITS FACE. A dead instance to which C owns a reference is held by another dead instance, in its data. (Any other owner would have kept it alive.) That one's tp_dealloc
+// is still to run, owns the reference, and may look at what it holds or hand it on: to a method, to the program. So what it holds is whole until it has been given back: its class, its attributes,
+// its weak references. It is let go of by the collection that finds it dead with no reference of C's left.
+// Not so where the holder is cyclic garbage itself. There CPython's collector lets the weak references die first and then clears one object after the other, the __dict__ of an instance of a class among them: what a tp_clear
+// or a tp_dealloc finds in another piece of the garbage hangs on the order, and nobody can count on it.
+// And a face that is nothing but the class, and a class that stays, is not missed: whoever asks for one gets a new one. So instances of C's own types, which have neither attributes nor weak references,
+// go with their holders however long the chain.
+static bool facesHaveNothingOfTheirOwn(PyType* type)
+{
+    if (type->has(TypeFlag::HasDict) || type->has(TypeFlag::HasWeakref))
+        return false;
+    for (; !MadeByExtension::of(type); type = type->base()) {
+        if (type->slots())
+            return false;
+    }
+    return true;
+}
+
 // `vm`: null for the collector, with the world stopped.
 void moveToClass(Interpreter& current, Body* body, PyType* type, VM* vm)
 {
@@ -142,21 +161,34 @@ bool letGoOfWhatIsDead(SlotVisitor& visitor)
     Vector<JSCell*> objects = dead.map([](Body* body) -> JSCell* {
         return body->face() ? static_cast<JSCell*>(body->face()) : body;
     });
+    // (All of it, at whatever depth: a cycle that hangs below an instance which reference counts would have freed is a cycle.)
     FinalizationQuestions questions;
-    questions.wantsToKnowWhatReferenceCountsWouldFree = true;
+    questions.wantsAllThatReferenceCountsWouldFree = true;
+    questions.wantsWhatWaitsForThat = true;
     FinalizationOrder order = finalizationOrder(current.vm.heap, visitor, objects.span(), questions);
-    for (Body* body : dead)
-        body->wasCyclicGarbage = false;
-    for (unsigned n = order.freedByReferenceCounts; n < order.now.size(); ++n)
-        dead[order.now[n]]->wasCyclicGarbage = true;
+    UncheckedKeyHashSet<JSCell*> freedByReferenceCounts;
+    freedByReferenceCounts.addAll(order.allFreedByReferenceCounts);
+    for (unsigned i = 0; i < dead.size(); ++i)
+        dead[i]->wasCyclicGarbage = !freedByReferenceCounts.contains(objects[i]);
+    // A cycle to which something leads that reference counts would have freed (parent -> child, and child.me = child). In CPython the parent goes at once, and finds the child whole; the collector comes
+    // later. So such garbage is for later too: it is kept as it is, and comes up again when its holder has gone.
+    BitVector waitsForItsHolder(dead.size());
+    for (unsigned i : order.later)
+        waitsForItsHolder.quickSet(i);
 
     Vector<JSCell*> facesOfCyclicGarbage;
-    for (Body* body : dead) {
-        if (!body->wasCyclicGarbage || !leavesCyclicGarbageForLater) {
+    for (unsigned i = 0; i < dead.size(); ++i) {
+        Body* body = dead[i];
+        if (!body->wasCyclicGarbage || (!leavesCyclicGarbageForLater && !waitsForItsHolder.quickGet(i))) {
             body->setLife(Body::Life::LetGo);
             watch(current, body, true);
             current.letGo.append(body);
-            moveToClass(current, body, classForItsEnd(visitor, body->type()), nullptr);
+            PyType* type = classForItsEnd(visitor, body->type());
+            // (The face is marked: it is taken back when the marker has come to rest, with all that it holds.)
+            if (!body->wasCyclicGarbage && body->face() && current.counts.find(body) && (type != body->type() || !facesHaveNothingOfTheirOwn(type)))
+                visitor.appendUnbarriered(body->face());
+            else
+                moveToClass(current, body, type, nullptr);
             if (body->wasCyclicGarbage && body->face())
                 facesOfCyclicGarbage.append(body->face());
         }
