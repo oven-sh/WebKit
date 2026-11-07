@@ -884,7 +884,7 @@ static JSValue arrayItem(JSGlobalObject* globalObject, PyCData* array, int64_t i
     if (index < 0 || index >= array->length)
         return raiseIndexError(globalObject, scope, "invalid index"_s);
     PyCTypeInfo* info = infoOfInstance(globalObject, array);
-    if (!info || !info->length)
+    if (!info || info->kind != TypeKind::Array || !info->length)
         return raiseIndexError(globalObject, scope, "invalid index"_s);
     int64_t size = info->size / info->length;
     RELEASE_AND_RETURN(scope, getData(globalObject, PyType::from(info->proto.get()), { }, { array, index * size }, index, size));
@@ -963,7 +963,7 @@ static bool arraySetItemAt(JSGlobalObject* globalObject, PyCData* array, int64_t
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCTypeInfo* info = infoOfInstance(globalObject, array);
-    if (!info || index < 0 || index >= info->length) {
+    if (!info || info->kind != TypeKind::Array || index < 0 || index >= info->length) {
         raiseIndexError(globalObject, scope, "invalid index"_s);
         return false;
     }
