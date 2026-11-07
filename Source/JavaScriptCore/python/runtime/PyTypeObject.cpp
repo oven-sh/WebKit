@@ -2302,20 +2302,22 @@ static JSValue typeGetBasicSize(JSGlobalObject*, JSValue self)
         { "list"_s, 40 }, { "dict"_s, 48 }, { "set"_s, 200 }, { "frozenset"_s, 200 }, { "type"_s, 944 }, { "BaseException"_s, 72 },
     };
     unsigned slotCount = 0;
+    // (That of the first such type: it has room for the data of those below it.)
+    size_t dataOfC = 0;
     for (PyType* type = PyType::from(self); type; type = type->base()) {
         if (type->isHeapType()) {
-            if (type->extension())
-                return jsNumber(16 + CApi::sizeOfDataOfC(type) + 8 * slotCount);
+            if (type->extension() && !dataOfC)
+                dataOfC = CApi::sizeOfDataOfC(type);
             if (PyTuple* slots = type->slots())
                 slotCount += slots->length();
             continue;
         }
         for (auto [name, size] : sizes) {
             if (type->nameInMessages() == name)
-                return jsNumber(size + 8 * slotCount);
+                return jsNumber(size + dataOfC + 8 * slotCount);
         }
     }
-    return jsNumber(16 + 8 * slotCount);
+    return jsNumber(16 + dataOfC + 8 * slotCount);
 }
 static JSValue typeGetItemSize(JSGlobalObject*, JSValue self) { return jsNumber(itemSize(PyType::from(self))); }
 static JSValue typeGetDictOffset(JSGlobalObject*, JSValue self) { return jsNumber(PyType::from(self)->has(TypeFlag::HasDict) ? -1 : 0); }

@@ -113,7 +113,8 @@ static bool facesHaveNothingOfTheirOwn(PyType* type)
 {
     if (type->has(TypeFlag::HasDict) || type->has(TypeFlag::HasWeakref))
         return false;
-    for (; !MadeByExtension::of(type); type = type->base()) {
+    // (To the end: C may make a type on top of a class of Python's.)
+    for (; type; type = type->base()) {
         if (type->slots())
             return false;
     }
