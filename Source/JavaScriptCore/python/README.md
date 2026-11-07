@@ -1742,7 +1742,7 @@ is a key: of anything else nobody knows whether it is still the address of a cel
 - **The list of the bodies holds an address only while the cell lives.** A body gets on it when it is made (if its type has a `tp_traverse`, or something to do when an instance dies) and
   off it when the marking of a collection ends without having marked it, before anything is swept. The collector walks it, with the world stopped, and `gc.get_referrers()`, with the GIL.
 - The other visitors (the graph of what has died in `runtime/PyFinalizationOrder.cpp`, `gc.get_referents()`, JSC's verifier) run with the world stopped or with the GIL. They ask what an
-  *object* refers to: to them the two cells are one, the face, whose `visitChildren()` calls `tp_traverse` itself and names faces where C holds bodies. So the order of finalization knows C's edges, and no walk comes to a body that has a face. (A heap snapshot listens to the marker: there, what an instance holds
+  *object* refers to: to them the two cells are one, the face, whose `visitChildren()` calls `tp_traverse` itself and names faces where C holds bodies. So the order of finalization knows C's edges, and nobody comes to a body that has a face by an edge. Who goes through all the cells of a block does (the graph of all that has died, in every `gc.collect()`): to him such a body names nothing of C's, or each instance would be asked twice and C's edges be there twice. (A heap snapshot listens to the marker: there, what an instance holds
   shows as a root.)
 
 **The end of an instance** (`capi/CApiEnd.cpp`). To destroy is not to finalize. A finalizer that is called for an object which another finalizer has just brought back is a wrong
