@@ -81,6 +81,8 @@ struct WaitRequest {
     fd_set* readable { nullptr };
     fd_set* writable { nullptr };
     fd_set* exceptional { nullptr };
+    // The three as they are asked, the caller's copies: a wait that is made piece by piece puts the sets back from them. A Select request must have them.
+    const fd_set* asked { nullptr };
 
     // Epoll, Kqueue: the descriptor of the queue, and room for the events.
     int queue { -1 };

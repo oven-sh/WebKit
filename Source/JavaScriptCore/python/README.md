@@ -1013,6 +1013,13 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
       stack is wiped before the call and the collection is made from inside, which is second best. A function that may have
       consumed something when it comes to wait (`readall`, the buffered readers) has not even that: the collection happens, but
       what the frames above hold by chance stays. So does what the frames of another thread hold that sits in such a function.
+    - *The frames under which a thread waits have little room that is not written to.* That is the rule for the C++ on the way to a system call that may take long
+      (`fileIOSystemRead`, `waitForEvents`, `blockingWait`, `socketRecv`, `posixRead`, `Ctypes::callFunction`): no buffer, no inline vector and no `AllowThreads` (1.5 KB, written as the GIL is given
+      up) in a frame that waits for something else first. What needs room has a frame of its own beside the wait (`NEVER_INLINE`), or the room is written when it is made (`RoomForArguments`, `WaitRequest::asked`;
+      a struct that lies there has no padding: `PY_BEGIN_WITHOUT_PADDING`). It makes what stays by chance rare, not impossible: padding, slots of branches not taken and the frames of the callers
+      remain. Not yet so: a socket with a timeout, `recvmsg`, `accept`, a text file's frames above the buffered one, `StreamUse<&bufferedRead>::call`, `os.read` of what `poll` does not speak for, `os.readv`, a function of a `PyDLL`.
+      Nothing guards the shape but the compiler's word on padding: how many objects stay is a matter of one kind of build (with assertions, or optimized at link time, the frames are others), so no test counts them.
+      `tools/kept_by_a_waiting_frame.py all SYMBOLS`, run by the `bun` in question, says for some ways to use an object what is still alive while the thread waits, what a heap snapshot says of it, and in whose frame the word lies.
     - What runs between giving up and beginning again (finalizers, and other threads while those wait) finds the function not begun: a
       `poll` object is not in use, a lock that a finalizer takes for this thread and keeps is this thread's.
     - *What JSC's own entry leaves unwritten.* Every entry into the VM (`vmEntryToJavaScript`, `vmEntryToNative`) makes room on the stack

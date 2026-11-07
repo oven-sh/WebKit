@@ -93,56 +93,45 @@ static int waitWithTimeout(WaitRequest& request, int64_t timeout)
     return -1;
 }
 
-int blockingWait(JSGlobalObject* globalObject, WaitRequest& request)
+// The frames under which a thread waits have no room that nothing is written to: what earlier frames left there would be under the eyes of
+// the collector until the wait is over. So this has a frame of its own (see AllowThreads: what it has room for is put there as the
+// GIL is given up), and so has whatever needs a buffer and does not wait.
+NEVER_INLINE int blockingWait(JSGlobalObject* globalObject, WaitRequest& request)
 {
     AllowThreads allow(globalObject, AllowThreads::LosesNothing);
     int64_t timeout = request.timeout;
     int64_t deadline = -1;
     if (timeout > 0 && __builtin_add_overflow(monotonicNanoseconds(), timeout, &deadline))
         deadline = std::numeric_limits<int64_t>::max();
-    // What select() leaves in the sets when it fails is not specified.
-    fd_set* sets[3] = { request.readable, request.writable, request.exceptional };
-    fd_set saved[3];
-    if (request.kind == WaitRequest::Kind::Select) {
-        for (unsigned i = 0; i < 3; ++i) {
-            if (sets[i])
-                saved[i] = *sets[i];
-        }
-    }
     while (true) {
         int result = waitWithTimeout(request, timeout);
         if (result >= 0 || errno != EINTR || !allow.wasInterruptedForNothing())
             return result;
-        // Again, for the time that is left; if none is, it says what is ready now.
+        // Again, for the time that is left; if none is, it says what is ready now. (A select() that fails leaves its sets as they were.)
         if (timeout > 0)
             timeout = std::max<int64_t>(deadline - monotonicNanoseconds(), 0);
-        if (request.kind == WaitRequest::Kind::Select) {
-            for (unsigned i = 0; i < 3; ++i) {
-                if (sets[i])
-                    *sets[i] = saved[i];
-            }
-        }
+    }
+}
+
+// select() replaces the sets by what is ready. If nothing is, they are put back, so that the same can be asked again.
+static void waitAskSameAgain(WaitRequest& request)
+{
+    if (request.kind != WaitRequest::Kind::Select)
+        return;
+    ASSERT(request.asked);
+    fd_set* sets[3] = { request.readable, request.writable, request.exceptional };
+    for (unsigned i = 0; i < 3; ++i) {
+        if (sets[i])
+            *sets[i] = request.asked[i];
     }
 }
 
 int waitWithoutBlocking(WaitRequest& request)
 {
-    if (request.kind != WaitRequest::Kind::Select)
-        return waitWithTimeout(request, 0);
-    // select() replaces the sets by what is ready. If nothing is, they are put back, so that the same can be asked again.
-    fd_set* sets[3] = { request.readable, request.writable, request.exceptional };
-    fd_set saved[3];
-    for (unsigned i = 0; i < 3; ++i) {
-        if (sets[i])
-            saved[i] = *sets[i];
-    }
     int result = waitWithTimeout(request, 0);
     if (result <= 0) {
         int error = errno;
-        for (unsigned i = 0; i < 3; ++i) {
-            if (sets[i])
-                *sets[i] = saved[i];
-        }
+        waitAskSameAgain(request);
         errno = error;
     }
     return result;
@@ -156,6 +145,20 @@ static void waitClearSets(WaitRequest& request)
         if (set)
             FD_ZERO(set);
     }
+}
+
+static NEVER_INLINE int waitInHost(JSGlobalObject* globalObject, WaitFunction function, WaitRequest& request)
+{
+    Runtime::EventLoopPositionScope position(runtime(globalObject), true);
+    // Not for a mere look, which sleeps nowhere.
+    std::optional<JSLock::EmbedderThreadWaitsInEventLoop> waits;
+    if (request.timeout) {
+        waits.emplace(getVM(globalObject).apiLock());
+        // Whoever asks for what runs to be ended either finds that, or has asked before this looks.
+        if (runtime(globalObject).threads().throwIfHostEndsWhatRuns()) [[unlikely]]
+            return waitRaised;
+    }
+    return function(globalObject, request);
 }
 
 int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
@@ -182,40 +185,13 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
         // A long wait is made piece by piece.
         int64_t timeout = request.timeout;
         int64_t piece = timeout ? idle.nextPiece(timeout) : 0;
-        fd_set* sets[3] = { request.readable, request.writable, request.exceptional };
-        fd_set saved[3];
-        if (piece != timeout && request.kind == WaitRequest::Kind::Select) {
-            for (unsigned i = 0; i < 3; ++i) {
-                if (sets[i])
-                    saved[i] = *sets[i];
-            }
-        }
         request.timeout = piece;
-        int result;
-        if (function == blockingWait)
-            result = blockingWait(globalObject, request);
-        else {
-            Runtime::EventLoopPositionScope position(runtime(globalObject), true);
-            // Not for a mere look, which sleeps nowhere.
-            std::optional<JSLock::EmbedderThreadWaitsInEventLoop> waits;
-            if (piece) {
-                waits.emplace(vm.apiLock());
-                // Whoever asks for what runs to be ended either finds that, or has asked before this looks.
-                if (runtime(globalObject).threads().throwIfHostEndsWhatRuns()) [[unlikely]]
-                    return waitRaised;
-            }
-            result = function(globalObject, request);
-        }
+        int result = function == blockingWait ? blockingWait(globalObject, request) : waitInHost(globalObject, function, request);
         request.timeout = timeout;
         // What the host's loop ran has raised.
         RETURN_IF_EXCEPTION(scope, waitRaised);
         if (!result && piece != timeout) {
-            if (request.kind == WaitRequest::Kind::Select) {
-                for (unsigned i = 0; i < 3; ++i) {
-                    if (sets[i])
-                        *sets[i] = saved[i];
-                }
-            }
+            waitAskSameAgain(request);
             if (failed(scope, idle.didWait(timeout > 0 ? deadline - monotonicNanoseconds() : -1)))
                 return waitRaised;
             if (timeout > 0)
@@ -260,7 +236,7 @@ bool waitUntilReady(JSGlobalObject* globalObject, int fd, bool isWaitOfCall)
 }
 
 // Nothing can be read from it now. Whether read() is sure to wait until something can.
-static bool readWaitsAsPollDoes(int fd)
+static NEVER_INLINE bool readWaitsAsPollDoes(int fd)
 {
     int flags = fcntl(fd, F_GETFL);
     if (flags < 0 || (flags & O_NONBLOCK) || (flags & O_ACCMODE) == O_WRONLY)
@@ -509,6 +485,9 @@ static JSValue selectSelect(JSGlobalObject* globalObject, JSValue readList, JSVa
     request.readable = readable.limit ? &readable.set : nullptr;
     request.writable = writable.limit ? &writable.set : nullptr;
     request.exceptional = exceptional.limit ? &exceptional.set : nullptr;
+    // (Here and not where the wait is made: that frame is under every wait, this one under select()'s, and all of this is written.)
+    fd_set asked[3] = { readable.set, writable.set, exceptional.set };
+    request.asked = asked;
     int result = waitForEvents(globalObject, request);
     if (failed(scope, result != waitRaised))
         return { };

@@ -539,11 +539,15 @@ JSValue objectFromBits(JSGlobalObject*, uint64_t, JSValue hint = { });
 // ---- Foreign calls: PyCtypesForeign.cpp ----
 
 // An argument or a result, as the calling convention sees it.
+// (It lies in a frame under which the thread may wait: all of it is written.)
+PY_BEGIN_WITHOUT_PADDING
 struct ForeignValue {
     ForeignKind kind { ForeignKind::Void };
+    uint8_t unused[7] { };
     PyCTypeInfo* aggregate { nullptr }; // What it is made of, if it is one.
     void* memory { nullptr }; // Where its bytes are, or are to be put. A result has room for 16 bytes at least.
 };
+PY_END_WITHOUT_PADDING
 
 // Calls the function, without the GIL unless the flags say FunctionPythonAPI. The arguments from `fixedCount` on are those that
 // a variadic function declares as "...". False: an exception: there is no way to make such a call here.

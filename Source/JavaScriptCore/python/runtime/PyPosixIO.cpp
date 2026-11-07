@@ -230,9 +230,10 @@ static JSValue posixLseek(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<int64_t>(result)));
 }
 
-// function(buffer, size) reads; what it read becomes bytes.
+// function(buffer, size) reads; what it read becomes bytes. In a frame of its own: os.read() waits before it comes here, and is not to wait with
+// the room for the buffer in its frame, where what earlier frames left there is under the eyes of the collector.
 template<typename Function>
-static JSValue posixReadBytes(JSGlobalObject* globalObject, int64_t length, const Function& function)
+static NEVER_INLINE JSValue posixReadBytes(JSGlobalObject* globalObject, int64_t length, const Function& function)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

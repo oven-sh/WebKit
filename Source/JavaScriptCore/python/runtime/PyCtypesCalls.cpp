@@ -294,8 +294,11 @@ bool AsParameterScope::isTooDeep(JSGlobalObject* globalObject) const
     return true;
 }
 
+// (As ForeignValue: all of it is written.)
+PY_BEGIN_WITHOUT_PADDING
 struct Argument {
     ForeignKind kind { ForeignKind::SInt32 };
+    uint8_t unused[7] { };
     PyCTypeInfo* aggregate { nullptr };
     void* aggregateMemory { nullptr };
     JSValue object; // What a PyObject* is believed to refer to.
@@ -311,6 +314,7 @@ struct Argument {
     template<typename T>
     void set(T newValue) { memcpy(value, &newValue, sizeof(T)); }
 };
+PY_END_WITHOUT_PADDING
 
 // `keeps` holds what has to live until the call is over. False: an exception.
 static bool convertArgument(JSGlobalObject* globalObject, JSValue object, unsigned index, Argument& result, MarkedArgumentBuffer& keeps)
@@ -396,7 +400,7 @@ static void takeOverReferenceIn(const uint8_t* memory, bool programGetsObject)
     CApi::takeOverReference(bits, programGetsObject);
 }
 
-static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, JSValue checker, JSValue hint, bool comesWithReference)
+static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, JSValue checker, JSValue hint, bool comesWithReference)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -431,7 +435,7 @@ static bool isOwnFunction(uintptr_t address)
 }
 
 // Runs one of them. The result is in `memory`, unless there is an exception.
-static void callOwnFunction(JSGlobalObject* globalObject, uintptr_t address, std::span<const Argument> arguments, uint8_t* memory, JSValue& result)
+static NEVER_INLINE void callOwnFunction(JSGlobalObject* globalObject, uintptr_t address, std::span<const Argument> arguments, uint8_t* memory, JSValue& result)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -494,22 +498,56 @@ static void callOwnFunction(JSGlobalObject* globalObject, uintptr_t address, std
     memcpy(memory, &bits, sizeof(bits));
 }
 
-JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* arguments, unsigned flags, JSValue convertersValue, JSValue resultType, JSValue checker)
+// Room for what a call is given: in the frame for up to eight. All eight are made with it, so that there is nothing in the frame that is not
+// written to: see callFunction().
+template<typename T>
+class RoomForArguments {
+    WTF_MAKE_NONCOPYABLE(RoomForArguments);
+public:
+    RoomForArguments() = default;
+
+    std::span<T> take(unsigned count)
+    {
+        if (count <= m_few.size()) [[likely]]
+            return std::span { m_few }.first(count);
+        m_more.grow(count);
+        return m_more.mutableSpan();
+    }
+
+private:
+    std::array<T, 8> m_few { };
+    Vector<T> m_more;
+};
+
+// (What raises has frames of its own: the texts are put together in room that a call that goes well never writes to.)
+static NEVER_INLINE JSValue raiseNoMemoryForResult(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return raiseMemoryError(globalObject, scope, String());
+}
+
+static NEVER_INLINE JSValue raiseNullPointerAccess(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return raiseValueError(globalObject, scope, "NULL pointer access"_s);
+}
+
+// False: an exception.
+static NEVER_INLINE bool convertArguments(JSGlobalObject* globalObject, void* function, PyTuple* arguments, PyTuple* converters, RoomForArguments<Argument>& room, std::span<Argument>& converted, MarkedArgumentBuffer& keeps)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     State& state = stateOf(globalObject);
 
     audit(globalObject, "ctypes.call_function"_s, intFromPointer(globalObject, function), arguments);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, false);
     unsigned count = arguments->length();
-    if (count > 1024)
-        return raise(globalObject, scope, state.argumentError.get(), makeString("too many arguments ("_s, count, "), maximum is 1024"_s));
-    PyTuple* converters = PyTuple::tryFrom(convertersValue);
+    if (count > 1024) {
+        raise(globalObject, scope, state.argumentError.get(), makeString("too many arguments ("_s, count, "), maximum is 1024"_s));
+        return false;
+    }
     unsigned converterCount = converters ? converters->length() : 0;
-
-    Vector<Argument, 8> converted(count);
-    MarkedArgumentBuffer keeps;
+    converted = room.take(count);
     for (unsigned i = 0; i < count; ++i) {
         JSValue argument = arguments->at(i);
         if (i < converterCount) {
@@ -517,7 +555,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
             if (scope.exception()) [[unlikely]] {
                 scope.release();
                 extendError(globalObject, state.argumentError.get(), makeString("argument "_s, i + 1, ": "_s));
-                return { };
+                return false;
             }
             keeps.append(argument);
         }
@@ -525,9 +563,27 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
         if (scope.exception()) [[unlikely]] {
             scope.release();
             extendError(globalObject, state.argumentError.get(), makeString("argument "_s, i + 1, ": "_s));
-            return { };
+            return false;
         }
     }
+    return true;
+}
+
+// The function may wait for as long as it likes, and what earlier frames left in room of this frame that nothing is written to is under the eyes of
+// the collector until it returns. So the room for the arguments is written whether there are so many or not, and what comes before and after
+// the call has frames of its own.
+JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* arguments, unsigned flags, JSValue convertersValue, JSValue resultType, JSValue checker)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyTuple* converters = PyTuple::tryFrom(convertersValue);
+    unsigned converterCount = converters ? converters->length() : 0;
+    RoomForArguments<Argument> roomForConverted;
+    std::span<Argument> converted;
+    MarkedArgumentBuffer keeps;
+    if (failed(scope, convertArguments(globalObject, function, arguments, converters, roomForConverted, converted, keeps)))
+        return { };
+    unsigned count = converted.size();
 
     ForeignValue result;
     PyCTypeInfo* resultInfo = resultType && !isNone(resultType) ? infoOf(globalObject, resultType) : nullptr;
@@ -546,7 +602,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
         Runtime& rt = runtime(globalObject);
         PyByteStorage* storage = PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), static_cast<size_t>(resultInfo->size));
         if (!storage)
-            return raiseMemoryError(globalObject, scope, String());
+            RELEASE_AND_RETURN(scope, raiseNoMemoryForResult(globalObject));
         keeps.append(storage);
         resultMemory = storage->data();
         memset(resultMemory, 0, static_cast<size_t>(resultInfo->size));
@@ -556,17 +612,18 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
     JSValue ownResult;
     bool returnsReference = false;
     if (isOwnFunction(std::bit_cast<uintptr_t>(function))) {
-        callOwnFunction(globalObject, std::bit_cast<uintptr_t>(function), converted.span(), resultMemory, ownResult);
+        callOwnFunction(globalObject, std::bit_cast<uintptr_t>(function), converted, resultMemory, ownResult);
         RETURN_IF_EXCEPTION(scope, { });
     } else {
-        Vector<ForeignValue, 8> values(count);
+        RoomForArguments<ForeignValue> roomForValues;
+        std::span<ForeignValue> values = roomForValues.take(count);
         for (unsigned i = 0; i < count; ++i) {
             values[i].kind = converted[i].kind;
             values[i].aggregate = converted[i].aggregate;
             values[i].memory = converted[i].kind == ForeignKind::Aggregate ? converted[i].aggregateMemory : converted[i].value;
         }
         if (!function)
-            return raiseValueError(globalObject, scope, "NULL pointer access"_s);
+            RELEASE_AND_RETURN(scope, raiseNullPointerAccess(globalObject));
         Runtime& rt = runtime(globalObject);
         bool returnsObject = isLoadedAsObject(resultInfo, resultType);
         bool callbackGivesReference = false;
@@ -581,7 +638,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
         unsigned fixedCount = converterCount && count > converterCount ? converterCount : count;
         {
             CApi::CRunsFor running(rt);
-            callForeignFunction(globalObject, function, values.span(), fixedCount, result, flags);
+            callForeignFunction(globalObject, function, values, fixedCount, result, flags);
         }
         // However the call ends, neither the reference nor what C raised outlives it. (For an interpreter that the API does not serve, C can raise nothing.)
         bool isEnded = scope.exception(); // The host is ending what runs here, or no such call can be made.
@@ -937,7 +994,9 @@ struct OutputArguments {
     unsigned count { 0 };
 };
 
-static PyTuple* buildCallArguments(JSGlobalObject* globalObject, PyCFuncPtr* function, JSValue argTypesValue, const CallArgs& args, OutputArguments& outputs)
+// This, what follows, and what raises below have frames of their own, so that what they need room for is not in the frame of functionCall(), under
+// which the function may wait for as long as it likes: see callFunction().
+static NEVER_INLINE PyTuple* buildCallArguments(JSGlobalObject* globalObject, PyCFuncPtr* function, JSValue argTypesValue, const CallArgs& args, OutputArguments& outputs)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1007,7 +1066,7 @@ static PyTuple* buildCallArguments(JSGlobalObject* globalObject, PyCFuncPtr* fun
     return result;
 }
 
-static JSValue buildCallResult(JSGlobalObject* globalObject, JSValue result, PyTuple* arguments, const OutputArguments& outputs)
+static NEVER_INLINE JSValue buildCallResult(JSGlobalObject* globalObject, JSValue result, PyTuple* arguments, const OutputArguments& outputs)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1033,6 +1092,12 @@ static JSValue buildCallResult(JSGlobalObject* globalObject, JSValue result, PyT
             break;
     }
     return tuple;
+}
+
+static NEVER_INLINE JSValue raiseWrongArgumentCount(JSGlobalObject* globalObject, ASCIILiteral atLeast, unsigned required, unsigned actual)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return raiseTypeError(globalObject, scope, "this function takes "_s, atLeast, required, " argument"_s, required == 1 ? ""_s : "s"_s, " ("_s, actual, " given)"_s);
 }
 
 static JSValue functionCall(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
@@ -1063,9 +1128,9 @@ static JSValue functionCall(JSGlobalObject* globalObject, JSValue self, const Ca
         unsigned actual = arguments->length();
         if (info->flags & FunctionCdecl) {
             if (required > actual)
-                return raiseTypeError(globalObject, scope, "this function takes at least "_s, required, " argument"_s, required == 1 ? ""_s : "s"_s, " ("_s, actual, " given)"_s);
+                RELEASE_AND_RETURN(scope, raiseWrongArgumentCount(globalObject, "at least "_s, required, actual));
         } else if (required != actual)
-            return raiseTypeError(globalObject, scope, "this function takes "_s, required, " argument"_s, required == 1 ? ""_s : "s"_s, " ("_s, actual, " given)"_s);
+            RELEASE_AND_RETURN(scope, raiseWrongArgumentCount(globalObject, ""_s, required, actual));
     }
     JSValue result = callFunction(globalObject, address, arguments, info->flags, converters, resultType, checker);
     RETURN_IF_EXCEPTION(scope, { });

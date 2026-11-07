@@ -1302,7 +1302,8 @@ static SocketCallOptions socketOptionsForFlags(int flags)
     return options;
 }
 
-using SocketScratch = Vector<uint8_t, 2048>;
+// Not in the frame: the call may wait for as long as it likes, with what earlier frames left in that room under the eyes of the collector.
+using SocketScratch = Vector<uint8_t>;
 
 // With MSG_TRUNC, the system says how long the datagram was, not how much of it there was room for.
 static JSValue socketReceivedBytes(JSGlobalObject* globalObject, const SocketScratch& scratch, ssize_t count)

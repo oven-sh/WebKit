@@ -83,6 +83,15 @@ bool fileIOIsClosed(PyRecord* file) { return ioStateOf<FileIOState>(file).fd < 0
 // ---- System calls ----
 // The count. -1: an exception. -2: nothing can be read or written without waiting.
 
+// In a frame of its own. What gives up the GIL has room for all that the thread puts down meanwhile (AllowThreads), and nothing is written
+// there until it does. Whatever earlier frames left in such room is under the eyes of the collector while the frame is there: so it is
+// not to be in a frame that waits for something else.
+static NEVER_INLINE ssize_t fileIOReadWithoutGIL(JSGlobalObject* globalObject, int fd, uint8_t* buffer, size_t count)
+{
+    AllowThreads allow(globalObject, AllowThreads::LosesNothing);
+    return read(fd, buffer, count);
+}
+
 static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState& state, uint8_t* buffer, size_t count)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -94,8 +103,7 @@ static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState&
 #endif
     ssize_t result;
     do {
-        AllowThreads allow(globalObject, AllowThreads::LosesNothing);
-        result = read(fd, buffer, std::min(count, fileIOMaxTransfer));
+        result = fileIOReadWithoutGIL(globalObject, fd, buffer, std::min(count, fileIOMaxTransfer));
     } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result >= 0)
         return result;
