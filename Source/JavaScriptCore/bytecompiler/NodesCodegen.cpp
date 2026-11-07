@@ -408,6 +408,14 @@ RegisterID* TaggedTemplateNode::emitBytecode(BytecodeGenerator& generator, Regis
         if (RegisterID* local = var.local()) {
             generator.emitTDZCheckIfNecessary(var, local, nullptr);
             tag = generator.move(generator.newTemporary(), local);
+        } else if (var.offset().isDirectArgument()) {
+            // A mapped parameter has no scope to pass as |this|. base stays null, so |this| is undefined.
+            tag = generator.newTemporary();
+
+            JSTextPosition newDivot = divotStart() + identifier.length();
+            generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+            generator.emitGetFromScope(tag.get(), nullptr, var, ThrowIfNotFound);
+            generator.emitTDZCheckIfNecessary(var, tag.get(), nullptr);
         } else {
             tag = generator.newTemporary();
             base = generator.newTemporary();
@@ -1404,6 +1412,8 @@ RegisterID* EvalFunctionCallNode::emitBytecode(BytecodeGenerator& generator, Reg
         generator.emitLoadThisFromArrowFunctionLexicalEnvironment();
 
     Variable var = generator.variable(generator.propertyNames().eval);
+    // A function that calls a name spelled eval captures all of its parameters, so eval is never a mapped parameter.
+    ASSERT(!var.offset().isDirectArgument());
     RefPtr<RegisterID> local = var.local();
     RefPtr<RegisterID> func;
     if (local) {
@@ -1593,6 +1603,13 @@ RegisterID* FunctionCallResolveNode::emitBytecode(BytecodeGenerator& generator, 
         // This passes NoExpectedFunction because we expect that if the function is in a
         // local variable, then it's not one of our built-in constructors.
         expectedFunction = NoExpectedFunction;
+    } else if (var.offset().isDirectArgument()) {
+        // A mapped parameter has no scope to pass as |this|. Its base is the arguments object, which is not a
+        // JSScope: neither op_to_this nor JSValue::toThis() in a native would turn it back into undefined.
+        generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+        generator.emitLoad(callArguments.thisRegister(), jsUndefined());
+        generator.emitGetFromScope(func.get(), nullptr, var, ThrowIfNotFound);
+        generator.emitTDZCheckIfNecessary(var, func.get(), nullptr);
     } else {
         generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
         generator.move(
@@ -2980,7 +2997,8 @@ RegisterID* PostfixNode::emitBytecode(BytecodeGenerator& generator, RegisterID* 
 RegisterID* DeleteResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
     Variable var = generator.variable(m_ident);
-    if (var.local())
+    // A mapped parameter is a binding that cannot be deleted, like a local. It is not a property of the arguments object.
+    if (var.local() || var.offset().isDirectArgument())
         return generator.emitLoad(generator.finalDestination(dst), false);
 
     generator.emitExpressionInfo(divot(), divotStart(), divotEnd());

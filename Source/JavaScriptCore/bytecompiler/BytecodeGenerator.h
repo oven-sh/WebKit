@@ -424,7 +424,6 @@ namespace JSC {
         
         // Returns the register storing "this"
         RegisterID* thisRegister() { return &m_thisRegister; }
-        RegisterID* argumentsRegister() { return m_argumentsRegister; }
         RegisterID* newTarget()
         {
             ASSERT(m_newTargetRegister);
