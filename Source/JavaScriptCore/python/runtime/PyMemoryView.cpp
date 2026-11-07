@@ -91,6 +91,11 @@ bool refreshBuffer(JSGlobalObject* globalObject, Buffer& buffer)
     return bufferLocate(globalObject, buffer.owner, buffer.offset, buffer.requiredSize, buffer.data);
 }
 
+bool locateMemory(JSGlobalObject* globalObject, JSCell* owner, size_t offset, size_t length, uint8_t*& data)
+{
+    return bufferLocate(globalObject, owner, offset, offset + length, data);
+}
+
 // ---- Shapes ----
 
 static bool bufferIsContiguous(int64_t length, int64_t itemSize, unsigned dimensions, const int64_t* shape, const int64_t* strides, char order)

@@ -1519,12 +1519,11 @@ static JSValue posixSetxattr(JSGlobalObject* globalObject, JSValue pathValue, JS
     int flags = 0;
     bool followSymlinks;
     if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, attribute.convert(globalObject, attributeValue)) || failed(scope, holder.get(value))
-        || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks))
-        || failed(scope, refreshBuffer(globalObject, holder.buffer)))
+        || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
     if (failed(scope, audit(globalObject, "os.setxattr"_s, path.object(), attribute.object(), value, flagsValue ? flagsValue : jsNumber(0))))
         return { };
-    if (failed(scope, !posixFdAndFollowSymlinksInvalid(globalObject, "setxattr"_s, path.isFd(), followSymlinks)))
+    if (failed(scope, !posixFdAndFollowSymlinksInvalid(globalObject, "setxattr"_s, path.isFd(), followSymlinks)) || failed(scope, refreshBuffer(globalObject, holder.buffer)))
         return { };
     auto bytes = holder.buffer.span();
     int result;

@@ -92,7 +92,10 @@ static NEVER_INLINE ssize_t fileIOReadWithoutGIL(JSGlobalObject* globalObject, i
     return read(fd, buffer, count);
 }
 
-static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState& state, uint8_t* buffer, size_t count)
+// `locate` says where the memory is, right before each call of the system: all that comes before may run code of the program, the handler of a signal for one, and the memory may be that
+// of JS, which takes it away whenever it runs. False: an exception.
+template<typename Locate>
+static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState& state, size_t count, const Locate& locate)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     writeOutPendingOutput(globalObject);
@@ -103,6 +106,9 @@ static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState&
 #endif
     ssize_t result;
     do {
+        uint8_t* buffer;
+        if (failed(scope, locate(buffer)))
+            return -1;
         result = fileIOReadWithoutGIL(globalObject, fd, buffer, std::min(count, fileIOMaxTransfer));
     } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result >= 0)
@@ -116,12 +122,25 @@ static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState&
     return -1;
 }
 
-static int64_t fileIOSystemWrite(JSGlobalObject* globalObject, int fd, const uint8_t* buffer, size_t count)
+// That of a bytes that nobody else has yet, or of C++.
+static auto fileIOMemoryThatStays(uint8_t* memory)
+{
+    return [memory](uint8_t*& buffer) {
+        buffer = memory;
+        return true;
+    };
+}
+
+static int64_t fileIOSystemWrite(JSGlobalObject* globalObject, int fd, JSCell* owner, size_t offset, size_t count)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     writeOutPendingOutput(globalObject);
     ssize_t result;
     do {
+        // As in fileIOSystemRead().
+        uint8_t* buffer;
+        if (failed(scope, locateMemory(globalObject, owner, offset, count, buffer)))
+            return -1;
         AllowThreads allow(globalObject);
         result = write(fd, buffer, std::min(count, fileIOMaxTransfer));
     } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
@@ -178,7 +197,7 @@ static bool fileIOSystemClose(JSGlobalObject* globalObject, FileIOState& state)
     return false;
 }
 
-int64_t fileIOReadInto(JSGlobalObject* globalObject, PyRecord* file, std::span<uint8_t> buffer)
+int64_t fileIOReadInto(JSGlobalObject* globalObject, PyRecord* file, JSCell* owner, size_t offset, size_t length)
 {
     auto& state = ioStateOf<FileIOState>(file);
     if (state.fd < 0) {
@@ -189,10 +208,10 @@ int64_t fileIOReadInto(JSGlobalObject* globalObject, PyRecord* file, std::span<u
         fileIORaiseMode(globalObject, "reading"_s);
         return -1;
     }
-    return fileIOSystemRead(globalObject, state, buffer.data(), buffer.size());
+    return fileIOSystemRead(globalObject, state, length, [&](uint8_t*& buffer) { return locateMemory(globalObject, owner, offset, length, buffer); });
 }
 
-int64_t fileIOWrite(JSGlobalObject* globalObject, PyRecord* file, std::span<const uint8_t> buffer)
+int64_t fileIOWrite(JSGlobalObject* globalObject, PyRecord* file, JSCell* owner, size_t offset, size_t length)
 {
     auto& state = ioStateOf<FileIOState>(file);
     if (state.fd < 0) {
@@ -203,7 +222,7 @@ int64_t fileIOWrite(JSGlobalObject* globalObject, PyRecord* file, std::span<cons
         fileIORaiseMode(globalObject, "writing"_s);
         return -1;
     }
-    return fileIOSystemWrite(globalObject, state.fd, buffer.data(), buffer.size());
+    return fileIOSystemWrite(globalObject, state.fd, owner, offset, length);
 }
 
 int64_t fileIOSeek(JSGlobalObject* globalObject, PyRecord* file, int64_t position, int whence)
@@ -570,7 +589,7 @@ static JSValue fileIOReadIntoMethod(JSGlobalObject* globalObject, JSValue self, 
     IOBuffer buffer;
     if (failed(scope, buffer.acquireWritable(globalObject, "readinto"_s, target, "argument 1"_s)))
         return { };
-    RELEASE_AND_RETURN(scope, fileIOResult(globalObject, fileIOReadInto(globalObject, PyRecord::from(self), buffer.mutableSpan())));
+    RELEASE_AND_RETURN(scope, fileIOResult(globalObject, fileIOReadInto(globalObject, PyRecord::from(self), buffer.owner(), buffer.offset(), buffer.size())));
 }
 
 static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
@@ -604,7 +623,7 @@ static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
         result = ioTryNewBytes(globalObject, expected);
         RETURN_IF_EXCEPTION(scope, { });
         while (filled < expected) {
-            int64_t count = fileIOSystemRead(globalObject, state, result->mutableData() + filled, expected - filled);
+            int64_t count = fileIOSystemRead(globalObject, state, expected - filled, fileIOMemoryThatStays(result->mutableData() + filled));
             if (failed(scope, count != -1))
                 return { };
             if (count <= 0) {
@@ -627,7 +646,7 @@ static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
             if (!rest.tryGrow(rest.size() + (result && rest.isEmpty() ? fileIOSmallChunk : addend)))
                 return raiseWithArgs(globalObject, scope, runtime(globalObject).MemoryError(), { });
         }
-        int64_t count = fileIOSystemRead(globalObject, state, rest.mutableSpan().data() + restFilled, rest.size() - restFilled);
+        int64_t count = fileIOSystemRead(globalObject, state, rest.size() - restFilled, fileIOMemoryThatStays(rest.mutableSpan().data() + restFilled));
         if (failed(scope, count != -1))
             return { };
         if (count == -2) {
@@ -667,7 +686,7 @@ static JSValue fileIORead(JSGlobalObject* globalObject, JSValue self, JSValue si
 
     PyBytes* result = ioTryNewBytes(globalObject, size);
     RETURN_IF_EXCEPTION(scope, { });
-    int64_t count = fileIOSystemRead(globalObject, state, result->mutableData(), size);
+    int64_t count = fileIOSystemRead(globalObject, state, size, fileIOMemoryThatStays(result->mutableData()));
     EXCEPTION_ASSERT(!!scope.exception() == (count == -1));
     if (count < 0)
         RELEASE_AND_RETURN(scope, fileIOResult(globalObject, count));
@@ -682,7 +701,7 @@ static JSValue fileIOWriteMethod(JSGlobalObject* globalObject, JSValue self, JSV
     IOBuffer buffer;
     if (failed(scope, buffer.acquire(globalObject, data)))
         return { };
-    RELEASE_AND_RETURN(scope, fileIOResult(globalObject, fileIOWrite(globalObject, PyRecord::from(self), buffer.span())));
+    RELEASE_AND_RETURN(scope, fileIOResult(globalObject, fileIOWrite(globalObject, PyRecord::from(self), buffer.owner(), buffer.offset(), buffer.size())));
 }
 
 // ---- The position ----

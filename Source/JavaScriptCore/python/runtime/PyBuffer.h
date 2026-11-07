@@ -101,7 +101,10 @@ bool getBuffer(JSGlobalObject*, JSValue object, Buffer&, unsigned flags = Buffer
 // May be called with an exception pending, and on a buffer that holds nothing. It raises nothing.
 void releaseBuffer(JSGlobalObject*, Buffer&);
 // After code of the program may have run, if the memory may be that of JS: sets `data` again. False: a BufferError.
+// A system call that is made again when a signal has interrupted it comes behind such code, the handler: this goes into the loop, right before the call.
 bool refreshBuffer(JSGlobalObject*, Buffer&);
+// The same for whoever has noted the owner and not a Buffer: where `length` bytes of its memory are, from `offset` on.
+bool locateMemory(JSGlobalObject*, JSCell* owner, size_t offset, size_t length, uint8_t*& data);
 // Copies the items, `length` bytes in all, in the order of C ('C', or 'A' unless they are in that of Fortran) or Fortran ('F').
 void copyBufferToContiguous(uint8_t* destination, const Buffer&, char order);
 

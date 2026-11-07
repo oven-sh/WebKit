@@ -292,9 +292,11 @@ static JSValue posixReadinto(JSGlobalObject* globalObject, JSValue fdValue, JSVa
     BufferHolder holder(globalObject);
     if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixGetWritableBuffer(globalObject, bufferValue, "readinto"_s, 2, holder)))
         return { };
-    auto buffer = holder.buffer.mutableSpan();
     ssize_t count;
     do {
+        if (failed(scope, refreshBuffer(globalObject, holder.buffer)))
+            return { };
+        auto buffer = holder.buffer.mutableSpan();
         AllowThreads allow(globalObject, AllowThreads::LosesNothing);
         count = read(fd, buffer.data(), std::min(buffer.size(), posixMaxTransfer));
     } while (count < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
@@ -312,9 +314,11 @@ static JSValue posixWrite(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     BufferHolder holder(globalObject);
     if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, holder.get(data)))
         return { };
-    auto bytes = holder.buffer.span();
     ssize_t count;
     do {
+        if (failed(scope, refreshBuffer(globalObject, holder.buffer)))
+            return { };
+        auto bytes = holder.buffer.span();
         AllowThreads allow(globalObject);
         count = write(fd, bytes.data(), std::min(bytes.size(), posixMaxTransfer));
     } while (count < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
@@ -331,11 +335,13 @@ static JSValue posixPwrite(JSGlobalObject* globalObject, JSValue fdValue, JSValu
     int fd;
     BufferHolder holder(globalObject);
     off_t offset;
-    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, holder.get(data)) || failed(scope, posixToOffset(globalObject, offsetValue, offset)) || failed(scope, refreshBuffer(globalObject, holder.buffer)))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, holder.get(data)) || failed(scope, posixToOffset(globalObject, offsetValue, offset)))
         return { };
-    auto bytes = holder.buffer.span();
     ssize_t count;
     do {
+        if (failed(scope, refreshBuffer(globalObject, holder.buffer)))
+            return { };
+        auto bytes = holder.buffer.span();
         AllowThreads allow(globalObject);
         count = pwrite(fd, bytes.data(), bytes.size(), offset);
     } while (count < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
@@ -383,11 +389,20 @@ public:
             m_values.append(buffer.owner ? JSValue(buffer.owner) : jsUndefined());
             m_buffers.append(WTF::move(buffer));
         }
-        // Getting the later ones may have run code.
-        for (auto& buffer : m_buffers) {
-            if (failed(scope, refreshBuffer(globalObject, buffer)))
+        // (Where they are is asked right before the call: refresh().)
+        for (auto& buffer : m_buffers)
+            m_vectors.append({ nullptr, static_cast<size_t>(buffer.length) });
+        return true;
+    }
+
+    // See refreshBuffer(). Getting the later ones may have run code too.
+    bool refresh()
+    {
+        auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
+        for (size_t i = 0; i < m_buffers.size(); ++i) {
+            if (failed(scope, refreshBuffer(m_globalObject, m_buffers[i])))
                 return false;
-            m_vectors.append({ buffer.data, static_cast<size_t>(buffer.length) });
+            m_vectors[i].iov_base = m_buffers[i].data;
         }
         return true;
     }
@@ -411,13 +426,15 @@ private:
 };
 
 template<typename Function>
-static JSValue posixTransfer(JSGlobalObject* globalObject, const Function& function, AllowThreads::WhenInterrupted whenInterrupted = AllowThreads::MayLoseSomething)
+static JSValue posixTransfer(JSGlobalObject* globalObject, PosixBufferList* buffers, const Function& function, AllowThreads::WhenInterrupted whenInterrupted = AllowThreads::MayLoseSomething)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     ssize_t count;
     do {
+        if (buffers && failed(scope, buffers->refresh()))
+            return { };
         AllowThreads allow(globalObject, whenInterrupted);
         count = function();
     } while (count < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
@@ -434,7 +451,7 @@ static JSValue posixReadv(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     PosixBufferList buffers(globalObject);
     if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, buffers.gather(buffersValue, "readv() arg 2 must be a sequence"_s, true)))
         return { };
-    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return readv(fd, buffers.vectors(), buffers.count()); }, AllowThreads::LosesNothing));
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, &buffers, [&] { return readv(fd, buffers.vectors(), buffers.count()); }, AllowThreads::LosesNothing));
 }
 
 static JSValue posixWritev(JSGlobalObject* globalObject, JSValue fdValue, JSValue buffersValue)
@@ -445,7 +462,7 @@ static JSValue posixWritev(JSGlobalObject* globalObject, JSValue fdValue, JSValu
     PosixBufferList buffers(globalObject);
     if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, buffers.gather(buffersValue, "writev() arg 2 must be a sequence"_s, false)))
         return { };
-    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return writev(fd, buffers.vectors(), buffers.count()); }));
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, &buffers, [&] { return writev(fd, buffers.vectors(), buffers.count()); }));
 }
 
 [[maybe_unused]] static JSValue posixFlagsUnavailable(JSGlobalObject* globalObject, ASCIILiteral function)
@@ -470,7 +487,7 @@ static JSValue posixPreadv(JSGlobalObject* globalObject, JSValue fdValue, JSValu
 #if OS(LINUX) && defined(SYS_preadv2)
     // For this call, unlike preadv(), an offset of -1 is where the descriptor is.
     scope.release();
-    return posixTransfer(globalObject, [&] {
+    return posixTransfer(globalObject, &buffers, [&] {
         ssize_t count = static_cast<ssize_t>(syscall(SYS_preadv2, fd, buffers.vectors(), buffers.count(), static_cast<long>(offset), 0L, flags));
         if (count < 0 && errno == ENOSYS && !flags)
             count = preadv(fd, buffers.vectors(), buffers.count(), offset);
@@ -479,7 +496,7 @@ static JSValue posixPreadv(JSGlobalObject* globalObject, JSValue fdValue, JSValu
 #else
     if (flags)
         RELEASE_AND_RETURN(scope, posixFlagsUnavailable(globalObject, "preadv2"_s));
-    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return preadv(fd, buffers.vectors(), buffers.count(), offset); }, AllowThreads::LosesNothing));
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, &buffers, [&] { return preadv(fd, buffers.vectors(), buffers.count(), offset); }, AllowThreads::LosesNothing));
 #endif
 }
 
@@ -497,7 +514,7 @@ static JSValue posixPwritev(JSGlobalObject* globalObject, JSValue fdValue, JSVal
         return { };
 #if OS(LINUX) && defined(SYS_pwritev2)
     scope.release();
-    return posixTransfer(globalObject, [&] {
+    return posixTransfer(globalObject, &buffers, [&] {
         ssize_t count = static_cast<ssize_t>(syscall(SYS_pwritev2, fd, buffers.vectors(), buffers.count(), static_cast<long>(offset), 0L, flags));
         if (count < 0 && errno == ENOSYS && !flags)
             count = pwritev(fd, buffers.vectors(), buffers.count(), offset);
@@ -506,7 +523,7 @@ static JSValue posixPwritev(JSGlobalObject* globalObject, JSValue fdValue, JSVal
 #else
     if (flags)
         RELEASE_AND_RETURN(scope, posixFlagsUnavailable(globalObject, "pwritev2"_s));
-    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return pwritev(fd, buffers.vectors(), buffers.count(), offset); }));
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, &buffers, [&] { return pwritev(fd, buffers.vectors(), buffers.count(), offset); }));
 #endif
 }
 
@@ -539,7 +556,7 @@ static JSValue posixSendfile(JSGlobalObject* globalObject, JSValue outValue, JSV
     if (failed(scope, posixToInt(globalObject, outValue, out)) || failed(scope, posixToInt(globalObject, inValue, in)) || failed(scope, posixToCount(globalObject, countValue, "count"_s, count))
         || failed(scope, posixToOptionalOffset(globalObject, offsetValue, storage, offset)))
         return { };
-    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return sendfile(out, in, offset, static_cast<size_t>(count)); }));
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, nullptr, [&] { return sendfile(out, in, offset, static_cast<size_t>(count)); }));
 }
 
 static JSValue posixCopyFileRange(JSGlobalObject* globalObject, JSValue sourceValue, JSValue destinationValue, JSValue countValue, JSValue sourceOffsetValue, JSValue destinationOffsetValue)
@@ -556,7 +573,7 @@ static JSValue posixCopyFileRange(JSGlobalObject* globalObject, JSValue sourceVa
     if (failed(scope, posixToInt(globalObject, sourceValue, source)) || failed(scope, posixToInt(globalObject, destinationValue, destination)) || failed(scope, posixToCount(globalObject, countValue, "count"_s, count))
         || failed(scope, posixToOptionalOffset(globalObject, sourceOffsetValue, sourceStorage, sourceOffset)) || failed(scope, posixToOptionalOffset(globalObject, destinationOffsetValue, destinationStorage, destinationOffset)))
         return { };
-    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return static_cast<ssize_t>(syscall(SYS_copy_file_range, source, sourceOffset, destination, destinationOffset, static_cast<size_t>(count), 0u)); }));
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, nullptr, [&] { return static_cast<ssize_t>(syscall(SYS_copy_file_range, source, sourceOffset, destination, destinationOffset, static_cast<size_t>(count), 0u)); }));
 }
 
 static JSValue posixSplice(JSGlobalObject* globalObject, JSValue sourceValue, JSValue destinationValue, JSValue countValue, JSValue sourceOffsetValue, JSValue destinationOffsetValue, JSValue flagsValue)
@@ -575,7 +592,7 @@ static JSValue posixSplice(JSGlobalObject* globalObject, JSValue sourceValue, JS
         || (flagsValue && failed(scope, posixToUnsigned(globalObject, flagsValue, flags)))
         || failed(scope, posixToOptionalOffset(globalObject, sourceOffsetValue, sourceStorage, sourceOffset)) || failed(scope, posixToOptionalOffset(globalObject, destinationOffsetValue, destinationStorage, destinationOffset)))
         return { };
-    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return splice(source, sourceOffset, destination, destinationOffset, static_cast<size_t>(count), flags); }));
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, nullptr, [&] { return splice(source, sourceOffset, destination, destinationOffset, static_cast<size_t>(count), flags); }));
 }
 #endif // OS(LINUX)
 
@@ -614,6 +631,8 @@ static JSValue posixSendfile(JSGlobalObject* globalObject, JSValue outValue, JSV
     }
     int result;
     do {
+        if (failed(scope, headers.refresh()) || failed(scope, trailers.refresh()))
+            return { };
         AllowThreads allow(globalObject);
         result = sendfile(in, out, offset, &byteCount, &extra, flags);
     } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));

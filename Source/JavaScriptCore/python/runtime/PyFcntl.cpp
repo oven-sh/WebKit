@@ -186,21 +186,22 @@ static JSValue fcntlIoctl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
         if (!failed(scope, holder.get(argument, BufferWritable))) {
             auto span = holder.buffer.mutableSpan();
             uint8_t copy[fcntlInlineSize + sizeof(fcntlGuard)];
-            uint8_t* address = span.data();
-            if (span.size() <= fcntlInlineSize) {
+            bool usesCopy = span.size() <= fcntlInlineSize;
+            if (usesCopy) {
                 memcpy(copy, span.data(), span.size());
                 memcpy(copy + span.size(), fcntlGuard, sizeof(fcntlGuard));
-                address = copy;
             }
             int result;
             do {
+                if (failed(scope, refreshBuffer(globalObject, holder.buffer)))
+                    return { };
                 AllowThreads allow(globalObject);
-                result = ioctl(fd, request, address);
+                result = ioctl(fd, request, usesCopy ? copy : holder.buffer.data);
             } while (result == -1 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
             if (result < 0)
                 RELEASE_AND_RETURN(scope, posixError(globalObject));
-            if (address == copy) {
-                memcpy(span.data(), copy, span.size());
+            if (usesCopy) {
+                memcpy(holder.buffer.data, copy, span.size());
                 if (memcmp(copy + span.size(), fcntlGuard, sizeof(fcntlGuard))) {
                     return raiseSystemError(globalObject, scope, "Possible stack corruption in ioctl() due to buffer overflow. "
                         "Provide a writable buffer argument of sufficient size as determined by the operation."_s);

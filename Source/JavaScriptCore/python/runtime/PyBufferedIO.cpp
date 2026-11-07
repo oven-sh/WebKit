@@ -111,9 +111,9 @@ public:
     int64_t rawTell();
     int64_t cachedRawTell() { return s.absolutePosition != -1 ? s.absolutePosition : rawTell(); }
     int64_t rawSeek(int64_t target, int whence);
-    // The memory is at `start`, which is `offset` bytes into that of the cell `owner`.
-    int64_t rawRead(JSCell* owner, size_t offset, uint8_t* start, int64_t length);
-    int64_t rawWrite(JSCell* owner, size_t offset, const uint8_t* start, int64_t length);
+    // The memory is that of the cell `owner`, from `offset` on. No address: see locateMemory().
+    int64_t rawRead(JSCell* owner, size_t offset, int64_t length);
+    int64_t rawWrite(JSCell* owner, size_t offset, int64_t length);
     int64_t fillBuffer();
 
     // ---- With the lock held, but for readFast() ----
@@ -357,13 +357,13 @@ bool BufferedStream::initialize(JSValue raw, int64_t bufferSize, bool readable, 
 
 // ---- Reading ----
 
-int64_t BufferedStream::rawRead(JSCell* owner, size_t offset, uint8_t* start, int64_t length)
+int64_t BufferedStream::rawRead(JSCell* owner, size_t offset, int64_t length)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t count;
     if (s.rawIsFileIO) {
-        count = fileIOReadInto(globalObject, rawFile(), { start, static_cast<size_t>(length) });
+        count = fileIOReadInto(globalObject, rawFile(), owner, offset, static_cast<size_t>(length));
         EXCEPTION_ASSERT(!!scope.exception() == (count == -1));
         if (count < 0)
             return count;
@@ -404,7 +404,7 @@ int64_t BufferedStream::rawRead(JSCell* owner, size_t offset, uint8_t* start, in
 int64_t BufferedStream::fillBuffer()
 {
     int64_t start = hasValidReadBuffer() ? s.readEnd : 0;
-    int64_t count = rawRead(storage(), start, buffer() + start, s.bufferSize - start);
+    int64_t count = rawRead(storage(), start, s.bufferSize - start);
     if (count <= 0)
         return count;
     s.readEnd = start + count;
@@ -520,7 +520,7 @@ JSValue BufferedStream::readGeneric(int64_t size)
         int64_t count = withoutLastBlock(remaining);
         if (!count)
             break;
-        count = rawRead(result, written, out + written, count);
+        count = rawRead(result, written, count);
         if (failed(scope, count != -1))
             return { };
         if (!count || count == -2)
@@ -571,6 +571,9 @@ JSValue BufferedStream::readInto(JSValue target, bool isReadInto1)
         return { };
     if (failed(scope, checkInitialized()) || failed(scope, checkClosed("readinto of closed file"_s)))
         return { };
+    // To ask a raw stream that is not a FileIO whether it is closed may run code.
+    if (!s.fastClosedChecks && failed(scope, destination.refresh()))
+        return { };
 
     int64_t length = destination.size();
     uint8_t* out = destination.mutableData();
@@ -602,7 +605,7 @@ JSValue BufferedStream::readInto(JSValue target, bool isReadInto1)
         out = destination.mutableData();
         if (remaining > s.bufferSize) {
             // More than the buffer could take anyway.
-            count = rawRead(destination.owner(), destination.offset() + written, out + written, remaining);
+            count = rawRead(destination.owner(), destination.offset() + written, remaining);
             EXCEPTION_ASSERT(!!scope.exception() == (count == -1));
         } else if (!(isReadInto1 && written)) {
             count = fillBuffer();
@@ -694,13 +697,13 @@ JSValue BufferedStream::readline(int64_t limit)
 
 // ---- Writing ----
 
-int64_t BufferedStream::rawWrite(JSCell* owner, size_t offset, const uint8_t* start, int64_t length)
+int64_t BufferedStream::rawWrite(JSCell* owner, size_t offset, int64_t length)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t count;
     if (s.rawIsFileIO) {
-        count = fileIOWrite(globalObject, rawFile(), { start, static_cast<size_t>(length) });
+        count = fileIOWrite(globalObject, rawFile(), owner, offset, static_cast<size_t>(length));
         EXCEPTION_ASSERT(!!scope.exception() == (count == -1));
         if (count == -2)
             lastErrno = EAGAIN;
@@ -747,7 +750,7 @@ bool BufferedStream::flushWrites()
             s.rawPosition -= rewind;
         }
         while (s.writePosition < s.writeEnd) {
-            int64_t count = rawWrite(storage(), s.writePosition, buffer() + s.writePosition, s.writeEnd - s.writePosition);
+            int64_t count = rawWrite(storage(), s.writePosition, s.writeEnd - s.writePosition);
             if (failed(scope, count != -1))
                 return false;
             if (count == -2) {
@@ -1030,7 +1033,7 @@ static JSValue bufferedRead1(JSGlobalObject* globalObject, JSValue self, JSValue
 
     PyBytes* result = ioTryNewBytes(globalObject, size);
     RETURN_IF_EXCEPTION(scope, { });
-    int64_t count = stream.rawRead(result, 0, result->mutableData(), size);
+    int64_t count = stream.rawRead(result, 0, size);
     if (failed(scope, count != -1))
         return { };
     if (count == -2)
@@ -1223,6 +1226,9 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
         return { };
     if (closed)
         return raiseValueError(globalObject, scope, "write to closed file"_s);
+    // As in readInto().
+    if (!s.fastClosedChecks && failed(scope, data.refresh()))
+        return { };
 
     int64_t length = data.size();
     const uint8_t* source = data.data();
@@ -1298,7 +1304,7 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
     int64_t remaining = length;
     int64_t written = 0;
     while (remaining >= s.bufferSize) {
-        int64_t count = stream.rawWrite(data.owner(), data.offset() + written, source + written, length - written);
+        int64_t count = stream.rawWrite(data.owner(), data.offset() + written, length - written);
         if (failed(scope, count != -1))
             return { };
         if (failed(scope, data.refresh()))

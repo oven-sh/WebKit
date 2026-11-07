@@ -300,8 +300,9 @@ PyByteStorage* ioTryNewStorage(JSGlobalObject*, size_t capacity);
 
 bool fileIOIsClosed(PyRecord*);
 // What readinto(), write(), seek() and tell() do, without the objects. -1: an exception. -2: it would block (None).
-int64_t fileIOReadInto(JSGlobalObject*, PyRecord*, std::span<uint8_t>);
-int64_t fileIOWrite(JSGlobalObject*, PyRecord*, std::span<const uint8_t>);
+// The memory is `length` bytes of that of `owner`, from `offset` on, and no address: see locateMemory().
+int64_t fileIOReadInto(JSGlobalObject*, PyRecord*, JSCell* owner, size_t offset, size_t length);
+int64_t fileIOWrite(JSGlobalObject*, PyRecord*, JSCell* owner, size_t offset, size_t length);
 int64_t fileIOSeek(JSGlobalObject*, PyRecord*, int64_t position, int whence);
 
 // ---- Text ----
