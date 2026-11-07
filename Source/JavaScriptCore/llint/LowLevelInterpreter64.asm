@@ -3287,6 +3287,64 @@ llintOp(op_py_spread_now, OpPySpreadNow, macro (size, get, dispatch)
 end)
 
 
+# t1: the items, t2: how many there are. Makes the frame of the callee, fills it and goes to `done` with the callee in t0 and the frame in t7.
+# loadItem(address, hole) puts the item there in t6, as a value.
+macro pySpreadIntoFrame(size, get, slow, done, loadItem)
+    # The frame of the callee, as calleeFrameForVarargs() has it.
+    getu(size, OpPyCallSpread, m_leadingCount, t3)
+    addi t2, t3, t0
+    addi CallFrameHeaderSlots + 2, t0, t7
+    andi ~1, t7
+    get(m_firstFree, t5)
+    subi t5, t7
+    addi 1, t7
+    andi ~1, t7
+    lshiftp 3, t7
+    subp cfr, t7, t7
+    loadp CodeBlock[cfr], t5
+    loadp CodeBlock::m_vm[t5], t5
+    bpa VMSoftStackLimitOffset[t5], t7, slow
+    # Before anything is written there: what is below sp belongs to whatever handles a signal.
+    addp CallerFrameAndPCSize, t7, sp
+
+    addi 1, t0
+    storei t0, LowWordOffset + ArgumentCountIncludingThis[t7]
+    storeq ValueUndefined, ThisArgumentOffset[t7]
+    leap FirstArgumentOffset[t7], t5
+    btiz t3, .leadingAreThere
+    get(m_leading, t0)
+    leap [cfr, t0, 8], t0
+.copyLeading:
+    loadq [t0], t6
+    storeq t6, [t5]
+    storeq ValueEmpty, [t0]
+    subp SlotSize, t0
+    addp SlotSize, t5
+    bsubinz 1, t3, .copyLeading
+.leadingAreThere:
+    btiz t2, .itemsAreThere
+    subp SlotSize, t1
+    subp SlotSize, t5
+.copyItem:
+    loadItem([t1, t2, 8], .hole)
+.isNoHole:
+    storeq t6, [t5, t2, 8]
+    bsubinz 1, t2, .copyItem
+.itemsAreThere:
+    get(m_positional, t0)
+    storeq ValueEmpty, [cfr, t0, 8]
+    get(m_keywords, t0)
+    storeq ValueEmpty, [cfr, t0, 8]
+    get(m_callee, t1)
+    loadConstantOrVariable(size, t1, t0)
+    storeq t0, Callee[t7]
+    storePC()
+    jmp done
+.hole:
+    move ValueUndefined, t6
+    jmp .isNoHole
+end
+
 llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatch, metadata, return)
     # After the * a tuple, a list or nothing, after the ** nothing or a dict that is empty.
     loadPythonRuntime(t3)
@@ -3313,72 +3371,32 @@ llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatc
     andi IndexingShapeMask, t2
     bieq t2, ContiguousShape, .listOfValues
     bieq t2, Int32Shape, .listOfValues
+    bieq t2, DoubleShape, .listOfDoubles
     # Of whatever other kind, if there is nothing in it: a list that never had an item is of a kind of its own.
     btiz t2, .slow
     loadp JSObjectWithButterfly::m_butterfly[t1], t1
     loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t2
     btiz t2, .haveLength
     jmp .slow
+.listOfDoubles:
+    loadp JSObjectWithButterfly::m_butterfly[t1], t1
+    loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t2
+    bia t2, constexpr Python::maxListLengthSpreadByInterpreter, .slow
+    pySpreadIntoFrame(size, get, .slow, .frameIsFilled, macro (address, hole)
+        loadd address, ft0
+        bdnequn ft0, ft0, hole
+        fd2q ft0, t6
+        subq numberTag, t6
+    end)
 .listOfValues:
     loadp JSObjectWithButterfly::m_butterfly[t1], t1
     loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t2
     bia t2, constexpr Python::maxListLengthSpreadByInterpreter, .slow
 .haveLength:
-    # The frame of the callee, as calleeFrameForVarargs() has it.
-    getu(size, OpPyCallSpread, m_leadingCount, t3)
-    addi t2, t3, t0
-    addi CallFrameHeaderSlots + 2, t0, t7
-    andi ~1, t7
-    get(m_firstFree, t5)
-    subi t5, t7
-    addi 1, t7
-    andi ~1, t7
-    lshiftp 3, t7
-    subp cfr, t7, t7
-    loadp CodeBlock[cfr], t5
-    loadp CodeBlock::m_vm[t5], t5
-    bpa VMSoftStackLimitOffset[t5], t7, .slow
-    # Before anything is written there: what is below sp belongs to whatever handles a signal.
-    addp CallerFrameAndPCSize, t7, sp
-
-    addi 1, t0
-    storei t0, LowWordOffset + ArgumentCountIncludingThis[t7]
-    storeq ValueUndefined, ThisArgumentOffset[t7]
-    leap FirstArgumentOffset[t7], t5
-    btiz t3, .leadingAreThere
-    get(m_leading, t0)
-    leap [cfr, t0, 8], t0
-.copyLeading:
-    loadq [t0], t6
-    storeq t6, [t5]
-    storeq ValueEmpty, [t0]
-    subp SlotSize, t0
-    addp SlotSize, t5
-    bsubinz 1, t3, .copyLeading
-.leadingAreThere:
-    btiz t2, .itemsAreThere
-    subp SlotSize, t1
-    subp SlotSize, t5
-.copyItem:
-    loadq [t1, t2, 8], t6
-    btqz t6, .hole
-.isNoHole:
-    storeq t6, [t5, t2, 8]
-    bsubinz 1, t2, .copyItem
-.itemsAreThere:
-    get(m_positional, t0)
-    storeq ValueEmpty, [cfr, t0, 8]
-    get(m_keywords, t0)
-    storeq ValueEmpty, [cfr, t0, 8]
-    get(m_callee, t1)
-    loadConstantOrVariable(size, t1, t0)
-    storeq t0, Callee[t7]
-    storePC()
-    jmp .frameIsFilled
-
-.hole:
-    move ValueUndefined, t6
-    jmp .isNoHole
+    pySpreadIntoFrame(size, get, .slow, .frameIsFilled, macro (address, hole)
+        loadq address, t6
+        btqz t6, hole
+    end)
 
     # As doCallVarargs().
 .slow:
