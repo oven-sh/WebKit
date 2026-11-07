@@ -82,7 +82,9 @@ PY_CAPI Handle Py_TYPE(Handle object)
 PY_CAPI int Py_IS_TYPE(Handle object, Handle type)
 {
     CAPI_QUIET_AND_ONLY_READS(0);
-    return JSValue(typeOf(object)) == toLookAt(type);
+    // (Null: see typeOfWhatIsNoObjectOfPythons().)
+    PyType* typeOfObject = typeOf(object);
+    return typeOfObject && JSValue(typeOfObject) == toLookAt(type);
 }
 
 // One object may be spelled in two ways for C too: None and the bools are, by their symbols, which say what they stand for at all times, and as toC() spells them. (A type is only ever

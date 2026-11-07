@@ -548,8 +548,7 @@ PY_CAPI int PyObject_GC_IsTracked(Handle object)
     CAPI_QUIET_AND_ONLY_READS(0);
     if (Body* body = bodyOrNull(object))
         return isTracked(body);
-    // (It asks for the type.)
-    return typeOf(object) && isTrackedByCollector(interpreter().runtime, toLookAt(object));
+    return isTrackedByCollector(interpreter().runtime, toLookAt(object));
 }
 
 PY_CAPI int PyObject_GC_IsFinalized(Handle object)

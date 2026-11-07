@@ -466,6 +466,9 @@ static bool isTracked(Runtime& rt, JSValue value, bool isYoung)
     // What is not allocated is not kept track of.
     if (auto* type = PyType::tryFrom(cell))
         return isAllocatedInCPython(type);
+    // A function, a list, whatever is JavaScript's: all are kept track of, and the types of some would have to be made first.
+    if (!isPyObject(cell))
+        return true;
     PyType* type = rt.typeOf(cell);
     if (type->has(TypeFlag::InstancesHaveDataOfC)) [[unlikely]]
         return CApi::isTracked(cell);
