@@ -72,19 +72,26 @@ $null = mkdir $OutputDir -ErrorAction SilentlyContinue
 
 $ICU_TARBALL = Join-Path $OutputDir "icu4c-$ICU_VERSION-src.tgz"
 $ICU_SOURCE_DIR = Join-Path $OutputDir "source"
-# Which version $ICU_SOURCE_DIR was extracted from. $OutputDir outlives an ICU bump, and a source tree of another
-# version (or of no recorded version) must not be what gets built.
+# The patches of icu/ that this script applies, in this order. Not the decompression hook: see the top of this file.
+$ICU_PATCHES = @("decnum-allocation-failure.patch", "decimfmt-default-locale-symbols.patch")
+# Which version $ICU_SOURCE_DIR was extracted from, and which patches it got. $OutputDir outlives an ICU bump and a
+# new patch, and a source tree of another version or of other patches (or of no record) must not be what gets built.
 $ICU_SOURCE_STAMP = Join-Path $OutputDir "source-version.txt"
+$ICU_SOURCE_ID = (@($ICU_VERSION) + ($ICU_PATCHES | ForEach-Object {
+    "$_=" + (Get-FileHash (Join-Path $PSScriptRoot "icu/$_") -Algorithm SHA256).Hash.ToLower()
+})) -join " "
 
 if (Test-Path $ICU_SOURCE_DIR) {
     $have = if (Test-Path $ICU_SOURCE_STAMP) { (Get-Content $ICU_SOURCE_STAMP -Raw).Trim() } else { "" }
-    if ($have -ne $ICU_VERSION) {
-        Write-Host ":: $ICU_SOURCE_DIR is ICU '$have', not $ICU_VERSION: removing it"
+    if ($have -ne $ICU_SOURCE_ID) {
+        Write-Host ":: $ICU_SOURCE_DIR is ICU '$have', not '$ICU_SOURCE_ID': removing it"
         Remove-Item -Recurse -Force $ICU_SOURCE_DIR
     }
 }
 
 if (-not (Test-Path $ICU_SOURCE_DIR)) {
+    # The stamp is of a tree that is gone. It is written again once every patch is applied.
+    if (Test-Path $ICU_SOURCE_STAMP) { Remove-Item $ICU_SOURCE_STAMP }
     # --- Download ICU source ---
     if (-not (Test-Path $ICU_TARBALL)) {
         Write-Host ":: Downloading ICU $ICU_VERSION"
@@ -102,10 +109,12 @@ if (-not (Test-Path $ICU_SOURCE_DIR)) {
     $extractDir = Split-Path -Parent $OutputDir
     tar.exe -xzf $ICU_TARBALL -C $extractDir
     if ($LASTEXITCODE -ne 0) { throw "tar failed with exit code $LASTEXITCODE" }
-    # The patch has to stay a plain diff: in a directory of a repository, git apply skips a "diff --git" one and exits with 0.
-    git -C $OutputDir apply --ignore-whitespace (Join-Path $PSScriptRoot "icu/decnum-allocation-failure.patch")
-    if ($LASTEXITCODE -ne 0) { throw "git apply failed with exit code $LASTEXITCODE" }
-    Set-Content -Path $ICU_SOURCE_STAMP -Value $ICU_VERSION
+    # A patch has to stay a plain diff: in a directory of a repository, git apply skips a "diff --git" one and exits with 0.
+    foreach ($patch in $ICU_PATCHES) {
+        git -C $OutputDir apply --ignore-whitespace (Join-Path $PSScriptRoot "icu/$patch")
+        if ($LASTEXITCODE -ne 0) { throw "git apply of $patch failed with exit code $LASTEXITCODE" }
+    }
+    Set-Content -Path $ICU_SOURCE_STAMP -Value $ICU_SOURCE_ID
 }
 
 # The code generation floor, the same as the lanes that ship (.github/scripts/lanes.mjs).
