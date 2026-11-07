@@ -377,7 +377,7 @@ private:
     // reads the attributes of the instances is replaced by something simpler. It shows where a key that is no str raised when it
     // was asked whether it is "__getattr__".
     bool m_hasGivenUpGetAttr { false };
-    // What is remembered of the type may be what a key that is no str has said. For good: it only costs AsksKeys::No a walk.
+    // What is remembered of the type may be what a key that is no str has said.
     bool m_hasAskedKeys { false };
     bool m_looksUpNew { false };
     Construction m_construction { Construction::Unknown };

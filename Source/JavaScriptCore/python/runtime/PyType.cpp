@@ -574,6 +574,7 @@ void PyType::didChange(VM& vm, Change change)
     m_specialStates.fill(SpecialState::Unknown);
     for (auto& special : m_specials)
         special.clear();
+    m_hasAskedKeys = false;
     JSValue subclasses = m_subclasses.get();
     if (!subclasses)
         return;
