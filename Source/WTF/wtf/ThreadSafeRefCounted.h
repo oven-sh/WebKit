@@ -40,7 +40,9 @@ class WTF_EMPTY_BASE_CLASS ThreadSafeRefCountedBase {
 public:
     void ref() const
     {
+#if CHECK_REF_COUNTED_LIFECYCLE || !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
         m_refCountDebugger.willRef(m_refCount.load(std::memory_order_relaxed));
+#endif
         m_refCount.fetch_add(1, std::memory_order_relaxed);
     }
 
@@ -56,7 +58,9 @@ protected:
 
     ~ThreadSafeRefCountedBase()
     {
+#if CHECK_REF_COUNTED_LIFECYCLE || !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
         m_refCountDebugger.willDestroy(m_refCount.load(std::memory_order_relaxed));
+#endif
         // Ideally we'd use a RELEASE_ASSERT() here but it is a 0.7-0.8% regression on Speedometer 3.
         ASSERT_WITH_SECURITY_IMPLICATION(m_refCount.load(std::memory_order_relaxed) == 1);
     }
@@ -64,7 +68,9 @@ protected:
     // Returns true if the pointer should be freed.
     bool derefBase() const
     {
+#if CHECK_REF_COUNTED_LIFECYCLE || !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
         m_refCountDebugger.willDeref(m_refCount.load(std::memory_order_relaxed));
+#endif
 
         if (m_refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) [[unlikely]] {
             m_refCountDebugger.willDelete();

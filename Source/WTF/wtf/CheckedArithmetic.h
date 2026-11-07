@@ -592,12 +592,16 @@ public:
         this->overflowed();
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    constexpr Checked(const Checked&) = default;
+#else
     constexpr Checked(const Checked& value)
     {
         if (value.hasOverflowed())
             this->overflowed();
         m_value = static_cast<T>(value.m_value);
     }
+#endif
 
     template<typename U> constexpr Checked(U value)
     {
@@ -630,6 +634,9 @@ public:
         m_value = static_cast<T>(rhs.m_value);
     }
     
+#if USE(BUN_JSC_ADDITIONS)
+    Checked& operator=(const Checked&) = default;
+#else
     Checked& operator=(Checked rhs)
     {
         this->clearOverflow();
@@ -638,6 +645,7 @@ public:
         m_value = static_cast<T>(rhs.m_value);
         return *this;
     }
+#endif
     
     template<typename U> Checked& operator=(U value)
     {

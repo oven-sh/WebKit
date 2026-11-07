@@ -72,8 +72,16 @@ struct VectorCopier {
         if constexpr (std::is_trivially_copyable_v<T> && std::is_trivially_default_constructible_v<T> && std::same_as<T, U>)
             memcpySpan(dst, src);
         else {
+#if USE(BUN_JSC_ADDITIONS)
+            if (dst.size() < src.size()) [[unlikely]]
+                CRASH();
+            T* to = dst.data();
+            for (const U* from = src.data(), *end = from + src.size(); from != end; ++from, ++to)
+                new (NotNull, to) T(*from);
+#else
             for (size_t i = 0; i < src.size(); ++i)
                 new (NotNull, &dst[i]) T(src[i]);
+#endif
         }
     }
 };
@@ -169,8 +177,16 @@ struct VectorTypeOperations
         if constexpr (VectorTraits<T>::canCopyWithMemcpy)
             memcpySpan(asMutableByteSpan(dst), asByteSpan(src));
         else {
+#if USE(BUN_JSC_ADDITIONS)
+            if (dst.size() < src.size()) [[unlikely]]
+                CRASH();
+            T* to = dst.data();
+            for (const T* from = src.data(), *end = from + src.size(); from != end; ++from, ++to)
+                new (NotNull, to) T(*from);
+#else
             for (size_t i = 0; i < src.size(); ++i)
                 new (NotNull, &dst[i]) T(src[i]);
+#endif
         }
     }
 
@@ -180,8 +196,16 @@ struct VectorTypeOperations
         if constexpr (std::same_as<T, U> && std::is_trivially_copyable_v<T>)
             memcpySpan(destination, source);
         else {
+#if USE(BUN_JSC_ADDITIONS)
+            if (destination.size() < source.size()) [[unlikely]]
+                CRASH();
+            T* to = destination.data();
+            for (U* from = source.data(), *end = from + source.size(); from != end; ++from, ++to)
+                new (NotNull, to) T(WTF::move(*from));
+#else
             for (size_t i = 0; i < source.size(); ++i)
                 new (NotNull, std::addressof(destination[i])) T(WTF::move(source[i]));
+#endif
         }
     }
 
@@ -299,7 +323,9 @@ protected:
     VectorBufferBase()
         : m_buffer(nullptr)
         , m_capacity(0)
+#if !USE(BUN_JSC_ADDITIONS)
         , m_isBorrowed(false)
+#endif
         , m_size(0)
     {
     }
@@ -307,7 +333,9 @@ protected:
     VectorBufferBase(T* buffer, size_t capacity, size_t size)
         : m_buffer(buffer)
         , m_capacity(capacity)
+#if !USE(BUN_JSC_ADDITIONS)
         , m_isBorrowed(false)
+#endif
         , m_size(size)
     {
     }
@@ -319,8 +347,14 @@ protected:
     }
 
     T* m_buffer;
+#if USE(BUN_JSC_ADDITIONS)
+    // Nothing in WTF, JavaScriptCore or Bun borrows a vector (wtf/Borrow.h has no user here), so there is no bit to test and to mask.
+    static constexpr bool m_isBorrowed = false;
+    unsigned m_capacity;
+#else
     unsigned m_capacity : 31;
     mutable unsigned m_isBorrowed : 1;
+#endif
     unsigned m_size;
 
     unsigned exchangeCapacity(unsigned newCapacity)
@@ -341,9 +375,14 @@ protected:
 
     bool setIsBorrowed(bool isBorrowed) const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        static_assert(!sizeof(T*), "this build of WTF::Vector has no borrowed bit");
+        return isBorrowed;
+#else
         bool old = m_isBorrowed;
         m_isBorrowed = isBorrowed;
         return old;
+#endif
     }
 
     void crashIfBorrowed() const
@@ -995,10 +1034,18 @@ private:
     template<FailureAction> bool reserveInitialCapacity(size_t initialCapacity);
     template<FailureAction> bool growCapacityBy(size_t increment);
 
+#if USE(BUN_JSC_ADDITIONS)
+    template<FailureAction> NEVER_INLINE bool expandCapacity(size_t newMinCapacity);
+#else
     template<FailureAction> bool expandCapacity(size_t newMinCapacity);
+#endif
     template<FailureAction> T* expandCapacity(size_t newMinCapacity, T*);
     template<FailureAction, typename U> U* expandCapacity(size_t newMinCapacity, U*);
+#if USE(BUN_JSC_ADDITIONS)
+    template<FailureAction, typename U> NEVER_INLINE bool appendSlowCase(U&&);
+#else
     template<FailureAction, typename U> bool appendSlowCase(U&&);
+#endif
     template<FailureAction> bool appendSlowCaseByValue(T);
     template<FailureAction, typename... Args> bool constructAndAppend(Args&&...);
     template<FailureAction, typename... Args> bool constructAndAppendSlowCase(Args&&...);
