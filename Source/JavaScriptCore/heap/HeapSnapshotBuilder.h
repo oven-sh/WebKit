@@ -27,6 +27,7 @@
 
 #include "HeapAnalyzer.h"
 #include "JSExportMacros.h"
+#include <atomic>
 #include <functional>
 #include <wtf/CheckedPtr.h>
 #include <wtf/HashMap.h>
@@ -132,7 +133,7 @@ public:
     String json();
     void dumpToStream(PrintStream&);
 
-    bool hasOverflowed() const { return m_hasOverflowed; }
+    bool hasOverflowed() const { return m_hasOverflowed.load(std::memory_order_relaxed); }
 
     class Client : public CanMakeCheckedPtr<Client> {
         WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Client);
@@ -156,6 +157,7 @@ private:
     bool LEGACY_NODELETE previousSnapshotHasNodeForCell(JSCell*, NodeIdentifier&);
 
     String descriptionForNode(const HeapSnapshotNode&);
+    void appendEdge(HeapSnapshotEdge&&) WTF_REQUIRES_LOCK(m_buildingEdgeMutex);
 
     struct RootData {
         ASCIILiteral reachabilityFromOpaqueRootReasons;
@@ -165,7 +167,8 @@ private:
     HeapProfiler& m_profiler;
     CheckedPtr<Client> m_client;
 
-    bool m_hasOverflowed { false };
+    // The markers of a collection set and read this from their threads.
+    std::atomic<bool> m_hasOverflowed { false };
 
     // SlotVisitors run in parallel.
     Lock m_buildingNodeMutex;
