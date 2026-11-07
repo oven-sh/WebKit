@@ -2598,28 +2598,15 @@ static JSValue jsFunctionMroEntries(JSGlobalObject* globalObject, JSValue self, 
 // issubclass(cls, function): whether the instances of the class inherit from function.prototype.
 static JSValue jsFunctionSubclassCheck(JSGlobalObject* globalObject, JSValue self, JSValue cls)
 {
-    // The classes of what JS threw mirror those of JS: issubclass(JSRangeError, js.RangeError). As `except js.RangeError`, it runs no code and
-    // works in any thread.
-    if (PyType* type = PyType::tryFrom(cls); type && type->isSubtypeOf(runtime(globalObject).JSError()))
+    // Of a class of exceptions it says what `except function:` catches, since that is what it is asked for: contextlib.suppress(js.RangeError) asks it
+    // of whatever is raised under it. As `except`, it runs no code and works in any thread.
+    if (PyType* type = PyType::tryFrom(cls); type && type->isSubtypeOf(runtime(globalObject).BaseException())) {
+        // An exception of Python's own is none of JS's: `except js.Error` catches none, nor does `except js.Object`. (Its instances do not
+        // inherit from the `prototype` that JS sees on the class, so there is nothing in that to go by.)
+        if (!type->isSubtypeOf(runtime(globalObject).JSError()))
+            return jsBoolean(false);
+        // The classes of what JS threw mirror those of JS: issubclass(JSRangeError, js.RangeError).
         return jsBoolean(exceptionClassStandsForClassOfJS(globalObject, type, asObject(self)));
-    // An exception of Python's own is none of JS's, as `except js.Error` catches none. A thread other than the main one is told so too:
-    // contextlib.suppress(js.RangeError) asks this of whatever is raised under it.
-    if (PyType* type = PyType::tryFrom(cls); type && type->isSubtypeOf(runtime(globalObject).BaseException()) && !runtime(globalObject).threads().isMainThread()) {
-        JSObject* function = asObject(self);
-        while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
-            function = bound->targetFunction();
-        // (What stands for the classes of Python's in a chain of prototypes has nothing to run. What JS has put into the chain may answer for
-        // its prototype itself, a Proxy or an exception of Python's: that is the main thread's to ask.)
-        if (JSValue wanted = valueOfJSForAnyThread(globalObject, function, getVM(globalObject).propertyNames->prototype)) {
-            JSValue prototype = prototypeForJS(globalObject, type);
-            while (prototype.isObject() && !asObject(prototype)->structure()->typeInfo().overridesGetPrototype()) {
-                if (prototype == wanted)
-                    return jsBoolean(true);
-                prototype = asObject(prototype)->getPrototypeDirect();
-            }
-            if (!prototype.isObject())
-                return jsBoolean(false);
-        }
     }
     if (!ensureMainThreadForJS(globalObject))
         return { };
