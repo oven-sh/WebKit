@@ -86,6 +86,9 @@ public:
     ~UnlinkedFunctionExecutable();
 
     const Identifier& name() const;
+    // The name of a function declaration of a module as the key of its binding. An anonymous default export is bound to
+    // the private name "*default*". Its name is "default", and that is the name this executable has.
+    inline const Identifier& bindingName(VM&) const;
     const Identifier& ecmaName() const
     {
         if (m_nameIsDeferred) [[unlikely]]
@@ -109,13 +112,7 @@ public:
             return nullptr;
         return &m_ecmaName;
     }
-    void setEcmaName(const Identifier& name)
-    {
-        if (m_nameIsDeferred) [[unlikely]]
-            materializeDeferredNameSlow();
-        ASSERT(!m_hasName || name == m_ecmaName);
-        m_ecmaName = name;
-    }
+    inline void setEcmaName(VM&, const Identifier&);
     unsigned parameterCount() const { return m_parameterCount; }; // Excluding 'this'!
     SourceParseMode parseMode() const { return static_cast<SourceParseMode>(m_sourceParseMode); };
 
@@ -366,6 +363,8 @@ private:
     UnlinkedFunctionExecutable(Decoder&, const CachedFunctionExecutable&);
 
     DECLARE_VISIT_CHILDREN;
+
+    static inline const Identifier& nameFromSyntaxTree(VM&, const Identifier&);
 
     void decodeCachedCodeBlocks(VM&);
     JS_EXPORT_PRIVATE void materializeDeferredNameSlow() const;
