@@ -11,6 +11,7 @@
 #include "PyList.h"
 #include "PyRange.h"
 #include <wtf/HexNumber.h>
+#include <wtf/Int128.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -1377,13 +1378,20 @@ static JSValue pointerGetItem(JSGlobalObject* globalObject, JSValue self, JSValu
         return raiseValueError(globalObject, scope, "slice stop is required"_s);
     int64_t stop = toSsize(globalObject, slice->stop(), rt.ValueError());
     RETURN_IF_EXCEPTION(scope, { });
-    int64_t count;
+    // CPython's arithmetic, in a type that holds what it comes to.
+    auto countIn = [&]<typename Integer>(Integer first) { return (stop - first + (step > 0 ? -1 : 1)) / step + 1; };
+    constexpr int64_t farOut = 1LL << 61;
+    int64_t count = 0;
     if ((step > 0 && start > stop) || (step < 0 && start < stop))
         count = 0;
-    else if (step > 0)
-        count = (stop - start - 1) / step + 1;
-    else
-        count = (stop - start + 1) / step + 1;
+    else if (start > -farOut && start < farOut && stop > -farOut && stop < farOut) [[likely]]
+        count = countIn(start);
+    else {
+        Int128 wide = countIn(static_cast<Int128>(start));
+        if (wide > std::numeric_limits<int64_t>::max())
+            return raiseMemoryError(globalObject, scope, String());
+        count = static_cast<int64_t>(wide);
+    }
 
     PyType* type;
     PyCTypeInfo* itemInfo;
