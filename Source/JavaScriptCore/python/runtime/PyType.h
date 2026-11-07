@@ -190,6 +190,14 @@ public:
     PyDict* dict() const { return m_dict.get(); }
     // The most derived of the bases that decides how instances are laid out.
     PyType* solidBase() const { return m_solidBase.get(); }
+    // The built-in type that decides what kind of cell the instances are.
+    PyType* layoutBase() const
+    {
+        PyType* base = solidBase();
+        while (base->isHeapType())
+            base = base->base()->solidBase();
+        return base;
+    }
 
     OptionSet<TypeFlag> flags() const { return m_flags; }
     bool has(TypeFlag flag) const { return m_flags.contains(flag); }

@@ -89,12 +89,20 @@ uint8_t* Place::resolve(JSGlobalObject* globalObject, int64_t size) const
 
 // ---- Making instances ----
 
+// The kind of cell goes by the built-in type that __base__ leads to, as the methods that the instance will be handed to do. Not by info->kind: that is
+// what the __init__ of a metaclass wrote, which a metaclass derived from two of them, or type.__new__() and a call of the __init__, gets to run on any class.
 static PyCData* allocateData(JSGlobalObject* globalObject, PyType* type, PyCTypeInfo* info)
 {
     VM& vm = getVM(globalObject);
     State& state = *info->state.get();
+    PyType* layout = type->layoutBase();
+    if (layout != state.dataType.get() && layout != state.functionType.get()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        raiseTypeError(globalObject, scope, "the instances of '"_s, type->name(), "' are no ctypes data"_s);
+        return nullptr;
+    }
     info->isFinal = true;
-    PyCData* data = info->kind == TypeKind::Function ? PyCFuncPtr::create(vm, state.functionStructure.get(), type) : PyCData::create(vm, state.dataStructure.get(), type);
+    PyCData* data = layout == state.functionType.get() ? PyCFuncPtr::create(vm, state.functionStructure.get(), type) : PyCData::create(vm, state.dataStructure.get(), type);
     data->length = info->length;
     data->size = info->size;
     if (type->isHeapType() && type->lookup(Special::Del)) [[unlikely]]
@@ -145,6 +153,7 @@ PyCData* newData(JSGlobalObject* globalObject, PyType* type)
     PyCTypeInfo* info = concreteInfoOf(globalObject, type);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyCData* data = allocateData(globalObject, type, info);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (failed(scope, allocateMemory(globalObject, data, info->size)))
         return nullptr;
     return data;
@@ -235,6 +244,7 @@ PyCData* dataAt(JSGlobalObject* globalObject, PyType* type, const Place& place, 
         return nullptr;
     }
     PyCData* data = allocateData(globalObject, type, info);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     data->base.set(vm, data, place.object);
     data->index = index;
     if (!place.address)
@@ -264,6 +274,7 @@ PyCData* dataAtAddress(JSGlobalObject* globalObject, PyType* type, const void* a
     PyCTypeInfo* info = concreteInfoOf(globalObject, type);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyCData* data = allocateData(globalObject, type, info);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     data->setAddress(address);
     return data;
 }
@@ -292,6 +303,7 @@ PyCData* dataInView(JSGlobalObject* globalObject, PyType* type, PyMemoryView* vi
     if (failed(scope, checkRoomFor(globalObject, info, view->length, offset)))
         return nullptr;
     PyCData* data = allocateData(globalObject, type, info);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     data->setView(vm, view, offset);
     return data;
 }

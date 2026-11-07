@@ -152,22 +152,13 @@ static unsigned itemSize(PyType* type)
     return 0;
 }
 
-// The built-in type that decides what kind of cell the instances are.
-static PyType* layoutBase(PyType* type)
-{
-    PyType* base = type->solidBase();
-    while (base->isHeapType())
-        base = base->base()->solidBase();
-    return base;
-}
-
 JSValue allocateInstance(JSGlobalObject* globalObject, PyType* type, PyType* layout)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     if (type == rt.objectType())
         return PyObject::create(vm, rt.structure<PyObject>(), type);
-    ASSERT_UNUSED(layout, layoutBase(type) == (layout ? layout : rt.objectType()));
+    ASSERT_UNUSED(layout, type->layoutBase() == (layout ? layout : rt.objectType()));
     return PyInstance::create(vm, type);
 }
 
@@ -1401,7 +1392,7 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
             return codePointCompareLessThan(a, b);
         });
         if (!names.isEmpty()) {
-            PyType* layout = layoutBase(base);
+            PyType* layout = base->layoutBase();
             if (layout == rt.intType() || layout == rt.bytesType() || layout == rt.typeType())
                 return raiseTypeError(globalObject, scope, "arbitrary __slots__ not supported for subtype of '"_s, base->name(), '\'');
             slots = PyTuple::create(globalObject, names.size());
