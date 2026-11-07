@@ -1412,29 +1412,33 @@ uint64_t prepareSpreadCall(JSGlobalObject* globalObject, CallFrame* callFrame, c
     return count;
 }
 
-JSValue fillSpreadCall(CallFrame* callFrame, const OpPyCallSpread& bytecode, JSValue* arguments)
+JSValue fillSpreadCall(CallFrame* callFrame, const OpPyCallSpread& bytecode, std::span<JSValue> arguments)
 {
     AssertNoGC assertNoGC;
     ASSERT(callFrame->r(bytecode.m_firstFree).jsValue());
+    auto add = [&](JSValue value) {
+        arguments.front() = value;
+        arguments = arguments.subspan(1);
+    };
     for (unsigned i = 0; i < bytecode.m_leadingCount; ++i)
-        *arguments++ = callFrame->r(bytecode.m_leading - i).jsValue();
+        add(callFrame->r(bytecode.m_leading - i).jsValue());
     if (JSValue positional = callFrame->r(bytecode.m_positional).jsValue()) {
         if (auto* tuple = PyTuple::tryFrom(positional)) {
-            for (JSValue item : tuple->span())
-                *arguments++ = item;
-        } else {
-            JSArray* list = asList(positional);
-            listCopyTo(arguments, list);
-            arguments += listLength(list);
-        }
+            auto items = tuple->span();
+            RELEASE_ASSERT(items.size() <= arguments.size());
+            std::copy(items.data(), items.data() + items.size(), arguments.data());
+            arguments = arguments.subspan(items.size());
+        } else
+            arguments = listCopyTo(arguments, asList(positional));
     }
     if (JSValue keywords = callFrame->r(bytecode.m_keywords).jsValue(); keywords && !isKeywordNames(keywords)) {
         PyDict* dict = PyDict::from(keywords);
         JSValue key;
         JSValue value;
         for (unsigned position = 0; dict->next(position, key, value);)
-            *arguments++ = value;
+            add(value);
     }
+    ASSERT(arguments.empty());
     return callFrame->r(bytecode.m_firstFree).jsValue();
 }
 

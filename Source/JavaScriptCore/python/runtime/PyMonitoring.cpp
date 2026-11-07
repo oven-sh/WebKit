@@ -2235,7 +2235,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
                 return runIt;
             count = total;
             spread.fill(vm, count, [&](JSValue* values) {
-                thisValue = fillSpreadCall(callFrame, bytecode, values);
+                thisValue = fillSpreadCall(callFrame, bytecode, { values, count });
             });
             if (spread.hasOverflowed()) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);

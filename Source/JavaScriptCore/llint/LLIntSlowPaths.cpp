@@ -2628,7 +2628,7 @@ LLINT_SLOW_PATH_DECL(slow_path_py_call_spread)
     SlowPathFrameTracer tracer(vm, callFrame);
     auto bytecode = pc->as<OpPyCallSpread>();
     CallFrame* calleeFrame = vm.newCallFrameReturnValue;
-    JSValue thisValue = Python::fillSpreadCall(callFrame, bytecode, std::bit_cast<JSValue*>(calleeFrame->addressOfArgumentsStart()));
+    JSValue thisValue = Python::fillSpreadCall(callFrame, bytecode, { std::bit_cast<JSValue*>(calleeFrame->addressOfArgumentsStart()), vm.varargsLength });
     for (unsigned i = 0; i < bytecode.m_leadingCount; ++i)
         callFrame->uncheckedR(bytecode.m_leading - i) = JSValue();
     callFrame->uncheckedR(bytecode.m_firstFree) = JSValue();

@@ -153,7 +153,7 @@ enum SpreadCallFlag : unsigned {
 JS_EXPORT_PRIVATE uint64_t prepareSpreadCall(JSGlobalObject*, CallFrame*, const OpPyCallSpread&, unsigned moreFlags = 0);
 // The second, right after that, copies them to where the arguments of the callee go, and returns `this`. It allocates nothing and raises nothing: the stack
 // pointer is at the frame of the callee by then, so that C++ runs in what are registers of the caller to the collector (clearDeadTemporaries()).
-JS_EXPORT_PRIVATE JSValue fillSpreadCall(CallFrame*, const OpPyCallSpread&, JSValue* arguments);
+JS_EXPORT_PRIVATE JSValue fillSpreadCall(CallFrame*, const OpPyCallSpread&, std::span<JSValue> arguments);
 
 // The stack has no room for the frame of a call of Python code, which is about to be told so.
 void frameHasNoRoom(CallFrame*, CodeBlock*);

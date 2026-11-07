@@ -129,6 +129,20 @@ DEFINE_VISIT_CHILDREN(PyListObject);
 
 // ---- Storage ----
 
+// The items of a list that has values in a row, to where they are not. An empty one is a hole, which reads as None.
+static ALWAYS_INLINE void copyValues(JSValue* to, std::span<const JSValue> values)
+{
+    for (JSValue value : values)
+        *to++ = value ? value : jsUndefined();
+}
+
+// Those of a list that has doubles in a row. What a hole becomes is for the caller to say.
+static ALWAYS_INLINE void copyDoubles(JSValue* to, std::span<const double> doubles, JSValue hole)
+{
+    for (double value : doubles)
+        *to++ = value == value ? JSValue(JSValue::EncodeAsDouble, value) : hole;
+}
+
 // The items of a JSArray as plain values in a row, which is how nearly every list is stored. One that is not (JS made it sparse,
 // say) is handled an item at a time, through what any JS code would use.
 class ListStorage {
@@ -179,12 +193,10 @@ public:
 
     void set(unsigned index, JSValue value) { items()[index].set(m_vm, m_list, value); }
 
-    // The values are not in this list. An empty one is a hole of the list they are in, which reads as None.
+    // The values are not in this list.
     void set(unsigned index, std::span<const JSValue> values)
     {
-        WriteBarrier<Unknown>* data = items() + index;
-        for (JSValue value : values)
-            (data++)->setWithoutWriteBarrier(value ? value : jsUndefined());
+        copyValues(std::bit_cast<JSValue*>(items() + index), values);
         m_vm.writeBarrier(m_list);
     }
 
@@ -214,30 +226,25 @@ static ALWAYS_INLINE void copyItems(WriteBarrier<Unknown>* to, JSArray* list, un
 {
     ASSERT(hasItemsInARow(list) && start + count <= list->butterfly()->publicLength());
     if (hasDouble(list->indexingType())) {
-        const double* from = list->butterfly()->contiguousDouble().data() + start;
-        for (unsigned i = 0; i < count; ++i)
-            to[i].setWithoutWriteBarrier(from[i] == from[i] ? JSValue(JSValue::EncodeAsDouble, from[i]) : JSValue());
+        copyDoubles(std::bit_cast<JSValue*>(to), { list->butterfly()->contiguousDouble().data() + start, count }, JSValue());
         return;
     }
     gcSafeMemcpy(to, list->butterfly()->contiguous().data() + start, count * sizeof(JSValue));
 }
 
-void listCopyTo(JSValue* to, JSArray* list)
+std::span<JSValue> listCopyTo(std::span<JSValue> to, JSArray* list)
 {
     unsigned length = list->length();
-    if (auto values = listValues(list); values.data()) {
+    RELEASE_ASSERT(length <= to.size());
+    if (auto values = listValues(list); values.data())
+        copyValues(to.data(), values);
+    else if (hasDouble(list->indexingType()))
+        copyDoubles(to.data(), { list->butterfly()->contiguousDouble().data(), length }, jsUndefined());
+    else {
         for (unsigned i = 0; i < length; ++i)
-            to[i] = values[i] ? values[i] : jsUndefined();
-        return;
+            to[i] = listGet(list, i);
     }
-    if (hasDouble(list->indexingType())) {
-        const double* from = list->butterfly()->contiguousDouble().data();
-        for (unsigned i = 0; i < length; ++i)
-            to[i] = from[i] == from[i] ? JSValue(JSValue::EncodeAsDouble, from[i]) : jsUndefined();
-        return;
-    }
-    for (unsigned i = 0; i < length; ++i)
-        to[i] = listGet(list, i);
+    return to.subspan(length);
 }
 
 static NEVER_INLINE void raiseListTooLong(JSGlobalObject* globalObject)
@@ -587,8 +594,9 @@ void AllItems::take(JSGlobalObject* globalObject, JSValue iterable, ASCIILiteral
         unsigned length = list->length();
         if (length > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
             RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
-        for (unsigned i = 0; i < length; ++i)
-            m_kept.append(listGet(list, i));
+        m_kept.fill(vm, length, [&](JSValue* items) {
+            listCopyTo({ items, length }, list);
+        });
     } else {
         JSValue iterator = getIter(globalObject, iterable);
         if (failed(scope, iterator)) {
@@ -630,8 +638,8 @@ PyTuple* tupleFromList(JSGlobalObject* globalObject, JSArray* list)
         return tuple;
     }
     PyTuple* tuple = PyTuple::create(globalObject, length);
-    for (unsigned i = 0; i < length; ++i)
-        tuple->initializeAt(vm, i, listGet(list, i));
+    listCopyTo(tuple->itemsToInitialize(), list);
+    vm.writeBarrier(tuple);
     return tuple;
 }
 
@@ -1413,8 +1421,9 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     }
 
     // The list is empty for as long as it is being sorted, so that what the comparisons do to it shows.
-    for (unsigned i = 0; i < count; ++i)
-        values.append(listGet(list, i));
+    values.fill(vm, count, [&](JSValue* items) {
+        listCopyTo({ items, count }, list);
+    });
     // Not one that JS has forbidden to grow, which could not be filled again.
     bool staysFilled = !list->structure()->isStructureExtensible();
     if (!staysFilled) {

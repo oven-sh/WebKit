@@ -81,8 +81,8 @@ ALWAYS_INLINE std::span<const JSValue> listValues(JSArray* list)
     Butterfly* butterfly = list->butterfly();
     return { std::bit_cast<const JSValue*>(butterfly->contiguous().data()), butterfly->publicLength() };
 }
-// All the items, as listGet() gives them, to where there is room for them. Allocates nothing.
-void listCopyTo(JSValue* to, JSArray*);
+// All the items, as listGet() gives them, to the front of `to`, which has room for them. What is left of it is returned. Allocates nothing.
+std::span<JSValue> listCopyTo(std::span<JSValue> to, JSArray*);
 void listSet(JSGlobalObject*, JSArray*, unsigned index, JSValue);
 void listAppend(JSGlobalObject*, JSArray*, JSValue);
 void listInsert(JSGlobalObject*, JSArray*, unsigned index, JSValue);

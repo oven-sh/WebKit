@@ -47,6 +47,8 @@ public:
         items()[index].set(vm, this, value);
     }
     std::span<const JSValue> span() const { return { reinterpret_cast<const JSValue*>(items()), m_length }; }
+    // For whoever has made it, to set all the items at once. The barrier is for the caller to see to.
+    std::span<JSValue> itemsToInitialize() { return { reinterpret_cast<JSValue*>(items()), m_length }; }
 
     // hash(tuple), once it has been worked out; -1 until then. (The items do not change, and what is hashable keeps its hash.)
     int64_t cachedHash() const { return m_hash; }
