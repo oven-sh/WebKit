@@ -219,8 +219,11 @@ ALWAYS_INLINE PyType* typeOf(Handle object)
             return uncheckedDowncast<PyObject>(cell)->type();
         if (Body* body = Body::tryFromCellOfHandle(cell))
             return body->type();
+        if (cell->type() != StringType && cell->type() != ArrayType)
+            return typeOfWhatIsNoObjectOfPythons(value);
     }
-    return typeOfWhatIsNoObjectOfPythons(value);
+    // A str, a list, or what is no cell: their types are there from the first.
+    return interpreter().runtime.typeOf(value);
 }
 
 // ---- Who may come in ----
