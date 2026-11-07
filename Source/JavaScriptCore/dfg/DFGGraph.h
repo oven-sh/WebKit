@@ -555,11 +555,20 @@ public:
         return isWithinPowerOfTwo<22>(node->child1()) || isWithinPowerOfTwo<22>(node->child2());
     }
 
+    // What mulShouldSpeculateInt32 asks of the multiply itself, for whoever makes int32s of its operands.
+    bool mulCanSpeculateInt32(Node* node, PredictionPass pass)
+    {
+        RareCaseProfilingSource source = node->sourceFor(pass);
+        if (!node->canSpeculateInt32(source))
+            return false;
+        // A multiply that overflows keeps its overflow check, and keeps failing it, unless its product is exact.
+        return !nodeMayOverflowInt32(node->arithNodeFlags(), source) || mulProductIsExact(node);
+    }
+
     bool mulShouldSpeculateInt32(Node* node, PredictionPass pass)
     {
-        if (!binaryArithShouldSpeculateInt32(node, pass))
-            return false;
-        return !nodeMayOverflowInt32(node->arithNodeFlags(), node->sourceFor(pass)) || mulProductIsExact(node);
+        return Node::shouldSpeculateInt32OrBooleanForArithmetic(node->child1().node(), node->child2().node())
+            && mulCanSpeculateInt32(node, pass);
     }
 
     bool binaryArithShouldSpeculateInt52(Node* node, PredictionPass pass)
