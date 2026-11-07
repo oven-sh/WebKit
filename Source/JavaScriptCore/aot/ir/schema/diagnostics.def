@@ -57,6 +57,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
 
     InvalidPropertyKey(ReadAndVerify, "property key {count} is not a valid record")
     InvalidClass(ReadAndVerify, "{layout} breaks a rule of classes")
+    RingOfBases(ReadAndVerify, "the row of bases of {layout} comes round and never ends")
     InvalidLayout(ReadAndVerify, "{layout} is not a valid layout")
     InvalidType(ReadAndVerify, "type {count} is not canonical, or its set of layouts is empty or open")
     InvalidDeclaredType(ReadAndVerify, "a position is both expected and an int32 promise, in record {count}")
@@ -127,6 +128,10 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     InvalidBuiltinCall(Optimize, "the overload does not take these operands")
     CallsTrimmedBuiltin(Optimize, "a built-in is called directly, but the executable may not have its code")
     InvalidSuspension(Optimize, "the suspension breaks a rule of coroutines")
+    GuessOpensAgain(Optimize, "the stretch of a guess opens the same guess at the same operation again")
+    WordInFrontOfTypedBuildIsStale(Optimize, "the head of a loop uses a word that was read in front of it, and its turns may write what that word rests on")
+    HandlerEdgeHandsOnStandIn(Optimize, "an edge to a handler hands on another value than the one that the head of its block named")
+    OperationMakesTwoCells(Optimize, "one operation of the body makes two cells on one way in one walk of its block, and both are used")
     IntrinsicOutsideLibraryCode(ReadAndVerify, "an intrinsic is used outside library code")
     ExpectedTypeAfterSelection(Select, "an expected type is left after selection")
     InvalidInlineFrame(Optimize, "inline frame {count} is malformed")
@@ -137,8 +142,10 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     OperationWithoutValue(AnalyzeFlow, "every operand of an operation that is reached has a value, its result has none, and nothing says why it should never complete")
     MaskCutKnownValue(AnalyzeFlow, "{function}: the type of {value} removed a value flow knows arrives")
     FlowEndedTooEarly(AnalyzeFlow, "the flow analysis was at rest, and {count} of its rules still add something when they run once more over the solved sets")
+    FlowStandsOnWhatNoLongerHolds(AnalyzeFlow, "the flow analysis is at rest, and {count} things that it took for absent or for constant are not so at its end, and who asked was never told")
     FlowRuleWasNotDue(AnalyzeFlow, "{value} in {function}: the rule was not due, and run once more over the solved sets it adds something")
     FlowFindsLessFromMore(AnalyzeFlow, "the flow analysis was given more to begin with, and {count} of its answers say more than they say of the program as it is")
+    NameLaidWhereFlowFindsNothing(AnalyzeFlow, "{count} accesses lay a name where the tables of the flow analysis say that no such name can lie")
 
     EffectsExceedReplacedGroup(Select, "a selected operation has effects beyond those of the group it replaced")
     EffectsOfPreparedTooNarrow(Select, "an operation was selected into a form with effects it does not declare")
@@ -184,6 +191,8 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     OutOfRegisters(GenerateCode, "{function}: one patch operation asks for more registers than there are")
     FrameNeededWhereNoneIsSetUp(GenerateCode, "{function}: the code needs the frame where none is set up")
     TrapWithoutSite(GenerateCode, "{function}: a load of {value} traps, and the emitters recorded no trap site for the operation")
+    Int32StoredInBoxThatItCameIn(GenerateCode, "an int32 by its type goes into a list, where the tag is read, as the word that it came in, and nobody has asked the tag")
+    NoFenceBehindLateStores(GenerateCode, "{function}: the code of {value} fills a new object and has neither a fence nor a barrier behind the stores")
 
     InvalidCodeUnits(BuildImage, "the recorded code units do not cover the code (reason {count})")
     UncheckedStackCycle(BuildImage, "functions entered without a stack check call each other in a cycle")

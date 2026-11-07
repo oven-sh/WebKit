@@ -259,6 +259,33 @@ void generateArrayIndexOfString(StubAssembler& jit)
 
     jit.loadPtr(Address(searchString, JSString::offsetOfValue()), searchCharacters);
     Jump searchStringIsRope = jit.branchIfRopeStringImpl(searchCharacters);
+    Jump searchStringIsNoAtom = jit.branchTest32(CCallHelpers::Zero, Address(searchCharacters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom()));
+
+    static_assert(JSCell::typeInfoFlagsOffset() == JSCell::typeInfoTypeOffset() + 1);
+    constexpr int32_t typeAndFlagsOfAtom = StringType | (TypeInfo(StringType, JSString::StructureFlags).inlineTypeFlags() | TypeInfoPerCellBit) << 8;
+    const GPRReg typeAndFlags = byteSize;
+    JumpList isNoCell;
+    Label seekAtom = jit.label();
+    jit.load64(Address(cursor), element);
+    isNoCell.append(jit.branchIfNotCell(element));
+    isNoCell.append(jit.branchTest64(CCallHelpers::Zero, element));
+    jit.load16(Address(element, JSCell::typeInfoTypeOffset()), typeAndFlags);
+    Jump cellDoesNotSay = jit.branch32(CCallHelpers::NotEqual, typeAndFlags, TrustedImm32(typeAndFlagsOfAtom));
+    found.append(jit.branchPtr(CCallHelpers::Equal, Address(element, JSString::offsetOfValue()), searchCharacters));
+    isNoCell.link(&jit);
+    Label passOver = jit.label();
+    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), cursor);
+    jit.branchPtr(CCallHelpers::Below, cursor, end).linkTo(seekAtom, &jit);
+    returnResult(jit, TrustedImm64(-1));
+
+    cellDoesNotSay.link(&jit);
+    jit.branchIfNotType(element, StringType).linkTo(passOver, &jit);
+    jit.loadPtr(Address(element, JSString::offsetOfValue()), characters);
+    found.append(jit.branchPtr(CCallHelpers::Equal, characters, searchCharacters));
+    Jump elementSoughtIsRope = jit.branchIfRopeStringImpl(characters);
+    jit.branchTest32(CCallHelpers::NonZero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())).linkTo(passOver, &jit);
+    elementSoughtIsRope.link(&jit);
+    searchStringIsNoAtom.link(&jit);
     jit.load32(Address(searchCharacters, StringImpl::lengthMemoryOffset()), lengthAndByteSize);
 
     JumpList hasOtherLength;

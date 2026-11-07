@@ -110,10 +110,30 @@ public:
         return { };
     }
 
+    Condition strictEqualityOnBoxesThatHoldNumbersOrNothing(const ValueContext& value)
+    {
+        ValueID left = value->leftOperand();
+        ValueID right = value->rightOperand();
+        Boxed x = in<Boxed>(left);
+        Boxed y = in<Boxed>(right);
+        return selectByBranch<Condition>(logicalAnd(isInt32(x), isInt32(y)), [&] {
+            return equal(low32(x), low32(y));
+        }, [&] {
+            ConversionEmitter& conversions = emitter<ConversionEmitter>();
+            Operand first = conversions.unbox(x, typeOf(left), Representation::OptionalDouble);
+            Operand second = conversions.unbox(y, typeOf(right), Representation::OptionalDouble);
+            Condition areEqualNumbers = equal(conversions.withoutMarkers(first).as<Number>(), conversions.withoutMarkers(second).as<Number>());
+            Condition areSameNothing = logicalAnd(equal(conversions.bitsOf(first), conversions.bitsOf(second)), conversions.isMarker(first));
+            return logicalOr(areEqualNumbers, areSameNothing);
+        });
+    }
+
     Condition equalityOnNumbers(const ValueContext& value, bool isStrict)
     {
         ValueID left = value->leftOperand();
         ValueID right = value->rightOperand();
+        if (isStrict && get(left).is<Boxed>() && get(right).is<Boxed>())
+            return strictEqualityOnBoxesThatHoldNumbersOrNothing(value);
         if (isStrict && get(left).representation == Representation::OptionalInt64 && get(right).representation == Representation::OptionalInt64) {
             ConversionEmitter& conversions = emitter<ConversionEmitter>();
             Integer leftBits = conversions.bitsOf(get(left));
@@ -184,6 +204,17 @@ public:
         return { };
     }
 
+    bool hasBranched() const { return m_hasBranched; }
+
+    Condition equalsWrittenText(const ValueContext& value, ComparedOperand operand, LValue subject, StringID text, bool everyCellIsString)
+    {
+        if (!value.isBranchCondition())
+            return emitter<StringEmitter>().equalsLiteral(value, operand, subject, text, std::nullopt, everyCellIsString);
+        emitter<StringEmitter>().branchOnEqualsLiteral(value, operand, subject, text, value.branchTargets(), std::nullopt, everyCellIsString);
+        m_hasBranched = true;
+        return { };
+    }
+
     Condition equalityOnStrings(const ValueContext& value, bool isStrict)
     {
         ValueID left = value->leftOperand();
@@ -197,7 +228,7 @@ public:
                 const Operation& definition = operationAt(definitionOf(written));
                 if (definition.opcode == Opcode::String) {
                     noteFormAgainstWrittenText(value, definition.string());
-                    return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::String, in<CellPointer>(other).value(), definition.string(), std::nullopt, true);
+                    return equalsWrittenText(value, ComparedOperand::String, in<CellPointer>(other).value(), definition.string(), true);
                 }
             }
             m_out.noteForm(Form::Closed, stateOf(value->form()));
@@ -297,7 +328,7 @@ public:
             const Type& type = typeOf(boxed);
             bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
             noteFormAgainstWrittenText(value, definition.string());
-            return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::Value, in<Boxed>(boxed).value(), definition.string(), std::nullopt, everyCellIsString);
+            return equalsWrittenText(value, ComparedOperand::Value, in<Boxed>(boxed).value(), definition.string(), everyCellIsString);
         }
         m_out.noteForm(Form::Closed, StateOfKnowledge::StringAndValue);
         Boxed string = boxCell(in<CellPointer>(typed));
@@ -442,12 +473,15 @@ private:
             const Operation& definition = operationAt(definitionOf(written));
             if (definition.opcode == Opcode::String) {
                 noteFormAgainstWrittenText(value, definition.string());
-                return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::Value, in<Boxed>(other).value(), definition.string(), std::nullopt, true);
+                return equalsWrittenText(value, ComparedOperand::Value, in<Boxed>(other).value(), definition.string(), true);
             }
         }
         m_out.noteForm(Form::Closed, stateOf(value->form()));
         Boxed x = in<Boxed>(value->leftOperand());
-        return callEqualStub(value, isStrict, x, in<Boxed>(value->rightOperand()));
+        Boxed y = in<Boxed>(value->rightOperand());
+        if (!mayBeEmpty(value->leftOperand()) && !mayBeEmpty(value->rightOperand()))
+            return Condition(m_out.castToInt32(callStub(value, equalOfNullableStrings(isStrict), { x.value(), y.value() }).first));
+        return callEqualStub(value, isStrict, x, y);
     }
 
     bool mayBeEmpty(ValueID id) { return typeOf(id).primitives & Primitive::Absent; }
@@ -576,6 +610,8 @@ private:
     }
 
     Condition areBothCells(Boxed x, Boxed y) { return isCell(Boxed(m_out.bitOr(x.value(), y.value()))); }
+
+    bool m_hasBranched { false };
 };
 
 } // anonymous namespace
@@ -678,6 +714,8 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
     case OperatorForm::MayBeStringOrNumber:
         break;
     }
+    if (equality.hasBranched())
+        return;
     if (!result) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         result = boolean(false);

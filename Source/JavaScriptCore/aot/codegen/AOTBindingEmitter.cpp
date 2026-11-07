@@ -121,7 +121,7 @@ void BindingEmitter::generatePutModuleVariable(const ValueContext& value)
     VariableID variable = value->variable();
     switch (m_plan.variable(variable).storage) {
     case VariableStorage::Statics:
-        emitter<StaticsEmitter>().storeVariable(variable, get(value->valueOperand()));
+        emitter<StaticsEmitter>().storeVariable(variable, get(value->valueOperand()), m_code.writesWhatTurnHasMade(value.id()));
         return;
     case VariableStorage::ClosureTable:
         fail(value, InternalErrorKind::SlotAccessNotPlaced);
@@ -182,14 +182,17 @@ void BindingEmitter::generatePutEnvironmentField(const ValueContext& value)
     LayoutID layout = value->layout();
     uint32_t field = value->field();
     const PlacedSlot& slot = m_plan.slot(layout, field);
-    if (endsWayAtEnvironmentThatIsNeverMade(layout))
+    if (endsWayAtEnvironmentThatIsNeverMade(layout)) {
+        m_generator.noteThatOwnerIsRememberedBehind(value.id());
         return;
+    }
     if (!isPlacedInEnvironment(slot)) {
         fail(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
     }
     if (VariableID variable = m_plan.promotedEnvironments().variableOf(layout, field)) {
         emitter<StaticsEmitter>().storeFieldOfEnvironment(variable, layout, field, get(value->valueOperand()), typeOf(value->valueOperand()));
+        m_generator.noteThatOwnerIsRememberedBehind(value.id());
         return;
     }
     CellPointer environment = in<CellPointer>(value->environmentOperand());

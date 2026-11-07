@@ -6,8 +6,8 @@
 # CHECK-NOT: passes-on-gathered-arguments
 # RUN(LINK): link functions mechanisms=all
 # LINK: function f2 callers-known
-# LINK-NEXT: parameter 0 expected=undefined|i32|string proven=undefined|i32|string
-# LINK-NEXT: parameter 1 expected=undefined|i32|string proven=undefined|i32|string
+# LINK-NEXT: parameter 0 expected=undefined|i32|string proven=undefined|int[0, 2147483647]|string
+# LINK-NEXT: parameter 1 expected=undefined|i32|string proven=undefined|int[0, 2147483647]|string
 
 variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -70,6 +70,15 @@ export function reduceFrom(array, length, callback, accumulator, k)
 {
     "use strict";
 
+    if ($isJSArray(array)) {
+        for (k >>>= 0; k < length; k += 1) {
+            var number = $getDoubleIndex(array, k);
+            if (number !== number)
+                break;
+            accumulator = callback.$call($undefined, accumulator, number, k, array);
+        }
+    }
+
     while (k < length) {
         if (k in array)
             accumulator = callback.$call($undefined, accumulator, array[k], k, array);
@@ -172,6 +181,16 @@ export function everyFrom(array, length, callback, thisArg, i)
 {
     "use strict";
 
+    if ($isJSArray(array)) {
+        for (i >>>= 0; i < length; i++) {
+            var number = $getDoubleIndex(array, i);
+            if (number !== number)
+                break;
+            if (!callback.$call(thisArg, number, i, array))
+                return false;
+        }
+    }
+
     for (; i < length; i++) {
         if (!(i in array))
             continue;
@@ -186,8 +205,14 @@ export function every(callback /*, thisArg */)
 {
     "use strict";
 
-    var array = $toObject(this, "Array.prototype.every requires that |this| not be null or undefined");
-    var length = $toLength(array.length);
+    var array = this;
+    var length;
+    if ($isJSArray(array))
+        length = $toLength(array.length);
+    else {
+        array = $toObject(this, "Array.prototype.every requires that |this| not be null or undefined");
+        length = $toLength(array.length);
+    }
 
     if (!$isCallable(callback))
         $throwTypeError("Array.prototype.every callback must be a function");
@@ -229,6 +254,15 @@ export function forEachFrom(array, length, callback, thisArg, i)
 {
     "use strict";
 
+    if ($isJSArray(array)) {
+        for (i >>>= 0; i < length; i++) {
+            var number = $getDoubleIndex(array, i);
+            if (number !== number)
+                break;
+            callback.$call(thisArg, number, i, array);
+        }
+    }
+
     for (; i < length; i++) {
         if (i in array)
             callback.$call(thisArg, array[i], i, array);
@@ -239,8 +273,14 @@ export function forEach(callback /*, thisArg */)
 {
     "use strict";
 
-    var array = $toObject(this, "Array.prototype.forEach requires that |this| not be null or undefined");
-    var length = $toLength(array.length);
+    var array = this;
+    var length;
+    if ($isJSArray(array))
+        length = $toLength(array.length);
+    else {
+        array = $toObject(this, "Array.prototype.forEach requires that |this| not be null or undefined");
+        length = $toLength(array.length);
+    }
 
     if (!$isCallable(callback))
         $throwTypeError("Array.prototype.forEach callback must be a function");
@@ -288,6 +328,20 @@ $linkTimeConstant;
 export function filterFrom(array, length, callback, thisArg, result, i, nextIndex)
 {
     "use strict";
+
+    if ($isJSArray(array) && $isJSArray(result)) {
+        nextIndex >>>= 0;
+        for (i >>>= 0; i < length; i++) {
+            var number = $getDoubleIndex(array, i);
+            if (number !== number)
+                break;
+            if (callback.$call(thisArg, number, i, array)) {
+                if (!$tryPutIndex(result, nextIndex, number))
+                    $putByValDirect(result, nextIndex, number);
+                ++nextIndex;
+            }
+        }
+    }
 
     for (; i < length; i++) {
         if (!(i in array))
@@ -360,6 +414,17 @@ export function mapFrom(array, length, callback, thisArg, result, i)
 {
     "use strict";
 
+    if ($isJSArray(array) && $isJSArray(result)) {
+        for (i >>>= 0; i < length; i++) {
+            var number = $getDoubleIndex(array, i);
+            if (number !== number)
+                break;
+            var made = callback.$call(thisArg, number, i, array);
+            if (!$tryPutIndex(result, i, made))
+                $putByValDirect(result, i, made);
+        }
+    }
+
     for (; i < length; i++) {
         if (!(i in array))
             continue;
@@ -421,6 +486,16 @@ export function someFrom(array, length, callback, thisArg, i)
 {
     "use strict";
 
+    if ($isJSArray(array)) {
+        for (i >>>= 0; i < length; i++) {
+            var number = $getDoubleIndex(array, i);
+            if (number !== number)
+                break;
+            if (callback.$call(thisArg, number, i, array))
+                return true;
+        }
+    }
+
     for (; i < length; i++) {
         if (!(i in array))
             continue;
@@ -434,8 +509,14 @@ export function some(callback /*, thisArg */)
 {
     "use strict";
 
-    var array = $toObject(this, "Array.prototype.some requires that |this| not be null or undefined");
-    var length = $toLength(array.length);
+    var array = this;
+    var length;
+    if ($isJSArray(array))
+        length = $toLength(array.length);
+    else {
+        array = $toObject(this, "Array.prototype.some requires that |this| not be null or undefined");
+        length = $toLength(array.length);
+    }
 
     if (!$isCallable(callback))
         $throwTypeError("Array.prototype.some callback must be a function");
@@ -477,6 +558,16 @@ export function findFrom(array, length, callback, thisArg, i)
 {
     "use strict";
 
+    if ($isJSArray(array)) {
+        for (i >>>= 0; i < length; i++) {
+            var number = $getDoubleIndex(array, i);
+            if (number !== number)
+                break;
+            if (callback.$call(thisArg, number, i, array))
+                return number;
+        }
+    }
+
     for (; i < length; i++) {
         var kValue = array[i];
         if (callback.$call(thisArg, kValue, i, array))
@@ -489,8 +580,14 @@ export function find(callback /*, thisArg */)
 {
     "use strict";
 
-    var array = $toObject(this, "Array.prototype.find requires that |this| not be null or undefined");
-    var length = $toLength(array.length);
+    var array = this;
+    var length;
+    if ($isJSArray(array))
+        length = $toLength(array.length);
+    else {
+        array = $toObject(this, "Array.prototype.find requires that |this| not be null or undefined");
+        length = $toLength(array.length);
+    }
 
     if (!$isCallable(callback))
         $throwTypeError("Array.prototype.find callback must be a function");
@@ -513,8 +610,14 @@ export function findLast(callback /*, thisArg */)
 {
     "use strict";
 
-    var array = $toObject(this, "Array.prototype.findLast requires that |this| not be null or undefined");
-    var length = $toLength(array.length);
+    var array = this;
+    var length;
+    if ($isJSArray(array))
+        length = $toLength(array.length);
+    else {
+        array = $toObject(this, "Array.prototype.findLast requires that |this| not be null or undefined");
+        length = $toLength(array.length);
+    }
 
     if (!$isCallable(callback))
         $throwTypeError("Array.prototype.findLast callback must be a function");
@@ -551,6 +654,16 @@ export function findIndexFrom(array, length, callback, thisArg, i)
 {
     "use strict";
 
+    if ($isJSArray(array)) {
+        for (i >>>= 0; i < length; i++) {
+            var number = $getDoubleIndex(array, i);
+            if (number !== number)
+                break;
+            if (callback.$call(thisArg, number, i, array))
+                return i;
+        }
+    }
+
     for (; i < length; i++) {
         if (callback.$call(thisArg, array[i], i, array))
             return i;
@@ -562,8 +675,14 @@ export function findIndex(callback /*, thisArg */)
 {
     "use strict";
 
-    var array = $toObject(this, "Array.prototype.findIndex requires that |this| not be null or undefined");
-    var length = $toLength(array.length);
+    var array = this;
+    var length;
+    if ($isJSArray(array))
+        length = $toLength(array.length);
+    else {
+        array = $toObject(this, "Array.prototype.findIndex requires that |this| not be null or undefined");
+        length = $toLength(array.length);
+    }
 
     if (!$isCallable(callback))
         $throwTypeError("Array.prototype.findIndex callback must be a function");
@@ -585,8 +704,14 @@ export function findLastIndex(callback /*, thisArg */)
 {
     "use strict";
 
-    var array = $toObject(this, "Array.prototype.findLastIndex requires that |this| not be null or undefined");
-    var length = $toLength(array.length);
+    var array = this;
+    var length;
+    if ($isJSArray(array))
+        length = $toLength(array.length);
+    else {
+        array = $toObject(this, "Array.prototype.findLastIndex requires that |this| not be null or undefined");
+        length = $toLength(array.length);
+    }
 
     if (!$isCallable(callback))
         $throwTypeError("Array.prototype.findLastIndex callback must be a function");
@@ -604,7 +729,20 @@ export function flatIntoArray(target, source, sourceLength, targetIndex, depth)
 {
     "use strict";
 
-    for (var sourceIndex = 0; sourceIndex < sourceLength; ++sourceIndex) {
+    targetIndex = $toLength(targetIndex);
+    var sourceIndex = 0;
+    if (depth <= 0 && sourceLength > 0 && $isJSArray(source) && $isJSArray(target)) {
+        for (; sourceIndex < sourceLength && $hasContiguousIndex(source, sourceIndex); ++sourceIndex) {
+            var taken = $getOwnContiguousIndex(source, sourceIndex);
+            if (!$tryPutIndex(target, targetIndex, taken)) {
+                if (targetIndex >= $MAX_SAFE_INTEGER)
+                    $throwTypeError("flatten array exceeds 2**53 - 1");
+                $putByValDirect(target, targetIndex, taken);
+            }
+            ++targetIndex;
+        }
+    }
+    for (; sourceIndex < sourceLength; ++sourceIndex) {
         if (sourceIndex in source) {
             var element = source[sourceIndex];
             if (depth > 0 && $isArray(element))
@@ -625,7 +763,23 @@ export function flatIntoArrayWithCallback(target, source, sourceLength, targetIn
 {
     "use strict";
 
-    for (var sourceIndex = 0; sourceIndex < sourceLength; ++sourceIndex) {
+    var sourceIndex = 0;
+    if (sourceLength > 0 && $isJSArray(source) && $isJSArray(target)) {
+        for (; sourceIndex < sourceLength && $hasContiguousIndex(source, sourceIndex); ++sourceIndex) {
+            var made = callback.$call(thisArg, $getOwnContiguousIndex(source, sourceIndex), sourceIndex, source);
+            if ($isArray(made))
+                targetIndex = $toLength($flatIntoArray(target, made, $toLength(made.length), targetIndex, 0));
+            else {
+                if (!$tryPutIndex(target, targetIndex, made)) {
+                    if (targetIndex >= $MAX_SAFE_INTEGER)
+                        $throwTypeError("flatten array exceeds 2**53 - 1");
+                    $putByValDirect(target, targetIndex, made);
+                }
+                ++targetIndex;
+            }
+        }
+    }
+    for (; sourceIndex < sourceLength; ++sourceIndex) {
         if (sourceIndex in source) {
             var element = callback.$call(thisArg, source[sourceIndex], sourceIndex, source);
             if ($isArray(element))
@@ -645,8 +799,14 @@ export function flatMap(callback)
 {
     "use strict";
 
-    var array = $toObject(this, "Array.prototype.flatMap requires that |this| not be null or undefined");
-    var length = $toLength(array.length);
+    var array = this;
+    var length;
+    if ($isJSArray(array))
+        length = $toLength(array.length);
+    else {
+        array = $toObject(this, "Array.prototype.flatMap requires that |this| not be null or undefined");
+        length = $toLength(array.length);
+    }
 
     if (!$isCallable(callback))
         $throwTypeError("Array.prototype.flatMap callback must be a function");
@@ -662,8 +822,14 @@ export function at(index)
 {
     "use strict";
 
-    var array = $toObject(this, "Array.prototype.at requires that |this| not be null or undefined");
-    var length = $toLength(array.length);
+    var array = this;
+    var length;
+    if ($isJSArray(array))
+        length = $toLength(array.length);
+    else {
+        array = $toObject(this, "Array.prototype.at requires that |this| not be null or undefined");
+        length = $toLength(array.length);
+    }
 
     var k = $toIntegerOrInfinity(index);
     if (k < 0)

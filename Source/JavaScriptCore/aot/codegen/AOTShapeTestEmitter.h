@@ -60,8 +60,15 @@ public:
 
     Condition hasShapeIn(CellPointer, LayoutSetID tested, const Type& known, MarkedObjects = MarkedObjects::Pass);
     bool lastTestRefusesMarkedObjects() const { return m_lastTestRefusesMarkedObjects; }
+    bool lastTestIsHeldAgainstEveryShape() const { return m_lastTestIsHeldAgainstEveryShape; }
     Condition isShapeOf(Word32 shapeWord, LayoutID);
     void branchOnShapeIn(CellPointer, LayoutSetID tested, const Type& known, BranchTargets, MarkedObjects = MarkedObjects::Pass);
+    struct ShapesOfMember {
+        LayoutID member;
+        ShapeTable::ShapeList shapes;
+    };
+    Vector<ShapesOfMember, 8> shapesOfMembersOf(LayoutSetID);
+    Word32 distanceOfUnmarkedObjectFromShape(CellPointer, LayoutSetID tested, uint32_t shape);
     void branchOnShapeAmongReceivers(const ValueContext& access, CellPointer, LayoutSetID tested, BranchTargets);
     void switchOnShape(CellPointer, std::span<const LayoutSetID> cases, std::span<const BlockEdge> targets, BlockEdge otherwise);
     bool hasOnlyCompiledObjects(const Type& known) const;
@@ -90,6 +97,7 @@ private:
     bool m_keptSetHoldsCompiledObjectsAlone { true };
     bool m_shapesOfKeptSetAreListed { false };
     bool m_lastTestRefusesMarkedObjects { false };
+    bool m_lastTestIsHeldAgainstEveryShape { false };
     bool m_wordIsAskedForMark { true };
     UncheckedKeyHashMap<LayoutSetID, bool> m_setsThatMayBearMark;
     ShapeTable::ShapeList m_shapesKept;

@@ -1,0 +1,64 @@
+# function make() {
+#   function Box(value) { if (this.held === undefined) this.held = value; }
+#   Box.prototype.fill = function fill(value) { this.held = value; };
+#   return Box;
+# }
+# globalThis.First = make();        globalThis.Second = make();
+# The constructor reads a field of the object that it is itself making, in front of its own store: at every birth the slot is empty. The look at the slot as the last resort would fail each time and pay for the
+# read by name on top of it (IncomingMessage in node:_http_incoming: +155 instructions a request). So outside of loops the last resort is not taken off an object that the body being read is making.
+# Box may be evaluated again, so the looks at the cell are refused; the constructor is marked as of a checked file (by hand), so they would pay: the last resort is what is left.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: PropGet v0 key="held"
+# RUN(LOOK): walk f2 mechanisms=all
+# LOOK-LABEL: code f2:Body
+# LOOK-NOT: IsSlotFilled
+# LOOK-NOT: = GetSlot
+
+module m0 path="w8.js" displayPath="w8.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Box" module=m0 position=20 constructor=f2 fields=[{key="held" declared={type=anything}}] flags=[IsConstructorFunction] place=20 ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @176
+    v3 = PropGet v2 key="globalThis" [isFreeName] @176
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @176
+    v5 = Call v1 calleeName="make" @195
+    PropSet v4, v5 key="First" @176
+    v7 = Builtin builtin=GlobalThis @203
+    v8 = PropGet v7 key="globalThis" [isFreeName] @203
+    v9 = Convert v8 declared={type=builtin(GlobalThis) flags=[IsExpected]} @203
+    v10 = Call v1 calleeName="make" @223
+    PropSet v9, v10 key="Second" @203
+    v12 = Undefined @203
+    Return v12 @203
+}
+function f1 name="make" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @0
+    v1 = NewClosure function=f2 @94
+    v2 = PropGet v1 key="prototype" @94
+    v3 = NewClosure function=f3 @115
+    PropSet v2, v3 key="fill" @98
+    Return v1 @169
+}
+function f2 name="Box" module=m0 position=20 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="held" @46
+    v3 = TypeTest v2 testedType=undefined @46
+    Branch v3 -> taken b1(| 0), notTaken b2() @46
+  b1(v4):
+    PropSet v0, v1 key="held" @71
+    Jump -> next b2() @71
+  b2():
+    v6 = Undefined @71
+    Return v6 @71
+}
+function f3 name="fill" module=m0 position=115 flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="held" @138
+    v3 = Undefined @138
+    Return v3 @138
+}

@@ -2,7 +2,7 @@
 # function read(o) { return o.x; }  function unwrap(b) { return b.held; }  read({ x: 1, p: 1 });  read({ x: "a", q: 1 });  read(unwrap({ held: { x: true, r: 1 } }));
 # The third comes a round later, through a read of its own: by then the read of `x` has been told of the set of two.
 # RUN: link functions layouts mechanisms=all
-# CHECK: function f1 callers-known one-callee {{*}}result=true|i32|string returns=
+# CHECK: function f1 callers-known one-callee {{*}}result=true|int[0, 2147483647]|string returns=
 # CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2
 # CHECK: layout L0 changes=[] stays-with-compiled-code
 # CHECK: layout L1 changes=[] stays-with-compiled-code

@@ -1,10 +1,11 @@
-# Four is the most that a set holds: if the fourth took the set apart, a table of four handlers would be an unknown function.
+# Four is the most that a set holds: if the fourth took the set apart, a table of four handlers would be an unknown function, and the four would be lost.
 # take(first);  take(second);  take(third);  take(fourth);
 # RUN: link held functions mechanisms=all
-# CHECK: function f1 
+# CHECK: function f1
 # CHECK-NEXT: parameter 0 {{*}}proven=f2|f3|f4|f5
-# RUN(NEVER): link functions mechanisms=all
-# NEVER-NOT: function f5 callers-known
+# RUN(KNOWN): link functions mechanisms=all
+# KNOWN: function f5 callers-known
+# KNOWN-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

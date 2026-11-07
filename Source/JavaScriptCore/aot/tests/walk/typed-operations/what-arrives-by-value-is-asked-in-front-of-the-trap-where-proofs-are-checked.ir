@@ -1,7 +1,8 @@
 # testing=CheckProofsAtRunTime: every caller of `sum` is in sight and hands over integers, so its body takes them raw. Whoever calls by value comes through an entry that has to make the raw words: it tests what it was handed
 # and traps on the failing side, which only a fault of the compiler takes. A bare trap names nothing. Under the switch the value is asked IN FRONT OF the test, as it arrives, and the process ends with the words of a false proof.
 # library.js: export function sum(a, b) { return a + b }
-# main.js: import { sum } from "./library.js"; print(sum(given | 0, given | 0))
+# main.js: import { sum } from "./library.js"; print(sum(given | 0, given | 0)); print([sum][given | 0](given | 0, given | 0))
+# The second call finds `sum` in a list: behind the test of what it found stands a call by value, so the entry stays open.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN: walk f2:GenericCallEntry mechanisms=all
 # CHECK-LABEL: code f2:GenericCallEntry
@@ -24,6 +25,10 @@ function f0 name="main" module=m1 kind=Module results=[{type=anything}] {
     v5 = Call v4, -, v3, v3
     v6 = PropGet v0 key="print" [isFreeName]
     v7 = Call v6, -, v5
+    v8 = NewArray v4 contents=anything
+    v9 = ElemGet v8, v3
+    v10 = Call v9, -, v3, v3
+    v11 = Call v6, -, v10
     Return
 }
 function f1 name="library" module=m0 kind=Module results=[{type=anything}] {

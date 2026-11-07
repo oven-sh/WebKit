@@ -1,0 +1,29 @@
+# A store at a far index of an empty list makes room for every place in front of it, as long as the index is near enough for the engine to lay no sparse table. That room is booked and paid for.
+# for (let n = 0; n < 50000; n++) { const list = []; list[999] = n; new RegExp("b" + n); }   The texts are printed in the order of their characters: /b49999/ would stand in front of /b999/.
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /b49999/
+# CHECK: text /b999/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Integer integer=999
+    v2 = Undefined
+    v3 = String string="b"
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5: anything):
+    LoopHint
+    v7 = NewArray
+    ElemSet v7, v1, v5
+    v9 = Add v3, v5
+    v10 = Construct v0, -, v9
+    v11 = Increment v5
+    v12 = Integer integer=50000
+    v13 = Less v11, v12
+    Branch v13 -> taken b1(v11), notTaken b2()
+  b2():
+    Return v4
+}

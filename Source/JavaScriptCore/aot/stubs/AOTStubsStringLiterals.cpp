@@ -49,6 +49,7 @@ void generateStringEqualsLiteral(StubAssembler& jit)
     static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1));
     static_assert(sizeof(ImageStringRecord) == sizeof(uint64_t) && !OBJECT_OFFSETOF(ImageStringRecord, rangeOrIndex) && sizeof(ImageStringWord) == sizeof(uint32_t));
     static_assert(sizeof(ImageStringHeader) == 3 * sizeof(uint64_t) && sizeof(ImageStringWord) == sizeof(uint32_t));
+    const unsigned lengthOfLiteral = jit.key().count();
     const GPRReg subject = jit.operand(0);
     const GPRReg stringIndex = jit.immediate();
     const GPRReg result = jit.result();
@@ -63,18 +64,58 @@ void generateStringEqualsLiteral(StubAssembler& jit)
     JumpList isNotEqual;
     JumpList hasNoHeader;
 
-    jit.bindEntry(equalsLiteral(ComparedOperand::Value));
+    jit.bindEntry(equalsLiteral(ComparedOperand::Value, lengthOfLiteral));
     isNotEqual.append(jit.branchIfNotCell(subject));
     isNotEqual.append(jit.branchIfNotType(subject, StringType));
     jit.bindEntry(jit.key());
     jit.loadPtr(Address(subject, JSString::offsetOfValue()), fiber);
     Jump isRope = jit.branchIfRopeStringImpl(fiber);
+    if (lengthOfLiteral)
+        isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(fiber, StringImpl::lengthMemoryOffset()), TrustedImm32(lengthOfLiteral)));
     Jump isSameImpl;
     const GPRReg number = header;
+    if (lengthOfLiteral && jit.options().isPositionIndependent) {
+        isRope.link(&jit);
+        jit.jumpToStub(equalsLiteral(ComparedOperand::String));
+        isNotEqual.link(&jit);
+        returnResult(jit, TrustedImm32(0));
+        return;
+    }
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringWords)), number);
     jit.load32(BaseIndex(number, stringIndex, CCallHelpers::TimesFour), number);
     hasNoHeader.append(jit.branchTest32(CCallHelpers::NonZero, number, TrustedImm32(ImageString::hasNoHeaderFlag)));
     jit.and32(TrustedImm32(ImageString::hashMask), number);
+    if (lengthOfLiteral) {
+        jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), header);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
+        jit.getEffectiveAddress(BaseIndex(headers, header, CCallHelpers::TimesEight), header);
+        isSameImpl = jit.branchPtr(CCallHelpers::Equal, fiber, header);
+        jit.load32(Address(fiber, StringImpl::flagsOffset()), length);
+        jit.and32(Address(header, StringImpl::flagsOffset()), length);
+        isNotEqual.append(jit.branchTest32(CCallHelpers::NonZero, length, TrustedImm32(StringImpl::flagIsAtom())));
+        if (lengthOfLiteral >= sizeof(uint64_t)) {
+            hasNoHeader.append(jit.branchTest32(CCallHelpers::Zero, length, TrustedImm32(StringImpl::flagIs8Bit())));
+            jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
+            jit.loadPtr(Address(header, StringImpl::dataOffset()), header);
+            for (unsigned offset = 0; offset < lengthOfLiteral; offset += sizeof(uint64_t)) {
+                int32_t start = std::min<unsigned>(offset, lengthOfLiteral - sizeof(uint64_t));
+                jit.load64(Address(fiber, start), length);
+                isNotEqual.append(jit.branch64(CCallHelpers::NotEqual, length, Address(header, start)));
+            }
+            isSameImpl.link(&jit);
+            returnResult(jit, TrustedImm32(1));
+        }
+        isRope.link(&jit);
+        hasNoHeader.link(&jit);
+        jit.jumpToStub(equalsLiteral(ComparedOperand::String));
+        if (lengthOfLiteral < sizeof(uint64_t)) {
+            isSameImpl.link(&jit);
+            returnResult(jit, TrustedImm32(1));
+        }
+        isNotEqual.link(&jit);
+        returnResult(jit, TrustedImm32(0));
+        return;
+    }
     if (jit.options().isPositionIndependent) {
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringRecords)), length);
         jit.load64(BaseIndex(length, number, CCallHelpers::TimesEight), length);

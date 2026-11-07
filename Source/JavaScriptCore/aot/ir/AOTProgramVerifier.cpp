@@ -14,6 +14,7 @@
 #include "AOTNameClass.h"
 #include "AOTOperationData.h"
 #include "AOTPhaseTimes.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTStringTable.h"
 #include "AOTThreads.h"
@@ -38,7 +39,9 @@ std::optional<InternalError> findErrorInStringAsRead(const Program& program, uin
     std::span<const uint8_t> bytes = strings[id];
     if (!isCanonicalProgramString(bytes))
         return InternalError { .kind = InternalErrorKind::StringNotCanonical, .count = index };
-    if (classifyName(bytes) != strings.nameClass(id) || program.builtins().nameOf(bytes) != strings.builtinName(id))
+    BuiltinName name = strings.builtinName(id);
+    bool carriesNameThatItDoesNotSpell = name && (name.index() >= program.builtins().textNameCount() || !equalSpans(program.builtins().textOf(name), bytes));
+    if (classifyName(bytes) != strings.nameClass(id) || carriesNameThatItDoesNotSpell)
         return InternalError { .kind = InternalErrorKind::NameClassMismatch, .count = index };
     StringID found = strings.find(bytes);
     if (found != id)
@@ -738,6 +741,7 @@ void ProgramVerifier::verifyIDs()
     verifyList(m_program.moduleFailures);
     verifyList(m_program.ambiguousExports);
     verifyList(m_program.sourceStamps);
+    verifyList(m_program.declaredRecords);
     verifyList(m_program.evalScopes);
     verifyList(m_program.data);
     verifyList(m_program.entries);
@@ -858,6 +862,16 @@ void ProgramVerifier::verifyClasses()
     });
     for (uint32_t index : invalidClasses)
         fail({ .kind = InternalErrorKind::InvalidClass, .layout = LayoutID(index) });
+    BitVector rowsThatEnd = answerAlongRows(m_program.layouts.size(), false, [&](LayoutID id) -> StepAlongRow {
+        LayoutID base = m_program.at(id).base;
+        if (!base)
+            return { true, { } };
+        return { std::nullopt, base };
+    });
+    for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+        if (!rowsThatEnd.quickGet(index))
+            fail({ .kind = InternalErrorKind::RingOfBases, .layout = LayoutID(index) });
+    }
 }
 
 bool ProgramVerifier::isValidClass(LayoutID id, const Layout& layout) const

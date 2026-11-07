@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTCompiledFrame.h"
+#include "AOTFunctionNames.h"
 #include "AOTImage.h"
 #include "AOTModuleHost.h"
 #include "AOTRealmStartup.h"
@@ -76,7 +77,7 @@ static String findQuotedText(ModuleID module, LineColumn place)
         column = row.isOnSameLine ? column + row.columnChange : row.column;
         start += row.startChange;
         if (line == place.line && column == place.column)
-            return String(byteCast<Latin1Character>(tables.textOfQuotes().subspan(static_cast<size_t>(start), row.length)));
+            return quotedTextBytes(static_cast<uint32_t>(start), row.length).transform([](std::span<const Latin1Character> text) { return String(text); }).value_or(String());
     }
     return { };
 }
@@ -254,6 +255,11 @@ JSObject* createBuiltinNotCompiledError(JSGlobalObject* globalObject, const Stri
     return createError(globalObject, withAOTErrorNote(makeString(builtin, " was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code."_s)));
 }
 
+JSObject* createBuiltinBehindTargetOfEventNotCompiledError(JSGlobalObject* globalObject, const String& builtin)
+{
+    return createError(globalObject, withAOTErrorNote(makeString(builtin, " was not compiled into this executable because the compiler saw no use of it. Your code called addEventListener() or dispatchEvent() without a receiver, so the `target` of an event is the global object, and the compiler didn't see that call. To keep everything that the global object leads to, write `void dispatchEvent` once anywhere in your code."_s)));
+}
+
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject* globalObject, const String& functionName)
 {
     return createBuiltinNotCompiledError(globalObject, functionName.isEmpty() ? "A built-in function"_str : makeString("The built-in function '"_s, functionName, '\''));
@@ -275,12 +281,16 @@ JSObject* createExternalModuleNotLoadedError(JSGlobalObject* globalObject, const
     return createTypeError(globalObject, withAOTErrorNote(makeString("The module \""_s, path, "\" is not loaded"_s)));
 }
 
-static JSObject* createErrorWithCode(JSGlobalObject* globalObject, const String& message, ASCIILiteral code)
+static JSObject* withCode(JSGlobalObject* globalObject, JSObject* error, ASCIILiteral code)
 {
     VM& vm = globalObject->vm();
-    JSObject* error = createError(globalObject, message);
     error->putDirect(vm, Identifier::fromString(vm, "code"_s), jsNontrivialString(vm, String(code)));
     return error;
+}
+
+static JSObject* createErrorWithCode(JSGlobalObject* globalObject, const String& message, ASCIILiteral code)
+{
+    return withCode(globalObject, createError(globalObject, message), code);
 }
 
 JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView name, ASCIILiteral code)
@@ -298,6 +308,11 @@ JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView 
 JSObject* createFileOfImageRefusedError(JSGlobalObject* globalObject, StringView path, ASCIILiteral code)
 {
     return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, path, "': code that this executable loads from disk can't load the files that were compiled into it. It can use globals, built-in modules, files and packages on disk, and what the program hands it."_s)), code);
+}
+
+JSObject* createExportNotHandedOutError(JSGlobalObject* globalObject, StringView path, StringView name)
+{
+    return withCode(globalObject, createReferenceError(globalObject, withAOTErrorNote(makeString("Cannot read '"_s, name, "' from the namespace object of '"_s, path, "': it hands out only the exports that the build saw somebody read from it. Import '"_s, name, "' by name."_s))), "ERR_MODULE_NOT_FOUND"_s);
 }
 
 JSObject* createModuleInOtherRealmError(JSGlobalObject* globalObject, StringView path)
@@ -399,6 +414,35 @@ String assignmentToLockedBuiltinMessage(const String& property)
     return withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s));
 }
 
+String changeThatCompiledCodeRulesOutMessage(ASCIILiteral change)
+{
+    return withAOTErrorNote(makeString("Cannot "_s, change, " because no code in the executable does, and compiled code relies on that"_s));
+}
+
+String changeThatCompiledCodeRulesOutMessage(ObjectMutation mutation)
+{
+    auto change = [&]() -> ASCIILiteral {
+        switch (mutation) {
+        case ObjectMutation::DeleteField:
+            return "delete this property"_s;
+        case ObjectMutation::RedefineProperty:
+            return "redefine this property"_s;
+        case ObjectMutation::AddProperty:
+            return "add a property to this object"_s;
+        case ObjectMutation::ChangeIntegrity:
+            return "freeze, seal or prevent extensions of this object"_s;
+        case ObjectMutation::ChangePrototype:
+            return "change the prototype of this object"_s;
+        case ObjectMutation::BecomePrototype:
+            return "make this object a prototype"_s;
+        case ObjectMutation::StoreOfOtherType:
+            return "store a value of this type in this property"_s;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    return changeThatCompiledCodeRulesOutMessage(change());
+}
+
 String callOfBuiltinChangedBeforeFirstUseMessage(const String& property)
 {
     return withAOTErrorNote(makeString("Cannot call "_s, property, " because it was replaced, redefined or deleted before its first use, and compiled code calls the built-in function without looking it up"_s));
@@ -439,7 +483,7 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
 
 bool isWrittenByFileOfProduct(VM& vm)
 {
-    if (!vm.hasCompiledCode() || !vm.topCallFrame)
+    if (!vm.hasCompiledCode() || !vm.topCallFrame || Image::current()->programTables().modulesThatFindBuiltinsReadOnly().empty())
         return false;
     std::optional<bool> answer;
     StackVisitor::visitWithCompiledFrames(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
@@ -452,13 +496,25 @@ bool isWrittenByFileOfProduct(VM& vm)
             return answer ? IterationStatus::Done : IterationStatus::Continue;
         }
         CodeBlock* codeBlock = visitor->codeBlock();
-        if (!codeBlock || !codeBlock->ownerExecutable()->sourceOrigin().url().protocolIsFile())
+        if (!codeBlock)
             return IterationStatus::Continue;
-        if (std::optional<ModuleID> file = findModule(codeBlock->ownerExecutable()->sourceOrigin().url().fileSystemPath()))
+        const SourceOrigin& origin = codeBlock->ownerExecutable()->sourceOrigin();
+        if (ScriptFetcher* fetcher = origin.fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM) {
+            answer = static_cast<FetcherOfTextHandedIn*>(fetcher)->isMadeByFileOfProduct();
+            return IterationStatus::Done;
+        }
+        if (!origin.url().protocolIsFile())
+            return IterationStatus::Continue;
+        if (std::optional<ModuleID> file = findModule(origin.url().fileSystemPath()))
             answer = findsBuiltinsReadOnly(*file);
         return IterationStatus::Done;
     }, false, StackVisitor::CompiledFrameVisit::EachRunOnce);
     return answer.value_or(false);
+}
+
+FetcherOfTextHandedIn::FetcherOfTextHandedIn(VM& vm)
+    : m_isMadeByFileOfProduct(isWrittenByFileOfProduct(vm))
+{
 }
 
 String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringImpl* key, LockedIn lockedIn)

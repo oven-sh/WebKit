@@ -1,6 +1,6 @@
 # type First = A | B;  type Second = B | C;  export function first(o: First) { return o.x; }  export function second(o: Second) { return o.x; }
 # The second union cuts across the first, so no declared family holds it. A set of two to four such layouts stays a set where it is proven or shown. Where it is only expected, a test for it with a closed arm behind costs more bytes than the call of a stub
-# that it spares: the application grew by a megabyte, 358 units and 14 thousand tests that rejoin, and no program ran faster. So of `o` in `second` an object is expected and no more, and the read stays a read by name.
+# that it spares: programs grew, and none ran faster. So of `o` in `second` an object is expected and no more, and the read stays a read by name.
 # RUN: link families functions mechanisms=all
 # CHECK: family F{{*}} [L0, L1]
 # CHECK-LABEL: function f1

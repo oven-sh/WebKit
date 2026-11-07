@@ -24,6 +24,7 @@ public:
     void generateStringBuilderAppendString(const ValueContext&);
     void generateStringBuilderAppendStringRange(const ValueContext&);
     void generateStringBuilderAppendBoolean(const ValueContext&);
+    void generateStringBuilderAppendCodeUnit(const ValueContext&);
     void generateStringBuilderAppendStringOrNullish(const ValueContext&);
     void generateStringBuilderAppendValue(const ValueContext&);
     void generateStackStringBuilderAppendConstant(const ValueContext&);
@@ -32,6 +33,7 @@ public:
     void generateStackStringBuilderAppendString(const ValueContext&);
     void generateStackStringBuilderAppendStringRange(const ValueContext&);
     void generateStackStringBuilderAppendBoolean(const ValueContext&);
+    void generateStackStringBuilderAppendCodeUnit(const ValueContext&);
     void generateStackStringBuilderAppendStringOrNullish(const ValueContext&);
     void generateStackStringBuilderAppendValue(const ValueContext&);
 

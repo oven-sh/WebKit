@@ -137,6 +137,15 @@ struct alignas(4) RuntimeType {
         return false;
     }
 
+    bool takesEveryValue() const
+    {
+        constexpr OptionSet<PrimitiveSet> everyPrimitive {
+            PrimitiveSet::Undefined, PrimitiveSet::Null, PrimitiveSet::False, PrimitiveSet::True, PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber,
+            PrimitiveSet::String, PrimitiveSet::Symbol, PrimitiveSet::BigInt
+        };
+        return primitiveSet().containsAll(everyPrimitive) && !(flags & hasIntegerRange) && acceptsEveryObject();
+    }
+
     static constexpr size_t sizeInBytes(unsigned numberOfCellTests, unsigned numberOfLiteralStrings, uint8_t flags)
     {
         size_t numberOfOptionalWords = (flags & hasIntegerRange ? numberOfIntegerRangeWords : 0) + (flags & hasContents ? 1 : 0) + (flags & hasLayoutSet ? 1 : 0);

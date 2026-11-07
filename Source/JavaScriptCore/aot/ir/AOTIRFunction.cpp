@@ -20,25 +20,6 @@ const DeclaredType& Function::result() const
     return results[0];
 }
 
-bool Function::isModuleBody() const
-{
-    switch (kind) {
-    case FunctionKind::Module:
-    case FunctionKind::CommonJsModule:
-        return true;
-    case FunctionKind::Plain:
-    case FunctionKind::Arrow:
-    case FunctionKind::Method:
-    case FunctionKind::Getter:
-    case FunctionKind::Setter:
-    case FunctionKind::BaseConstructor:
-    case FunctionKind::DerivedConstructor:
-    case FunctionKind::Initializer:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 ConstructorForm Function::constructorForm() const
 {
     switch (kind) {

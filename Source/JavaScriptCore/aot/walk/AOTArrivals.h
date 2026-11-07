@@ -28,6 +28,8 @@ public:
     TypeID provenAt(TypeArena&, FunctionID, uint32_t entryParameter) const;
     TypeID leftAt(TypeArena&, FunctionID, uint32_t entryParameter) const;
     bool takesWhatWasLeft(FunctionID) const;
+    void closeEntriesOf(FunctionID function) { m_entriesAreClosed[function.index()] = 1; }
+    bool entriesAreClosed(FunctionID function) const { return m_entriesAreClosed[function.index()]; }
     const Facts& facts() const { return m_facts; }
 
 private:
@@ -35,6 +37,7 @@ private:
     const Facts& m_facts;
     TypeTable& m_types;
     Vector<TypeID> m_joined;
+    Vector<uint8_t> m_entriesAreClosed;
     mutable Vector<Lock> m_locks;
     mutable TypeArena m_joins;
     mutable Lock m_joinsLock;

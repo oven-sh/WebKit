@@ -35,23 +35,6 @@ static void findModulesWhosePathNoOperationReadsForFactsOfStrings(const Program&
     tables.modulesWhosePathNoOperationReads = WTF::move(modules);
 }
 
-static bool parsersCouldMakeRecordsOfLayoutForFactsOfStrings(const Program& program, LayoutID id)
-{
-    constexpr OptionSet<LayoutFlags> flagsOfOtherLayouts { LayoutFlags::HasHeritage, LayoutFlags::IsConstructorFunction, LayoutFlags::HasMembersWithoutLayout, LayoutFlags::IsTypeParameter, LayoutFlags::IsNeverAllocated, LayoutFlags::IsWrittenUnderDictionaryType, LayoutFlags::IsDerived, LayoutFlags::IsOfCreatedObject };
-    const Layout& layout = program.at(id);
-    if (layout.kind != LayoutKind::Record || layout.constructor || layout.base || layout.flags.containsAny(flagsOfOtherLayouts) || layout.fields.isEmpty())
-        return false;
-    return std::ranges::all_of(layout.fields, [&](const Field& field) {
-        if (!field.key)
-            return false;
-        TypeID written = field.declared.written();
-        if (!written)
-            return true;
-        Type type = program.at(written);
-        return type.isAnything() || !type.mayBeFunction();
-    });
-}
-
 static void findLayoutsThatParsersMayMakeForFactsOfStrings(const Program& program, const LinkTables& linked, FactTables& tables)
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
@@ -62,7 +45,7 @@ static void findLayoutsThatParsersMayMakeForFactsOfStrings(const Program& progra
         const LinkedLayout& layout = linked.layouts[index];
         if (!layout.isAllocated || !layout.reachesUnseenCode)
             continue;
-        if (parsersCouldMakeRecordsOfLayoutForFactsOfStrings(program, LayoutID(index)))
+        if (parsersCouldMakeRecordsOf(program, LayoutID(index)))
             layouts.quickSet(index);
     }
     tables.layoutsThatParsersMayMake = WTF::move(layouts);

@@ -21,6 +21,7 @@ class JSArray;
 class JSGlobalObject;
 class JSMap;
 class JSMapIterator;
+class JSSetIterator;
 class JSObject;
 class JSPropertyNameEnumerator;
 class JSSet;
@@ -35,6 +36,7 @@ JS_EXPORT_PRIVATE JSObject* withAllPropertiesInline(JSGlobalObject*, JSObject*);
 
 void defineDataProperty(Instance*, JSObject*, PropertyName, JSValue, PutPropertySlot&);
 bool tryDefineElementOfCompiledObject(Instance*, JSObject*, uint32_t index, JSValue);
+bool trySetElementOfCompiledObject(Instance*, JSObject*, uint32_t index, JSValue);
 JSValue getWithoutCaches(Instance*, JSValue base, const Identifier&, JSValue receiver);
 inline JSValue getWithoutCaches(Instance* instance, JSValue base, const Identifier& identifier) { return getWithoutCaches(instance, base, identifier, base); }
 
@@ -64,6 +66,8 @@ void appendElementsOfList(JSGlobalObject*, JSArray* target, JSArray* source);
 void appendMembersOfSet(JSGlobalObject*, JSArray* target, JSSet* source);
 bool tryAppendPairsOfMap(JSGlobalObject*, JSArray* target, JSMap* source);
 bool tryAppendPairsLeftIn(JSGlobalObject*, JSArray* target, JSMapIterator*);
+bool tryAppendMembersOfIteratorNobodyStepped(JSGlobalObject*, JSArray* target, JSMapIterator*);
+bool tryAppendMembersOfIteratorNobodyStepped(JSGlobalObject*, JSArray* target, JSSetIterator*);
 JS_EXPORT_PRIVATE size_t numberOfElementsSpreadFrom(JSGlobalObject*, JSString*);
 
 } } // namespace JSC::AOT

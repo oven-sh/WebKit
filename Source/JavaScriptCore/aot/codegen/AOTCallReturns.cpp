@@ -18,6 +18,7 @@
 #include "AOTHintEmitter.h"
 #include "AOTMachineFrame.h"
 #include "AOTStackCheckEmitter.h"
+#include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCallFrames.h"
 #include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
@@ -260,8 +261,12 @@ void CallEmitter::callFromArgumentListFrame(const CallTarget& target, const Plac
         AllowMacroScratchRegisterUsage allowScratch(jit);
         RELEASE_ASSERT(params.frameIsSetUp());
         Machine::emitCalleeSaveRestore(jit, params.frame());
-        emitMoveStackWordsToArgumentListFrame(jit, numberOfWords, spilledBytes);
         emitMoveAddressOf(jit, *records, destination);
+        if (numberOfWords && numberOfWords <= StubKey::maxCount) {
+            records->stubCalls.tailCall(jit, AOT::callFromArgumentListFrameWithWords(numberOfWords, spilledBytes));
+            return;
+        }
+        emitMoveStackWordsToArgumentListFrame(jit, numberOfWords, spilledBytes);
         records->stubCalls.tailCall(jit, AOT::callFromArgumentListFrame());
     });
 }
@@ -284,7 +289,7 @@ void CallEmitter::requireCallable(const OperationContext& context, Boxed callee,
     LBasicBlock mayNotBeCallable = newBlock();
     LBasicBlock continuation = newBlock();
     branchUnless(isCell(callee), mayNotBeCallable);
-    Condition isKnownToBeCallable = closures.hasFunctionCellType(unboxCell(callee));
+    Condition isKnownToBeCallable = closures.isSlimClosureAsCreated(unboxCell(callee));
     m_out.branch(isKnownToBeCallable.value(), normalEdge(continuation), rareEdge(mayNotBeCallable));
 
     m_out.appendTo(mayNotBeCallable);
@@ -359,15 +364,28 @@ void CallEmitter::requireForwardedCallCanBeMade(const ValueContext& value, Boxed
 void CallEmitter::tailCallValue(const ValueContext& value, const ValueCall& call)
 {
     RELEASE_ASSERT(!call.lentArguments);
-    requireCallableBeforeTailCall(value, call.callee, call.thisValue);
-
     Vector<LValue, 8> values;
     for (Boxed argument : call.arguments)
         values.append(argument.value());
+    if (call.methodMayBeUnread) {
+        RELEASE_ASSERT(call.methodOfBuiltinClass && !mayForwardCallToReceiver(value.value()));
+        LBasicBlock wasRead = newBlock();
+        LBasicBlock leaves = newBlock();
+        branch(isNotEmpty(call.callee), { rareEdge(wasRead), normalEdge(leaves) });
+        m_out.appendTo(wasRead);
+        requireCallableBeforeTailCall(value, call.callee, call.thisValue);
+        m_out.jump(leaves);
+        m_out.appendTo(leaves);
+        ConventionCall unread { .stub = callMethodThatMayBeUnreadInTailPosition(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size())), .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
+        emitTailCall(value, CallTarget::stub(unread.stub, std::nullopt), placeConventionArguments(unread));
+        return;
+    }
+    requireCallableBeforeTailCall(value, call.callee, call.thisValue);
+    bool calleeIsCell = call.calleeIsCell || !mayForwardCallToReceiver(value.value());
 
     ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
     LValue countOperand = nullptr;
-    chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);
+    chooseStubThatCallsValue(conventionCall, countOperand, calleeIsCell);
     tailCallByConvention(value, conventionCall);
 }
 

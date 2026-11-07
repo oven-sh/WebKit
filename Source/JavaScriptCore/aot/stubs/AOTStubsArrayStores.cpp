@@ -178,6 +178,10 @@ void generateReserveArrayRoom(StubAssembler& jit)
     jit.add32(kind, grownToRoom);
     jit.neg32(grownToRoom);
     jit.add32(room, grownToRoom);
+    jit.add32(TrustedImm32(1), length);
+    Jump growsPastVector = jit.branch32(CCallHelpers::AboveOrEqual, grownToRoom, length);
+    jit.move(length, grownToRoom);
+    growsPastVector.link(&jit);
     jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
     growVectorFor(jit, { array, butterfly, length, storage, allocator, kind }, grownToRoom, callsOperation);
     hasRoom.link(&jit);

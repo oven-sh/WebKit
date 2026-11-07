@@ -253,7 +253,7 @@ void writeFeatureSection(const Typed::Facts& facts, const BuiltImage* image, Com
 
         FeatureSet featuresNamedByFacts;
         for (const Wire::FeatureUseRecord& record : records) {
-            if (record.kind == Wire::FeatureUseKind::Named && record.feature < FeatureSet::size())
+            if ((record.kind == Wire::FeatureUseKind::Named || record.kind == Wire::FeatureUseKind::FoundByName) && record.feature < FeatureSet::size())
                 featuresNamedByFacts.set(record.feature);
         }
         featuresOfImage.exclude(featuresNamedByFacts);

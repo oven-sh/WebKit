@@ -55,7 +55,10 @@ static Reference flattenInFrontOfLoopForFlattening(Walker& walker, Reference str
     std::optional<uint32_t> loop = walker.outermostLoopToMakeTextInFrontOf(singleElementSpan(string), declaredBoundOf(Opcode::FlattenString));
     if (!loop)
         return { };
-    return walker.buildInFrontOfOpenLoop(*loop, draftOfFlatStringForFlattening(string, origin));
+    Draft flatten = draftOfFlatStringForFlattening(string, origin);
+    if (Reference begins = walker.askInFrontOfOpenLoopWhetherItsFirstTurnBegins(*loop))
+        flatten.setIsReadOperand(begins);
+    return walker.buildInFrontOfOpenLoop(*loop, WTF::move(flatten));
 }
 
 Reference flatStringInSight(Walker& walker, Reference string)
@@ -65,6 +68,18 @@ Reference flatStringInSight(Walker& walker, Reference string)
     if (walker.types().at(walker.typeOf(string)).isOpaque(OpaqueKind::FlatString))
         return string;
     return flatStringNotedForFlattening(walker, string);
+}
+
+Reference flatStringMadeWhereWalkStands(Walker& walker, Reference string, Origin origin)
+{
+    if (walker.isUnreachable() || !string.isValue() || !isProvenString(walker, walker.typeOf(string)))
+        return { };
+    if (Reference flat = flatStringInSight(walker, string))
+        return flat;
+    Reference flat = walker.build(draftOfFlatStringForFlattening(string, origin));
+    if (flat)
+        noteFlatStringForFlattening(walker, string, flat);
+    return flat;
 }
 
 Reference flatStringForReaderOfCharacters(Walker& walker, Reference string, Origin origin)

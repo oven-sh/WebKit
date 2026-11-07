@@ -55,7 +55,6 @@ public:
 
 private:
     Integer rowOf(const MentionedAllocation& allocation) { return zeroExtended(numberOf(allocation.mention)); }
-    void copyFromBuffer(Word32 count, Pointer buffer, Pointer butterfly, LBasicBlock copyLoop, LBasicBlock copyElement, LBasicBlock copied);
     void zeroBody(CellPointer, const MentionedAllocation&);
     LValue slotOfFrameCell(const OperationContext&, size_t size);
 

@@ -17,6 +17,7 @@ enum class InternalFunctionEntry : uint8_t { Call, Construct };
 
 constexpr StubKey callHostFunction(unsigned count) { return StubKey(StubFamily::CallHostFunction).withCount(count); }
 constexpr StubKey callHostFunctionWithoutBoxedCall(unsigned count) { return StubKey(StubFamily::CallHostFunctionWithoutBoxedCall).withCount(count); }
+constexpr StubKey callHostFunctionThatMayBeUnfetched(unsigned count) { return StubKey(StubFamily::CallHostFunctionThatMayBeUnfetched).withCount(count); }
 constexpr StubKey callHostFunctionWithCount() { return StubKey(StubFamily::CallHostFunctionWithCount); }
 
 enum class DirectFunctionCall : uint8_t { WithFrame, Leaf, WithHostFrame, LeafReturningNumber };

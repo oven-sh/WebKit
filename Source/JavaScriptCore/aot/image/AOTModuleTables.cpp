@@ -43,6 +43,7 @@ struct ModulesListedInChunk {
     Vector<uint32_t> modulesThatLoadCompiledFilesAlone;
     Vector<uint32_t> modulesThatFindBuiltinsReadOnly;
     Vector<uint32_t> modulesReachedUnderOtherNames;
+    Vector<uint32_t> modulesThatDependOnMoreThanSource;
 };
 
 struct FunctionsListedInRange {
@@ -142,6 +143,20 @@ static Vector<NameOfStatementData> listNamesOfStatements(const Typed::Program& p
             names.append({ index, numberOfString(name) });
     }
     return names;
+}
+
+static Vector<StarAsWrittenData> listStarsAsWritten(const Typed::Program& program, const AnswersAboutModules& answers)
+{
+    Vector<StarAsWrittenData> stars;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        size_t first = stars.size();
+        for (const Typed::ModuleRequest& request : program.modules[index].requests) {
+            if (request.starPlace && !answers.ofModules[request.target.index()].containsAll({ AnswerAboutModule::IsNotWorthVisiting, AnswerAboutModule::IsNeverEvaluated }))
+                stars.append({ index, request.target.index(), *request.starPlace });
+        }
+        AOT::sort(stars.mutableSpan().subspan(first), { }, &StarAsWrittenData::place);
+    }
+    return stars;
 }
 
 void nameWhatModuleTablesName(const TableInputs& inputs, const GatheredMentions&, NamesOfTables& names)
@@ -282,6 +297,8 @@ static void listModulesOfChunkForModuleTables(const TableInputs& inputs, const A
         if (module.flags.contains(ModuleFlags::FindsBuiltinsReadOnly))
             listed.modulesThatFindBuiltinsReadOnly.append(index);
         appendOtherNamesThatReachModule(module, index, listed.modulesReachedUnderOtherNames);
+        if (module.flags.contains(ModuleFlags::DependsOnMoreThanSource))
+            listed.modulesThatDependOnMoreThanSource.append(index);
 
         bool isFoundOnlyWithCode = module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Data;
         if (!Typed::answersToPath(program, module) || (isFoundOnlyWithCode && !answers.has(id, AnswerAboutModule::HasCompiledBody)))
@@ -566,10 +583,12 @@ void encodeModuleTables(TableEncoder& encoder)
     Vector<uint16_t> evaluationRequests = encodeNumbersForModuleTables(program, followed.evaluationRequests);
     Vector<ModuleFailureData> moduleFailures = listFailuresForModuleTables(program, numberOfString);
     Vector<NameOfStatementData> namesOfStatements = listNamesOfStatements(program, numberOfString);
+    Vector<StarAsWrittenData> starsAsWritten = listStarsAsWritten(program, answers);
     Vector<UncompiledModuleData> modulesOfUncompiledCode = listModulesOfUncompiledCode(program, answers, numberOfString);
     Vector<uint32_t> modulesThatLoadCompiledFilesAlone = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatLoadCompiledFilesAlone);
     Vector<uint32_t> modulesThatFindBuiltinsReadOnly = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatFindBuiltinsReadOnly);
     Vector<uint32_t> modulesReachedUnderOtherNames = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesReachedUnderOtherNames);
+    Vector<uint32_t> modulesThatDependOnMoreThanSource = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatDependOnMoreThanSource);
     Vector<uint32_t> asyncFunctionsWithoutAwait = joinListsForModuleTables(functionsListed, &FunctionsListedInRange::asyncFunctionsWithoutAwait);
     Vector<CompiledRuntimeModuleData> compiledRuntimeModules = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::runtimeModules);
     AOT::sort(compiledRuntimeModules, { }, &CompiledRuntimeModuleData::registryID);
@@ -587,9 +606,9 @@ void encodeModuleTables(TableEncoder& encoder)
     };
     part.reserveRoomFor(roomFor(lists.modules, lists.directories, lists.displayPaths, lists.requests, linkRequests, evaluationRequests, groupsLoadedWithGroups, entryPointLinkPlan,
         lists.exports, lists.indirectExports, lists.syntheticExports, lists.requiredNames, lists.exportStatements, lists.ambiguousExports, lists.sourceStamps,
-        moduleFailures, modulesOfUncompiledCode, modulesThatLoadCompiledFilesAlone, modulesThatFindBuiltinsReadOnly, modulesReachedUnderOtherNames, followed.importsOfHeldFiles, asyncFunctionsWithoutAwait,
+        moduleFailures, modulesOfUncompiledCode, modulesThatLoadCompiledFilesAlone, modulesThatFindBuiltinsReadOnly, modulesReachedUnderOtherNames, modulesThatDependOnMoreThanSource, followed.importsOfHeldFiles, asyncFunctionsWithoutAwait,
         byPath.modulesByPath, byPath.modulesByHashOfPath, byPath.firstModulesByHashOfPath, byPath.directoriesOfModulesByPath, compiledRuntimeModules, compiledRuntimeFunctions, stateOfLibraryModules,
-        startsOfModules.firstSteps, startsOfModules.steps, namesOfStatements));
+        startsOfModules.firstSteps, startsOfModules.steps, namesOfStatements, starsAsWritten));
     part.setTable(ProgramTableIndex::modules, lists.modules);
     part.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     part.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);
@@ -607,10 +626,12 @@ void encodeModuleTables(TableEncoder& encoder)
     part.setTable(ProgramTableIndex::sourceStamps, lists.sourceStamps);
     part.setTable(ProgramTableIndex::moduleFailures, moduleFailures);
     part.setTable(ProgramTableIndex::namesOfStatements, namesOfStatements);
+    part.setTable(ProgramTableIndex::starsAsWritten, starsAsWritten);
     part.setTable(ProgramTableIndex::modulesOfUncompiledCode, modulesOfUncompiledCode);
     part.setTable(ProgramTableIndex::modulesThatLoadCompiledFilesAlone, modulesThatLoadCompiledFilesAlone);
     part.setTable(ProgramTableIndex::modulesThatFindBuiltinsReadOnly, modulesThatFindBuiltinsReadOnly);
     part.setTable(ProgramTableIndex::modulesReachedUnderOtherNames, modulesReachedUnderOtherNames);
+    part.setTable(ProgramTableIndex::modulesThatDependOnMoreThanSource, modulesThatDependOnMoreThanSource);
     part.setTable(ProgramTableIndex::importsOfHeldFiles, followed.importsOfHeldFiles);
     part.setTable(ProgramTableIndex::asyncFunctionsWithoutAwait, asyncFunctionsWithoutAwait);
     part.setTable(ProgramTableIndex::modulesByPath, byPath.modulesByPath);

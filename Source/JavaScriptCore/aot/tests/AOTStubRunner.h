@@ -172,7 +172,7 @@ public:
 
     StubRun run(StubKey, std::initializer_list<uint64_t> operands, std::optional<uint32_t> immediate = std::nullopt);
     StubRun runOperationCall(StubKey, std::initializer_list<uint64_t> arguments);
-    StubRun runCall(StubKey, uint64_t callee, uint64_t thisValue, std::initializer_list<uint64_t> arguments);
+    StubRun runCall(StubKey, uint64_t callee, uint64_t thisValue, std::initializer_list<uint64_t> arguments, std::optional<uint32_t> immediate = std::nullopt);
     uint64_t closureWord(unsigned numberOfParameters, ClosureWord::Flags flags = { }) const { return ClosureWord::encode({ distanceOfCompiledFunction, numberOfParameters }, 1, flags); }
     Instance& instance() { return m_environment->instance; }
     void forgetAccessTable() { instance().propertyCaches.accessTable.forgetEverything(); }
@@ -553,6 +553,11 @@ inline StubRunner::StubRunner(const StubOptions& options, std::span<const StubKe
         for (Slot::Kind kind : slotKindsWithHandlers)
             instance.slotHandlers()[static_cast<unsigned>(table)][static_cast<unsigned>(kind)] = addressOf(slotHandlerFor(table, kind));
     }
+    for (AnswerHandlerTable table : allAnswerHandlerTables) {
+        const std::array handlers = answerHandlerKeys(table);
+        for (unsigned bits = 0; bits < handlers.size(); ++bits)
+            instance.slotHandlers()[numberOfSlotHandlerTables + static_cast<unsigned>(table)][bits] = addressOf(handlers[bits]);
+    }
     compileLandings();
 }
 
@@ -642,7 +647,7 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
     return { environment.result, !!environment.numberOfOperationCalls, environment.numberOfRecordedCalls, environment.recordedArguments, environment.landedCall, instructionsInStubs, changedRegisters, leapsInStubs };
 }
 
-inline StubRun StubRunner::runCall(StubKey key, uint64_t callee, uint64_t thisValue, std::initializer_list<uint64_t> arguments)
+inline StubRun StubRunner::runCall(StubKey key, uint64_t callee, uint64_t thisValue, std::initializer_list<uint64_t> arguments, std::optional<uint32_t> immediate)
 {
     const StubSignature& signature = m_catalog.summaryOf(key).signature;
     AOT_TEST_CHECK(signature.usesCallConvention && arguments.size() <= numberOfArgumentGPRs);
@@ -652,7 +657,7 @@ inline StubRun StubRunner::runCall(StubKey key, uint64_t callee, uint64_t thisVa
     call.arguments.fill(unsetArgument);
     std::ranges::copy(arguments, call.arguments.begin());
     if (!signature.numberOfOperands)
-        return run(key, { });
+        return run(key, { }, immediate);
     AOT_TEST_CHECK(signature.numberOfOperands == 1 && signature.operands[0] == Reg(countGPR));
     return run(key, { arguments.size() });
 }

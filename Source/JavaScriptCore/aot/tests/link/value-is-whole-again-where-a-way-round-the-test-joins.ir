@@ -3,7 +3,7 @@
 # The twin of tests-that-join-one-block-add-up.ir. One of the two edges into the last block has cut nothing that the other has cut away: both kinds arrive.
 # RUN: link functions mechanisms=all
 # CHECK: function f2
-# CHECK-NEXT: parameter 0 {{*}}proven=i32|string
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]|string
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

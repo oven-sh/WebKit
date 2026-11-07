@@ -126,9 +126,11 @@ void StraightEmitter::loadSlot(GPRReg cell, const PlacedSlot& slot, GPRReg boxed
             m_jit->load64(address, boxedResult);
             return;
         case SlotRepresentation::OptionalInt64:
+            ++m_numberOfRawSlotsOfScopesRead;
             boxNumberOfSlotInStraightForm(*this, BoxedNumberForm::OptionalInteger, address, boxedResult);
             return;
         case SlotRepresentation::OptionalDouble:
+            ++m_numberOfRawSlotsOfScopesRead;
             boxNumberOfSlotInStraightForm(*this, BoxedNumberForm::OptionalDouble, address, boxedResult);
             return;
         default:
@@ -147,11 +149,6 @@ void StraightEmitter::storeSlot(GPRReg cell, const PlacedSlot& slot, GPRReg boxe
         case SlotRepresentation::Cell:
             m_jit->store64(boxed, address);
             barrierAfterStore(cell);
-            return;
-        case SlotRepresentation::OptionalInt64:
-        case SlotRepresentation::OptionalDouble:
-            convertToNumberOfSlotInStraightForm(*m_jit, slot.representation, boxed, takeResultFPR());
-            m_jit->store64(boxed, address);
             return;
         default:
             break;

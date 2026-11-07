@@ -79,7 +79,12 @@ public:
     void createEngineSymbols();
 
     void nameForHeapSnapshots(const void* variable, const AtomString& name) { m_namesOfVariables.set(variable, name); }
-    void nameForHeapSnapshots(uint32_t closureNumber, uint32_t slot, const AtomString& name) { m_namesOfCaptures.set(keyOfCapture(closureNumber, slot), name); }
+    void nameForHeapSnapshots(uint32_t closureNumber, uint32_t slot, const AtomString& name, bool isVariableOfModule)
+    {
+        m_namesOfCaptures.set(keyOfCapture(closureNumber, slot), name);
+        if (isVariableOfModule)
+            m_capturesThatAreVariablesOfModules.add(keyOfCapture(closureNumber, slot));
+    }
     UniquedStringImpl* nameInHeapSnapshots(const void* variable) const
     {
         auto entry = m_namesOfVariables.find(variable);
@@ -90,6 +95,7 @@ public:
         auto entry = m_namesOfCaptures.find(keyOfCapture(closureNumber, slot));
         return entry == m_namesOfCaptures.end() ? nullptr : entry->value.impl();
     }
+    bool isVariableOfModuleInHeapSnapshots(uint32_t closureNumber, uint32_t slot) const { return m_capturesThatAreVariablesOfModules.contains(keyOfCapture(closureNumber, slot)); }
 
     static String textOf(const Image&, uint32_t number);
     static AtomStringImpl* findAtom(StringView, unsigned hash);
@@ -133,6 +139,7 @@ private:
     UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_numbersOfSymbols WTF_GUARDED_BY_LOCK(m_symbolsLock);
     UncheckedKeyHashMap<const void*, AtomString> m_namesOfVariables;
     UncheckedKeyHashMap<uint64_t, AtomString, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesOfCaptures;
+    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_capturesThatAreVariablesOfModules;
     std::array<NativeText, 128> m_recentNativeTexts;
     std::array<NativeTextFingerprintSet, 32> m_nativeTextsByCharacters;
 };

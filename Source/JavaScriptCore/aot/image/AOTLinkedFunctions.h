@@ -142,6 +142,13 @@ public:
 
     std::span<const FusedCallEntry> fusedCallEntries() const { return m_fusedCallEntries.span(); }
 
+    bool hasFusedCallEntry(Typed::CodeUnit unit, uint32_t unitIndex) const
+    {
+        uint32_t place = placeInCodeOf(unit, unitIndex);
+        auto fused = std::ranges::lower_bound(m_fusedCallEntries, place, { }, &FusedCallEntry::place);
+        return unit.role == Typed::CodeRole::GenericCallEntry && fused != m_fusedCallEntries.end() && fused->place == place;
+    }
+
     std::optional<uint32_t> positionOfUnit(Typed::CodeUnit unit, uint32_t unitIndex) const
     {
         uint32_t place = placeInCodeOf(unit, unitIndex);

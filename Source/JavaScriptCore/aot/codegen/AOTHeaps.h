@@ -75,6 +75,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
 
 #define FOR_EACH_JSC_FIELD_HEAP_UNDER_ROOT(v) \
     v(ClassInfo_parentClass, ClassInfo::offsetOfParentClass(), Immutable) \
+    v(JSArrayBufferView_sharingOfMemory, JSArrayBufferView::offsetOfMode(), Immutable) \
     v(JSCell_typeInfoType, JSCell::typeInfoTypeOffset(), Immutable) \
     v(JSPropertyNameEnumerator_cachedInlineCapacity, JSPropertyNameEnumerator::cachedInlineCapacityOffset(), Immutable) \
     v(JSPropertyNameEnumerator_cachedPropertyNamesVector, JSPropertyNameEnumerator::cachedPropertyNamesVectorOffset(), ImmutableInnerPointer) \

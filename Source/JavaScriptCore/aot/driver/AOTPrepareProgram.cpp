@@ -76,6 +76,25 @@ static BitVector findDictionariesOfPreparedProgram(const Typed::Program& program
     return layoutsOfDictionaries;
 }
 
+static void leaveOutCallsOfBuiltinsThatProgramCannotHold(StubOptions& options, const Typed::Program& program, const Typed::Facts& facts)
+{
+    if (facts.unseenCodeCanRun())
+        return;
+    const auto& builtins = program.builtins();
+    BitVector held(builtins.builtinCount());
+    for (const auto& use : facts.builtinUses())
+        held.set(builtins.canonicalID(BuiltinID(use.builtin)).index());
+    auto isHeld = [&](BuiltinID builtin) {
+        return held.get(builtins.canonicalID(builtin).index());
+    };
+    options.callsNumberOrStringByValue = isHeld(Builtins::Number) || isHeld(Builtins::String);
+    options.boxedCallsOutOfReach.setAll();
+    for (const auto& call : builtins.boxedCalls()) {
+        if (isHeld(call.builtin))
+            options.boxedCallsOutOfReach.clear(static_cast<size_t>(call.stub));
+    }
+}
+
 static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
 {
     PhaseTimes times(build, Stage::PlanSlots);
@@ -87,6 +106,7 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
     BitVector layoutsOfDictionaries = findDictionariesOfPreparedProgram(program, facts);
     Typed::noteLayoutsOfDictionaries(program, layoutsOfDictionaries);
 
+    program.types.keepAddressesOfTypes();
     prepared.plan = Typed::planProgram(program, facts, build);
     program.types.freeze();
     times.didFinish("plan"_s);
@@ -113,7 +133,11 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
         return false;
 
     runLanes(build.parallelLoops(), {
-        [&] { prepared.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(build.recordedOptions(), program, facts.hasOneInstance(), facts.matchesRegExps(), facts.mayReadLegacyRegExpStatics(), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckWalkAtRunTime))); },
+        [&] {
+            StubOptions options = StubOptions::from(build.recordedOptions(), program, facts.hasOneInstance(), facts.matchesRegExps(), facts.mayReadLegacyRegExpStatics(), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckWalkAtRunTime));
+            leaveOutCallsOfBuiltinsThatProgramCannotHold(options, program, facts);
+            prepared.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(options);
+        },
         [&] { prepared.facts->freeListsOfSummariesNotKeptForWalk(build.parallelLoops()); },
     });
     times.didFinish("make the stub catalog"_s);

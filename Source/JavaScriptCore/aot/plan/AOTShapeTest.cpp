@@ -658,7 +658,7 @@ static void encodePagedDistanceTable(DistancesByShape& result, std::span<const D
 
 static void encodeFlatDistanceTable(DistancesByShape& result, std::span<const DistanceOfShapes> members, uint32_t firstShape)
 {
-    result.table = Vector<uint8_t>(FillWith { }, static_cast<size_t>(result.lastShape - firstShape + 1) << result.logBytesPerDistance, static_cast<uint8_t>(0));
+    result.table = Vector<uint8_t>(FillWith { }, static_cast<size_t>(result.lastShape - firstShape + 1) << result.logBytesPerDistance, std::numeric_limits<uint8_t>::max());
     for (const DistanceOfShapes& member : members) {
         for (uint32_t shape = member.shapes.first; shape < member.shapes.end(); ++shape)
             writeDistanceTableElement(result.table.mutableSpan(), result.lastShape - shape, result.logBytesPerDistance, member.distance);
@@ -668,15 +668,15 @@ static void encodeFlatDistanceTable(DistancesByShape& result, std::span<const Di
 static DistancesByShape encodeDistancesOfStretches(std::span<const DistanceOfShapes> members, DistancesByComparison&& byComparison, DistanceForm form)
 {
     std::span<const DistanceOfShapes> stretches = byComparison.stretches.span();
-    DistancesByShape result { .form = form, .lastShape = stretches.back().shapes.end() - 1 };
+    DistancesByShape result { .form = form, .lastShape = stretches.back().shapes.end() - 1, .numberOfShapes = stretches.back().shapes.end() - stretches.front().shapes.first };
     if (form == DistanceForm::Comparisons) {
         result.comparisons = WTF::move(byComparison);
         return result;
     }
 
     uint32_t greatestDistance = std::ranges::max(stretches, { }, &DistanceOfShapes::distance).distance;
-    RELEASE_ASSERT(greatestDistance <= std::numeric_limits<uint16_t>::max());
-    result.logBytesPerDistance = greatestDistance > std::numeric_limits<uint8_t>::max();
+    RELEASE_ASSERT(greatestDistance < std::numeric_limits<uint16_t>::max());
+    result.logBytesPerDistance = greatestDistance >= std::numeric_limits<uint8_t>::max();
     if (form == DistanceForm::FlatTable) {
         encodeFlatDistanceTable(result, members, stretches.front().shapes.first);
         return result;

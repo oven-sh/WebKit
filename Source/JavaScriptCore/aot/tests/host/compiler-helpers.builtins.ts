@@ -19,7 +19,7 @@ const helpersIn = (file: string, usesByHelper: Readonly<Record<string, UsesByPar
     ]),
   );
 
-const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh.dense;
+const newArrayOf = (elements: b.TableType) => b.instance("Array").exactly.holding({ element: elements }).fresh.dense;
 const lengthOfNewArray = [b.runs("ToPrimitive")];
 const calledForEachIndex = (element: b.PlaceLike, ...others: readonly b.PlaceLike[]) => [
   b.called({

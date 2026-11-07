@@ -1,0 +1,33 @@
+# const act = globalThis.pick ? String.fromCharCode.bind(null) : Math.floor.bind(null); act(65.5)
+# Two bound functions that meet at one call are one type with the site of the first. What the two hold is not one thing, so the call goes by the rows of neither target:
+# its result is anything, which Link does not print: not the string of the one, not the number of the other.
+# The control stands beside this file: one-bound-function-alone-is-called-by-the-rows-of-its-target.ir
+# RUN: link functions mechanisms=all
+# CHECK: function f0
+# CHECK-NOT: function f0 {{*}}result=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Null
+    v2 = PropGet v0 key="pick"
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="String" [isFreeName]
+    v4 = PropGet v3 key="fromCharCode"
+    v5 = PropGet v4 key="bind"
+    v6 = Call v5, v4, v1 calleeKey="bind"
+    Jump -> next b3(v6)
+  b2():
+    v7 = PropGet v0 key="Math" [isFreeName]
+    v8 = PropGet v7 key="floor"
+    v9 = PropGet v8 key="bind"
+    v10 = Call v9, v8, v1 calleeKey="bind"
+    Jump -> next b3(v10)
+  b3(v11):
+    v12 = Double number=65.5
+    v13 = Call v11, -, v12
+    Return v13
+}

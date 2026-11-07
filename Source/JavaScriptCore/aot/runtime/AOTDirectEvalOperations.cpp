@@ -55,7 +55,7 @@ enum class EvalBindingForm : uint8_t { ModuleVariable, EnvironmentSlot, MappedAr
 
 static EvalBindingKind kindOf(const EvalBindingData& binding)
 {
-    RELEASE_ASSERT(binding.kind <= static_cast<uint32_t>(EvalBindingKind::SimpleCatchParameter));
+    RELEASE_ASSERT(binding.kind <= static_cast<uint32_t>(EvalBindingKind::PrivateAccessorPair));
     return static_cast<EvalBindingKind>(binding.kind);
 }
 
@@ -169,6 +169,8 @@ static std::optional<PrivateNameEntry> privateNameEntryOf(const EvalBindingData&
     case EvalBindingKind::EvalVariables:
     case EvalBindingKind::MappedArgument:
     case EvalBindingKind::SimpleCatchParameter:
+    case EvalBindingKind::PrivateFunction:
+    case EvalBindingKind::PrivateAccessorPair:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -270,7 +272,7 @@ public:
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 
     const EvalBindingData* find(VM&, PropertyName) const;
-    JSValue read(const EvalBindingData&) const;
+    JSValue read(JSGlobalObject*, const EvalBindingData&);
 
 private:
     EvalBindings(VM& vm, Structure* structure, Instance* instance, const DirectEvalRequest& request, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData> bindings)
@@ -287,6 +289,8 @@ private:
     std::span<const EvalBindingData> bindings() const { return unsafeMakeSpan(m_request->bindings + m_first, m_count); }
     uint32_t privateValueIndexOf(const EvalBindingData& binding) const { return m_operands->length() - m_request->numberOfBindings + static_cast<uint32_t>(&binding - m_request->bindings); }
     JSCell* createPrivateValue(VM&, const EvalBindingData&);
+    JSValue readWhatBindingHolds(uint32_t index) const;
+    JSValue readAccessorPair(JSGlobalObject*, const EvalBindingData&);
     JSObject* createStaticFieldAccessors(VM&, const EvalBindingData&);
     JSValue readStaticField(JSGlobalObject*, const EvalBindingData&) const;
     void storeStaticField(JSGlobalObject*, const EvalBindingData&, JSValue);
@@ -309,10 +313,39 @@ JSCell* EvalBindings::createPrivateValue(VM& vm, const EvalBindingData& binding)
         return createStaticFieldAccessors(vm, binding);
     if (kindOf(binding) == EvalBindingKind::PrivateName)
         return privateSymbolOf(m_instance, m_operands.get(), binding);
-    if (kindOf(binding) != EvalBindingKind::PrivateAccessor)
-        return nullptr;
-    JSCellButterfly* operands = m_operands.get();
-    return createAccessorPair(vm, realm(), operandOrEmpty(operands, binding.function), operandOrEmpty(operands, binding.setter));
+    return nullptr;
+}
+
+JSValue EvalBindings::readWhatBindingHolds(uint32_t index) const
+{
+    if (index == EvalBindingData::noOperand)
+        return JSValue();
+    return readBinding(m_instance, m_operands.get(), unsafeMakeSpan(m_request->bindings, m_request->numberOfBindings)[index]);
+}
+
+JSValue EvalBindings::readAccessorPair(JSGlobalObject* globalObject, const EvalBindingData& binding)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t indexOfPair = privateValueIndexOf(binding);
+    if (JSValue made = m_operands->get(indexOfPair))
+        return made;
+    JSValue getter = readWhatBindingHolds(binding.function);
+    JSValue setter = readWhatBindingHolds(binding.setter);
+    bool isHeldAsPair = binding.function != EvalBindingData::noOperand && kindOf(unsafeMakeSpan(m_request->bindings, m_request->numberOfBindings)[binding.function]) == EvalBindingKind::PrivateAccessorPair;
+    if (isHeldAsPair && getter && getter.isObject()) {
+        JSObject* held = asObject(getter);
+        getter = held->get(globalObject, vm.propertyNames->get);
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        setter = held->get(globalObject, vm.propertyNames->set);
+        RETURN_IF_EXCEPTION(scope, JSValue());
+    }
+    JSObject* pair = createAccessorPair(vm, realm(), getter, setter);
+    bool getterIsMade = binding.function == EvalBindingData::noOperand || (getter && getter.isCell());
+    bool setterIsMade = binding.setter == EvalBindingData::noOperand || (setter && setter.isCell());
+    if (getterIsMade && setterIsMade)
+        m_operands->setIndex(vm, indexOfPair, pair);
+    return pair;
 }
 
 JSObject* EvalBindings::createStaticFieldAccessors(VM& vm, const EvalBindingData& binding)
@@ -400,15 +433,17 @@ const EvalBindingData* EvalBindings::find(VM& vm, PropertyName name) const
     return nullptr;
 }
 
-JSValue EvalBindings::read(const EvalBindingData& binding) const
+JSValue EvalBindings::read(JSGlobalObject* globalObject, const EvalBindingData& binding)
 {
     EvalBindingKind kind = kindOf(binding);
     if (kind == EvalBindingKind::HomeObject)
         return m_homeObjectHolder.get();
-    if (kind == EvalBindingKind::PrivateName || kind == EvalBindingKind::PrivateAccessor)
+    if (kind == EvalBindingKind::PrivateName)
         return m_operands->get(privateValueIndexOf(binding));
+    if (kind == EvalBindingKind::PrivateAccessor)
+        return readAccessorPair(globalObject, binding);
     if (kind == EvalBindingKind::PrivateMethod)
-        return operandOrEmpty(m_operands.get(), binding.function);
+        return readWhatBindingHolds(binding.function);
     JSValue value = readBinding(m_instance, m_operands.get(), binding);
     if (kind == EvalBindingKind::This)
         return boundThisOrEmpty(value, m_request->isInDerivedConstructor);
@@ -428,7 +463,8 @@ bool EvalBindings::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalOb
         slot.setValue(object, attributesOf(kind), jsUndefined());
         return true;
     }
-    JSValue value = thisObject->read(*binding);
+    JSValue value = thisObject->read(globalObject, *binding);
+    RETURN_IF_EXCEPTION(scope, false);
     if (!value && kind != EvalBindingKind::This) {
         throwException(globalObject, scope, createTDZError(globalObject, StringView(name.uid())));
         return false;
@@ -498,7 +534,9 @@ bool EvalBindings::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName 
         return true;
     }
     RELEASE_ASSERT(isNamedBinding(kind));
-    if (!thisObject->read(*binding)) {
+    JSValue held = thisObject->read(globalObject, *binding);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!held) {
         throwException(globalObject, scope, createTDZError(globalObject, StringView(name.uid())));
         return false;
     }

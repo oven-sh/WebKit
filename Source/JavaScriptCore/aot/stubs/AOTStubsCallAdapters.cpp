@@ -407,6 +407,21 @@ void generateEnterClosure(StubAssembler& jit)
     emitStackOverflowPath(jit, entryCall);
 }
 
+StubSignature signatureOfStartModuleThatRunTimeNames(StubKey) { return { }; }
+
+void generateStartModuleThatRunTimeNames(StubAssembler& jit)
+{
+    const GPRReg start = jit.reuseScratch(StubRegister::A0);
+    const Address named(instanceGPR, AOT_INSTANCE_OFFSET(modules.moduleThatRunTimeStartsPlusOne));
+    jit.load32(named, start);
+    jit.store32(TrustedImm32(0), named);
+    Jump isNamed = jit.branchTest32(CCallHelpers::NonZero, start);
+    jit.breakpoint();
+    isNamed.link(&jit);
+    jit.sub32(TrustedImm32(1), start);
+    jit.jumpToStub(startModule());
+}
+
 StubSignature signatureOfStartModule(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0) }); }
 
 void generateStartModule(StubAssembler& jit)
@@ -438,6 +453,11 @@ void generateStartModule(StubAssembler& jit)
         hasThrown.append(jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2));
         jit.loadPtr(nextStepInFrame, nextStep);
     };
+
+    jit.zeroExtend32ToWord(start, start);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
+    jit.load8(BaseIndex(table, start, CCallHelpers::TimesOne), operand);
+    Jump hasBegunBeforeCall = jit.branch32(CCallHelpers::Above, operand, inRecord);
 
     Label entry = jit.label();
     jit.checkStackBeforeEntering();
@@ -554,6 +574,10 @@ void generateStartModule(StubAssembler& jit)
     returns.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
     jit.emitFunctionEpilogue();
+    jit.returnToCaller();
+
+    hasBegunBeforeCall.link(&jit);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
     jit.returnToCaller();
 
     hasThrown.link(&jit);

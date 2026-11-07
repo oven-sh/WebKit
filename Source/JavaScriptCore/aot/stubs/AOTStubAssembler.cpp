@@ -80,10 +80,16 @@ StubRecording StubAssembler::generateBody(StubKey body, const ScopedLambda<void(
     m_boxesBooleanAtEveryReturn = false;
     m_stubBehindEveryReturn = std::nullopt;
     m_outOfLineParts.clear();
+    m_entriesBehindTheirHeads.clear();
 
     if (m_signature.filledOutOfResultInFrontOfBody) {
-        alignWhatStandsBehind(sizeOfMoveInFrontOfStub);
+        const unsigned sizeOfHead = sizeOfHeadOfStub(m_signature.movedIntoResultInFront ? entryInFrontOfStubThatDoesTwoMoves : entryInFrontOfStub);
+        alignWhatStandsBehind(sizeOfHead);
+        const size_t begin = m_assembler.codeSize();
         CCallHelpers::move(GPRInfo::returnValueGPR, m_signature.filledOutOfResultInFrontOfBody.gpr());
+        if (m_signature.movedIntoResultInFront)
+            CCallHelpers::move(m_signature.movedIntoResultInFront.gpr(), GPRInfo::returnValueGPR);
+        RELEASE_ASSERT(m_assembler.codeSize() - begin == sizeOfHead);
     }
     if (!isOperationCallHead(body))
         align();
@@ -160,7 +166,7 @@ void StubAssembler::jumpToStubTakingImmediate()
 void StubAssembler::recordSignatureRegisters(StubKey entry)
 {
     StubSignature signature = signatureOf(entry);
-    if (signature.filledOutOfResultInFront && (signature.filledOutOfResultInFront != m_signature.filledOutOfResultInFrontOfBody || m_entryLabels.get(entry.bits()) != m_headOfBody))
+    if (signature.filledOutOfResultInFront && !m_entriesBehindTheirHeads.contains(entry) && (signature.filledOutOfResultInFront != m_signature.filledOutOfResultInFrontOfBody || m_entryLabels.get(entry.bits()) != m_headOfBody))
         crashWhileGenerating("an entry that has an operand filled in front does not stand at the head of the body"_s);
     if (signature.firstResult)
         recordClobber(signature.firstResult);
@@ -340,7 +346,7 @@ void StubAssembler::loadPreservedRegisters(std::span<const GPRReg> saved)
     addPtr(TrustedImm32(alignedSizeOfRegisters(saved.size())), stackPointerRegister);
 }
 
-StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep)
+StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep, unsigned bytesLeftFreeAbove)
 {
     Vector<Reg, 48> registers;
     registersClobberedBy(callee).forEach([&](Reg reg) {
@@ -356,10 +362,10 @@ StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCa
     }
 #if CPU(X86_64)
     unsigned bytes = alignedSizeOfRegisters(registers.size() + 2) - sizeof(CPURegister);
-    subPtr(TrustedImm32(bytes), stackPointerRegister);
+    subPtr(TrustedImm32(bytes + bytesLeftFreeAbove), stackPointerRegister);
 #else
     unsigned bytes = alignedSizeOfRegisters(registers.size() + 1);
-    subPtr(TrustedImm32(bytes), stackPointerRegister);
+    subPtr(TrustedImm32(bytes + bytesLeftFreeAbove), stackPointerRegister);
     storePtr(linkRegister, Address(stackPointerRegister));
 #endif
     for (unsigned i = 0; i < registers.size(); ++i) {
@@ -383,7 +389,7 @@ StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCa
     return { WTF::move(registers), bytes };
 }
 
-void StubAssembler::loadSavedRegisters(const SavedRegisterArea& area)
+void StubAssembler::loadSavedRegisters(const SavedRegisterArea& area, StackPointerAfterLoads stackPointer)
 {
     auto& registers = area.registers;
     for (unsigned i = 0; i < registers.size(); ++i) {
@@ -406,7 +412,8 @@ void StubAssembler::loadSavedRegisters(const SavedRegisterArea& area)
 #if !CPU(X86_64)
     loadPtr(Address(stackPointerRegister), linkRegister);
 #endif
-    addPtr(TrustedImm32(area.bytes), stackPointerRegister);
+    if (stackPointer == StackPointerAfterLoads::IsMovedBack)
+        addPtr(TrustedImm32(area.bytes), stackPointerRegister);
 }
 
 void StubAssembler::recordCall(Entry entry)
@@ -606,6 +613,19 @@ void StubAssembler::callThroughHandlerTable(BaseIndex tableEntry, std::span<cons
         addReference(handler, StubReference::Kind::Call);
     loadPtr(tableEntry, scratch);
     CCallHelpers::call(scratch, JITThunkPtrTag);
+}
+
+void StubAssembler::bindEntryBehindItsHead(StubKey entry)
+{
+    const StubSignature signature = signatureOf(entry);
+    RELEASE_ASSERT(signature.filledOutOfResultInFront && !signature.filledOutOfResultInFrontOfBody);
+    const size_t begin = m_assembler.codeSize();
+    CCallHelpers::move(GPRInfo::returnValueGPR, signature.filledOutOfResultInFront.gpr());
+    if (signature.movedIntoResultInFront)
+        CCallHelpers::move(signature.movedIntoResultInFront.gpr(), GPRInfo::returnValueGPR);
+    RELEASE_ASSERT(m_assembler.codeSize() - begin == sizeOfHeadOfStub(signature.movedIntoResultInFront ? entryInFrontOfStubThatDoesTwoMoves : entryInFrontOfStub));
+    m_entriesBehindTheirHeads.append(entry);
+    bindEntry(entry);
 }
 
 void StubAssembler::bindEntryAt(StubKey entry, Label location)

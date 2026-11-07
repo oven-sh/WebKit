@@ -86,7 +86,7 @@ void RuntimeIntrinsicEmitter::generateFindsDeclaredMember(const ValueContext& va
 
 void RuntimeIntrinsicEmitter::generateFindsNoMember(const ValueContext& value)
 {
-    if (value->receivers()) {
+    if (value->receivers() || value->asksObjectByInquiry()) {
         emitter<GuardEmitter>().defineWhetherNoMemberIsFound(value);
         return;
     }
@@ -104,6 +104,25 @@ void RuntimeIntrinsicEmitter::generateIsPlainHeirOf(const ValueContext& value)
         return;
     }
     defineAs(value, boolean(false), m_program.at(TypeTable::boolean));
+}
+
+void RuntimeIntrinsicEmitter::generateIsPrototypeChainPlain(const ValueContext& value)
+{
+    if (!value->conditions().isEmpty()) {
+        emitter<GuardEmitter>().defineWhetherPrototypeChainIsPlain(value);
+        return;
+    }
+    generateIsPlainHeirOf(value);
+}
+
+void RuntimeIntrinsicEmitter::generateIsAsBorn(const ValueContext& value)
+{
+    generateIsPlainHeirOf(value);
+}
+
+void RuntimeIntrinsicEmitter::generateIsAsBornExceptForAddedNames(const ValueContext& value)
+{
+    generateIsPlainHeirOf(value);
 }
 
 void RuntimeIntrinsicEmitter::generateIsPlainInstanceOf(const ValueContext& value)

@@ -168,35 +168,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTypedArrayIsDetached, void, (Instanc
     OPERATION_RETURN(scope);
 }
 
-template<typename View>
-static JSCell* makeRange(JSGlobalObject* globalObject, JSArrayBufferView* view, size_t start, size_t end)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RefPtr<ArrayBuffer> buffer = view->possiblySharedBuffer();
-    if (!buffer) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-    Structure* structure = globalObject->typedArrayStructure(View::TypedArrayStorageType, false);
-    if (!view->isDetached()) [[likely]]
-        RELEASE_AND_RETURN(scope, View::create(globalObject, structure, WTF::move(buffer), view->byteOffsetRaw() + start * View::elementSize, end - start));
-
-    View* range = View::create(globalObject, structure, 1);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RefPtr<ArrayBuffer> own = range->possiblySharedBuffer();
-    if (!own) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-    ArrayBufferContents taken;
-    bool isTaken = own->transferTo(vm, taken);
-    RELEASE_ASSERT(isTaken && range->isDetached());
-    range->butterfly()->indexingHeader()->setArrayBuffer(buffer.get());
-    vm.heap.addReference(range, buffer.get());
-    return range;
-}
-
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

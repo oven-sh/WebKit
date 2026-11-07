@@ -148,9 +148,15 @@ public:
     bool hasPassedAwaitOnStack() const { return m_flags & hasPassedAwaitOnStackFlag; }
     void notePassedAwaitOnStack() { m_flags |= hasPassedAwaitOnStackFlag; }
     bool goesOnInContextOfItsAwait() const { return m_flags & goesOnInContextOfItsAwaitFlag; }
+    void setGoesOnInContextOfItsAwait(bool goesOn)
+    {
+        m_flags = static_cast<uint8_t>((m_flags & ~goesOnInContextOfItsAwaitFlag) | (goesOn ? goesOnInContextOfItsAwaitFlag : 0));
+        m_asyncContext = JSValue::encode(jsUndefined());
+    }
     JSValue contextOfAwait() const { return m_asyncContext ? JSValue::decode(m_asyncContext) : jsUndefined(); }
     void setStepStatus(AsyncGeneratorStepStatus status) { m_flags = (m_flags & ~stepStatusMask) | static_cast<uint8_t>(status) << stepStatusShift; }
     AsyncGeneratorStepStatus stepStatus() const { return static_cast<AsyncGeneratorStepStatus>((m_flags & stepStatusMask) >> stepStatusShift); }
+    bool liesOnHeap() const { return m_numberOfSavedRegisterPairs & liesOnHeapBit; }
     const void* resumeAddress() const { return m_resumeAddress; }
     std::optional<uint64_t> wordAt(uint32_t location) const;
 
@@ -176,8 +182,9 @@ public:
     static constexpr unsigned stepStatusShift = 2;
     static constexpr uint8_t stepStatusMask = 3 << stepStatusShift;
     static constexpr uint8_t hasPassedAwaitOnStackFlag = 16;
-    static constexpr uint8_t isHeapFrameFlag = 32;
     static constexpr uint8_t goesOnInContextOfItsAwaitFlag = 64;
+    static constexpr uint8_t liesOnHeapBit = 128;
+    static constexpr unsigned throwsIntoAwaitShift = 8;
     static constexpr uint32_t minWordsForStringMove = 32;
     static constexpr size_t maxWordsAllocatedInStub = (MarkedSpace::largeCutoff - 64) / sizeof(uint64_t);
     static constexpr ptrdiff_t offsetOfNumberOfWords() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfWords); }
@@ -296,7 +303,7 @@ ALWAYS_INLINE void SavedFrame::visitFields(SavedFrame* saved, Visitor& visitor)
 {
     visitor.appendUnbarriered(saved->m_promiseOrWaiter);
     visitor.appendUnbarriered(JSValue::decode(saved->m_asyncContext));
-    if (saved->m_flags & isHeapFrameFlag) {
+    if (saved->liesOnHeap()) {
         for (uint32_t index = 0; index < saved->m_numberOfWords; ++index)
             visitor.appendUnbarriered(JSValue::decode(static_cast<EncodedJSValue>(WTF::atomicLoad(&saved->words()[index], std::memory_order_relaxed))));
         return;

@@ -1320,7 +1320,6 @@ static void checkReserveThatTheErrorForStructuresAndTablesTookIsKeptAgain()
     cage.addExhaustedHeap(MarkedBlockCage::ExhaustedHeap::Tables);
     AOT_TEST_CHECK(createOutOfMemoryError(realm));
     AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && cage.errorWaitsForPoll());
-    // As where a cell of the error needs a block.
     AOT_TEST_CHECK(cage.releaseReserve() && cage.reserveSize() < whole);
     didThrowOwedOutOfMemoryError(vm);
     AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && cage.errorWaitsForPoll());

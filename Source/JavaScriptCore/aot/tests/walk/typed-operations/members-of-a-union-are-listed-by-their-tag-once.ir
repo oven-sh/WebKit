@@ -31,6 +31,29 @@
 # RUN(SHELL): run-in-shell globalThis.sink = (...told) => { if (told.length) print(told.join()); };
 # SHELL: 2,3,4,5,2,3,4,5,2,3,4,5
 # SHELL-NEXT: exited with 0
+# testing=CheckProofsAtRunTime builds the same forms and holds what the shape answers against what the tag answers: behind a test the comparison as written,
+# on the edge of each case that case, on the last edge every case. A list of members that is wrong stops the run by name; it used to be silent as built and never built under the word.
+# RUN(SWITCHCHECKED): walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding testing=CheckProofsAtRunTime
+# SWITCHCHECKED-LABEL: code f1:Body
+# SWITCHCHECKED: [[tag]]: {{*}} = GetSlot {{*}}key="kind"
+# SWITCHCHECKED: SwitchOnShape
+# SWITCHCHECKED: = StrictEq [[tag]], {{*}}form=Generic
+# SWITCHCHECKED: [[led]]: boolean @Boolean = StrictEq {{*}}form=Generic
+# SWITCHCHECKED: CheckProof [[led]] checkedType=true {{*}}source=Field
+# RUN(ROWCHECKED): walk f2 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding testing=CheckProofsAtRunTime
+# ROWCHECKED-LABEL: code f2:Body
+# ROWCHECKED: [[tag]]: {{*}} = GetSlot {{*}}key="kind"
+# ROWCHECKED: [[byShape]]: boolean @Boolean = ShapeTest {{*}}layouts=[L0]
+# ROWCHECKED: = StrictEq [[tag]], {{*}}form=Generic
+# ROWCHECKED: [[agree]]: boolean @Boolean = StrictEq {{*}}form=Generic
+# ROWCHECKED: CheckProof [[agree]] checkedType=true {{*}}source=Field
+# ROWCHECKED: Branch [[byShape]]
+# RUN(NEVERASWRITTEN): walk f1 f2 f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding testing=CheckProofsAtRunTime
+# NEVERASWRITTEN-NOT: SwitchString
+# NEVERASWRITTEN-NOT: narrowsHolderOfOperand
+# RUN(SHELLCHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.sink = (...told) => { if (told.length) print(told.join()); };
+# SHELLCHECKED: 2,3,4,5,2,3,4,5,2,3,4,5
+# SHELLCHECKED-NEXT: exited with 0
 
 layout L0 name="Circle" module=m0 fields=[{key="kind" declared={type=undefined|null|"circle" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="r" declared={type=number} flags=[IsRequired]}]
 layout L1 name="Square" module=m0 fields=[{key="kind" declared={type=undefined|null|"square" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="s" declared={type=number} flags=[IsRequired]}]

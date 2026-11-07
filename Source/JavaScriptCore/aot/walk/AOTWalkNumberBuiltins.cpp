@@ -15,9 +15,11 @@
 #include "AOTOperatorForms.h"
 #include "AOTSchemaInlineBuiltins.h"
 #include "AOTTypeArena.h"
+#include "ParseInt.h"
 #include <array>
 #include <bit>
 #include <cmath>
+#include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 
 #include "AOTWalkNumberGuesses.h"
@@ -281,7 +283,7 @@ static Reference buildFunctionOfOneNumberInNumberBuiltins(Walker& walker, const 
 
 static Reference constantWhereRowLeavesOneIntegerInNumberBuiltins(Walker& walker, const CallByOneRow& call)
 {
-    if (!walker.has(Mechanism::Folding) || call.arguments.empty() || !takesOnlyNumbersInNumberBuiltins(walker, call))
+    if (!walker.has(Mechanism::Folding) || walker.checksProofs() || call.arguments.empty() || !takesOnlyNumbersInNumberBuiltins(walker, call))
         return { };
     TypeID result = walker.resultTypeOf(draftOfCodeInLineInNumberBuiltins(walker, call, call.arguments));
     if (!result)
@@ -373,6 +375,87 @@ static Reference buildConversionByCallInNumberBuiltins(Walker& walker, const Cal
     return { };
 }
 
+static Reference buildParsedIntegerOfFractionInNumberBuiltins(Walker& walker, const CallByOneRow& call, Reference number)
+{
+    auto holds = [&](Opcode relation, Reference left, Reference right) {
+        return buildOperatorInNumberForms(walker, relation, left, right, call.origin);
+    };
+    auto written = [&](double value) {
+        return walker.constant(PrimitiveKnownToFolding::number(value));
+    };
+    const BodyIndex& index = walker.currentBodyIndex();
+    BlockID inputBlock = index.blockOf(call.call.id());
+    uint32_t place = call.call.id().index() - index.block(inputBlock).firstValue().index();
+
+    BlockID truncating = walker.addBlock();
+    BlockID parsing = walker.addBlock(BlockFrequency::Rare);
+    BlockID notTiny = walker.addBlock();
+    BlockID belowTiny = walker.addBlock();
+    BlockID atMostMinusOne = walker.addBlock();
+    BlockID aroundZero = walker.addBlock();
+    walker.branch(holds(Opcode::LessEq, written(0.000001), number), notTiny, belowTiny);
+    walker.continueIn(notTiny);
+    walker.branch(holds(Opcode::LessEq, number, written(maxSafeInteger())), truncating, parsing);
+    walker.continueIn(belowTiny);
+    walker.branch(holds(Opcode::LessEq, number, written(-1)), atMostMinusOne, aroundZero);
+    walker.continueIn(atMostMinusOne);
+    walker.branch(holds(Opcode::LessEq, written(-maxSafeInteger()), number), truncating, parsing);
+    walker.continueIn(aroundZero);
+    walker.branch(holds(Opcode::StrictEq, number, written(0)), truncating, parsing);
+
+    Vector<Walker::ArmThatMeets, 2> arms;
+    walker.continueIn(truncating);
+    Draft truncation(Opcode::ToIntegerOrInfinity, call.origin);
+    walker.chooseConservativeFields(truncation);
+    truncation.setValueOperand(number);
+    if (Reference truncated = walker.build(WTF::move(truncation)))
+        arms.append(Walker::ArmThatMeets { walker.currentBlock(), { truncated } });
+    walker.continueIn(parsing);
+    {
+        Walker::ClosedArm closedArm(walker);
+        walker.walkStretch(inputBlock, place, place + 1);
+        if (walker.hasFailed())
+            return { };
+        if (!walker.isUnreachable())
+            arms.append(Walker::ArmThatMeets { walker.currentBlock(), { walker.referenceOf(call.call.id()) } });
+    }
+    std::array<Reference, 1> met;
+    return !arms.isEmpty() && walker.letArmsMeet(arms.span(), walker.addBlock(), met) ? met[0] : Reference();
+}
+
+static Reference buildParseOfNumberInNumberBuiltins(Walker& walker, const CallByOneRow& call)
+{
+    const BuiltinTable& table = walker.program().builtins();
+    BuiltinID builtin = table.canonicalID(call.builtin);
+    bool parsesInteger = builtin == table.canonicalID(Builtins::ParseInt);
+    if ((!parsesInteger && builtin != table.canonicalID(Builtins::ParseFloat)) || call.call.opcode() != Opcode::Call || call.isForwarded || !walker.has(Mechanism::Folding))
+        return { };
+    std::span<const ValueID> arguments = argumentsWrittenInNumberBuiltins(call.call);
+    if (arguments.empty() || !arguments[0])
+        return { };
+    Reference number = walker.referenceOf(arguments[0]);
+    Type type = typeOfBuiltInNumberBuiltins(walker, number);
+    if (!type.isNumber())
+        return { };
+    if (parsesInteger && arguments.size() > 1) {
+        PrimitiveKnownToFolding radix = arguments[1] ? primitiveKnownInNumberForms(walker, walker.referenceOf(arguments[1])) : PrimitiveKnownToFolding();
+        bool isDecimal = radix.kind() == PrimitiveKnownToFolding::Kind::Undefined || (radix.kind() == PrimitiveKnownToFolding::Kind::Number && (!radix.asNumber() || radix.asNumber() == 10));
+        if (!isDecimal)
+            return { };
+    }
+    if (type.isInteger())
+        return number;
+    if (PrimitiveKnownToFolding known = primitiveKnownInNumberForms(walker, number); known.kind() == PrimitiveKnownToFolding::Kind::Number) {
+        std::optional<double> parsed = parsesInteger ? parseIntDouble(known.asNumber()) : std::optional<double>(known.asNumber() + 0.0);
+        return parsed ? walker.constant(PrimitiveKnownToFolding::number(*parsed)) : Reference();
+    }
+    if (!parsesInteger)
+        return buildOperatorInNumberForms(walker, Opcode::Add, number, integerInNumberForms(walker, 0), call.origin);
+    const BodyIndex& index = walker.currentBodyIndex();
+    bool standsInLoop = walker.isInLoop() || index.loopDepthOf(index.blockOf(call.call.id()));
+    return standsInLoop && walker.opensGuesses() && number.isValue() ? buildParsedIntegerOfFractionInNumberBuiltins(walker, call, number) : Reference();
+}
+
 Reference buildCallOnNumbers(Walker& walker, const CallByOneRow& call)
 {
     if (!hasMechanismsOfNumberForms(walker))
@@ -392,6 +475,8 @@ Reference buildCallOnNumbers(Walker& walker, const CallByOneRow& call)
         return simpler;
     if (Reference converted = buildConversionByCallInNumberBuiltins(walker, call))
         return converted;
+    if (Reference parsed = buildParseOfNumberInNumberBuiltins(walker, call))
+        return parsed;
     if (Reference charCode = buildCharCode(walker, call))
         return charCode;
     return { };

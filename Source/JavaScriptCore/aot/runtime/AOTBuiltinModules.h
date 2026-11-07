@@ -28,6 +28,7 @@ class VM;
 
 namespace AOT {
 
+class Image;
 struct State;
 struct Instance;
 
@@ -61,8 +62,10 @@ bool refusesToInterpret(JSGlobalObject*, ScriptExecutable&);
 JS_EXPORT_PRIVATE void admitFunctionOfTestRunner(VM&, FunctionExecutable&);
 JS_EXPORT_PRIVATE bool refusesToRun(JSFunction*);
 JS_EXPORT_PRIVATE bool isNeededByNothingThatRuns(JSFunction*);
+bool lacksOnlyWhatReachMissed(const Image&);
 void throwLibraryFunctionNotCompiled(JSGlobalObject*, ScriptExecutable&);
 JS_EXPORT_PRIVATE void throwBuiltinNotCompiled(JSGlobalObject*, const String& builtin);
+JS_EXPORT_PRIVATE void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject*);
 
 } // namespace AOT
 } // namespace JSC

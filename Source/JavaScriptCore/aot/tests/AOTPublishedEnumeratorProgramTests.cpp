@@ -66,16 +66,17 @@ function f6 name="setPrototype" parameters=[{type=anything}, {type=anything}] re
 }
 )IR"_s;
 
-static constexpr ASCIILiteral statements = R"JS(
+static constexpr ASCIILiteral statements = COUNTED_CALLS(R"("GetPropertyEnumerator", "OpenEnumeration")") R"JS(
 globalThis.publish = (makePair, makeReversedPair, walk, set, remove, setPrototype) => {
     let keys = "";
     const note = key => { keys += " " + key; };
     const show = (what, create) => {
+        const before = countedCalls();
         for (let i = 0; i < 50; i++) {
             keys = "";
             walk(create(i), note);
         }
-        print(what + ":" + keys);
+        print(what + ":" + keys + servedBy(before, 50, 4));
     };
     show("pairs", makePair);
     show("reversed pairs", makeReversedPair);
@@ -122,6 +123,7 @@ static void testForInListsTheKeysOfEachObject()
 {
     checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s }, statements);
     checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s }, statements);
+    checkServicesInShell(__FILE__, __LINE__, programText, expectedOutput, statements, wordsOfCaches, "cccccccnnncccccc"_s, { "references=narrow"_s });
 }
 
 std::span<const NativeTest> publishedEnumeratorProgramTests()

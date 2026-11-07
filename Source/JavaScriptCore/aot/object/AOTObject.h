@@ -267,6 +267,7 @@ public:
     };
     ExtraPropertyStoreResult tryStoreExtraProperty(VM&, PropertyName, JSValue, OptionSet<ExtraPropertyStoreFlag>);
     void willAddExtraProperty(VM&, PropertyName, bool isSpelledByProgram = true);
+    [[nodiscard]] bool mayAddExtraProperty(VM&, PropertyName, bool isSpelledByProgram = true);
 
     std::span<const uint16_t> keyOrder(State&) const;
     void forEachKeyInOrder(State& state, const Invocable<void(uint16_t)> auto& functor) const
@@ -294,6 +295,8 @@ public:
     std::optional<uint32_t> numberOfExtraKeysByStructure() const;
     void willCreateField(State&, const FieldData&);
     void didCreateField(State&, const FieldData&, bool withStorage = true);
+    bool tryRepeatCreationAtSlot(State&, uint32_t slotKey);
+    void rememberCreationAtSlot(State&, StructureID before, uint32_t orderAndCountBefore, uint32_t slotKey) const;
     void setKeyOrder(VM&, State&, std::span<const uint16_t> keys);
     bool trySetNumberedKeyOrder(VM&, State&, std::span<const uint16_t> keys);
     struct PlaceOfExtraKey {

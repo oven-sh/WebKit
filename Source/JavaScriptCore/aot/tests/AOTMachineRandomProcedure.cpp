@@ -307,6 +307,10 @@ static uint64_t evaluateRandomOperationOn(Opcode opcode, T left, T right)
         if constexpr (isInteger)
             return answer(a >> (b & amountMask));
         break;
+    case RotR:
+        if constexpr (isInteger)
+            return answer(std::rotr(a, static_cast<int>(b & amountMask)));
+        break;
     case Clz:
         if constexpr (isInteger)
             return static_cast<uint64_t>(std::countl_zero(a));

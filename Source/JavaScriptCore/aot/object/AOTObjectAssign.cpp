@@ -343,7 +343,7 @@ bool Object::tryDefineFields(VM& vm, std::span<UniquedStringImpl* const> names, 
     uint64_t granuleBits = 0;
     for (size_t i = 0; i < names.size(); ++i) {
         const FieldData* field = layouts.field(vm, layout, names[i]);
-        if (!field || field->flags & fieldAttributeFlags || field->slot.representation() == SlotRepresentation::DeferredClosure)
+        if (!field || isPreparedBeforeLookups(vm, names[i]) || field->flags & fieldAttributeFlags || field->slot.representation() == SlotRepresentation::DeferredClosure)
             return false;
         fields.append(field);
         if (!attributes.empty() && attributes[i]) {
@@ -1778,8 +1778,8 @@ bool tryDefinePropertiesOnOrdinaryObject(VM& vm, State& state, JSObject* target,
     if (assignmentSource->compiledObject && &assignmentSource->compiledObject->state() != &state)
         return false;
     DeferGC deferGC(vm);
-    AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFor(vm, target, nullptr, *assignmentSource);
-    if (!plan->isUsable)
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFromSecondCopyOn(vm, target, nullptr, *assignmentSource);
+    if (!plan || !plan->isUsable)
         return false;
     Vector<EncodedJSValue, 16> values;
     for (auto& store : plan->extraPropertyStores) {

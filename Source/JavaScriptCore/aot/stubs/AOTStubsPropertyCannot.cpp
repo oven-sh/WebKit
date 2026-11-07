@@ -74,7 +74,7 @@ void generateCallGetterOfAnswer(StubAssembler& jit)
     RELEASE_ASSERT(signatureOfSlotCannot(finisher).operands[firstOperandOfFinisher] == Reg(jit.operand(1)) && signatureOfSlotCannot(finisher).operands[0] == Reg(jit.operand(0)));
     jit.recordClobbers(RegisterSet { gprOf(slotHeaderRegister), gprOf(slotPayloadRegister), gprOf(slotNameRegister) });
     JumpList cannot;
-    callGetterAndReturn(jit, jit.operand(0), jit.operand(1), cannot);
+    callGetterAndReturn(jit, jit.operand(0), jit.clobberOperand(1), cannot);
     jit.linkToStub(cannot, finisher);
 }
 

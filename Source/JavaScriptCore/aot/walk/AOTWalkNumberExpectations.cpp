@@ -458,7 +458,7 @@ ExpectationOfNumber numbersExpectedOf(Walker& walker, ValueID input, Expectation
 {
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers))
         return found;
-    if (isLeftAsFoundInNumberExpectations(walker.rememberedExpectationOf(input)))
+    if (isLeftAsFoundInNumberExpectations(walker.expectationRememberedOf(input)))
         return found;
     TypeArena& types = walker.types();
     TypeID proven = provenTypeInNumberExpectations(walker, input);

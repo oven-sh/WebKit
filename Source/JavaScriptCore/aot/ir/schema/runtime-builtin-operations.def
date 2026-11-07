@@ -30,6 +30,7 @@ runtime NewArrayFromDoubles : JSCell* (uint32_t countAndNumberMask, double, doub
 runtime NewArrayIterator : JSCell* (JSCell* array, uint32_t kind) ; RuntimeAllocates
 runtime TruncateNewArray : JSCell* (JSCell* array, uint32_t length) ; RuntimeGrowsArray writes(ShapeWords)
 runtime NewArrayWithHoles : JSCell* (JSCell* source, uint64_t length, uint32_t indexingType, uint32_t flags) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime NewArrayWithHolesAtSite : JSCell* (void* profile, JSCell* source, uint64_t length, uint32_t seedIndexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 
 runtime OwnPropertyKeys : JSCell* (EncodedJSValue object, uint32_t kind) ; unknownCode
 runtime ObjectValues, ObjectEntries : JSCell* (EncodedJSValue object) ; unknownCode
@@ -73,8 +74,14 @@ runtime ParseInt8 : double (const Latin1Character* characters, uint32_t length, 
 runtime ParseInt16 : double (const char16_t* characters, uint32_t length, int32_t radix) ; reads(StringStorage) ; leaf preserveMost
 runtime StringToNumber8 : double (const Latin1Character* characters, uint32_t length) ; reads(StringStorage) ; leaf preserveMost
 runtime StringToNumber16 : double (const char16_t* characters, uint32_t length) ; reads(StringStorage) ; leaf preserveMost
+runtime FindCharacters8InMap : int64_t (JSCell* map, const Latin1Character* characters, uint32_t length) ; reads(CollectionStorage, CollectionEntries, StringStorage) ; leaf
+runtime FindCharacters16InMap : int64_t (JSCell* map, const char16_t* characters, uint32_t length) ; reads(CollectionStorage, CollectionEntries, StringStorage) ; leaf
 runtime StringFindCharacter8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t character, uint32_t start) ; reads(StringStorage) ; leaf preserveMost
 runtime StringFindCharacter16 : size_t (const char16_t* characters, uint32_t length, uint32_t character, uint32_t start) ; reads(StringStorage) ; leaf preserveMost
+runtime StringFindSeparators8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t separator, uint32_t countAndWhetherAllAreCounted, uint32_t* bounds) ; reads(StringStorage) ; leaf preserveMost
+runtime StringFindSeparators16 : size_t (const char16_t* characters, uint32_t length, uint32_t separator, uint32_t countAndWhetherAllAreCounted, uint32_t* bounds) ; reads(StringStorage) ; leaf preserveMost
+runtime StringFindLongSeparators8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t countAndWhetherAllAreCounted, uint32_t* bounds) ; reads(StringStorage) ; leaf preserveMost
+runtime StringFindLongSeparators16 : size_t (const char16_t* characters, uint32_t length, uint32_t text, uint32_t countAndWhetherAllAreCounted, uint32_t* bounds) ; reads(StringStorage) ; leaf preserveMost
 runtime StringReverseFindCharacter8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t character, int32_t position) ; reads(StringStorage) ; leaf preserveMost
 runtime StringReverseFindCharacter16 : size_t (const char16_t* characters, uint32_t length, uint32_t character, int32_t position) ; reads(StringStorage) ; leaf preserveMost
 runtime StringFind8 : size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, uint32_t start) ; reads(StringStorage) ; leaf preserveMost
@@ -109,9 +116,12 @@ runtime NarrowCharactersOfString : size_t (JSCell* string) ; reads(all)
 effects RuntimeMatchesRegExp = reads(all) writes(RegExpState, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime RegExpExec : EncodedJSValue (JSCell* regExp, JSCell* string) ; unknownCode
 runtime RegExpTest : size_t (JSCell* regExp, JSCell* string) ; unknownCode
+runtime RegExpMatchFlatProgram8 : int64_t (void* program, const Latin1Character* characters, uint32_t length, uint32_t* output, void* instance) ; none ; leaf
+runtime RegExpMatchFlatProgram16 : int64_t (void* program, const char16_t* characters, uint32_t length, uint32_t* output, void* instance) ; none ; leaf
 runtime RegExpTestBoxed : EncodedJSValue (JSCell* regExp, JSCell* string) ; unknownCode
 runtime RegExpMatchLiteral : EncodedJSValue (JSCell* regExp, JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
 runtime RegExpMatchLiteralWithoutObject : EncodedJSValue (JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
+runtime RegExpMatchInParts : EncodedJSValue (JSCell* regExp, JSCell* string) ; unknownCode
 runtime NewRegExpLiteral : JSCell* (uint32_t regExpRecord, uint32_t flags, uint32_t staticsOffset) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime SharedRegExpLiteral : JSCell* (uint32_t staticsOffset, uint32_t regExpRecord, uint32_t flags) ; RuntimeCreatesConstant
 runtime CopyOfSharedRegExpLiteral : JSCell* (JSCell* shared) ; reads(all) writes(AllocatorState, RuntimeState) throws collects

@@ -8,7 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
+#include "AOTClosureWord.h"
 #include "AOTCompiledStructure.h"
+#include "AOTFunctionData.h"
+#include "AOTProgramTables.h"
 #include "AOTPropertyCachesWords.h"
 #include "AOTFieldTable.h"
 #include "AOTImageText.h"
@@ -31,6 +34,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <wtf/Noncopyable.h>
@@ -51,6 +55,18 @@ template<void (*test)()>
     stubOfPropertyReads = getByIdCalledByCode();
     test();
     stubOfPropertyReads = getById();
+}
+
+static constexpr uint32_t instructionsOfProbeThatFindsNoField = 8;
+
+static constinit bool readAtPlaceAsksStructureFirst = false;
+
+template<void (*test)()>
+[[maybe_unused]] static void withStubThatAsksStructureFirst()
+{
+    readAtPlaceAsksStructureFirst = true;
+    test();
+    readAtPlaceAsksStructureFirst = false;
 }
 
 namespace {
@@ -704,6 +720,121 @@ static void testTypedArrayLengths()
     AOT_TEST_CHECK(isLeftToOperation(ResizableNonSharedWastefulTypedArray, 7));
 }
 
+static void testWhetherLengthIsWrittenInteger()
+{
+    PropertyReads reads;
+    StubRunner& runner = reads.runner;
+    auto says = [&](unsigned integer, uint64_t receiver) {
+        StubRun run = runner.run(lengthIs(integer), { receiver }, PropertyReads::name);
+        AOT_TEST_CHECK(!run.calledOperation);
+        return !!run.result;
+    };
+    auto holdsForEveryInteger = [&](uint64_t receiver, uint32_t length) {
+        for (unsigned integer = 0; integer <= greatestIntegerThatLengthIsAskedFor; ++integer) {
+            if (says(integer, receiver) != (length == integer))
+                return false;
+        }
+        return true;
+    };
+    constexpr std::array<uint32_t, 5> lengths { 0, 1, 2, 7, 8 };
+
+    std::array<uint32_t, 4> storage { };
+    FakeObject<16> list;
+    list.setHeader(PropertyReads::structureID, ArrayType);
+    list.at<uint64_t>(JSObject::butterflyOffset()) = std::bit_cast<uintptr_t>(storage.data() + 2);
+    static_assert(Butterfly::offsetOfPublicLength() == -static_cast<ptrdiff_t>(2 * sizeof(uint32_t)));
+    for (IndexingType kind : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, ArrayWithArrayStorage, CopyOnWriteArrayWithContiguous }) {
+        list.at<uint8_t>(JSCell::indexingTypeAndMiscOffset()) = kind;
+        for (uint32_t length : lengths) {
+            storage[0] = length;
+            AOT_TEST_CHECK(holdsForEveryInteger(list.address(), length));
+        }
+    }
+
+    std::array<uint32_t, 8> characters { };
+    FakeObject<32> text;
+    text.setHeader(PropertyReads::structureID, StringType);
+    text.at<uint64_t>(JSString::offsetOfValue()) = std::bit_cast<uintptr_t>(characters.data());
+    for (uint32_t length : lengths) {
+        characters[StringImpl::lengthMemoryOffset() / sizeof(uint32_t)] = length;
+        AOT_TEST_CHECK(holdsForEveryInteger(text.address(), length));
+    }
+    text.at<uint64_t>(JSString::offsetOfValue()) = JSString::isRopeInPointer;
+    for (uint32_t length : lengths) {
+        text.at<uint32_t>(JSRopeString::offsetOfLength()) = length;
+        AOT_TEST_CHECK(holdsForEveryInteger(text.address(), length));
+    }
+
+    auto isLeftToRoadByName = [&](uint64_t receiver) {
+        runner.forgetAccessTable();
+        return runner.run(lengthIs(1), { receiver }, PropertyReads::name).calledOperation;
+    };
+
+    Instance& instance = runner.instance();
+    FakeObject<sizeof(JSArrayBufferView)> buffer;
+    buffer.setHeader(PropertyReads::structureID, Uint8ArrayType);
+    buffer.at<uint8_t>(JSArrayBufferView::offsetOfMode()) = WastefulTypedArray;
+    buffer.at<uint64_t>(JSArrayBufferView::offsetOfLength()) = 1;
+    AOT_TEST_CHECK(isLeftToRoadByName(buffer.address()));
+    instance.receiverStructureID(Receiver::Buffer) = PropertyReads::structureID;
+    for (uint32_t length : lengths) {
+        buffer.at<uint64_t>(JSArrayBufferView::offsetOfLength()) = length;
+        AOT_TEST_CHECK(holdsForEveryInteger(buffer.address(), length));
+    }
+    instance.builtins.someClassOfViewsWasWrittenAbove = 1;
+    AOT_TEST_CHECK(isLeftToRoadByName(buffer.address()));
+    instance.builtins.someClassOfViewsWasWrittenAbove = 0;
+    buffer.at<uint8_t>(JSArrayBufferView::offsetOfMode()) = ResizableNonSharedWastefulTypedArray;
+    AOT_TEST_CHECK(isLeftToRoadByName(buffer.address()));
+    buffer.at<uint8_t>(JSArrayBufferView::offsetOfMode()) = WastefulTypedArray;
+    instance.receiverStructureID(Receiver::Buffer) = PropertyReads::structureID + 64;
+    AOT_TEST_CHECK(isLeftToRoadByName(buffer.address()));
+    instance.receiverStructureID(Receiver::Buffer) = 0;
+
+    constexpr uint32_t numberOfClosure = 5;
+    auto memoryOfTables = std::make_unique<uint64_t[]>(sizeof(ProgramTables) / sizeof(uint64_t) + 2);
+    auto* tables = reinterpret_cast<ProgramTables*>(memoryOfTables.get());
+    uint8_t* lengthsOfFunctions = reinterpret_cast<uint8_t*>(memoryOfTables.get()) + sizeof(ProgramTables);
+    tables->ranges[static_cast<unsigned>(ProgramTableIndex::functionLengths)] = { static_cast<uint32_t>(sizeof(ProgramTables)), 8 };
+    const ProgramTables* tablesBefore = std::exchange(instance.image.tables, tables);
+    FakeObject<16> closure;
+    closure.setHeader(PropertyReads::structureID, SlimClosureType);
+    closure.at<uint64_t>(offsetOfSlimClosureWord) = static_cast<uint64_t>(numberOfClosure) << ClosureWord::functionShift | 0x1234;
+    for (uint32_t length : lengths) {
+        lengthsOfFunctions[numberOfClosure] = length;
+        AOT_TEST_CHECK(holdsForEveryInteger(closure.address(), length));
+    }
+    lengthsOfFunctions[numberOfClosure] = countsAreListed;
+    AOT_TEST_CHECK(isLeftToRoadByName(closure.address()));
+    lengthsOfFunctions[numberOfClosure] = 1;
+    closure.setHeader(PropertyReads::structureID, SlimClosureWithPropertiesType);
+    AOT_TEST_CHECK(isLeftToRoadByName(closure.address()));
+    instance.image.tables = tablesBefore;
+
+    reads.file(Slot::createWithoutPayload(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::TypedArrayLength, 0));
+    FakeObject<sizeof(JSArrayBufferView)> other;
+    other.setHeader(PropertyReads::structureID, Uint8ArrayType);
+    other.at<uint8_t>(JSArrayBufferView::offsetOfMode()) = ResizableNonSharedWastefulTypedArray;
+    auto saysOfWhatOperationFinds = [&](unsigned integer, JSValue found) {
+        runner.forgetAccessTable();
+        runner.recordCallsOf(Entry::operationAOTGetById);
+        runner.setResultOfRecordedOperation(bitsOf(found));
+        StubRun run = runner.run(lengthIs(integer), { other.address() }, PropertyReads::name);
+        runner.countCallsOf(Entry::operationAOTGetById);
+        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == other.address() && static_cast<uint32_t>(run.recordedArguments[1]) == PropertyReads::name);
+        return !!run.result;
+    };
+    for (unsigned integer = 0; integer <= greatestIntegerThatLengthIsAskedFor; ++integer) {
+        for (int32_t found = -1; found <= 8; ++found) {
+            AOT_TEST_CHECK(saysOfWhatOperationFinds(integer, jsNumber(found)) == (found == static_cast<int32_t>(integer)));
+            AOT_TEST_CHECK(saysOfWhatOperationFinds(integer, JSValue(JSValue::EncodeAsDouble, static_cast<double>(found))) == (found == static_cast<int32_t>(integer)));
+        }
+        AOT_TEST_CHECK(saysOfWhatOperationFinds(integer, JSValue(JSValue::EncodeAsDouble, -0.0)) == !integer);
+        for (JSValue found : { jsUndefined(), jsNull(), jsBoolean(true), jsBoolean(false), JSValue(JSValue::EncodeAsDouble, 0.5), JSValue(JSValue::EncodeAsDouble, PNaN), JSValue(std::bit_cast<JSCell*>(other.address())) })
+            AOT_TEST_CHECK(!saysOfWhatOperationFinds(integer, found));
+    }
+}
+
 namespace {
 
 class FieldTable {
@@ -963,6 +1094,7 @@ static void testMissingFieldsAnsweredByFieldTable()
     AOT_TEST_CHECK(reads.read(withClosure.address()).calledOperation);
 }
 
+template<int onlyRow = -1, uint32_t instructionsThatWereEnough = 0>
 static void testInstructionsOfReadsByKindOfField()
 {
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
@@ -986,21 +1118,23 @@ static void testInstructionsOfReadsByKindOfField()
     };
     auto absent = [](SlotRepresentation representation) { return traitsOf(representation).absentBits; };
     const Read readsByKind[] = {
-        { "a boxed value"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, bitsOf(jsNumber(7)), jsNumber(7), 40, 19 },
-        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 7, jsNumber(7), 49, 36 },
-        { "a narrow reference"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, MarkedBlockCage::encode(cageBase, std::bit_cast<JSCell*>(cell.address())), JSValue(std::bit_cast<JSCell*>(cell.address())), 51, 38 },
-        { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, JSValue::ValueTrue, jsBoolean(true), 56, 43 },
-        { "a boolean"_s, FieldTable::shapeWithBoolean, SlotRepresentation::Boolean, 1, jsBoolean(true), 57, 44 },
-        { "a double"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, std::bit_cast<uint64_t>(0.5), jsDoubleNumber(0.5), 62, 49 },
-        { "a 64-bit integer"_s, FieldTable::shapeWithInt64, SlotRepresentation::OptionalInt64, 7, jsNumber(7), 60, 47 },
-        { "a boxed value that is missing"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, absent(SlotRepresentation::JSValue), jsUndefined(), 44, 44 },
-        { "an optional boolean that is missing"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, absent(SlotRepresentation::OptionalBoolean), jsUndefined(), 71, 58 },
-        { "an integer that is missing"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, absent(SlotRepresentation::OptionalInt32), jsUndefined(), 94, 81 },
-        { "a narrow reference that is missing"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, absent(SlotRepresentation::OptionalCell32), jsUndefined(), 101, 88 },
-        { "a double that is missing"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, absent(SlotRepresentation::OptionalDouble), jsUndefined(), 116, 103 },
+        { "a boxed value"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, bitsOf(jsNumber(7)), jsNumber(7), 17, 17 },
+        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 7, jsNumber(7), 21, 21 },
+        { "a narrow reference"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, MarkedBlockCage::encode(cageBase, std::bit_cast<JSCell*>(cell.address())), JSValue(std::bit_cast<JSCell*>(cell.address())), 24, 24 },
+        { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, JSValue::ValueTrue, jsBoolean(true), 31, 31 },
+        { "a boolean"_s, FieldTable::shapeWithBoolean, SlotRepresentation::Boolean, 1, jsBoolean(true), 32, 32 },
+        { "a double"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, std::bit_cast<uint64_t>(0.5), jsDoubleNumber(0.5), 37, 37 },
+        { "a 64-bit integer"_s, FieldTable::shapeWithInt64, SlotRepresentation::OptionalInt64, 7, jsNumber(7), 35, 35 },
+        { "a boxed value that is missing"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, absent(SlotRepresentation::JSValue), jsUndefined(), 32, 32 },
+        { "an optional boolean that is missing"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, absent(SlotRepresentation::OptionalBoolean), jsUndefined(), 46, 46 },
+        { "an integer that is missing"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, absent(SlotRepresentation::OptionalInt32), jsUndefined(), 66, 66 },
+        { "a narrow reference that is missing"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, absent(SlotRepresentation::OptionalCell32), jsUndefined(), 74, 74 },
+        { "a double that is missing"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, absent(SlotRepresentation::OptionalDouble), jsUndefined(), 91, 91 },
     };
     bool isWithinBudget = true;
     for (const Read& read : readsByKind) {
+        if (onlyRow >= 0 && &read != &readsByKind[std::max(onlyRow, 0)])
+            continue;
         table.field() = { };
         table.field().name = PropertyReads::name;
         table.field().slot = SlotData::create(FakeTypedObject::offsetOfField, read.representation);
@@ -1012,7 +1146,11 @@ static void testInstructionsOfReadsByKindOfField()
         isWithinBudget &= isWithinBudgetOfRead(run, read.budget, firstReadByName, read.what);
         run = reads.readAgain(object.address());
         AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(read.expected));
-        isWithinBudget &= isWithinBudgetOfRead(run, read.budgetOfNextRead, nextReadByName, read.what);
+        isWithinBudget &= isWithinBudgetOfRead(run, onlyRow >= 0 ? instructionsThatWereEnough : read.budgetOfNextRead, nextReadByName, read.what);
+    }
+    if (onlyRow >= 0) {
+        AOT_TEST_CHECK(isWithinBudget);
+        return;
     }
 
     FakeExtension extension(FakeExtension::bitOfSlot);
@@ -1022,14 +1160,15 @@ static void testInstructionsOfReadsByKindOfField()
     withOutOfLineValue.field() = extension.encode(cageBase);
     StubRun run = reads.read(withOutOfLineValue.address());
     AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(7)));
-    isWithinBudget &= isWithinBudgetOfRead(run, 56, firstReadByName, "a boxed value out of line"_s);
+    isWithinBudget &= isWithinBudgetOfRead(run, 38, firstReadByName, "a boxed value out of line"_s);
     run = reads.readAgain(withOutOfLineValue.address());
     AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(7)));
-    isWithinBudget &= isWithinBudgetOfRead(run, 43, nextReadByName, "a boxed value out of line"_s);
+    isWithinBudget &= isWithinBudgetOfRead(run, 38, nextReadByName, "a boxed value out of line"_s);
     AOT_TEST_CHECK(isWithinBudget);
 #endif
 }
 
+template<int onlyRow = -1, uint32_t instructionsThatWereEnough = 0>
 static void testInstructionsOfReadsOfFiledFields()
 {
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
@@ -1046,32 +1185,35 @@ static void testInstructionsOfReadsOfFiledFields()
         uint32_t budget;
     };
     const Read readsByRepresentation[] = {
-        { SlotRepresentation::JSValue, jsNumber(7), 61 },
-        { SlotRepresentation::Cell, cellValue, 61 },
-        { SlotRepresentation::Cell32, cellValue, 63 },
-        { SlotRepresentation::OptionalCell32, cellValue, 63 },
-        { SlotRepresentation::OptionalInt32, jsNumber(7), 66 },
-        { SlotRepresentation::Int32, jsNumber(7), 66 },
-        { SlotRepresentation::Double, jsDoubleNumber(0.5), 79 },
-        { SlotRepresentation::OptionalDouble, jsDoubleNumber(0.5), 76 },
-        { SlotRepresentation::OptionalDouble, jsNumber(7), 76 },
-        { SlotRepresentation::Boolean, jsBoolean(true), 71 },
-        { SlotRepresentation::OptionalBoolean, jsBoolean(true), 75 },
+        { SlotRepresentation::JSValue, jsNumber(7), 62 },
+        { SlotRepresentation::Cell, cellValue, 62 },
+        { SlotRepresentation::Cell32, cellValue, 64 },
+        { SlotRepresentation::OptionalCell32, cellValue, 64 },
+        { SlotRepresentation::OptionalInt32, jsNumber(7), 67 },
+        { SlotRepresentation::Int32, jsNumber(7), 67 },
+        { SlotRepresentation::Double, jsDoubleNumber(0.5), 80 },
+        { SlotRepresentation::OptionalDouble, jsDoubleNumber(0.5), 77 },
+        { SlotRepresentation::OptionalDouble, jsNumber(7), 77 },
+        { SlotRepresentation::Boolean, jsBoolean(true), 72 },
+        { SlotRepresentation::OptionalBoolean, jsBoolean(true), 72 },
     };
     bool isWithinBudget = true;
     for (const Read& read : readsByRepresentation) {
+        if (onlyRow >= 0 && &read != &readsByRepresentation[std::max(onlyRow, 0)])
+            continue;
         reads.file(createFieldSlot(read.representation));
         FakeTypedObject object;
         AOT_TEST_CHECK(tryWrite(read.representation, &object.field(), read.value.isInt32() && traitsOf(read.representation).valueKind == SlotValueKind::Double ? jsDoubleNumber(read.value.asInt32()) : read.value, cageBase));
         for (StubRun run : { reads.read(object.address()), reads.readAgain(object.address()) }) {
             AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(read.value));
-            isWithinBudget &= isWithinBudgetOfRead(run, read.budget, "a read by name of a filed field, "_s, nameOf(read.representation));
+            isWithinBudget &= isWithinBudgetOfRead(run, onlyRow >= 0 ? instructionsThatWereEnough : read.budget, "a read by name of a filed field, "_s, nameOf(read.representation));
         }
     }
     AOT_TEST_CHECK(isWithinBudget);
 #endif
 }
 
+template<int onlyRow = -1, uint32_t instructionsThatWereEnough = 0>
 static void testInstructionsOfReadsOfMissingFieldsBelowClasses()
 {
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
@@ -1088,13 +1230,15 @@ static void testInstructionsOfReadsOfMissingFieldsBelowClasses()
         uint32_t budgetOfNextRead;
     };
     const Read readsByKind[] = {
-        { "a boxed value"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, 49, 49 },
-        { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, 76, 63 },
-        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 99, 86 },
-        { "a narrow reference"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, 106, 93 },
+        { "a boxed value"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, 37, 37 },
+        { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, 51, 51 },
+        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 71, 71 },
+        { "a narrow reference"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, 79, 79 },
     };
     bool isWithinBudget = true;
     for (const Read& read : readsByKind) {
+        if (onlyRow >= 0 && &read != &readsByKind[std::max(onlyRow, 0)])
+            continue;
         const SlotTraits traits = traitsOf(read.representation);
         table.field() = { };
         table.field().name = PropertyReads::name;
@@ -1112,7 +1256,7 @@ static void testInstructionsOfReadsOfMissingFieldsBelowClasses()
         isWithinBudget &= isWithinBudgetOfRead(run, read.budget, firstReadByName, read.what, " that is missing below a class");
         run = reads.readAgain(object.address());
         AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsUndefined()));
-        isWithinBudget &= isWithinBudgetOfRead(run, read.budgetOfNextRead, nextReadByName, read.what, " that is missing below a class");
+        isWithinBudget &= isWithinBudgetOfRead(run, onlyRow >= 0 ? instructionsThatWereEnough : read.budgetOfNextRead, nextReadByName, read.what, " that is missing below a class");
 
         fileInFront(0);
         AOT_TEST_CHECK(reads.read(object.address()).calledOperation);
@@ -1314,11 +1458,11 @@ static std::array<AnswerBehindFieldTable, 5> answersBehindFieldTable(FakeHolder&
         return Slot::createInStorage(id, Slot::Kind::Value, Slot::dependsOnChain, std::bit_cast<JSCell*>(other.address()), offset);
     };
     return { {
-        { "an extra property in the cell"_s, extraProperty(FakeHolder::inlineOffset), other.property(FakeHolder::inlineOffset), 38, 38 },
-        { "an extra property out of line"_s, extraProperty(FakeHolder::outOfLineOffset), other.property(FakeHolder::outOfLineOffset), 47, 47 },
-        { "a value in the cell of a holder"_s, valueOfHolder(FakeHolder::inlineOffset), other.property(FakeHolder::inlineOffset), 69, 20 },
-        { "a value out of line in a holder"_s, valueOfHolder(FakeHolder::outOfLineOffset), other.property(FakeHolder::outOfLineOffset), 82, 30 },
-        { "a name that nothing has"_s, Slot::createWithoutPayload(id, Slot::Kind::Absent, Slot::dependsOnChain), bitsOf(jsUndefined()), 63, 20 },
+        { "an extra property in the cell"_s, extraProperty(FakeHolder::inlineOffset), other.property(FakeHolder::inlineOffset), 32, 32 },
+        { "an extra property out of line"_s, extraProperty(FakeHolder::outOfLineOffset), other.property(FakeHolder::outOfLineOffset), 41, 41 },
+        { "a value in the cell of a holder"_s, valueOfHolder(FakeHolder::inlineOffset), other.property(FakeHolder::inlineOffset), 63, 20 },
+        { "a value out of line in a holder"_s, valueOfHolder(FakeHolder::outOfLineOffset), other.property(FakeHolder::outOfLineOffset), 76, 28 },
+        { "a name that nothing has"_s, Slot::createWithoutPayload(id, Slot::Kind::Absent, Slot::dependsOnChain), bitsOf(jsUndefined()), 57, 20 },
     } };
 }
 
@@ -1400,10 +1544,10 @@ static void testInstructionsOfReadsBehindFieldTable()
         reads.fileInFrontBesideOthers(answer.slot, nameOutsideLayouts);
         StubRun run = reads.read(object.address(), nameOutsideLayouts);
         AOT_TEST_CHECK(!run.calledOperation && run.result == answer.expected);
-        isWithinBudget &= isWithinBudgetOfRead(run, answer.budget, firstReadByName, answer.what);
+        isWithinBudget &= isWithinBudgetOfRead(run, answer.budget + instructionsOfProbeThatFindsNoField, firstReadByName, answer.what);
         run = reads.readAgain(object.address(), nameOutsideLayouts);
         AOT_TEST_CHECK(!run.calledOperation && run.result == answer.expected);
-        isWithinBudget &= isWithinBudgetOfRead(run, answer.budgetOfNextRead, nextReadByName, answer.what);
+        isWithinBudget &= isWithinBudgetOfRead(run, answer.budgetOfNextRead + instructionsOfProbeThatFindsNoField, nextReadByName, answer.what);
     }
     AOT_TEST_CHECK(isWithinBudget);
 #endif
@@ -1446,20 +1590,8 @@ static void testReadsAnsweredByAccessTable()
     withValue.field() = bitsOf(jsNumber(7));
     StubRun run = reads.read(withValue.address());
     AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(7)));
-    AOT_TEST_CHECK(placeOf(PropertyReads::name).keyOfOwnValue == keyOf(PropertyReads::name) && placeOf(PropertyReads::name).offsetInCell == FakeTypedObject::offsetOfField && !placeOf(PropertyReads::name).keyOfOtherAnswer);
-    AOT_TEST_CHECK(!words.numberOfKeysThatDependOnChains);
-    FakeObjectWithShape withRowOfOtherForm(FieldTable::shapeWithOtherField);
-    withRowOfOtherForm.field() = bitsOf(jsNumber(8));
-    run = reads.readAgain(withRowOfOtherForm.address());
-    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(8)));
-    withRowOfOtherForm.field() = 0;
-    AOT_TEST_CHECK(reads.readAgain(withRowOfOtherForm.address()).calledOperation);
+    AOT_TEST_CHECK(!placeOf(PropertyReads::name).keyOfOwnValue && !placeOf(PropertyReads::name).keyOfOtherAnswer && !words.numberOfKeysThatDependOnChains);
     AOT_TEST_CHECK(reads.readAgain(withValue.address(), nameOutsideLayouts).calledOperation);
-    words.numberOfKeysThatDependOnChains = AccessTable::maxKeysListed + 1;
-    words.didChangeObjectOnSomeChain();
-    AOT_TEST_CHECK(placeOf(PropertyReads::name).keyOfOwnValue == keyOf(PropertyReads::name));
-    words.forgetEverything();
-    AOT_TEST_CHECK(!placeOf(PropertyReads::name).keyOfOwnValue);
 
     FakeExtension extension(FakeExtension::bitOfSlot);
     extension.granule() = bitsOf(jsNumber(5));
@@ -1480,15 +1612,9 @@ static void testReadsAnsweredByAccessTable()
     for (const Field& field : fields) {
         FakeObjectWithShape object(field.shape);
         object.field() = field.slot;
-        run = reads.read(object.address());
-        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(field.expected));
-        const AccessTable::Read& place = placeOf(PropertyReads::name);
-        AOT_TEST_CHECK(!place.keyOfOwnValue && place.keyOfOtherAnswer == keyOf(PropertyReads::name));
-        AOT_TEST_CHECK((place.otherAnswer & ((1u << AccessTable::answerShift) - 1)) == AccessTable::answerHasForm && !words.numberOfKeysThatDependOnChains);
-        FakeObjectWithShape withRowOfValue(FieldTable::shapeWithValue);
-        withRowOfValue.field() = field.slot;
-        run = reads.readAgain(withRowOfValue.address());
-        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(field.expected));
+        for (StubRun read : { reads.read(object.address()), reads.readAgain(object.address()) })
+            AOT_TEST_CHECK(!read.calledOperation && read.result == bitsOf(field.expected));
+        AOT_TEST_CHECK(!placeOf(PropertyReads::name).keyOfOwnValue && !placeOf(PropertyReads::name).keyOfOtherAnswer && !words.numberOfKeysThatDependOnChains);
     }
 
     FakeHolder holder;
@@ -1558,6 +1684,13 @@ static void testReadsAnsweredByAccessTable()
         ordinary.property(offset) = bitsOf(jsNumber(22));
         run = reads.readAgain(ordinary.address(), nameOutsideLayouts);
         AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(22)));
+        if (!isInlineOffset(offset))
+            continue;
+        words.numberOfKeysThatDependOnChains = AccessTable::maxKeysListed + 1;
+        words.didChangeObjectOnSomeChain();
+        AOT_TEST_CHECK(placeOf(nameOutsideLayouts).keyOfOwnValue == keyOf(nameOutsideLayouts));
+        words.forgetEverything();
+        AOT_TEST_CHECK(!placeOf(nameOutsideLayouts).keyOfOwnValue);
     }
 }
 
@@ -1988,19 +2121,736 @@ static void testInstanceOfRemembersOrdinaryConstructors()
     StubRun withCellNotMade = askBuiltin(value.address());
     runner.countCallsOf(Entry::operationAOTBuiltinCell);
     AOT_TEST_CHECK(withCellNotMade.numberOfRecordedCalls == 1 && withCellNotMade.recordedArguments[0] == numberOfCell && withCellNotMade.result == 1);
+    structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = objectPrototype.address();
+    runner.recordCallsOf(Entry::operationAOTBuiltinCell);
+    StubRun rightBelowObjectPrototype = askBuiltin(value.address());
+    runner.countCallsOf(Entry::operationAOTBuiltinCell);
+    AOT_TEST_CHECK(!rightBelowObjectPrototype.numberOfRecordedCalls && !rightBelowObjectPrototype.result);
+    structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = prototypeObject.address();
     cellsOfBuiltins[numberOfCell] = cellAt(prototypeObject.address());
 
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
     runner.setCountsInstructions(true);
-    AOT_TEST_CHECK(isWithinBudgetOfRead(askBuiltin(value.address()), 21, "instanceof of a built-in whose prototype object the stub reads"_s));
+    AOT_TEST_CHECK(isWithinBudgetOfRead(askBuiltin(value.address()), 22, "instanceof of a built-in whose prototype object the stub reads"_s));
     AOT_TEST_CHECK(isWithinBudgetOfRead(ask(value.address()), 32, "instanceof of a remembered constructor, found at the first link"_s));
     structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = objectPrototype.address();
     AOT_TEST_CHECK(isWithinBudgetOfRead(ask(value.address()), 34, "instanceof of a remembered constructor, not found below Object.prototype"_s));
+    AOT_TEST_CHECK(isWithinBudgetOfRead(askBuiltin(value.address()), 15, "instanceof of a built-in, asked of an object right below Object.prototype"_s));
     bindings[numberOfBinding].constant = static_cast<EncodedJSValue>(constructor.address());
     AOT_TEST_CHECK(isWithinBudgetOfRead(runner.run(instanceOf(InstanceOfOperand::NameSeenByScripts), { value.address() }, numberOfBinding), 41, "instanceof of a remembered constructor that a global name holds"_s));
     bindings[numberOfBinding] = { 0, structureIDOfValues, epochOfGlobalObject, static_cast<int64_t>(std::bit_cast<uintptr_t>(&wordOfName)) };
     AOT_TEST_CHECK(isWithinBudgetOfRead(runner.run(instanceOf(InstanceOfOperand::NameSeenByScripts), { value.address() }, numberOfBinding), 56, "instanceof of a remembered constructor at the location of a global name"_s));
 #endif
+}
+
+namespace {
+
+class AnswersAtOnePlace {
+    WTF_MAKE_NONCOPYABLE(AnswersAtOnePlace);
+public:
+    static constexpr uint16_t index = 60000;
+    static constexpr uint32_t distance = WTF::roundUpToMultipleOf<64>(sizeof(Instance)) + 64;
+    static constexpr ptrdiff_t offsetOfAnswers = InstanceLayout::offsetOfSiteAnswers + static_cast<ptrdiff_t>(index * sizeof(uint64_t));
+    static_assert(-offsetOfAnswers <= static_cast<ptrdiff_t>(StubEnvironment::bytesBelowInstance) && -offsetOfAnswers >= static_cast<ptrdiff_t>(sizeof(InstancePrefix) + sizeof(SiteAnswers)));
+    static_assert(distance + sizeof(uint16_t) <= InstanceLayout::offsetOfStringCells && !(offsetOfAnswers % static_cast<ptrdiff_t>(alignof(SiteAnswers))));
+
+    explicit AnswersAtOnePlace(StubRunner& runner)
+        : m_instance(reinterpret_cast<uint8_t*>(&runner.instance()))
+    {
+        *reinterpret_cast<uint16_t*>(m_instance + distance) = index;
+        runner.instance().propertyCaches.firstWordOfWideAnswers = UINT32_MAX;
+        answers() = SiteAnswers::forPlacesWithout();
+    }
+
+    SiteAnswers& answers() { return *reinterpret_cast<SiteAnswers*>(m_instance + offsetOfAnswers); }
+    WideSiteAnswers& wideAnswers() { return *reinterpret_cast<WideSiteAnswers*>(m_instance + offsetOfAnswers); }
+    static_assert(-offsetOfAnswers >= static_cast<ptrdiff_t>(sizeof(InstancePrefix) + sizeof(WideSiteAnswers)) && !(offsetOfAnswers % static_cast<ptrdiff_t>(alignof(WideSiteAnswers))));
+
+private:
+    uint8_t* m_instance;
+};
+
+struct OrdinaryObjectWithTwoValues : FakeObject<32> {
+    static constexpr uint32_t offsetInCell = 16;
+    static constexpr int32_t indexInStorage = -2;
+
+    OrdinaryObjectWithTwoValues(uint32_t structureID, int32_t inCell, int32_t inStorage)
+    {
+        setHeader(structureID, FinalObjectType);
+        at<uint64_t>(offsetInCell) = bitsOf(jsNumber(inCell));
+        storage[0] = bitsOf(jsNumber(inStorage));
+        at<uint64_t>(JSObject::butterflyOffset()) = std::bit_cast<uintptr_t>(storage.data() - indexInStorage);
+    }
+
+    std::array<uint64_t, 2> storage { };
+};
+
+enum class HitAtPlace : uint8_t {
+    BoxedField, Int32Field, NarrowReferenceField, DoubleField, OptionalBooleanField, Int64Field, FieldInExtension,
+    OwnValueInCell, OwnValueInStorage, ValueInCellOfHolder, ValueInStorageOfHolder, NoProperty,
+};
+
+} // anonymous namespace
+
+[[maybe_unused]] static uint32_t instructionsOfHitAtPlace(HitAtPlace hit, ReceiverAtSite receiverIs, std::optional<PresenceQuestion> presence = std::nullopt, bool runsNoCode = false)
+{
+    using Form = SiteAnswers::Form;
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    const uintptr_t cageBase = reads.runner.instance().cellCageBase;
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    FakeObject<16> cell;
+    cell.setHeader(0, FinalObjectType);
+    FakeObjectWithShape withField(1);
+    withField.at<uint32_t>(offsetOfOrderWord) = 0;
+    FakeExtension extension(FakeExtension::bitOfSlot);
+    extension.granule() = bitsOf(jsNumber(7));
+    OrdinaryObjectWithTwoValues receiver(PropertyReads::structureID, 1, 2);
+    OrdinaryObjectWithTwoValues holder(PropertyReads::structureIDOfHolder, 3, 4);
+    uint64_t wordThatHoldsUndefined = bitsOf(jsUndefined());
+    auto wordsFromCage = [&](uint64_t address) { return static_cast<uint32_t>((address - cageBase) / sizeof(EncodedJSValue)); };
+    auto inTypedSlot = [&](SlotRepresentation representation, uint64_t bits) {
+        place.answers().first = *SiteAnswers::tryByShapeInTypedSlot(shapeWordOf(1), representation, FakeTypedObject::offsetOfField);
+        withField.field() = bits;
+    };
+    auto byStructure = [&](Form form, uint32_t operand) { place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, structureID, form, operand); };
+
+    uint64_t object = withField.address();
+    JSValue expected = jsNumber(7);
+    switch (hit) {
+    case HitAtPlace::BoxedField:
+        place.answers().first = SiteAnswers::byShape(shapeWordOf(1), FakeTypedObject::offsetOfField);
+        withField.field() = bitsOf(jsNumber(7));
+        break;
+    case HitAtPlace::Int32Field:
+        inTypedSlot(SlotRepresentation::OptionalInt32, 7);
+        break;
+    case HitAtPlace::NarrowReferenceField:
+        inTypedSlot(SlotRepresentation::OptionalCell32, MarkedBlockCage::encode(cageBase, std::bit_cast<JSCell*>(cell.address())));
+        expected = JSValue(std::bit_cast<JSCell*>(cell.address()));
+        break;
+    case HitAtPlace::DoubleField:
+        inTypedSlot(SlotRepresentation::OptionalDouble, std::bit_cast<uint64_t>(0.5));
+        expected = jsDoubleNumber(0.5);
+        break;
+    case HitAtPlace::OptionalBooleanField:
+        inTypedSlot(SlotRepresentation::OptionalBoolean, JSValue::ValueTrue);
+        expected = jsBoolean(true);
+        break;
+    case HitAtPlace::Int64Field:
+        inTypedSlot(SlotRepresentation::OptionalInt64, 7);
+        break;
+    case HitAtPlace::FieldInExtension:
+        place.answers().first = *SiteAnswers::tryByShapeInExtension(shapeWordOf(1), FieldTable::offsetInExtension);
+        withField.field() = extension.encode(cageBase);
+        break;
+    case HitAtPlace::OwnValueInCell:
+        byStructure(Form::OwnValueInStorage, OrdinaryObjectWithTwoValues::offsetInCell / sizeof(EncodedJSValue));
+        object = receiver.address();
+        expected = jsNumber(1);
+        break;
+    case HitAtPlace::OwnValueInStorage:
+        byStructure(Form::OwnValueInStorage, static_cast<uint32_t>(OrdinaryObjectWithTwoValues::indexInStorage));
+        object = receiver.address();
+        expected = jsNumber(2);
+        break;
+    case HitAtPlace::ValueInCellOfHolder:
+        byStructure(Form::ValueInWordOfCage, wordsFromCage(holder.address() + OrdinaryObjectWithTwoValues::offsetInCell));
+        object = receiver.address();
+        expected = jsNumber(3);
+        break;
+    case HitAtPlace::ValueInStorageOfHolder:
+        byStructure(Form::ValueInStorageOfHolder, wordsFromCage(holder.address()));
+        place.answers().first = SiteAnswers::withoutKey(SiteUse::Read, true, static_cast<uint32_t>(OrdinaryObjectWithTwoValues::indexInStorage));
+        object = receiver.address();
+        expected = jsNumber(4);
+        break;
+    case HitAtPlace::NoProperty:
+        byStructure(Form::ValueInWordOfCage, wordsFromCage(std::bit_cast<uintptr_t>(&wordThatHoldsUndefined)));
+        object = receiver.address();
+        expected = jsUndefined();
+        break;
+    }
+    reads.runner.setCountsInstructions(true);
+    if (presence) {
+        reads.runner.instance().propertyCaches.wordOfCageThatHoldsUndefined = wordsFromCage(std::bit_cast<uintptr_t>(&wordThatHoldsUndefined));
+        bool standsAbove = hit == HitAtPlace::ValueInCellOfHolder || hit == HitAtPlace::ValueInStorageOfHolder;
+        bool isThere = hit != HitAtPlace::NoProperty && (*presence == PresenceQuestion::In || !standsAbove);
+        StubRun run = reads.runner.run(findsNameAtSite(*presence, !readAtPlaceAsksStructureFirst), { object }, AnswersAtOnePlace::distance);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == static_cast<uint64_t>(isThere));
+        return run.instructionsInStubs.value_or(0);
+    }
+    if (runsNoCode) {
+        StubRun run = reads.runner.run(readAtSiteRunningNoCode(receiverIs, !readAtPlaceAsksStructureFirst), { object }, AnswersAtOnePlace::distance);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(expected));
+        return run.instructionsInStubs.value_or(0);
+    }
+    StubRun run = reads.runner.run(readAtPlaceAsksStructureFirst ? readAtSiteAskingStructureFirst(receiverIs) : readAtSite(receiverIs), { object }, AnswersAtOnePlace::distance);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(expected) && run.instructionsInStubs);
+    return *run.instructionsInStubs;
+}
+
+static void testArmsOfAnswersAtPlace()
+{
+    using Form = SiteAnswers::Form;
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    Instance& instance = reads.runner.instance();
+    const uintptr_t cageBase = instance.cellCageBase;
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    const StructureID structureIDOfOtherVisitor = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
+    auto wordsFromCage = [&](uint64_t address) { return static_cast<uint32_t>((address - cageBase) / sizeof(EncodedJSValue)); };
+    constexpr uint32_t offsetOfExtraProperties = 24;
+    constexpr int32_t wordInCell = OrdinaryObjectWithTwoValues::offsetInCell / sizeof(EncodedJSValue);
+    constexpr int32_t indexInStorage = OrdinaryObjectWithTwoValues::indexInStorage;
+    auto operandOfExtraValue = [](int32_t index) { return static_cast<uint32_t>(index) << SiteAnswers::indexShiftInOperandOfExtraValue | offsetOfExtraProperties / sizeof(uint32_t); };
+    FakeObject<16> cell;
+    cell.setHeader(0, FinalObjectType);
+    FakeObject<64> view;
+    view.setHeader(PropertyReads::structureID, Uint8ArrayType);
+    view.at<uint64_t>(JSArrayBufferView::offsetOfLength()) = 7;
+
+    struct Arm {
+        ASCIILiteral what;
+        Form form;
+        uint32_t budget;
+        uint32_t budgetAsFurtherAnswer;
+    };
+    constexpr Arm arms[] = {
+        { "a value in the storage of a holder"_s, Form::ValueInStorageOfHolder, 14, 33 },
+        { "a value in a word of the cage"_s, Form::ValueInWordOfCage, 12, 27 },
+        { "an own field in the cell"_s, Form::OwnFieldInCell, 14, 29 },
+        { "an extra value in the cell"_s, Form::ExtraValueInCell, 18, 33 },
+        { "an own value in the cell"_s, Form::OwnValueInCell, 12, 27 },
+        { "an extra value in storage"_s, Form::ExtraValueInStorage, 19, 34 },
+        { "the length of a typed array"_s, Form::LengthOfTypedArray, 18, 0 },
+        { "an own narrow reference"_s, Form::OwnNarrowReferenceInCell, 15, 0 },
+        { "an own integer"_s, Form::OwnInt32InCell, 16, 0 },
+    };
+    bool isWithinBudget = true;
+    for (const Arm& arm : arms) {
+        for (bool isFurtherAnswer : { false, true }) {
+            if (isFurtherAnswer && !arm.budgetAsFurtherAnswer)
+                continue;
+            for (bool isTruthy : { true, false }) {
+                const int32_t number = isTruthy ? 7 : 0;
+                OrdinaryObjectWithTwoValues receiver(PropertyReads::structureID, number, number);
+                OrdinaryObjectWithTwoValues holder(PropertyReads::structureIDOfHolder, number, number);
+                receiver.at<uint32_t>(offsetOfExtraProperties) = wordsFromCage(holder.address());
+                FakeObjectWithShape withField(1);
+                withField.at<uint32_t>(offsetOfOrderWord) = 0;
+                uint64_t object = receiver.address();
+                JSValue expected = jsNumber(number);
+                uint32_t operand = 0;
+                int32_t index = 0;
+                switch (arm.form) {
+                case Form::ValueInStorageOfHolder:
+                    operand = wordsFromCage(holder.address());
+                    index = indexInStorage;
+                    break;
+                case Form::ValueInWordOfCage:
+                    operand = wordsFromCage(holder.address() + OrdinaryObjectWithTwoValues::offsetInCell);
+                    break;
+                case Form::OwnFieldInCell:
+                    object = withField.address();
+                    withField.field() = bitsOf(expected);
+                    operand = FakeTypedObject::offsetOfField;
+                    break;
+                case Form::ExtraValueInCell:
+                    operand = operandOfExtraValue(wordInCell);
+                    break;
+                case Form::OwnValueInCell:
+                    operand = OrdinaryObjectWithTwoValues::offsetInCell;
+                    break;
+                case Form::ExtraValueInStorage:
+                    operand = operandOfExtraValue(indexInStorage);
+                    break;
+                case Form::LengthOfTypedArray:
+                    object = view.address();
+                    view.at<uint64_t>(JSArrayBufferView::offsetOfLength()) = number;
+                    break;
+                case Form::OwnNarrowReferenceInCell:
+                    if (!isTruthy)
+                        continue;
+                    object = withField.address();
+                    withField.field() = MarkedBlockCage::encode(cageBase, std::bit_cast<JSCell*>(cell.address()));
+                    expected = JSValue(std::bit_cast<JSCell*>(cell.address()));
+                    operand = FakeTypedObject::offsetOfField;
+                    break;
+                case Form::OwnInt32InCell:
+                    if (!isTruthy)
+                        continue;
+                    object = withField.address();
+                    withField.field() = number;
+                    operand = FakeTypedObject::offsetOfField;
+                    break;
+                default:
+                    RELEASE_ASSERT_NOT_REACHED();
+                }
+                place.wideAnswers() = { };
+                place.answers() = SiteAnswers::forPlacesWithout();
+                instance.propertyCaches.hitsOfFurtherAnswers = 0;
+                if (isFurtherAnswer) {
+                    instance.propertyCaches.firstWordOfWideAnswers = AnswersAtOnePlace::index;
+                    WideSiteAnswers& wide = place.wideAnswers();
+                    wide.answers.second = *SiteAnswers::tryByStructure(SiteUse::Read, structureIDOfOtherVisitor, Form::OwnValueInStorage, wordInCell);
+                    wide.structuresOfFurtherAnswers[1] = structureID.bits();
+                    wide.operandsOfFurtherAnswers[1] = operand;
+                    wide.formsOfFurtherAnswersHeld[1] = { static_cast<uint8_t>(SiteAnswers::bitsOf(SiteUse::Read, arm.form)), static_cast<int8_t>(index) };
+                } else {
+                    instance.propertyCaches.firstWordOfWideAnswers = UINT32_MAX;
+                    place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, structureID, arm.form, operand);
+                    if (index)
+                        place.answers().first = SiteAnswers::withoutKey(SiteUse::Read, true, static_cast<uint32_t>(index));
+                }
+                reads.runner.setCountsInstructions(true);
+                for (ReceiverAtSite receiverIs : { ReceiverAtSite::IsAnyValue, ReceiverAtSite::IsCell }) {
+                    for (NameAtSite name : { NameAtSite::IsAnyName, NameAtSite::HasColumn }) {
+                        for (StubFamily family : { StubFamily::ReadAtSite, StubFamily::ReadAtSiteAskingStructureFirst }) {
+                            StubRun run = reads.runner.run(readAtSite(receiverIs, name).withFamily(family), { object }, AnswersAtOnePlace::distance);
+                            AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(expected));
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+                            if (family != StubFamily::ReadAtSiteAskingStructureFirst || receiverIs != ReceiverAtSite::IsAnyValue)
+                                continue;
+#if defined(BUN_HARDENED)
+                            constexpr uint32_t instructionsThatBoundIndexOfHandler = 1;
+#else
+                            constexpr uint32_t instructionsThatBoundIndexOfHandler = 0;
+#endif
+                            const uint32_t budget = isFurtherAnswer ? arm.budgetAsFurtherAnswer + instructionsThatBoundIndexOfHandler : arm.budget;
+                            if (*run.instructionsInStubs != budget)
+                                dataLogLn("a read at a place that holds ", arm.what, isFurtherAnswer ? " as a further answer: " : ": ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+                            isWithinBudget &= *run.instructionsInStubs <= budget;
+#endif
+                        }
+                        for (StubFamily family : { StubFamily::ReadTruthAtSite, StubFamily::ReadTruthAtSiteAskingStructureFirst }) {
+                            StubRun run = reads.runner.run(readAtSite(receiverIs, name).withFamily(family), { object }, AnswersAtOnePlace::distance);
+                            AOT_TEST_CHECK(!run.calledOperation && run.result == static_cast<uint64_t>(isTruthy));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    AOT_TEST_CHECK(isWithinBudget);
+}
+
+template<HitAtPlace hit, uint32_t budget>
+static void testInstructionsOfHitAtPlace()
+{
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    constexpr uint32_t instructionsOfTestForCell = 2;
+    uint32_t ofAnyValue = instructionsOfHitAtPlace(hit, ReceiverAtSite::IsAnyValue);
+    uint32_t ofCell = instructionsOfHitAtPlace(hit, ReceiverAtSite::IsCell);
+    if (ofAnyValue != budget || ofCell + instructionsOfTestForCell != budget)
+        dataLogLn("a read at a place: ", ofAnyValue, " instructions, of a cell ", ofCell, ", the budget is ", budget);
+    AOT_TEST_CHECK(ofAnyValue <= budget && ofCell + instructionsOfTestForCell <= budget);
+#endif
+}
+
+template<HitAtPlace hit, PresenceQuestion question, uint32_t budget>
+static void testInstructionsOfPresenceAtPlace()
+{
+    [[maybe_unused]] uint32_t instructions = instructionsOfHitAtPlace(hit, ReceiverAtSite::IsAnyValue, question);
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    if (instructions != budget)
+        dataLogLn("whether a name is there, asked at a place: ", instructions, " instructions, the budget is ", budget);
+    AOT_TEST_CHECK(instructions <= budget);
+#endif
+}
+
+template<HitAtPlace hit, uint32_t budget>
+static void testInstructionsOfHitAtPlaceRunningNoCode()
+{
+    constexpr uint32_t instructionsOfTestForCell = 2;
+    [[maybe_unused]] uint32_t ofAnyValue = instructionsOfHitAtPlace(hit, ReceiverAtSite::IsAnyValue, std::nullopt, true);
+    [[maybe_unused]] uint32_t ofCell = instructionsOfHitAtPlace(hit, ReceiverAtSite::IsCell, std::nullopt, true);
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    if (ofAnyValue != budget || ofCell + instructionsOfTestForCell != budget)
+        dataLogLn("a read at a place that runs no code: ", ofAnyValue, " instructions, of a cell ", ofCell, ", the budget is ", budget);
+    AOT_TEST_CHECK(ofAnyValue <= budget && ofCell + instructionsOfTestForCell <= budget);
+#endif
+}
+
+static void testLengthReadAtSite()
+{
+    PropertyReads reads;
+    FieldTable table(reads);
+    StubRunner& runner = reads.runner;
+    AnswersAtOnePlace place(runner);
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    const StructureID otherStructureID = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
+    std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
+    runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
+    runner.instance().propertyCaches.missesOfEmptySites = 0;
+    place.answers().first = SiteAnswers::byShape(shapeWordOf(FieldTable::shapeWithOtherField), FakeTypedObject::offsetOfField);
+    place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, otherStructureID, SiteAnswers::Form::OwnValueInCell, OrdinaryObjectWithTwoValues::offsetInCell);
+    reads.fileInFrontBesideOthers(Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain));
+    runner.forgetAccessTable();
+    constexpr std::array<uint32_t, 5> lengths { 0, 1, 2, 7, 8 };
+    for (bool asksStructureFirst : { false, true }) {
+        auto says = [&](uint64_t receiver, JSValue expected) {
+            StubRun run = runner.run(readLengthAtSite(asksStructureFirst), { receiver }, AnswersAtOnePlace::distance);
+            return !run.calledOperation && run.result == bitsOf(expected);
+        };
+        auto isAnsweredInFrontOfRecord = [&](uint64_t receiver, uint32_t length) { return says(receiver, jsNumber(static_cast<int32_t>(length))); };
+        auto isLeftToRoadOfRecord = [&](uint64_t receiver) { return says(receiver, jsUndefined()); };
+
+        std::array<uint32_t, 4> storage { };
+        FakeObject<16> list;
+        list.setHeader(PropertyReads::structureID, ArrayType);
+        list.at<uint64_t>(JSObject::butterflyOffset()) = std::bit_cast<uintptr_t>(storage.data() + 2);
+        for (IndexingType kind : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, CopyOnWriteArrayWithContiguous }) {
+            list.at<uint8_t>(JSCell::indexingTypeAndMiscOffset()) = kind;
+            for (uint32_t length : lengths) {
+                storage[0] = length;
+                AOT_TEST_CHECK(isAnsweredInFrontOfRecord(list.address(), length));
+            }
+        }
+        storage[0] = 7;
+        list.at<uint8_t>(JSCell::indexingTypeAndMiscOffset()) = ArrayWithArrayStorage;
+        AOT_TEST_CHECK(isLeftToRoadOfRecord(list.address()));
+        list.at<uint8_t>(JSCell::indexingTypeAndMiscOffset()) = ContiguousShape;
+        AOT_TEST_CHECK(isLeftToRoadOfRecord(list.address()));
+
+        std::array<uint32_t, 8> characters { };
+        FakeObject<32> text;
+        text.setHeader(PropertyReads::structureID, StringType);
+        text.at<uint64_t>(JSString::offsetOfValue()) = std::bit_cast<uintptr_t>(characters.data());
+        for (uint32_t length : lengths) {
+            characters[StringImpl::lengthMemoryOffset() / sizeof(uint32_t)] = length;
+            AOT_TEST_CHECK(isAnsweredInFrontOfRecord(text.address(), length));
+        }
+        text.at<uint64_t>(JSString::offsetOfValue()) = JSString::isRopeInPointer;
+        for (uint32_t length : lengths) {
+            text.at<uint32_t>(JSRopeString::offsetOfLength()) = length;
+            AOT_TEST_CHECK(isAnsweredInFrontOfRecord(text.address(), length));
+        }
+
+        OrdinaryObjectWithTwoValues ordinary(PropertyReads::structureID, 1, 2);
+        AOT_TEST_CHECK(isLeftToRoadOfRecord(ordinary.address()));
+    }
+}
+
+static void testMissAtPlaceRunningNoCode()
+{
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
+    reads.runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
+    reads.runner.instance().propertyCaches.missesOfEmptySites = 0;
+    OrdinaryObjectWithTwoValues ordinary(PropertyReads::structureID, 1, 2);
+    FakeObject<16> text;
+    text.setHeader(PropertyReads::structureID, StringType);
+    for (bool asksShapeFirst : { true, false }) {
+        uint8_t counted = reads.runner.instance().propertyCaches.missesOfEmptySites;
+        StubRun run = reads.runner.run(readAtSiteRunningNoCode(ReceiverAtSite::IsAnyValue, asksShapeFirst), { ordinary.address() }, AnswersAtOnePlace::distance);
+        AOT_TEST_CHECK(!run.calledOperation && !run.result && reads.runner.instance().propertyCaches.missesOfEmptySites != counted);
+        counted = reads.runner.instance().propertyCaches.missesOfEmptySites;
+        run = reads.runner.run(readAtSiteRunningNoCode(ReceiverAtSite::IsAnyValue, asksShapeFirst), { text.address() }, AnswersAtOnePlace::distance);
+        AOT_TEST_CHECK(!run.calledOperation && !run.result && reads.runner.instance().propertyCaches.missesOfEmptySites == counted);
+        run = reads.runner.run(readAtSiteRunningNoCode(ReceiverAtSite::IsAnyValue, asksShapeFirst), { bitsOf(jsNumber(7)) }, AnswersAtOnePlace::distance);
+        AOT_TEST_CHECK(!run.calledOperation && !run.result && reads.runner.instance().propertyCaches.missesOfEmptySites == counted);
+    }
+}
+
+static void testFrontOfTablesAnswersWherePlaceHoldsAnotherStructureRunningNoCode()
+{
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    const StructureID otherStructureID = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
+    std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
+    reads.runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
+    reads.runner.instance().propertyCaches.missesOfEmptySites = 0;
+    place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, otherStructureID, SiteAnswers::Form::OwnValueInCell, OrdinaryObjectWithTwoValues::offsetInCell);
+    OrdinaryObjectWithTwoValues ordinary(PropertyReads::structureID, 1, 2);
+    auto readIs = [&](uint64_t expected) {
+        for (bool asksShapeFirst : { true, false }) {
+            for (ReceiverAtSite receiverIs : { ReceiverAtSite::IsAnyValue, ReceiverAtSite::IsCell }) {
+                uint8_t counted = reads.runner.instance().propertyCaches.missesOfEmptySites;
+                StubRun run = reads.runner.run(readAtSiteRunningNoCode(receiverIs, asksShapeFirst), { ordinary.address() }, AnswersAtOnePlace::distance);
+                if (run.calledOperation || run.result != expected || (reads.runner.instance().propertyCaches.missesOfEmptySites == counted) != !!expected)
+                    return false;
+            }
+        }
+        return true;
+    };
+    AOT_TEST_CHECK(readIs(0));
+    reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, 0));
+    AOT_TEST_CHECK(readIs(bitsOf(jsNumber(1))));
+    reads.clear();
+    reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, firstOutOfLineOffset));
+    AOT_TEST_CHECK(readIs(bitsOf(jsNumber(2))));
+    reads.clear();
+    reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Getter, Slot::isOwn, nullptr, firstOutOfLineOffset));
+    AOT_TEST_CHECK(readIs(0));
+    reads.clear();
+    reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Getter, Slot::isOwn, nullptr, 0));
+    AOT_TEST_CHECK(readIs(0));
+    reads.clear();
+    reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, 0), PropertyReads::name + 1);
+    AOT_TEST_CHECK(readIs(0));
+    nameOfSite[0] = InstanceLayout::nameOfSiteStandsBehind;
+    reads.clear();
+    reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, 0));
+    AOT_TEST_CHECK(readIs(0));
+}
+
+static void testFormsThatAreNoHitsRunningNoCode()
+{
+    using Form = SiteAnswers::Form;
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    const uintptr_t cageBase = reads.runner.instance().cellCageBase;
+    OrdinaryObjectWithTwoValues receiver(PropertyReads::structureID, 1, 2);
+    OrdinaryObjectWithTwoValues holder(PropertyReads::structureIDOfHolder, 3, 4);
+    const uint32_t wordsToHolder = static_cast<uint32_t>((holder.address() - cageBase) / sizeof(EncodedJSValue));
+    for (Form form : { Form::ExtraValueInCell, Form::GetterInStorageOfHolder, Form::ExtraValueInStorage, Form::GetterInWordOfCage, Form::OwnGetterInStorage, Form::OwnGetterInCell, Form::LengthOfTypedArray }) {
+        place.answers() = SiteAnswers::forPlacesWithout();
+        place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, std::bit_cast<StructureID>(PropertyReads::structureID), form, wordsToHolder);
+        for (bool asksShapeFirst : { true, false }) {
+            for (ReceiverAtSite receiverIs : { ReceiverAtSite::IsAnyValue, ReceiverAtSite::IsCell }) {
+                uint8_t counted = reads.runner.instance().propertyCaches.missesOfEmptySites;
+                StubRun run = reads.runner.run(readAtSiteRunningNoCode(receiverIs, asksShapeFirst), { receiver.address() }, AnswersAtOnePlace::distance);
+                AOT_TEST_CHECK(!run.calledOperation && !run.result && reads.runner.instance().propertyCaches.missesOfEmptySites == counted);
+            }
+        }
+    }
+}
+
+enum class MissAtPlace : uint8_t { OwnValueInCell, OwnValueInStorage, NoProperty, BoxedField, Int32Field };
+
+[[maybe_unused]] static uint32_t instructionsOfNextMissAtPlace(MissAtPlace miss, NameAtSite name)
+{
+    PropertyReads reads;
+    FieldTable table(reads);
+    AnswersAtOnePlace place(reads.runner);
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    const StructureID otherStructureID = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
+    std::array<uint16_t, 1> nameOfSite { PropertyReads::name };
+    reads.runner.instance().image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(nameOfSite.data()) - AnswersAtOnePlace::distance;
+    reads.runner.instance().propertyCaches.missesOfEmptySites = 0;
+    place.answers().first = SiteAnswers::byShape(shapeWordOf(FieldTable::shapeWithOtherField), FakeTypedObject::offsetOfField);
+    place.answers().second = *SiteAnswers::tryByStructure(SiteUse::Read, otherStructureID, SiteAnswers::Form::OwnValueInCell, OrdinaryObjectWithTwoValues::offsetInCell);
+
+    OrdinaryObjectWithTwoValues ordinary(PropertyReads::structureID, 1, 2);
+    FakeObjectWithShape withValue(FieldTable::shapeWithValue);
+    withValue.at<uint32_t>(offsetOfOrderWord) = 0;
+    withValue.field() = bitsOf(jsNumber(7));
+    FakeObjectWithShape withInt32(FieldTable::shapeWithInt32);
+    withInt32.at<uint32_t>(offsetOfOrderWord) = 0;
+    withInt32.field() = 7;
+    uint64_t object = ordinary.address();
+    JSValue expected;
+    switch (miss) {
+    case MissAtPlace::OwnValueInCell:
+        reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, 0));
+        expected = jsNumber(1);
+        break;
+    case MissAtPlace::OwnValueInStorage:
+        reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, firstOutOfLineOffset));
+        expected = jsNumber(2);
+        break;
+    case MissAtPlace::NoProperty:
+        reads.fileInFrontBesideOthers(Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain));
+        expected = jsUndefined();
+        break;
+    case MissAtPlace::BoxedField:
+        object = withValue.address();
+        expected = jsNumber(7);
+        break;
+    case MissAtPlace::Int32Field:
+        table.field() = { };
+        table.field().name = PropertyReads::name;
+        table.field().slot = SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::OptionalInt32);
+        object = withInt32.address();
+        expected = jsNumber(7);
+        break;
+    }
+    reads.runner.setCountsInstructions(true);
+    reads.runner.forgetAccessTable();
+    StubRun run { };
+    for (unsigned read = 0; read < 2; ++read) {
+        run = reads.runner.run(readAtSite(ReceiverAtSite::IsAnyValue, name), { object }, AnswersAtOnePlace::distance);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(expected) && run.instructionsInStubs);
+    }
+    return *run.instructionsInStubs;
+}
+
+template<MissAtPlace miss, uint32_t budget, NameAtSite name = NameAtSite::IsAnyName>
+static void testInstructionsOfNextMissAtPlace()
+{
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    uint32_t instructions = instructionsOfNextMissAtPlace(miss, name);
+    if (instructions != budget)
+        dataLogLn("a read at a place that holds the answers of other objects: ", instructions, " instructions, the budget is ", budget);
+    AOT_TEST_CHECK(instructions <= budget);
+#endif
+}
+
+static void testReadsAtSites()
+{
+    PropertyReads reads;
+    Instance& instance = reads.runner.instance();
+    constexpr PropertyOffset inlineOffset = 1;
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    const StructureID otherStructureID = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
+    std::array<SiteCacheState, SiteCacheState::numberOfStates> states;
+    states.fill(SiteCacheState { UINT8_MAX });
+    instance.propertyCaches.siteCacheStates = states.data();
+
+    FakeObject<JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue)> receiver;
+    receiver.setHeader(PropertyReads::structureID, FinalObjectType);
+    receiver.at<uint64_t>(JSObject::offsetOfInlineStorage() + inlineOffset * sizeof(EncodedJSValue)) = bitsOf(jsNumber(42));
+    Slot site = Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, inlineOffset);
+    auto readAtSite = [&] { return reads.runner.run(getByIdAtSite(), { receiver.address(), std::bit_cast<uint64_t>(&site) }, PropertyReads::name); };
+    auto isAnswered = [](const StubRun& run, JSValue expected) { return !run.calledOperation && run.result == bitsOf(expected); };
+
+    AOT_TEST_CHECK(isAnswered(readAtSite(), jsNumber(42)));
+    site = Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain);
+    AOT_TEST_CHECK(isAnswered(readAtSite(), jsUndefined()));
+
+    site = Slot::createWithoutPayload(otherStructureID, Slot::Kind::Absent, Slot::dependsOnChain);
+    reads.clear();
+    reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, inlineOffset));
+    AOT_TEST_CHECK(isAnswered(readAtSite(), jsNumber(42)));
+    AOT_TEST_CHECK(isAnswered(reads.read(receiver.address()), jsNumber(42)));
+    reads.clear();
+    reads.fileInFrontBesideOthers(Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain));
+    AOT_TEST_CHECK(isAnswered(readAtSite(), jsUndefined()));
+    AOT_TEST_CHECK(isAnswered(reads.read(receiver.address()), jsUndefined()));
+}
+
+struct ObjectWithTwoValues : FakeObject<JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue)> {
+    static constexpr PropertyOffset inlineOffset = 1;
+    static constexpr PropertyOffset outOfLineOffset = firstOutOfLineOffset + 1;
+
+    ObjectWithTwoValues(uint32_t structureID, int32_t valueInCell, int32_t valueOutOfLine)
+    {
+        setHeader(structureID, FinalObjectType);
+        at<uint64_t>(JSObject::offsetOfInlineStorage() + inlineOffset * sizeof(EncodedJSValue)) = bitsOf(jsNumber(valueInCell));
+        at<uint64_t>(JSObject::butterflyOffset()) = std::bit_cast<uintptr_t>(storage.data() + storage.size());
+        storage[storage.size() + Slot::wordIndexFor(outOfLineOffset)] = bitsOf(jsNumber(valueOutOfLine));
+    }
+
+    std::array<uint64_t, 4> storage { };
+};
+
+static void testHitsAtSites()
+{
+    PropertyReads reads;
+    constexpr PropertyOffset inlineOffset = ObjectWithTwoValues::inlineOffset;
+    constexpr PropertyOffset outOfLineOffset = ObjectWithTwoValues::outOfLineOffset;
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    ObjectWithTwoValues receiver(PropertyReads::structureID, 1, 2);
+    ObjectWithTwoValues holder(PropertyReads::structureIDOfHolder, 3, 4);
+    JSCell* holderCell = std::bit_cast<JSCell*>(holder.address());
+    auto value = [&](uint8_t flags, JSCell* holderOrNull, PropertyOffset offset) { return Slot::createInStorage(structureID, Slot::Kind::Value, flags, holderOrNull, offset); };
+
+    struct Hit {
+        ASCIILiteral what;
+        Slot slot;
+        JSValue expected;
+        uint32_t budget;
+    };
+    const Hit hits[] = {
+        { "an own value in the cell"_s, value(Slot::isOwn, nullptr, inlineOffset), jsNumber(1), 10 },
+        { "an own value in the cell that depends on other objects"_s, value(Slot::isOwn | Slot::dependsOnChain, nullptr, inlineOffset), jsNumber(1), 13 },
+        { "an own value out of line"_s, value(Slot::isOwn, nullptr, outOfLineOffset), jsNumber(2), 14 },
+        { "an own value out of line that depends on other objects"_s, value(Slot::isOwn | Slot::dependsOnChain, nullptr, outOfLineOffset), jsNumber(2), 14 },
+        { "an inherited value in the cell"_s, value(0, holderCell, inlineOffset), jsNumber(3), 14 },
+        { "an inherited value in the cell that depends on other objects"_s, value(Slot::dependsOnChain, holderCell, inlineOffset), jsNumber(3), 14 },
+        { "an inherited value out of line"_s, value(0, holderCell, outOfLineOffset), jsNumber(4), 14 },
+        { "an inherited value out of line that depends on other objects"_s, value(Slot::dependsOnChain, holderCell, outOfLineOffset), jsNumber(4), 14 },
+        { "no property"_s, Slot::createWithoutPayload(structureID, Slot::Kind::Absent, 0), jsUndefined(), 12 },
+        { "no property as long as other objects stay as they are"_s, Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain), jsUndefined(), 12 },
+        { "a constant"_s, Slot::createConstant(structureID, Slot::isOwn, jsNumber(5)), jsNumber(5), 14 },
+        { "a constant of an object above"_s, Slot::createConstant(structureID, Slot::dependsOnChain, jsNumber(5)), jsNumber(5), 14 },
+    };
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+    reads.runner.setCountsInstructions(true);
+#endif
+    bool isWithinBudget = true;
+    constexpr uint32_t instructionsOfTestForCell = 2;
+    for (const Hit& hit : hits) {
+        for (StubKey stub : { getByIdAtSite(), getByIdOfObjectAtSite() }) {
+            Slot site = hit.slot;
+            StubRun run = reads.runner.run(stub, { receiver.address(), std::bit_cast<uint64_t>(&site) }, PropertyReads::name);
+            AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(hit.expected));
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+            uint32_t budget = stub == getByIdAtSite() ? hit.budget : hit.budget - instructionsOfTestForCell;
+            AOT_TEST_CHECK(run.instructionsInStubs);
+            if (*run.instructionsInStubs != budget)
+                dataLogLn("a read at a site that holds ", hit.what, ": ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+            isWithinBudget &= *run.instructionsInStubs <= budget;
+#endif
+        }
+    }
+    AOT_TEST_CHECK(isWithinBudget);
+}
+
+template<int onlyRow = -1, uint32_t instructionsThatWereEnough = 0>
+static void testSitesOfOtherStructures()
+{
+    PropertyReads reads;
+    constexpr PropertyOffset inlineOffset = ObjectWithTwoValues::inlineOffset;
+    constexpr PropertyOffset outOfLineOffset = ObjectWithTwoValues::outOfLineOffset;
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    const StructureID otherStructureID = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
+    std::array<SiteCacheState, SiteCacheState::numberOfStates> states;
+    states.fill(SiteCacheState { UINT8_MAX });
+    reads.runner.instance().propertyCaches.siteCacheStates = states.data();
+    ObjectWithTwoValues receiver(PropertyReads::structureID, 1, 2);
+    auto ownValue = [&](StructureID id, PropertyOffset offset) { return Slot::createInStorage(id, Slot::Kind::Value, Slot::isOwn, nullptr, offset); };
+
+    struct Read {
+        ASCIILiteral what;
+        Slot site;
+        Slot inFront;
+        JSValue expected;
+        bool countsMiss;
+        uint32_t budget;
+    };
+    const Read readsByFrontCell[] = {
+        { "an own value at the place that the site names"_s, ownValue(otherStructureID, inlineOffset), ownValue(structureID, inlineOffset), jsNumber(1), false, 27 },
+        { "an own value in the cell at another place"_s, ownValue(otherStructureID, inlineOffset - 1), ownValue(structureID, inlineOffset), jsNumber(1), true, 33 },
+        { "an own value in the cell, and the site one out of line"_s, ownValue(otherStructureID, outOfLineOffset), ownValue(structureID, inlineOffset), jsNumber(1), true, 33 },
+        { "an own value out of line"_s, ownValue(otherStructureID, outOfLineOffset), ownValue(structureID, outOfLineOffset), jsNumber(2), true, 50 },
+        { "no property"_s, ownValue(otherStructureID, inlineOffset), Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain), jsUndefined(), true, 43 },
+    };
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+    reads.runner.setCountsInstructions(true);
+#endif
+    bool isWithinBudget = true;
+    for (const Read& read : readsByFrontCell) {
+        if (onlyRow >= 0 && &read != &readsByFrontCell[std::max(onlyRow, 0)])
+            continue;
+        [[maybe_unused]] const uint32_t budget = onlyRow >= 0 ? instructionsThatWereEnough : read.budget;
+        Slot site = read.site;
+        reads.clear();
+        reads.fileInFrontBesideOthers(read.inFront);
+        states.fill(SiteCacheState { UINT8_MAX });
+        StubRun run = reads.runner.run(getByIdAtSite(), { receiver.address(), std::bit_cast<uint64_t>(&site) }, PropertyReads::name);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(read.expected));
+        AOT_TEST_CHECK(std::ranges::count_if(states, [](const SiteCacheState& state) { return state.missesLeft != UINT8_MAX; }) == read.countsMiss);
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+        AOT_TEST_CHECK(run.instructionsInStubs);
+        if (*run.instructionsInStubs != budget)
+            dataLogLn("a read at a site of another Structure, the front table holds ", read.what, ": ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+        isWithinBudget &= *run.instructionsInStubs <= budget;
+#endif
+    }
+    AOT_TEST_CHECK(isWithinBudget);
+    if (onlyRow >= 0)
+        return;
+
+    for (StructureID idAtSite : { structureID, otherStructureID }) {
+        Slot site = ownValue(idAtSite, inlineOffset);
+        reads.file(ownValue(structureID, outOfLineOffset));
+        StubRun run = reads.runner.run(getByIdAtSite(), { receiver.address(), std::bit_cast<uint64_t>(&site) }, PropertyReads::name);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(idAtSite == structureID ? 1 : 2)));
+    }
 }
 
 std::span<const NativeTest> stubPropertyReadTests()
@@ -2021,12 +2871,14 @@ std::span<const NativeTest> stubPropertyReadTests()
 #endif
         { "stubs/get-by-id/deferred-closures"_s, ImageTests::whenExecutable<testDeferredClosures> },
         { "stubs/get-by-id/typed-array-lengths"_s, ImageTests::whenExecutable<testTypedArrayLengths> },
+        { "stubs/length-is/every-kind-of-receiver-against-every-written-integer"_s, ImageTests::whenExecutable<testWhetherLengthIsWrittenInteger> },
+        { "stubs/read-length-at-site/a-list-and-a-text-are-answered-in-front-of-the-record"_s, ImageTests::whenExecutable<testLengthReadAtSite> },
         { "stubs/get-by-id/fields-found-in-field-table"_s, ImageTests::whenExecutable<testFieldsFoundInFieldTable> },
         { "stubs/get-by-id/booleans-and-doubles-found-in-field-table"_s, ImageTests::whenExecutable<testBooleansAndDoublesFoundInFieldTable> },
         { "stubs/get-by-id/missing-fields-answered-by-field-table"_s, ImageTests::whenExecutable<testMissingFieldsAnsweredByFieldTable> },
-        { "stubs/get-by-id/instructions-of-reads-by-kind-of-field"_s, ImageTests::whenExecutable<testInstructionsOfReadsByKindOfField> },
-        { "stubs/get-by-id/instructions-of-reads-of-filed-fields"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields> },
-        { "stubs/get-by-id/instructions-of-reads-of-missing-fields-below-classes"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfMissingFieldsBelowClasses> },
+        { "stubs/get-by-id/instructions-of-reads-by-kind-of-field"_s, ImageTests::whenExecutable<testInstructionsOfReadsByKindOfField<>> },
+        { "stubs/get-by-id/instructions-of-reads-of-filed-fields"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<>> },
+        { "stubs/get-by-id/instructions-of-reads-of-missing-fields-below-classes"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfMissingFieldsBelowClasses<>> },
         { "stubs/get-by-id/lookups-left-to-the-caches"_s, ImageTests::whenExecutable<testLookupsLeftToTheCaches> },
         { "stubs/get-by-id/symbols-of-a-realm"_s, ImageTests::whenExecutable<testSymbolsOfRealm> },
         { "stubs/get-by-id/names-outside-layout-are-absent"_s, ImageTests::whenExecutable<testNamesOutsideLayoutAreAbsent> },
@@ -2058,6 +2910,119 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id-keeping-registers/reads-that-handlers-answer-leap-over-no-answer"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testReadsThatHandlersAnswerLeapOverNoAnswer>> },
         { "stubs/get-by-id-keeping-registers/reads-answered-by-access-table"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testReadsAnsweredByAccessTable>> },
         { "stubs/get-by-id-keeping-registers/closures-not-created"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testReadsOfClosuresNotCreated>> },
+#endif
+        { "stubs/get-by-id/reads-at-sites"_s, ImageTests::whenExecutable<testReadsAtSites> },
+        { "stubs/get-by-id/hits-at-sites"_s, ImageTests::whenExecutable<testHitsAtSites> },
+        { "stubs/get-by-id/sites-of-other-structures"_s, ImageTests::whenExecutable<testSitesOfOtherStructures<>> },
+        { "stubs/read-at-site/every-arm-of-an-answer-that-runs-no-code"_s, ImageTests::whenExecutable<testArmsOfAnswersAtPlace> },
+        { "stubs/read-at-site/instructions/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::BoxedField, 11>> },
+        { "stubs/read-at-site/instructions/an-integer-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::Int32Field, 22>> },
+        { "stubs/read-at-site/instructions/a-narrow-reference"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::NarrowReferenceField, 23>> },
+        { "stubs/read-at-site/instructions/a-double-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::DoubleField, 35>> },
+        { "stubs/read-at-site/instructions/an-optional-boolean"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::OptionalBooleanField, 30>> },
+        { "stubs/read-at-site/instructions/a-64-bit-integer"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::Int64Field, 34>> },
+        { "stubs/read-at-site/instructions/a-field-in-the-extension"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::FieldInExtension, 31>> },
+        { "stubs/read-at-site/instructions/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::OwnValueInCell, 14>> },
+        { "stubs/read-at-site/instructions/an-own-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::OwnValueInStorage, 15>> },
+        { "stubs/read-at-site/instructions/an-inherited-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::ValueInCellOfHolder, 15>> },
+        { "stubs/read-at-site/instructions/an-inherited-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::ValueInStorageOfHolder, 17>> },
+        { "stubs/read-at-site/instructions/no-property"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::NoProperty, 15>> },
+        { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/a-boxed-field"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::BoxedField, 16>>> },
+        { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/an-integer-field"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::Int32Field, 22>>> },
+        { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::OwnValueInCell, 11>>> },
+        { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/an-own-value-out-of-line"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::OwnValueInStorage, 12>>> },
+        { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/an-inherited-value-in-the-cell"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::ValueInCellOfHolder, 12>>> },
+        { "stubs/read-at-site/instructions-where-the-structure-is-asked-first/no-property"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlace<HitAtPlace::NoProperty, 12>>> },
+        { "stubs/finds-name-at-site/in/instructions/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::BoxedField, PresenceQuestion::In, 11>> },
+        { "stubs/finds-name-at-site/in/instructions/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::OwnValueInCell, PresenceQuestion::In, 11>> },
+        { "stubs/finds-name-at-site/in/instructions/an-own-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::OwnValueInStorage, PresenceQuestion::In, 11>> },
+        { "stubs/finds-name-at-site/in/instructions/an-inherited-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::ValueInCellOfHolder, PresenceQuestion::In, 19>> },
+        { "stubs/finds-name-at-site/in/instructions/an-inherited-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::ValueInStorageOfHolder, PresenceQuestion::In, 16>> },
+        { "stubs/finds-name-at-site/in/instructions/no-property"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::NoProperty, PresenceQuestion::In, 19>> },
+        { "stubs/finds-name-at-site/in/instructions-where-the-structure-is-asked-first/a-boxed-field"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::BoxedField, PresenceQuestion::In, 16>>> },
+        { "stubs/finds-name-at-site/in/instructions-where-the-structure-is-asked-first/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::OwnValueInCell, PresenceQuestion::In, 8>>> },
+        { "stubs/finds-name-at-site/in/instructions-where-the-structure-is-asked-first/an-own-value-out-of-line"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::OwnValueInStorage, PresenceQuestion::In, 8>>> },
+        { "stubs/finds-name-at-site/in/instructions-where-the-structure-is-asked-first/an-inherited-value-in-the-cell"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::ValueInCellOfHolder, PresenceQuestion::In, 16>>> },
+        { "stubs/finds-name-at-site/in/instructions-where-the-structure-is-asked-first/an-inherited-value-out-of-line"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::ValueInStorageOfHolder, PresenceQuestion::In, 13>>> },
+        { "stubs/finds-name-at-site/in/instructions-where-the-structure-is-asked-first/no-property"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::NoProperty, PresenceQuestion::In, 16>>> },
+        { "stubs/finds-name-at-site/has-own/instructions/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::BoxedField, PresenceQuestion::HasOwn, 11>> },
+        { "stubs/finds-name-at-site/has-own/instructions/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::OwnValueInCell, PresenceQuestion::HasOwn, 11>> },
+        { "stubs/finds-name-at-site/has-own/instructions/an-own-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::OwnValueInStorage, PresenceQuestion::HasOwn, 11>> },
+        { "stubs/finds-name-at-site/has-own/instructions/an-inherited-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::ValueInCellOfHolder, PresenceQuestion::HasOwn, 17>> },
+        { "stubs/finds-name-at-site/has-own/instructions/an-inherited-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::ValueInStorageOfHolder, PresenceQuestion::HasOwn, 16>> },
+        { "stubs/finds-name-at-site/has-own/instructions/no-property"_s, ImageTests::whenExecutable<testInstructionsOfPresenceAtPlace<HitAtPlace::NoProperty, PresenceQuestion::HasOwn, 17>> },
+        { "stubs/finds-name-at-site/has-own/instructions-where-the-structure-is-asked-first/a-boxed-field"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::BoxedField, PresenceQuestion::HasOwn, 16>>> },
+        { "stubs/finds-name-at-site/has-own/instructions-where-the-structure-is-asked-first/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::OwnValueInCell, PresenceQuestion::HasOwn, 8>>> },
+        { "stubs/finds-name-at-site/has-own/instructions-where-the-structure-is-asked-first/an-own-value-out-of-line"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::OwnValueInStorage, PresenceQuestion::HasOwn, 8>>> },
+        { "stubs/finds-name-at-site/has-own/instructions-where-the-structure-is-asked-first/an-inherited-value-in-the-cell"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::ValueInCellOfHolder, PresenceQuestion::HasOwn, 14>>> },
+        { "stubs/finds-name-at-site/has-own/instructions-where-the-structure-is-asked-first/an-inherited-value-out-of-line"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::ValueInStorageOfHolder, PresenceQuestion::HasOwn, 13>>> },
+        { "stubs/finds-name-at-site/has-own/instructions-where-the-structure-is-asked-first/no-property"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfPresenceAtPlace<HitAtPlace::NoProperty, PresenceQuestion::HasOwn, 14>>> },
+        { "stubs/read-at-site-running-no-code/instructions/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::BoxedField, 11>> },
+        { "stubs/read-at-site-running-no-code/instructions/an-integer-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::Int32Field, 22>> },
+        { "stubs/read-at-site-running-no-code/instructions/a-narrow-reference"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::NarrowReferenceField, 23>> },
+        { "stubs/read-at-site-running-no-code/instructions/a-double-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::DoubleField, 35>> },
+        { "stubs/read-at-site-running-no-code/instructions/an-optional-boolean"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::OptionalBooleanField, 30>> },
+        { "stubs/read-at-site-running-no-code/instructions/a-64-bit-integer"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::Int64Field, 34>> },
+        { "stubs/read-at-site-running-no-code/instructions/a-field-in-the-extension"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::FieldInExtension, 31>> },
+        { "stubs/read-at-site-running-no-code/instructions/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::OwnValueInCell, 14>> },
+        { "stubs/read-at-site-running-no-code/instructions/an-own-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::OwnValueInStorage, 15>> },
+        { "stubs/read-at-site-running-no-code/instructions/an-inherited-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::ValueInCellOfHolder, 17>> },
+        { "stubs/read-at-site-running-no-code/instructions/an-inherited-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::ValueInStorageOfHolder, 18>> },
+        { "stubs/read-at-site-running-no-code/instructions/no-property"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::NoProperty, 17>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/a-boxed-field"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::BoxedField, 16>>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/an-integer-field"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::Int32Field, 22>>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/a-narrow-reference"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::NarrowReferenceField, 23>>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/a-double-field"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::DoubleField, 35>>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/an-optional-boolean"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::OptionalBooleanField, 30>>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/a-64-bit-integer"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::Int64Field, 34>>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/a-field-in-the-extension"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::FieldInExtension, 31>>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::OwnValueInCell, 11>>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/an-own-value-out-of-line"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::OwnValueInStorage, 12>>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/an-inherited-value-in-the-cell"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::ValueInCellOfHolder, 14>>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/an-inherited-value-out-of-line"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::ValueInStorageOfHolder, 15>>> },
+        { "stubs/read-at-site-running-no-code/instructions-where-the-structure-is-asked-first/no-property"_s, ImageTests::whenExecutable<withStubThatAsksStructureFirst<testInstructionsOfHitAtPlaceRunningNoCode<HitAtPlace::NoProperty, 14>>> },
+        { "stubs/read-at-site-running-no-code/a-miss-is-counted-and-is-no-hit"_s, ImageTests::whenExecutable<testMissAtPlaceRunningNoCode> },
+        { "stubs/read-at-site-running-no-code/the-front-of-the-tables-answers-where-the-place-holds-another-structure"_s, ImageTests::whenExecutable<testFrontOfTablesAnswersWherePlaceHoldsAnotherStructureRunningNoCode> },
+        { "stubs/read-at-site-running-no-code/the-forms-that-run-code-or-ask-more-are-no-hits"_s, ImageTests::whenExecutable<testFormsThatAreNoHitsRunningNoCode> },
+        { "stubs/read-at-site/instructions-of-misses/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInCell, 43>> },
+        { "stubs/read-at-site/instructions-of-misses/an-own-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInStorage, 50>> },
+        { "stubs/read-at-site/instructions-of-misses/no-property"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::NoProperty, 44>> },
+        { "stubs/read-at-site/instructions-of-misses/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::BoxedField, 39>> },
+        { "stubs/read-at-site/instructions-of-misses/an-integer-field"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::Int32Field, 43>> },
+        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/an-own-value-in-the-cell"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInCell, 41, NameAtSite::HasColumn>> },
+        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/an-own-value-out-of-line"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInStorage, 48, NameAtSite::HasColumn>> },
+        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/no-property"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::NoProperty, 42, NameAtSite::HasColumn>> },
+        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::BoxedField, 37, NameAtSite::HasColumn>> },
+        { "stubs/read-at-site/instructions-of-misses-under-a-name-with-a-column/an-integer-field"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::Int32Field, 42, NameAtSite::HasColumn>> },
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+        { "stubs/read-at-site/instructions-that-were-enough/an-integer-field-takes-22-not-21"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::Int32Field, 21>>, "reads by name: 22 instructions where the compiler before this one took 21"_s },
+        { "stubs/read-at-site/instructions-that-were-enough/a-double-field-takes-35-not-26"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::DoubleField, 26>>, "reads by name: 35 instructions where the compiler before this one took 26"_s },
+        { "stubs/read-at-site/instructions-that-were-enough/an-own-value-in-the-cell-takes-14-not-10"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::OwnValueInCell, 10>>, "reads by name: 14 instructions where the compiler before this one took 10"_s },
+        { "stubs/read-at-site/instructions-that-were-enough/an-inherited-value-in-the-cell-takes-15-not-14"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::ValueInCellOfHolder, 14>>, "reads by name: 15 instructions where the compiler before this one took 14"_s },
+        { "stubs/read-at-site/instructions-that-were-enough/an-inherited-value-out-of-line-takes-17-not-14"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::ValueInStorageOfHolder, 14>>, "reads by name: 17 instructions where the compiler before this one took 14"_s },
+        { "stubs/read-at-site/instructions-that-were-enough/no-property-takes-15-not-12"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::NoProperty, 12>>, "reads by name: 15 instructions where the compiler before this one took 12"_s },
+        { "stubs/read-at-site/instructions-that-were-enough/a-miss-that-finds-an-own-value-in-the-cell-takes-43-not-28"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInCell, 28>>, "reads by name: 43 instructions where the compiler before this one took 28"_s },
+        { "stubs/read-at-site/instructions-that-were-enough/a-miss-that-finds-an-own-value-out-of-line-takes-50-not-39"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::OwnValueInStorage, 39>>, "reads by name: 50 instructions where the compiler before this one took 39"_s },
+        { "stubs/read-at-site/instructions-that-were-enough/a-miss-that-finds-no-property-takes-44-not-26"_s, ImageTests::whenExecutable<testInstructionsOfNextMissAtPlace<MissAtPlace::NoProperty, 26>>, "reads by name: 44 instructions where the compiler before this one took 26"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/the-next-read-of-a-boolean-takes-32-not-30"_s, ImageTests::whenExecutable<testInstructionsOfReadsByKindOfField<4, 30>>, "reads by name: 32 instructions where the compiler before this one took 30"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/the-next-read-of-a-double-takes-37-not-26"_s, ImageTests::whenExecutable<testInstructionsOfReadsByKindOfField<5, 26>>, "reads by name: 37 instructions where the compiler before this one took 26"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/the-next-read-of-a-double-that-is-missing-takes-91-not-80"_s, ImageTests::whenExecutable<testInstructionsOfReadsByKindOfField<11, 80>>, "reads by name: 91 instructions where the compiler before this one took 80"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-read-of-a-filed-field-a-boxed-value-takes-62-not-50"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<0, 50>>, "reads by name: 62 instructions where the compiler before this one took 50"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-read-of-a-filed-field-a-reference-takes-62-not-50"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<1, 50>>, "reads by name: 62 instructions where the compiler before this one took 50"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-read-of-a-filed-field-a-narrow-reference-takes-64-not-52"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<2, 52>>, "reads by name: 64 instructions where the compiler before this one took 52"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-read-of-a-filed-field-an-optional-narrow-reference-takes-64-not-52"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<3, 52>>, "reads by name: 64 instructions where the compiler before this one took 52"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-read-of-a-filed-field-an-optional-integer-takes-67-not-55"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<4, 55>>, "reads by name: 67 instructions where the compiler before this one took 55"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-read-of-a-filed-field-an-integer-takes-67-not-61"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<5, 61>>, "reads by name: 67 instructions where the compiler before this one took 61"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-read-of-a-filed-field-a-double-takes-80-not-69"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<6, 69>>, "reads by name: 80 instructions where the compiler before this one took 69"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-read-of-a-filed-field-an-optional-double-takes-77-not-69"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<7, 69>>, "reads by name: 77 instructions where the compiler before this one took 69"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-read-of-a-filed-field-an-optional-double-that-is-whole-takes-77-not-69"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<8, 69>>, "reads by name: 77 instructions where the compiler before this one took 69"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-read-of-a-filed-field-a-boolean-takes-72-not-61"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<9, 61>>, "reads by name: 72 instructions where the compiler before this one took 61"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-read-of-a-filed-field-an-optional-boolean-takes-72-not-62"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields<10, 62>>, "reads by name: 72 instructions where the compiler before this one took 62"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-site-of-another-structure-where-the-front-table-holds-an-own-value-at-the-place-that-the-site-names-takes-27-not-22"_s, ImageTests::whenExecutable<testSitesOfOtherStructures<0, 22>>, "reads by name: 27 instructions where the compiler before this one took 22"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-site-of-another-structure-where-the-front-table-holds-an-own-value-in-the-cell-at-another-place-takes-33-not-28"_s, ImageTests::whenExecutable<testSitesOfOtherStructures<1, 28>>, "reads by name: 33 instructions where the compiler before this one took 28"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-site-of-another-structure-where-the-front-table-holds-an-own-value-in-the-cell-and-the-site-one-out-of-line-takes-33-not-28"_s, ImageTests::whenExecutable<testSitesOfOtherStructures<2, 28>>, "reads by name: 33 instructions where the compiler before this one took 28"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-site-of-another-structure-where-the-front-table-holds-an-own-value-out-of-line-takes-50-not-39"_s, ImageTests::whenExecutable<testSitesOfOtherStructures<3, 39>>, "reads by name: 50 instructions where the compiler before this one took 39"_s },
+        { "stubs/get-by-id/instructions-that-were-enough/a-site-of-another-structure-where-the-front-table-holds-no-property-takes-43-not-26"_s, ImageTests::whenExecutable<testSitesOfOtherStructures<4, 26>>, "reads by name: 43 instructions where the compiler before this one took 26"_s },
 #endif
         { "stubs/in-by-val/presence-from-leaf-lookup"_s, ImageTests::whenExecutable<testPresenceFromLeafLookup> },
         { "stubs/in-by-val/own-presence-of-fields-that-objects-above-answer-for"_s, ImageTests::whenExecutable<testOwnPresenceOfFieldsThatObjectsAboveAnswerFor> },

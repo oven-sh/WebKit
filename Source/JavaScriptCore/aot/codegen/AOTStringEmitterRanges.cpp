@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
+#include "AOTElementAccessEmitter.h"
+#include "AOTStubsCollections.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -64,6 +66,27 @@ void StringEmitter::generateStringRangeParseInt(const ValueContext& value)
     }, Machine::EdgeClass::Normal);
     ensureStillAliveHere(view.owner);
     define(value, emitter<ConversionEmitter>().inRepresentation(value, number, typeOf(value.id()), value.representation()));
+}
+
+void StringEmitter::generateFindStringRangeInMap(const ValueContext& value)
+{
+    CellPointer map = in<CellPointer>(value->mapOperand());
+    CharacterView view = viewOf(value, value->stringOperand());
+    Word32 start = word32Of(value->startOperand());
+    Word32 end = word32Of(value->endOperand());
+    if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.testsEveryPosition()) {
+        elements.stopUnlessInside(value, belowOrEqual(start, end));
+        elements.stopUnlessInside(value, belowOrEqual(end, view.length));
+    }
+    Word32 length = sub(end, start);
+    Integer place = selectByWidth<Integer>(view.is8Bit, [&](bool is8Bit) {
+        Pointer characters = offsetBy(view.characters, zeroExtended(start), is8Bit ? 0 : 1);
+        if (is8Bit)
+            return Integer(callStub(value, findCharactersInMap(), { map.value(), characters.value(), length.value() }).first);
+        return callLeaf<Integer>(RuntimeOperation::FindCharacters16InMap, { map, characters, length });
+    });
+    ensureStillAliveHere(view.owner);
+    define(value, place);
 }
 
 } } } // namespace JSC::AOT::Typed

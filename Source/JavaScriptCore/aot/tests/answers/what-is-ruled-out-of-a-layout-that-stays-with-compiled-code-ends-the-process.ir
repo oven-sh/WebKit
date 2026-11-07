@@ -3,10 +3,15 @@
 # an emptied slot, a frozen object or another prototype under code that does not look would be a wrong answer or worse. What fits what is proven goes through.
 # The same deeds on a layout that reaches unseen code stop nothing and leave their marks: deeds-of-code-that-the-build-has-not-seen-leave-their-marks-on-the-object.ir.
 # OPTIONS: mechanisms=all
-# RUN: run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { const kept = aotFindObjectOfLayout(0); print(aotPlaceOfProperty(kept, "count"), JSON.stringify(aotMarksOfObject(kept))); kept.count = 5; kept.label = "other"; print(kept.count, kept.label, kept.twice(), aotPlaceOfProperty(kept, "count")); });
+# RUN: run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { const kept = aotFindObjectOfLayout(0); print(aotPlaceOfProperty(kept, "count"), JSON.stringify(aotMarksOfObject(kept))); kept.count = 5; kept.label = "other"; print(kept.count, kept.label, aotPlaceOfProperty(kept, "count")); });
 # CHECK: slot ""
-# CHECK-NEXT: 5 other 10 slot
+# CHECK-NEXT: 5 other slot
 # CHECK-NEXT: exited with 0
+# Every call of `twice` is copied and no compiled code enters it by value: its entry is closed.
+# RUN(ENTERS): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { print(aotFindObjectOfLayout(0).twice()); print("went on"); });
+# ENTERS: AOT: {{*}}an entry parameter is not of the type that the compiler has proven of it
+# ENTERS-NOT: went on
+# ENTERS: crashed with
 # RUN(STORES): run-in-shell const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => start(entry).then(() => { aotFindObjectOfLayout(0).count = "text"; print("went on"); });
 # STORES: AOT: StoreOfOtherType of an object of layout L0, field 0: the compiler has proven that it never happens, and compiled code reads such objects without a look. This is a bug in Bun.
 # STORES-NOT: went on

@@ -7,16 +7,20 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCode.h"
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
-#include <wtf/HashSet.h>
 #include <wtf/HashTraits.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 struct LoopsOverGeneratorsOfUnit {
-    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> states;
+    struct StateOpened {
+        uint32_t listOfWords { 0 };
+        std::optional<PassedTest> generatorWasAsMade;
+    };
+    HashMap<uint32_t, StateOpened, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> statesOpened;
     std::optional<bool> engineAnswers;
     bool hasStepsWrittenByHand { false };
     HashMap<uint32_t, BitVector, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> callsOfNextWhoseResultIsOnlyRead;

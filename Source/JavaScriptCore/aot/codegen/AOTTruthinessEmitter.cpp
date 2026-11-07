@@ -81,16 +81,16 @@ Condition TruthinessEmitter::isTruthy(const OperationContext& context, Operand o
     return boolean(false);
 }
 
-void TruthinessEmitter::branchOnTruthiness(const OperationContext& context, Operand operand, const Type& type, BranchTargets targets)
+void TruthinessEmitter::branchOnTruthiness(const OperationContext& context, Operand operand, const Type& type, BranchTargets targets, bool expectsObjectOrNothing, bool expectsInt32OrNothing, bool isAnswerOfCall, bool expectsBoolean)
 {
     if (operand.is<Boxed>()) {
-        branchOnTruthinessOfAnyValue(context, operand.as<Boxed>(), type, targets);
+        branchOnTruthinessOfAnyValue(context, operand.as<Boxed>(), type, targets, expectsObjectOrNothing, expectsInt32OrNothing, isAnswerOfCall, expectsBoolean);
         return;
     }
     branch(isTruthy(context, operand, type), targets);
 }
 
-void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& context, Boxed value, const Type& type, BranchTargets targets)
+void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& context, Boxed value, const Type& type, BranchTargets targets, bool expectsObjectOrNothing, bool expectsInt32OrNothing, bool isAnswerOfCall, bool expectsBoolean)
 {
     auto branchInStub = [&] {
         LValue operands[] = { value.value() };
@@ -106,7 +106,35 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
     }
     FormAtPlace named = formByLoopAlone(Opcode::ToBoolean, StateOfKnowledge::BranchOnTestedKinds, context.block() && generator().isInLoop(context.block()));
     m_out.noteFormOf(conversionsToBoolean, named.form, StateOfKnowledge::BranchOnTestedKinds, named.place);
+    if (expectsBoolean && (type.primitives & Primitive::Boolean) == Primitive::Boolean) {
+        LBasicBlock isNotFalse = newBlock();
+        LBasicBlock isNoBoolean = newBlock();
+        m_out.branch(equal(value, boxedConstant(jsBoolean(false))).value(), targets.notTaken, normalEdge(isNotFalse));
+        m_out.appendTo(isNotFalse);
+        m_out.branch(equal(value, boxedConstant(jsBoolean(true))).value(), targets.taken, rareEdge(isNoBoolean));
+        m_out.appendTo(isNoBoolean);
+        branchInStub();
+        return;
+    }
     if (named.form != Form::Open) {
+        bool asksForObject = expectsObjectOrNothing && expectsObjects;
+        bool asksForInt32 = expectsInt32OrNothing && type.primitives & Primitive::Number;
+        if ((!asksForObject && !asksForInt32) || !expectsSmallValues || !context.block() || generator().code().at(context.block()).frequency == BlockFrequency::Rare) {
+            branchInStub();
+            return;
+        }
+        LBasicBlock isNotUndefined = newBlock();
+        LBasicBlock isOfExpectedKind = newBlock();
+        LBasicBlock isOfOtherKind = newBlock();
+        m_out.branch(equal(value, undefined()).value(), targets.notTaken, normalEdge(isNotUndefined));
+        m_out.appendTo(isNotUndefined);
+        m_out.branch((asksForObject ? isCell(value) : isInt32(value)).value(), normalEdge(isOfExpectedKind), normalEdge(isOfOtherKind));
+        m_out.appendTo(isOfExpectedKind);
+        if (asksForObject)
+            m_out.branch(isObjectCell(unboxCell(value)).value(), targets.taken, normalEdge(isOfOtherKind));
+        else
+            branch(isNotZero(low32(value)), targets);
+        m_out.appendTo(isOfOtherKind);
         branchInStub();
         return;
     }
@@ -117,6 +145,15 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
     auto edgeToNextTest = [&](bool hasNextTest) {
         return hasNextTest ? normalEdge(newBlock()) : rareEdge(otherwise);
     };
+    bool asksForBooleansFirst = isAnswerOfCall && expectsObjects && type.primitives & Primitive::Boolean;
+    if (asksForBooleansFirst) {
+        LBasicBlock isNotFalse = newBlock();
+        LBasicBlock isNoBoolean = newBlock();
+        m_out.branch(equal(value, boxedConstant(jsBoolean(false))).value(), targets.notTaken, normalEdge(isNotFalse));
+        m_out.appendTo(isNotFalse);
+        m_out.branch(equal(value, trueValue).value(), targets.taken, normalEdge(isNoBoolean));
+        m_out.appendTo(isNoBoolean);
+    }
     if (expectsObjects) {
         LBasicBlock isCellCase = newBlock();
         BlockEdge isOtherCase = edgeToNextTest(expectsSmallValues);
@@ -128,9 +165,11 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
         m_out.appendTo(isOtherCase.block());
     }
     if (expectsSmallValues) {
-        LBasicBlock isNotTrue = newBlock();
-        m_out.branch(equal(value, trueValue).value(), targets.taken, normalEdge(isNotTrue));
-        m_out.appendTo(isNotTrue);
+        if (!asksForBooleansFirst) {
+            LBasicBlock isNotTrue = newBlock();
+            m_out.branch(equal(value, trueValue).value(), targets.taken, normalEdge(isNotTrue));
+            m_out.appendTo(isNotTrue);
+        }
         m_out.branch(belowOrEqual(value, undefined()).value(), targets.notTaken, edgeToNextTest(false));
         m_out.appendTo(otherwise);
     }

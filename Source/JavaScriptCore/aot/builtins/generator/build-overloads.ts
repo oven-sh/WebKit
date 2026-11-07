@@ -180,7 +180,7 @@ function withConstructedClass(spec: TypeSpec, constructed: ClassName): TypeSpec 
     return { type: "Union", members: spec.members.map(member => withConstructedClass(member, constructed)) };
   }
   if (spec.type !== "InstanceOfReceiverClass") return spec;
-  return { type: "Instance", class: constructed, freshness: spec.freshness };
+  return { type: "Instance", class: constructed, freshness: spec.freshness, isOfClassItself: true };
 }
 
 function resultSpecOf(context: OverloadContext): TypeSpec {

@@ -54,6 +54,49 @@ uint32_t limitOfStretchOfNumbers(const Walker& walker, const BodyBlock& block)
     return limit;
 }
 
+std::optional<uint32_t> findPlaceBehindUpdateOfElement(Walker& walker, const BodyValue& read)
+{
+    static constexpr OpcodeSet operatorsInsideUpdate = operatorsThatMakeNumbers | allSums;
+    static constexpr OpcodeSet passedInsideUpdate = opcodesThatStateTypes | OpcodeSet { Opcode::Integer, Opcode::Double, Opcode::ReleaseHint };
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (read.opcode() != Opcode::ElemGet || read.id().index() >= index.numberOfValues() || index.value(read.id()).words() != read.words() || walker.hasTextsInStringBuilders())
+        return std::nullopt;
+    BodyBlock block = index.block(index.blockOf(read.id()));
+    if (walker.inputBlockBeingWalked() != block.id())
+        return std::nullopt;
+    TypeArena& types = walker.types();
+    auto namesSame = [&](ValueID stored, ValueID loaded) {
+        if (index.valueBehindCasts(stored) == index.valueBehindCasts(loaded))
+            return !!index.valueBehindCasts(stored);
+        Reference built = stored < read.id() ? walker.referenceOf(stored) : Reference();
+        return built && built.isValue() && built == walker.referenceOf(loaded);
+    };
+    uint32_t first = block.firstValue().index();
+    uint32_t limit = limitOfStretchOfNumbers(walker, block);
+    for (uint32_t place = read.id().index() + 1 - first; place < limit; ++place) {
+        BodyValue operation = index.value(ValueID(first + place));
+        Opcode opcode = operation.opcode();
+        if (opcode == Opcode::ElemSet) {
+            bool storesWhereItWasRead = namesSame(operation.objectOperand(), read.objectOperand()) && namesSame(operation.propertyOperand(), read.propertyOperand());
+            return storesWhereItWasRead && operation.valueOperand() > read.id() ? std::optional<uint32_t>(place + 1) : std::nullopt;
+        }
+        if (passedInsideUpdate.contains(opcode) && !opcodesThatStateTypes.contains(opcode))
+            continue;
+        if (!passedInsideUpdate.contains(opcode) && !operatorsInsideUpdate.contains(opcode))
+            return std::nullopt;
+        bool takesNumbersAlone = true;
+        operation.forEachOperand([&](ValueID operand, uint32_t) {
+            if (operand >= read.id())
+                return;
+            Reference taken = walker.referenceOf(operand);
+            takesNumbersAlone &= taken && taken.isRecord() && types.at(walker.typeOf(taken)).isNumber();
+        });
+        if (!takesNumbersAlone)
+            return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 Reference buildTestOfNumber(Walker& walker, Reference value, TypeID tested, Origin origin)
 {
     Draft test(Opcode::TypeTest, origin);

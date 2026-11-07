@@ -6,9 +6,9 @@
 # IT IS AN EXPECTATION: the run time looks at the chain when the first object is linked. What the setter stores on `this` becomes a field of the created layout.
 # RUN(HELD): link functions fields held mechanisms=all
 # HELD: function f3 {{*}} result=undefined|i32
-# HELD-NEXT: parameter 0 expected=L2
+# HELD-NEXT: parameter 0 expected=L2 declared
 # HELD: function f4
-# HELD-NEXT: parameter 0 expected=L2
+# HELD-NEXT: parameter 0 expected=L2 declared
 # HELD-NEXT: parameter 1 expected=undefined|i32
 # HELD: field L2.0 "out" appended proven=undefined|i32
 # HELD-NEXT: field L2.1 "seen" appended proven=true
@@ -19,10 +19,15 @@
 # The order of the worklist does not show.
 # RUN(OLDEST): link functions held oldest-first mechanisms=all
 # OLDEST: function f3 {{*}} result=undefined|i32
-# OLDEST-NEXT: parameter 0 expected=L2
+# OLDEST-NEXT: parameter 0 expected=L2 declared
 # RUN(SCATTERED): link functions held scattered mechanisms=all
 # SCATTERED: function f3 {{*}} result=undefined|i32
-# SCATTERED-NEXT: parameter 0 expected=L2
+# SCATTERED-NEXT: parameter 0 expected=L2 declared
+# RUN(WRITTEN): link functions mechanisms=all
+# WRITTEN: function f3
+# WRITTEN-NEXT: parameter 0 expected=L2 declared
+# WRITTEN: function f4
+# WRITTEN-NEXT: parameter 0 expected=L2 declared
 
 layout L0 kind=Instance name="Server" module=m0 position=114 constructor=f1 fields=[{key="reply" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 layout L1 module=m0 position=14 fields=[{key="code" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1

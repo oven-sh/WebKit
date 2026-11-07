@@ -1,0 +1,26 @@
+# function first() {} Object.defineProperty(first, "limit", hidden)
+# The control of function-on-which-one-descriptor-written-in-place-lays-an-accessor-is-not-reached.ir: nobody knows what the descriptor holds.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+layout L0 fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}, {key="enumerable" declared={type=anything}}, {key="value" declared={type=anything}}]
+layout L1 fields=[{key="limit" declared={type=anything}}, {key="mark" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="hidden" [isFreeName]
+    v5 = String string="limit"
+    v6 = Call v2, v1, v0, v5, v4 calleeName="Object.defineProperty"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="first" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

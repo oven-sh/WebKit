@@ -421,7 +421,7 @@ void Allocator::findFramedPart()
         return m_liveness.mostLiveIn(block, Bank::GP) > numberOfGPRsThatNoCallerCountsOn || m_liveness.mostLiveIn(block, Bank::FP) > numberOfFPRsThatNoCallerCountsOn;
     };
     bool hasCalls = m_liveness.nextCallBehindHeadOf(entry, Bank::GP) != noPosition || m_liveness.nextCallBehindHeadOf(entry, Bank::FP) != noPosition;
-    if (!hasCalls && std::ranges::none_of(blocksInOrder, runsOutOfRegisters))
+    if (!hasCalls && std::ranges::none_of(blocksInOrder, [&](const Block* block) { return runsOutOfRegisters(block) || blockHoldsPatchThatNeedsFrameToBePlanned(m_liveness, block); }))
         return;
 
     const BlockPlace* const places = m_order.places();

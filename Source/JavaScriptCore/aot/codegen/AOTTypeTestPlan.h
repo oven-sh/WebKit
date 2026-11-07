@@ -66,6 +66,7 @@ struct TypeTestContext {
 bool holdsOnlyCompiledObjects(TypeReader, const Plan&, const Type&);
 
 TypeTestPlan computeTypeTestPlan(TypeArena&, const TypeTestContext&, TypeID from, Representation, TypeID to);
+bool recordInTablesTellsType(TypeArena&, TypeID);
 TypeTestPlan computeTypeTestPlanFromAnything(TypeReader, const Type& to);
 
 } } } // namespace JSC::AOT::Typed

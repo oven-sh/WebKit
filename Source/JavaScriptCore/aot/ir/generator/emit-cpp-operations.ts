@@ -109,10 +109,12 @@ function entryInfoDeclarations(schema: Schema): string[] {
   const externals = ["None", ...schema.externals.map(external => external.name)];
   return `JS_EXPORT_PRIVATE std::span<const uint32_t> defaultPayloadOf(TerminatorKind);
 // By the number of the opcode: the words that a fresh draft has, and how many named operands.
+inline constexpr unsigned numberOfFreshPayloadWordsAtHand = 12;
 struct FreshWordsOfOperation {
     const uint32_t* payload { nullptr };
     uint16_t numberOfPayloadWords { 0 };
     uint16_t numberOfNamedOperands { 0 };
+    std::array<uint32_t, numberOfFreshPayloadWordsAtHand> firstPayloadWords { };
 };
 JS_EXPORT_PRIVATE extern const std::array<FreshWordsOfOperation, numberOfEnumerators<Opcode>> freshWordsByOpcode;
 ALWAYS_INLINE const FreshWordsOfOperation& freshWordsOf(Opcode opcode) { return freshWordsByOpcode[static_cast<unsigned>(opcode)]; }
@@ -775,7 +777,9 @@ function operationsSource(schema: Schema): string[] {
       "    std::array<FreshWordsOfOperation, numberOfEnumerators<Opcode>> table;",
       "    for (unsigned index = 0; index < table.size(); ++index) {",
       "        std::span<const uint32_t> payload = defaultPayloadInSchemaOf(static_cast<Opcode>(index));",
-      "        table[index] = { payload.data(), static_cast<uint16_t>(payload.size()), static_cast<uint16_t>(numberOfNamedOperandsOf(static_cast<Opcode>(index))) };",
+      "        table[index] = { payload.data(), static_cast<uint16_t>(payload.size()), static_cast<uint16_t>(numberOfNamedOperandsOf(static_cast<Opcode>(index))), { } };",
+      "        for (size_t word = 0; word < payload.size() && word < numberOfFreshPayloadWordsAtHand; ++word)",
+      "            table[index].firstPayloadWords[word] = payload[word];",
       "    }",
       "    return table;",
       "}();",

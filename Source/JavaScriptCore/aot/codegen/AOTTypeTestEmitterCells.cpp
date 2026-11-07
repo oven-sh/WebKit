@@ -289,6 +289,14 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
 
 Condition TypeTestEmitter::nothingWasWrittenAbove(BuiltinClassID classID)
 {
+    if (standsAboveClassesOfViews(m_builtins, classID)) {
+        Condition nothing = boolean(true);
+        for (uint32_t index = 0; index < m_builtins.classCount(); ++index) {
+            if (m_builtins.at(BuiltinClassID(index)).parent == classID && isTypedView(m_builtins.typedArrayTypeOf(BuiltinClassID(index))))
+                nothing = logicalAnd(nothing, nothingWasWrittenAbove(BuiltinClassID(index)));
+        }
+        return nothing;
+    }
     Pointer classesWrittenAbove = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.classesWrittenAbove));
     Word32 wasWrittenAbove(m_out.load8ZeroExt32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), classesWrittenAbove.value(), classID.index())));
     return isZero(wasWrittenAbove);
@@ -298,6 +306,10 @@ Condition TypeTestEmitter::isAsItsClassMadeIt(CellPointer cell, BuiltinClassID c
 {
     if (aspects.containsAny(aspectsWithoutTest))
         return boolean(false);
+    if (standsAboveClassesOfViews(m_builtins, classID)) {
+        aspects.remove(PristineAspects::Storage);
+        return aspects.contains(PristineAspects::NamesKeptBelow) ? boolean(false) : emitter<ElementAccessEmitter>().isPristineInstance(cell, aspects);
+    }
     switch (pristineTestOf(m_builtins, classID)) {
     case PristineTest::NeverPasses:
         return boolean(false);
@@ -311,9 +323,14 @@ Condition TypeTestEmitter::isAsItsClassMadeIt(CellPointer cell, BuiltinClassID c
             RELEASE_ASSERT(below);
             OptionSet<PristineAspects> aspectsOfEither = aspects - PristineAspects::NamesKeptBelow;
             aspectsOfEither.add(PristineAspects::Names);
-            Condition isPristineArray = emitter<ElementAccessEmitter>().isPristineInstance(cell, aspectsOfEither);
-            return logicalOr(isPristineArray, isPristine(cell, below, aspectsOfEither));
+            return selectByBranch<Condition>(emitter<ElementAccessEmitter>().isPristineInstance(cell, aspectsOfEither), [&] {
+                return boolean(true);
+            }, [&] {
+                return isPristine(cell, below, aspectsOfEither);
+            });
         }
+        if (aspects.contains(PristineAspects::Names) && pristineFlagOfCellCoversElements(m_builtins.at(classID).type))
+            aspects.remove(PristineAspects::Storage);
         return emitter<ElementAccessEmitter>().isPristineInstance(cell, aspects);
     case PristineTest::ClosureAsCreated:
         return emitter<GuardEmitter>().isClosureAsCreated(cell, classID, aspects);

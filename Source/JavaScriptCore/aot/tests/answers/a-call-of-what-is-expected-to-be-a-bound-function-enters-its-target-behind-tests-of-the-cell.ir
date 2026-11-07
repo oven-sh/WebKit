@@ -1,0 +1,192 @@
+# `const inc = add.bind(null, 1); for (..) sum += inc(round)`: A CALL OF A BOUND FUNCTION IN A LOOP. It went through the stub for calls by value, the stub's way for bound functions, the target's guard of parameters and the target's body that knows nothing: 85 to 100 instructions.
+# What bind makes never changes: its target, its `this` and its arguments are words of the cell. Where a value is EXPECTED to be a bound function of one function (bind's row says what its result holds: BoundFunction<add, null, 1>),
+# the call asks the cell: is it a bound function . has it that many arguments . is its target a closure of that function: and enters the function with the words read off the cell. Whatever else stands there is called as written.
+# class Scale { factor: number; constructor(factor: number) { this.factor = factor; } times(value: number, more: number): number { return value * this.factor + more; } }
+# function add(a: number, b: number): number { return a + b; }
+# function total(rounds: number): number {
+#   const scale = new Scale(3);
+#   const inc = add.bind(null, 1), times = scale.times.bind(scale), timesTwo = scale.times.bind(scale, 2);
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) sum += inc(round) + times(round, 1) + timesTwo(round);
+#   return sum;
+# }
+# keep(add);
+# keep(Scale.prototype.times);
+# print(total(4));
+# The shell lays a `bind` of its own on the two functions, so that anything may stand where a bound function is expected.
+# f2 = total
+# The emitter runs under its own net on what the code of an operation touches: the two new operations read words of the cell.
+# OPTIONS: mechanisms=all check=Validate
+# LIBRARY: own
+# RUN(FORM): walk f2
+# FORM: = TypeTest {{*}}testedType=BoundFunction
+# FORM: = HasNumberOfBoundArguments {{*}}count=1
+# FORM: = GetWordOfBoundFunction
+# FORM: = TypeTest {{*}}testedType=f1
+# FORM: = GetWordOfBoundFunction {{*}}index=2
+# RUN(BOUND): run-in-shell keep = function () { };
+# BOUND: 62
+# BOUND-NEXT: exited with 0
+# RUN(CLOSURE): run-in-shell keep = function (f) { f.bind = function () { return function (a, b) { return 1000 + a; }; }; };
+# CLOSURE: 12018
+# RUN(OTHERTARGET): run-in-shell keep = function (f) { f.bind = function (t, ...bound) { return Function.prototype.bind.call(function (...all) { return all.length * 100; }, t, ...bound); }; };
+# OTHERTARGET: 2400
+# RUN(OTHERCOUNT): run-in-shell keep = function (f) { f.bind = function (t, ...bound) { return Function.prototype.bind.call(f, t, 7, ...bound); }; };
+# OTHERCOUNT: 214
+# RUN(MANY): run-in-shell keep = function (f) { f.bind = function (t, ...bound) { return Function.prototype.bind.call(f, t, 1, 2, 3, 4, 5); }; };
+# MANY: 52
+# RUN(OTHERTHIS): run-in-shell keep = function (f) { f.bind = function (t, ...bound) { return Function.prototype.bind.call(f, { factor: 10 }, ...bound); }; };
+# OTHERTHIS: 160
+# RUN(TWICE): run-in-shell keep = function (f) { f.bind = function (t, ...bound) { return Function.prototype.bind.call(Function.prototype.bind.call(f, t), null, ...bound); }; };
+# TWICE: 62
+# RUN(PROXY): run-in-shell keep = function (f) { f.bind = function (t, ...bound) { return new Proxy(Function.prototype.bind.call(f, t, ...bound), { apply(target, self, passed) { return 5000; } }); }; };
+# PROXY: 60000
+# RUN(NATIVE): run-in-shell keep = function (f) { f.bind = function () { return Math.max; }; };
+# NATIVE: 19
+# RUN(NOTHING): run-in-shell keep = function (f) { f.bind = function () { return 5; }; };
+# NOTHING: TypeError: inc is not a function
+# RUN(TEXTS): run-in-shell keep = function (f) { f.bind = function (t, ...bound) { return Function.prototype.bind.call(f, t, ...bound.map(String)); }; };
+# TEXTS: 010161147127813109
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Scale" module=m0 position=103 constructor=f3 fields=[{key="factor" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="add" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Scale" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @97
+    v3 = NewClass v2 layout=L0 @97
+    PutModuleVariable v3 variable=g2 @97
+    v5 = NewClosure function=f4 @181
+    DefineMethod v3, v5 layout=L0 key="times" @181
+    v7 = FinishClass v3 layout=L0 @97
+    v8 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @97
+    v9 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @97
+    PutModuleVariable v9 variable=g1 @97
+    v11 = Builtin builtin=GlobalThis @635
+    v12 = PropGet v11 key="keep" [isFreeName] @635
+    v13 = GetModuleVariable variable=g0 @640
+    v14 = Call v12, -, v13 calleeName="keep" @635
+    v15 = Builtin builtin=GlobalThis @646
+    v16 = PropGet v15 key="keep" [isFreeName] @646
+    v17 = PropGet v9 key="prototype" @651
+    v18 = PropGet v17 key="times" @657
+    v19 = Call v16, -, v18 calleeName="keep" @646
+    v20 = Builtin builtin=GlobalThis @675
+    v21 = PropGet v20 key="print" [isFreeName] @675
+    v22 = Integer integer=4 @687
+    v23 = Call v1, -, v22 calleeName="total" @681
+    v24 = Call v21, -, v23 calleeName="print" @675
+    v25 = Undefined @675
+    Return v25 @675
+}
+function f1 name="add" module=m0 position=265 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Add v0, v1 @321
+    v3 = Convert v2 declared={type=number} @321
+    Return v3 @321
+}
+function f2 name="total" module=m0 position=326 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g1 @387
+    v2 = CheckInitialized v1 name="Scale" @387
+    v3 = Integer integer=3 @393
+    v4 = Construct v2, -, v3 calleeName="Scale" @387
+    v5 = GetModuleVariable variable=g0 @411
+    v6 = PropGet v5 key="bind" @411
+    v7 = Null @420
+    v8 = Integer integer=1 @426
+    v9 = Call v6, v5, v7, v8 calleeKey="bind" calleeName="add.bind" @415
+    v10 = Convert v9 declared={type=undefined|null|function flags=[IsExpected]} @411
+    v11 = PropGet v4 key="times" @438
+    v12 = PropGet v11 key="bind" @444
+    v13 = Call v12, v11, v4 calleeKey="bind" calleeName="scale.times.bind" @450
+    v14 = Convert v13 declared={type=undefined|null|function|f4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @438
+    v15 = PropGet v4 key="times" @474
+    v16 = PropGet v15 key="bind" @480
+    v17 = Integer integer=2 @498
+    v18 = Call v16, v15, v4, v17 calleeKey="bind" calleeName="scale.times.bind" @486
+    v19 = Convert v18 declared={type=undefined|null|function flags=[IsExpected]} @474
+    v20 = Integer @514
+    v21 = Convert v20 declared={type=number} @514
+    v22 = Integer @536
+    v23 = Convert v22 declared={type=number} @536
+    Jump -> next b1(v21, v23) @528
+  b1(v24: number, v25: number):
+    LoopHint @528
+    v27 = Less v25, v0 @547
+    Branch v27 -> taken b2(), notTaken b3() @547
+  b2():
+    v28 = Call v10, -, v25 calleeName="inc" @571
+    v29 = Convert v28 declared={type=number} illTypedCause=FromLooseType @571
+    v30 = Integer integer=1 @597
+    v31 = Call v14, -, v25, v30 calleeName="times" @584
+    v32 = Add v29, v31 @584
+    v33 = Call v19, -, v25 calleeName="timesTwo" @602
+    v34 = Convert v33 declared={type=number} illTypedCause=FromLooseType @602
+    v35 = Add v32, v34 @602
+    v36 = Add v24, v35 @602
+    v37 = Convert v36 declared={type=number} @564
+    v38 = Increment v25 @555
+    v39 = Convert v38 declared={type=number} @555
+    Jump -> next b1(v37, v39) @555
+  b3():
+    v40 = Convert v24 declared={type=number} @628
+    Return v40 @628
+}
+function f3 name="Scale" module=m0 position=138 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0 @138
+    v3 = NewObject v2 layout=L0 @138
+    v4 = Convert v3 declared={type=L0} @138
+    v5 = CallDirect v4 function=f5 @138
+    PropSet v4, v1 key="factor" @157
+    v7 = Undefined @157
+    v8 = TypeTest v7 testedType=object @157
+    Branch v8 -> taken b1(| 0), notTaken b2(v4) @157
+  b1(v9):
+    Jump -> next b2(v9) @157
+  b2(v10):
+    Return v10 @157
+}
+function f4 name="times" module=m0 position=181 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=L0} parameters=[{type=number}, {type=number}] results=[{type=number}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number, v2: number):
+    v3 = PropGet v0 key="factor" @241
+    v4 = Mul v1, v3 @241
+    v5 = Add v4, v2 @255
+    v6 = Convert v5 declared={type=number} @255
+    Return v6 @255
+}
+function f5 module=m0 position=103 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @103
+    v2 = Undefined @103
+    PropDefine v1, v2 key="factor" @111
+    v4 = Undefined @103
+    Return v4 @103
+}
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
