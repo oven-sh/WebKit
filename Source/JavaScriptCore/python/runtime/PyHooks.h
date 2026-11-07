@@ -135,7 +135,9 @@ JS_EXPORT_PRIVATE JSFunction* beginCallWithSelf(JSGlobalObject*, JSValue callee)
 
 // op_py_call_spread: callee(leading..., *positional, **keywords).
 // A longer tuple or list is for the slow path, which knows how many arguments there may be, and copies faster than it costs to get there. On x86-64:
-// a tuple from about 70 items on in instructions and about 100 in time, a list from about 195 and 125.
+// a tuple from 79 items on in instructions and about 110 in time, a list of values from about 195 and 125, a list of doubles from about 130 and 96
+// (128 doubles take 12 % longer here than there if the function takes exactly that many, 3 % if it takes *args).
+// The times are good to a factor of two: they move that much from one build to the next, with where the loop comes to lie in the lines of the cache.
 static constexpr unsigned maxTupleLengthSpreadByInterpreter = 96;
 static constexpr unsigned maxListLengthSpreadByInterpreter = 128;
 enum SpreadCallFlag : unsigned {
