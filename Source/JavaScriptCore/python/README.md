@@ -1348,7 +1348,9 @@ up before it waits for events while a collection that it has asked for is under 
 - **So does everything else that is the host's.** `Heap::mayRunEmbedderFinalizers()` is false while another thread has the VM. Then
   cells with destructors of the host's, or with dead weak handles whose finalizers are not known to run anywhere
   (`Heap::addFinalizerForAnyThread()`), are not swept: the allocator passes over their blocks, `gc.collect()` does not sweep. The main
-  thread is woken and makes up for it at its next safe point. Requests to end what runs (`node:vm` timeouts, `Worker.terminate()`, the
+  thread is woken and makes up for it at its next safe point. Until then such a cell stands there dead, while what it refers to is swept. In a block the engine has always had that, sweeping
+  being lazy, and whatever comes to a cell by anything but a reference asks whether it is alive. A large allocation, or one of the first few cells of a class, used to be swept by the collection that
+  found it dead, so the scan of the stacks did not ask: a stale word marked such a cell again, and the marker went on into what had been swept. It asks now (`ConservativeRoots::genericAddPointer`). Requests to end what runs (`node:vm` timeouts, `Worker.terminate()`, the
   watchdog) are put aside for the main thread too, and the VM counts as idle (`VM::isIdle()`) when the main thread is outside it,
   whatever Python frames other threads are parked in.
 - While there are other threads, a `Buffer` that C++ holds of memory of JS pins the `ArrayBuffer` (`runtime/PyBuffer.h`): JS, which may run

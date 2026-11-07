@@ -484,6 +484,9 @@ public:
     // and thread-local state. Whoever hands the VM from thread to thread says here whether the thread that has it is that
     // one. While it is not, cells with such things on them are left unswept: the allocator passes over their blocks, and
     // nothing is swept for the sake of sweeping. The right thread makes up for it with runPostponedEmbedderFinalizers().
+    // What is left unswept is dead, and stays dead, while what it refers to is swept: so whoever comes to a cell by anything but a
+    // reference from a live one asks whether it is alive (isLive(), HeapCell::isPendingDestruction()), not whether it is valid. In a
+    // block that has always been so, sweeping being lazy. A precise allocation used to be swept by the collection that found it dead.
     // (What happens in the collector itself, with the world stopped, has always happened on any thread.)
     bool mayRunEmbedderFinalizers() const { return m_mayRunEmbedderFinalizers; }
     void setMayRunEmbedderFinalizers(bool value) { m_mayRunEmbedderFinalizers = value; }

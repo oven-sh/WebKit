@@ -133,7 +133,12 @@ public:
         // traffic.
         if (isMarked())
             return true;
-        return m_isMarked.compareExchangeStrong(false, true);
+        if (m_isMarked.compareExchangeStrong(false, true))
+            return true;
+        // What a collection has found dead no later one marks: see Heap::mayRunEmbedderFinalizers(). (See flip(): while a full collection marks, this bit says that the cell was alive when it began; in
+        // an Eden collection what is old and alive is marked already.)
+        ASSERT(isNewlyAllocated());
+        return false;
     }
     ALWAYS_INLINE bool testAndSetMarked(HeapCell*, Dependency) { return testAndSetMarked(); }
     void clearMarked() { m_isMarked.store(false); }

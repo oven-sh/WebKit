@@ -145,7 +145,8 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
                     bool inBounds = mayBeReferencedByButterflyEndPointer(kind, allocation->cellSize())
                         ? allocation->contains(pointer)
                         : (allocation->aboveLowerBound(pointer) && pointer <= std::bit_cast<char*>(allocation->cell()) + allocation->cellSize());
-                    if (inBounds && allocation->hasValidCell())
+                    // As for a cell in a block, below: what an earlier collection has found dead may still stand (PreciseAllocation::sweep()), and what it refers to may not.
+                    if (inBounds && allocation->hasValidCell() && allocation->isLive())
                         markFoundGCPointer(allocation->cell(), kind);
                 };
 
