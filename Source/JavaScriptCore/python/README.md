@@ -447,14 +447,15 @@ callee (`self` excepted: the method stays in the caller's register while the cal
 from the tuple or the list, the values from the dict. Nothing is made on the way but the tuple of the names. It is JSC's `op_call_varargs` in all but that: the
 frame is placed and checked in the same way (`calleeFrameForVarargs()`), two slow paths size and fill it, and the call itself is the same code with the same
 call link info. All that allocates, raises or runs code is done by the first of the two, the names included, which wait in a register of the instruction: when the second fills
-the frame the stack pointer is at that frame, and C++ runs in what the collector takes for registers of the caller (`clearDeadTemporaries()`). The interpreter does by itself what most such calls are, a function that passes on what it was given: after the `*` a tuple, a list whose items lie in a row as values (either of up to 96 items: beyond that C++ copies faster than it costs to get there), a list with nothing in it, or nothing, after the `**` nothing or
+the frame the stack pointer is at that frame, and C++ runs in what the collector takes for registers of the caller (`clearDeadTemporaries()`). The interpreter does by itself what most such calls are, a function that passes on what it was given: after the `*` a tuple of up to 96 items, a list of up to 128 whose items lie in a row as values (beyond that C++ copies faster than it costs to get there), a list with nothing in it, or nothing, after the `**` nothing or
 a dict that is empty, none an instance of a derived class. Everything else is `Python::prepareSpreadCall()`, in CPython's order: `k` is read, then `a` is gone through. If an
 argument stands before the `*` it is the other way round, CPython having made a list of `x` and `a` by then (`PositionalExtendsList`), and if keyword arguments follow, `op_py_spread_now` goes through `a` before they are
 evaluated. That makes a list of whatever is no tuple, a copy if it is a list: unless nothing of the program can run before the call, the keyword arguments being constants and variables of the function, all on one line. A dict of the program's with
 nothing but strs for keys is only read, not copied, if no code of the program can run before it has been. The instruction empties its registers when the arguments are in place, so the caller holds neither them nor what they came in.
 Arguments before a `*` that is not the last argument, and more than 30 of them, go into a list first, as all do in CPython.
-In instructions, with CPython's beside them: `f(*t)` 334 (446), `f(*l)` 332 (604), `f(x, *t)` 344 (1,119), `f(*t, **{})` 361 (686), `f(*t, **d)` 1,301 (1,350), `f(*t, k=x)` 1,953 (1,220: the dict is made
-and then taken apart), and `def g(*a, **k): return f(*a, **k)` called with one argument 1,025 (1,215).
+In instructions, with CPython's beside them, for three items, functions that take exactly what they are given, and local variables: `f(*t)` 319 (477), `f(*l)` 316 (651), a list of floats 651 (569),
+`f(x, *t)` 333 (1,237), `f(*t, **{})` 321 (682), `f(*t, **d)` 1,286 (1,369), `f(*t, k=x)` 1,961 (1,276: the dict is made
+and then taken apart), and `def g(*a, **k): return f(*a, **k)` called with one argument 992 (1,170).
 The names that come out of `k` are its keys as they are, not atoms: a program can make any number of them, and an atom is looked
 up in a table that all strs of the process share. So whoever takes keywords compares texts where the pointers differ.
 

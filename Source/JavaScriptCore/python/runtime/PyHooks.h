@@ -134,9 +134,10 @@ JS_EXPORT_PRIVATE CallData callDataUnknownToJS(JSValue callee);
 JS_EXPORT_PRIVATE JSFunction* beginCallWithSelf(JSGlobalObject*, JSValue callee);
 
 // op_py_call_spread: callee(leading..., *positional, **keywords).
-// A longer tuple or list is for the slow path, which knows how many arguments there may be, and copies faster than it costs to get there: in
-// instructions from about 100 items of a tuple and 190 of a list on, in time from about 75 of either.
-static constexpr unsigned maxLengthSpreadByInterpreter = 96;
+// A longer tuple or list is for the slow path, which knows how many arguments there may be, and copies faster than it costs to get there. On x86-64:
+// a tuple from about 70 items on in instructions and about 100 in time, a list from about 195 and 125.
+static constexpr unsigned maxTupleLengthSpreadByInterpreter = 96;
+static constexpr unsigned maxListLengthSpreadByInterpreter = 128;
 enum SpreadCallFlag : unsigned {
     KeywordsAreOfProgram = 1, // `keywords` is what the program wrote after the only **, which may be anything. Otherwise a dict that the compiled code has made.
     PositionalExtendsList = 2, // There are leading arguments. CPython has them in a list, and extends that with what is after the * before it comes to the **.

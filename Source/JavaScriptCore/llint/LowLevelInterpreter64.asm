@@ -3306,7 +3306,8 @@ llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatc
     pyBranchIfCellIsNotExactly(t1, PyTupleType, (constexpr (Python::Runtime::offsetOfType(Python::TypeID::tupleType))), t3, t2, .slow)
     loadi (constexpr (Python::PyTuple::offsetOfLength()))[t1], t2
     addp (constexpr (Python::PyTuple::offsetOfItems())), t1
-    jmp .haveItems
+    bia t2, constexpr Python::maxTupleLengthSpreadByInterpreter, .slow
+    jmp .haveLength
 .list:
     loadb JSCell::m_indexingTypeAndMisc[t1], t2
     andi IndexingShapeMask, t2
@@ -3321,8 +3322,7 @@ llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatc
 .listOfValues:
     loadp JSObjectWithButterfly::m_butterfly[t1], t1
     loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t2
-.haveItems:
-    bia t2, constexpr Python::maxLengthSpreadByInterpreter, .slow
+    bia t2, constexpr Python::maxListLengthSpreadByInterpreter, .slow
 .haveLength:
     # The frame of the callee, as calleeFrameForVarargs() has it.
     getu(size, OpPyCallSpread, m_leadingCount, t3)
