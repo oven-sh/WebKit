@@ -31,6 +31,7 @@
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "TemporalDuration.h"
+#include "TemporalObject.h"
 #include "TemporalPlainDate.h"
 #include "TemporalPlainDateTime.h"
 #include "TemporalPlainTime.h"
@@ -43,7 +44,6 @@ static JSC_DECLARE_HOST_FUNCTION(temporalPlainTimePrototypeFuncWith);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainTimePrototypeFuncUntil);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainTimePrototypeFuncSince);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainTimePrototypeFuncRound);
-static JSC_DECLARE_HOST_FUNCTION(temporalPlainTimePrototypeFuncEquals);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainTimePrototypeFuncToString);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainTimePrototypeFuncToJSON);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainTimePrototypeFuncToLocaleString);
@@ -71,7 +71,7 @@ const ClassInfo TemporalPlainTimePrototype::s_info = { "Temporal.PlainTime"_s, &
   until            temporalPlainTimePrototypeFuncUntil              DontEnum|Function 1
   since            temporalPlainTimePrototypeFuncSince              DontEnum|Function 1
   round            temporalPlainTimePrototypeFuncRound              DontEnum|Function 1
-  equals           temporalPlainTimePrototypeFuncEquals             DontEnum|Function 1
+  equals           temporalPlainTimePrototypeFuncEquals             DontEnum|Function 1 TemporalIntrinsic
   toString         temporalPlainTimePrototypeFuncToString           DontEnum|Function 0
   toJSON           temporalPlainTimePrototypeFuncToJSON             DontEnum|Function 0
   toLocaleString   temporalPlainTimePrototypeFuncToLocaleString     DontEnum|Function 0
@@ -277,7 +277,7 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainTimePrototypeFuncEquals, (JSGlobalObject* 
         return throwVMTypeError(globalObject, scope, "Temporal.PlainTime.prototype.equals called on value that's not a PlainTime"_s);
 
     // Step 3: Set other to ? ToTemporalTime(other).
-    auto* other = TemporalPlainTime::from(globalObject, callFrame->argument(0), jsUndefined());
+    auto* other = toTemporalObjectForReading<TemporalPlainTime>(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Steps 4-5: If CompareTimeRecord(this.[[Time]], other.[[Time]]) = 0 return true, else false.

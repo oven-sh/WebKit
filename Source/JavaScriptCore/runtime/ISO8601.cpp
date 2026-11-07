@@ -1521,112 +1521,151 @@ uint8_t daysInMonth(uint8_t month)
     return daysInMonths[isLeapYear][month - 1];
 }
 
-// https://tc39.es/proposal-temporal/#sec-temporal-formattimezoneoffsetstring
-String formatTimeZoneOffsetString(int64_t offset)
+// Appends the low `digits` decimal digits of value, zero-padded.
+void ISODateTimeStringBuilder::appendDigits(unsigned value, unsigned digits)
+{
+    ASSERT(digits <= 9 && m_length + digits <= m_buffer.size());
+    for (unsigned i = digits; i--;) {
+        m_buffer[m_length + i] = '0' + value % 10;
+        value /= 10;
+    }
+    m_length += digits;
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal-padisoyear
+void ISODateTimeStringBuilder::appendYearMonth(int32_t year, unsigned month)
+{
+    // If we're printing a date, it should be within range
+    ASSERT(isYearWithinLimits(year));
+    ASSERT(month >= 1 && month <= 12);
+    if (year < 0 || year > 9999) {
+        append(year < 0 ? '-' : '+');
+        appendDigits(std::abs(year), 6);
+    } else
+        appendDigits(year, 4);
+    append('-');
+    appendDigits(month, 2);
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal-temporaldatetostring
+void ISODateTimeStringBuilder::appendDate(int32_t year, unsigned month, unsigned day)
+{
+    ASSERT(day >= 1 && day <= 31);
+    appendYearMonth(year, month);
+    append('-');
+    appendDigits(day, 2);
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal-formattimestring
+void ISODateTimeStringBuilder::appendTime(unsigned hour, unsigned minute, unsigned second, unsigned subSecondNanoseconds, std::tuple<Precision, unsigned> precision)
+{
+    auto [precisionType, precisionValue] = precision;
+    ASSERT(precisionType == Precision::Auto || precisionValue < 10);
+    appendDigits(hour, 2);
+    append(':');
+    appendDigits(minute, 2);
+    if (precisionType == Precision::Minute)
+        return;
+    append(':');
+    appendDigits(second, 2);
+    if (precisionType == Precision::Auto) {
+        if (!subSecondNanoseconds)
+            return;
+        // Drop trailing zeros.
+        unsigned digits = 9;
+        unsigned fraction = subSecondNanoseconds;
+        for (; !(fraction % 10); fraction /= 10)
+            --digits;
+        append('.');
+        appendDigits(fraction, digits);
+        return;
+    }
+    if (!precisionValue)
+        return;
+    // Truncate to precisionValue digits.
+    unsigned fraction = subSecondNanoseconds;
+    for (unsigned i = precisionValue; i < 9; ++i)
+        fraction /= 10;
+    append('.');
+    appendDigits(fraction, precisionValue);
+}
+
+void ISODateTimeStringBuilder::appendTime(PlainTime plainTime, std::tuple<Precision, unsigned> precision)
+{
+    unsigned subSecondNanoseconds = plainTime.millisecond() * nsPerMillisecond + plainTime.microsecond() * nsPerMicrosecond + plainTime.nanosecond();
+    appendTime(plainTime.hour(), plainTime.minute(), plainTime.second(), subSecondNanoseconds, precision);
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal-formatutcoffsetnanoseconds
+void ISODateTimeStringBuilder::appendOffset(int64_t offset)
 {
     bool negative = false;
     if (offset < 0) {
         negative = true;
         offset = -offset; // This is OK since offset range is much narrower than [INT64_MIN, INT64_MAX] range.
     }
-    int64_t nanoseconds = offset % nsPerSecond;
-    int64_t seconds = (offset / nsPerSecond) % 60;
-    int64_t minutes = (offset / nsPerMinute) % 60;
-    int64_t hours = offset / nsPerHour;
-
-    if (nanoseconds) {
-        // Since nsPerSecond is 1000000000, stringified nanoseconds takes at most 9 characters (999999999).
-        auto fraction = numberToStringUnsigned<Vector<Latin1Character, 9>>(nanoseconds);
-        unsigned paddingLength = 9 - fraction.size();
-        unsigned index = fraction.size();
-        std::optional<unsigned> validLength;
-        while (index--) {
-            if (fraction[index] != '0') {
-                validLength = index + 1;
-                break;
-            }
-        }
-        if (validLength)
-            fraction.shrink(validLength.value());
-        else
-            fraction.clear();
-        return makeString(negative ? '-' : '+', pad('0', 2, hours), ':', pad('0', 2, minutes), ':', pad('0', 2, seconds), '.', pad('0', paddingLength, emptyString()), fraction);
+    ASSERT(offset < nsPerHour * 24);
+    unsigned nanoseconds = static_cast<unsigned>(offset % nsPerSecond);
+    unsigned seconds = static_cast<unsigned>((offset / nsPerSecond) % 60);
+    unsigned minutes = static_cast<unsigned>((offset / nsPerMinute) % 60);
+    unsigned hours = static_cast<unsigned>(offset / nsPerHour);
+    append(negative ? '-' : '+');
+    if (!nanoseconds && !seconds) {
+        appendTime(hours, minutes, 0, 0, { Precision::Minute, 0 });
+        return;
     }
-    if (seconds)
-        return makeString(negative ? '-' : '+', pad('0', 2, hours), ':', pad('0', 2, minutes), ':', pad('0', 2, seconds));
-    return makeString(negative ? '-' : '+', pad('0', 2, hours), ':', pad('0', 2, minutes));
+    appendTime(hours, minutes, seconds, nanoseconds, { Precision::Auto, 0 });
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal-formatdatetimeutcoffsetrounded
+void ISODateTimeStringBuilder::appendOffsetRoundedToMinutes(int64_t offsetNanoseconds)
+{
+    // RoundNumberToIncrement(offsetNanoseconds, 60 × 10**9, ~half-expand~).
+    int64_t minutes = offsetNanoseconds / nsPerMinute;
+    int64_t remainder = offsetNanoseconds % nsPerMinute;
+    if (2 * remainder >= nsPerMinute)
+        ++minutes;
+    else if (2 * remainder <= -nsPerMinute)
+        --minutes;
+    appendOffset(minutes * nsPerMinute);
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal-formattimezoneoffsetstring
+String formatTimeZoneOffsetString(int64_t offset)
+{
+    ISODateTimeStringBuilder builder;
+    builder.appendOffset(offset);
+    return String(builder.span());
 }
 
 String temporalTimeToString(PlainTime plainTime, std::tuple<Precision, unsigned> precision)
 {
-    auto [precisionType, precisionValue] = precision;
-    ASSERT(precisionType == Precision::Auto || precisionValue < 10);
-    if (precisionType == Precision::Minute)
-        return makeString(pad('0', 2, plainTime.hour()), ':', pad('0', 2, plainTime.minute()));
-
-    int64_t milliseconds = plainTime.millisecond();
-    int64_t microseconds = plainTime.microsecond();
-    int64_t nanoseconds = plainTime.nanosecond();
-    int64_t fractionNanoseconds = milliseconds * nsPerMillisecond + microseconds * nsPerMicrosecond + nanoseconds;
-    if (precisionType == Precision::Auto) {
-        if (!fractionNanoseconds)
-            return makeString(pad('0', 2, plainTime.hour()), ':', pad('0', 2, plainTime.minute()), ':', pad('0', 2, plainTime.second()));
-        auto fraction = numberToStringUnsigned<Vector<Latin1Character, 9>>(fractionNanoseconds);
-        unsigned paddingLength = 9 - fraction.size();
-        unsigned index = fraction.size();
-        std::optional<unsigned> validLength;
-        while (index--) {
-            if (fraction[index] != '0') {
-                validLength = index + 1;
-                break;
-            }
-        }
-        if (validLength)
-            fraction.shrink(validLength.value());
-        else
-            fraction.clear();
-        return makeString(pad('0', 2, plainTime.hour()), ':', pad('0', 2, plainTime.minute()), ':', pad('0', 2, plainTime.second()), '.', pad('0', paddingLength, emptyString()), fraction);
-    }
-    if (!precisionValue)
-        return makeString(pad('0', 2, plainTime.hour()), ':', pad('0', 2, plainTime.minute()), ':', pad('0', 2, plainTime.second()));
-    auto fraction = numberToStringUnsigned<Vector<Latin1Character, 9>>(fractionNanoseconds);
-    unsigned paddingLength = 9 - fraction.size();
-    paddingLength = std::min(paddingLength, precisionValue);
-    precisionValue -= paddingLength;
-    fraction.resize(precisionValue);
-    return makeString(pad('0', 2, plainTime.hour()), ':', pad('0', 2, plainTime.minute()), ':', pad('0', 2, plainTime.second()), '.', pad('0', paddingLength, emptyString()), fraction);
+    ISODateTimeStringBuilder builder;
+    builder.appendTime(plainTime, precision);
+    return String(builder.span());
 }
 
 static String temporalDateToString(int32_t year, int32_t month)
 {
-    // If we're printing a date, it should be within range
-    ASSERT(isYearWithinLimits(year));
-
-    String prefix;
-    auto yearDigits = 4;
-    if (year < 0 || year > 9999) {
-        prefix = year < 0 ? "-"_s : "+"_s;
-        yearDigits = 6;
-        year = std::abs(year);
-    }
-
-    return makeString(prefix, pad('0', yearDigits, year), '-', pad('0', 2, month));
-}
-
-static String temporalDateToString(int32_t year, int32_t month, int32_t day)
-{
-    auto first = temporalDateToString(year, month);
-    return makeString(first, '-', pad('0', 2, day));
+    ISODateTimeStringBuilder builder;
+    builder.appendYearMonth(year, month);
+    return String(builder.span());
 }
 
 String temporalDateTimeToString(PlainDate plainDate, PlainTime plainTime, std::tuple<Precision, unsigned> precision)
 {
-    return makeString(temporalDateToString(plainDate), 'T', temporalTimeToString(plainTime, precision));
+    ISODateTimeStringBuilder builder;
+    builder.appendDate(plainDate.year(), plainDate.month(), plainDate.day());
+    builder.append('T');
+    builder.appendTime(plainTime, precision);
+    return String(builder.span());
 }
 
 String temporalDateToString(PlainDate plainDate)
 {
-    return temporalDateToString(plainDate.year(), plainDate.month(), plainDate.day());
+    ISODateTimeStringBuilder builder;
+    builder.appendDate(plainDate.year(), plainDate.month(), plainDate.day());
+    return String(builder.span());
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-temporalyearmonthtostring
@@ -1844,16 +1883,13 @@ template std::optional<Int128> Duration::totalNanoseconds<TemporalUnit::Microsec
 bool isValidDuration(const Duration& duration)
 {
     // Check sign consistency: all non-zero fields must have the same sign.
-    int sign = 0;
+    bool hasNegative = false;
+    bool hasPositive = false;
 #define JSC_CHECK_DURATION_FIELD(field) \
     do { \
         auto v = duration.field(); \
-        if (v < 0 && sign > 0) \
-            return false; \
-        if (v > 0 && sign < 0) \
-            return false; \
-        if (!sign && v) \
-            sign = v > 0 ? 1 : -1; \
+        hasNegative |= v < 0; \
+        hasPositive |= v > 0; \
     } while (false);
     JSC_CHECK_DURATION_FIELD(years)
     JSC_CHECK_DURATION_FIELD(months)
@@ -1866,12 +1902,24 @@ bool isValidDuration(const Duration& duration)
     JSC_CHECK_DURATION_FIELD(microseconds)
     JSC_CHECK_DURATION_FIELD(nanoseconds)
 #undef JSC_CHECK_DURATION_FIELD
+    if (hasNegative && hasPositive)
+        return false;
+
+    // Use range comparisons to avoid UB from std::abs(INT64_MIN).
+    constexpr int64_t limit = static_cast<int64_t>(1) << 32;
+    auto belowLimit = [](auto value) {
+        return value > -limit && value < limit;
+    };
+    // When every field is below 2^32 in magnitude, steps 3-5 hold and
+    // abs(normalizedSeconds) < 2^32 × 90061.001001 < 2^53, so step 8 holds too.
+    if (belowLimit(duration.years()) && belowLimit(duration.months()) && belowLimit(duration.weeks()) && belowLimit(duration.days())
+        && belowLimit(duration.hours()) && belowLimit(duration.minutes()) && belowLimit(duration.seconds())
+        && belowLimit(duration.milliseconds()) && belowLimit(duration.microseconds()) && belowLimit(duration.nanoseconds()))
+        return true;
 
     // 3. If abs(years) ≥ 2^32, return false.
     // 4. If abs(months) ≥ 2^32, return false.
     // 5. If abs(weeks) ≥ 2^32, return false.
-    // Use range comparisons to avoid UB from std::abs(INT64_MIN).
-    constexpr int64_t limit = static_cast<int64_t>(1) << 32;
     if (duration.years() >= limit || duration.years() <= -limit
         || duration.months() >= limit || duration.months() <= -limit
         || duration.weeks() >= limit || duration.weeks() <= -limit)
@@ -1930,29 +1978,11 @@ static Int128 roundTemporalInstant(Int128 ns, unsigned increment, TemporalUnit u
 }
 
 
-// https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype.round
-// (Steps 10-17 only)
-ExactTime ExactTime::round(JSGlobalObject* globalObject, unsigned increment,
-    TemporalUnit unit, RoundingMode roundingMode) const
+// https://tc39.es/proposal-temporal/#sec-temporal-roundtemporalinstant
+ExactTime ExactTime::round(unsigned increment, TemporalUnit unit, RoundingMode roundingMode) const
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    Int128 maximum = 0;
-    switch (unit) {
-    case TemporalUnit::Hour: maximum = static_cast<Int128>(WTF::hoursPerDay); break;
-    case TemporalUnit::Minute: maximum = static_cast<Int128>(minutesPerHour * WTF::hoursPerDay); break;
-    case TemporalUnit::Second: maximum = static_cast<Int128>(secondsPerMinute * minutesPerHour * WTF::hoursPerDay); break;
-    case TemporalUnit::Millisecond: maximum = static_cast<Int128>(msPerDay); break;
-    case TemporalUnit::Microsecond: maximum = static_cast<Int128>(msPerDay * 1000); break;
-    case TemporalUnit::Nanosecond: maximum = nsPerDay; break;
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    validateTemporalRoundingIncrement(globalObject, static_cast<double>(increment), static_cast<double>(maximum), Inclusivity::Inclusive);
-    RETURN_IF_EXCEPTION(scope, { });
-    auto roundedNs = roundTemporalInstant(m_epochNanoseconds, increment, unit, roundingMode);
-    return ExactTime { roundedNs };
+    ASSERT(increment >= 1);
+    return ExactTime { roundTemporalInstant(m_epochNanoseconds, increment, unit, roundingMode) };
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-roundtimedurationtoincrement
@@ -2025,7 +2055,10 @@ InternalDuration InternalDuration::combineDateAndTimeDuration(Duration dateDurat
 InternalDuration ExactTime::difference(JSGlobalObject* globalObject, ExactTime other, unsigned roundingIncrement, TemporalUnit smallestUnit, RoundingMode roundingMode) const
 {
     Int128 timeDuration = other.m_epochNanoseconds - m_epochNanoseconds;
-    timeDuration = roundTimeDuration(globalObject, timeDuration, roundingIncrement, smallestUnit, roundingMode);
+    // Rounding to 1ns is the identity, and the difference of two valid instants is far below
+    // maxTimeDuration, so RoundTimeDuration's RangeError cannot occur.
+    if (smallestUnit != TemporalUnit::Nanosecond || roundingIncrement != 1)
+        timeDuration = roundTimeDuration(globalObject, timeDuration, roundingIncrement, smallestUnit, roundingMode);
     return InternalDuration::combineDateAndTimeDuration(ISO8601::Duration(), timeDuration);
 }
 

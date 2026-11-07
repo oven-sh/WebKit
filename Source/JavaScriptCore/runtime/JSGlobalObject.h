@@ -133,6 +133,7 @@ enum class FunctionConstructionMode : uint8_t;
 enum class JSPromiseRejectionOperation : unsigned;
 
 struct GlobalObjectMethodTable;
+struct TemporalPropertyShapeCache;
 
 template<typename Watchpoint> class ObjectPropertyChangeAdaptiveWatchpoint;
 
@@ -773,6 +774,7 @@ public:
     const GlobalObjectMethodTable* m_globalObjectMethodTable;
 
     inline void createRareDataIfNeeded();
+    TemporalPropertyShapeCache& createTemporalPropertyShapeCache() LIFETIME_BOUND;
         
 public:
     using Base = JSSegmentedVariableObject;
@@ -935,6 +937,8 @@ public:
     GetterSetter* throwTypeErrorArgumentsCalleeGetterSetter() const LIFETIME_BOUND { return m_throwTypeErrorArgumentsCalleeGetterSetter.get(this); }
     
     JSModuleLoader* moduleLoader() const LIFETIME_BOUND { return m_moduleLoader.get(this); }
+
+    inline TemporalPropertyShapeCache& temporalPropertyShapeCache() LIFETIME_BOUND;
 
     ObjectPrototype* objectPrototype() const LIFETIME_BOUND { return m_objectPrototype.get(); }
     FunctionPrototype* functionPrototype() const LIFETIME_BOUND { return m_functionPrototype.get(); }

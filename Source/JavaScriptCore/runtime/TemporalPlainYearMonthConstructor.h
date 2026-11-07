@@ -47,4 +47,6 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(TemporalPlainYearMonthConstructor, InternalFunction);
 
+JSC_DECLARE_HOST_FUNCTION(temporalPlainYearMonthConstructorFuncCompare);
+
 } // namespace JSC

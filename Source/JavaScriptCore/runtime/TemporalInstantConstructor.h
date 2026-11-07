@@ -47,4 +47,6 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(TemporalInstantConstructor, InternalFunction);
 
+JSC_DECLARE_HOST_FUNCTION(temporalInstantConstructorFuncCompare);
+
 } // namespace JSC

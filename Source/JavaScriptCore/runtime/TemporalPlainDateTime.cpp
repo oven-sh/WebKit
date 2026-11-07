@@ -46,8 +46,7 @@ CLASSINFO_KEEP_ADDRESS_UNIQUE(TemporalPlainDateTime);
 
 TemporalPlainDateTime* TemporalPlainDateTime::create(VM& vm, Structure* structure, ISO8601::PlainDate&& plainDate, ISO8601::PlainTime&& plainTime, CalendarID calendarID)
 {
-    auto* object = new (NotNull, allocateCell<TemporalPlainDateTime>(vm)) TemporalPlainDateTime(vm, structure, WTF::move(plainDate), WTF::move(plainTime));
-    object->m_calendarID = calendarID;
+    auto* object = new (NotNull, allocateCell<TemporalPlainDateTime>(vm)) TemporalPlainDateTime(vm, structure, WTF::move(plainDate), WTF::move(plainTime), calendarID);
     object->finishCreation(vm);
     return object;
 }
@@ -57,11 +56,11 @@ Structure* TemporalPlainDateTime::createStructure(VM& vm, JSGlobalObject* global
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-TemporalPlainDateTime::TemporalPlainDateTime(VM& vm, Structure* structure, ISO8601::PlainDate&& plainDate, ISO8601::PlainTime&& plainTime)
+TemporalPlainDateTime::TemporalPlainDateTime(VM& vm, Structure* structure, ISO8601::PlainDate&& plainDate, ISO8601::PlainTime&& plainTime, CalendarID calendarID)
     : Base(vm, structure)
     , m_plainDate(WTF::move(plainDate))
     , m_plainTime(WTF::move(plainTime))
-    , m_calendarID(iso8601CalendarID())
+    , m_calendarID(calendarID)
 {
 }
 
@@ -172,6 +171,18 @@ static TemporalPlainDateTime* fromImpl(JSGlobalObject* globalObject, JSValue ite
     return { };
 }
 
+// ToTemporalDateTime steps 2.a and 2.c: the slots of a PlainDateTime, or of a PlainDate at midnight.
+static std::optional<TemporalCore::ResolvedCalendarDateTime> temporalDateTimeSlots(JSValue itemValue)
+{
+    if (!itemValue.isCell())
+        return std::nullopt;
+    if (auto* plainDateTime = dynamicDowncast<TemporalPlainDateTime>(itemValue.asCell()))
+        return TemporalCore::ResolvedCalendarDateTime { ISO8601::PlainDateTime { plainDateTime->plainDate(), plainDateTime->plainTime() }, plainDateTime->calendarID() };
+    if (auto* plainDate = dynamicDowncast<TemporalPlainDate>(itemValue.asCell()))
+        return TemporalCore::ResolvedCalendarDateTime { ISO8601::PlainDateTime { plainDate->plainDate(), { } }, plainDate->calendarID() };
+    return std::nullopt;
+}
+
 // https://tc39.es/proposal-temporal/#sec-temporal-totemporaldatetime
 // Entry point from Temporal.PlainDateTime.from() — handles step 1 (default options).
 TemporalPlainDateTime* TemporalPlainDateTime::from(JSGlobalObject* globalObject, JSValue itemValue, JSValue optionsValue)
@@ -183,19 +194,12 @@ TemporalPlainDateTime* TemporalPlainDateTime::from(JSGlobalObject* globalObject,
 
     // Step 2: If item is an Object:
     if (itemValue.isObject()) {
-        if (itemValue.inherits<TemporalPlainDateTime>()) {
-            // Step 2.a.i-ii: validate options, Step 2.a.iii: return new CreateTemporalDateTime.
+        if (auto slots = temporalDateTimeSlots(itemValue)) {
+            // Steps 2.a.i-ii / 2.c.i-ii: validate options. Steps 2.a.iii / 2.c.iii: return ? CreateTemporalDateTime,
+            // which throws a RangeError for a PlainDate whose midnight is outside the ISODateTimeWithinLimits range.
             toTemporalOverflow(globalObject, optionsValue);
             RETURN_IF_EXCEPTION(scope, { });
-            auto* src = uncheckedDowncast<TemporalPlainDateTime>(itemValue);
-            return TemporalPlainDateTime::create(vm, globalObject->plainDateTimeStructure(), src->plainDate(), src->plainTime(), src->calendarID());
-        }
-        if (itemValue.inherits<TemporalPlainDate>()) {
-            // Step 2.c.i-ii: validate options, Step 2.c.iii: return CreateTemporalDateTime(date, midnight).
-            toTemporalOverflow(globalObject, optionsValue);
-            RETURN_IF_EXCEPTION(scope, { });
-            auto* pd = uncheckedDowncast<TemporalPlainDate>(itemValue);
-            return TemporalPlainDateTime::create(vm, globalObject->plainDateTimeStructure(), pd->plainDate(), { }, pd->calendarID());
+            RELEASE_AND_RETURN(scope, createTemporalDateTime(globalObject, ISO8601::PlainDate { slots->isoDateTime.date }, ISO8601::PlainTime { slots->isoDateTime.time }, slots->calendarId));
         }
         if (itemValue.inherits<TemporalZonedDateTime>()) {
             // Step 2.b.i: GetISODateTimeFor FIRST (before options — spec step order).
@@ -313,16 +317,35 @@ String TemporalPlainDateTime::toString(JSGlobalObject* globalObject, JSValue opt
     return base;
 }
 
+// https://tc39.es/proposal-temporal/#sec-temporal-totemporaldatetime
+// With undefined options, for callers that read only [[ISODateTime]] and [[Calendar]].
+TemporalCore::ResolvedCalendarDateTime TemporalPlainDateTime::toISODateTimeWithCalendar(JSGlobalObject* globalObject, JSValue itemValue)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // CreateTemporalDateTime's range check can fail only for a PlainDate at midnight; from() throws its RangeError.
+    if (auto slots = temporalDateTimeSlots(itemValue)) {
+        auto& [date, time] = slots->isoDateTime;
+        if (ISO8601::isDateTimeWithinLimits(date.year(), date.month(), date.day(), time.hour(), time.minute(), time.second(), time.millisecond(), time.microsecond(), time.nanosecond())) [[likely]]
+            return *slots;
+    }
+
+    auto* plainDateTime = from(globalObject, itemValue, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, { });
+    return TemporalCore::ResolvedCalendarDateTime { ISO8601::PlainDateTime { plainDateTime->plainDate(), plainDateTime->plainTime() }, plainDateTime->calendarID() };
+}
+
 // https://tc39.es/proposal-temporal/#sec-temporal-differencetemporalplaindatetime
 // Step 1 (ToTemporalDateTime on `other`) is done by the caller (host fn) before invoking this helper.
 template<DifferenceOperation op>
-ISO8601::Duration TemporalPlainDateTime::differenceTemporalPlainDateTime(JSGlobalObject* globalObject, TemporalPlainDateTime* other, JSValue optionsValue)
+ISO8601::Duration TemporalPlainDateTime::differenceTemporalPlainDateTime(JSGlobalObject* globalObject, const TemporalCore::ResolvedCalendarDateTime& other, JSValue optionsValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Step 2: If CalendarEquals(dateTime.[[Calendar]], other.[[Calendar]]) is false, throw a RangeError exception.
-    if (m_calendarID != other->m_calendarID) [[unlikely]] {
+    if (m_calendarID != other.calendarId) [[unlikely]] {
         throwRangeError(globalObject, scope, "cannot compute difference between date-times with different calendars"_s);
         return { };
     }
@@ -334,7 +357,7 @@ ISO8601::Duration TemporalPlainDateTime::differenceTemporalPlainDateTime(JSGloba
     // Steps 4-8: If CompareISODateTime = 0 return zero-duration; else DifferenceISODateTime + optional round
     //            + TemporalDurationFromInternal + negate-if-since (all fused in TemporalCore::differenceTemporalPlainDateTime).
     auto coreResult = TemporalCore::differenceTemporalPlainDateTime(op,
-        plainDate(), plainTime(), other->plainDate(), other->plainTime(),
+        plainDate(), plainTime(), other.isoDateTime.date, other.isoDateTime.time,
         m_calendarID, smallestUnit, largestUnit, roundingMode, increment);
     if (!coreResult) [[unlikely]] {
         throwTemporalError(globalObject, scope, coreResult.error());
@@ -344,7 +367,7 @@ ISO8601::Duration TemporalPlainDateTime::differenceTemporalPlainDateTime(JSGloba
     return *coreResult;
 }
 
-template ISO8601::Duration TemporalPlainDateTime::differenceTemporalPlainDateTime<DifferenceOperation::Until>(JSGlobalObject*, TemporalPlainDateTime*, JSValue);
-template ISO8601::Duration TemporalPlainDateTime::differenceTemporalPlainDateTime<DifferenceOperation::Since>(JSGlobalObject*, TemporalPlainDateTime*, JSValue);
+template ISO8601::Duration TemporalPlainDateTime::differenceTemporalPlainDateTime<DifferenceOperation::Until>(JSGlobalObject*, const TemporalCore::ResolvedCalendarDateTime&, JSValue);
+template ISO8601::Duration TemporalPlainDateTime::differenceTemporalPlainDateTime<DifferenceOperation::Since>(JSGlobalObject*, const TemporalCore::ResolvedCalendarDateTime&, JSValue);
 
 } // namespace JSC

@@ -34,6 +34,14 @@
 #include "DOMJITSignature.h"
 #include "JSBigInt.h"
 #include "JSCellButterfly.h"
+#include "TemporalDuration.h"
+#include "TemporalInstant.h"
+#include "TemporalPlainDate.h"
+#include "TemporalPlainDateTime.h"
+#include "TemporalPlainTime.h"
+#include "TemporalZonedDateTime.h"
+#include <array>
+#include <bit>
 
 #if USE(BUN_JSC_ADDITIONS)
 #include "FFISignature.h"
@@ -577,6 +585,68 @@ PromotedLocationDescriptor Node::promotedLocationDescriptor()
     return PromotedLocationDescriptor(static_cast<PromotedLocationKind>(m_opInfo.as<uint32_t>()), m_opInfo2.as<uint32_t>());
 }
 
+static_assert(std::endian::native == std::endian::little);
+static_assert(std::bit_cast<std::array<uint64_t, 2>>(Int128 { -2 }) == std::array<uint64_t, 2> { 0xfffffffffffffffe, 0xffffffffffffffff }, "Int128 must be its low word then its high word");
+static_assert(std::bit_cast<Int128>(ISO8601::ExactTime(Int128 { -1234567 })) == Int128 { -1234567 }, "ExactTime must be exactly its epoch nanoseconds");
+
+ptrdiff_t durationFieldOffsetForTemporalOperation(TemporalOperation operation)
+{
+    switch (operation) {
+    case TemporalOperation::DurationYears:
+        return ISO8601::Duration::offsetOfYears();
+    case TemporalOperation::DurationMonths:
+        return ISO8601::Duration::offsetOfMonths();
+    case TemporalOperation::DurationWeeks:
+        return ISO8601::Duration::offsetOfWeeks();
+    case TemporalOperation::DurationDays:
+        return ISO8601::Duration::offsetOfDays();
+    case TemporalOperation::DurationHours:
+        return ISO8601::Duration::offsetOfHours();
+    case TemporalOperation::DurationMinutes:
+        return ISO8601::Duration::offsetOfMinutes();
+    case TemporalOperation::DurationSeconds:
+        return ISO8601::Duration::offsetOfSeconds();
+    case TemporalOperation::DurationMilliseconds:
+        return ISO8601::Duration::offsetOfMilliseconds();
+    default:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+const ClassInfo* classInfoForTemporalOperation(TemporalOperation operation)
+{
+    switch (operation) {
+    case TemporalOperation::InstantCompare:
+    case TemporalOperation::InstantEquals:
+    case TemporalOperation::InstantEpochMilliseconds:
+        return TemporalInstant::info();
+    case TemporalOperation::ZonedDateTimeCompare:
+    case TemporalOperation::ZonedDateTimeEquals:
+    case TemporalOperation::ZonedDateTimeEpochMilliseconds:
+        return TemporalZonedDateTime::info();
+    case TemporalOperation::DurationYears:
+    case TemporalOperation::DurationMonths:
+    case TemporalOperation::DurationWeeks:
+    case TemporalOperation::DurationDays:
+    case TemporalOperation::DurationHours:
+    case TemporalOperation::DurationMinutes:
+    case TemporalOperation::DurationSeconds:
+    case TemporalOperation::DurationMilliseconds:
+        return TemporalDuration::info();
+    case TemporalOperation::PlainDateCompare:
+    case TemporalOperation::PlainDateEquals:
+        return TemporalPlainDate::info();
+    case TemporalOperation::PlainDateTimeCompare:
+    case TemporalOperation::PlainDateTimeEquals:
+        return TemporalPlainDateTime::info();
+    case TemporalOperation::PlainTimeCompare:
+    case TemporalOperation::PlainTimeEquals:
+        return TemporalPlainTime::info();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 } } // namespace JSC::DFG
 
 namespace WTF {
@@ -598,6 +668,73 @@ void printInternal(PrintStream& out, SwitchKind kind)
         return;
     case SwitchCell:
         out.print("SwitchCell");
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void printInternal(PrintStream& out, TemporalOperation operation)
+{
+    switch (operation) {
+    case TemporalOperation::InstantCompare:
+        out.print("InstantCompare");
+        return;
+    case TemporalOperation::PlainDateCompare:
+        out.print("PlainDateCompare");
+        return;
+    case TemporalOperation::PlainDateTimeCompare:
+        out.print("PlainDateTimeCompare");
+        return;
+    case TemporalOperation::ZonedDateTimeCompare:
+        out.print("ZonedDateTimeCompare");
+        return;
+    case TemporalOperation::PlainTimeCompare:
+        out.print("PlainTimeCompare");
+        return;
+    case TemporalOperation::InstantEquals:
+        out.print("InstantEquals");
+        return;
+    case TemporalOperation::PlainDateEquals:
+        out.print("PlainDateEquals");
+        return;
+    case TemporalOperation::PlainDateTimeEquals:
+        out.print("PlainDateTimeEquals");
+        return;
+    case TemporalOperation::ZonedDateTimeEquals:
+        out.print("ZonedDateTimeEquals");
+        return;
+    case TemporalOperation::PlainTimeEquals:
+        out.print("PlainTimeEquals");
+        return;
+    case TemporalOperation::InstantEpochMilliseconds:
+        out.print("InstantEpochMilliseconds");
+        return;
+    case TemporalOperation::ZonedDateTimeEpochMilliseconds:
+        out.print("ZonedDateTimeEpochMilliseconds");
+        return;
+    case TemporalOperation::DurationYears:
+        out.print("DurationYears");
+        return;
+    case TemporalOperation::DurationMonths:
+        out.print("DurationMonths");
+        return;
+    case TemporalOperation::DurationWeeks:
+        out.print("DurationWeeks");
+        return;
+    case TemporalOperation::DurationDays:
+        out.print("DurationDays");
+        return;
+    case TemporalOperation::DurationHours:
+        out.print("DurationHours");
+        return;
+    case TemporalOperation::DurationMinutes:
+        out.print("DurationMinutes");
+        return;
+    case TemporalOperation::DurationSeconds:
+        out.print("DurationSeconds");
+        return;
+    case TemporalOperation::DurationMilliseconds:
+        out.print("DurationMilliseconds");
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -31,6 +31,7 @@
 #include "FractionToDouble.h"
 #include "ISO8601.h"
 #include "ISOArithmetic.h"
+#include "MathCommon.h"
 #include "Rounding.h"
 #include "TemporalObject.h"
 #include "TimeZoneICUBridge.h"
@@ -84,26 +85,65 @@ ISO8601::Duration absDuration(const ISO8601::Duration& d)
 // largestSubduration — temporal_rs: Duration::default_largest_unit
 TemporalUnit LEGACY_NODELETE largestSubduration(const ISO8601::Duration& d)
 {
-    uint8_t index = 0;
-    while (index < numberOfTemporalUnits - 1 && !d[index])
-        index++;
-    return static_cast<TemporalUnit>(index);
+    // Tests the stored fields directly: d[index] would convert each one to double, which is slow for the Int128 fields.
+    if (d.years())
+        return TemporalUnit::Year;
+    if (d.months())
+        return TemporalUnit::Month;
+    if (d.weeks())
+        return TemporalUnit::Week;
+    if (d.days())
+        return TemporalUnit::Day;
+    if (d.hours())
+        return TemporalUnit::Hour;
+    if (d.minutes())
+        return TemporalUnit::Minute;
+    if (d.seconds())
+        return TemporalUnit::Second;
+    if (d.milliseconds())
+        return TemporalUnit::Millisecond;
+    if (d.microseconds())
+        return TemporalUnit::Microsecond;
+    return TemporalUnit::Nanosecond;
+}
+
+template<typename Integer>
+static Checked<Integer, RecordOverflow> timeDurationFromComponentsImpl(double hours, double minutes, double seconds, double milliseconds, double microseconds, double nanoseconds)
+{
+    constexpr Integer minPerHour = 60;
+    constexpr Integer secPerMin = 60;
+    constexpr Integer msPerSec = 1000;
+    constexpr Integer usPerMs = 1000;
+    constexpr Integer nsPerUs = 1000;
+    auto component = [](double value) -> Checked<Integer, RecordOverflow> {
+        if constexpr (std::is_same_v<Integer, Int128>)
+            return checkedCastDoubleToInt128(value);
+        else {
+            ASSERT(std::abs(value) <= maxSafeInteger());
+            return static_cast<Integer>(value);
+        }
+    };
+    auto result = component(hours);
+    result = result * minPerHour + component(minutes);
+    result = result * secPerMin + component(seconds);
+    result = result * msPerSec + component(milliseconds);
+    result = result * usPerMs + component(microseconds);
+    result = result * nsPerUs + component(nanoseconds);
+    return result;
 }
 
 // timeDurationFromComponents — temporal_rs: TimeDuration::from_components
 // Converts duration time fields to a total nanosecond Int128.
 Int128 timeDurationFromComponents(double hours, double minutes, double seconds, double milliseconds, double microseconds, double nanoseconds)
 {
-    constexpr int64_t minPerHour = 60;
-    constexpr int64_t secPerMin = 60;
-    constexpr int64_t msPerSec = 1000;
-    constexpr int64_t usPerMs = 1000;
-    constexpr int64_t nsPerUs = 1000;
-    CheckedInt128 min = checkedCastDoubleToInt128(minutes) + checkedCastDoubleToInt128(hours) * Int128(minPerHour);
-    CheckedInt128 sec = checkedCastDoubleToInt128(seconds) + min * Int128(secPerMin);
-    CheckedInt128 millis = checkedCastDoubleToInt128(milliseconds) + sec * Int128(msPerSec);
-    CheckedInt128 micros = checkedCastDoubleToInt128(microseconds) + millis * Int128(usPerMs);
-    CheckedInt128 nanos = checkedCastDoubleToInt128(nanoseconds) + micros * Int128(nsPerUs);
+    // Within the safe-integer range the components truncate to int64 exactly as checkedCastDoubleToInt128 does.
+    if (std::abs(hours) <= maxSafeInteger() && std::abs(minutes) <= maxSafeInteger() && std::abs(seconds) <= maxSafeInteger()
+        && std::abs(milliseconds) <= maxSafeInteger() && std::abs(microseconds) <= maxSafeInteger() && std::abs(nanoseconds) <= maxSafeInteger()) [[likely]] {
+        auto result = timeDurationFromComponentsImpl<int64_t>(hours, minutes, seconds, milliseconds, microseconds, nanoseconds);
+        if (!result.hasOverflowed()) [[likely]]
+            return result.value();
+    }
+    auto nanos = timeDurationFromComponentsImpl<Int128>(hours, minutes, seconds, milliseconds, microseconds, nanoseconds);
     ASSERT(!nanos.hasOverflowed());
     ASSERT(absInt128(nanos) <= ISO8601::InternalDuration::maxTimeDuration);
     return nanos;
@@ -113,8 +153,17 @@ Int128 timeDurationFromComponents(double hours, double minutes, double seconds, 
 std::pair<int64_t, Int128> splitTimeDuration(Int128 timeDuration)
 {
     constexpr Int128 nsPerDay = ISO8601::ExactTime::nsPerDay;
-    int64_t overflowDays = static_cast<int64_t>(timeDuration / nsPerDay);
-    Int128 remainder = timeDuration % nsPerDay;
+    int64_t overflowDays;
+    Int128 remainder;
+    // Most time durations and epoch times (within int64, about ±292 years) fit in 64-bit division.
+    if (timeDuration >= std::numeric_limits<int64_t>::min() && timeDuration <= std::numeric_limits<int64_t>::max()) [[likely]] {
+        int64_t ns = static_cast<int64_t>(timeDuration);
+        overflowDays = ns / static_cast<int64_t>(nsPerDay);
+        remainder = ns % static_cast<int64_t>(nsPerDay);
+    } else {
+        overflowDays = static_cast<int64_t>(timeDuration / nsPerDay);
+        remainder = timeDuration % nsPerDay;
+    }
     if (remainder < 0) {
         remainder += nsPerDay;
         overflowDays--;
@@ -126,8 +175,10 @@ std::pair<int64_t, Int128> splitTimeDuration(Int128 timeDuration)
 ISO8601::PlainTime plainTimeFromSubdayNs(Int128 ns)
 {
     ASSERT(ns >= 0 && ns < ISO8601::ExactTime::nsPerDay);
-    int32_t nanosecond = static_cast<int32_t>(ns % 1000);
-    Int128 remaining = ns / 1000;
+    // Below nsPerDay, so 64-bit division is exact.
+    int64_t remaining = static_cast<int64_t>(ns);
+    int32_t nanosecond = static_cast<int32_t>(remaining % 1000);
+    remaining /= 1000;
     int32_t microsecond = static_cast<int32_t>(remaining % 1000);
     remaining /= 1000;
     int32_t millisecond = static_cast<int32_t>(remaining % 1000);
@@ -160,94 +211,72 @@ ISO8601::InternalDuration toInternalDuration(ISO8601::Duration d)
     return ISO8601::InternalDuration::combineDateAndTimeDuration(d, timeDuration);
 }
 
+// balanceTimeDuration — internal; the balancing steps of TemporalDurationFromInternal on |timeDuration|, then the Duration's fields.
+template<typename Integer>
+static ISO8601::Duration balanceTimeDuration(const ISO8601::Duration& dateDuration, int32_t sign, Integer nanoseconds, TemporalUnit largestUnit)
+{
+    Integer days = 0;
+    Integer hours = 0;
+    Integer minutes = 0;
+    Integer seconds = 0;
+    Integer milliseconds = 0;
+    Integer microseconds = 0;
+    if (largestUnit <= TemporalUnit::Microsecond) {
+        microseconds = nanoseconds / 1000;
+        nanoseconds = nanoseconds % 1000;
+    }
+    if (largestUnit <= TemporalUnit::Millisecond) {
+        milliseconds = microseconds / 1000;
+        microseconds = microseconds % 1000;
+    }
+    if (largestUnit <= TemporalUnit::Second) {
+        seconds = milliseconds / 1000;
+        milliseconds = milliseconds % 1000;
+    }
+    if (largestUnit <= TemporalUnit::Minute) {
+        minutes = seconds / 60;
+        seconds = seconds % 60;
+    }
+    if (largestUnit <= TemporalUnit::Hour) {
+        hours = minutes / 60;
+        minutes = minutes % 60;
+    }
+    if (largestUnit <= TemporalUnit::Day) {
+        days = hours / 24;
+        hours = hours % 24;
+    }
+    // Apply ℝ(𝔽(x)) per spec CreateTemporalDuration step 12: round through float64 so that
+    // values not exactly representable round past nanosecondsLimit → isValidDuration rejects.
+    // milliseconds uses doubleToInt64Saturating because the double can still exceed int64_t
+    // (e.g. largestUnit=millisecond, out-of-range input: ms ≈ 9e21 > INT64_MAX ≈ 9.2e18).
+    return ISO8601::Duration { dateDuration.years(), dateDuration.months(), dateDuration.weeks(),
+        dateDuration.days() + static_cast<int64_t>(days) * sign,
+        static_cast<int64_t>(hours) * sign, static_cast<int64_t>(minutes) * sign, static_cast<int64_t>(seconds) * sign,
+        ISO8601::Duration::doubleToInt64Saturating(static_cast<double>(milliseconds) * sign),
+        Int128(static_cast<double>(microseconds) * sign),
+        Int128(static_cast<double>(nanoseconds) * sign) };
+}
+
 // temporalDurationFromInternal — temporal_rs: Duration::from_internal (src/builtins/core/duration.rs)
 // Converts an InternalDuration back to a Duration given largestUnit.
 TemporalResult<ISO8601::Duration> temporalDurationFromInternal(ISO8601::InternalDuration internalDuration, TemporalUnit largestUnit)
 {
-    int64_t days = 0;
-    int64_t hours = 0;
-    int64_t minutes = 0;
-    int64_t seconds = 0;
-    Int128 milliseconds = 0;
-    Int128 microseconds = 0;
-
     int32_t sign = internalDuration.timeDurationSign();
     Int128 nanoseconds = absInt128(internalDuration.time());
+    ISO8601::Duration dateDuration = internalDuration.dateDuration();
 
-    if (largestUnit <= TemporalUnit::Day) {
-        microseconds = nanoseconds / 1000;
-        nanoseconds = nanoseconds % 1000;
-        milliseconds = microseconds / 1000;
-        microseconds = microseconds % 1000;
-        seconds = static_cast<int64_t>(milliseconds / 1000);
-        milliseconds = milliseconds % 1000;
-        minutes = seconds / 60;
-        seconds = seconds % 60;
-        hours = minutes / 60;
-        minutes = minutes % 60;
-        days = hours / 24;
-        hours = hours % 24;
-    } else if (largestUnit == TemporalUnit::Hour) {
-        microseconds = nanoseconds / 1000;
-        nanoseconds = nanoseconds % 1000;
-        milliseconds = microseconds / 1000;
-        microseconds = microseconds % 1000;
-        seconds = static_cast<int64_t>(milliseconds / 1000);
-        milliseconds = milliseconds % 1000;
-        minutes = seconds / 60;
-        seconds = seconds % 60;
-        hours = minutes / 60;
-        minutes = minutes % 60;
-    } else if (largestUnit == TemporalUnit::Minute) {
-        microseconds = nanoseconds / 1000;
-        nanoseconds = nanoseconds % 1000;
-        milliseconds = microseconds / 1000;
-        microseconds = microseconds % 1000;
-        seconds = static_cast<int64_t>(milliseconds / 1000);
-        milliseconds = milliseconds % 1000;
-        minutes = seconds / 60;
-        seconds = seconds % 60;
-    } else if (largestUnit == TemporalUnit::Second) {
-        microseconds = nanoseconds / 1000;
-        nanoseconds = nanoseconds % 1000;
-        milliseconds = microseconds / 1000;
-        microseconds = microseconds % 1000;
-        seconds = static_cast<int64_t>(milliseconds / 1000);
-        milliseconds = milliseconds % 1000;
-    } else if (largestUnit == TemporalUnit::Millisecond) {
-        microseconds = nanoseconds / 1000;
-        nanoseconds = nanoseconds % 1000;
-        milliseconds = microseconds / 1000;
-        microseconds = microseconds % 1000;
-    } else if (largestUnit == TemporalUnit::Microsecond) {
-        microseconds = nanoseconds / 1000;
-        nanoseconds = nanoseconds % 1000;
+    // Below 2^63 ns the balancing runs in uint64. With no date part every field has one sign and the total is far
+    // below 2^53 s, so IsValidDuration holds without checking.
+    if (nanoseconds <= std::numeric_limits<int64_t>::max()) [[likely]] {
+        auto result = balanceTimeDuration<uint64_t>(dateDuration, sign, static_cast<uint64_t>(nanoseconds), largestUnit);
+        if (!dateDuration.years() && !dateDuration.months() && !dateDuration.weeks() && !dateDuration.days())
+            return result;
+        if (!ISO8601::isValidDuration(result))
+            return makeUnexpected(rangeError("Duration is outside the representable range"_s));
+        return result;
     }
 
-    if (hours)
-        hours *= sign;
-    if (minutes)
-        minutes *= sign;
-    if (seconds)
-        seconds *= sign;
-    if (milliseconds)
-        milliseconds *= sign;
-    if (microseconds)
-        microseconds *= sign;
-    if (nanoseconds)
-        nanoseconds *= sign;
-    // Apply ℝ(𝔽(x)) per spec CreateTemporalDuration step 12: round through float64 so that
-    // Int128 values not exactly representable round past nanosecondsLimit → isValidDuration rejects.
-    // milliseconds uses doubleToInt64Saturating because Int128 → double can still exceed int64_t
-    // (e.g. largestUnit=millisecond, out-of-range input: ms ≈ 9e21 > INT64_MAX ≈ 9.2e18).
-    ISO8601::Duration result { internalDuration.dateDuration().years(),
-        internalDuration.dateDuration().months(),
-        internalDuration.dateDuration().weeks(),
-        static_cast<int64_t>(internalDuration.dateDuration().days() + days * sign),
-        static_cast<int64_t>(hours), static_cast<int64_t>(minutes), static_cast<int64_t>(seconds),
-        ISO8601::Duration::doubleToInt64Saturating(static_cast<double>(milliseconds)),
-        Int128(static_cast<double>(microseconds)),
-        Int128(static_cast<double>(nanoseconds)) };
+    auto result = balanceTimeDuration<Int128>(dateDuration, sign, nanoseconds, largestUnit);
     // CreateTemporalDuration step: If IsValidDuration is false, return error.
     if (!ISO8601::isValidDuration(result))
         return makeUnexpected(rangeError("Duration is outside the representable range"_s));
@@ -258,7 +287,10 @@ TemporalResult<ISO8601::Duration> temporalDurationFromInternal(ISO8601::Internal
 // Adds 24-hour days to a timeDuration (ns). Returns error if result exceeds maxTimeDuration.
 TemporalResult<Int128> add24HourDaysToTimeDuration(Int128 d, double days)
 {
-    CheckedInt128 daysInNanoseconds = checkedCastDoubleToInt128(days) * ISO8601::ExactTime::nsPerDay;
+    // Within the safe-integer range, days truncates to int64 exactly as checkedCastDoubleToInt128 does, and |days| × nsPerDay < 2^100.
+    CheckedInt128 daysInNanoseconds = std::abs(days) <= maxSafeInteger()
+        ? CheckedInt128(Int128(static_cast<int64_t>(days)) * ISO8601::ExactTime::nsPerDay)
+        : checkedCastDoubleToInt128(days) * ISO8601::ExactTime::nsPerDay;
     CheckedInt128 result = d + daysInNanoseconds;
     ASSERT(!result.hasOverflowed());
     if (absInt128(result) > ISO8601::InternalDuration::maxTimeDuration)
@@ -293,10 +325,27 @@ TemporalResult<ISO8601::InternalDuration> toInternalDurationRecordWith24HourDays
     return ISO8601::InternalDuration::combineDateAndTimeDuration(dateDuration, *result);
 }
 
+// timeDurationForCompareWithoutRelativeTo — internal; the time duration Temporal.Duration.compare orders by without relativeTo.
+// https://tc39.es/proposal-temporal/#sec-temporal.duration.compare
+TemporalResult<Int128> timeDurationForCompareWithoutRelativeTo(ISO8601::Duration duration)
+{
+    // If IsCalendarUnit(largestUnit) is true and plainRelativeTo is undefined, throw a RangeError exception.
+    if (duration.years() || duration.months() || duration.weeks())
+        return makeUnexpected(rangeError("Cannot compare a duration of years, months, or weeks without a relativeTo option"_s));
+
+    // Else, days = duration.[[Days]]; timeDuration = ? Add24HourDaysToTimeDuration(ToInternalDurationRecord(duration).[[Time]], days).
+    return add24HourDaysToTimeDuration(toInternalDurationRecord(duration).time(), duration.days());
+}
+
 // toDateDurationRecordWithoutTime — temporal_rs: InternalDurationRecord::to_date_duration_record_without_time (src/builtins/core/duration/normalized.rs)
 // Strips time fields and folds days into the date part. Returns a date-only Duration.
 TemporalResult<ISO8601::Duration> toDateDurationRecordWithoutTime(ISO8601::Duration duration)
 {
+    // With no time fields, the time duration is days × nsPerDay and dividing it back gives days unchanged, so only
+    // the range check of Add24HourDaysToTimeDuration is left.
+    if (!duration.hours() && !duration.minutes() && !duration.seconds() && !duration.milliseconds() && !duration.microseconds() && !duration.nanoseconds()
+        && absInt128(Int128(duration.days()) * ISO8601::ExactTime::nsPerDay) <= ISO8601::InternalDuration::maxTimeDuration) [[likely]]
+        return ISO8601::Duration { duration.years(), duration.months(), duration.weeks(), duration.days(), 0, 0, 0, 0, Int128(0), Int128(0) };
     auto internalDuration = toInternalDurationRecordWith24HourDays(duration);
     if (!internalDuration)
         return makeUnexpected(internalDuration.error());

@@ -677,6 +677,10 @@ namespace JSC { namespace DFG {
     macro(DateGetMilliseconds, NodeResultJS) \
     macro(DateGetTime, NodeResultDouble) \
     macro(DateSetTime, NodeMustGenerate | NodeResultDouble) \
+    /* Temporal */ \
+    macro(TemporalCompare, NodeResultInt32) \
+    macro(TemporalEquals, NodeResultBoolean) \
+    macro(TemporalGetNumber, NodeResultJS) \
     /* Promise */ \
     macro(ResolvePromiseFirstResolving, NodeMustGenerate) \
     macro(RejectPromiseFirstResolving, NodeMustGenerate) \

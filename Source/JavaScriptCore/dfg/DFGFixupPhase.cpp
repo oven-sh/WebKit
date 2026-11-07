@@ -3538,6 +3538,16 @@ private:
             fixEdge<DoubleRepUse>(node->child2());
             break;
 
+        case TemporalCompare:
+        case TemporalEquals:
+            fixEdge<CellUse>(node->child1());
+            fixEdge<CellUse>(node->child2());
+            break;
+
+        case TemporalGetNumber:
+            fixEdge<CellUse>(node->child1());
+            break;
+
         case DataViewGetInt:
         case DataViewGetFloat: {
             fixEdge<DataViewObjectUse>(node->child1());

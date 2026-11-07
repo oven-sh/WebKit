@@ -54,8 +54,7 @@ public:
     static JSValue compare(JSGlobalObject*, JSValue, JSValue, JSValue options);
 
 #define JSC_DEFINE_TEMPORAL_DURATION_FIELD(name, capitalizedName) \
-    double name##s() const { return static_cast<double>(m_duration.name##s()); } \
-    void set##capitalizedName##s(double value) { m_duration.setField(TemporalUnit::capitalizedName, value); }
+    double name##s() const { return static_cast<double>(m_duration.name##s()); }
     JSC_TEMPORAL_UNITS(JSC_DEFINE_TEMPORAL_DURATION_FIELD);
 #undef JSC_DEFINE_TEMPORAL_DURATION_FIELD
 
@@ -71,6 +70,9 @@ public:
     String toString(JSGlobalObject* globalObject, std::tuple<Precision, unsigned> precision = { Precision::Auto, 0 }) const { return toString(globalObject, m_duration, precision); }
 
     static ISO8601::Duration toDateDurationRecordWithoutTime(JSGlobalObject*, const ISO8601::Duration&);
+
+    static constexpr ptrdiff_t offsetOfDuration() { return OBJECT_OFFSETOF(TemporalDuration, m_duration); }
+
 private:
     TemporalDuration(VM&, Structure*, ISO8601::Duration&&);
     DECLARE_DEFAULT_FINISH_CREATION;
@@ -84,7 +86,7 @@ private:
 
     static ISO8601::InternalDuration toInternalDurationRecordWith24HourDays(JSGlobalObject*, ISO8601::Duration);
 
-    ISO8601::Duration m_duration;
+    const ISO8601::Duration m_duration;
 };
 
 TemporalDuration* createTemporalDuration(JSGlobalObject*, ISO8601::Duration&&);

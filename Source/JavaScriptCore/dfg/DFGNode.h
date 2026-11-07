@@ -320,6 +320,36 @@ enum class BucketOwnerType : uint32_t {
     Set
 };
 
+enum class TemporalOperation : uint8_t {
+    // TemporalCompare
+    InstantCompare,
+    PlainDateCompare,
+    PlainDateTimeCompare,
+    ZonedDateTimeCompare,
+    PlainTimeCompare,
+    // TemporalEquals
+    InstantEquals,
+    PlainDateEquals,
+    PlainDateTimeEquals,
+    ZonedDateTimeEquals,
+    PlainTimeEquals,
+    // TemporalGetNumber
+    InstantEpochMilliseconds,
+    ZonedDateTimeEpochMilliseconds,
+    DurationYears,
+    DurationMonths,
+    DurationWeeks,
+    DurationDays,
+    DurationHours,
+    DurationMinutes,
+    DurationSeconds,
+    DurationMilliseconds,
+};
+
+const ClassInfo* classInfoForTemporalOperation(TemporalOperation);
+
+ptrdiff_t durationFieldOffsetForTemporalOperation(TemporalOperation);
+
 // === Node ===
 //
 // Node represents a single operation in the data flow graph.
@@ -2220,6 +2250,7 @@ public:
         case DateGetInt32OrNaN:
         case DateGetMilliseconds:
         case NewArrayWithSpecies:
+        case TemporalGetNumber:
             return true;
         default:
             return false;
@@ -3684,6 +3715,24 @@ public:
         return m_opInfo.as<const ClassInfo*>();
     }
 
+    bool hasTemporalOperation() const
+    {
+        switch (op()) {
+        case TemporalCompare:
+        case TemporalEquals:
+        case TemporalGetNumber:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    TemporalOperation temporalOperation() const
+    {
+        ASSERT(hasTemporalOperation());
+        return static_cast<TemporalOperation>(m_opInfo.as<uint32_t>());
+    }
+
     bool hasSignature() const
     {
         // Note that this does not include TailCall node types intentionally.
@@ -4200,6 +4249,7 @@ UTF8CString nodeValuePairListDump(const T& nodeValuePairList, DumpContext* conte
 namespace WTF {
 
 void printInternal(PrintStream&, JSC::DFG::SwitchKind);
+void printInternal(PrintStream&, JSC::DFG::TemporalOperation);
 void printInternal(PrintStream&, JSC::DFG::Node*);
 
 inline JSC::DFG::Node* inContext(JSC::DFG::Node* node, JSC::DumpContext*) { return node; }
