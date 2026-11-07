@@ -645,7 +645,9 @@ static void overrideDefaults()
     }
 #endif
 
-#if OS(LINUX) && !OS(ANDROID) && CPU(ARM64)
+    // Bun: not here. Upstream measured a browser on a device with four cores. In this fork numberOfProcessorCores() is what the process may use: the affinity mask and the CPU quota
+    // of a cgroup count, so the rule would also take a container with a limit of four CPUs on a large server.
+#if OS(LINUX) && !OS(ANDROID) && CPU(ARM64) && !USE(BUN_JSC_ADDITIONS)
     constexpr int maxCoresForThresholdScaling = 4;
     if (WTF::numberOfProcessorCores() <= maxCoresForThresholdScaling) {
         Options::thresholdForFTLOptimizeAfterWarmUp() *= Options::ftlThresholdScaleForFewCores();
