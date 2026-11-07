@@ -88,11 +88,19 @@ static unsigned sizeOfScalar(ForeignKind kind)
     }
 }
 
-// False: there are too many parts for it to go into registers anyway.
+// False: there are too many parts for it to go into registers anyway; or, with an exception, one is in the other too many times.
 static bool flatten(JSGlobalObject* globalObject, PyCTypeInfo* info, int64_t offset, Scalars& result)
 {
     if (result.size() > 64)
         return false;
+    // There is nothing in it, however many arrays of arrays of nothing it is.
+    if (!info->size)
+        return true;
+    if (VM& vm = getVM(globalObject); !vm.isSafeToRecurseSoft()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded"_s);
+        return false;
+    }
     switch (info->kind) {
     case TypeKind::None:
         RELEASE_ASSERT_NOT_REACHED();
@@ -334,7 +342,12 @@ static bool place(JSGlobalObject* globalObject, Outgoing& out, const ForeignValu
             return true;
         size_t size = static_cast<size_t>(info->size);
         size_t alignment = static_cast<size_t>(std::max<int64_t>(info->alignment, 1));
-        Passing passing = classify(globalObject, info);
+        Passing passing;
+        {
+            auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+            passing = classify(globalObject, info);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
         if (passing.way == Passing::AsFloats) {
             placeFloats(passing.count, passing.floatSize);
             return true;
@@ -467,6 +480,7 @@ bool callForeignFunction(JSGlobalObject* globalObject, void* function, std::span
     size_t resultSize = 0;
     if (resultKind == ForeignKind::Aggregate) {
         resultPassing = classify(globalObject, result.aggregate);
+        RETURN_IF_EXCEPTION(scope, false);
         resultSize = static_cast<size_t>(result.aggregate->size);
 #if CPU(X86_64)
         if (resultPassing.way == Passing::InMemory)
