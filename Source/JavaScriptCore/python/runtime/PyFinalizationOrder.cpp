@@ -1693,6 +1693,10 @@ FinalizationOrder DeadGraph::order()
                 if ((m_flags[i] & (Released | Waits)) == Waits)
                     result.later.append(i);
             }
+            for (unsigned candidate : released) {
+                if (!rank[candidate])
+                    result.now.append(candidate);
+            }
         }
         return result;
     }

@@ -717,6 +717,7 @@ public:
     void queueToFinalize(JSCell*, uint32_t thread, TellsThread);
     void letWeakRefsDie(SlotVisitor&, std::span<JSCell* const> referents);
     bool leavesCyclicGarbageForLater() const { return m_leavesCyclicGarbageForLater; }
+    bool collectionIsWaitedFor() const { return m_collectionIsWaitedFor; }
     // Since the last collection, of whatever kind. With the GIL.
     bool hasRegisteredFinalizableSinceCollection() const { return !m_youngFinalizable.isEmpty(); }
 

@@ -138,6 +138,13 @@ void moveToClass(Interpreter& current, Body* body, PyType* type, VM* vm)
     }
 }
 
+// Since the first of those that are let go of was. Either the world has been stopped ever since. Or a thread has been waiting for this collection ever since (gc.collect()): it has the GIL and runs nothing of the
+// program's until the collection has ended, though the collector goes through its phases as always.
+static bool programHasStoodStillSinceLettingGo(Interpreter& current)
+{
+    return current.versionWhenLetGo == current.vm.heap.phaseVersion() || (current.wasWaitedForWhenLetGo && current.runtime.collectionIsWaitedFor());
+}
+
 bool letGoOfWhatIsDead(SlotVisitor& visitor)
 {
     Interpreter& current = interpreter();
@@ -159,7 +166,8 @@ bool letGoOfWhatIsDead(SlotVisitor& visitor)
         return false;
 
     // Which of them reference counts would have freed. (To that graph an instance is one object: see Face::visitChildren(). It is made by another visitor than the marker, and may
-    // differ from what the marker finds. Whether tp_clear is called hangs on it, and nothing else.)
+    // differ from what the marker finds. On it hangs whether tp_clear is called, who keeps its face for its holder, and who waits. Never whether anything is destroyed: that is for the marker. Where it
+    // misses an edge that the marker follows, see "An edge that the graph has not seen".)
     Vector<JSCell*> objects = dead.map([](Body* body) -> JSCell* {
         return body->face() ? static_cast<JSCell*>(body->face()) : body;
     });
@@ -177,6 +185,17 @@ bool letGoOfWhatIsDead(SlotVisitor& visitor)
     BitVector waitsForItsHolder(dead.size());
     for (unsigned i : order.later)
         waitsForItsHolder.quickSet(i);
+    for (unsigned i : order.now) {
+        if (!current.counts.find(dead[i]))
+            current.letGoThatNothingLeadsTo.append(dead[i]);
+    }
+    if (current.letGo.isEmpty()) {
+        current.versionWhenLetGo = current.vm.heap.phaseVersion();
+        current.wasWaitedForWhenLetGo = current.runtime.collectionIsWaitedFor();
+    } else if (!programHasStoodStillSinceLettingGo(current)) {
+        current.versionWhenLetGo = std::nullopt;
+        current.wasWaitedForWhenLetGo = false;
+    }
 
     Vector<JSCell*> facesOfCyclicGarbage;
     for (unsigned i = 0; i < dead.size(); ++i) {
@@ -204,9 +223,33 @@ bool letGoOfWhatIsDead(SlotVisitor& visitor)
 
 // ---- B ----
 
+// AN EDGE THAT THE GRAPH HAS NOT SEEN. The graph of the dead said of an instance that nothing dead leads to it, and C owns no reference to it. The marker had come to rest without marking its face, so nothing that lives leads to it; L has not
+// marked the face; the program has stood still ever since, so nobody has taken it. And now the face is marked. Then the marker has come to it from what L did mark, which is what the dead hold: by an edge that
+// the graph does not know of. (A live WeakMap of JS's: wm.set(child, parent), and the parent holds the child in its data. The child keeps its face for the parent's tp_dealloc, and to the marker a
+// key that is marked leads to its value.) Reference counts would not have freed such an instance after all: something dead holds it, and no count will ever say when that has gone. If the way comes from what the
+// instance itself holds, every collection would find the same, take both back, and call nothing, for ever.
+// So it is what it would have been had the graph seen the edge and found a cycle: garbage that the collector has to break. Its weak references die, and it is asked to let go of what it holds. IT IS GARBAGE
+// in any case, which is all that a tp_clear needs. (If the way came from another dead instance, that one may find it cleared, valid and empty, as one piece of cyclic garbage finds another.)
+static void lookForEdgesThatGraphHasNotSeen(SlotVisitor& visitor, Interpreter& current)
+{
+    if (!programHasStoodStillSinceLettingGo(current) || current.runtime.leavesCyclicGarbageForLater())
+        return;
+    Vector<JSCell*> faces;
+    for (Body* body : current.letGoThatNothingLeadsTo) {
+        if (body->life() != Body::Life::LetGo || body->wasCyclicGarbage || !body->face() || !visitor.isMarked(body->face()))
+            continue;
+        body->wasCyclicGarbage = true;
+        if (body->face()->type()->has(TypeFlag::HasWeakref))
+            faces.append(body->face());
+    }
+    if (!faces.isEmpty())
+        current.runtime.letWeakRefsDie(visitor, faces.span());
+}
+
 bool takeBackWhatTheLivingHold(SlotVisitor& visitor)
 {
     Interpreter& current = interpreter();
+    lookForEdgesThatGraphHasNotSeen(visitor, current);
     Vector<Body*> toFollow;
     for (Body* body : current.letGo) {
         // (The first: see didSeeSomebodyTake().)
@@ -301,6 +344,7 @@ bool didSeeWhichFacesDied(JSC::Heap& heap)
         if (body->isAliveOrCleared())
             clearIfThatIsDue(body);
     }
+    current.letGoThatNothingLeadsTo.clear();
     for (Body* body : std::exchange(current.letGo, { })) {
         // THE FACE IS DEAD. All that follows stands on this.
         RELEASE_ASSERT(body->life() == Body::Life::LetGo && heap.isMarked(body) && (!body->face() || !heap.isMarked(body->face())));

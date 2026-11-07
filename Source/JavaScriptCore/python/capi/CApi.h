@@ -188,6 +188,11 @@ struct Interpreter {
     // Those that this collection has let go of, and those of them that it has taken back: from then on they are marked, so they live. Empty when the marking has ended. See CApiEnd.cpp.
     Vector<Body*> letGo;
     Vector<Body*> takenBack;
+    // Of the first: those that reference counts would have freed, to which nothing dead leads as far as the graph of the dead has seen, and to which C owns no reference.
+    Vector<Body*> letGoThatNothingLeadsTo;
+    // See programHasStoodStillSinceLettingGo().
+    std::optional<uint64_t> versionWhenLetGo;
+    bool wasWaitedForWhenLetGo { false };
     // How many wait for their tp_clear (Body::Life::ToBeCleared). And: somebody has been seen to take one of those, or one that was let go of, so none of them is cleared.
     size_t numberToBeCleared { 0 };
     bool clearingIsOff { false };

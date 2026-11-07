@@ -1773,6 +1773,13 @@ answer; a `tp_dealloc` is the end of what C keeps in the object.
 - *B. Taking back.* The marker has come to rest again. A face that is marked now is led to by what a body holds (body -> list -> face); or L has marked it; or, if the collection goes on beside the program,
   somebody has taken it by a weak reference. Nobody can tell which. Its body is alive again, **and so is every body that it holds, with its face, and so on**: an instance that lives
   keeps what it holds whole. That marks faces, so the marker goes on and comes here again.
+- *An edge that the graph has not seen.* Who is let go of, and who is destroyed, is the marker's word. Who is cleared, who keeps its face and who waits is the word of the graph of the dead, which another visitor
+  makes, and which does not know every way that the marker goes: an ephemeron of JS's, an opaque root. A live `WeakMap` says of a child who its parent is, `wm.set(child, parent)`; the parent holds the child in
+  C's data; the child is of a class of Python's. Both are dropped. To the graph reference counts free both, so the child keeps its face for the parent's `tp_dealloc`; to the marker a key that is marked leads
+  to its value, so the parent's face is marked, both are taken back, nothing is called, and the next collection finds the same. So B looks at those of which the graph said that nothing dead leads to them, and to
+  which C owns no reference. If the face of one is marked now, *and the program has stood still since L* (the world has been stopped, or a thread has been waiting for this collection, with the GIL, since before
+  L), nobody has taken it: the marker has come to it from what L marked, which is what the dead hold. It is garbage, something dead holds it, and no count will say when that has gone. It is treated as what the
+  collector has to break: its weak references die, and `tp_clear` is called. If the program has run in between, nothing is said, and it comes up again.
 - *E. When that collection ends* the face of a body that is still let go of is not marked: it is dead as any cell is dead. Whoever knew its address has been told, or is told when its
   block is swept, in whatever way JSC and Bun tell him of any cell. From now on the body has no face. What has been taken back stays as it was. If it is cyclic garbage, it is asked once to
   let go of what it holds (`tp_clear`), and a later collection finds the face dead. If reference counts would have freed it (parent -> list -> child), nothing is called: CPython never clears
