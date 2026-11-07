@@ -1362,7 +1362,10 @@ private:
     void end();
     bool m_hasPendingCalls { false };
     bool m_isRunningPendingCalls { false };
-    bool m_hasLetGoOfModules { false }; // See finalizeAllAtExit().
+    // These two from where finalizeAllAtExit() lets go of the modules to where it is left.
+    bool m_hasLetGoOfModules { false };
+    // Not visited: a collection takes out what it finds dead, when it has put the finalizers in order.
+    Vector<PyDict*> m_namespacesOfModulesLetGoOf;
     void* m_stackWhereUnaskedCallsBegan { nullptr };
     uint32_t m_threadWhereSignalHandlerRaised { noThread }; // In one of the calls it owed, which has not returned yet.
     bool m_hasKeptWhatSignalHandlerRaised { false };

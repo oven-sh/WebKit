@@ -731,6 +731,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
         .wantsToKnowWhatReferenceCountsWouldFree = m_leavesCyclicGarbageForLater,
         .wantsPieces = areOfSeveralThreads,
         .holdersComeFirst = m_hasLetGoOfModules,
+        .namespaces = m_namespacesOfModulesLetGoOf.span(),
     });
     m_isPuttingFinalizersInOrder = false;
 
@@ -939,6 +940,9 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
     }
     m_justFinalizedAndOld = m_justFinalized.size();
     forgetDeadTemporaries(visitor);
+    m_namespacesOfModulesLetGoOf.removeAllMatching([&](PyDict* dict) {
+        return !visitor.isMarked(dict);
+    });
 
     // Those that owe since an earlier collection are told again: a thread may have been about to wait when it was told.
     for (auto& owed : m_callsOwed) {
@@ -1560,6 +1564,19 @@ void Runtime::finalizeAllAtExit()
     for (auto name : { "path"_s, "argv"_s, "ps1"_s, "ps2"_s, "last_exc"_s, "last_type"_s, "last_value"_s, "last_traceback"_s, "__interactivehook__"_s, "path_hooks"_s, "path_importer_cache"_s, "meta_path"_s })
         sysDict()->set(m_vm, internString(m_vm, name), jsUndefined()); // None, not gone: importlib then says that the interpreter is shutting down.
     builtins()->remove(m_vm, internString(m_vm, "_"_s));
+    // An object with a finalizer that has a name in one of them is held by nothing, as far as the order goes, and the ways from the names into what holds one another begin there.
+    auto forgetNamespaces = makeScopeExit([&] {
+        m_namespacesOfModulesLetGoOf.clear();
+        m_hasLetGoOfModules = false;
+    });
+    {
+        JSValue name;
+        JSValue module;
+        for (unsigned position = 0; modules()->next(position, name, module);) {
+            if (auto* pythonModule = PyModule::tryFrom(module); pythonModule && pythonModule->dict())
+                m_namespacesOfModulesLetGoOf.append(pythonModule->dict());
+        }
+    }
     modules()->clear(m_vm);
     m_hasLetGoOfModules = true;
     wipeStackBelow(m_globalObject);
@@ -1580,7 +1597,7 @@ void Runtime::finalizeAllAtExit()
                 (cell->classInfo() == Ctypes::PyCThunk::info() ? callbacksOfForeignCode : rest).append(cell);
         });
         if (rest.size() > 1) {
-            rest = orderWithHoldersFirst(m_vm.heap, rest.span()).map([&](unsigned index) {
+            rest = orderWithHoldersFirst(m_vm.heap, rest.span(), m_namespacesOfModulesLetGoOf.span()).map([&](unsigned index) {
                 return rest[index];
             });
         }

@@ -762,7 +762,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     a finalizer that resurrects its object also keeps what the object refers to from being finalized. So it goes level by level, each
     level in the order of reference counts: of `[N('x', N('x1')), N('y', N('y1'))]`, dropped, `y x y1 x1`, where CPython, which knows at
     once whether `y` has come back, has `y y1 x x1`. A structure more than a few levels deep is finalized in one round, from the top
-    down and depth first, instead of a collection per level.
+    down and depth first, instead of a collection per level. So is all that dies when the modules have gone at exit.
   - What is in a cycle or hangs off one comes after the rest and is finalized in one go, in the order in which the objects were
     made, whatever refers to what: that is what CPython's collector does with what no collection has seen alive. (See "At exit" for what one has.)
   - A collection that the program waits for (`gc.collect()`, the exit, a thread that is idle: `Runtime::collectAsAskedFor`) looks at
@@ -899,6 +899,23 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     when the modules go and that reference counts would not have freed is finalized in the order in which the objects were made, but an object that is reached from the namespaces of the modules only
     through others goes after those (`DeadGraph::candidatesWithHoldersFirst`). That is what CPython's exit does in every version, however it is started and whatever the size of the program; the rest of its
     order depends on where the generations of its collector happen to be cut, and differs between two installations of one version in 35 to 48 % of all pairs.
+  - Where such objects hold one another, the circle is opened where the names lead into it. A reference does not hold what it refers to if that leads back to where the reference comes from by a way on which
+    nothing is nearer to the names than it is itself; nearer: fewer objects with finalizers on the way from a namespace; at the same distance what has no finalizer; of two objects the younger, which is the wrapper
+    if one of them is. So of `raw.owner = f` the writer goes first if the program has `f`, or has both in a list, and a tree with links to the parents goes from its root down. A reference that is on no circle
+    holds (unless it is to a namespace, or to an object with a finalizer that has a name of its own), what holds has no circle, and nothing depends on the order in which the collector comes to the cells. (A search from the names that took the first way into a circle for the way in
+    depended on that order, and let what lay behind the first of two holders go before the second.) All of it is finalized in one round: what has waited a round stands in the lists in the order that the
+    round before has given it. Among what is still held when all else has gone (by JS, by a frame) only what the objects with finalizers lead to is looked at: a list with a name that holds them is not
+    in it, and a circle that no way leads to is entered at its youngest.
+  - That is worked out with the world stopped, so there is a bound: 16,000,000 looks at references inside such circles in all (`mostLooksAtInnerReferences`), the smallest circles first. First by searches from each
+    cell, the nearest first, which in a list, a tree, a ring or a class that keeps its instances are over after a few cells each; if they run out of looks (four for each cell and reference), by division, which
+    takes three looks at each reference for each halving of the number of degrees of nearness, whatever the shape. Both work out the same (where assertions are on, both are gone, and compared). If the
+    looks do not suffice for all the halvings, neighbouring degrees count as one: the same rule with a coarser "nearer"; a circle of more than 2,000,000 cells is not opened: its objects go in the order of
+    making. The looks suffice for a tangle of 90,000 objects each of which knows three others, and for a list, a tree or a ring of 1,500,000.
+    The function by itself, compiled apart, on a busy machine, before and now, in ms, for 100,000 / 1,000,000 / 4,000,000 cells: nothing in a circle 5, 5 / 50, 54 / 203, 216; a tree of plain cells with links to
+    the parents 4, 4 / 58, 56 / 239, 235; the same with an object with a finalizer for its root, in a list, 4, 23 / 79, 292 / 329, 321; all of them objects with finalizers: a doubly linked list 5, 22 / 51,
+    243 / 212, 329; a tree 6, 26 / 65, 333 / 277, 390; a class that keeps its instances 9, 28 / 113, 352 / 521, 302; a doubly linked list that was not made in the order of its links 12, 53 / 428, 1,688 /
+    3,019, 4,400; each knows three others at random 11, 249 / 197, 2,446 / 1,664, 4,046. So up to 22 times what it was where memory is against it, and at its worst 4.4 s where it was 3.0 s. (Without the bound:
+    120 s.) Memory for the circle in hand: 20 bytes for a reference inside it, 64 for a cell: 290 MB at the most.
   - Daemon threads are still running during the first of these steps, and in CPython they finalize what they drop themselves. So the step begins
     an era (`Runtime::m_era`, which each object with a finalizer is registered with; weak references have serial numbers): the main thread
     is a caller as above that serves only what is of an earlier era, whoever made it. It takes more: beside what its own collections find, what the others owe when it comes, and again before each further
