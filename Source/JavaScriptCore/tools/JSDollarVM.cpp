@@ -2203,6 +2203,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockForFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockFor);
 static JSC_DECLARE_HOST_FUNCTION(functionHasDecodedExpressionInfo);
+static JSC_DECLARE_HOST_FUNCTION(functionExpressionInfoStats);
+static JSC_DECLARE_HOST_FUNCTION(functionExpressionInfoWordsDecoded);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos);
 static JSC_DECLARE_HOST_FUNCTION(functionHasValueProfilePredictions);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSourceFor);
@@ -2985,6 +2987,36 @@ JSC_DEFINE_HOST_FUNCTION(functionHasDecodedExpressionInfo, (JSGlobalObject* glob
     if (!codeBlock)
         return JSValue::encode(jsUndefined());
     return JSValue::encode(jsBoolean(!!codeBlock->unlinkedCodeBlock()->expressionInfoIfDecoded()));
+}
+
+// Usage: $vm.expressionInfoStats(functionObj) or $vm.expressionInfoStats(codeBlockToken)
+// { words, chapters } of the source positions of the function's code: how many words encode them, and how many chapters
+// those are in besides the first. Decodes them from a bytecode cache payload. Undefined if it has no code block.
+JSC_DEFINE_HOST_FUNCTION(functionExpressionInfoStats, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    ExpressionInfo& info = codeBlock->unlinkedCodeBlock()->expressionInfo();
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "words"_s), jsNumber(info.numberOfEncodedInfo()));
+    result->putDirect(vm, Identifier::fromString(vm, "chapters"_s), jsNumber(info.numberOfChapters()));
+    return JSValue::encode(result);
+}
+
+// Usage: $vm.expressionInfoWordsDecoded(functionObj or codeBlockToken, bytecodeOffset)
+// How many words of the function's source positions a lookup of the position of the instruction at the offset steps over:
+// those from the start of its chapter. Undefined for an offset behind the last instruction, or without a code block.
+JSC_DEFINE_HOST_FUNCTION(functionExpressionInfoWordsDecoded, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    JSValue offset = callFrame->argument(1);
+    if (!codeBlock || !offset.isUInt32() || offset.asUInt32() >= codeBlock->instructions().size())
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsNumber(codeBlock->unlinkedCodeBlock()->expressionInfo().numberOfEncodedInfoDecodedForInstPC(offset.asUInt32())));
 }
 
 // Usage: $vm.numberOfOwnCallLinkInfos(functionObj)
@@ -6137,6 +6169,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "callFrame"_s, functionCallFrame, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockFor"_s, functionCodeBlockFor, 1);
     addFunction(vm, allowIfNotFuzz, "hasDecodedExpressionInfo"_s, functionHasDecodedExpressionInfo, 1);
+    addFunction(vm, allowIfNotFuzz, "expressionInfoStats"_s, functionExpressionInfoStats, 1);
+    addFunction(vm, allowIfNotFuzz, "expressionInfoWordsDecoded"_s, functionExpressionInfoWordsDecoded, 2);
     addFunction(vm, allowIfNotFuzz, "numberOfOwnCallLinkInfos"_s, functionNumberOfOwnCallLinkInfos, 1);
     addFunction(vm, allowIfNotFuzz, "hasValueProfilePredictions"_s, functionHasValueProfilePredictions, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockForFrame"_s, functionCodeBlockForFrame, 1);
