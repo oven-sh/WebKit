@@ -1512,7 +1512,7 @@ static JSValue numberOfItems(JSGlobalObject* globalObject, JSObject* object)
     // What the engine goes through without calling anything is counted as it is: that is what iteration gives, whatever `size` says.
     bool isSetToGoThrough = isSetAsTheEngineMadeIt(object);
     if (!isSetToGoThrough && (type == JSMapType || type == JSSetType)) {
-        // One of a derived class, or of another realm: what Python goes through it with is the engine's own. (It is looked at: to be counted so, no getter is called.)
+        // One of a derived class, or of another realm: what Python goes through it with is the engine's own. (That method is looked at, not asked for: no getter for it is called.)
         bool isMap = type == JSMapType;
         JSValue method;
         Inquiry result = inquirePropertyOfHost(globalObject, object, isMap ? PropertyName(vm.propertyNames->keys) : PropertyName(vm.propertyNames->iteratorSymbol), method);
@@ -1523,12 +1523,22 @@ static JSValue numberOfItems(JSGlobalObject* globalObject, JSObject* object)
             isSetToGoThrough = !isMap && function->intrinsic() == JSSetValuesIntrinsic && function->realm()->isSetPrototypeIteratorProtocolFastAndNonObservable();
         }
     }
+    std::optional<ItemsOfJS> items;
     if (isSetToGoThrough) {
-        // Unless it is a mapping by its methods, which iteration goes through by its keys(): what iteration asks.
-        ItemsOfJS items = itemsOfIterable(globalObject, object);
+        // Unless it is a mapping by its methods, which iteration goes through by its keys(): what iteration asks, getters for `get`, `has` and
+        // `keys` and all.
+        items = itemsOfIterable(globalObject, object);
         RETURN_IF_EXCEPTION(scope, { });
-        if (items == ItemsOfJS::Iterated)
+        if (*items == ItemsOfJS::Iterated)
             return jsNumber(uncheckedDowncast<JSSet>(object)->size());
+        // One whose keys() is the engine's own is gone through as it is all the same, as a Map.
+        if (*items == ItemsOfJS::ByMethods) {
+            JSValue keys;
+            Inquiry result = inquirePropertyOfHost(globalObject, object, vm.propertyNames->keys, keys);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (auto* function = result == Inquiry::Value ? dynamicDowncast<JSFunction>(keys) : nullptr; function && function->intrinsic() == JSSetValuesIntrinsic && function->realm()->isSetPrototypeIteratorProtocolFastAndNonObservable())
+                return jsNumber(uncheckedDowncast<JSSet>(object)->size());
+        }
     }
     if (type != JSMapType) {
         JSValue iterates = methodOfIteration(globalObject, object);
@@ -1552,9 +1562,10 @@ static JSValue numberOfItems(JSGlobalObject* globalObject, JSObject* object)
         if (isSmallInt(count) && smallIntValue(count) >= 0)
             return count;
     }
-    ItemsOfJS items = type == JSMapType ? ItemsOfJS::ByMethods : itemsOfIterable(globalObject, object);
+    if (!items)
+        items = type == JSMapType ? ItemsOfJS::ByMethods : itemsOfIterable(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
-    if (items != ItemsOfJS::ByMethods)
+    if (*items != ItemsOfJS::ByMethods)
         return { };
     JSArray* keys = keysByMethod(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
