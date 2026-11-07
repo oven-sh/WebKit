@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "JSCellButterfly.h"
 #include "PyBuffer.h"
 #include "PyModuleHelpers.h"
 #include "PyNative.h"
@@ -223,6 +224,11 @@ public:
     int64_t offsetInView() const { return static_cast<int64_t>(m_address); }
 
     void setStorage(VM&, PyByteStorage*, size_t offset);
+    // resize() has given the instance new memory. What it had lives as long as the instance: there may be addresses of it about, in pointers that keep the instance alive
+    // and in arguments of a call that is being put together.
+    void keepFormerStorage(VM&, PyByteStorage*);
+    // Null: it has what it always had.
+    JSCellButterfly* formerStorages() const { return m_isView || !m_past ? nullptr : uncheckedDowncast<JSCellButterfly>(m_past.get().asCell()); }
     // `memory`: where that is now.
     void setView(VM&, PyMemoryView*, int64_t offset, const uint8_t* memory);
     // Where the memory was when the view was taken. It tells what points there once the memory is there no more: the view is gone, or, which is rare, the memory has moved under
@@ -250,7 +256,7 @@ private:
     bool m_isView { false };
     WriteBarrier<JSCell> m_owner;
     uintptr_t m_address { 0 }; // For a view: the offset into it.
-    WriteBarrier<Unknown> m_past; // For a view: whereViewWas(), a number.
+    WriteBarrier<Unknown> m_past; // For a view: whereViewWas(), a number. For memory of its own: formerStorages().
 };
 
 class PyCFuncPtr final : public PyCData {
@@ -482,7 +488,8 @@ JSValue dataBuffer(JSGlobalObject*, JSValue self, JSValue flags);
 bool checkRoomFor(JSGlobalObject*, PyCTypeInfo*, int64_t length, int64_t offset);
 
 // Gives the instance zeroed memory of its own, of that size. False: a MemoryError.
-bool allocateMemory(JSGlobalObject*, PyCData*, int64_t size);
+// `room`: how much it is given if that much is to be had.
+bool allocateMemory(JSGlobalObject*, PyCData*, int64_t size, int64_t room = 0);
 
 // Replaces the pending exception by one of that type, whose message is the prefix, the name of its class and its message.
 void extendError(JSGlobalObject*, PyType* exceptionType, const String& prefix);

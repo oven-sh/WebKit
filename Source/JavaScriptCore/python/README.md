@@ -1601,6 +1601,9 @@ What that rests on, each kept at one place:
   has gone (WebAssembly's, when it grows), or it has moved under a view that is good (as a rule what is exported does not: a bytearray does, under a view of a view of it whose first has been released), a pointer to there is a
   `ValueError`. Not if the view pins memory of JS (`from_buffer()`): that stays where it was while the cell of the view lives, released or not. The instance goes on by that address, and the pointer keeps its bounds, after a look at what is pinned, whether the bytes are still in it (`memoryBehindReleasedView()`): a pin holds against JS, and an `mmap`, whose memory is an `ArrayBuffer` too, lets go of it when nothing is exported. In every other case the address is compared, never followed. (Of a pointer made behind such a move nothing is known once the view has gone: DEFERRED.md.)
   One address is still taken early: that of an argument (an array, `byref(x)`), when it is converted, and the conversion of a later argument runs behind that (DEFERRED.md).
+- **What an instance had before `resize()` lives as long as the instance** (`PyCData::keepFormerStorage()`): a pointer keeps the instance alive, not its memory, and a call that is being put together has addresses of its
+  arguments while the later ones are converted. A pointer from before goes on reading and writing what was there then, within its bounds. So that growing step by step does not add up to the square of what is needed, `resize()` gives half as much
+  again at least: what is kept is at most twice what the instance has.
 
 **`py_object`.** The eight bytes are a `PyObject*` as the C API has it (see there): what `id()` returns, for every object but a str, and 0 is NULL. The object is kept alive by `_objects`. Bits read from memory are handed out as an object if they are those of
 what `_objects` holds for that place; otherwise only after the heap has confirmed that they are those of a live cell of a kind that programs

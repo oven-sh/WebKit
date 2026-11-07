@@ -61,6 +61,18 @@ void PyCData::setStorage(VM& vm, PyByteStorage* storage, size_t offset)
     m_isView = false;
 }
 
+void PyCData::keepFormerStorage(VM& vm, PyByteStorage* storage)
+{
+    // (Not a tuple: gc.get_referents() would hand it out.)
+    JSCellButterfly* earlier = formerStorages();
+    unsigned count = earlier ? earlier->length() : 0;
+    auto* all = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, count + 1);
+    for (unsigned i = 0; i < count; ++i)
+        all->setIndex(vm, i, earlier->get(i));
+    all->setIndex(vm, count, storage);
+    m_past.set(vm, this, all);
+}
+
 void PyCData::setView(VM& vm, PyMemoryView* view, int64_t offset, const uint8_t* memory)
 {
     m_owner.set(vm, this, view);
@@ -108,7 +120,7 @@ static PyCData* allocateData(JSGlobalObject* globalObject, PyType* type, PyCType
     return data;
 }
 
-bool allocateMemory(JSGlobalObject* globalObject, PyCData* data, int64_t size)
+bool allocateMemory(JSGlobalObject* globalObject, PyCData* data, int64_t size, int64_t room)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -117,11 +129,15 @@ bool allocateMemory(JSGlobalObject* globalObject, PyCData* data, int64_t size)
     // follows being zero: a c_wchar or a full (c_char * 3) passed where C expects a string that ends. The cell is a multiple of 16
     // bytes anyway, and what is left over would otherwise hold what some dead object left there.
     static constexpr int64_t granule = 16;
-    PyByteStorage* storage = nullptr;
-    if (size <= std::numeric_limits<int64_t>::max() - granule) {
-        size_t capacity = std::max<size_t>(roundUpToMultipleOf<granule>(static_cast<size_t>(size)), granule);
-        storage = PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), capacity);
-    }
+    auto tryWith = [&](int64_t bytes) -> PyByteStorage* {
+        if (bytes > std::numeric_limits<int64_t>::max() - granule)
+            return nullptr;
+        size_t capacity = std::max<size_t>(roundUpToMultipleOf<granule>(static_cast<size_t>(bytes)), granule);
+        return PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), capacity);
+    };
+    PyByteStorage* storage = room > size ? tryWith(room) : nullptr;
+    if (!storage)
+        storage = tryWith(size);
     if (!storage) {
         raiseMemoryError(globalObject, scope, String());
         return false;
@@ -212,8 +228,18 @@ static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uin
             auto* storage = uncheckedDowncast<PyByteStorage>(other->owner());
             begin = storage->data();
             size = storage->capacity();
-            if (address < begin || address > begin + size)
+            if (address < begin || address > begin + size) {
+                // It may point to where the instance was before a resize().
+                JSCellButterfly* former = other->formerStorages();
+                for (unsigned i = former ? former->length() : 0; i--;) {
+                    auto* earlier = uncheckedDowncast<PyByteStorage>(former->get(i).asCell());
+                    if (address >= earlier->data() && address <= earlier->data() + earlier->capacity()) {
+                        result = { earlier, earlier->data(), earlier->data() + earlier->capacity() };
+                        return true;
+                    }
+                }
                 return false;
+            }
         }
         result = { other->owner(), begin, begin + size };
         return true;

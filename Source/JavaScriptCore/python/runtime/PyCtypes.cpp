@@ -110,6 +110,7 @@ void PyCData::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->base);
     visitor.append(thisObject->objects);
     visitor.append(thisObject->m_owner);
+    visitor.append(thisObject->m_past);
 }
 
 DEFINE_VISIT_CHILDREN(PyCData);
@@ -440,9 +441,12 @@ static JSValue moduleResize(JSGlobalObject* globalObject, JSValue object, JSValu
         data->size = size;
         return none();
     }
-    if (failed(scope, allocateMemory(globalObject, data, size)))
+    // What it had is kept. So that an instance that grows step by step does not come to hold the square of what it needs, it is given half as much again at least.
+    size_t oldCapacity = oldStorage->capacity();
+    if (failed(scope, allocateMemory(globalObject, data, size, static_cast<int64_t>(oldCapacity + oldCapacity / 2))))
         return { };
     memcpy(data->memory(globalObject), oldStorage->data(), static_cast<size_t>(oldSize));
+    data->keepFormerStorage(vm, oldStorage);
     return none();
 }
 
