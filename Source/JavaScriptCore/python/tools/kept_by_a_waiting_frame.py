@@ -3,7 +3,7 @@
 
     bun kept_by_a_waiting_frame.py KIND [SYMBOLS]
 
-KIND: unbuffered, buffered, recv, ctypes, or all. SYMBOLS: `nm -C --defined-only` of the binary that runs this, or of its twin that has
+KIND: unbuffered, buffered, readinto, recv, recvfrom, recvmsg, recv_into, ctypes, or all. SYMBOLS: `nm -C --defined-only` of the binary that runs this, or of its twin that has
 symbols; without it the frames have sizes and no names. Linux, with frame pointers.
 
 A thread makes an object, uses it in one of some ways, lets go of it and blocks. After six collections, for an object that is still
@@ -123,7 +123,16 @@ def look(kind, symbols):
     here, there = socket.socketpair()
     unbuffered, buffered = os.fdopen(os.dup(reader), 'rb', buffering=0), os.fdopen(os.dup(reader), 'rb')
     libc, room = ctypes.CDLL(None), ctypes.create_string_buffer(1)
-    block = {'unbuffered': lambda: unbuffered.read(1), 'buffered': lambda: buffered.read(1), 'recv': lambda: here.recv(1), 'ctypes': lambda: libc.read(reader, room, 1)}[kind]
+    block = {
+        'unbuffered': lambda: unbuffered.read(1),
+        'buffered': lambda: buffered.read(1),
+        'readinto': lambda: os.readinto(reader, bytearray(1)),
+        'recv': lambda: here.recv(1),
+        'recvfrom': lambda: here.recvfrom(1),
+        'recvmsg': lambda: here.recvmsg(1),
+        'recv_into': lambda: here.recv_into(bytearray(1)),
+        'ctypes': lambda: libc.read(reader, room, 1),
+    }[kind]
 
     alive = 0
     for way, use in WAYS.items():
@@ -152,7 +161,7 @@ def look(kind, symbols):
             print('%s, %s: alive; %s' % (kind, way, snapshot_says(cell)))
             for line in words_that_point_at(cell, 80, thread.native_id, symbols):
                 print('    a word in ' + line)
-        there.send(b'x') if kind == 'recv' else os.write(writer, b'x')
+        there.send(b'x') if kind.startswith('recv') else os.write(writer, b'x')
         thread.join()
     print('%s: %d of %d alive after six collections' % (kind, alive, len(WAYS)))
     for file in (unbuffered, buffered, here, there):
@@ -162,5 +171,5 @@ def look(kind, symbols):
 
 
 symbols = sorted((int(line[:16], 16), line[19:].rstrip()) for line in open(sys.argv[2]) if line[17:18] in 'tTwW') if len(sys.argv) > 2 else []
-for kind in ('unbuffered', 'buffered', 'recv', 'ctypes') if sys.argv[1] == 'all' else sys.argv[1:2]:
+for kind in ('unbuffered', 'buffered', 'readinto', 'recv', 'recvfrom', 'recvmsg', 'recv_into', 'ctypes') if sys.argv[1] == 'all' else sys.argv[1:2]:
     look(kind, symbols)
