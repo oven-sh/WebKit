@@ -55,12 +55,14 @@ static constexpr size_t leastToTellOf = 8 * KB;
 static NEVER_INLINE void tellHeap()
 {
     Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
+    size_t bytes = std::exchange(t_bytesNotToldOf, 0);
+    // (Then it is not told at all: most of it may have been freed by the time somebody could tell.)
     if (!hasGIL(current))
         return;
     // It does not collect here and now, but where a cell is next asked for. C may be half way through a change to an object (the new length is stored, the memory is being asked
     // for), and counts on it that nobody calls its tp_traverse meanwhile.
     DeferGCForAWhile deferGC(current->vm);
-    current->vm.heap.deprecatedReportExtraMemory(std::exchange(t_bytesNotToldOf, 0));
+    current->vm.heap.deprecatedReportExtraMemory(bytes);
 }
 
 static ALWAYS_INLINE void* tellingHeap(void* memory, size_t size)
