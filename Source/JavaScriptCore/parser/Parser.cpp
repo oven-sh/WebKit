@@ -237,8 +237,14 @@ std::expected<typename Parser<LexerType>::ParseInnerResult, String> Parser<Lexer
             parameters = createGeneratorParameters(context, functionInfo.parameterCount);
         else if (parseMode == SourceParseMode::ClassFieldInitializerMode)
             parameters = context.createFormalParameterList();
-        else
+        else {
             parameters = parseFunctionParameters(context, functionInfo);
+            // Read here, before the body is parsed. The count is of the direct eval calls that |context| built, so it
+            // is never zero when a parameter expression has one. It is an upper bound: the head of a nested arrow
+            // function and the fields and static blocks of a nested class go through |context| as well.
+            if (parameters && context.evalCount())
+                parameters->setUsesEval();
+        }
 
         if (SourceParseModeSet(SourceParseMode::ArrowFunctionMode, SourceParseMode::AsyncArrowFunctionMode).contains(parseMode) && !hasError()) {
             // FIXME:
