@@ -13,6 +13,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTStringBuilderStorage.h"
+#include "DecimalObject.h"
 #include "JSCInlines.h"
 #include "JSGlobalObjectFunctions.h"
 #include "MathCommon.h"
@@ -131,6 +132,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNumberOfAnyValue, EncodedJSValue, (Instance
         }
         OPERATION_RETURN(scope, JSValue::encode(jsNumber(jsToNumber(view))));
     }
+    if (auto* decimal = DecimalObject::tryCast(value)) [[unlikely]]
+        OPERATION_RETURN(scope, JSValue::encode(jsNumber(decimal->toNumberValue())));
     JSValue numeric = value.toNumeric(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (numeric.isNumber())

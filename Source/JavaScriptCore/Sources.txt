@@ -875,6 +875,10 @@ runtime/DateConstructor.cpp
 runtime/DateConversion.cpp
 runtime/DateInstance.cpp
 runtime/DatePrototype.cpp
+runtime/Decimal128.cpp @no-unify
+runtime/DecimalConstructor.cpp @no-unify
+runtime/DecimalObject.cpp @no-unify
+runtime/DecimalPrototype.cpp @no-unify
 runtime/DeferredWorkTimer.cpp
 runtime/DirectArguments.cpp
 runtime/DirectArgumentsOffset.cpp

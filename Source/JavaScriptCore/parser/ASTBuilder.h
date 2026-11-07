@@ -246,6 +246,13 @@ public:
         return new (m_parserArena) BigIntNode(location, *bigInt, radix);
     }
 
+    ExpressionNode* createDecimal(const JSTokenLocation& location, const Identifier& value, const JSTextPosition& start, const JSTextPosition& end)
+    {
+        auto* node = new (m_parserArena) DecimalNode(location, value);
+        setExceptionLocation(node, start, end, end);
+        return node;
+    }
+
     ExpressionNode* createString(const JSTokenLocation& location, const Identifier* string)
     {
         ASSERT(string);
