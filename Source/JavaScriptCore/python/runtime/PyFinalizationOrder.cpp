@@ -99,7 +99,7 @@ public:
 
 private:
     static constexpr unsigned none = std::numeric_limits<unsigned>::max();
-    // The graph takes some 60 bytes for a cell, while the world is stopped, and when the modules have gone some 36 more, and up to 290 MB for the largest circle in which a candidate is
+    // The graph takes some 60 bytes for a cell, while the world is stopped, and when the modules have gone some 36 more (48 for a cell in a circle, if cells of a circle that is opened count as one), and up to 300 MB for the largest circle in which a candidate is
     // (candidatesWithHoldersFirst()). If more than this has died, only what the candidates reach is looked at, and beyond as many cells of that, what is reached is not looked into: it is taken to refer to nothing.
     static constexpr unsigned maxCells = 4'000'000;
     // See candidatesWithHoldersFirst().
@@ -641,13 +641,17 @@ void forEachComponent(ComponentSearch& search, Vertices vertices, Vector<Compone
 //   if one of them is. A REFERENCE TO A CELL DOES NOT HOLD IT IF THE CELL LEADS BACK TO WHERE THE REFERENCE COMES FROM BY A WAY ON WHICH NOTHING IS NEARER THAN THE CELL ITSELF. So of `raw.owner = f`, where
 //   the program has `f`, the writer goes first, whatever else holds the raw file, and a tree with links to the parents goes from its root down. Any other reference that is on no circle holds; what
 //   holds has no circle; and nothing depends on the order in which the cells or their references are come to.
+// - THE TWO ENDS OF A REFERENCE THAT DOES NOT HOLD COUNT AS ONE CELL IF THEY ARE EQUALLY NEAR, and so do all the cells of a circle that holds nothing together (see below): they are free to go, together, when no
+//   reference that holds is left to any of them. Else what holds one list of a cycle of lists, or the root of a tree of plain nodes with links to the parents, would not hold what hangs off another list or a leaf,
+//   and an older object there would go before it. With that, an object goes after every candidate through which all the ways to it lead, from where the levels begin; and what holds still has no circle. (Two cells
+//   that are equally near and lead to one another only by way of farther ones stay two: what holds the one does not hold what hangs off the other.)
 // - What no way leads to (the graph may be no more than what the candidates lead to, and among the living it never is: a list with a name that holds them is not in it) is entered at its youngest candidate: from the holders
 //   down, a component that nothing has led to yet gets level 0 there (everywhere, if it has no candidate), and the levels spread from all those places. What had a level keeps it.
 //
 // How that is worked out. The strongly connected components, once. A component all of whose cells are equally near holds nothing together: none of its inner references holds. (Every component without a
 // candidate is one: through what is no candidate the level does not rise.) In any other, the question for a reference from u to v is whether u and v are strongly connected among the cells that are no
 // nearer than v. In a circle of up to 64 cells that is worked out as it stands: from each cell what it reaches among what is no nearer, as a set of bits. That takes two looks at each reference of its cells
-// and no memory, so it is done always: a writer and its raw file never go short, whatever else is in the heap. In a larger circle two ways lead to the answer; where there are more than eight degrees of
+// and no memory, so it is done always (a third look, if two of them are no candidates, says which are one, and that does take memory: see the end): a writer and its raw file never go short, whatever else is in the heap. In a larger circle two ways lead to the answer; where there are more than eight degrees of
 // nearness the first is tried first:
 // - By searches, from the nearest cell to the farthest: from each, among what is no nearer, for the references to it. What has no inner reference left that holds is taken away. In a list, a tree with links to
 //   the parents, a ring, a class that keeps its instances, each search is over after a few cells. In a tangle each goes through all of it.
@@ -657,13 +661,15 @@ void forEachComponent(ComponentSearch& search, Vertices vertices, Vector<Compone
 //   different degrees of nearness in the component, whatever its shape.
 //
 // The world is stopped meanwhile, so for the larger circles there is a bound: so many looks at cells and inner references in all (FinalizationQuestions::mostLooksAtInnerReferences), for the smallest first, by
-// the number of their cells and inner references. One look at each is taken to begin with. A circle for which there are not twice as many left, or not eight for each cell, is left alone, and costs nothing. The
+// the number of their cells and inner references. One look at each is taken to begin with. A circle for which there are not twice as many left, or not eight for each cell, is left alone, and costs no looks. The
 // searches have four looks for each cell and inner reference, or what is left. If there are not enough left for all the halvings of the division, neighbouring degrees of nearness count as one: the rule is
 // the same, with a coarser "nearer". That takes references away from what holds, so that still has no circle. With no halving at all, as where it is left alone, the circle holds nothing together, and its
-// candidates go in the order in which they were made.
+// candidates go in the order in which they were made, when nothing holds any of its cells.
+// Which cells are one: in a small circle that takes the third look; in a larger one it is noted where a reference is found not to hold, for the circle in hand (`tiedTo`), and taken over behind the opening.
 // As long as the looks suffice nothing depends on the order in which the cells or their references are come to. Behind that, how many looks a search takes depends on the order of a cell's own references, which
 // the object fixes, not on where the cells lie: so the order is the same from run to run.
-// What that is in time: see README.md. Memory, for the circle in hand: 20 bytes for an inner reference, 64 for a cell, asked for beforehand: if it is not to be had the circle is left alone.
+// What that is in time: see README.md. Memory, for the circle in hand: 20 bytes for an inner reference, 68 for a cell, asked for beforehand: if it is not to be had the circle is left alone. For what
+// is one: 12 bytes for each cell that is in any circle, opened or not, asked for when the first two are found: if they are not to be had the cells stay two.
 Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
 {
     unsigned count = m_cells.size();
@@ -720,10 +726,11 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
         unsigned firstMember;
         unsigned youngestCandidate; // none: it has no candidate.
         unsigned innerReferences { 0 }; // Only of those that are opened on the account: see below.
+        unsigned cellsThatAreHeld { 0 }; // For the last pass, if it holds nothing together.
     };
     Vector<Circle> circles;
     Vector<unsigned> members;
-    // `number`: its circle. `low`: its number in that, while the circle is being opened.
+    // `number`: its circle. `low`: its number in that: from when the circle has been opened its place among the members.
     Vector<ComponentSearch::State> places;
     places.fill({ none, none }, count);
     auto circleOf = [&](unsigned node) -> unsigned& {
@@ -758,7 +765,7 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                 youngest = node;
         }
         someCircleHasCandidate |= youngest != none;
-        circles.append({ static_cast<unsigned>(members.size()), youngest, 0 });
+        circles.append({ static_cast<unsigned>(members.size()), youngest, 0, 0 });
         members.append(cells);
     });
     auto membersOf = [&](unsigned index) {
@@ -774,6 +781,19 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
     holdsNothingTogether.resize(circles.size());
     for (unsigned index = 0; index < circles.size(); ++index)
         holdsNothingTogether[index] = circles[index].youngestCandidate == none;
+    // The cells of a circle that is opened which count as one. By the place in `members`, where what hangs together lies together: which of them stands for it (union-find), the next in a ring of all of them, and,
+    // at the one that stands for them, for the last pass, how many of them are held. Made when the first two are found.
+    Vector<unsigned> standsFor;
+    Vector<unsigned> nextOfThoseThatAreOne;
+    Vector<unsigned> thoseThatAreHeld;
+    auto whatStandsFor = [](Vector<unsigned>& unionFind, unsigned place) {
+        while (unionFind[place] != place)
+            place = unionFind[place] = unionFind[unionFind[place]];
+        return place;
+    };
+    auto placeOf = [&](unsigned node) {
+        return circles[circleOf(node)].firstMember + numberInCircle(node);
+    };
 
     Vector<unsigned> holders;
     // Hardly any program comes here: what it holds at its end is in circles (the namespaces aside) seldom enough, and a candidate is seldom in one.
@@ -902,6 +922,7 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
         Vector<unsigned> firstInner;
         Vector<unsigned> time; // At which the cell is added: the farthest at 0.
         Vector<unsigned> parent; // Union-find: what has become strongly connected before the span in hand is one.
+        Vector<unsigned> tiedTo; // Union-find: the two ends of a reference that does not hold, if they are equally near.
         // The graph of a step.
         Vector<unsigned> vertices;
         Vector<unsigned> heads;
@@ -962,6 +983,53 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                 }
             }
         };
+#if ASSERT_ENABLED
+        // Of each of `size` places from `first` on, the first that it is one with, counted from `first`.
+        auto partsOf = [&](Vector<unsigned>& unionFind, unsigned first, unsigned size) {
+            Vector<unsigned> firstOfPart;
+            firstOfPart.fill(none, size);
+            Vector<unsigned> parts;
+            for (unsigned i = 0; i < size; ++i) {
+                unsigned& firstOfIts = firstOfPart[whatStandsFor(unionFind, first + i) - first];
+                if (firstOfIts == none)
+                    firstOfIts = i;
+                parts.append(firstOfIts);
+            }
+            return parts;
+        };
+        // Whether the cells of a circle that are one are those that its opening has just tied.
+        auto tiesAreTakenOver = [&](unsigned index) {
+            unsigned size = membersOf(index).size();
+            auto tied = partsOf(tiedTo, 0, size);
+            if (standsFor.isEmpty())
+                return std::ranges::equal(tied, std::views::iota(0u, size));
+            return tied == partsOf(standsFor, circles[index].firstMember, size);
+        };
+#endif
+        // Two cells of a circle that has been opened, by their numbers in it, which are their places among its members. If there is no room for that they stay two: the circle is open all the same, and what holds
+        // the one does not hold what hangs off the other.
+        bool thereIsRoomForWhatIsOne = true;
+        auto makeOne = [&](unsigned index, unsigned i, unsigned j) {
+            if (standsFor.isEmpty()) {
+                thereIsRoomForWhatIsOne = thereIsRoomForWhatIsOne && standsFor.tryReserveCapacity(members.size()) && nextOfThoseThatAreOne.tryReserveCapacity(members.size()) && thoseThatAreHeld.tryReserveCapacity(members.size());
+                if (!thereIsRoomForWhatIsOne) {
+                    standsFor.clear();
+                    nextOfThoseThatAreOne.clear();
+                    return;
+                }
+                standsFor.resize(members.size());
+                for (unsigned place = 0; place < members.size(); ++place)
+                    standsFor[place] = place;
+                nextOfThoseThatAreOne = standsFor;
+                thoseThatAreHeld.fill(0, members.size());
+            }
+            unsigned a = whatStandsFor(standsFor, circles[index].firstMember + i);
+            unsigned b = whatStandsFor(standsFor, circles[index].firstMember + j);
+            if (a != b) {
+                standsFor[a] = b;
+                std::swap(nextOfThoseThatAreOne[a], nextOfThoseThatAreOne[b]); // Of two rings one.
+            }
+        };
         Vector<CircleToOpen> circlesToOpen;
         for (unsigned index = 0; index < circles.size(); ++index) {
             if (holdsNothingTogether[index])
@@ -995,7 +1063,7 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                 }() && ...);
             };
             return reserve(innerReferenceCount, mostInnerReferences, inner, heads)
-                && reserve(cellCount + 1, mostCells + 1, byNearness, firstInner, time, parent, vertices, firstHead, endOfHeads, states, referencesLeft, searchThatCameToIt, reached, free);
+                && reserve(cellCount + 1, mostCells + 1, byNearness, firstInner, time, parent, tiedTo, vertices, firstHead, endOfHeads, states, referencesLeft, searchThatCameToIt, reached, free);
         };
         auto open = [&](unsigned index, unsigned cellsAndInnerReferences, uint64_t& looksLeft) {
             auto cells = membersOf(index);
@@ -1006,10 +1074,16 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                 return;
             }
             byNearness.shrink(0);
+            tiedTo.resize(size);
             for (unsigned i = 0; i < size; ++i) {
                 numberInCircle(cells[i]) = i;
                 byNearness.append({ nearness(cells[i]), i });
+                tiedTo[i] = i;
             }
+            auto tie = [&](unsigned a, unsigned b) {
+                a = whatStandsFor(tiedTo, a);
+                tiedTo[a] = whatStandsFor(tiedTo, b);
+            };
             std::ranges::sort(byNearness, { }, &Near::nearness);
             ASSERT(byNearness[0].nearness != byNearness.last().nearness); // (It has a candidate, and nothing else is as near as a candidate is.)
             time.resize(size);
@@ -1073,6 +1147,8 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                                     if (!doesNotHold[reference.edge]) {
                                         doesNotHold[reference.edge] = true;
                                         --referencesLeft[cell];
+                                        if (time[from] == time[cell])
+                                            tie(from, cell);
                                     }
                                     continue;
                                 }
@@ -1128,9 +1204,7 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                 for (auto& reference : inner)
                     reference.timeAndWhetherItLeadsNearer = std::max(time[reference.from], time[reference.to]) << 1 | (time[reference.from] <= time[reference.to]);
                 auto find = [&](unsigned i) {
-                    while (parent[i] != i)
-                        i = parent[i] = parent[parent[i]];
-                    return i;
+                    return whatStandsFor(parent, i);
                 };
                 spans.append({ 0, (degrees - 1) >> degreesInOne, 0, static_cast<unsigned>(inner.size()) });
                 while (!spans.isEmpty()) {
@@ -1141,8 +1215,12 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                     if (span.firstTime == span.lastTime) {
                         // That is when their ends become one: for a reference that does not hold, as soon as its head is there.
                         for (auto& reference : references) {
-                            if (reference.timeAndWhetherItLeadsNearer == (span.firstTime << 1 | 1))
+                            if (reference.timeAndWhetherItLeadsNearer == (span.firstTime << 1 | 1)) {
                                 doesNotHold[reference.edge] = true;
+                                // (A cell stands for itself until the time at which it is added: all its references are of that time or later. What stands for a farther tail is farther.)
+                                if (time[reference.from] == span.firstTime)
+                                    tie(reference.from, reference.to);
+                            }
                             parent[find(reference.from)] = find(reference.to);
                         }
                         continue;
@@ -1218,28 +1296,64 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                     std::ranges::sort(found);
                     return found;
                 };
+                auto takeWhatWasTied = [&] {
+                    auto parts = partsOf(tiedTo, 0, size);
+                    for (unsigned i = 0; i < size; ++i)
+                        tiedTo[i] = i;
+                    return parts;
+                };
                 if (openBySearches()) {
                     auto foundBySearches = takeWhatWasFound();
+                    auto tiedBySearches = takeWhatWasTied();
                     auto innerAsItWas = inner;
                     bool hasOpened = openByDivision();
                     ASSERT_UNUSED(hasOpened, hasOpened);
                     ASSERT(takeWhatWasFound() == foundBySearches);
+                    ASSERT(takeWhatWasTied() == tiedBySearches);
                     inner = WTF::move(innerAsItWas);
                 }
+                // (Searches that have given up leave what they have found by then.)
+                takeWhatWasFound();
+                takeWhatWasTied();
                 looksLeft = looksLeftInTruth;
             }
 #endif
             constexpr unsigned fewDegrees = 8;
-            if (degrees > fewDegrees && openBySearches())
-                return;
-            if (!openByDivision())
+            if (!(degrees > fewDegrees && openBySearches()) && !openByDivision()) {
                 holdsNothingTogether[index] = true;
+                return;
+            }
+#if ASSERT_ENABLED
+            // Whichever way it went, and whatever its size: what is tied is what the rule says, by the degrees with which it has been opened.
+            Vector<unsigned> tiedByTheRule;
+            for (unsigned i = 0; i < size; ++i)
+                tiedByTheRule.append(i);
+            for (unsigned i = 0; i < size; ++i) {
+                for (unsigned edge = m_firstEdge[cells[i]]; edge < m_firstEdge[cells[i] + 1]; ++edge) {
+                    if (doesNotHold[edge] && time[numberInCircle(m_edges[edge])] == time[i])
+                        tiedByTheRule[whatStandsFor(tiedByTheRule, i)] = whatStandsFor(tiedByTheRule, numberInCircle(m_edges[edge]));
+                }
+            }
+            ASSERT(partsOf(tiedByTheRule, 0, size) == partsOf(tiedTo, 0, size));
+#endif
         };
         for (unsigned index = 0; index < circles.size(); ++index) {
             auto cells = membersOf(index);
             if (holdsNothingTogether[index] || cells.size() > mostCellsOfSmallCircle)
                 continue;
             openSmallCircle(index);
+            unsigned cellsWithoutFinalizer = 0;
+            for (unsigned i = 0; i < cells.size(); ++i) {
+                numberInCircle(cells[i]) = i;
+                cellsWithoutFinalizer += !isCandidate(cells[i]);
+            }
+            // (Nothing else is as near as a candidate is.)
+            for (unsigned i = 0; cellsWithoutFinalizer > 1 && thereIsRoomForWhatIsOne && i < cells.size(); ++i) {
+                for (unsigned edge = m_firstEdge[cells[i]]; edge < m_firstEdge[cells[i] + 1]; ++edge) {
+                    if (doesNotHold[edge] && nearness(m_edges[edge]) == nearness(cells[i]))
+                        makeOne(index, i, numberInCircle(m_edges[edge]));
+                }
+            }
 #if ASSERT_ENABLED
             // The other ways are to come to the same. (So a build with assertions goes all three in every small circle.)
             unsigned innerReferences = 0;
@@ -1257,21 +1371,34 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                 return found;
             };
             auto foundWithSets = takeWhatWasFound();
+            for (unsigned i = 0; i < cells.size(); ++i)
+                ASSERT(numberInCircle(cells[i]) == i);
+            ASSERT(!holdsNothingTogether[index]);
             uint64_t allTheLooksThatItTakes = std::numeric_limits<uint64_t>::max();
             open(index, cells.size() + innerReferences, allTheLooksThatItTakes);
             bool hadRoom = !holdsNothingTogether[index];
             holdsNothingTogether[index] = false;
             auto foundOtherwise = takeWhatWasFound();
             ASSERT(!hadRoom || foundOtherwise == foundWithSets);
+            ASSERT(!hadRoom || !thereIsRoomForWhatIsOne || tiesAreTakenOver(index));
             for (unsigned edge : foundWithSets)
                 doesNotHold[edge] = true;
 #endif
         }
         uint64_t looksLeft = mostLooksAtInnerReferences;
-        for (auto& [index, cellsAndInnerReferences] : circlesToOpen)
+        for (auto& [index, cellsAndInnerReferences] : circlesToOpen) {
             open(index, cellsAndInnerReferences, looksLeft);
+            if (holdsNothingTogether[index])
+                continue;
+            for (unsigned i = 0; thereIsRoomForWhatIsOne && i < membersOf(index).size(); ++i) {
+                if (tiedTo[i] != i)
+                    makeOne(index, i, tiedTo[i]);
+            }
+            ASSERT(!thereIsRoomForWhatIsOne || tiesAreTakenOver(index));
+        }
     }
 
+    // The last pass.
     FastBitVector holds; // By the number of the reference in m_edges.
     holds.resize(m_edges.size());
     holders.fill(0, count);
@@ -1284,10 +1411,16 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
             unsigned target = m_edges[edge];
             if (!leadsTo(node, target) || (circle != inNoCircle && circle == circleOf(target) && !(isOpen && !doesNotHold[edge])))
                 continue;
+            ASSERT(!isOpen || circle != circleOf(target) || standsFor.isEmpty() || whatStandsFor(standsFor, placeOf(node)) != whatStandsFor(standsFor, placeOf(target))); // What is one does not hold itself.
             holds[edge] = true;
             ++holders[target];
         }
     }
+    // The holders are counted cell by cell. Of the cells that a cell is one with, itself among them: how many are held.
+    auto thoseThatAreHeldWith = [&](unsigned node) -> unsigned& {
+        unsigned circle = circleOf(node);
+        return holdsNothingTogether[circle] ? circles[circle].cellsThatAreHeld : thoseThatAreHeld[whatStandsFor(standsFor, placeOf(node))];
+    };
 
     Vector<unsigned> withoutFinalizer;
     LowestFirst withFinalizer(m_candidateCount); // The oldest first.
@@ -1297,6 +1430,48 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
         else
             withoutFinalizer.append(node);
     };
+    auto allThatAreOneAreFreeToGo = [&](unsigned node) {
+        unsigned circle = circleOf(node);
+        if (holdsNothingTogether[circle]) {
+            for (unsigned member : membersOf(circle))
+                isFreeToGo(member);
+            return;
+        }
+        unsigned first = placeOf(node);
+        unsigned place = first;
+        do {
+            isFreeToGo(members[place]);
+            place = nextOfThoseThatAreOne[place];
+        } while (place != first);
+    };
+    // A bit in the count of its holders says that a cell is one with others: so a cell that is not, as nearly all are not, is told by the count, which is in hand, and nothing else that lies scattered is looked at.
+    constexpr unsigned isOneWithOthers = 1u << 31;
+    ASSERT(m_edges.size() < isOneWithOthers);
+    for (unsigned index = 0; index < circles.size(); ++index) {
+        auto cells = membersOf(index);
+        if (holdsNothingTogether[index]) {
+            for (unsigned node : cells) {
+                circles[index].cellsThatAreHeld += !!holders[node];
+                holders[node] |= isOneWithOthers;
+            }
+            if (!circles[index].cellsThatAreHeld)
+                allThatAreOneAreFreeToGo(cells[0]);
+            continue;
+        }
+        if (standsFor.isEmpty())
+            continue;
+        unsigned first = circles[index].firstMember;
+        for (unsigned i = 0; i < cells.size(); ++i) {
+            if (nextOfThoseThatAreOne[first + i] == first + i)
+                continue;
+            thoseThatAreHeld[whatStandsFor(standsFor, first + i)] += !!holders[cells[i]];
+            holders[cells[i]] |= isOneWithOthers;
+        }
+        for (unsigned i = 0; i < cells.size(); ++i) {
+            if (standsFor[first + i] == first + i && nextOfThoseThatAreOne[first + i] != first + i && !thoseThatAreHeld[first + i])
+                allThatAreOneAreFreeToGo(cells[i]);
+        }
+    }
     for (unsigned node = 0; node < count; ++node) {
         if (isLeft(node) && !holders[node])
             isFreeToGo(node);
@@ -1310,12 +1485,18 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
             node = withoutFinalizer.takeLast();
         else {
             node = withFinalizer.takeLowest();
+            ASSERT(isLeft(node));
             result.append(node);
             hasGone[node] = true;
         }
         for (unsigned edge = m_firstEdge[node]; edge < m_firstEdge[node + 1]; ++edge) {
-            if (holds[edge] && !--holders[m_edges[edge]])
+            if (!holds[edge])
+                continue;
+            unsigned holdersLeft = --holders[m_edges[edge]];
+            if (!holdersLeft)
                 isFreeToGo(m_edges[edge]);
+            else if (holdersLeft == isOneWithOthers && !--thoseThatAreHeldWith(m_edges[edge]))
+                allThatAreOneAreFreeToGo(m_edges[edge]);
         }
     }
     // What holds has no circle, so nothing is left. What were left would be freed without its finalizer having been called.
