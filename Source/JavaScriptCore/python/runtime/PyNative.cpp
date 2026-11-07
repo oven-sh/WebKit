@@ -10,6 +10,7 @@
 #include "PyAbstract.h"
 #include "PyBytecode.h"
 #include "PyErrors.h"
+#include "PyHooks.h"
 #include "PyInternals.h"
 #include "PyJSView.h"
 #include "PyRuntime.h"
@@ -750,6 +751,7 @@ NEVER_INLINE JSValue PyNativeFunction::invoke(JSGlobalObject* globalObject, cons
 
 ALWAYS_INLINE JSValue PyNativeFunction::invokeInline(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    ASSERT(!countOfGrantedMemory());
     switch (m_kind) {
     case NativeKind::Function:
     case NativeKind::StaticMethod:

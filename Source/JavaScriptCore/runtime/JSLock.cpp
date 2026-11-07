@@ -25,6 +25,7 @@
 #include "HeapInlines.h"
 #include "JSGlobalObject.h"
 #include "MachineStackMarker.h"
+#include "PyHooks.h"
 #include "SamplingProfiler.h"
 #include "VMTrapsInlines.h"
 #include <wtf/SpinBackoff.h>
@@ -414,6 +415,7 @@ void JSLock::park(ParkedThread& parked)
     parked.m_lastStackTop = vm.m_lastStackTop;
     parked.m_softReservedZoneSize = vm.m_currentSoftReservedZoneSize;
     vm.m_currentSoftReservedZoneSize = Options::softReservedZoneSize();
+    ASSERT(!Python::countOfGrantedMemory());
     parked.m_disallowVMEntryCount = std::exchange(vm.disallowVMEntryCount, 0);
     parked.m_allowLazyMaterializationOfImmutablePropertiesCount = std::exchange(vm.allowLazyMaterializationOfImmutablePropertiesCount, 0);
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)

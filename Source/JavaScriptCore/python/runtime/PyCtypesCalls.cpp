@@ -1152,10 +1152,12 @@ static JSValue functionCall(JSGlobalObject* globalObject, JSValue self, const Ca
     JSValue argTypes = choose(function->argTypes.get(), info->argTypes.get());
     JSValue errorCheck = function->errorCheck.get();
 
-    auto memory = Place { function }.resolve(globalObject, sizeof(void*));
-    RETURN_IF_EXCEPTION(scope, { });
     void* address;
-    memcpy(&address, memory.data(), sizeof(void*));
+    {
+        auto memory = Place { function }.resolve(globalObject, sizeof(void*));
+        RETURN_IF_EXCEPTION(scope, { });
+        memcpy(&address, memory.data(), sizeof(void*));
+    }
 
     OutputArguments outputs;
     PyTuple* arguments = buildCallArguments(globalObject, function, argTypes, args, outputs);

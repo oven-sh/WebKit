@@ -5,8 +5,10 @@
 
 #pragma once
 
+#include "DisallowVMEntry.h"
 #include "JSCellButterfly.h"
 #include "PyBuffer.h"
+#include "PyHooks.h"
 #include "PyModuleHelpers.h"
 #include "PyNative.h"
 #include "PyType.h"
@@ -461,6 +463,42 @@ ALWAYS_INLINE bool isInstanceOfData(JSValue value, PyType* type)
 
 // ---- Instances: PyCtypesData.cpp ----
 
+// Bytes that may be touched, until code of the program runs. In a debug build, code that runs while one of these lives is caught: so it lives in braces of its own
+// wherever something follows the touch that may run some (keepAlive(), a warning, a call). (In a release build it is the span: a class that cannot be copied is not returned in registers.)
+#if ASSERT_ENABLED
+class Granted {
+    WTF_MAKE_NONCOPYABLE(Granted);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    Granted() = default; // An exception has been raised.
+    Granted(VM& vm, uint8_t* data, size_t size)
+        : m_bytes(data, size)
+        , m_noEntry(std::in_place, vm)
+    {
+        ++countOfGrantedMemory();
+    }
+    ~Granted()
+    {
+        if (m_noEntry)
+            --countOfGrantedMemory();
+    }
+
+    uint8_t* data() const { return m_bytes.data(); }
+    size_t size() const { return m_bytes.size(); }
+    uint8_t& operator[](size_t index) const { return m_bytes[index]; }
+    auto begin() const { return m_bytes.begin(); }
+    auto end() const { return m_bytes.end(); }
+    operator std::span<uint8_t>() const { return m_bytes; }
+    operator std::span<const uint8_t>() const { return m_bytes; }
+
+private:
+    std::span<uint8_t> m_bytes;
+    std::optional<DisallowVMEntry> m_noEntry;
+};
+#else
+using Granted = std::span<uint8_t>;
+#endif
+
 // Where a value is: in the memory of an instance, or in what the instance (a pointer) points to.
 struct Place {
     PyCData* object;
@@ -470,7 +508,7 @@ struct Place {
     // `size` bytes from there, and no byte of an instance is touched but in what this has returned. No data: an exception.
     // They are good until code of the program runs, which may free the memory, move it or make the pointer point elsewhere. So this is asked behind the last thing
     // that can run such code (converting a value, making an instance, an audit hook), and with the very number that the access goes by.
-    std::span<uint8_t> resolve(JSGlobalObject*, int64_t size) const;
+    Granted resolve(JSGlobalObject*, int64_t size) const;
 };
 
 // An instance with zeroed memory of its own. __init__ is not called. Null: an exception ("abstract class", MemoryError).

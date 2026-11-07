@@ -79,6 +79,12 @@ struct ConstantParts {
 bool constantParts(JSCell*, ConstantParts&);
 JSValue constantFromParts(JSGlobalObject*, const ConstantParts&);
 
+#if ASSERT_ENABLED
+// How many spans of memory this thread holds that are good only until code of the program runs (Ctypes::Granted). Whoever is about to run such code, or to let another
+// thread run, asserts that there are none. Nothing rests on this: it is there to find the place that has forgotten the rule.
+JS_EXPORT_PRIVATE unsigned& countOfGrantedMemory();
+#endif
+
 // VMTraps::NeedPythonCalls, at a place where any code may run. What a signal handler raises is thrown.
 JS_EXPORT_PRIVATE void makeCallsOwed(VM&);
 // For VMTraps::handleTraps() on another thread: see VMTraps::fireTrapsLeftToEmbedderThread().

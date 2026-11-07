@@ -1333,6 +1333,7 @@ static bool makeCallsOwedToProgram(VM&);
 
 void makeCallsOwed(VM& vm)
 {
+    ASSERT(!countOfGrantedMemory());
     vm.traps().clearTrap(VMTraps::NeedPythonCalls);
     if (vm.heap.pythonRuntimes().isEmpty())
         return;

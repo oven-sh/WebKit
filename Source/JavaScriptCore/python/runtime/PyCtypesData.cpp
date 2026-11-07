@@ -22,6 +22,16 @@ namespace Ctypes {
 
 // ---- Where the memory is ----
 
+#if ASSERT_ENABLED
+} // namespace Ctypes
+unsigned& countOfGrantedMemory()
+{
+    static thread_local unsigned count;
+    return count;
+}
+namespace Ctypes {
+#endif
+
 uint8_t* PyCData::memoryOfView(JSGlobalObject* globalObject) const
 {
     VM& vm = getVM(globalObject);
@@ -339,9 +349,11 @@ static bool pointerTarget(JSGlobalObject* globalObject, PyCData* pointer, uint8_
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto memory = Place { pointer }.resolve(globalObject, sizeof(void*));
-    RETURN_IF_EXCEPTION(scope, false);
-    memcpy(&target, memory.data(), sizeof(void*));
+    {
+        auto memory = Place { pointer }.resolve(globalObject, sizeof(void*));
+        RETURN_IF_EXCEPTION(scope, false);
+        memcpy(&target, memory.data(), sizeof(void*));
+    }
     if (!target) {
         raiseValueError(globalObject, scope, "NULL pointer access"_s);
         return false;
@@ -381,7 +393,17 @@ static uint8_t* lookThroughPointer(JSGlobalObject* globalObject, PyCData* pointe
     return nullptr;
 }
 
-std::span<uint8_t> Place::resolve(JSGlobalObject* globalObject, int64_t size) const
+static ALWAYS_INLINE Granted grant(VM& vm, uint8_t* data, size_t size)
+{
+#if ASSERT_ENABLED
+    return { vm, data, size };
+#else
+    UNUSED_PARAM(vm);
+    return { data, size };
+#endif
+}
+
+Granted Place::resolve(JSGlobalObject* globalObject, int64_t size) const
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -394,7 +416,7 @@ std::span<uint8_t> Place::resolve(JSGlobalObject* globalObject, int64_t size) co
         Provenance provenance;
         uint8_t* address = lookThroughPointer(globalObject, object, offset, size, provenance);
         RETURN_IF_EXCEPTION(scope, { });
-        return { address, static_cast<size_t>(size) };
+        return grant(vm, address, static_cast<size_t>(size));
     }
     uint8_t* memory = object->memory(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -402,7 +424,7 @@ std::span<uint8_t> Place::resolve(JSGlobalObject* globalObject, int64_t size) co
         raiseValueError(globalObject, scope, "NULL pointer access"_s);
         return { };
     }
-    return { memory + offset, static_cast<size_t>(size) };
+    return grant(vm, memory + offset, static_cast<size_t>(size));
 }
 
 PyCData* dataAt(JSGlobalObject* globalObject, PyType* type, const Place& place, int64_t index)
@@ -943,9 +965,11 @@ static void simpleSetValue(JSGlobalObject* globalObject, JSValue self, JSValue v
     bool ok = pack(globalObject, info->accessor, value, info->size, packed);
     RETURN_IF_EXCEPTION(scope, void());
     ASSERT_UNUSED(ok, ok);
-    auto memory = Place { data }.resolve(globalObject, info->size);
-    RETURN_IF_EXCEPTION(scope, void());
-    store(memory, info->accessor, packed);
+    {
+        auto memory = Place { data }.resolve(globalObject, info->size);
+        RETURN_IF_EXCEPTION(scope, void());
+        store(memory, info->accessor, packed);
+    }
     RELEASE_AND_RETURN(scope, void(keepAlive(globalObject, data, 0, packed.keep, Kept::ForWhole)));
 }
 
@@ -1542,9 +1566,11 @@ static void pointerSetContents(JSGlobalObject* globalObject, JSValue self, JSVal
     }
     uint8_t* address = target->memory(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
-    auto memory = Place { pointer }.resolve(globalObject, sizeof(void*));
-    RETURN_IF_EXCEPTION(scope, void());
-    memcpy(memory.data(), &address, memory.size());
+    {
+        auto memory = Place { pointer }.resolve(globalObject, sizeof(void*));
+        RETURN_IF_EXCEPTION(scope, void());
+        memcpy(memory.data(), &address, memory.size());
+    }
     // What it points to has to live, and so has what that keeps alive.
     if (failed(scope, keepAlive(globalObject, pointer, 1, value)))
         return;
