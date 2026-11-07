@@ -4773,6 +4773,8 @@ void ScanOfBody::takeObjectsHandedTo(const BodyBlock& block)
         }
         ObjectBeingMadeInScan& object = objectBeingMade(handed.root);
         m_firstLeft[handed.root] = std::min(m_firstLeft[handed.root], handed.placeInStream);
+        m_lastLeft[handed.root] = std::max(m_lastLeft[handed.root], handed.placeInStream);
+        m_uses[handed.root] |= isAccessedBesideNamedStores;
         if (hasParameter)
             object.parametersHandedTo.append(block.parameter(handed.position).index());
         meetFillsWhereObjectLeaves(object, fillsOf(handed.root, handed.fills));

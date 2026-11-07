@@ -1149,7 +1149,6 @@ public:
     Vector<WriteFollowedToBuiltin> takeWritesFollowedToBuiltins();
     bool appendNamesOfObjectsAmong(const LinkType&, Vector<PropertyKeyID>&) const;
     LinkType builtinsAbove(const LinkType&, FunctionID asker);
-    void noteOperandsHandedToCalleeNobodyKnows();
     BuiltinID prototypeOfInstancesOf(BuiltinClassID) const;
     bool isClimbedFrom(SiteID site) const { return m_sites[m_familiesOfSites.representativeOf(site.index())].isClimbedFrom; }
     FlowNodeID writtenAtMember(BuiltinID member);

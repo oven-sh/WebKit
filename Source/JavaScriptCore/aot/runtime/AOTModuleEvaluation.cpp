@@ -823,8 +823,10 @@ bool Modules::beginModuleInRecord(ModuleID module)
             throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.pathText(module)));
             return false;
         }
-        if (mockInPlace(module))
+        if (mockInPlace(module)) {
             ensureLoaded(module).wasRequiredUnderMockInPlace = true;
+            noteDoorThatLoadsMockLaidInPreload(module, LoadByName::Require);
+        }
         if (!liesInRequireMap && m_modulesWithMockToRun.get(module.index()) && getsOriginalBesideMock(module, module)) {
             JSValue original = answerRequireWithOriginal(module, module);
             RETURN_IF_EXCEPTION(scope, false);
@@ -842,6 +844,8 @@ bool Modules::beginModuleInRecord(ModuleID module)
         noteAskUnderMockInPlace(module);
         if (!m_innermostFilesBeingRun)
             ensureLoaded(module).wasRequiredUnderMockInPlace = true;
+        if (!m_innermostFilesBeingRun || fileOf(m_innermostFilesBeingRun->root) != module)
+            noteDoorThatLoadsMockLaidInPreload(module, LoadByName::Require);
     }
     if (m_filesToLoadAgain.get(module.index())) [[unlikely]] {
         JSGlobalObject* realm = m_instance.globalObject;
@@ -3460,8 +3464,10 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
             RELEASE_AND_RETURN(scope, answerRequireWithOriginal(target, referrer));
         if (m_filesWhoseOriginalRuns.get(target.index()) && mockInPlace(target))
             return ensureLoaded(target).answerOfMockWhileOriginalRuns.get();
-        if (mockInPlace(target))
+        if (mockInPlace(target)) {
             noteAskUnderMockInPlace(target);
+            noteDoorThatLoadsMockLaidInPreload(target, LoadByName::Require);
+        }
     }
     if (isLeftToHost(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target), referrer));

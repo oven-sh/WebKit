@@ -921,10 +921,12 @@ static bool turnMayAppendToTextInListReadsInLoops(Walker& walker, BlockID inputH
 
 static constexpr OpcodeSet readsThatMayFindSameInEveryTurn { Opcode::PropGet, Opcode::ElemGet, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture };
 
-static bool takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(const BodyIndex& index, const BodyValue& read, uint32_t firstValueOfLoop)
+static bool takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(const BodyIndex& index, const BodyValue& read, uint32_t firstValueOfLoop, BitVector& found)
 {
     if (read.opcode() == Opcode::PropGet && read.isFreeName())
         return false;
+    if (found.get(read.id().index() - firstValueOfLoop))
+        return true;
     bool takesOnlyThat = true;
     read.forEachOperand([&](ValueID operand, uint32_t) {
         if (!takesOnlyThat || operand.index() < firstValueOfLoop)
@@ -942,8 +944,10 @@ static bool takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(const BodyIndex&
         }
         Opcode made = index.opcodeOf(source);
         takesOnlyThat = numberConstantsInListReadsInLoops.contains(made)
-            || ((readsThatMayFindSameInEveryTurn.contains(made) || operatorsThatMakeNumbersOfNumbers.contains(made)) && takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(index, index.value(source), firstValueOfLoop));
+            || ((readsThatMayFindSameInEveryTurn.contains(made) || operatorsThatMakeNumbersOfNumbers.contains(made)) && takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(index, index.value(source), firstValueOfLoop, found));
     });
+    if (takesOnlyThat)
+        found.set(read.id().index() - firstValueOfLoop);
     return takesOnlyThat;
 }
 
@@ -957,7 +961,8 @@ bool readsListFoundByReadFromInFront(const Program& program, const BodyIndex& in
         source = index.valueBehindCasts(index.value(source).operand(0));
     if (!source || source.index() < firstValueOfLoop || index.isParameter(source) || !readsThatMayFindSameInEveryTurn.contains(index.opcodeOf(source)))
         return false;
-    return takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(index, index.value(source), firstValueOfLoop);
+    BitVector found;
+    return takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(index, index.value(source), firstValueOfLoop, found);
 }
 
 static bool rowFindsListsLeftAsTheyAreInListReadsInLoops(Walker& walker, BlockID inputHead, std::span<const ListTestedInFrontOfLoop> lists, std::span<const GuessInFrontOfLoop> guesses, std::span<const Reference> proofs)

@@ -359,6 +359,8 @@ public:
     LoadedBy whoLoaded(ModuleID);
     void didEmptyKeyOfMockInPlace(ModuleID fileOrModule);
     void noteAskUnderMockInPlace(ModuleID fileOrModule);
+    void noteDoorThatLoadsMockLaidInPreload(ModuleID fileOrFace, LoadByName);
+    bool wasOnlyImportedUnderMockLaidInPreload(ModuleID file);
     LoadedBy whoLoadedMockInPlaceAnew(ModuleID fileOrModule);
     bool isKeyOfMockInPlaceEmpty(ModuleID fileOrModule) { return mockInPlace(fileOrModule) && ensureLoaded(moduleWithExportsOf(fileOrModule)).nextAskLoadsMockInPlace; }
     void willRunBodyOfRecord(ModuleID, ModuleRecord*);
@@ -996,6 +998,8 @@ private:
         bool hadRunAheadOfMocksThatNameAlone { false };
         bool wasRequiredUnderMockInPlace { false };
         bool wasImportedUnderMockInPlace { false };
+        bool wasRequiredUnderMockLaidInPreload { false };
+        bool wasImportedUnderMockLaidInPreload { false };
         uint32_t momentOfTestFileThatLoadedItUnderMockInPlace { 0 };
         bool nextAskLoadsMockInPlace { false };
         uint32_t momentOfTestFileThatLoadedMockInPlaceAnew { 0 };

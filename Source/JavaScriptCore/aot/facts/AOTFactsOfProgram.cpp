@@ -4066,7 +4066,7 @@ void BuilderOfProgramFacts::noteWhatRowsMake(BuiltinID canonical)
         });
         if (mayPrintWhatNobodyKnows || mayDescribeWhatNobodyKnows)
             noteObjectHandedToFormatter(true);
-        if (mayBeHandedWhatNobodyKnows && overload.mode == BuiltinCallMode::Call && handsOutPrototypeOfOperandInProgramFacts(m_builtins, overload))
+        if (mayBeHandedWhatNobodyKnows && (overload.mode == BuiltinCallMode::Call || overload.mode == BuiltinCallMode::Get) && handsOutPrototypeOfOperandInProgramFacts(m_builtins, overload))
             m_climberMayBeHandedWhatNobodyKnows = true;
         const RuntimeFunctionEntry* code = findRuntimeFunction(m_source, overload.code.implementation.function);
         bool programHoldsCode = code && code->function;
@@ -6406,11 +6406,6 @@ void BuiltinsInReach::noteClimbFromLostBuiltins()
     m_wasToldSomethingNew |= !std::exchange(m_linked->lookups.climbsFromLostBuiltins, true);
 }
 
-void BuiltinsInReach::noteOperandsHandedToCalleeNobodyKnows()
-{
-    m_wasToldSomethingNew |= !std::exchange(m_linked->lookups.handsOperandsToCalleesNobodyKnows, true);
-}
-
 void BuiltinsInReach::noteClimbFromUnseenObjects()
 {
     m_wasToldSomethingNew |= !std::exchange(m_linked->lookups.climbsFromUnseenObjects, true);
@@ -6478,7 +6473,7 @@ void BuiltinsInReach::settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>
     if (!std::exchange(m_wasToldSomethingNew, false))
         return;
     m_builder->settle();
-    if (m_linked->lookups.handsOperandsToCalleesNobodyKnows && m_builder->climberMayBeHandedWhatNobodyKnows()) {
+    if (m_builder->climberMayBeHandedWhatNobodyKnows()) {
         if (!std::exchange(m_linked->lookups.climbsFromUnseenObjects, true))
             m_builder->settle();
     }

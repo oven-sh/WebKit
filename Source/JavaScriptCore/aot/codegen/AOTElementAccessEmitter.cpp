@@ -661,7 +661,8 @@ Operand ElementAccessEmitter::readElementInsideLength(const ValueContext& value,
 const PlacedSlot* ElementAccessEmitter::extraPropertiesWordOfReadByPosition(const ValueContext& read)
 {
     Type receiver = typeOf(read->objectOperand());
-    if (!receiver.hasObjects() || !receiver.layouts || !receiver.hasOnlyLayouts() || receiver.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow) || !typeOf(read->propertyOperand()).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
+    Type key = typeOf(read->propertyOperand());
+    if (!receiver.hasObjects() || !receiver.layouts || !receiver.hasOnlyLayouts() || receiver.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow) || !key.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull) || (key.isInteger() && key.integers.maximum < 0))
         return nullptr;
     const PlacedSlot* found = nullptr;
     for (LayoutID layout : membersOf(types(), receiver)) {

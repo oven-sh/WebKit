@@ -3267,8 +3267,10 @@ void WriterOfLinkLayouts::noteValueLeftOutOfDescriptor(const LinkType& descripto
 {
     PropertyKeyID key = m_program.keyOf(BuiltinNames::value);
     auto note = [&](LayoutID layout) {
-        if (std::optional<FieldReference> held = findField(m_program, layout, key))
+        if (std::optional<FieldReference> held = findField(m_program, layout, key)) {
             m_fieldsWithUnseenWriters.quickSet(cellOf(*held));
+            m_fieldsGivenValues.quickSet(cellOf(*held));
+        }
     };
     m_flow.forEachLayoutOf(descriptor, note);
 }

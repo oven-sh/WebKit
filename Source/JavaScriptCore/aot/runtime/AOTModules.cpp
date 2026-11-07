@@ -1941,6 +1941,23 @@ void Modules::didEmptyKeyOfMockInPlace(ModuleID fileOrModule)
     LoadedModule& loaded = ensureLoaded(moduleWithExportsOf(fileOrModule));
     loaded.nextAskLoadsMockInPlace = true;
     loaded.momentOfTestFileThatLoadedMockInPlaceAnew = 0;
+    LoadedModule& held = ensureLoaded(fileOf(fileOrModule));
+    held.wasRequiredUnderMockLaidInPreload = false;
+    held.wasImportedUnderMockLaidInPreload = false;
+}
+
+void Modules::noteDoorThatLoadsMockLaidInPreload(ModuleID fileOrFace, LoadByName door)
+{
+    LoadedModule* held = loadedIfExists(fileOf(fileOrFace));
+    if (!held || !held->mockInPlace || held->mockInPlace.get() != held->mockLaidInPreload.get())
+        return;
+    (door == LoadByName::Require ? held->wasRequiredUnderMockLaidInPreload : held->wasImportedUnderMockLaidInPreload) = true;
+}
+
+bool Modules::wasOnlyImportedUnderMockLaidInPreload(ModuleID file)
+{
+    LoadedModule* held = loadedIfExists(file);
+    return held && held->wasImportedUnderMockLaidInPreload && !held->wasRequiredUnderMockLaidInPreload;
 }
 
 void Modules::noteAskUnderMockInPlace(ModuleID fileOrModule)
@@ -3111,6 +3128,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         if (!m_modulesWithMockThatStandsForLoadsInFlight.isEmpty() && m_rootsOfImportsBehindFactories.size() == numberOfRoots) [[unlikely]]
             holdMockThatStandsUntilImportSettles(started, promise);
         ModuleID file = fileOf(started);
+        noteDoorThatLoadsMockLaidInPreload(file, LoadByName::Import);
         if (isMadeByOwnFactory || importsOriginalBesideMock(started, referrer, OriginalIsAskedBy::CallOfImport)) [[unlikely]] {
             VM& vm = *m_instance.vm;
             JSPromise* ofModuleItself = JSPromise::create(vm, realm->promiseStructure());
@@ -4338,6 +4356,7 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
     Identifier key;
     {
         SetForScope isResolvingImportCall(m_instance.vm->aotState().isResolvingImportCall, true);
+        SetForScope isResolvingImportCallWithoutAttributes(m_instance.vm->aotState().isResolvingImportCallWithoutAttributes, !*fetchParameters);
         if (!found)
             key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
     }
@@ -6085,6 +6104,11 @@ bool isResolvingImportCall(VM& vm)
     return vm.aotState().isResolvingImportCall;
 }
 
+bool isResolvingImportCallWithoutAttributes(VM& vm)
+{
+    return vm.aotState().isResolvingImportCallWithoutAttributes;
+}
+
 bool requireAsksFor(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -6591,6 +6615,12 @@ bool wasRequiredUnderMockInPlace(JSGlobalObject* realm, ModuleID module)
     return modules && modules->wasRequiredUnderMockInPlace(module);
 }
 
+bool wasOnlyImportedUnderMockLaidInPreload(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasOnlyImportedUnderMockLaidInPreload(file);
+}
+
 bool hasWordOfMock(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -6744,6 +6774,13 @@ JSPromise* evaluationOfModuleThatMockLeftAlone(JSGlobalObject* realm, ModuleID m
 {
     Modules* modules = modulesOf(realm);
     return modules && !modules->bodySetAsideWaitsForItsMock(module) ? modules->evaluationOfRecordSetAside(module) : nullptr;
+}
+
+JSValue errorOfModuleThatMockLeftAlone(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    ModuleRecord* record = modules ? modules->recordSetAside(module) : nullptr;
+    return record ? record->evaluationError() : JSValue();
 }
 
 bool runMocksBelow(JSGlobalObject* realm, ModuleID module)

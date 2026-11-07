@@ -116,7 +116,6 @@ public:
     void noteReadThroughLostBuiltins(PropertyKeyID);
     void noteClimbFromLostBuiltins();
     void noteClimbFromUnseenObjects();
-    void noteOperandsHandedToCalleeNobodyKnows();
     void noteLost(BuiltinID);
     void noteAtUnseen(BuiltinID);
     void noteOptionThatRunsCodePassed(BuiltinID);

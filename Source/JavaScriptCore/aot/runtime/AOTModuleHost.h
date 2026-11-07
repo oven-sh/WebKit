@@ -174,6 +174,7 @@ JS_EXPORT_PRIVATE bool forEachNewChild(JSGlobalObject*, ModuleID, const ScopedLa
 JS_EXPORT_PRIVATE void dropNewChildren(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willLoadByName(JSGlobalObject*, JSValue specifier, LoadByName = LoadByName::Require);
 JS_EXPORT_PRIVATE bool isResolvingImportCall(VM&);
+JS_EXPORT_PRIVATE bool isResolvingImportCallWithoutAttributes(VM&);
 JS_EXPORT_PRIVATE bool requireRunsMocks(VM&);
 JS_EXPORT_PRIVATE bool requireAsksFor(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool importAsksFor(JSGlobalObject*, ModuleID);
@@ -308,6 +309,7 @@ JS_EXPORT_PRIVATE LoadedBy whoLoadedMockInPlaceAnew(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isKeyOfMockInPlaceEmpty(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* namespaceOfFileThatRanAheadOfMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSPromise* evaluationOfModuleThatMockLeftAlone(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE JSValue errorOfModuleThatMockLeftAlone(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool runMocksBelow(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool setMock(JSGlobalObject*, ModuleID, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters = false);
@@ -325,6 +327,7 @@ struct LoadedUnderStandingMock {
 };
 JS_EXPORT_PRIVATE LoadedUnderStandingMock loadedUnderStandingMockThatImportersKeep(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasRequiredUnderMockInPlace(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool wasOnlyImportedUnderMockLaidInPreload(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE JSObject* mockInPlaceBehind(JSCell* moduleNamespace);
 JS_EXPORT_PRIVATE bool hasWordOfMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSValue whatRequireAnswers, bool exportsAreOfCommonJSModule = false);

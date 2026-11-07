@@ -387,7 +387,6 @@ struct LookupsPastProgramObjects {
     bool writesUnderAnyNameThroughLostBuiltinsBesideProduct { false };
     bool climbsFromLostBuiltins { false };
     bool climbsFromUnseenObjects { false };
-    bool handsOperandsToCalleesNobodyKnows { false };
     bool lostBuiltinsReachUnseen { false };
     bool readsUnderKeysNobodyKnows { false };
     bool readsUnderNamesThatLoopsGave { false };
