@@ -474,6 +474,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
         bool isJumpAsLaidOut { false };
         bool isJumpForwardsAsLaidOut { false };
         bool hasLineToItself { false }; // A jump: it is a statement, or jumpHasLineToItselfMark.
+        bool staysForBranches { false }; // A jump that is dropped, at which a line begins: something stays for the line where a branch leads there. What jumps to a jump has a copy of it.
         bool isOfSilentLine { false };
         unsigned silentLinesFirst { 0 }; // How many lines that are not told of come before the first that begins here.
         uint8_t asyncForMark { 0 };
@@ -631,6 +632,17 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
     // Of one that has a line to itself, something that does nothing stays for the line.
     {
         BitVector nothingIsLeft(items.size());
+        BitVector isBranchedTo(items.size());
+        for (unsigned i = 0; i < items.size(); ++i) {
+            auto& item = items[i];
+            // (Where a `for` loop goes when it ends does not count: see below.)
+            if (!isPythonBranch(item.opcode) || item.opcode == op_py_for_iter || item.isHiddenJump || !isReachable.get(i))
+                continue;
+            extractStoredJumpTargetsForInstruction(code, instructions.at(item.offset), [&](int32_t relative) {
+                if (auto it = indexOfOffset.find(item.offset + relative); it != indexOfOffset.end())
+                    isBranchedTo.set(it->value);
+            });
+        }
         for (unsigned i = items.size(); i--;) {
             if (!items[i].isJumpAsLaidOut && !items[i].isJumpForwardsAsLaidOut)
                 continue;
@@ -647,7 +659,8 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
             items[i].isHiddenJump = true;
             for (unsigned between = i + 1; between < it->value && items[i].isHiddenJump; ++between)
                 items[i].isHiddenJump = !isReachable.get(between) || isReachableWithoutException.get(between) == isInHandler || nothingIsLeft.get(between);
-            if (items[i].isHiddenJump && !items[i].hasLineToItself)
+            items[i].staysForBranches = items[i].isHiddenJump && items[i].lineCount && isBranchedTo.get(i);
+            if (items[i].isHiddenJump && !items[i].hasLineToItself && !items[i].staysForBranches)
                 nothingIsLeft.set(i);
         }
     }
@@ -739,7 +752,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
     auto whereItEndsUp = [&](unsigned offset) {
         for (unsigned count = 0; count < 8; ++count) {
             auto it = indexOfOffset.find(offset);
-            if (it == indexOfOffset.end() || !isJump(items[it->value].opcode) || !items[it->value].isHiddenJump || items[it->value].hasLineToItself)
+            if (it == indexOfOffset.end() || !isJump(items[it->value].opcode) || !items[it->value].isHiddenJump || items[it->value].hasLineToItself || items[it->value].staysForBranches)
                 break;
             offset = targetOfJump(code, offset);
         }
