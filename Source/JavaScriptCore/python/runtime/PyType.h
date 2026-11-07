@@ -270,8 +270,9 @@ public:
     // For a class that is being made. A built-in type without a __new__ of its own has it so too, but one derived from object has to ask: of most
     // such types no instances are made from Python.
     void takeMakerOfBase(VM&);
-    // Of this type alone.
-    void updateMaker();
+    // Of this type alone. False: a key of a dict has raised when it was asked whether it is "__new__". Then there is no __new__, and no making any from then on, as
+    // in CPython.
+    bool updateMaker();
     // __new__ has been set or deleted here, and didChange() called: of this type, and of those derived from it as far as they get to see that.
     void updateMakers();
 
@@ -315,8 +316,9 @@ public:
     const void* symbolForC() const { return m_symbolForC; }
     void setSymbolForC(const void* symbol) { m_symbolForC = symbol; }
 
-    // The classes derived directly from this one, oldest first. It does not keep them alive.
-    void appendSubclassesTo(MarkedArgumentBuffer&) const;
+    // The classes derived directly from this one. It does not keep them alive.
+    enum class SubclassOrder : bool { OldestFirst, NewestFirst };
+    void appendSubclassesTo(MarkedArgumentBuffer&, SubclassOrder = SubclassOrder::OldestFirst) const;
     JSValue subclasses() const { return m_subclasses.get(); } // The list they are kept in, which is for nobody else. Empty: there is none.
     void addSubclass(JSGlobalObject*, PyType*);
     void removeSubclass(JSGlobalObject*, PyType*);
@@ -343,7 +345,8 @@ private:
 
     void takeNewLookupKey();
 
-    JSValue lookupSlow(JSString* name, AsksKeys = AsksKeys::Yes);
+    JSValue lookupSlow(JSString* name, AsksKeys = AsksKeys::Yes, bool* hasRaised = nullptr);
+    JSValue getAskingKeys(PyDict*, JSString* name, bool& hasRaised);
     static std::atomic<uint64_t> s_timesLookupRanCode;
     JSValue lookupSpecialSlow(Special, AsksKeys);
     Structure* createInstanceStructure(VM&);

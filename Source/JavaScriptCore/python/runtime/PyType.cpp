@@ -206,7 +206,7 @@ void PyType::takeMakerOfBase(VM& vm)
     m_construction = Construction::Unknown;
 }
 
-void PyType::updateMaker()
+bool PyType::updateMaker()
 {
     m_construction = Construction::Unknown;
     // In a new class nothing has been looked up yet, and this may never be asked for again: lookup() would remember it, at a price. So the dicts are
@@ -221,35 +221,58 @@ void PyType::updateMaker()
         if (asksNoKeys)
             found = dict->get(name);
     }
+    bool hasRaised = false;
     if (!asksNoKeys)
-        found = lookup(Special::New);
+        found = lookupSlow(name, AsksKeys::Yes, &hasRaised);
     if (!found) {
         m_maker.clear();
         m_looksUpNew = false;
-        return;
+        return !hasRaised;
     }
     // The __new__ of a built-in type, whichever, stands for "as it was".
     if (auto* native = PyNativeFunction::tryFrom(found); native && native->kind() == NativeKind::New)
-        return;
+        return true;
     m_maker.clear();
     m_looksUpNew = true;
+    return true;
 }
 
 void PyType::updateMakers()
 {
-    // What is left to do is in a list, not on the stack: classes derive from one another to any depth. Each is seen to once, however many ways lead to it.
-    // (Not those that only have this one in an MRO of their own making.)
+    // What is left to do is in a list, not on the stack: classes derive from one another to any depth. The last is next: all that derives from a class comes
+    // before the class beside it, as in CPython. Each is seen to once, however many ways lead to it. (Not those that only have this one in an MRO of their own
+    // making.)
     updateMaker();
-    MarkedArgumentBuffer types;
-    appendSubclassesTo(types);
+    if (!m_subclasses)
+        return;
+    MarkedArgumentBuffer left;
+    appendSubclassesTo(left, SubclassOrder::NewestFirst);
     UncheckedKeyHashSet<PyType*> seen;
+    // CPython comes to a class by every way that leads to it. That shows where a key has been asked: by the next way it is asked again, and may say something else.
+    UncheckedKeyHashSet<PyType*> askedInVain;
     JSString* name = runtime(realm()).name(Special::New);
-    for (unsigned i = 0; i < types.size(); ++i) {
-        PyType* type = PyType::from(types.at(i));
-        if (!seen.add(type).isNewEntry || type->dict()->get(name))
+    while (!left.isEmpty()) {
+        PyType* type = PyType::from(left.takeLast());
+        bool isFirstTime = seen.add(type).isNewEntry;
+        if (!isFirstTime && !askedInVain.remove(type))
             continue;
-        type->updateMaker();
-        type->appendSubclassesTo(types);
+        PyDict* dict = type->dict();
+        bool hasRaised = false;
+        JSValue own = dict->hasOnlyStringKeys() ? dict->get(name) : type->getAskingKeys(dict, name, hasRaised);
+        // A key of its dict raises when it is asked whether it is the name: there CPython gives up (and leaves the exception for whoever comes next). That class,
+        // and all whose turn has not come, stay as they were.
+        if (hasRaised) [[unlikely]]
+            return;
+        if (own) {
+            // A key may have said so.
+            if (!dict->hasOnlyStringKeys()) [[unlikely]]
+                seen.remove(type);
+            continue;
+        }
+        if (!type->updateMaker()) [[unlikely]]
+            askedInVain.add(type);
+        if (isFirstTime)
+            type->appendSubclassesTo(left, SubclassOrder::NewestFirst);
     }
 }
 
@@ -357,7 +380,40 @@ void PyType::takeNewLookupKey()
     m_lookupKey = (lastKey.fetch_add(1, std::memory_order_relaxed) + 1) * 0x9E3779B97F4A7C15ull;
 }
 
-JSValue PyType::lookupSlow(JSString* name, AsksKeys asksKeys)
+// type("X", (), { key: 1 }): the key is asked whether it equals the name. What it raises is lost.
+JSValue PyType::getAskingKeys(PyDict* dict, JSString* name, bool& hasRaised)
+{
+    VM& vm = this->vm();
+    hasRaised = true;
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return { };
+    JSGlobalObject* globalObject = realm();
+    m_hasAskedKeys = true;
+    s_timesLookupRanCode.fetch_add(1, std::memory_order_relaxed);
+    hasRaised = false;
+    bool wasTerminated = false;
+    JSValue value;
+    {
+        // An exception may be on its way.
+        ExceptionSetAside suspended(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        value = dict->get(globalObject, name);
+        if (Exception* exception = scope.exception()) [[unlikely]] {
+            hasRaised = true;
+            wasTerminated = vm.isTerminationException(exception);
+            if (wasTerminated)
+                scope.clearException();
+            else
+                takePendingException(globalObject);
+        }
+    }
+    // In place of whatever was on its way.
+    if (wasTerminated) [[unlikely]]
+        vm.throwTerminationException();
+    return hasRaised ? JSValue() : value;
+}
+
+JSValue PyType::lookupSlow(JSString* name, AsksKeys asksKeys, bool* hasRaisedResult)
 {
     PyTuple* mro = m_mro.get();
     if (!mro)
@@ -382,34 +438,14 @@ JSValue PyType::lookupSlow(JSString* name, AsksKeys asksKeys)
             hasPassedOverKeys = true;
             continue;
         }
-        // type("X", (), { key: 1 }): the key is asked whether it equals the name. What it raises is lost, the name counts as not found,
-        // and nothing is remembered, as in CPython.
-        if (vm.hasPendingTerminationException()) [[unlikely]]
-            return { };
-        JSGlobalObject* globalObject = realm();
-        m_hasAskedKeys = true;
-        s_timesLookupRanCode.fetch_add(1, std::memory_order_relaxed);
+        // If one raises, the name counts as not found, and nothing is remembered, as in CPython.
         bool hasRaised = false;
-        bool wasTerminated = false;
-        {
-            // An exception may be on its way.
-            ExceptionSetAside suspended(globalObject);
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            value = dict->get(globalObject, name);
-            if (Exception* exception = scope.exception()) [[unlikely]] {
-                hasRaised = true;
-                wasTerminated = vm.isTerminationException(exception);
-                if (wasTerminated)
-                    scope.clearException();
-                else
-                    takePendingException(globalObject);
-            }
-        }
-        // In place of whatever was on its way.
-        if (wasTerminated) [[unlikely]]
-            vm.throwTerminationException();
-        if (hasRaised) [[unlikely]]
+        value = getAskingKeys(dict, name, hasRaised);
+        if (hasRaised) [[unlikely]] {
+            if (hasRaisedResult)
+                *hasRaisedResult = true;
             return { };
+        }
     }
     // And it may have changed the type, or its bases.
     if (m_lookupKey != key || isForCollector || hasPassedOverKeys) [[unlikely]]
@@ -585,14 +621,15 @@ void PyType::didChange(VM& vm, Change change)
     }
 }
 
-void PyType::appendSubclassesTo(MarkedArgumentBuffer& result) const
+void PyType::appendSubclassesTo(MarkedArgumentBuffer& result, SubclassOrder order) const
 {
     JSValue subclasses = m_subclasses.get();
     if (!subclasses)
         return;
     JSArray* list = asList(subclasses);
-    for (unsigned i = 0; i < listLength(list); ++i) {
-        JSValue entry = listGet(list, i);
+    unsigned length = listLength(list);
+    for (unsigned i = 0; i < length; ++i) {
+        JSValue entry = listGet(list, order == SubclassOrder::OldestFirst ? i : length - 1 - i);
         if (PyTuple::is(entry))
             continue;
         if (PyType* subclass = subclassInEntry(entry); subclass && !subclass->has(TypeFlag::Internal))
