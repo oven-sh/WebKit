@@ -1488,9 +1488,6 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     JSGlobalObject* realm = program.realm();
     PropertyCaches& caches = *program.state().propertyCaches;
     VMPropertyCaches& tables = caches.tables();
-    Identifier label = Identifier::fromString(vm, "label"_s);
-    std::optional<uint32_t> number = caches.nameOf(label.impl()).identifierNumber;
-    AOT_TEST_CHECK(number);
     auto validFilterOf = [&](JSObject* object) -> const AbsenceFilter* {
         const AbsenceFilter& filter = tables.absenceFilterFor(object->structureID());
         return filter.structureID == object->structureID().bits() && filter.generationForStores == tables.absenceFilterGenerationForStores() ? &filter : nullptr;
@@ -1508,7 +1505,18 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     JSObject* above = constructEmptyObject(realm);
     JSObject* below = makeBelow(above);
     const AbsenceFilter* ofBelow = filterOf(below);
-    AOT_TEST_CHECK(ofBelow && ofBelow->letsStoresPass(*number));
+    AOT_TEST_CHECK(ofBelow);
+
+    // Many names share a bit of a filter, and the number of a name follows from how many names Bun's built-ins have.
+    Identifier label;
+    std::optional<uint32_t> number;
+    for (ASCIILiteral name : { "label"_s, "count"_s, "publish"_s, "input"_s }) {
+        label = Identifier::fromString(vm, name);
+        number = caches.nameOf(label.impl()).identifierNumber;
+        if (number && ofBelow->letsStoresPass(*number))
+            break;
+    }
+    AOT_TEST_CHECK(number && ofBelow->letsStoresPass(*number));
 
     // A data property that can be written stops no store, and the filters for stores outlive its arrival.
     above->putDirect(vm, label, jsNumber(1));
