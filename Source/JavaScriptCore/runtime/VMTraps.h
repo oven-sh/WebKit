@@ -140,7 +140,8 @@ public:
     //
     //  - They are arbitrary code, which nothing expects in the middle of a C++ function or at a
     //    poll in JS code (the optimizing JITs take a poll to change nothing). So this is not one of
-    //    the AsyncEvents: only the polls in Python code (op_py_jmp_back) service it, and whoever
+    //    the AsyncEvents: only the polls in Python code (op_py_jmp_back) service it, the Python
+    //    runtime where it is about to call a function of JS (Python::safePoint()), and whoever
     //    runs an event loop may, between two turns.
     //
     //  NeedExceptionHandling

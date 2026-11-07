@@ -863,6 +863,13 @@ void makeCallsOwed(VM& vm)
         wipeStackBelow(vm.heap.pythonRuntimes().first()->globalObject());
 }
 
+bool safePointSlow(VM& vm)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    makeCallsOwed(vm);
+    return !scope.exception();
+}
+
 // Whether it has called anything but handlers of signals.
 static NEVER_INLINE bool makeCallsOwedToProgram(VM& vm)
 {

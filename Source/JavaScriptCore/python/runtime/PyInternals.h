@@ -383,6 +383,17 @@ bool systemRandomBytes(JSGlobalObject*, std::span<uint8_t>, SystemRandomBytes);
 
 // Calls the handlers of the signals that have arrived. False: one of them raised. (PyErr_CheckSignals)
 bool checkOnlySignals(JSGlobalObject*);
+// A safe point for code in C++: what the jump back of a loop in Python does, no more and no less. For a loop that calls code of JS's for every item, which looks for none of this: a
+// signal, a thread that has waited long enough for the GIL, calls that are owed. False: an exception. (What the host does to end what runs needs no look: RETURN_IF_EXCEPTION is one.)
+// It is a call that may run anything, as the call for the item is. Other threads run: what was known of an object that can change is looked at again. No pointer into the memory of an
+// object is kept across it, no lock of the runtime's is held, and what only a variable of C++ refers to is on the stack, where the collector finds it.
+// Not in a loop over memory of the runtime's own (sum(list), list.index(), bytes.join()): programs count on those being one step, and they come to an end.
+JS_EXPORT_PRIVATE bool safePointSlow(VM&);
+ALWAYS_INLINE bool safePoint(JSGlobalObject* globalObject)
+{
+    VM& vm = getVM(globalObject);
+    return !vm.traps().needHandling(VMTraps::NeedPythonCalls) || safePointSlow(vm);
+}
 // For a function that waits, in a system call say, when that fails with EINTR: if this returns true, it tries again (PEP 475).
 // Before the handlers it makes the calls that the thread owes, which may be what it was woken for. They are code of the
 // program: whoever calls this holds nothing that only a variable of C++ refers to. See Runtime::releaseUnreachableBuffers().

@@ -1182,9 +1182,9 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
             RETURN_IF_EXCEPTION(scope, { });
             bool found = isEqual(globalObject, item, key);
             bool hasRaised = scope.exception();
-            // (The iterable may have no end, and code of JS's does not look for the signals of Python's.)
-            if (!found && !hasRaised && vm.traps().needHandling(VMTraps::NeedPythonCalls)) [[unlikely]]
-                hasRaised = failed(scope, checkOnlySignals(globalObject));
+            // (The iterable may have no end.)
+            if (!found && !hasRaised)
+                hasRaised = failed(scope, safePoint(globalObject));
             if (!found && !hasRaised) [[likely]]
                 continue;
             // As `for...of` that is left early: the iterator that was made here is told, since nobody else can. One that the program has (a
@@ -1243,6 +1243,9 @@ static JSValue jsIteratorNext(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* record = uncheckedDowncast<PyRecord>(self.asCell());
+    // Whoever calls this again and again may be a loop in C++: sum(), list(), min(). Before the step: what it gives is not to be lost.
+    if (failed(scope, safePoint(globalObject))) [[unlikely]]
+        return { };
     JSValue iterator = record->get(JSIteratorObject);
     if (!iterator)
         return raiseStopIteration(globalObject, scope);
@@ -2514,6 +2517,10 @@ JSValue callForeignFunction(JSGlobalObject* globalObject, JSValue self, const Ca
     MarkedArgumentBuffer list;
     argumentsForJS(globalObject, args, list);
     RETURN_IF_EXCEPTION(scope, { });
+    // Whoever calls this again and again may be a loop in C++: any(map(f, itertools.count())), min(iterable, key=f). A function of Python's has one at its entry, when it has its
+    // arguments: `args` may be memory of an object that what runs here changes.
+    if (failed(scope, safePoint(globalObject))) [[unlikely]]
+        return { };
     // What these return when something is thrown is not the empty value.
     JSValue result = isClassOfJS(self.asCell())
         ? JSValue(JSC::construct(globalObject, self, list, "not a constructor"_s))
@@ -2534,6 +2541,9 @@ JSValue constructForeignFunction(JSGlobalObject* globalObject, JSValue construct
     MarkedArgumentBuffer list;
     argumentsForJS(globalObject, args, list);
     RETURN_IF_EXCEPTION(scope, { });
+    // As in callForeignFunction().
+    if (failed(scope, safePoint(globalObject))) [[unlikely]]
+        return { };
     JSObject* result = JSC::construct(globalObject, constructor, constructData, list, newTarget ? newTarget : constructor);
     RETURN_IF_EXCEPTION(scope, { });
     return result;
@@ -2848,6 +2858,9 @@ static JSValue stepIteratorOfJS(JSGlobalObject* globalObject, JSValue self, cons
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // As in jsIteratorNext(). (Not where it is told to end.)
+    if (method == vm.propertyNames->next && failed(scope, safePoint(globalObject))) [[unlikely]]
+        return { };
     JSValue function = asObject(self)->get(globalObject, method);
     RETURN_IF_EXCEPTION(scope, { });
     CallData callData = JSC::getCallData(function);
