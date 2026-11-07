@@ -1987,6 +1987,13 @@ static void socketForEachControlMessage(struct msghdr& message, const Function& 
     }
 }
 
+static NEVER_INLINE ssize_t socketReceiveMessageWithoutGIL(JSGlobalObject* globalObject, PyRecord* socket, struct msghdr& message, int flags)
+{
+    int descriptor = socketDescriptor(socket);
+    AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
+    return recvmsg(descriptor, &message, flags);
+}
+
 // What recvmsg() and recvmsg_into() share. `makeData` makes the first item of the result of the number of bytes received.
 template<typename Refresh, typename MakeData>
 static JSValue socketReceiveMessage(JSGlobalObject* globalObject, PyRecord* socket, int64_t controlSize, int flags, const Refresh& refresh, const MakeData& makeData)
@@ -2000,7 +2007,7 @@ static JSValue socketReceiveMessage(JSGlobalObject* globalObject, PyRecord* sock
         return { };
     if (controlSize < 0 || static_cast<uint64_t>(controlSize) > socketLengthLimit)
         return raiseValueError(globalObject, scope, "invalid ancillary data buffer length"_s);
-    Vector<uint8_t, 256> control;
+    SocketScratch control;
     if (!control.tryGrow(controlSize))
         RELEASE_AND_RETURN(scope, socketRaiseMemoryError(globalObject));
 
@@ -2016,8 +2023,7 @@ static JSValue socketReceiveMessage(JSGlobalObject* globalObject, PyRecord* sock
         message.msg_control = controlSize ? control.mutableSpan().data() : nullptr;
         message.msg_controllen = controlSize;
         message.msg_flags = 0;
-        AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
-        count = recvmsg(socketDescriptor(socket), &message, flags);
+        count = socketReceiveMessageWithoutGIL(globalObject, socket, message, flags);
         return count >= 0;
     }, socketOptionsForReceiveFlags(socket, flags));
     if (failed(scope, succeeded))
