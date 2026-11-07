@@ -1757,6 +1757,12 @@ answer; a `tp_dealloc` is the end of what C keeps in the object.
   CPython's collector would have found, and the first thing that does is done here and now, with the world stopped: Python's weak references to it die; the callbacks of those that are
   not garbage themselves are owed. (A collection that a waiting thread has asked for, or the one before `atexit`, leaves cyclic garbage for later, as the runtime does with its own: such a body is
   kept as it is, face and all, and comes up again.)
+- *The class of a body that is let go of.* C needs the type for the end: `tp_dealloc` asks it for `tp_free` and gives back the reference that the instance owns to it. But a class leads to much (class ->
+  method -> globals of the module -> whatever is there), and if it has died with the instance that may be the face: `class Sub(Node)` with a method, and `x = Sub()` beside it. No `tp_clear` lets go
+  of that, and `tp_dealloc` is not called while the face lives. So from L on the body is an instance of **the nearest base of its class that this collection has found alive**, no further down than the
+  type that the extension has made (which it is if that has died too): the same data, the same slots. That base is marked already, so the body marks nothing by its type, and the class dies like
+  anything else. The counted reference moves with it, as for an assignment to `__class__` (`moveToClass()`). What the class added to the instance is in the face and ends with it. A body that is taken back
+  (B, or somebody is seen to take it) has a face that is marked, and the face names the class: the body is of that class again, and the reference moves back.
 - *B. Taking back.* The marker has come to rest again. A face that is marked now is led to by what a body holds (body -> list -> face); or, if the collection goes on beside the program,
   somebody has taken it by a weak reference. Nobody can tell which. Its body is alive again, **and so is every body that it holds, with its face, and so on**: an instance that lives
   keeps what it holds whole. That marks faces, so the marker goes on and comes here again.

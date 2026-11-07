@@ -237,12 +237,18 @@ void didChangeClass(JSCell* cell, PyType* oldType, PyType* newType)
     Face* face = Face::tryFromCell(cell);
     if (!face)
         return;
-    face->body()->setType(interpreter().vm, newType);
-    // tp_dealloc gives back a reference to the type that the instance has then.
-    if (ownsReferenceToType(madeByExtension(newType))) {
-        retain(interpreter(), toC(newType));
-        release(interpreter(), toC(oldType));
+    UNUSED_PARAM(oldType);
+    Interpreter& current = interpreter();
+    Body* body = face->body();
+    // What has been destroyed has given its reference back.
+    if (body->life() >= Body::Life::BeingDestroyed) {
+        body->setType(current.vm, newType);
+        return;
     }
+    // Whoever assigns has the face in hand. (A body that was let go of is of the face's class again by that, which is the new one.)
+    bodyOfFaceInHand(face);
+    // tp_dealloc gives back a reference to the type that the instance has then.
+    moveToClass(current, body, newType, &current.vm);
 }
 
 static Handle allocate(Entry& entry, Handle typeHandle)

@@ -89,9 +89,11 @@ public:
         return uncheckedDowncast<Body>(cell);
     }
 
-    // The face's, as long as there is one. (tp_dealloc needs it when there is none.)
+    // The face's, as long as there is one and the body is not let go of. (tp_dealloc needs it when there is none.) See "The class of a body that is let go of" in CApiEnd.cpp.
     PyType* type() const { return m_type.get(); }
     void setType(VM& vm, PyType* type) { m_type.set(vm, this, type); }
+    // For the collector, with the world stopped: the type is marked, or is about to be by another way.
+    void setTypeInCollection(PyType* type) { m_type.setWithoutWriteBarrier(type); }
 
     // Null: it has died, or has not been made.
     Face* face() const { return m_face.get(); }

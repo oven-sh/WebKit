@@ -22,7 +22,7 @@
 //     to the finalizer. If that brings it back, it is back.
 //  L  LETTING GO. A collection has marked all that is reachable, and all that it keeps for whatever reason (finalizers to run, what gc.DEBUG_SAVEALL shows), to the end, by the marker's own
 //     ways. A body that is still not marked is dead, and so is its face. The body is marked now, for its end. The face is not: the marker does not go from such a body to its face. What the body
-//     holds is marked, as for any body that is marked: C will give it back in tp_dealloc.
+//     holds is marked, as for any body that is marked: C will give it back in tp_dealloc. Its class is not, if that has died with it: see "The class of a body that is let go of".
 //     What reference counts would not have freed (it is in a cycle, or hangs off one) CPython's collector would have found, and the first thing it does is done here, with the world stopped: the
 //     weak references of Python's to it die.
 //  B  TAKING BACK. The marker has come to rest again. A face that is marked now is led to by what a body holds (body -> list -> face); or, if the collection goes on beside the program, somebody
@@ -82,6 +82,41 @@ static void didChangeWhatWaits(Interpreter& current)
         current.clearingIsOff = false;
 }
 
+// THE CLASS OF A BODY THAT IS LET GO OF. C needs the type of the instance for its end: tp_dealloc asks it for tp_free and gives back the reference that the instance owns to it. But a class leads
+// to much (class -> method -> globals of the module -> whatever is there), and if it has died with the instance that may well be the face: class Sub(Node) with a method, and x = Sub() beside it. Nothing
+// would let go of that: a tp_clear does not, and tp_dealloc is not called while the face lives. (CPython's collector clears the other objects of the garbage: the dict, the function, the class.)
+// So FROM L ON SUCH A BODY IS AN INSTANCE OF THE NEAREST BASE OF ITS CLASS THAT THIS COLLECTION HAS FOUND ALIVE, no further down than the type that the extension has made: the data and the slots are the
+// same. That one is marked already, so the body marks nothing by its type, and the class dies like anything else, with all that only it leads to. The reference moves with it, as it does when __class__
+// is assigned to. What the class added to the instance is in the face, and ends with it; what C's tp_dealloc gets is what is left. (In CPython the tp_dealloc of a class made in Python does that, and then
+// calls the base's. Py_TYPE(self) is still the class there.)
+// If the extension's own type has died too, the body is of that type, which is kept by that: there is no doing without it.
+// A body that is taken back has a face that is marked, and the face names the class: it is of that class again.
+static PyType* classForItsEnd(SlotVisitor& visitor, PyType* type)
+{
+    for (PyType* candidate = type; candidate; candidate = candidate->base()) {
+        if (visitor.isMarked(candidate) || MadeByExtension::of(candidate))
+            return candidate;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// `vm`: null for the collector, with the world stopped.
+void moveToClass(Interpreter& current, Body* body, PyType* type, VM* vm)
+{
+    PyType* old = body->type();
+    if (old == type) [[likely]]
+        return;
+    ASSERT(madeByExtension(old) == madeByExtension(type));
+    if (vm)
+        body->setType(*vm, type);
+    else
+        body->setTypeInCollection(type);
+    if (ownsReferenceToType(madeByExtension(type))) {
+        retain(current, toC(type));
+        release(current, toC(old));
+    }
+}
+
 bool letGoOfWhatIsDead(SlotVisitor& visitor)
 {
     Interpreter& current = interpreter();
@@ -121,6 +156,7 @@ bool letGoOfWhatIsDead(SlotVisitor& visitor)
             body->setLife(Body::Life::LetGo);
             watch(current, body, true);
             current.letGo.append(body);
+            moveToClass(current, body, classForItsEnd(visitor, body->type()), nullptr);
             if (body->wasCyclicGarbage && body->face())
                 facesOfCyclicGarbage.append(body->face());
         }
@@ -151,8 +187,10 @@ bool takeBackWhatTheLivingHold(SlotVisitor& visitor)
             body->setAliveOrCleared();
             watch(current, body, body->isCleared);
             // The marker has been at the body, and has passed by the face.
-            if (body->face())
-                visitor.appendUnbarriered(body->face());
+            if (Face* face = body->face()) {
+                moveToClass(current, body, face->type(), nullptr);
+                visitor.appendUnbarriered(face);
+            }
         }
         traverse(body, [&](JSCell* target, CountTable::Counts&) {
             if (Body* held = Body::tryFromCellOfHandle(target); held && held->life() == Body::Life::LetGo)
@@ -193,6 +231,8 @@ void didSeeSomebodyTake(Body* body)
         // WeakRef.prototype.deref() does.) What the body holds follows when the marker has come to rest.
         body->setLife(Body::Life::Alive);
         watch(current, body, false);
+        if (Face* face = body->face())
+            moveToClass(current, body, face->type(), &current.vm);
         current.vm.writeBarrier(body);
         break;
     case Body::Life::ToBeCleared:
@@ -222,7 +262,7 @@ bool didSeeWhichFacesDied(JSC::Heap& heap)
         toClear.append(body);
     };
     for (Body* body : std::exchange(current.takenBack, { })) {
-        ASSERT(heap.isMarked(body) && (!body->face() || heap.isMarked(body->face())));
+        ASSERT(heap.isMarked(body) && (!body->face() || (heap.isMarked(body->face()) && body->type() == body->face()->type())));
         // (If the program has run since, C may have made an end of it.)
         if (body->isAliveOrCleared())
             clearIfThatIsDue(body);

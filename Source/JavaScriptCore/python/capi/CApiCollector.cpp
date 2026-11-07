@@ -126,6 +126,14 @@ void addMarkingConstraint(VM& vm)
 bool markWhatIsLeft(SlotVisitor& visitor)
 {
     Interpreter& current = interpreter();
+    // THE REALM OF THE INTERPRETER HAS DIED, with all that is in it. To call a tp_dealloc takes the realm, and the realm leads to whatever its modules hold: the instances that are left could be ended only as
+    // at exit, after the modules have been let go of, and a realm that is dropped does not get that. Nothing is kept: if nobody else marks the global object (then this is called again), the interpreter ends in this
+    // collection, before anything is swept (runtimeIsEnding()), and with it the table and the lists. What C really owns is a root, so there is none of that. (While something is let go of, its
+    // Structure holds the realm.)
+    if (!visitor.isMarked(current.globalObject)) {
+        ASSERT(current.letGo.isEmpty() && current.takenBack.isEmpty());
+        return false;
+    }
     if (takeBackWhatTheLivingHold(visitor) || letGoOfWhatIsDead(visitor))
         return true;
     // A key that is still not marked is held only by instances that are dead and that nobody keeps, so the references will never be given back. That does not happen while every instance that has

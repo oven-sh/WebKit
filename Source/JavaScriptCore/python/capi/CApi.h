@@ -283,6 +283,8 @@ void releaseSlow(JSCell*, Interpreter* thatLetsGo);
 extern std::atomic<Interpreter*> s_interpreterThatLetsGo;
 // See CountTable, and CApiEnd.cpp.
 void didTakeWatchedReference(JSCell*);
+// The body is of that type from now on, and the reference that the instance owns to its type, if it owns one, is to that. `vm`: null for the collector, with the world stopped.
+void moveToClass(Interpreter&, Body*, PyType*, VM*);
 void didGiveBackLastReferenceToBodyWithoutFace(Body*);
 
 // THE QUESTION IS FOR C. Who has asked and been let in does not ask again, and the runtime does not ask at all where it keeps the books of a call that it has made itself (the hooks of
