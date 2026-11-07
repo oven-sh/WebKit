@@ -622,6 +622,15 @@ Reference Walker::askInFrontOfOpenLoopWhetherItsFirstTurnBegins(uint32_t indexOf
     return begins && begins.isValue() && representationOf(begins) == Representation::Boolean ? begins : Reference();
 }
 
+bool Walker::isInSightWhereWalkBuilds(Reference reference) const
+{
+    if (m_numberOfLoopsThatMayBeLeft >= m_openLoops.size() || !reference.isValue() || reference.id().index() < m_openLoops[m_numberOfLoopsThatMayBeLeft].firstRecord)
+        return true;
+    BlockID block = m_code.blockOf(reference.id());
+    uint32_t place = block && block.index() < m_placesOfLoopsBehindBlocks.size() ? m_placesOfLoopsBehindBlocks[block.index()] : 0;
+    return place && place - 1 <= m_numberOfLoopsThatMayBeLeft;
+}
+
 bool Walker::everyTurnOfTypedCopyThatComesRoundPassesHere() const
 {
     std::optional<uint32_t> loop = openLoopOfTypedCopy();

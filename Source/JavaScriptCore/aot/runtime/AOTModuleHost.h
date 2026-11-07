@@ -267,7 +267,7 @@ JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID, AfterFailure = After
 JS_EXPORT_PRIVATE void letMockWaitBehindLateFailure(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void dropErrorsOfLoadsEndedByMocks(JSGlobalObject*);
 enum class OriginalBehindEntryOfProgram : uint8_t { GoesWithPatch, Stays };
-JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID, OriginalBehindEntryOfProgram = OriginalBehindEntryOfProgram::GoesWithPatch);
+JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID, OriginalBehindEntryOfProgram = OriginalBehindEntryOfProgram::GoesWithPatch, bool wasLaidOverMockOfPreload = true);
 JS_EXPORT_PRIVATE void letMockStandForLoadsInFlight(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool standsForLoadsInFlight(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isImportHeld(JSGlobalObject*, ModuleID);
@@ -302,6 +302,9 @@ JS_EXPORT_PRIVATE JSValue exportsThatMockWasLaidOver(JSGlobalObject*, ModuleID f
 JS_EXPORT_PRIVATE bool hasMockLaidOver(JSGlobalObject*, ModuleID);
 enum class LoadedBy : uint8_t { Nobody, Preload, EarlierTestFile, ThisTestFile };
 JS_EXPORT_PRIVATE LoadedBy whoLoaded(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void didEmptyKeyOfMockInPlace(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE LoadedBy whoLoadedMockInPlaceAnew(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool isKeyOfMockInPlaceEmpty(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* namespaceOfFileThatRanAheadOfMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSPromise* evaluationOfModuleThatMockLeftAlone(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool runMocksBelow(JSGlobalObject*, ModuleID);

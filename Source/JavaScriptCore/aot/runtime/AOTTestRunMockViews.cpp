@@ -418,6 +418,7 @@ void Modules::noteImportUnderMockInPlace(ModuleID module)
 {
     LoadedModule& loaded = ensureLoaded(module);
     loaded.wasImportedUnderMockInPlace = true;
+    noteAskUnderMockInPlace(module);
     if (!loaded.momentOfTestFileThatLoadedItUnderMockInPlace)
         loaded.momentOfTestFileThatLoadedItUnderMockInPlace = m_instance.vm->aotState().momentOfTestFile;
 }

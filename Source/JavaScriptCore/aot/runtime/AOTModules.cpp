@@ -1686,8 +1686,10 @@ void Modules::letGoOfRecordThatAnswersByMock(ModuleID module)
     ModuleRecord* record = m_records.get(module);
     if (!record || !record->hasLiveExports())
         return;
-    if (storedStatus(module) == StoredModuleStatus::InRecord)
+    if (storedStatus(module) == StoredModuleStatus::InRecord) {
         setStoredStatus(module, StoredModuleStatus::Unlinked);
+        forgetCapturedExports(module);
+    }
     loader()->removeEntryOfRecord(record);
     takeOutRecord(module);
 }
@@ -1833,6 +1835,8 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
         if (originalRuns) [[unlikely]]
             loaded.answerOfMockWhileOriginalRuns.set(*this, whatRequireAnswers);
         else if (isFile) {
+            if (m_filesThatRanAheadOfMock.get(fileOrModule.index()) && status(fileOrModule) == ModuleStatus::Evaluated && !loaded.exportsOfOriginalBesideMock)
+                loaded.exportsOfOriginalBesideMock.set(*this, commonJSExports(fileOrModule));
             markEvaluated(fileOrModule);
             setCommonJSExports(fileOrModule, whatRequireAnswers);
         } else
@@ -1894,7 +1898,8 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     if (JSObject* own = ensureLoaded(module).namespaceBeforeMockInPlace.get()) [[unlikely]] {
         uncheckedDowncast<ModuleNamespace>(own)->setKeepsToModule(false);
         ensureLoaded(module).namespaceBeforeMockInPlace.set(*this, nullptr);
-        setNamespace(module, ModulePhase::Evaluation, own);
+        if (!isCommonJSFileOrFace(module) || status(module) >= ModuleStatus::Evaluating)
+            setNamespace(module, ModulePhase::Evaluation, own);
     }
     if (originalRuns) [[unlikely]]
         loaded.answerOfMockWhileOriginalRuns.set(*this, JSValue());
@@ -1929,6 +1934,28 @@ void Modules::countMocksAnewBehindLoad(ModuleID module)
         return;
     if (!hasMockThatEnded(module) && !wasLetGoByLoader(module) && !m_modulesOwedToImportersThatRan.get(module.index()))
         m_firstMocksInTestFile.remove(first);
+}
+
+void Modules::didEmptyKeyOfMockInPlace(ModuleID fileOrModule)
+{
+    LoadedModule& loaded = ensureLoaded(moduleWithExportsOf(fileOrModule));
+    loaded.nextAskLoadsMockInPlace = true;
+    loaded.momentOfTestFileThatLoadedMockInPlaceAnew = 0;
+}
+
+void Modules::noteAskUnderMockInPlace(ModuleID fileOrModule)
+{
+    LoadedModule& loaded = ensureLoaded(moduleWithExportsOf(fileOrModule));
+    if (std::exchange(loaded.nextAskLoadsMockInPlace, false))
+        loaded.momentOfTestFileThatLoadedMockInPlaceAnew = m_instance.vm->aotState().momentOfTestFile;
+}
+
+LoadedBy Modules::whoLoadedMockInPlaceAnew(ModuleID fileOrModule)
+{
+    uint32_t moment = ensureLoaded(moduleWithExportsOf(fileOrModule)).momentOfTestFileThatLoadedMockInPlaceAnew;
+    if (!moment)
+        return LoadedBy::Nobody;
+    return moment == m_instance.vm->aotState().momentOfTestFile ? LoadedBy::ThisTestFile : LoadedBy::EarlierTestFile;
 }
 
 LoadedBy Modules::whoLoaded(ModuleID module)
@@ -2389,7 +2416,7 @@ bool Modules::isHiddenInModuleItself(ModuleID module, unsigned index) const
     auto mock = m_mocksOverModulesThatHaveRun.find(fileOf(module));
     if (mock != m_mocksOverModulesThatHaveRun.end() && mock->value.isInPlace)
         return mock->value.exportsHiddenBefore.get(index);
-    if ((hasRunItself(module) || m_modulesKeptByLoadsInFlight.get(module.index())) && mockInPlace(module)) [[unlikely]]
+    if (mockInPlace(module)) [[unlikely]]
         return m_table.exports(module)[index].isFromStarExport && isExportAmbiguous(module, index);
     return (m_table.exports(module)[index].isFromStarExport && isExportAmbiguous(module, index)) || isLeftOut(module, index, TablesBehindStars::MayLackName);
 }
@@ -3489,11 +3516,11 @@ void Modules::forgetFormAnsweredFirst(ModuleID file)
         return;
     Identifier key = keyWithoutForm(file);
     m_formsAnsweredFirst.removeIf([&](auto& entry) {
-        return entry.value.name == key;
+        return entry.value.name == key || entry.value.module == file;
     });
 }
 
-std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const ScriptFetchParameters* fetchParameters, FormWithoutAttributes formWithoutAttributes)
+std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const ScriptFetchParameters* fetchParameters, FormWithoutAttributes formWithoutAttributes, std::optional<ModuleID> foundUnderWrittenName)
 {
     if (!fetchParameters)
         return std::nullopt;
@@ -3508,7 +3535,7 @@ std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const
         m_dataFilesThatMockTookOutOfLoader.clear(first->value.module.index());
         return first->value.module;
     }
-    std::optional<ModuleID> module = host().findModuleWithAttributes(m_instance.globalObject, key.string(), *fetchParameters);
+    std::optional<ModuleID> module = foundUnderWrittenName ? foundUnderWrittenName : host().findModuleWithAttributes(m_instance.globalObject, key.string(), *fetchParameters);
     if (module && formWithoutAttributes == FormWithoutAttributes::IsAnotherModule && m_table.pathText(*module) == key.string())
         module = std::nullopt;
     if (std::optional<ModuleID> loaded = findFormThatStatementLoaded(key, *fetchParameters, module))
@@ -3520,7 +3547,24 @@ std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const
     return module;
 }
 
-std::optional<ModuleID> Modules::findFormUnderWrittenName(JSString* name, const ScriptFetchParameters& fetchParameters)
+static String pathBesideFile(StringView file, StringView written)
+{
+    Vector<StringView, 16> segments;
+    for (StringView segment : file.left(file.reverseFind('/') + 1).split('/'))
+        segments.append(segment);
+    for (StringView segment : written.split('/')) {
+        if (segment == ".."_s && !segments.isEmpty())
+            segments.removeLast();
+        else if (segment != "."_s && segment != ".."_s)
+            segments.append(segment);
+    }
+    StringBuilder path;
+    for (StringView segment : segments)
+        path.append('/', segment);
+    return path.toString();
+}
+
+std::optional<ModuleID> Modules::findFormUnderWrittenName(JSString* name, ModuleID referrer, const ScriptFetchParameters& fetchParameters)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (!host().findModuleWithAttributes)
@@ -3529,7 +3573,18 @@ std::optional<ModuleID> Modules::findFormUnderWrittenName(JSString* name, const 
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     if (!written.startsWith("./"_s) && !written.startsWith("../"_s))
         return std::nullopt;
-    RELEASE_AND_RETURN(scope, host().findModuleWithAttributes(m_instance.globalObject, written, fetchParameters));
+    std::optional<ModuleID> found = host().findModuleWithAttributes(m_instance.globalObject, written, fetchParameters);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!found)
+        return std::nullopt;
+    Identifier keyBesideAsker = Identifier::fromString(*m_instance.vm, pathBesideFile(m_table.pathText(referrer), written));
+    std::optional<ModuleID> first = findWithAttributes(keyBesideAsker, &fetchParameters, FormWithoutAttributes::MayAnswer, found);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!first || first == found)
+        return first;
+    std::optional<ModuleID> ofSameTypeBesideAsker = host().findModuleWithAttributes(m_instance.globalObject, keyBesideAsker.string(), fetchParameters);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    return first == ofSameTypeBesideAsker ? found : first;
 }
 
 bool Modules::doOtherJobsWait() const
@@ -4258,7 +4313,7 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (!fetchParameters)
         return fetchParameters.error();
-    std::optional<ModuleID> found = *fetchParameters ? findFormUnderWrittenName(text, **fetchParameters) : std::nullopt;
+    std::optional<ModuleID> found = *fetchParameters ? findFormUnderWrittenName(text, referrer, **fetchParameters) : std::nullopt;
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     Identifier key;
     {
@@ -6592,6 +6647,24 @@ bool hasMockLaidOver(JSGlobalObject* realm, ModuleID module)
     return modules && modules->hasMockLaidOver(module);
 }
 
+void didEmptyKeyOfMockInPlace(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->didEmptyKeyOfMockInPlace(module);
+}
+
+bool isKeyOfMockInPlaceEmpty(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isKeyOfMockInPlaceEmpty(module);
+}
+
+LoadedBy whoLoadedMockInPlaceAnew(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->whoLoadedMockInPlaceAnew(module) : LoadedBy::Nobody;
+}
+
 LoadedBy whoLoaded(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -6659,7 +6732,7 @@ bool runMocksBelow(JSGlobalObject* realm, ModuleID module)
     return modules && modules->runMocksBelowModuleThatLoaderFetches(module);
 }
 
-void didEndMock(JSGlobalObject* realm, ModuleID module, OriginalBehindEntryOfProgram original)
+void didEndMock(JSGlobalObject* realm, ModuleID module, OriginalBehindEntryOfProgram original, bool wasLaidOverMockOfPreload)
 {
     Modules* modules = modulesOf(realm);
     if (!modules)
@@ -6671,7 +6744,7 @@ void didEndMock(JSGlobalObject* realm, ModuleID module, OriginalBehindEntryOfPro
     if (modules->letsMockOverModuleThatHasRunStandForLoadInFlight(module))
         return;
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    bool isBack = modules->bringBackMockKeptByImportersOfThisTestFile(module);
+    bool isBack = wasLaidOverMockOfPreload && modules->bringBackMockKeptByImportersOfThisTestFile(module);
     RETURN_IF_EXCEPTION(scope, void());
     if (isBack)
         return;

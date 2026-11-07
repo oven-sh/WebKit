@@ -1641,7 +1641,7 @@ void WriterOfLink::writeContentsAtOperations()
             bool mayMakeIteratorOverList = receiver.builtinClass == BuiltinClasses::Array && !call.numberOfArguments;
             if (receiver.classes != LinkType::Classes::Site || receiver.objects != LinkType::Objects::None || receiver.functions != LinkType::Functions::None || (!isMapOrWeakMap(receiver) && !mayMakeIteratorOverList && receiver.builtinClass != BuiltinClasses::Set))
                 continue;
-            if ((receiver.primitives & ~Primitive::UndefinedOrNull) || (!writesWhatIsExpected() && m_flow.hasEscaped(receiver.site)))
+            if ((receiver.primitives & ~Primitive::UndefinedOrNull) || (!writesWhatIsExpected() && (receiver.holdsUnseen || receiver.holdsLostBuiltins || m_flow.hasEscaped(receiver.site))))
                 continue;
             operationsOfChunk.append(Operation { function, call.site, node });
         }

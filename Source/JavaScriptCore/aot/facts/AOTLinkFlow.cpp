@@ -1721,6 +1721,12 @@ Vector<WriteFollowedToBuiltin> LinkFlow::takeWritesFollowedToBuiltins()
     return writes;
 }
 
+void LinkFlow::noteOperandsHandedToCalleeNobodyKnows()
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    builtinsInReach().noteOperandsHandedToCalleeNobodyKnows();
+}
+
 LinkType LinkFlow::builtinsAbove(const LinkType& below, FunctionID asker)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);

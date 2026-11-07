@@ -837,8 +837,11 @@ bool Modules::beginModuleInRecord(ModuleID module)
             return false;
         }
     }
-    if (!m_innermostFilesBeingRun && mockInPlace(module)) [[unlikely]]
-        ensureLoaded(module).wasRequiredUnderMockInPlace = true;
+    if (mockInPlace(module)) [[unlikely]] {
+        noteAskUnderMockInPlace(module);
+        if (!m_innermostFilesBeingRun)
+            ensureLoaded(module).wasRequiredUnderMockInPlace = true;
+    }
     if (m_filesToLoadAgain.get(module.index())) [[unlikely]] {
         JSGlobalObject* realm = m_instance.globalObject;
         JSPromise* loaded = nullptr;
@@ -1618,6 +1621,11 @@ void Modules::runStepsOfLoaderInFrontOf(ModuleID file)
     DeferTerminationForAWhile deferTermination(vm);
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     Ref<MicrotaskQueue> turn = MicrotaskQueue::create(vm);
+    Ref<MicrotaskQueue> stepsOfFilesYetToEnd = MicrotaskQueue::create(vm);
+    auto hasFileYetToEnd = [&](const Identifier& key) {
+        std::optional<ModuleID> fetched = findByKey(key);
+        return fetched && isCommonJSFileOrFace(*fetched) && status(fileOf(*fetched)) < ModuleStatus::Evaluated;
+    };
     while (!queue.isEmpty()) {
         queue.moveTasksBehind(0, turn.get());
         size_t stepsTaken = 0;
@@ -1627,8 +1635,16 @@ void Modules::runStepsOfLoaderInFrontOf(ModuleID file)
                 return true;
             }
             auto arguments = job.arguments();
-            if (job.job() == InternalMicrotask::ModuleRegistryFetchSettled && hasKey(file, uncheckedDowncast<ModuleRegistryEntry>(arguments[2])->key()))
-                return false;
+            if (job.job() == InternalMicrotask::ModuleRegistryFetchSettled) {
+                const Identifier& key = uncheckedDowncast<ModuleRegistryEntry>(arguments[2])->key();
+                if (hasKey(file, key))
+                    return false;
+                if (hasFileYetToEnd(key)) {
+                    ++stepsTaken;
+                    stepsOfFilesYetToEnd->enqueue(QueuedTask(job));
+                    return true;
+                }
+            }
             ++stepsTaken;
             runInternalMicrotask(job.globalObject(), vm, job.job(), job.payload(), arguments[0], arguments[1], arguments[2], arguments[3]);
             scope.assertNoException();
@@ -1637,6 +1653,7 @@ void Modules::runStepsOfLoaderInFrontOf(ModuleID file)
         if (hasComeToFile) {
             Ref<MicrotaskQueue> queuedInThisTurn = MicrotaskQueue::create(vm);
             queue.moveTasksBehind(0, queuedInThisTurn.get());
+            stepsOfFilesYetToEnd->moveTasksBehind(0, queue);
             turn->moveTasksBehind(stepsTaken + 1, queue);
             queuedInThisTurn->moveTasksBehind(0, queue);
         }
@@ -1644,6 +1661,7 @@ void Modules::runStepsOfLoaderInFrontOf(ModuleID file)
         if (hasComeToFile)
             return;
     }
+    stepsOfFilesYetToEnd->moveTasksBehind(0, queue);
 }
 
 void Modules::finishStepInWhichFileRan(ModuleID fileOrFace, JSValue error)
@@ -3180,6 +3198,9 @@ ModuleID Modules::formThatRequireFinds(ModuleID target)
     }
     if (file && !hasNotBegun(*file) && !isOutOfLoaderBehindMock(*file))
         return *file;
+    bool loaderHoldsEntryWithoutType = loader()->moduleMap().contains(ModuleMapKey { key.impl(), ScriptFetchParameters::Type::JavaScript });
+    if (!file && loaderHoldsEntryWithoutType && status(target) == ModuleStatus::Evaluated && !isOutOfLoaderBehindMock(target))
+        return target;
     auto first = m_formsAnsweredFirst.find(ModuleMapKey { key.impl(), ScriptFetchParameters::Type::HostDefined });
     if (first != m_formsAnsweredFirst.end() && forms.contains(first->value.module) && status(first->value.module) == ModuleStatus::Evaluated && !isOutOfLoaderBehindMock(first->value.module))
         return first->value.module;
@@ -3438,6 +3459,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
             RELEASE_AND_RETURN(scope, answerRequireWithOriginal(target, referrer));
         if (m_filesWhoseOriginalRuns.get(target.index()) && mockInPlace(target))
             return ensureLoaded(target).answerOfMockWhileOriginalRuns.get();
+        if (mockInPlace(target))
+            noteAskUnderMockInPlace(target);
     }
     if (isLeftToHost(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target), referrer));
