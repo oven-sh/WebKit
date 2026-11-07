@@ -122,24 +122,8 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationCon
 
 const ArrayStorageForm* ArrayAllocationEmitter::findFormOfLiteral(std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray)
 {
-    bool isNeverMade = std::ranges::any_of(elements, [&](ValueID element) {
-        return isNeverType(typeIDOf(element));
-    });
-    if (isNeverMade)
-        return &arrayStorageFormOf(ArrayStorage::Contiguous);
-
-    if (const ArrayStorageForm* namedForm = findArrayStorageForm(named)) {
-        bool fitsNamedStorage = std::ranges::all_of(elements, [&](ValueID element) {
-            return fitsStorageOfLiteral(types(), named, typeIDOf(element));
-        });
-        return fitsNamedStorage ? namedForm : nullptr;
-    }
-
-    const ArrayStorageForm& form = declaredByArray ? formAtAllocationOfStorageDeclared(*declaredByArray) : formAtAllocation(array);
-    bool canHoldElements = std::ranges::all_of(elements, [&](ValueID element) {
-        return (form.element == Representation::Double && isNumberOrMarker(element)) || fitsStorageOfLiteral(types(), form.kind, typeIDOf(element));
-    });
-    return canHoldElements ? &form : &arrayStorageFormOf(ArrayStorage::Contiguous);
+    ArrayStorage declared = declaredByArray ? *declaredByArray : hasArrayStorageForm(named) ? ArrayStorage::Other : formAtAllocation(array).kind;
+    return Typed::findFormOfLiteral(types(), m_code, elements, named, declared);
 }
 
 bool newArrayFencesBeforeHandingCellOn(const Operation& newArray)
@@ -196,7 +180,7 @@ CellPointer ArrayAllocationEmitter::allocateArrayCell(Integer header, Pointer bu
 
 void ArrayAllocationEmitter::setLengthOfNewArray(CellPointer array, Integer length)
 {
-    CodeGenerator::InitializationScope scope(generator());
+    CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap::No);
     m_out.store32(low32(length).value(), m_out.loadPtr(array.value(), m_heaps.JSArray_butterfly), m_heaps.Butterfly_publicLength);
 }
 
@@ -226,6 +210,39 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
     return elementsBelowLength == ElementsBelowLength::NotCleared ? array : setLength(array);
 }
 
+std::optional<Pointer> ArrayAllocationEmitter::profileOfListsOfLengthAtSite(const ValueContext& value, const ArrayStorageForm& seed)
+{
+    static constexpr uint32_t markOfListsOfLength = 8;
+    std::optional<Vector<uint32_t, 12>> site = modulesAndPositionsOf(value);
+    if (!site || seed.holdsCells)
+        return std::nullopt;
+    site->append(markOfListsOfLength | static_cast<uint32_t>(elementKindOfForm(seed)));
+    return Pointer(m_out.valueOf(instanceWord(m_heaps.entire(AbstractHeap::RuntimeState), m_mentions.add(NumberSpace::ArrayProfile, site->span()))));
+}
+
+CellPointer ArrayAllocationEmitter::allocateArrayOfHolesAtSite(const ValueContext& value, Integer length, const ArrayStorageForm& seed, Pointer profile, LBasicBlock slowPath)
+{
+    branchUnless(belowOrEqual(length, integer(maxHoleArrayCapacity)), slowPath);
+    bool isEmpty = length.value()->hasInt64() && !length.value()->asInt64();
+    Integer capacity = isEmpty ? integer(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY | 1) : bitOr(length, integer(1));
+    Integer lengthAndCapacity(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift)));
+    CellPointer array(callStub(value, newArrayWithLengthAtSite(elementKindOfForm(seed)), { lengthAndCapacity.value(), profile.value() }).first);
+    branchUnless(Condition(m_out.notNull(array.value())), slowPath);
+    return array;
+}
+
+CellPointer ArrayAllocationEmitter::bearArrayOfLength(const OperationContext& context, const ArrayStorageForm& form, Integer length)
+{
+    if (length.value()->hasInt64() && length.value()->asInt64() >= 1 && length.value()->asInt64() <= 3 && elementKindOfForm(form) != ArrayElementKind::Int32) {
+        bool holdsOne = length.value()->asInt64() == 1;
+        bool holdsFractions = elementKindOfForm(form) == ArrayElementKind::Double;
+        CellPointer array = callNewEmptyArray(context, holdsFractions ? (holdsOne ? EmptyArray::DoubleCapacity1 : EmptyArray::DoubleCapacity3) : (holdsOne ? EmptyArray::ContiguousCapacity1 : EmptyArray::ContiguousCapacity3));
+        setLengthOfNewArray(array, length);
+        return array;
+    }
+    return CellPointer(callStub(context, newArrayOfLength(elementKindOfForm(form)), { length.value() }).first);
+}
+
 CellPointer ArrayAllocationEmitter::allocateEmptyArrayWithRoom(const OperationContext& context, Integer room, const ArrayStorageForm& form, LBasicBlock slowPath)
 {
     static_assert((BASE_CONTIGUOUS_VECTOR_LEN_EMPTY | 1) <= maxHoleArrayCapacity);
@@ -243,10 +260,18 @@ void ArrayAllocationEmitter::allocateListLike(const OperationContext& context, C
     }
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     ArrayStorageFormList kinds { &arrayStorageFormOf(ArrayStorage::Contiguous), &arrayStorageFormOf(ArrayStorage::Int32), &arrayStorageFormOf(ArrayStorage::Double) };
-    elements.forEachFormByShape(elements.indexingMode(source, IndexingShapeMask), &ElementAccessEmitter::hasShape, kinds, slowPath, scopedLambda<void(const ArrayStorageForm&)>([&](const ArrayStorageForm& formOfSource) {
-        const ArrayStorageForm& form = formOfSource.holdsCells && inPlaceOfAnyValue ? *inPlaceOfAnyValue : formOfSource;
+    auto takeListOfForm = [&](const ArrayStorageForm& form) {
         take(roomOfEmptyList ? allocateEmptyArrayWithRoom(context, *roomOfEmptyList, form, slowPath) : allocateArrayOfHoles(context, length, form, slowPath));
+    };
+    LBasicBlock hasNoneOfTheKinds = newBlock();
+    Word32 shape = elements.indexingMode(source, IndexingShapeMask);
+    elements.forEachFormByShape(shape, &ElementAccessEmitter::hasShape, kinds, hasNoneOfTheKinds, scopedLambda<void(const ArrayStorageForm&)>([&](const ArrayStorageForm& formOfSource) {
+        takeListOfForm(formOfSource.holdsCells && inPlaceOfAnyValue ? *inPlaceOfAnyValue : formOfSource);
     }));
+
+    m_out.appendTo(hasNoneOfTheKinds);
+    branchUnless(equal(shape, word32(UndecidedShape)), slowPath);
+    takeListOfForm(arrayStorageFormOf(ArrayStorage::Int32));
 }
 
 CellPointer ArrayAllocationEmitter::newArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, BuiltinID calledBuiltin)
@@ -365,7 +390,7 @@ void ArrayAllocationEmitter::storeElements(const OperationContext& context, Cell
         return;
     ElementAccessEmitter& access = emitter<ElementAccessEmitter>();
     {
-        CodeGenerator::InitializationScope scope(generator());
+        CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap(form.holdsCells));
         ArrayElements elements = access.elementsOf(newArray);
         for (size_t i = 0; i < rawElements.size(); ++i)
             access.storeRawElement(form, elements, integer(indexes[i]), rawElements[i]);
@@ -399,6 +424,33 @@ CellPointer ArrayAllocationEmitter::newArrayInForm(const OperationContext& conte
             isNumberMask |= static_cast<uint32_t>(!isNumberOrMarker(elements[i])) << i;
         }
         return newDoubleLiteral(context, numbersOrMarkers.span(), isNumberMask);
+    }
+    bool areInt32 = std::ranges::all_of(elements, [&](ValueID element) {
+        return representationOf(element) == Representation::Int32 || (representationOf(element) == Representation::JSValue && typeOf(element).isInt32());
+    });
+    if (form.kind == ArrayStorage::Int32 && length && length <= maxArrayElementsInRegisters && areInt32) {
+        bool someAreBoxed = std::ranges::any_of(elements, [&](ValueID element) {
+            return representationOf(element) == Representation::JSValue;
+        });
+        LBasicBlock liesInBoxOfDouble = someAreBoxed ? newBlock() : nullptr;
+        Vector<LValue, maxArrayElementsInRegisters> operands;
+        for (ValueID element : elements) {
+            if (representationOf(element) == Representation::Int32) {
+                operands.append(zeroExtended(get(element).as<Word32>()).value());
+                continue;
+            }
+            Boxed boxed = get(element).as<Boxed>();
+            branchUnless(isInt32(boxed), liesInBoxOfDouble);
+            operands.append(zeroExtended(unboxInt32(boxed)).value());
+        }
+        CellPointer born(callStub(context, arrayLiteralWithInt32(length), operands.span()).first);
+        if (!someAreBoxed)
+            return born;
+        Join<CellPointer> join(m_out);
+        join.add(born);
+        m_out.appendTo(liesInBoxOfDouble);
+        join.add(newArrayOutOfLine(context, elements, form));
+        return join.finish();
     }
 
     LBasicBlock slowPath = newBlock();

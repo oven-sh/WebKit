@@ -89,13 +89,16 @@ struct LocationAllocatorOfConvention {
         if (representation == Representation::Void)
             return { .kind = ArgumentLocation::Kind::None, .representation = representation };
         if (isPassedInFPR(representation)) {
-            if (nextFPR < numberOfDirectArgumentFPRs)
+            if (nextFPR < numberOfDirectArgumentFPRs) {
+                nextGPR += rawValuesKeepTheirPlaces;
                 return { .kind = ArgumentLocation::Kind::FPR, .reg = directArgumentFPR(nextFPR++), .representation = representation };
+            }
         } else if (nextGPR < numberOfDirectArgumentGPRs)
             return { .kind = ArgumentLocation::Kind::GPR, .reg = directArgumentGPR(nextGPR++), .representation = representation };
         return { .kind = ArgumentLocation::Kind::Stack, .stackIndex = numberOfStackWords++, .representation = representation };
     }
 
+    bool rawValuesKeepTheirPlaces { false };
     unsigned nextGPR { 0 };
     unsigned nextFPR { 0 };
     uint32_t numberOfStackWords { 0 };
@@ -106,12 +109,22 @@ enum class ConstructionThroughConvention : uint8_t { None, CallEntryTakesNewTarg
 } // anonymous namespace
 
 template<typename FormOfValue, size_t inlineCapacity>
-static ALWAYS_INLINE uint32_t assignLocationsOfConvention(size_t numberOfValues, const FormOfValue& formOfValue, Vector<ArgumentLocation, inlineCapacity>& locations)
+static ALWAYS_INLINE uint32_t assignLocationsOfConvention(size_t numberOfValues, const FormOfValue& formOfValue, Vector<ArgumentLocation, inlineCapacity>& locations, size_t numberOfCapturesBehind = 0, size_t numberOfEntryParameters = 0)
 {
-    LocationAllocatorOfConvention allocator;
-    locations.reserveInitialCapacity(numberOfValues);
-    for (size_t index = 0; index < numberOfValues; ++index)
-        locations.append(allocator.allocate(formOfValue(index)));
+    LocationAllocatorOfConvention allocator { .rawValuesKeepTheirPlaces = !!numberOfCapturesBehind };
+    if (!numberOfCapturesBehind) {
+        locations.reserveInitialCapacity(numberOfValues);
+        for (size_t index = 0; index < numberOfValues; ++index)
+            locations.append(allocator.allocate(formOfValue(index)));
+        return allocator.numberOfStackWords;
+    }
+    locations.fill(ArgumentLocation { }, numberOfValues);
+    for (size_t place = 0; place < numberOfValues; ++place) {
+        size_t index = place;
+        if (place < numberOfEntryParameters)
+            index = place + numberOfCapturesBehind < numberOfEntryParameters ? place + numberOfCapturesBehind : place + numberOfCapturesBehind - numberOfEntryParameters;
+        locations[index] = allocator.allocate(formOfValue(index));
+    }
     return allocator.numberOfStackWords;
 }
 
@@ -123,11 +136,11 @@ static ArgumentLocation locationOfOnlyResultOfConvention(Representation represen
 }
 
 template<typename FormOfParameter, typename FormOfResult>
-static ALWAYS_INLINE ArgumentLocations locationsOfDirectConvention(size_t numberOfParameters, const FormOfParameter& formOfParameter, size_t numberOfResults, const FormOfResult& formOfResult)
+static ALWAYS_INLINE ArgumentLocations locationsOfDirectConvention(size_t numberOfParameters, const FormOfParameter& formOfParameter, size_t numberOfResults, const FormOfResult& formOfResult, size_t numberOfCapturesBehind, size_t numberOfEntryParameters)
 {
     ArgumentLocations locations;
     locations.convention = EntryConvention::Direct;
-    locations.numberOfStackArguments = assignLocationsOfConvention(numberOfParameters, formOfParameter, locations.parameters);
+    locations.numberOfStackArguments = assignLocationsOfConvention(numberOfParameters, formOfParameter, locations.parameters, numberOfCapturesBehind, numberOfEntryParameters);
 
     if (!numberOfResults) {
         locations.results.append(ArgumentLocation { .kind = ArgumentLocation::Kind::None, .representation = Representation::JSValue });
@@ -365,6 +378,16 @@ Representation CallingConventions::parameterRepresentationByRole(const Program& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static size_t numberOfCapturesPassedBehindParameters(const CallingConventions& conventions, const Program& program, CodeUnit unit)
+{
+    size_t numberOfCaptures = program.at(unit.function).captures.size();
+    if (!numberOfCaptures)
+        return 0;
+    bool takesParametersOfFunction = unit.role == CodeRole::Body || unit.role == CodeRole::SlowBody || unit.role == CodeRole::ParameterGuard || unit.role == CodeRole::CoroutineBody;
+    unsigned numberOfValues = conventions.of(unit.function).numberOfEntryParameters + conventions.isCoroutine(unit.function);
+    return takesParametersOfFunction && numberOfValues <= GPRInfo::numberOfArgumentRegisters ? numberOfCaptures : 0;
+}
+
 ArgumentLocations CallingConventions::locationsOf(const Program& program, CodeUnit unit) const
 {
     EntryConvention convention = entryConventionOf(unit);
@@ -373,15 +396,17 @@ ArgumentLocations CallingConventions::locationsOf(const Program& program, CodeUn
         auto formOfResult = [&](size_t index) {
             return resultRepresentation(unit, static_cast<unsigned>(index));
         };
+        size_t numberOfCapturesBehind = numberOfCapturesPassedBehindParameters(*this, program, unit);
+        size_t numberOfEntryParameters = numberOfCapturesBehind ? of(unit.function).numberOfEntryParameters : 0;
         if (takesEntryParametersAsListed(unit.role) && !m_parts.formsOfEntryParameters.isEmpty()) {
             const FunctionConvention& ofFunction = of(unit.function);
             return locationsOfDirectConvention(ofFunction.numberOfEntryParameters, [&](size_t index) {
                 return formOfEntryParameterAsListed(program, ofFunction, unit.role, static_cast<unsigned>(index));
-            }, numberOfResults(unit), formOfResult);
+            }, numberOfResults(unit), formOfResult, numberOfCapturesBehind, numberOfEntryParameters);
         }
         return locationsOfDirectConvention(numberOfParametersInConventionOf(*this, program, unit), [&](size_t index) {
             return parameterRepresentation(program, unit, static_cast<unsigned>(index));
-        }, numberOfResults(unit), formOfResult);
+        }, numberOfResults(unit), formOfResult, numberOfCapturesBehind, numberOfEntryParameters);
     }
     case EntryConvention::GenericRegisters:
         return locationsOfGenericConvention(convention, numberOfArgumentsTakenInRegistersBy(*this, program, unit));
@@ -415,7 +440,7 @@ static uint8_t argumentsThatEntryOnlyCalls(const Program& program, const Facts& 
 {
     static_assert(ClosureWord::numberOfBorrowedArguments == 2, "FunctionConvention::borrowedArguments has a bit for each");
     const Function& function = program.at(id);
-    if (!convention.has(CodeRole::Body) || !convention.has(CodeRole::GenericCallEntry) || convention.takesArgumentsInBuffer || convention.callEntryTakesNewTarget || function.newTargetParameterIndex())
+    if (!convention.has(CodeRole::Body) || !convention.has(CodeRole::GenericCallEntry) || function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }) || convention.callEntryTakesNewTarget || function.newTargetParameterIndex())
         return 0;
     uint8_t onlyCalled = 0;
     for (unsigned argument = 0; argument < std::min<unsigned>(ClosureWord::numberOfBorrowedArguments, function.numberOfPositionalParameters()); ++argument) {
@@ -551,6 +576,17 @@ static bool entryByValueHasToAskForConventions(const Program& program, const Fac
     return false;
 }
 
+static bool runTimeEntersBodyByNumberOfItsStart(const Program& program, const FunctionConvention& convention, FunctionID id)
+{
+    const Function& function = program.at(id);
+    if (!function.isModuleBody() || !function.module || !convention.has(CodeRole::ModuleStart) || !convention.has(CodeRole::GenericCallEntry))
+        return false;
+    const Module& module = program.at(function.module);
+    if (module.body != id)
+        return false;
+    return module.kind == ModuleKind::CommonJs || (module.kind == ModuleKind::SourceText && !module.flags.contains(ModuleFlags::HasTopLevelAwait));
+}
+
 void CallingConventions::fuseCallEntriesThatOnlyMove(const Program& program, const Facts& facts, const ParallelLoops& loops)
 {
     static constexpr uint32_t functionsInRange = 256;
@@ -560,25 +596,16 @@ void CallingConventions::fuseCallEntriesThatOnlyMove(const Program& program, con
     forEachIndexInParallel(loops, (numberOfFunctions + functionsInRange - 1) / functionsInRange, [&](unsigned range) {
         uint32_t endOfRange = std::min(numberOfFunctions, (range + 1) * functionsInRange);
         for (uint32_t index = range * functionsInRange; index < endOfRange; ++index) {
-            if (!entryByValueHasToAskForConventions(program, facts, FunctionID(index)) && planCallEntryMoves(program, *this, FunctionID(index)))
+            if (runTimeEntersBodyByNumberOfItsStart(program, of(FunctionID(index)), FunctionID(index)) || (!entryByValueHasToAskForConventions(program, facts, FunctionID(index)) && planCallEntryMoves(program, *this, FunctionID(index))))
                 functionsWithFusedCallEntry.quickSet(index);
         }
     });
     m_functionsWithFusedCallEntry = WTF::move(functionsWithFusedCallEntry);
 }
 
-static bool isRunTimeCodeForConventions(const Program& program, const Function& function)
-{
-    if (function.role == FunctionRole::Library || function.enclosingRuntimeFunction)
-        return true;
-    return function.module && program.at(function.module).kind == ModuleKind::RuntimeSource;
-}
-
 static bool constructEntryAllocatesThisOf(const Program& program, const Function& function, const BitVector& layoutsMadeAsCompiledObjects)
 {
     if (function.kind != FunctionKind::Plain || function.isCoroutine() || !function.has(FunctionFlags::HasThis) || function.results.size() != 1 || !function.constructedClass)
-        return false;
-    if (isRunTimeCodeForConventions(program, function))
         return false;
     LayoutID declared = declaredLayoutOf(program, function.constructedClass);
     return declared && program.at(declared).has(LayoutFlags::IsConstructorFunction) && layoutsMadeAsCompiledObjects.get(function.constructedClass.index());
@@ -714,7 +741,33 @@ static void fillFormsOfEntryParameters(const Program& program, const Facts& fact
     }
 }
 
-static void boxResultsThatNobodyTakesRaw(const LinkTables& linked, BitVector& functionsThatReturnRawValues, CallingConventionParts& parts)
+static void boxResultsOfMethodsWhoseNamesakesReturnOtherwise(const Program& program, const LinkTables& linked, BitVector& functionsThatReturnRawValues, CallingConventionParts& parts)
+{
+    auto forEachMethodThatSharesCalls = [&](const auto& visit) {
+        for (const LinkedMember& member : linked.members) {
+            if (member.key && member.written && member.kind == MethodKind::Method && member.side == ClassSide::Prototype && !linked.function(member.written).everyCallHasOneCallee)
+                visit(member.key, member.written);
+        }
+    };
+    Vector<Representation> formsUnderKeys(FillWith { }, program.types.numberOfPropertyKeys(), Representation::Unchosen);
+    BitVector keysWhoseMethodsDiffer(program.types.numberOfPropertyKeys());
+    forEachMethodThatSharesCalls([&](PropertyKeyID key, FunctionID method) {
+        Representation form = functionsThatReturnRawValues.get(method.index()) ? parts.formsOfResults[parts.conventions[method.index()].firstResult] : Representation::JSValue;
+        Representation& known = formsUnderKeys[key.index()];
+        bool someSelectorCarriesForm = form == Representation::JSValue || form == Representation::Int32 || form == Representation::Double;
+        if (!someSelectorCarriesForm || (known != Representation::Unchosen && known != form))
+            keysWhoseMethodsDiffer.quickSet(key.index());
+        known = form;
+    });
+    forEachMethodThatSharesCalls([&](PropertyKeyID key, FunctionID method) {
+        if (!keysWhoseMethodsDiffer.quickGet(key.index()) || !functionsThatReturnRawValues.get(method.index()))
+            return;
+        functionsThatReturnRawValues.clear(method.index());
+        parts.formsOfResults[parts.conventions[method.index()].firstResult] = Representation::JSValue;
+    });
+}
+
+static void boxResultsThatNobodyTakesRaw(const Program& program, const LinkTables& linked, BitVector& functionsThatReturnRawValues, CallingConventionParts& parts)
 {
     auto returnsRawValue = [&](FunctionID id) {
         return functionsThatReturnRawValues.get(id.index());
@@ -725,10 +778,15 @@ static void boxResultsThatNobodyTakesRaw(const LinkTables& linked, BitVector& fu
         if (returnsRawValue(call.callee) && (!call.isInTailPosition || returnsRawValue(call.caller)))
             ++numberOfTakers[call.callee.index()];
     }
+    auto hasTakersThatLinkDoesNotList = [&](FunctionID id) {
+        FunctionKind kind = program.at(id).kind;
+        return kind == FunctionKind::Getter || (kind == FunctionKind::Method && !linked.function(id).everyCallHasOneCallee);
+    };
     Vector<FunctionID> functionsWithoutTakers;
     for (size_t index : functionsThatReturnRawValues) {
-        if (!numberOfTakers[index])
-            functionsWithoutTakers.append(FunctionID(static_cast<uint32_t>(index)));
+        FunctionID id(static_cast<uint32_t>(index));
+        if (!numberOfTakers[index] && !hasTakersThatLinkDoesNotList(id))
+            functionsWithoutTakers.append(id);
     }
     while (!functionsWithoutTakers.isEmpty()) {
         FunctionID boxed = functionsWithoutTakers.takeLast();
@@ -782,7 +840,7 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
                 formsOfResults[result] = boxedFormOfDeclaredPosition(program, function.results[result]);
             if (returnsRawValues && convention.has(CodeRole::Body) && mayReturnInFormOfItsOwn(function) && formsOfResults.back() == Representation::JSValue) {
                 const LinkedFunction& proven = linked.function(id);
-                if (proven.everyCallHasOneCallee && proven.ringsOfTailCallsAreListed)
+                if (proven.everyTakerOfResultKnowsCallee && proven.ringsOfTailCallsAreListed)
                     formsOfResults.back() = formOfResultProvenToBe(program, proven.result);
                 if (formsOfResults.back() != Representation::JSValue)
                     functionsThatReturnRawValues.quickSet(index);
@@ -793,7 +851,8 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
             fillFormsOfEntryParameters(program, facts, id, mayTakeUnboxedNumbers, parts.formsOfEntryParameters.mutableSpan().subspan(convention.firstEntryParameter, convention.numberOfEntryParameters));
         }
     });
-    boxResultsThatNobodyTakesRaw(linked, functionsThatReturnRawValues, parts);
+    boxResultsOfMethodsWhoseNamesakesReturnOtherwise(program, linked, functionsThatReturnRawValues, parts);
+    boxResultsThatNobodyTakesRaw(program, linked, functionsThatReturnRawValues, parts);
     return CallingConventions(WTF::move(parts));
 }
 

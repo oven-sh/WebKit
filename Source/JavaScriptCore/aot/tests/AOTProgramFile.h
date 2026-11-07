@@ -23,6 +23,7 @@ struct ProgramFile {
 
     Kind kind { Kind::Text };
     Program::OwnedBytes bytes;
+    std::optional<Wire::CompileOptions> options;
     String text;
 };
 

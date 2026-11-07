@@ -91,15 +91,6 @@ static void loadContiguousElementOrEmpty(StraightEmitter& emitter, const BodyVal
     isAbsent.link(&jit);
 }
 
-static void defineBitsOfDouble(StraightEmitter& emitter, const BodyValue& value, GPRReg bits)
-{
-    CCallHelpers& jit = emitter.jit();
-    jit.withNumberTag([&](auto tag) {
-        jit.sub64(tag, bits);
-    });
-    emitter.define(value, bits);
-}
-
 static void generateIsPristineArray(StraightEmitter& emitter, const BodyValue& value)
 {
     static_assert(DerivedArrayType == ArrayType + 1);
@@ -188,7 +179,8 @@ void StraightEmitter::generateArrayIntrinsic(const BodyValue& value)
         jit().move(CCallHelpers::TrustedImm64(static_cast<int64_t>(arrayStorageFormOf(ArrayStorage::Double).hole)), result);
         jit().load64(elementBelowLengthOfList(*this, value, ArrayStorage::Double, isAbsent), result);
         isAbsent.link(&jit());
-        defineBitsOfDouble(*this, value, result);
+        jit().move64ToDouble(result, takeResultFPR());
+        defineDouble(value);
         return;
     }
     case Opcode::NewContiguousArray:

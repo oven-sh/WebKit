@@ -214,6 +214,7 @@ void listCreatedField(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoT
 void listCreatedFieldAndReturn(StubAssembler&, const KeyOrderRegisters&, GPRReg value, std::optional<FieldOfLayout> known = std::nullopt);
 void createGranuleOfField(StubAssembler&, const FieldStoreRegisters&, const WaysToFieldInExtension&);
 PreludeExit emitPrivateDefinePrelude(StubAssembler&);
+PreludeExit emitPrivateHasPrelude(StubAssembler&);
 PreludeExit emitPrivateSetPrelude(StubAssembler&);
 
 inline constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);

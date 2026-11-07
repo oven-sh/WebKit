@@ -77,6 +77,7 @@ struct StepsOfLateModuleSites {
 struct ModuleEvaluationParts {
     Vector<ModuleStart> starts;
     Vector<uint32_t> startsByBody;
+    BitVector bodiesWithStart;
     Vector<ModuleStep> steps;
     Vector<ModuleID> filesRunWhileLoaded;
     Vector<BareModuleSite> bareSites;

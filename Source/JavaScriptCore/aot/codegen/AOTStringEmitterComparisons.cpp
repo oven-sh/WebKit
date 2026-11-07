@@ -119,7 +119,7 @@ void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context,
 void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, const String& text, BranchTargets targets)
 {
     if (!comparedTextFitsInRegister(text)) {
-        branch(Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first)), targets);
+        branch(Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand, text.length()), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first)), targets);
         return;
     }
     LValue operands[] = { subject, m_out.constInt64(static_cast<int64_t>(packStringIntoRegister(text))) };
@@ -265,7 +265,7 @@ Condition StringEmitter::equalsLiteral(const OperationContext& context, Compared
         });
     }
     m_out.noteFormOf(comparisonsWithLiteral, Form::Closed, StateOfKnowledge::LiteralComparedByStub);
-    return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first));
+    return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand, text.length()), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first));
 }
 
 void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOperand operand, LValue subject, std::optional<FlatStringCell> flatSubject, bool everyCellIsString)

@@ -141,7 +141,7 @@ static void testSetsAnswerAsPlainListsDo()
         for (uint32_t step = 0; step < 6000; ++step) {
             size_t place = random.getUint32(numberOfSets);
             size_t other = random.getUint32(numberOfSets);
-            switch (random.getUint32(12)) {
+            switch (random.getUint32(13)) {
             case 0:
             case 1:
             case 2:
@@ -162,6 +162,19 @@ static void testSetsAnswerAsPlainListsDo()
                 AOT_TEST_CHECK(sets[place].add(number) == wasAbsent && lists[place].add(number) == wasAbsent);
                 if (wasAbsent)
                     plain[place].append(number);
+                break;
+            }
+            case 12: {
+                if (nextNumber < 64)
+                    break;
+                uint32_t number = 32 + random.getUint32(nextNumber - 32);
+                for (uint32_t fall = random.getUint32(24); fall && number; --fall) {
+                    number -= std::min(number, 1 + random.getUint32(3));
+                    bool wasAbsent = !plain[place].contains(number);
+                    AOT_TEST_CHECK(sets[place].add(number) == wasAbsent && lists[place].add(number) == wasAbsent);
+                    if (wasAbsent)
+                        plain[place].append(number);
+                }
                 break;
             }
             case 6:
@@ -460,6 +473,29 @@ static void testNumberFarAboveOldOneCostsNoMore()
     AOT_TEST_CHECK(old.size() == 1 && old.contains(3));
 }
 
+static void testNumbersThatFallCostNoMoreEach()
+{
+    constexpr uint32_t numberOfNumbers = 400000;
+    ListOfAnswersUntilEnded list;
+    for (uint32_t above = 0; above < 8; ++above)
+        AOT_TEST_CHECK(list.add(3 * numberOfNumbers + above));
+    AOT_TEST_CHECK(list.add(0));
+    for (uint32_t number = numberOfNumbers; number; --number)
+        AOT_TEST_CHECK(list.add(3 * number - 1) && !list.add(3 * number - 1) && list.contains(3 * number - 1) && !list.contains(3 * number - 2));
+    AOT_TEST_CHECK(list.size() == numberOfNumbers + 9 && list.numberOfPlaces() <= 2 * list.size() + 16);
+    uint32_t numberSeen = 0;
+    uint32_t last = 0;
+    list.forEach([&](uint32_t number) {
+        AOT_TEST_CHECK(!numberSeen || last < number);
+        last = number;
+        ++numberSeen;
+    });
+    AOT_TEST_CHECK(numberSeen == list.size() && list.contains(0) && !list.contains(1) && list.contains(2) && !list.contains(3));
+    for (uint32_t number = 1; number <= numberOfNumbers; ++number)
+        AOT_TEST_CHECK(list.remove(3 * number - 1) && !list.contains(3 * number - 1));
+    AOT_TEST_CHECK(list.size() == 9 && list.contains(0) && list.contains(3 * numberOfNumbers + 7));
+}
+
 static void testStoresIntoFreshObjectsCostNoMoreEach()
 {
     constexpr uint32_t numberOfStatements = 200000;
@@ -486,6 +522,7 @@ std::span<const NativeTest> knownAnswersTests()
         { "known-answers/suspensions"_s, testSuspensions },
         { "known-answers/a-writer-ends-what-it-may-write"_s, testWriterEndsWhatItMayWrite },
         { "known-answers/a-number-far-above-an-old-one-costs-no-more"_s, testNumberFarAboveOldOneCostsNoMore },
+        { "known-answers/numbers-that-fall-cost-no-more-each"_s, testNumbersThatFallCostNoMoreEach },
         { "known-answers/stores-into-fresh-objects-cost-no-more-each"_s, testStoresIntoFreshObjectsCostNoMoreEach },
     };
     return tests;

@@ -1,8 +1,9 @@
 # function each(list: number[], visit: (value: number) => void) { for (let i = 0; i < list.length; i++) visit(list[i]); }
-# function main() { const list = fill(9), a = make(8), b = make(4); each(list, value => { if (value < a.limit) a.total += value; }); each(list, value => { if (value > b.limit) b.total += 1; }); sink(a.total + b.total); }
+# function main() { const list = fill(9), a = make(8), b = make(4); for (let turn = 0, turns = hidden(); turn < turns; turn++) { each(list, value => { if (value < a.limit) a.total += value; }); each(list, value => { if (value > b.limit) b.total += 1; }); } sink(a.total + b.total); }
 # Two closures reach the call in `each`; each copy of `each` knows its own. The look takes the effects of that one function: it runs no code that nobody has seen, but all that is told of its stores is
 # that they may reach whatever is in sight, the list among it. A copy of the loop whose turns begin again in the other copy is still tried for such a loop, and in it the stores are those of the closure's own
 # operations: the list is tested once in front of the loop and read by the kind of its storage.
+# The calls stand in a loop of main: outside every loop of its callers the loop of a helper that only calls what it is handed is built once, as it is written.
 # f4 = main
 # OPTIONS: check=Validate
 # RUN: walk f4 mechanisms=all
@@ -110,20 +111,35 @@ function f4 name="main" module=m0 flags=[IsChecked, HasExplicitName] thisType={t
     v8 = Integer integer=4
     v9 = Call v7, -, v8 calleeName="make"
     v10 = Convert v9 declared={type=undefined|null|L0 flags=[IsExpected]}
-    v11 = GetModuleVariable variable=g2
-    v12 = NewClosure v6 function=f5
-    v13 = Call v11, -, v2, v12 calleeName="each"
-    v14 = GetModuleVariable variable=g2
-    v15 = NewClosure v10 function=f6
-    v16 = Call v14, -, v2, v15 calleeName="each"
-    v17 = Builtin builtin=GlobalThis
-    v18 = PropGet v17 key="sink" [isFreeName]
-    v19 = PropGet v6 key="total"
-    v20 = PropGet v10 key="total"
-    v21 = Add v19, v20
-    v22 = Call v18, -, v21 calleeName="sink"
-    v23 = Undefined
-    Return v23
+    v11 = Integer
+    v12 = Convert v11 declared={type=number}
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="hidden" [isFreeName]
+    v15 = Call v14 calleeName="hidden"
+    Jump -> next b1(v12)
+  b1(v16: number):
+    LoopHint
+    v18 = Less v16, v15
+    Branch v18 -> taken b2(), notTaken b3()
+  b2():
+    v19 = GetModuleVariable variable=g2
+    v20 = NewClosure v6 function=f5
+    v21 = Call v19, -, v2, v20 calleeName="each"
+    v22 = GetModuleVariable variable=g2
+    v23 = NewClosure v10 function=f6
+    v24 = Call v22, -, v2, v23 calleeName="each"
+    v25 = Increment v16
+    v26 = Convert v25 declared={type=number}
+    Jump -> next b1(v26)
+  b3():
+    v27 = Builtin builtin=GlobalThis
+    v28 = PropGet v27 key="sink" [isFreeName]
+    v29 = PropGet v6 key="total"
+    v30 = PropGet v10 key="total"
+    v31 = Add v29, v30
+    v32 = Call v28, -, v31 calleeName="sink"
+    v33 = Undefined
+    Return v33
 }
 function f5 module=m0 kind=Arrow flags=[IsChecked] length=1 captures=[{type=anything variableName="a"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number):

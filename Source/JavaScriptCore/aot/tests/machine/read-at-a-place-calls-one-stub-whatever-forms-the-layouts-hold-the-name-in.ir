@@ -13,9 +13,9 @@
 # PLAN-NEXT: slot 0 "part" Cell32 Inline
 # PLAN-NEXT: slot 1 "whole" Cell32 Inline
 # RUN(CODE): bytes f1:Body f2:Body f5:Body mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
-# CODE: Call Stub ReadAtSite.OfAnyValueUnderNameWithColumn
-# CODE: Call Stub ReadAtSite.OfAnyValueUnderNameWithColumn
-# CODE: Call Stub ReadAtSite.OfAnyValueUnderNameWithColumn
+# CODE: Call Stub ReadAtSite.OfAnyValue
+# CODE: Call Stub ReadAtSite.OfAnyValue
+# CODE: Call Stub ReadAtSite.OfAnyValue
 # RUN: run-in-shell globalThis.publish = () => { }; globalThis.show = (a, b) => print(a, b); mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
 # CHECK: 1.5 7
 # CHECK-NEXT: 2.5 w

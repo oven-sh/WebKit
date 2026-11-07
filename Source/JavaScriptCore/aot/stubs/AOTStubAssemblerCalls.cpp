@@ -75,17 +75,14 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
             emitCall();
         });
     } else {
-#if CPU(X86_64)
-        subPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
-#endif
         RegisterSet lostAnyway = m_recording.clobbered();
         lostAnyway.merge(RegisterSet::macroClobberedGPRs());
         lostAnyway.merge(floatingPointRegistersLostToAccessors(preservingCall.callee));
-        SavedRegisterArea area = storeRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, preservingCall.cellsToKeep);
+        SavedRegisterArea area = storeRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, preservingCall.cellsToKeep, isX86_64() ? sizeof(CPURegister) : 0);
         withSavedRegisters(RegisterSet::fromIterable(area.registers), [&] {
             emitCall();
         });
-        loadSavedRegisters(area);
+        loadSavedRegisters(area, StackPointerAfterLoads::IsLeftToEpilogue);
     }
     emitFunctionEpilogue();
     if (!preservingCall.checksException) {

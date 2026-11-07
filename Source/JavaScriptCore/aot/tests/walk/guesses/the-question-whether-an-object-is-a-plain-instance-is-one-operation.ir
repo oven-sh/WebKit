@@ -2,7 +2,7 @@
 # with the layout that this class itself declares and with the guards that its yes rests on, and lets the operand go. The emitter asks the shape and one byte of the cell.
 # Unstamped the operation answers false.
 # RUN: walk f1 mechanisms=all
-# CHECK: = IsPlainInstanceOf v0 conditions=[{{*}}{kind=MemberPassedByStores layout=L0 key="level"}, {kind=MemberPassedByStores layout=L0 key="mark"}] receivers=[L0]
+# CHECK: = IsPlainInstanceOf v0 conditions=[{{*}}{kind=MemberPassedByStores layout=L0 key="level"}, {kind=MemberPassedByStores layout=L0 key="mark"}, {layout=L0 key="what sees a read or a store above"}] receivers=[L0]
 # RUN(WITHHELD): walk f1 mechanisms=all-Guesses
 # WITHHELD: = IsPlainInstanceOf
 # WITHHELD-NOT: receivers=

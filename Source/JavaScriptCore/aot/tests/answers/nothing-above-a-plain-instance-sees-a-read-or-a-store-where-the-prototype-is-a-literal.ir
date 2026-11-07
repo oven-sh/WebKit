@@ -1,0 +1,146 @@
+# THE WORD OF $isPlainInstanceOf ON WHAT SEES A READ OR A STORE ABOVE, WHERE THE PROTOTYPE OBJECT IS A LITERAL's: its members lie in slots of a compiled object, and freezing it changes no property's own attributes.
+# function Gauge(level) { this.level = level; }
+# Gauge.prototype = { read() { return this.level; } };
+# function ask(object) { return $isPlainInstanceOf(object, Gauge) ? "yes" : "no"; }            in a file of the library
+# keep(Gauge);
+# early(Gauge);
+# const asks = keep(ask);
+# print(asks(new Gauge(1)), asks(new Gauge(2)));
+# later(Gauge);
+# print(asks(new Gauge(3)), asks(new Gauge(4)));
+# OPTIONS: mechanisms=all
+# RUN(FORM): walk f2
+# FORM: key="what sees a read or a store above"}
+# RUN(QUIET): run-in-shell keep = x => x; early = function () { }; later = function () { };
+# QUIET: yes yes
+# QUIET-NEXT: yes yes
+# RUN(STORED): run-in-shell keep = x => x; early = function () { }; later = function (Gauge) { Gauge.prototype.other = function () { }; Gauge.prototype.read = function () { return 0; }; };
+# STORED: yes yes
+# STORED-NEXT: yes yes
+# RUN(GETTER): run-in-shell keep = x => x; early = function () { }; later = function (Gauge) { Object.defineProperty(Gauge.prototype, "other", { get() { return 1; } }); };
+# GETTER: yes yes
+# GETTER-NEXT: no no
+# RUN(OVER): run-in-shell keep = x => x; early = function () { }; later = function (Gauge) { Object.defineProperty(Gauge.prototype, "read", { get() { return function () { return 1; }; } }); };
+# OVER: yes yes
+# OVER-NEXT: no no
+# RUN(READONLY): run-in-shell keep = x => x; early = function () { }; later = function (Gauge) { Object.defineProperty(Gauge.prototype, "read", { writable: false }); };
+# READONLY: yes yes
+# READONLY-NEXT: no no
+# RUN(FROZEN): run-in-shell keep = x => x; early = function () { }; later = function (Gauge) { Object.freeze(Gauge.prototype); };
+# FROZEN: yes yes
+# FROZEN-NEXT: no no
+# RUN(FIRSTGETTER): run-in-shell keep = x => x; early = function (Gauge) { Object.defineProperty(Gauge.prototype, "other", { get() { return 1; } }); }; later = function () { };
+# FIRSTGETTER: no no
+# FIRSTGETTER-NEXT: no no
+# RUN(FIRSTOVER): run-in-shell keep = x => x; early = function (Gauge) { Object.defineProperty(Gauge.prototype, "read", { get() { return function () { return 1; }; } }); }; later = function () { };
+# FIRSTOVER: no no
+# FIRSTOVER-NEXT: no no
+# RUN(FIRSTREADONLY): run-in-shell keep = x => x; early = function (Gauge) { Object.defineProperty(Gauge.prototype, "read", { writable: false }); }; later = function () { };
+# FIRSTREADONLY: no no
+# FIRSTREADONLY-NEXT: no no
+# RUN(FIRSTFROZEN): run-in-shell keep = x => x; early = function (Gauge) { Object.freeze(Gauge.prototype); }; later = function () { };
+# FIRSTFROZEN: no no
+# FIRSTFROZEN-NEXT: no no
+
+module m0 path="word.js" displayPath="word.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Gauge" module=m0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=0 ownFieldCount=1
+layout L1 module=m0 flags=[IsNeverAllocated] place=0
+variable g0 name="Gauge" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = GetModuleVariable variable=g0 @46
+    v3 = NewDictionary @64
+    v4 = NewClosure function=f3 @66
+    PropDefine v3, v4 key="read" @66
+    PropSet v2, v3 key="prototype" @46
+    v7 = Builtin builtin=GlobalThis @181
+    v8 = PropGet v7 key="keep" [isFreeName] @181
+    v9 = GetModuleVariable variable=g0 @186
+    v10 = Call v8, -, v9 calleeName="keep" @181
+    v11 = Builtin builtin=GlobalThis @194
+    v12 = PropGet v11 key="early" [isFreeName] @194
+    v13 = GetModuleVariable variable=g0 @200
+    v14 = Call v12, -, v13 calleeName="early" @194
+    v15 = Builtin builtin=GlobalThis @221
+    v16 = PropGet v15 key="keep" [isFreeName] @221
+    v17 = Call v16, -, v1 calleeName="keep" @221
+    v18 = Builtin builtin=GlobalThis @232
+    v19 = PropGet v18 key="print" [isFreeName] @232
+    v20 = GetModuleVariable variable=g0 @247
+    v21 = Integer integer=1 @253
+    v22 = Construct v20, -, v21 calleeName="Gauge" @247
+    v23 = Call v17, -, v22 calleeName="asks" @238
+    v24 = GetModuleVariable variable=g0 @267
+    v25 = Integer integer=2 @273
+    v26 = Construct v24, -, v25 calleeName="Gauge" @267
+    v27 = Call v17, -, v26 calleeName="asks" @258
+    v28 = Call v19, -, v23, v27 calleeName="print" @232
+    v29 = Builtin builtin=GlobalThis @279
+    v30 = PropGet v29 key="later" [isFreeName] @279
+    v31 = GetModuleVariable variable=g0 @285
+    v32 = Call v30, -, v31 calleeName="later" @279
+    v33 = Builtin builtin=GlobalThis @293
+    v34 = PropGet v33 key="print" [isFreeName] @293
+    v35 = GetModuleVariable variable=g0 @308
+    v36 = Integer integer=3 @314
+    v37 = Construct v35, -, v36 calleeName="Gauge" @308
+    v38 = Call v17, -, v37 calleeName="asks" @299
+    v39 = GetModuleVariable variable=g0 @328
+    v40 = Integer integer=4 @334
+    v41 = Construct v39, -, v40 calleeName="Gauge" @328
+    v42 = Call v17, -, v41 calleeName="asks" @319
+    v43 = Call v34, -, v38, v42 calleeName="print" @293
+    v44 = Undefined @293
+    Return v44 @293
+}
+function f1 name="Gauge" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = Undefined @24
+    Return v3 @24
+}
+function f2 name="ask" module=m2 position=99 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined @129
+    v2 = Undefined @129
+    v3 = GetModuleVariable variable=g0 @156
+    v4 = IsPlainInstanceOf v0, v3 @129
+    v5 = ToBoolean v4 @129
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @129
+  b1(v6):
+    v7 = String string="yes" @165
+    Jump -> next b3(v7) @165
+  b2(v8):
+    v9 = String string="no" @173
+    Jump -> next b3(v9) @173
+  b3(v10):
+    Return v10 @173
+}
+function f3 name="read" module=m0 position=66 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="level" @82
+    Return v1 @82
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

@@ -1,0 +1,89 @@
+# function give(x) { if (typeof x === "string") return x; return "none"; }
+# function take(text) { return text.length; }
+# function hand(x) { if (typeof x === "string") return take(x); return 0; }
+# print(give(id("text")) + give(id(5)));
+# print(hand(id("text")) + hand(id(5)));
+# f1 = take, f2 = give, f3 = hand
+# What a function hands back is held to the type that its callers believe, by a door in every build. The door is left out where the walk calls the value shown to fit: here a test has just shown the text.
+# Where proofs are checked at run time this door asks from nothing, as the doors of variables, captures, scopes and fields do, and as a body asks its parameters: what the walk calls shown is a belief of the walk.
+# With what is shown of a value falsified by hand (a parameter of the head of a closed loop said to be undefined) a text came back out of a function whose result Link held to undefined, in silence under the word.
+# What the unit has made itself is not asked: a check would be one more user of the cell, and a closure or an object with two users is neither lent nor laid in the frame.
+# A RIGHT PROGRAM, NO LIE: THE RECORDS.
+# RUN(RESULT): walk f2 mechanisms=all-Inlining testing=CheckProofsAtRunTime
+# RESULT: [[given]]: string @{{*}} = Narrowed
+# RESULT: CheckProof [[given]] checkedType=string typeWithoutProof=absent|anything source=ResultOfCall
+# RESULT-NEXT: Return [[given]]
+# RUN(ANSWERS): run-in-shell mechanisms=all-Inlining testing=CheckProofsAtRunTime
+# ANSWERS: textnone
+# ANSWERS-NEXT: 4
+# ANSWERS-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="take" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @289
+    v5 = PropGet v4 key="print" [isFreeName] @289
+    v6 = Builtin builtin=GlobalThis @300
+    v7 = PropGet v6 key="id" [isFreeName] @300
+    v8 = String string="text" @303
+    v9 = Call v7, -, v8 calleeName="id" @300
+    v10 = Call v1, -, v9 calleeName="give" @295
+    v11 = Builtin builtin=GlobalThis @319
+    v12 = PropGet v11 key="id" [isFreeName] @319
+    v13 = Integer integer=5 @322
+    v14 = Call v12, -, v13 calleeName="id" @319
+    v15 = Call v1, -, v14 calleeName="give" @314
+    v16 = Add v10, v15 @314
+    v17 = Call v5, -, v16 calleeName="print" @289
+    v18 = Builtin builtin=GlobalThis @328
+    v19 = PropGet v18 key="print" [isFreeName] @328
+    v20 = Builtin builtin=GlobalThis @339
+    v21 = PropGet v20 key="id" [isFreeName] @339
+    v22 = String string="text" @342
+    v23 = Call v21, -, v22 calleeName="id" @339
+    v24 = Call v3, -, v23 calleeName="hand" @334
+    v25 = Builtin builtin=GlobalThis @358
+    v26 = PropGet v25 key="id" [isFreeName] @358
+    v27 = Integer integer=5 @361
+    v28 = Call v26, -, v27 calleeName="id" @358
+    v29 = Call v3, -, v28 calleeName="hand" @353
+    v30 = Add v24, v29 @353
+    v31 = Call v19, -, v30 calleeName="print" @328
+    v32 = Undefined @328
+    Return v32 @328
+}
+function f1 name="take" module=m0 position=158 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = PropGet v0 key="length" @195
+    Return v1 @195
+}
+function f2 name="give" module=m0 position=80 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string @108
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0) @108
+  b1(v2):
+    v3 = NarrowByTest v0, v2 @108
+    Return v3 @138
+  b2(v4):
+    v5 = String string="none" @148
+    Return v5 @148
+}
+function f3 name="hand" module=m0 position=210 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string @238
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0) @238
+  b1(v2):
+    v3 = NarrowByTest v0, v2 @238
+    v4 = GetModuleVariable variable=g0 @268
+    v5 = Call v4, -, v3 calleeName="take" @268
+    ReturnCall v5 @268
+  b2(v6):
+    v7 = Integer @284
+    Return v7 @284
+}

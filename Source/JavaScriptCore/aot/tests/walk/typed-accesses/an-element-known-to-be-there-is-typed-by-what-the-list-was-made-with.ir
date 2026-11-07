@@ -1,0 +1,101 @@
+# function lengthOfOne(a: number, k: number) { const t = ["n" + a, "m" + a, "k" + a, "j" + a]; return t[k & 3].length; }   function oneOfConstants(k: number) { const t = ["a", "bb", "ccc", "dddd"]; return t[k & 3].length; }
+# function storedBetween(a: number, k: number, other: any) { const t: any[] = ["n" + a, "m" + a, "k" + a, "j" + a]; t[1] = other; return t[k & 3].length; }   function oneOfTwoKinds(a: number, k: number) { const t = ["n" + a, a, "k" + a, a + 1]; return t[k & 3]; }
+# A list is made in sight, nothing has written it since, and the position lies inside it: the element read is one of the values that the list was made with. So it has their type: the union of the types of the operands of the making, or of the kinds of the constants.
+# No test of its type stands behind the read, and no check of what Link says of the contents: nothing of Link's is leaned on. No more is SHOWN of the element than is shown of the values that the list was made with.
+# RUN: walk f1 mechanisms=all
+# CHECK: : string @JSValue = GetArrayElement {{*}} arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, isPresent]
+# CHECK: = GetStringLength
+# RUN(TESTS): walk f1 mechanisms=all
+# TESTS-NOT: = TypeTest
+# Under the word that checks proofs at run time the type is asked all the same: that is the oracle of the red controls.
+# REQUIRES(CHECKS): as-written
+# RUN(CHECKS): walk f1 mechanisms=all
+# CHECKS-NOT: source=Contents
+# RUN(CONSTANTS): walk f2 mechanisms=all
+# CONSTANTS: : string @JSValue = GetArrayElement {{*}} arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, isPresent]
+# RUN(UNTESTED): walk f2 mechanisms=all
+# UNTESTED-NOT: = TypeTest
+# A store between the making and the read ends what is remembered.
+# RUN(STORED): walk f3 mechanisms=all
+# STORED-NOT: isPresent
+# Two kinds give both.
+# RUN(BOTH): walk f4 mechanisms=all
+# BOTH: : number|string @JSValue = GetArrayElement {{*}} arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, isPresent]
+# RUN(ANSWER): run-in-shell globalThis.sink = (lengthOfOne, oneOfConstants, storedBetween, oneOfTwoKinds) => { const all = []; for (let k = 0; k < 5; k++) all.push(lengthOfOne(10 ** k, k), oneOfConstants(k), storedBetween(1, k, k === 1 ? 7 : [1, 2, 3]), oneOfTwoKinds(k, k)); print(all.join(" ")); };
+# ANSWER: 2 1 2 n0 3 2  1 4 3 2 k2 5 4 2 4 6 1 2 n4
+# ANSWER-NEXT: exited with 0
+
+data d0 root=Array{contents=anything elements=[String{value="a"}, String{value="bb"}, String{value="ccc"}, String{value="dddd"}]} module=m0
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="lengthOfOne" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = String string="n"
+    v3 = Add v2, v0
+    v4 = String string="m"
+    v5 = Add v4, v0
+    v6 = String string="k"
+    v7 = Add v6, v0
+    v8 = String string="j"
+    v9 = Add v8, v0
+    v10 = NewArray v3, v5, v7, v9 contents=anything
+    v11 = Integer integer=3
+    v12 = BitAnd v1, v11
+    v13 = ElemGet v10, v12
+    v14 = PropGet v13 key="length"
+    Return v14
+}
+function f2 name="oneOfConstants" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Data data=d0
+    v2 = Integer integer=3
+    v3 = BitAnd v0, v2
+    v4 = ElemGet v1, v3
+    v5 = PropGet v4 key="length"
+    Return v5
+}
+function f3 name="storedBetween" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: anything):
+    v3 = String string="n"
+    v4 = Add v3, v0
+    v5 = String string="m"
+    v6 = Add v5, v0
+    v7 = String string="k"
+    v8 = Add v7, v0
+    v9 = String string="j"
+    v10 = Add v9, v0
+    v11 = NewArray v4, v6, v8, v10 contents=anything
+    v12 = Convert v11 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v13 = Integer integer=1
+    ElemSet v12, v13, v2 mode=Strict
+    v15 = Integer integer=3
+    v16 = BitAnd v1, v15
+    v17 = ElemGet v12, v16
+    v18 = PropGet v17 key="length"
+    Return v18
+}
+function f4 name="oneOfTwoKinds" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = String string="n"
+    v3 = Add v2, v0
+    v4 = String string="k"
+    v5 = Add v4, v0
+    v6 = Integer integer=1
+    v7 = Add v0, v6
+    v8 = NewArray v3, v0, v5, v7 contents=anything
+    v9 = Integer integer=3
+    v10 = BitAnd v1, v9
+    v11 = ElemGet v8, v10
+    Return v11
+}

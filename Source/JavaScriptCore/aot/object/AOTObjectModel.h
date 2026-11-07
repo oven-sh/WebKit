@@ -66,6 +66,7 @@ public:
         return fieldAccepts(field, value) || (field.slotHoldsUndefinedAndNull && value.isUndefinedOrNull());
     }
     std::optional<AcceptedValue> accept(const FieldData&, JSValue) const;
+    static bool slotTakesHalf(const FieldData&, const JSCell* getterOrSetter);
     bool passes(const ShapeTestData& test, uint32_t shape) const { return m_tables.passes(test, shape); }
     Object* compiledObject(JSValue) const;
     bool isOfThisRealm(const JSCell*) const;
@@ -132,9 +133,11 @@ public:
         StructureID after;
         uint32_t orderAndCountAfter;
     };
-    enum class KindOfStep : bool { Creates, Removes };
+    enum class KindOfStep : uint8_t { Creates, Removes, CreatesAtSlot };
     const StepOfKeyOrder* findStepOfKeyOrder(StructureID before, uint32_t orderAndCountBefore, uint16_t field, KindOfStep) const;
     void rememberStepOfKeyOrder(StructureID before, uint32_t orderAndCountBefore, uint16_t field, KindOfStep, StructureID after, uint32_t orderAndCountAfter);
+    JSCellButterfly* findKeysOfOrderWithoutNumber(StructureID, uint32_t count, KeyListKind) const;
+    void rememberKeysOfOrderWithoutNumber(StructureID, uint32_t count, KeyListKind, JSCellButterfly*);
 
     JSCell* allocate(VM&, uint32_t allocation);
     JSCell* allocateAsCompiledCodeDoes(VM&, uint32_t allocation);
@@ -178,6 +181,11 @@ private:
 
     template<typename Appender> void visitUsualStructures(Appender&, size_t begin, size_t end);
     template<typename Appender> void visitRecords(Appender&, size_t begin, size_t end);
+    static bool livesWhilePrototypeLives(const LayoutData& layout) { return layout.isClass() && layout.evaluation() == EvaluationState::PredictedOnce; }
+    bool livesWhilePrototypeLives(const AllocationSiteRecord&) const;
+    bool noteWhetherLivesWhilePrototypeLives(const LayoutData&);
+    void didNameStructureThatLivesWhilePrototypeLives(AllocationSiteRecord&);
+    void forgetStructuresThatDied(VM&, CollectionScope);
 
     AllocationSiteRecord* recordOfSameAllocation(uint32_t allocation) const;
     AllocationSiteRecord& ensureRecord(uint32_t allocation);
@@ -198,8 +206,22 @@ private:
     using StepsOfKeyOrders = std::array<StepOfKeyOrder, 4096>;
     static size_t placeOfStep(StructureID before, uint32_t orderAndCountBefore, uint32_t fieldAndKind) { return ((before.bits() >> 4 ^ orderAndCountBefore * 0x9e3779b1u ^ fieldAndKind * 0x85ebca6bu) * 0x9e3779b1u) >> 20 & ~static_cast<size_t>(1); }
     std::unique_ptr<StepsOfKeyOrders> m_stepsOfKeyOrders;
+    struct KeysOfOrderWithoutNumber {
+        StructureID structure;
+        uint32_t countAndKind;
+        JSCellButterfly* list;
+    };
+    using KeysOfOrdersWithoutNumber = std::array<KeysOfOrderWithoutNumber, 1024>;
+    static size_t placeOfKeys(StructureID structure, uint32_t countAndKind) { return ((structure.bits() >> 4 ^ countAndKind * 0x85ebca6bu) * 0x9e3779b1u) >> 22; }
+    std::unique_ptr<KeysOfOrdersWithoutNumber> m_keysOfOrdersWithoutNumber;
     RememberedSlotSet m_writtenStructures;
     RememberedSlotSet m_writtenRecords;
+    BitVector m_shapesThatLiveWhilePrototypesLive;
+    Vector<uint32_t> m_listOfShapesThatLiveWhilePrototypesLive;
+    Vector<uint32_t> m_shapesGivenStructuresSinceCollection;
+    BitVector m_recordsThatLiveWhilePrototypesLive;
+    Vector<AllocationSiteRecord*> m_listOfRecordsThatLiveWhilePrototypesLive;
+    Vector<AllocationSiteRecord*> m_recordsGivenStructuresSinceCollection;
 };
 
 struct ObjectModel {

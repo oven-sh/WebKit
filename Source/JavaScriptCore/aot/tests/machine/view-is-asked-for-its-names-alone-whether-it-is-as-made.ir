@@ -4,12 +4,13 @@
 # The test once asked that bit too, so it passed for no typed array, and every `view.length` behind it went by the name: 106 instructions a turn of `for (let i = 0; i < view.length; i++) total += view[i]`, 34 since.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = IsPristine {{*}} builtinClass=Uint8Array aspects=[Storage, Names]
+# CHECK: = IsPristine {{*}} builtinClass=Uint8Array aspects=[Names]
 # CHECK: = GetTypedArrayLength
 # RUN(MACHINE): emit f1:Body mechanisms=all
 # MACHINE-LABEL: unit f1:Body
 # MACHINE: = Load8Z({{*}}JSCell_typeInfoFlags
 # MACHINE-NOT: Structure_bitField
+# MACHINE-NOT: JSArrayBufferView_sharingOfMemory
 # RUN(SHELL): run-in-shell globalThis.sink = (size) => { const plain = new Uint8Array(3); const hidden = Object.defineProperty(new Uint8Array(3), "length", { value: 7 }); const below = Object.setPrototypeOf(new Uint8Array(3), { get length() { return 9; } }); let said = ""; for (let i = 0; i < 3; i++) said += size(plain) + " " + size(hidden) + " " + size(below) + " "; Object.defineProperty(plain, "length", { value: 5 }); print(said + size(plain)); };
 # SHELL: 3 7 9 3 7 9 3 7 9 5
 # SHELL: exited with 0

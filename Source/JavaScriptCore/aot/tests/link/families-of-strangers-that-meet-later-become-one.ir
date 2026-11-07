@@ -4,9 +4,9 @@
 # function read(o) { return o.x; }  read(first(flag));  const either = flag ? first(flag) : second(flag);  readEither(either)
 # Five meet in what each function gives, one more than a set takes, so they are lost: two families. The reader of the first five was given its node before the families met. It is tied to the node of the other five, so it finds what all ten hold. Nothing has escaped
 # RUN: link functions layouts mechanisms=all
-# CHECK: function f3 callers-known one-callee {{*}}result=undefined|null|true|i32|string
+# CHECK: function f3 callers-known one-callee {{*}}result=undefined|null|true|int[0, 2147483647]|string
 # CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9
-# CHECK: function f4 callers-known one-callee {{*}}result=undefined|null|true|i32|string
+# CHECK: function f4 callers-known one-callee {{*}}result=undefined|null|true|int[0, 2147483647]|string
 # CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9
 # CHECK: layout L0 {{*}}changes=[]
 # CHECK: layout L1 {{*}}changes=[]

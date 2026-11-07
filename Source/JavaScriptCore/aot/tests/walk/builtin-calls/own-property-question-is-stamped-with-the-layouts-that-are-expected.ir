@@ -8,15 +8,15 @@
 # RUN(OTHER): walk f2 mechanisms=all
 # OTHER-LABEL: code f2:Body
 # OTHER: : boolean @Boolean = PropHasOwn v0 key="other" calledBuiltin=ObjectHasOwn receivers=[L0]
-# An index may be an element, and of a value of which nothing is written nothing is expected: the code in line as before.
+# An index may be an element: the code in line as before. Of a value of which nothing is written nothing is expected: the question goes by name, unstamped, and no cell is made of the written name.
 # RUN(INDEX): walk f3 mechanisms=all
 # INDEX-LABEL: code f3:Body
 # INDEX-NOT: PropHasOwn
 # INDEX: inlineBuiltin=ObjectHasOwn
 # RUN(UNKNOWN): walk f4 mechanisms=all
 # UNKNOWN-LABEL: code f4:Body
-# UNKNOWN-NOT: PropHasOwn
-# UNKNOWN: inlineBuiltin=ObjectHasOwn
+# UNKNOWN-NOT: inlineBuiltin=ObjectHasOwn
+# UNKNOWN: = PropHasOwn v0 key="filled" calledBuiltin=ObjectHasOwn traits=
 # Without guesses nothing is stamped.
 # RUN(WITHOUT): walk f1 mechanisms=all-Guesses
 # WITHOUT-LABEL: code f1:Body

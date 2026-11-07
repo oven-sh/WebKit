@@ -103,7 +103,7 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, cons
     Integer header = headerOfHeapCells.finish();
 
     CellPointer cell = cellAllocation.allocateInFrame(value, layout.size);
-    CodeGenerator::InitializationScope scope(generator());
+    CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap::No);
     cellAllocation.storeHeader(cell, header);
     storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(allocation.placed.orderWord)));
     uint32_t shapeWord = shapeWordOf(allocation.placed.shape);
@@ -189,7 +189,7 @@ void AllocationEmitter::clearBirthMark(CellPointer cell, const Type& type)
         std::span<const LayoutID> members = membersOf(types(), type.layouts);
         ShapeRange shapes = members.size() == 1 ? m_plan.shapes().shapesOf(members[0]) : ShapeRange { };
         if (shapes.count == 1) {
-            CodeGenerator::InitializationScope scope(generator());
+            CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap::No);
             storeField(cell, m_heaps.AOTObject_shapeWord, word32(static_cast<int32_t>(shapeWordOf(shapes.first))));
             return;
         }
@@ -411,8 +411,7 @@ void AllocationEmitter::initializeHiddenFields(CellPointer cell, LayoutID layout
 {
     // A store whose receiver may also be on the heap runs its barrier, which must not mistake a frame cell for a marked one.
     const SlotPlan& plan = m_plan.slots();
-    bool someBarrierMayReadState = !plan.layout(layout).liesOnlyInFrames;
-    if (storage != AllocationStorage::Heap && !hasStateOfFrameCell && someBarrierMayReadState)
+    if (storage != AllocationStorage::Heap && !hasStateOfFrameCell)
         m_out.store32As8(m_out.constInt32(frameCellState), m_out.address(m_heaps.collectorState, cell.value(), JSCell::cellStateOffset()));
 
     for (const PlacedSlot* hiddenWord : { &plan.extensionWord(layout), &plan.extraPropertiesWord(layout) }) {
@@ -589,19 +588,19 @@ void AllocationEmitter::storeFieldsInExtension(const ValueContext& value, CellPo
         callVoidOperation(value, RuntimeOperation::EnsureExtensionGranules, { cell, integer(static_cast<int64_t>(granuleBits)) });
 
     SlotEmitter& slots = emitter<SlotEmitter>();
-    bool hasStoredCell = false;
+    bool storesCellInHeap = value->storage() == AllocationStorage::Heap && std::ranges::any_of(initialFields, [&](const InitialField& field) {
+        return takesGranule(field) && traitsOf(field.slot->representation).holdsCell && typeOf(field.value).hasCells();
+    });
     {
-        CodeGenerator::InitializationScope scope(generator());
+        CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap(storesCellInHeap));
         Pointer extension = slots.extensionOf(cell, extensionWord);
         for (const InitialField& field : initialFields) {
-            if (!takesGranule(field))
-                continue;
-            hasStoredCell |= traitsOf(field.slot->representation).holdsCell && typeOf(field.value).hasCells();
-            slots.storeInExtension(extension, *field.slot, locationOfField(m_program, m_plan.slots(), layout, field.field), takeForSlot(field));
+            if (takesGranule(field))
+                slots.storeInExtension(extension, *field.slot, locationOfField(m_program, m_plan.slots(), layout, field.field), takeForSlot(field));
         }
     }
-    if (hasStoredCell && value->storage() == AllocationStorage::Heap)
-        emitter<BarrierEmitter>().fenceAfterInitialization();
+    if (storesCellInHeap)
+        emitter<BarrierEmitter>().fenceAfterLateStores();
     ensureStillAliveHere(cell);
 }
 
@@ -658,7 +657,7 @@ void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer ce
             CodeGenerator::InitializationScope scope(generator());
             emitter<AccessEmitter>().storeStructureAfterPrototypeTransition(cell, structureID);
         }
-        emitter<BarrierEmitter>().fenceAfterInitialization();
+        emitter<BarrierEmitter>().fenceAfterLateStores();
         join.add(cell);
 
         m_out.appendTo(isUnknown);
@@ -695,7 +694,7 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, con
     ZeroedBy zeroedBy = whoZeroesBodyOfFreshCell(value, allocation, emptySlots.span(), storage);
     CellPointer cell = allocateCell(value, allocation, layout, storage, zeroedBy);
     {
-        CodeGenerator::InitializationScope scope(generator());
+        CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap(storage == AllocationStorage::Heap));
         initializeHiddenFields(cell, layoutID, storage, zeroedBy, storage != AllocationStorage::Heap && initializesFrameObjectInStub(value, layoutID));
         storeInitialFields(cell, layoutID, initialFields);
         storeEmptySlots(cell, layoutID, emptySlots.span(), zeroedBy);

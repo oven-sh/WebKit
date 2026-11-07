@@ -1788,11 +1788,14 @@ void CodeTextParser::addFatesOfPolls()
         if (!acceptField("fate"_s))
             failExpecting("`fate=`"_s);
         FateOfPoll fate = parseSpelledEnumerator(FateOfPoll::IsDropped, "a fate of a poll"_s);
+        ValueID unlessKept = acceptField("unlessKept"_s) ? parseValueUse() : ValueID();
         if (!hasFailed() && m_code.at(poll).opcode != Opcode::LoopHint)
             fail("only a LoopHint has a fate"_s);
+        if (!hasFailed() && unlessKept && (fate != FateOfPoll::LeavesHandler || m_code.at(unlessKept).opcode == Opcode::LoopHint))
+            fail("only a poll that leaves its handler does so unless a record that is no poll is kept"_s);
         if (hasFailed())
             return;
-        m_code.addFateOfPoll(poll, fate);
+        m_code.addFateOfPoll(poll, fate, unlessKept);
     }
 }
 

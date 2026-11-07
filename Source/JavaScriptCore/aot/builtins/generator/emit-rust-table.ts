@@ -1,6 +1,6 @@
 import { screamingCase } from "../../ir/generator/names.ts";
 import { GeneratorError } from "./declarations.ts";
-import { DependencyClosure, type CallsForTexts, type LoadedModule } from "./dependency-closure.ts";
+import { closureOf, type CallsForTexts, type DependencyClosure, type LoadedModule } from "./dependency-closure.ts";
 import {
   emitArray,
   emitCount,
@@ -30,6 +30,7 @@ import {
   type ModelHostRead,
   type ModelModule,
   type ModelName,
+  type ModelOverload,
   type ModelParameter,
   type ModelPlace,
   type ModelPrototype,
@@ -221,7 +222,12 @@ function handsCodeOnlyWhatProgramHandedIn({ callbacks, handlerCalls, propertyAct
   );
 }
 
-function formatWrittenOperand({ mode, accepted, conversion, refused }: ModelParameter): string | null {
+function formatWrittenOperand({
+  mode,
+  accepted,
+  conversion,
+  refused,
+}: Pick<ModelParameter, "mode" | "accepted" | "conversion" | "refused">): string | null {
   if (conversion !== "None" || !holdsNothing(refused)) return null;
   if (accepted.isAnything) return mode === "Rest" ? "WrittenOperand::AnyFurther" : "WrittenOperand::Any";
   const isOfOneKind = !accepted.hasAnyObject && !accepted.hasPlainData && accepted.parts.length === 0;
@@ -257,25 +263,53 @@ function mayAnswerReceiver({ overloads }: ModelBuiltin): boolean {
   );
 }
 
-function formatQuietCalls(builtin: ModelBuiltin, context: EntryContext): string[] {
-  const calls = builtin.overloads.filter(({ mode }) => mode === "Call");
-  const firstThatRunsCode = calls.findIndex(({ effects }) => effects.capability === "js");
-  const inFrontOfIt = firstThatRunsCode === -1 ? calls : calls.slice(0, firstThatRunsCode);
-  const quiet: string[] = [];
+type OverloadJudgedForQuietCalls = Pick<ModelOverload, "mode" | "effects" | "receiver" | "flags" | "flow"> & {
+  code?: Pick<ModelOverload["code"], "directEntry">;
+  parameters: readonly Pick<ModelParameter, "mode" | "accepted" | "conversion" | "refused">[];
+  result: Pick<ModelResult, "type">;
+};
+
+const standsInFrontForItsDoor = (
+  { code, flags }: OverloadJudgedForQuietCalls,
+  behind: readonly OverloadJudgedForQuietCalls[],
+): boolean =>
+  code?.directEntry != null &&
+  flags.includes("RunsOnlyOperandCode") &&
+  behind.some(({ parameters }) => parameters.some(({ mode, accepted }) => mode === "Rest" && accepted.isAnything));
+
+export function listQuietCalls(
+  overloads: readonly OverloadJudgedForQuietCalls[],
+): { operands: string[]; answersPrimitive: boolean }[] {
+  const calls = overloads.filter(({ mode }) => mode === "Call");
+  const quiet: { operands: string[]; answersPrimitive: boolean }[] = [];
   let answersPrimitive = true;
-  for (const { parameters, receiver, flags, result, flow } of inFrontOfIt) {
+  let isBehindDoor = false;
+  for (const [index, overload] of calls.entries()) {
+    const { parameters, receiver, flags, result, flow, effects } = overload;
+    if (effects.capability === "js") {
+      if (!standsInFrontForItsDoor(overload, calls.slice(index + 1))) break;
+      answersPrimitive &&= holdsNoObject(result.type);
+      isBehindDoor = true;
+      continue;
+    }
     answersPrimitive &&= holdsNoObject(result.type);
+    if (receiver !== null || flags.includes("IsUndeclared") || !handsCodeOnlyWhatProgramHandedIn(flow)) break;
+    if (isBehindDoor && !parameters.every(({ accepted }) => holdsNoObject(accepted))) break;
     const operands = parameters.map(formatWrittenOperand);
-    const givesNoLine =
-      receiver !== null ||
-      flags.includes("IsUndeclared") ||
-      !handsCodeOnlyWhatProgramHandedIn(flow) ||
-      operands.includes(null);
-    if (givesNoLine) break;
-    const written = context.writtenOperandLists.add(operands.map(operand => operand ?? ""));
-    quiet.push(`QuietCall { operands: ${written}, answers_primitive: ${answersPrimitive} }`);
+    if (operands.includes(null)) {
+      if (parameters.every(({ accepted, conversion }) => conversion === "None" && holdsNoObject(accepted))) continue;
+      break;
+    }
+    quiet.push({ operands: operands.map(operand => operand ?? ""), answersPrimitive });
   }
   return quiet;
+}
+
+function formatQuietCalls(builtin: ModelBuiltin, context: EntryContext): string[] {
+  return listQuietCalls(builtin.overloads).map(
+    ({ operands, answersPrimitive }) =>
+      `QuietCall { operands: ${context.writtenOperandLists.add(operands)}, answers_primitive: ${answersPrimitive} }`,
+  );
 }
 
 function formatEntry(builtin: ModelBuiltin, context: EntryContext): string {
@@ -312,7 +346,7 @@ function formatEntry(builtin: ModelBuiltin, context: EntryContext): string {
 
 function emitEntries(model: TableModel): string {
   const context: EntryContext = {
-    closure: new DependencyClosure(model),
+    closure: closureOf(model),
     moduleOfNamespace: findModulesByNamespace(model.modules),
     moduleLoadLists: new StaticListPool("MODULE_LOAD_LIST", "ModuleLoad"),
     functionLists: new StaticListPool("FUNCTION_LIST", "RuntimeFunction"),
@@ -542,7 +576,7 @@ function formatHostRead({ context, exportName, use, namesLookedFor }: ModelHostR
 }
 
 function emitEntriesLeadingToStartupLoads(model: TableModel): string {
-  const closure = new DependencyClosure(model);
+  const closure = closureOf(model);
   return emitSlice(
     "pub static ENTRIES_LEADING_TO_STARTUP_LOADS: &[BuiltinId]",
     model.builtins.filter(builtin => closure.dependenciesOf(builtin).hasMethodCalledWithStartupLoads).map(formatBuiltinId),
@@ -609,7 +643,7 @@ function emitEntriesReadingUnderKeysTheyAreHanded(model: TableModel): string {
 }
 
 function emitWhatAnyOperandIsAsked(model: TableModel): string {
-  const closure = new DependencyClosure(model);
+  const closure = closureOf(model);
   const { calls, implementedBy } = closure.dependenciesOfAnyOperand();
   return [
     emitSlice(
@@ -652,7 +686,7 @@ function emitFunctionsOfOpenRealm(model: TableModel): string {
 }
 
 function emitFunctionsForAnyHostObject(model: TableModel): string {
-  const anyHostObject = new DependencyClosure(model).dependenciesOfAnyHostObject();
+  const anyHostObject = closureOf(model).dependenciesOfAnyHostObject();
   const { calls, callsWhereCallRunsOtherCode, implementedBy } = anyHostObject;
   return emitSlice(
     "pub static FUNCTIONS_FOR_ANY_HOST_OBJECT: &[RuntimeFunction]",

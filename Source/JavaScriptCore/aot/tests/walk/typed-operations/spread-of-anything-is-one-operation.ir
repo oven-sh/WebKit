@@ -4,8 +4,8 @@
 # RUN: walk f1 mechanisms=none+TypedOperations
 # CHECK-LABEL: code f1:Body
 # CHECK: [[list]]: {{*}} = NewArray
-# CHECK: [[given]]: {{*}} = RequireObjectCoercible {{*}}nullishAccess=Spread
-# CHECK: AppendIterable [[list]], [[given]] [readsListsByIndex]
+# CHECK-NOT: RequireObjectCoercible
+# CHECK: AppendIterable [[list]], v0 [readsListsByIndex]
 # RUN(NEVER): walk f1 mechanisms=none+TypedOperations
 # NEVER-NOT: @@iterator
 # NEVER-NOT: isLoopHead

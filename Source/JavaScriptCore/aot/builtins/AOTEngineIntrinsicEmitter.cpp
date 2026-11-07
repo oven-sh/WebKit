@@ -39,7 +39,6 @@ void EngineIntrinsicEmitter::generateReadsIteratorOfListUnseen(const ValueContex
 void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& value)
 {
     LBasicBlock invalid = newBlock();
-    Boxed length = boxedOperand(value, value->lengthOperand());
     CellPointer array = objectOrElse(value->arrayOperand(), invalid);
     LBasicBlock continuation = m_out.m_block;
 
@@ -49,15 +48,20 @@ void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& valu
     m_out.appendTo(continuation);
     Operand lengthAsHanded = get(value->lengthOperand());
     if (!lengthAsHanded.is<Number>()) {
-        defineAs(value, callOperation<Boxed>(value, RuntimeOperation::ArraySpeciesCreate, { length, array }), typeOf(value.id()));
+        defineAs(value, callOperation<Boxed>(value, RuntimeOperation::ArraySpeciesCreate, { boxedOperand(value, value->lengthOperand()), array }), typeOf(value.id()));
         return;
     }
 
     LBasicBlock asksRunTime = newBlock();
     Join<Boxed> join(m_out);
+    auto wholeNumberBehind = [](Number number) -> LValue {
+        return number.value()->opcode() == Machine::IToD && number.value()->child(0)->type() == Machine::Int64 ? number.value()->child(0) : nullptr;
+    };
     Number number = lengthAsHanded.as<Number>();
-    Integer count = emitter<ConversionEmitter>().toInteger(number);
-    branchUnless(logicalAnd(belowOrEqual(count, integer(maxHoleArrayCapacity)), equal(toNumber(count), number)), asksRunTime);
+    LValue whole = wholeNumberBehind(number);
+    Integer count = whole ? Integer(whole) : emitter<ConversionEmitter>().toInteger(number);
+    Condition hasRoomInLine = belowOrEqual(count, integer(maxHoleArrayCapacity));
+    branchUnless(whole ? hasRoomInLine : logicalAnd(hasRoomInLine, equal(toNumber(count), number)), asksRunTime);
     branchUnless(logicalAnd(hasCellType(array, ArrayType), emitter<ElementAccessEmitter>().isPristineArray(array, { PristineAspects::Storage, PristineAspects::Names })), asksRunTime);
     branchUnless(emitter<GuardEmitter>().belongsToInstance(array), asksRunTime);
     branchUnless(emitter<GuardEmitter>().realmWatchesSpeciesOfLists(), asksRunTime);
@@ -65,13 +69,13 @@ void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& valu
     ArrayAllocationEmitter allocation(generator());
     std::optional<Integer> roomOfEmptyList;
     if (Operand room = value->roomOperand() ? get(value->roomOperand()) : Operand(); isEmpty && value->roomOperand() && room.is<Number>())
-        roomOfEmptyList = emitter<ConversionEmitter>().toInteger(room.as<Number>());
+        roomOfEmptyList = wholeNumberBehind(room.as<Number>()) ? Integer(wholeNumberBehind(room.as<Number>())) : emitter<ConversionEmitter>().toInteger(room.as<Number>());
     allocation.allocateListLike(value, array, count, roomOfEmptyList, asksRunTime, scopedLambda<void(CellPointer)>([&](CellPointer list) {
         join.add(Boxed(list.value()));
     }), value->likeOperand() && typeOf(value->likeOperand()).isUndefinedOrNull() ? &arrayStorageFormOf(ArrayStorage::Int32) : nullptr);
 
     m_out.appendTo(asksRunTime);
-    join.add(callOperation<Boxed>(value, RuntimeOperation::ArraySpeciesCreate, { length, array }));
+    join.add(callOperation<Boxed>(value, RuntimeOperation::ArraySpeciesCreate, { boxedOperand(value, value->lengthOperand()), array }));
     defineAs(value, join.finish(), typeOf(value.id()));
 }
 

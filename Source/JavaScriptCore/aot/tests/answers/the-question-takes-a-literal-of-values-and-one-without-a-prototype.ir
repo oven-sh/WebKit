@@ -1,0 +1,282 @@
+# `$isAsBorn` takes a maker whose literal holds values that are no constants (NewObject, FinishObject, Return), and one whose literal is written with `__proto__: null`: an emitter's table.
+# The usual prototype of a literal's layout is Object.prototype, so an object born without one stands "below another prototype"; for such a maker the stamped form bears the flag isBornWithoutPrototype and the emitter asks the structure's prototype for null.
+# "As born" stays exact both ways: the two makers share one layout; an object of the one asked against the other gets a no. One whose link was taken away is as one born without (LINKTAKENAWAY); one that was given Object.prototype later stays a no (GIVENTHEUSUALLINK): false says nothing. A literal written below anything else names no layout.
+# function handler() { return 1; }
+# function make() { return { __proto__: null, finish: handler }; }
+# function makeWithLink() { return { finish: handler }; }
+# function makeBelowOther() { return { __proto__: holder(), finish: handler }; }
+# function ask(table) { return $isAsBorn(table, make) ? "yes " + (table.finish === handler) + " " + table.other : "no"; }            in a file of the library
+# function askWithLink(table) { return $isAsBorn(table, makeWithLink) ? "yes " + (table.finish === handler) + " " + table.other : "no"; }            in a file of the library
+# function askBelowOther(table) { return $isAsBorn(table, makeBelowOther) ? "yes " + table.finish : "no"; }            in a file of the library
+# function askLeniently(table) { return $isAsBornExceptForAddedNames(table, make) ? "yes " + table.other : "no"; }            in a file of the library
+# const makes = keep(make), makesWithLink = keep(makeWithLink), makesBelowOther = keep(makeBelowOther);
+# const asks = keep(ask), asksWithLink = keep(askWithLink), asksBelowOther = keep(askBelowOther), asksLeniently = keep(askLeniently);
+# const bare = makes(), linked = makesWithLink();
+# print(asks(bare), "|", asksLeniently(bare), "|", asksWithLink(bare), "|", asksWithLink(linked), "|", asks(linked));
+# change(bare, linked);
+# print(asks(bare), "|", asksLeniently(bare), "|", asksWithLink(bare), "|", asksWithLink(linked), "|", asks(linked));
+# print(asksBelowOther(makesBelowOther()));
+# OPTIONS: mechanisms=all
+# RUN(FORM): walk f5
+# FORM: = IsPlainInstanceOf v0{{*}}receivers=[L0]{{*}}isBornWithoutPrototype
+# RUN(WITHLINK): walk f6
+# WITHLINK: = IsPlainInstanceOf v0{{*}}receivers=[L0]{{*}}isAskedWhetherAsBorn
+# WITHLINK-NOT: isBornWithoutPrototype
+# RUN(BELOWOTHER): walk f7
+# BELOWOTHER: = IsAsBorn
+# RUN(QUIET): run-in-shell keep = x => x; holder = () => ({ }); change = function () { };
+# QUIET: yes true undefined | yes undefined | no | yes true undefined | no
+# QUIET-NEXT: yes true undefined | yes undefined | no | yes true undefined | no
+# QUIET-NEXT: no
+# QUIET-NEXT: exited with 0
+# RUN(STORED): run-in-shell keep = x => x; holder = () => ({ }); change = function (bare, linked) { bare.finish = 5; linked.finish = 6; };
+# STORED: yes true undefined | yes undefined | no | yes true undefined | no
+# STORED-NEXT: yes false undefined | yes undefined | no | yes false undefined | no
+# STORED-NEXT: no
+# RUN(GIVENTHEUSUALLINK): run-in-shell keep = x => x; holder = () => ({ }); change = function (bare, linked) { Object.setPrototypeOf(bare, Object.prototype); };
+# GIVENTHEUSUALLINK: yes true undefined | yes undefined | no | yes true undefined | no
+# GIVENTHEUSUALLINK-NEXT: no | no | no | yes true undefined | no
+# GIVENTHEUSUALLINK-NEXT: no
+# RUN(GIVENANOTHERLINK): run-in-shell keep = x => x; holder = () => ({ }); change = function (bare, linked) { Object.setPrototypeOf(bare, { other: 3 }); };
+# GIVENANOTHERLINK: yes true undefined | yes undefined | no | yes true undefined | no
+# GIVENANOTHERLINK-NEXT: no | no | no | yes true undefined | no
+# GIVENANOTHERLINK-NEXT: no
+# RUN(LINKTAKENAWAY): run-in-shell keep = x => x; holder = () => ({ }); change = function (bare, linked) { Object.setPrototypeOf(linked, null); };
+# LINKTAKENAWAY: yes true undefined | yes undefined | no | yes true undefined | no
+# LINKTAKENAWAY-NEXT: yes true undefined | yes undefined | no | no | yes true undefined
+# LINKTAKENAWAY-NEXT: no
+# RUN(ADDED): run-in-shell keep = x => x; holder = () => ({ }); change = function (bare, linked) { bare.other = 1; };
+# ADDED: yes true undefined | yes undefined | no | yes true undefined | no
+# ADDED-NEXT: no | yes 1 | no | yes true undefined | no
+# ADDED-NEXT: no
+# RUN(ACCESSOR): run-in-shell keep = x => x; holder = () => ({ }); change = function (bare, linked) { Object.defineProperty(bare, "finish", { get() { return 9; }, configurable: true }); };
+# ACCESSOR: yes true undefined | yes undefined | no | yes true undefined | no
+# ACCESSOR-NEXT: no | no | no | yes true undefined | no
+# ACCESSOR-NEXT: no
+# RUN(DELETED): run-in-shell keep = x => x; holder = () => ({ }); change = function (bare, linked) { delete bare.finish; };
+# DELETED: yes true undefined | yes undefined | no | yes true undefined | no
+# DELETED-NEXT: no | no | no | yes true undefined | no
+# DELETED-NEXT: no
+# RUN(FROZEN): run-in-shell keep = x => x; holder = () => ({ }); change = function (bare, linked) { Object.freeze(bare); };
+# FROZEN: yes true undefined | yes undefined | no | yes true undefined | no
+# FROZEN-NEXT: no | no | no | yes true undefined | no
+# FROZEN-NEXT: no
+
+module m0 path="word.js" displayPath="word.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0 position=58 fields=[{key="finish" declared={type=anything}}] place=58 ownFieldCount=1
+variable g0 name="handler" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g1 name="make" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable] place=2
+variable g2 name="makeWithLink" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable] place=3
+variable g3 name="makeBelowOther" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable] place=4
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f5 @0
+    v1 = Convert v0 declared={type=f5 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f6 @0
+    v3 = Convert v2 declared={type=f6 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f7 @0
+    v5 = Convert v4 declared={type=f7 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f8 @0
+    v7 = Convert v6 declared={type=f8 flags=[IsFromCompiler]} @0
+    v8 = Builtin builtin=GlobalThis @722
+    v9 = PropGet v8 key="keep" [isFreeName] @722
+    v10 = GetModuleVariable variable=g1 @727
+    v11 = Call v9, -, v10 calleeName="keep" @722
+    v12 = Builtin builtin=GlobalThis @750
+    v13 = PropGet v12 key="keep" [isFreeName] @750
+    v14 = GetModuleVariable variable=g2 @755
+    v15 = Call v13, -, v14 calleeName="keep" @750
+    v16 = Builtin builtin=GlobalThis @788
+    v17 = PropGet v16 key="keep" [isFreeName] @788
+    v18 = GetModuleVariable variable=g3 @793
+    v19 = Call v17, -, v18 calleeName="keep" @788
+    v20 = Builtin builtin=GlobalThis @823
+    v21 = PropGet v20 key="keep" [isFreeName] @823
+    v22 = Call v21, -, v1 calleeName="keep" @823
+    v23 = Builtin builtin=GlobalThis @849
+    v24 = PropGet v23 key="keep" [isFreeName] @849
+    v25 = Call v24, -, v3 calleeName="keep" @849
+    v26 = Builtin builtin=GlobalThis @885
+    v27 = PropGet v26 key="keep" [isFreeName] @885
+    v28 = Call v27, -, v5 calleeName="keep" @885
+    v29 = Builtin builtin=GlobalThis @922
+    v30 = PropGet v29 key="keep" [isFreeName] @922
+    v31 = Call v30, -, v7 calleeName="keep" @922
+    v32 = Call v11 calleeName="makes" @955
+    v33 = Call v15 calleeName="makesWithLink" @973
+    v34 = Builtin builtin=GlobalThis @990
+    v35 = PropGet v34 key="print" [isFreeName] @990
+    v36 = Call v22, -, v32 calleeName="asks" @996
+    v37 = String string="|" @1008
+    v38 = Call v31, -, v32 calleeName="asksLeniently" @1013
+    v39 = String string="|" @1034
+    v40 = Call v25, -, v32 calleeName="asksWithLink" @1039
+    v41 = String string="|" @1059
+    v42 = Call v25, -, v33 calleeName="asksWithLink" @1064
+    v43 = String string="|" @1086
+    v44 = Call v22, -, v33 calleeName="asks" @1091
+    v45 = Call v35, -, v36, v37, v38, v39, v40, v41, v42, v43, v44 calleeName="print" @990
+    v46 = Builtin builtin=GlobalThis @1106
+    v47 = PropGet v46 key="change" [isFreeName] @1106
+    v48 = Call v47, -, v32, v33 calleeName="change" @1106
+    v49 = Builtin builtin=GlobalThis @1128
+    v50 = PropGet v49 key="print" [isFreeName] @1128
+    v51 = Call v22, -, v32 calleeName="asks" @1134
+    v52 = String string="|" @1146
+    v53 = Call v31, -, v32 calleeName="asksLeniently" @1151
+    v54 = String string="|" @1172
+    v55 = Call v25, -, v32 calleeName="asksWithLink" @1177
+    v56 = String string="|" @1197
+    v57 = Call v25, -, v33 calleeName="asksWithLink" @1202
+    v58 = String string="|" @1224
+    v59 = Call v22, -, v33 calleeName="asks" @1229
+    v60 = Call v50, -, v51, v52, v53, v54, v55, v56, v57, v58, v59 calleeName="print" @1128
+    v61 = Builtin builtin=GlobalThis @1244
+    v62 = PropGet v61 key="print" [isFreeName] @1244
+    v63 = Call v19 calleeName="makesBelowOther" @1265
+    v64 = Call v28, -, v63 calleeName="asksBelowOther" @1250
+    v65 = Call v62, -, v64 calleeName="print" @1244
+    v66 = Undefined @1244
+    Return v66 @1244
+}
+function f1 name="handler" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1 @28
+    Return v0 @28
+}
+function f2 name="make" module=m0 position=33 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Null @71
+    v1 = GetModuleVariable variable=g0 @85
+    v2 = NewObject -, v1 layout=L0 fields=[0] @58
+    SetLiteralPrototype v2, v0 @58
+    v4 = FinishObject v2 @58
+    Return v4 @58
+}
+function f3 name="makeWithLink" module=m0 position=98 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @141
+    v1 = NewObject -, v0 layout=L0 fields=[0] @131
+    v2 = FinishObject v1 @131
+    Return v2 @131
+}
+function f4 name="makeBelowOther" module=m0 position=154 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @202
+    v1 = PropGet v0 key="holder" [isFreeName] @202
+    v2 = Call v1 calleeName="holder" @202
+    v3 = GetModuleVariable variable=g0 @220
+    v4 = NewObject -, v3 layout=L0 fields=[0] @189
+    SetLiteralPrototype v4, v2 @189
+    v6 = FinishObject v4 @189
+    Return v6 @189
+}
+function f5 name="ask" module=m2 position=233 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @262
+    v2 = Undefined @262
+    v3 = GetModuleVariable variable=g1 @279
+    v4 = IsAsBorn v0, v3 @262
+    v5 = ToBoolean v4 @262
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @262
+  b1(v6):
+    v7 = String string="yes " @287
+    v8 = PropGet v0 key="finish" @297
+    v9 = GetModuleVariable variable=g0 @314
+    v10 = StrictEq v8, v9 @314
+    v11 = Add v7, v10 @314
+    v12 = String string=" " @325
+    v13 = Add v11, v12 @325
+    v14 = PropGet v0 key="other" @331
+    v15 = Add v13, v14 @331
+    Jump -> next b3(v15) @331
+  b2(v16):
+    v17 = String string="no" @345
+    Jump -> next b3(v17) @345
+  b3(v18):
+    Return v18 @345
+}
+function f6 name="askWithLink" module=m2 position=353 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @390
+    v2 = Undefined @390
+    v3 = GetModuleVariable variable=g2 @407
+    v4 = IsAsBorn v0, v3 @390
+    v5 = ToBoolean v4 @390
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @390
+  b1(v6):
+    v7 = String string="yes " @423
+    v8 = PropGet v0 key="finish" @433
+    v9 = GetModuleVariable variable=g0 @450
+    v10 = StrictEq v8, v9 @450
+    v11 = Add v7, v10 @450
+    v12 = String string=" " @461
+    v13 = Add v11, v12 @461
+    v14 = PropGet v0 key="other" @467
+    v15 = Add v13, v14 @467
+    Jump -> next b3(v15) @467
+  b2(v16):
+    v17 = String string="no" @481
+    Jump -> next b3(v17) @481
+  b3(v18):
+    Return v18 @481
+}
+function f7 name="askBelowOther" module=m2 position=489 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0):
+    v1 = Undefined @528
+    v2 = Undefined @528
+    v3 = GetModuleVariable variable=g3 @545
+    v4 = IsAsBorn v0, v3 @528
+    v5 = ToBoolean v4 @528
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @528
+  b1(v6):
+    v7 = String string="yes " @563
+    v8 = PropGet v0 key="finish" @572
+    v9 = Add v7, v8 @572
+    Jump -> next b3(v9) @572
+  b2(v10):
+    v11 = String string="no" @587
+    Jump -> next b3(v11) @587
+  b3(v12):
+    Return v12 @587
+}
+function f8 name="askLeniently" module=m2 position=595 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @633
+    v2 = Undefined @633
+    v3 = GetModuleVariable variable=g1 @669
+    v4 = IsAsBornExceptForAddedNames v0, v3 @633
+    v5 = ToBoolean v4 @633
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @633
+  b1(v6):
+    v7 = String string="yes " @677
+    v8 = PropGet v0 key="other" @686
+    v9 = Add v7, v8 @686
+    Jump -> next b3(v9) @686
+  b2(v10):
+    v11 = String string="no" @700
+    Jump -> next b3(v11) @700
+  b3(v12):
+    Return v12 @700
+}
+function f9 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private

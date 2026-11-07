@@ -50,15 +50,16 @@ Condition PromiseIntrinsicEmitter::hasPromiseStructure(CellPointer cell)
     return equal(structureID, loadImmutable32(offsetOfPromiseHeader));
 }
 
-void PromiseIntrinsicEmitter::fulfillWithoutBarrier(CellPointer promise, Boxed value)
+void PromiseIntrinsicEmitter::fulfillWithoutBarrier(CellPointer promise, Boxed value, bool mayStoreCell)
 {
+    CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap(mayStoreCell));
     storeField(promise, m_heaps.JSPromise_slot, value);
     storeField(promise, m_heaps.JSPromise_packed, integer(static_cast<int64_t>(fulfilledPromiseBits)));
 }
 
 void PromiseIntrinsicEmitter::fulfillAtStore(const ValueContext& store, CellPointer promise, Boxed value, const Type& valueType)
 {
-    fulfillWithoutBarrier(promise, value);
+    fulfillWithoutBarrier(promise, value, valueType.hasCells());
     barrierAfterStore(store, promise, valueType);
 }
 
@@ -66,6 +67,12 @@ void PromiseIntrinsicEmitter::generateResolvePromise(const ValueContext& value)
 {
     CellPointer promise = in<CellPointer>(value->promiseOperand());
     Boxed resolution = in<Boxed>(value->valueOperand());
+    if (value->valueHasFailedTestForNoThen()) {
+        m_out.noteForm(Form::Runtime, StateOfKnowledge::FailsTest);
+        callVoidOperation(value, RuntimeOperation::ResolvePromise, { promise, resolution });
+        return;
+    }
+    m_out.noteForm(Form::Open, StateOfKnowledge::NeedsTest);
     const Type& resolutionType = typeOf(value->valueOperand());
     LBasicBlock otherwise = newBlock();
     LBasicBlock continuation = newBlock();

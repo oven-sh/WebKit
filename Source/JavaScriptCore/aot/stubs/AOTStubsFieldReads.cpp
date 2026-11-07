@@ -551,10 +551,12 @@ void generatePrivateGet(StubAssembler& jit)
         const GPRReg record = T11;
         JumpList hasNoPlace;
         jit.load32(Address(layout, OBJECT_OFFSETOF(LayoutData, index)), layouts);
+        jit.getEffectiveAddress(BaseIndex(T10, T10, CCallHelpers::TimesTwo), place);
+        jit.add32(layouts, place);
         jit.lshift64(TrustedImm32(32), layouts);
         jit.or64(T10, layouts);
-        jit.load32(Address(layout, OBJECT_OFFSETOF(LayoutData, index)), T10);
-        jit.xor32(field, T10);
+        jit.lshift32(field, TrustedImm32(shiftOfFieldInIndexOfPrivateFieldPlace), T10);
+        jit.xor32(place, T10);
         jit.and32(TrustedImm32(numberOfPrivateFieldPlaces - 1), T10);
         jit.lshift32(TrustedImm32(shiftOfPrivateFieldPlace), T10);
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.privateFieldPlaces)), place);
@@ -710,6 +712,50 @@ PreludeExit emitPrivateSetPrelude(StubAssembler& jit)
     }, [&] {
         jit.jumpToStub(writeBarrier());
     });
+}
+
+PreludeExit emitPrivateHasPrelude(StubAssembler& jit)
+{
+    if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::GPR)
+        return PreludeExit::CallsOperation;
+
+    constexpr GPRReg object = operationArgumentGPR(1);
+    constexpr GPRReg token = operationArgumentGPR(2);
+    constexpr GPRReg field = operationArgumentGPR(3);
+    const GPRReg layouts = jit.result();
+    const GPRReg place = jit.allocateScratch(StubRegister::A4);
+    const GPRReg row = jit.allocateScratch(StubRegister::A5);
+
+    JumpList callsOperation;
+    callsOperation.append(jit.branchIfNotCell(object));
+    callsOperation.append(branchIfNotCompiledObject(jit, object));
+    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
+    loadStructure(jit, object, layouts);
+    if (!jit.options().hasOneInstance) {
+        jit.move(layouts, place);
+        callsOperation.append(branchIfNotOfThisRealm(jit, place));
+    }
+    jit.loadPtr(Address(layouts, CompiledStructure::offsetOfLayout()), layouts);
+    jit.load32(Address(layouts, OBJECT_OFFSETOF(LayoutData, index)), layouts);
+    jit.load32(slotOfButterfly(token, ClassToken::classIndexSlot), place);
+    jit.getEffectiveAddress(BaseIndex(place, place, CCallHelpers::TimesTwo), row);
+    jit.add32(layouts, row);
+    jit.lshift64(TrustedImm32(32), layouts);
+    jit.or64(place, layouts);
+    jit.lshift32(field, TrustedImm32(shiftOfFieldInIndexOfPrivateFieldPlace), place);
+    jit.xor32(place, row);
+    jit.and32(TrustedImm32(numberOfPrivateFieldPlaces - 1), row);
+    jit.lshift32(TrustedImm32(shiftOfPrivateFieldPlace), row);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.privateFieldPlaces)), place);
+    jit.addPtr(row, place);
+    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, layouts, Address(place, OBJECT_OFFSETOF(PrivateFieldPlace, layouts))));
+    jit.or32(TrustedImm32(static_cast<int32_t>(layoutHasNoPlaceForPrivateField)), field, row);
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, row, Address(place, OBJECT_OFFSETOF(PrivateFieldPlace, declaredField))));
+    jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsBoolean(false))), jit.result());
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
+    return PreludeExit::CallsOperation;
 }
 
 PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)

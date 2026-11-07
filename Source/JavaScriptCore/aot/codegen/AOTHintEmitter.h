@@ -20,6 +20,11 @@ public:
     void release(ValueID);
     void generateEndLifeOfCell(const ValueContext&);
     void generateGuessFailsUnasked(const ValueContext&);
+    void generateBeginsWhatMayRunAgain(const ValueContext&);
+    void generateTurnBeginsAgain(const ValueContext&);
+    void generateCopyLeavesForCall(const ValueContext&);
+    void generateTurnWasQuiet(const ValueContext&);
+    void generateAskObjectAgain(const ValueContext&);
     bool endsLivesAtRunTime();
     void endLifeOf(const OperationContext&, ValueID cell);
     void noteThatCellIsLent(const ValueContext& made, CellPointer);

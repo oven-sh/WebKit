@@ -101,15 +101,39 @@ std::optional<uint16_t> LinkFlow::primitivesThatOperatorGivesWhateverArrives(Fun
     }));
 }
 
+static bool mayGiveCountsInLinkOperators(const SummaryOperator& operation)
+{
+    return operation.opcode == Opcode::Mul || operation.opcode == Opcode::Add || (operation.opcode == Opcode::Mod && operation.writtenDivisor != SummaryOperator::WrittenDivisor::None);
+}
+
+static LinkType::Counts countsThatOperatorGivesInLinkOperators(const SummaryOperator& operation, std::span<const LinkType::Counts, SummaryOperator::mostOperands> counts)
+{
+    using Counts = LinkType::Counts;
+    if (counts[0] == Counts::Unknown)
+        return Counts::Unknown;
+    switch (operation.opcode) {
+    case Opcode::Mul:
+        return std::max(counts[0], counts[1]) <= Counts::BelowTwoTo32 ? Counts::WholeFromZeroUp : Counts::Unknown;
+    case Opcode::Add:
+        return std::min(counts[0], counts[1]) <= Counts::BelowTwoTo32 && std::max(counts[0], counts[1]) != Counts::Unknown ? Counts::WholeFromZeroUp : Counts::Unknown;
+    case Opcode::Mod:
+        return operation.writtenDivisor == SummaryOperator::WrittenDivisor::FromOneBelowTwoTo31 ? Counts::BelowTwoTo31 : Counts::BelowTwoTo32;
+    default:
+        return Counts::Unknown;
+    }
+}
+
 void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& now)
 {
     if (!typeObservedBefore().isNothing() && typeObservedBefore().primitives == now.primitives && holdsObjectsForLinkOperators(typeObservedBefore()) == holdsObjectsForLinkOperators(now) && typeObservedBefore().hasSameShadowsAs(now))
         return;
 
     const SummaryOperator& operation = summaries.at(observer.function).operators[observer.record];
+    bool someCameByEscapeAlone = false;
     auto answer = [&](bool ofWhatWasSeen) -> LinkType {
         auto held = [&](uint32_t node) {
             const LinkType& type = typeAt(nodeOf(observer.function, node));
+            someCameByEscapeAlone |= type.primitivesByEscapeAlone || type.unseenIsByEscapeAlone;
             return ofWhatWasSeen ? type.asSeen() : type;
         };
         if (flowRuleOf(operation.opcode) == FlowRule::ToPropertyKey) {
@@ -137,6 +161,9 @@ void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& no
             return converted;
         }
         Vector<uint16_t, SummaryOperator::mostOperands> operands;
+        std::array<LinkType::Counts, SummaryOperator::mostOperands> counts { LinkType::Counts::Unknown, LinkType::Counts::Unknown };
+        static_assert(SummaryOperator::mostOperands == 2);
+        bool asksForCounts = !ofWhatWasSeen && mayGiveCountsInLinkOperators(operation);
         for (uint32_t index = 0; index < SummaryOperator::mostOperands && operation.operands[index] != noSummaryNode; ++index) {
             LinkType operand = held(operation.operands[index]);
             uint16_t primitives = operand.primitives;
@@ -148,6 +175,8 @@ void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& no
             if (!primitives)
                 return { };
             operands.append(primitives);
+            if (asksForCounts && operand.counts != LinkType::Counts::Unknown && !(primitives & ~operand.primitives) && !(primitives & ~LinkType::closed(Primitive::Number)) && !holdsObjectsForLinkOperators(operand))
+                counts[index] = operand.counts;
         }
 
         prepareOperatorsForSeveralThreads();
@@ -156,12 +185,19 @@ void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& no
         result.primitives = static_cast<uint16_t>(askedOnceByLane(MadeOnDemand::ResultOfOperator, words, [&]() -> uint32_t {
             return m_stateOfLinkOperators->resultOf(operation.opcode, operands.span());
         }));
+        if (asksForCounts) {
+            result.counts = countsThatOperatorGivesInLinkOperators(operation, counts);
+            if (result.counts == LinkType::Counts::BelowTwoTo31)
+                result.primitives = LinkType::int32;
+            else if (result.counts == LinkType::Counts::BelowTwoTo32)
+                result.primitives = LinkType::closed(Primitive::Integer);
+        }
         return result;
     };
     LinkType result = answer(false);
     if (result.isNothing())
         return;
-    LinkType seen = answer(true);
+    LinkType seen = someCameByEscapeAlone ? answer(true) : result;
     result.primitivesByEscapeAlone = result.primitives & ~seen.primitives;
     result.unseenIsByEscapeAlone = result.holdsUnseen && !seen.holdsUnseen;
     arrive(nodeOf(observer.function, operation.result), result, flowRuleOf(operation.opcode) == FlowRule::ToPropertyKey ? symbolSeenAt(nodeOf(observer.function, operation.operands[0])) : PropertyKeyID());

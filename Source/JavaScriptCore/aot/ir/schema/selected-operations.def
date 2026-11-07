@@ -1,5 +1,5 @@
 enum StringRangeMethod { | engine Slice Substring Substr SingleIndex SingleRelativeIndex }
-enum RegExpMatchForm { | engine Test Exec Search Match }
+enum RegExpMatchForm { | engine Test Exec Search Match Parts }
 flags PropertyDescriptorFlags { | engine HasValue HasWritable IsWritable HasEnumerable IsEnumerable HasConfigurable IsConfigurable HasGet HasSet }
 
 family ObjectCreation Selected..Placed
@@ -15,7 +15,7 @@ operation FulfillFreshPromise (promise: Object/inspects+writesContents, value: A
 
 family String Selected..Placed
 operation Substring (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(string) ; CreatesString ; Prepared..Placed ; interpreted = Allocation ; replaces = CallBuiltin, ElemGet ; runtime = Substring ; hasOwnFoldingRule = true ; form = Closed
-operation FlattenString (string: String/inspects+returns) -> natural(FlatString) ; ResolvesRopes ; Prepared..Placed ; replaces = CallBuiltin, ElemGet, StrictEq, Substring, StringEqualsLiteral, StringOrderToCharacter, StringStartsWithLiteral, StringEndsWithLiteral, StringIndexOfLiteral, StringIndexOfCharacter, StringLastIndexOfLiteral, GetStringCodeUnit, GetStringLength ; runtime = Flatten ; form = Closed
+operation FlattenString (string: String/inspects+returns, isRead?: Boolean/inspects) -> natural(FlatString) ; ResolvesRopes ; Prepared..Placed ; replaces = CallBuiltin, ElemGet, StrictEq, Substring, StringEqualsLiteral, StringOrderToCharacter, StringStartsWithLiteral, StringEndsWithLiteral, StringIndexOfLiteral, StringIndexOfCharacter, StringLastIndexOfLiteral, GetStringCodeUnit, GetStringLength ; runtime = Flatten ; form = Closed
 operation StringRange (length: Integer/inspects, first: Number/inspects, second?: Number/inspects, method: StringRangeMethod) -> results(natural(int[0, 2147483647]), natural(int[0, 2147483647])) ; none ; Prepared..Placed ; form = Open
 operation StringOrder (left: String/inspects, right: String/inspects) -> natural(int[-1, 1]) ; ResolvesRopes ; replaces = Less, LessEq, Greater, GreaterEq, CallBuiltin ; runtime = CompareStrings ; form = Closed
 operation StringOrderToCharacter (string: String/inspects, codeUnit: UInt32) -> natural(int[-1, 1]) ; ResolvesRopes ; replaces = Less, LessEq, Greater, GreaterEq ; form = Open
@@ -29,6 +29,10 @@ operation StringLastIndexOfLiteral (string: String/inspects, position: Integer/i
 operation StringRangeEqualsLiteral (string: String/inspects, start: Integer/inspects, end: Integer/inspects, literal: String) -> natural(boolean) ; ResolvesRopes ; branches = May ; replaces = CallBuiltin, Substring, StrictEq, Eq ; form = Closed
 operation StringRangeToNumber (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(number) ; ResolvesRopes ; replaces = CallBuiltin, Substring, ToNumber, ToNumeric ; form = Runtime
 operation StringRangeParseInt (string: String/inspects, start: Integer/inspects, end: Integer/inspects, radix?: Integer/inspects) -> natural(number) ; ResolvesRopes ; replaces = CallBuiltin, Substring ; form = Runtime
+operation FindStringRangeInMap (map: Object/inspects, string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(int[-2, 8796093022207]) ; ResolvesRopes reads(CollectionStorage, CollectionEntries) ; replaces = CallBuiltin, Substring ; form = Runtime
+operation SubstringOrUndefined (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(string | undefined) ; CreatesString ; interpreted = Allocation ; replaces = CallBuiltin, ElemGet ; form = Closed
+operation BoundsOfStringSplit (string: String/inspects, literal: String, count: UInt32) [countsEveryPiece] -> results(natural(int[-1, 2147483647]), natural(int[-1, 2147483647]), ..) ; ResolvesRopes ; replaces = CallBuiltin ; form = Open
+operation NewStringSplitArray (contents: Type, string: String/inspects, separator: String/inspects) -> allocation(Array<contents>) ; CreatesString ; interpreted = Allocation ; replaces = CallBuiltin ; form = Runtime
 
 family StringBuilderPart Selected..Placed ; replaces = StringBuilderAppend, Substring, CallBuiltin
 operation StringBuilderAppendConstant (builder: StringBuilder/inspects, string: String) -> none ; AppendsToBuilder ; runtime = StringBuilderAppendString ; form = Open
@@ -37,6 +41,7 @@ operation StringBuilderAppendNumber (builder: StringBuilder/inspects, value: Num
 operation StringBuilderAppendString (builder: StringBuilder/inspects, value: String/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppendString ; form = Closed
 operation StringBuilderAppendStringRange (builder: StringBuilder/inspects, string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppendStringRange ; form = Open
 operation StringBuilderAppendBoolean (builder: StringBuilder/inspects, value: Boolean/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppend ; form = Open
+operation StringBuilderAppendCodeUnit (builder: StringBuilder/inspects, value: Integer/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppendString ; form = Open
 operation StringBuilderAppendStringOrNullish (builder: StringBuilder/inspects, value: Any/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppend ; form = Closed
 operation StringBuilderAppendValue (builder: StringBuilder/inspects, value: Any/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppend ; form = Runtime
 engine operation StackStringBuilderAppendConstant (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, string: String) -> natural(BuilderCursor) ; AppendsToBuilder ; runtime = StackStringBuilderAppend ; base = builder ; form = Open
@@ -45,13 +50,23 @@ engine operation StackStringBuilderAppendNumber (builder: StringBuilder/inspects
 engine operation StackStringBuilderAppendString (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: String/inspects) -> natural(BuilderCursor) ; AppendsToBuilder ; runtime = StackStringBuilderAppend ; base = builder ; form = Closed
 engine operation StackStringBuilderAppendStringRange (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(BuilderCursor) ; AppendsToBuilder ; runtime = StackStringBuilderAppendStringRange ; base = builder ; form = Closed
 engine operation StackStringBuilderAppendBoolean (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Boolean/inspects) -> natural(BuilderCursor) ; AppendsToBuilder ; runtime = StackStringBuilderAppend ; base = builder ; form = Open
+engine operation StackStringBuilderAppendCodeUnit (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Integer/inspects) -> natural(BuilderCursor) ; AppendsToBuilder ; runtime = StackStringBuilderAppend ; base = builder ; form = Open
 engine operation StackStringBuilderAppendStringOrNullish (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Any/inspects) -> natural(BuilderCursor) ; AppendsToBuilder ; runtime = StackStringBuilderAppend ; base = builder ; form = Closed
 engine operation StackStringBuilderAppendValue (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Any/inspects) -> natural(BuilderCursor) ; AppendsToBuilder ; runtime = StackStringBuilderAppend ; base = builder ; form = Runtime
+
+family CollectionIntrinsic Selected..Placed
+operation GetValueAtPlaceInMap (map: Object/inspects+readsContents, place: Integer/inspects) -> unknown => declared(map) ; reads(CollectionStorage, CollectionEntries) ; replaces = CallBuiltin ; form = Open
+operation FindKeyInMap (map: Object/inspects, key: Any/inspects) -> natural(int[-2, 8796093022207]) ; reads(CollectionStorage, CollectionEntries) ; replaces = CallBuiltin ; form = Closed
+operation MovesOfEntriesInCollections () -> natural(int[0, 9007199254740991]) ; reads(CollectionStorage) ; form = Open
+operation TryPutValueAtPlaceInMap (map: Object/inspects+writesContents, place: Integer/inspects, moves: Integer/inspects, value: Any/retains(map)) -> natural(boolean) ; reads(CollectionStorage) writes(CollectionEntries) ; replaces = CallBuiltin ; form = Open
 
 family ResolvedCall Selected..Placed
 operation ResolveCallTarget (callee: Any/inspects, argumentCount: UInt32) -> natural(CodeAddress) ; none ; form = Closed
 operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisValue?: Any/retains, arguments...: Any/retains, calleeKey?: PropertyKey, calleeName?: String, calledBuiltin?: Builtin, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; replaces = Call ; runsBeforeCallee = true ; form = Closed
 operation RegExpMatchLiteral (overload: BuiltinOverload, string: String/inspects, regExp?: Object/inspects, pattern: String, regExpFlags: RegExpFlags, matchForm: RegExpMatchForm) -> declared(overload) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; replaces = CallBuiltin ; form = Closed
+operation RegExpMatchLiteralInParts (string: String/inspects, regExp?: Object/inspects, pattern: String, regExpFlags: RegExpFlags) -> natural(boolean) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; replaces = CallBuiltin ; form = Closed
+operation BoundsOfRegExpMatch (count: UInt32) -> results(natural(int[-1, 2147483647]), natural(int[-1, 2147483647]), ..) ; reads(RegExpState) ; replaces = CallBuiltin ; form = Open
+operation NewRegExpMatchArray (contents: Type, string: String/inspects, pattern: String, regExpFlags: RegExpFlags) -> allocation(Array<contents>) ; CreatesString reads(RegExpState) ; interpreted = Allocation ; replaces = CallBuiltin ; form = Runtime
 
 family InlineBuiltin Selected..Placed ; replaces = CallBuiltin
 operation CallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, calleeName?: String) [| engine isDoneInPlace] -> declared(overload) ; unknownCode by Inline ; accessClass = DirectCall ; formDependsOnLoop = true ; form = Closed

@@ -1,6 +1,6 @@
 # whoever has an object reads what lies on it, under the names that the program spells: the program lets a constructor go and reads `prototype` off a value that nobody knows, so the members of the prototype object stay open too
 # What nobody lets go keeps its locks: TextDecoder. name-that-stands-in-a-text-alone.ir: so does what lies under a name that no operation of the program reads
-# keep(TextEncoder); function below(value) { return value.prototype; }  new TextEncoder().encode(""); new TextDecoder().decode();
+# globalThis.keep(TextEncoder); function below(value) { return value.prototype; } below(globalThis.given);  new TextEncoder().encode(""); new TextDecoder().decode();
 # RUN: locks
 # REQUIRES: entries-of-bun
 # CHECK: locked TextDecoderPrototypeDecode constant
@@ -19,9 +19,12 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v6 = Construct v5, -
     v7 = PropGet v6 key="decode"
     v8 = Call v7, v6
-    v9 = NewClosure function=f1
-    v10 = Call v9, -, v1
-    Return v10
+    v9 = PropGet v0 key="keep"
+    v10 = Call v9, v0, v1 calleeKey="keep"
+    v11 = NewClosure function=f1
+    v12 = PropGet v0 key="given"
+    v13 = Call v11, -, v12
+    Return v13
 }
 function f1 name="below" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

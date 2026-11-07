@@ -3,7 +3,7 @@
 # The last edge of the switch says nothing of anything, so it brings no name at all. What comes along it is whole.
 # RUN: link functions mechanisms=all
 # CHECK: function f2
-# CHECK-NEXT: parameter 0 {{*}}proven=i32|string
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]|string
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

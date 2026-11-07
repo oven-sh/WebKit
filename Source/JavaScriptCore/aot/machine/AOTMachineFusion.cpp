@@ -40,7 +40,7 @@ constexpr bool fusionOpcodesHaveChildren(unsigned numberOfChildren)
 }
 static_assert(fusionOpcodesHaveChildren<Neg, Clz, PopCount, Abs, Ceil, Floor, FTrunc, Sqrt, BitwiseCast, SExt8, SExt16, SExt32, ZExt32, Trunc, IToD, FloatToDouble, DoubleToFloat>(1));
 static_assert(fusionOpcodesHaveChildren<Load8Z, Load8S, Load16Z, Load16S, Load, Branch>(1));
-static_assert(fusionOpcodesHaveChildren<Add, Sub, Mul, MulHigh, UMulHigh, Div, UDiv, Mod, UMod, BitAnd, BitOr, BitXor, Shl, SShr, ZShr, FMin, FMax>(2));
+static_assert(fusionOpcodesHaveChildren<Add, Sub, Mul, MulHigh, UMulHigh, Div, UDiv, Mod, UMod, BitAnd, BitOr, BitXor, Shl, SShr, ZShr, RotR, FMin, FMax>(2));
 static_assert(fusionOpcodesHaveChildren<Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Above, Below, AboveEqual, BelowEqual, EqualOrUnordered, Store8, Store16, Store>(2));
 
 static ALWAYS_INLINE Operation* const* fusionChildrenOf(const Operation* operation)
@@ -771,6 +771,7 @@ static NEVER_INLINE bool fuseIntoOtherThanBranch(ValueFacts* values, Operation* 
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
     case FMin:
     case FMax:
     case Equal:

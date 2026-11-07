@@ -5,8 +5,8 @@
 # The run time answers for an ES module on a ring (RequireModule), so no request leads out of ledger.cjs and the requests show no ring. look() runs in the middle of the body of ledger.cjs and finds the `undefined`
 # that `total` held at first. The front end knows every load and says so: the requests for ledger.cjs do not say `completes`. Those for steady.cjs do, and whoever names `count` finds what the body stored.
 # RUN: link variables mechanisms=all
-# CHECK: variable g1 proven=undefined|i32 writers-known
-# CHECK: variable g3 proven=i32 writers-known filled
+# CHECK: variable g1 proven=undefined|int[0, 2147483647] writers-known
+# CHECK: variable g3 proven=int[0, 2147483647] writers-known filled
 
 module m0 path="probe.mjs" displayPath="probe.mjs" flags=[KeepsError] body=f0 requests=[{target=m1 kind=Require}] exports=[{name="look" variable=g0}] namespaceLayout=L(m0)
 module m1 path="ledger.cjs" displayPath="ledger.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2

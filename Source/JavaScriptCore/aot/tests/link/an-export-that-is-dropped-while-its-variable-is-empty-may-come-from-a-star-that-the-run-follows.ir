@@ -1,9 +1,11 @@
 # lacks.js never provides `sep`   stars.js: sep = "/"   t.js: export * from "./stars.js"; export { sep } from "./lacks.js"; export const kept = 7   main.js: import * as t from "./t.js"; out = t.sep; other = t.kept
 # The variable behind the entry `sep` of t.js stays empty. The run drops such an entry while it is empty, and the stars that it follows answer: a string.
+# giveExport() gave what the variable holds and nothing else, so `out` was proven to hold undefined or nothing, and the executable stopped at its own test:
+# "what a variable holds is not of the type that the compiler has proven of it. It is: string."
 # the control: `kept` is an ordinary entry, and what its variable holds is proven of `other`
 # RUN: link variables mechanisms=all
 # CHECK-NOT: variable g2 proven
-# CHECK: variable g4 proven=i32
+# CHECK: variable g4 proven=int
 
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/t.js" displayPath="t.js" body=f1 requests=[{target=m2 isDynamicStarExport=true completes=true}, {target=m3 completes=true}] exports=[{name="kept" variable=g3}, {name="sep" variable=g0 isDroppedWhileEmpty=true}]

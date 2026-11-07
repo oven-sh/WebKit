@@ -10,15 +10,16 @@
 # RUN(CALLED): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
 # CALLED-LABEL: code f2:Body
 # CALLED: : Array @{{*}} = NewArrayLike
-# A number that may be a fraction is left to the constructor: function fraction(n) { return new Array(n * 0.5); }
+# A number that may be a fraction goes by one call of the run time, which does what the constructor does: function fraction(n) { return new Array(n * 0.5); }
 # RUN(FRACTION): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
 # FRACTION-LABEL: code f3:Body
 # FRACTION-NOT: NewArrayLike
-# FRACTION: = CallBuiltin {{*}}overload=Array/
-# What may be a length or an element is left to it too: function either(n) { return new Array(n); }
+# FRACTION: = NewArrayOfGiven
+# What may be a length or an element goes that way too: function either(n) { return new Array(n); }
 # RUN(EITHER): walk f4 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
 # EITHER-LABEL: code f4:Body
 # EITHER-NOT: NewArrayLike
+# EITHER: = NewArrayOfGiven
 # With typed operations withheld the call stays.
 # RUN(CLOSED): walk f1 mechanisms=none+DirectCalls+BuiltinCalls
 # CLOSED-LABEL: code f1:Body

@@ -597,30 +597,6 @@ static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobal
     return tryCopyAsOrdinaryObject(vm, globalObject, &source, ExcludedRun { });
 }
 
-static NEVER_INLINE JSObject* tryCopyCompiledObjectWithout(Instance* instance, JSGlobalObject* globalObject, VM& vm, Object& source, ExcludedRun excluded)
-{
-    if (&source.state() != instance->state)
-        return nullptr;
-    for (uint32_t number : excluded.identifiers) {
-        Identifier name = identifierAt(instance, number);
-        const FieldData* field = source.fieldNamed(*instance->state, name);
-        if (parseIndex(name) || (field && (!field->canLeaveSlot() || field->isAccessor() || field->isPrivate())))
-            return nullptr;
-    }
-    Object* copy = Object::tryCreateCopyOfFields(vm, source);
-    if (!copy)
-        return nullptr;
-    DeferTerminationForAWhile deferTermination(vm);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    for (uint32_t number : excluded.identifiers) {
-        DeletePropertySlot slot;
-        bool isGone = Object::deleteProperty(copy, globalObject, identifierAt(instance, number), slot);
-        scope.assertNoException();
-        RELEASE_ASSERT(isGone);
-    }
-    return copy;
-}
-
 static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue source, ExcludedRun run, std::span<const EncodedJSValue> excludedKeys)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -656,10 +632,6 @@ static ALWAYS_INLINE JSObject* copyObject(Instance* instance, JSGlobalObject* gl
             return copy;
     }
     ExcludedRun run = excludedRunAt(instance, excludedRun);
-    if (Object* record = !count && excludedRun && source.isObject() ? compiledObjectOrNull(source) : nullptr) {
-        if (JSObject* copy = tryCopyCompiledObjectWithout(instance, globalObject, vm, *record, run))
-            return copy;
-    }
     if (!compiled && !count && source.isObject()) {
         if (JSObject* copy = tryCopyWithoutNames(vm, globalObject, asObject(source), run))
             return copy;

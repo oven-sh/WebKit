@@ -5,8 +5,8 @@
 # function two(values: number[]) { const [a, b] = values; return keep(a, b); }
 # RUN: walk f1 mechanisms=none+TypedOperations
 # CHECK-LABEL: code f1:Body
-# CHECK: [[given]]: {{*}} = RequireObjectCoercible {{*}}nullishAccess=Iterate
-# CHECK: [[taken]]: {{*}} = DestructureIterable [[given]] count=2 [readsListsByIndex]
+# CHECK-NOT: RequireObjectCoercible
+# CHECK: [[taken]]: {{*}} = DestructureIterable {{*}} count=2 [readsListsByIndex]
 # CHECK: [[a]]: {{*}} = ResultAt [[taken]]
 # CHECK: [[b]]: {{*}} = ResultAt [[taken]] index=1
 # CHECK: = Call {{*}}, -, [[a]], [[b]]

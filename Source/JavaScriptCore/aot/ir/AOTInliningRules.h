@@ -25,6 +25,7 @@ struct FlagsOfSummaryForInlining {
 
 inline constexpr OptionSet<FunctionCapabilities> capabilitiesNeededToBeInlined { FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame };
 inline constexpr OpcodeSet opcodesOfMappedArguments { Opcode::CreateMappedArguments, Opcode::GetMappedArgument, Opcode::SetMappedArgument };
+inline constexpr OpcodeSet opcodesThatReachParametersThroughArguments { Opcode::GetMappedArgument, Opcode::SetMappedArgument };
 inline constexpr OpcodeSet opcodesThatBindBodyToFrame = opcodesWhere([](Opcode opcode) { return boundToOf(opcode) == BoundTo::Frame && !catchOpcodes.contains(opcode); });
 
 static_assert(std::ranges::none_of(allMembersOf<TerminatorKind>, [](TerminatorKind kind) { return boundToOf(kind) == BoundTo::Frame; }));
@@ -58,7 +59,7 @@ inline NotInlinedCause whyNoCallInlines(const Program& program, FunctionID id, P
     switch (part) {
     case PartOfCallee::WholeBody:
         ASSERT(summary->holdsOperationsBoundToFrame || !body->holdsAnyOf(opcodesThatBindBodyToFrame));
-        if (summary->holdsOperationsBoundToFrame || summary->hasDirectEval || body->holdsAnyOf(opcodesOfMappedArguments))
+        if (summary->holdsOperationsBoundToFrame || summary->hasDirectEval || body->holdsAnyOf(opcodesThatReachParametersThroughArguments))
             return NotInlinedCause::IsBoundToFrame;
         break;
     case PartOfCallee::Head:

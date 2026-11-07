@@ -102,6 +102,8 @@ static MatchFormTraits traitsOfMatchForm(RegExpMatchForm form)
         return { false, jsNumber(-1), std::nullopt, Entry::operationAOTStringSearchRegExp };
     case RegExpMatchForm::Match:
         return { true, jsNull(), std::nullopt, Entry::operationAOTStringMatchRegExp };
+    case RegExpMatchForm::Parts:
+        return { false, jsBoolean(false), RegExpMatchResult::Parts, std::nullopt };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -112,6 +114,7 @@ static LastIndexUseOfLiteral lastIndexUseOfLiteral(RegExpMatchForm form, bool is
     switch (form) {
     case RegExpMatchForm::Test:
     case RegExpMatchForm::Exec:
+    case RegExpMatchForm::Parts:
         return useOfExec;
     case RegExpMatchForm::Search:
         return { .isStoredAndPutBack = usesLastIndex };
@@ -206,7 +209,7 @@ static void finishLiteralMatchWithoutCellAndReturn(StubAssembler& jit, RegExpMat
         loadRegExp(jit, *registers.regExpObject, regExp);
         recordMatch(jit, { .regExp = regExp, .string = registers.string, .offsets = offsets, .globalObject = jit.reuseScratch(StubRegister::T10), .scratch = registers.scratch });
     }
-    if (form == RegExpMatchForm::Test)
+    if (form == RegExpMatchForm::Test || form == RegExpMatchForm::Parts)
         jit.move(TrustedImm64(JSValue::encode(jsBoolean(true))), result);
     else if (recordsMatch) {
         loadMatchOutput(jit, result);
@@ -294,7 +297,7 @@ void generateRegExpMatchLiteral(StubAssembler& jit)
     miss.append(jit.branch64(CCallHelpers::Equal, scratch, TrustedImm32(static_cast<int32_t>(noMatch))));
     outOfLine.append(jit.branch64(CCallHelpers::LessThan, scratch, TrustedImm32(0)));
     if (!traitsOfMatchForm(form).createsCell)
-        finishLiteralMatchWithoutCellAndReturn(jit, form, registers, form == RegExpMatchForm::Test && usesLastIndex, recordsMatchOfLiteral(jit.key()));
+        finishLiteralMatchWithoutCellAndReturn(jit, form, registers, (form == RegExpMatchForm::Test || form == RegExpMatchForm::Parts) && usesLastIndex, recordsMatchOfLiteral(jit.key()));
     else if (takesObject)
         finishLiteralMatchWithObjectAndReturn(jit, form, isGlobal, registers);
     else

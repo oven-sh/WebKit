@@ -18,6 +18,7 @@
 #include "CPUFeatureSet.h"
 #include <memory>
 #include <utility>
+#include <wtf/Function.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Nonmovable.h>
 #include <wtf/StdLibExtras.h>
@@ -29,6 +30,7 @@ class RegExpSummaries;
 
 namespace Typed {
 class FormatPatternPlans;
+class LinkFlow;
 }
 
 class BuildContext {
@@ -63,6 +65,9 @@ public:
     const HostFunctionTexts& functionTexts() const { return m_functionTexts; }
     void setFunctionTexts(const HostFunctionTexts& texts) { m_functionTexts = texts; }
 
+    const Function<void(const Typed::LinkFlow&)>& askedOfFlowAtRest() const { return m_askedOfFlowAtRest; }
+    void askOfFlowAtRest(Function<void(const Typed::LinkFlow&)>&& asked) { m_askedOfFlowAtRest = WTF::move(asked); }
+
     Diagnostics takeDiagnostics() { return WTF::move(m_diagnostics); }
 
 private:
@@ -73,6 +78,7 @@ private:
     ParallelLoops m_parallelLoops;
     const Ref<BackgroundJobs> m_backgroundJobs { BackgroundJobs::create(m_parallelLoops) };
     HostFunctionTexts m_functionTexts;
+    Function<void(const Typed::LinkFlow&)> m_askedOfFlowAtRest;
     std::unique_ptr<RegExpSummaries> m_regExpSummaries;
     std::unique_ptr<Typed::FormatPatternPlans> m_formatPatternPlans;
 };

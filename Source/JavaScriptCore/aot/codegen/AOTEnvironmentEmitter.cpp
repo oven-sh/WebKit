@@ -86,7 +86,7 @@ void EnvironmentEmitter::markEnvironmentsThatClosureKeeps(const ValueContext& cl
         if (!environment)
             continue;
         const PlannedLayout& planned = m_plan.layout(environment);
-        if (planned.cellsAreHandedBack && !planned.liesOnlyInFrames)
+        if (planned.cellsAreHandedBack)
             markEscaped(capture);
     }
 }

@@ -57,43 +57,16 @@ static void readConstructorOffGlobalNameAndGoOn(StubAssembler& jit, GlobalBindin
     jit.jumpToStub(instanceOf(InstanceOfOperand::Constructor));
 }
 
-static void readPrototypeOutOfCellOfBuiltinAndGoOn(StubAssembler& jit)
-{
-    const GPRReg value = jit.operand(0);
-    const GPRReg prototype = jit.clobberRegister(jit.immediate());
-    const GPRReg number = jit.allocateScratch(StubRegister::T11);
-
-    jit.zeroExtend32ToWord(jit.immediate(), number);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(builtinCells)), prototype);
-    jit.load64(BaseIndex(prototype, number, CCallHelpers::TimesEight), prototype);
-    Jump isNotMade = jit.branchTest64(CCallHelpers::Zero, prototype);
-    jit.jumpToStub(instanceOf(InstanceOfOperand::Prototype));
-
-    const StubSignature signatureOfMaker = signatureOf(builtinCell());
-    isNotMade.link(&jit);
-    jit.emitFunctionPrologue();
-    jit.preserving({ value }, [&] {
-        jit.move(number, *signatureOfMaker.immediate);
-        jit.callStub(builtinCell());
-        jit.move(signatureOfMaker.firstResult.gpr(), prototype);
-    });
-    jit.emitFunctionEpilogue();
-    jit.jumpToStub(instanceOf(InstanceOfOperand::Prototype));
-}
-
 void generateInstanceOf(StubAssembler& jit)
 {
     const auto operand = static_cast<InstanceOfOperand>(jit.key().form());
-    if (operand == InstanceOfOperand::PrototypeThatIsBuiltin) {
-        readPrototypeOutOfCellOfBuiltinAndGoOn(jit);
-        return;
-    }
     if (operand == InstanceOfOperand::NameSeenByScripts || operand == InstanceOfOperand::NameOfGlobalObject) {
         readConstructorOffGlobalNameAndGoOn(jit, operand == InstanceOfOperand::NameSeenByScripts ? GlobalBindingScope::ScriptsAndGlobalObject : GlobalBindingScope::GlobalObject);
         return;
     }
+    const bool readsPrototypeOutOfCell = operand == InstanceOfOperand::PrototypeThatIsBuiltin;
     const bool isGivenPrototype = operand == InstanceOfOperand::Prototype;
-    const GPRReg prototype = isGivenPrototype ? jit.operand(1) : jit.clobberOperand(1);
+    const GPRReg prototype = readsPrototypeOutOfCell ? jit.clobberRegister(jit.immediate()) : isGivenPrototype ? jit.operand(1) : jit.clobberOperand(1);
     const GPRReg constructor = prototype;
     const GPRReg current = jit.allocateScratch(StubRegister::T11);
     const GPRReg next = jit.allocateScratch(StubRegister::T12);
@@ -101,7 +74,15 @@ void generateInstanceOf(StubAssembler& jit)
     JumpList isInstance;
     JumpList notInstance;
     JumpList slowCases;
+    JumpList startsOverWithPrototype;
+    JumpList cellIsNotMade;
 
+    auto readPrototypeOutOfCell = [&] {
+        jit.zeroExtend32ToWord(jit.immediate(), current);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(builtinCells)), prototype);
+        jit.load64(BaseIndex(prototype, current, CCallHelpers::TimesEight), prototype);
+        cellIsNotMade.append(jit.branchTest64(CCallHelpers::Zero, prototype));
+    };
     auto returnBoolean = [&](bool result) {
         jit.move(TrustedImm32(result), jit.result());
         jit.returnToCaller();
@@ -112,13 +93,21 @@ void generateInstanceOf(StubAssembler& jit)
             Label hasPrototype;
             Jump goesOn;
         };
-        auto followLink = [&](GPRReg object) {
+        auto followLink = [&](GPRReg object, bool standsAheadOfPrototype) {
             Link link;
-            slowCases.append(jit.branchTest8(CCallHelpers::NonZero, Address(object, JSObject::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
+            (standsAheadOfPrototype ? startsOverWithPrototype : slowCases).append(jit.branchTest8(CCallHelpers::NonZero, Address(object, JSObject::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
             loadStructure(jit, object, next);
             jit.load64(Address(next, Structure::prototypeOffset()), next);
             link.hasPolyProto = jit.branchTest64(CCallHelpers::Zero, next);
             link.hasPrototype = jit.label();
+            if (standsAheadOfPrototype) {
+                Jump liesBelowAnotherObject = jit.branch64(CCallHelpers::NotEqual, next, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype)));
+                returnBoolean(false);
+                liesBelowAnotherObject.link(&jit);
+                readPrototypeOutOfCell();
+                isInstance.append(jit.branch64(CCallHelpers::Equal, next, prototype));
+                return link;
+            }
             isInstance.append(jit.branch64(CCallHelpers::Equal, next, prototype));
             link.goesOn = jit.branch64(CCallHelpers::NotEqual, next, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype)));
             returnBoolean(false);
@@ -129,12 +118,13 @@ void generateInstanceOf(StubAssembler& jit)
             jit.load64(Address(object, offsetRelativeToBase(knownPolyProtoOffset)), next);
             jit.jump().linkTo(link.hasPrototype, &jit);
         };
-        Link first = followLink(value);
-        first.goesOn.link(&jit);
+        Link first = followLink(value, readsPrototypeOutOfCell);
+        if (!readsPrototypeOutOfCell)
+            first.goesOn.link(&jit);
         Label nextLink = jit.label();
         notInstance.append(jit.branchIfNotCell(next));
         jit.move(next, current);
-        Link further = followLink(current);
+        Link further = followLink(current, false);
         further.goesOn.linkTo(nextLink, &jit);
         readPolyProto(first, value);
         readPolyProto(further, current);
@@ -145,9 +135,26 @@ void generateInstanceOf(StubAssembler& jit)
         returnBoolean(true);
         slowCases.link(&jit);
         jit.callOperationAndReturn(Entry::operationAOTDefaultHasInstance, { .secondArgumentIn = value, .thirdArgumentIn = prototype });
+        if (!readsPrototypeOutOfCell)
+            return;
+
+        startsOverWithPrototype.link(&jit);
+        readPrototypeOutOfCell();
+        jit.jumpToStub(instanceOf(InstanceOfOperand::Prototype));
+
+        const StubSignature signatureOfMaker = signatureOf(builtinCell());
+        cellIsNotMade.link(&jit);
+        jit.emitFunctionPrologue();
+        jit.preserving({ value }, [&] {
+            jit.move(current, *signatureOfMaker.immediate);
+            jit.callStub(builtinCell());
+            jit.move(signatureOfMaker.firstResult.gpr(), prototype);
+        });
+        jit.emitFunctionEpilogue();
+        jit.jumpToStub(instanceOf(InstanceOfOperand::Prototype));
     };
 
-    if (isGivenPrototype) {
+    if (isGivenPrototype || readsPrototypeOutOfCell) {
         notInstance.append(jit.branchIfNotCell(value));
         notInstance.append(jit.branchIfNotObject(value));
         followPrototypeChainAndReturn();

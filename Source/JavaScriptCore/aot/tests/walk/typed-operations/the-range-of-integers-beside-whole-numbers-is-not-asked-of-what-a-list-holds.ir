@@ -1,0 +1,64 @@
+# function least(t) { const l = new Array(32); for (let i = 0; i < 32; i++) l[i] = Infinity; l[t & 31] = t & 7; let m = Infinity; for (let i = 0; i < 32; i++) if (l[i] < m) m = l[i]; return m; }
+# Link says of what the list holds: int32 and whole numbers that are no integers (an infinity): `i32|whole`. What is believed of contents is asked of every element that is read.
+# Whether a double has no fraction is a short test. Whether it is, besides, an integer and then lies in a range is a long one: 21 instructions more at every read, for a bound that a double beside it (1e21) has not.
+# So beside whole numbers that are no integers the range of the integers is not believed: the elements are numbers without a fraction.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : undefined|int|whole @OptionalDouble = GetArrayElement {{*}}arrayStorage=Double
+# RUN(RANGE): walk f1 mechanisms=all
+# RANGE-NOT: i32|whole @OptionalDouble = GetArrayElement
+# RUN(ANSWER): run-in-shell globalThis.sink = least => { print([0, 1, 7, 8, 31, 33].map(t => least(t)).join(" ")); };
+# ANSWER: 0 1 7 0 7 1
+# ANSWER-NEXT: exited with 0
+# LIBRARY: own
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="least" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer integer=32
+    v3 = Construct v1, -, v2 calleeName="Array"
+    v4 = Integer
+    v5 = Double number=Infinity
+    Jump -> next b1(v4)
+  b1(v6: anything):
+    LoopHint
+    v8 = Less v6, v2
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    ElemSet v3, v6, v5
+    v10 = Increment v6
+    Jump -> next b1(v10)
+  b3():
+    v11 = Integer integer=31
+    v12 = BitAnd v0, v11
+    v13 = Integer integer=7
+    v14 = BitAnd v0, v13
+    ElemSet v3, v12, v14
+    Jump -> next b4(v5, v4)
+  b4(v16: anything, v17: anything):
+    LoopHint
+    v19 = Less v17, v2
+    Branch v19 -> taken b5(), notTaken b8()
+  b5():
+    v20 = ElemGet v3, v17
+    v21 = Less v20, v16
+    Branch v21 -> taken b6(), notTaken b7(v16)
+  b6():
+    v22 = ElemGet v3, v17
+    Jump -> next b7(v22)
+  b7(v23: anything):
+    v24 = Increment v17
+    Jump -> next b4(v23, v24)
+  b8():
+    Return v16
+}

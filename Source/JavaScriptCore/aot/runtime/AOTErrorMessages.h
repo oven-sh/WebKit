@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTRecordTypes.h"
 #include "JSCJSValue.h"
 #include <span>
 #include <wtf/text/WTFString.h>
@@ -53,11 +54,13 @@ JSObject* createBuiltinModulesUnavailableError(JSGlobalObject*);
 JSObject* createNativeBindingsUnavailableError(JSGlobalObject*);
 JSObject* createBuiltinWithoutPathError(JSGlobalObject*);
 JSObject* createBuiltinNotCompiledError(JSGlobalObject*, const String& builtin);
+JSObject* createBuiltinBehindTargetOfEventNotCompiledError(JSGlobalObject*, const String& builtin);
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject*, const String& functionName);
 JSObject* createBuiltinsNotCompiledError(JSGlobalObject*, std::span<const String> builtins);
 JSObject* createExternalModuleNotLoadedError(JSGlobalObject*, const String& path);
 JSObject* createLoadByNameRefusedError(JSGlobalObject*, StringView name, ASCIILiteral code);
 JSObject* createFileOfImageRefusedError(JSGlobalObject*, StringView path, ASCIILiteral code);
+JSObject* createExportNotHandedOutError(JSGlobalObject*, StringView path, StringView name);
 JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
 JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
 JSObject* createEntryOfRequireCacheRefusedError(JSGlobalObject*, StringView path);
@@ -72,6 +75,8 @@ String functionNotCompiledMessage(const String& path, unsigned line);
 String functionNotCompiledMessage();
 String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key);
 String assignmentToLockedBuiltinMessage(const String& property);
+String changeThatCompiledCodeRulesOutMessage(ObjectMutation);
+String changeThatCompiledCodeRulesOutMessage(ASCIILiteral change);
 String deletionFromLockedBuiltinMessage(const String& property);
 String assignmentThatBuildDidNotSeeMessage(const String& property);
 String callOfBuiltinChangedBeforeFirstUseMessage(const String& property);

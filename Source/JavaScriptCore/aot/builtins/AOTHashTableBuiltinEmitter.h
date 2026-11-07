@@ -25,6 +25,7 @@ public:
     Boxed normalizedKey(const OperationContext&, ValueID);
     Word32 hashOfBits(Boxed normalizedKey);
     Integer sizeOf(CellPointer table, HashTableOwner);
+    Integer findPlace(const OperationContext&, ValueID map, ValueID key);
 
 private:
     Boxed normalizedNumber(Number);

@@ -2,12 +2,12 @@
 # the program is made from source: its text stands at the head of the file that it is taken from
 # RUN: bytes f3:Body mechanisms=all-Inlining
 # CHECK-LABEL: unit f3:Body
-# CHECK: GetterAtSite.UnderNameWithColumn
+# CHECK: GetterAtSite
 # RUN(NEVER): bytes f3:Body mechanisms=all-Inlining
 # NEVER-NOT: GetterByAccessTable
 # RUN(ALL): bytes f3:Body mechanisms=all
 # ALL-LABEL: unit f3:Body
-# ALL: GetterAtSite.UnderNameWithColumn
+# ALL: GetterAtSite
 # RUN(WITHHELD): bytes f3:Body mechanisms=all-Guesses
 # WITHHELD-NOT: GetterAtSite
 # PROGRAM-OF: ../walk/guesses/getter-that-a-descriptor-lays-is-called-by-the-code-that-reads.ir

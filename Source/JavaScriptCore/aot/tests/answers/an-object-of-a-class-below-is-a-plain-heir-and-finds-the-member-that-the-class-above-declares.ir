@@ -23,9 +23,9 @@
 # RUN(FORM): walk f5
 # FORM: = IsPlainInstanceOf v0 conditions=[{layout=L0 side=Static key=@@hasInstance}, {layout=L0 side=Static key="prototype"}, {{*}}] receivers=[L0, L1, L2]
 # FORM: L0|L1|L2{{*}} = Narrowed v0, {{*}}[isOnTakenEdge]
-# FORM: = FindsDeclaredMember {{*}}key="on" receivers=[L0, L1, L2]
-# FORM: = FindsDeclaredMember {{*}}key="read" receivers=[L0]
-# The guards of all the classes are asked by one count, which a class of which no object was made yet does not hold up: the first call of all gets its yes.
+# FORM: = FindsDeclaredMember {{*}}key="on" {{*}}receivers=[L0, L1, L2]
+# FORM: = FindsDeclaredMember {{*}}key="read" {{*}}receivers=[L0]
+# The guards of each class are asked by that class's own count, which stands at nothing as long as no object of the class was made: the first call of all gets its yes.
 # RUN(NOTHING): run-in-shell change = function () { };
 # NOTHING: short 1s on read short 5s on - short 3s on - full 4o full 6l
 # NOTHING-NEXT: exact -
@@ -35,11 +35,11 @@
 # ACCESSOR: short 1s on read short 5s on - short 3s on - full 4o full 6l
 # ACCESSOR-NEXT: exact -
 # ACCESSOR-NEXT: full 5a short 7s on - short 8s on read
-# The count is one for all: what ends a guard of one class ends the yes for the objects of all of them.
+# A count a class: what ends a guard of a class ends the yes for its objects and for those of the classes below it: an object of the class above keeps its yes.
 # RUN(ABOVEHEIR): run-in-shell change = function (made, Stream, Message) { delete made.state; Object.defineProperty(Message.prototype, "state", { get() { return "above"; }, set(value) { }, configurable: true }); };
 # ABOVEHEIR: short 1s on read short 5s on - short 3s on - full 4o full 6l
 # ABOVEHEIR-NEXT: exact -
-# ABOVEHEIR-NEXT: full 5above full 7above full 8s
+# ABOVEHEIR-NEXT: full 5above full 7above short 8s on read
 # RUN(ONHEIR): run-in-shell change = function (made, Stream, Message) { Message.prototype.on = function () { return "on of Message"; }; };
 # ONHEIR: short 1s on read short 5s on - short 3s on - full 4o full 6l
 # ONHEIR-NEXT: exact -
@@ -60,7 +60,7 @@
 # RUN(HEIRSLINK): run-in-shell change = function (made, Stream, Message) { Object.setPrototypeOf(Message.prototype, { }); };
 # HEIRSLINK: short 1s on read short 5s on - short 3s on - full 4o full 6l
 # HEIRSLINK-NEXT: exact -
-# HEIRSLINK-NEXT: full 5s full 7s full 8s
+# HEIRSLINK-NEXT: full 5s full 7s short 8s - read
 
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

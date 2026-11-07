@@ -79,15 +79,16 @@ static void testLazyStructureIsOfferedForMarking()
     AOT_TEST_CHECK(!offerForMarking(fixture, "new Int8Array(4)"_s));
 }
 
-static void testViewOverBufferThatMayGrowIsNeverPristine()
+static void testViewOverBufferThatMayGrowIsOfferedForMarking()
 {
     static constexpr ASCIILiteral views[] = { "new Uint8Array(new ArrayBuffer(4, { maxByteLength: 8 }))"_s, "new Int32Array(new ArrayBuffer(8, { maxByteLength: 16 }), 0, 1)"_s };
     for (TestRealm realm : { TestRealm::Plain, TestRealm::Locked }) {
         DetachedInstance fixture(realm);
         for (ASCIILiteral expression : views) {
-            checkNotOfferedForMarking(fixture, expression);
-            AOT_TEST_CHECK_FOR_SOURCE(!asObject(fixture.evaluate(expression))->structure()->isPristine(), expression);
+            bool isPristine = offerForMarking(fixture, expression);
+            AOT_TEST_CHECK_FOR_SOURCE(isPristine == (realm == TestRealm::Locked), expression);
         }
+        checkNotOfferedForMarking(fixture, "new DataView(new ArrayBuffer(4, { maxByteLength: 8 }))"_s);
     }
 }
 
@@ -95,7 +96,7 @@ std::span<const NativeTest> pristineStructureTests()
 {
     static constexpr NativeTest tests[] = {
         { "pristine-structures/lazy-structure-is-offered-for-marking"_s, testLazyStructureIsOfferedForMarking },
-        { "pristine-structures/view-over-buffer-that-may-grow-is-never-pristine"_s, testViewOverBufferThatMayGrowIsNeverPristine },
+        { "pristine-structures/view-over-buffer-that-may-grow-is-offered-for-marking"_s, testViewOverBufferThatMayGrowIsOfferedForMarking },
     };
     return tests;
 }

@@ -48,6 +48,7 @@ inline unsigned numberOfWordsAboveSlotsOf(const Frame& frame)
 }
 
 void emitFrameSetup(CCallHelpers&, const Procedure&, std::span<const GPRReg> registersPushedIntoFirstSlots);
+void emitTeardownOfFrameThatPopsWords(CCallHelpers&, const Frame&, std::span<const GPRReg> registersPoppedOutOfWords);
 
 #if CPU(X86_64)
 void emitTeardownOfFrameInOtherForm(CCallHelpers&, const Frame&);

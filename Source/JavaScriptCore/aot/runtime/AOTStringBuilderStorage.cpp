@@ -1017,12 +1017,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderAppendStringRange, uint8_
     AOT_MUST_TAIL_CALL return appendStringRangeToStorageOfStackStringBuilder(instance, builder, cursor, string, start, end);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderToString, JSCell*, (Instance* instance, uint8_t* builder, uint8_t* cursor))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderToString);
-    OPERATION_RETURN(scope, reinterpret_cast<StackStringBuilder*>(builder)->toString(globalObject, *instance, byteCast<Latin1Character>(cursor)));
-}
-
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStackStringBuilderByContents(Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderFinish);
@@ -1036,6 +1030,45 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finish
     if (!key) [[unlikely]]
         throwOutOfMemoryError(globalObject, scope);
     OPERATION_RETURN(scope, key);
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES makeStringOfStackStringBuilderAsNewKey(Instance* instance, uint8_t* builder, uint8_t* cursor)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderToString);
+    std::span<const Latin1Character> characters = reinterpret_cast<StackStringBuilder*>(builder)->charactersOnStack(byteCast<Latin1Character>(cursor));
+    JSString* key = instance->state->stringKeys->makeKey(vm, characters, RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters));
+    if (!key) [[unlikely]]
+        throwOutOfMemoryError(globalObject, scope);
+    OPERATION_RETURN(scope, key);
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES makeStringOfStackStringBuilderByContents(Instance* instance, uint8_t* builder, uint8_t* cursor)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderToString);
+    OPERATION_RETURN(scope, reinterpret_cast<StackStringBuilder*>(builder)->toString(globalObject, *instance, byteCast<Latin1Character>(cursor)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderToString, JSCell*, (Instance* instance, uint8_t* builder, uint8_t* cursor))
+{
+    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    if (stackBuilder.isOnStack()) [[likely]] {
+        std::span<const Latin1Character> characters = stackBuilder.charactersOnStack(byteCast<Latin1Character>(cursor));
+        if (characters.size() < 2)
+            return { characters.empty() ? jsEmptyString(*instance->vm) : jsSingleCharacterString(*instance->vm, characters[0]), nullptr };
+        if (characters.size() <= StringKeyCache::maxCachedKeyLength) {
+            JSString* key;
+            unsigned hash;
+            switch (instance->state->stringKeys->findKeyForText(characters, key, hash)) {
+            case StringKeyCache::Lookup::Found:
+                return { key, nullptr };
+            case StringKeyCache::Lookup::Absent:
+                AOT_MUST_TAIL_CALL return makeStringOfStackStringBuilderAsNewKey(instance, builder, cursor);
+            case StringKeyCache::Lookup::AbsentIndex:
+                break;
+            }
+        }
+    }
+    AOT_MUST_TAIL_CALL return makeStringOfStackStringBuilderByContents(instance, builder, cursor);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderFinish, JSCell*, (Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey))

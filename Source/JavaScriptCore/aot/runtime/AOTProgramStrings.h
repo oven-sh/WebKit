@@ -34,7 +34,8 @@ public:
     static StringID identifierString(const ProgramTables&, uint32_t identifier) { return Image::current()->text().identifier(identifier).text(); }
 
     enum class Made : bool { AnyNumberOfTimes, Once };
-    JSString* string(VM&, StringID, Made = Made::AnyNumberOfTimes) const;
+    JSString* string(VM& vm, StringID string, Made made = Made::AnyNumberOfTimes) const { return this->string(vm, m_image.text().wordOf(string), made); }
+    JSString* string(VM&, ImageStringWord, Made) const;
     JSString* constant(VM&, uint32_t number);
     JSString* constantIfCreated(uint32_t number) const;
     JSString* writtenNameOfFunction(VM&, FunctionID);

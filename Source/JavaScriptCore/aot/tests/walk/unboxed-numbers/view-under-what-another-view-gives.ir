@@ -15,7 +15,7 @@
 # CHECK: [[positionInTurn]]: i32 @Int32 = GetTypedArrayElement {{*}}isInsideView
 # CHECK-NOT: = ElemGet
 # CHECK-NOT: = TypeTest
-# CHECK: [[held]]: i32 @Int32 = Narrowed [[positionInTurn]]
+# CHECK: [[held]]: int[-2147483648, 1073741823] @Int32 = Narrowed [[positionInTurn]]
 # CHECK: [[element]]: i32 @Int32 = GetTypedArrayElement {{*}}, [[held]], {{*}}isInsideView
 # CHECK: = URShift [[element]], {{*}} form=Integers
 # RUN(SHELL): run-in-shell globalThis.sink = (picked, sum) => { print(String(picked) + " " + String(sum)); };

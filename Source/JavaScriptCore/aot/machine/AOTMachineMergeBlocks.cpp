@@ -130,6 +130,7 @@ ALWAYS_INLINE uint64_t MachineBlockMerger::payloadOf(const Operation* operation)
     case Shl:
     case SShr:
     case ZShr:
+    case RotR:
     case Clz:
     case PopCount:
     case Abs:
@@ -370,6 +371,7 @@ bool MachineBlockMerger::areEqual(const PatchOperation* a, const PatchOperation*
         || a->isSuspension() != b->isSuspension()
         || a->releasesDeadValues() != b->releasesDeadValues()
         || a->sharesLatePath() != b->sharesLatePath()
+        || a->failsWhenPredicateIsZero() != b->failsWhenPredicateIsZero()
         || !areEqual(a->effects, b->effects)
         || !std::ranges::equal(a->resultConstraints.span(), b->resultConstraints.span()))
         return false;

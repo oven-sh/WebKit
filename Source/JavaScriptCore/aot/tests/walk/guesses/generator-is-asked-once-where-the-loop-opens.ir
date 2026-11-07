@@ -3,26 +3,26 @@
 # function each(things: Generator<number>) { for (const thing of things) keep(thing); }
 # function eachOfList(things: number[]) { for (const thing of things) keep(thing); }
 # function last(things: Generator<number>): the step reads what is returned, which no `for of` does, so the loop is not taken
-# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
 # CHECK-LABEL: code f1:Body
 # CHECK: = TypeTest {{*}}testedType=Generator
 # CHECK: = IsUnmodifiedGenerator
-# RUN(STEP): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# RUN(STEP): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
 # STEP: = StepGenerator {{*}}check=None
-# RUN(CLOSE): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# RUN(CLOSE): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
 # CLOSE: = StepGenerator {{*}}resumeMode=Return{{*}}check=IsUnmodified
-# RUN(ARM): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# RUN(ARM): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
 # ARM: = PropGet {{*}}key="next"
 # ARM: = PropGet {{*}}key="done"
-# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
 # NEVER-NOT: NewHeapWords
 # NEVER-NOT: testedType=builtin(GeneratorPrototypeNext)
-# RUN(LIST): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# RUN(LIST): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
 # LIST-NOT: IsUnmodifiedGenerator
 # LIST-NOT: StepGenerator
-# RUN(LAST): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# RUN(LAST): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
 # LAST-NOT: IsUnmodifiedGenerator
-# RUN(KEPT): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# RUN(KEPT): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls+Folding
 # KEPT: = NewHeapWords
 # KEPT: testedType=builtin(GeneratorPrototypeNext)
 

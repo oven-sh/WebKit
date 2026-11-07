@@ -660,6 +660,78 @@ static void testFindByCharacters(LoadedProgram& program)
     AOT_TEST_CHECK(!set.has(jsString(program.realm(), jsString(vm, String("al"_s)), jsString(vm, String("ph"_s)))));
 }
 
+static void testTheCountOfMovedEntriesRisesWithEveryDeedThatMovesOne(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    auto risesIn = [&](auto&& deed) {
+        uint64_t before = vm.aotState().movesOfEntriesInCollections;
+        deed();
+        return vm.aotState().movesOfEntriesInCollections > before;
+    };
+    auto keyAt = [&](unsigned number) { return numberedString(program, "key"_s, number); };
+    auto filled = [&](Collection& map, unsigned count, JSValue value) {
+        for (unsigned number = 0; number < count; ++number)
+            map.add(keyAt(number), value);
+        return map.table();
+    };
+
+    Collection map(program, Collection::Kind::Map);
+    CompactTable* table = filled(map, 1, jsNumber(0));
+    AOT_TEST_CHECK(table->capacity() >= 3);
+    AOT_TEST_CHECK(!risesIn([&] { map.add(keyAt(1), jsNumber(1)); }) && map.table() == table && table->used() == 2);
+    AOT_TEST_CHECK(!risesIn([&] { map.add(keyAt(1), jsNumber(2)); }) && table->used() == 2);
+    AOT_TEST_CHECK(!risesIn([&] { AOT_TEST_CHECK(map.get(keyAt(1)) == jsNumber(2) && !map.remove(keyAt(9))); }));
+    AOT_TEST_CHECK(risesIn([&] { AOT_TEST_CHECK(map.remove(keyAt(1))); }) && map.table() == table);
+    AOT_TEST_CHECK(risesIn([&] {
+        for (unsigned number = 2; map.table() == table; ++number)
+            map.add(keyAt(number), jsNumber(number));
+    }) && table->status() == Status::Replaced);
+
+    if (!usesWideReferences()) {
+        Collection texts(program, Collection::Kind::Map);
+        table = filled(texts, 1, keyAt(0));
+        AOT_TEST_CHECK(table->valueWidth() == Width::Narrow);
+        AOT_TEST_CHECK(risesIn([&] { texts.add(keyAt(1), jsNumber(1)); }) && texts.table() != table && texts.table()->valueWidth() == Width::Wide);
+
+        Collection numbers(program, Collection::Kind::Map);
+        table = filled(numbers, 1, jsNumber(0));
+        AOT_TEST_CHECK(table->keyWidth() == Width::Narrow);
+        AOT_TEST_CHECK(risesIn([&] { numbers.add(jsNumber(1.5), jsNumber(1)); }) && numbers.table() != table && numbers.table()->keyWidth() == Width::Wide);
+    }
+
+    Collection emptied(program, Collection::Kind::Map);
+    table = filled(emptied, 3, jsNumber(0));
+    AOT_TEST_CHECK(risesIn([&] { CompactTable::clear(program.realm(), emptied.owner()); }) && emptied.table() == table && !table->used());
+
+    Collection replaced(program, Collection::Kind::Map);
+    table = filled(replaced, CompactTable::initialCapacity, jsNumber(0));
+    takeFirstEntry(program, replaced);
+    AOT_TEST_CHECK(risesIn([&] { CompactTable::clear(program.realm(), replaced.owner()); }) && table->status() == Status::Cleared);
+
+    Collection walked(program, Collection::Kind::Map);
+    filled(walked, CompactTable::initialCapacity + 1, jsNumber(0));
+    CompactTable::clear(program.realm(), walked.owner());
+    table = filled(walked, 2, jsNumber(0));
+    AOT_TEST_CHECK(table->capacity() <= CompactTable::maxCapacityWithTags && table->capacity() >= 4);
+    takeFirstEntry(program, walked);
+    AOT_TEST_CHECK(risesIn([&] { CompactTable::clear(program.realm(), walked.owner()); }) && walked.table() == table && table->used() == 2 && !table->size());
+
+    Collection large(program, Collection::Kind::Map);
+    table = filled(large, CompactTable::maxCapacityEmptiedByClear + 1, jsNumber(0));
+    AOT_TEST_CHECK(risesIn([&] { CompactTable::clear(program.realm(), large.owner()); }) && table->status() == Status::Cleared);
+
+    Collection shrunk(program, Collection::Kind::Map);
+    table = filled(shrunk, 1000, jsNumber(0));
+    uint32_t capacityWhenFull = table->capacity();
+    for (unsigned number = 8; number < 1000; ++number) {
+        CompactTable* held = shrunk.table();
+        uint64_t before = vm.aotState().movesOfEntriesInCollections;
+        AOT_TEST_CHECK(shrunk.remove(keyAt(number)));
+        AOT_TEST_CHECK(vm.aotState().movesOfEntriesInCollections >= before + (shrunk.table() == held ? 1 : 2));
+    }
+    AOT_TEST_CHECK(table->status() == Status::Replaced && shrunk.table()->capacity() < capacityWhenFull);
+}
+
 static void testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot(LoadedProgram& program)
 {
     for (bool keysAreNumbers : { false, true }) {
@@ -874,6 +946,8 @@ std::span<const NativeTest> compactTableTests()
         { "compact-table/find-by-characters"_s, narrow<testFindByCharacters> },
         { "compact-table/ordinary-table-has-no-prefix"_s, narrow<testAnOrdinaryTableHasNoDeletedPrefix> },
         { "compact-table/readded-key-keeps-one-slot"_s, narrow<testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot> },
+        { "compact-table/the-count-of-moved-entries-rises-with-every-deed-that-moves-one"_s, narrow<testTheCountOfMovedEntriesRisesWithEveryDeedThatMovesOne> },
+        { "compact-table/wide-references/the-count-of-moved-entries-rises-with-every-deed-that-moves-one"_s, wide<testTheCountOfMovedEntriesRisesWithEveryDeedThatMovesOne> },
         { "compact-table/out-of-memory-throws-and-leaves-the-table-usable"_s, narrow<testOutOfMemoryThrowsAndLeavesTheTableUsable> },
         { "compact-table/wide-references/deletion-of-half-and-growth"_s, wide<testDeletionOfHalfAndGrowth> },
         { "compact-table/a-table-that-was-replaced-gives-its-pages-back"_s, narrow<testATableThatWasReplacedGivesItsPagesBack> },
