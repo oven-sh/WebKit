@@ -2589,7 +2589,11 @@ void Unit::returnStatement(Return* node)
     } else
         value = constant(jsUndefined());
     // As in CPython: what leaves a `with` is of the line of the `with`, and nothing comes before it, unless the value begins on another line than the `return`.
-    auto* innermost = innermostBlock(m_blocks.size());
+    // (A `while` loop leaves nothing.)
+    size_t blockCount = m_blocks.size();
+    while (blockCount && m_blocks[blockCount - 1].kind == BlockKind::WhileLoop)
+        --blockCount;
+    auto* innermost = innermostBlock(blockCount);
     bool leavesWithFirst = innermost && (innermost->kind == BlockKind::With || innermost->kind == BlockKind::AsyncWith);
     bool valueEndsOnAnotherLine = m_markedLine != node->range.lineno;
     if (!leavesWithFirst || !node->value || node->value->range.lineno != node->range.lineno) {
