@@ -1218,6 +1218,19 @@ void BytecodeGenerator::giveFirstPythonLineMarkAnInstruction()
     --m_pythonLineMarkCount;
 }
 
+#if ASSERT_ENABLED
+bool BytecodeGenerator::pythonStatementBeginsSince(unsigned position) const
+{
+    for (auto& mark : m_codeBlock->pythonMarks() | std::views::reverse) {
+        if (mark.offset < position)
+            break;
+        if (mark.kind() == PythonMark::Line && Python::isStatementStart(mark.value()))
+            return true;
+    }
+    return false;
+}
+#endif
+
 void BytecodeGenerator::settlePythonLineMark()
 {
     while (m_pythonLineMarkPosition == m_writer.position())

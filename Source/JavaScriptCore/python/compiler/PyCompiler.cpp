@@ -1643,7 +1643,15 @@ void Unit::endTry(Try& tryRange)
 
 Unit::Reg Unit::beginHandler(Try& tryRange, Reg* previous, bool isOfLine)
 {
+    // A line that was marked behind code that cannot be reached (deadCode()) is given an instruction, which cannot be reached either, and must not fall into the handler.
+    // (No frame can be sent there: no statement begins at it.)
+    bool cannotGetHereAnyway = cannotGetHere();
+    unsigned position = g.instructions().size();
     g.settlePythonLineMark();
+    if (cannotGetHereAnyway && !cannotGetHere()) {
+        ASSERT_UNUSED(position, !g.pythonStatementBeginsSince(position) || c.failed());
+        g.emitUnreachable();
+    }
     ASSERT(cannotGetHere() || c.failed()); // BytecodeGeneratorification counts on it. (No more statements are compiled behind an error, so what would have left may be missing.)
     g.emitLabel(tryRange.handler.get());
     noLine();

@@ -467,6 +467,9 @@ namespace JSC {
         const WaysToPythonLabel& jumpsToLastPythonLabel() const { return m_jumpsToLastPythonLabel; }
         const WaysToPythonLabel& branchesToLastPythonLabel() const { return m_branchesToLastPythonLabel; }
         int pythonLineAt(unsigned position) const;
+#if ASSERT_ENABLED
+        bool pythonStatementBeginsSince(unsigned position) const;
+#endif
         bool lineBeginsBehindLastPythonLabel() const;
         // Where a range of the code begins or ends. Nothing jumps there.
         Ref<Label> newEmittedPythonRangeLabel();
