@@ -112,6 +112,21 @@
           runComplexTest [], [], "TZ=Etc/Unknown", "--useDollarVM=1", "--useTemporal=1"
       end
 
+- path: complex/bun-stack-bounds-unreadable-stack-limit.js
+  cmd: |
+      # Bun: the fork's own test. The helper runs jsc with a stack limit of 8 MB, under a seccomp filter that makes prlimit64() fail:
+      # jsc cannot read the limit. The helper is asked first whether it can do that here. Not under ASan, whose own start reads the
+      # limit and aborts. Not in a bundle for another machine, about which this one's answer says nothing.
+      helper = "deny-prlimit64"
+      errnos = [["eperm", 1], ["enosys", 38]]
+      if ($hostOS == "linux" && !$asan && !$tarball && errnos.all? { |_, errno| system("ruby", (HELPERS_PATH + helper).to_s, errno.to_s, "true", :err => File::NULL) })
+          errnos.each { |name, errno|
+              addRunCommand("complex-" + name, ["ruby", (pathToHelpers + helper).to_s, errno.to_s] + vmCommand + BASE_OPTIONS + $testSpecificRequiredOptions + [$benchmark.to_s], noisyOutputHandler, simpleErrorHandler)
+          }
+      else
+          skip
+      end
+
 - path: complex/for-in-clobberize.js
   cmd: runComplexTest [], [], nil, "--destroy-vm"
 

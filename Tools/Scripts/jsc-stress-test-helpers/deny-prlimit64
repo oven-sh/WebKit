@@ -1,0 +1,58 @@
+#!/usr/bin/env ruby
+
+# Copyright (C) 2026 Oven, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Bun: the fork's own helper. It runs a command under a seccomp filter that makes prlimit64() fail, which is what
+# getrlimit() calls on Linux, so the command cannot read its resource limits. Before that it gives the command a
+# stack limit of 8 MB, which is what WTF takes for a stack limit that it cannot read.
+#
+# usage: deny-prlimit64 <errno> <command> [argument...]
+#
+# It exits with 77 where it cannot do that: another system or architecture, a ruby without fiddle, a hard stack
+# limit below 8 MB, a sandbox that forbids the filter. It exits with 78 if getrlimit() still works under the filter.
+
+require "rbconfig"
+
+# The numbers of prlimit64, seccomp and prctl, and the AUDIT_ARCH of the architecture.
+numbers = { "x86_64" => [302, 317, 157, 0xc000003e], "aarch64" => [261, 277, 167, 0xc00000b7] }[RbConfig::CONFIG["host_cpu"]]
+exit 77 unless RbConfig::CONFIG["host_os"].include?("linux") && numbers
+begin
+    require "fiddle"
+rescue LoadError
+    exit 77
+end
+prlimit64, seccomp, prctl, arch = numbers
+errno = Integer(ARGV.shift)
+
+megabyte = 1024 * 1024
+hardLimit = Process.getrlimit(Process::RLIMIT_STACK)[1]
+exit 77 if hardLimit < 8 * megabyte
+Process.setrlimit(Process::RLIMIT_STACK, 8 * megabyte, hardLimit)
+
+# struct sock_filter is { u16 code; u8 jt; u8 jf; u32 k; }.
+instruction = ->(code, jt, jf, k) { [code, jt, jf, k].pack("SCCL") }
+allow = instruction[0x06, 0, 0, 0x7fff0000]
+instructions = [
+    instruction[0x20, 0, 0, 4], # Load the architecture of the call.
+    instruction[0x15, 1, 0, arch], # Another architecture has other numbers:
+    allow, # allow its calls.
+    instruction[0x20, 0, 0, 0], # Load the number of the call.
+    instruction[0x15, 0, 1, prlimit64], # prlimit64
+    instruction[0x06, 0, 0, 0x00050000 | errno], # fails with errno.
+    allow, # Any other call is allowed.
+]
+filter = Fiddle::Pointer[instructions.join]
+# struct sock_fprog is { unsigned short len; struct sock_filter* filter; }.
+program = Fiddle::Pointer[[instructions.size, filter.to_i].pack("Sx6Q")]
+syscall = Fiddle::Function.new(Fiddle.dlopen(nil)["syscall"], [Fiddle::TYPE_LONG] * 6, Fiddle::TYPE_LONG)
+# PR_SET_NO_NEW_PRIVS, then SECCOMP_SET_MODE_FILTER.
+exit 77 unless syscall.call(prctl, 38, 1, 0, 0, 0) == 0 && syscall.call(seccomp, 1, 0, program.to_i, 0, 0) == 0
+
+begin
+    Process.getrlimit(Process::RLIMIT_STACK)
+    exit 78
+rescue SystemCallError
+end
+
+exec(*ARGV)
