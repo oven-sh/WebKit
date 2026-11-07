@@ -303,8 +303,12 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
         chainLetsStoresPass = access.caches().tables().addFilterAndCheckStoreCreatesOwnField(globalObject, *object, field->name);
     else if (field && mode != PutMode::Define && shouldFile && !object->compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
         access.caches().tables().fileAbsenceFilterForStores(globalObject, object);
-    if (object && !field && tryStoreExtraPropertyAndCache(access.instance, *object, access.name(), value, mode, slot, shouldFile))
-        return;
+    if (object && !field) {
+        bool isStored = tryStoreExtraPropertyAndCache(access.instance, *object, access.name(), value, mode, slot, shouldFile);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (isStored)
+            return;
+    }
     bool createsOwnField = field && !shouldFile && !object->isInSlot(*field) && (mode == PutMode::Define || chainLetsStoresPass);
     if (createsOwnField && !uid->isSymbol() && canCreateFieldInSlot(vm, *object, *field) && tryCreateField(vm, object->state(), *object, *field, value))
         return;

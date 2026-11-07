@@ -77,13 +77,17 @@ private:
     struct RecordPlanForNames {
         Vector<RefPtr<UniquedStringImpl>, 8> names;
         std::unique_ptr<ObjectBuilderPlan> plan;
+        uint32_t numberOfCollectionsWhenLastFound { 0 };
+        uint64_t numberOfTimesAskedWhenLastFound { 0 };
     };
     static constexpr size_t recordPlanCacheSize = 128;
+    static constexpr uint32_t fewestRecordPlansLookedThrough = 256;
     using RecordPlanCache = std::array<CachedRecordPlan, recordPlanCacheSize>;
     static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> 4) % recordPlanCacheSize; }
 
     RecordPlan findRecordPlan(VM&, Structure*);
     const ObjectBuilderPlan* findOrCreateRecordPlan(VM&, Structure*);
+    void forgetRecordPlansNotFoundLately(VM&);
 
     uint8_t* begin(void* stackPointer, size_t length);
     uint8_t* beginIn(uint8_t* start, void* stackPointer, size_t length);
@@ -100,6 +104,11 @@ private:
     MadeInArena<RecordPlanCache> m_recordPlanCache;
     MadeInArena<JSONValueParser::LearnedNames> m_learnedNames;
     HashMap<uint32_t, Vector<RecordPlanForNames, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_recordPlans;
+    uint64_t m_numberOfTimesAskedForRecordPlan { 0 };
+    uint64_t m_numberOfTimesAskedWhenPlansWereForgotten { 0 };
+    uint32_t m_numberOfCollections { 0 };
+    uint32_t m_numberOfRecordPlans { 0 };
+    uint32_t m_mostRecordPlansHeld { 0 };
     std::unique_ptr<WeakGCMap<Structure*, Structure>> m_structuresThatNoPlanFits;
     RefPtr<StringImpl> m_wideText;
     size_t m_sourceCapacity { 0 };

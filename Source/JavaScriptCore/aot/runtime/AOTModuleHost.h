@@ -33,10 +33,12 @@ class JSObject;
 class JSPromise;
 class JSString;
 class ScriptFetchParameters;
+class SourceOrigin;
 class VM;
 
 namespace AOT {
 
+struct Instance;
 struct MockOperations;
 
 struct ModuleObjects {
@@ -118,6 +120,7 @@ JS_EXPORT_PRIVATE const MockOperations* mockOperations();
 
 JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath, unsigned hashOfPath);
 inline std::optional<ModuleID> findModule(StringView publicPath) { return findModule(publicPath, publicPath.hash()); }
+bool isOriginOfCompiledFile(const Instance&, const SourceOrigin&);
 JS_EXPORT_PRIVATE bool holdsFormThatAttributeAsksFor(StringView publicPath);
 JS_EXPORT_PRIVATE bool mayHoldPathStartingWith(StringView start);
 JS_EXPORT_PRIVATE bool isLeftToCodeOutsideImage(StringView specifier, StringView directoryOfImporter);

@@ -500,7 +500,7 @@ bool PlannerOfPromotedEnvironments::isEnteredUnderNoHandler(FunctionID id, unsig
     if (function.isModuleBody())
         return true;
     const LinkTables& linked = m_facts.linked();
-    if (!stepsLeft || !linked.function(id).everyCallerIsKnown || !m_facts.runsAtMostOnce(id))
+    if (!stepsLeft || function.isCoroutine() || !linked.function(id).everyCallerIsKnown || !m_facts.runsAtMostOnce(id))
         return false;
     bool isCalled = false;
     for (FunctionID referrer : linked.referrersOf(id)) {

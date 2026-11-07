@@ -395,8 +395,7 @@ struct NameOfStatementData {
 struct StarAsWrittenData {
     uint32_t module;
     uint32_t target;
-    uint32_t place : 31;
-    uint32_t isFollowed : 1;
+    uint32_t place;
 };
 
 struct ModuleFailureData {

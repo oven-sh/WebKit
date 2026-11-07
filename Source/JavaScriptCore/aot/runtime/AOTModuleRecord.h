@@ -125,7 +125,6 @@ public:
     void executeAsync(JSGlobalObject*);
 
     Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&, ModuleRecord* leader);
-    bool originalShows(JSGlobalObject*, const Identifier& exportName, std::span<ModuleRecord* const> askers);
     bool isNamedByEndedMockInFrontOfItsStar(JSGlobalObject*, const Identifier& exportName, unsigned index);
     bool answersByWhoLedToIt() const;
     bool keepsEndedMock() const;
@@ -147,14 +146,11 @@ private:
     ModuleRecord(Instance&, Structure*, JSModuleLoader*, const Identifier& moduleKey, ModuleID);
     Modules& modules() const;
     void appendDynamicStarTargets(StarExportTargets&);
-    bool appendStarsThatMayProvide(const Identifier& exportName, unsigned index, StarExportTargets&);
-    AbstractModuleRecord* recordBehindStar(ModuleID);
 
     Instance& m_instance;
     ModuleID m_module;
     const ModuleEvaluationStack* m_evaluationStack { nullptr };
     Vector<UniquedStringImpl*, 2> m_resolveSet;
-    ModuleRecord* m_leaderOfLastQuestion { nullptr };
     Vector<std::pair<UniquedStringImpl*, ModuleID>, 2> m_compiledRequests;
     unsigned m_nextCompiledRequest { 0 };
     ModuleGraphLoadingState* m_loadGoneOnWithWhileRequestsWereListed { nullptr };

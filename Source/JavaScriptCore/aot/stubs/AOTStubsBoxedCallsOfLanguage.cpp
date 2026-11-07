@@ -214,7 +214,7 @@ void emitCallOfNumberOrStringConstructor(StubAssembler& jit, GPRReg scratch)
     constexpr GPRReg value = argumentGPR(0);
     const GPRReg classInfo = jit.reuseScratch(StubRegister::T9);
     RELEASE_ASSERT(noOverlap(scratch, classInfo, calleeGPR, thisGPR, instanceGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3)));
-    const bool takesValue = jit.key().count();
+    const bool takesValue = jit.key().count() && jit.options().callsNumberOrStringByValue;
     JumpList callsFunction;
 
     loadStructure(jit, calleeGPR, scratch);

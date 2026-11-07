@@ -152,11 +152,9 @@ static Vector<StarAsWrittenData> listStarsAsWritten(const Typed::Program& progra
         size_t first = stars.size();
         for (const Typed::ModuleRequest& request : program.modules[index].requests) {
             if (request.starPlace && !answers.ofModules[request.target.index()].containsAll({ AnswerAboutModule::IsNotWorthVisiting, AnswerAboutModule::IsNeverEvaluated }))
-                stars.append({ index, request.target.index(), *request.starPlace, request.isDynamicStarExport });
+                stars.append({ index, request.target.index(), *request.starPlace });
         }
-        AOT::sort(stars.mutableSpan().subspan(first), [](const StarAsWrittenData& a, const StarAsWrittenData& b) {
-            return a.place < b.place;
-        });
+        AOT::sort(stars.mutableSpan().subspan(first), { }, &StarAsWrittenData::place);
     }
     return stars;
 }

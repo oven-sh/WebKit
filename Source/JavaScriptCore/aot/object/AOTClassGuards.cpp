@@ -33,6 +33,7 @@
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "ObjectPrototype.h"
+#include "TopExceptionScope.h"
 #include <algorithm>
 #include <cstdlib>
 #include <optional>
@@ -1047,9 +1048,13 @@ static void throwChangeOfClassHolderTakenBack(VM& vm, State& state, HolderMutati
         }
         RELEASE_ASSERT_NOT_REACHED();
     };
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!scope.exception())
-        throwTypeError(state.instance.globalObject, scope, changeThatCompiledCodeRulesOutMessage(change()));
+    auto owesNoCheck = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (!scope.exception())
+            throwTypeError(state.instance.globalObject, scope, changeThatCompiledCodeRulesOutMessage(change()));
+    }
+    RELEASE_ASSERT(owesNoCheck.exception());
 }
 
 static bool takeBackChangeOfMember(VM& vm, State& state, JSObject* holder, UniquedStringImpl* uid, HolderMutation mutation, const ClassTable::DeclaredMember& declared)

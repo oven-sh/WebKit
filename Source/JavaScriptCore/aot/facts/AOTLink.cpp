@@ -1807,7 +1807,10 @@ TypeID WriterOfLink::typeOfLiteralAndWhatIsCreatedBelow(FunctionID member)
     LayoutID literal = m_literalsThatMembersAreWrittenIn[member.index()];
     if (!literal)
         return { };
-    return typesAtHand().forLayouts(m_literalsWithWhatIsCreatedBelow.find(literal.index())->value.span());
+    TypeID& made = typesTurned().typeOfLiteralWithWhatIsCreatedBelow(literal);
+    if (!made)
+        made = typesAtHand().forLayouts(m_literalsWithWhatIsCreatedBelow.find(literal.index())->value.span());
+    return made;
 }
 
 void WriterOfLink::writeFunctions()

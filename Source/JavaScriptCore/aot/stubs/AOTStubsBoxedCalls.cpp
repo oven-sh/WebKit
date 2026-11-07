@@ -1574,7 +1574,7 @@ void generateCallBoxedBuiltin(StubAssembler& jit)
 {
     const BoxedCallHandler& handler = boxedCallHandlers[jit.key().form()];
     const StubKey hostCall = fetchesFunctionOnlyToLeave(handler.form, jit.key().count()) ? callHostFunctionThatMayBeUnfetched(jit.key().count()) : callHostFunctionWithoutBoxedCall(jit.key().count());
-    if (!acceptsArgumentCount(handler.form, jit.key().count())) {
+    if (!acceptsArgumentCount(handler.form, jit.key().count()) || jit.options().boxedCallsOutOfReach.get(jit.key().form())) {
         jit.jumpToStub(hostCall);
         return;
     }

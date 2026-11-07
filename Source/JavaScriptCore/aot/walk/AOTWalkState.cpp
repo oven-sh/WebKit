@@ -798,10 +798,12 @@ void WalkState::Held::listAsReachedByEffects(uint32_t holder)
 void WalkState::Held::takeOffListOfReachedByEffects(uint32_t holder)
 {
     uint32_t place = std::exchange(m_holders.mutableAt(holder).placeAmongReachedByEffects, none);
-    uint32_t last = m_holdersReachedByEffects.takeLast();
+    uint32_t numberLeft = m_holdersReachedByEffects.size() - 1;
+    uint32_t last = m_holdersReachedByEffects[numberLeft];
+    m_holdersReachedByEffects.shrink(numberLeft);
     if (last == holder)
         return;
-    m_holdersReachedByEffects[place] = last;
+    m_holdersReachedByEffects.mutableAt(place) = last;
     m_holders.mutableAt(last).placeAmongReachedByEffects = place;
 }
 
@@ -819,7 +821,7 @@ void WalkState::Held::forEachHolderReachedByEffects(NOESCAPE const Invocable<voi
     OptionSet<FactOfCell> facts;
     uint16_t kindsOfPlaces = 0;
     uint64_t maskOfPlaces = 0;
-    for (size_t index = 0; index < m_holdersReachedByEffects.size();) {
+    for (uint32_t index = 0; index < m_holdersReachedByEffects.size();) {
         uint32_t holder = m_holdersReachedByEffects[index];
         functor(holder);
         const Holder& record = m_holders[holder];
@@ -1178,8 +1180,8 @@ void WalkState::Held::makeLists()
     m_lists->places.grow(Lists::notListed, Lists::headsOfPlaces + m_places.size() * Lists::entriesOfPlace);
     m_lists->holders.fill(none, Lists::headsOfHolders);
     m_lists->holders.grow(Lists::notListed, Lists::headsOfHolders + m_holders.size() * Lists::entriesOfHolder);
-    for (uint32_t holder : m_holdersReachedByEffects)
-        listWhatHangsOn(holder);
+    for (uint32_t index = 0; index < m_holdersReachedByEffects.size(); ++index)
+        listWhatHangsOn(m_holdersReachedByEffects[index]);
 }
 
 void WalkState::Held::dropLists()
@@ -1672,7 +1674,7 @@ void WalkState::Held::endWhatIsNotFresh()
         return;
     }
     while (!m_holdersReachedByEffects.isEmpty())
-        endHolder(m_holdersReachedByEffects.last());
+        endHolder(m_holdersReachedByEffects[m_holdersReachedByEffects.size() - 1]);
     dropEndedRecordsIfMany();
 }
 

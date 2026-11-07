@@ -933,7 +933,7 @@ private:
         SharedSetOfNumbers m_builtinsRead;
         Table m_tableOfHolders;
         Table m_tableOfPlaces;
-        Vector<uint32_t, holdersFoundWithoutTable> m_holdersReachedByEffects;
+        SharedArray<uint32_t, holdersFoundWithoutTable> m_holdersReachedByEffects;
         SharedArray<Holder, holdersFoundWithoutTable> m_holders;
         SharedArray<Place, placesThatLieInHeld> m_places;
     };

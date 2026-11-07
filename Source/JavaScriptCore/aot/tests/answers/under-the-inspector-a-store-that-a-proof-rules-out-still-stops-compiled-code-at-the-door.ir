@@ -48,6 +48,7 @@
 # CAUGHT-NEXT: went on
 # CAUGHT-NEXT: exited with 0
 # Text that the PROGRAM evaluates bears the origin of the compiled file that evaluated it: it counts as the program, and the stop stays. Here the shell lays eval under `id` and a text under `stranger`: compiled code evaluates the text and calls what it makes.
+# The path of the module is relative on purpose: made into a file URL and back it is another path ("/main.js") on every system, as an absolute one is on Windows alone, so the text is known by its origin or not at all.
 # RUN(OWNTEXT): run-in-shell mechanisms=all globalThis.which = 6; globalThis.id = eval; globalThis.stranger = "(function (b) { try { b.inner = 'text'; } catch { } })";
 # OWNTEXT: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that
 # OWNTEXT-NOT: went on
@@ -65,7 +66,7 @@
 # NONE-NEXT: went on
 # NONE-NEXT: exited with 0
 
-module m0 path="/made-up/main.js" displayPath="main.js" body=f0
+module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 module=m0 fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="inner" declared={type=anything} flags=[IsRequired]}, {key="kept" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
 layout L1 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1

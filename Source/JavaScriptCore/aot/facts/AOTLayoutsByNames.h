@@ -253,16 +253,41 @@ private:
             m_numberWrittenInSight[pair >> 32] += layoutsWrittenIn(ModuleID(static_cast<uint32_t>(pair))).size();
     }
 
+    static uint64_t wordOfName(PropertyKeyID name)
+    {
+        uint64_t word = (static_cast<uint64_t>(name.index()) + 1) * 0x9e3779b97f4a7c15ull;
+        return word ^ (word >> 29);
+    }
+
     void listRecordsThatDeclaredTypesName(const Program& program)
     {
+        struct RecordByNames {
+            uint64_t wordOfNames;
+            uint32_t holder;
+            auto operator<=>(const RecordByNames&) const = default;
+        };
+        Vector<RecordByNames> recordsByNames;
+        for (uint32_t holder = 0; !program.declaredRecords.isEmpty() && holder + 1 < m_firstNameOfLayout.size(); ++holder) {
+            const auto& written = program.layouts[holder].fields;
+            if (m_isInstance.get(holder) || m_firstNameOfLayout[holder] == m_firstNameOfLayout[holder + 1] || !std::ranges::all_of(written, [](const Field& field) { return !!field.key; }))
+                continue;
+            uint64_t wordOfNames = 0;
+            for (const Field& field : written)
+                wordOfNames += wordOfName(field.key);
+            recordsByNames.append({ wordOfNames, holder });
+        }
+        std::ranges::sort(recordsByNames);
         for (const DeclaredRecord& declared : program.declaredRecords) {
             uint64_t function = static_cast<uint64_t>(declared.module.index()) << 32 | declared.start;
             m_recordsOfDeclaredParameters.append({ function, declared.parameter, LayoutID() });
-            auto isDeclared = [&](const Field& field) { return field.key && std::ranges::binary_search(declared.names, field.key); };
-            for (uint32_t holder : holdersOfRarestOf(declared.names.span())) {
-                const auto& written = program.layouts[holder].fields;
-                if (!m_isInstance.get(holder) && written.size() == declared.names.size() && std::ranges::all_of(written, isDeclared))
-                    m_recordsOfDeclaredParameters.append({ function, declared.parameter, LayoutID(holder) });
+            auto isDeclared = [&](const Field& field) { return std::ranges::binary_search(declared.names, field.key); };
+            uint64_t wordOfNames = 0;
+            for (PropertyKeyID name : declared.names)
+                wordOfNames += wordOfName(name);
+            for (const RecordByNames& found : std::ranges::equal_range(recordsByNames, wordOfNames, { }, &RecordByNames::wordOfNames)) {
+                const auto& written = program.layouts[found.holder].fields;
+                if (written.size() == declared.names.size() && std::ranges::all_of(written, isDeclared))
+                    m_recordsOfDeclaredParameters.append({ function, declared.parameter, LayoutID(found.holder) });
             }
         }
         std::ranges::stable_sort(m_recordsOfDeclaredParameters, { }, &RecordOfDeclaredParameter::place);

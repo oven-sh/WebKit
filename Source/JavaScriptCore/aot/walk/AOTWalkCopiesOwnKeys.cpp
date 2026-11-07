@@ -18,7 +18,9 @@
 #include "AOTTypeArena.h"
 #include <algorithm>
 #include <optional>
+#include <ranges>
 #include <span>
+#include <tuple>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -326,6 +328,26 @@ static LayoutID layoutWrittenOfSourceInCopiesOwnKeys(Walker& walker, ValueID sou
     return layoutThatNamesFamily(walker, written);
 }
 
+static bool isWrittenEarlierInCopiesOwnKeys(const Program& program, LayoutID first, LayoutID second)
+{
+    const Layout& one = program.at(first);
+    const Layout& other = program.at(second);
+    auto placeOf = [](const Layout& layout) {
+        return std::tuple(!layout.module, layout.module ? layout.module.index() : 0u, layout.position);
+    };
+    if (placeOf(one) != placeOf(other))
+        return placeOf(one) < placeOf(other);
+    auto namesOf = [&](const Layout& layout) {
+        return layout.fields | std::views::transform([&](const Field& field) {
+            StringID text = field.key ? program.at(field.key).text : StringID();
+            return text ? program.string(text) : std::span<const uint8_t>();
+        });
+    };
+    return std::ranges::lexicographical_compare(namesOf(one), namesOf(other), [](std::span<const uint8_t> name, std::span<const uint8_t> otherName) {
+        return std::ranges::lexicographical_compare(name, otherName);
+    });
+}
+
 static bool listLayoutsInCopiesOwnKeys(Walker& walker, TypeID listed, ValueID source, unsigned mostArms, size_t mostFields, Vector<LayoutID, mostArmsOfOwnKeyWalk>& layouts, bool& hasMoreLayouts)
 {
     if (!listed)
@@ -343,15 +365,17 @@ static bool listLayoutsInCopiesOwnKeys(Walker& walker, TypeID listed, ValueID so
     }
     if (written)
         layouts.append(written);
+    Vector<LayoutID, 8> others;
     for (LayoutID member : membersOf(walker.types(), type.layouts)) {
-        if (member == written || !walker.plan().isInUse(member))
-            continue;
-        if (layouts.size() == mostArms) {
-            hasMoreLayouts = true;
-            break;
-        }
-        layouts.append(member);
+        if (member != written && walker.plan().isInUse(member))
+            others.append(member);
     }
+    std::ranges::stable_sort(others, [&](LayoutID first, LayoutID second) {
+        return isWrittenEarlierInCopiesOwnKeys(walker.program(), first, second);
+    });
+    size_t room = mostArms - std::min<size_t>(mostArms, layouts.size());
+    hasMoreLayouts |= others.size() > room;
+    layouts.append(others.span().first(std::min(room, others.size())));
     return !layouts.isEmpty();
 }
 

@@ -105,6 +105,29 @@ static void testFormsThatMatchInLanguageCallTests()
     }
 }
 
+static void testCallsOfBuiltinsThatProgramCannotHoldInLanguageCallTests()
+{
+    StubCatalog holdsAll(StubOptions { });
+    StubOptions options { .callsNumberOrStringByValue = false };
+    options.boxedCallsOutOfReach.setAll();
+    StubCatalog holdsNone(options);
+    auto uses = [](const StubCatalog& catalog, StubKey key, Entry entry) {
+        return catalog.recordingOf(bodyOf(key)).entriesUsed.get(static_cast<size_t>(entry));
+    };
+    StubKey then = callBoxedBuiltin(BoxedCallForm::PromiseThen, 2);
+    AOT_TEST_CHECK(uses(holdsAll, then, Entry::operationAOTPromiseThen) && !uses(holdsNone, then, Entry::operationAOTPromiseThen));
+    StubKey constructor = callInternalFunction(CodeSpecializationKind::CodeForCall, 1);
+    for (Entry entry : { Entry::operationAOTNumberOfAnyValue, Entry::operationAOTStringOfAnyValue })
+        AOT_TEST_CHECK(uses(holdsAll, constructor, entry) && !uses(holdsNone, constructor, entry));
+    for (unsigned form = 0; form < numberOfBuiltinBoxedStubs; ++form) {
+        for (unsigned count = BoxedCallEntry::minArgumentCount; count <= BoxedCallEntry::maxArgumentCount; ++count) {
+            StubKey key = callBoxedBuiltin(static_cast<BoxedCallForm>(form), count);
+            AOT_TEST_CHECK(holdsNone.recordingOf(bodyOf(key)).entriesUsed.isEmpty());
+            AOT_TEST_CHECK(refersToInLanguageCallTests(holdsNone, key, callHostFunctionWithoutBoxedCall(count)) || refersToInLanguageCallTests(holdsNone, key, callHostFunctionThatMayBeUnfetched(count)));
+        }
+    }
+}
+
 static void testIsWellFormedInLanguageCallTests()
 {
     StubRunner runner;
@@ -993,6 +1016,56 @@ static void testBooleanCalledByValueInLanguageCallTests()
     }
 }
 
+static void testNumberAndStringCalledByValueWithoutTheirArmInLanguageCallTests()
+{
+    StubRunner runner(StubOptions { .callsNumberOrStringByValue = false, .targetFeatures = CPUFeatureSet::buildTarget() });
+    Instance& instance = runner.instance();
+    std::array<FakeObject<sizeof(Structure)>, 2> structures;
+    FakeObject<16> classInfoOfNumber;
+    FakeObject<16> classInfoOfString;
+    instance.prefix().structureIDBase = structures[0].address() & ~static_cast<uint64_t>(UINT32_MAX);
+    AOT_TEST_CHECK((structures[1].address() & ~static_cast<uint64_t>(UINT32_MAX)) == instance.prefix().structureIDBase);
+    structures[0].at<uint64_t>(Structure::classInfoOffset()) = classInfoOfNumber.address();
+    structures[1].at<uint64_t>(Structure::classInfoOffset()) = classInfoOfString.address();
+    StubEnvironment::of(&instance).runtimeTable[indexOf(Entry::NumberConstructorClassInfo)] = std::bit_cast<void*>(static_cast<uintptr_t>(classInfoOfNumber.address()));
+    StubEnvironment::of(&instance).runtimeTable[indexOf(Entry::StringConstructorClassInfo)] = std::bit_cast<void*>(static_cast<uintptr_t>(classInfoOfString.address()));
+
+    FakeObject<16> realm;
+    FakeObject<sizeof(NativeExecutable)> executable;
+    executable.setHeader(0, NativeExecutableType);
+    executable.at<const void*>(NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall)) = TaggedNativeFunction(countHostCallInLanguageCallTests).taggedPtr();
+    std::array<FakeObject<sizeof(JSFunction)>, 2> constructors;
+    for (size_t index = 0; index < constructors.size(); ++index) {
+        constructors[index].setHeader(static_cast<uint32_t>(structures[index].address()), JSFunctionType);
+        constructors[index].at<uint64_t>(JSCallee::offsetOfScopeChain()) = realm.address();
+        constructors[index].at<uint64_t>(JSFunction::offsetOfExecutableOrRareData()) = executable.address();
+    }
+
+    Ref<StringImpl> characters = StringImpl::create("12"_s);
+    TextInLanguageCallTests text;
+    FakeObject<16> object;
+    makeFlatInLanguageCallTests(text, characters.get());
+    object.setHeader(0, ObjectType);
+    constexpr uint64_t thisValue = JSValue::ValueUndefined;
+    const uint64_t fraction = static_cast<uint64_t>(JSValue::encode(jsDoubleNumber(0.5)));
+
+    numberOfHostCallsInLanguageCallTests = 0;
+    for (uint64_t callee : { constructors[0].address(), constructors[1].address() }) {
+        for (uint64_t value : { int32InLanguageCallTests(7), fraction, text.address(), object.address() }) {
+            const std::array<StubRun, 4> runs {
+                runner.runCall(callValue(1), callee, thisValue, { value }),
+                runner.runCall(callValue(3), callee, thisValue, { value, int32InLanguageCallTests(0), object.address() }),
+                runner.runCall(callInternalFunction(CodeSpecializationKind::CodeForCall, 1), callee, thisValue, { value }),
+                runner.runCall(callInternalFunction(CodeSpecializationKind::CodeForCall, 3), callee, thisValue, { value, int32InLanguageCallTests(0), object.address() }),
+            };
+            for (const StubRun& run : runs)
+                AOT_TEST_CHECK(!run.calledOperation && run.result == resultOfHostFunctionInLanguageCallTests);
+        }
+        AOT_TEST_CHECK(runner.runCall(callValue(0), callee, thisValue, { }).result == resultOfHostFunctionInLanguageCallTests);
+    }
+    AOT_TEST_CHECK(numberOfHostCallsInLanguageCallTests == 34);
+}
+
 static void testNumberAndStringCalledByValueInLanguageCallTests()
 {
     StubRunner runner;
@@ -1075,6 +1148,7 @@ std::span<const NativeTest> stubBoxedCallsOfLanguageTests()
 {
     static constexpr NativeTest tests[] = {
         { "stubs/boxed-calls-of-language/exec-and-match-go-to-what-matches"_s, testFormsThatMatchInLanguageCallTests },
+        { "stubs/boxed-calls-of-language/number-and-string-called-by-value-without-their-arm-go-to-the-host-function"_s, ImageTests::whenExecutable<testNumberAndStringCalledByValueWithoutTheirArmInLanguageCallTests> },
         { "stubs/boxed-calls-of-language/narrow-flat-text-is-well-formed"_s, ImageTests::whenExecutable<testIsWellFormedInLanguageCallTests> },
         { "stubs/boxed-calls-of-language/search-from-a-position-lies-in-the-text"_s, ImageTests::whenExecutable<testSearchesFromPositionInLanguageCallTests> },
         { "stubs/boxed-calls-of-language/short-text-that-can-stand-at-one-place-alone-is-compared-there"_s, ImageTests::whenExecutable<testTextAtOnePlaceInLanguageCallTests> },
@@ -1089,6 +1163,7 @@ std::span<const NativeTest> stubBoxedCallsOfLanguageTests()
         { "stubs/boxed-calls-of-language/instructions/a-shift-of-a-list-of-seventeen"_s, ImageTests::whenExecutable<testInstructionsOfShiftInLanguageCallTests<17, 113>> },
         { "stubs/boxed-calls-of-language/boolean-called-by-value-takes-no-frame"_s, ImageTests::whenExecutable<testBooleanCalledByValueInLanguageCallTests> },
         { "stubs/boxed-calls-of-language/number-and-string-called-by-value-go-to-the-operations-of-their-direct-calls"_s, ImageTests::whenExecutable<testNumberAndStringCalledByValueInLanguageCallTests> },
+        { "stubs/boxed-calls-of-language/a-call-of-a-built-in-that-the-program-cannot-hold-goes-to-the-host-function"_s, testCallsOfBuiltinsThatProgramCannotHoldInLanguageCallTests },
     };
     return tests;
 }

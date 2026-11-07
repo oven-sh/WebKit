@@ -29,12 +29,16 @@ public:
         return turnAndKeep(flow, types, type, hash);
     }
 
+    TypeID& typeOfLiteralWithWhatIsCreatedBelow(LayoutID literal) { return m_typesOfLiteralsWithWhatIsCreatedBelow.add(literal.index(), TypeID()).iterator->value; }
+
 private:
     struct Slot {
         LinkType type;
         TypeID turned;
         bool isFilled { false };
     };
+
+    UncheckedKeyHashMap<uint32_t, TypeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typesOfLiteralsWithWhatIsCreatedBelow;
 
     static ALWAYS_INLINE size_t hashOf(const LinkType& type)
     {

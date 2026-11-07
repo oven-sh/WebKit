@@ -296,6 +296,7 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
         if (object->isNotExtensible())
             return typeError(globalObject, scope, shouldThrow, NonExtensibleObjectPropertyDefineError);
         createField(vm, *object, field, createPropertyFromDescriptor(globalObject, descriptor));
+        RETURN_IF_EXCEPTION(scope, false);
         return true;
     }
 
@@ -314,7 +315,7 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
         bool replacesProvenHalf = (field.getterIsProven && !held->isGetterNull() && getter != held->getter()) || (field.setterIsProven && !held->isSetterNull() && setter != held->setter());
         if (replacesProvenHalf && !vm.aotState().nativeTestChangesObjectsUnseen) [[unlikely]] {
             if (refusesMutation(vm, *object, ObjectMutation::RedefineProperty))
-                return false;
+                RELEASE_AND_RETURN(scope, false);
             crashOnImpossibleMutation(vm, *object, field, ObjectMutation::RedefineProperty);
         }
         bool keepsBothHalves = !field.takesAccessorsOfLibraryAlone() || (getter == (held->isGetterNull() ? nullptr : held->getter()) && setter == (held->isSetterNull() ? nullptr : held->setter()));
@@ -330,10 +331,12 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
         if (keepsValue || object->tryStore(vm, field, descriptor.value()))
             return true;
         object->moveFieldToExtraProperties(vm, field, { descriptor.value(), attributes }, SlotExitReason::StoreOfOtherType);
+        RETURN_IF_EXCEPTION(scope, false);
         return true;
     }
 
     object->moveFieldToExtraProperties(vm, field, redefinedProperty(globalObject, currentDescriptor, descriptor), SlotExitReason::Redefinition);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -765,6 +768,7 @@ bool Object::setPrototype(JSObject* cell, JSGlobalObject* globalObject, JSValue 
             return typeError(globalObject, scope, shouldThrow, "cyclic __proto__ value"_s);
     }
     object->setPrototypeKeepingShape(vm, prototype);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -1066,6 +1070,7 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
             if (object->tryStore(vm, *field, value))
                 return true;
             object->moveFieldToExtraProperties(vm, *field, { value, current.attributes }, SlotExitReason::StoreOfOtherType);
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         }
         if (current) {
@@ -1107,6 +1112,7 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
         if (fitsSlot && tryCreateField(vm, object->state(), *object, *field, value))
             return true;
         object->moveFieldToExtraProperties(vm, *field, { value, static_cast<unsigned>(PropertyAttribute::None) }, fitsSlot ? SlotExitReason::StoreOfOtherType : SlotExitReason::Redefinition);
+        RETURN_IF_EXCEPTION(scope, false);
         return true;
     }
     RELEASE_AND_RETURN(scope, defineOwnProperty(object, globalObject, name, PropertyDescriptor(value, static_cast<unsigned>(PropertyAttribute::None)), slot.isStrictMode()));
@@ -1147,6 +1153,7 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
         if (current.isInSlot) {
             if (!field->isAccessor()) {
                 object->deleteField(vm, *field);
+                RETURN_IF_EXCEPTION(scope, false);
                 return true;
             }
             object->moveFieldToExtraProperties(vm, *field, { current.valueOrAccessor, current.attributes }, SlotExitReason::Delete);

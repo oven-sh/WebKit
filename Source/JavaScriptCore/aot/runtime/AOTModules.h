@@ -76,7 +76,6 @@ struct LinkContext {
     macro(JSValue, exportsWhenVariableAndModuleObjectAgreed) \
     macro(Structure*, structureOfModuleObjectLastLookedAt) \
     macro(JSObject*, objectMadeByRequire) \
-    macro(JSObject*, standInForModuleObject) \
     macro(JSObject*, objectMadeByRequireBeforeMockInPlace) \
     macro(JSValue, exportsGivenToObjectMadeByRequire) \
     macro(JSObject*, firstRequirerOutsideImage) \
@@ -129,6 +128,7 @@ struct MockedModules {
     Vector<uint32_t> positionBelow;
     uint32_t numberBelow { 0 };
     BitVector namedByListsAlone;
+    std::optional<BitVector> comeToMock;
     UncheckedKeyHashMap<ModuleID, Box<BitVector>> reachedFromRoots;
 };
 
@@ -160,6 +160,7 @@ public:
     JSValue value(ModuleID) const;
     enum class MockOfModule : bool { Answers, IsReadPast };
     JSValue readExport(ModuleID, unsigned index, MockOfModule = MockOfModule::Answers);
+    JSValue readOffNamespaceThatListsName(ModuleID reader, JSObject* namespaceOfReader, JSObject* lister, const Identifier&);
     JSValue readExportIfInitialized(ModuleID, unsigned index) const;
     bool isExportAmbiguous(ModuleID, unsigned index) const;
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue);
@@ -208,7 +209,6 @@ public:
     struct AnswersKept {
         uint32_t timesMocksInPlaceWereWritten;
         bool isShut { false };
-        bool isPassedBy { false };
         UncheckedKeyHashMap<std::pair<AbstractModuleRecord*, RefPtr<UniquedStringImpl>>, AbstractModuleRecord::Resolution> resolutions { };
         UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> isLeftOut { };
         BitVector namesBehindStarsAreInTables { };
@@ -219,12 +219,12 @@ public:
             return nullptr;
         if (m_answersKept->timesMocksInPlaceWereWritten != m_numberOfMocksInPlace.timesWritten()) [[unlikely]]
             dropAnswersKept();
-        return m_answersKept->isShut || m_answersKept->isPassedBy ? nullptr : m_answersKept;
+        return m_answersKept->isShut ? nullptr : m_answersKept;
     }
     void dropAnswersKept(bool shuts = true) const
     {
         if (m_answersKept) [[unlikely]]
-            *m_answersKept = { m_numberOfMocksInPlace.timesWritten(), shuts || m_answersKept->isShut, m_answersKept->isPassedBy };
+            *m_answersKept = { m_numberOfMocksInPlace.timesWritten(), shuts || m_answersKept->isShut };
     }
     class KeepsAnswers {
     public:
@@ -371,7 +371,6 @@ public:
         JSObject* mock;
         Identifier name;
         ModuleID mocked;
-        bool lacksName { false };
     };
     std::optional<AnswerOfMock> mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& passedOn, MockOfModule ofPassingOn = MockOfModule::Answers) const;
     std::optional<AnswerOfMock> mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData& passedOn, MockOfModule ofPassingOn) const;
@@ -379,7 +378,7 @@ public:
         ModuleID module;
         unsigned index;
     };
-    const Vector<Vector<PlaceOfExport, 1>>& whoHandsOnEntriesThatStarsLaidInto(ModuleID) const;
+    const Vector<std::optional<PlaceOfExport>>& whoHandsOnEntriesThatStarsLaidInto(ModuleID) const;
     enum class MocksAskedFor : uint8_t { All, ThoseThatAddNames };
     bool isMockedInItsImage(ModuleID, MocksAskedFor = MocksAskedFor::All);
     bool isMockedInItsImageSlow(ModuleID, MocksAskedFor);
@@ -437,11 +436,16 @@ public:
             if (m_mocks->namedByListsAlone.quickGet(module.index()))
                 return true;
             uint32_t position = m_mocks->positionBelow[module.index()];
-            return position != MockedModules::notBelow && !reachedFromRoot().quickGet(position);
+            if (position == MockedModules::notBelow)
+                return false;
+            if (!rootComesToMock())
+                return m_mocks->modules.quickGet(module.index());
+            return !reachedFromRoot().quickGet(position);
         }
 
     private:
         const BitVector& reachedFromRoot() const;
+        bool rootComesToMock() const;
 
         const ModuleTable& m_table;
         Box<MockedModules> m_mocks;
@@ -547,6 +551,7 @@ public:
     JSString* pathString(ModuleID);
     JSString* resolve(ModuleID, ResolvedSpecifierForm);
     const SourceOrigin& sourceOrigin(ModuleID);
+    bool hasMadeOrigin(const SourceOrigin&) const;
     void throwFailure(ModuleFailureID, bool isForRequire);
     void throwNewFailure(ModuleFailureID, bool isForRequire);
     std::optional<ModuleFailureID> loadFailure(ModuleID module) const { return m_table.loadFailure(module); }
@@ -873,9 +878,7 @@ public:
     JSObject* mainModuleObject(ModuleID);
     JSObject* parentModuleObject(ModuleID);
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
-    bool keepsModuleObjectToItself(ModuleID module) const { return !mayHandOutModuleObject(module) || data(module).exportsStayInCompiledCode(); }
     bool forEachNewChild(ModuleID, const ScopedLambda<void(JSObject*)>&);
-    JSObject* prototypeOfModuleObjects() const { return m_prototypeOfModuleObjects; }
     void dropNewChildren(ModuleID);
     enum class NamedByBuild : uint8_t { No, FileOfImage, WhatLiesOutsideImage };
     JSValue requireSpecifier(JSValue specifier, ModuleID referrer, NamedByBuild);
@@ -1134,10 +1137,6 @@ private:
     void noteFirstRequestFromHost(ModuleID);
     void noteLoadOfGraph(ModuleID root);
     JSObject* moduleObjectMadeByRequire(ModuleID);
-    JSObject* objectThatStandsForModule(ModuleID);
-    JSObject* objectThatStandsForModuleIfMade(ModuleID);
-    JSObject* makeStandInForModuleObject(const String& messageOfRefusal);
-    void notePrototypeOfModuleObjects(JSObject* freshModuleObject);
     enum class FormThatAnswers : bool { TheOneAskedFor, TheOneThatLoaderFinds };
     JSValue answerRequire(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer, FormThatAnswers = FormThatAnswers::TheOneAskedFor);
     bool standsForFileOutsideImage(ModuleID) const;
@@ -1221,7 +1220,6 @@ private:
     uint32_t m_synchronousLoadCount { 0 };
     uint32_t m_activeSynchronousLoad { 0 };
     Structure* m_namespaceStructure { nullptr };
-    JSObject* m_prototypeOfModuleObjects { nullptr };
     Structure* m_extensibleNamespaceStructure { nullptr };
     Identifier m_moduleExportsName;
     enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain, BegunAndMadeObjectOfESModule, ReturnedAndNotListed };
@@ -1753,6 +1751,7 @@ private:
         bool wasLoadedInThisTestFile { false };
     };
     Vector<std::pair<ModuleID, JSObject*>, 4> m_namespacesBeingMade;
+    Vector<std::pair<JSObject*, UniquedStringImpl*>, 4> m_namesBeingReadOffListers;
     struct CollectionOfNamesBehindStars {
         Vector<std::pair<JSObject*, IdentifierSet>, 1> namesOfEndedMocks;
     };
@@ -1816,7 +1815,7 @@ private:
     BitVector m_modulesLoadedAnewWhoseNamesAreOwed;
     BitVector m_modulesWithNoNamesOwedBelow;
     Vector<Vector<uint32_t, 2>> m_importersByStatement;
-    mutable UncheckedKeyHashMap<ModuleID, Vector<Vector<PlaceOfExport, 1>>> m_whoHandsOnEntriesThatStarsLaid;
+    mutable UncheckedKeyHashMap<ModuleID, Vector<std::optional<PlaceOfExport>>> m_whoHandsOnEntriesThatStarsLaid;
     std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
     std::optional<ModuleID> m_rootWhoseFilesRun;
     struct DeferredRequest {

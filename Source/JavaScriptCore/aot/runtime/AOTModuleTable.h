@@ -33,12 +33,12 @@ public:
     {
     }
 
-    bool placesAreWritten() const { return !m_asWritten.empty(); }
+    bool standOutOfOrder() const { return !m_asWritten.empty(); }
     size_t numberOfPlaces() const { return m_asWritten.empty() ? m_requests.size() : m_asWritten.size(); }
     std::optional<ModuleRequestData> at(size_t place) const
     {
         if (!m_asWritten.empty()) [[unlikely]]
-            return m_asWritten[place].isFollowed ? std::optional(ModuleRequestData::create(m_asWritten[place].target, false, true)) : std::nullopt;
+            return ModuleRequestData::create(m_asWritten[place].target, false, true);
         return m_requests[place].isDynamicStarExport ? std::optional(m_requests[place]) : std::nullopt;
     }
 

@@ -1451,7 +1451,7 @@ public:
         SetForScope isRemembered(m_resultOfReadIsRemembered, true);
         Reference built = build(WTF::move(read));
         if (built && built.isValue())
-            setTypeAsked(built.id(), shownOfWhatIsRemembered);
+            setTypeAsked(built.id(), asFarAsUnitMayAsk(shownOfWhatIsRemembered));
         return built;
     }
     const PositionTypes& positions() const { return *m_positions; }

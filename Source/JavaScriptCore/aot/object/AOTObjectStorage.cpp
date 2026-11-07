@@ -352,7 +352,7 @@ bool isAskedByCodeThatInspectorBrought(VM& vm, const Instance& instance, FrameTh
             textWithoutOriginAsks = true;
             return IterationStatus::Continue;
         }
-        isAskedByConsole = !textWithoutOriginAsks && !(origin.url().protocolIsFile() && findModule(origin.url().fileSystemPath()));
+        isAskedByConsole = !textWithoutOriginAsks && !(origin.url().protocolIsFile() && (findModule(origin.url().fileSystemPath()) || isOriginOfCompiledFile(instance, origin)));
         return IterationStatus::Done;
     }, false, StackVisitor::CompiledFrameVisit::EachRunOnce);
     return isAskedByConsole;

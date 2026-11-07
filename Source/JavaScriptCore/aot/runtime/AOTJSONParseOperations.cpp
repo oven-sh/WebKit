@@ -91,6 +91,22 @@ JSONValueParser::LearnedNames& JSONRuntime::learnedNames()
     return *m_learnedNames;
 }
 
+void JSONRuntime::forgetRecordPlansNotFoundLately(VM& vm)
+{
+    if (m_numberOfRecordPlans < fewestRecordPlansLookedThrough || m_numberOfTimesAskedForRecordPlan - m_numberOfTimesAskedWhenPlansWereForgotten <= 2 * static_cast<uint64_t>(m_numberOfRecordPlans))
+        return;
+    m_numberOfTimesAskedWhenPlansWereForgotten = m_numberOfTimesAskedForRecordPlan;
+    uint32_t numberOfRecordPlansBefore = m_numberOfRecordPlans;
+    m_recordPlans.removeIf([&](auto& plansUnderHash) {
+        m_numberOfRecordPlans -= plansUnderHash.value.removeAllMatching([&](const RecordPlanForNames& known) {
+            return m_numberOfCollections - known.numberOfCollectionsWhenLastFound > 1 && m_numberOfTimesAskedForRecordPlan - known.numberOfTimesAskedWhenLastFound > 2 * static_cast<uint64_t>(numberOfRecordPlansBefore);
+        });
+        return plansUnderHash.value.isEmpty();
+    });
+    if (m_numberOfRecordPlans != numberOfRecordPlansBefore)
+        countEvent(vm, RuntimeCounterID::RecordPlansForgotten, numberOfRecordPlansBefore - m_numberOfRecordPlans);
+}
+
 const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* structure)
 {
     if (structure->isDictionary() || (m_structuresThatNoPlanFits && m_structuresThatNoPlanFits->get(structure)))
@@ -120,9 +136,12 @@ const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* 
         hash = pairIntHash(hash, name->existingSymbolAwareHash());
     hash >>= 1;
     if (auto found = m_recordPlans.find(hash); found != m_recordPlans.end()) {
-        for (const RecordPlanForNames& known : found->value) {
-            if (std::ranges::equal(known.names, names, { }, &RefPtr<UniquedStringImpl>::get))
+        for (RecordPlanForNames& known : found->value) {
+            if (std::ranges::equal(known.names, names, { }, &RefPtr<UniquedStringImpl>::get)) {
+                known.numberOfCollectionsWhenLastFound = m_numberOfCollections;
+                known.numberOfTimesAskedWhenLastFound = m_numberOfTimesAskedForRecordPlan;
                 return known.plan.get();
+            }
         }
     }
     bool imageHasEveryName = std::ranges::all_of(names, [&](UniquedStringImpl* name) {
@@ -138,7 +157,11 @@ const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* 
         return nullptr;
     }
     Vector<RecordPlanForNames, 1>& plansUnderHash = m_recordPlans.add(hash, Vector<RecordPlanForNames, 1> { }).iterator->value;
-    plansUnderHash.append({ { }, WTF::move(plan) });
+    plansUnderHash.append({ { }, WTF::move(plan), m_numberOfCollections, m_numberOfTimesAskedForRecordPlan });
+    if (++m_numberOfRecordPlans > m_mostRecordPlansHeld) {
+        m_mostRecordPlansHeld = m_numberOfRecordPlans;
+        countEvent(vm, RuntimeCounterID::MostRecordPlansHeld);
+    }
     plansUnderHash.last().names.appendContainerWithMapping(names, [](UniquedStringImpl* name) {
         return RefPtr { name };
     });
@@ -149,11 +172,15 @@ NEVER_INLINE JSONRuntime::RecordPlan JSONRuntime::findRecordPlan(VM& vm, Structu
 {
     if (!m_recordPlanCache)
         m_recordPlanCache.make();
+    ++m_numberOfTimesAskedForRecordPlan;
+    forgetRecordPlansNotFoundLately(vm);
+    uint32_t numberOfCollectionsAtFirst = m_numberOfCollections;
     uint32_t id = ordinaryStructure->id().bits();
     RecordPlan recordPlan;
     if (const ObjectBuilderPlan* plan = findOrCreateRecordPlan(vm, ordinaryStructure))
         recordPlan = { plan, m_instance.state->objects->structures.objectStructure(vm, plan->layout().shape) };
-    (*m_recordPlanCache)[recordPlanCacheIndex(id)] = { id, recordPlan };
+    if (m_numberOfCollections == numberOfCollectionsAtFirst)
+        (*m_recordPlanCache)[recordPlanCacheIndex(id)] = { id, recordPlan };
     return recordPlan;
 }
 
@@ -265,6 +292,7 @@ void JSONRuntime::abandon()
 
 void JSONRuntime::clear()
 {
+    ++m_numberOfCollections;
     if (m_learnedNames)
         m_learnedNames->clear();
     if (m_recordPlanCache)

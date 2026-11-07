@@ -202,21 +202,17 @@ static bool hasValidPlacesOfStars(const Module& module)
     BitVector isTaken(numberOfPlaces);
     std::optional<uint32_t> last;
     bool isInOrder = true;
-    bool everyStarIsFollowed = true;
-    bool someStarIsFollowed = false;
     for (const ModuleRequest& request : module.requests) {
-        if (request.isDynamicStarExport && !request.starPlace)
+        if (request.isDynamicStarExport != request.starPlace.has_value())
             return false;
         if (!request.starPlace)
             continue;
-        if (request.kind != ModuleRequestKind::Import || request.isHoisted || *request.starPlace >= numberOfPlaces || isTaken.quickSet(*request.starPlace))
+        if (*request.starPlace >= numberOfPlaces || isTaken.quickSet(*request.starPlace))
             return false;
         isInOrder &= !last || *last < *request.starPlace;
         last = request.starPlace;
-        everyStarIsFollowed &= request.isDynamicStarExport;
-        someStarIsFollowed |= request.isDynamicStarExport;
     }
-    return someStarIsFollowed && (!isInOrder || !everyStarIsFollowed);
+    return !isInOrder;
 }
 
 static bool isValidRequest(const ModuleRequest& request)

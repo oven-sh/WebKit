@@ -79,8 +79,6 @@ String changeThatCompiledCodeRulesOutMessage(ObjectMutation);
 String changeThatCompiledCodeRulesOutMessage(ASCIILiteral change);
 String deletionFromLockedBuiltinMessage(const String& property);
 String assignmentThatBuildDidNotSeeMessage(const String& property);
-String moduleObjectRefusedMessage(StringView path);
-String moduleObjectOfRunThatThrewRefusedMessage(StringView path);
 String callOfBuiltinChangedBeforeFirstUseMessage(const String& property);
 enum class LockedIn : bool { Executable, TestRun };
 bool isWrittenByFileOfProduct(VM&);

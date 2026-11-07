@@ -1,8 +1,8 @@
-# only a star bears a place, and a require is none
+# only a dynamic star bears a place
 # RUN: verify
 # DIAGNOSTIC: InvalidModule 1
 
-module m0 path="main" displayPath="main" requests=[{target=m1 isDynamicStarExport=true completes=true starPlace=1}, {target=m2 isDynamicStarExport=true completes=true starPlace=0}, {target=m3 kind=Require starPlace=2}]
+module m0 path="main" displayPath="main" requests=[{target=m1 isDynamicStarExport=true completes=true starPlace=1}, {target=m2 isDynamicStarExport=true completes=true starPlace=0}, {target=m3 completes=true starPlace=2}]
 module m1 path="first" displayPath="first"
 module m2 path="second" displayPath="second"
 module m3 path="third" displayPath="third"

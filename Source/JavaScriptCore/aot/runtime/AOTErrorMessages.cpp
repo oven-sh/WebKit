@@ -339,16 +339,6 @@ JSObject* createEntryOfRequireCacheRefusedError(JSGlobalObject* globalObject, St
     return createError(globalObject, makeString("Cannot read the entry of '"_s, path, "' in require.cache: the build found nothing that reads the cache, so the module was compiled for the code that imports it. Spell the read in a file that the tests import: require.cache[require.resolve(\"./module\")]"_s));
 }
 
-String moduleObjectRefusedMessage(StringView path)
-{
-    return withAOTErrorNote(makeString("Cannot get at the module object of '"_s, path, "': the build found nothing that does, so the file was compiled into the code that requires it. Write `void module.children;` in one of your files."_s));
-}
-
-String moduleObjectOfRunThatThrewRefusedMessage(StringView path)
-{
-    return withAOTErrorNote(makeString("Cannot get at the module object of '"_s, path, "' from the run that threw: nothing had used it when the file threw, so it was never made. The file has a new one when it runs again."_s));
-}
-
 JSObject* createComparisonOfPrivateFieldRefusedError(JSGlobalObject* globalObject, const String& field)
 {
     return createError(globalObject, withAOTErrorNote(makeString("Cannot compare what the private field "_s, field, " holds: the build followed no object with this field to Bun.deepMatch(), toMatchObject() or expect.objectContaining(), so what the field holds was compiled for its class alone. Call the comparison by its own name, and make one of the two objects where it is called."_s)));
