@@ -80,6 +80,19 @@ static bool isAbsoluteFileSystemPath(StringView path)
 #endif
 }
 
+class ResolveOfImportCall {
+public:
+    ResolveOfImportCall(VM& vm, const ScriptFetchParameters* attributes)
+        : m_isResolvingImportCall(vm.aotState().isResolvingImportCall, true)
+        , m_isResolvingImportCallWithoutAttributes(vm.aotState().isResolvingImportCallWithoutAttributes, !attributes)
+    {
+    }
+
+private:
+    SetForScope<bool> m_isResolvingImportCall;
+    SetForScope<bool> m_isResolvingImportCallWithoutAttributes;
+};
+
 static AbstractModuleRecord::ModulePhase targetPhaseOf(const ModuleExportData& moduleExport)
 {
     return moduleExport.isDeferred ? AbstractModuleRecord::ModulePhase::Defer : AbstractModuleRecord::ModulePhase::Evaluation;
@@ -413,14 +426,25 @@ void Modules::bringBackKeptFiles(const WTF::Function<void(const String&)>& funct
 void Modules::forgetEvaluation(ModuleID module)
 {
     const ModuleData& moduleData = data(module);
-    if (!m_instance.program->runsEntryPointsAgain() || !moduleData.isEntryPoint() || !moduleData.isESModuleOfProgram() || moduleData.isFaceOfFile())
-        return;
-    if (isEvicted(module) || isMocked(module))
+    if (!moduleData.isEntryPoint() || moduleData.isFaceOfFile() || isEvicted(module) || isMocked(module))
         return;
     ModuleStatus current = status(module);
     if (current != ModuleStatus::Evaluated && current != ModuleStatus::Failed)
         return;
     RELEASE_ASSERT(!m_innermostEvaluation);
+    if (moduleData.runsAgainAfterThrow()) {
+        for (ModuleID each : { moduleWithExportsOf(module), module }) {
+            if (ModuleRecord* record = m_records.get(each)) {
+                loader()->removeEntryOfRecord(record);
+                takeOutRecord(each);
+            }
+            setStoredStatus(each, StoredModuleStatus::Linked);
+        }
+        forgetRunThatThrew(module);
+        return;
+    }
+    if (!m_instance.program->runsEntryPointsAgain() || !moduleData.isESModuleOfProgram())
+        return;
     if (ModuleRecord* record = m_records.get(module)) {
         loader()->removeEntryOfRecord(record);
         takeOutRecord(module);
@@ -3169,7 +3193,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     if (isLeftToHost || hostAnswersInPlaceOf(module, LoadByName::Import)) [[unlikely]] {
         Identifier key;
         {
-            SetForScope isResolvingImportCall(m_instance.vm->aotState().isResolvingImportCall, true);
+            ResolveOfImportCall resolve(*m_instance.vm, fetchParameters->get());
             key = loader()->resolve(realm, isLeftToHost ? jsString(*m_instance.vm, keyWithoutForm(fileOf(module)).string()) : pathString(module), pathString(referrer), nullptr, true);
         }
         RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
@@ -4355,8 +4379,7 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     Identifier key;
     {
-        SetForScope isResolvingImportCall(m_instance.vm->aotState().isResolvingImportCall, true);
-        SetForScope isResolvingImportCallWithoutAttributes(m_instance.vm->aotState().isResolvingImportCallWithoutAttributes, !*fetchParameters);
+        ResolveOfImportCall resolve(*m_instance.vm, fetchParameters->get());
         if (!found)
             key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
     }
@@ -7253,6 +7276,19 @@ AbstractModuleRecord* ModuleRecord::recordOfRequest(JSGlobalObject*, const Ident
             continue;
         m_nextCompiledRequest = index + 1;
         return modules().recordOfRequestedModule(m_compiledRequests[index].second);
+    }
+    return nullptr;
+}
+
+AbstractModuleRecord* ModuleRecord::recordOfRequestBeingFetched(const Identifier& key)
+{
+    for (unsigned index = m_nextCompiledRequest; index--;) {
+        if (m_compiledRequests[index].first == key.impl())
+            return modules().recordOfRequestedModule(m_compiledRequests[index].second);
+    }
+    for (unsigned index = m_nextCompiledRequest; index < m_compiledRequests.size(); ++index) {
+        if (m_compiledRequests[index].first == key.impl())
+            return modules().recordOfRequestedModule(m_compiledRequests[index].second);
     }
     return nullptr;
 }

@@ -118,6 +118,7 @@ public:
     static void willAnswerRequestOfUncompiledModule(JSGlobalObject*, const Identifier& key, const Identifier& keyOfAsker);
     static void willAnswerFromRegistry(JSGlobalObject*, const Identifier& key, const String& pathOfAsker);
     AbstractModuleRecord* recordOfRequest(JSGlobalObject*, const Identifier& key);
+    AbstractModuleRecord* recordOfRequestBeingFetched(const Identifier& key);
     bool holdTextOfRequest(JSPromise* fetched, AbstractModuleRecord* requested);
     void didRequestCompiledModule(const Identifier& key, ModuleID module) { m_compiledRequests.append({ key.impl(), module }); }
     unsigned innerModuleLinking(JSGlobalObject*, ModuleLinkingStack&, unsigned index, RefPtr<ScriptFetcher>);

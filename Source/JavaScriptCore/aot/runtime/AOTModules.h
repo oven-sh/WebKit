@@ -1381,8 +1381,9 @@ private:
 
     private:
         const void* m_madeAt;
-        bool m_isForFileOfImage { true };
+        uintptr_t m_isForFileOfImage { true };
     };
+    static_assert(std::has_unique_object_representations_v<RequestToHost>);
     RequestToHost m_isAskingHost;
     Vector<RequestToHost, 4> m_requestsToHostSetAside;
     std::optional<ModuleID> m_rootThatCompiledCodeLoads;
