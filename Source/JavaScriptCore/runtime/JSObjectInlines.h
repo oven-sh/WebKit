@@ -283,21 +283,6 @@ ALWAYS_INLINE bool JSObject::getPropertySlot(JSGlobalObject* globalObject, uint6
     return getPropertySlot(globalObject, Identifier::from(globalObject->vm(), propertyName), slot);
 }
 
-// getPropertySlot() goes up by the prototypes that the Structures name, whoever overrides getPrototype(), and comes to getNonIndexPropertySlot() at the first object that answers for its own properties itself.
-// A compiled object stands for a plain one: behind it the search goes on as it came.
-inline bool searchCameByStructures(JSObject* first, JSObject* last)
-{
-    if (first->type() != CompiledObjectType)
-        return false;
-    for (JSObject* object = first; object; object = object->getPrototypeDirect().getObject()) {
-        if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && object->type() != CompiledObjectType)
-            return false;
-        if (object == last)
-            return true;
-    }
-    return false;
-}
-
 ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     // This method only supports non-index PropertyNames.
@@ -326,8 +311,10 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
         JSValue prototype;
         if (!structure->typeInfo().overridesGetPrototype() || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) [[likely]]
             prototype = object->getPrototypeDirect();
-        else if (searchCameByStructures(this, object))
+#if ENABLE(AOT)
+        else if (vm.hasCompiledCode() && AOT::PropertyWalk::searchCameByStructures(this, object))
             prototype = object->getPrototypeDirect();
+#endif
         else {
             prototype = object->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, false);

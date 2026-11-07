@@ -743,6 +743,19 @@ JSValue getDirect(VM& vm, const JSObject* object, PropertyName name, unsigned* a
     return declaredName ? typed.getDirectFromNativeCode(vm, declaredName, attributesOrNull) : JSValue();
 }
 
+bool searchCameByStructures(JSObject* first, JSObject* last)
+{
+    if (first->type() != CompiledObjectType)
+        return false;
+    for (JSObject* object = first; object; object = object->getPrototypeDirect().getObject()) {
+        if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && object->type() != CompiledObjectType)
+            return false;
+        if (object == last)
+            return true;
+    }
+    return false;
+}
+
 bool ordinaryGetOwnPropertySlot(JSGlobalObject* globalObject, JSObject* object, PropertyName name, PropertySlot& slot)
 {
     ASSERT(slot.isVMInquiry());

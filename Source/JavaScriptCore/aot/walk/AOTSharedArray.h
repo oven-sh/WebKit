@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEndOfThread.h"
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
@@ -48,20 +49,28 @@ struct PartsOfSharedArray {
         fastFree(node);
     }
 
-    struct PartsOfZerosOfThread {
-        ~PartsOfZerosOfThread()
-        {
-            for (unsigned level = maxHeight; level--;)
-                release(parts[level], level);
-        }
-
-        Node* parts[maxHeight] { };
-    };
+    static Node**& partsOfZerosOfThread()
+    {
+        static thread_local Node** s_partsOfZeros = nullptr;
+        return s_partsOfZeros;
+    }
 
     static Node** partsOfZeros()
     {
-        WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local PartsOfZerosOfThread s_partsOfZeros;
-        return s_partsOfZeros.parts;
+        Node**& parts = partsOfZerosOfThread();
+        if (!parts) {
+            parts = static_cast<Node**>(fastZeroedMalloc(sizeof(Node*) * maxHeight));
+            runAtEndOfThread(freePartsOfZeros);
+        }
+        return parts;
+    }
+
+    static void freePartsOfZeros()
+    {
+        Node** parts = std::exchange(partsOfZerosOfThread(), nullptr);
+        for (unsigned level = maxHeight; level--;)
+            release(parts[level], level);
+        fastFree(parts);
     }
 };
 

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTClosure.h"
+#include "AOTEndOfThread.h"
 #include "AOTEnvironment.h"
 #include "AOTObject.h"
 #include "AOTSlimClosure.h"
@@ -61,8 +62,14 @@ struct CellLent {
 
 static Vector<CellLent>& cellsLentOnThisThread()
 {
-    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local Vector<CellLent> cells;
-    return cells;
+    static thread_local Vector<CellLent>* cells;
+    if (!cells) {
+        cells = new Vector<CellLent>;
+        runAtEndOfThread([] {
+            delete std::exchange(cells, nullptr);
+        });
+    }
+    return *cells;
 }
 
 void PoisonedCell::noteThatCellIsLent(JSCell* cell, const void* frame, uint32_t function, uint32_t position)

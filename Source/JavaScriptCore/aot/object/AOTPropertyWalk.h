@@ -78,6 +78,7 @@ Presence hasPropertyOnChain(Structure*, UniquedStringImpl*);
 bool listExtraPropertiesInStructure(VM&, JSObject*);
 JS_EXPORT_PRIVATE JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned* attributesOrNull);
 JS_EXPORT_PRIVATE bool ordinaryGetOwnPropertySlot(JSGlobalObject*, JSObject*, PropertyName, PropertySlot&);
+JS_EXPORT_PRIVATE bool searchCameByStructures(JSObject* first, JSObject* last);
 JS_EXPORT_PRIVATE UniquedStringImpl* tryFindName(VM&, std::span<const Latin1Character>);
 JS_EXPORT_PRIVATE Presence tryGetOwnValue(JSObject* compiledObject, UniquedStringImpl*, JSValue&);
 using DescriptorMembers = std::array<JSValue, 6>;

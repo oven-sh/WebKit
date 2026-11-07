@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCurrentWork.h"
+#include "AOTEndOfThread.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSystemResources.h"
 #include <atomic>
@@ -30,6 +31,26 @@ static thread_local const ParallelLoops* t_currentLoops = nullptr;
 static thread_local unsigned t_workerNumber = 0;
 static thread_local const ParallelLoops* t_loopsOfLane = nullptr;
 constinit thread_local void* t_whatHelpersInherit = nullptr;
+
+namespace {
+
+struct WorkAtEndOfThread {
+    ~WorkAtEndOfThread()
+    {
+        while (!functions.isEmpty())
+            functions.takeLast()();
+    }
+
+    Vector<void (*)()> functions;
+};
+
+} // anonymous namespace
+
+void runAtEndOfThread(void (*function)())
+{
+    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local WorkAtEndOfThread work;
+    work.functions.append(function);
+}
 
 bool ParallelLoops::isInsideLoop()
 {
