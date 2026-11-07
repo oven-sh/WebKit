@@ -2098,7 +2098,7 @@ The collector is told the size of the side tables, which are several times the s
   (`PySuperConstructor`, `typeCall` with `afterType`). If the class has an `__init__` besides its constructor, `super(...)` is `__new__`
   alone, and the `__init__` calls those of the bases. What it gives is `this`, which JS takes for an object: if a `__new__` returns 5, `None`
   or a str, it throws the TypeError of a constructor that returned no object. (`new P()` for the class of Python itself gives the 5. So does a `super(...)` that
-  gets to that class by another way than `extends`, `Object.setPrototypeOf(F, P)` or a Proxy: see DEFERRED.md.)
+  gets to that class by another way than `extends`, `Object.setPrototypeOf(F, P)` or a Proxy: see DEFERRED.md.) So `new int('5')` is 5 and `new str(1)` is `'1'`: `new T(...)` is what `T(...)` is, and an int, a float, a str, a bool and `None` are primitives to JS. The engine lets a constructor of the host's answer `new` with one (`constructAllowingPrimitiveResult()` in `runtime/ConstructData.h`), as `new CString(p)` of `bun:ffi` does; who calls a constructor from C++ by `construct()`, a species constructor or `Array.of`, gets the TypeError.
 - **`Class.prototype`** (`PyPrototypeView`) has what the class and its bases have. Read for an instance
   (`Reflect.get(Class.prototype, name, instance)`) it binds as `super()` does, looking from the class on in the MRO of the instance.
   Read by itself it gives functions that take the instance as `this`: `list.prototype.index.call(array, item)`. What is assigned
