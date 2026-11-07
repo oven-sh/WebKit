@@ -206,6 +206,24 @@ JSCell* faceOfBodyIfAnySlow(JSCell* cell)
     return body ? body->face() : nullptr;
 }
 
+const void* addressInMessagesSlow(JSCell* cell)
+{
+    Face* face = Face::tryFromCell(cell);
+    return face ? static_cast<JSCell*>(face->body()) : cell;
+}
+
+size_t sizeOfDataOfC(PyType* type)
+{
+    return madeByExtension(type)->dataEnd;
+}
+
+bool saysThatCollectorIsTold(PyType* type)
+{
+    // (A class that derives from the type of an extension has it whatever that type says.)
+    auto* made = MadeByExtension::of(type);
+    return !made || (made->flags & HaveGC);
+}
+
 void forEachInstanceThatRefersTo(std::span<const JSValue> values, const ScopedLambda<void(JSCell*)>& function)
 {
     Interpreter& current = interpreter();

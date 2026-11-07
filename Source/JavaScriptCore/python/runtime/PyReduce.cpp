@@ -56,8 +56,12 @@ static bool reduceHasItems(JSGlobalObject* globalObject, PyType* type)
 // Whether the instances hold something besides a __dict__ and slots, which __new__ without arguments could not bring back.
 static bool reduceHasNativeState(PyType* type)
 {
-    while (type->isHeapType())
+    while (type->isHeapType()) {
+        // (The type of an extension, with data of C's. A class with __slots__ has a layout of its own too, and that is no native state.)
+        if (type->extension() && type->has(TypeFlag::OwnLayout))
+            return true;
         type = type->base();
+    }
     return type->base() && !type->has(TypeFlag::NothingOfItsOwn);
 }
 

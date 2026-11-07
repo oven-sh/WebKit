@@ -81,6 +81,8 @@ JSValue allocateInstance(JSGlobalObject*, PyType*, PyType* layout = nullptr);
 // What type.__new__(metatype, name, bases, namespace) makes, for a type that an extension describes: nobody is told of it (__set_name__,
 // __init_subclass__), as CPython tells nobody of such a type. Like any class it takes the maker of its base (PyType::maker()).
 JSValue makeTypeForExtension(JSGlobalObject*, PyType* metatype, JSValue name, JSValue bases, JSValue namespaceOfClass);
+// What __base__ is going to be, for a class with these bases, of which there is one at least. Null, with an exception: there is no such class.
+PyType* findBestBase(JSGlobalObject*, PyTuple* bases);
 // For whoever has called the __new__ of a built-in type, or done what it does, to make an instance of the type: if the type has a
 // __del__, the runtime is told of the object. Once for an object.
 void didMakeObject(JSGlobalObject*, PyType*, JSValue object);

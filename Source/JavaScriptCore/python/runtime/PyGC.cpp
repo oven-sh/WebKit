@@ -542,7 +542,7 @@ public:
             if (m_keepsWhatItFinds)
                 m_keptByLastCollection.append(cell);
             if (m_describesWhatItFinds)
-                descriptions.append(makeString('<', m_runtime.typeOf(cell)->nameInMessages(), " 0x"_s, hex(std::bit_cast<uintptr_t>(cell), WTF::Lowercase), '>'));
+                descriptions.append(makeString('<', m_runtime.typeOf(cell)->nameInMessages(), " 0x"_s, hex(std::bit_cast<uintptr_t>(CApi::addressInMessages(cell)), WTF::Lowercase), '>'));
         }
         toKeep.appendVector(m_keptByLastCollection);
     }

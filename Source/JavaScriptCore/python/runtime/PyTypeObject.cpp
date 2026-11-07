@@ -160,9 +160,14 @@ JSValue allocateInstance(JSGlobalObject* globalObject, PyType* type, PyType* lay
     if (type == rt.objectType())
         return PyObject::create(vm, rt.structure<PyObject>(), type);
     ASSERT_UNUSED(layout, type->layoutBase() == (layout ? layout : rt.objectType()));
-    if (type->has(TypeFlag::InstancesHaveDataOfC)) [[unlikely]]
-        return CApi::allocateInstance(globalObject, type);
-    return PyInstance::create(vm, type);
+    Structure* structure = type->instanceStructureIfMade();
+    if (!structure) [[unlikely]] {
+        // (Such a type never has one: so the question costs those that have one nothing.)
+        if (type->has(TypeFlag::InstancesHaveDataOfC))
+            return CApi::allocateInstance(globalObject, type);
+        structure = type->instanceStructure(vm);
+    }
+    return PyInstance::create(vm, type, structure);
 }
 
 void didMakeObject(JSGlobalObject* globalObject, PyType* type, JSValue object)
@@ -330,8 +335,12 @@ static JSValue objectFormat(JSGlobalObject* globalObject, JSValue self, JSValue 
     RELEASE_AND_RETURN(scope, strObject(globalObject, self));
 }
 
-static JSValue objectSizeOf(JSGlobalObject*, JSValue self)
+static JSValue typeGetBasicSize(JSGlobalObject*, JSValue self);
+
+static JSValue objectSizeOf(JSGlobalObject* globalObject, JSValue self)
 {
+    if (PyType* type = typeOf(globalObject, self); type->has(TypeFlag::InstancesHaveDataOfC)) [[unlikely]]
+        return typeGetBasicSize(globalObject, type);
     return jsNumber(self.isCell() ? static_cast<int32_t>(self.asCell()->cellSize()) : 16);
 }
 
@@ -541,6 +550,11 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
     // (What an object of JS's is an instance of, its prototype says.)
     if (!areModules && (!oldType->isHeapType() || !newType->isHeapType() || oldType->has(TypeFlag::Immutable) || newType->has(TypeFlag::Immutable) || oldType->has(TypeFlag::AttributesAreProperties))) {
         raiseTypeError(globalObject, scope, "__class__ assignment only supported for mutable types or ModuleType subclasses"_s);
+        return;
+    }
+    // (tp_free is another function for what the collector is told of.)
+    if ((oldType->has(TypeFlag::InstancesHaveDataOfC) || newType->has(TypeFlag::InstancesHaveDataOfC)) && CApi::saysThatCollectorIsTold(oldType) != CApi::saysThatCollectorIsTold(newType)) [[unlikely]] {
+        raiseTypeError(globalObject, scope, "__class__ assignment: '"_s, newType->nameInMessages(), "' deallocator differs from '"_s, oldType->nameInMessages(), '\'');
         return;
     }
     // (A class without an order of its bases is still being made: this is the mro() of its metaclass.)
@@ -1121,7 +1135,7 @@ PyType* calculateMetaclass(JSGlobalObject* globalObject, PyType* metatype, PyTup
 }
 
 // The first of the bases on the way to the one that decides the layout of the instances.
-static PyType* findBestBase(JSGlobalObject* globalObject, PyTuple* bases)
+PyType* findBestBase(JSGlobalObject* globalObject, PyTuple* bases)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2266,7 +2280,7 @@ static JSValue typeGetFlags(JSGlobalObject* globalObject, JSValue self)
     bool isAtomic = false;
     for (PyType* atomic : { rt.objectType(), rt.intType(), rt.boolType(), rt.floatType(), rt.complexType(), rt.strType(), rt.bytesType(), rt.bytearrayType(), rt.noneType(), rt.rangeType(), rt.typeOf(rt.notImplemented()), rt.typeOf(rt.ellipsis()) })
         isAtomic |= type == atomic;
-    if (!isAtomic)
+    if (!isAtomic && (!type->has(TypeFlag::InstancesHaveDataOfC) || CApi::saysThatCollectorIsTold(type)))
         flags |= 1 << 14;
     return makeInt(globalObject, flags);
 }
@@ -2290,6 +2304,8 @@ static JSValue typeGetBasicSize(JSGlobalObject*, JSValue self)
     unsigned slotCount = 0;
     for (PyType* type = PyType::from(self); type; type = type->base()) {
         if (type->isHeapType()) {
+            if (type->extension())
+                return jsNumber(16 + CApi::sizeOfDataOfC(type) + 8 * slotCount);
             if (PyTuple* slots = type->slots())
                 slotCount += slots->length();
             continue;

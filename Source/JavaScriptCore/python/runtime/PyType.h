@@ -286,6 +286,14 @@ public:
     // Of this type alone. False: a key of a dict has raised when it was asked whether it is "__new__". Then there is no __new__, and no making any from then on, as
     // in CPython.
     bool updateMaker();
+    // Py_TPFLAGS_DISALLOW_INSTANTIATION of a type that an extension makes: there is no making any, nor of what derives from it and has no __new__ of its own.
+    void disallowInstantiation()
+    {
+        m_flags.add(TypeFlag::DisallowInstantiation);
+        m_maker.clear();
+        m_looksUpNew = false;
+        m_construction = Construction::Unknown;
+    }
     // __new__ has been set or deleted here, and didChange() called: of this type, and of those derived from it as far as they get to see that.
     void updateMakers();
 
@@ -321,6 +329,7 @@ public:
             return structure;
         return createInstanceStructure(vm);
     }
+    Structure* instanceStructureIfMade() const { return m_instanceStructure.get(); }
 
     // Type.prototype in JS: see PyJSClass.h. Null: nobody has asked for it.
     JSObject* jsPrototype() const { return m_jsPrototype.get(); }

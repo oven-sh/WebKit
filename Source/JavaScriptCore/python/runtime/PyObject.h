@@ -142,6 +142,7 @@ public:
     static Structure* createStructure(VM&, JSGlobalObject*, Runtime&);
 
     static PyInstance* create(VM&, PyType*);
+    static PyInstance* create(VM&, PyType*, Structure*); // PyType::instanceStructure()
 
     // Null: the attributes are properties.
     PyDict* dict() const { return m_dict.get(); }

@@ -100,8 +100,8 @@ static Handle typeFromSpec(Entry& entry, Handle metaclassHandle, Handle, TypeSpe
     }
     if (!bases)
         bases = rt.objectType();
-    if (!PyTuple::is(bases))
-        bases = PyTuple::create(globalObject, { bases });
+    if (!PyTuple::is(bases) || !PyTuple::from(bases)->length())
+        bases = PyTuple::create(globalObject, { PyTuple::is(bases) ? JSValue(rt.objectType()) : bases });
     // In abi3t C does not know how large an object is: a type can only say how much it adds.
     if (spec->basicSize > 0 || spec->itemSize) {
         entry.raise(rt.SystemError(), "PyType_FromSpec: in abi3t basicsize is what the type adds to its base, as a negative number, and itemsize is 0"_s);
@@ -110,6 +110,38 @@ static Handle typeFromSpec(Entry& entry, Handle metaclassHandle, Handle, TypeSpe
     // (So that the sizes of a chain of types add up in 32 bits.)
     if (spec->basicSize < -(1 << 24)) {
         entry.raise(rt.SystemError(), "PyType_FromSpec: basicsize is out of range"_s);
+        return nullptr;
+    }
+
+    // All that can be refused is refused before there is a class: once made, its bases know of it.
+    if (spec->flags & ImmutableTypeFlag) {
+        for (JSValue base : PyTuple::from(bases)->span()) {
+            if (PyType* type = PyType::tryFrom(base); type && !type->isImmutable()) {
+                entry.raise(rt.TypeError(), makeString("Creating immutable type "_s, String::fromUTF8(spec->name), " from mutable base "_s, type->nameInMessages()));
+                return nullptr;
+            }
+        }
+    }
+    PyType* base = findBestBase(globalObject, PyTuple::from(bases));
+    if (entry.failed())
+        return nullptr;
+    MadeByExtension* ofBase = madeByExtension(base);
+    // If not: it is as a class statement would have made it.
+    bool isRemembered = ofBase || base->solidBase() == rt.objectType();
+    if (!isRemembered) {
+        bool saysSomething = spec->basicSize;
+        for (TypeSlot* slot = spec->slots; slot->slot; ++slot)
+            saysSomething |= isSlotOfLife(slot->slot);
+        if (saysSomething) {
+            entry.raise(rt.SystemError(), makeString("PyType_FromSpec: a type with data or a life of its own cannot derive from '"_s, base->name(), "' yet"_s));
+            return nullptr;
+        }
+    }
+    uint32_t dataOffset = ofBase ? ofBase->dataEnd : 0;
+    uint32_t dataSize = static_cast<uint32_t>(-static_cast<int64_t>(spec->basicSize));
+    uint32_t dataEnd = roundUpToMultipleOf<Body::dataAlignment>(dataOffset + dataSize);
+    if (dataEnd > 1u << 30) {
+        entry.raise(rt.SystemError(), "PyType_FromSpec: the instances would be too large"_s);
         return nullptr;
     }
 
@@ -143,32 +175,14 @@ static Handle typeFromSpec(Entry& entry, Handle metaclassHandle, Handle, TypeSpe
     if (entry.failed())
         return nullptr;
     PyType* type = PyType::from(made);
+    ASSERT(type->base() == base);
     type->dict()->remove(vm, rt.names.dSlots());
-    if (spec->flags & ImmutableTypeFlag) {
-        for (JSValue base : type->bases()->span()) {
-            if (!PyType::from(base)->isImmutable()) {
-                entry.raise(rt.TypeError(), makeString("Creating immutable type "_s, String::fromUTF8(spec->name), " from mutable base "_s, PyType::from(base)->nameInMessages()));
-                return nullptr;
-            }
-        }
-    }
     if (dot != notFound)
         type->setModuleInMessages(vm, asString(namespaceOfClass->get(rt.names.dModule())));
 
     // ---- What the C API remembers of it ----
 
-    PyType* base = type->base();
-    MadeByExtension* ofBase = madeByExtension(base);
-    if (!ofBase && base->solidBase() != rt.objectType()) {
-        bool saysSomething = spec->basicSize;
-        for (TypeSlot* slot = spec->slots; slot->slot; ++slot)
-            saysSomething |= isSlotOfLife(slot->slot);
-        if (saysSomething) {
-            entry.raise(rt.SystemError(), makeString("PyType_FromSpec: a type with data or a life of its own cannot derive from '"_s, base->name(), "' yet"_s));
-            return nullptr;
-        }
-        // As a class statement would have made it.
-    } else {
+    if (isRemembered) {
         auto* extension = MadeByExtension::create(vm, interpreter().state->madeByExtensionStructure.get());
         for (TypeSlot* slot = spec->slots; slot->slot; ++slot) {
             if (isSlotOfLife(slot->slot))
@@ -188,13 +202,9 @@ static Handle typeFromSpec(Entry& entry, Handle metaclassHandle, Handle, TypeSpe
                 extension->slots[tp_clear] = ofBase->slots[tp_clear];
             }
         }
-        extension->dataOffset = ofBase ? ofBase->dataEnd : 0;
-        extension->dataSize = static_cast<uint32_t>(-static_cast<int64_t>(spec->basicSize));
-        extension->dataEnd = roundUpToMultipleOf<Body::dataAlignment>(extension->dataOffset + extension->dataSize);
-        if (extension->dataEnd > 1u << 30) {
-            entry.raise(rt.SystemError(), "PyType_FromSpec: the instances would be too large"_s);
-            return nullptr;
-        }
+        extension->dataOffset = dataOffset;
+        extension->dataSize = dataSize;
+        extension->dataEnd = dataEnd;
         type->setExtension(vm, extension);
         type->add(TypeFlag::InstancesHaveDataOfC);
         if (extension->dataSize) {
@@ -207,7 +217,7 @@ static Handle typeFromSpec(Entry& entry, Handle metaclassHandle, Handle, TypeSpe
     if (spec->flags & ImmutableTypeFlag)
         type->add(TypeFlag::Immutable);
     if (spec->flags & DisallowInstantiationFlag)
-        type->add(TypeFlag::DisallowInstantiation);
+        type->disallowInstantiation();
     type->didChange(vm);
     return entry.newReference(type);
 }

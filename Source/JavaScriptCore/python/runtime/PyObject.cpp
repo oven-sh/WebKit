@@ -124,7 +124,11 @@ Structure* PyInstance::createStructure(VM& vm, JSGlobalObject* globalObject, Run
 
 PyInstance* PyInstance::create(VM& vm, PyType* type)
 {
-    Structure* structure = type->instanceStructure(vm); // It may have to be made: not between the allocation of the cell and its initialization.
+    return create(vm, type, type->instanceStructure(vm)); // It may have to be made: not between the allocation of the cell and its initialization.
+}
+
+PyInstance* PyInstance::create(VM& vm, PyType* type, Structure* structure)
+{
     auto* object = new (NotNull, allocateCell<PyInstance>(vm, allocationSize(structure->inlineCapacity()))) PyInstance(vm, structure, type);
     // Not that of JSNonFinalObject, which takes it that no such object has storage of its own for properties.
     object->JSObjectWithButterfly::finishCreation(vm);

@@ -128,6 +128,12 @@ bool isTracked(JSCell*);
 // For a cell in the queue of finalizers: what Python sees of it, if it is the body of an instance that has a face. It makes nothing, and nobody is seen to take anything.
 JSCell* faceOfBodyIfAnySlow(JSCell*);
 ALWAYS_INLINE JSCell* faceOfBodyIfAny(JSCell* cell) { return isSomebodys() ? faceOfBodyIfAnySlow(cell) : nullptr; }
+// The address that id() and repr() say, for a message about an object that nobody has in hand. The same.
+const void* addressInMessagesSlow(JSCell*);
+ALWAYS_INLINE const void* addressInMessages(JSCell* cell) { return isSomebodys() ? addressInMessagesSlow(cell) : cell; }
+// What a type with TypeFlag::InstancesHaveDataOfC tells the program: how much of C's there is in an instance, and Py_TPFLAGS_HAVE_GC.
+size_t sizeOfDataOfC(PyType*);
+bool saysThatCollectorIsTold(PyType*);
 // gc.get_referrers(): what refers to one of the values by a reference that C holds in it. With the GIL, right after a full collection.
 void forEachInstanceThatRefersTo(std::span<const JSValue>, const ScopedLambda<void(JSCell*)>&);
 
@@ -200,6 +206,9 @@ public:
 };
 inline bool isTracked(JSCell*) { return false; }
 inline JSCell* faceOfBodyIfAny(JSCell*) { return nullptr; }
+inline const void* addressInMessages(JSCell* cell) { return cell; }
+inline size_t sizeOfDataOfC(PyType*) { return 0; }
+inline bool saysThatCollectorIsTold(PyType*) { return true; }
 inline void forEachInstanceThatRefersTo(std::span<const JSValue>, const ScopedLambda<void(JSCell*)>&) { }
 inline bool throwWhatCRaised(JSGlobalObject*) { return true; }
 inline bool throwWhatCRaisedBesideResult(JSGlobalObject*, const String&) { return true; }
