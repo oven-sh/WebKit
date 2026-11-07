@@ -29,6 +29,7 @@
 #include <wtf/HashFunctions.h>
 #include <wtf/MathExtras.h>
 #include <wtf/PageBlock.h>
+#include <wtf/RefCounted.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -260,22 +261,20 @@ static bool isWrittenAsItIsInJSON(std::span<const Latin1Character> name)
     });
 }
 
-struct KeyOrderTable::Storage {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Storage);
-    WTF_MAKE_NONCOPYABLE(Storage);
+struct KeyOrderTable::StorageOfOrders : public RefCounted<KeyOrderTable::StorageOfOrders> {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StorageOfOrders);
+    WTF_MAKE_NONCOPYABLE(StorageOfOrders);
 
     struct Place {
         uint32_t order;
         uint32_t count;
     };
 
-    Storage(ZeroedPages& pages, const ProgramTables& tables)
+    StorageOfOrders(PagesOfVM& pagesOfVM, const ProgramTables& tables)
         : tables(tables)
+        , pages(pagesOfVM)
         , layouts(pages)
         , continuations(pages)
-        , keyLists(pages)
-        , enumerators(pages)
-        , propertyLists(pages)
     {
     }
 
@@ -283,9 +282,13 @@ struct KeyOrderTable::Storage {
     {
         if (order < layout.numberOfOrders)
             return tables.keyOrder(layout, order).entries();
-        uint32_t index = order - layout.numberOfOrders;
-        RELEASE_ASSERT(index < orders.numberOfAddedOrders);
-        return orders.addedOrders[index]->entries();
+        return addedOrder(layout, orders, order)->entries();
+    }
+
+    AddedOrder*& addedOrder(const LayoutData& layout, const OrdersOfLayout& orders, uint32_t order) const
+    {
+        RELEASE_ASSERT(order >= layout.numberOfOrders && order - layout.numberOfOrders < orders.numberOfAddedOrders);
+        return orders.addedOrders[order - layout.numberOfOrders];
     }
 
     OrdersOfLayout& ordersOf(const LayoutData& layout)
@@ -371,6 +374,26 @@ struct KeyOrderTable::Storage {
             order->largestEntry = std::max(order->largestEntry, entry);
     }
 
+    const ProgramTables& tables;
+    ZeroedPages pages;
+    KeyOrderArena orderArena;
+    KeyOrderArena listArena;
+    FlatTable<OrdersOfLayout> layouts;
+    OrdersOfLayout* ordersAskedForLast { nullptr };
+    FlatTable<ContinuationInOtherOrder> continuations;
+};
+
+struct KeyOrderTable::Storage {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Storage);
+    WTF_MAKE_NONCOPYABLE(Storage);
+
+    explicit Storage(ZeroedPages& pages)
+        : keyLists(pages)
+        , enumerators(pages)
+        , propertyLists(pages)
+    {
+    }
+
     const FieldList* createFieldList(std::span<const FieldAsProperty> properties)
     {
         constexpr size_t sizeAroundName = 4;
@@ -421,21 +444,27 @@ struct KeyOrderTable::Storage {
         return list;
     }
 
-    const ProgramTables& tables;
-    KeyOrderArena orderArena;
     KeyOrderArena listArena;
-    FlatTable<OrdersOfLayout> layouts;
-    OrdersOfLayout* ordersAskedForLast { nullptr };
-    FlatTable<ContinuationInOtherOrder> continuations;
     FlatTable<Listing<JSCellButterfly*>> keyLists;
     FlatTable<Listing<CachedEnumerator>> enumerators;
     FlatTable<Listing<const FieldList*>> propertyLists;
 };
 
+Ref<KeyOrderTable::StorageOfOrders> KeyOrderTable::storageOfOrdersFor(State& state)
+{
+    VMState& stateOfVM = state.instance.vm->aotState();
+    for (Instance* other : stateOfVM.instances) {
+        if (other != &state.instance && other->state && other->state->objects && &other->state->tables == &state.tables)
+            return other->state->objects->keyOrders.m_orders;
+    }
+    return adoptRef(*new StorageOfOrders(*stateOfVM.pages, state.tables));
+}
+
 KeyOrderTable::KeyOrderTable(State& state)
     : m_state(state)
     , m_tables(state.tables)
-    , m_storage(makeUnique<Storage>(state.pages, state.tables))
+    , m_orders(storageOfOrdersFor(state))
+    , m_storage(makeUnique<Storage>(state.pages))
     , m_keyListsByStructure { state.instance.objects }
 {
     Instance& instance = state.instance;
@@ -468,7 +497,14 @@ std::span<const uint16_t> KeyOrderTable::entriesInOrder(const LayoutData& layout
     ASSERT(order != orderStoredOutOfLine);
     if (order < layout.numberOfOrders)
         return m_tables.keyOrder(layout, order).entries();
-    return m_storage->entriesOf(layout, m_storage->ordersOf(layout), order);
+    return m_orders->entriesOf(layout, m_orders->ordersOf(layout), order);
+}
+
+std::span<const uint16_t> KeyOrderTable::entriesListedBy(const LayoutData& layout, uint32_t orderWord)
+{
+    std::span<const uint16_t> entries = entriesInOrder(layout, orderOf(orderWord));
+    RELEASE_ASSERT(countOf(orderWord) <= entries.size());
+    return entries.first(countOf(orderWord));
 }
 
 std::optional<std::span<const FieldAsProperty>> KeyOrderTable::propertiesInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord, Object::SymbolKeys symbolKeys)
@@ -480,7 +516,7 @@ std::optional<std::span<const FieldAsProperty>> KeyOrderTable::propertiesInOrder
         return known->value->fields();
     RuntimeLayoutTable& layouts = m_state.objects->layouts;
     Vector<FieldAsProperty, 32> list;
-    for (uint16_t index : entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord))) {
+    for (uint16_t index : entriesListedBy(layout, orderWord)) {
         if (index >= layout.numberOfFields)
             return std::nullopt;
         const FieldData& field = layout.fields()[index];
@@ -523,7 +559,7 @@ JSCellButterfly* KeyOrderTable::tryCreateKeyList(VM& vm, const LayoutData& layou
 
 NEVER_INLINE JSCellButterfly* KeyOrderTable::tryCreateAndRememberKeyList(VM& vm, const LayoutData& layout, uint32_t orderWord, KeyListKind listed)
 {
-    JSCellButterfly* list = tryCreateKeyList(vm, layout, entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord)), listed);
+    JSCellButterfly* list = tryCreateKeyList(vm, layout, entriesListedBy(layout, orderWord), listed);
     if (!list)
         return nullptr;
     Locker locker { m_state.caches->lock() };
@@ -555,7 +591,7 @@ bool KeyOrderTable::positionsExtraKeys(const LayoutData& layout, uint32_t orderW
     uint32_t order = orderOf(orderWord);
     if (order < layout.numberOfOrders)
         return !numberOfExtraKeys;
-    const AddedOrder& added = *m_storage->ordersOf(layout).addedOrders[order - layout.numberOfOrders];
+    const AddedOrder& added = *m_orders->addedOrder(layout, m_orders->ordersOf(layout), order);
     ExtraKeyCounter positioned(layout.numberOfFields);
     if (countOf(orderWord) == added.length && added.largestEntry < maxKeyOrderEntry) {
         if (added.largestEntry >= layout.numberOfFields)
@@ -569,7 +605,7 @@ std::optional<uint32_t> KeyOrderTable::orderStartingWith(const LayoutData& layou
 {
     if (entries.size() > maxFieldsInOrder)
         return std::nullopt;
-    Storage& storage = *m_storage;
+    StorageOfOrders& storage = m_orders;
     OrdersOfLayout& orders = storage.ordersOf(layout);
     auto [order, count] = storage.follow(layout, orders, entries);
     uint32_t size = static_cast<uint32_t>(entries.size());
@@ -578,7 +614,7 @@ std::optional<uint32_t> KeyOrderTable::orderStartingWith(const LayoutData& layou
     for (uint16_t entry : entries.subspan(count))
         RELEASE_ASSERT(entry <= maxKeyOrderEntry);
     if (order >= layout.numberOfOrders) {
-        AddedOrder*& reached = orders.addedOrders[order - layout.numberOfOrders];
+        AddedOrder*& reached = storage.addedOrder(layout, orders, order);
         if (reached->length == count) {
             storage.append(reached, entries.subspan(count));
             return orderWordOf(order, size);
@@ -658,13 +694,13 @@ std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layo
     auto entries = entriesInOrder(layout, order);
     if (count < entries.size() && entries[count] == entry) [[likely]]
         return publish(orderWordOf(order, count + 1));
-    Storage& storage = *m_storage;
+    StorageOfOrders& storage = m_orders;
     OrdersOfLayout& orders = storage.ordersOf(layout);
     uint32_t before = orderWordOf(order, count);
     if (const ContinuationInOtherOrder* known = storage.continuations.find(layout.shape, before, entry))
         return publish(orderWordOf(known->next, count + 1));
     if (order >= layout.numberOfOrders && count == entries.size() && count < maxFieldsInOrder) {
-        storage.append(orders.addedOrders[order - layout.numberOfOrders], singleElementSpan(entry));
+        storage.append(storage.addedOrder(layout, orders, order), singleElementSpan(entry));
         return publish(orderWordOf(order, count + 1));
     }
     Vector<uint16_t, 16> next(entries.first(count));
@@ -680,7 +716,7 @@ std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layo
 void KeyOrderTable::didFindHeldOrder(const LayoutData& layout)
 {
     constexpr uint16_t numberRemembered = 1 << 12;
-    OrdersOfLayout& orders = m_storage->ordersOf(layout);
+    OrdersOfLayout& orders = m_orders->ordersOf(layout);
     if (++orders.heldOrdersFound < numberRemembered)
         return;
     orders.heldOrdersFound /= 2;
@@ -689,7 +725,7 @@ void KeyOrderTable::didFindHeldOrder(const LayoutData& layout)
 
 void KeyOrderTable::didMakeHeldOrderAfterFindingOne(const LayoutData& layout)
 {
-    OrdersOfLayout& orders = m_storage->ordersOf(layout);
+    OrdersOfLayout& orders = m_orders->ordersOf(layout);
     if (orders.heldOrdersMadeAfterFindingOne < orders.heldOrdersFound)
         ++orders.heldOrdersMadeAfterFindingOne;
 }
@@ -698,7 +734,7 @@ bool KeyOrderTable::shouldSearchForHeldOrder(const LayoutData& layout)
 {
     constexpr uint32_t numberFoundBeforeJudging = 64;
     constexpr uint32_t ordersMadeBetweenSearches = 16;
-    OrdersOfLayout& orders = m_storage->ordersOf(layout);
+    OrdersOfLayout& orders = m_orders->ordersOf(layout);
     if (orders.heldOrdersFound < numberFoundBeforeJudging || orders.heldOrdersMadeAfterFindingOne * 8 < orders.heldOrdersFound * 7)
         return true;
     return !(++orders.heldOrdersMadeWithoutSearch % ordersMadeBetweenSearches);
@@ -710,8 +746,8 @@ std::optional<uint32_t> KeyOrderTable::tryAppendToAddedOrder(const LayoutData& l
     uint32_t order = orderOf(orderWord);
     if (order < layout.numberOfOrders)
         return std::nullopt;
-    Storage& storage = *m_storage;
-    AddedOrder*& added = storage.ordersOf(layout).addedOrders[order - layout.numberOfOrders];
+    StorageOfOrders& storage = m_orders;
+    AddedOrder*& added = storage.addedOrder(layout, storage.ordersOf(layout), order);
     uint32_t count = countOf(orderWord);
     if (count != added->length || count >= maxFieldsInOrder)
         return std::nullopt;

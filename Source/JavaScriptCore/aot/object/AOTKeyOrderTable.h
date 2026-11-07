@@ -20,6 +20,7 @@
 #include <span>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/Ref.h>
 
 namespace JSC {
 
@@ -54,6 +55,7 @@ public:
     ~KeyOrderTable();
 
     std::span<const uint16_t> entriesInOrder(const LayoutData&, uint32_t order);
+    std::span<const uint16_t> entriesListedBy(const LayoutData&, uint32_t orderWord);
     std::optional<uint32_t> orderStartingWith(const LayoutData&, std::span<const uint16_t> entries);
     std::optional<uint32_t> stepInsideOrderOfImage(const LayoutData&, uint32_t orderWord, uint16_t entry) const;
     enum class Step : bool { IsPublished, IsNotPublished };
@@ -102,6 +104,7 @@ public:
 
 private:
     struct Storage;
+    struct StorageOfOrders;
     struct ListedField {
         uint32_t shape;
         uint32_t orderAndCount;
@@ -121,11 +124,13 @@ private:
         ObjectWords& words;
     };
 
+    static Ref<StorageOfOrders> storageOfOrdersFor(State&);
     void growTransitions();
     size_t indexOfFieldAt(const LayoutData&, uint32_t slotKey);
 
     State& m_state;
     const ProgramTables& m_tables;
+    const Ref<StorageOfOrders> m_orders;
     std::unique_ptr<Storage> m_storage;
     KeyListsByStructure m_keyListsByStructure;
     RememberedSlotSet m_writes;
