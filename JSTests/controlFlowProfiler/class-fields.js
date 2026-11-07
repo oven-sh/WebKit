@@ -124,6 +124,43 @@ checkBasicBlock(testStaticElementsAfterThrow, "throw new", ShouldHaveExecuted);
 checkBasicBlock(testStaticElementsAfterThrow, "bar()", ShouldNotHaveExecuted);
 checkBasicBlock(testStaticElementsAfterThrow, "foo()", ShouldNotHaveExecuted);
 
+// Static fields and static blocks in turns are one function for each run. A run behind the one that throws is never made.
+function testStaticRunsAfterThrow() {
+    try {
+        class A {
+            static {
+                foo();
+            }
+            static a = (() => { throw new Error; })();
+            static {
+                bar();
+            }
+            static b = key();
+        }
+    } catch { }
+}
+testStaticRunsAfterThrow();
+checkBasicBlock(testStaticRunsAfterThrow, "foo()", ShouldHaveExecuted);
+checkBasicBlock(testStaticRunsAfterThrow, "throw new", ShouldHaveExecuted);
+checkBasicBlock(testStaticRunsAfterThrow, "bar()", ShouldNotHaveExecuted);
+checkBasicBlock(testStaticRunsAfterThrow, "key()", ShouldNotHaveExecuted);
+
+function testStaticRunCounts(times) {
+    for (let i = 0; i < times; i++) {
+        class A {
+            static a = foo();
+            static {
+                bar();
+            }
+            static b = key();
+        }
+    }
+}
+testStaticRunCounts(3);
+assert(basicBlockExecutionCount(testStaticRunCounts, "static a") === 3, "a static field in front of a block is initialized once per class");
+assert(basicBlockExecutionCount(testStaticRunCounts, "bar()") === 3, "a static block between fields runs once per class");
+assert(basicBlockExecutionCount(testStaticRunCounts, "static b") === 3, "a static field behind a block is initialized once per class");
+
 function testFarFromField() {
     class A {
         a = foo();
