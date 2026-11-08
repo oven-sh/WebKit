@@ -101,7 +101,7 @@ static TypeID requiredTypeOfPrivateDefinition(const TypingContext& context, Layo
     return fields[field].flags.contains(FieldFlags::IsBrand) ? context.typeIDOf(fields[field].declared) : TypeTable::anything;
 }
 
-static TypeID requiredTypeOfInitialValue(const TypingContext& context, LayoutID layout, uint32_t field)
+static ALWAYS_INLINE TypeID requiredTypeOfInitialValue(const TypingContext& context, LayoutID layout, uint32_t field)
 {
     const Layout& allocated = context.program.at(layout);
     if (allocated.isEnvironment())

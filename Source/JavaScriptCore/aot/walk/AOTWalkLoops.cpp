@@ -348,7 +348,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
 
 #define FOR_EACH_FIELD_OF_FRAME_SET_WHERE_FRAME_IS_LAID(macro) \
     macro(function) macro(body) macro(index) macro(variablesStoredFirst) macro(loopDepthAtCall) macro(numberOfValuesBuiltBefore) macro(typeExpectedOfAnswer) macro(answerIsDeclared) macro(useOfAnswerAsKey) \
-    macro(inlineFrame) macro(callsAreCountedByPlan) macro(callCopied) macro(isCopiedByLinkOfChain) macro(numberOfCopy) macro(mayLeaveForCall) macro(isWalkedWhereItsGuardFailed) macro(blocksOfHead) macro(handlerOfCodeBelow)
+    macro(inlineFrame) macro(callsAreCountedByPlan) macro(callCopied) macro(isCopiedByLinkOfChain) macro(numberOfCopy) macro(markOfTurnThatCopyTook) macro(mayLeaveForCall) macro(isWalkedWhereItsGuardFailed) macro(blocksOfHead) macro(handlerOfCodeBelow)
 
 #define FOR_EACH_FIELD_OF_FRAME_THAT_ITS_WRITER_PUTS_BACK(macro) \
     macro(returnsInPlaceOfUnit) macro(isOfUnit) macro(countAmongFramesOfFunction) macro(loopsBeingTried)
@@ -1358,7 +1358,7 @@ Vector<bool, 8> Walker::findParametersSteppedOnDoubles(BlockID inputHead, const 
     return isStepped;
 }
 
-ValueID Walker::headParameterBehind(Reference value) const
+ALWAYS_INLINE ValueID Walker::headParameterBehind(Reference value) const
 {
     if (!value || !value.isValue())
         return { };
@@ -1919,7 +1919,7 @@ bool Walker::noteWhatCameRoundInTry(BlockID head, size_t parameter, TypeID assum
     return false;
 }
 
-void Walker::noteOwnParametersThatMeetInValue(TryOfLoop& tried, size_t parameter, ValueID value, BlockID head)
+ALWAYS_INLINE void Walker::noteOwnParametersThatMeetInValue(TryOfLoop& tried, size_t parameter, ValueID value, BlockID head)
 {
     constexpr OpcodeSet arithmeticWhoseKindFollowsItsOperands { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Increment, Opcode::Decrement };
     auto behindConversions = [&](ValueID id) {

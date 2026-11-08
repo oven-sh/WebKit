@@ -135,7 +135,7 @@ static void makeWrittenContentsCanonical(ClassPart& part)
     }
 }
 
-static ClassPartsID addClassesOfNamedObjects(TypeArena& arena, ClassPartsID written, ClassPartsID ofNamedObjects)
+static ALWAYS_INLINE ClassPartsID addClassesOfNamedObjects(TypeArena& arena, ClassPartsID written, ClassPartsID ofNamedObjects)
 {
     if (!ofNamedObjects || written == ofNamedObjects)
         return written;

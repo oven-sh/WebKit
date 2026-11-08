@@ -184,7 +184,7 @@ public:
     }
     bool spillsArgumentRegisters(CodeUnit unit) const { return entryConventionOf(unit) == EntryConvention::GenericBuffer; }
 
-    Representation parameterRepresentation(const Program& program, CodeUnit unit, unsigned parameterIndex) const
+    ALWAYS_INLINE Representation parameterRepresentation(const Program& program, CodeUnit unit, unsigned parameterIndex) const
     {
         if (takesEntryParametersAsListed(unit.role) && !m_parts.formsOfEntryParameters.isEmpty())
             return formOfEntryParameterAsListed(program, m_parts.conventions[unit.function.index()], unit.role, parameterIndex);

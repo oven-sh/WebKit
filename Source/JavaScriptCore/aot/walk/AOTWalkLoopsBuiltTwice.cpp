@@ -831,10 +831,21 @@ bool Walker::mayBeginTurnAgainInClosedCopy() const
     return !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().isEntered && !isUnreachable() && m_state.allThatWasDoneInTurnCanBePutBack(m_waysIntoClosedCopies.last().numberOfTurn) && !handlerKeepsTurnsFromBeginningAgain() && !hasTextsInStringBuilders();
 }
 
+bool Walker::noOtherCodeRanInTurnThoughCopiesTookItsMark(uint32_t numberOfTurn) const
+{
+    uint32_t mark = m_state.markOfTurn();
+    for (size_t index = m_frames.size(); index-- && mark && WalkState::turnOfMark(mark) != numberOfTurn;) {
+        const Frame& frame = m_frames[index];
+        if (frame.markOfTurnThatCopyTook && WalkState::turnOfMark(mark) == frame.numberOfCopy)
+            mark = frame.markOfTurnThatCopyTook;
+    }
+    return numberOfTurn && WalkState::turnOfMark(mark) == numberOfTurn;
+}
+
 std::optional<uint32_t> Walker::openLoopOfTypedCopy(TurnOfTypedCopy turn) const
 {
     bool standsInTurn = turn == TurnOfTypedCopy::HasDoneNothing ? turnOfTypedCopyHasDoneNothing()
-        : !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().isEntered && !isUnreachable() && m_state.noOtherCodeRanInTurn(m_waysIntoClosedCopies.last().numberOfTurn) && !isUnderHandler() && !hasTextsInStringBuilders();
+        : !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().isEntered && !isUnreachable() && (turn == TurnOfTypedCopy::HasRunNoOtherCode ? m_state.noOtherCodeRanInTurn(m_waysIntoClosedCopies.last().numberOfTurn) : noOtherCodeRanInTurnThoughCopiesTookItsMark(m_waysIntoClosedCopies.last().numberOfTurn)) && !isUnderHandler() && !hasTextsInStringBuilders();
     if (!standsInTurn || !has(Mechanism::LoopInvariants))
         return std::nullopt;
     std::optional<uint32_t> innermost = innermostOpenLoop();

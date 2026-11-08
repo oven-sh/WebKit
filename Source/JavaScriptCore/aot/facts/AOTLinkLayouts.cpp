@@ -1267,8 +1267,13 @@ bool LinkFlow::isPlainClosureOrConstructorFunction(FunctionID function) const
 
 bool LinkFlow::isWatchedForFirstTime(FlowNodeID node, const FlowObserver& observer)
 {
-    LockerOfWhatIsShared locker(*this);
-    return m_nodesOfDescriptorsThatDefinitionsWatch.add({ static_cast<uint64_t>(observer.function.index() + 1) << 32 | observer.record, static_cast<uint64_t>(observer.kind) << 32 | (node.index() + 1) }).isNewEntry;
+    std::pair<uint64_t, uint64_t> words { static_cast<uint64_t>(observer.function.index() + 1) << 32 | observer.record, static_cast<uint64_t>(observer.kind) << 32 | (node.index() + 1) };
+    PartOfNodesThatDefinitionsWatch& part = m_nodesOfDescriptorsThatDefinitionsWatch[DefaultHash<std::pair<uint64_t, uint64_t>>::hash(words) >> (32 - log2OfPartsOfNodesThatDefinitionsWatch)];
+    while (part.isLocked.load(std::memory_order_relaxed) || part.isLocked.exchange(true, std::memory_order_acquire))
+        simde_mm_pause();
+    bool isFirstTime = part.watched.add(words).isNewEntry;
+    part.isLocked.store(false, std::memory_order_release);
+    return isFirstTime;
 }
 
 bool LinkFlow::descriptorsInSightLayValuesAlone(const LinkType& descriptors, const FlowObserver* toldAgain, Vector<FlowNodeID, 4>& values)
@@ -1293,9 +1298,10 @@ bool LinkFlow::descriptorsInSightLayValuesAlone(const LinkType& descriptors, con
         }
         if (!toldAgain)
             return;
+        if (!isWatchedForFirstTime(node, *toldAgain))
+            return;
         LockerOfWhatIsShared locker(*this);
-        if (m_nodesOfDescriptorsThatDefinitionsWatch.add({ static_cast<uint64_t>(toldAgain->function.index() + 1) << 32 | toldAgain->record, static_cast<uint64_t>(toldAgain->kind) << 32 | (node.index() + 1) }).isNewEntry)
-            observe(node, *toldAgain);
+        observe(node, *toldAgain);
     };
     forEachLayoutOf(descriptors, [&](LayoutID layout) {
         const Layout& record = program.at(layout);

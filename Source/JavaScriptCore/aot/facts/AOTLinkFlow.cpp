@@ -1999,12 +1999,12 @@ ALWAYS_INLINE bool LinkFlow::wouldNameSomethingNewAtUnseen(const LinkType& type)
 
 void LinkFlow::noteReachesUnseen(const LinkType& type) const
 {
-    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     if (Lane* lane = s_laneAtWork) {
         if (wouldNameSomethingNewAtUnseen(type) && (lane->typesAtUnseen.isEmpty() || lane->typesAtUnseen.last() != type || lane->typesAtUnseen.last().marks != type.marks))
             lane->typesAtUnseen.append(type);
         return;
     }
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     m_objectsReachUnseen |= type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None;
     noteLossOf(type.builtin);
     if (type.builtin)
@@ -5918,14 +5918,15 @@ void LinkFlow::tieReadThroughSortedMembers(FlowNodeID aggregate, FamilyID family
     uint32_t numberLostThatList = 0;
     for (LayoutID layout : sorted.tiedOneByOne) {
         bool mayHaveAppendedFields = mayHaveAppendedFieldsInLinkFlow(program.at(layout));
+        if (FlowNodeID born = mayHaveAppendedFields ? findAppendedField(layout, key) : FlowNodeID())
+            addEdge(born, aggregate);
         if (tieRead(aggregate, layout, key))
             numberLostThatList += mayHaveAppendedFields && m_lostLayoutsWhoseAppendedFieldsAreTied.get(layout.index());
-        else if (mayHaveAppendedFields) {
-            someMayHoldItBesideTheirFields = true;
-            if (FlowNodeID born = findAppendedField(layout, key))
-                addEdge(born, aggregate);
-        }
+        else
+            someMayHoldItBesideTheirFields |= mayHaveAppendedFields;
     }
+    for (FlowNodeID appended : m_appendedFieldsThatWaitForRead.take(static_cast<uint64_t>(family.index()) << 32 | key.bits()))
+        addEdge(appended, aggregate);
     if (sorted.foundBesideTheirFields)
         addEdge(sorted.foundBesideTheirFields, aggregate);
     if (auto listing = sorted.membersWithNothingAboveByKey.find(key.bits()); listing != sorted.membersWithNothingAboveByKey.end()) {
@@ -5940,8 +5941,6 @@ void LinkFlow::tieReadThroughSortedMembers(FlowNodeID aggregate, FamilyID family
     else if (!someMayHoldItBesideTheirFields)
         return;
 
-    for (FlowNodeID appended : m_appendedFieldsThatWaitForRead.take(static_cast<uint64_t>(family.index()) << 32 | key.bits()))
-        addEdge(appended, aggregate);
     if (sorted.numberLost > numberLostThatList)
         addEdge(foundBesideFieldsUnder(key), aggregate);
     else
@@ -6117,6 +6116,15 @@ void LinkFlow::layTie(const TiesToLay& ties, LayoutID member)
             return;
         if (!isListed && mayHaveAppendedFieldsInLinkFlow(program.at(member)))
             addEdge(appendedField(member, ties.key), ties.aggregate);
+        else if (isListed && mayHaveAppendedFieldsInLinkFlow(program.at(member))) {
+            FlowNodeID born;
+            {
+                LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+                born = findAppendedField(member, ties.key);
+            }
+            if (born)
+                addEdge(born, ties.aggregate);
+        }
         addEdge(foundBesideFieldsOf(member), ties.aggregate);
         return;
     }
@@ -7635,18 +7643,22 @@ void LinkFlow::noteWhatMayMakeThenableOf(const LinkType& subject, FunctionID wri
 
 FlowNodeID LinkFlow::whereInstancesLoseTheirConstructor()
 {
+    if (uint32_t made = m_whereInstancesLoseTheirConstructor.load(std::memory_order_acquire); made != noNodeInLinkFlow)
+        return FlowNodeID(made);
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
-    if (m_whereInstancesLoseTheirConstructor == noNodeInLinkFlow)
-        m_whereInstancesLoseTheirConstructor = makeNode().index();
-    return FlowNodeID(m_whereInstancesLoseTheirConstructor);
+    if (m_whereInstancesLoseTheirConstructor.load(std::memory_order_relaxed) == noNodeInLinkFlow)
+        m_whereInstancesLoseTheirConstructor.store(makeNode().index(), std::memory_order_release);
+    return FlowNodeID(m_whereInstancesLoseTheirConstructor.load(std::memory_order_relaxed));
 }
 
 FlowNodeID LinkFlow::whereInstancesAreMadeThenables()
 {
+    if (uint32_t made = m_whereInstancesAreMadeThenables.load(std::memory_order_acquire); made != noNodeInLinkFlow)
+        return FlowNodeID(made);
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
-    if (m_whereInstancesAreMadeThenables == noNodeInLinkFlow)
-        m_whereInstancesAreMadeThenables = makeNode().index();
-    return FlowNodeID(m_whereInstancesAreMadeThenables);
+    if (m_whereInstancesAreMadeThenables.load(std::memory_order_relaxed) == noNodeInLinkFlow)
+        m_whereInstancesAreMadeThenables.store(makeNode().index(), std::memory_order_release);
+    return FlowNodeID(m_whereInstancesAreMadeThenables.load(std::memory_order_relaxed));
 }
 
 FlowNodeID LinkFlow::gatheredByLostFunctions(uint32_t pool)

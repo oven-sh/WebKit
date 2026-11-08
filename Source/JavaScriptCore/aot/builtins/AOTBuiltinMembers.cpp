@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTableRealm.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTPrimitives.h"
 #include "AOTSort.h"
 #include "AOTTypeRelations.h"
@@ -34,7 +35,7 @@ static constexpr BuiltinClassOfPrimitives builtinClassesOfPrimitives[] = {
     { BuiltinClasses::Boolean, Primitive::Boolean },
 };
 
-BuiltinMemberName builtinMemberNameOf(const Program& program, PropertyKeyID id)
+ALWAYS_INLINE_INTO_OTHER_FILES BuiltinMemberName builtinMemberNameOf(const Program& program, PropertyKeyID id)
 {
     const PropertyKey& key = program.at(id);
     switch (key.kind) {

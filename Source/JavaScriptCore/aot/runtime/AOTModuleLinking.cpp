@@ -644,8 +644,8 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             if (module != walk.root()) {
-                takeCopiesAnewWhereMockCallAloneTookThem(module);
-                RETURN_IF_EXCEPTION(scope, void());
+                if (ModuleID file = fileOf(module); !isMocked(file) && !mockInPlace(file))
+                    m_facesThatTookCopiesForMock.clear(module.index());
                 bindLatestCapture(module);
                 RETURN_IF_EXCEPTION(scope, void());
             }
@@ -908,17 +908,6 @@ void Modules::copyExportsOfFinishedFile(ModuleID face)
     host().captureSyntheticExports(m_instance.globalObject, captureRuleOf(data(face)), value, names, values);
 }
 
-void Modules::takeCopiesAnewWhereMockCallAloneTookThem(ModuleID face)
-{
-    ModuleID file = fileOf(face);
-    if (isMocked(file) || mockInPlace(file) || !m_facesThatTookCopiesForMock.get(face.index()))
-        return;
-    bool wasImported = wasLoadedByImport(file);
-    m_facesThatTookCopiesForMock.clear(face.index());
-    if (!wasImported)
-        captureExportsAgain(face);
-}
-
 void Modules::captureExportsAgain(ModuleID fileOrFace)
 {
     if (forgetCapturedExports(fileOrFace))
@@ -1084,7 +1073,7 @@ void Modules::noteWhetherFileHasThrownWhereMockIsMade(ModuleID file, bool displa
     if (displacesEarlierMock && !setsModuleAside)
         return;
     LoadedModule& loaded = ensureLoaded(file);
-    loaded.hadThrownWhenMockWasMade = !setsModuleAside && isESModuleThatThrew(file) && !loaded.holdsValueOfMockThatEnded;
+    loaded.hadThrownWhenMockWasMade = !setsModuleAside && isESModuleThatThrew(file) && !wasLetGoByLoader(file) && !loaded.holdsValueOfMockThatEnded;
 }
 
 void Modules::keepWhatMockIsLaidOver(ModuleID file)

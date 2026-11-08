@@ -35,7 +35,7 @@ static bool hasTruthyAndFalsyPartsAtAGlance(const TypeArena& types, TypeID opera
     return type.isJavaScriptValue() && (type.hasObjects() || type.primitives & Primitive::True) && type.primitives & keptInFalsyPart;
 }
 
-static TypeID refinedTypeOfToBoolean(TypeArena& types, TypeID operand, TypeID upperBound)
+static ALWAYS_INLINE TypeID refinedTypeOfToBoolean(TypeArena& types, TypeID operand, TypeID upperBound)
 {
     if (hasTruthyAndFalsyPartsAtAGlance(types, operand))
         return upperBound;
@@ -46,7 +46,7 @@ static TypeID refinedTypeOfToBoolean(TypeArena& types, TypeID operand, TypeID up
     return upperBound;
 }
 
-static TypeID refinedTypeOfStrictEquality(TypeArena& types, TypeID left, TypeID right, TypeID upperBound)
+static ALWAYS_INLINE TypeID refinedTypeOfStrictEquality(TypeArena& types, TypeID left, TypeID right, TypeID upperBound)
 {
     Type leftType = types.at(left);
     Type rightType = types.at(right);
@@ -74,7 +74,7 @@ static bool typeTestSurelyPassesInResultRules(const TypingContext& context, Type
     return types.testablePartOf(objectsOfTestedLayouts) == objectsOfTestedLayouts;
 }
 
-static TypeID refinedTypeOfTypeTest(const TypingContext& context, TypeID value, TypeID tested, TypeID upperBound)
+static ALWAYS_INLINE TypeID refinedTypeOfTypeTest(const TypingContext& context, TypeID value, TypeID tested, TypeID upperBound)
 {
     if (typeTestSurelyPassesInResultRules(context, value, tested))
         return TypeArena::fromPrimitives(Primitive::True);

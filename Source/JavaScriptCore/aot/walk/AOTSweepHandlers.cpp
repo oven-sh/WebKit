@@ -486,7 +486,7 @@ struct FenceOfSweptOperation {
 } // anonymous namespace
 
 // A fence keeps the stores that fill a new cell in front of the store that hands the cell on, which the collector may follow while the program runs. It keeps every earlier store of the thread there too.
-static FenceOfSweptOperation describeFenceOfSweptOperation(const Program& program, const Plan& plan, const Operation& operation)
+static ALWAYS_INLINE FenceOfSweptOperation describeFenceOfSweptOperation(const Program& program, const Plan& plan, const Operation& operation)
 {
     EffectTraits traits = operation.traits();
     if (!traits.isRemovableWhenUnused() || callsAmongSweptOperations.contains(operation.opcode) || testsItsOwnGuess(operation))

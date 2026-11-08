@@ -13,6 +13,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
 #include "AOTOpcodeSets.h"
 #include "AOTPlan.h"
@@ -335,7 +336,7 @@ static Reference onlyObjectDefinedOnInKnownWriters(Walker& walker, const Draft& 
     return { };
 }
 
-static std::optional<ElementStoreInKnownWriters> findElementStoreWithoutOtherCodeInKnownWriters(const Draft& writer, const Effects& effects)
+static ALWAYS_INLINE std::optional<ElementStoreInKnownWriters> findElementStoreWithoutOtherCodeInKnownWriters(const Draft& writer, const Effects& effects)
 {
     if (writer.opcode == Opcode::PutArrayElement) {
         if (writer.level() != KnowledgeLevel::Proven)
@@ -657,7 +658,7 @@ bool writerEndsNoGuard(const Walker& walker, const Draft& writer)
     return guardsEndedByInKnownWriters(walker, writer).which == GuardsEndedInKnownWriters::Which::None;
 }
 
-void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
+ALWAYS_INLINE_INTO_OTHER_FILES void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
 {
     bool isPutBack = draft.opcode == Opcode::PutModuleVariable && walker.storeIsPutBackWhereTurnBeginsAgain(draft.variable());
     uint32_t newestStoreInFront = isPutBack ? walker.state().newestStoreToPutBack() : 0;

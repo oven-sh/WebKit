@@ -1275,7 +1275,7 @@ bool Walker::questionOfHeadWasAskedAbove(const BodyValue& call, FunctionID calle
     return false;
 }
 
-static bool copyHeadThatAsksFieldsAtInlining(Walker& walker, const BodyValue& call, const Draft& site, FunctionID callee, std::span<const Reference> handedOver)
+static ALWAYS_INLINE bool copyHeadThatAsksFieldsAtInlining(Walker& walker, const BodyValue& call, const Draft& site, FunctionID callee, std::span<const Reference> handedOver)
 {
     if ((call.opcode() != Opcode::Call && call.opcode() != Opcode::CallDirect) || !walker.opensGuesses() || site.isNeverInlined() || !walker.facts().bodies().has(callee))
         return false;
@@ -1345,7 +1345,7 @@ struct ClosureMadeForCallAtInlining {
     ValueID written;
 };
 
-static Vector<ClosureMadeForCallAtInlining, 2> collectClosuresMadeForCallAtInlining(Walker& walker, const BodyValue& call)
+static ALWAYS_INLINE Vector<ClosureMadeForCallAtInlining, 2> collectClosuresMadeForCallAtInlining(Walker& walker, const BodyValue& call)
 {
     Vector<ClosureMadeForCallAtInlining, 2> closures;
     const BodyIndex& index = walker.currentBodyIndex();
@@ -1529,7 +1529,10 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
             return true;
         if (m_inputs.options.takesNotes && passes.isValue())
             m_code.noteTestOfGuardInFrontOfCopy({ passes.id(), callee, function.position });
-        bool isAskedInFront = branchInFrontOfTypedCopy(passes, true);
+        TurnOfTypedCopy turnThatAsksInFront = turnOfTypedCopyHasDoneNothing() ? TurnOfTypedCopy::HasDoneNothing : TurnOfTypedCopy::HasRunNoOtherCodeThoughCopiesBegan;
+        bool isAskedInFront = branchInFrontOfTypedCopy(passes, true, turnThatAsksInFront);
+        if (isAskedInFront && turnThatAsksInFront != TurnOfTypedCopy::HasDoneNothing)
+            count(StatisticID::GuardsOfCopiesAskedInFrontBehindStoresOfTurns);
         if (isAskedInFront)
             noteGuessOpened();
         else {
@@ -1548,7 +1551,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
             continueIn(whereTestPasses);
         }
 
-        InFrontOfTypedCopy inFront(*this, isAskedInFront);
+        InFrontOfTypedCopy inFront(*this, isAskedInFront, turnThatAsksInFront);
         Draft narrowed(Opcode::Narrowed, originOfCall);
         narrowed.setValueOperand(entryArguments[index]);
         narrowed.setTestOperand(passes);
@@ -1667,6 +1670,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     if (frame.mayLeaveForCall)
         m_state.noteCopyBegins(numberOfCopy);
     bool copyTookMarkOfTurn = markOfTurnInFrontOfCopy && m_state.markOfTurn() != markOfTurnInFrontOfCopy;
+    m_frames.last().markOfTurnThatCopyTook = copyTookMarkOfTurn ? markOfTurnInFrontOfCopy : 0;
 
     using ReturnOfCopy = Frame::ReturnOfCopy;
     Vector<ReturnOfCopy, 2> returns;

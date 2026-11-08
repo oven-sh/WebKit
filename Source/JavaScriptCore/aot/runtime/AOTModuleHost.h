@@ -297,7 +297,10 @@ JS_EXPORT_PRIVATE bool textOfFetchedModuleComesInLaterTurn(JSGlobalObject*, Modu
 JS_EXPORT_PRIVATE void holdTextOfFetchedModule(JSGlobalObject*, ModuleID, JSPromise* fetched, AbstractModuleRecord*);
 JS_EXPORT_PRIVATE JSValue exportsBeforeMock(JSGlobalObject*, ModuleID, bool evenIfItsBodyThrew);
 JS_EXPORT_PRIVATE JSValue exportsBehindEntryOfProgram(JSGlobalObject*, ModuleID file);
+JS_EXPORT_PRIVATE JSValue askForExportsBehindEntryOfProgram(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE void keepOriginalOfFileThatLeavesProgram(JSGlobalObject*, ModuleID file);
+JS_EXPORT_PRIVATE void parkRunUnderKeyOfOriginal(JSGlobalObject*, ModuleID file);
+JS_EXPORT_PRIVATE void takeBackRunUnderKeyOfOriginal(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE JSObject* moduleObjectBehindEntryOfProgram(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE void forgetOriginalOfFileThatLeftProgram(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE bool liesUnderKeyOfOriginal(JSGlobalObject*, ModuleID file);
@@ -306,13 +309,14 @@ JS_EXPORT_PRIVATE bool didOriginalComeBackUnderOwnKey(JSGlobalObject*, ModuleID 
 JS_EXPORT_PRIVATE void setOriginalCameBackUnderOwnKey(JSGlobalObject*, ModuleID file, bool);
 JS_EXPORT_PRIVATE JSValue exportsThatMockWasLaidOver(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE bool hasMockLaidOver(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool hasMockLaidOverFileThatHadRun(JSGlobalObject*, ModuleID);
 enum class LoadedBy : uint8_t { Nobody, Preload, EarlierTestFile, ThisTestFile };
 JS_EXPORT_PRIVATE LoadedBy whoLoaded(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didEmptyKeyOfMockInPlace(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE LoadedBy whoLoadedMockInPlaceAnew(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isKeyOfMockInPlaceEmpty(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* namespaceOfFileThatRanAheadOfMock(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE JSPromise* evaluationOfModuleThatMockLeftAlone(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE JSPromise* evaluationOfModuleThatMockLeftAlone(JSGlobalObject*, ModuleID, std::optional<ModuleID> loadThatCalledFactory);
 JS_EXPORT_PRIVATE JSValue errorThrownByBodyOfMockedModule(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool runMocksBelow(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);

@@ -120,7 +120,7 @@ static ALWAYS_INLINE bool holdsNeverAmongOperandsOfRule(OperandTypes operands)
 static constexpr OpcodeSet checksThatThrowInResultRules = checksThatHandOnOrThrow;
 static_assert(OperandIndex::CheckInitialized::value == OperandIndex::RequireObjectCoercible::value && OperandIndex::CheckInitialized::value == OperandIndex::RequireObject::value);
 
-static TypeID resultTypeOfCheckThatThrows(TypeArena& types, Opcode check, TypeID checked)
+static ALWAYS_INLINE TypeID resultTypeOfCheckThatThrows(TypeArena& types, Opcode check, TypeID checked)
 {
     if (!checked)
         return { };

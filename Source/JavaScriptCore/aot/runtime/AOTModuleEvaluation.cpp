@@ -882,7 +882,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
         }
         if (mockInPlace(module)) {
             ensureLoaded(module).wasRequiredUnderMockInPlace = true;
-            noteDoorThatLoadsMockLaidInPreload(module, LoadByName::Require);
+            noteRequireOfMockLaidInPreload(module);
         }
         if (!liesInRequireMap && m_modulesWithMockToRun.get(module.index()) && getsOriginalBesideMock(module, module)) {
             JSValue original = answerRequireWithOriginal(module, module);
@@ -902,7 +902,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
         if (!m_innermostFilesBeingRun)
             ensureLoaded(module).wasRequiredUnderMockInPlace = true;
         if (!isBegunForStatement(module))
-            noteDoorThatLoadsMockLaidInPreload(module, LoadByName::Require);
+            noteRequireOfMockLaidInPreload(module);
     }
     if (m_filesToLoadAgain.get(module.index())) [[unlikely]] {
         JSGlobalObject* realm = m_instance.globalObject;
@@ -961,14 +961,10 @@ void Modules::forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)>
 bool Modules::isBegunForStatement(ModuleID fileOrFace) const
 {
     ModuleID file = fileOf(fileOrFace);
-    if (m_innermostFilesBeingRun)
-        return fileOf(m_innermostFilesBeingRun->root) == file || (m_innermostFilesBeingRun->fileOrFace && fileOf(*m_innermostFilesBeingRun->fileOrFace) == file);
     if (fileOrFace != file)
         return true;
-    if (!m_innermostEvaluation || m_innermostEvaluation->frames.isEmpty())
-        return false;
-    ModuleID asking = m_innermostEvaluation->frames.last().module;
-    return asking != file && fileOf(asking) == file;
+    std::optional<ModuleID> face = m_table.faceOfFile(file);
+    return face && status(*face) == ModuleStatus::Evaluating;
 }
 
 std::optional<ModuleID> Modules::fileOrFaceEvaluatedIn(const FilesBeingRun& load) const
@@ -3486,6 +3482,8 @@ JSValue Modules::answerOfRequireToMock(ModuleID target)
 
 JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy requiredBy, FormThatAnswers formThatAnswers)
 {
+    if (!m_callsOfImportUnderMocks.isEmpty()) [[unlikely]]
+        forgetNamespacesKeptForCallsOfImport();
     if (JSValue settled = settledAnswerOfRequire(target, requiredBy))
         return settled;
     if (formThatAnswers == FormThatAnswers::TheOneThatLoaderFinds && data(target).kind == ModuleKind::Data) [[unlikely]]
@@ -3553,7 +3551,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
             return ensureLoaded(target).answerOfMockWhileOriginalRuns.get();
         if (mockInPlace(target)) {
             noteAskUnderMockInPlace(target);
-            noteDoorThatLoadsMockLaidInPreload(target, LoadByName::Require);
+            noteRequireOfMockLaidInPreload(target);
         }
     }
     if (isLeftToHost(target)) [[unlikely]]

@@ -477,7 +477,7 @@ void BodyVerifier::verifyOperandDefinitionsOneByOne(const BodyBlock& block, cons
     });
 }
 
-void BodyVerifier::verifyNumberOfVariadicOperands(const BodyBlock& block, const BodyValue& value)
+ALWAYS_INLINE void BodyVerifier::verifyNumberOfVariadicOperands(const BodyBlock& block, const BodyValue& value)
 {
     size_t expectedNumber = 0;
     if (value.opcode() == Opcode::NewObject)

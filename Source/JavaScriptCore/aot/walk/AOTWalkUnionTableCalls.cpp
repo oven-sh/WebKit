@@ -173,7 +173,7 @@ static void mergeEffectsOfMethodsInUnionTableCalls(Walker& walker, ReceiversOfTa
 
 enum class ArmsMayTakeCallInUnionTableCalls : bool { No, Yes };
 
-static std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(Walker& walker, const BodyValue& read, ValueID call, Reference receiver, ArmsMayTakeCallInUnionTableCalls armsMayTakeCall, std::optional<ReceiversOfTableCallInUnionTableCalls>& receiversOfThisCallAlone)
+static ALWAYS_INLINE std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(Walker& walker, const BodyValue& read, ValueID call, Reference receiver, ArmsMayTakeCallInUnionTableCalls armsMayTakeCall, std::optional<ReceiversOfTableCallInUnionTableCalls>& receiversOfThisCallAlone)
 {
     if (isTableRole(walker.unit().role) || !receiver || !receiver.isValue())
         return std::nullopt;

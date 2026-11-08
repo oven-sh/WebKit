@@ -177,7 +177,7 @@ bool KnownThreading::terminatorMayBeWalkedAgain()
     return true;
 }
 
-void KnownThreading::forgetValuesThatNobodyReadsAnyMore()
+ALWAYS_INLINE void KnownThreading::forgetValuesThatNobodyReadsAnyMore()
 {
     if (!frame().loopsBeingBuiltTwice.isEmpty() || !frame().valuesBuiltTwice || m_walker.m_numberOfMarksOfTries)
         return;
@@ -450,7 +450,7 @@ void KnownThreading::lookBehindEdge(LookAhead& look, const PlaceLookedAt& from, 
     look.places.append(PlaceLookedAt { from.frameIndex, target.block(), 0, from.call, from.given });
 }
 
-void KnownThreading::lookBehindReturnOfCopy(LookAhead& look, const PlaceLookedAt& from, const BodyTerminator& terminator)
+ALWAYS_INLINE void KnownThreading::lookBehindReturnOfCopy(LookAhead& look, const PlaceLookedAt& from, const BodyTerminator& terminator)
 {
     if (!from.frameIndex)
         return;

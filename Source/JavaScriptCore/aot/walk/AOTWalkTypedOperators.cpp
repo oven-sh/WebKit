@@ -81,7 +81,7 @@ OperatorForm formAllowedForTypedOperator(Walker& walker, Opcode opcode, const Bo
     return chooseFormOfOperator(walker.program(), walker.types(), opcode, operands);
 }
 
-static bool buildInFormOfTypedOperator(Walker& walker, Draft&& draft, OperatorForm form, ValueID input)
+static ALWAYS_INLINE bool buildInFormOfTypedOperator(Walker& walker, Draft&& draft, OperatorForm form, ValueID input)
 {
     walker.chooseConservativeFields(draft);
     if (form == OperatorForm::NumberAndValue && holdOperandBesideNumberToNumberOrBeginTurnAgain(walker, draft, input))

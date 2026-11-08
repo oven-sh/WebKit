@@ -25,7 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t closedOperationsOfAccessThatCallsAccessorInKeyOrdersAccessors = 2;
 
-static LayoutID onlyLayoutOfInKeyOrdersAccessors(const Walker& walker, TypeID listed)
+static ALWAYS_INLINE LayoutID onlyLayoutOfInKeyOrdersAccessors(const Walker& walker, TypeID listed)
 {
     if (!listed)
         return { };

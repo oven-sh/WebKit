@@ -94,7 +94,7 @@ static Reference rootOfObjectBuiltFor(Walker& walker, const BodyValue& value, ui
     return Reference::value(cell);
 }
 
-static bool givesObjectThatNothingElseNames(const Operation& made)
+static ALWAYS_INLINE bool givesObjectThatNothingElseNames(const Operation& made)
 {
     Opcode opcode = made.opcode;
     EffectTraits traits = made.traits();

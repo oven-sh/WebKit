@@ -210,6 +210,37 @@ void Modules::runJobThatMakesCallsAgain(ModuleID moduleOfJob)
         queueStepOfImportInImportTurns(m_promiseOfJobThatMakesCallsAgain.get(), moduleOfJob, 1);
 }
 
+void Modules::noteChangeOfMockUnderCallsOfImport(ModuleID module)
+{
+    bool isChangedByImport = !!m_moduleThatImportAsksFor;
+    for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks) {
+        if (call.module != module)
+            continue;
+        if (!isChangedByImport)
+            call.namespaceBeforeImportChangedMock.clear();
+        else if (!call.namespaceBeforeImportChangedMock) {
+            if (JSObject* namespaceObject = namespaceIfCreated(module, ModulePhase::Evaluation))
+                call.namespaceBeforeImportChangedMock.set(*m_instance.vm, namespaceObject);
+        }
+    }
+}
+
+void Modules::forgetNamespacesKeptForCallsOfImport()
+{
+    for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks)
+        call.namespaceBeforeImportChangedMock.clear();
+}
+
+JSObject* Modules::takeNamespaceKeptForCallOfImport(JSPromise* importPromise)
+{
+    size_t index = m_callsOfImportUnderMocks.findIf([&](const CallOfImportUnderMock& call) { return call.promise.get() == importPromise; });
+    if (index == notFound)
+        return nullptr;
+    JSObject* namespaceObject = m_callsOfImportUnderMocks[index].namespaceBeforeImportChangedMock.get();
+    m_callsOfImportUnderMocks.removeAt(index);
+    return namespaceObject;
+}
+
 void Modules::queueJobOfRound(ModuleID moduleOfJob)
 {
     if (!loadsAsExecutableDoes() || std::exchange(m_isJobOfRoundQueued, true))

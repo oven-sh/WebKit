@@ -252,7 +252,7 @@ static TypeID describeLooselyFittingObjectsByShape(TypeArena& types, TypeID pass
     return described;
 }
 
-TypeID withUndescribedObjectsInside(TypeArena& types, TypeID passing, TypeID holder)
+ALWAYS_INLINE TypeID withUndescribedObjectsInside(TypeArena& types, TypeID passing, TypeID holder)
 {
     if (holdsOnlyPrimitives(passing) || holdsOnlyPrimitives(holder))
         return passing;

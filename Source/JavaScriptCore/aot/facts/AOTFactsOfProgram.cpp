@@ -56,7 +56,7 @@ static bool isObjectOfClassInProgramFacts(const BuiltinTable& builtins, BuiltinI
     return builtins.isObjectOfClass(canonical);
 }
 
-static BuiltinID objectAnsweredByBindingInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
+static ALWAYS_INLINE BuiltinID objectAnsweredByBindingInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
 {
     if (builtins.at(canonical).kind != BuiltinKind::NativeBinding)
         return canonical;
@@ -151,7 +151,7 @@ static bool standsForObjectInProgramFacts(const BuiltinTable& builtins, BuiltinI
     return isObjectKind(entry.kind) || entry.memberCount;
 }
 
-static bool mayHoldObjectInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
+static ALWAYS_INLINE bool mayHoldObjectInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
 {
     if (standsForObjectInProgramFacts(builtins, canonical))
         return true;
@@ -4427,7 +4427,7 @@ void BuilderOfProgramFacts::noteObjectHandedToFormatter(bool isWalked)
         m_holdersToLookThrough.append(BuiltinID(static_cast<uint32_t>(index)));
 }
 
-bool BuilderOfProgramFacts::formatterWalksPrototype(BuiltinID canonicalHolder) const
+ALWAYS_INLINE bool BuilderOfProgramFacts::formatterWalksPrototype(BuiltinID canonicalHolder) const
 {
     BuiltinClassID builtinClass = m_classOfPrototype[canonicalHolder.index()];
     return m_formattersAreHandedObjects && builtinClass && m_builtins.formatterWalksInstancesOf(builtinClass) && formatterMayComeByWhatStandsBelow(canonicalHolder);

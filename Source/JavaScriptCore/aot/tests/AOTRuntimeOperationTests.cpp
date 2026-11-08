@@ -20,6 +20,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaOperations.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTStubTestSupport.h"
 #include "AOTTemporaryFile.h"
 #include "AOTVector.h"
 #include "ClonedArguments.h"
@@ -48,6 +49,9 @@ static constexpr ASCIILiteral callsThroughRuntimeTableTest = "runtime-operations
 static constexpr ASCIILiteral unusedEntriesTrapTest = "runtime-operations/unused-entries-trap"_s;
 static constexpr ASCIILiteral unmappedArgumentsTest = "runtime-operations/unmapped-arguments-come-from-frame-and-rest"_s;
 static constexpr ASCIILiteral appendElementsTest = "runtime-operations/append-elements"_s;
+#if OS(UNIX)
+static constexpr ASCIILiteral radixOutsideOfItsRangeTest = "runtime-operations/a-radix-outside-of-two-to-thirty-six-stops-the-process"_s;
+#endif
 static constexpr ASCIILiteral arrayLiteralsTest = "runtime-operations/array-literals-are-pristine-and-contiguous"_s;
 static constexpr ASCIILiteral badTimeStopsTest = "runtime-operations/a-realm-with-an-image-that-begins-to-have-a-bad-time-stops"_s;
 static constexpr ASCIILiteral pushesAndHolesTest = "runtime-operations/pushes-and-holes"_s;
@@ -832,6 +836,31 @@ static void appendElements()
     runWithLoadedProgram(appendElementsTest, programText, checkAppendElements);
 }
 
+#if OS(UNIX)
+static void checkRadixOutsideOfItsRangeStopsProcess(LoadedProgram& program)
+{
+    auto outcomeWith = [&](int32_t radix, bool takesInt32) {
+        return runInChild([&] {
+            if (takesInt32)
+                callFromNativeCode(program, operationAOTInt32ToStringWithRadix, 255, radix);
+            else
+                callFromNativeCode(program, operationAOTNumberToStringWithRadix, 255.5, radix);
+        });
+    };
+    for (bool takesInt32 : { true, false }) {
+        for (int32_t radix : { 2, 16, 36 })
+            AOT_TEST_CHECK(outcomeWith(radix, takesInt32) == ChildOutcome::Finished);
+        for (int32_t radix : { 1, 0, 37, -1 })
+            AOT_TEST_CHECK(outcomeWith(radix, takesInt32) == ChildOutcome::Crashed);
+    }
+}
+
+static void radixOutsideOfItsRangeStopsProcess()
+{
+    runWithLoadedProgram(radixOutsideOfItsRangeTest, programText, checkRadixOutsideOfItsRangeStopsProcess);
+}
+#endif
+
 static void arrayLiteralsArePristineAndContiguous()
 {
     runWithLoadedProgram(arrayLiteralsTest, programText, checkArrayLiterals);
@@ -905,6 +934,9 @@ std::span<const NativeTest> runtimeOperationTests()
         { callsThroughRuntimeTableTest, operationsAreCalledThroughRuntimeTable },
         { unmappedArgumentsTest, unmappedArgumentsComeFromFrameAndRest },
         { appendElementsTest, appendElements },
+#if OS(UNIX)
+        { radixOutsideOfItsRangeTest, radixOutsideOfItsRangeStopsProcess },
+#endif
         { arrayLiteralsTest, arrayLiteralsArePristineAndContiguous },
         { badTimeStopsTest, realmWithImageThatBeginsToHaveABadTimeStops },
         { pushesAndHolesTest, pushesAndHoles },

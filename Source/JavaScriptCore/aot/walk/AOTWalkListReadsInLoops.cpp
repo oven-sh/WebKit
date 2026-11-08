@@ -951,7 +951,7 @@ static TypeID expectedOfRowThatIsNotBuiltInListReadsInLoops(Walker& walker, Valu
     return expected;
 }
 
-static bool readsRowOfNumbersThatTurnFindsInListedList(Walker& walker, const BodyIndex& index, const BodyValue& operation, uint32_t firstValueOfLoop, std::span<const ListTestedInFrontOfLoop> lists, std::span<const GuessInFrontOfLoop> guesses = { })
+static ALWAYS_INLINE bool readsRowOfNumbersThatTurnFindsInListedList(Walker& walker, const BodyIndex& index, const BodyValue& operation, uint32_t firstValueOfLoop, std::span<const ListTestedInFrontOfLoop> lists, std::span<const GuessInFrontOfLoop> guesses = { })
 {
     ValueID row = operation.opcode() == Opcode::ElemGet ? index.valueBehindCasts(operation.objectOperand()) : ValueID();
     if (!row || row.index() < firstValueOfLoop || index.isParameter(row) || index.opcodeOf(row) != Opcode::ElemGet)

@@ -1428,7 +1428,7 @@ void Walker::holdSlotsOfScopesThatLeaveAt(std::span<const SummaryScopeStoredFirs
     }
 }
 
-static bool namesSlotStoredFirst(Walker& walker, const BodyValue& access)
+static ALWAYS_INLINE bool namesSlotStoredFirst(Walker& walker, const BodyValue& access)
 {
     std::span<const SummaryScopeStoredFirst> scopes = walker.facts().summaries().at(walker.currentFunction()).scopesStoredFirst.span();
     if (scopes.empty())
@@ -1945,7 +1945,7 @@ TypeID Walker::typeThatCallByValueIsShownToGive(const auto& call, std::span<cons
     return entersBuiltin ? m_types.wholeKindsAndBuiltinClassesOf(given) : given;
 }
 
-void Walker::askWhatCallByValueGives(ValueID call, const Draft& draft, TypeID proven)
+ALWAYS_INLINE void Walker::askWhatCallByValueGives(ValueID call, const Draft& draft, TypeID proven)
 {
     if (m_types.saysNothing(proven) || unitReturnsAtOnce(draft))
         return;
@@ -1963,7 +1963,7 @@ void Walker::askWhatCallByValueGives(ValueID call, const Draft& draft, TypeID pr
         buildCheckOfProof(callee, TypeTable::never, TypeTable::anything, ProofSource::ResultOfOtherCall, draft.origin());
 }
 
-bool Walker::isTypedByWhatLinkSaysOfContents(const Draft& draft) const
+ALWAYS_INLINE bool Walker::isTypedByWhatLinkSaysOfContents(const Draft& draft) const
 {
     return m_positions == m_positionsOfBuild.get()
         && ((m_resultOfReadBeingTyped && readsTypedByWhatIsProvenOfInput.contains(draft.opcode)) || (m_contentsBeingTyped && recordsTypedByWhatIsProvenOfContents.contains(draft.opcode)));
@@ -2037,7 +2037,7 @@ ALWAYS_INLINE bool Walker::entryParameterIsCapture(const Block& entry, ValueID p
     return index < function.numberOfEntryParameters() && function.entryParameterKind(static_cast<unsigned>(index)) == EntryParameter::Capture;
 }
 
-bool Walker::entryParameterIsShown(const Block& entry, ValueID parameter) const
+ALWAYS_INLINE bool Walker::entryParameterIsShown(const Block& entry, ValueID parameter) const
 {
     switch (unit().role) {
     case CodeRole::Body:
@@ -2372,6 +2372,14 @@ void Walker::checkProofOfCopy(Reference value, TypeID proven, ProofSource source
     if (!m_types.at(proven).isJavaScriptValue() || !m_types.at(own).isJavaScriptValue() || m_types.isSubset(own, proven))
         return;
     checkProof(value, proven, TypeWithoutProof::restingOnBelief(own), source, origin);
+}
+
+void Walker::checkRawNumberThatFoldRestsOn(Reference number, Origin origin)
+{
+    if (!checksProofs() || !number || !number.isValue() || !numberRepresentations.contains(representationOf(number)))
+        return;
+    origin.isTailCall = false;
+    checkProof(number, TypeTable::anything, ProofSource::Test, origin);
 }
 
 TypeID Walker::asFarAsUnitMayAsk(TypeID claimed)
@@ -2933,7 +2941,7 @@ void Walker::Frame::bringTablesOfNarrowerNamesTo(uint32_t first) const
     listInTables = first;
 }
 
-void Walker::Frame::addNarrowerName(uint32_t& first, Reference value, Reference name)
+ALWAYS_INLINE void Walker::Frame::addNarrowerName(uint32_t& first, Reference value, Reference name)
 {
     ASSERT(value && name);
     PlaceOfNarrowerName place;
@@ -4375,7 +4383,7 @@ ValueID Walker::findCopyOfConstant(ValueID constant, Representation form) const
     return { };
 }
 
-void Walker::noteCopyOfConstant(ValueID constant, Representation form, ValueID copy)
+ALWAYS_INLINE void Walker::noteCopyOfConstant(ValueID constant, Representation form, ValueID copy)
 {
     if (constant.index() >= 1u << (32 - bitsOfFormOfCopyInWalk))
         return;
@@ -6075,7 +6083,7 @@ Reference Walker::tagReadInFrontOfTest(const BodyValue& read)
     return earlier;
 }
 
-static ValueID valueWhoseTruthIsToldInWalk(const Code& code, ValueID value, bool& isNegated)
+static ALWAYS_INLINE ValueID valueWhoseTruthIsToldInWalk(const Code& code, ValueID value, bool& isNegated)
 {
     while ((value = valueBehindNamesInWalk(code, value))) {
         Opcode opcode = code.at(value).opcode;
@@ -6088,7 +6096,7 @@ static ValueID valueWhoseTruthIsToldInWalk(const Code& code, ValueID value, bool
     return value;
 }
 
-Reference Walker::booleanAskedByBranchOnEdge(BlockID from, uint32_t targetIndex, Reference value)
+ALWAYS_INLINE Reference Walker::booleanAskedByBranchOnEdge(BlockID from, uint32_t targetIndex, Reference value)
 {
     if (!has(Mechanism::Folding) || !value || !value.isValue())
         return { };
@@ -6152,7 +6160,7 @@ ALWAYS_INLINE void Walker::nameBooleansAskedByBranch(BlockID from, const BodyTer
     }
 }
 
-Reference Walker::narrowOnEdge(BlockID from, uint32_t targetIndex, const BodyEdgeResult& result)
+ALWAYS_INLINE Reference Walker::narrowOnEdge(BlockID from, uint32_t targetIndex, const BodyEdgeResult& result)
 {
     Reference subject = referenceOf(result.subject);
     if (!checksProofs() && m_frames.last().index->isUnused(result.parameter))
@@ -8256,7 +8264,7 @@ bool Walker::staysTailCall(Reference call) const
     return returned == conventions.resultRepresentation(unit()) && record.representation == returned;
 }
 
-void Walker::walkReturn(const BodyTerminator& terminator)
+ALWAYS_INLINE void Walker::walkReturn(const BodyTerminator& terminator)
 {
     Reference returned;
     if (ValueID value = terminator.operand(0)) {

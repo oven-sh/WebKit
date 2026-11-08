@@ -60,7 +60,7 @@ void BufferBuiltinEmitter::generateDataViewGet(const InlineCall& call)
     ByteOrder order = byteOrderOf(call, 1, size);
     CellPointer view = cellOperand(call.receiver());
     Integer offset = offsetOrElse(call.argument(0), miss);
-    Pointer address = findBytes(view, offset, mayBeNegative(call.argument(0)), size, miss);
+    Pointer address = findBytes(view, offset, size > 1 && mayBeNegative(call.argument(0)), size, miss);
     Operand loaded = loadBytes(call.context(), address, elements, order);
     ensureStillAliveHere(view);
     finish(call, loaded, types().at(elementTypeOf(elements)));
@@ -84,7 +84,7 @@ void BufferBuiltinEmitter::generateDataViewSet(const InlineCall& call)
         stored = int32Operand(value);
     else
         stored = emitter<ConversionEmitter>().toInt32(numberOperand(value));
-    Pointer address = findBytes(view, offset, mayBeNegative(call.argument(0)), size, miss);
+    Pointer address = findBytes(view, offset, size > 1 && mayBeNegative(call.argument(0)), size, miss);
     storeBytes(address, elements, stored, order);
     ensureStillAliveHere(view);
     finishWithUndefined(call);
@@ -148,10 +148,13 @@ BufferBuiltinEmitter::ByteOrder BufferBuiltinEmitter::byteOrderOf(const InlineCa
     return { std::nullopt, emitter<TruthinessEmitter>().isTruthy(call.context(), get(argument), type) };
 }
 
-bool BufferBuiltinEmitter::mayBeNegative(ValueID id) const
+bool BufferBuiltinEmitter::mayBeNegative(ValueID id)
 {
     Type type = typeOf(id);
-    return !type.isInteger() || type.integers.minimum < 0;
+    if (!type.isInteger() || type.integers.minimum < 0 || emitter<ElementAccessEmitter>().testsEveryPosition())
+        return true;
+    build().statistics().count(StatisticID::RangeChecksRemoved);
+    return false;
 }
 
 Integer BufferBuiltinEmitter::offsetOrElse(ValueID id, LBasicBlock otherwise)
@@ -166,14 +169,15 @@ Integer BufferBuiltinEmitter::offsetOrElse(ValueID id, LBasicBlock otherwise)
 
 Pointer BufferBuiltinEmitter::vectorHoldingElement(CellPointer view, Integer index, LBasicBlock otherwise)
 {
-    TypedArrayElements elements = emitter<ElementAccessEmitter>().typedArrayElementsOf(view, otherwise);
+    ElementAccessEmitter& accesses = emitter<ElementAccessEmitter>();
+    TypedArrayElements elements = accesses.typedArrayElementsOf(accesses.testsEveryPosition() ? accesses.askedAnew(view) : view, otherwise);
     branchUnless(below(index, elements.length), otherwise);
     return elements.vector;
 }
 
 Pointer BufferBuiltinEmitter::findBytes(CellPointer view, Integer offset, bool mayBeNegative, unsigned size, LBasicBlock otherwise)
 {
-    if (size > 1 && mayBeNegative)
+    if (mayBeNegative)
         branchUnless(greaterThanOrEqual(offset, integer(0)), otherwise);
     Pointer vector = vectorHoldingElement(view, add(offset, integer(size - 1)), otherwise);
     return offsetBy(vector, offset, 0);
@@ -376,7 +380,7 @@ void BufferBuiltinEmitter::generateBufferAccess(const InlineCall& call)
     if (isWrite)
         stored = valueToStoreOrElse(call.argument(0), *elements, miss);
     Integer offset = offsetArgument ? offsetOrElse(offsetArgument, miss) : integer(0);
-    Pointer address = findBytes(view, offset, offsetArgument && mayBeNegative(offsetArgument), size, miss);
+    Pointer address = findBytes(view, offset, size > 1 && offsetArgument && mayBeNegative(offsetArgument), size, miss);
     if (isWrite) {
         storeBytes(address, *elements, stored, order);
         ensureStillAliveHere(view);

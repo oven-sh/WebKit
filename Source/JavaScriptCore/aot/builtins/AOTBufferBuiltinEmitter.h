@@ -32,7 +32,7 @@ private:
     };
 
     ByteOrder byteOrderOf(const InlineCall&, unsigned argumentIndex, unsigned size);
-    bool mayBeNegative(ValueID) const;
+    bool mayBeNegative(ValueID);
     Pointer vectorHoldingElement(CellPointer view, Integer index, LBasicBlock otherwise);
     Pointer findBytes(CellPointer view, Integer offset, bool mayBeNegative, unsigned size, LBasicBlock otherwise);
     LValue byteSwapped(LValue bits, unsigned size);

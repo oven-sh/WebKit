@@ -182,6 +182,7 @@ private:
     static ALWAYS_INLINE Operation* findBitsThatBranchAsks(const Block*, unsigned& wayWhereBitIsSet);
     static bool isReadAgainWhereNothingWasWritten(const Operation* read, const Block* first, const Operation* readAgain, const Block* second);
     static bool isAskedByBranchOfItsBlockAlone(const Operation* bits, const Block*);
+    static ALWAYS_INLINE bool mayEndInTestOfBitsOf32Bits(const Block*);
     static NEVER_INLINE void askBitsOfNextTestAtOnce(Block* first);
     NEVER_INLINE void askTestsBehindNextThatImplyThem();
 
@@ -1167,6 +1168,14 @@ bool JumpThreader::isAskedByBranchOfItsBlockAlone(const Operation* bits, const B
     return bits->useCount() == numberOfUsesSeen;
 }
 
+ALWAYS_INLINE bool JumpThreader::mayEndInTestOfBitsOf32Bits(const Block* block)
+{
+    if (block->numSuccessors() != 2 || block->isEmpty() || block->last()->opcode() != Branch)
+        return false;
+    const Operation* asked = block->last()->child(0);
+    return asked->type() == Int32 && (asked->opcode() == BitAnd || asked->opcode() == Equal || asked->opcode() == NotEqual);
+}
+
 void JumpThreader::askBitsOfNextTestAtOnce(Block* first)
 {
     unsigned wayOfFirstWhereBitIsSet = 0;
@@ -1214,7 +1223,7 @@ void JumpThreader::askTestsBehindNextThatImplyThem()
             Block* block = m_proc.blockAt(test.block);
             if (mayAskTestBehindNext(block))
                 askTestBehindNextThatImpliesIt(block);
-            if (test.opcode && block->numSuccessors() == 2 && !block->isEmpty() && block->last()->opcode() == Branch && block->last()->child(0)->type() == Int32)
+            if (test.opcode && mayEndInTestOfBitsOf32Bits(block) && mayEndInTestOfBitsOf32Bits(block->successor(test.isInverted ? 0 : 1).block()))
                 askBitsOfNextTestAtOnce(block);
         }
         return;

@@ -105,7 +105,7 @@ struct Effects {
     constexpr bool mayRunOtherCode() const { return maySuspend || mayCallUnknownCode; }
     constexpr bool mayExitSideways() const { return mayThrow || mayBeTerminated || mayRunOtherCode(); }
 
-    constexpr void merge(const Effects& other)
+    ALWAYS_INLINE constexpr void merge(const Effects& other)
     {
         if (other.writes.containsAny(perObjectHeaps))
             writesObjectsMadeHereAlone = other.writesObjectsMadeHereAlone && (writesObjectsMadeHereAlone || !writes.containsAny(perObjectHeaps));

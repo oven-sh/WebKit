@@ -1893,6 +1893,8 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     m_modulesOwedBesideMock.clear(fileOrModule.index());
     if (!mock && !stoodInPlace)
         return false;
+    if (!m_callsOfImportUnderMocks.isEmpty()) [[unlikely]]
+        noteChangeOfMockUnderCallsOfImport(module);
     JSObject* endedMock = mock ? nullptr : mockInPlace(fileOrModule);
     BitVector leftOutByEndedMock = endedMock ? exportsLeftOutOf(module) : BitVector();
     if (mock)
@@ -1971,7 +1973,7 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     m_modulesOwedBesideMock.clear(module.index());
     goModuleByModuleFromNowOn();
     for (ModuleID each : { fileOrModule, module }) {
-        m_modulesThatRanBesideMockAlone.set(each.index(), ranBesideMock);
+        m_modulesThatRanBesideMockAlone.set(each.index(), ranBesideMock && !staysLoaded);
         if (staysLoaded) [[unlikely]] {
             if (status(each) < ModuleStatus::Evaluating)
                 setStatus(each, ModuleStatus::Evaluated);
@@ -2008,6 +2010,42 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     loaded.objectMadeByRequire.set(*this, nullptr);
     loaded.exportsGivenToObjectMadeByRequire.set(*this, JSValue());
     return true;
+}
+
+void Modules::parkRunUnderKeyOfOriginal(ModuleID file)
+{
+    LoadedModule& loaded = ensureLoaded(file);
+    loaded.exportsOfRunUnderKeyOfOriginal.set(*this, commonJSExports(file));
+    goModuleByModuleFromNowOn();
+    for (ModuleID each : { file, moduleWithExportsOf(file) }) {
+        if (status(each) == ModuleStatus::Evaluated)
+            setStatus(each, ModuleStatus::Unlinked);
+        m_modulesLoadedBesideGroups.clear(each.index());
+        m_modulesOwedToImportersThatRan.set(each.index());
+        unsettleForLinks(each);
+        letGoOfNamespaceMadeUnderMock(each);
+    }
+    m_modulesWithNothingOwedBelow.clearAll();
+    m_mockedModulesPassedOverByWalks.clear();
+    followImportsAnewAtNextQuestion();
+    setCommonJSExports(file, jsUndefined());
+    loaded.objectMadeByRequire.set(*this, nullptr);
+    loaded.exportsGivenToObjectMadeByRequire.set(*this, JSValue());
+}
+
+void Modules::takeBackRunUnderKeyOfOriginal(ModuleID file)
+{
+    LoadedModule* loaded = loadedIfExists(file);
+    JSValue parked = loaded ? loaded->exportsOfRunUnderKeyOfOriginal.get() : JSValue();
+    if (!parked)
+        return;
+    loaded->exportsOfRunUnderKeyOfOriginal.set(*this, JSValue());
+    if (status(file) > ModuleStatus::Linked) {
+        setLiesUnderKeyOfOriginal(file, false);
+        return;
+    }
+    setCommonJSExports(file, parked);
+    markEvaluated(file);
 }
 
 uint32_t Modules::momentOfFirstMockInTestFile(ModuleID module)
@@ -2048,12 +2086,12 @@ void Modules::didEmptyKeyOfMockInPlace(ModuleID fileOrModule)
     held.wasRequiredUnderMockLaidInPreload = false;
 }
 
-void Modules::noteDoorThatLoadsMockLaidInPreload(ModuleID fileOrFace, LoadByName door)
+void Modules::noteRequireOfMockLaidInPreload(ModuleID fileOrFace)
 {
     LoadedModule* held = loadedIfExists(fileOf(fileOrFace));
     if (!held || !held->mockInPlace || held->mockInPlace.get() != held->mockLaidInPreload.get())
         return;
-    held->wasRequiredUnderMockLaidInPreload |= door == LoadByName::Require;
+    held->wasRequiredUnderMockLaidInPreload = true;
 }
 
 bool Modules::wasRequiredUnderMockLaidInPreload(ModuleID file)
@@ -2144,6 +2182,17 @@ JSObject* Modules::moduleObjectBehindEntryOfProgram(ModuleID module) const
     return loaded ? loaded->moduleObjectBehindEntryOfProgram.get() : nullptr;
 }
 
+JSValue Modules::askForExportsBehindEntryOfProgram(ModuleID file)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    JSValue kept = exportsBehindEntryOfProgram(file);
+    if (!kept || data(file).kind == ModuleKind::CommonJs || wasLoadedInThisTestFile(file))
+        return kept;
+    evaluateModulesOwedBelowOriginal(file);
+    RETURN_IF_EXCEPTION(scope, { });
+    return kept;
+}
+
 JSValue Modules::exportsBehindEntryOfProgram(ModuleID module) const
 {
     const LoadedModule* loaded = loadedIfExists(fileOf(module));
@@ -2163,6 +2212,12 @@ bool Modules::hasMockLaidOver(ModuleID module) const
 {
     const LoadedModule* loaded = loadedIfExists(module);
     return loaded && loaded->hasMockLaidOver;
+}
+
+bool Modules::hasMockLaidOverFileThatHadRun(ModuleID module) const
+{
+    const LoadedModule* loaded = loadedIfExists(module);
+    return loaded && loaded->hasMockLaidOver && loaded->hadRunWhenMockWasLaid;
 }
 
 bool Modules::keepsStatusOfRunBeforeLoadThatRuns(ModuleID module) const
@@ -2245,7 +2300,7 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
     bool isData = moduleData.kind == ModuleKind::Data && !moduleData.isOfLibrary();
     if ((!isFile && !isData && (!moduleData.isESModuleOfProgram() || moduleData.isFaceOfFile())) || !m_table.hasFilePath(module) || !m_table.wordOfMock(module))
         return false;
-    bool hasFailed = evenIfItsBodyThrew && moduleData.isESModuleOfProgram() && !moduleData.isFaceOfFile() && status(module) == ModuleStatus::Failed;
+    bool hasFailed = (evenIfItsBodyThrew || wasLetGoByLoader(module)) && moduleData.isESModuleOfProgram() && !moduleData.isFaceOfFile() && status(module) == ModuleStatus::Failed;
     bool isBehindAwait = moduleData.isESModuleOfProgram() && !moduleData.isFaceOfFile() && status(module) == ModuleStatus::EvaluatingAsync;
     if ((!hasFailed && !isBehindAwait && !hasRun(module)) || isMocked(module) || mockInPlace(module) || isEvicted(module) || m_momentsOfLoads.isEmpty())
         return false;
@@ -3264,12 +3319,13 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 
     bool isMadeByOwnFactory = isAskedForByOwnFactory(module);
     SetForScope importThatBodySetAsideCallsNow(m_importThatBodySetAsideCallsNow, referrer && !m_mocksOverModulesThatHaveRun.isEmpty() ? std::optional(std::pair(referrer, module)) : std::nullopt);
-    if (m_mocks) [[unlikely]]
+    if (m_mocks) [[unlikely]] {
         noteLoadBegunByFactories(module);
-    if (!m_facesThatTookCopiesForMock.isEmpty()) [[unlikely]] {
-        takeCopiesAnewWhereMockCallAloneTookThem(moduleWithExportsOf(module));
-        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        if (!isMocked(fileOf(module)))
+            m_facesThatTookCopiesForMock.clear(moduleWithExportsOf(module).index());
     }
+    if (!m_mocks && !m_facesThatTookCopiesForMock.isEmpty()) [[unlikely]]
+        m_facesThatTookCopiesForMock.clear(moduleWithExportsOf(module).index());
     ModuleID walkedBelow = module;
     bool walkStopped = false;
     auto start = [&](ModuleID started) -> JSPromise* {
@@ -3283,7 +3339,6 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         if (m_mocks) [[unlikely]]
             hearWhetherImportUnderMockFails(started, promise);
         ModuleID file = fileOf(started);
-        noteDoorThatLoadsMockLaidInPreload(file, LoadByName::Import);
         if (isMadeByOwnFactory || importsOriginalBesideMock(started, referrer, OriginalIsAskedBy::CallOfImport)) [[unlikely]] {
             VM& vm = *m_instance.vm;
             JSPromise* ofModuleItself = JSPromise::create(vm, realm->promiseStructure());
@@ -3292,7 +3347,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
             promise = ofModuleItself;
         }
         if (referrer && !m_mocksOverModulesThatHaveRun.isEmpty()) [[unlikely]]
-            m_importsCalledByBodiesSetAside.append({ started, Strong<JSPromise>(*m_instance.vm, promise) });
+            m_importsCalledByBodiesSetAside.append({ started, asyncEvaluationOrder(referrer), Strong<JSPromise>(*m_instance.vm, promise) });
         scope.release();
         tellHostOfImport(promise, data(file).mayBeMocked() ? keyWithoutForm(file).string() : String());
         return promise;
@@ -4050,6 +4105,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         if (isCalledByProgram && (!isBuiltinModule || isBuiltinModuleThatLoaderHas) && loaderOnlyHandsOverNamespace(module)) {
             JSPromise* promise = promiseForCaller();
             if (promise->isThenFastAndNonObservable()) [[likely]] {
+                if (mockInPlace(module)) [[unlikely]]
+                    m_callsOfImportUnderMocks.append(CallOfImportUnderMock { Strong<JSPromise>(vm, promise), moduleWithExportsOf(module), { } });
                 queueStepOfImport(promise, moduleForJob(module), std::size(jobsOfImportOfEvaluatedModule));
                 return promise;
             }
@@ -4406,7 +4463,9 @@ void Modules::finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID m
         RELEASE_AND_RETURN(scope, runJobOfRound(module));
     if (importPromise == m_promiseOfJobThatMakesCallsAgain.get()) [[unlikely]]
         RELEASE_AND_RETURN(scope, runJobThatMakesCallsAgain(module));
-    if (!error && status(module) == ModuleStatus::EvaluatingAsync) [[unlikely]]
+    JSObject* namespaceKept = m_callsOfImportUnderMocks.isEmpty() ? nullptr : takeNamespaceKeptForCallOfImport(importPromise);
+    EnsureStillAliveScope keepsNamespaceKept(namespaceKept);
+    if (!error && !namespaceKept && status(module) == ModuleStatus::EvaluatingAsync) [[unlikely]]
         RELEASE_AND_RETURN(scope, startImportWhoseTextHasCome(importPromise, module, std::nullopt));
     if (!error && !m_importersEnteredAboveMocks.isEmpty()) [[unlikely]] {
         BitVector seen;
@@ -4421,6 +4480,8 @@ void Modules::finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID m
     scope.release();
     if (error) [[unlikely]]
         loaded->reject(vm, error);
+    else if (namespaceKept) [[unlikely]]
+        loaded->resolve(m_instance.globalObject, vm, namespaceKept);
     else
         resolveWithNamespace(loaded, module);
     loaded->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, importPromise, jsUndefined());
@@ -5696,6 +5757,7 @@ void takeOutFilesThatFailed(JSGlobalObject* realm)
     if (!modules)
         return;
     modules->forgetFailedRunsOfESModulesThatMayRunAgain();
+    modules->letGoOfESModulesThatThrew();
     if (!modules->holdsCodeThatMayBeEvicted())
         return;
     Vector<ModuleID, 4> failed;
@@ -6926,6 +6988,12 @@ bool hasMockLaidOver(JSGlobalObject* realm, ModuleID module)
     return modules && modules->hasMockLaidOver(module);
 }
 
+bool hasMockLaidOverFileThatHadRun(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->hasMockLaidOverFileThatHadRun(module);
+}
+
 void didEmptyKeyOfMockInPlace(JSGlobalObject* realm, ModuleID module)
 {
     if (Modules* modules = modulesOf(realm))
@@ -6960,6 +7028,18 @@ void keepOriginalOfFileThatLeavesProgram(JSGlobalObject* realm, ModuleID file)
 {
     if (Modules* modules = modulesOf(realm))
         modules->keepExportsBehindEntryOfProgram(file);
+}
+
+void parkRunUnderKeyOfOriginal(JSGlobalObject* realm, ModuleID file)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->parkRunUnderKeyOfOriginal(file);
+}
+
+void takeBackRunUnderKeyOfOriginal(JSGlobalObject* realm, ModuleID file)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->takeBackRunUnderKeyOfOriginal(file);
 }
 
 JSObject* moduleObjectBehindEntryOfProgram(JSGlobalObject* realm, ModuleID file)
@@ -6998,6 +7078,12 @@ void setOriginalCameBackUnderOwnKey(JSGlobalObject* realm, ModuleID file, bool c
         modules->setOriginalCameBackUnderOwnKey(file, cameBack);
 }
 
+JSValue askForExportsBehindEntryOfProgram(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->askForExportsBehindEntryOfProgram(file) : JSValue();
+}
+
 JSValue exportsBehindEntryOfProgram(JSGlobalObject* realm, ModuleID file)
 {
     Modules* modules = modulesOf(realm);
@@ -7011,10 +7097,10 @@ JSObject* namespaceOfFileThatRanAheadOfMock(JSGlobalObject* realm, ModuleID modu
     return modules ? modules->namespaceOfFileThatRanAheadOfMock(module) : nullptr;
 }
 
-JSPromise* evaluationOfModuleThatMockLeftAlone(JSGlobalObject* realm, ModuleID module)
+JSPromise* evaluationOfModuleThatMockLeftAlone(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> loadThatCalledFactory)
 {
     Modules* modules = modulesOf(realm);
-    return modules && !modules->bodySetAsideWaitsForItsMock(module) ? modules->evaluationOfRecordSetAside(module) : nullptr;
+    return modules && !modules->bodySetAsideWaitsForItsMock(module, loadThatCalledFactory) ? modules->evaluationOfRecordSetAside(module) : nullptr;
 }
 
 JSValue errorThrownByBodyOfMockedModule(JSGlobalObject* realm, ModuleID module)
@@ -8080,7 +8166,7 @@ JSPromise* Modules::evaluationOfRecordSetAside(ModuleID module)
     return record->evaluate(m_instance.globalObject);
 }
 
-bool Modules::bodySetAsideWaitsForItsMock(ModuleID module)
+bool Modules::bodySetAsideWaitsForItsMock(ModuleID module, std::optional<ModuleID> loadThatCalledFactory)
 {
     m_importsCalledByBodiesSetAside.removeAllMatching([](const ImportCalledByBodySetAside& call) {
         return call.promise->status() != JSPromise::Status::Pending;
@@ -8090,9 +8176,19 @@ bool Modules::bodySetAsideWaitsForItsMock(ModuleID module)
         return false;
     if (m_importThatBodySetAsideCallsNow && reachedByStatements(module, AtMock::GoesOn).quickGet(m_importThatBodySetAsideCallsNow->first.index()) && reachedByStatements(m_importThatBodySetAsideCallsNow->second, AtMock::Stops).get(module.index()))
         return true;
-    return std::ranges::any_of(m_importsCalledByBodiesSetAside, [&](const ImportCalledByBodySetAside& call) {
-        return reachedByStatements(call.imported, AtMock::Stops).get(module.index()) && AbstractModuleRecord::importPromiseGatesAsyncDependency(call.promise.get(), record);
+    CyclicModuleRecord* root = record->cycleRoot() ? record->cycleRoot() : record;
+    AbstractModuleRecord::AsyncEvaluationOrder order = root->asyncEvaluationOrder();
+    auto waitsFor = [&](const ImportCalledByBodySetAside& call) {
+        if (!reachedByStatements(call.imported, AtMock::Stops).get(module.index()))
+            return false;
+        return (order.hasOrder() && call.orderOfCaller == order.order()) || AbstractModuleRecord::importPromiseGatesAsyncDependency(call.promise.get(), root);
+    };
+    if (!loadThatCalledFactory)
+        return std::ranges::any_of(m_importsCalledByBodiesSetAside, waitsFor);
+    auto call = std::ranges::find_if(m_importsCalledByBodiesSetAside, [&](const ImportCalledByBodySetAside& each) {
+        return fileOf(each.imported) == fileOf(*loadThatCalledFactory);
     });
+    return call != m_importsCalledByBodiesSetAside.end() && waitsFor(*call);
 }
 
 JSObject* Modules::namespaceOfRecordSetAside(ModuleRecord* record)

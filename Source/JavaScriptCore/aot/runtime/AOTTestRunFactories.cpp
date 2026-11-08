@@ -965,6 +965,8 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
             continue;
         }
         ModuleID imported(path.last().requests[path.last().next++]);
+        if (data(imported).isFaceOfFile() && needsOriginalAheadOfFactory(fileOf(imported)))
+            break;
         bool isSeen = seen.quickSet(imported.index());
         if (needsOriginalAheadOfFactory(imported)) {
             noteMock(imported);
@@ -1157,7 +1159,7 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (m_linksOfLoadThatMayFail && !isWalkedForLoadThatMayFail(root)) [[unlikely]]
+    if (m_linksOfLoadThatMayFail && !isWalkedForLoadThatMayFail(root) && (status(m_linksOfLoadThatMayFail->root) < ModuleStatus::Evaluating || reachesWhatLoadThatMayFailLinkedAnew(root))) [[unlikely]]
         m_linksOfLoadThatMayFail = std::nullopt;
     auto bringsBackWhereLoadFails = makeScopeExit([&] {
         if (scope.exception()) [[unlikely]]

@@ -198,7 +198,7 @@ void ListOfAnswersUntilEnded::keepMembersOfListWithMembers(const ListOfAnswersUn
     dropEndedPlacesIfMany();
 }
 
-void ListOfAnswersUntilEnded::keepMembersOfEither(const ListOfAnswersUntilEnded& other, const ListOfAnswersUntilEnded& beside, Vector<uint32_t, 8>& gone)
+ALWAYS_INLINE void ListOfAnswersUntilEnded::keepMembersOfEither(const ListOfAnswersUntilEnded& other, const ListOfAnswersUntilEnded& beside, Vector<uint32_t, 8>& gone)
 {
     if (!m_numberHeld)
         return;

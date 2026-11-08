@@ -181,6 +181,8 @@ void OperatorEmitter::generateRelation(const ValueContext& value, Relation relat
     case OperatorForm::Integers: {
         m_out.noteForm(Form::Open, StateOfKnowledge::Integers);
         bool areBothNonNegative = typeOf(left).integers.minimum >= 0 && typeOf(right).integers.minimum >= 0;
+        if (relation == Relation::Less && AOT::hasFlag(build().options().testing, Wire::TestingSwitch::EqualIntegersAreTakenToBeLess)) [[unlikely]]
+            relation = Relation::LessOrEqual;
         Representation width = widthOfComparedIntegers(m_generator, value.value());
         Operand leftInteger = m_generator.getIn(left, width);
         Operand rightInteger = m_generator.getIn(right, width);

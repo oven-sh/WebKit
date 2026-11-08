@@ -106,6 +106,11 @@ struct KeptByTypedAccesses final : Walker::KeptForBuild {
     enum class RowAbove : uint8_t { NotAsked, IsAsked, Passes, Fails };
     Vector<RowAbove> rowsAboveClasses;
     std::optional<BitVector> keysOfMembersOfPrototypes;
+    struct LayoutsThatSourcesFit {
+        LayoutID onlyLayoutMade;
+        Vector<LayoutID, 3> layoutsThatAllFit;
+    };
+    HashMap<uint32_t, LayoutsThatSourcesFit, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> layoutsThatSourcesOfCopiesFit;
 };
 
 struct OperandsOfTypedAccess {
@@ -415,7 +420,7 @@ static FieldOfTypedAccess describeFieldOfTypedAccess(Walker& walker, const Recei
     return field;
 }
 
-static bool listMembersThatMayHaveKeyForTypedAccess(Walker& walker, const ReceiversOfTypedAccess& receivers, PropertyKeyID key, Vector<uint32_t, 16>& places)
+static ALWAYS_INLINE bool listMembersThatMayHaveKeyForTypedAccess(Walker& walker, const ReceiversOfTypedAccess& receivers, PropertyKeyID key, Vector<uint32_t, 16>& places)
 {
     static constexpr size_t mostMembersAskedOneByOne = 16;
     static constexpr uint32_t mostKeysAskedOfEveryMember = 8;
@@ -748,6 +753,8 @@ static MemberFound findMemberAboveReceiversForTypedAccess(const Walker& walker, 
         MemberFound foundByAll;
         for (LayoutID member : receivers.members) {
             MemberFound found = findMemberAboveObjectsOf(walker.program(), linkTablesForTypedAccesses(walker), member, key);
+            if (found.kind == MemberFound::Kind::Unknown && !found.method && !found.getter && !found.setter)
+                return { };
             if (member != receivers.members[0] && (found.kind != foundByAll.kind || found.method != foundByAll.method || found.getter != foundByAll.getter || found.setter != foundByAll.setter))
                 return { };
             foundByAll = found;
@@ -910,7 +917,7 @@ static Opcode readOfFilledSlotForTypedAccess(const Walker& walker, const Receive
     return slotHoldsMarkForTypedAccess(walker, receivers, key) ? Opcode::GetDeferredClosureSlot : Opcode::GetSlot;
 }
 
-static void readScopeBesideSlotForTypedAccess(Walker& walker, Origin origin, Reference closure)
+static ALWAYS_INLINE void readScopeBesideSlotForTypedAccess(Walker& walker, Origin origin, Reference closure)
 {
     if (!closure || !closure.isValue() || walker.isUnreachable() || walker.code().at(closure.id()).opcode != Opcode::GetDeferredClosureSlot)
         return;
@@ -934,7 +941,7 @@ static Draft draftOfSlotOperationForTypedAccess(Walker& walker, const BodyValue&
     return draft;
 }
 
-static TypedForm buildReadOfMemberForTypedAccess(Walker& walker, const BodyValue& value, const OperandsOfTypedAccess& operands, const MemberFound& member)
+static ALWAYS_INLINE TypedForm buildReadOfMemberForTypedAccess(Walker& walker, const BodyValue& value, const OperandsOfTypedAccess& operands, const MemberFound& member)
 {
     switch (member.kind) {
     case MemberFound::Kind::Unknown:
@@ -1017,7 +1024,7 @@ static bool lookAsksForValueOfWrittenTypeInTypedAccess(const FieldOfTypedAccess&
     return field.isWrittenWithoutUndefinedAndNull || (field.liesInFormOfNumbersOrBooleans && !field.liesInOptionalBoolean);
 }
 
-static bool markOfCellAnswersForFieldInTypedAccess(const Walker& walker, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field, PropertyKeyID key, ValueID object)
+static ALWAYS_INLINE bool markOfCellAnswersForFieldInTypedAccess(const Walker& walker, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field, PropertyKeyID key, ValueID object)
 {
     bool lookAsksForValue = lookAsksForValueOfWrittenTypeInTypedAccess(field) && !field.markAnswersForValue;
     return field.liesInOneSlot && field.coverage == CoverageOfTypedAccess::EveryReceiver && field.markAnswersForSlot && !lookAsksForValue && !field.isAppended && paysToLookAtSlotForTypedAccess(walker, field, key)
@@ -4726,25 +4733,41 @@ static bool buildCopyOfFreshObjectForTypedAccess(Walker& walker, const BodyValue
     return true;
 }
 
-static LayoutID layoutThatSourceOfCopyIsWrittenAsForTypedAccess(Walker& walker, std::span<const LayoutID> members, LayoutID layoutMade)
+static KeptByTypedAccesses::LayoutsThatSourcesFit findLayoutsThatSourcesOfCopyFitForTypedAccess(Walker& walker, std::span<const LayoutID> members)
 {
+    static constexpr size_t layoutsThatDecideWhateverIsMade = 3;
     const Program& program = walker.program();
     const Plan& plan = walker.plan();
+    KeptByTypedAccesses::LayoutsThatSourcesFit found;
     Vector<LayoutID, 8> made;
     for (LayoutID member : members) {
         if (program.at(member).kind == LayoutKind::Record && !plan.shapes().shapesOf(member).isEmpty())
             made.append(member);
     }
-    if (made.size() == 1)
-        return made[0];
-    LayoutID written;
-    bool allFitLayoutMade = false;
+    if (made.size() == 1) {
+        found.onlyLayoutMade = made[0];
+        return found;
+    }
     for (LayoutID candidate : made) {
         if (!program.hasDeclaredMembers(candidate))
             continue;
         SetView<LayoutID, LayoutSetID> fitting = program.at(program.declaredMembersOf(candidate));
         if (fitting.size() < made.size() || !std::ranges::all_of(made, [&](LayoutID other) { return fitting.contains(other); }))
             continue;
+        found.layoutsThatAllFit.append(candidate);
+        if (found.layoutsThatAllFit.size() == layoutsThatDecideWhateverIsMade)
+            break;
+    }
+    return found;
+}
+
+static LayoutID chooseLayoutThatSourceOfCopyIsWrittenAsForTypedAccess(const KeptByTypedAccesses::LayoutsThatSourcesFit& found, LayoutID layoutMade)
+{
+    if (found.onlyLayoutMade)
+        return found.onlyLayoutMade;
+    LayoutID written;
+    bool allFitLayoutMade = false;
+    for (LayoutID candidate : found.layoutsThatAllFit) {
         if (candidate == layoutMade) {
             allFitLayoutMade = true;
             continue;
@@ -4754,6 +4777,18 @@ static LayoutID layoutThatSourceOfCopyIsWrittenAsForTypedAccess(Walker& walker, 
         written = candidate;
     }
     return written || !allFitLayoutMade ? written : layoutMade;
+}
+
+static LayoutID layoutThatSourceOfCopyIsWrittenAsForTypedAccess(Walker& walker, const ReceiversOfTypedAccess& receivers, LayoutID layoutMade)
+{
+    TypeArena::SetOfRound round = walker.types().setOfRound(receivers.set);
+    if (!round.isKeptForBuild && liesInThread(receivers.set))
+        return chooseLayoutThatSourceOfCopyIsWrittenAsForTypedAccess(findLayoutsThatSourcesOfCopyFitForTypedAccess(walker, receivers.members.span()), layoutMade);
+    auto& kept = keptByTypedAccesses(walker).layoutsThatSourcesOfCopiesFit;
+    auto known = kept.find(round.word);
+    if (known == kept.end())
+        known = kept.add(round.word, findLayoutsThatSourcesOfCopyFitForTypedAccess(walker, receivers.members.span())).iterator;
+    return chooseLayoutThatSourceOfCopyIsWrittenAsForTypedAccess(known->value, layoutMade);
 }
 
 static std::optional<Vector<FieldIndex, 8>> fieldsFilledByLoadsForCopyInTypedAccess(Walker& walker, const BodyValue& copy, LayoutID layout, LayoutID layoutOfSource, std::span<const FieldIndex>& order, Vector<FieldIndex, 8>& copied)
@@ -4796,7 +4831,7 @@ static bool buildCopyBehindTestsForTypedAccess(Walker& walker, const BodyValue& 
 
     const Plan& plan = walker.plan();
     const Program& program = walker.program();
-    LayoutID layoutOfSource = layoutThatSourceOfCopyIsWrittenAsForTypedAccess(walker, receivers->members.span(), layout);
+    LayoutID layoutOfSource = layoutThatSourceOfCopyIsWrittenAsForTypedAccess(walker, *receivers, layout);
     if (!layoutOfSource)
         return false;
 

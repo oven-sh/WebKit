@@ -134,7 +134,7 @@ static TypeID applyRangeRuleToBuiltinResult(const BuiltinTypeContext& context, c
     return declared;
 }
 
-static TypeID resultTypeOfWholeBuiltinCall(const BuiltinTypeContext& context, BuiltinOverloadID id, const BuiltinOperandTypes* operands)
+static ALWAYS_INLINE TypeID resultTypeOfWholeBuiltinCall(const BuiltinTypeContext& context, BuiltinOverloadID id, const BuiltinOperandTypes* operands)
 {
     const BuiltinOverload& overload = context.program.builtins().at(id);
     if (overload.isUndeclared() || (overload.resultIsDeclaredOnly() && context.level == TypeLevel::Proven))

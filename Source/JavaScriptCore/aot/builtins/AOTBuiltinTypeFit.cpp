@@ -151,7 +151,7 @@ static bool isRelativeToOperandsOfCall(const BuiltinTypePart& part)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Vector<ClassTestedByRow, 4> classesTestedByRow(const BuiltinTable& table, const BuiltinType& tested)
+static ALWAYS_INLINE Vector<ClassTestedByRow, 4> classesTestedByRow(const BuiltinTable& table, const BuiltinType& tested)
 {
     Vector<ClassTestedByRow, 4> classes;
     for (const BuiltinTypePart& part : tested.parts) {

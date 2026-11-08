@@ -101,7 +101,7 @@ static ClassPartsID readClassPartsOfWireType(TypeArena& arena, const Wire::Secti
     return arena.internClassParts(parts.span());
 }
 
-static uint32_t endOfTypesNamedByWireType(const Wire::Sections& checkedSections, uint32_t index)
+static ALWAYS_INLINE uint32_t endOfTypesNamedByWireType(const Wire::Sections& checkedSections, uint32_t index)
 {
     Wire::Span list = checkedSections.types[index].classes;
     std::span<const Wire::ClassPart> parts = checkedSections.classParts.subspan(list.start, list.count);

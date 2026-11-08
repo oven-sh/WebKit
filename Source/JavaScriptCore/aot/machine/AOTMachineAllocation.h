@@ -214,6 +214,7 @@ public:
         uint32_t endOfSteps { 0 };
     };
     std::span<const HeadOfFramedPart> headsOfFramedPart() const { return m_headsOfFramedPart.span(); }
+    std::span<HeadOfFramedPart> headsOfFramedPartForTesting() { return m_headsOfFramedPart.span(); }
     bool hasFramedPart() const { return !m_headsOfFramedPart.isEmpty(); }
     bool isInFramedPart(const Block* block) const { return m_isInFramedPart.get(block->index()); }
     const HeadOfFramedPart& headOfFramedPartAbove(const Block* block) const { return m_headsOfFramedPart[m_headAboveBlock[block->index()]]; }

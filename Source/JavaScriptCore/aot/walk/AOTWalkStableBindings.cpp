@@ -74,7 +74,7 @@ static bool keepsNotesOfStableBindings(const Walker& walker)
     return walker.has(Mechanism::Folding) && walker.state().remembersPlaces();
 }
 
-static bool isValueOfFilledBinding(Walker& walker, Reference value, bool hasDeadZone)
+static ALWAYS_INLINE bool isValueOfFilledBinding(Walker& walker, Reference value, bool hasDeadZone)
 {
     TypeID type = value ? walker.typeOf(value) : TypeID();
     uint16_t saysNothing = Primitive::Absent | Primitive::Unspecified | (hasDeadZone ? 0 : Primitive::Undefined);

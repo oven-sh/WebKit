@@ -418,6 +418,27 @@ bool Modules::isWalkedForLoadThatMayFail(ModuleID root)
     return false;
 }
 
+bool Modules::reachesWhatLoadThatMayFailLinkedAnew(ModuleID root)
+{
+    BitVector isLinkedAnew(m_table.size());
+    for (auto& [module, moment] : m_linksOfLoadThatMayFail->before.moments)
+        isLinkedAnew.quickSet(module.index());
+    BitVector seen(m_table.size());
+    seen.quickSet(root.index());
+    Vector<ModuleID, 16> work { root };
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        if (isLinkedAnew.quickGet(module.index()))
+            return true;
+        for (const ModuleRequestData& request : m_table.imports(module)) {
+            ModuleID imported = moduleLoadedBy(request);
+            if (!request.isHoisted && !seen.quickSet(imported.index()))
+                work.append(imported);
+        }
+    }
+    return false;
+}
+
 void Modules::letLinksOfLoadStand(ModuleID root)
 {
     if (m_linksOfLoadThatMayFail && m_linksOfLoadThatMayFail->root == root)

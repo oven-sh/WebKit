@@ -785,8 +785,6 @@ static std::optional<uint64_t> allocationTestInstructionsForRareWaysBackInBehind
         prepareOrFail(test);
     });
     AOT_TEST_CHECK(test.procedure().order().of(meetings.last()).predecessors.size() == 2);
-    if (isX86_64())
-        dataLogLn("rare ways back in: ", numberOfGuards, " guards: heads ", test.procedure().allocation().headsOfFramedPart().size(), " coverage ", static_cast<unsigned>(test.procedure().frame().coverage()), " instructions ", instructions.value_or(0));
     return instructions;
 }
 

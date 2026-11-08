@@ -22,7 +22,7 @@ static_assert(elementRepresentationOf(ArrayStorage::Int32) == Representation::In
 static_assert(elementRepresentationOf(ArrayStorage::Contiguous) == Representation::JSValue && elementRepresentationOf(ArrayStorage::Other) == Representation::JSValue);
 static_assert(traitsOf(SlotRepresentation::DeferredClosure).isNarrowReference && widthOf(SlotRepresentation::DeferredClosure) == widthOf(SlotRepresentation::Cell32));
 
-static std::optional<PlacedSlot> findSlotAtPlannedPosition(const RepresentationContext& context, PropertyKeyID key, LayoutSetID receivers, bool isStore)
+static ALWAYS_INLINE std::optional<PlacedSlot> findSlotAtPlannedPosition(const RepresentationContext& context, PropertyKeyID key, LayoutSetID receivers, bool isStore)
 {
     if (!key || !receivers)
         return std::nullopt;

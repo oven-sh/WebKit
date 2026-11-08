@@ -92,6 +92,7 @@ struct LinkContext {
     macro(JSObject*, variablesBeforeMock) \
     macro(JSValue, valueBeforeMock) \
     macro(JSValue, exportsBehindEntryOfProgram) \
+    macro(JSValue, exportsOfRunUnderKeyOfOriginal) \
     macro(JSObject*, moduleObjectBehindEntryOfProgram) \
     macro(JSObject*, mockInPlace) \
     macro(JSObject*, recordBeforeMockInPlace) \
@@ -275,9 +276,10 @@ public:
     ModuleRecord* ensureRecordSetAside(ModuleID);
     void forgetAnswersThatName(ModuleRecord*);
     JSPromise* evaluationOfRecordSetAside(ModuleID);
-    bool bodySetAsideWaitsForItsMock(ModuleID);
+    bool bodySetAsideWaitsForItsMock(ModuleID, std::optional<ModuleID> loadThatCalledFactory);
     struct ImportCalledByBodySetAside {
         ModuleID imported;
+        std::optional<int64_t> orderOfCaller;
         Strong<JSPromise> promise;
     };
     Vector<ImportCalledByBodySetAside, 2> m_importsCalledByBodiesSetAside;
@@ -381,6 +383,7 @@ public:
         m_importersOfMockThatEnded.set(module.index());
     }
     bool wasLetGoByLoader(ModuleID module) const { return m_modulesThatLoaderLetGo.get(module.index()); }
+    void letGoOfESModulesThatThrew();
     void bringBackWhatLoaderLetGoBelow(ModuleID root);
     void evaluateModulesOwedBelowOriginal(ModuleID);
     bool hasMockEndedThatWalksPassedOver() const
@@ -395,17 +398,21 @@ public:
     bool isHiddenInModuleItself(ModuleID, unsigned index) const;
     JSValue readExportOfModuleItself(ModuleID, unsigned index);
     bool hasMockLaidOver(ModuleID) const;
+    bool hasMockLaidOverFileThatHadRun(ModuleID) const;
     LoadedBy whoLoaded(ModuleID);
     void didEmptyKeyOfMockInPlace(ModuleID fileOrModule);
     void noteAskUnderMockInPlace(ModuleID fileOrModule);
-    void noteDoorThatLoadsMockLaidInPreload(ModuleID fileOrFace, LoadByName);
+    void noteRequireOfMockLaidInPreload(ModuleID fileOrFace);
     bool wasRequiredUnderMockLaidInPreload(ModuleID file);
     LoadedBy whoLoadedMockInPlaceAnew(ModuleID fileOrModule);
     bool isKeyOfMockInPlaceEmpty(ModuleID fileOrModule) { return mockInPlace(fileOrModule) && ensureLoaded(moduleWithExportsOf(fileOrModule)).nextAskLoadsMockInPlace; }
     void willRunBodyOfRecord(ModuleID, ModuleRecord*);
     void keepExportsBehindEntryOfProgram(ModuleID);
+    void parkRunUnderKeyOfOriginal(ModuleID file);
+    void takeBackRunUnderKeyOfOriginal(ModuleID file);
     void forgetExportsBehindEntryOfProgram(ModuleID);
     JSValue exportsBehindEntryOfProgram(ModuleID) const;
+    JSValue askForExportsBehindEntryOfProgram(ModuleID);
     JSObject* moduleObjectBehindEntryOfProgram(ModuleID) const;
     bool liesUnderKeyOfOriginal(ModuleID file) const { return m_filesUnderKeyOfOriginal.get(file.index()); }
     void setLiesUnderKeyOfOriginal(ModuleID file, bool ran) { m_filesUnderKeyOfOriginal.set(file.index(), ran); }
@@ -820,7 +827,6 @@ public:
     void runFileThatWaitsForItsTurn(ModuleID);
     bool isAskedForBehindLoadInFlight(ModuleID fileOrFace);
     void captureExportsAgain(ModuleID);
-    void takeCopiesAnewWhereMockCallAloneTookThem(ModuleID face);
     bool forgetCapturedExports(ModuleID);
     void exportWhatMockNamesAlone(ModuleID file, bool hasRun);
     bool exportsWhatMockNamesAlone(ModuleID) const;
@@ -1006,6 +1012,9 @@ public:
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
     void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error);
+    void noteChangeOfMockUnderCallsOfImport(ModuleID);
+    void forgetNamespacesKeptForCallsOfImport();
+    JSObject* takeNamespaceKeptForCallOfImport(JSPromise*);
 
     enum class RecordHolder : uint8_t { Anyone, Loader };
     ModuleRecord* exposeRecord(ModuleID, RecordHolder = RecordHolder::Anyone);
@@ -1895,6 +1904,7 @@ private:
     };
     std::optional<LinksOfLoadThatMayFail> m_linksOfLoadThatMayFail;
     bool isWalkedForLoadThatMayFail(ModuleID root);
+    bool reachesWhatLoadThatMayFailLinkedAnew(ModuleID root);
     void hearWhetherImportThatLinkedAnewFails(ModuleID root, JSPromise*);
     void hearWhetherImportUnderMockFails(ModuleID root, JSPromise*);
     struct EndedMock {
@@ -1962,6 +1972,12 @@ private:
         Strong<JSPromise> promise;
     };
     Vector<DeferredImport> m_deferredImports;
+    struct CallOfImportUnderMock {
+        Strong<JSPromise> promise;
+        ModuleID module;
+        Strong<JSObject> namespaceBeforeImportChangedMock;
+    };
+    Vector<CallOfImportUnderMock> m_callsOfImportUnderMocks;
     BitVector m_modulesThatHadRunWhenMocked;
     BitVector m_modulesWhoseFactoryRuns;
     BitVector m_modulesWhoseFactoryWasCalled;

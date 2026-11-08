@@ -395,7 +395,8 @@ IterationStatus ModuleTable::forEachFilePathStartingWith(StringView start, const
         if (!path.startsWith(start))
             break;
         bool isCode = data(module).kind == ModuleKind::SourceText || data(module).kind == ModuleKind::CommonJs;
-        if (isCode && !data(module).registryID() && !data(module).evaluatorModule() && functor(path) == IterationStatus::Done)
+        bool isDataFile = data(module).isDataFoundByName() && !path.contains('?');
+        if ((isCode || isDataFile) && !data(module).registryID() && !data(module).evaluatorModule() && functor(path) == IterationStatus::Done)
             return IterationStatus::Done;
     }
     return IterationStatus::Continue;

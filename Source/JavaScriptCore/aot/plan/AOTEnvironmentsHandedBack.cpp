@@ -194,7 +194,7 @@ static void findHowFarWaysOnLeadOutOfBlocksAbove(BodyOfMakerInEnvironmentsHanded
     }
 }
 
-static void findMentionsOfEnvironmentsJudged(const BodyOfMakerInEnvironmentsHandedBack& body, std::span<EnvironmentJudgedInEnvironmentsHandedBack> judged)
+static ALWAYS_INLINE void findMentionsOfEnvironmentsJudged(const BodyOfMakerInEnvironmentsHandedBack& body, std::span<EnvironmentJudgedInEnvironmentsHandedBack> judged)
 {
     const BodyIndex& index = body.index;
     ValueID first = judged.front().environment;

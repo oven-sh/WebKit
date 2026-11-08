@@ -38,10 +38,15 @@ struct PartsOfSharedArray {
         Node* children[widthOfBranch] { };
     };
 
-    static void release(Node* node, unsigned level)
+    static ALWAYS_INLINE void release(Node* node, unsigned level)
     {
         if (!node || --node->numberOfOwners)
             return;
+        freeWithoutOwner(node, level);
+    }
+
+    static NEVER_INLINE void freeWithoutOwner(Node* node, unsigned level)
+    {
         if (level) {
             for (Node* child : static_cast<Branch*>(node)->children)
                 release(child, level - 1);

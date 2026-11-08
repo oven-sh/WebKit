@@ -490,6 +490,57 @@ static void checkerRefusesRareRegionThatDoesNotSave()
     expectCheckerRefusal(test, checkAllocation, FailureKind::SpillSlotLacksItsValue, { arm.coldReader });
 }
 
+static void checkerRefusesHeadOfFramedPartThatDoesNotSaveWhatIsReadBehindMeetingOfHeads()
+{
+    for (bool rareHeadLies : { true, false }) {
+        TestProcedure test;
+        Output& out = test.out();
+        Operation* selector = test.argumentGPR(0);
+        unsigned numberOfCalleeSaves = 0;
+        forEachRegister(registerFileFor(test.procedure().traits()).calleeSavedIn(Bank::GP), [&](Reg) {
+            ++numberOfCalleeSaves;
+        });
+        Vector<Operation*> values = defineValues(test, test.argumentGPR(1), numberOfCalleeSaves + 3, Int64);
+        Block* slow = out.newBlock();
+        Block* guard = out.newBlock();
+        Block* returning = out.newBlock();
+        Block* head = out.newBlock();
+        Block* meeting = out.newBlock();
+        out.branch(out.testNonZero64(selector, 2), rareEdge(slow), normalEdge(guard));
+        out.appendTo(guard);
+        out.branch(out.testNonZero64(selector, 1), normalEdge(returning), normalEdge(head));
+        out.appendTo(returning);
+        out.ret(selector);
+        out.appendTo(head);
+        appendPatchForCheckerTest(out, Void, { }, callerSavedRegistersForCheckerTest(test));
+        out.jump(normalEdge(meeting));
+        out.appendTo(slow);
+        appendPatchForCheckerTest(out, Void, { }, callerSavedRegistersForCheckerTest(test));
+        out.jump(normalEdge(meeting));
+        out.appendTo(meeting);
+        appendPatchForCheckerTest(out, Void, { }, callerSavedRegistersForCheckerTest(test));
+        Operation* sum = values[0];
+        for (size_t index = 1; index < values.size(); ++index)
+            sum = out.add(sum, values[index]);
+        out.ret(sum);
+        prepareForCheckerTest(test);
+
+        Allocation& allocation = test.procedure().allocationForTesting();
+        AOT_CHECKER_TEST_CHECK(test, allocation.isHeadOfFramedPart(head) && allocation.isHeadOfFramedPart(slow) && allocation.isInFramedPart(meeting) && !allocation.isHeadOfFramedPart(meeting));
+        bool hasLied = false;
+        for (Allocation::HeadOfFramedPart& lying : allocation.headsOfFramedPartForTesting()) {
+            if (lying.block != (rareHeadLies ? slow : head))
+                continue;
+            AOT_CHECKER_TEST_CHECK(test, lying.beginOfSteps < lying.endOfSteps && allocation.step(lying.endOfSteps - 1).kind == StepKind::Save);
+            --lying.endOfSteps;
+            hasLied = true;
+        }
+        AOT_CHECKER_TEST_CHECK(test, hasLied);
+        AOT_CHECKER_TEST_CHECK(test, !checkAllocation(test.procedure()));
+        AOT_CHECKER_TEST_CHECK(test, test.procedure().failure() && (test.procedure().failure()->kind == FailureKind::RegisterLacksItsValue || test.procedure().failure()->kind == FailureKind::SpillSlotLacksItsValue));
+    }
+}
+
 static void checkerRefusesTwoLiveSpillsInOneSlot()
 {
     TestProcedure test;
@@ -689,6 +740,7 @@ std::span<const NativeTest> machineCheckerTests()
         { "machine-checker/landing-pad-reads-a-caller-saved-register"_s, Machine::checkerRefusesLandingPadThatReadsCallerSavedRegister },
         { "machine-checker/rare-region-does-not-restore"_s, Machine::checkerRefusesRareRegionThatDoesNotRestore },
         { "machine-checker/rare-region-does-not-save"_s, Machine::checkerRefusesRareRegionThatDoesNotSave },
+        { "machine-checker/a-head-of-the-framed-part-does-not-save-what-is-read-behind-the-meeting-of-heads"_s, Machine::checkerRefusesHeadOfFramedPartThatDoesNotSaveWhatIsReadBehindMeetingOfHeads },
         { "machine-checker/two-live-spills-in-one-slot"_s, Machine::checkerRefusesTwoLiveSpillsInOneSlot },
         { "machine-checker/patch-without-the-frame-it-needs"_s, Machine::checkerRefusesPatchWithoutTheFrameItNeeds },
         { "machine-checker/owner-of-storage-that-a-landing-pad-reads"_s, Machine::checkerFindsOwnerOfStorageThatLandingPadReads },

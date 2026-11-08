@@ -219,7 +219,7 @@ bool UnitQueue::isSeedThatWaitsForNobody(Typed::CodeUnit unit) const
     return !m_isSeed.isEmpty() && (m_isSeed[index / bitsInWordOfUnitQueue] >> (index % bitsInWordOfUnitQueue) & 1) && !m_arrivals->takesWhatWasLeft(unit.function);
 }
 
-void UnitQueue::checkMentionByTakenUnit(unsigned thread, Typed::CodeUnit unit) const
+ALWAYS_INLINE void UnitQueue::checkMentionByTakenUnit(unsigned thread, Typed::CodeUnit unit) const
 {
     if (m_isTakingSeeds)
         return;

@@ -214,6 +214,17 @@ BitVector Modules::modulesThatReach(std::span<const ModuleID> files)
     return reaching;
 }
 
+void Modules::letGoOfESModulesThatThrew()
+{
+    if (m_momentsOfLoads.isEmpty())
+        return;
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID module(index);
+        if (isESModuleThatThrew(module) && !isMocked(module) && !mockInPlace(module))
+            m_modulesThatLoaderLetGo.set(index);
+    }
+}
+
 void Modules::tellThatFileDidNotRunAgain(ModuleID module)
 {
     if (status(module) > ModuleStatus::Linked && m_table.hasFilePath(module) && !m_table.fileBehindFace(module))

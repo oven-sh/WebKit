@@ -161,6 +161,7 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::FencesBehindLateStoresAreLeftOut:
     case Wire::TestingSwitch::DividendsOfReciprocalsAreTakenToFit32Bits:
     case Wire::TestingSwitch::BoundsOfCountersAreRoundedTheOtherWay:
+    case Wire::TestingSwitch::EqualIntegersAreTakenToBeLess:
     case Wire::TestingSwitch::Int32sGoIntoListsInTheBoxesTheyCameIn:
     case Wire::TestingSwitch::SweepTurnsBranchThatDecidesIntoJump:
     case Wire::TestingSwitch::SweepLetsGoEdgeThatIsTaken:

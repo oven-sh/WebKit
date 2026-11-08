@@ -648,6 +648,16 @@ static std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const 
     return std::nullopt;
 }
 
+static NEVER_INLINE void checkRawNumbersThatAnswerRestsOnInFolding(Walker& walker, const BodyValue& answered)
+{
+    for (uint32_t operandIndex = 0; operandIndex < 2; ++operandIndex) {
+        ValueID operand = answered.operand(operandIndex);
+        if (!operand)
+            break;
+        walker.checkRawNumberThatFoldRestsOn(walker.referenceOf(operand), walker.originOf(answered));
+    }
+}
+
 static Reference operandOfCheckThatPassesInFolding(Walker& walker, const BodyValue& check)
 {
     static_assert(!OperandIndex::CheckInitialized::value && !OperandIndex::RequireObjectCoercible::value && !OperandIndex::RequireObject::value);
@@ -757,7 +767,7 @@ static Reference onlyValueOfCellInFolding(Walker& walker, const LinkedCell& cell
     return walker.constant(onlyValueOfTypeInFolding(walker.types(), cell.proven));
 }
 
-static Reference unlessAbsentInFolding(Walker& walker, Reference held)
+static ALWAYS_INLINE Reference unlessAbsentInFolding(Walker& walker, Reference held)
 {
     TypeID type = typeToJudgeByInFolding(walker, held);
     return type && !(walker.types().at(type).primitives & Primitive::Absent) ? held : Reference();
@@ -932,8 +942,11 @@ static ALWAYS_INLINE Reference answerKnownToFolding(Walker& walker, const BodyVa
             return constant;
     }
     if (testsThatTypesDecideInFolding.contains(opcode)) {
-        if (std::optional<bool> answer = answerThatTypesDecideInFolding(walker, value))
+        if (std::optional<bool> answer = answerThatTypesDecideInFolding(walker, value)) {
+            if (walker.checksProofs()) [[unlikely]]
+                checkRawNumbersThatAnswerRestsOnInFolding(walker, value);
             return walker.constant(PrimitiveKnownToFolding::boolean(*answer));
+        }
     }
     if (opcode == Opcode::TypeTest && isLookAtCellInFrontOfIsArray(walker, walker.currentBodyIndex(), value)) {
         Reference asked = walker.referenceOf(value.operand(0));
@@ -942,7 +955,10 @@ static ALWAYS_INLINE Reference answerKnownToFolding(Walker& walker, const BodyVa
     }
     if (Reference answer = opcode == Opcode::StrictEq && !walker.isAskedByBranchOfItsBlock(value) ? walker.buildTestOfTagAsTestOfShape(value) : Reference())
         return answer;
-    return conversionsThatMayHandOnInFolding.contains(opcode) ? operandThatConversionHandsOnInFolding(walker, value) : Reference();
+    Reference handedOn = conversionsThatMayHandOnInFolding.contains(opcode) ? operandThatConversionHandsOnInFolding(walker, value) : Reference();
+    if (handedOn && walker.checksProofs()) [[unlikely]]
+        checkRawNumbersThatAnswerRestsOnInFolding(walker, value);
+    return handedOn;
 }
 
 constinit const OpcodeSet opcodesThatFoldOperationTakes = opcodesOfFolding;

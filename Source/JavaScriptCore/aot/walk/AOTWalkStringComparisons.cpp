@@ -97,7 +97,7 @@ static Reference compareCharacterWithTextForStringComparisons(Walker& walker, Op
     return compareInOrderForStringComparisons(walker, opcode, codeUnit, integerForStrings(walker, *unit), characterIsOnLeft, origin);
 }
 
-static Reference compareByCodeUnitForStringComparisons(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
+static ALWAYS_INLINE Reference compareByCodeUnitForStringComparisons(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
 {
     for (uint32_t side = 0; side < 2; ++side) {
         Reference subject = side ? right : left;
@@ -157,7 +157,7 @@ static Reference buildTestForEmptyStringForStringComparisons(Walker& walker, Ref
     return passesForEmptyString && isNotEmpty ? buildNegationForStrings(walker, isNotEmpty, origin) : isNotEmpty;
 }
 
-static std::optional<int64_t> integerKnownForStringComparisons(const Walker& walker, Reference reference)
+static ALWAYS_INLINE std::optional<int64_t> integerKnownForStringComparisons(const Walker& walker, Reference reference)
 {
     Type type = walker.types().at(walker.typeOf(reference));
     if (!type.isInteger() || !type.integers.isSingleValue())

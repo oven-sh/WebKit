@@ -1409,6 +1409,7 @@ public:
     void checkProof(Reference value, TypeWithoutProof, ProofSource, Origin);
     void checkProof(Reference value, TypeID proven, TypeWithoutProof, ProofSource, Origin);
     void checkProofOfCopy(Reference value, TypeID proven, ProofSource, Origin);
+    void checkRawNumberThatFoldRestsOn(Reference number, Origin);
     Reference proveOrTrap(Reference value, TypeID tested, ProofSource, Origin);
     TypeID typeThatUnitMayTestFor(TypeID tested, bool mayBringClasses = true, bool asOfUnitWithoutReach = false);
     void checkThatSlotTakes(Reference value, TypeID taken, Origin);
@@ -1605,7 +1606,7 @@ public:
     void setLooksTakeFormsBehindLooksAsBuilt(bool take) { m_looksTakeFormsBehindLooksAsBuilt = take; }
     void beginTurnAgainInClosedCopy();
     void keepStateBehindStoreToPutBack(uint32_t store) { m_statesBehindStoresToPutBack.append({ store, m_state }); }
-    enum class TurnOfTypedCopy : uint8_t { HasDoneNothing, HasRunNoOtherCode };
+    enum class TurnOfTypedCopy : uint8_t { HasDoneNothing, HasRunNoOtherCode, HasRunNoOtherCodeThoughCopiesBegan };
     bool standsInFrontOfTypedCopy(Reference, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing) const;
     TurnOfTypedCopy turnInWhichListsAreAskedInFront() const { return turnOfTypedCopyHasDoneNothing() ? TurnOfTypedCopy::HasDoneNothing : TurnOfTypedCopy::HasRunNoOtherCode; }
     bool wasAskedForStorageOfNumbersInVain(Reference list) const { return list && list == m_listAskedForStorageOfNumbersInVain; }
@@ -1915,6 +1916,7 @@ private:
         ValueID callCopied;
         bool isCopiedByLinkOfChain { false };
         uint32_t numberOfCopy { 0 };
+        uint32_t markOfTurnThatCopyTook { 0 };
         BlockID whereCopyLeavesForCall;
         bool mayLeaveForCall { false };
         bool isWalkedWhereItsGuardFailed { false };
@@ -2800,6 +2802,7 @@ private:
     void layFrontOfQuietTurns(OpenLoop&, BlockID inputHead);
     void noteHeadOfQuietTurns(BlockID head);
     bool mayReadInFrontOfQuietTurns(uint32_t indexOfLoop) const;
+    bool noOtherCodeRanInTurnThoughCopiesTookItsMark(uint32_t numberOfTurn) const;
     bool holdBackEdgeOfTurnThatDidSomething(EdgeID&, BlockID head, std::span<const Reference> arguments);
     BlockID closeFrontOfQuietTurns(const OpenLoop&);
     void noteBlockOfFrontOfQuietTurns(uint32_t indexOfLoop, BlockID);

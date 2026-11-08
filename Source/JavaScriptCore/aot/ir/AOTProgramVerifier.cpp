@@ -618,7 +618,7 @@ std::optional<InternalError> findFieldError(const Program& program, LayoutID id,
 
 } // anonymous namespace
 
-bool isValidPropertyKey(const PropertyKey& key)
+ALWAYS_INLINE bool isValidPropertyKey(const PropertyKey& key)
 {
     bool hasCreationSite = key.module || key.callNumber;
     switch (key.kind) {

@@ -28,6 +28,7 @@ namespace JSC { namespace AOT {
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNumberToStringWithRadix, JSCell*, (Instance* instance, double value, int32_t radix))
 {
+    RELEASE_ASSERT(radix >= 2 && radix <= 36);
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNumberToStringWithRadix);
     if (int32_t integer = truncateDoubleToInt32(value); integer == value)
         OPERATION_RETURN(scope, int32ToString(vm, integer, radix));
@@ -36,6 +37,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNumberToStringWithRadix, JSCell*, 
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTInt32ToStringWithRadix, JSCell*, (Instance* instance, int32_t value, int32_t radix))
 {
+    RELEASE_ASSERT(radix >= 2 && radix <= 36);
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTInt32ToStringWithRadix);
     OPERATION_RETURN(scope, int32ToString(vm, value, radix));
 }

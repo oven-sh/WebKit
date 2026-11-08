@@ -181,8 +181,10 @@ static Reference buildBitsOfNumberInNumberOperators(Walker& walker, Opcode conve
 {
     Type type = walker.types().at(walker.typeOf(number));
     Range leftAsTheyAre = conversion == Opcode::ToUint32 ? Range::uint32() : Range::int32();
-    if (type.isInteger() && type.integers.isSubsetOf(leftAsTheyAre) && walker.has(Mechanism::Folding))
+    if (type.isInteger() && type.integers.isSubsetOf(leftAsTheyAre) && walker.has(Mechanism::Folding)) {
+        walker.checkRawNumberThatFoldRestsOn(number, origin);
         return number;
+    }
     if (conversion == Opcode::ToUint32 && !type.isInteger()) {
         number = buildConversionInNumberOperators(walker, Opcode::ToInt32, number, origin);
         if (!number)

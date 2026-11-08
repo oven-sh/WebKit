@@ -2128,7 +2128,12 @@ private:
     BitVector m_layoutsWhoseOwnValuesAreListed;
     Vector<OwnValue, 8> listOwnValuesOf(LayoutID);
     Vector<LayoutID> m_layoutsWithNodesBesideFields;
-    HashSet<std::pair<uint64_t, uint64_t>> m_nodesOfDescriptorsThatDefinitionsWatch;
+    struct alignas(128) PartOfNodesThatDefinitionsWatch {
+        std::atomic<bool> isLocked { false };
+        HashSet<std::pair<uint64_t, uint64_t>> watched;
+    };
+    static constexpr unsigned log2OfPartsOfNodesThatDefinitionsWatch = 6;
+    std::array<PartOfNodesThatDefinitionsWatch, 1 << log2OfPartsOfNodesThatDefinitionsWatch> m_nodesOfDescriptorsThatDefinitionsWatch;
     BitVector m_openLayouts;
     struct AppendedField {
         PropertyKeyID key;
@@ -2283,8 +2288,8 @@ private:
     size_t m_numberOfPoolsTiedToPoolOfAll { 1 };
     TiesOfPoolsInLinkFlow m_tiesOfPools;
     bool m_lostFunctionsAreCalledByFamily { false };
-    uint32_t m_whereInstancesAreMadeThenables { UINT32_MAX };
-    uint32_t m_whereInstancesLoseTheirConstructor { UINT32_MAX };
+    std::atomic<uint32_t> m_whereInstancesAreMadeThenables { UINT32_MAX };
+    std::atomic<uint32_t> m_whereInstancesLoseTheirConstructor { UINT32_MAX };
     BitVector m_lostFunctionsTied;
     size_t m_numberOfLostFunctionsTied { 0 };
     bool m_lostFunctionsAreCalled { false };
