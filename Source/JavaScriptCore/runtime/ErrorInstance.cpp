@@ -568,11 +568,15 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
 #if USE(BUN_JSC_ADDITIONS)
 
+    // The host formats a trace with no frame too: V8 gives every error whose stackTraceLimit is a number a
+    // `stack`, "name: message" alone when there is no frame (a limit of 0, or an error made on the event loop
+    // with no JavaScript running). A null trace is a limit that is not a number, and leaves `stack` unset.
     auto& fn = vm.onComputeErrorInfoJSValue();
-    if (fn && m_stackTrace && !m_stackTrace->isEmpty()) {
+    if (fn && m_stackTrace) {
         m_errorInfoMaterialized = true;
         DeferGCForAWhile deferGC(vm);
 
+        bool hasFrames = !m_stackTrace->isEmpty();
         JSValue stack;
         if (!m_stackPropertyProvidedByCapturedStackTrace)
             stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
@@ -588,10 +592,13 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs from here on.
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
-        putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
-        if (!m_sourceURL.isEmpty())
-            putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        // A position comes from a frame, or from the parser (addErrorInfo). With neither there is none to report.
+        if (hasFrames || m_lineColumn.line || !m_sourceURL.isEmpty()) {
+            putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
+            putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
+            if (!m_sourceURL.isEmpty())
+                putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        }
 
         if (!m_stackPropertyProvidedByCapturedStackTrace)
             putDirect(vm, vm.propertyNames->stack, stack, attributes);
