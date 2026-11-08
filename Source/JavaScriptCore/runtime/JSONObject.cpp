@@ -1717,6 +1717,9 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendPreparedObject(JS
 {
     auto range = m_preparedStructureRanges[structureSlot];
     if (!range.propertyCount) [[unlikely]] {
+        if (!enterHolder<hasGap>()) [[unlikely]]
+            return;
+        leaveHolder<hasGap>();
         if (!hasRemainingCapacity(2)) [[unlikely]] {
             recordBufferFull();
             return;
