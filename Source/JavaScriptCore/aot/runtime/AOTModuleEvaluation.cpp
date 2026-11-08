@@ -1608,15 +1608,30 @@ void Modules::runSynchronousStepsInFrontOf(ModuleID file)
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& steps = vm.synchronousModuleQueue()->tasks;
+    auto hasFileYetToEnd = [&](const Identifier& key) {
+        std::optional<ModuleID> fetched = findByKey(key);
+        return fetched && isCommonJSFileOrFace(*fetched) && status(fileOf(*fetched)) < ModuleStatus::Evaluated;
+    };
+    Vector<VM::SynchronousModuleTask, 2> stepsOfFilesYetToEnd;
     size_t taken = 0;
     while (taken < steps.size()) {
-        VM::SynchronousModuleTask step = steps[taken++];
-        if (step.task == InternalMicrotask::ModuleRegistryFetchSettled && hasKey(file, uncheckedDowncast<ModuleRegistryEntry>(step.arg2)->key()))
+        if (steps[taken].task == InternalMicrotask::ModuleLoadLinkEvaluateSettled)
             break;
+        VM::SynchronousModuleTask step = steps[taken++];
+        if (step.task == InternalMicrotask::ModuleRegistryFetchSettled) {
+            const Identifier& key = uncheckedDowncast<ModuleRegistryEntry>(step.arg2)->key();
+            if (hasKey(file, key))
+                break;
+            if (hasFileYetToEnd(key)) {
+                stepsOfFilesYetToEnd.append(step);
+                continue;
+            }
+        }
         runInternalMicrotask(m_instance.globalObject, vm, step.task, step.payload, step.arg0, step.arg1, step.arg2, step.arg3);
         scope.assertNoException();
     }
     steps.removeAt(0, taken);
+    steps.insertVector(0, stepsOfFilesYetToEnd);
 }
 
 void Modules::runStepsOfLoaderInFrontOf(ModuleID file)
