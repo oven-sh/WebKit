@@ -1642,6 +1642,9 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
 
     resolveMRO(globalObject, type);
     RETURN_IF_EXCEPTION(scope, { });
+    MarkedArgumentBuffer mrosOfBases;
+    for (unsigned i = 0; i < bases->length(); ++i)
+        mrosOfBases.append(PyType::from(bases->at(i))->mro());
     type->takeMakerOfBase(vm);
     type->updateMaker();
 
@@ -1669,6 +1672,16 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
     }
     enterUnderBases(globalObject, type, bases, MayBeThere::No);
     RETURN_IF_EXCEPTION(scope, { });
+    // Keys have been asked since the MRO was worked out, and one may have assigned to the __bases__ of a base. That one's walk did not come here, so the MRO is what it was, as in CPython,
+    // and may name a class to which no base leads any more.
+    for (unsigned i = 0; i < bases->length(); ++i) {
+        if (PyType::from(bases->at(i))->mro() != mrosOfBases.at(i).asCell()) [[unlikely]] {
+            beToldByAllInMRO(globalObject, type);
+            RETURN_IF_EXCEPTION(scope, { });
+            type->didChange(vm);
+            break;
+        }
+    }
 
     if (!dict->hasOnlyStringKeys()) [[unlikely]] {
         bool allAreStrs = true;
