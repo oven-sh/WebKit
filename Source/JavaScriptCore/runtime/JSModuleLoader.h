@@ -53,6 +53,10 @@ enum class ModuleLoadFlag : uint8_t {
     // JSModuleLoader::loadModuleSync(): the load keeps no async context. What it runs inside the call runs in the
     // context of the caller.
     Synchronous = 1 << 4,
+    // The host starts the load with no script on the stack: the entry point, a preload, a test file. The load keeps no
+    // async context. What is in the slot there is what the last script left (enterWith() in a preload), and a module
+    // that the host loads next is no continuation of that script.
+    StartedByHost = 1 << 5,
 };
 
 class JSModuleLoader final : public JSCell {
@@ -102,16 +106,12 @@ public:
     // that the load makes takes it from there, not from what is current where the request is made.
     static JSValue asyncContextOfLoad(JSCell* payload);
 
-    // What a load that begins here keeps of the async context of its caller. The host can set a filter for what no
-    // load may keep. Bun.ModuleGraph has the context of a graph in the slot, beside the stores of AsyncLocalStorage, and
-    // what runs in the context of a graph ends with the graph: a hook of the host, or a module of another loader, must
-    // not. So Bun lets a load that begins in the context of a graph keep nothing.
-    using AsyncContextOfLoadFilter = JSValue (*)(JSGlobalObject*, JSValue asyncContext);
-    void setAsyncContextOfLoadFilter(AsyncContextOfLoadFilter filter) { m_asyncContextOfLoadFilter = filter; }
-    JS_EXPORT_PRIVATE JSValue asyncContextForLoad(VM&, JSGlobalObject*) const;
+    // What a load that script starts here keeps of the async context of its caller: what is current, less what the
+    // host's filter takes away (VM::asyncContextOfLoadFilter).
+    JS_EXPORT_PRIVATE static JSValue asyncContextForLoad(VM&, JSGlobalObject*);
     // For CyclicModuleRecord::executeAsync(): the async context of the job that runs the modules that wait for a
     // top-level await. See ModuleEvaluationAsyncContextScope. Empty where no job of the loader evaluates.
-    JSValue asyncContextOfModulesThatWait(VM&, JSGlobalObject*) const;
+    static JSValue asyncContextOfModulesThatWait(VM&, JSGlobalObject*);
 #endif
 
     DECLARE_INFO;
@@ -124,8 +124,9 @@ public:
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSValue, JSValue asyncContext = { });
     JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { }, AbstractModuleRecord* recordInPlaceOfFetch = nullptr);
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
-    JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
-    JS_EXPORT_PRIVATE JSPromise* requestImportModuleForKey(JSGlobalObject*, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1, AbstractModuleRecord* recordInPlaceOfFetch = nullptr, JSPromise* resultPromise = nullptr);
+    // startedBy: ModuleLoadFlag::StartedByHost where the host imports with no script on the stack, or nothing.
+    JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1, OptionSet<ModuleLoadFlag> startedBy = { });
+    JS_EXPORT_PRIVATE JSPromise* requestImportModuleForKey(JSGlobalObject*, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1, AbstractModuleRecord* recordInPlaceOfFetch = nullptr, JSPromise* resultPromise = nullptr, OptionSet<ModuleLoadFlag> startedBy = { });
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE int64_t asyncEvaluationOrderForKey(const Identifier& key);
 #endif
@@ -344,7 +345,6 @@ private:
     WriteBarrier<JSScope> m_moduleScope;
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<Unknown> m_asyncContext;
-    AsyncContextOfLoadFilter m_asyncContextOfLoadFilter { nullptr };
 #endif
     ModuleMap<WriteBarrier<ModuleRegistryEntry>> m_moduleMap;
 

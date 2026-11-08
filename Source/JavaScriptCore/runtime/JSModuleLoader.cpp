@@ -459,9 +459,14 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
     AbstractModuleRecord::ModuleRequest request { specifier, ScriptFetchParameters::create(type) };
 #endif
 #if USE(BUN_JSC_ADDITIONS)
-    // The load keeps the async context of its caller. A synchronous load keeps none: what it runs inside the call of
-    // require() runs in the context of the caller.
-    JSValue asyncContext = flags.contains(ModuleLoadFlag::Synchronous) ? JSValue() : asyncContextForLoad(vm, globalObject);
+    // The load keeps the async context of its caller. A load that the host starts keeps none. Nor does a synchronous
+    // load: what it runs inside the call of require() runs in the context of the caller. (Empty for that one, not
+    // undefined: see ModuleRegistryEntry::ensureModulePromise().)
+    JSValue asyncContext;
+    if (flags.contains(ModuleLoadFlag::StartedByHost))
+        asyncContext = jsUndefined();
+    else if (!flags.contains(ModuleLoadFlag::Synchronous))
+        asyncContext = asyncContextForLoad(vm, globalObject);
     auto* context = ModuleLoadingContext::create(vm, this, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder, asyncContext);
 #else
     auto* context = ModuleLoadingContext::create(vm, this, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder);
@@ -532,7 +537,7 @@ static String moduleReferrer(const Identifier& referrerKey)
     return referrerKey.string();
 }
 
-JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder)
+JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder, OptionSet<ModuleLoadFlag> startedBy)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -540,15 +545,17 @@ JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, con
     Identifier resolved = resolve(globalObject, moduleName, referrer, scriptFetcher, /* useImportMap */ true);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    RELEASE_AND_RETURN(scope, requestImportModuleForKey(globalObject, resolved, referrer, WTF::move(parameters), WTF::move(scriptFetcher), deferred, referrerAsyncOrder));
+    RELEASE_AND_RETURN(scope, requestImportModuleForKey(globalObject, resolved, referrer, WTF::move(parameters), WTF::move(scriptFetcher), deferred, referrerAsyncOrder, nullptr, nullptr, startedBy));
 }
 
-JSPromise* JSModuleLoader::requestImportModuleForKey(JSGlobalObject* globalObject, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder, AbstractModuleRecord* recordInPlaceOfFetch, JSPromise* resultPromise)
+JSPromise* JSModuleLoader::requestImportModuleForKey(JSGlobalObject* globalObject, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder, AbstractModuleRecord* recordInPlaceOfFetch, JSPromise* resultPromise, OptionSet<ModuleLoadFlag> startedBy)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    ASSERT(startedBy.isEmpty() || startedBy == ModuleLoadFlag::StartedByHost);
     OptionSet<ModuleLoadFlag> flags { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Dynamic };
+    flags.add(startedBy);
     if (deferred)
         flags.add(ModuleLoadFlag::Deferred);
     // Per "fetch an import() module script graph", the referring script's base URL is the fetch's referrer.
@@ -560,7 +567,7 @@ JSPromise* JSModuleLoader::requestImportModuleForKey(JSGlobalObject* globalObjec
     resultPromise->markAsHandled();
 #if USE(BUN_JSC_ADDITIONS)
     // The job has no other use for its context: it is the async context of the import(), under which the job asks the namespace for then().
-    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ImportModuleNamespace, resultPromise, asyncContextForLoad(vm, globalObject));
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ImportModuleNamespace, resultPromise, startedBy.contains(ModuleLoadFlag::StartedByHost) ? jsUndefined() : asyncContextForLoad(vm, globalObject));
 #else
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ImportModuleNamespace, resultPromise, jsUndefined());
 #endif
@@ -769,15 +776,34 @@ JSValue JSModuleLoader::asyncContextOfLoad(JSCell* payload)
     return uncheckedDowncast<ModuleLoaderPayload>(payload)->asyncContext();
 }
 
-JSValue JSModuleLoader::asyncContextForLoad(VM& vm, JSGlobalObject* globalObject) const
+void ModuleLoaderAsyncContextScope::enterOutsideSynchronousDrain(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
 {
-    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
-    if (asyncContext.isUndefined() || !m_asyncContextOfLoadFilter) [[likely]]
-        return asyncContext;
-    return m_asyncContextOfLoadFilter(globalObject, asyncContext);
+    if (!vm.synchronousModuleQueue())
+        enter(globalObject, asyncContext);
 }
 
-JSValue JSModuleLoader::asyncContextOfModulesThatWait(VM& vm, JSGlobalObject* globalObject) const
+ModuleEvaluationAsyncContextScope::ModuleEvaluationAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
+    : ModuleLoaderAsyncContextScope(vm, globalObject, asyncContext)
+    , m_vm(vm)
+    , m_asyncContextOfLoad(asyncContext)
+    , m_outer(std::exchange(vm.m_moduleEvaluationAsyncContextScope, this))
+{
+}
+
+ModuleEvaluationAsyncContextScope::~ModuleEvaluationAsyncContextScope()
+{
+    m_vm.m_moduleEvaluationAsyncContextScope = m_outer;
+}
+
+JSValue JSModuleLoader::asyncContextForLoad(VM& vm, JSGlobalObject* globalObject)
+{
+    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    if (asyncContext.isUndefined() || !vm.asyncContextOfLoadFilter) [[likely]]
+        return asyncContext;
+    return vm.asyncContextOfLoadFilter(globalObject, asyncContext);
+}
+
+JSValue JSModuleLoader::asyncContextOfModulesThatWait(VM& vm, JSGlobalObject* globalObject)
 {
     auto* job = vm.m_moduleEvaluationAsyncContextScope;
     if (!job)

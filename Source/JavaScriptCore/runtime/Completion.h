@@ -28,6 +28,7 @@
 #include "ScriptFetchParameters.h"
 #include <wtf/FileSystem.h>
 #include <wtf/NakedPtr.h>
+#include <wtf/OptionSet.h>
 #include <wtf/RefPtr.h>
 
 namespace JSC {
@@ -37,6 +38,7 @@ class CachedBytecode;
 class CallFrame;
 class Exception;
 class JSObject;
+enum class ModuleLoadFlag : uint8_t;
 class ParserError;
 class ScriptFetcher;
 class SourceCode;
@@ -79,6 +81,12 @@ JS_EXPORT_PRIVATE JSValue evaluateWithScopeExtension(JSGlobalObject*, const Sour
 
 // Load the module source and evaluate it.
 JS_EXPORT_PRIVATE JSPromise* loadAndEvaluateModule(JSGlobalObject*, const String& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
+#if USE(BUN_JSC_ADDITIONS)
+// The host calls the one above with no script on the stack, and that load keeps no async context (ModuleLoadFlag::StartedByHost).
+// A host function that loads for the script that calls it passes no flag here: the load keeps the async context of that script, as
+// an import() does.
+JS_EXPORT_PRIVATE JSPromise* loadAndEvaluateModule(JSGlobalObject*, const String& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag> startedBy);
+#endif
 JS_EXPORT_PRIVATE JSPromise* loadAndEvaluateModule(JSGlobalObject*, SourceCode&&, RefPtr<ScriptFetcher>);
 
 // Fetch the module source, and instantiate the module record.
@@ -89,7 +97,8 @@ JS_EXPORT_PRIVATE JSPromise* loadModule(JSGlobalObject*, SourceCode&&, RefPtr<Sc
 // Link and evaluate the already linked module. This function is called in an async manner.
 JS_EXPORT_PRIVATE JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetcher>);
 
-JS_EXPORT_PRIVATE JSPromise* importModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
+// startedBy: ModuleLoadFlag::StartedByHost where the host imports with no script on the stack, or nothing.
+JS_EXPORT_PRIVATE JSPromise* importModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1, OptionSet<ModuleLoadFlag> startedBy = { });
 
 JS_EXPORT_PRIVATE UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, String> retrieveImportAttributesFromDynamicImportOptions(JSGlobalObject*, JSValue, const Vector<RefPtr<UniquedStringImpl>>& supportedAssertions);
 JS_EXPORT_PRIVATE std::optional<ScriptFetchParameters::Type> retrieveTypeImportAttribute(JSGlobalObject*, const UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, String>&);

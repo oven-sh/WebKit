@@ -1692,6 +1692,14 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
         }
 
         // 6.d-f. Perform PerformPromiseThen(evaluatePromise, onFulfilled, onRejected).
+#if ENABLE(AOT)
+        // The job gets the namespace of the module. For a compiled CommonJS file that reads the exports, which can call
+        // getters of the program. So there the job has the async context of the import(), paired with the module.
+        if (vm.hasCompiledCode() && module->inherits<AOT::ModuleRecord>()) [[unlikely]] {
+            evaluatePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::DynamicImportEvaluateSettled, capabilityPromise, AsyncContextSwapScope::wrap(vm, globalObject, module, dynamicPayload->asyncContext()));
+            return;
+        }
+#endif
         evaluatePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::DynamicImportEvaluateSettled, capabilityPromise, module);
         return;
     }
@@ -2626,7 +2634,14 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::DynamicImportEvaluateSettled: {
+#if ENABLE(AOT)
+        // argument2 is the module. A compiled module is paired with the async context of the import() where there is one.
+        JSValue module = argument2;
+        ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(module));
+        dynamicImportEvaluateSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, module }, payload);
+#else
         dynamicImportEvaluateSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
+#endif
         return;
     }
 
