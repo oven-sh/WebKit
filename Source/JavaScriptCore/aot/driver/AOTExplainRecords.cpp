@@ -157,6 +157,8 @@ static std::optional<Wire::TypeTestFailure> failureOfExplainedTest(Typed::WalkNo
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The why of a cause that says it by itself. A generic access says nothing of where its value came from: the note names the why
+// where the types of the swept Code tell it (notesOfSweptCode), and is silent otherwise.
 static Wire::IllTypedCause illTypedCauseForExplainedCause(Wire::UnprovenCause cause)
 {
     switch (cause) {
@@ -164,10 +166,9 @@ static Wire::IllTypedCause illTypedCauseForExplainedCause(Wire::UnprovenCause ca
     case Wire::UnprovenCause::ResultDisabled:
     case Wire::UnprovenCause::Untracked:
     case Wire::UnprovenCause::ClassEvaluatedAgain:
-        return Wire::IllTypedCause::None;
     case Wire::UnprovenCause::UnknownObject:
     case Wire::UnprovenCause::UncheckedConversionOfUntracked:
-        return Wire::IllTypedCause::FromLooseType;
+        return Wire::IllTypedCause::None;
     case Wire::UnprovenCause::UndescribedNativeResult:
         return Wire::IllTypedCause::DeclarationWithoutBody;
     case Wire::UnprovenCause::DataFromOutside:

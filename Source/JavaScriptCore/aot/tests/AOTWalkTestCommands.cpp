@@ -282,6 +282,10 @@ static void runNotesCommand(TestCommandContext& context)
             context.out.print(nameOfWalkNoteKind(note.kind), " @"_s, note.origin.position, " in f"_s, note.writtenIn.index());
             if (note.layout)
                 context.out.print(" layout=L"_s, note.layout.index());
+            if (note.cause != UnprovenCause::Unknown)
+                context.out.print(" cause="_s, nameOf(note.cause));
+            if (note.illTypedCause != IllTypedCause::None)
+                context.out.print(" why="_s, nameOf(note.illTypedCause));
             context.out.println();
         }
     }

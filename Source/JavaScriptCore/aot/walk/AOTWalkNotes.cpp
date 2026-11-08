@@ -177,6 +177,96 @@ static LayoutID layoutOfValueInWalkNote(TypeReader types, const Code& code, Valu
     return singleLayoutOf(types, types.at(code.at(value).type));
 }
 
+static constexpr OpcodeSet readsOfElementsInWalkNotes { Opcode::GetArrayElement, Opcode::ElemGet };
+static constexpr OpcodeSet accessesUnderComputedKeysInWalkNotes {
+    Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine,
+    Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement,
+};
+
+// The arm behind a failed test of a value holds that value narrowed to what failed the test. Where that is undefined alone, the
+// constant stands in its place, and the test in front of the arm is what says where the value came from.
+static ValueID valueTestedInFrontOfBlockInWalkNote(const Code& code, BlockID block)
+{
+    for (unsigned steps = 0; steps < 4; ++steps) {
+        const Edge* only = nullptr;
+        unsigned numberOfEdgesIn = 0;
+        code.forEachEdgeInto(block, [&](const Edge& edge) {
+            only = &edge;
+            ++numberOfEdgesIn;
+        });
+        if (numberOfEdgesIn != 1)
+            return ValueID();
+        const Terminator& terminator = code.at(only->from).terminator;
+        if (terminator.kind == TerminatorKind::Jump) {
+            block = only->from;
+            continue;
+        }
+        if (!terminator.isConditionalBranch() || code.at(terminator.notTaken()).to != block)
+            return ValueID();
+        ValueID condition = terminator.child(0);
+        if (!condition || code.at(condition).opcode != Opcode::TypeTest)
+            return ValueID();
+        return code.at(condition).child(0);
+    }
+    return ValueID();
+}
+
+// What the swept Code says of why this operand is not what the program declares it to be: an element read out of a list whose
+// contents are known can be absent, so the value read can be undefined. An unknown value is left unnamed. The seed of its type says
+// what the walk fell back on, not where the value came from.
+static IllTypedCause illTypedCauseOfOperandInWalkNote(TypeReader types, const Code& code, ValueID value)
+{
+    if (!value || !code.at(value).type)
+        return IllTypedCause::None;
+    ValueID source = value;
+    while (code.at(source).opcode == Opcode::Narrowed && code.at(source).child(0) && code.at(code.at(source).child(0)).type)
+        source = code.at(source).child(0);
+    if (!readsOfElementsInWalkNotes.contains(code.at(source).opcode) || !types.at(code.at(value).type).mayBeUndefinedOrNull())
+        return IllTypedCause::None;
+    Type typeOfSource = types.at(code.at(source).type);
+    bool isKnownButForUndefined = !typeOfSource.hasUnknown() && typeOfSource.mayBeUndefinedOrNull() && !typeOfSource.isUndefinedOrNull();
+    return isKnownButForUndefined ? IllTypedCause::ElementMayBeAbsent : IllTypedCause::None;
+}
+
+// An operand of an access in the arm behind a failed test that is the constant undefined is the tested value where the test failed.
+static IllTypedCause illTypedCauseOfOperandOfAccessInWalkNote(TypeReader types, const Code& code, const Operation& access, ValueID value)
+{
+    IllTypedCause cause = illTypedCauseOfOperandInWalkNote(types, code, value);
+    if (cause != IllTypedCause::None || !value || !code.isConstant(value) || !code.at(value).type || !types.at(code.at(value).type).isUndefinedOrNull())
+        return cause;
+    return illTypedCauseOfOperandInWalkNote(types, code, valueTestedInFrontOfBlockInWalkNote(code, access.block()));
+}
+
+// The receiver, then the key, whose value decides between a typed element access and a lookup by name.
+static IllTypedCause illTypedCauseOfAccessInWalkNote(TypeReader types, const Code& code, const Operation& access)
+{
+    IllTypedCause ofReceiver = IllTypedCause::None;
+    if (std::optional<uint8_t> receiver = receiverOf(access.opcode))
+        ofReceiver = illTypedCauseOfOperandOfAccessInWalkNote(types, code, access, access.child(*receiver));
+    if (ofReceiver != IllTypedCause::None || !accessesUnderComputedKeysInWalkNotes.contains(access.opcode))
+        return ofReceiver;
+    return illTypedCauseOfOperandOfAccessInWalkNote(types, code, access, access.child(1));
+}
+
+// An element that may be absent is a value that TypeScript holds to a type without undefined: the operation is not on an object from
+// untyped code, and the headline says so.
+static void noteIllTypedCause(WalkNote& note, IllTypedCause cause)
+{
+    note.illTypedCause = cause;
+    if (cause == IllTypedCause::ElementMayBeAbsent)
+        note.cause = UnprovenCause::UncheckedConversionOfUntracked;
+}
+
+static void noteIllTypedCauseOfAccess(WalkNote& note, TypeReader types, const Code& code, const Operation& access)
+{
+    noteIllTypedCause(note, illTypedCauseOfAccessInWalkNote(types, code, access));
+}
+
+static void noteIllTypedCauseOfTest(WalkNote& note, TypeReader types, const Code& code, const Operation& test)
+{
+    noteIllTypedCause(note, illTypedCauseOfOperandInWalkNote(types, code, test.child(0)));
+}
+
 WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolvedOperations)
 {
     RELEASE_ASSERT(code.isSwept());
@@ -217,6 +307,7 @@ WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolve
             note.kind = WalkNoteKind::TestThatLeaves;
             note.cost = costOfWalkNoteKind(note.kind);
             note.cause = UnprovenCause::UnknownObject;
+            noteIllTypedCauseOfTest(note, types, code, operation);
             note.layout = singleLayoutOf(types, types.at(operation.testedType()));
             result.notes.append(note);
             continue;
@@ -225,6 +316,7 @@ WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolve
             note.kind = WalkNoteKind::TestThatRejoins;
             note.cost = costOfWalkNoteKind(note.kind);
             note.cause = UnprovenCause::UnknownObject;
+            noteIllTypedCauseOfTest(note, types, code, operation);
             if (ValueID tested = operation.child(0))
                 note.layout = layoutOfValueInWalkNote(types, code, tested);
             result.notes.append(note);
@@ -238,8 +330,11 @@ WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolve
         if (note.kind == WalkNoteKind::ResolvedOperation && !notesResolvedOperations)
             continue;
         note.cost = costOfWalkNoteKind(note.kind);
-        if (note.kind != WalkNoteKind::ResolvedOperation)
+        if (note.kind != WalkNoteKind::ResolvedOperation) {
             note.cause = causeInWalkNote(note.access);
+            if (note.cause == UnprovenCause::UnknownObject)
+                noteIllTypedCauseOfAccess(note, types, code, operation);
+        }
         if (std::optional<uint8_t> receiver = receiverOf(operation.opcode)) {
             if (ValueID object = operation.child(*receiver))
                 note.layout = layoutOfValueInWalkNote(types, code, object);
@@ -256,6 +351,7 @@ WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolve
         note.opcode = operation.opcode;
         note.cost = costOfWalkNoteKind(note.kind);
         note.cause = UnprovenCause::UnknownObject;
+        noteIllTypedCauseOfTest(note, types, code, operation);
         note.loopDepth = code.at(block).isInLoop;
         note.origin = Origin { noted.positionOfCallee, 0, false, false };
         note.writtenIn = noted.callee;
