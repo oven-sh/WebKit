@@ -630,11 +630,15 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncJoin(VM& vm, JSGlobalObject*
             RELEASE_AND_RETURN(scope, JSValue::encode(value.toString(globalObject)));
         }
 
+#if !USE(BUN_JSC_ADDITIONS)
         if constexpr (std::is_integral_v<typename ViewClass::ElementType>) {
             if (!thisObject->isShared())
                 RELEASE_AND_RETURN(scope, JSValue::encode(joinIntegerTypedArray(globalObject, elements, length, separator)));
         }
+#endif
 
+        // joinIntegerTypedArray() reads every element twice and must find the same values. In Bun another thread may write a typed array that is not
+        // shared while JavaScript runs: a pending fs.read() fills its buffer from the thread pool. joinTypedArray() reads every element once.
         RELEASE_AND_RETURN(scope, JSValue::encode(joinTypedArray(globalObject, elements, length, separator)));
     };
 
