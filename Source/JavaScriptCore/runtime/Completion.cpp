@@ -23,9 +23,6 @@
 #include "config.h"
 #include "Completion.h"
 
-#if USE(BUN_JSC_ADDITIONS)
-#include "AsyncContextSwapScope.h"
-#endif
 #include "BuiltinNames.h"
 #include "BytecodeCacheError.h"
 #include "CodeCache.h"
@@ -255,7 +252,7 @@ JSPromise* loadAndEvaluateModule(JSGlobalObject* globalObject, SourceCode&& sour
     RETURN_IF_EXCEPTION(scope, rejectPromise(scope, globalObject));
 #if USE(BUN_JSC_ADDITIONS)
     // The load keeps the async context of its caller: JSModuleLoader::asyncContextOfLoad().
-    auto graphLoadingState = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher, globalObject->moduleLoader()->asyncContextForLoad(vm, globalObject));
+    auto graphLoadingState = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher, JSModuleLoader::asyncContextForLoad(vm, globalObject));
 #else
     auto graphLoadingState = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher);
 #endif

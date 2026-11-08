@@ -179,25 +179,33 @@ private:
 // context is a store, a job of the load is a continuation of the import(): it runs under the store, and what it leaves
 // in the slot ends with it.
 //
-// A load that captured no store has no scope. Its jobs run as such jobs always did: under what is in the slot, and what
-// they leave there stays. That is:
-// - an import() outside any store, and the load of an entry point, whose module enters what the program goes on in;
-// - a synchronous load (JSModuleLoader::loadModuleSync()), which captures nothing: what it runs inside the call of
-//   require() runs in the context of the caller, and what its modules enter is the caller's, as for a CommonJS module.
+// A load that keeps no store has no scope, and this class changes nothing for it. Its jobs run as they ran before there
+// was this class: under whatever the slot holds when each of them runs, and what they leave there stays until the host
+// resets the slot. That is how a store that one module of such a load enters reaches the modules that run behind it in
+// the same turn. Such a load is:
+// - a load that begins outside any store: an import() there, and what the host loads with no script on the stack (the
+//   entry point, a preload, a test file, the entry point of a Worker). The loader asks nobody who begins a load. What
+//   the slot holds where no script runs is the host's to say: Bun resets it where it begins such a load;
+// - a synchronous load (JSModuleLoader::loadModuleSync()): what it runs inside the call of require() runs in the context
+//   of the caller, and what its modules enter is the caller's, as for a CommonJS module.
 //
 // While a synchronous load drains its queue, no job of the loader enters the context of its load. The drain also takes
 // the jobs of other loads that come due meanwhile: of an import() in flight, and of an import() that a module calls
 // during the drain. It runs them inside the call of require(), so they run in the context of its caller, as the steps
 // of the synchronous load do. (The job that resumes a module behind its own await is no such job: it has the context
 // of that await, as any await has.)
+//
+// What a job with a store does more is out of line. A job of the loader is rare, and runInternalMicrotask() keeps, ahead
+// of the case of each microtask, the instructions that it had: inline, the far fields of the VM that these scopes read
+// are hoisted there on ARM64.
 class ModuleLoaderAsyncContextScope : public AsyncContextSwapScope {
 public:
     ALWAYS_INLINE ModuleLoaderAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
         : AsyncContextSwapScope(vm, DoNotEnter)
     {
-        if (!wouldEnter(vm, asyncContext)) [[likely]]
+        if (asyncContext.isEmpty() || asyncContext.isUndefined()) [[likely]]
             return;
-        enter(globalObject, asyncContext);
+        enterOutsideSynchronousDrain(vm, globalObject, asyncContext);
     }
 
     static ALWAYS_INLINE bool wouldEnter(VM& vm, JSValue asyncContext)
@@ -206,6 +214,15 @@ public:
             return false;
         return !vm.synchronousModuleQueue();
     }
+
+protected:
+    ALWAYS_INLINE ModuleLoaderAsyncContextScope(VM& vm, DoNotEnterTag)
+        : AsyncContextSwapScope(vm, DoNotEnter)
+    {
+    }
+
+private:
+    NEVER_INLINE void enterOutsideSynchronousDrain(VM&, JSGlobalObject*, JSValue asyncContext);
 };
 
 // For a job of the module loader that evaluates modules. A module with a top-level await leaves a job behind that runs
@@ -216,28 +233,30 @@ public:
 // - Where the job did not enter it (the drain of a synchronous load), it gets the context of the load.
 // - Where the load keeps no context, it gets none, as before there was this scope. What the slot holds in a job that
 //   entered nothing is not the job's to hand on: it can be the context of whoever runs the job.
+//
+// CalledByScript is for a host function that evaluates a module for the script that calls it: node:vm's
+// SourceTextModule#evaluate(). No job of the loader began that evaluation. The call did, as a call of import() begins a
+// load, and the slot is the caller's: the job behind the await gets what is current where the awaiting module begins,
+// whichever job of the loader is on the stack. Such a scope enters nothing and puts nothing back: what the module
+// leaves in the slot is the caller's, as behind any call. Where nothing is current at the call, the job gets none, as
+// in a load with no store: it runs under whatever the slot holds then.
 class ModuleEvaluationAsyncContextScope final : public ModuleLoaderAsyncContextScope {
 public:
-    ALWAYS_INLINE ModuleEvaluationAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
-        : ModuleLoaderAsyncContextScope(vm, globalObject, asyncContext)
-        , m_vm(vm)
-        , m_asyncContextOfLoad(asyncContext)
-        , m_outer(std::exchange(vm.m_moduleEvaluationAsyncContextScope, this))
-    {
-    }
+    enum CalledByScriptTag { CalledByScript };
 
-    ALWAYS_INLINE ~ModuleEvaluationAsyncContextScope()
-    {
-        m_vm.m_moduleEvaluationAsyncContextScope = m_outer;
-    }
+    NEVER_INLINE ModuleEvaluationAsyncContextScope(VM&, JSGlobalObject*, JSValue asyncContext);
+    JS_EXPORT_PRIVATE ModuleEvaluationAsyncContextScope(VM&, CalledByScriptTag);
+    JS_EXPORT_PRIVATE NEVER_INLINE ~ModuleEvaluationAsyncContextScope();
 
-    using ModuleLoaderAsyncContextScope::didEnter;
+    // Whether the slot is the evaluation's own, so that what is current in it goes to the modules that wait.
+    bool handsOnWhatIsCurrent() const { return m_calledByScript || didEnter(); }
     JSValue asyncContextOfLoad() const { return m_asyncContextOfLoad; }
 
 private:
     VM& m_vm;
     JSValue m_asyncContextOfLoad;
     ModuleEvaluationAsyncContextScope* m_outer;
+    bool m_calledByScript { false };
 };
 
 } // namespace JSC

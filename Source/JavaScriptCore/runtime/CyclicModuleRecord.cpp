@@ -751,9 +751,8 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     // Also handled in JSMicrotask.cpp.
     // 8. Perform PerformPromiseThen(capability.[[Promise]], onFulfilled, onRejected).
 #if USE(BUN_JSC_ADDITIONS)
-    // The modules that wait for this one run in that job. It continues the job of the module loader that evaluates this
-    // one: ModuleEvaluationAsyncContextScope says under which async context. An evaluation that no such job began hands
-    // on none.
+    // The modules that wait for this one run in that job. It continues whoever evaluates this one, a job of the module
+    // loader or a host function for its caller: ModuleEvaluationAsyncContextScope says under which async context.
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this, moduleLoader()->asyncContextOfModulesThatWait(vm, globalObject));
 #else
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
