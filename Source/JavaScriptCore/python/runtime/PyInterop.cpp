@@ -1239,7 +1239,8 @@ static JSArray* ownPropertyNames(JSGlobalObject* globalObject, JSObject* object,
 // ---- Iterators of JS, as iterators of Python ----
 
 // The fields of the records that those are. The iterator is empty once it is exhausted.
-enum JSIteratorField : unsigned { JSIteratorObject, JSIteratorNextMethod, JSIteratorThen, JSIteratorIsOfLoop, JSIteratorFieldCount };
+// JSIteratorOfLoop: see getAIterOfLoop(). Empty, or true, or the last step that the loop has asked for, a promise.
+enum JSIteratorField : unsigned { JSIteratorObject, JSIteratorNextMethod, JSIteratorThen, JSIteratorOfLoop, JSIteratorFieldCount };
 
 static JSValue jsIteratorSelf(JSGlobalObject*, JSValue self) { return self; }
 
@@ -1319,6 +1320,9 @@ static JSValue jsAsyncIteratorNext(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* record = uncheckedDowncast<PyRecord>(self.asCell());
     MarkedArgumentBuffer noArguments;
+    // An iterator that has failed is told nothing more: see leaveAsyncFor().
+    bool isOfLoop = !!record->get(JSIteratorOfLoop);
+    record->set(vm, JSIteratorOfLoop, { });
     JSValue nextMethod = record->get(JSIteratorNextMethod);
     auto callData = JSC::getCallData(nextMethod);
     if (callData.type == CallData::Type::None)
@@ -1327,7 +1331,10 @@ static JSValue jsAsyncIteratorNext(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     JSPromise* promise = JSPromise::resolvedPromise(globalObject, result);
     RETURN_IF_EXCEPTION(scope, { });
-    return thenOfPromise(globalObject, promise, record->get(JSIteratorThen), jsUndefined());
+    JSPromise* step = thenOfPromise(globalObject, promise, record->get(JSIteratorThen), jsUndefined());
+    if (isOfLoop)
+        record->set(vm, JSIteratorOfLoop, step);
+    return step;
 }
 
 // iterator.return(), by which whoever stops before the end says so in JS: `for await` does when it is left. A promise.
@@ -1422,7 +1429,7 @@ JSValue getAIterOfLoop(JSGlobalObject* globalObject, JSValue iterable)
     if (!iterator || iterator == iterable)
         return iterator;
     if (auto* record = PyRecord::tryFrom(iterator, runtime(globalObject).typeFor(jsAsyncIteratorTypeDef))) [[unlikely]]
-        record->set(getVM(globalObject), JSIteratorIsOfLoop, jsBoolean(true));
+        record->set(getVM(globalObject), JSIteratorOfLoop, jsBoolean(true));
     return iterator;
 }
 
@@ -1432,9 +1439,14 @@ JSValue leaveAsyncFor(JSGlobalObject* globalObject, JSValue iterator, JSValue ex
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* record = PyRecord::tryFrom(iterator, rt.typeFor(jsAsyncIteratorTypeDef));
-    if (!record || !record->get(JSIteratorIsOfLoop)) [[likely]]
+    JSValue ofLoop = record ? record->get(JSIteratorOfLoop) : JSValue();
+    if (!ofLoop) [[likely]]
         return jsUndefined();
-    record->set(vm, JSIteratorIsOfLoop, { });
+    record->set(vm, JSIteratorOfLoop, { });
+    // The loop is left because the step failed: next() has thrown (and there is no step), its promise was rejected, or what it gave is no result. Such an iterator has said its last, and
+    // `for await` does not call its return(). A step that was cut short from outside, by a cancellation, is pending.
+    if (auto* step = dynamicDowncast<JSPromise>(ofLoop); step && step->status() == JSPromise::Status::Rejected)
+        return jsUndefined();
     JSValue promise = jsAsyncIteratorClose(globalObject, iterator);
     RETURN_IF_EXCEPTION(scope, { });
     // A coroutine that is being closed cannot wait.

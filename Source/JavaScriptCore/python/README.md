@@ -2369,7 +2369,7 @@ The collector is told the size of the side tables, which are several times the s
   clear its timer or to cancel and unlock its stream (`getAIterOfLoop`, `leaveAsyncFor`). The handler that does this for an exception is one that CPython's code has
   not, so it is a `HandlerType::SynthesizedCatch`, as what JSC's compiler adds for itself is, and tools are told neither that it catches nor that it raises again. It is called and not awaited by a coroutine
   that is being closed, and where it is the wait for the next item that was cut short: an async generator of JS answers
-  `return()` after the `next()` that it still owes. Only for the iterator that the loop itself has made of an object of JS: one that the program made with `aiter()`
+  `return()` after the `next()` that it still owes. It is not called where the step itself has failed (`next()` has thrown, its promise was rejected, what it gave is no result): such an iterator has said its last, and `for await` does not call it either. Only for the iterator that the loop itself has made of an object of JS: one that the program made with `aiter()`
   is the program's, and has `aclose()`. For everything of Python's the loop does what it does in CPython, which is nothing.
 - **Truth.** What is a container to Python is false when it is empty: what has a `len()`, as above (a `Map`, a `Set`,
   a typed array, a mapping by its methods, a plain object). Everything else is true, as an instance of a class in Python is: a function, a class, a
