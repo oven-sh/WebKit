@@ -142,7 +142,7 @@ private:
 // It has a value, which it roots for as long as it uses the memory, and that may be long after the call has returned.
 //
 // memoryForHost() makes that value, the holder, of the object:
-// - Of a bytes, the bytes itself: what it holds neither changes nor moves.
+// - Of a bytes, the bytes itself: what it holds does not move, and is not to change (but see DEFERRED.md, "What a raw stream is lent").
 // - Of a view of what JS exported (memoryview(uint8Array)), a Uint8Array of JS on the same memory. The host has its ways with those.
 // - Of anything else, a memoryview that the program cannot get at. Like any view, it is an export for as long as it can be
 //   reached from a root that has a name: the bytearray cannot be resized, the mmap cannot be closed (BufferError). One that only

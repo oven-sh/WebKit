@@ -1475,6 +1475,31 @@ bool BytesHolder::getText(JSValue value)
     return false;
 }
 
+bool BytesHolder::settleSlow(JSValue& copy)
+{
+    if (m_held->type() == PyBytesType || m_span.empty())
+        return true;
+    if (auto* array = PyByteArray::tryFrom(m_held); array && !array->mayBeWrittenMeanwhile())
+        return true;
+    if (auto* view = PyMemoryView::tryFrom(m_held); view && !view->isReleased()) {
+        // A view that a bytes has given of itself. (Not one that C++ has made of a bytes it is still filling, which can be written to.)
+        if (JSCell* owner = view->managedBuffer()->owner(); owner && owner->type() == PyBytesType && view->managedBuffer()->object() == JSValue(owner))
+            return true;
+    }
+    Runtime& rt = runtime(m_globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyBytes* bytes = PyBytes::tryCreateUninitialized(vm, rt.structure<PyBytes>(), rt.bytesType(), m_span.size());
+    if (!bytes) [[unlikely]] {
+        raiseMemoryError(m_globalObject, scope, String());
+        return false;
+    }
+    memcpy(bytes->mutableData(), m_span.data(), m_span.size());
+    copy = bytes;
+    m_span = bytes->span();
+    return true;
+}
+
 void BytesHolder::release()
 {
     JSCell* held = std::exchange(m_held, nullptr);

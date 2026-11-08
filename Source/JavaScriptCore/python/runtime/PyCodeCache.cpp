@@ -314,14 +314,15 @@ PyCode* readMarshalledCode(JSGlobalObject* globalObject, const MarshalledCodeHea
     auto* intactFile = PyBytes::tryFrom(rt.slot(Runtime::Slot::IntactPycFile));
     rt.setSlot(Runtime::Slot::IntactPycFile, JSValue());
     bool isKnownToBeIntact = intactFile && bytes.data() == intactFile->data() + offsetOfPayloadInPycFile && bytes.size() == intactFile->length() - offsetOfPayloadInPycFile;
-    if (!isKnownToBeIntact && checksumOf(bytes, header.codeFlags) != header.checksum)
-        return nullptr;
     // The records are read where they are, for as long as any of the code is there, and are aligned.
     RefPtr keeper = owner;
     if (!keeper || std::bit_cast<uintptr_t>(bytes.data()) % alignmentOfPayload) {
         keeper = ThreadSafeRefCountedFixedVector<uint8_t>::create(bytes.begin(), bytes.end());
         bytes = keeper->span();
     }
+    // Only now: what has no owner may be memory that another thread writes to (marshal.loads() of a SharedArrayBuffer), and what is decoded has to be what was looked through.
+    if (!isKnownToBeIntact && checksumOf(bytes, header.codeFlags) != header.checksum)
+        return nullptr;
     auto payload = keeper->span().subspan(bytes.data() - keeper->span().data(), bytes.size());
     SourceCode parentSource;
     UnlinkedFunctionExecutable* unlinked = decodePythonCode(globalObject, keeper.releaseNonNull(), payload, parentSource);

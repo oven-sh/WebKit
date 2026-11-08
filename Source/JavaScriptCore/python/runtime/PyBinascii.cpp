@@ -628,6 +628,9 @@ static JSValue binasciiA2BAscii85(JSGlobalObject* globalObject, JSValue dataValu
         } else if ((character == 'y' && foldSpaces) || character == 'z') {
             if (position)
                 RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, '\'', static_cast<char>(character), "' inside Ascii85 5-tuple"_s));
+            // There is room for as many as were counted, or fewer. Memory that is shared with another thread, or another process, may hold more by now.
+            if (!shorthands--) [[unlikely]]
+                return raiseSystemError(globalObject, scope, "the bytes changed while a2b_ascii85() was reading them"_s);
             group = character == 'y' ? 0x20202020 : 0;
             isShorthandForZero = character == 'z';
             position = 5;

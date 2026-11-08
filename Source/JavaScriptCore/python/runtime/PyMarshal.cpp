@@ -881,6 +881,11 @@ private:
         std::span<const uint8_t> bytes;
         if (failed(scope, readBytes(length, bytes)))
             return -1;
+        // They are looked at more than once, and another thread may be writing to the memory.
+        std::array<uint8_t, 255> copy;
+        if (!bytes.empty())
+            memcpy(copy.data(), bytes.data(), bytes.size());
+        bytes = std::span { copy }.first(bytes.size());
         // What follows a NUL is not looked at.
         if (size_t end = WTF::find(bytes, static_cast<uint8_t>(0)); end != notFound)
             bytes = bytes.first(end);

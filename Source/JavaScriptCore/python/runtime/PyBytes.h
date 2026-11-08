@@ -112,6 +112,10 @@ public:
     }
     // Whether it cannot be resized. May collect.
     bool isStillExported(JSGlobalObject*);
+    // Whether the bytes may change while this thread has the GIL and runs no code of the program. Who writes to them then (a thread that waits in readinto() or recv_into(), the
+    // host, a foreign function) has asked for a buffer, which is an export (but see DEFERRED.md, "What a raw stream is lent"); a hold only reads. A view that is dead and not yet
+    // found counts too, which costs a copy and no more.
+    bool mayBeWrittenMeanwhile() const { return m_exports != m_holds; }
 
 private:
     PyByteArray(VM&, Structure*, PyType*);
@@ -130,8 +134,9 @@ bool isBytesLike(JSValue);
 // array.array, a typed array of JS, whatever has __buffer__(). They are held for as long as this lives, as by a Buffer, whatever runs: the
 // conversion of the next argument, its __buffer__(), the __release_buffer__() of this one, which is called when this goes.
 // Of memory that another thread of JS can write to, a SharedArrayBuffer, this has a copy, so that the bytes are not seen to change. (The buffer is then released as soon as the
-// copy is made.) That is not to be counted on, though: an mmap of a file that another process writes to is read where it is.
-// Mostly the argument is a bytes. That neither changes nor moves, so there is nothing to hold and nothing is done. Something has
+// copy is made.) That is not to be counted on, though: an mmap of a file that another process writes to is read where it is, and so is a bytearray that another thread of Python
+// is having filled. What looks at the bytes twice, and takes from the first look how much the second writes, calls settle() first.
+// Mostly the argument is a bytes. That does not move, and is not to change (but see settle()), so there is nothing to hold and nothing is done. Something has
 // to keep it alive, as an argument is kept.
 // CPython releases the buffers of a call in the order of the arguments, and C++ lets go first of what was declared last: the holder of the last argument is declared first.
 class BytesHolder {
@@ -158,6 +163,11 @@ public:
     // False, and no exception but a termination: the object would not give them, whatever it raised. To the three it is then no text.
     bool getText(JSValue);
 
+    // After this the bytes do not change until this goes: unless they are a bytes, a view that a bytes has given of itself, or a bytearray that nobody else has a buffer of, span()
+    // is that of a copy from now on, which the caller keeps alive. What was held stays held. To be called when the last code of the program has run. False: a MemoryError.
+    // There are writers that nobody counts (DEFERRED.md, "What a raw stream is lent"): whoever writes by what it has counted looks at the room all the same.
+    ALWAYS_INLINE bool settle(JSValue& copy) { return !m_held || settleSlow(copy); }
+
     std::span<const uint8_t> span() const { return m_span; }
 
 private:
@@ -173,6 +183,7 @@ private:
         return true;
     }
     bool getSlow(JSValue, bool isLast);
+    bool settleSlow(JSValue& copy);
     void hold(PyByteArray*);
     void release();
 

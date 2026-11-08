@@ -485,6 +485,26 @@ static JSValue bytesMake(JSGlobalObject* globalObject, bool asArray, std::span<c
     return object;
 }
 
+static NEVER_INLINE bool bytesSettleOnCopy(JSGlobalObject* globalObject, std::span<const uint8_t>& span, JSValue& copy)
+{
+    copy = bytesMake(globalObject, true, span);
+    if (!copy)
+        return false;
+    span = PyByteArray::from(copy)->span();
+    return true;
+}
+
+// For a method that looks at the bytes of self twice and takes from the first look how much the second writes (README.md, "To hold memory"). If they may change meanwhile, the span
+// becomes that of a copy, a bytearray that nobody else knows of, which the caller keeps alive. To be called when the last code of the program has run. BytesHolder::settle() is this
+// for an argument. There are writers that nobody counts (DEFERRED.md, "What a raw stream is lent"), so the caller looks at the room before it writes all the same.
+static ALWAYS_INLINE bool bytesSettle(JSGlobalObject* globalObject, JSValue self, std::span<const uint8_t>& span, JSValue& copy)
+{
+    auto* array = PyByteArray::tryFrom(self);
+    if (!array || !array->mayBeWrittenMeanwhile()) [[likely]]
+        return true;
+    return bytesSettleOnCopy(globalObject, span, copy);
+}
+
 // What a method returns when there is nothing to change: the object itself where that cannot be told from a copy.
 static JSValue bytesSelfOrCopy(JSGlobalObject* globalObject, JSValue self)
 {
@@ -1857,12 +1877,20 @@ static JSValue bytesJoin(JSGlobalObject* globalObject, JSValue self, JSValue ite
     uint8_t* data;
     if (failed(scope, bytesAllocate(globalObject, isArray, total, result, data)))
         return { };
+    // canGetBufferTwice() has promised that there is room. Should it forget an exporter one day, that is not to be a write beyond the result.
+    size_t room = total;
+    auto raiseChanged = [&] {
+        return raiseSystemError(globalObject, scope, "the items changed while join() was reading them"_s);
+    };
     for (unsigned i = 0; i < count; ++i) {
         BytesHolder holder(globalObject);
         if (failed(scope, holder.getLast(itemAt(i))))
             return { };
         auto span = holder.span();
         size_t separatorSize = i ? separator.size() : 0;
+        if (separatorSize > room || span.size() > room - separatorSize) [[unlikely]]
+            return raiseChanged();
+        room -= separatorSize + span.size();
         if (separatorSize) {
             memcpy(data, separator.data(), separatorSize);
             data += separatorSize;
@@ -1872,6 +1900,8 @@ static JSValue bytesJoin(JSGlobalObject* globalObject, JSValue self, JSValue ite
             data += span.size();
         }
     }
+    if (room) [[unlikely]]
+        return raiseChanged();
     return result;
 }
 
@@ -1930,6 +1960,12 @@ static JSValue bytesReplace(JSGlobalObject* globalObject, JSValue self, JSValue 
         return result;
     }
 
+    // From here on the bytes are looked at twice.
+    JSValue copyOfOld;
+    JSValue copyOfSelf;
+    if (failed(scope, oldHolder.settle(copyOfOld)) || failed(scope, bytesSettle(globalObject, self, span, copyOfSelf)))
+        return { };
+    from = oldHolder.span();
     size_t count = 0;
     for (auto rest = span; count < limit; ++count) {
         size_t position = bytesSearch(rest, from);
@@ -1937,14 +1973,18 @@ static JSValue bytesReplace(JSGlobalObject* globalObject, JSValue self, JSValue 
             break;
         rest = rest.subspan(position + from.size());
     }
-    if (!count)
+    if (!count) {
+        // The copy is what is asked for.
+        if (copyOfSelf) [[unlikely]]
+            return copyOfSelf;
         RELEASE_AND_RETURN(scope, bytesSelfOrCopy(globalObject, self));
+    }
     if (to.size() > from.size() && to.size() - from.size() > (static_cast<uint64_t>(bytesMaxSsize) - span.size()) / count)
         return raiseOverflowError(globalObject, scope, "replace bytes is too long"_s);
     if (failed(scope, allocate(span.size() - count * from.size() + count * to.size())))
         return { };
-    // The room is for what the first look has found, and the second finds the same unless something outside this thread has changed the bytes in between: another process
-    // that writes to a file of which they are an mmap. (Of what another thread of JS can write to, the holder has a copy.) Then other places are found, or fewer.
+    // The room is for what the first look has found, and the second finds the same, since the bytes are settled. The room is looked at all the same: native code that has
+    // an address and nothing else may write there with nobody knowing, and so may a raw stream that has kept the view it was lent (DEFERRED.md, "What a raw stream is lent").
     auto rest = span;
     bool ok = true;
     for (size_t i = 0; i < count && ok; ++i) {
@@ -1955,6 +1995,8 @@ static JSValue bytesReplace(JSGlobalObject* globalObject, JSValue self, JSValue 
     }
     if (!ok || !write(rest) || room) [[unlikely]]
         return raiseSystemError(globalObject, scope, "the bytes changed while replace() was reading them"_s);
+    ensureStillAliveHere(copyOfOld);
+    ensureStillAliveHere(copyOfSelf);
     return result;
 }
 
@@ -1998,6 +2040,21 @@ static JSValue bytesTranslate(JSGlobalObject* globalObject, JSValue self, JSValu
         map[byte] = -1;
 
     auto span = bytesSpanOf(self);
+    JSValue result;
+    uint8_t* data;
+    if (bytesIsArray(self)) {
+        // It may change while it is read (README.md, "To hold memory"): one look, into room for all of it.
+        if (failed(scope, bytesAllocate(globalObject, true, span.size(), result, data)))
+            return { };
+        uint8_t* start = data;
+        for (uint8_t byte : span) {
+            if (map[byte] >= 0)
+                *data++ = static_cast<uint8_t>(map[byte]);
+        }
+        if (failed(scope, uncheckedDowncast<PyByteArray>(result.asCell())->resize(globalObject, data - start)))
+            return { };
+        return result;
+    }
     size_t length = 0;
     bool changed = false;
     for (uint8_t byte : span) {
@@ -2006,14 +2063,24 @@ static JSValue bytesTranslate(JSGlobalObject* globalObject, JSValue self, JSValu
     }
     if (!changed && bytesIsExact(globalObject, self))
         return self;
-    JSValue result;
-    uint8_t* data;
-    if (failed(scope, bytesAllocate(globalObject, bytesIsArray(self), length, result, data)))
+    if (failed(scope, bytesAllocate(globalObject, false, length, result, data)))
         return { };
-    for (uint8_t byte : span) {
-        if (map[byte] >= 0)
+    if (length == span.size() && deleted.empty()) {
+        for (uint8_t byte : span)
             *data++ = static_cast<uint8_t>(map[byte]);
+        return result;
     }
+    // The room is looked at, as in replace(): a bytes is not to change, but see DEFERRED.md, "What a raw stream is lent".
+    size_t room = length;
+    for (uint8_t byte : span) {
+        if (map[byte] < 0)
+            continue;
+        if (!room--) [[unlikely]]
+            return raiseSystemError(globalObject, scope, "the bytes changed while translate() was reading them"_s);
+        *data++ = static_cast<uint8_t>(map[byte]);
+    }
+    if (room) [[unlikely]]
+        return raiseSystemError(globalObject, scope, "the bytes changed while translate() was reading them"_s);
     return result;
 }
 
@@ -2149,6 +2216,34 @@ static JSValue bytesZFill(JSGlobalObject* globalObject, JSValue self, JSValue wi
     return result;
 }
 
+// False: the room was not filled exactly.
+static bool bytesExpandTabsInto(std::span<const uint8_t> span, int tabSize, uint8_t* data, uint64_t room)
+{
+    uint64_t column = 0;
+    for (uint8_t byte : span) {
+        if (byte == '\t') {
+            if (tabSize > 0) {
+                uint64_t count = tabSize - column % tabSize;
+                if (count > room) [[unlikely]]
+                    return false;
+                room -= count;
+                column += count;
+                memset(data, ' ', count);
+                data += count;
+            }
+        } else {
+            if (!room) [[unlikely]]
+                return false;
+            --room;
+            ++column;
+            *data++ = byte;
+            if (byte == '\n' || byte == '\r')
+                column = 0;
+        }
+    }
+    return !room;
+}
+
 static JSValue bytesExpandTabs(JSGlobalObject* globalObject, JSValue self, JSValue tabSizeValue)
 {
     VM& vm = getVM(globalObject);
@@ -2157,6 +2252,9 @@ static JSValue bytesExpandTabs(JSGlobalObject* globalObject, JSValue self, JSVal
     if (tabSizeValue && failed(scope, bytesIntArgument(globalObject, tabSizeValue, tabSize)))
         return { };
     auto span = bytesSpanOf(self);
+    JSValue copy;
+    if (failed(scope, bytesSettle(globalObject, self, span, copy)))
+        return { };
     // The length of the lines that have ended, and the column in the one that has not.
     uint64_t total = 0;
     uint64_t column = 0;
@@ -2178,22 +2276,11 @@ static JSValue bytesExpandTabs(JSGlobalObject* globalObject, JSValue self, JSVal
     uint8_t* data;
     if (failed(scope, bytesAllocate(globalObject, bytesIsArray(self), total + column, result, data)))
         return { };
-    column = 0;
-    for (uint8_t byte : span) {
-        if (byte == '\t') {
-            if (tabSize > 0) {
-                uint64_t count = tabSize - column % tabSize;
-                column += count;
-                memset(data, ' ', count);
-                data += count;
-            }
-        } else {
-            ++column;
-            *data++ = byte;
-            if (byte == '\n' || byte == '\r')
-                column = 0;
-        }
-    }
+    // The room is looked at although the bytes are settled: see replace().
+    bool ok = bytesExpandTabsInto(span, tabSize, data, total + column);
+    ensureStillAliveHere(copy);
+    if (!ok) [[unlikely]]
+        return raiseSystemError(globalObject, scope, "the bytes changed while expandtabs() was reading them"_s);
     return result;
 }
 

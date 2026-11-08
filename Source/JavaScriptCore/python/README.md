@@ -1555,6 +1555,19 @@ up before it waits for events while a collection that it has asked for is under 
   Not so memory of WebAssembly, which cannot be pinned: the thread keeps the GIL instead (DEFERRED.md). A function that only reads the
   bytes of an argument (`BytesHolder` in `runtime/PyBytes.h`) holds them likewise, but of such memory it has a copy where code of the program
   may run before it has read them, and of a `SharedArrayBuffer` always.
+- To hold memory is not to have it to oneself. A `SharedArrayBuffer`, shared memory of WebAssembly and an `mmap` of a file that is
+  mapped elsewhere change while a function reads them: another thread of JS writes there, or another process, and asks nobody. So does
+  a `bytearray`, or whatever else can be written to, that another thread of Python is having filled: it waits in `os.readinto()` or
+  `recv_into()` without the GIL, and the kernel writes. So bytes that something outside this thread's control can change are read once,
+  or copied first; no length, count or checksum taken from them is trusted on a second reading. `bytearray.translate()` looks once;
+  `marshal.loads()` of a code object, which the engine's decoder trusts, copies first; `binascii.a2b_ascii85()`, which counts the
+  shorthands to know how much room it needs, counts them down as it meets them. `replace()` and `expandtabs()` have to look twice, and
+  ask first whether the bytes can change (`BytesHolder::settle()`, `bytesSettle()` for `self`): a `bytes` cannot, nor a view that it
+  has given of itself, nor a `bytearray` of which nobody else has a buffer, since whoever writes to one without the GIL has asked for a
+  buffer; of anything else they take a copy, once, and look at that. Both look at the room before they write all the same, and so does
+  `bytes.translate()`, which takes a `bytes` at its word: there are writers that nobody counts, of a `bytes` too (DEFERRED.md, "What a
+  raw stream is lent"). Where the room does not come out the call ends with a `SystemError`; where it happens to, the result is made of
+  bytes that do not go together.
 - A thread that waits for others for more than 50 ms, having allocated since it last did so, collects and runs finalizers: the
   others may be waiting for what a dropped object holds open, and in CPython it would have been closed when it was dropped.
 - A wait without a time limit while there is no other thread can be ended by a finalizer, so the thread collects at once, or by a
