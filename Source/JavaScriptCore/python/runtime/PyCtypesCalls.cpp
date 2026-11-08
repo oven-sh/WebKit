@@ -575,23 +575,26 @@ static NEVER_INLINE bool convertArguments(JSGlobalObject* globalObject, void* fu
     }
     unsigned converterCount = converters ? converters->length() : 0;
     converted = room.take(count);
+    auto blameArgument = [&](unsigned i) {
+        scope.release();
+        // Where the stack is at its end nothing can be converted, not even by from_param() of c_long, which is called like any function. That is no fault of the argument, and whoever is
+        // there to catch a RecursionError is to get one. (What an _as_parameter_ or a from_param() of the program's raises with room to spare is an ArgumentError, as in CPython.)
+        if (!isSafeToRecurseWithMargin(vm, 16 * KB) && pendingExceptionMatches(globalObject, runtime(globalObject).RecursionError())) [[unlikely]]
+            return false;
+        extendError(globalObject, state.argumentError.get(), makeString("argument "_s, i + 1, ": "_s));
+        return false;
+    };
     for (unsigned i = 0; i < count; ++i) {
         JSValue argument = arguments->at(i);
         if (i < converterCount) {
             argument = call(globalObject, converters->at(i), argument);
-            if (scope.exception()) [[unlikely]] {
-                scope.release();
-                extendError(globalObject, state.argumentError.get(), makeString("argument "_s, i + 1, ": "_s));
-                return false;
-            }
+            if (scope.exception()) [[unlikely]]
+                return blameArgument(i);
             keeps.append(argument);
         }
         convertArgument(globalObject, argument, i + 1, converted[i], keeps);
-        if (scope.exception()) [[unlikely]] {
-            scope.release();
-            extendError(globalObject, state.argumentError.get(), makeString("argument "_s, i + 1, ": "_s));
-            return false;
-        }
+        if (scope.exception()) [[unlikely]]
+            return blameArgument(i);
     }
     return true;
 }
