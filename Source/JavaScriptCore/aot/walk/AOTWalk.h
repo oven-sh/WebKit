@@ -1112,7 +1112,6 @@ public:
     std::optional<PassedTest> showElementPresentBehindTest(Reference list, Reference position, const std::optional<PassedTest>&);
     std::optional<PassedTest> showPositionInside(const GroundsOfPosition&);
     std::optional<PassedTest> showPositionInsideBehindTests(Reference view, Reference position, Reference length, const PassedTest& fromZeroUp, const PassedTest& below);
-    std::optional<PassedTest> showPositionInsideBehindTestOfSum(Reference list, Reference position, Reference length);
     void switchOn(Reference subject, std::span<const int64_t> cases, std::span<const BlockID> targets, BlockID otherwise);
     Reference tryCallInline(TerminatorDraft&&, BlockID done, BlockID miss, const Effects* foundByCaller = nullptr);
     void continueIn(BlockID);
