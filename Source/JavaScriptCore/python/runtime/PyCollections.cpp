@@ -928,8 +928,11 @@ constexpr TypeDef dequeReverseIteratorTypeDef { "collections._deque_reverse_iter
 
 // ---- defaultdict ----
 
-// The hidden field of a defaultdict that holds default_factory. Empty: None.
-static constexpr unsigned defaultDictFactoryField = 0;
+// default_factory is a member of the instance, as in CPython, and is kept as the value of a slot of a class is: a property of the cell under a key of its own, which JS cannot see (PyMemberDescriptor::create()). So to
+// whoever looks at the heap it is a value that the object holds, whatever it is. (Not a hidden field: it may be any object of the program's, a list too, and a container under a hidden key is the runtime's own memory there:
+// a part of the object, which no program is given. See PyGC.cpp.) Not there: None.
+// The key is kept with the type, in this hidden field of it.
+static constexpr unsigned defaultDictFactoryKeyField = 0;
 
 extern const TypeDef defaultDictTypeDef;
 
@@ -939,10 +942,27 @@ static PyType* defaultDictType(JSGlobalObject* globalObject)
     return rt.typeFor(defaultDictTypeDef, rt.dictType());
 }
 
+static PrivateName defaultDictFactoryKey(JSGlobalObject* globalObject)
+{
+    PyType* type = defaultDictType(globalObject);
+    JSValue key = hiddenField(globalObject, type, defaultDictFactoryKeyField);
+    if (!key) [[unlikely]] {
+        String description = "default_factory"_s;
+        key = Symbol::create(getVM(globalObject), PrivateSymbolImpl::create(*description.impl()).get());
+        setHiddenField(globalObject, type, defaultDictFactoryKeyField, key);
+    }
+    return uncheckedDowncast<Symbol>(key.asCell())->privateName();
+}
+
 static JSValue defaultDictFactory(JSGlobalObject* globalObject, JSValue self)
 {
-    JSValue factory = hiddenField(globalObject, self, defaultDictFactoryField);
+    JSValue factory = asObject(self)->getDirect(getVM(globalObject), defaultDictFactoryKey(globalObject));
     return factory ? factory : jsUndefined();
+}
+
+static void defaultDictPutFactory(JSGlobalObject* globalObject, JSValue self, JSValue factory)
+{
+    asObject(self)->putDirect(getVM(globalObject), defaultDictFactoryKey(globalObject), factory, PropertyAttribute::DontEnum | 0);
 }
 
 static JSValue defaultDictInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
@@ -956,7 +976,7 @@ static JSValue defaultDictInit(JSGlobalObject* globalObject, JSValue self, const
         if (!isNone(factory) && !isCallable(globalObject, factory))
             return raiseTypeError(globalObject, scope, "first argument must be callable or None"_s);
     }
-    setHiddenField(globalObject, self, defaultDictFactoryField, factory);
+    defaultDictPutFactory(globalObject, self, factory);
     RELEASE_AND_RETURN(scope, callSpecial(globalObject, rt.dictType()->lookup(Special::Init), self, args.size() ? args.withoutFirst() : args));
 }
 
@@ -1048,7 +1068,7 @@ static JSValue defaultDictROr(JSGlobalObject* globalObject, JSValue self, JSValu
 
 static void defaultDictSetFactory(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
-    setHiddenField(globalObject, self, defaultDictFactoryField, value ? value : jsUndefined());
+    defaultDictPutFactory(globalObject, self, value ? value : jsUndefined());
 }
 
 static constexpr NativeDef defaultDictMethods[] = {
