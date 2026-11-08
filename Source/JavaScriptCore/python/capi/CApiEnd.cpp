@@ -472,14 +472,17 @@ public:
     HeldForCall(Interpreter& current, Body* body)
         : m_current(current)
         , m_body(body)
+        , m_wasKey(current.counts.contains(body))
     {
         m_current.counts.add(m_body);
     }
-    ~HeldForCall() { m_current.counts.remove(m_body, s_interpreterThatLetsGo.load(std::memory_order_relaxed)); }
+    // (An entry that this has made goes with it, even when nothing is let go of any more: what stays then is what C has given back, and this is not C's.)
+    ~HeldForCall() { m_current.counts.remove(m_body, !m_wasKey || s_interpreterThatLetsGo.load(std::memory_order_relaxed)); }
 
 private:
     Interpreter& m_current;
     Body* m_body;
+    bool m_wasKey;
 };
 
 static void serve(JSGlobalObject* globalObject, Body* body)
