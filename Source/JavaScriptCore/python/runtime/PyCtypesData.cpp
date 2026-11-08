@@ -220,6 +220,7 @@ struct Provenance {
     JSCell* owner { nullptr }; // A PyByteStorage or a PyMemoryView. Null: nothing is known.
     const uint8_t* begin { nullptr };
     const uint8_t* end { nullptr };
+    int64_t offsetOfBegin { 0 }; // In the view, if that is the owner.
     bool isInWhatIsGone { false }; // It points to where something that is kept alive was, and is no more: a view has been released, JS has detached or shrunk the memory, or it has moved.
     bool isNotAllSeen { false }; // More is kept alive than is looked through.
 };
@@ -251,7 +252,7 @@ static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uin
                 // Whoever is made to lie in there has to hold the cell of the view as well.
                 if (address < begin || address > begin + other->size)
                     return false;
-                result = { view, begin, begin + other->size };
+                result = { view, begin, begin + other->size, other->offsetInView() };
                 return true;
             }
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
@@ -403,6 +404,32 @@ static uint8_t* lookThroughPointer(JSGlobalObject* globalObject, PyCData* pointe
     return nullptr;
 }
 
+static Home homeInView(PyMemoryView* view, int64_t offset)
+{
+    if (view->isReleased())
+        return { };
+    return { view->managedBuffer()->owner(), view->offset + offset };
+}
+
+static Home homeOf(PyCData* data, int64_t offset)
+{
+    JSCell* owner = data->owner();
+    if (!owner)
+        return { };
+    if (data->isView())
+        return homeInView(uncheckedDowncast<PyMemoryView>(owner), data->offsetInView() + offset);
+    return { owner, data->addressInStorage() - uncheckedDowncast<PyByteStorage>(owner)->data() + offset };
+}
+
+static Home homeOf(const Provenance& provenance, const uint8_t* address)
+{
+    if (!provenance.owner)
+        return { };
+    if (auto* view = dynamicDowncast<PyMemoryView>(provenance.owner))
+        return homeInView(view, provenance.offsetOfBegin + (address - provenance.begin));
+    return { provenance.owner, address - provenance.begin };
+}
+
 static ALWAYS_INLINE Granted grant(VM& vm, uint8_t* data, size_t size)
 {
 #if ASSERT_ENABLED
@@ -413,7 +440,7 @@ static ALWAYS_INLINE Granted grant(VM& vm, uint8_t* data, size_t size)
 #endif
 }
 
-Granted Place::resolve(JSGlobalObject* globalObject, int64_t size) const
+Granted Place::resolve(JSGlobalObject* globalObject, int64_t size, Home* home) const
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -426,6 +453,8 @@ Granted Place::resolve(JSGlobalObject* globalObject, int64_t size) const
         Provenance provenance;
         uint8_t* address = lookThroughPointer(globalObject, object, offset, size, provenance);
         RETURN_IF_EXCEPTION(scope, { });
+        if (home)
+            *home = homeOf(provenance, address);
         return grant(vm, address, static_cast<size_t>(size));
     }
     uint8_t* memory = object->memory(globalObject);
@@ -434,6 +463,8 @@ Granted Place::resolve(JSGlobalObject* globalObject, int64_t size) const
         raiseValueError(globalObject, scope, "NULL pointer access"_s);
         return { };
     }
+    if (home)
+        *home = homeOf(object, offset);
     return grant(vm, memory + offset, static_cast<size_t>(size));
 }
 
@@ -467,7 +498,7 @@ PyCData* dataAt(JSGlobalObject* globalObject, PyType* type, const Place& place, 
     if (!provenance.owner)
         data->setAddress(address);
     else if (auto* view = dynamicDowncast<PyMemoryView>(provenance.owner))
-        data->setView(vm, view, address - provenance.begin, address);
+        data->setView(vm, view, provenance.offsetOfBegin + (address - provenance.begin), address);
     else
         data->setStorage(vm, uncheckedDowncast<PyByteStorage>(provenance.owner), address - provenance.begin);
     return didMakeData(globalObject, data, isFinalized);

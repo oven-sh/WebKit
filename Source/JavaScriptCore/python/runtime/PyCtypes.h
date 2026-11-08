@@ -228,6 +228,7 @@ public:
     JSCell* owner() const { return m_owner.get(); }
     bool isView() const { return m_isView; }
     int64_t offsetInView() const { return static_cast<int64_t>(m_address); }
+    const uint8_t* addressInStorage() const { ASSERT(!m_isView); return std::bit_cast<const uint8_t*>(m_address); }
 
     void setStorage(VM&, PyByteStorage*, size_t offset);
     // resize() has given the instance new memory. What it had lives as long as the instance: there may be addresses of it about, in pointers that keep the instance alive
@@ -503,6 +504,15 @@ private:
 using Granted = std::span<uint8_t>;
 #endif
 
+// The cell that owns the bytes of a place, under all the views that there may be of them, and where in the memory of that cell the place is. So instances that have come by the same memory in different
+// ways (a part, from_buffer() of an instance or of the same bytearray, through a pointer) name a place in it alike.
+// No cell: nothing is known to own the bytes (from_address(), what a pointer of unknown origin points to), or the view of them has been released.
+struct Home {
+    JSCell* cell { nullptr };
+    int64_t offset { 0 };
+    explicit operator bool() const { return cell; }
+};
+
 // Where a value is: in the memory of an instance, or in what the instance (a pointer) points to.
 struct Place {
     PyCData* object;
@@ -512,7 +522,7 @@ struct Place {
     // `size` bytes from there, and no byte of an instance is touched but in what this has returned. No data: an exception.
     // They are good until code of the program runs, which may free the memory, move it or make the pointer point elsewhere. So this is asked behind the last thing
     // that can run such code (converting a value, making an instance, an audit hook), and with the very number that the access goes by.
-    Granted resolve(JSGlobalObject*, int64_t size) const;
+    Granted resolve(JSGlobalObject*, int64_t size, Home* = nullptr) const;
 };
 
 // An instance with zeroed memory of its own. __init__ is not called. Null: an exception ("abstract class", MemoryError).
