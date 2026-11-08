@@ -110,8 +110,26 @@ JSValue makeReference(JSGlobalObject* globalObject, JSValue object, int64_t offs
     argument->tag = 'P';
     argument->foreignKind = ForeignKind::Pointer;
     argument->object.set(vm, argument, object);
-    argument->setPointer(memory + offset);
+    argument->isReference = true;
+    argument->offset = offset;
+    argument->setPointer(std::bit_cast<void*>(std::bit_cast<uintptr_t>(memory) + static_cast<uintptr_t>(offset)));
     return argument;
+}
+
+static void* addressOfReference(JSGlobalObject* globalObject, PyCArg* argument)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyCData* data = PyCData::from(argument->object.get());
+    uint8_t* memory = data->memory(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    void* address = std::bit_cast<void*>(std::bit_cast<uintptr_t>(memory) + static_cast<uintptr_t>(argument->offset));
+    // As for an access through a pointer: within what the memory of the instance is a part of, or just behind it. Where nothing is known to own the memory, nothing can be said.
+    if (argument->offset && data->owner() && !liesInMemoryOf(globalObject, data, address)) {
+        raiseValueError(globalObject, scope, "byref() with an offset beyond the memory of the object"_s);
+        return nullptr;
+    }
+    return address;
 }
 
 // What the _obj of a structure passed by value is. (Field 0: the copy. Field 1: the instance.)
@@ -147,6 +165,7 @@ PyCArg* argumentFor(JSGlobalObject* globalObject, PyCData* data)
     case TypeKind::Array:
         argument->tag = 'P';
         argument->foreignKind = ForeignKind::Pointer;
+        argument->isReference = true;
         argument->setPointer(memory.data());
         break;
     case TypeKind::Structure:
@@ -339,7 +358,7 @@ struct Argument {
     void* aggregateMemory { nullptr };
     size_t aggregateSize { 0 };
     JSValue object; // What a PyObject* is believed to refer to.
-    uint8_t alsoUnused[8] { };
+    PyCArg* reference { nullptr }; // It is a byref(): the value is yet to be worked out, see convertArguments().
     alignas(16) uint8_t value[32] { };
 
     template<typename T>
@@ -371,6 +390,8 @@ static bool convertArgument(JSGlobalObject* globalObject, JSValue object, unsign
         keeps.append(argument);
         result.kind = argument->foreignKind;
         memcpy(result.value, argument->value, sizeof(result.value));
+        if (argument->isReference)
+            result.reference = argument;
         if (argument->tag == 'O') {
             JSValue object = argument->object.get();
             auto* holder = PyCData::tryFrom(object);
@@ -611,6 +632,15 @@ static NEVER_INLINE bool convertArguments(JSGlobalObject* globalObject, void* fu
         convertArgument(globalObject, argument, i + 1, converted[i], keeps);
         if (scope.exception()) [[unlikely]]
             return blameArgument(i);
+    }
+    // Behind all that runs code of the program, which may move the memory of an instance or take it away.
+    for (unsigned i = 0; i < count; ++i) {
+        if (PyCArg* reference = converted[i].reference) {
+            void* address = addressOfReference(globalObject, reference);
+            if (scope.exception()) [[unlikely]]
+                return blameArgument(i);
+            converted[i].set(address);
+        }
     }
     return true;
 }

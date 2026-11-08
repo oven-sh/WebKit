@@ -323,6 +323,10 @@ public:
     ForeignKind foreignKind { ForeignKind::Pointer };
     char tag { 0 };
     char tag2 { 0 }; // The second letter of the complex types.
+    // byref(): it stands for a place in the memory of `object`, `offset` bytes in. Where that is, is looked at when the call is made: until then the memory may move (resize()) or go (the view of it is released).
+    // `value` is where it was when this was made, for repr().
+    bool isReference { false };
+    int64_t offset { 0 };
     int64_t size { 0 }; // Of an aggregate: how many bytes the copy has.
     alignas(16) uint8_t value[32] { };
     WriteBarrier<Unknown> object; // What the value is of, or points into.
