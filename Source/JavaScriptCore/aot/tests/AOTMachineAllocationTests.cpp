@@ -699,10 +699,10 @@ static std::optional<uint64_t> allocationTestInstructionsForValuesThatOutliveThe
 static void allocatorWorkGrowsAsValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWaysDo()
 {
     constexpr unsigned number = 2000;
-    std::optional<uint64_t> small = allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(number);
+    std::optional<uint64_t> smallest = allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(number);
     std::optional<uint64_t> middle = allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(4 * number);
     std::optional<uint64_t> large = allocationTestInstructionsForValuesThatOutliveTheirBlockAndBlocksThatAskWhatLivesOnTheirWays(16 * number);
-    AOT_TEST_CHECK(growsAsSizeDoes(small, middle));
+    AOT_TEST_CHECK(growsAsSizeDoes(smallest, middle));
     AOT_TEST_CHECK(growsAsSizeDoes(middle, large));
 }
 
