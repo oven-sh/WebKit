@@ -456,6 +456,9 @@ static bool isAllocatedInCPython(PyType* type)
 
 static bool isOfUntrackedType(PyType* type)
 {
+    // The type of an extension says so itself (Py_TPFLAGS_HAVE_GC). One that does not has no tp_traverse either.
+    if (type->has(TypeFlag::InstancesHaveDataOfC)) [[unlikely]]
+        return !CApi::saysThatCollectorIsTold(type);
     if (type->isHeapType())
         return false;
     return contains(untrackedTypes, type->nameInMessages());
@@ -947,6 +950,11 @@ private:
     Vector<JSCell*> m_found;
 };
 
+static bool refersToOneOf(JSGlobalObject*, JSCell* object, bool wasSeenItself, std::span<const JSValue>);
+
+// THE MIRROR OF get_referents(): who is named here refers to the object as get_referents() understands it, and is an object that CPython's collector keeps track of: that one asks those, and asks them the same question
+// for both. What the marker has seen is only where to look: every cell refers to its type, which in CPython only the instances of an allocated type do (100,000 tuples were the referrers of `tuple`); a cell may refer to
+// what is no business of the program's by ways that get_referents() passes over. A way that get_referents() does not know loses a referrer here: that is the safe side.
 static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
@@ -961,29 +969,58 @@ static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args
         ReferrerListener listener(args.positional());
         WhatIsGoneInCPython gone(vm);
         listener.listen(runtime(globalObject), gone);
-        UncheckedKeyHashSet<JSCell*> seen;
-        Vector<JSCell*> found = listener.found();
-        // To the marker no cell says so of these.
+        // Each object once, however many of its cells the marker has seen to refer to one of these. And whether one of them was the object's own cell, or the cell in which a dict or a set keeps its entries: a part of another
+        // kind has a type of its own, and more that is no business of the object's.
+        struct Candidate {
+            JSCell* object;
+            bool isNamedByItsOwnCode;
+            bool wasSeenItself;
+        };
+        Vector<Candidate> candidates;
+        UncheckedKeyHashMap<JSCell*, size_t> places;
+        // To the marker no cell says so of these, nor to get_referents(): their own tp_traverse has said it. They come first.
+        Vector<JSCell*> found;
         if (CApi::isSetUpFor(runtime(globalObject))) {
             CApi::forEachInstanceThatRefersTo(args.positional(), [&](JSCell* instance) {
                 found.append(instance);
             });
         }
+        size_t saidByTheirOwnCode = found.size();
+        found.appendVector(listener.found());
         if (!found.isEmpty()) {
             HeapView view(globalObject, gone);
-            if (forHooks)
-                seen.add(forHooks);
-            for (JSCell* cell : found) {
-                cell = view.objectOf(cell);
-                if (cell && seen.add(cell).isNewEntry) {
-                    assertIsComplete(cell);
-                    result.append(cell);
+            // (Nothing here allocates a cell. If something did, no collection would come of it.)
+            DeferGC deferGC(vm);
+            for (size_t i = 0; i < found.size(); ++i) {
+                JSCell* cell = view.objectOf(found[i]);
+                if (!cell || cell == forHooks)
+                    continue;
+                auto place = places.add(cell, candidates.size());
+                if (place.isNewEntry)
+                    candidates.append({ cell, i < saidByTheirOwnCode, false });
+                bool isItself = found[i] == cell;
+                if (!isItself && isContainer(cell)) {
+                    forEachPartInFields(cell, [&](JSCell* part, bool) {
+                        isItself |= part == found[i];
+                    });
                 }
+                candidates[place.iterator->value].wasSeenItself |= isItself;
+            }
+            TrackedTuples memory;
+            for (auto [cell, isNamedByItsOwnCode, wasSeenItself] : candidates) {
+                // Kept track of, as gc.is_tracked() says and gc.get_objects() goes by: there is one answer to whether an object is the collector's. A type that is not allocated is not kept track of; but its namespace
+                // is, which is a part of the type here: list.append has a referrer.
+                if (!PyType::is(cell) && !isTracked(runtime(globalObject), cell, false, &memory))
+                    continue;
+                if (!isNamedByItsOwnCode && !refersToOneOf(globalObject, cell, wasSeenItself, args.positional()))
+                    continue;
+                assertIsComplete(cell);
+                result.append(cell);
             }
         }
         // No cell says so of these.
         forEachVariableOfRunningGenerators(vm, [&](PyGenerator* generator, JSValue value) {
-            if (std::ranges::find(args.positional(), value) != args.positional().end() && generator->structure()->realm() == globalObject && seen.add(generator).isNewEntry)
+            if (std::ranges::find(args.positional(), value) != args.positional().end() && generator->structure()->realm() == globalObject && places.add(generator, 0).isNewEntry)
                 result.append(generator);
         });
     }
@@ -1052,30 +1089,38 @@ UncheckedKeyHashSet<JSCell*> cellsReachedFrom(VM& vm, std::span<JSCell* const> r
     return reached;
 }
 
-// Allocates no cell.
-static void appendReferents(JSGlobalObject* globalObject, JSCell* object, MarkedArgumentBuffer& result, unsigned depth = 0)
+// sink(referent) for all that the object refers to, until that says true: then true. It allocates no cell.
+// `isForMirror`: what is found is compared, not handed out: nothing is passed over for what it is.
+template<typename Sink>
+static bool forEachReferent(JSGlobalObject* globalObject, JSCell* object, const Sink& sink, unsigned depth = 0, bool isForMirror = false)
 {
     Runtime& rt = runtime(globalObject);
+    auto mayBeGiven = [&](JSCell* cell) {
+        return isForMirror || cell->isString() || cell->isHeapBigInt() || (cell->isObject() && isObjectOfPython(cell, globalObject) && isWhole(cell));
+    };
     // A container that is a part of something else is the runtime's, and may hold whatever is the runtime's. What the program has put into a container of its own is the program's, an object of JavaScript's too. But a
     // container that the program can come to may be the runtime's all the same (a dict of weak references that ctypes has made for itself): what is the runtime's alone is not given out of any.
     auto give = [&](JSValue value) {
-        if (value.isCell()) {
+        if (!isForMirror && value.isCell()) {
             JSCell* cell = value.asCell();
-            if (depth ? !cell->isString() && !cell->isHeapBigInt() && !(cell->isObject() && isObjectOfPython(cell, globalObject) && isWhole(cell)) : cell->isObject() && isOfTheRuntimeAlone(cell, globalObject))
-                return;
+            if (depth ? !mayBeGiven(cell) : cell->isObject() && isOfTheRuntimeAlone(cell, globalObject))
+                return false;
         }
-        result.append(value);
+        return sink(value);
     };
     bool isContainerByKind = true;
+    bool ownCodeHasNamedType = false;
     // Numbers are not cells, so no cell says that it refers to one. The items of these are asked for.
     if (JSArray* list = tryAsList(object)) {
-        for (unsigned i = 0; i < listLength(list); ++i)
-            give(listGet(list, i));
+        for (unsigned i = 0; i < listLength(list); ++i) {
+            if (give(listGet(list, i)))
+                return true;
+        }
     } else if (auto* tuple = PyTuple::tryFrom(object)) {
         for (JSValue item : tuple->span()) {
             // In one that is the memory of something else, None may stand for nothing.
-            if (item && !(depth && isNone(item)))
-                give(item);
+            if (item && !(depth && isNone(item)) && give(item))
+                return true;
         }
     } else if (auto* dict = PyDict::tryFrom(object)) {
         // CPython's does not mention its keys if they are all strings. An OrderedDict has them in its nodes too, and mentions those, whatever the dict in it does.
@@ -1089,17 +1134,16 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
             mentionsKeys = !key.isString();
         position = 0;
         while (dict->next(position, key, value)) {
-            give(value);
-            if (mentionsKeys)
-                give(key);
-            if (hasKeysInNodes)
-                give(key);
+            if (give(value) || (mentionsKeys && give(key)) || (hasKeysInNodes && give(key)))
+                return true;
         }
     } else if (auto* set = PySet::tryFrom(object)) {
         size_t position = 0;
         JSValue key;
-        while (set->next(position, key))
-            give(key);
+        while (set->next(position, key)) {
+            if (give(key))
+                return true;
+        }
     } else {
         isContainerByKind = false;
         UncheckedKeyHashSet<JSCell*> parts;
@@ -1121,34 +1165,57 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
         ReferentCollector collector(rt.vm());
         collector.visit(object);
         PyType* type = rt.typeOf(object);
-        for (JSCell* cell : collector.cells) {
-            if (hidden.contains(cell) || cell == type)
+        // Of an instance of the type of an extension: behind what the cell says for itself comes what the tp_traverse of the type has named (CApi::Face::visitChildren()).
+        size_t saidByCellItself = collector.cells.size();
+        if (type->has(TypeFlag::InstancesHaveDataOfC)) [[unlikely]] {
+            ReferentCollector cellItself(rt.vm());
+            PyObject::visitChildren(object, cellItself);
+            saidByCellItself = cellItself.cells.size();
+        }
+        // A cell of one of Python's kinds says once that it refers to its type, and so does a type. If it says so again, the type is a value that it holds: property(property), map(map, []), the base of a metaclass.
+        bool saysItsTypeOnce = isPyObject(object) || PyType::is(object);
+        bool hasSaidItsType = false;
+        // A type also says which of its bases lays out its instances. That is a note of the runtime's, beside the base, the bases and the MRO.
+        JSCell* noteOfRuntime = PyType::is(object) ? PyType::from(object)->solidBase() : nullptr;
+        for (size_t i = 0; i < collector.cells.size(); ++i) {
+            JSCell* cell = collector.cells[i];
+            if (hidden.contains(cell) || (cell == type && (!saysItsTypeOnce || !std::exchange(hasSaidItsType, true))))
                 continue;
-            if (parts.contains(cell)) {
-                if (depth < 2)
-                    appendReferents(globalObject, cell, result, depth + 1);
+            if (cell == noteOfRuntime) {
+                noteOfRuntime = nullptr;
                 continue;
             }
-            if (cell->isString() || cell->isHeapBigInt() || (cell->isObject() && isObjectOfPython(cell, globalObject) && isWhole(cell)))
-                result.append(cell);
-            else if (auto* view = PyMemoryView::tryFrom(cell); view && view->isInternal && !view->isReleased()) {
+            ownCodeHasNamedType |= cell == type && i >= saidByCellItself;
+            if (parts.contains(cell)) {
+                if (depth < 2 && forEachReferent(globalObject, cell, sink, depth + 1, isForMirror))
+                    return true;
+                continue;
+            }
+            if (mayBeGiven(cell)) {
+                if (sink(cell))
+                    return true;
+            } else if (auto* view = PyMemoryView::tryFrom(cell); view && view->isInternal && !view->isReleased()) {
                 // It stands for a Py_buffer of CPython's: who has that refers to the object whose memory it is.
                 JSValue exporter = view->managedBuffer()->object();
-                if (exporter && exporter.isCell() && isObjectOfPython(exporter.asCell(), globalObject) && !collector.cells.contains(exporter.asCell()))
-                    result.append(exporter);
+                if (exporter && exporter.isCell() && isObjectOfPython(exporter.asCell(), globalObject) && !collector.cells.contains(exporter.asCell()) && sink(exporter))
+                    return true;
             }
         }
         if (auto* generator = PyGenerator::tryFrom(object); generator && generator->isRunning()) {
+            bool isDone = false;
             forEachVariableOfRunningGenerators(rt.vm(), [&](PyGenerator* running, JSValue value) {
-                if (running == generator)
-                    result.append(value);
+                if (running == generator && !isDone)
+                    isDone = sink(value);
             });
+            if (isDone)
+                return true;
         }
     }
     // A cell that is a container by its kind may have more than items: an instance of a class that derives from one has its __dict__ and its slots, a defaultdict its factory, and a type written in C++ keeps things under hidden keys. A container
     // there is the runtime's own memory, a part of the object (HeapView::addPart()): what is in it, the object refers to (the values of a struct sequence that are no items). All these are
     // properties of the cell with names, which the items are not. (None of the plain containers has any.)
     if (Structure* structure = object->structure(); isContainerByKind && !depth && structure->maxOffset() != invalidOffset) {
+        bool isDone = false;
         structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
             JSValue value = asObject(object)->getDirect(entry.offset());
             if (!value || !value.isCell())
@@ -1158,15 +1225,41 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
             for (unsigned i = 0; i < Runtime::numberOfHiddenKeys; ++i)
                 isHidden |= entry.key() == &rt.hiddenKey(i).uid();
             if (isHidden && isContainer(cell))
-                appendReferents(globalObject, cell, result, depth + 1);
-            else if (cell->isString() || cell->isHeapBigInt() || (cell->isObject() && isObjectOfPython(cell, globalObject) && isWhole(cell)))
-                result.append(cell);
-            return true;
+                isDone = forEachReferent(globalObject, cell, sink, depth + 1, isForMirror);
+            else if (mayBeGiven(cell))
+                isDone = sink(cell);
+            return !isDone;
         });
+        if (isDone)
+            return true;
     }
-    // In CPython an object holds on to its type only if that has been allocated.
-    if (PyType* type = rt.typeOf(object); !depth && isAllocatedInCPython(type))
-        result.append(type);
+    // In CPython an object holds on to its type only if that has been allocated. There it is the tp_traverse of the type that says so, by visiting Py_TYPE(self), and this line stands for those of CPython's own types.
+    // That of the type of an extension has been asked itself (CApi::Face::visitChildren()): where it has named the type, that was its word, and it is not said again for it. (Where it has not been heard to, it may
+    // have named nothing, or the runtime has left the name out, as it does for a type without a tp_dealloc, whose instances own no reference to it here: from here nobody can tell. Then the line stands.)
+    if (PyType* type = rt.typeOf(object); !depth && isAllocatedInCPython(type) && !ownCodeHasNamedType)
+        return sink(type);
+    return false;
+}
+
+// For get_referrers(), of an object that the marker has seen to refer to one of these, itself (`wasSeenItself`) or by one of its parts alone: does it, as get_referents() understands it? A question: nothing is copied.
+static bool refersToOneOf(JSGlobalObject* globalObject, JSCell* object, bool wasSeenItself, std::span<const JSValue> objects)
+{
+    auto isOneOfThem = [&](JSValue value) {
+        return std::ranges::find(objects, value) != objects.end();
+    };
+    // Two answers that take no walk, whatever the size of the object. Its type is asked about, and it holds on to that. It is a container by its kind, and it is its own cell that the marker has seen: of all that such a cell
+    // refers to only the type is passed over (and the keys of a dict, if they are all strings): the marker has seen something else. (Not if it has seen a part alone: the tuple of the other values of a struct sequence refers to
+    // `tuple`, the weak reference that a set keeps for those who refer to it weakly to `weakref.ref`.)
+    // A type that is not allocated stands for its namespace, and for nothing else.
+    if (auto* itself = PyType::tryFrom(object); itself && !isAllocatedInCPython(itself))
+        return forEachReferent(globalObject, itself->dict(), isOneOfThem, 1, true);
+    PyType* type = runtime(globalObject).typeOf(object);
+    if (isOneOfThem(type)) {
+        if (isAllocatedInCPython(type))
+            return true;
+    } else if (wasSeenItself && isContainer(object) && !(PyDict::is(object) && std::ranges::any_of(objects, [](JSValue value) { return value.isString(); })))
+        return true;
+    return forEachReferent(globalObject, object, isOneOfThem, 0, true);
 }
 
 static JSValue gcGetReferents(JSGlobalObject* globalObject, const CallArgs& args)
@@ -1183,8 +1276,12 @@ static JSValue gcGetReferents(JSGlobalObject* globalObject, const CallArgs& args
         // Its __name__, __qualname__ and __doc__ are among them.
         if (auto* function = PyFunction::tryFrom(object))
             function->name();
-        if (object.isCell() && object.asCell()->isObject() && isObjectOfPython(object.asCell(), globalObject) && !isOfUntrackedType(typeOf(globalObject, object)))
-            appendReferents(globalObject, object.asCell(), result);
+        if (object.isCell() && object.asCell()->isObject() && isObjectOfPython(object.asCell(), globalObject) && !isOfUntrackedType(typeOf(globalObject, object))) {
+            forEachReferent(globalObject, object.asCell(), [&](JSValue referent) {
+                result.append(referent);
+                return false;
+            });
+        }
     }
     for (unsigned i = 0; i < result.size(); ++i) {
         // By whichever way it has got there. (All that any thread is handling has been seen to above.)
