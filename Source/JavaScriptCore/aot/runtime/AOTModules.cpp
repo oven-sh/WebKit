@@ -1358,6 +1358,12 @@ bool Modules::hasBegunToLoad(ModuleID module) const
     return data(module).isESModuleOfProgram() && wasLoadedWithGraph(module);
 }
 
+bool Modules::hasOnlyBeenLinked(ModuleID module)
+{
+    ModuleStatus current = status(module);
+    return (current == ModuleStatus::Unlinked || current == ModuleStatus::Linked) && !didCaptureExports(module) && !hasRun(module);
+}
+
 std::optional<ModuleID> Modules::formThatMockFinds(StringView path, std::optional<ModuleID> file) const
 {
     Vector<ModuleID, 2> forms = m_table.formsThatAttributesAskFor(path);
@@ -1715,7 +1721,7 @@ std::span<const uint32_t> Modules::requiredNamesOfStatementsThatExport(ModuleID 
 
 auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData& passedOn, MockOfModule ofPassingOn) const -> std::optional<AnswerOfMock>
 {
-    if (!someMockIsSeen() || passedOn.kind() == ModuleExportKind::Indirect)
+    if (!someMockIsSeen() || (passedOn.kind() == ModuleExportKind::Indirect && passedOn.isFromStarExport))
         return std::nullopt;
     BitVector modulesWithMock = m_modulesWithMockInPlace;
     for (ModuleID mocked : m_endedMocks.keys())
@@ -1733,6 +1739,17 @@ auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData&
         }
         return std::nullopt;
     };
+    if (passedOn.kind() == ModuleExportKind::Indirect) {
+        std::span<const RequiredNameData> requiredNames = m_table.requiredNames(passingOn);
+        for (uint32_t place : requiredNamesOfStatementsThatExport(passingOn, identifier(passedOn.name).string())) {
+            ModuleID exporter = requiredNames[place].exporterModule();
+            if (!std::ranges::contains(m_table.requests(passingOn), exporter, &ModuleRequestData::targetModule))
+                continue;
+            if (std::optional<ModuleID> mocked = mockedModuleFor(exporter, passingOn))
+                return AnswerOfMock { mockSeenOf(*mocked, passingOn), identifier(requiredNames[place].name), *mocked };
+        }
+        return std::nullopt;
+    }
     auto indexOfExport = [&](ModuleID module, uint32_t name) -> std::optional<unsigned> {
         return data(module).hasExportTable() ? m_table.findExport(module, identifier(name).impl()) : std::nullopt;
     };
@@ -7193,6 +7210,12 @@ bool hasBegunToLoad(JSGlobalObject* realm, ModuleID module)
     return !modules || modules->hasBegunToLoad(module);
 }
 
+bool hasOnlyBeenLinked(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->hasOnlyBeenLinked(module);
+}
+
 std::optional<ModuleID> formThatMockFinds(JSGlobalObject* realm, StringView path, std::optional<ModuleID> file)
 {
     Modules* modules = modulesOf(realm);
@@ -8605,8 +8628,13 @@ bool Modules::bodySetAsideWaitsForItsMock(ModuleID module, std::optional<ModuleI
     };
     if (!loadThatCalledFactory)
         return std::ranges::any_of(m_importsCalledByBodiesSetAside, waitsFor);
+    bool beganLoad = true;
     return std::ranges::any_of(m_importsCalledByBodiesSetAside, [&](const ImportCalledByBodySetAside& each) {
-        return fileOf(each.imported) == fileOf(*loadThatCalledFactory) && waitsFor(each);
+        if (fileOf(each.imported) != fileOf(*loadThatCalledFactory))
+            return false;
+        if (std::exchange(beganLoad, false))
+            return waitsFor(each);
+        return reachedByStatements(each.imported, AtMock::Stops).get(module.index()) && AbstractModuleRecord::importPromiseGatesAsyncDependency(each.promise.get(), root);
     });
 }
 

@@ -53,7 +53,7 @@ private:
     void putInBounds(const ValueContext&, const ArrayStorageForm&);
     enum class AccessVouchedFor : bool { Reads, Writes };
     Integer positionThatLibraryVouchesFor(const ValueContext&, const ArrayElements&, const ArrayStorageForm&, AccessVouchedFor);
-    Integer countThatLibraryVouchesFor(const ValueContext&, Integer count, const ArrayElements& asked, const ArrayElements& vouchedFor);
+    Integer countThatLibraryVouchesFor(const ValueContext&, Integer count, const ArrayElements& asked, const ArrayElements& vouchedFor, AccessVouchedFor);
     template<typename Functor> void forEachPositionBelow(Integer count, const Functor&);
     Condition isOneOfBoxedForms(Word32 mode, IndexingType ofIntegers, IndexingType ofValues);
     void newArrayOfForm(const ValueContext&, const ArrayStorageForm&);

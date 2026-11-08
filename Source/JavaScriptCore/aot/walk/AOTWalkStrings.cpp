@@ -404,8 +404,17 @@ std::optional<uint32_t> operandsNarrowedBehindTestForStrings(const Walker& walke
     if (index.isUnused(test))
         return 0;
     std::optional<BodyUser> user = index.onlyUser(test);
-    if (!user)
-        return std::nullopt;
+    if (!user) {
+        std::optional<BodyUser> first = index.firstUser(test);
+        ValueID truth = first && first->kind == BodyUseKind::Operand && index.opcodeOf(first->value) == Opcode::ToBoolean ? first->value : ValueID();
+        std::optional<BodyUser> asker = truth ? index.onlyUser(truth) : std::nullopt;
+        if (!asker || asker->kind != BodyUseKind::TerminatorOperand)
+            return std::nullopt;
+        uint32_t numberOfUsesSeen = 1;
+        for (BodyTarget target : index.terminator(asker->block).targets())
+            numberOfUsesSeen += target.proofs().size();
+        return index.useCount(test) == numberOfUsesSeen ? std::optional<uint32_t>(0) : std::nullopt;
+    }
     if (user->kind != BodyUseKind::TerminatorOperand)
         return 0;
 

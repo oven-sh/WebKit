@@ -620,6 +620,7 @@ void GuessedAccessEmitter::storeInProvenListUnderAnyKey(const ValueContext& valu
         elements.setPublicLength(storage, add(test.indexInside, integer(1)));
         m_out.jump(liesInside);
         m_out.appendTo(liesInside);
+        elements.stopWhereHoleWouldBeStored(value, form, *rawElement);
         elements.storeRawElement(form, storage, test.indexInside, *rawElement);
         if (form.holdsCells && typeOf(stored).hasCells()) {
             Boxed storedElement = rawElement->as<Boxed>();
@@ -721,6 +722,7 @@ void GuessedAccessEmitter::generateElementStore(const ValueContext& value)
             ArrayElements storage = elements.elementsOf(owner);
             LengthTest test = elements.testLength(signExtended(index), storage);
             branchUnless(test.isInside, failure);
+            elements.stopWhereHoleWouldBeStored(value, form, *element);
             elements.storeRawElement(form, storage, test.indexInside, *element);
             if (form.holdsCells && typeOf(storedValue).hasCells()) {
                 Boxed storedElement = element->as<Boxed>();

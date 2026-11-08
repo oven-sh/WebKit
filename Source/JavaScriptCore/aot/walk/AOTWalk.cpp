@@ -1726,7 +1726,7 @@ void Walker::proveThatSlotsOfScopeTakeStoredValues(Draft& store)
     store.setValuesOperands(values.span());
 }
 
-void Walker::holdStoredValuesToPlaces(const Draft& draft)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::holdStoredValuesToPlaces(const Draft& draft)
 {
     Origin origin = draft.origin();
     bool storesWrittenConstant = false;
@@ -1933,7 +1933,7 @@ static ALWAYS_INLINE ProofSource sourceOfProofInWalk(Opcode opcode)
 
 static constexpr OpcodeSet readsThatHandOverWhatLies {
     Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined, Opcode::GetStaticFieldOrAbsent, Opcode::GetEnvironmentField, Opcode::GetModuleVariable,
-    Opcode::GetCapture, Opcode::GetGlobalBinding, Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex, Opcode::GetPropertyOfHeir,
+    Opcode::GetCapture, Opcode::GetGlobalBinding, Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex, Opcode::GetPropertyOfHeir, Opcode::GetWordOfBoundFunction,
 };
 
 static constexpr RepresentationSet rawFormsOfJavaScriptValuesInWalk { Representation::Boolean, Representation::Int32, Representation::Double, Representation::OptionalInt64, Representation::OptionalDouble };
@@ -2887,7 +2887,7 @@ bool Walker::bodyAtWorkCallsItself() const
     if (!frame.index)
         return false;
     if (!frame.bodyCallsItself)
-        frame.bodyCallsItself = callsItselfByItsOwnText(program(), *frame.index, currentFunction());
+        frame.bodyCallsItself = callsItselfByItsOwnText(program(), *frame.index, currentFunction()) || callsItselfUnderNameThatStatementLaysOnPrototype(*this, *frame.index, currentFunction());
     return *frame.bodyCallsItself;
 }
 
@@ -3392,7 +3392,7 @@ static constexpr OpcodeSet conversionsOnStraightRoadInWalk { Opcode::Box, Opcode
 static_assert((conversionsOnStraightRoadInWalk | conversionsOfForm) == conversionsOfForm && (conversionsOnStraightRoadInWalk | opcodesThatGiveSameCell) == opcodesThatGiveSameCell);
 static_assert(!conversionsOnStraightRoadInWalk.intersects(opcodesThatStateTypes));
 
-Reference Walker::tryBuildConversionOnStraightRoad(Opcode opcode, Representation to, Reference operand, Origin origin)
+ALWAYS_INLINE_INTO_OTHER_FILES Reference Walker::tryBuildConversionOnStraightRoad(Opcode opcode, Representation to, Reference operand, Origin origin)
 {
     if (!(stepsOfBuildOf(opcode) & StepOfBuildInWalk::isConversionOnStraightRoad) || !operand.isRecord() || isUnreachable())
         return { };
@@ -4116,7 +4116,8 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         if (leaveCopyOfHeadForCall())
             return { };
     }
-    if (!m_openLoops.isEmpty()) {
+    const bool isStorePassedOver = m_inputs.options.typedTurnsPassStoresIntoListsOver && draft.opcode == Opcode::PutArrayElement && !m_openLoops.isEmpty();
+    if (!m_openLoops.isEmpty() && !isStorePassedOver) {
         if (!m_isWalkingAccess && !m_openLoops.isEmpty() && effects.mayRunOtherCode() && (m_code.at(m_block).frequency == BlockFrequency::Rare ? mayBeginTurnAgainInClosedCopy() : turnOfTypedCopyHasDoneNothing()) && !looksAtLoopsAroundHaveCounted(draft, effects)) {
             m_turnOfTypedBuildLeavesWithoutTest |= m_code.at(m_block).frequency == BlockFrequency::Normal;
             m_waysIntoClosedCopies.last().isLeftAtOtherCodeOnUsualWay |= m_code.at(m_block).frequency == BlockFrequency::Normal;
@@ -4130,7 +4131,7 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         }
     }
     bool endsNoGuard = (!m_triesOfLoops.isEmpty() || m_inputs.options.checksEffects) && effects.writes.contains(AbstractHeap::MemberGuards) && !effects.mayRunOtherCode() && writerEndsNoGuard(*this, draft);
-    if (!m_triesOfLoops.isEmpty() && (!hasNoEffects || m_inputs.options.periodOfHearingsThatCutWalks) && draft.opcode != Opcode::EndLifeOfCell) {
+    if (!m_triesOfLoops.isEmpty() && (!hasNoEffects || m_inputs.options.periodOfHearingsThatCutWalks) && draft.opcode != Opcode::EndLifeOfCell && !isStorePassedOver) {
         bool isCall = effects.mayRunOtherCode() && effectRuleOf(draft.opcode) == EffectRule::Call;
         FunctionID callee = isCall && isWrittenInFrameOnTop(draft) && !facts().linked().calls.isEmpty() ? facts().linked().calleeAt(currentFunction(), draft.inputValueGiven) : FunctionID();
         if (callee) {
@@ -6134,7 +6135,7 @@ bool Walker::narrowHolderOfTestedFieldOnEdge(BlockID from, uint32_t targetIndex,
     return true;
 }
 
-Reference Walker::tagReadInFrontOfTest(const BodyValue& read)
+ALWAYS_INLINE_INTO_OTHER_FILES Reference Walker::tagReadInFrontOfTest(const BodyValue& read)
 {
     if (!has(Mechanism::TypedOperations))
         return { };

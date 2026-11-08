@@ -3058,7 +3058,12 @@ void Modules::waitForFactoriesThatRequireLeft(ModuleID required)
         return;
     JSPromise* wait = JSPromise::create(vm, realm->promiseStructure());
     wait->markAsHandled();
-    m_waitsThatRequiresLeft.append({ required, Strong<JSPromise>(vm, wait), true, number, heard });
+    BitVector fetchedAsThemselves(m_table.size());
+    for (size_t below : reachedByStatements(required, AtMock::Stops)) {
+        if (!isMocked(ModuleID(below)))
+            fetchedAsThemselves.set(below);
+    }
+    m_waitsThatRequiresLeft.append({ required, Strong<JSPromise>(vm, wait), true, number, heard, WTF::move(fetchedAsThemselves) });
 }
 
 void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason reason)

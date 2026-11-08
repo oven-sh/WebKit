@@ -998,6 +998,13 @@ void Walker::noteLengthOfViewAskedForWrittenPlace(Reference view)
     m_triesOfLoops.last().asksLengthsOfViewsFromInFrontForWrittenPlaces = true;
 }
 
+void Walker::noteListFromInFrontTakenApart(Reference list)
+{
+    if (m_triesOfLoops.isEmpty() || m_openLoops.isEmpty() || !list.isValue() || !standsInFrontOfLoop(m_openLoops.size() - 1, list) || leavesOutQuestionThatEveryTurnWouldAsk(QuestionIsAsked::Anywhere))
+        return;
+    m_triesOfLoops.last().takesApartListsFromInFront = true;
+}
+
 bool Walker::turnsOfTypedCopyLeaveViewsAsTheyAre(TurnOfTypedCopy turn) const
 {
     std::optional<uint32_t> loop = openLoopOfTypedCopy(turn);
@@ -2491,6 +2498,106 @@ static bool turnsReadListsFoundFromInFront(const Program& program, const BodyInd
     return false;
 }
 
+static ValueID valueThatIsHandedOnAs(Walker& walker, const BodyIndex& index, ValueID name, unsigned joinsLeft = 3)
+{
+    for (;;) {
+        if (!index.isParameter(name)) {
+            if (!inputOperationsThatOnlyHandOn.contains(index.opcodeOf(name)))
+                return name;
+            name = index.value(name).operand(0);
+            continue;
+        }
+        if (ValueID narrowed = index.valueNarrowedInto(name)) {
+            name = narrowed;
+            continue;
+        }
+        BlockID join = index.blockOf(name);
+        if (!joinsLeft || index.isLoopHead(join) || join == entryBlock)
+            return name;
+        uint32_t place = name.index() - index.block(join).firstParameter().index();
+        ValueID arrives;
+        for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, join)) {
+            std::span<const ValueID> arguments = edge.target.arguments();
+            ValueID handedOn = place < arguments.size() ? valueThatIsHandedOnAs(walker, index, arguments[place], joinsLeft - 1) : ValueID();
+            if (!handedOn || (arrives && arrives != handedOn))
+                return name;
+            arrives = handedOn;
+        }
+        if (!arrives)
+            return name;
+        name = arrives;
+    }
+}
+
+static bool whatComesRoundIsReadOff(Walker& walker, const BodyIndex& index, BlockID inputHead, uint32_t position)
+{
+    ValueID parameter = index.block(inputHead).parameter(position);
+    LoopID loop = index.loopOf(inputHead);
+    bool followsLink = false;
+    for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, inputHead)) {
+        if (!index.isInLoop(edge.from, loop))
+            continue;
+        std::span<const ValueID> arguments = edge.target.arguments();
+        if (position >= arguments.size())
+            return false;
+        ValueID comesRound = valueThatIsHandedOnAs(walker, index, arguments[position]);
+        if (comesRound == parameter)
+            continue;
+        if (index.isParameter(comesRound) || index.opcodeOf(comesRound) != Opcode::PropGet || index.value(comesRound).isFreeName() || valueThatIsHandedOnAs(walker, index, index.value(comesRound).objectOperand()) != parameter)
+            return false;
+        followsLink = true;
+    }
+    return followsLink;
+}
+
+static ValueID nameUnderWhichTurnsReadInTwoBlocksOff(Walker& walker, const BodyIndex& index, BlockID inputHead, ValueID parameter)
+{
+    BlockID first;
+    ValueID asWritten;
+    for (BlockID member : index.membersOf(index.loopOf(inputHead))) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (operation.opcode() != Opcode::PropGet || operation.isFreeName())
+                continue;
+            if (valueThatIsHandedOnAs(walker, index, operation.objectOperand()) != parameter)
+                continue;
+            if (first && first != member)
+                return asWritten;
+            first = member;
+            asWritten = operation.objectOperand();
+        }
+    }
+    return { };
+}
+
+static void appendLinksHeldWhereTheyComeRound(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, Vector<CounterTestedInFrontOfLoop, 2>& counters)
+{
+    TypeArena& types = walker.types();
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock head = index.block(inputHead);
+    for (uint32_t position = 0; position < head.numberOfParameters() && position < entering.size(); ++position) {
+        if (!entering[position] || !entering[position].isValue() || counters.containsIf([&](const CounterTestedInFrontOfLoop& counter) { return counter.position == position; }))
+            continue;
+        ValueID parameter = head.parameter(position);
+        ValueID asWritten = nameUnderWhichTurnsReadInTwoBlocksOff(walker, index, inputHead, parameter);
+        if (!asWritten || !whatComesRoundIsReadOff(walker, index, inputHead, position))
+            continue;
+        TypeID expected = findExpectation(walker, parameter).type;
+        if (!expected)
+            expected = findExpectation(walker, asWritten).type;
+        if (!expected)
+            continue;
+        Type type = types.at(expected);
+        if (!type.hasObjects() || !type.hasOnlyLayouts() || type.hasOnlyClosures() || !holdsOneMember(type.layouts) || (type.primitives & ~Primitive::UndefinedOrNull))
+            continue;
+        if (!types.overlap(walker.typeOf(entering[position]), types.withoutNullish(expected)))
+            continue;
+        TypeID held = types.unionOf(expected, TypeArena::fromPrimitives(Primitive::UndefinedOrNull));
+        if (position < preview.typesOfParameters.size() && preview.typesOfParameters[position] && types.isSubset(preview.typesOfParameters[position], held))
+            continue;
+        counters.append({ position, held, true, true });
+    }
+}
+
 bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering)
 {
     if (!m_buysTwoBuilds && !m_asksOnlyWhetherLoopMayBeBuiltTwice)
@@ -2562,6 +2669,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         listsRead = findListsReadInLoop(*this, inputHead, preview, entering, guesses);
     }
     Vector<CounterTestedInFrontOfLoop, 2> counters = findCountersTestedInFrontOfLoop(*this, inputHead, preview, entering, guesses);
+    appendLinksHeldWhereTheyComeRound(*this, inputHead, preview, entering, counters);
     Vector<VariableAskedInFrontOfLoop, 2> variablesAskedInFront;
     Vector<VariableID, 2> functionsOfOtherFilesAskedInFront;
     guessDivisorsOfIntegersInFrontOfLoop(*this, inputHead, preview, entering, guesses, variablesAskedInFront);
@@ -2970,7 +3078,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     bool isBoughtForBoundAlone = relationOfHeadOnNumber.relation && (!hasTestInFront || guardsNotedAreOnlyTestInFront) && variablesCheckedInTurns.isEmpty() && !ofTypedCopy && !m_types.at(typeOfBoundOfRelation()).isNumberWithinBounds();
     hasTestInFront |= isBoughtForBoundAlone;
     bool hasNothingToAskInFront = !hasTestInFront && variablesCheckedInTurns.isEmpty() && !ofTypedCopy && !holdsCounterBelowRoom;
-    bool isBoughtForListsFoundFromInFront = hasNothingToAskInFront && closedCopyHasEntry && !preview.effects.mayRunOtherCode() && (turnsReadListsFoundFromInFront(program(), index, inputHead) || (m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces && !preview.effects.writes.overlaps(LocationMasks(AbstractHeapSet { AbstractHeap::TypedArrayStorage }))));
+    bool isBoughtForListsFoundFromInFront = hasNothingToAskInFront && closedCopyHasEntry && !preview.effects.mayRunOtherCode() && (turnsReadListsFoundFromInFront(program(), index, inputHead) || m_turnsOfRowTakeApartListsFromInFront || (m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces && !preview.effects.writes.overlaps(LocationMasks(AbstractHeapSet { AbstractHeap::TypedArrayStorage }))));
     if (hasNothingToAskInFront && !isBoughtForListsFoundFromInFront) {
         if (counters.isEmpty())
             return false;
@@ -3577,6 +3685,9 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     WalkState stateWhereTestsPassed = m_state;
     if (frontIsEnteredOutOfTurns && !closedStart)
         closedStart = addBlock(BlockFrequency::Rare);
+    WalkState stateOfClosedStartOfItsOwn;
+    if (frontIsEnteredOutOfTurns)
+        stateOfClosedStartOfItsOwn = stateWhereTestsPassed;
     if (!sharedEntry) {
         if (closedStart && !frontLeadsOnAsItDid)
             continueIn(closedStart);
@@ -3621,7 +3732,8 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             if (firstPurchaseIsListed)
                 m_loopsBeingBought.removeLast();
             bool wayAroundBeginsLoop = !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().frameIndex == frameIndex && m_waysIntoClosedCopies.last().inputHead == inputHead;
-            BlockID startOfWayAround = wayAroundBeginsLoop ? std::exchange(m_waysIntoClosedCopies.last().startFromInFront, BlockID()) : BlockID();
+            size_t placeOfWayAround = m_waysIntoClosedCopies.size() - wayAroundBeginsLoop;
+            BlockID startOfWayAround = wayAroundBeginsLoop ? std::exchange(m_waysIntoClosedCopies[placeOfWayAround].startFromInFront, BlockID()) : BlockID();
             if (closedCopyIsSharedBehindOtherCopy) {
                 m_closedCopiesShared.last().isAboutToBeTaken = true;
                 m_closedCopiesShared.last().isEnteredOutOfTurns = true;
@@ -3629,7 +3741,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
                 m_frames[frameIndex].loopsBeingBuiltTwice.removeLast();
             walkCopyOfLoop(inputHead, enteringClosedCopy.span());
             if (wayAroundBeginsLoop)
-                m_waysIntoClosedCopies.last().startFromInFront = startOfWayAround;
+                m_waysIntoClosedCopies[placeOfWayAround].startFromInFront = startOfWayAround;
             if (closedCopyIsSharedBehindOtherCopy) {
                 m_closedCopiesShared.last().isAboutToBeTaken = false;
                 m_closedCopiesShared.last().isEnteredOutOfTurns = false;
@@ -3791,8 +3903,11 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             m_waysIntoClosedCopies.last().readOfVariableThatIsBound = readOfVariableThatIsBound;
         }
         for (const CounterTestedInFrontOfLoop& counter : counters) {
-            if (entryOfClosedCopy && counter.isHeldWhereItComesRound)
+            if (entryOfClosedCopy && counter.isHeldWhereItComesRound) {
                 m_waysIntoClosedCopies.last().countersHeld.append({ counter.position, counter.tested });
+                if (m_types.at(counter.tested).hasObjects())
+                    count(StatisticID::LinksHeldToTheirLayoutWhereTheyComeRound);
+            }
         }
         ++m_ordinalOfCopyOfLoop;
         if (turnsThatRunOtherCodeComeRound)
@@ -3970,6 +4085,16 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         m_block = { };
         m_state.clear();
         continueIn(closedStart);
+        if (isUnreachable()) {
+            bool hoistedTestsLeadHere = false;
+            m_code.forEachEdgeIntoSoFar(closedStart, [&](const Edge&) {
+                hoistedTestsLeadHere = true;
+            });
+            if (hoistedTestsLeadHere) {
+                m_block = closedStart;
+                m_state = WTF::move(stateOfClosedStartOfItsOwn);
+            }
+        }
         if (!isUnreachable())
             enterWithFieldsOfScopes(sharedEntry, entering);
     }

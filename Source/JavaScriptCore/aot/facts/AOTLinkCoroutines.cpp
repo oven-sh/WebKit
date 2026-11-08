@@ -12,6 +12,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTFacts.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTypesOnAllThreads.h"
 #include "AOTObjects.h"
 #include "AOTTypeArena.h"
@@ -100,7 +101,7 @@ void writeCoroutinesOfLink(const Program& program, const LinkFlow& flow, TypeAre
     });
 }
 
-void forEachFunctionNamedByCoroutinesCalledBy(const Program& program, const LinkTables& tables, FunctionID referrer, const ScopedLambda<void(FunctionID)>& functor)
+ALWAYS_INLINE_INTO_OTHER_FILES void forEachFunctionNamedByCoroutinesCalledBy(const Program& program, const LinkTables& tables, FunctionID referrer, const ScopedLambda<void(FunctionID)>& functor)
 {
     if (tables.coroutines.isEmpty())
         return;

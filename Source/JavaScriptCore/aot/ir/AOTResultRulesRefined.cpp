@@ -11,6 +11,7 @@
 #include "AOTBody.h"
 #include "AOTCode.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTVector.h"
 #include "PageCount.h"
@@ -266,7 +267,7 @@ static TypeID refinedTypeWithin(TypeArena& types, TypeID refined, TypeID upperBo
 }
 
 template<typename Operation>
-TypeID refineFixedNatural(const TypingContext& context, const Operation& operation, OperandTypes operands, TypeID upperBound)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID refineFixedNatural(const TypingContext& context, const Operation& operation, OperandTypes operands, TypeID upperBound)
 {
     Opcode opcode = opcodeOf(operation);
     if (!opcodesRefinedBeyondFixedNatural.contains(opcode))

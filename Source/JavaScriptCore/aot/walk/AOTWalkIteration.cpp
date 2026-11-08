@@ -1153,6 +1153,12 @@ public:
                 iteration.position = integer(*position + 1);
                 return resultsOf(boolean(false), value);
             }
+            if (position && iteration.stepsOfPatternStandInRow && runsNoCode && !iteration.table && iteration.kind == JSC::IterationKind::Values) {
+                SetForScope takesApart(m_takesListApart, true);
+                Reference value = handedOutAt(iteration, iteration.list, iteration.position, true, std::nullopt);
+                iteration.position = integer(*position + 1);
+                return resultsOf(boolean(false), value);
+            }
         }
 
         BlockID after = addBlock();
@@ -2132,7 +2138,12 @@ private:
             m_walker.letLeave(list);
         TypeID before = m_walker.exchangeResultOfReadBeingTyped(provenByLink);
         Reference built;
-        if (std::optional<ListTestedInFrontOfLoop> tested = findListTestedInFrontOfLoop(m_walker, list)) {
+        std::optional<ListTestedInFrontOfLoop> tested = findListTestedInFrontOfLoop(m_walker, list);
+        if (!tested && m_takesListApart && m_site)
+            tested = askListTakenApartInFrontOfTypedCopy(m_walker, m_walker.currentBodyIndex().value(m_site->operand(0)), list);
+        if (!tested && m_takesListApart)
+            m_walker.noteListFromInFrontTakenApart(list);
+        if (tested) {
             Draft read = readOfListTestedInFrontOfLoop(list, position, *tested, insideLength);
             if (m_valueThatStepHandsToArithmeticAlone && read.isInBounds() && holdsOnlyNumbers(read.arrayStorage())) {
                 read.setReadsHoleAsNaN(true);
@@ -3129,6 +3140,7 @@ private:
     bool m_protocolIsForTheOddOne { false };
     BlockID m_whereNeitherTextNorListIsStepped;
     ValueID m_valueThatStepHandsToArithmeticAlone;
+    bool m_takesListApart { false };
     BlockFrequency m_frequencyOfBlocksAdded { BlockFrequency::Normal };
     Reference m_instanceAsMadeForGood;
     BlockID m_blockOfCallThatMakesIterator;
@@ -3659,6 +3671,9 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
         iteration.table = builder.tableThatFirstStepBeginsIn(iterable, proven->contents);
         iteration.isAsMadeForGood = isAsMadeForGood;
         iteration.isOpenAtEveryStepAndClose = way.isOpenAtEveryStepAndClose;
+        iteration.stepsOfPatternStandInRow = proven->contents == ContentsStepped::List && stepsOfPatternStandInRow(index, open);
+        if (iteration.stepsOfPatternStandInRow)
+            walker.count(StatisticID::PatternsThatReadListsAsMadeUnderWrittenPlaces);
     } else {
         if (isExpectedToBeSteppedUnseen(walker, open.id()))
             builder.expectNoStepByProtocol();

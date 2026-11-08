@@ -112,6 +112,7 @@ bool isAskedForNameThatNoBuiltinAnswers(Walker&, ValueID);
 bool isExpectedToBeArgumentsObject(Walker&, ValueID);
 bool isShapedLikeLayoutsThatItCanNeverBe(Walker&, ValueID);
 bool callsItselfByItsOwnText(const Program&, const BodyIndex&, FunctionID);
+bool callsItselfUnderNameThatStatementLaysOnPrototype(const Walker&, const BodyIndex&, FunctionID);
 TypeID typeThatMapIsExpectedToGive(Walker&, const BodyValue& call);
 void sayWhatIsExpectedOfComparedOperands(Walker&, const BodyValue& equality, Draft&);
 void sayWhatIsExpectedOfValueAskedForTruth(Walker&, const BodyValue& question, Draft&);
@@ -1040,6 +1041,7 @@ public:
         ValueID literal;
         Vector<Reference, 4> takenAtOpen;
         bool isTakenAtOpen { false };
+        bool stepsOfPatternStandInRow { false };
         BlockID inputHead;
         BlockID head;
         uint32_t inlineFrame { 0 };
@@ -1245,6 +1247,7 @@ public:
     ReadWhoseGuessIsOpen& readWhoseGuessIsOpen() { return m_readWhoseGuessIsOpen; }
     void noteListAskedInFrontOfTypedCopy() { ++m_numberOfListsAskedInFrontOfTypedCopies; }
     void noteLengthOfViewAskedForWrittenPlace(Reference view);
+    void noteListFromInFrontTakenApart(Reference list);
     void noteElementAskedInFrontOfTypedCopy() { ++m_numberOfElementsAskedInFrontOfTypedCopies; }
     void noteNumberReadInFrontOfTypedCopy() { ++m_numberOfNumbersReadInFrontOfTypedCopies; }
     void noteFillersOfAllocation(Reference allocation, Vector<FieldIndex, 2>&& fields) { m_fillersOfAllocations.set(allocation.id().index(), WTF::move(fields)); }
@@ -1439,6 +1442,7 @@ public:
     bool takesNumbersStoredIntoListsOfDoublesToBeNoNaN() const { return m_inputs.options.takesNumbersStoredIntoListsOfDoublesToBeNoNaN; }
     bool takesOneRowToSpeakForAll() const { return m_inputs.options.takesOneRowToSpeakForAll; }
     bool takesNothingToBeDoneToFreshLists() const { return m_inputs.options.takesNothingToBeDoneToFreshLists; }
+    bool takesBoundFunctionsToBindOneMore() const { return m_inputs.options.takesBoundFunctionsToBindOneMore; }
     std::optional<PassedTest> findWhatHoldsPositionBelowRoomOfView(Reference view, Reference position);
     struct PlacesSeenToStandInStretches {
         const BodyIndex* index { nullptr };
@@ -1717,6 +1721,7 @@ public:
     std::optional<PassedTest> goOnInTypedCopyWhereTestInFrontPasses(Reference test, bool passesWithYes, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing);
     bool turnsOfTypedCopyLeaveListsAsTheyAre(Reference list, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing);
     bool textOfLoopReckonsWithWhatItReads(BlockID inputHead) { return loopReckonsWithWhatItReads(inputHead); }
+    std::span<const uint64_t> holdersFromInFrontThatLoopReadsUnderIndexes(BlockID inputHead);
     bool takesReceiversOfMethodsOfListsToBeMadeHere() const { return m_inputs.options.takesReceiversOfMethodsOfListsToBeMadeHere; }
     std::optional<BlockID> headOfInnermostTryInFrameOnTop() const { return !m_triesOfLoops.isEmpty() && m_triesOfLoops.last().frameIndex == m_frames.size() - 1 ? std::optional(m_triesOfLoops.last().inputHead) : std::nullopt; }
     using ObjectsMadeHereThatLoopMentions = Vector<uint32_t, 4>;
@@ -2433,6 +2438,7 @@ private:
         bool firstOtherCodeRanInCopy { false };
         bool someCallStaysInTurn { false };
         bool asksLengthsOfViewsFromInFrontForWrittenPlaces { false };
+        bool takesApartListsFromInFront { false };
         Vector<ValueID, 4> operationsThatRanOtherCode;
         Vector<MemberConditionRecord, 2> guardsOfStoresAsked;
         uint32_t numberOfEdgesThatCameRound { 0 };
@@ -2536,6 +2542,7 @@ private:
         bool firstOtherCodeRanInCopy { false };
         bool someCallStaysInTurn { false };
         bool asksLengthsOfViewsFromInFrontForWrittenPlaces { false };
+        bool takesApartListsFromInFront { false };
         uint32_t numberOfEdgesThatCameRound { 0 };
         Vector<ValueID, 8> headParametersThatEnter;
         Vector<TypeID, 8> enteredBesideHeadParameters;
@@ -2693,6 +2700,7 @@ private:
     Vector<ExpectationOfArgument, 2> m_expectedOfArgumentsOfCopies;
     bool m_someCallStaysInTurnOfRow { false };
     bool m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces { false };
+    bool m_turnsOfRowTakeApartListsFromInFront { false };
     bool m_everyTurnOfTypedBuildLeaves { false };
     bool m_readWasKeptFromItsSiteBecauseCallStays { false };
     bool m_turnOfTypedBuildLeavesWithoutTest { false };

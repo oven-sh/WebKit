@@ -578,7 +578,7 @@ void ElementAccessEmitter::holdElementToldToBeThere(const ValueContext& read, Co
     build().statistics().count(counted);
 }
 
-void ElementAccessEmitter::stopWhereHoleWouldBeStored(const ValueContext& store, const ArrayStorageForm& form, Operand rawElement)
+void ElementAccessEmitter::stopWhereHoleWouldBeStored(const OperationContext& store, const ArrayStorageForm& form, Operand rawElement)
 {
     if (emittersCheckProofs())
         emitter<ThrowEmitter>().requireOrStopAtFalseProof(store, logicalNot(isHole(form, rawElement)), std::nullopt, ProofSource::OtherOperation);

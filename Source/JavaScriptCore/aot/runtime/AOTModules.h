@@ -566,6 +566,7 @@ public:
     MocksBelowRoot mocksBelow(ModuleID root) const { return { m_table, m_mocks, root, isMocked(root) && (m_modulesThatRanBesideMock.get(root.index()) || runsBesideMockFor(root, std::nullopt)) }; }
     bool isLinkedBelow(ModuleID module, ModuleID root) const { return !mocksBelow(root).hides(module) && (!isMocked(module) || mocksBelow(module).rootRunsBesideItsMock()); }
     bool hasBegunToLoad(ModuleID) const;
+    bool hasOnlyBeenLinked(ModuleID);
     bool hostAnswersInPlaceOf(ModuleID, LoadByName);
     bool isKeptInRequireCache(ModuleID) const;
     bool isInRequireCache(ModuleID) const;
@@ -2211,7 +2212,9 @@ private:
         bool keepsError;
         unsigned number;
         unsigned factoriesYetToSettle;
+        BitVector fetchedAsThemselves;
     };
+    bool wasFetchedAsItselfByLoadThatRequireLeft(ModuleID root, ModuleID module) const;
     Vector<WaitThatRequireLeft> m_waitsThatRequiresLeft;
     unsigned m_numberOfWaitsThatRequiresHaveLeft { 0 };
     BitVector m_modulesLoadedBeforeMockThatWaited;

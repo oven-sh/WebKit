@@ -2692,6 +2692,53 @@ static void testStubThatCanMeetNoFieldAsksNoShape()
     }
 }
 
+static void testPlacesWhoseDistancesAgreeInSixteenBitsShareOneCount()
+{
+    constexpr uint32_t bytesOfCounts = InstanceLayout::bytesReservedForMissesOfPlaces;
+    constexpr uint32_t distanceOfSameCount = AnswersAtOnePlace::distance + bytesOfCounts;
+    constexpr uint32_t distanceOfLastCount = 2 * bytesOfCounts - sizeof(uint16_t);
+    static_assert(distanceOfSameCount < distanceOfLastCount && distanceOfLastCount + sizeof(uint16_t) <= InstanceLayout::offsetOfStringCells);
+    constexpr uint8_t step = SiteCacheState::sampleStep;
+    constexpr uint8_t oneMissBeforeSample = static_cast<uint8_t>(UINT8_MAX + 1 - step);
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    Instance& instance = reads.runner.instance();
+    uint8_t* bytesOfInstance = reinterpret_cast<uint8_t*>(&instance);
+    Vector<uint16_t> namesOfSites(FillWith { }, (distanceOfLastCount - AnswersAtOnePlace::distance) / sizeof(uint16_t) + 1, PropertyReads::name);
+    instance.image.namesOfSitesByDistance = reinterpret_cast<const uint8_t*>(namesOfSites.span().data()) - AnswersAtOnePlace::distance;
+    for (uint32_t distance : { distanceOfSameCount, distanceOfLastCount })
+        *reinterpret_cast<uint16_t*>(bytesOfInstance + distance) = AnswersAtOnePlace::index;
+    uint8_t* lastCount = bytesOfInstance + InstanceLayout::offsetOfSiteAnswers - sizeof(uint16_t);
+    lastCount[0] = 0;
+    lastCount[1] = 0;
+    const uint8_t firstByteOfAnswers = lastCount[2];
+    OrdinaryObjectWithTwoValues visitor(PropertyReads::structureID, 1, 2);
+    reads.fileInFrontBesideOthers(Slot::createInStorage(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::Value, Slot::isOwn, nullptr, 0));
+    auto missAt = [&](uint32_t distance) {
+        StubRun run = reads.runner.run(readAtSiteAskingStructureFirst(ReceiverAtSite::IsCell, SiteUse::ReadUnderNameOfField), { visitor.address() }, distance);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(1)) && lastCount[2] == firstByteOfAnswers);
+    };
+
+    missAt(AnswersAtOnePlace::distance);
+    AOT_TEST_CHECK(place.misses() == step && !place.misses(1) && !lastCount[0] && !lastCount[1]);
+    missAt(distanceOfSameCount);
+    AOT_TEST_CHECK(place.misses() == 2 * step && !place.misses(1) && !lastCount[0] && !lastCount[1]);
+    missAt(distanceOfLastCount);
+    AOT_TEST_CHECK(place.misses() == 2 * step && !place.misses(1) && lastCount[0] == step && !lastCount[1]);
+
+    place.misses(1) = 2;
+    for (uint32_t distance : { distanceOfSameCount, AnswersAtOnePlace::distance }) {
+        const uint8_t leftOut = place.misses(1);
+        place.misses() = oneMissBeforeSample;
+        missAt(distance);
+        AOT_TEST_CHECK(!place.misses() && place.misses(1) == leftOut - 1 && lastCount[0] == step && !lastCount[1]);
+    }
+    lastCount[0] = oneMissBeforeSample;
+    lastCount[1] = 1;
+    missAt(distanceOfLastCount);
+    AOT_TEST_CHECK(!lastCount[0] && !lastCount[1] && !place.misses() && !place.misses(1));
+}
+
 template<HitAtPlace hit, uint32_t budget>
 static void testInstructionsOfHitAtPlace()
 {
@@ -3372,6 +3419,7 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/read-at-site/a-wide-place-asks-its-structures-in-front-of-the-shape"_s, ImageTests::whenExecutable<testWidePlaceAsksItsStructuresInFrontOfShape> },
         { "stubs/read-at-site/whether-a-name-is-there-is-answered-by-the-further-answers"_s, ImageTests::whenExecutable<testWhetherNameIsThereIsAnsweredByFurtherAnswers> },
         { "stubs/read-at-site/a-stub-that-can-meet-no-field-asks-no-shape"_s, ImageTests::whenExecutable<testStubThatCanMeetNoFieldAsksNoShape> },
+        { "stubs/read-at-site/places-whose-distances-agree-in-sixteen-bits-share-one-count"_s, ImageTests::whenExecutable<testPlacesWhoseDistancesAgreeInSixteenBitsShareOneCount> },
         { "stubs/read-at-site/instructions/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::BoxedField, 11>> },
         { "stubs/read-at-site/instructions/an-integer-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::Int32Field, 22>> },
         { "stubs/read-at-site/instructions/a-narrow-reference"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::NarrowReferenceField, 23>> },

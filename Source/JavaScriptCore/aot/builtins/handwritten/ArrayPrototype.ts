@@ -32,6 +32,7 @@
 // The run is entered for a list that has an element: an empty list does not pay for what stands in front of a loop.
 // What a method makes it stores by an operation that takes a list whose vector is writable and has the place; a definition and a store are the same there. Where that says no, the definition as upstream writes it.
 
+$overriddenName = "reduce";
 export function reduceOfList(callback /*, initialValue */)
 {
     "use strict";
@@ -118,7 +119,8 @@ export function reduce(callback /*, initialValue */)
     }
     if (k >= length)
         return accumulator;
-    return $reduceFrom(array, length, callback, accumulator, k);
+    var answer = $reduceFrom(array, length, callback, accumulator, k);
+    return answer;
 }
 
 export function reduceRight(callback /*, initialValue */)
@@ -154,6 +156,7 @@ export function reduceRight(callback /*, initialValue */)
     return accumulator;
 }
 
+$overriddenName = "every";
 export function everyOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -228,9 +231,11 @@ export function every(callback /*, thisArg */)
     }
     if (i >= length)
         return true;
-    return $everyFrom(array, length, callback, thisArg, i);
+    var answer = $everyFrom(array, length, callback, thisArg, i);
+    return answer;
 }
 
+$overriddenName = "forEach";
 export function forEachOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -298,6 +303,7 @@ export function forEach(callback /*, thisArg */)
 }
 
 $alwaysInline;
+$overriddenName = "filter";
 export function filterOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -414,6 +420,7 @@ export function filter(callback /*, thisArg */)
     return result;
 }
 
+$overriddenName = "map";
 export function mapOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -497,6 +504,7 @@ export function map(callback /*, thisArg */)
     return result;
 }
 
+$overriddenName = "some";
 export function someOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -567,9 +575,11 @@ export function some(callback /*, thisArg */)
     }
     if (i >= length)
         return false;
-    return $someFrom(array, length, callback, thisArg, i);
+    var answer = $someFrom(array, length, callback, thisArg, i);
+    return answer;
 }
 
+$overriddenName = "find";
 export function findOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -639,7 +649,8 @@ export function find(callback /*, thisArg */)
     }
     if (i >= length)
         return $undefined;
-    return $findFrom(array, length, callback, thisArg, i);
+    var answer = $findFrom(array, length, callback, thisArg, i);
+    return answer;
 }
 
 export function findLast(callback /*, thisArg */)
@@ -667,6 +678,7 @@ export function findLast(callback /*, thisArg */)
     return $undefined;
 }
 
+$overriddenName = "findIndex";
 export function findIndexOfList(callback /*, thisArg */)
 {
     "use strict";
@@ -733,7 +745,8 @@ export function findIndex(callback /*, thisArg */)
     }
     if (i >= length)
         return -1;
-    return $findIndexFrom(array, length, callback, thisArg, i);
+    var answer = $findIndexFrom(array, length, callback, thisArg, i);
+    return answer;
 }
 
 export function findLastIndex(callback /*, thisArg */)

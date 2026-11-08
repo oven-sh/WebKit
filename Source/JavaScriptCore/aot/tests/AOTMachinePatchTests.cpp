@@ -982,8 +982,10 @@ static void testMachinePatchReleasesRegisterThatNativeCalleesAloneKeep()
 
 static void testMachinePatchClearsSpillThatAnotherArmReads()
 {
-    for (bool isReadBehindArms : { false, true }) {
-        TestProcedure test;
+    for (auto [isReadBehindArms, takesWaysOnToReadNothing] : { std::pair { false, false }, std::pair { true, false }, std::pair { true, true } }) {
+        ProcedureTraits traits;
+        traits.takesWaysOnToReadNothing = takesWaysOnToReadNothing;
+        TestProcedure test(traits);
         Output& out = test.out();
         Block* releasing = out.newBlock();
         Block* made = out.newBlock();
@@ -1029,6 +1031,11 @@ static void testMachinePatchClearsSpillThatAnotherArmReads()
         Operation* result = out.phi(Int64, fromJoined, fromReading);
         out.ret(isReadBehindArms ? out.add(result, cell) : result);
 
+        if (takesWaysOnToReadNothing) {
+            AOT_TEST_CHECK(!test.prepare());
+            AOT_TEST_CHECK(test.procedure().failure() && test.procedure().failure()->kind == FailureKind::ReleasedValueIsReadOnWayOn);
+            continue;
+        }
         compileOrFail(test);
         Procedure& proc = test.procedure();
         const Allocation& allocation = proc.allocation();
@@ -1039,6 +1046,50 @@ static void testMachinePatchClearsSpillThatAnotherArmReads()
         AOT_TEST_CHECK(test.call<int64_t>(int64_t { 2 }) == (isReadBehindArms ? 14 : 0));
         AOT_TEST_CHECK(test.call<int64_t>(int64_t { 3 }) == (isReadBehindArms ? 16 : 0));
         AOT_TEST_CHECK(test.call<int64_t>(int64_t { 0 }) == (isReadBehindArms ? 11 : 6));
+    }
+}
+
+static void testMachinePatchStopsWhereEdgeHandsOnWhatHintLetGo()
+{
+    for (bool takesWaysOnToReadNothing : { false, true }) {
+        ProcedureTraits traits;
+        traits.takesWaysOnToReadNothing = takesWaysOnToReadNothing;
+        TestProcedure test(traits);
+        Output& out = test.out();
+        Block* releasing = out.newBlock();
+        Block* other = out.newBlock();
+        Block* meeting = out.newBlock();
+
+        Operation* a = test.argumentGPR(0);
+        Operation* cell = out.opaque(out.add(a, 5));
+        PatchOperation* call = out.patch(Void);
+        call->clobberLate(allocatableRegistersOfPatchTest(test));
+        call->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+        out.branch(out.testNonZero64(a, 1), normalEdge(releasing), normalEdge(other));
+
+        out.appendTo(releasing);
+        PatchTestObservation seen;
+        RegisterMask cleared = 0;
+        appendPatchTestReleaseHint(out, cell, seen, cleared);
+        ValueFromBlock fromReleasing = out.anchor(cell);
+        out.jump(meeting);
+
+        out.appendTo(other);
+        ValueFromBlock fromOther = out.anchor(out.add(a, 1));
+        out.jump(meeting);
+
+        out.appendTo(meeting);
+        out.ret(out.phi(Int64, fromReleasing, fromOther));
+
+        if (takesWaysOnToReadNothing) {
+            AOT_TEST_CHECK(!test.prepare());
+            AOT_TEST_CHECK(test.procedure().failure() && test.procedure().failure()->kind == FailureKind::ReleasedValueIsReadOnWayOn);
+            continue;
+        }
+        compileOrFail(test);
+        AOT_TEST_CHECK(!numberOfStepsInPatchTest(test.procedure().allocation(), StepKind::ClearSpill));
+        AOT_TEST_CHECK(test.call<int64_t>(int64_t { 3 }) == 8);
+        AOT_TEST_CHECK(test.call<int64_t>(int64_t { 2 }) == 3);
     }
 }
 
@@ -1245,6 +1296,7 @@ static std::span<const NativeTest> listOfMachinePatchTests()
         { "machine/patch/releases-register-of-another-name"_s, testMachinePatchReleasesRegisterOfAnotherName },
         { "machine/patch/releases-register-that-native-callees-alone-keep"_s, testMachinePatchReleasesRegisterThatNativeCalleesAloneKeep },
         { "machine/patch/clears-spill-that-another-arm-reads"_s, testMachinePatchClearsSpillThatAnotherArmReads },
+        { "machine/patch/stops-where-an-edge-hands-on-what-a-hint-let-go"_s, testMachinePatchStopsWhereEdgeHandsOnWhatHintLetGo },
         { "machine/patch/searches-for-ways-through-block-split-late"_s, testMachinePatchSearchesForWaysThroughBlockSplitLate },
         { "machine/patch/wants-too-many-registers"_s, testMachinePatchThatWantsTooManyRegisters },
         { "machine/patch/question-of-an-entry-written-by-hand-asks-for-one-shape"_s, testMachinePatchQuestionOfEntryAsksForOneShape },

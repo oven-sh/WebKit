@@ -406,7 +406,7 @@ BlockID Code::addBlock(BlockRole role, BlockFrequency frequency)
     return id;
 }
 
-BlockID Code::addBlockBehindEdge(EdgeID edgeID, BlockFrequency frequency, bool isInLoop)
+ALWAYS_INLINE_INTO_OTHER_FILES BlockID Code::addBlockBehindEdge(EdgeID edgeID, BlockFrequency frequency, bool isInLoop)
 {
     RELEASE_ASSERT(!m_isSwept);
     RELEASE_ASSERT(m_blocks.size() < Operation::noBlock);
@@ -800,7 +800,7 @@ ValueID Code::addConstant(const Draft& draft, TypeID proven)
     return appendRecordToCode(m_operations, constant);
 }
 
-ValueID Code::addCopyOfConstant(ValueID constant, Representation representation)
+ALWAYS_INLINE_INTO_OTHER_FILES ValueID Code::addCopyOfConstant(ValueID constant, Representation representation)
 {
     RELEASE_ASSERT(!m_isSwept && representation != Representation::Unchosen);
     Operation copy = m_operations[checkedIndexInCode(constant, m_operations.size())];

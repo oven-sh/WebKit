@@ -174,6 +174,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnPrivateNames, PrivateSet) \
     v(OperationsOnSuper, GetSuperBase) \
     v(OperationsOnSuper, GetSuperPropertyById) \
+    v(OperationsOnSuper, GetSuperPropertyOfClassById) \
     v(OperationsOnSuper, SuperConstruct) \
     v(OperationsOnSuper, SuperConstructList) \
     v(OperationsOnSuper, SuperGet) \

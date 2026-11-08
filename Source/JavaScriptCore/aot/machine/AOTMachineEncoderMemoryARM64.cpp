@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTMachineEncoder.h"
+#include "AOTInliningAcrossFiles.h"
 
 #if ENABLE(AOT) && CPU(ARM64)
 
@@ -289,7 +290,7 @@ static bool isStorePairOffsetEncodableARM64(Width width, bool storesNumbers, int
     return storesNumbers ? ARM64Assembler::isValidSTPFPImm<64>(offset) : ARM64Assembler::isValidSTPImm<64>(offset);
 }
 
-void Encoder::encodeLoad(const Step& step)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeLoad(const Step& step)
 {
     ASSERT(step.kind == StepKind::Execute);
     const Operation* load = step.operation;
@@ -323,7 +324,7 @@ void Encoder::encodeLoad(const Step& step)
         recordTrappingAccess(load, address, instruction);
 }
 
-void Encoder::encodeStore(const Step& step)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeStore(const Step& step)
 {
     ASSERT(step.kind == StepKind::Execute);
     const Operation* store = step.operation;

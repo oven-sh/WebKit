@@ -918,7 +918,7 @@ bool callTargetOfBoundFunctionBehindTests(Walker& walker, const BodyValue& call)
     Reference closure = proveBehind(word, isTarget);
     Vector<Reference, 8> passed;
     Reference thisValue = wordOf(bound, 1);
-    for (uint32_t position = 0; position < expected->numberOfBoundArguments; ++position) {
+    for (uint32_t position = 0; position < expected->numberOfBoundArguments + walker.takesBoundFunctionsToBindOneMore(); ++position) {
         Reference argument = wordOf(bound, 2 + position);
         if (TypeID seen = argument ? primitivesSeenToArriveAtParameter(walker, target, position, argument) : TypeID()) {
             Reference isAsSeen = askType(argument, seen);

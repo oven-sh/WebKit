@@ -429,7 +429,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
     macro(m_numberOfMarksOfTries) macro(m_nestingDepth) macro(m_serialOfNewestMark) macro(m_loopsBeingBought) macro(m_sizesOfLogsWhereFramesWentOnTop) macro(m_buysTwoBuilds) \
     macro(m_numberOfFormsHeardAsArms) macro(m_operationsThatRanOtherCodeOfRow) macro(m_guardsOfStoresAskedOfRow) macro(m_previewOutOfRow) macro(m_listsAreStruckInRow) macro(m_otherCodeStaysInTypedBuildOfRow) macro(m_otherCodeIsKeptOutOfFirstCopyInVainOfRow) macro(m_otherCodeStayedInVainOfRow) macro(m_readsAskSitesThoughCallStaysOfRow) macro(m_sumsAreNotAskedInRow) macro(m_keysAreReadOffLookInRow) macro(m_keyWasTakenForCounterAskedInFront) macro(m_walksCopyThatAsksCountersAlone) macro(m_headOfTypedBuildOverListsTestedInFront) \
     macro(m_frameOfTypedBuildOverListsTestedInFront) macro(m_listsMadeHereOfTypedBuildOverListsTestedInFront) macro(m_headOfRowHandedOn) macro(m_frameOfRowHandedOn) macro(m_enteredOfRowHandedOn) macro(m_typesOfRowHandedOn) \
-    macro(m_rungsOfRowHandedOn) macro(m_parametersThatRareWaysWidenedHandedOn) macro(m_parametersThatElementsOutsideViewsWidenedHandedOn) macro(m_firstOtherCodeRanInCopyOfRow) macro(m_someCallStaysInTurnOfRow) macro(m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces) macro(m_rowSaysTurnsAreQuietOutsideArms) macro(m_effectsOutsideArmsOfRow) \
+    macro(m_rungsOfRowHandedOn) macro(m_parametersThatRareWaysWidenedHandedOn) macro(m_parametersThatElementsOutsideViewsWidenedHandedOn) macro(m_firstOtherCodeRanInCopyOfRow) macro(m_someCallStaysInTurnOfRow) macro(m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces) macro(m_turnsOfRowTakeApartListsFromInFront) macro(m_rowSaysTurnsAreQuietOutsideArms) macro(m_effectsOutsideArmsOfRow) \
     macro(m_testsSeenOfRow) macro(m_asksOnlyWhetherLoopMayBeBuiltTwice) macro(m_operatorsMadeInFrontOfLoops) macro(m_ordinalOfCopyOfLoop) macro(m_walksCopyWithoutGuessesOfSomeTurns) macro(m_walksCopyWithoutQuestionsOfEveryTurn) macro(m_walksCopyForAnotherKindOfStorage) macro(m_frontsSharedWithTypedBuilds) macro(m_inputHeadAskedAboutTypedCopy) \
     macro(m_numberOfStretchesBehindBytesOfMembers) macro(m_numbersOfFramesOfFunctions) macro(m_resultOfReadBeingTyped) macro(m_resultOfReadIsRemembered) macro(m_contentsBeingTyped) macro(m_handlerMadeOverCopies) \
     macro(m_numberOfFramesBelowHandlerMade) macro(m_buildsWhereItStands) macro(m_rowOfCopyFoundUnderKey) macro(m_numberOfLoopsAroundEdgeBeingLed) macro(m_readWhoseGuessIsOpen) macro(m_weighsWhatIsWritten) macro(m_makesLetterOfStep)
@@ -2203,13 +2203,14 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
         if (!m_numberOfClosedArms)
             m_bindings.shrink(0);
     });
-    auto putRowOfPurchaseAroundBack = makeScopeExit([this, isQuiet = m_rowSaysTurnsAreQuietOutsideArms, effects = m_effectsOutsideArmsOfRow, tests = m_testsSeenOfRow, firstRanInCopy = m_firstOtherCodeRanInCopyOfRow, callStays = m_someCallStaysInTurnOfRow, asksLengths = m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces, ran = m_operationsThatRanOtherCodeOfRow, guards = m_guardsOfStoresAskedOfRow]() mutable {
+    auto putRowOfPurchaseAroundBack = makeScopeExit([this, isQuiet = m_rowSaysTurnsAreQuietOutsideArms, effects = m_effectsOutsideArmsOfRow, tests = m_testsSeenOfRow, firstRanInCopy = m_firstOtherCodeRanInCopyOfRow, callStays = m_someCallStaysInTurnOfRow, asksLengths = m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces, takesApart = m_turnsOfRowTakeApartListsFromInFront, ran = m_operationsThatRanOtherCodeOfRow, guards = m_guardsOfStoresAskedOfRow]() mutable {
         m_rowSaysTurnsAreQuietOutsideArms = isQuiet;
         m_effectsOutsideArmsOfRow = effects;
         m_testsSeenOfRow = WTF::move(tests);
         m_firstOtherCodeRanInCopyOfRow = firstRanInCopy;
         m_someCallStaysInTurnOfRow = callStays;
         m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces = asksLengths;
+        m_turnsOfRowTakeApartListsFromInFront = takesApart;
         m_operationsThatRanOtherCodeOfRow = WTF::move(ran);
         m_guardsOfStoresAskedOfRow = WTF::move(guards);
     });
@@ -2485,6 +2486,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
             m_firstOtherCodeRanInCopyOfRow = bought->firstOtherCodeRanInCopy;
             m_someCallStaysInTurnOfRow = bought->someCallStaysInTurn;
             m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces = bought->asksLengthsOfViewsFromInFrontForWrittenPlaces;
+            m_turnsOfRowTakeApartListsFromInFront = bought->takesApartListsFromInFront;
             m_operationsThatRanOtherCodeOfRow = bought->operationsThatRanOtherCode;
             m_guardsOfStoresAskedOfRow = bought->guardsOfStoresAsked;
             auto ownerOfLearned = makeUniqueWithoutFastMallocCheck<LoopPreview>();
@@ -2903,6 +2905,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
                 m_firstOtherCodeRanInCopyOfRow = tried.firstOtherCodeRanInCopy;
                 m_someCallStaysInTurnOfRow = tried.someCallStaysInTurn;
                 m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces = tried.asksLengthsOfViewsFromInFrontForWrittenPlaces;
+                m_turnsOfRowTakeApartListsFromInFront = tried.takesApartListsFromInFront;
                 m_operationsThatRanOtherCodeOfRow = tried.operationsThatRanOtherCode;
                 m_guardsOfStoresAskedOfRow = tried.guardsOfStoresAsked;
                 BodyBlock head = index.block(inputHead);
@@ -3047,6 +3050,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
                     bought->firstOtherCodeRanInCopy = tried.firstOtherCodeRanInCopy;
                     bought->someCallStaysInTurn = tried.someCallStaysInTurn;
                     bought->asksLengthsOfViewsFromInFrontForWrittenPlaces = tried.asksLengthsOfViewsFromInFrontForWrittenPlaces;
+                    bought->takesApartListsFromInFront = tried.takesApartListsFromInFront;
                     bought->operationsThatRanOtherCode = tried.operationsThatRanOtherCode;
                     bought->guardsOfStoresAsked = tried.guardsOfStoresAsked;
                     bought->numberOfEdgesThatCameRound = tried.numberOfEdgesThatCameRound;

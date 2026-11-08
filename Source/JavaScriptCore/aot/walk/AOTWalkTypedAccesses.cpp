@@ -2872,7 +2872,7 @@ static TypedForm buildReadsOfMethodOffPrototypeOfClassForTypedAccess(Walker& wal
 
 bool callThroughSuperBehindGuards(Walker& walker, const BodyValue& superBase)
 {
-    if (!walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::TypedOperations) || walker.isNestedTooDeeply() || walker.isUnreachable() || !(walker.isInLoop() || walker.bodyAtWorkCallsItself()))
+    if (!walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::TypedOperations) || walker.isNestedTooDeeply() || walker.isUnreachable())
         return false;
     const Program& program = walker.program();
     const BodyIndex& index = walker.currentBodyIndex();
@@ -2892,6 +2892,10 @@ bool callThroughSuperBehindGuards(Walker& walker, const BodyValue& superBase)
     Reference home = walker.referenceOf(written.homeOperand());
     if (end > walker.endOfStretchBeingWalked() || !home)
         return false;
+    bool paysBytesForTime = walker.isInLoop() || walker.bodyAtWorkCallsItself();
+    bool armsHoldCall = paysBytesForTime || end - begin == 3;
+    if (!armsHoldCall)
+        end = placeOfRead + 1;
 
     Type type = walker.types().at(walker.typeOf(home));
     FunctionID constructor = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
@@ -2899,7 +2903,7 @@ bool callThroughSuperBehindGuards(Walker& walker, const BodyValue& superBase)
     if (!classLayout || program.at(classLayout).kind != LayoutKind::Instance || declaredLayoutOf(program, classLayout) != classLayout || !walker.plan().hasClassRecord(classLayout) || !walker.facts().isEvaluatedAtMostOnce(classLayout))
         return false;
     LayoutID parent;
-    if (!findParentNamedByClassRecordForTypedAccess(walker, classLayout, parent) || !parent)
+    if (walker.positions().classAbove(classLayout) || !findParentNamedByClassRecordForTypedAccess(walker, classLayout, parent) || !parent)
         return false;
     LayoutID classOfObjects;
     FunctionID method = findMethodDeclaredAboveObjectsOf(walker, parent, lookup.key(), classOfObjects);
@@ -2917,6 +2921,8 @@ bool callThroughSuperBehindGuards(Walker& walker, const BodyValue& superBase)
     BlockID closed = walker.addBlock(BlockFrequency::Rare);
     walker.noteGuessOpened();
     walker.count(StatisticID::CallsThroughSuperMadeBehindGuards);
+    if (!armsHoldCall)
+        walker.count(StatisticID::ReadsThroughSuperGuardedInFrontOfArgumentsBuiltOnce);
     for (const MemberConditionRecord& condition : conditions) {
         Draft look(Opcode::AreMembersUnchanged, origin);
         look.setConditions(singleElementSpan(condition));
@@ -2931,9 +2937,18 @@ bool callThroughSuperBehindGuards(Walker& walker, const BodyValue& superBase)
     for (uint32_t place = begin; place < end; ++place)
         walker.bind(ValueID(first + place), Reference());
     walker.walkStretch(inputBlock, begin + 1, placeOfRead);
-    if (!walker.hasFailed() && !walker.isUnreachable()) {
+    if (!armsHoldCall && !walker.hasFailed() && !walker.isUnreachable())
         bindClosureThatClosureTableHoldsForTypedAccess(walker, index.value(read), method, origin);
-        walker.walkStretch(inputBlock, placeOfRead + 1, end);
+    if (armsHoldCall && !walker.hasFailed() && !walker.isUnreachable())
+        walker.walkStretch(inputBlock, placeOfRead + 1, end - 1);
+    if (armsHoldCall && !walker.hasFailed() && !walker.isUnreachable()) {
+        auto callAsWritten = index.value(call).as<Opcode::Call>();
+        Vector<Reference, 8> arguments;
+        for (ValueID argument : callAsWritten.argumentsOperands())
+            arguments.append(walker.referenceOf(argument));
+        bindClosureThatClosureTableHoldsForTypedAccess(walker, index.value(read), method, origin);
+        if (!callFunctionDirectly(walker, index.value(call), method, walker.referenceOf(callAsWritten.thisValueOperand()), arguments.span(), paysBytesForTime ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No))
+            walker.walkStretch(inputBlock, end - 1, end);
     }
     if (walker.hasFailed())
         return true;

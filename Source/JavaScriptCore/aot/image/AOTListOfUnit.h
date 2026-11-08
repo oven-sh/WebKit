@@ -410,7 +410,7 @@ public:
         : m_bits(std::exchange(other.m_bits, 0))
     {
     }
-    ~RarePartOfUnit() { release(); }
+    ALWAYS_INLINE ~RarePartOfUnit() { release(); }
 
     RarePartOfUnit& operator=(const RarePartOfUnit& other)
     {

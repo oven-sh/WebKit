@@ -173,6 +173,7 @@ private:
         ValueID pattern;
     };
     std::optional<ReadLeftToCall> m_readLeftToCall;
+    ValueID m_baseOfSuperLeftToRead;
     BitVector m_methodsThatMayBeUnread;
     const bool m_functionComesAgain;
 };

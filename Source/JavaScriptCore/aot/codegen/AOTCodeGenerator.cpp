@@ -1820,6 +1820,13 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     loop.asking = asking;
     loop.mayComeBack = !m_keepsValuesInHeapFrame && loop.storesOfWhatComesRound.isEmpty() && loop.mostTurns >= fewestTurnsOfLoopComeBackTo && (someUnusualTurnComesRound(loop) || someHoleLeavesTurn(loop)) && loop.viewsAskedForKind.isEmpty();
     loop.mayComeBack &= !loop.storesIntoLists;
+    if (loop.mayComeBack && loop.listsAskedForKind.isEmpty() && loop.listsWhoseKindIsRead.isEmpty()) {
+        BlockID head = m_order[positionOfHead];
+        code().forEachEdgeIntoSoFar(head, [&](const Edge& edge) {
+            if (edge.to == head && edge.from != head && m_scopeAtEndOfBlock[edge.from.index()].block && code().at(edge.from).isInLoop)
+                loop.mayComeBack = false;
+        });
+    }
     askKindsReadWhereLoopIsComeBackTo(loop);
     findSumsOfIntegers(loop, back);
     return loop;
@@ -3076,7 +3083,7 @@ void CodeGenerator::defineParameter(ValueID parameter, Operand operand)
         passArgument(parameter, operand);
 }
 
-void CodeGenerator::defineParameterAsPassed(ValueID parameter, Operand passed)
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::defineParameterAsPassed(ValueID parameter, Operand passed)
 {
     RELEASE_ASSERT(opcodeOf(parameter) == Opcode::Parameter);
     Representation representation = representationOf(parameter);

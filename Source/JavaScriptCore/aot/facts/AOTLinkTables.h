@@ -519,6 +519,7 @@ struct LinkTables {
     Vector<uint32_t> numbersOfClassesAbove;
     std::array<BitVector, 2> keysOfMembers;
     Vector<LinkedNameOnPrototype> namesOnPrototypes;
+    Vector<std::pair<FunctionID, PropertyKeyID>> functionsWrittenRightOfNamesOnPrototypes;
     Vector<TaggedMaker> taggedMakers;
     SizeOfLinkFlow sizeOfFlow;
     LookupsPastProgramObjects lookups;

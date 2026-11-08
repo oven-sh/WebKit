@@ -1077,7 +1077,7 @@ Vector<Reference, 8> WalkState::listFreshObjects() const
     return fresh;
 }
 
-bool WalkState::Held::letLeaveIfFresh(Reference object)
+ALWAYS_INLINE_INTO_OTHER_FILES bool WalkState::Held::letLeaveIfFresh(Reference object)
 {
     uint32_t holder = findHolder(object);
     if (holder == none || !m_holders[holder].isFresh)
@@ -1753,7 +1753,7 @@ bool leavesDeadZoneForGood(const Program& program, VariableID id)
     return loaderEntersBodyAtMostOnce(program.at(variable.module));
 }
 
-void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers& other)
+ALWAYS_INLINE_INTO_OTHER_FILES void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers& other)
 {
     if (!other.m_size) {
         clear();

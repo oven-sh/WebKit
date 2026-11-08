@@ -409,7 +409,7 @@ public:
     RegisterMask takeScratchRegisters(Bank, unsigned count, RegisterMask& locked);
     void releaseDeadValue(PatchOperation*);
     void releaseChildrenLetGoByCallee(PatchOperation*, std::span<const Location> locationsOfOperands, Position early, RegisterMask locked);
-    RegisterMask clearPlacesOfValuesHandedTo(Operation* released, Position);
+    RegisterMask clearPlacesOfValuesHandedTo(Operation* released, Position, const PatchOperation* releasing);
     void findBlocksThatLeadToReadsOf(const Operation* value, uint32_t firstBlock);
     uint32_t firstBlockOnWaysFrom(const Block*, const Operation* value);
     bool isReadOnSomeWayFromHeadOf(const Operation* value, const Block*);
@@ -554,7 +554,8 @@ public:
     ArenaVector<Position> m_knownReadsOutsideRareRegions;
     struct ReleaseByWaysOn {
         const Operation* value;
-        const PatchOperation* hint;
+        const PatchOperation* releasing;
+        uint32_t firstStepBehind;
     };
     ArenaVector<ReleaseByWaysOn> m_releasesByWaysOn;
     mutable ArenaVector<uint8_t> m_whetherValuesThatRareRegionsReadAreWorthCalleeSaveNotYetSaved;

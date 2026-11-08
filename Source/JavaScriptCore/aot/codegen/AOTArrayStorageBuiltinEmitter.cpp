@@ -83,6 +83,7 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
         Operand rawElement = *elements().rawElementToStore(form, pushed, slowPath);
         if (form.holdsCells && mayPushCell)
             branchUnless(emitter<BarrierEmitter>().isBeyondBarrierThreshold(array), slowPath);
+        elements().stopWhereHoleWouldBeStored(call.context(), form, rawElement);
         elements().storeRawElement(form, storage, zeroExtended(length), rawElement);
         m_out.jump(isStored);
     };

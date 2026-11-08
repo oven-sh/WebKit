@@ -589,6 +589,36 @@ static const KinInFamilyForInstanceOf* findKinOfClassForInstanceOf(const Walker&
     }).iterator->value);
 }
 
+bool callsItselfUnderNameThatStatementLaysOnPrototype(const Walker& walker, const BodyIndex& index, FunctionID id)
+{
+    const Function& function = walker.program().at(id);
+    if (function.kind != FunctionKind::Plain || !index.opcodes().contains(Opcode::Call) || !index.opcodes().contains(Opcode::PropGet))
+        return false;
+    auto laidUnder = std::ranges::equal_range(walker.facts().linked().functionsWrittenRightOfNamesOnPrototypes, id, { }, &std::pair<FunctionID, PropertyKeyID>::first);
+    if (laidUnder.empty())
+        return false;
+    bool callsItself = false;
+    index.body().forEachBlock([&](BodyBlock block) {
+        for (BodyValue value : block.values()) {
+            if (callsItself || value.opcode() != Opcode::Call)
+                continue;
+            ValueID callee = index.valueBehindCasts(value.as<Opcode::Call>().calleeOperand());
+            if (!callee || index.isParameter(callee) || index.opcodeOf(callee) != Opcode::PropGet)
+                continue;
+            BodyValue read = index.value(callee);
+            ValueID receiver = index.valueBehindCasts(read.as<Opcode::PropGet>().objectOperand());
+            if (receiver && !index.isParameter(receiver) && index.opcodeOf(receiver) == Opcode::ToThis)
+                receiver = index.valueBehindCasts(index.value(receiver).operand(0));
+            if (read.isFreeName() || !receiver || !index.isParameter(receiver) || index.blockOf(receiver) != entryBlock || receiver.index() >= function.numberOfEntryParameters() || function.entryParameterKind(receiver.index()) != EntryParameter::This)
+                continue;
+            callsItself = std::ranges::any_of(laidUnder, [&](const auto& name) {
+                return name.second == read.key();
+            });
+        }
+    });
+    return callsItself;
+}
+
 static bool programMakesNoProxyForInstanceOf(const Walker& walker)
 {
     const Facts& facts = walker.facts();

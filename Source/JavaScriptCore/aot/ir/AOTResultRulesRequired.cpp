@@ -10,6 +10,7 @@
 
 #include "AOTCode.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -212,7 +213,7 @@ TypeID requiredTypeOfOperand(const TypingContext& context, const Operation& user
 }
 
 template<typename Operation>
-TypeID requiredTypeOfDeclaredOperand(const TypingContext& context, const Operation& user, uint32_t operandIndex)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID requiredTypeOfDeclaredOperand(const TypingContext& context, const Operation& user, uint32_t operandIndex)
 {
     ASSERT(operandKindOf(opcodeOf(user), operandIndex) == OperandKind::Declared);
     return requiredTypeOfOperandInResultRules<true>(context, user, operandIndex);

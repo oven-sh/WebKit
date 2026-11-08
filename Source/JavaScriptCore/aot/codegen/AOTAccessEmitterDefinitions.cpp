@@ -480,8 +480,21 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
 
 void AccessEmitter::generateGetSuperBase(const ValueContext& value)
 {
-    CellPointer home = in<CellPointer>(value->homeOperand());
     HomeObjectKind homeKind = value->homeKind();
+    if (ValueID read = m_code.useCountOf(value.id()) == 1 ? m_code.onlyUserOf(value.id()) : ValueID(); read && homeKind == HomeObjectKind::ClassPrototype && m_code.at(value.block()).frequency == BlockFrequency::Rare && m_code.blockOf(read) == value.block()) {
+        const auto& user = m_code.at(read);
+        std::span<const ValueID> behind = value.operationsBehind();
+        while (!behind.empty() && behind.front() != read && (m_code.at(behind.front()).opcode == Opcode::Box || m_code.at(behind.front()).traits().isPure()))
+            behind = behind.subspan(1);
+        bool nothingSeenStandsBetween = !behind.empty() && behind.front() == read;
+        if (nothingSeenStandsBetween && user.opcode == Opcode::SuperGet && user.baseOperand() == value.id() && user.receiverOperand() != value.id() && user.key() && !liesInThread(user.key()) && !isSymbolOfRealm(user.key())) {
+            RELEASE_ASSERT(!m_baseOfSuperLeftToRead);
+            m_baseOfSuperLeftToRead = value.id();
+            define(value, undefined());
+            return;
+        }
+    }
+    CellPointer home = in<CellPointer>(value->homeOperand());
     auto readByOperation = [&](bool isOnRarePath) {
         return callWithoutSite<Boxed>(RuntimeOperation::GetSuperBase, { boxCell(home), word32(static_cast<int32_t>(homeKind)) }, { .isOnRarePath = isOnRarePath });
     };
@@ -507,9 +520,14 @@ void AccessEmitter::generateGetSuperBase(const ValueContext& value)
 
 void AccessEmitter::generateSuperGet(const ValueContext& value)
 {
-    Boxed base = in<Boxed>(value->baseOperand());
     Boxed receiver = in<Boxed>(value->receiverOperand());
     PropertyKeyID key = value->key();
+    if (ValueID left = std::exchange(m_baseOfSuperLeftToRead, ValueID())) {
+        RELEASE_ASSERT(left == value->baseOperand());
+        define(value, callOperation<Boxed>(value, RuntimeOperation::GetSuperPropertyOfClassById, { boxCell(in<CellPointer>(m_code.at(left).homeOperand())), receiver, numberOf(mentionOfName(key)) }, { .isOnRarePath = true }));
+        return;
+    }
+    Boxed base = in<Boxed>(value->baseOperand());
     bool keyIsThreadLocal = liesInThread(key);
     if (!key || (!keyIsThreadLocal && isSymbolOfRealm(key))) {
         Boxed property = keyOperand(value, key, value->computedKeyOperand());
@@ -526,8 +544,9 @@ void AccessEmitter::generateSuperGet(const ValueContext& value)
     auto readByOperation = [&](bool isOnRarePath) {
         return callOperation<Boxed>(value, RuntimeOperation::GetSuperPropertyById, { base, receiver, numberOf(name) }, { .isOnRarePath = isOnRarePath });
     };
-    if (keyIsThreadLocal) {
-        define(value, readByOperation(false));
+    bool standsInRareBlock = m_code.at(value.block()).frequency == BlockFrequency::Rare;
+    if (keyIsThreadLocal || standsInRareBlock) {
+        define(value, readByOperation(standsInRareBlock));
         return;
     }
 

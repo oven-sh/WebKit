@@ -179,7 +179,7 @@ std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorag
     const Type& type = typeOf(stored);
     Operand operand = get(stored);
     auto numberToStore = [&](Number number) -> Operand {
-        if (!canStoreWithoutConversion(types(), form.kind, typeIDOf(stored)))
+        if (!canStoreWithoutConversion(types(), form.kind, typeIDOf(stored)) && !AOT::hasFlag(build().options().testing, Wire::TestingSwitch::NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN))
             branchUnless(equal(number, number), doesNotFit);
         return number;
     };
@@ -247,6 +247,7 @@ void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayS
 
 void ElementAccessEmitter::replaceElement(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement)
 {
+    stopWhereHoleWouldBeStored(store, form, rawElement);
     storeRawElement(form, elements, index, rawElement);
     if (form.holdsCells && typeOf(store->valueOperand()).hasCells()) {
         Boxed stored = rawElement.as<Boxed>();
@@ -364,6 +365,7 @@ void ElementAccessEmitter::storeInProvenList(const ValueContext& value, const Ar
             m_out.appendTo(liesInside);
         } else if (!value->isInBounds())
             branchUnless(test.isInside, outOfLine);
+        stopWhereHoleWouldBeStored(value, form, *rawElement);
         storeRawElement(form, elements, test.indexInside, *rawElement);
         if (form.holdsCells && typeOf(stored).hasCells()) {
             Boxed storedElement = rawElement->as<Boxed>();
@@ -444,6 +446,7 @@ void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer 
         branchUnless(below(length, vectorLength(elements)), slowPath);
 
         setPublicLength(elements, add(length, integer(1)));
+        stopWhereHoleWouldBeStored(store, form, rawElement);
         storeRawElement(form, elements, length, rawElement);
         if (form.holdsCells && typeOf(element).hasCells()) {
             Boxed stored = rawElement.as<Boxed>();

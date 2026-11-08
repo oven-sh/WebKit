@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTMachine.h"
+#include "AOTInliningAcrossFiles.h"
 
 #if ENABLE(AOT)
 
@@ -137,7 +138,7 @@ void PatchOperation::markChildAsLetGoByCallee(unsigned child)
     m_childrenLetGoByCallee.append(m_procedure.arena(), child);
 }
 
-void PatchOperation::leaveOperandsWhereTheyLie()
+ALWAYS_INLINE_INTO_OTHER_FILES void PatchOperation::leaveOperandsWhereTheyLie()
 {
     RELEASE_ASSERT(m_opcode == Patch && bringsOperandsToTheirRegisters() && m_registersToBringOperandsTo.isEmpty());
     if (numGPScratchRegisters)

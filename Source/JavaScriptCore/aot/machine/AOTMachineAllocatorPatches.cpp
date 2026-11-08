@@ -1533,7 +1533,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
         if (!child->hasNoPosition() && (!isReadBehindByPosition || (!isReadOnSomeWayOn(child, early + 1) && !isHeldAtHeadThatWayLeadsBackTo(child)))) {
             releasesItsChild = true;
             if (isReadBehindByPosition)
-                m_releasesByWaysOn.append(m_arena, ReleaseByWaysOn { child, patch });
+                m_releasesByWaysOn.append(m_arena, ReleaseByWaysOn { child, patch, static_cast<uint32_t>(m_allocation.m_steps.size()) });
             patch->m_registersToRelease = stateOf(child).registers & m_file.allocatableIn(Bank::GP);
         }
     }
@@ -1731,10 +1731,8 @@ RegisterMask Allocator::takeScratchRegisters(Bank bank, unsigned count, Register
 
 static void clearMemoryOfReleasedValue(Allocator& allocator, Operation* value)
 {
-    std::span<PatchOperation* const> suspensions = allocator.m_allocation.suspensions();
-    const Position lastSuspension = suspensions.empty() ? 0 : allocator.m_order.latePositionOf(suspensions.back());
     auto clear = [&](SpillIndex spill) {
-        if (spill == noSpill || allocator.m_allocation.spills()[spill].end < lastSuspension)
+        if (spill == noSpill)
             return;
         Step& step = allocator.appendStep(StepKind::ClearSpill, value);
         step.width = allocator.m_allocation.spills()[spill].width;
@@ -1745,7 +1743,7 @@ static void clearMemoryOfReleasedValue(Allocator& allocator, Operation* value)
     clear(allocator.stateOf(value).saveInRareRegion);
 }
 
-RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Position position)
+RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Position position, const PatchOperation* releasing)
 {
     if (released->opcode() != Phi)
         return 0;
@@ -1771,6 +1769,7 @@ RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Positio
                     RegisterMask held = stateOf(handedOn).registers & m_file.allocatableIn(Bank::GP);
                     if ((spill == noSpill && !held) || isReadOnSomeWayOn(handedOn, position))
                         continue;
+                    m_releasesByWaysOn.append(m_arena, ReleaseByWaysOn { handedOn, releasing, static_cast<uint32_t>(m_allocation.m_steps.size()) });
                     if (held && !isHeldAtHeadThatWayLeadsBackTo(handedOn)) {
                         unbindAll(handedOn);
                         freed |= held;
@@ -1851,10 +1850,10 @@ void Allocator::checkThatNoWayOnReadsWhatHintsReleased()
         ++walk;
         entered.clear();
 
-        auto reads = [&](const Step& step) {
+        auto reads = [&](const Step& step, const PatchOperation* hintOfValue) {
             if (step.kind == StepKind::KeepPointer)
-                return step.operation == value || step.other == value;
-            if (step.kind != StepKind::Execute)
+                return step.operation == value;
+            if (step.kind != StepKind::Execute || step.operation == hintOfValue)
                 return false;
             bool isAmongLeaves = false;
             forEachLeaf(m_liveness, step.operation, [&](const Operation*, unsigned, const Operation* leaf) {
@@ -1862,17 +1861,22 @@ void Allocator::checkThatNoWayOnReadsWhatHintsReleased()
             });
             return isAmongLeaves;
         };
-        auto someStepReadsFrom = [&](const Block* block, uint32_t first) {
+        auto someStepReadsFrom = [&](const Block* block, uint32_t first, const PatchOperation* hintOfValue) {
             const BlockSteps& range = m_allocation.stepsOf(block);
             for (uint32_t index = first; index < range.end; ++index) {
-                if (reads(steps[index]))
+                if (reads(steps[index], hintOfValue))
                     return true;
             }
             for (const Operation* upsilon : block->upsilons()) {
-                if (upsilon->child(0) == value && !m_valueFacts[upsilon->phi()->index()].has(ValueFlag::IsDropped))
-                    return true;
+                const Operation* phi = upsilon->phi();
+                if (upsilon->child(0) != value || !phi || m_valueFacts[phi->index()].has(ValueFlag::IsDropped))
+                    continue;
+                for (const Edge& successor : block->successors()) {
+                    if (successor.block() == phi->owner())
+                        return true;
+                }
             }
-            return range.terminator != UINT32_MAX && range.terminator >= first && reads(steps[range.terminator]);
+            return range.terminator != UINT32_MAX && range.terminator >= first && reads(steps[range.terminator], hintOfValue);
         };
         auto enterSuccessorsOf = [&](const Block* block) {
             for (const Edge& successor : block->successors()) {
@@ -1887,17 +1891,14 @@ void Allocator::checkThatNoWayOnReadsWhatHintsReleased()
 
         bool isRead = false;
         for (; next < m_releasesByWaysOn.size() && m_releasesByWaysOn[next].value == value; ++next) {
-            const PatchOperation* hint = m_releasesByWaysOn[next].hint;
-            const Block* block = hint->owner();
-            const BlockSteps& range = m_allocation.stepsOf(block);
-            uint32_t behindHint = range.begin;
-            while (behindHint < range.end && !(steps[behindHint].kind == StepKind::Execute && steps[behindHint].operation == hint))
-                ++behindHint;
-            isRead |= someStepReadsFrom(block, behindHint + 1);
+            const PatchOperation* releasing = m_releasesByWaysOn[next].releasing;
+            const Block* block = releasing->owner();
+            const bool isHintOfValue = releasing->releasesDeadValues() && releasing->child(firstPlacedChildOfPatch(releasing)) == value;
+            isRead |= someStepReadsFrom(block, m_releasesByWaysOn[next].firstStepBehind, isHintOfValue ? releasing : nullptr);
             enterSuccessorsOf(block);
         }
         for (uint32_t index = 0; index < entered.size() && !isRead; ++index) {
-            isRead = someStepReadsFrom(entered[index], m_allocation.stepsOf(entered[index]).begin);
+            isRead = someStepReadsFrom(entered[index], m_allocation.stepsOf(entered[index]).begin, nullptr);
             enterSuccessorsOf(entered[index]);
         }
         if (isRead) {
@@ -1995,7 +1996,7 @@ void Allocator::releaseDeadValue(PatchOperation* patch)
     patch->m_registersToRelease |= registersWhereReleasedValueMayHaveWaited();
     patch->m_registersToRelease &= ~m_bound;
     clearMemoryOfReleasedValue(*this, released);
-    freed |= clearPlacesOfValuesHandedTo(released, earlyPositionOfAllocatedPatch(*this, patch) + 1);
+    freed |= clearPlacesOfValuesHandedTo(released, earlyPositionOfAllocatedPatch(*this, patch) + 1, patch);
     patch->m_registersToRelease |= freed;
     m_allocation.m_patchAssignments.last().usedRegisters &= ~freed;
 }
@@ -2027,7 +2028,7 @@ void Allocator::releaseChildrenLetGoByCallee(PatchOperation* patch, std::span<co
         patch->m_registersToRelease |= stateOf(value).registers & m_file.allocatableIn(Bank::GP) & ~locked;
         if (std::ranges::find(readFromMemory.span(), value) == readFromMemory.span().end())
             clearMemoryOfReleasedValue(*this, value);
-        patch->m_registersToRelease |= clearPlacesOfValuesHandedTo(value, early) & ~locked;
+        patch->m_registersToRelease |= clearPlacesOfValuesHandedTo(value, early, patch) & ~locked;
         patch->m_registersToRelease |= registersWhereReleasedValueMayHaveWaited() & ~m_bound & ~locked;
     }
 }

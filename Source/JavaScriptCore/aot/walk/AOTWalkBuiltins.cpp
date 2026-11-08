@@ -18,6 +18,7 @@
 #include "AOTEffectsOfOperations.h"
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLimits.h"
 #include "AOTSchemaInlineBuiltins.h"
 #include "AOTStubsBoxedCalls.h"
@@ -1732,7 +1733,7 @@ bool CallInWalkBuiltins::planConversion(Operand& operand) const
     return true;
 }
 
-CallInWalkBuiltins::Outcome CallInWalkBuiltins::planOperand(Operand& operand, BuiltinOperand position) const
+ALWAYS_INLINE_INTO_OTHER_FILES CallInWalkBuiltins::Outcome CallInWalkBuiltins::planOperand(Operand& operand, BuiltinOperand position) const
 {
     operand.parameter = m_table.parameterFor(*m_overload, position);
     if (!operand.parameter)

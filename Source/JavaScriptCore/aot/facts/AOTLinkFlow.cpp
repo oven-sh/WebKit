@@ -7983,7 +7983,7 @@ FlowNodeID LinkFlow::parameterOfLostFunctions(const LinkType& callee, uint32_t p
     });
 }
 
-FlowNodeID LinkFlow::receiverOfLostFunctions(const LinkType& callee)
+ALWAYS_INLINE_INTO_OTHER_FILES FlowNodeID LinkFlow::receiverOfLostFunctions(const LinkType& callee)
 {
     uint32_t family = familyOfLostFunctions(callee);
     return nodeAskedOnceByLane(MadeOnDemand::ReceiverOfLostFunctions, family, [&]() -> FlowNodeID {

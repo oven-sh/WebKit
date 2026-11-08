@@ -505,7 +505,7 @@ void OrderOfWriting::findPieces()
     }
 }
 
-void OrderOfWriting::writePiece(Piece& piece)
+ALWAYS_INLINE_INTO_OTHER_FILES void OrderOfWriting::writePiece(Piece& piece)
 {
     piece.isPlaced = true;
     m_somethingIsPlaced = true;

@@ -152,14 +152,15 @@ static bool leafReadsElementsOfHolderFromInFrontOfLoopAtInlining(const Walker& w
 {
     const BodyIndex* body = walker.facts().bodies().find(leaf);
     std::optional<uint32_t> loop = walker.innermostOpenLoop();
-    if (!handedOver || !body || !loop || !body->holdsAnyOf(OpcodeSet { Opcode::ElemGet }))
+    if (!handedOver || !body || !loop || !body->holdsAnyOf(OpcodeSet { Opcode::ElemGet, Opcode::IteratorOpen }))
         return false;
     BodyBlock entry = body->block(entryBlock);
     for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
         for (BodyValue read : body->block(BlockID(number)).values()) {
-            if (read.opcode() != Opcode::ElemGet)
+            bool takesApart = read.opcode() == Opcode::IteratorOpen && read.as<Opcode::IteratorOpen>().isDestructuring() && !read.as<Opcode::IteratorOpen>().hasRest();
+            if (read.opcode() != Opcode::ElemGet && !takesApart)
                 continue;
-            std::optional<uint32_t> position = entry.indexOfParameter(body->valueBehindCasts(read.objectOperand()));
+            std::optional<uint32_t> position = entry.indexOfParameter(body->valueBehindCasts(takesApart ? read.as<Opcode::IteratorOpen>().iterableOperand() : read.objectOperand()));
             if (position && *position < handedOver->size() && (*handedOver)[*position] && walker.standsInFrontOfOpenLoop(*loop, (*handedOver)[*position]))
                 return true;
         }

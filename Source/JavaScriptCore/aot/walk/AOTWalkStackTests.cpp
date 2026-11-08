@@ -10,6 +10,7 @@
 
 #include "AOTCallingConventions.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
 #include "AOTPlan.h"
 
@@ -29,7 +30,7 @@ static bool planHasCountedCallForStackTests(const Walker& walker, FunctionID cal
     return walker.facts().linked().calleeAt(caller, site) == callee || walker.facts().held().calleeAt(caller, site) == callee;
 }
 
-void Walker::noteDirectCallForStackTests(const Draft& draft)
+ALWAYS_INLINE_INTO_OTHER_FILES void Walker::noteDirectCallForStackTests(const Draft& draft)
 {
     if (!unitCountsOnCallersForStackTests(*this))
         return;

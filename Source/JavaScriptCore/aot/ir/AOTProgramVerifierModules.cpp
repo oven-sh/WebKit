@@ -12,6 +12,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
@@ -480,7 +481,7 @@ void MentionsInCode::beginFunction(const Function& function)
     m_mentionsOfLongList.clear();
 }
 
-void MentionsInCode::add(MentionInCode::Kind kind, ModuleID other)
+ALWAYS_INLINE_INTO_OTHER_FILES void MentionsInCode::add(MentionInCode::Kind kind, ModuleID other)
 {
     constexpr size_t mostMentionsGoneThrough = 16;
     auto keyOf = [](const MentionInCode& mention) {
@@ -504,7 +505,7 @@ void MentionsInCode::add(MentionInCode::Kind kind, ModuleID other)
     m_found.append(mention);
 }
 
-void MentionsInCode::noteWhatValueNames(const BodyValue& value)
+ALWAYS_INLINE_INTO_OTHER_FILES void MentionsInCode::noteWhatValueNames(const BodyValue& value)
 {
     if (!m_file)
         return;

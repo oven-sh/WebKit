@@ -3,7 +3,7 @@ enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObj
     | engine Closure(true, false, false, false, false, false) CoroutineFrame(true, false, false, false, false, false) BuiltinResult(false, false, true, false, false, false) ModuleNamespace(false, false, false, false, false, false)
 }
 flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType IsOfCreatedObject | engine IsDerived }
-flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
+flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods IsRequiredAndReadThoughNeverWritten | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
 flags FieldForm { IsReadOnly IsNotEnumerable IsNotConfigurable IsAccessor }
 enum MethodKind { Method Getter Setter }
 enum ClassSide { Prototype Static }

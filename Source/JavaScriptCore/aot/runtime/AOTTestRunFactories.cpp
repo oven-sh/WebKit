@@ -1349,6 +1349,13 @@ void Modules::didBeginWalkOnEmptyStack(ModuleID root)
         endPassing(above);
 }
 
+bool Modules::wasFetchedAsItselfByLoadThatRequireLeft(ModuleID root, ModuleID module) const
+{
+    return m_waitsThatRequiresLeft.containsIf([&](const WaitThatRequireLeft& left) {
+        return left.required == root && left.wait->status() == JSPromise::Status::Pending && left.fetchedAsThemselves.get(module.index());
+    });
+}
+
 bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
 {
     VM& vm = *m_instance.vm;
@@ -1430,7 +1437,7 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
             throwException(m_instance.globalObject, scope, kept);
             return false;
         }
-        bool runsMock = m_modulesWithMockToRun.get(module.index()) && !standsForLoadsInFlight(module) && (isImportedByStatement || !m_modulesOwedBesideMock.get(module.index()));
+        bool runsMock = m_modulesWithMockToRun.get(module.index()) && !standsForLoadsInFlight(module) && (isImportedByStatement || !m_modulesOwedBesideMock.get(module.index())) && !wasFetchedAsItselfByLoadThatRequireLeft(root, module);
         bool isPutAside = runsMock && isImportedByStatement && !hasCalledOrdinaryFactories && m_modulesWithMockThatAsksAgain.get(module.index());
         hasPutMockAside |= isPutAside;
         if (runsMock && !isPutAside) {

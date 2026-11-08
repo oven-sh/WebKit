@@ -275,6 +275,7 @@ JS_EXPORT_PRIVATE String refusedSpyOnExportMessage(JSCell* moduleNamespace, Uniq
 JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE String refusedMockMessage(JSGlobalObject*, const String& path, const String& callerOutsideBuild);
 JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool hasOnlyBeenLinked(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasImportBegunToLoad(JSGlobalObject*, ModuleID fileOrFace);
 JS_EXPORT_PRIVATE bool wasLoadedByImport(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachModuleWhoseBodyRuns(VM&, CallFrame*, const ScopedLambda<void(ModuleID)>&);

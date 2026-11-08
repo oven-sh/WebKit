@@ -188,7 +188,7 @@ void Walker::endBlockLeadingTo(TerminatorDraft&& draft, std::span<const EdgeToTa
     m_state.clear();
 }
 
-bool Walker::leaveBlockAnotherWay(const BodyTerminator& terminator)
+ALWAYS_INLINE_INTO_OTHER_FILES bool Walker::leaveBlockAnotherWay(const BodyTerminator& terminator)
 {
     switch (terminator.kind()) {
     case TerminatorKind::Throw:

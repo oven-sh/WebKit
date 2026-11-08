@@ -70,7 +70,7 @@ public:
     void holdKindOfList(const ValueContext& access, StorageIsWritten = StorageIsWritten::No);
     void stopUnlessInside(const ValueContext& access, Condition isInside);
     void holdElementToldToBeThere(const ValueContext& read, Condition isThere, StatisticID counted = StatisticID::ElementsToldToBeThereHeldAgainstHoles);
-    void stopWhereHoleWouldBeStored(const ValueContext& store, const ArrayStorageForm&, Operand rawElement);
+    void stopWhereHoleWouldBeStored(const OperationContext& store, const ArrayStorageForm&, Operand rawElement);
     void stopUnlessListIsAsMadeWhereNothingIsFound(const ValueContext& access, CellPointer list);
 
     Condition isPristineArray(CellPointer, OptionSet<PristineAspects>);

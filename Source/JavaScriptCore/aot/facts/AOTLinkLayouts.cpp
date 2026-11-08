@@ -3239,6 +3239,11 @@ void WriterOfLinkLayouts::noteNameWrittenOnPrototype(FunctionID id, const ThinSu
         if (!added.isNewEntry && (added.iterator->value.getter != access.writtenGetter || added.iterator->value.setter != access.writtenSetter))
             added.iterator->value.isWrittenOnce = false;
     }
+    if (access.key && access.kind == SummaryAccess::Kind::Store && access.value != noSummaryNode && summary.nodes[access.value].kind == SummaryNode::Kind::Closure && summary.nodes[access.subject].kind == SummaryNode::Kind::ResultOfAccess) {
+        const SummaryAccess& read = summary.accesses[summary.nodes[access.subject].first];
+        if (read.kind == SummaryAccess::Kind::Read && read.key == m_program.keyOf(BuiltinNames::prototype))
+            m_tables.functionsWrittenRightOfNamesOnPrototypes.append({ FunctionID(summary.nodes[access.value].first), access.key });
+    }
     PropertyKeyID key = m_flow.keyOf(id, access);
     LayoutID layout = key ? findLayoutWhosePrototypeObjectIsAt(summary, access.subject) : LayoutID();
     if (!layout)
@@ -4678,6 +4683,8 @@ void WriterOfLinkLayouts::writeMembers()
         }
         m_tables.namesOnPrototypes.append(linked);
     }
+    std::ranges::sort(m_tables.functionsWrittenRightOfNamesOnPrototypes);
+    m_tables.functionsWrittenRightOfNamesOnPrototypes.shrink(std::ranges::unique(m_tables.functionsWrittenRightOfNamesOnPrototypes).begin() - m_tables.functionsWrittenRightOfNamesOnPrototypes.begin());
     std::ranges::sort(m_tables.namesOnPrototypes, { }, [](const LinkedNameOnPrototype& name) {
         return std::pair { name.layout, name.key };
     });

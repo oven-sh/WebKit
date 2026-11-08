@@ -101,6 +101,8 @@ struct WalkOptions {
     bool takesNumbersStoredIntoListsOfDoublesToBeNoNaN { false };
     bool takesOneRowToSpeakForAll { false };
     bool takesNothingToBeDoneToFreshLists { false };
+    bool typedTurnsPassStoresIntoListsOver { false };
+    bool takesBoundFunctionsToBindOneMore { false };
     bool sweepTurnsBranchThatDecidesIntoJump { false };
     bool sweepLetsGoEdgeThatIsTaken { false };
     bool handlerEdgesTakeWhatStandsIn { false };

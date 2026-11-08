@@ -2565,7 +2565,7 @@ void ScanOfBody::addAllocation(const BodyValue& value, LayoutID layout)
     addNode(made);
 }
 
-void ScanOfBody::addDeclared(const BodyValue& value)
+ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::addDeclared(const BodyValue& value)
 {
     Opcode opcode = value.opcode();
     if (opcode == Opcode::GetModuleVariable) {
@@ -3331,7 +3331,7 @@ void ScanOfBody::readEntryParameter(uint32_t parameter)
     m_incoming.append(IncomingInScan { entryBlock.index(), parameter, listOfNode(node), { } });
 }
 
-void ScanOfBody::readArgumentsOf(uint32_t from, BodyTarget target, KindOfEdgeInScan kind)
+ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::readArgumentsOf(uint32_t from, BodyTarget target, KindOfEdgeInScan kind)
 {
     uint32_t to = target.block().index();
     noteEdgeOfBodyOfModule(from, to, kind);
@@ -3680,7 +3680,7 @@ ALWAYS_INLINE void ScanOfBody::readOperation(const BodyValue& value, uint32_t bl
         addChange(SummaryChange::Kind::BecomesPrototype, value.id(), *m_prototypeOfResult, { }, result);
 }
 
-void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, uint32_t block)
+ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, uint32_t block)
 {
     using Row = RowOfOpcodeInScan;
     Opcode opcode = value.opcode();
@@ -5161,7 +5161,7 @@ bool ScanOfBody::isGatheredListThatOnlyCallsTake(ValueID list)
     return *m_onlyCallsTakeGatheredList;
 }
 
-BuiltinID ScanOfBody::builtinExpectedOf(ValueID value) const
+ALWAYS_INLINE_INTO_OTHER_FILES BuiltinID ScanOfBody::builtinExpectedOf(ValueID value) const
 {
     TypeReader types(m_program);
     for (BodyValue cast = definitionOf(value.index()); cast && (rowsOfOpcodesInScan[static_cast<unsigned>(cast.opcode())].traits & RowOfOpcodeInScan::handsOn); cast = definitionOf(cast.operand(0).index())) {

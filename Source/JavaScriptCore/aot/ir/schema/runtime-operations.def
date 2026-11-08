@@ -13,6 +13,7 @@ runtime PrivateDefine : void (EncodedJSValue object, JSCell* token, uint32_t fie
 
 runtime GetSuperBase : EncodedJSValue (EncodedJSValue home, uint32_t homeKind) ; RuntimeCreatesConstant
 runtime GetSuperPropertyById : EncodedJSValue (EncodedJSValue base, EncodedJSValue receiver, uint32_t key) ; unknownCode
+runtime GetSuperPropertyOfClassById : EncodedJSValue (EncodedJSValue classObject, EncodedJSValue receiver, uint32_t key) ; unknownCode
 runtime SuperGet : EncodedJSValue (EncodedJSValue base, EncodedJSValue property, EncodedJSValue receiver) ; unknownCode
 runtime SuperSet : void (EncodedJSValue base, EncodedJSValue property, EncodedJSValue value, EncodedJSValue receiver, uint32_t mode) ; unknownCode
 

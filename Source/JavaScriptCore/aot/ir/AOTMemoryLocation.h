@@ -167,7 +167,7 @@ public:
         }
     }
 
-    void add(const Program& program, const MemoryLocation& location) { add(location.heap(), location.isEntireHeap() ? entireHeap : Typed::maskOf(program, location)); }
+    ALWAYS_INLINE void add(const Program& program, const MemoryLocation& location) { add(location.heap(), location.isEntireHeap() ? entireHeap : Typed::maskOf(program, location)); }
 
     void add(const MemoryLocation&);
 

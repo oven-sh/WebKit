@@ -66,6 +66,8 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .takesNumbersStoredIntoListsOfDoublesToBeNoNaN = AOT::hasFlag(options.testing, Wire::TestingSwitch::NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN),
         .takesOneRowToSpeakForAll = AOT::hasFlag(options.testing, Wire::TestingSwitch::OneRowSpeaksForAllThatCallMayTake),
         .takesNothingToBeDoneToFreshLists = AOT::hasFlag(options.testing, Wire::TestingSwitch::NothingIsDoneToFreshLists),
+        .typedTurnsPassStoresIntoListsOver = AOT::hasFlag(options.lies, Wire::TestingLie::TypedTurnsPassStoresIntoListsOver),
+        .takesBoundFunctionsToBindOneMore = AOT::hasFlag(options.lies, Wire::TestingLie::BoundFunctionsAreTakenToBindOneMore),
         .sweepTurnsBranchThatDecidesIntoJump = AOT::hasFlag(options.testing, Wire::TestingSwitch::SweepTurnsBranchThatDecidesIntoJump),
         .sweepLetsGoEdgeThatIsTaken = AOT::hasFlag(options.testing, Wire::TestingSwitch::SweepLetsGoEdgeThatIsTaken),
         .takesCalleesToKeepNothing = AOT::hasFlag(options.testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded),

@@ -6236,9 +6236,13 @@ void CallInLinkCalls::addConversion(Questions& questions)
 
 ALWAYS_INLINE const StateOfLinkCalls::WhatTableSaysOfParameter& CallInLinkCalls::whatTableSaysOf(const BuiltinOverload& row, const BuiltinParameter& parameter)
 {
-    size_t place = &parameter == row.receiver.get() ? 0 : 1 + static_cast<size_t>(&parameter - row.parameters.data());
-    RELEASE_ASSERT(place <= row.parameters.size());
+    static_assert(std::atomic<const StateOfLinkCalls::WhatTableSaysOfParameter*>::is_always_lock_free);
+    bool isReceiver = &parameter == row.receiver.get();
+    ptrdiff_t placeAmongParameters = &parameter - row.parameters.data();
+    RELEASE_ASSERT(isReceiver || (placeAmongParameters >= 0 && static_cast<size_t>(placeAmongParameters) < row.parameters.size()));
+    size_t place = isReceiver ? 0 : 1 + static_cast<size_t>(placeAmongParameters);
     size_t numberOfRow = static_cast<size_t>(&row - &m_builtins.at(BuiltinOverloadID(0)));
+    RELEASE_ASSERT(numberOfRow < m_builtins.overloadCount());
     const StateOfLinkCalls::WhatTableSaysOfParameter** said = &m_state.whatTableSaysAtPlacesOfRows[numberOfRow * m_state.placesOfRow + place];
     if (const StateOfLinkCalls::WhatTableSaysOfParameter* known = WTF::atomicLoad(said, std::memory_order_acquire)) [[likely]]
         return *known;

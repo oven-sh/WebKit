@@ -612,7 +612,7 @@ static bool neitherSideOfTestIsRuledOutInFolding(const TypeArena& types, const B
     return !(mayBeInteger(first) && mayLieWithinBounds(second)) && !(mayBeInteger(second) && mayLieWithinBounds(first));
 }
 
-static std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const BodyValue& test)
+static ALWAYS_INLINE std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const BodyValue& test)
 {
     std::array<TypeID, 2> typesOfOperands;
     uint32_t numberOfOperands = 0;
@@ -695,7 +695,7 @@ static constexpr OpcodeSet conversionsThatMayHandOnInFolding = opcodesWhere([](O
     return primitivesThatConversionHandsOnInFolding(opcode) || conversionsToObjectsInFolding.contains(opcode) || opcode == Opcode::ToLength;
 });
 
-static Reference operandThatConversionHandsOnInFolding(Walker& walker, const BodyValue& conversion)
+static ALWAYS_INLINE Reference operandThatConversionHandsOnInFolding(Walker& walker, const BodyValue& conversion)
 {
     Opcode opcode = conversion.opcode();
     uint16_t handedOn = primitivesThatConversionHandsOnInFolding(opcode);
