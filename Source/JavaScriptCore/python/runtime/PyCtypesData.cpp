@@ -650,9 +650,10 @@ static bool findProvenanceOfPart(JSGlobalObject* globalObject, PyDict* kept, PyC
 }
 
 // What an address points into that lies at `home`, in the memory of the instance.
-static bool findProvenanceOfTarget(JSGlobalObject* globalObject, PyCData* holder, const Home& home, const uint8_t* target, Provenance& provenance)
+// `entry`: that of the place where the address is.
+static bool findProvenanceOfTarget(JSGlobalObject* globalObject, PyCData* holder, JSValue entry, const uint8_t* target, Provenance& provenance)
 {
-    if (findProvenanceByEntry(globalObject, entryAt(globalObject, home), target, provenance)) [[likely]]
+    if (findProvenanceByEntry(globalObject, entry, target, provenance)) [[likely]]
         return true;
     // Nothing was written down for the place, or the bytes have been written since by something that writes nothing down. What the instance keeps alive is in _objects as well, which the
     // program can get at: this helps against accidents, it is no wall.
@@ -669,16 +670,27 @@ static bool findProvenanceOfTarget(JSGlobalObject* globalObject, PyCData* holder
     return dict && dict->type() == runtime(globalObject).dictType() && findProvenanceOfPart(globalObject, dict, holder, target, provenance);
 }
 
+// The place was written as a function pointer or a py_object: the bits point into nothing, they stand for the entry.
+static bool isWhatBitsStandFor(JSValue entry, const uint8_t* bits)
+{
+    auto* thunk = PyCThunk::tryFrom(entry);
+    return thunk ? thunk->code == bits : identityBits(entry) == std::bit_cast<uint64_t>(bits);
+}
+
 // What to write down beside a copy of that address.
 static JSValue entryForCopy(JSGlobalObject* globalObject, PyCData* holder, const Home& home, const uint8_t* target)
 {
     if (!target)
         return { };
+    JSValue entry = entryAt(globalObject, home);
+    // Asked first: what is kept alive would be looked through in vain, and for a py_object that is the object, of whatever size.
+    if (entry && isWhatBitsStandFor(entry, target))
+        return entry;
     Provenance provenance;
-    if (findProvenanceOfTarget(globalObject, holder, home, target, provenance))
+    if (findProvenanceOfTarget(globalObject, holder, entry, target, provenance))
         return provenance.entry;
     // (By it a copy knows as well that what it points into is gone.)
-    return entryAt(globalObject, home);
+    return entry;
 }
 
 // What the eight bytes of a py_object are believed to stand for.
@@ -707,8 +719,8 @@ static void didStoreAddress(JSGlobalObject* globalObject, const Home& home, cons
         return;
     const uint8_t* target;
     memcpy(&target, packed.bytes, sizeof(target));
-    // (The place may have been written as a function pointer or a py_object, in a union: then the entry is what the bits stand for.)
-    if (auto* thunk = PyCThunk::tryFrom(entry); thunk ? thunk->code == target : identityBits(entry) == std::bit_cast<uint64_t>(target))
+    // (In a union.)
+    if (isWhatBitsStandFor(entry, target))
         return;
     Provenance provenance;
     if (!findProvenanceByEntry(globalObject, entry, target, provenance) && !provenance.isInWhatIsGone)
@@ -743,7 +755,7 @@ static uint8_t* lookThroughPointer(JSGlobalObject* globalObject, PyCData* pointe
     if (failed(scope, pointerTarget(globalObject, pointer, target, &home)))
         return nullptr;
     uint8_t* address = std::bit_cast<uint8_t*>(std::bit_cast<uintptr_t>(target) + static_cast<uintptr_t>(offset));
-    if (!findProvenanceOfTarget(globalObject, pointer, home, target, provenance)) {
+    if (!findProvenanceOfTarget(globalObject, pointer, entryAt(globalObject, home), target, provenance)) {
         if (!provenance.isInWhatIsGone) [[likely]]
             return address;
         raiseValueError(globalObject, scope, "the memory that the pointer was made to point into is no longer there"_s);
