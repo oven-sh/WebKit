@@ -469,6 +469,7 @@ struct Provenance {
     const uint8_t* begin { nullptr };
     const uint8_t* end { nullptr };
     int64_t offsetOfBegin { 0 }; // In the view, if that is the owner.
+    JSCell* entry { nullptr }; // What to write down beside the address: see entryAt().
     bool isInWhatIsGone { false }; // It points to where something that is kept alive was, and is no more: a view has been released, JS has detached or shrunk the memory, or it has moved.
     bool isNotAllSeen { false }; // More is kept alive than is looked through.
 };
@@ -500,7 +501,7 @@ static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uin
                 // Whoever is made to lie in there has to hold the cell of the view as well.
                 if (address < begin || address > begin + other->size)
                     return false;
-                result = { view, begin, begin + other->size, other->offsetInView() };
+                result = { view, begin, begin + other->size, other->offsetInView(), other };
                 return true;
             }
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
@@ -524,14 +525,14 @@ static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uin
                 for (unsigned i = former ? former->length() : 0; i--;) {
                     auto* earlier = uncheckedDowncast<PyByteStorage>(former->get(i).asCell());
                     if (address >= earlier->data() && address <= earlier->data() + earlier->capacity()) {
-                        result = { earlier, earlier->data(), earlier->data() + earlier->capacity() };
+                        result = { earlier, earlier->data(), earlier->data() + earlier->capacity(), 0, earlier };
                         return true;
                     }
                 }
                 return false;
             }
         }
-        result = { other->owner(), begin, begin + size };
+        result = { other->owner(), begin, begin + size, 0, entryFor(other).asCell() };
         return true;
     }
     if (auto* tuple = PyTuple::tryFrom(kept)) {
@@ -566,7 +567,7 @@ static bool findProvenanceByEntry(JSGlobalObject* globalObject, JSValue entry, c
     auto* storage = uncheckedDowncast<PyByteStorage>(entry.asCell());
     if (address < storage->data() || address > storage->data() + storage->capacity())
         return false;
-    result = { storage, storage->data(), storage->data() + storage->capacity() };
+    result = { storage, storage->data(), storage->data() + storage->capacity(), 0, storage };
     return true;
 }
 
@@ -616,6 +617,38 @@ static bool findProvenanceOfPart(JSGlobalObject* globalObject, PyDict* kept, PyC
     return false;
 }
 
+// What an address points into that lies at `home`, in the memory of the instance.
+static bool findProvenanceOfTarget(JSGlobalObject* globalObject, PyCData* holder, const Home& home, const uint8_t* target, Provenance& provenance)
+{
+    if (findProvenanceByEntry(globalObject, entryAt(globalObject, home), target, provenance)) [[likely]]
+        return true;
+    // Nothing was written down for the place, or the bytes have been written since by something that writes nothing down. What the instance keeps alive is in _objects as well, which the
+    // program can get at: this helps against accidents, it is no wall.
+    PyCData* root = holder;
+    while (root->base)
+        root = root->base.get();
+    JSValue kept = root->objects.get();
+    if (findProvenance(globalObject, kept, target, provenance))
+        return true;
+    if (!provenance.isNotAllSeen || root == holder) [[likely]]
+        return false;
+    // It is a part of something larger, which keeps more alive for its parts than is looked through.
+    auto* dict = PyDict::tryFrom(kept);
+    return dict && dict->type() == runtime(globalObject).dictType() && findProvenanceOfPart(globalObject, dict, holder, target, provenance);
+}
+
+// What to write down beside a copy of that address.
+static JSValue entryForCopy(JSGlobalObject* globalObject, PyCData* holder, const Home& home, const uint8_t* target)
+{
+    if (!target)
+        return { };
+    Provenance provenance;
+    if (findProvenanceOfTarget(globalObject, holder, home, target, provenance))
+        return provenance.entry;
+    // (By it a copy knows as well that what it points into is gone.)
+    return entryAt(globalObject, home);
+}
+
 // What the pointer holds. False: an exception; a null pointer is one.
 static bool pointerTarget(JSGlobalObject* globalObject, PyCData* pointer, uint8_t*& target, Home* home = nullptr)
 {
@@ -644,22 +677,7 @@ static uint8_t* lookThroughPointer(JSGlobalObject* globalObject, PyCData* pointe
     if (failed(scope, pointerTarget(globalObject, pointer, target, &home)))
         return nullptr;
     uint8_t* address = std::bit_cast<uint8_t*>(std::bit_cast<uintptr_t>(target) + static_cast<uintptr_t>(offset));
-    bool isFound = findProvenanceByEntry(globalObject, entryAt(globalObject, home), target, provenance);
-    if (!isFound) {
-        // Nothing was written down for the place, or the bytes have been written since by something that writes nothing down. What the pointer keeps alive is in _objects as well, which the
-        // program can get at: this helps against accidents, it is no wall.
-        PyCData* root = pointer;
-        while (root->base)
-            root = root->base.get();
-        JSValue kept = root->objects.get();
-        isFound = findProvenance(globalObject, kept, target, provenance);
-        if (!isFound && provenance.isNotAllSeen && root != pointer) [[unlikely]] {
-            // It is a part of something larger, which keeps more alive for its parts than is looked through.
-            if (auto* dict = PyDict::tryFrom(kept); dict && dict->type() == runtime(globalObject).dictType())
-                isFound = findProvenanceOfPart(globalObject, dict, pointer, target, provenance);
-        }
-    }
-    if (!isFound) {
+    if (!findProvenanceOfTarget(globalObject, pointer, home, target, provenance)) {
         if (!provenance.isInWhatIsGone) [[likely]]
             return address;
         raiseValueError(globalObject, scope, "the memory that the pointer was made to point into is no longer there"_s);
@@ -1034,14 +1052,21 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
             return raiseValueError(globalObject, scope, "the memory of the instance is too small"_s);
         Home homeOfSource;
         Home home;
+        const uint8_t* target = nullptr;
         {
             auto from = Place { source }.resolve(globalObject, size, &homeOfSource);
             RETURN_IF_EXCEPTION(scope, { });
             auto to = place.resolve(globalObject, size, &home);
             RETURN_IF_EXCEPTION(scope, { });
             memmove(to.data(), from.data(), to.size());
+            if (size == sizeof(void*))
+                memcpy(&target, to.data(), sizeof(void*));
         }
-        if (PyCTypeInfo* info = infoOf(globalObject, type); info && info->flags & (IsPointer | HasPointer)) {
+        if (PyCTypeInfo* info = infoOf(globalObject, type); info && info->flags & IsPointer && size == sizeof(void*)) {
+            // Also where only the search knows what it points into: what the search goes by is not handed on in a way that lasts.
+            setEntry(globalObject, home, entryForCopy(globalObject, source, homeOfSource, target));
+            RETURN_IF_EXCEPTION(scope, { });
+        } else if (info && info->flags & HasPointer) {
             copyEntries(globalObject, homeOfSource, home, size);
             RETURN_IF_EXCEPTION(scope, { });
         }
