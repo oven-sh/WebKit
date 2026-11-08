@@ -1,0 +1,80 @@
+# class Base { constructor(a) { this.a = a; this.b = 0 } get() { this.b++; return this.a } }  class Sub extends Base {}
+# class Loose { constructor(a) { this.a = a; this.extra = 0 } }  class LooseSub extends Loose {}
+# `new Sub(42)`: the constructor of Base makes the object with the layout of Sub, which lists no field of its own until flow has run. The store `this.a = a` goes
+# into a field that Sub has from Base: it adds no property, and the class is left without a cause. `this.extra = 0` names no field of Loose or of LooseSub: that
+# store adds a property to the heir, and is its cause. Appended fields are off so that the store is not made a field of LooseSub.
+# OPTIONS: disable=flow:AppendedFields
+# RUN: valueflow-results
+# CHECK: class [[sub]] layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype] keys=NeverEnumerated addedKeysAreComplete=true
+# CHECK-NOT: cause=
+# CHECK: class [[loose]] layout=L2
+# CHECK: class [[looseSub]] layout=L3 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType] keys=NeverEnumerated addedKeys=["extra"] addedKeysAreComplete=true cause=PropertyAdded
+# RUN(APPLY): valueflow-apply
+# APPLY: layout L1 kind=Instance name="Sub" {{*}} flow={baseState=Layout base=L0 allocationClasses=[1] constructorOrders=[{}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype] keys=NeverEnumerated addedKeysAreComplete=true neverEscapes=true}
+# APPLY: layout L3 kind=Instance name="LooseSub" {{*}} flow={baseState=Layout base=L2 allocationClasses=[3] constructorOrders=[{}] cause=PropertyAdded impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType] keys=NeverEnumerated addedKeys=["extra"] addedKeysAreComplete=true neverEscapes=true}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Sub" base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Loose" constructor=f3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L3 kind=Instance name="LooseSub" base=L2 constructor=f5 supertypes=[L2] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="get"
+    v4 = FinishClass v1 layout=L0
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f4
+    v7 = NewClass v6, v4, v5 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = NewClosure function=f3
+    v10 = NewClass v9 layout=L2
+    v11 = FinishClass v10 layout=L2
+    v12 = ResolveHeritage v11
+    v13 = NewClosure function=f5
+    v14 = NewClass v13, v11, v12 layout=L3
+    v15 = FinishClass v14 layout=L3
+    v16 = Integer integer=42
+    v17 = Construct v8, -, v16
+    v18 = PropGet v17 key="get"
+    v19 = Call v18, v17
+    v20 = Construct v15, -, v16
+    v21 = PropGet v20 key="a"
+    v22 = Add v19, v21
+    Return v22
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="a" mode=Strict
+    v5 = Integer integer=0
+    PropSet v3, v5 key="b" mode=Strict
+    Return v3
+}
+function f2 name="get" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+    v1 = PropGet v0 key="b"
+    v2 = Increment v1
+    PropSet v0, v2 key="b" mode=Strict
+    v4 = PropGet v0 key="a"
+    Return v4
+}
+function f3 name="Loose" kind=BaseConstructor flags=[HasNewTarget] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    PropSet v3, v1 key="a" mode=Strict
+    v5 = Integer integer=0
+    PropSet v3, v5 key="extra" mode=Strict
+    Return v3
+}
+function f4 name="Sub" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    Return v4
+}
+function f5 name="LooseSub" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L3
+    Return v4
+}

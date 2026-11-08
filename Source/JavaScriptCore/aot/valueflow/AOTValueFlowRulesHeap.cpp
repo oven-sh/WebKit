@@ -1622,9 +1622,7 @@ void HeapRule::runOperation()
             bool mayLack = false;
             m_context.forEachMember(m_context.valueOf(m_context.readWhatWasWritten(ClimbingSet(only(object)), prototypeLinkName)), [&](ValueFlowObjectID prototype) {
                 LayoutID classOfPrototype = m_universe.classLayoutOf(prototype);
-                mayLack |= classOfPrototype && !std::ranges::any_of(m_program.at(classOfPrototype).fields, [&](const Field& field) {
-                    return field.key == key.name;
-                });
+                mayLack |= classOfPrototype && !findField(m_program, classOfPrototype, key.name, BaseChain::Predicted);
             });
             if (mayLack)
                 mayLackField.append(object);

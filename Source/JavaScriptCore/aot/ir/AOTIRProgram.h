@@ -283,6 +283,18 @@ void forEachFunctionCalledByHost(const Program& program, NOESCAPE const Invocabl
         functor(FunctionID(index));
 }
 
+// The fields that an object of the layout has from its construction: those of the layout, then those of each class that its heritage names (predictedHeritageOf). Before flow has run a
+// derived layout lists none of the fields of the classes above it (appendInheritedFields), so a reader of those fields walks the row. A key that a class below lists again is visited again.
+void forEachFieldOnPredictedRow(const Program& program, LayoutID id, NOESCAPE const Invocable<void(const Field&)> auto& functor)
+{
+    for (size_t steps = 0; id && steps < program.layouts.size(); ++steps, id = predictedHeritageOf(program.at(id))) {
+        for (const Field& field : program.at(id).fields) {
+            if (field.key)
+                functor(field);
+        }
+    }
+}
+
 const RuntimeFunctionEntry* findRuntimeFunction(const Program&, RuntimeFunctionID);
 bool isLibraryCode(const Program&, const Function&);
 bool isBundlerHelperModule(const Program&, const Module&);

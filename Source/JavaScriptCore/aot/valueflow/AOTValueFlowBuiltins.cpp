@@ -1491,7 +1491,7 @@ private:
         bool hasField = false;
         m_context.forEachMember(Typed::withSourcesOfCopies(m_context, known(holders)), [&](ValueFlowObjectID object) {
             LayoutID layout = m_universe.layoutOf(object);
-            hasField |= layout && std::ranges::contains(m_program.at(layout).fields, key, &Field::key);
+            hasField |= layout && findField(m_program, layout, key, BaseChain::Predicted).has_value();
         });
         return hasField;
     }
@@ -3463,12 +3463,11 @@ std::optional<ValueSetID> keysThatObjectsWereMadeWith(ValueFlowRuleContext& cont
         // What a class declares on its prototype object is not enumerable.
         if (universe.classLayoutOf(object) && listed == OwnKeys::EnumerableStrings)
             return;
-        // What a constructor of the program makes is born without a name. The stores of its declared fields are not counted as added names.
+        // What a constructor of the program makes is born without a name. The stores of its declared fields, and of those of the classes above, are not counted as added names.
         if (universe.kindOf(object) == ValueFlowObjectKind::Instance && program.at(universe.layoutOf(object)).constructor && !context.sets().contains(withNamesOfNativeCode, object)) {
-            for (const Field& field : program.at(universe.layoutOf(object)).fields) {
-                if (field.key)
-                    list(field.key);
-            }
+            forEachFieldOnPredictedRow(program, universe.layoutOf(object), [&](const Field& field) {
+                list(field.key);
+            });
             return;
         }
         const ValueFlowSite* site = universe.kindOf(object) == ValueFlowObjectKind::Site ? universe.siteOf(object) : nullptr;

@@ -1,0 +1,40 @@
+# class Base { constructor(a) { this.a = a; this.b = 0 } }  class Sub extends Base {}  keys = Object.keys(new Sub(42))
+# The constructor of Base makes the object with the layout of Sub, which lists no field of its own until flow has run, and the stores of Base's fields add no names to it.
+# Its own names are the fields of the classes above it.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="keys" {{*}} declared={type=Array<"a"|"b", proven
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Sub" base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
+variable g0 name="keys" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = Integer integer=42
+    v8 = Construct v6, -, v7
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectKeys
+    v11 = Call v10, v9, v8
+    PutModuleVariable v11 variable=g0
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="a" mode=Strict
+    v5 = Integer integer=0
+    PropSet v3, v5 key="b" mode=Strict
+    Return v3
+}
+function f2 name="Sub" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    Return v4
+}

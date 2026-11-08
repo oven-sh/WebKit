@@ -1281,11 +1281,25 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     };
     auto uniteObjectsDeclaringFields = [&] {
         ValueSetMaker maker(allSets);
+        // An object of a class has the fields of every class that its heritage names: the constructor at the top of the row allocates it with them. A layout lists the fields of the
+        // classes above it only once flow has run (appendInheritedFields), so the fields of a class are declared by its objects and by those of every class below it.
+        uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
+        Vector<ValueSetID> objectsAtOrBelow(numberOfLayouts, [&](size_t index) {
+            return maker.intersect(universe.objectsWith(LayoutID(static_cast<uint32_t>(index))), ValueSets::complement(universe.objectsThatMayBeAnything()));
+        });
+        for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+            ValueSetID objects = objectsAtOrBelow[index];
+            if (objects == ValueSets::nothing)
+                continue;
+            LayoutID above = predictedHeritageOf(program.layouts[index]);
+            for (size_t steps = 0; above && steps < numberOfLayouts; ++steps, above = predictedHeritageOf(program.at(above)))
+                objectsAtOrBelow[above.index()] = maker.unite(objectsAtOrBelow[above.index()], objects);
+        }
         Vector<std::pair<PropertyKeyID, ValueSetID>> declaredFields;
         Vector<uint32_t> endOfObjectsDeclaringField;
         endOfObjectsDeclaringField.fill(0u, numberOfKeys);
-        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
-            ValueSetID objects = maker.intersect(universe.objectsWith(LayoutID(index)), ValueSets::complement(universe.objectsThatMayBeAnything()));
+        for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+            ValueSetID objects = objectsAtOrBelow[index];
             if (objects == ValueSets::nothing)
                 continue;
             for (const Field& field : program.layouts[index].fields) {
@@ -1302,12 +1316,12 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             return maker.uniteAll(entriesOfKey(objectsDeclaringFields, endOfObjectsDeclaringField, key));
         });
         m_objectsDeclaringFieldThatNoStoreCreates.fill(ValueSets::nothing, numberOfKeys);
-        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        for (uint32_t index = 0; index < numberOfLayouts; ++index) {
             for (const Field& field : program.layouts[index].fields) {
                 if (!field.key || field.form.isEmpty())
                     continue;
                 ValueSetID& objects = m_objectsDeclaringFieldThatNoStoreCreates[field.key.index()];
-                objects = maker.unite(objects, maker.intersect(universe.objectsWith(LayoutID(index)), ValueSets::complement(universe.objectsThatMayBeAnything())));
+                objects = maker.unite(objects, objectsAtOrBelow[index]);
             }
         }
     };

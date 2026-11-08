@@ -1,0 +1,51 @@
+# class Base { #kept; constructor(a) { this.#kept = a } read() { return this.#kept } }  class Sub extends Base {}  new Sub(42).read()
+# The object that the constructor of Base defines the private name on has the layout of Sub, which lists no field of its own until flow has run. The name is a field that Sub has
+# from Base: the definition goes into that field and adds no property. The class is left without a cause, and the read answers what was defined.
+# RUN: valueflow-results
+# CHECK: class [[sub]] layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] keys=NeverEnumerated addedKeysAreComplete=true
+# CHECK-NOT: cause=
+# CHECK: class [[main]] closureFunction=f0
+# RUN(READ): valueflow-why values=f2:v2
+# READ: values=f2:v2
+# READ: result {{*}} 1 members: primitive4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key=#"kept"@L0 declared={type=anything} flags=[IsPrivate]}]
+layout L1 kind=Instance name="Sub" base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]
+variable g0 name="token" module=m0 declared={type=classtoken flags=[IsFromCompiler]} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClassToken layout=L0
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f2
+    DefineMethod v1, v4 layout=L0 key="read"
+    v6 = FinishClass v1 layout=L0
+    v7 = ResolveHeritage v6
+    v8 = NewClosure function=f3
+    v9 = NewClass v8, v6, v7 layout=L1
+    v10 = FinishClass v9 layout=L1
+    v11 = Integer integer=42
+    v12 = Construct v10, -, v11
+    v13 = PropGet v12 key="read"
+    v14 = Call v13, v12
+    Return v14
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = GetModuleVariable variable=g0
+    PrivateDefine v3, v4, v1 layout=L0 field=0
+    Return v3
+}
+function f2 name="read" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = PrivateGet v0, v1 layout=L0 field=0
+    Return v2
+}
+function f3 name="Sub" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    Return v4
+}

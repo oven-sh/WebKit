@@ -349,12 +349,10 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     ClimbingSet names = context.unite(context.valueOf(context.read(above, ValueFlowCellName { ValueFlowNameKind::AddedNames })), context.valueOf(context.read(above, ValueFlowCellName { ValueFlowNameKind::NamesOfMethods })));
     Vector<ValueFlowObjectID, 16> declaredNames;
     context.forEachMember(known(context, above), [&](ValueFlowObjectID object) {
-        LayoutID layout = universe.layoutOf(object);
-        if (!layout)
-            return;
-        for (const Field& field : program.at(layout).fields) {
-            if (field.key)
+        if (LayoutID layout = universe.layoutOf(object)) {
+            forEachFieldOnPredictedRow(program, layout, [&](const Field& field) {
                 declaredNames.append(universe.keyConstant(field.key));
+            });
         }
     });
     names = context.unite(names, ClimbingSet(context.maker().of(declaredNames.span())));
