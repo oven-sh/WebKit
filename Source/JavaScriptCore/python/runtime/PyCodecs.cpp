@@ -419,8 +419,12 @@ JSValue codecLookup(JSGlobalObject* globalObject, const String& encoding)
     }
     JSString* name = internString(vm, builder.toString());
 
-    if (JSValue cached = registry.cache->get(name))
-        return cached;
+    if (JSValue cached = registry.cache->get(name)) {
+        // Whoever is given this takes it apart as a tuple of four. Only such a one is put there, below; but the dict is an object like any other, which a program can come to and write into.
+        if (auto* tuple = PyTuple::tryFrom(cached); tuple && tuple->length() == 4) [[likely]]
+            return cached;
+        return raiseSystemError(globalObject, scope, "the cache of codecs has something for '"_s, encoding, "' that no search function has returned: not a tuple of four"_s);
+    }
 
     if (failed(scope, codecImportEncodings(globalObject, registry)))
         return { };
