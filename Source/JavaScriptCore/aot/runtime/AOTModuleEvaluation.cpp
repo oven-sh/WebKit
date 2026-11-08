@@ -2032,7 +2032,7 @@ void Modules::noteLoadOfEachModuleWith(ModuleID root)
                 m_libraryModulesAskedForInPreload.set(imported.index());
             if (!data(imported).isESModuleOfProgram())
                 continue;
-            noteAskForKey(imported);
+            noteAskForKey(imported, ModuleID(module), LoadByName::Import);
             if (mockInPlace(imported))
                 noteImportUnderMockInPlace(imported);
             if (!m_modulesLoadedBesideGroups.quickSet(imported.index()))
@@ -3431,7 +3431,7 @@ JSValue Modules::require(ModuleID target, ModuleID referrer, RequiredBy required
 {
     SetForScope noImportAsks(m_moduleThatWroteImportThatAsks, ModuleID());
     if (m_mocks) [[unlikely]]
-        noteAskForKey(target);
+        noteAskForKey(target, referrer, LoadByName::Require);
     if (auto* willLoad = m_mocks || m_hasBegunTestFile ? host().willLoad : nullptr) [[unlikely]]
         willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadByName::Require);
     if (referrer && m_goesModuleByModule) [[unlikely]]
@@ -3768,7 +3768,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         return executed;
     }
 
-    if (JSValue thrownByBody = mockInPlace(target) ? JSValue() : errorOfModuleThatRanBesideMock(target)) [[unlikely]] {
+    if (JSValue thrownByBody = isLeftAloneByMock(target) && !mockInPlace(target) ? errorOfModuleThatRanBesideMock(target) : JSValue()) [[unlikely]] {
         throwException(m_instance.globalObject, scope, thrownByBody);
         return { };
     }
@@ -4272,7 +4272,7 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
 {
     if constexpr (answeredBy == RequireAnsweredBy::CompiledCode) {
         if (m_mocks) [[unlikely]]
-            noteAskForKey(target);
+            noteAskForKey(target, referrer, LoadByName::Require);
         if (auto* willLoad = m_mocks || m_hasBegunTestFile ? host().willLoad : nullptr) [[unlikely]]
             willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadByName::Require);
     }

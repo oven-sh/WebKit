@@ -51,6 +51,8 @@ Reference askWhetherListIsAsMade(Walker&, Reference list, Origin);
 Reference askWhetherStorageOfListIsOfKind(Walker&, Reference list, ArrayStorage, Origin, bool isWritable = false);
 void noteKindOfStorageThatTurnFound(Walker&, Reference list, ArrayStorage, bool isWritable = false);
 std::optional<ListTestedInFrontOfLoop> askListTakenApartInFrontOfTypedCopy(Walker&, const BodyValue& open, Reference list);
+std::optional<ListTestedInFrontOfLoop> askListTakenApartInTurnOfTypedCopy(Walker&, const BodyValue& open, Reference list);
+bool listTakenApartIsExpectedToHoldNumbers(Walker&, const BodyValue& open, Reference list);
 std::optional<ListTestedInFrontOfLoop> askListInFrontOfTypedCopy(Walker&, const BodyValue& read, Reference list, ArrayStorage kindStoredInto = ArrayStorage::Other, bool goesByKindOfStorage = false);
 std::optional<PassedTest> askElementInFrontOfTypedCopy(Walker&, const BodyValue& read, const ListTestedInFrontOfLoop&, Reference list, Reference position);
 struct WhatReadsFromInFrontOfLoopFind {

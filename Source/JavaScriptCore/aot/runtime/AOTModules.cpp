@@ -1358,6 +1358,12 @@ bool Modules::hasBegunToLoad(ModuleID module) const
     return data(module).isESModuleOfProgram() && wasLoadedWithGraph(module);
 }
 
+bool Modules::wasMockLaidOverFailureOf(ModuleID module) const
+{
+    auto laid = m_mocksOverModulesThatHaveRun.find(module);
+    return laid != m_mocksOverModulesThatHaveRun.end() && laid->value.wasLaidOverFailure;
+}
+
 bool Modules::hasOnlyBeenLinked(ModuleID module)
 {
     ModuleStatus current = status(module);
@@ -2355,7 +2361,7 @@ BitVector Modules::modulesThatWerePassedWithoutStatus() const
     return passed;
 }
 
-bool Modules::hasLinkedImporterYetToRun(ModuleID module, std::optional<ModuleID> asking) const
+bool Modules::hasLinkedImporterYetToRun(ModuleID module, std::optional<ModuleID> asking, bool onlyOfProject) const
 {
     std::optional<BitVector> passed;
     for (uint32_t index = 0; index < m_table.size(); ++index) {
@@ -2366,6 +2372,8 @@ bool Modules::hasLinkedImporterYetToRun(ModuleID module, std::optional<ModuleID>
         if (status(importer) > ModuleStatus::Evaluating && !keepsStatus)
             continue;
         if (asking && importer == *asking)
+            continue;
+        if (onlyOfProject && isOfPackage(importer))
             continue;
         for (const ModuleRequestData& request : m_table.imports(importer)) {
             if (moduleLoadedBy(request) != module && moduleLoadedBy(request) != moduleWithExportsOf(module))
@@ -2413,6 +2421,7 @@ bool Modules::wasLoadedAheadOfThisTestFile(ModuleID module)
 
 bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, std::optional<ModuleID> asking, bool evenIfItsBodyThrew)
 {
+    bool wasRunByThisMockCall = std::exchange(m_moduleWhoseBodyMockCallRan, std::nullopt) == module;
     if (auto waiting = m_mocksOverModulesThatHaveRun.find(module); waiting != m_mocksOverModulesThatHaveRun.end() && !waiting->value.isInPlace && wasLetGoByLoader(module))
         return true;
     const ModuleData& moduleData = data(module);
@@ -2439,6 +2448,8 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
         return false;
     if ((isGraphRunning() || hasFailed) && hasLinkedImporterYetToRun(module, asking))
         return false;
+    if (wasRunByThisMockCall && hasLinkedImporterYetToRun(module, asking, true))
+        return false;
     bool isOfThisTestFile = wasLoadedInThisTestFile(withExports);
     if (!isOfThisTestFile)
         letGoOfImportersOf(module, ImportersLetGo::All);
@@ -2446,6 +2457,7 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
     auto laid = m_mocksOverModulesThatHaveRun.set(module, MockOverModuleThatHasRun { momentOfFirstMockInTestFile(module), state.momentOfTestFile });
     laid.iterator->value.momentThisWasLaid = ++state.momentOfLoads;
     laid.iterator->value.wasLoadedInThisTestFile = isOfThisTestFile;
+    laid.iterator->value.wasLaidOverFailure = hasFailed;
     if (isOfThisTestFile && !wasLoadedAheadOfThisTestFile(module))
         laid.iterator->value.filesThatHadRun = filesThatHaveRun();
     auto setAsideRecord = [&](ModuleID each) {
@@ -4192,7 +4204,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     if (m_goesModuleByModule) [[unlikely]]
         m_rootsOfCallsOfImport.set(module.index());
     if (m_mocks) [[unlikely]]
-        noteAskForKey(module);
+        noteAskForKey(module, m_moduleThatWroteImportThatAsks, LoadByName::Import);
     if (text == TextOfImport::MayComeLater && isHeldBySweepUnderWay(module)) [[unlikely]]
         return startImportInLaterTurn(module, referrerAsyncOrder);
     runDataFileAgainForImport(module, caller == ImportCaller::Host ? ImportAnsweredBy::Loader : ImportAnsweredBy::Build);

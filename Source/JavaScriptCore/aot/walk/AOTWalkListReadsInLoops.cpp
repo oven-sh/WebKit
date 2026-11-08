@@ -2639,6 +2639,41 @@ static std::optional<ListTestedInFrontOfLoop> askInFrontOfTypedCopyInListReadsIn
     return tested;
 }
 
+static ArrayStorage kindThatTakersOfPatternSpeakForInListReadsInLoops(Walker& walker, const BodyValue& open)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto typeAsBuilt = [&](ValueID input) {
+        Reference built = walker.referenceOf(input);
+        return built ? walker.typeOf(built) : TypeID();
+    };
+    bool someValueIsTaken = false;
+    for (const BodyMentionOfIteration& mention : index.mentionsOfIteration(open.id())) {
+        if (index.opcodeOf(mention.user) != Opcode::IteratorResume)
+            continue;
+        for (BodyValue operation : index.block(mention.block).values()) {
+            if (operation.opcode() != Opcode::ResultAt || operation.as<Opcode::ResultAt>().resultsOperand() != mention.user || operation.as<Opcode::ResultAt>().index() != static_cast<uint32_t>(IteratorResumeResult::Value) || index.isUnused(operation.id()))
+                continue;
+            if (!valueIsOnlyReckonedWithAsNumber(walker, operation.id(), TypesOfInputs(typeAsBuilt)))
+                return ArrayStorage::Contiguous;
+            someValueIsTaken = true;
+        }
+    }
+    return someValueIsTaken ? ArrayStorage::Double : ArrayStorage::Other;
+}
+
+static ArrayStorage kindOfListTakenApartInListReadsInLoops(Walker& walker, const BodyValue& open, Reference list)
+{
+    ArrayStorage written = list && list.isValue() ? kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, ownTypeInListReadsInLoops(walker, list)) : ArrayStorage::Other;
+    if (TypeID expected = written == ArrayStorage::Other ? findExpectation(walker, open.as<Opcode::IteratorOpen>().iterableOperand()).type : TypeID())
+        written = kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, walker.types().withoutNullish(expected));
+    return written == ArrayStorage::Other ? kindThatTakersOfPatternSpeakForInListReadsInLoops(walker, open) : written;
+}
+
+bool listTakenApartIsExpectedToHoldNumbers(Walker& walker, const BodyValue& open, Reference list)
+{
+    return walker.has(Mechanism::Folding) && holdsOnlyNumbers(kindOfListTakenApartInListReadsInLoops(walker, open, list));
+}
+
 std::optional<ListTestedInFrontOfLoop> askListTakenApartInFrontOfTypedCopy(Walker& walker, const BodyValue& open, Reference list)
 {
     Walker::TurnOfTypedCopy turn = walker.turnInWhichListsAreAskedInFront();
@@ -2646,9 +2681,7 @@ std::optional<ListTestedInFrontOfLoop> askListTakenApartInFrontOfTypedCopy(Walke
         return std::nullopt;
     if (!isProvenListInListReadsInLoops(walker, list) || isFreshInListReadsInLoops(walker, list))
         return std::nullopt;
-    ArrayStorage written = kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, ownTypeInListReadsInLoops(walker, list));
-    if (TypeID expected = written == ArrayStorage::Other ? findExpectation(walker, open.as<Opcode::IteratorOpen>().iterableOperand()).type : TypeID())
-        written = kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, walker.types().withoutNullish(expected));
+    ArrayStorage written = kindOfListTakenApartInListReadsInLoops(walker, open, list);
     if (written == ArrayStorage::Other)
         return std::nullopt;
     bool holdsNumbers = holdsOnlyNumbers(written);
@@ -2767,6 +2800,28 @@ std::optional<ListTestedInFrontOfLoop> askListOfNumbersInTurnOfTypedCopy(Walker&
         return goOnWhereTestPassesOrBeginTurnAgainInListReadsInLoops(walker, WTF::move(draft));
     };
     if (!askWhatListIsAskedInListReadsInLoops(walker, tested, origin, passesInTurn))
+        return std::nullopt;
+    walker.noteGuessOpened();
+    walker.count(StatisticID::ListsAskedInTurnsOfTypedCopies);
+    noteListTestedInListReadsInLoops(walker, tested);
+    return tested;
+}
+
+std::optional<ListTestedInFrontOfLoop> askListTakenApartInTurnOfTypedCopy(Walker& walker, const BodyValue& open, Reference list)
+{
+    if (!turnOfTypedCopyMayAskList(walker, list) || !isProvenListInListReadsInLoops(walker, list))
+        return std::nullopt;
+    ArrayStorage written = kindOfListTakenApartInListReadsInLoops(walker, open, list);
+    if (written == ArrayStorage::Other)
+        return std::nullopt;
+    bool holdsNumbers = holdsOnlyNumbers(written);
+    ListTestedInFrontOfLoop tested { list, holdsNumbers ? ArrayStorage::Double : written, holdsNumbers };
+    Origin origin = walker.originOf(open);
+    origin.isTailCall = false;
+    auto passesInTurn = [&](Draft&& draft) {
+        return goOnWhereTestPassesOrBeginTurnAgainInListReadsInLoops(walker, WTF::move(draft));
+    };
+    if (isListAsMade(walker, list) ? !passesInTurn(questionForKindOfStorageInListReadsInLoops(walker, tested, origin)) : !askWhatListIsAskedInListReadsInLoops(walker, tested, origin, passesInTurn))
         return std::nullopt;
     walker.noteGuessOpened();
     walker.count(StatisticID::ListsAskedInTurnsOfTypedCopies);

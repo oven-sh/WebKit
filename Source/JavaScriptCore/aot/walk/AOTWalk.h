@@ -3965,6 +3965,7 @@ void proveExpectedTypeOrBeginTurnAgain(Walker&, ValueID input, TypeID expected, 
 bool rowIsToldApartFromViewsInTurn(Walker&, const BodyValue& read, TypeID expected);
 TypeID typeThatTypeTestAsksForWhereExpected(Walker&, Reference value, TypeID expected);
 bool guessesMayTypeOperationInCleanTurn(Walker&, const BodyValue&, const TypesOfInputs&, bool sitesMayAnswer);
+bool patternMayTakeListApartInCleanTurn(Walker&, const BodyValue& open);
 bool valueIsOnlyReckonedWithAsNumber(Walker&, ValueID, const TypesOfInputs&);
 bool someReadThatAsksItsSiteIsReckonedWith(Walker&, std::span<const ValueID> reads, const TypesOfInputs&);
 bool readThatAsksItsSiteIsReckonedWithAsNumber(Walker&, ValueID read, const TypesOfInputs&);

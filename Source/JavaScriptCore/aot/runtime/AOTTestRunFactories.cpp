@@ -89,7 +89,7 @@ bool Modules::importsModuleWhoseMockWaits(ModuleID root)
     return false;
 }
 
-bool Modules::isImportedByGraphUnderEvaluation(ModuleID module)
+bool Modules::isImportedByGraphUnderEvaluation(ModuleID module, bool forMockThatLeavesModulesAlone)
 {
     auto hasYetToRun = [&](ModuleID each) {
         ModuleStatus current = status(each);
@@ -99,7 +99,7 @@ bool Modules::isImportedByGraphUnderEvaluation(ModuleID module)
     Vector<ModuleID, 16> importers;
     for (unsigned index = 0; index < m_table.size(); ++index) {
         ModuleStatus current = status(ModuleID(index));
-        if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync || (current == ModuleStatus::Failed && !failureByAbsentExport(ModuleID(index))))
+        if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync || (current == ModuleStatus::Failed && !failureByAbsentExport(ModuleID(index)) && !(forMockThatLeavesModulesAlone && wasLetGoByLoader(ModuleID(index)))) || (forMockThatLeavesModulesAlone && wasMockLaidOverFailureOf(ModuleID(index)) && !wasLetGoByLoader(ModuleID(index))))
             importers.append(ModuleID(index));
     }
     while (!importers.isEmpty()) {
@@ -259,9 +259,10 @@ void Modules::forgetFailuresOfExportsThatBuildFoundAbsent()
     ensureStillAliveHere(kept);
 }
 
-bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
+bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module, bool leavesModuleAlone)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    m_moduleWhoseBodyMockCallRan = std::nullopt;
     forgetLoadsRefusedByCheckOfNames(module);
     auto hasYetToRun = [&](ModuleID each) {
         ModuleStatus current = status(each);
@@ -269,7 +270,7 @@ bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
     };
     if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || !hasYetToRun(module) || isMocked(module) || m_modulesWithMockToRun.get(module.index()))
         return false;
-    if (!isImportedByGraphUnderEvaluation(module) || m_modulesWhoseFailedRunWasForgotten.get(module.index()))
+    if (!isImportedByGraphUnderEvaluation(module, leavesModuleAlone) || m_modulesWhoseFailedRunWasForgotten.get(module.index()))
         return !hasRun(module) && !didCaptureExports(module);
     BitVector isSeen(m_table.size());
     Vector<ModuleID, 16> toVisit { module };
@@ -291,7 +292,9 @@ bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
     if (evaluation->status() == JSPromise::Status::Rejected) {
         evaluation->markAsHandled();
         throwException(m_instance.globalObject, scope, evaluation->result());
+        return false;
     }
+    m_moduleWhoseBodyMockCallRan = module;
     return false;
 }
 
@@ -320,13 +323,22 @@ JSPromise* Modules::evaluationUnderWay(ModuleID module, bool hasWaitedForTurn)
 JSPromise* Modules::evaluationUnderWayBelow(ModuleID file)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    for (const ModuleRequestData& request : m_table.imports(file)) {
-        if (request.isDeferred)
+    BitVector isSeen(m_table.size());
+    Vector<ModuleID, 16> toVisit { file };
+    while (!toVisit.isEmpty()) {
+        ModuleID importer = toVisit.takeLast();
+        if (isSeen.quickSet(importer.index()))
             continue;
-        JSPromise* evaluation = evaluationUnderWay(moduleLoadedBy(request), true);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (evaluation)
-            return evaluation;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (request.isDeferred)
+                continue;
+            ModuleID imported = moduleLoadedBy(request);
+            JSPromise* evaluation = evaluationUnderWay(imported, true);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (evaluation)
+                return evaluation;
+            toVisit.append(imported);
+        }
     }
     return nullptr;
 }
@@ -1593,7 +1605,7 @@ JSPromise* evaluationUnderWayBelow(JSGlobalObject* realm, ModuleID file)
     return modules ? modules->evaluationUnderWayBelow(file) : nullptr;
 }
 
-bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID module, bool displacesEarlierMock, bool setsModuleAside)
+bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID module, bool displacesEarlierMock, bool setsModuleAside, bool leavesModuleAlone)
 {
     Modules* modules = modulesOf(realm);
     MockDoor door(modules, module, "the mock call"_s);
@@ -1610,7 +1622,7 @@ bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID module, bo
     modules->noteCallOfMock(module);
     modules->noteWhetherFileHasThrownWhereMockIsMade(module, displacesEarlierMock, setsModuleAside);
     modules->dropErrorsOfLoadsEndedByMockOf(module);
-    RELEASE_AND_RETURN(scope, modules->runBodyOfLinkedModuleAheadOfMock(module));
+    RELEASE_AND_RETURN(scope, modules->runBodyOfLinkedModuleAheadOfMock(module, leavesModuleAlone));
 }
 
 void letMockStandForLoadsInFlight(JSGlobalObject* realm, ModuleID module)

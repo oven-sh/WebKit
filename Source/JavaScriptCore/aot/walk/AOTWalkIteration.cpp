@@ -969,6 +969,31 @@ public:
         return iteration;
     }
 
+    std::optional<Walker::IterationByIndex> holdToListAsMadeOrBeginTurnAgain(const BodyValue& open, Reference iterable, const ClassSteppedUnseen& stepped)
+    {
+        if (stepped.contents != ContentsStepped::List || stepped.kind != JSC::IterationKind::Values || stepped.restsOnWatchAboveInstances || stepped.methodAskedByItsByte)
+            return std::nullopt;
+        if (!m_walker.standsInTurnThatLooksCountOn() || !m_walker.mayBeginTurnAgainInClosedCopy() || !indexesAreAbsentAboveLists(m_walker) || !listTakenApartIsExpectedToHoldNumbers(m_walker, open, iterable))
+            return std::nullopt;
+        Walker::IterationByIndex iteration;
+        BlockID otherwise = addBlock(BlockFrequency::Rare);
+        iteration.list = goOnWhereInstanceIsAsMade(iterable, stepped, otherwise);
+        BlockID held = m_walker.isUnreachable() ? BlockID() : m_walker.currentBlock();
+        continueIn(otherwise);
+        if (!m_walker.isUnreachable())
+            m_walker.beginTurnAgainInClosedCopy();
+        if (held)
+            continueIn(held);
+        iteration.builtinClass = stepped.builtinClass;
+        iteration.contents = stepped.contents;
+        iteration.kind = stepped.kind;
+        iteration.position = integer(0);
+        iteration.stepsOfPatternStandInRow = true;
+        m_walker.noteGuessOpened();
+        m_walker.count(StatisticID::PatternsThatHoldValuesToListsAsMadeInTurns);
+        return iteration;
+    }
+
     Walker::IterationByIndex takePartsOfPairOrStepsAtOpen(const Walker::IterationByIndex& stepping, Reference pair)
     {
         Walker::IterationByIndex pattern;
@@ -1155,6 +1180,8 @@ public:
             }
             if (position && iteration.stepsOfPatternStandInRow && runsNoCode && !iteration.table && iteration.kind == JSC::IterationKind::Values) {
                 SetForScope takesApart(m_takesListApart, true);
+                if (!*position)
+                    m_walker.count(StatisticID::PatternsThatReadListsAsMadeUnderWrittenPlaces);
                 Reference value = handedOutAt(iteration, iteration.list, iteration.position, true, std::nullopt);
                 iteration.position = integer(*position + 1);
                 return resultsOf(boolean(false), value);
@@ -2047,6 +2074,8 @@ private:
             return false;
         if (iteration.isAsMadeForGood && indexesAreAbsentAboveLists(m_walker))
             return true;
+        if (iteration.stepsOfPatternStandInRow && isListAsMade(m_walker, iteration.list) && indexesAreAbsentAboveLists(m_walker))
+            return true;
         return iteration.literal || (isFreshInIteration(m_walker, iteration.list) && isListAsMade(m_walker, iteration.list));
     }
 
@@ -2141,6 +2170,8 @@ private:
         std::optional<ListTestedInFrontOfLoop> tested = findListTestedInFrontOfLoop(m_walker, list);
         if (!tested && m_takesListApart && m_site)
             tested = askListTakenApartInFrontOfTypedCopy(m_walker, m_walker.currentBodyIndex().value(m_site->operand(0)), list);
+        if (!tested && m_takesListApart && m_site)
+            tested = askListTakenApartInTurnOfTypedCopy(m_walker, m_walker.currentBodyIndex().value(m_site->operand(0)), list);
         if (!tested && m_takesListApart)
             m_walker.noteListFromInFrontTakenApart(list);
         if (tested) {
@@ -3609,6 +3640,11 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
         uint32_t numberOfSteps = *open.as<Opcode::IteratorOpen>().elementCount();
         bool standsInLoop = iterable.isValue() && walker.isInLoop();
         std::optional<ClassSteppedUnseen> table = standsInLoop ? findClassToTestFor(walker, iterated, iterable, true) : std::nullopt;
+        if (std::optional<Walker::IterationByIndex> held = table ? builder.holdToListAsMadeOrBeginTurnAgain(open, iterable, *table) : std::nullopt) {
+            if (!walker.isUnreachable())
+                walker.bind(open.id(), walker.addIterationByIndex(WTF::move(*held)));
+            return true;
+        }
         if (table && table->contents != ContentsStepped::Map && table->contents != ContentsStepped::Set)
             table = std::nullopt;
         TypeID expected = standsInLoop && !table ? findExpectation(walker, iterated).type : TypeID();
@@ -3672,8 +3708,6 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
         iteration.isAsMadeForGood = isAsMadeForGood;
         iteration.isOpenAtEveryStepAndClose = way.isOpenAtEveryStepAndClose;
         iteration.stepsOfPatternStandInRow = proven->contents == ContentsStepped::List && stepsOfPatternStandInRow(index, open);
-        if (iteration.stepsOfPatternStandInRow)
-            walker.count(StatisticID::PatternsThatReadListsAsMadeUnderWrittenPlaces);
     } else {
         if (isExpectedToBeSteppedUnseen(walker, open.id()))
             builder.expectNoStepByProtocol();
@@ -3940,6 +3974,12 @@ bool openLoopOverIteratorThatEngineMakesOfItsOpcodes(Walker& walker, const BodyV
         walker.bind(openID, walker.addIterationByIndex(WTF::move(iteration)));
     walker.walkStretch(block.id(), placeOfOpen + 1, placeOfOpen + 1);
     return true;
+}
+
+bool patternMayTakeListApartInCleanTurn(Walker& walker, const BodyValue& open)
+{
+    return isOpenThatMayGoByIndex(open) && listsAreIteratedByIndex(walker) && indexesAreAbsentAboveLists(walker) && stepsOfPatternStandInRow(walker.currentBodyIndex(), open)
+        && listTakenApartIsExpectedToHoldNumbers(walker, open, walker.referenceOf(open.as<Opcode::IteratorOpen>().iterableOperand()));
 }
 
 bool spreadAppendsElementsOfListAsMade(Walker& walker, ValueID spreadValue)

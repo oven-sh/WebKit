@@ -38,7 +38,7 @@ enum StatisticID (stage: StatisticStage) {
     CallsThatTakeListInPlaceOfItsCopy
     CallsOfPushThatAppendListPassed
     CopiesThatAreDefinitionsOneByOne
-    RestsOfPatternsThatAreDefinitionsOneByOne PatternsThatReadListsAsMadeUnderWrittenPlaces
+    RestsOfPatternsThatAreDefinitionsOneByOne PatternsThatReadListsAsMadeUnderWrittenPlaces PatternsThatHoldValuesToListsAsMadeInTurns
     SpreadsOfIteratorsThatAreNeverMade
     StepsOfIteratorsThatAreNeverMade
     CallsWalkedApartFromSpreadsOfWhatIsNoList

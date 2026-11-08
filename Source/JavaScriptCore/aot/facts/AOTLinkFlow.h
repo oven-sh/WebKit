@@ -2418,6 +2418,7 @@ void summarizeCallees(const LinkFlow&, LinkTables&);
 void writePrototypeObjectsThatAreSettled(const LinkFlow&, LinkTables&);
 void layReferrersOfHeldReadingOver(LinkTables& proven, LinkTables& held, const ParallelLoops&);
 void rankReferrersFirst(LinkTables&);
+Vector<std::pair<RuntimeModuleID, BuiltinName>> exportsThatHostOnlyKeepsWhereLinkFollows(const BuiltinTable&);
 
 } } } // namespace JSC::AOT::Typed
 

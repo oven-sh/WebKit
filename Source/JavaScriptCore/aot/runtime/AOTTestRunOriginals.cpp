@@ -226,6 +226,15 @@ bool Modules::isMockedByFactoryThatTakesOriginal(ModuleID module) const
     return m_modulesWithMockThatAsksAgain.get(module.index()) && isMocked(module);
 }
 
+bool Modules::isGivenOriginalBesideMock(ModuleID file, ModuleID asker, LoadByName way)
+{
+    if (!asker || !m_table.hasFilePath(file) || !m_table.hasFilePath(fileOf(asker)))
+        return false;
+    if (way == LoadByName::Require)
+        return host().isLeftToItselfByMock && host().isLeftToItselfByMock(m_instance.globalObject, m_table.pathText(file), m_table.pathText(fileOf(asker)));
+    return host().givesOriginalBesideMock && host().givesOriginalBesideMock(m_instance.globalObject, m_table.pathText(file), m_table.pathText(fileOf(asker)), true);
+}
+
 bool Modules::getsOriginalBesideMock(ModuleID target, ModuleID referrer)
 {
     if (!m_numberOfMocksInPlace || !host().givesOriginalBesideMock) [[likely]]
@@ -475,7 +484,10 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target)
     m_requiresThatGaveUp.removeAllMatching([&](const RequireThatGaveUp& pair) {
         return pair.call != callOfFactoryThatHasNotSettled(pair.mocked) || mockInPlace(pair.mocked);
     });
-    if (m_requiresThatGaveUp.isEmpty())
+    auto standsAsItRan = [&](ModuleID file) {
+        return hasRun(file) && !isEvicted(file) && !m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return m_timesMocked.get(pair.mocked) > 1; });
+    };
+    if (m_requiresThatGaveUp.isEmpty() || (!isMocked(target) && standsAsItRan(target)))
         return { };
     auto givesUpAgain = [&] {
         throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.pathText(target)));
@@ -516,7 +528,7 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target)
             bool passesThroughLoadThatWasLeft = false;
             for (size_t index : belowTarget) {
                 ModuleID file(index);
-                if (file == above || file == target || isMocked(file) || !belowLoadThatWasLeft.get(index))
+                if (file == above || file == target || isMocked(file) || standsAsItRan(file) || !belowLoadThatWasLeft.get(index))
                     continue;
                 BitVector belowFile = reachedByStatements(file, AtMock::Stops);
                 if (m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return belowFile.get(pair.mocked.index()); })) {

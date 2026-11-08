@@ -161,7 +161,7 @@ static bool leafReadsElementsOfHolderFromInFrontOfLoopAtInlining(const Walker& w
             if (read.opcode() != Opcode::ElemGet && !takesApart)
                 continue;
             std::optional<uint32_t> position = entry.indexOfParameter(body->valueBehindCasts(takesApart ? read.as<Opcode::IteratorOpen>().iterableOperand() : read.objectOperand()));
-            if (position && *position < handedOver->size() && (*handedOver)[*position] && walker.standsInFrontOfOpenLoop(*loop, (*handedOver)[*position]))
+            if (position && *position < handedOver->size() && (*handedOver)[*position] && (takesApart || walker.standsInFrontOfOpenLoop(*loop, (*handedOver)[*position])))
                 return true;
         }
     }

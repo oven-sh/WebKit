@@ -8111,6 +8111,8 @@ bool guessesMayTypeOperationInCleanTurn(Walker& walker, const BodyValue& operati
         TypeID callee = typesOfInputs(whatIsCalled);
         return (callee && !saysNothingForGuesses(walker.types(), callee)) || !!expectationOfCalleeForGuesses(walker, operation, OperandIndex::Call::callee).type || callIsExpectedToEnterTargetOfBoundFunction(walker, operation) || !!fewClosuresThatCalleeIsHeldToBeForGuesses(walker, operation);
     }
+    if (opcode == Opcode::IteratorOpen && patternMayTakeListApartInCleanTurn(walker, operation))
+        return true;
     static constexpr OpcodeSet accesses = opcodesOfFamily(OperationFamily::Access);
     static constexpr OpcodeSet operators = opcodesOfFamily(OperationFamily::Operator);
     bool isAccess = accesses.contains(opcode);

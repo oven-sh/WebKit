@@ -262,11 +262,18 @@ struct PathIntoLiteralInLinkCalls {
     std::span<const BuiltinName> stepsLeft;
 };
 
+struct ExportKeptInNativeCellInLinkCalls {
+    RuntimeModuleID module;
+    BuiltinName name;
+    std::span<const BuiltinName> memberPath;
+};
+
 struct NativeCellInLinkCalls {
     BuiltinName name;
     bool isCalled { false };
     bool isHandedOut { false };
     FlowNodeID kept;
+    Vector<ExportKeptInNativeCellInLinkCalls, 1> exportsKept { };
 };
 
 struct RowCallInLinkCalls {
@@ -701,7 +708,44 @@ static Vector<NativeCellInLinkCalls> nativeCellsOfTableForLinkCalls(const Builti
             }
         }
     }
+    for (uint32_t index = 0; index < table.builtinCount(); ++index) {
+        for (const BuiltinModuleLoad& load : table.moduleLoadsOf(BuiltinID(index))) {
+            for (size_t place = 0; place < load.usesOfExports.size(); ++place) {
+                for (const BuiltinHostUse& use : load.usesOfExports[place].list) {
+                    size_t position = use.use == BuiltinHostReadUse::Kept ? cells.findIf([&](const NativeCellInLinkCalls& cell) { return cell.name == use.nativeCell; }) : notFound;
+                    if (position != notFound)
+                        cells[position].exportsKept.append({ load.module, load.exports[place], use.memberPath });
+                }
+            }
+        }
+    }
     return cells;
+}
+
+Vector<std::pair<RuntimeModuleID, BuiltinName>> exportsThatHostOnlyKeepsWhereLinkFollows(const BuiltinTable& table)
+{
+    Vector<NativeCellInLinkCalls> cells = nativeCellsOfTableForLinkCalls(table);
+    Vector<std::pair<RuntimeModuleID, BuiltinName>> followed;
+    Vector<std::pair<RuntimeModuleID, BuiltinName>> usedOtherwise;
+    auto lookAt = [&](const BuiltinModuleLoad& load) {
+        for (size_t place = 0; place < load.exports.size(); ++place) {
+            bool isOnlyKept = !load.readsEveryExport && place < load.usesOfExports.size() && load.usesOfExports[place].areListed && !load.usesOfExports[place].list.empty();
+            for (size_t index = 0; isOnlyKept && index < load.usesOfExports[place].list.size(); ++index) {
+                const BuiltinHostUse& use = load.usesOfExports[place].list[index];
+                isOnlyKept = use.use == BuiltinHostReadUse::Kept && !use.memberPath.empty() && cells.containsIf([&](const NativeCellInLinkCalls& cell) {
+                    return cell.name == use.nativeCell && cell.isCalled && !cell.isHandedOut;
+                });
+            }
+            (isOnlyKept ? followed : usedOtherwise).append({ load.module, load.exports[place] });
+        }
+    };
+    for (uint32_t index = 0; index < table.builtinCount(); ++index)
+        std::ranges::for_each(table.moduleLoadsOf(BuiltinID(index)), lookAt);
+    std::ranges::for_each(table.startupLoads(), lookAt);
+    followed.removeAllMatching([&](const std::pair<RuntimeModuleID, BuiltinName>& exported) {
+        return usedOtherwise.contains(exported);
+    });
+    return followed;
 }
 
 StateOfLinkCalls::StateOfLinkCalls(const LinkFlow& flow)
@@ -1038,6 +1082,8 @@ private:
     void callHandlers(RowCall&, const BuiltinHandlerCall&, const Values& handlers);
     const NativeCellInLinkCalls* findNativeCell(BuiltinName) const;
     FlowNodeID nodeOfFunctionsKeptIn(BuiltinName cell);
+    void addExportsThatHostKeepsIn(BuiltinName cell, Values&);
+    Values whatLiesUnder(BuiltinName, const Values& holders);
     void applyAction(RowCall&, const BuiltinPropertyAction&);
     bool noteWritesOf(RowCall&, const BuiltinPropertyAction&);
     bool onlyWritesOnObject(RowCall&, const BuiltinPropertyAction&);
@@ -4460,6 +4506,7 @@ void CallInLinkCalls::applyHandlerCall(RowCall& call, const BuiltinHandlerCall& 
     if (FlowNodeID kept = handlerCall.callee.kind == BuiltinPlaceKind::NativeCell ? nodeOfFunctionsKeptIn(handlerCall.callee.nativeCell) : FlowNodeID()) {
         Values handlers;
         add(handlers, kept, 1);
+        addExportsThatHostKeepsIn(handlerCall.callee.nativeCell, handlers);
         callHandlers(call, handlerCall, handlers);
         return;
     }
@@ -4487,6 +4534,42 @@ FlowNodeID CallInLinkCalls::nodeOfFunctionsKeptIn(BuiltinName name)
     if (!cell.kept)
         cell.kept = m_flow.makeSharedNode();
     return cell.kept;
+}
+
+void CallInLinkCalls::addExportsThatHostKeepsIn(BuiltinName name, Values& kept)
+{
+    for (const ExportKeptInNativeCellInLinkCalls& exported : findNativeCell(name)->exportsKept) {
+        for (const Module& module : m_program.modules) {
+            if (module.runtimeModule != exported.module || !module.body)
+                continue;
+            Values found;
+            add(found, m_flow.result(module.body, 0), 1);
+            found = whatLiesUnder(exported.name, found);
+            for (BuiltinName member : exported.memberPath)
+                found = whatLiesUnder(member, found);
+            add(kept, found);
+        }
+    }
+}
+
+ValuesInLinkCalls CallInLinkCalls::whatLiesUnder(BuiltinName name, const Values& holders)
+{
+    Values found;
+    PropertyKeyID key = m_program.keyOf(name);
+    forEachType(holders, [&](const LinkType& type, const Source*) {
+        bool everyHolderIsRecordInSight = type.functions == LinkType::Functions::None && type.classes == LinkType::Classes::None && !type.builtin && !type.holdsUnseen && !type.holdsLostBuiltins
+            && (type.objects == LinkType::Objects::None || type.objects == LinkType::Objects::Layout || type.objects == LinkType::Objects::Set);
+        m_flow.forEachLayoutOf(type, [&](LayoutID holder) {
+            std::optional<FieldReference> field = key ? findField(m_program, holder, key) : std::nullopt;
+            if (field)
+                add(found, m_flow.field(*field), 1);
+            else
+                everyHolderIsRecordInSight = false;
+        });
+        if (!everyHolderIsRecordInSight)
+            add(found, LinkType::anything());
+    });
+    return found;
 }
 
 bool CallInLinkCalls::isTakenApart(const RowCall& call, std::optional<BuiltinOperand> operand) const

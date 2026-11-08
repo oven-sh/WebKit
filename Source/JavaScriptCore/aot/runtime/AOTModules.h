@@ -222,11 +222,12 @@ public:
     bool isKeyOfThisTestFile(ModuleID module) const { return m_filesWhoseKeyIsOfThisTestFile.get(module.index()); }
     void noteThatMockHasEmptiedKey(ModuleID file) { m_filesWhoseKeyMockHasEmptied.set(file.index()); }
     void noteThatKeyIsFilledAgain(ModuleID file) { m_filesWhoseKeyMockHasEmptied.clear(file.index()); }
-    void noteAskForKey(ModuleID fileOrFace)
+    void noteAskForKey(ModuleID fileOrFace, ModuleID asker, LoadByName way)
     {
-        if (ModuleID file = fileOf(fileOrFace); m_filesWhoseKeyMockHasEmptied.get(file.index()))
+        if (ModuleID file = fileOf(fileOrFace); m_filesWhoseKeyMockHasEmptied.get(file.index()) && !isGivenOriginalBesideMock(file, asker, way))
             noteThatKeyIsOfThisTestFile(file);
     }
+    bool isGivenOriginalBesideMock(ModuleID file, ModuleID asker, LoadByName);
     void markEvaluated(ModuleID module) { setStatus(module, ModuleStatus::Evaluated); }
     bool isMocked(ModuleID module) const { return m_mocks && m_mocks->modules.get(module.index()); }
     bool hasMockThatWaitsOrRuns(ModuleID file) const { return m_modulesWithMockThatWaited.get(file.index()) && !m_modulesWithMockInPlace.get(file.index()); }
@@ -315,7 +316,7 @@ public:
     std::optional<std::pair<ModuleID, ModuleID>> m_importThatBodySetAsideCallsNow;
     bool willLeaveModuleAlone(ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt, bool evenIfItsBodyThrew);
     bool isGraphRunning() const { return m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_instance.vm->synchronousModuleQueue(); }
-    bool hasLinkedImporterYetToRun(ModuleID, std::optional<ModuleID> askingAsHostNamesIt) const;
+    bool hasLinkedImporterYetToRun(ModuleID, std::optional<ModuleID> askingAsHostNamesIt, bool onlyOfProject = false) const;
     bool keepsStatusOfRunBeforeLoadThatRuns(ModuleID) const;
     BitVector modulesThatWerePassedWithoutStatus() const;
     uint32_t momentOfFirstMockInTestFile(ModuleID);
@@ -567,6 +568,7 @@ public:
     bool isLinkedBelow(ModuleID module, ModuleID root) const { return !mocksBelow(root).hides(module) && (!isMocked(module) || mocksBelow(module).rootRunsBesideItsMock()); }
     bool hasBegunToLoad(ModuleID) const;
     bool hasOnlyBeenLinked(ModuleID);
+    bool wasMockLaidOverFailureOf(ModuleID) const;
     bool hostAnswersInPlaceOf(ModuleID, LoadByName);
     bool isKeptInRequireCache(ModuleID) const;
     bool isInRequireCache(ModuleID) const;
@@ -601,10 +603,10 @@ public:
     bool wasLoadedWhenMockWasMade(ModuleID);
     void forgetLoadThatFailed(ModuleID file);
     bool importsModuleWhoseMockWaits(ModuleID root);
-    bool runBodyOfLinkedModuleAheadOfMock(ModuleID);
+    bool runBodyOfLinkedModuleAheadOfMock(ModuleID, bool leavesModuleAlone);
     JSPromise* evaluationUnderWay(ModuleID, bool hasWaitedForTurn);
     JSPromise* evaluationUnderWayBelow(ModuleID file);
-    bool isImportedByGraphUnderEvaluation(ModuleID);
+    bool isImportedByGraphUnderEvaluation(ModuleID, bool forMockThatLeavesModulesAlone = false);
     void forgetLoadsRefusedByCheckOfNames(ModuleID mocked);
     bool wasPulledInByLoadThatFailed(ModuleID) const;
     bool isRootOfImportThatFailed(ModuleID module) const { return m_rootsOfCallsOfImport.get(module.index()) && status(module) == ModuleStatus::Failed; }
@@ -2009,6 +2011,7 @@ private:
         bool didFileRunBesideMock { false };
         bool wasLoadedInThisTestFile { false };
         BitVector filesThatHadRun { };
+        bool wasLaidOverFailure { false };
     };
     Vector<std::pair<ModuleID, JSObject*>, 4> m_namespacesBeingMade;
     size_t m_outermostNamespaceReadWhileBeingMade { notFound };
@@ -2117,6 +2120,7 @@ private:
     BitVector m_namespacesReplacedByMock;
     std::optional<UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 2>>> m_modulesThatHandOnNamespaces;
     BitVector m_modulesOwedToImportersThatRan;
+    std::optional<ModuleID> m_moduleWhoseBodyMockCallRan;
     BitVector m_modulesWithNothingOwedBelow;
     Vector<ModuleID, 4> m_mockedModulesPassedOverByWalks;
     BitVector m_modulesWithMockToLetGo;

@@ -307,7 +307,7 @@ JS_EXPORT_PRIVATE bool isImportHeld(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void endMocksThatStoodForLoadsInFlight(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool importsByStatements(JSGlobalObject*, ModuleID importer, ModuleID imported);
 JS_EXPORT_PRIVATE void layMocksAgainAtNextLoad(JSGlobalObject*, ModuleID, bool waits = true);
-JS_EXPORT_PRIVATE bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID, bool displacesEarlierMock, bool setsModuleAside);
+JS_EXPORT_PRIVATE bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID, bool displacesEarlierMock, bool setsModuleAside, bool leavesModuleAlone);
 JS_EXPORT_PRIVATE JSPromise* evaluationUnderWay(JSGlobalObject*, ModuleID, bool hasWaitedForTurn);
 JS_EXPORT_PRIVATE JSPromise* evaluationUnderWayBelow(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE void countMockCall(JSGlobalObject*, std::optional<ModuleID>, ASCIILiteral otherwise, ASCIILiteral call, ASCIILiteral factory);

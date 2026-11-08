@@ -3991,7 +3991,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             bind(name, reference);
     }
     if (startOfCopyBeside && !copyBesideIsEntered && !m_hasFailed) {
-        m_state.clear();
+        m_state = WTF::move(stateOfCopyBeside);
         m_block = startOfCopyBeside;
         jumpTo(closedStart, { });
     }
@@ -4082,9 +4082,11 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         inputBlock(frameIndex, member).firstNarrowerName = namesInFrontOfLoop;
     forgetValuesOfLoop(inputHead);
     if (frontIsEnteredOutOfTurns && closedStart && !m_hasFailed) {
-        m_block = { };
-        m_state.clear();
-        continueIn(closedStart);
+        if (m_block != closedStart) {
+            m_block = { };
+            m_state.clear();
+            continueIn(closedStart);
+        }
         if (isUnreachable()) {
             bool hoistedTestsLeadHere = false;
             m_code.forEachEdgeIntoSoFar(closedStart, [&](const Edge&) {
