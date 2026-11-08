@@ -414,17 +414,21 @@ JSValue attributeFromPropertyOfJS(JSGlobalObject* globalObject, JSObject* object
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Identifier key;
-    if (failed(scope, propertyKeyForAttribute(globalObject, object, name, key)))
-        return { };
-    JSValue attribute = attributeFromProperty<false>(globalObject, object, object, key);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (attribute)
-        return attribute;
-    // A function with properties of its own is still that when it has been taken from an object as a method.
-    if (auto* bound = dynamicDowncast<JSBoundFunction>(object))
-        RELEASE_AND_RETURN(scope, attributeFromPropertyOfJS(globalObject, bound->targetFunction(), name));
-    return { };
+    while (true) {
+        Identifier key;
+        if (failed(scope, propertyKeyForAttribute(globalObject, object, name, key)))
+            return { };
+        JSValue attribute = attributeFromProperty<false>(globalObject, object, object, key);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (attribute)
+            return attribute;
+        // A function with properties of its own is still that when it has been taken from an object as a method. (What has been bound may be
+        // bound again, as often as the program likes.)
+        auto* bound = dynamicDowncast<JSBoundFunction>(object);
+        if (!bound)
+            return { };
+        object = bound->targetFunction();
+    }
 }
 
 // The same for an instance of `type`, a class of Python's that derives from one of JS's. The chain of prototypes would say the same to JS, but

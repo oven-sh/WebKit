@@ -2192,7 +2192,8 @@ The collector is told the size of the side tables, which are several times the s
   derives from no class of JS's makes an object nothing but an object with that prototype: `Object.create(list.prototype)` is no list.
   The prototypes are made with the class, so `Derived.__bases__` cannot be assigned.
   One class of JS among the bases, and no built-in type of Python's beside it. Not `Array` (an array is a list), `Function`, nor the
-  wrappers of primitive values. An `Error` of JS is no exception of Python's, so such a class cannot be raised.
+  wrappers of primitive values. An `Error` of JS is no exception of Python's, so such a class cannot be raised. Nor a class that extends more than 10,000 others which have no type yet: what a class extends may be
+  the answer of a `Proxy`, so a chain need not end, and one that does costs by the square of its length (`longestChainOfClassesOfJS`).
 - What JS forbids is refused as in strict code: to assign to or delete a property of a frozen object is a `TypeError` of JS.
 - `dir()` lists the names of the properties, inherited ones too, once each; not `arguments` and `caller` of `Function.prototype`, which throw.
 - `str()` is `String()`; of what JS can make no string of (an object without a prototype, the namespace of a module), `repr()`.
