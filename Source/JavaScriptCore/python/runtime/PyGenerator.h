@@ -21,6 +21,9 @@ public:
 
     enum class Kind : uint8_t { Generator, Coroutine, AsyncGenerator };
 
+    // The hidden fields of a generator (hiddenField()). Of an asynchronous one: see jsViewRequestUnderWay().
+    static constexpr unsigned lastRequestOfJSField = 0;
+
     // A positive state is where to resume: the offset of an instruction of the body.
     enum State : int32_t {
         Completed = -1,

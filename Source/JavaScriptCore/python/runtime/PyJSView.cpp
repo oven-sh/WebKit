@@ -945,8 +945,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncEnd, (JSGlobalObject* globalObject, CallFram
 // An asynchronous generator of JS's takes requests while it runs, and serves them in the order in which they came. One of Python's
 // refuses them ("asynchronous generator is already running"), and whoever reads a stream asks for return() while a next() is under
 // way. So the generator keeps the promise with which the last request that JS has made of it is over, and a request that finds that
-// pending begins behind it. (The generator, not the object that JS has: there is one line, however many of those there are.)
-static constexpr unsigned lastRequestOfJSField = 0;
+// pending begins behind it (PyGenerator::lastRequestOfJSField). The generator, not the object that JS has: there is one line, however many of those there are.
 
 static PyGenerator* jsViewAsyncGenerator(JSValue iterator)
 {
@@ -958,7 +957,7 @@ static PyGenerator* jsViewAsyncGenerator(JSValue iterator)
 static JSPromise* jsViewRequestUnderWay(JSGlobalObject* globalObject, JSValue iterator)
 {
     auto* generator = jsViewAsyncGenerator(iterator);
-    JSValue last = generator ? hiddenField(globalObject, generator, lastRequestOfJSField) : JSValue();
+    JSValue last = generator ? hiddenField(globalObject, generator, PyGenerator::lastRequestOfJSField) : JSValue();
     auto* promise = last ? uncheckedDowncast<JSPromise>(last) : nullptr;
     return promise && promise->status() == JSPromise::Status::Pending ? promise : nullptr;
 }
@@ -967,7 +966,7 @@ static void jsViewRequestHasBegun(JSGlobalObject* globalObject, JSValue iterator
 {
     auto* generator = jsViewAsyncGenerator(iterator);
     if (request && generator)
-        setHiddenField(globalObject, generator, lastRequestOfJSField, request);
+        setHiddenField(globalObject, generator, PyGenerator::lastRequestOfJSField, request);
 }
 
 // When `last` is over, function.call(iterator, argument, request), which settles `request` as the iterator settles what it is asked for.
