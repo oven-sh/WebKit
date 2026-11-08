@@ -244,6 +244,7 @@ header: <WebCore/ScrollbarTrackCornerSystemImageMac.h>
 #endif // USE(APPKIT)
 
 header: <WebCore/ScrollTypes.h>
+enum class WebCore::ScrollAnimationCurve : bool;
 enum class WebCore::ScrollIsAnimated : bool;
 enum class WebCore::ScrollbarRevealBehavior : bool;
 
@@ -1982,6 +1983,7 @@ header: <WebCore/ScrollingCoordinatorTypes.h>
 [CustomHeader] struct WebCore::ScrollRequestResponseData {
     WebCore::ScrollRequestType requestType;
     Markable<WebCore::ScrollRequestIdentifier> responseIdentifier;
+    bool wasDiscarded;
 };
 
 header: <WebCore/ScrollingCoordinatorTypes.h>
@@ -2017,7 +2019,7 @@ header: <WebCore/KeyboardScroll.h>
 
 header: <WebCore/NotificationResources.h>
 [RefCounted] class WebCore::NotificationResources {
-    RefPtr<WebCore::BitmapImage> icon();
+    RefPtr<WebCore::NativeImage> icon();
 };
 
 [RefCounted] class WebCore::IdentityTransformOperation {
@@ -2962,6 +2964,7 @@ enum class WebCore::ScrollType : bool;
     WebCore::ScrollType scrollType;
     WebCore::ScrollClamping clamping;
     WebCore::ScrollbarRevealBehavior scrollbarRevealBehavior;
+    WebCore::ScrollAnimationCurve animationCurve;
 }
 
 using WebCore::ScrollRequestData = Vector<WebCore::RequestedScrollData, 2>;
@@ -3543,19 +3546,19 @@ header: <WebCore/ImageTypes.h>
 };
 #endif
 
-[AdditionalEncoder=StreamConnectionEncoder] struct WebCore::ImageDrawingOptions {
+[AdditionalEncoder=StreamConnectionEncoder] struct WebCore::RasterDrawingOptions {
     WebCore::CompositeOperator compositeOperator();
     WebCore::BlendMode blendMode();
-    WebCore::DecodingMode decodingMode();
     WebCore::ImageOrientation::Orientation orientation().orientation();
     WebCore::InterpolationQuality interpolationQuality();
-    WebCore::DrawsHDRContent drawsHDRContent();
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
     WebCore::InvertContent invertContent();
 #endif
+    WebCore::DrawsHDRContent drawsHDRContent();
     WebCore::Headroom headroom();
     WebCore::PlatformDynamicRangeLimit dynamicRangeLimit();
 };
+
 
 [AdditionalEncoder=StreamConnectionEncoder] struct WebCore::FloatSegment {
     float begin;
@@ -6297,16 +6300,6 @@ header: <WebCore/AppleVisualEffect.h>
     WebCore::SpotLightSource
 }
 
-header: <WebCore/Image.h>
-[RefCounted] class WebCore::Image {
-    RefPtr<WebCore::ShareableBitmap> toShareableBitmap();
-};
-
-header: <WebCore/BitmapImage.h>
-[RefCounted] class WebCore::BitmapImage {
-    RefPtr<WebCore::ShareableBitmap> toShareableBitmap();
-};
-
 header: <WebCore/NativeImage.h>
 [RefCounted] class WebCore::NativeImage {
     RefPtr<WebCore::ShareableBitmap> toShareableBitmap();
@@ -6433,7 +6426,7 @@ header: <WebCore/TextAttachmentForSerialization.h>
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
 
 [CustomHeader] struct WebCore::MultiRepresentationHEICAttachmentSingleImage {
-    RefPtr<WebCore::BitmapImage> image;
+    RefPtr<WebCore::NativeImage> image;
     WebCore::FloatSize size;
 }
 
@@ -7274,7 +7267,7 @@ enum class WebCore::PredominantColorType : uint8_t {
     Multiple
 };
 
-using WebCore::FixedContainerEdge = Variant<WebCore::PredominantColorType, WebCore::Color>;
+using WebCore::FixedContainerEdge = Variant<WebCore::PredominantColorType, WebCore::Color, WebCore::FrameIdentifier>;
 
 header: <WebCore/FixedContainerEdges.h>
 [Nested] class WebCore::RectEdges<WebCore::FixedContainerEdge> {
@@ -7696,6 +7689,8 @@ header: <WebCore/UserGestureIndicator.h>
     WebCore::DOMPasteAccessPolicy domPasteAccessPolicy;
     WebCore::GestureScope scope;
     bool removesTransientActivation;
+    Markable<WebCore::FrameIdentifier> frameID;
+    Markable<WebCore::ScriptExecutionContextIdentifier> documentID;
 };
 
 header: <WebCore/ViewportSegments.h>

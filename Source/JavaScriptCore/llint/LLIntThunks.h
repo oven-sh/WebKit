@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2012-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +29,7 @@
 #include "MacroAssemblerCodeRef.h"
 #include "OpcodeSize.h"
 #include "VM.h"
+#include <JavaScriptCore/GPRInfo.h>
 #include <wtf/Scope.h>
 
 namespace JSC {
@@ -75,6 +77,10 @@ extern "C" {
     void llint_function_for_call_arity_checkTagGateAfter(void);
     void llint_function_for_construct_arity_checkUntagGateAfter(void);
     void llint_function_for_construct_arity_checkTagGateAfter(void);
+#if ENABLE(WEBASSEMBLY)
+    void crossInstanceRestoreFrameOriginalReturnPCRetagGateAfter(void);
+    void crossInstanceRestoreFrameTaggedRestoreFramePtrGateAfter(void);
+#endif
 }
 #endif
 
@@ -126,6 +132,8 @@ MacroAssemblerCodeRef<NativeToJITGatePtrTag> exceptionHandlerGateThunk();
 MacroAssemblerCodeRef<NativeToJITGatePtrTag> returnFromLLIntGateThunk();
 MacroAssemblerCodeRef<NativeToJITGatePtrTag> untagGateThunk(void*);
 MacroAssemblerCodeRef<NativeToJITGatePtrTag> tagGateThunk(void*);
+MacroAssemblerCodeRef<NativeToJITGatePtrTag> tagConstantGateThunk(void*, const void*);
+MacroAssemblerCodeRef<NativeToJITGatePtrTag> retagGateThunk(void*);
 #endif
 
 MacroAssemblerCodeRef<JSEntryPtrTag> normalOSRExitTrampolineThunk();

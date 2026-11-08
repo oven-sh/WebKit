@@ -370,15 +370,15 @@ public:
         ASSERT_WITH_SECURITY_IMPLICATION(m_didBeginDeletion || deleteException == CheckedPtrDeleteCheckException::Yes);
     }
 
-    PtrCounterType LEGACY_NODELETE checkedPtrCount() const { return m_checkedPtrCount; }
-    void LEGACY_NODELETE incrementCheckedPtrCount() const
+    NODELETE PtrCounterType checkedPtrCount() const { return m_checkedPtrCount; }
+    NODELETE void incrementCheckedPtrCount() const
     {
         if constexpr (AtomicLike<StorageType>)
             m_checkedPtrCount.fetch_add(1, std::memory_order_relaxed);
         else
             ++m_checkedPtrCount;
     }
-    SUPPRESS_NODELETE ALWAYS_INLINE void LEGACY_NODELETE decrementCheckedPtrCount() const
+    NODELETE SUPPRESS_NODELETE ALWAYS_INLINE void decrementCheckedPtrCount() const
     {
         // In normal execution, a CheckedPtr always points to an object with a non-zero checkedPtrCount().
         // When it detects a dangling pointer, WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR scribbles an object with zeroes and then leaks it.
@@ -427,6 +427,7 @@ class CanMakeCheckedPtr : public CanMakeCheckedPtrBase<SingleThreadIntegralWrapp
 public:
     ~CanMakeCheckedPtr()
     {
+        static_assert(std::is_base_of_v<CanMakeCheckedPtr, T>, "T must be the class that inherits from CanMakeCheckedPtr<T>");
         static_assert(std::is_same<typename T::WTFIsFastMallocAllocated, int>::value, "Objects that use CanMakeCheckedPtr must use TZoneMalloc (WTF_MAKE_TZONE_ALLOCATED or one of its variants)");
         static_assert(std::is_same<typename T::WTFDidOverrideDeleteForCheckedPtr, int>::value, "Objects that use CanMakeCheckedPtr must use WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR");
     }
@@ -443,6 +444,7 @@ class CanMakeThreadSafeCheckedPtr : public CanMakeCheckedPtrBase<std::atomic<uin
 public:
     ~CanMakeThreadSafeCheckedPtr()
     {
+        static_assert(std::is_base_of_v<CanMakeThreadSafeCheckedPtr, T>, "T must be the class that inherits from CanMakeThreadSafeCheckedPtr<T>");
         static_assert(std::is_same<typename T::WTFIsFastMallocAllocated, int>::value, "Objects that use CanMakeCheckedPtr must use TZoneMalloc (WTF_MAKE_TZONE_ALLOCATED or one of its variants)");
         static_assert(std::is_same<typename T::WTFDidOverrideDeleteForCheckedPtr, int>::value, "Objects that use CanMakeCheckedPtr must use WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR");
     }

@@ -29,7 +29,7 @@ import os
 import re
 import sys
 
-from webkit.opaque_ipc_types import is_opaque_type, opaque_ipc_types
+from webkit.opaque_ipc_types import OPAQUE_TYPES, is_opaque_type, opaque_ipc_types
 
 # Generated serializers are split into per-bundle translation units to keep
 # any single .{mm,cpp} from dominating the critical path. Each
@@ -1940,75 +1940,128 @@ def generate_webkit_secure_coding_impl(serialized_types, headers):
     result.append('    return dictionaryForWebKitSecureCodingTypeFromWKKeyedCoder(object);')
     result.append('}')
     result.append('')
-    result.append('template<typename T> RetainPtr<NSDictionary> dictionaryFromVector(const Vector<std::pair<String, RetainPtr<T>>>& vector)')
-    result.append('{')
-    result.append('    NSMutableDictionary *dictionary = [NSMutableDictionary dictionaryWithCapacity:vector.size()];')
-    result.append('    for (auto& pair : vector)')
-    result.append('        dictionary[pair.first] = pair.second;')
-    result.append('    return dictionary;')
-    result.append('}')
-    result.append('')
-    result.append('template<typename T> RetainPtr<NSDictionary> dictionaryFromOptionalVector(const std::optional<Vector<std::pair<String, RetainPtr<T>>>>& vector)')
-    result.append('{')
-    result.append('    if (!vector)')
-    result.append('        return nil;')
-    result.append('    return dictionaryFromVector<T>(*vector);')
-    result.append('}')
-    result.append('')
-    result.append('template<typename T> Vector<std::pair<String, RetainPtr<T>>> vectorFromDictionary(NSDictionary *dictionary)')
-    result.append('{')
-    result.append('    if (![dictionary isKindOfClass:NSDictionary.class])')
-    result.append('        return { };')
-    result.append('    __block Vector<std::pair<String, RetainPtr<T>>> result;')
-    result.append('    [dictionary enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL*){')
-    result.append('        if ([key isKindOfClass:NSString.class] && [value isKindOfClass:IPC::getClass<T>()])')
-    result.append('            result.append((NSString *)key, (T)value);')
-    result.append('    }];')
-    result.append('    return result;')
-    result.append('}')
-    result.append('')
-    result.append('template<typename T> std::optional<Vector<std::pair<String, RetainPtr<T>>>> optionalVectorFromDictionary(NSDictionary *dictionary)')
-    result.append('{')
-    result.append('    if (![dictionary isKindOfClass:NSDictionary.class])')
-    result.append('        return std::nullopt;')
-    result.append('    return vectorFromDictionary<T>(dictionary);')
-    result.append('}')
-    result.append('')
-    result.append('template<typename T> RetainPtr<NSArray> arrayFromVector(const Vector<RetainPtr<T>>& vector)')
-    result.append('{')
-    result.append('    return createNSArray(vector, [] (auto& t) {')
-    result.append('        return t.get();')
-    result.append('    });')
-    result.append('}')
-    result.append('')
-    result.append('template<typename T> RetainPtr<NSArray> arrayFromOptionalVector(const std::optional<Vector<RetainPtr<T>>>& vector)')
-    result.append('{')
-    result.append('    if (!vector)')
-    result.append('        return nil;')
-    result.append('    return arrayFromVector<T>(*vector);')
-    result.append('}')
-    result.append('')
-    result.append('template<typename T> Vector<RetainPtr<T>> vectorFromArray(NSArray *array)')
-    result.append('{')
-    result.append('    if (![array isKindOfClass:NSArray.class])')
-    result.append('        return { };')
-    result.append('    Vector<RetainPtr<T>> result;')
-    # FIXME: Remove SUPPRESS_UNRETAINED_LOCAL once the static analyzer false positive is fixed (rdar://189710680).
-    result.append('    for (SUPPRESS_UNRETAINED_LOCAL id element in array) {')
-    # FIXME: isKindOfClass call can cause a static analysis false positive (https://github.com/llvm/llvm-project/issues/162979).
-    result.append('        SUPPRESS_UNRETAINED_ARG if ([element isKindOfClass:retainPtr(IPC::getClass<T>()).get()])')
-    result.append('            result.append((T *)element);')
-    result.append('    }')
-    result.append('    return result;')
-    result.append('}')
-    result.append('')
-    result.append('template<typename T> std::optional<Vector<RetainPtr<T>>> optionalVectorFromArray(NSArray *array)')
-    result.append('{')
-    result.append('    if (![array isKindOfClass:NSArray.class])')
-    result.append('        return std::nullopt;')
-    result.append('    return vectorFromArray<T>(array);')
-    result.append('}')
-    result.append('')
+
+    helper_definitions = {
+        'dictionaryFromVector': [
+            'template<typename T> RetainPtr<NSDictionary> dictionaryFromVector(const Vector<std::pair<String, RetainPtr<T>>>& vector)',
+            '{',
+            '    NSMutableDictionary *dictionary = [NSMutableDictionary dictionaryWithCapacity:vector.size()];',
+            '    for (auto& pair : vector)',
+            '        dictionary[pair.first] = pair.second;',
+            '    return dictionary;',
+            '}',
+        ],
+        'dictionaryFromOptionalVector': [
+            'template<typename T> RetainPtr<NSDictionary> dictionaryFromOptionalVector(const std::optional<Vector<std::pair<String, RetainPtr<T>>>>& vector)',
+            '{',
+            '    if (!vector)',
+            '        return nil;',
+            '    return dictionaryFromVector<T>(*vector);',
+            '}',
+        ],
+        'vectorFromDictionary': [
+            'template<typename T> Vector<std::pair<String, RetainPtr<T>>> vectorFromDictionary(NSDictionary *dictionary)',
+            '{',
+            '    if (![dictionary isKindOfClass:NSDictionary.class])',
+            '        return { };',
+            '    __block Vector<std::pair<String, RetainPtr<T>>> result;',
+            '    [dictionary enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL*){',
+            '        if ([key isKindOfClass:NSString.class] && [value isKindOfClass:IPC::getClass<T>()])',
+            '            result.append((NSString *)key, (T)value);',
+            '    }];',
+            '    return result;',
+            '}',
+        ],
+        'optionalVectorFromDictionary': [
+            'template<typename T> std::optional<Vector<std::pair<String, RetainPtr<T>>>> optionalVectorFromDictionary(NSDictionary *dictionary)',
+            '{',
+            '    if (![dictionary isKindOfClass:NSDictionary.class])',
+            '        return std::nullopt;',
+            '    return vectorFromDictionary<T>(dictionary);',
+            '}',
+        ],
+        'arrayFromVector': [
+            'template<typename T> RetainPtr<NSArray> arrayFromVector(const Vector<RetainPtr<T>>& vector)',
+            '{',
+            '    return createNSArray(vector, [] (auto& t) {',
+            '        return t.get();',
+            '    });',
+            '}',
+        ],
+        'arrayFromOptionalVector': [
+            'template<typename T> RetainPtr<NSArray> arrayFromOptionalVector(const std::optional<Vector<RetainPtr<T>>>& vector)',
+            '{',
+            '    if (!vector)',
+            '        return nil;',
+            '    return arrayFromVector<T>(*vector);',
+            '}',
+        ],
+        'vectorFromArray': [
+            'template<typename T> Vector<RetainPtr<T>> vectorFromArray(NSArray *array)',
+            '{',
+            '    if (![array isKindOfClass:NSArray.class])',
+            '        return { };',
+            '    Vector<RetainPtr<T>> result;',
+            # FIXME: Remove SUPPRESS_UNRETAINED_LOCAL once the static analyzer false positive is fixed (rdar://189710680).
+            '    for (SUPPRESS_UNRETAINED_LOCAL id element in array) {',
+            # FIXME: isKindOfClass call can cause a static analysis false positive (https://github.com/llvm/llvm-project/issues/162979).
+            '        SUPPRESS_UNRETAINED_ARG if ([element isKindOfClass:retainPtr(IPC::getClass<T>()).get()])',
+            '            result.append((T *)element);',
+            '    }',
+            '    return result;',
+            '}',
+        ],
+        'optionalVectorFromArray': [
+            'template<typename T> std::optional<Vector<RetainPtr<T>>> optionalVectorFromArray(NSArray *array)',
+            '{',
+            '    if (![array isKindOfClass:NSArray.class])',
+            '        return std::nullopt;',
+            '    return vectorFromArray<T>(array);',
+            '}',
+        ],
+    }
+
+    # Only emit the helpers that are used, guarded by the conditions of the types using them, to avoid -Wunused-template.
+    helper_conditions = {}
+
+    def add_helpers(condition, *helpers):
+        for helper in helpers:
+            conditions = helper_conditions.setdefault(helper, [])
+            if condition not in conditions:
+                conditions.append(condition)
+
+    for type in serialized_types:
+        if not type.is_webkit_secure_coding_type():
+            continue
+        for member in type.dictionary_members:
+            if member.dictionary_contents() is not None:
+                if member.value_is_optional():
+                    add_helpers(type.condition, 'dictionaryFromOptionalVector', 'dictionaryFromVector', 'optionalVectorFromDictionary', 'vectorFromDictionary')
+                else:
+                    add_helpers(type.condition, 'dictionaryFromVector', 'vectorFromDictionary')
+            if member.array_contents() is not None:
+                if member.value_is_optional():
+                    add_helpers(type.condition, 'arrayFromOptionalVector', 'arrayFromVector', 'optionalVectorFromArray', 'vectorFromArray')
+                else:
+                    add_helpers(type.condition, 'arrayFromVector', 'vectorFromArray')
+
+    for helper, definition in helper_definitions.items():
+        if helper not in helper_conditions:
+            continue
+        conditions = helper_conditions[helper]
+        if None in conditions:
+            condition = None
+        elif len(conditions) == 1:
+            condition = conditions[0]
+        else:
+            condition = ' || '.join(f'({c})' for c in conditions)
+        if condition is not None:
+            result.append(f'#if {condition}')
+        result.extend(definition)
+        if condition is not None:
+            result.append(f'#endif // {condition}')
+        result.append('')
+
     for type in serialized_types:
         if not type.is_webkit_secure_coding_type():
             continue
@@ -2157,10 +2210,16 @@ def main(argv):
     parser.add_argument('file_extension', help='File extension for output files')
     parser.add_argument('input_files', nargs='+', help='Input files to process')
     parser.add_argument('--output-dir', help='Directory for output files')
+    parser.add_argument('--opaque-ipc-types-tracking-file', action='append', default=[],
+                        help='Additional opaque_ipc_types tracking file, for example one supplied by WebKitAdditions.')
     parser.add_argument('--split-by-directory', action='store_true',
                         help='Emit per-domain GeneratedSerializers<Domain>.{ext} files instead of a single GeneratedSerializers.{ext}.')
 
     args = parser.parse_args(argv[1:])
+
+    for tracking_file_path in args.opaque_ipc_types_tracking_file:
+        opaque_ipc_types.load_tracking_file(tracking_file_path)
+        OPAQUE_TYPES.update(opaque_ipc_types.alias_params.keys())
 
     serialized_types = []
     serialized_enums = []

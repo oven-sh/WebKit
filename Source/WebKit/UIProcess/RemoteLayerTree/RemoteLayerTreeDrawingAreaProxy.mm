@@ -441,6 +441,9 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(IPC::Connection& connectio
             page->didReachLayoutMilestone(milestones, WallTime::now());
     }
 
+    for (auto& [frameID, edges] : bundle.fixedContainerEdges)
+        page->didReceiveFixedContainerEdges(connection, frameID, edges);
+
     WeakPtr weakThis { *this };
 
     for (auto& transaction : borrowedTransactions) {
@@ -613,6 +616,14 @@ void RemoteLayerTreeDrawingAreaProxy::releaseDisplayOnlyImage(RemoteSnapshotIden
     if (m_remoteLayerTreeHost)
         m_remoteLayerTreeHost->releaseDisplayOnlyImage(image);
 }
+
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+void RemoteLayerTreeDrawingAreaProxy::updateDeferredInteractionRegions()
+{
+    if (m_remoteLayerTreeHost)
+        m_remoteLayerTreeHost->updateDeferredInteractionRegions();
+}
+#endif
 
 void RemoteLayerTreeDrawingAreaProxy::acceleratedAnimationDidStart(WebCore::PlatformLayerIdentifier layerID, const String& key, MonotonicTime startTime)
 {

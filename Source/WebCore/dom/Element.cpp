@@ -3460,12 +3460,6 @@ void Element::setInvokedPopover(RefPtr<Element>&& element)
     invalidateStyle();
 }
 
-inline void ShadowRoot::setHost(Element* host)
-{
-    m_host = host;
-    m_shadowIncludingRoot = host ? &host->shadowIncludingRoot() : this;
-}
-
 void Element::addShadowRoot(Ref<ShadowRoot>&& newShadowRoot)
 {
     ASSERT(!newShadowRoot->hasChildNodes());
@@ -3480,7 +3474,7 @@ void Element::addShadowRoot(Ref<ShadowRoot>&& newShadowRoot)
 
         m_shadowRoot = WTF::move(newShadowRoot);
 
-        shadowRoot->setHost(this);
+        shadowRoot->setHost(*this);
         shadowRoot->setParentTreeScope(protect(treeScope()));
 
         NodeVector postInsertionNotificationTargets;
@@ -3517,6 +3511,11 @@ void Element::removeShadowRootSlow(ShadowRoot& oldRoot)
 
     oldRoot.setHost(nullptr);
     oldRoot.setParentTreeScope(protect(document()));
+
+    if (oldRoot.refCount() > 1)
+        oldRoot.updateShadowIncludingRootForSubtree();
+    else
+        oldRoot.resetShadowIncludingRoot();
 }
 
 static bool canAttachAuthorShadowRoot(const Element& element)
@@ -3647,7 +3646,11 @@ RefPtr<ShadowRoot> Element::shadowRootForBindings(JSC::JSGlobalObject& lexicalGl
 
 RefPtr<ShadowRoot> Element::openOrClosedShadowRoot() const
 {
-    return shadowRoot();
+    RefPtr shadow = shadowRoot();
+    if (!shadow || shadow->mode() == ShadowRootMode::UserAgent)
+        return nullptr;
+
+    return shadow;
 }
 
 RefPtr<Element> Element::resolveReferenceTarget() const

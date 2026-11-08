@@ -44,7 +44,6 @@
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
 #include "SVGVisitedRendererTracking.h"
-#include "StyleImageDrawingExtras.h"
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -187,8 +186,8 @@ void LegacyRenderSVGImage::paintForeground(PaintInfo& paintInfo)
     auto srcRect = placement.source;
 
     auto& context = paintInfo.context();
-    auto options = calculateSVGImageDrawingOptions(*styleImage, *this, context, placement.imageRenderingRectangle.size(), destRect.size(), paintInfo.paintBehavior);
-    styleImage->draw(context, *this, ConcreteObjectSize::fixed(placement.imageRenderingRectangle.size()), destRect, srcRect, options);
+    auto descriptor = calculateSVGImageDrawDescriptor(*styleImage, *this, context, placement.imageRenderingRectangle.size(), destRect.size(), paintInfo.paintBehavior);
+    styleImage->draw(context, *this, descriptor, destRect, srcRect);
 
     if (RefPtr cachedImage = imageResource().cachedImage(); cachedImage && !context.paintingDisabled())
         protect(document())->didPaintImage(imageElement(), cachedImage, destRect);

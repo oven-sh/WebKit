@@ -176,6 +176,9 @@ class WebXRTest;
 
 #if ENABLE(MEDIA_SESSION)
 class MediaSession;
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+enum class CallToActionLabel : uint8_t;
+#endif
 struct MediaSessionActionDetails;
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
 class MediaSessionCoordinator;
@@ -482,6 +485,7 @@ public:
     Ref<Range> subrange(Range&, unsigned rangeLocation, unsigned rangeLength);
     ExceptionOr<RefPtr<Range>> rangeForDictionaryLookupAtLocation(int x, int y);
     RefPtr<Range> rangeOfStringNearLocation(const Range&, const String&, unsigned);
+    unsigned computeNodeIndexCount() const;
 
     struct TextIteratorState {
         String text;
@@ -1128,6 +1132,17 @@ public:
     static Vector<int> webglMaxDrawingBufferSize(WebGLRenderingContextBase&);
     // The width and height of the allocated default framebuffer storage, or 0, 0 if it is not allocated.
     static Vector<int> webglDefaultFramebufferAllocatedSize(WebGLRenderingContextBase&);
+#if ENABLE(VIDEO)
+    enum class WebGLVideoUploadPath : uint8_t { Default, Software, Hardware };
+    void setWebGLVideoUploadPath(WebGLRenderingContextBase&, WebGLVideoUploadPath);
+    struct WebGLVideoUploadRecord {
+        String path;
+        String reason;
+        String pixelFormat;
+        uint64_t sequence { 0 };
+    };
+    std::optional<WebGLVideoUploadRecord> webglLastVideoUpload(WebGLRenderingContextBase&);
+#endif
 #endif
 
     void setPageVisibility(bool isVisible);
@@ -1614,6 +1629,8 @@ public:
     void setSubframeURLForQuirks(const String&);
     void setTopDocumentHostForQuirks(const String&);
     Vector<String> activeQuirks() const;
+    Vector<String> activeQuirkNames() const;
+    ExceptionOr<void> setQuirkTableForTesting(JSDOMGlobalObject&, JSC::JSValue table);
 
 #if ENABLE(APP_HIGHLIGHTS)
     Vector<String> appHighlightContextMenuItemTitles() const;
@@ -1653,6 +1670,9 @@ public:
 #if ENABLE(MEDIA_SESSION)
     ExceptionOr<double> currentMediaSessionPosition(const MediaSession&);
     ExceptionOr<void> sendMediaSessionAction(MediaSession&, const MediaSessionActionDetails&);
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    std::optional<CallToActionLabel> mediaSessionCallToActionLabel(const MediaSession&);
+#endif
 
 #if ENABLE(WEB_CODECS)
     using ArtworkImagePromise = DOMPromiseDeferred<IDLInterface<WebCodecsVideoFrame>>;
@@ -1775,6 +1795,10 @@ public:
     RefPtr<Element> LEGACY_NODELETE spatialPortalAnchorForModel(HTMLModelElement&);
     std::optional<Vector<double>> LEGACY_NODELETE spatialPortalResolvedTransform(Element&);
     String LEGACY_NODELETE effectiveEnvironmentMap(Element&);
+#endif
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    bool isAXCustomColorModeActive(const Document&);
 #endif
 
 #if ENABLE(CONNECTED_VOLUMETRIC_SCENE)

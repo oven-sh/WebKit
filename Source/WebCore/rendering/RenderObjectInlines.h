@@ -69,7 +69,7 @@ inline TreeScope& RenderObject::treeScopeForSVGReferences() const
 inline CheckedRef<const Style::ComputedStyle> RenderObject::firstLineStyle() const
 {
     if (isRenderText())
-        return parent()->firstLineStyle();
+        return layoutBox().firstLineStyle();
     return downcast<RenderElement>(*this).firstLineStyle();
 }
 
@@ -94,7 +94,7 @@ inline void RenderObject::setNeedsLayout(MarkingBehavior markParents)
     if (InspectorInstrumentationPublic::hasFrontends()) [[unlikely]]
         notifyInspectorOfLayoutInvalidate();
     m_stateBitfields.setFlag(StateFlag::NeedsLayout);
-    if (markParents == MarkingBehavior::MarkContainingBlockChain)
+    if (markParents == MarkingBehavior::ContainingBlockChain)
         scheduleLayout(CheckedPtr { markContainingBlocksForLayout() });
     if (hasLayer())
         setLayerNeedsFullRepaint();

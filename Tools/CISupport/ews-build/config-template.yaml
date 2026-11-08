@@ -445,6 +445,7 @@ builders:
     configuration: debug
     architectures: [arm64]
     additionalArguments: [--cmake]
+    rebuild_without_change_on_builder: true
     triggers: [macos-tahoe-debug-api-tests-ews, macos-tahoe-debug-wk2-tests-ews]
     workernames:
       $flatten:
@@ -674,6 +675,7 @@ builders:
     factory: JSCBuildO3AndTestsFactory
     platform: mac-sequoia
     configuration: debug
+    additionalArguments: [--cmake]
     runTests: 'true'
     workernames: {$map: {$eval: "range(0, 3)"}, each(i): {$eval: "pop(workers, \"tag == 'tahoe-m2pro'\").name"}}
   - name: API-Tests-iOS-Simulator-EWS

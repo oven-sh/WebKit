@@ -221,24 +221,24 @@ Ref<WebCore::Gradient> GradientImage::gradientForSize(const RenderElement& rende
     return gradient;
 }
 
-ImageDrawResult GradientImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options, bool isForFirstLine) const
+ImageDrawResult GradientImage::draw(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& source, bool isForFirstLine) const
 {
-    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
+    auto size = descriptor.concreteObjectSize.size() * descriptor.concreteObjectSize.zoom();
     if (size.isEmpty())
         return ImageDrawResult::DidNothing;
 
     CachedGradient* cached = nullptr;
     Ref gradient = gradientForSize(renderer, size, isForFirstLine, cached);
 
-    return drawIntoDestination(context, destination, source, options, [&](GraphicsContext& context) {
+    return drawIntoDestination(context, descriptor, destination, source, [&](GraphicsContext& context) {
         context.fillRect(FloatRect { { }, size }, gradient);
         return ImageDrawResult::DidDraw;
     });
 }
 
-ImageDrawResult GradientImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options, bool isForFirstLine) const
+ImageDrawResult GradientImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, bool isForFirstLine) const
 {
-    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
+    auto size = descriptor.concreteObjectSize.size() * descriptor.concreteObjectSize.zoom();
     if (size.isEmpty() || context.paintingDisabled())
         return ImageDrawResult::DidNothing;
 
@@ -250,35 +250,23 @@ ImageDrawResult GradientImage::drawAsPattern(GraphicsContext& context, const Ren
     auto adjustedTile = tile;
     gradient->adjustParametersForTiledDrawing(adjustedSize, adjustedTile, spacing);
 
-    // Factor in the destination context's scale to generate at the best resolution.
-    auto contextCTM = context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
-    double xScale = std::abs(contextCTM.xScale());
-    double yScale = std::abs(contextCTM.yScale());
-    auto adjustedPatternCTM = patternTransform;
-    adjustedPatternCTM.scale(1.0 / xScale, 1.0 / yScale);
-    adjustedTile.scale(xScale, yScale);
-
     auto gradientHash = gradient->hash();
     auto scaleFactor = context.scaleFactor();
 
     RefPtr buffer = cached ? cached->patternBuffer(adjustedSize, gradientHash, scaleFactor) : nullptr;
     if (!buffer) {
-        auto newBuffer = context.createAlignedImageBuffer(adjustedSize);
+        RefPtr newBuffer = createPatternBuffer(context, descriptor, adjustedSize, [&](GraphicsContext& context) {
+            context.fillRect(FloatRect { { }, adjustedSize }, gradient);
+        });
         if (!newBuffer)
             return ImageDrawResult::DidDraw;
-
-        newBuffer->context().fillRect(FloatRect { { }, adjustedSize }, gradient);
-
-        if (options.drawLuminanceMask() == DrawLuminanceMask::Yes)
-            newBuffer->convertToLuminanceMask();
 
         buffer = newBuffer.copyRef();
         if (cached)
             cached->setPatternBuffer(newBuffer.releaseNonNull(), adjustedSize, gradientHash, scaleFactor);
     }
 
-    context.drawPattern(*buffer, destination, adjustedTile, adjustedPatternCTM, phase, spacing, options);
-    return ImageDrawResult::DidDraw;
+    return drawPatternBuffer(context, *buffer, descriptor, destination, adjustedTile, patternTransform, phase, spacing);
 }
 
 bool GradientImage::knownToBeOpaque(const RenderElement& renderer) const

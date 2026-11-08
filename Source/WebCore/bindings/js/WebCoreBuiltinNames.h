@@ -69,6 +69,7 @@ namespace WebCore {
     macro(AudioProcessingEvent) \
     macro(AudioScheduledSourceNode) \
     macro(AudioSession) \
+    macro(AudioSinkInfo) \
     macro(AudioWorklet) \
     macro(AudioWorkletGlobalScope) \
     macro(AudioWorkletNode) \
@@ -548,6 +549,8 @@ namespace WebCore {
     macro(XRJointSpace) \
     macro(XRLayer) \
     macro(XRLayerEvent) \
+    macro(XRPlane) \
+    macro(XRPlaneSet) \
     macro(XRPose) \
     macro(XRProjectionLayer) \
     macro(XRQuadLayer) \

@@ -168,63 +168,12 @@ using FrameIdentifier = ObjectIdentifier<FrameIdentifierType>;
 
 } // namespace WebCore
 
-@protocol WebViewImplDelegate
-
-- (NSTextInputContext *)_web_superInputContext;
-- (void)_web_superQuickLookWithEvent:(NSEvent *)event;
-- (void)_web_superRemoveTrackingRect:(NSTrackingRectTag)tag;
-- (void)_web_superSwipeWithEvent:(NSEvent *)event;
-- (void)_web_superMagnifyWithEvent:(NSEvent *)event;
-- (void)_web_superSmartMagnifyWithEvent:(NSEvent *)event;
-- (id)_web_superAccessibilityAttributeValue:(NSString *)attribute;
-- (void)_web_superDoCommandBySelector:(SEL)selector;
-- (BOOL)_web_superPerformKeyEquivalent:(NSEvent *)event;
-- (void)_web_superKeyDown:(NSEvent *)event;
-- (NSView *)_web_superHitTest:(NSPoint)point;
-
-- (id)_web_immediateActionAnimationControllerForHitTestResultInternal:(API::HitTestResult*)hitTestResult withType:(uint32_t)type userData:(API::Object*)userData;
-- (void)_web_prepareForImmediateActionAnimation;
-- (void)_web_cancelImmediateActionAnimation;
-- (void)_web_completeImmediateActionAnimation;
-
-- (void)_web_dismissContentRelativeChildWindows;
-- (void)_web_dismissContentRelativeChildWindowsWithAnimation:(BOOL)animate;
-- (void)_web_editorStateDidChange;
-
-- (void)_web_gestureEventWasNotHandledByWebCore:(NSEvent *)event;
-- (void)_web_magnificationGestureEventWasNotHandledByWebCoreWithPhase:(NSEventPhase)phase magnification:(CGFloat)magnification locationInWindow:(NSPoint)locationInWindow;
-
-- (void)_web_didChangeContentSize:(NSSize)newSize;
-
-#if ENABLE(DRAG_SUPPORT)
-- (WKDragDestinationAction)_web_dragDestinationActionForDraggingInfo:(id <NSDraggingInfo>)draggingInfo;
-- (void)_web_didPerformDragOperation:(BOOL)handled;
-#if ENABLE(DRAG_SOURCE_CUSTOMIZATION)
-- (void)_web_draggingItemsForDraggingItem:(NSDraggingItem *)draggingItem atLocation:(NSPoint)viewLocation completionHandler:(void (^)(NSArray<NSDraggingItem *> *draggingItems))completionHandler;
-- (NSDragOperation)_web_dragSourceOperationMaskForDraggingContext:(NSDraggingContext)context defaultMask:(NSDragOperation)defaultMask;
-- (void)_web_draggingSession:(NSDraggingSession *)session willBeginAtPoint:(NSPoint)point;
-- (void)_web_draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)point operation:(NSDragOperation)operation;
-#endif
-#endif
-
-@optional
-- (void)_web_didAddMediaControlsManager:(id)controlsManager;
-- (void)_web_didRemoveMediaControlsManager;
-- (void)_didHandleAcceptedCandidate;
-- (void)_didUpdateCandidateListVisibility:(BOOL)visible;
-
-- (BOOL)_web_hasActiveIntelligenceTextEffects;
-- (void)_web_suppressContentRelativeChildViews;
-- (void)_web_restoreContentRelativeChildViews;
-
-@end
-
 namespace WebCore {
 struct DragItem;
 struct ResolvedCaptionDisplaySettingsOptions;
 
 #if ENABLE(WEB_AUTHN)
-struct DigitalCredentialsMobileDocumentRequestData;
+struct DigitalCredentialsRequestData;
 struct DigitalCredentialsResponseData;
 #endif
 
@@ -406,7 +355,6 @@ public:
     void activeSpaceDidChange();
 
     void pageDidScroll(const WebCore::IntPoint&);
-    void didEndSyntheticMomentumScrolling();
 
     NSRect scrollViewFrame();
     bool LEGACY_NODELETE hasScrolledContentsUnderTitlebar();
@@ -415,6 +363,7 @@ public:
 #if ENABLE(SCROLL_POCKET_IN_FULLSCREEN)
     void setFullScreenTitlebarOverlayHeight(CGFloat);
     CGFloat LEGACY_NODELETE fullScreenTitlebarOverlayHeight() const { return m_fullScreenTitlebarOverlayHeight; }
+    bool isInElementFullScreenWindow() const;
 #endif
 
     RetainPtr<NSView> hitTest(CGPoint);
@@ -599,7 +548,6 @@ public:
     NSString *stringForToolTip(NSToolTipTag tag);
     void toolTipChanged(const String& oldToolTip, const String& newToolTip);
 
-    void enterAcceleratedCompositingWithRootLayer(CALayer *);
     void setAcceleratedCompositingRootLayer(CALayer *);
     CALayer *acceleratedCompositingRootLayer() const LIFETIME_BOUND { return m_rootLayer.get(); }
 
@@ -671,6 +619,7 @@ public:
     void setTextSelectionDragGesture(NSGestureRecognizer *, void (^completionHandler)(NSDraggingSession *));
     void invalidateCachedPositionInformation();
     void positionInformationDidChange(const InteractionInformationAtPosition&);
+    void installClickHighlightView(NSView *);
 #endif
     void LEGACY_NODELETE setAllowsBackForwardNavigationGestures(bool);
     bool allowsBackForwardNavigationGestures() const { return m_allowsBackForwardNavigationGestures; }
@@ -754,7 +703,7 @@ public:
     void removeFlagsChangedEventMonitor();
     bool LEGACY_NODELETE hasFlagsChangedEventMonitor();
 
-    void mouseMoved(NSEvent *);
+    void mouseMoved(NSEvent *, WebEventInputSource = WebEventInputSource::UserDriven);
     void mouseDown(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
     void mouseUp(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
     void mouseDragged(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
@@ -1017,7 +966,7 @@ private:
 
     void scheduleMouseDidMoveOverElementForModifierFlagsChange(NSEvent *);
 
-    void mouseMovedInternal(NSEvent *);
+    void mouseMovedInternal(NSEvent *, WebEventInputSource);
     void mouseDownInternal(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
     void mouseUpInternal(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
     void mouseDraggedInternal(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
@@ -1060,10 +1009,6 @@ private:
     WeakObjCPtr<WKWebView> m_view;
     const UniqueRef<PageClient> m_pageClient;
     const Ref<WebPageProxy> m_page;
-
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    DrawingAreaType m_drawingAreaType { DrawingAreaType::TiledCoreAnimation };
-#endif
 
     bool m_willBecomeFirstResponderAgain { false };
     bool m_inBecomeFirstResponder { false };

@@ -1052,6 +1052,7 @@ private:
         case Construct:
         case DirectConstruct:
         case CallVarargs:
+        case CallVarargsWithSpread:
         case CallDirectEval:
         case TailCallVarargsInlinedCaller:
         case ConstructVarargs:
@@ -1491,6 +1492,11 @@ private:
             break;
         }
 
+        case NewProxyObject: {
+            setPrediction(SpecProxyObject);
+            break;
+        }
+
         case PushWithScope:
         case CreateActivation: {
             setPrediction(SpecObjectOther);
@@ -1846,6 +1852,8 @@ private:
         case ExitOK:
         case VarargsLength:
         case LoadVarargs:
+        case VarargsLengthWithSpread:
+        case LoadVarargsWithSpread:
         case ForwardVarargs:
         case PutDynamicVar:
         case NukeStructureAndSetButterfly:

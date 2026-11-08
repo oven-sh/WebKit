@@ -89,6 +89,7 @@ CSSParserContext::CSSParserContext(const Document& document, const URL& sheetBas
     isHTMLDocument = document.isHTMLDocument();
     hasDocumentSecurityOrigin = sheetBaseURL.isNull() || protect(document.securityOrigin())->canRequest(baseURL, OriginAccessPatternsForWebProcess::singleton());
     webkitMediaTextTrackDisplayQuirkEnabled = document.quirks().needsWebKitMediaTextTrackDisplayQuirk();
+    marginTrimInlineSupportsQuirkEnabled = document.quirks().needsMarginTrimInlineSupportsQuirk();
 }
 
 CSSParserContext::CSSParserContext(const Settings& settings)
@@ -138,6 +139,7 @@ CSSParserContext::CSSParserContext(const Settings& settings)
     , cssInheritFunctionEnabled { settings.cssInheritFunctionEnabled() }
     , cssFontPaletteMixFunctionEnabled { settings.cssFontPaletteMixFunctionEnabled() }
     , cssSymbolsFunctionEnabled { settings.cssSymbolsFunctionEnabled() }
+    , cssMeshGradientsEnabled { settings.cssMeshGradientsEnabled() }
     , viewportSegmentsAPIEnabled { settings.viewportSegmentsAPIEnabled() }
     , propertySettings { CSSPropertySettings { settings } }
 {
@@ -188,6 +190,7 @@ void add(Hasher& hasher, const CSSParserContext& context)
         context.cssFontSynthesisStyleObliqueOnlyEnabled,
         context.cssInternalAutoBaseParsingEnabled,
         context.webkitMediaTextTrackDisplayQuirkEnabled,
+        context.marginTrimInlineSupportsQuirkEnabled,
         context.cssMathDepthEnabled,
         context.openPseudoClassEnabled,
         context.cssScrollStateContainerQueriesEnabled,
@@ -197,6 +200,7 @@ void add(Hasher& hasher, const CSSParserContext& context)
         context.cssInheritFunctionEnabled,
         context.cssFontPaletteMixFunctionEnabled,
         context.cssSymbolsFunctionEnabled,
+        context.cssMeshGradientsEnabled,
         context.legacyFontFaceAttributeMode,
         context.viewportSegmentsAPIEnabled
     );

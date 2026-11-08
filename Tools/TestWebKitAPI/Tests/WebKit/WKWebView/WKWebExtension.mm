@@ -32,6 +32,7 @@
 #import "Helpers/cocoa/TestCocoaImageAndCocoaColor.h"
 #import "Helpers/cocoa/WebExtensionUtilities.h"
 #import <WebKit/WKFoundation.h>
+#import <WebKit/WKWebExtensionContextPrivate.h>
 #import <WebKit/WKWebExtensionMatchPatternPrivate.h>
 #import <WebKit/WKWebExtensionPrivate.h>
 
@@ -519,6 +520,39 @@ TEST(WKWebExtension, MalformedPDFIconIsReported)
 #endif // PLATFORM(MAC)
 
 
+TEST(WKWebExtension, IconsWithWrongTypeIsReported)
+{
+    for (id wrongTypeValue in @[ @"icon-128.png", @[ @"icon-128.png" ], @128 ]) {
+        auto *testManifestDictionary = @{
+            @"manifest_version": @3,
+            @"name": @"Test",
+            @"version": @"1.0",
+            @"description": @"Test",
+            @"icons": wrongTypeValue
+        };
+
+        auto testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary resources:@{ }];
+
+        EXPECT_NULL([testExtension iconForSize:CGSizeMake(128, 128)]);
+        EXPECT_NOT_NULL(matchingError(testExtension.errors, WKWebExtensionErrorInvalidManifestEntry));
+    }
+}
+
+TEST(WKWebExtension, MissingIconsIsNotReported)
+{
+    auto *testManifestDictionary = @{
+        @"manifest_version": @3,
+        @"name": @"Test",
+        @"version": @"1.0",
+        @"description": @"Test"
+    };
+
+    auto testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary resources:@{ }];
+
+    EXPECT_NULL([testExtension iconForSize:CGSizeMake(128, 128)]);
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+}
+
 TEST(WKWebExtension, SymbolImageIcon)
 {
     auto *testManifestDictionary = @{
@@ -691,6 +725,103 @@ TEST(WKWebExtension, SingleIconVariant)
     EXPECT_TRUE(CGSizeEqualToSize(icon.size, CGSizeMake(32, 32)));
 }
 
+TEST(WKWebExtension, IconVariantWithUnknownPropertyIsSkipped)
+{
+    auto *testManifestDictionary = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test Unknown Property",
+        @"version": @"1.0",
+        @"description": @"Test with an unknown icon variant property",
+
+        @"icon_variants": @[
+            @{ @"32": @"unknown-32.png", @"contrast": @"high" },
+            @{ @"32": @"known-32.png" }
+        ]
+    };
+
+    auto *unknownIcon = Util::makePNGData(CGSizeMake(32, 32), @selector(whiteColor));
+    auto *knownIcon = Util::makePNGData(CGSizeMake(32, 32), @selector(blackColor));
+
+    auto *resources = @{
+        @"unknown-32.png": unknownIcon,
+        @"known-32.png": knownIcon,
+    };
+
+    auto testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary resources:resources];
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+
+    auto *icon = [testExtension iconForSize:CGSizeMake(32, 32)];
+    EXPECT_NOT_NULL(icon);
+    EXPECT_TRUE(CGSizeEqualToSize(icon.size, CGSizeMake(32, 32)));
+    EXPECT_TRUE(Util::compareColors(Util::pixelColor(icon), [CocoaColor blackColor]));
+}
+
+TEST(WKWebExtension, IconVariantWithOnlyUnknownPropertyHasNoIcon)
+{
+    auto *testManifestDictionary = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test Only Unknown Property",
+        @"version": @"1.0",
+        @"description": @"Test with a single icon variant with an unknown property",
+
+        @"icon_variants": @[
+            @{ @"32": @"unknown-32.png", @"contrast": @"high" }
+        ]
+    };
+
+    auto *resources = @{
+        @"unknown-32.png": Util::makePNGData(CGSizeMake(32, 32), @selector(whiteColor)),
+    };
+
+    auto testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary resources:resources];
+
+    EXPECT_NULL([testExtension iconForSize:CGSizeMake(32, 32)]);
+}
+
+TEST(WKWebExtension, IconVariantSelectionUsesPixelSize)
+{
+    auto *testManifestDictionary = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test Variant Pixel Size",
+        @"version": @"1.0",
+        @"description": @"Test choosing between icon variants by pixel size",
+
+        @"icon_variants": @[
+            @{ @"16": @"icon-16.png" },
+            @{ @"32": @"icon-32.png" }
+        ]
+    };
+
+    auto *resources = @{
+        @"icon-16.png": Util::makePNGData(CGSizeMake(16, 16), @selector(blackColor)),
+        @"icon-32.png": Util::makePNGData(CGSizeMake(32, 32), @selector(whiteColor)),
+    };
+
+    auto testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary resources:resources];
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+
+    CGFloat largestScreenScale = 1;
+#if USE(APPKIT)
+    for (NSScreen *screen in NSScreen.screens)
+        largestScreenScale = std::max(largestScreenScale, screen.backingScaleFactor);
+#else
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+    for (UIScreen *screen in UIScreen.screens)
+        largestScreenScale = std::max(largestScreenScale, screen.scale);
+    ALLOW_DEPRECATED_DECLARATIONS_END
+#endif
+
+    // A 16 point icon needs 32 pixels on a 2x screen, so the 32 pixel variant is the better match there.
+    auto *expectedColor = largestScreenScale >= 2 ? [CocoaColor whiteColor] : [CocoaColor blackColor];
+
+    auto *icon = [testExtension iconForSize:CGSizeMake(16, 16)];
+    EXPECT_NOT_NULL(icon);
+    EXPECT_TRUE(Util::compareColors(Util::pixelColor(icon), expectedColor));
+}
+
 TEST(WKWebExtension, AnySizeIconVariant)
 {
     auto *testManifestDictionary = @{
@@ -721,6 +852,49 @@ TEST(WKWebExtension, AnySizeIconVariant)
     icon = [testExtension actionIconForSize:CGSizeMake(64, 64)];
     EXPECT_NOT_NULL(icon);
     EXPECT_TRUE(CGSizeEqualToSize(icon.size, CGSizeMake(64, 64)));
+}
+
+TEST(WKWebExtension, IconVariantsWithWrongTypeRecordsError)
+{
+    auto *testManifestDictionary = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test",
+        @"version": @"1.0",
+        @"description": @"Test with a non-array icon_variants",
+
+        @"icon_variants": @"icon.png"
+    };
+
+    auto testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary resources:@{ }];
+
+    EXPECT_NULL([testExtension iconForSize:CGSizeMake(32, 32)]);
+    EXPECT_EQ(testExtension.errors.count, 1UL);
+}
+
+TEST(WKWebExtension, IconVariantsSkipsNonObjectEntries)
+{
+    auto *testManifestDictionary = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test",
+        @"version": @"1.0",
+        @"description": @"Test with a non-object entry in icon_variants",
+
+        @"icon_variants": @[
+            @"icon-16.png",
+            @{ @"32": @"icon-32.png" }
+        ]
+    };
+
+    auto *resources = @{
+        @"icon-32.png": Util::makePNGData(CGSizeMake(32, 32), @selector(whiteColor)),
+    };
+
+    auto testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary resources:resources];
+
+    auto *icon = [testExtension iconForSize:CGSizeMake(32, 32)];
+    EXPECT_NOT_NULL(icon);
 }
 
 TEST(WKWebExtension, NoIconVariants)
@@ -1471,7 +1645,8 @@ TEST(WKWebExtension, BackgroundParsing)
     EXPECT_FALSE(testExtension.hasPersistentBackgroundContent);
     EXPECT_FALSE(testExtension._hasServiceWorkerBackgroundContent);
     EXPECT_FALSE(testExtension._hasModularBackgroundContent);
-    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+    EXPECT_EQ(testExtension.errors.count, 1ul);
+    EXPECT_EQ(testExtension.errors.firstObject.code, WKWebExtensionErrorInvalidManifestEntry);
 
     testManifestDictionary[@"background"] = @{ @"service_worker": @"test.js", @"persistent": @NO };
     testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
@@ -1605,6 +1780,47 @@ TEST(WKWebExtension, BackgroundParsing)
     EXPECT_NE(testExtension.errors.count, 0ul);
     EXPECT_NOT_NULL(matchingError(testExtension.errors, WKWebExtensionErrorInvalidManifestEntry));
     EXPECT_NULL(matchingError(testExtension.errors, WKWebExtensionErrorInvalidBackgroundPersistence));
+}
+
+TEST(WKWebExtension, BackgroundDefaultPrecedence)
+{
+    NSMutableDictionary *testManifestDictionary = [@{ @"manifest_version": @3, @"name": @"Test", @"description": @"Test", @"version": @"1.0" } mutableCopy];
+
+    testManifestDictionary[@"background"] = @{ @"page": @"background.html", @"scripts": @[ @"background.js" ] };
+
+    auto *testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    auto *testContext = [[WKWebExtensionContext alloc] initForExtension:testExtension];
+
+    EXPECT_TRUE(testExtension.hasBackgroundContent);
+    EXPECT_FALSE(testExtension._hasServiceWorkerBackgroundContent);
+    EXPECT_NS_EQUAL(testContext._backgroundContentURL.lastPathComponent, @"background.html");
+    EXPECT_EQ(testExtension.errors.count, 1ul);
+    EXPECT_EQ(testExtension.errors.firstObject.code, WKWebExtensionErrorInvalidManifestEntry);
+
+    testManifestDictionary[@"background"] = @{ @"page": @"background.html", @"scripts": @[ @"background.js" ], @"service_worker": @"worker.js" };
+
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    testContext = [[WKWebExtensionContext alloc] initForExtension:testExtension];
+
+    EXPECT_FALSE(testExtension._hasServiceWorkerBackgroundContent);
+    EXPECT_NS_EQUAL(testContext._backgroundContentURL.lastPathComponent, @"background.html");
+    EXPECT_EQ(testExtension.errors.count, 1ul);
+
+    testManifestDictionary[@"background"] = @{ @"page": @"background.html" };
+
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+
+    EXPECT_TRUE(testExtension.hasBackgroundContent);
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+
+    testManifestDictionary[@"background"] = @{ @"scripts": @[ @"background.js" ], @"service_worker": @"worker.js" };
+
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    testContext = [[WKWebExtensionContext alloc] initForExtension:testExtension];
+
+    EXPECT_FALSE(testExtension._hasServiceWorkerBackgroundContent);
+    EXPECT_NS_EQUAL(testContext._backgroundContentURL.lastPathComponent, @"_generated_background_page.html");
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
 }
 
 TEST(WKWebExtension, BackgroundPreferredEnvironmentParsing)

@@ -548,6 +548,21 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case VarargsLengthWithSpread: {
+        clobberWorld();
+        setTypeForNode(node, SpecInt32Only);
+        break;
+    }
+
+    case LoadVarargsWithSpread: {
+        clobberWorld();
+        LoadVarargsData* data = node->loadVarargsData();
+        m_state.operand(data->count).setNonCellType(SpecInt32Only);
+        for (unsigned i = data->limit - 1; i--;)
+            m_state.operand(data->start + i).makeHeapTop();
+        break;
+    }
+
     case LoadVarargs:
     case ForwardVarargs: {
         // FIXME: ForwardVarargs should check if the count becomes known, and if it does, it should turn
@@ -3909,6 +3924,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         setForNode(node, node->structure());
         break;
 
+    case NewProxyObject:
+        setTypeForNode(node, SpecProxyObject);
+        break;
+
     case ToThis: {
         AbstractValue& source = forNode(node->child1());
         AbstractValue& destination = forNode(node);
@@ -4461,7 +4480,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                     auto& variant = status[0];
                     if (!variant.conditionSet().isEmpty()) {
                         ASSERT(variant.structureSet().size() == 1);
-                        auto attempToFold = [&] {
+                        auto attemptToFold = [&] {
                             for (auto& condition : variant.conditionSet()) {
                                 switch (condition.kind()) {
                                 case PropertyCondition::Presence: {
@@ -4485,7 +4504,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                             return false;
                         };
 
-                        if (attempToFold())
+                        if (attemptToFold())
                             break;
 
                         clobberWorld();
@@ -5593,6 +5612,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case Call:
     case TailCallInlinedCaller:
     case CallVarargs:
+    case CallVarargsWithSpread:
     case CallForwardVarargs:
     case TailCallVarargsInlinedCaller:
     case ConstructVarargs:

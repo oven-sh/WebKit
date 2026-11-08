@@ -92,6 +92,7 @@ struct CSSParserContext {
     bool cssFontSynthesisStyleObliqueOnlyEnabled : 1 { false };
     bool cssInternalAutoBaseParsingEnabled : 1 { false };
     bool webkitMediaTextTrackDisplayQuirkEnabled : 1 { false };
+    bool marginTrimInlineSupportsQuirkEnabled : 1 { false };
     bool cssMathDepthEnabled : 1 { false };
     bool openPseudoClassEnabled : 1 { false };
     bool cssScrollStateContainerQueriesEnabled : 1 { false };
@@ -101,6 +102,7 @@ struct CSSParserContext {
     bool cssInheritFunctionEnabled : 1 { false };
     bool cssFontPaletteMixFunctionEnabled : 1 { false };
     bool cssSymbolsFunctionEnabled : 1 { false };
+    bool cssMeshGradientsEnabled : 1 { false };
     bool viewportSegmentsAPIEnabled : 1 { false };
 
     // Enabled only for the legacy <font face> attribute: allows a numeric token within a family

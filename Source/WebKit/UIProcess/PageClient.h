@@ -525,10 +525,11 @@ public:
     virtual bool effectiveAppearanceIsDark() const { return false; }
     virtual bool effectiveUserInterfaceLevelIsElevated() const { return false; }
 
+#if !PLATFORM(COCOA)
     virtual void enterAcceleratedCompositingMode(const LayerTreeContext&) = 0;
     virtual void exitAcceleratedCompositingMode() = 0;
     virtual void updateAcceleratedCompositingMode(const LayerTreeContext&) = 0;
-    virtual void didFirstLayerFlush(const LayerTreeContext&) { }
+#endif
 
     virtual void takeFocus(WebCore::FocusDirection) { }
 
@@ -577,7 +578,7 @@ public:
 
 #if PLATFORM(COCOA)
     virtual void didCommitLayerTree(const RemoteLayerTreeTransaction&, const std::optional<MainFrameData>&, const PageData&, const TransactionID&) = 0;
-    virtual void didCommitMainFrameData(const MainFrameData&) = 0;
+    virtual void didUpdateFixedContainerEdges(const WebCore::FixedContainerEdges&) = 0;
     virtual void layerTreeCommitComplete() { }
 
 #if HAVE(NSREFRESHCONTROLLER)
@@ -766,8 +767,6 @@ public:
     virtual void derefView() = 0;
 
     virtual void pageDidScroll(const WebCore::IntPoint& scrollOffset) { }
-
-    virtual void didEndSyntheticMomentumScrolling() { }
 
     virtual void didRestoreScrollPosition() = 0;
     virtual void pageScaleFactorDidChange() { }

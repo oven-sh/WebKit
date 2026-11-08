@@ -150,13 +150,13 @@ RenderPassEncoder::RenderPassEncoder(id<MTLRenderCommandEncoder> renderCommandEn
         if (texture.isDestroyed())
             m_parentEncoder->makeSubmitInvalid();
 
-        texture.setPreviouslyCleared();
+        texture.setProvisionallyCleared(m_parentEncoder);
         addResourceToActiveResources(texture, BindGroupEntryUsage::Attachment);
         m_rasterSampleCount = texture.sampleCount();
         if (attachment.resolveTarget) {
             auto texture = *attachment.resolveTarget;
             texture.setCommandEncoder(m_parentEncoder);
-            texture.setPreviouslyCleared();
+            texture.setProvisionallyCleared(m_parentEncoder);
             addResourceToActiveResources(texture, BindGroupEntryUsage::Attachment);
         }
 
@@ -180,7 +180,7 @@ RenderPassEncoder::RenderPassEncoder(id<MTLRenderCommandEncoder> renderCommandEn
 
     if (const auto* attachment = depthStencilAttachment) {
         auto textureView = attachment->view;
-        textureView.setPreviouslyCleared();
+        textureView.setProvisionallyCleared(m_parentEncoder);
         textureView.setCommandEncoder(m_parentEncoder);
         id<MTLTexture> depthTexture = textureView.isDestroyed() ? nil : textureView.texture();
         if (textureView.width() && !m_renderTargetWidth) {
@@ -650,6 +650,7 @@ bool RenderPassEncoder::executePreDrawCommands(uint32_t firstInstance, uint32_t 
                 ASSERT(resource.mtlResources.size() == resource.resourceUsages.size());
                 for (size_t i = 0, sz = resource.mtlResources.size(); i < sz; ++i) {
                     auto& resourceUsage = resource.resourceUsages[i];
+                    m_parentEncoder->addResidentResource(resource.mtlResources[i]);
                     addResourceToActiveResources(resourceUsage.resource, resourceUsage.usage);
                     setCommandEncoder(resourceUsage.resource);
                 }
@@ -813,7 +814,7 @@ RenderPassEncoder::DrawIndexResult RenderPassEncoder::clampIndexBufferToValidVal
 
     auto primitiveOffset = primitiveType == MTLPrimitiveTypeLineStrip || primitiveType == MTLPrimitiveTypeTriangleStrip ? 1u : 0u;
     auto effectiveMinVertexCount = minVertexCount == RenderBundleEncoder::invalidVertexInstanceCount ? minVertexCount : (minVertexCount - baseVertex);
-    if (auto it = apiIndexBuffer->canSkipDrawIndexedValidation(firstIndex, indexCount, effectiveMinVertexCount, indexType, primitiveOffset)) {
+    if (auto it = apiIndexBuffer->canSkipDrawIndexedValidation(firstIndex, indexCount, effectiveMinVertexCount, baseVertex, indexType, primitiveOffset)) {
         if (apiIndexBuffer->didReadOOB())
             return DrawIndexResult { IndexCall::Skip, nil, 0 };
 
@@ -821,9 +822,11 @@ RenderPassEncoder::DrawIndexResult RenderPassEncoder::clampIndexBufferToValidVal
         return DrawIndexResult { IndexCall::Draw, nil, 0 };
     }
 
-    if (!apiIndexBuffer->didReadOOB() && apiIndexBuffer->allIndexValuesBelow(indexType, effectiveMinVertexCount)) {
-        apiIndexBuffer->drawIndexedValidated(firstIndex, indexCount, effectiveMinVertexCount, indexType, primitiveOffset, apiIndexBuffer->indexContentsGeneration());
-        if (auto it = apiIndexBuffer->canSkipDrawIndexedValidation(firstIndex, indexCount, effectiveMinVertexCount, indexType, primitiveOffset)) {
+    // A negative baseVertex additionally requires every index to be >= -baseVertex, but the buffer only
+    // tracks an upper bound on its index values, so the clamp shader is still required in that case.
+    if (!apiIndexBuffer->didReadOOB() && baseVertex >= 0 && apiIndexBuffer->allIndexValuesBelow(indexType, effectiveMinVertexCount)) {
+        apiIndexBuffer->drawIndexedValidated(firstIndex, indexCount, effectiveMinVertexCount, baseVertex, indexType, primitiveOffset, apiIndexBuffer->indexContentsGeneration());
+        if (auto it = apiIndexBuffer->canSkipDrawIndexedValidation(firstIndex, indexCount, effectiveMinVertexCount, baseVertex, indexType, primitiveOffset)) {
             apiIndexBuffer->skippedDrawIndexedValidation(encoder.parentEncoder(), *it);
             return DrawIndexResult { IndexCall::Draw, nil, 0 };
         }
@@ -864,12 +867,12 @@ RenderPassEncoder::DrawIndexResult RenderPassEncoder::clampIndexBufferToValidVal
 
     auto encoderHandle = device.getQueue()->retainCounterSampleBuffer(encoder.parentEncoder());
     uint64_t validationGeneration = apiIndexBuffer->indexContentsGeneration();
-    [encoder.parentEncoder().commandBuffer() addCompletedHandler:[encoderHandle, protectedDevice = protect(device), firstIndex, indexCount, effectiveMinVertexCount, indexType, primitiveOffset, validationGeneration, refIndexBuffer = protect(*apiIndexBuffer), indexedIndirectBuffer, indexedIndirectBufferOffset](id<MTLCommandBuffer> completedCommandBuffer) mutable {
+    [encoder.parentEncoder().commandBuffer() addCompletedHandler:[encoderHandle, protectedDevice = protect(device), firstIndex, indexCount, effectiveMinVertexCount, baseVertex, indexType, primitiveOffset, validationGeneration, refIndexBuffer = protect(*apiIndexBuffer), indexedIndirectBuffer, indexedIndirectBufferOffset](id<MTLCommandBuffer> completedCommandBuffer) mutable {
         if (completedCommandBuffer.status != MTLCommandBufferStatusCompleted) {
             protectedDevice->getQueue()->releaseCounterSampleBuffer(encoderHandle);
             return;
         }
-        protectedDevice->getQueue()->scheduleWork([encoderHandle, protectedDevice, firstIndex, indexCount, effectiveMinVertexCount, indexType, primitiveOffset, validationGeneration, refIndexBuffer = WTF::move(refIndexBuffer), indexedIndirectBuffer, indexedIndirectBufferOffset]() mutable {
+        protectedDevice->getQueue()->scheduleWork([encoderHandle, protectedDevice, firstIndex, indexCount, effectiveMinVertexCount, baseVertex, indexType, primitiveOffset, validationGeneration, refIndexBuffer = WTF::move(refIndexBuffer), indexedIndirectBuffer, indexedIndirectBufferOffset]() mutable {
             protectedDevice->getQueue()->releaseCounterSampleBuffer(encoderHandle);
             if (!indexedIndirectBuffer.contents || indexedIndirectBuffer.length < sizeof(WebKitMTLDrawIndexedPrimitivesIndirectArguments) + indexedIndirectBufferOffset)
                 return;
@@ -877,7 +880,7 @@ RenderPassEncoder::DrawIndexResult RenderPassEncoder::clampIndexBufferToValidVal
             auto* offsetContents = static_cast<uint8_t*>(indexedIndirectBuffer.contents) + indexedIndirectBufferOffset;
             auto& args = *static_cast<WebKitMTLDrawIndexedPrimitivesIndirectArguments*>(static_cast<void*>(offsetContents));
             refIndexBuffer->didReadOOB(args.lostOrOOBRead);
-            refIndexBuffer->drawIndexedValidated(firstIndex, indexCount, effectiveMinVertexCount, indexType, primitiveOffset, validationGeneration);
+            refIndexBuffer->drawIndexedValidated(firstIndex, indexCount, effectiveMinVertexCount, baseVertex, indexType, primitiveOffset, validationGeneration);
         });
     }];
 
@@ -1496,7 +1499,7 @@ void RenderPassEncoder::executeBundles(std::span<const Ref<WebGPU::RenderBundle>
                     if (!indexBuffer)
                         continue;
                     auto effectiveMinVertexCount = minVertexCount == RenderBundleEncoder::invalidVertexInstanceCount ? minVertexCount : (minVertexCount - baseVertex);
-                    if (auto it = indexBuffer->canSkipDrawIndexedValidation(firstIndex, indexCount, effectiveMinVertexCount, indexType, primitiveOffset, icb.indirectCommandBuffer); it && !indexBuffer->didReadOOB(icb.indirectCommandBuffer)) {
+                    if (auto it = indexBuffer->canSkipDrawIndexedValidation(firstIndex, indexCount, effectiveMinVertexCount, baseVertex, indexType, primitiveOffset, icb.indirectCommandBuffer); it && !indexBuffer->didReadOOB(icb.indirectCommandBuffer)) {
                         indexBuffer->skippedDrawIndexedValidation(m_parentEncoder, *it);
                         continue;
                     }
@@ -1517,17 +1520,17 @@ void RenderPassEncoder::executeBundles(std::span<const Ref<WebGPU::RenderBundle>
 
                     auto encoderHandle = m_device->getQueue()->retainCounterSampleBuffer(m_parentEncoder);
                     uint64_t validationGeneration = indexBuffer->indexContentsGeneration();
-                    [m_parentEncoder->commandBuffer() addCompletedHandler:[encoderHandle, protectedDevice = protect(m_device), firstIndex, indexCount, effectiveMinVertexCount, indexType, primitiveOffset, validationGeneration, refIndexBuffer = protect(*indexBuffer), icb](id<MTLCommandBuffer> completedCommandBuffer) mutable {
+                    [m_parentEncoder->commandBuffer() addCompletedHandler:[encoderHandle, protectedDevice = protect(m_device), firstIndex, indexCount, effectiveMinVertexCount, baseVertex, indexType, primitiveOffset, validationGeneration, refIndexBuffer = protect(*indexBuffer), icb](id<MTLCommandBuffer> completedCommandBuffer) mutable {
                         if (completedCommandBuffer.status != MTLCommandBufferStatusCompleted) {
                             protectedDevice->getQueue()->releaseCounterSampleBuffer(encoderHandle);
                             return;
                         }
 
-                        protectedDevice->getQueue()->scheduleWork([encoderHandle, protectedDevice, icb, firstIndex, indexCount, effectiveMinVertexCount, indexType, primitiveOffset, validationGeneration, refIndexBuffer = WTF::move(refIndexBuffer)]() mutable {
+                        protectedDevice->getQueue()->scheduleWork([encoderHandle, protectedDevice, icb, firstIndex, indexCount, effectiveMinVertexCount, baseVertex, indexType, primitiveOffset, validationGeneration, refIndexBuffer = WTF::move(refIndexBuffer)]() mutable {
                             protectedDevice->getQueue()->releaseCounterSampleBuffer(encoderHandle);
                             id<MTLBuffer> outOfBoundsReadFlag = icb.outOfBoundsReadFlag;
                             refIndexBuffer->didReadOOB(*static_cast<uint32_t*>(outOfBoundsReadFlag.contents), icb.indirectCommandBuffer);
-                            refIndexBuffer->drawIndexedValidated(firstIndex, indexCount, effectiveMinVertexCount, indexType, primitiveOffset, validationGeneration, icb.indirectCommandBuffer);
+                            refIndexBuffer->drawIndexedValidated(firstIndex, indexCount, effectiveMinVertexCount, baseVertex, indexType, primitiveOffset, validationGeneration, icb.indirectCommandBuffer);
                         });
                     }];
                     needsBarrierBeforeExecute = true;
@@ -1547,8 +1550,24 @@ void RenderPassEncoder::executeBundles(std::span<const Ref<WebGPU::RenderBundle>
 
                     uint64_t indirectGeneration = indirectBuffer->contentsGeneration();
                     uint64_t indexGeneration = indexBuffer ? indexBuffer->indexContentsGeneration() : 0;
-                    if (data.encodedAtLeastOnce && data.lastIndirectGeneration == indirectGeneration && data.lastIndexGeneration == indexGeneration)
+                    // Unlike the cache above, this needs no didReadOOB() check: the slot holds arguments the
+                    // encode kernel already clamped, not app-authored counts an OOB scan had to vet, so equal
+                    // generations mean the baked command is still in bounds.
+                    if (data.encodedAtLeastOnce && data.lastIndirectGeneration == indirectGeneration && data.lastIndexGeneration == indexGeneration) {
+                        if (data.isIndexed && indexBuffer) {
+                            indexBuffer->skippedBundleIndirectDrawValidation(m_parentEncoder, ReusedIndirectIndexedDraw {
+                                .indirectBuffer = indirectBuffer,
+                                .indirectOffset = data.indirectOffset,
+                                .indexBufferOffset = data.indexBufferOffset,
+                                .indirectGeneration = indirectGeneration,
+                                .indexGeneration = indexGeneration,
+                                .minVertexCount = data.minVertexCount,
+                                .indexType = data.indexType,
+                                .primitiveType = data.primitiveType,
+                            });
+                        }
                         continue;
+                    }
 
                     bool clamps = data.isIndexed || !(data.minVertexCount == RenderBundleEncoder::invalidVertexInstanceCount && data.minInstanceCount == RenderBundleEncoder::invalidVertexInstanceCount);
                     indirectWork.append(IndirectEncodeWork {
@@ -1716,6 +1735,7 @@ void RenderPassEncoder::executeBundles(std::span<const Ref<WebGPU::RenderBundle>
             ASSERT(resource.mtlResources.size() == resource.resourceUsages.size());
             for (size_t i = 0, resourceCount = resource.mtlResources.size(); i < resourceCount; ++i) {
                 auto& resourceUsage = resource.resourceUsages[i];
+                m_parentEncoder->addResidentResource(resource.mtlResources[i]);
                 addResourceToActiveResources(resourceUsage.resource, resourceUsage.usage);
                 setCommandEncoder(resourceUsage.resource);
             }
@@ -1929,6 +1949,7 @@ void RenderPassEncoder::setBindGroup(uint32_t groupIndex, const BindGroup* group
         ASSERT(resource.mtlResources.size() == resource.resourceUsages.size());
         for (size_t i = 0, sz = resource.mtlResources.size(); i < sz; ++i) {
             auto& resourceUsage = resource.resourceUsages[i];
+            parentEncoder->addResidentResource(resource.mtlResources[i]);
             addResourceToActiveResources(resourceUsage.resource, resourceUsage.usage);
             setCommandEncoder(resourceUsage.resource);
         }
@@ -2143,117 +2164,159 @@ void LEGACY_NODELETE wgpuRenderPassEncoderAddRef(WGPURenderPassEncoder renderPas
 
 void wgpuRenderPassEncoderRelease(WGPURenderPassEncoder renderPassEncoder)
 {
-    WebGPU::Metal::fromAPI(renderPassEncoder).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(renderPassEncoder).deref();
+    }
 }
 
 void wgpuRenderPassEncoderBeginOcclusionQuery(WGPURenderPassEncoder renderPassEncoder, uint32_t queryIndex)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->beginOcclusionQuery(queryIndex);
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->beginOcclusionQuery(queryIndex);
+    }
 }
 
 void wgpuRenderPassEncoderDraw(WGPURenderPassEncoder renderPassEncoder, uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->draw(vertexCount, instanceCount, firstVertex, firstInstance);
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->draw(vertexCount, instanceCount, firstVertex, firstInstance);
+    }
 }
 
 void wgpuRenderPassEncoderDrawIndexed(WGPURenderPassEncoder renderPassEncoder, uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t baseVertex, uint32_t firstInstance)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+    }
 }
 
 void wgpuRenderPassEncoderDrawIndexedIndirect(WGPURenderPassEncoder renderPassEncoder, WGPUBuffer indirectBuffer, uint64_t indirectOffset)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->drawIndexedIndirect(protect(WebGPU::Metal::fromAPI(indirectBuffer)), indirectOffset);
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->drawIndexedIndirect(protect(WebGPU::Metal::fromAPI(indirectBuffer)), indirectOffset);
+    }
 }
 
 void wgpuRenderPassEncoderDrawIndirect(WGPURenderPassEncoder renderPassEncoder, WGPUBuffer indirectBuffer, uint64_t indirectOffset)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->drawIndirect(protect(WebGPU::Metal::fromAPI(indirectBuffer)), indirectOffset);
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->drawIndirect(protect(WebGPU::Metal::fromAPI(indirectBuffer)), indirectOffset);
+    }
 }
 
 void wgpuRenderPassEncoderEndOcclusionQuery(WGPURenderPassEncoder renderPassEncoder)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->endOcclusionQuery();
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->endOcclusionQuery();
+    }
 }
 
 void wgpuRenderPassEncoderEnd(WGPURenderPassEncoder renderPassEncoder)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->endPass();
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->endPass();
+    }
 }
 
 void wgpuRenderPassEncoderExecuteBundles(WGPURenderPassEncoder renderPassEncoder, size_t bundlesCount, const WGPURenderBundle* bundles)
 {
-    auto apiBundles = WTF::map(unsafeMakeSpan(bundles, bundlesCount), [](auto bundle) {
-        return Ref { WebGPU::fromAPI(bundle) };
-    });
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->executeBundles(apiBundles.span());
+    @autoreleasepool {
+        auto apiBundles = WTF::map(unsafeMakeSpan(bundles, bundlesCount), [](auto bundle) {
+            return Ref { WebGPU::fromAPI(bundle) };
+        });
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->executeBundles(apiBundles.span());
+    }
 }
 
 void wgpuRenderPassEncoderInsertDebugMarker(WGPURenderPassEncoder renderPassEncoder, WGPUStringView markerLabel)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->insertDebugMarker(WebGPU::Metal::fromAPI(markerLabel));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->insertDebugMarker(WebGPU::Metal::fromAPI(markerLabel));
+    }
 }
 
 void wgpuRenderPassEncoderPopDebugGroup(WGPURenderPassEncoder renderPassEncoder)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->popDebugGroup();
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->popDebugGroup();
+    }
 }
 
 void wgpuRenderPassEncoderPushDebugGroup(WGPURenderPassEncoder renderPassEncoder, WGPUStringView groupLabel)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->pushDebugGroup(WebGPU::Metal::fromAPI(groupLabel));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->pushDebugGroup(WebGPU::Metal::fromAPI(groupLabel));
+    }
 }
 
 // No dynamic offsets is std::nullopt.
 void wgpuRenderPassEncoderSetBindGroup(WGPURenderPassEncoder renderPassEncoder, uint32_t groupIndex, WGPUBindGroup group, size_t dynamicOffsetCount, const uint32_t* dynamicOffsets)
 {
-    auto offsets = dynamicOffsetCount ? std::optional { unsafeMakeSpan(dynamicOffsets, dynamicOffsetCount) } : std::nullopt;
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setBindGroup(groupIndex, group ? protect(WebGPU::Metal::fromAPI(group)).ptr() : nullptr, offsets);
+    @autoreleasepool {
+        auto offsets = dynamicOffsetCount ? std::optional { unsafeMakeSpan(dynamicOffsets, dynamicOffsetCount) } : std::nullopt;
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setBindGroup(groupIndex, group ? protect(WebGPU::Metal::fromAPI(group)).ptr() : nullptr, offsets);
+    }
 }
 
 void wgpuRenderPassEncoderSetBlendConstant(WGPURenderPassEncoder renderPassEncoder, const WGPUColor* color)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setBlendConstant(WebGPU::Metal::fromAPI(*color));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setBlendConstant(WebGPU::Metal::fromAPI(*color));
+    }
 }
 
 void wgpuRenderPassEncoderSetIndexBuffer(WGPURenderPassEncoder renderPassEncoder, WGPUBuffer buffer, WGPUIndexFormat format, uint64_t offset, uint64_t size)
 {
-    Ref protectedRenderPassEncoder = WebGPU::Metal::fromAPI(renderPassEncoder);
-    auto apiFormat = WebGPU::Metal::fromAPI(format);
-    if (!apiFormat)
-        return protectedRenderPassEncoder->makeInvalid(@"setIndexBuffer: invalid index format");
-    protectedRenderPassEncoder->setIndexBuffer(protect(WebGPU::Metal::fromAPI(buffer)), *apiFormat, offset, size == WGPU_WHOLE_SIZE ? std::nullopt : std::optional { size });
+    @autoreleasepool {
+        Ref protectedRenderPassEncoder = WebGPU::Metal::fromAPI(renderPassEncoder);
+        auto apiFormat = WebGPU::Metal::fromAPI(format);
+        if (!apiFormat)
+            return protectedRenderPassEncoder->makeInvalid(@"setIndexBuffer: invalid index format");
+        protectedRenderPassEncoder->setIndexBuffer(protect(WebGPU::Metal::fromAPI(buffer)), *apiFormat, offset, size == WGPU_WHOLE_SIZE ? std::nullopt : std::optional { size });
+    }
 }
 
 void wgpuRenderPassEncoderSetPipeline(WGPURenderPassEncoder renderPassEncoder, WGPURenderPipeline pipeline)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setPipeline(protect(WebGPU::Metal::fromAPI(pipeline)));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setPipeline(protect(WebGPU::Metal::fromAPI(pipeline)));
+    }
 }
 
 void wgpuRenderPassEncoderSetScissorRect(WGPURenderPassEncoder renderPassEncoder, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setScissorRect(x, y, width, height);
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setScissorRect(x, y, width, height);
+    }
 }
 
 void wgpuRenderPassEncoderSetStencilReference(WGPURenderPassEncoder renderPassEncoder, uint32_t reference)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setStencilReference(reference);
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setStencilReference(reference);
+    }
 }
 
 void wgpuRenderPassEncoderSetVertexBuffer(WGPURenderPassEncoder renderPassEncoder, uint32_t slot, WGPUBuffer buffer, uint64_t offset, uint64_t size)
 {
-    RefPtr<WebGPU::Metal::Buffer> optionalBuffer;
-    if (buffer)
-        optionalBuffer = protect(WebGPU::Metal::fromAPI(buffer)).ptr();
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setVertexBuffer(slot, optionalBuffer.get(), offset, size == WGPU_WHOLE_SIZE ? std::nullopt : std::optional { size });
+    @autoreleasepool {
+        RefPtr<WebGPU::Metal::Buffer> optionalBuffer;
+        if (buffer)
+            optionalBuffer = protect(WebGPU::Metal::fromAPI(buffer)).ptr();
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setVertexBuffer(slot, optionalBuffer.get(), offset, size == WGPU_WHOLE_SIZE ? std::nullopt : std::optional { size });
+    }
 }
 
 void wgpuRenderPassEncoderSetViewport(WGPURenderPassEncoder renderPassEncoder, float x, float y, float width, float height, float minDepth, float maxDepth)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setViewport(x, y, width, height, minDepth, maxDepth);
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setViewport(x, y, width, height, minDepth, maxDepth);
+    }
 }
 
 void wgpuRenderPassEncoderSetLabel(WGPURenderPassEncoder renderPassEncoder, WGPUStringView label)
 {
-    protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setLabel(WebGPU::Metal::fromAPI(label));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderPassEncoder))->setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }

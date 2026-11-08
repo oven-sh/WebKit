@@ -27,7 +27,6 @@
 #include "SVGTextLayoutAlgorithm.h"
 
 #include "ComplexTextController.h"
-#include "FontCascadeCache.h"
 #include "FontCascadeInlines.h"
 #include "InlineDisplayBoxInlines.h"
 #include "LayoutElementBox.h"
@@ -155,7 +154,6 @@ static void ensureTextMetrics(RenderSVGInlineText& text)
     };
 
     if (shouldUseComplexTextController(scaledFont, run)) {
-        FontCascadeCache::forCurrentThread().invalidate();
         auto controller = ComplexTextController { scaledFont, run, true };
         auto totalWidth = 0.f;
         for (unsigned position = 0; position < length;) {
@@ -172,10 +170,10 @@ static void ensureTextMetrics(RenderSVGInlineText& text)
     auto canUseSimplifiedTextMeasuring = [&] {
         if (run.direction() != TextDirection::LTR)
             return false;
-        if (auto cachedValue = text.canUseSimplifiedTextMeasuring())
+        if (auto cachedValue = text.canUseSimplifiedTextMeasuringWithScaledFont())
             return *cachedValue;
         auto value = Layout::TextUtil::canUseSimplifiedTextMeasuring(run.text(), scaledFont, text.style().collapseWhiteSpace(), nullptr);
-        text.setCanUseSimplifiedTextMeasuring(value);
+        text.setCanUseSimplifiedTextMeasuringWithScaledFont(value);
         return value;
     }();
 
@@ -763,14 +761,22 @@ void SVGTextLayoutAlgorithm::positionOnPaths()
     for (unsigned textPathIndex = 0; textPathIndex < m_textPaths.size(); ++textPathIndex) {
         auto& textPath = m_textPaths[textPathIndex];
 
+        auto isOnTextPath = [&](unsigned charIndex) {
+            return m_textBoxes[m_characters[charIndex].textBoxIndex].textPathIndex == textPathIndex;
+        };
+
         auto rangeStart = notFound;
         size_t rangeEnd = 0;
-        for (size_t i = 0; i < m_displayOrder.size(); ++i) {
-            if (m_textBoxes[m_characters[m_displayOrder[i]].textBoxIndex].textPathIndex != textPathIndex)
+        for (size_t glyphIndex = 0; glyphIndex < m_displayOrder.size(); ++glyphIndex) {
+            if (!isOnTextPath(m_displayOrder[glyphIndex])) {
+                if (rangeStart != notFound)
+                    break;
                 continue;
+            }
+
             if (rangeStart == notFound)
-                rangeStart = i;
-            rangeEnd = i + 1;
+                rangeStart = glyphIndex;
+            rangeEnd = glyphIndex + 1;
         }
         if (rangeStart == notFound)
             continue;

@@ -1568,6 +1568,8 @@ void run(const TestConfig* config)
         RUN(testVectorRelaxedDotI8x16I7x16());
         RUN(testVectorRelaxedDotI8x16I7x16Add());
         RUN(testVectorDotProductSplatOne());
+        RUN(testVectorReplaceLaneOfZeroWithLoad());
+        RUN(testVectorDotProductSum());
         RUN(testVectorShrZipToExtend());
         RUN(testVectorShrZipToExtendI32());
         RUN(testVectorShrZipToExtendI64());

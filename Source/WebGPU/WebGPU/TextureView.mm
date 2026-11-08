@@ -81,6 +81,11 @@ void TextureView::setPreviouslyCleared(uint32_t mipLevel, uint32_t slice)
     m_parentTexture->setPreviouslyCleared(m_texture.parentRelativeLevel + mipLevel, m_texture.parentRelativeSlice + slice);
 }
 
+void TextureView::setProvisionallyCleared(const CommandEncoder& commandEncoder, uint32_t mipLevel, uint32_t slice)
+{
+    m_parentTexture->setProvisionallyCleared(m_texture.parentRelativeLevel + mipLevel, m_texture.parentRelativeSlice + slice, commandEncoder);
+}
+
 uint32_t TextureView::parentRelativeMipLevel() const
 {
     RELEASE_ASSERT(baseMipLevel() == m_texture.parentRelativeLevel);
@@ -221,10 +226,14 @@ void LEGACY_NODELETE wgpuTextureViewAddRef(WGPUTextureView textureView)
 
 void wgpuTextureViewRelease(WGPUTextureView textureView)
 {
-    WebGPU::Metal::fromAPI(textureView).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(textureView).deref();
+    }
 }
 
 void wgpuTextureViewSetLabel(WGPUTextureView textureView, WGPUStringView label)
 {
-    protect(WebGPU::Metal::fromAPI(textureView))->setLabel(WebGPU::Metal::fromAPI(label));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(textureView))->setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }

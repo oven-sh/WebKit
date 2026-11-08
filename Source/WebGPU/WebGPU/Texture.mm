@@ -4138,6 +4138,11 @@ NSString* Texture::errorValidatingLinearTextureData(const WebGPU::TexelCopyBuffe
     return nil;
 }
 
+static uint64_t provisionalClearKey(uint32_t mipLevel, uint32_t slice)
+{
+    return (static_cast<uint64_t>(mipLevel) << 32) | slice;
+}
+
 bool Texture::previouslyCleared() const
 {
     for (uint32_t m = 0; m < mipLevelCount(); ++m) {
@@ -4158,15 +4163,21 @@ void Texture::setPreviouslyCleared()
     }
 }
 
+bool Texture::durablyCleared(uint32_t mipLevel, uint32_t slice) const
+{
+    auto it = m_clearedToZero.find(mipLevel);
+    return it != m_clearedToZero.end() && it->value.contains(slice);
+}
+
 bool Texture::previouslyCleared(uint32_t mipLevel, uint32_t slice) const
 {
     if (isDestroyed())
         return true;
 
-    if (auto it = m_clearedToZero.find(mipLevel); it != m_clearedToZero.end())
-        return it->value.contains(slice);
+    if (durablyCleared(mipLevel, slice))
+        return true;
 
-    return false;
+    return m_provisionalClears.contains(provisionalClearKey(mipLevel, slice));
 }
 
 void Texture::setPreviouslyCleared(uint32_t mipLevel, uint32_t slice, bool setCleared)
@@ -4174,6 +4185,8 @@ void Texture::setPreviouslyCleared(uint32_t mipLevel, uint32_t slice, bool setCl
     if (!setCleared) {
         if (auto it = m_clearedToZero.find(mipLevel); it != m_clearedToZero.end())
             it->value.remove(slice);
+        m_provisionalClears.removeAll(provisionalClearKey(mipLevel, slice));
+        m_device->getQueue()->removeProvisionalTextureClears(*this, mipLevel, slice);
         return;
     }
 
@@ -4185,6 +4198,43 @@ void Texture::setPreviouslyCleared(uint32_t mipLevel, uint32_t slice, bool setCl
     ClearedToZeroInnerContainer set;
     set.add(slice);
     m_clearedToZero.add(mipLevel, set);
+}
+
+void Texture::setProvisionallyCleared(uint32_t mipLevel, uint32_t slice, const CommandEncoder& commandEncoder)
+{
+    if (isDestroyed() || durablyCleared(mipLevel, slice))
+        return;
+
+    m_provisionalClears.add(provisionalClearKey(mipLevel, slice));
+    m_device->getQueue()->addProvisionalTextureClear(*this, mipLevel, slice, commandEncoder.uniqueId());
+}
+
+void Texture::setProvisionallyCleared(const CommandEncoder& commandEncoder)
+{
+    for (uint32_t m = 0; m < mipLevelCount(); ++m) {
+        for (uint32_t s = 0; s < arrayLayerCount(); ++s)
+            setProvisionallyCleared(m, s, commandEncoder);
+    }
+}
+
+void Texture::promoteProvisionalClear(uint32_t mipLevel, uint32_t slice)
+{
+    m_provisionalClears.remove(provisionalClearKey(mipLevel, slice));
+    setPreviouslyCleared(mipLevel, slice);
+}
+
+void Texture::dropProvisionalClear(uint32_t mipLevel, uint32_t slice)
+{
+    m_provisionalClears.remove(provisionalClearKey(mipLevel, slice));
+}
+
+void Texture::discardProvisionalClear(uint32_t mipLevel, uint32_t slice)
+{
+    if (!m_provisionalClears.contains(provisionalClearKey(mipLevel, slice)))
+        return;
+
+    m_provisionalClears.removeAll(provisionalClearKey(mipLevel, slice));
+    m_device->getQueue()->removeProvisionalTextureClears(*this, mipLevel, slice);
 }
 
 id<MTLSharedEvent> Texture::sharedEvent() const
@@ -4214,74 +4264,98 @@ void LEGACY_NODELETE wgpuTextureAddRef(WGPUTexture texture)
 
 void wgpuTextureRelease(WGPUTexture texture)
 {
-    WebGPU::Metal::fromAPI(texture).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(texture).deref();
+    }
 }
 
 WGPUTextureView wgpuTextureCreateView(WGPUTexture texture, const WGPUTextureViewDescriptor* descriptor)
 {
-    Ref protectedTexture = WebGPU::Metal::fromAPI(texture);
-    // A null descriptor is a descriptor with all members at their defaults.
-    std::optional<WebGPU::TextureViewDescriptor> apiDescriptor;
-    if (descriptor) {
-        apiDescriptor = WebGPU::Metal::fromAPI(*descriptor);
-        if (!apiDescriptor) {
-            Ref device = protectedTexture->device();
-            device->generateAValidationError("GPUTextureViewDescriptor has an invalid enum value or usage bit"_s);
-            return WebGPU::Metal::releaseToAPI(WebGPU::Metal::TextureView::createInvalid(protectedTexture, device));
+    @autoreleasepool {
+        Ref protectedTexture = WebGPU::Metal::fromAPI(texture);
+        // A null descriptor is a descriptor with all members at their defaults.
+        std::optional<WebGPU::TextureViewDescriptor> apiDescriptor;
+        if (descriptor) {
+            apiDescriptor = WebGPU::Metal::fromAPI(*descriptor);
+            if (!apiDescriptor) {
+                Ref device = protectedTexture->device();
+                device->generateAValidationError("GPUTextureViewDescriptor has an invalid enum value or usage bit"_s);
+                return WebGPU::Metal::releaseToAPI(WebGPU::Metal::TextureView::createInvalid(protectedTexture, device));
+            }
         }
+        // Every WebGPU::TextureView that a WebGPU::Metal::Texture creates is a WebGPU::Metal::TextureView.
+        Ref view = downcast<WebGPU::Metal::TextureView>(*protectedTexture->createView(apiDescriptor));
+        return WebGPU::Metal::releaseToAPI(WTF::move(view));
     }
-    // Every WebGPU::TextureView that a WebGPU::Metal::Texture creates is a WebGPU::Metal::TextureView.
-    Ref view = downcast<WebGPU::Metal::TextureView>(*protectedTexture->createView(apiDescriptor));
-    return WebGPU::Metal::releaseToAPI(WTF::move(view));
 }
 
 void wgpuTextureDestroy(WGPUTexture texture)
 {
-    protect(WebGPU::Metal::fromAPI(texture))->destroy();
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(texture))->destroy();
+    }
 }
 
 void wgpuTextureSetLabel(WGPUTexture texture, WGPUStringView label)
 {
-    protect(WebGPU::Metal::fromAPI(texture))->setLabel(WebGPU::Metal::fromAPI(label));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(texture))->setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }
 
 uint32_t wgpuTextureGetDepthOrArrayLayers(WGPUTexture texture)
 {
-    return protect(WebGPU::Metal::fromAPI(texture))->depthOrArrayLayers();
+    @autoreleasepool {
+        return protect(WebGPU::Metal::fromAPI(texture))->depthOrArrayLayers();
+    }
 }
 
 WGPUTextureDimension wgpuTextureGetDimension(WGPUTexture texture)
 {
-    return WebGPU::Metal::toAPI(protect(WebGPU::Metal::fromAPI(texture))->dimension());
+    @autoreleasepool {
+        return WebGPU::Metal::toAPI(protect(WebGPU::Metal::fromAPI(texture))->dimension());
+    }
 }
 
 WGPUTextureFormat wgpuTextureGetFormat(WGPUTexture texture)
 {
-    auto format = protect(WebGPU::Metal::fromAPI(texture))->optionalFormat();
-    return format ? WebGPU::Metal::toAPI(*format) : WGPUTextureFormat_Undefined;
+    @autoreleasepool {
+        auto format = protect(WebGPU::Metal::fromAPI(texture))->optionalFormat();
+        return format ? WebGPU::Metal::toAPI(*format) : WGPUTextureFormat_Undefined;
+    }
 }
 
 uint32_t wgpuTextureGetHeight(WGPUTexture texture)
 {
-    return protect(WebGPU::Metal::fromAPI(texture))->height();
+    @autoreleasepool {
+        return protect(WebGPU::Metal::fromAPI(texture))->height();
+    }
 }
 
 uint32_t wgpuTextureGetWidth(WGPUTexture texture)
 {
-    return protect(WebGPU::Metal::fromAPI(texture))->width();
+    @autoreleasepool {
+        return protect(WebGPU::Metal::fromAPI(texture))->width();
+    }
 }
 
 uint32_t wgpuTextureGetMipLevelCount(WGPUTexture texture)
 {
-    return protect(WebGPU::Metal::fromAPI(texture))->mipLevelCount();
+    @autoreleasepool {
+        return protect(WebGPU::Metal::fromAPI(texture))->mipLevelCount();
+    }
 }
 
 uint32_t wgpuTextureGetSampleCount(WGPUTexture texture)
 {
-    return protect(WebGPU::Metal::fromAPI(texture))->sampleCount();
+    @autoreleasepool {
+        return protect(WebGPU::Metal::fromAPI(texture))->sampleCount();
+    }
 }
 
 WGPUTextureUsage wgpuTextureGetUsage(WGPUTexture texture)
 {
-    return WebGPU::Metal::toAPI(protect(WebGPU::Metal::fromAPI(texture))->usage());
+    @autoreleasepool {
+        return WebGPU::Metal::toAPI(protect(WebGPU::Metal::fromAPI(texture))->usage());
+    }
 }

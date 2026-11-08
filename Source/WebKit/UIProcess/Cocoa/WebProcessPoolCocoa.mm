@@ -46,6 +46,7 @@
 #import "ProcessThrottler.h"
 #import "SandboxExtension.h"
 #import "SandboxUtilities.h"
+#import "SecurityFlags.h"
 #import "TextChecker.h"
 #import "WKContentRuleListInternal.h"
 #import "WKContentRuleListStoreInternal.h"
@@ -632,6 +633,8 @@ void WebProcessPool::platformInitializeNetworkProcess(NetworkProcessCreationPara
 #if HAVE(ENHANCED_SECURITY_LINKS)
     parameters.enableEnhancedSecurityLinks = ![defaults objectForKey:WebPreferencesKey::enhancedSecurityLinksEnabledKey().createNSString().get()] || [defaults boolForKey:WebPreferencesKey::enhancedSecurityLinksEnabledKey().createNSString().get()];
 #endif
+
+    RELEASE_LOG(Process, "SecurityFlags: radar184485266 is %" PUBLIC_LOG_STRING, SecurityFlags::radar184485266() ? "enforced" : "disabled");
 }
 
 void WebProcessPool::platformInvalidateContext()
@@ -996,7 +999,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     auto notificationName = adoptNS([[NSString alloc] initWithCString:kGSEventHardwareKeyboardAvailabilityChangedNotification encoding:NSUTF8StringEncoding]);
     addCFNotificationObserver(hardwareKeyboardAvailabilityChangedCallback, (__bridge CFStringRef)notificationName.get(), CFNotificationCenterGetDarwinNotifyCenterSingleton());
 
-    lazyInitialize(m_accessibilityEnabledObserver, RetainPtr<NSObject> { [[NSNotificationCenter defaultCenter] addObserverForName:(__bridge id)kAXSApplicationAccessibilityEnabledNotification object:nil queue:[NSOperationQueue currentQueue] usingBlock:^(NSNotification *) {
+    lazyInitialize(m_accessibilityEnabledObserver, RetainPtr<NSObject> { [[NSNotificationCenter defaultCenter] addObserverForName:(__bridge NSString *)kAXSApplicationAccessibilityEnabledNotification object:nil queue:[NSOperationQueue currentQueue] usingBlock:^(NSNotification *) {
         if (!_AXSApplicationAccessibilityEnabled())
             return;
         for (auto& process : m_processes)
@@ -1255,7 +1258,7 @@ static bool isLockdownModeEnabledBySystemIgnoringCaching()
 #endif
     
 #if PLATFORM(MAC)
-    if (!WTF::MacApplication::isSafari() && !WTF::MacApplication::isMiniBrowser())
+    if (!WTF::MacApplication::isSafari() && !WTF::MacApplication::isMiniBrowser() && !WTF::MacApplication::isCaptiveNetworkAssistant())
         return false;
 #endif
     

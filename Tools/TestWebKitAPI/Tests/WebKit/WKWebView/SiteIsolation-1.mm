@@ -38,6 +38,7 @@
 #import "Helpers/cocoa/TestCocoa.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestResourceLoadDelegate.h"
+#import "Helpers/cocoa/TestUIDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
 #import "Helpers/cocoa/WKWebViewConfigurationExtras.h"
 #import "InstanceMethodSwizzler.h"
@@ -93,6 +94,7 @@
 #import <WebCore/LegacyNSPasteboardTypes.h>
 #import <WebCore/WebAVPlayerLayer.h>
 #import <WebKit/_WKHitTestResult.h>
+#import <pal/spi/mac/NSApplicationSPI.h>
 #import <pal/cocoa/TranslationUIServicesSoftLink.h>
 #import <pal/spi/mac/NSImmediateActionGestureRecognizerSPI.h>
 #import <pal/spi/mac/NSSpellCheckerSPI.h>
@@ -121,6 +123,11 @@
     if (_mouseDidMoveOverElement)
         _mouseDidMoveOverElement(hitTestResult, flags);
 }
+@end
+
+@interface WKWebView ()
+- (BOOL)isAutomaticQuoteSubstitutionEnabled;
+- (void)setAutomaticQuoteSubstitutionEnabled:(BOOL)flag;
 @end
 #endif // PLATFORM(MAC)
 
@@ -2439,11 +2446,11 @@ TEST(SiteIsolation, TransientActivationFromForcedUserGestureInCrossOriginIframeI
     EXPECT_FALSE(hasTransientActivationInFrame(webView.get(), nil));
 }
 
-TEST(SiteIsolation, TransientActivationFromForcedUserGesturePostedToCrossOriginIframeIsRevoked)
+TEST(SiteIsolation, TransientActivationFromForcedUserGesturePostedFromCrossOriginIframeIsRevoked)
 {
     HTTPServer server({
-        { "/mainframe"_s, { mainFrameTextWithCrossOriginIframe } },
-        { "/iframe"_s, { "<script>addEventListener('message', () => window.webkit.messageHandlers.testHandler.postMessage(navigator.userActivation.isActive ? 'active' : 'inactive'))</script>"_s } }
+        { "/mainframe"_s, { "<script>addEventListener('message', () => window.webkit.messageHandlers.testHandler.postMessage(navigator.userActivation.isActive ? 'active' : 'inactive'))</script><iframe id='iframe' style='width: 400px; height: 300px; border: none;' src='https://webkit.org/iframe'></iframe>"_s } },
+        { "/iframe"_s, { "iframe text"_s } }
     }, HTTPServer::Protocol::HttpsProxy);
 
     auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configurationWithInternals(server), CGRectMake(0, 0, 800, 600));
@@ -2451,16 +2458,16 @@ TEST(SiteIsolation, TransientActivationFromForcedUserGesturePostedToCrossOriginI
     [navigationDelegate waitForDidFinishNavigation];
     RetainPtr childFrame = [webView firstChildFrame];
 
-    // The forced user gesture is forwarded with the message, so the iframe has activation while it handles it.
+    // The pending timer keeps the forced user gesture in the iframe alive. Its activation was also given to the main
+    // frame, which is in another process, so the main frame has activation while it handles the message.
     __block bool receivedMessage = false;
     [webView performAfterReceivingMessage:@"active" action:^{
         receivedMessage = true;
     }];
-    evaluateJavaScriptInFrame(webView.get(), @"frames[0].postMessage('hello', '*'); 1", nil, YES);
+    evaluateJavaScriptInFrame(webView.get(), @"window.pendingTimer = setTimeout(() => { }, 100000); parent.postMessage('hello', '*'); 1", childFrame.get(), YES);
     Util::run(&receivedMessage);
 
-    // Querying the iframe first makes sure that it has finished handling the message, and that the main frame's
-    // process received the revocation of the activation that it gave the main frame.
+    evaluateJavaScriptInFrame(webView.get(), @"clearTimeout(window.pendingTimer)", childFrame.get(), NO);
     EXPECT_FALSE(hasTransientActivationInFrame(webView.get(), childFrame.get()));
     EXPECT_FALSE(hasTransientActivationInFrame(webView.get(), nil));
 }
@@ -3136,6 +3143,226 @@ TEST(SiteIsolation, TranslatePopoverInCrossOriginIframe)
     EXPECT_EQ(popoverEdge, NSRectEdgeMaxX);
 }
 
+#if ENABLE(IPC_TESTING_API)
+
+TEST(SiteIsolation, ContextMenuRequestForFrameInAnotherProcessIsIgnored)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body style='margin: 0; font-size: 40px'><div>main frame text</div><iframe src='https://webkit.org/iframe'></iframe></body>"_s } },
+        { "/iframe"_s, { "<body>iframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr configuration { server.httpsProxyConfiguration() };
+    setFeatureEnabled(configuration.get(), @"IPCTestingAPIEnabled", true);
+    setFeatureEnabled(configuration.get(), @"IgnoreInvalidMessageWhenIPCTestingAPIEnabled", true);
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration, CGRectMake(0, 0, 800, 600));
+
+    unsigned menuCount { 0 };
+    RetainPtr uiDelegate { adoptNS([TestUIDelegate new]) };
+    [uiDelegate setGetContextMenuFromProposedMenu:makeBlockPtr([&menuCount](NSMenu *, _WKContextMenuElementInfo *, id<NSSecureCoding>, void (^completion)(NSMenu *)) {
+        ++menuCount;
+        completion(nil);
+    }).get()];
+    [webView setUIDelegate:uiDelegate.get()];
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    RetainPtr frame { [webView firstChildFrame] };
+    EXPECT_NE(frame.get()._processIdentifier, [webView _webProcessIdentifier]);
+
+    [webView objectByEvaluatingJavaScript:@"window.capturedMessage = null;"
+        "IPC.addOutgoingMessageListener('UI', message => {"
+        "    if (!window.capturedMessage && message.name === IPC.messages.WebPageProxy_ShowContextMenuFromFrame.name)"
+        "        window.capturedMessage = new Uint8Array(message.buffer).slice(16);"
+        "}); true"];
+    [webView rightClickAtPoint:NSMakePoint(20, 600 - 20)];
+    EXPECT_TRUE(Util::waitFor([&] {
+        return menuCount == 1 && [[webView objectByEvaluatingJavaScript:@"!!window.capturedMessage"] boolValue];
+    }));
+
+    RetainPtr<NSArray> bytes { [webView objectByEvaluatingJavaScript:@"Array.from(window.capturedMessage)"] };
+    RetainPtr bytesJSON { adoptNS([[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:bytes.get() options:0 error:nil] encoding:NSUTF8StringEncoding]) };
+    auto replay = [&](WKFrameInfo *sender) -> RetainPtr<NSString> {
+        return [webView stringByEvaluatingJavaScript:[NSString stringWithFormat:@"(() => {"
+            "IPC.sendMessage('UI', IPC.pageID, IPC.messages.WebPageProxy_ShowContextMenuFromFrame.name, new Uint8Array(%@));"
+            "const reply = IPC.sendSyncMessage('UI', 0, IPC.messages.WebProcessProxy_TakeInvalidMessageStringForTesting.name, 1000, []);"
+            "return reply && reply.arguments && reply.arguments[0] ? reply.arguments[0].value : '';"
+            "})()", bytesJSON.get()] inFrame:sender];
+    };
+
+    EXPECT_WK_STREQ(@"", replay(frame.get()).get());
+    EXPECT_EQ(menuCount, 1u);
+
+    EXPECT_WK_STREQ(@"", replay(nil).get());
+    EXPECT_TRUE(Util::waitFor([&] {
+        return menuCount >= 2;
+    }));
+    [webView waitForNextPresentationUpdate];
+    EXPECT_EQ(menuCount, 2u);
+}
+
+#endif // ENABLE(IPC_TESTING_API)
+
+static void selectActiveContextMenuItem(TestWKWebView *webView, NSString *title)
+{
+    Function<NSMenuItem *(NSMenu *)> find { [&](NSMenu *menu) -> NSMenuItem * {
+        for (NSMenuItem *item in menu.itemArray) {
+            if ([item.title isEqualToString:title])
+                return item;
+            if (NSMenuItem *found = item.hasSubmenu ? find(item.submenu) : nil)
+                return found;
+        }
+        return nil;
+    } };
+    NSMenuItem *item { find([webView _activeMenu]) };
+    ASSERT_NOT_NULL(item);
+    [item.menu performActionForItemAtIndex:[item.menu indexOfItem:item]];
+}
+
+TEST(SiteIsolation, ContextMenuItemIsDroppedAfterFrameMovesToAnotherProcess)
+{
+    HTTPServer server({
+        { "/example"_s, { "<body style='margin: 0'><iframe id='frame' src='https://webkit.org/iframe' style='display: block; width: 300px; height: 150px; border: none'></iframe><input id='input'></body>"_s } },
+        { "/iframe"_s, { "<body style='margin: 0; font-size: 60px' onmousedown='event.preventDefault()'>subframe</body>"_s } },
+        { "/navigated"_s, { "<body style='margin: 0; font-size: 60px' onmousedown='event.preventDefault()'>navigated</body><script>onload = () => alert('navigated')</script>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    __block bool didSpeak { false };
+    __block RetainPtr<NSString> spokenString;
+    InstanceMethodSwizzler speakStringSwizzler { NSApplication.class, @selector(speakString:), imp_implementationWithBlock(^(id, NSString *string) {
+        spokenString = string;
+        didSpeak = true;
+    }) };
+    __block bool didShowMenu { false };
+    InstanceMethodSwizzler popUpSwizzler { NSMenu.class, NSSelectorFromString(@"_popUpContextMenu:withEvent:forView:"), imp_implementationWithBlock(^(id, NSMenu *, NSEvent *, NSView *) {
+        didShowMenu = true;
+    }) };
+
+    auto [webView, delegate] = siteIsolatedViewAndDelegate(server, CGRectMake(0, 0, 400, 400));
+    [webView loadURL:[NSURL URLWithString:@"https://example.com/example"]];
+    [delegate waitForDidFinishNavigation];
+    [webView stringByEvaluatingJavaScript:@"document.getElementById('input').focus()"];
+    pid_t initialProcess { [webView firstChildFrame]._processIdentifier };
+
+    [webView rightClickAtPoint:NSMakePoint(50, 350)];
+    Util::run(&didShowMenu);
+
+    [webView evaluateJavaScript:@"document.getElementById('frame').src = 'https://example.com/navigated'" completionHandler:nil];
+    EXPECT_WK_STREQ("navigated", [webView _test_waitForAlert]);
+    EXPECT_NE([webView firstChildFrame]._processIdentifier, initialProcess);
+
+    selectActiveContextMenuItem(webView.get(), @"Start Speaking");
+    if (HasFatalFailure())
+        return;
+    [webView objectByEvaluatingJavaScript:@"true" inFrame:[webView firstChildFrame]];
+    [webView waitForNextPresentationUpdate];
+    EXPECT_FALSE(didSpeak) << [spokenString UTF8String];
+
+    didShowMenu = false;
+    [webView rightClickAtPoint:NSMakePoint(50, 350)];
+    Util::run(&didShowMenu);
+    selectActiveContextMenuItem(webView.get(), @"Start Speaking");
+    if (HasFatalFailure())
+        return;
+    EXPECT_TRUE(Util::runFor(&didSpeak, 5_s));
+    EXPECT_WK_STREQ("navigated", spokenString.get());
+}
+
+TEST(SiteIsolation, ContextMenuSettingAppliesAfterFrameMovesToAnotherProcess)
+{
+    HTTPServer server({
+        { "/example"_s, { "<body style='margin: 0'><iframe id='frame' src='https://webkit.org/iframe' style='display: block; width: 300px; height: 150px; border: none'></iframe></body>"_s } },
+        { "/iframe"_s, { "<body contenteditable style='margin: 0; font-size: 60px'>subframe</body>"_s } },
+        { "/navigated"_s, { "<body contenteditable style='margin: 0; font-size: 60px'>navigated</body><script>onload = () => alert('navigated')</script>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    __block bool didShowMenu { false };
+    InstanceMethodSwizzler popUpSwizzler { NSMenu.class, NSSelectorFromString(@"_popUpContextMenu:withEvent:forView:"), imp_implementationWithBlock(^(id, NSMenu *, NSEvent *, NSView *) {
+        didShowMenu = true;
+    }) };
+
+    auto [webView, delegate] = siteIsolatedViewAndDelegate(server, CGRectMake(0, 0, 400, 400));
+    [webView loadURL:[NSURL URLWithString:@"https://example.com/example"]];
+    [delegate waitForDidFinishNavigation];
+    pid_t initialProcess { [webView firstChildFrame]._processIdentifier };
+    BOOL wasEnabled { [webView isAutomaticQuoteSubstitutionEnabled] };
+
+    [webView rightClickAtPoint:NSMakePoint(50, 350)];
+    Util::run(&didShowMenu);
+
+    [webView evaluateJavaScript:@"document.getElementById('frame').src = 'https://example.com/navigated'" completionHandler:nil];
+    EXPECT_WK_STREQ("navigated", [webView _test_waitForAlert]);
+    EXPECT_NE([webView firstChildFrame]._processIdentifier, initialProcess);
+
+    selectActiveContextMenuItem(webView.get(), @"Smart Quotes");
+    if (HasFatalFailure())
+        return;
+    EXPECT_NE([webView isAutomaticQuoteSubstitutionEnabled], wasEnabled);
+    [webView setAutomaticQuoteSubstitutionEnabled:wasEnabled];
+}
+
 #endif // PLATFORM(MAC)
+
+TEST(SiteIsolation, NavigationJoiningPrefetchWhoseResponseHasDocumentIsolationPolicy)
+{
+    auto speculationRules = "<script type='speculationrules'>{\"prefetch\":[{\"source\":\"list\",\"urls\":[\"/destination\"]}]}</script>"_s;
+    std::optional<Connection> prefetchConnection;
+    size_t navigationRequests = 0;
+    HTTPServer server(HTTPServer::UseCoroutines::Yes, [&](Connection connection) -> ConnectionTask {
+        while (1) {
+            auto request = co_await connection.awaitableReceiveHTTPRequest();
+            auto path = HTTPServer::parsePath(request);
+            if (path == "/plain"_s) {
+                co_await connection.awaitableSend(HTTPResponse(speculationRules).serialize());
+                continue;
+            }
+            if (path == "/destination"_s) {
+                // Hold the prefetch, so the navigation finds it still loading.
+                if (contains(request.span(), "Sec-Purpose: prefetch"_span)) {
+                    prefetchConnection = connection;
+                    co_return;
+                }
+                navigationRequests++;
+                co_await connection.awaitableSend(documentIsolationPolicyResponse("destination"_s).serialize());
+                continue;
+            }
+            EXPECT_FALSE(true);
+        }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegateWithDocumentIsolationPolicy(server);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/plain"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    pid_t plainProcess = [webView _webProcessIdentifier];
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !!prefetchConnection;
+    }));
+
+    WKWebView *view = webView.get();
+    unsigned responseDecisions = 0;
+    std::optional<pid_t> provisionalProcessAtResponse;
+    navigationDelegate.get().decidePolicyForNavigationResponse = makeBlockPtr([&](WKNavigationResponse *, void (^decisionHandler)(WKNavigationResponsePolicy)) {
+        responseDecisions++;
+        provisionalProcessAtResponse = view._provisionalWebProcessIdentifier;
+        decisionHandler(WKNavigationResponsePolicyAllow);
+    }).get();
+
+    // The navigation joins the prefetch in the same task that reports its start, so the prefetch's response reaches it.
+    [webView evaluateJavaScript:@"location.href = '/destination'" completionHandler:nil];
+    [navigationDelegate waitForDidStartProvisionalNavigation];
+    prefetchConnection->send(HTTPResponse({ { "Content-Type"_s, "text/html"_s }, { "Document-Isolation-Policy"_s, "isolate-and-require-corp"_s }, { "Connection"_s, "close"_s } }, "prefetch"_s).serialize());
+    [navigationDelegate waitForDidFinishNavigation];
+
+    // The prefetch can't serve the navigation, so the navigation makes its own request, whose response moves it to a
+    // cross-origin isolated process before the delegate decides on it.
+    EXPECT_EQ(navigationRequests, 1u);
+    EXPECT_EQ(responseDecisions, 1u);
+    pid_t destinationProcess = [webView _webProcessIdentifier];
+    EXPECT_NE(destinationProcess, plainProcess);
+    EXPECT_EQ(provisionalProcessAtResponse.value_or(-1), destinationProcess);
+    EXPECT_WK_STREQ([webView objectByEvaluatingJavaScript:@"document.body.textContent"], "destination");
+    EXPECT_TRUE([[webView objectByEvaluatingJavaScript:@"crossOriginIsolated"] boolValue]);
+}
 
 } // namespace TestWebKitAPI

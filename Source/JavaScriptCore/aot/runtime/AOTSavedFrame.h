@@ -298,7 +298,7 @@ ALWAYS_INLINE void SavedFrame::visitFields(SavedFrame* saved, Visitor& visitor)
     visitor.appendUnbarriered(JSValue::decode(saved->m_asyncContext));
     if (saved->m_flags & isHeapFrameFlag) {
         for (uint32_t index = 0; index < saved->m_numberOfWords; ++index)
-            visitor.appendUnbarriered(JSValue::decode(static_cast<EncodedJSValue>(WTF::atomicLoad(&saved->words()[index], std::memory_order_relaxed))));
+            visitor.appendUnbarriered(JSValue::decode(static_cast<EncodedJSValue>(WTF::atomicLoad<MemoryOrder::Relaxed>(&saved->words()[index]))));
         return;
     }
     uint32_t version = saved->m_version;

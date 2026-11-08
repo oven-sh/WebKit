@@ -939,21 +939,21 @@ SlotVisitor::SharedDrainResult SlotVisitor::drainInParallel(MonotonicTime timeou
 SlotVisitor::SharedDrainResult SlotVisitor::drainInParallelPassively(MonotonicTime timeout)
 {
     ASSERT(m_isInParallelMode);
-    
-    ASSERT(Options::numberOfGCMarkers());
-    
-    JSC::Heap& heap = m_collector.heap();
-    if (Options::numberOfGCMarkers() == 1
-        || (heap.m_worldState.load() & Heap::mutatorWaitingBit)
-        || !heap.hasHeapAccess()
-        || heap.worldIsStopped()) {
-        // This is an optimization over drainInParallel() when we have a concurrent mutator but
-        // otherwise it is not profitable.
-        return drainInParallel(timeout);
-    }
+    // This thread counts as one of the markers but does not mark here, so there must be at least one other.
+    ASSERT(Options::numberOfGCMarkers() > 1);
 
     Locker locker { collector().m_markingMutex };
     donateAll(locker);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Bun: upstream starts the helpers when a collection begins. Here they start with the first work that is donated
+    // (Collector::startHelpers()), and a collection of Heap::collectForExhaustedCage() starts none. Where none has
+    // started, nobody marks what this thread donated and nobody wakes it, so it marks itself.
+    if (!collector().hasStartedHelpers()) {
+        locker.unlockEarly();
+        return drainFromShared(MainDrain, timeout);
+    }
+#endif
 
     // Wait for termination.
     for (;;) {

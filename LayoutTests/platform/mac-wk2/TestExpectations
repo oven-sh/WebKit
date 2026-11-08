@@ -1128,6 +1128,7 @@ webkit.org/b/326061 [ x86_64 ] webgl/default-framebuffer-size-limits-worker-4.ht
 webkit.org/b/241265 [ Debug ] imported/w3c/web-platform-tests/html/rendering/replaced-elements/svg-embedded-sizing/svg-in-object-percentage.html [ Pass Crash ]
 
 http/tests/workers/service/shownotification-allowed-document.html [ Pass ]
+http/tests/workers/service/shownotification-icon-from-worker.html [ Pass ]
 http/tests/workers/service/shownotification-invalid-data.html [ Pass ]
 http/wpt/push-api/pushEvent.any.serviceworker.html [ Pass ]
 imported/w3c/web-platform-tests/notifications/idlharness.https.any.html [ Pass ]
@@ -1824,11 +1825,6 @@ webkit.org/b/289211 [ Sequoia Release x86_64 ] imported/w3c/web-platform-tests/m
 
 webkit.org/b/289284 fast/canvas/image-buffer-resource-limits.html [ Pass Timeout Crash ]
 
-# webkit.org/b/289298 [ macOS wk2 Release ] 3x imported/w3c/web-platform-tests/css/css-conditional/container-queries/canvas-as-container-00*.html are flaky failures.
-[ Release ] imported/w3c/web-platform-tests/css/css-conditional/container-queries/canvas-as-container-001.html [ Pass Failure ]
-[ Release ] imported/w3c/web-platform-tests/css/css-conditional/container-queries/canvas-as-container-004.html [ Pass Failure ]
-[ Release ] imported/w3c/web-platform-tests/css/css-conditional/container-queries/canvas-as-container-003.html [ Pass Failure ]
-
 webkit.org/b/289370 [ Debug arm64 ] media/video-webm-seek-singlekeyframe.html [ Pass Failure ]
 
 webkit.org/b/289487 [ Sequoia Release x86_64 ] fast/webgpu/nocrash/RenderBundle_WRITE.html [ Pass Timeout ]
@@ -1938,8 +1934,6 @@ webkit.org/b/295938 scrollingcoordinator/mac/latching/horizontal-overflow-back-s
 webkit.org/b/296017 [ Release ] imported/w3c/web-platform-tests/css/css-shapes/shape-outside/shape-image/shape-image-021.html [ Pass ImageOnlyFailure ]
 
 webkit.org/b/296066 [ Sequoia Debug arm64 ] accessibility/mac/scrolling-in-pdf-crash.html [ Pass Timeout ]
-
-webkit.org/b/295929 [ Release ] imported/w3c/web-platform-tests/css/css-conditional/container-queries/canvas-as-container-002.html [ Pass ImageOnlyFailure ]
 
 webkit.org/b/296101 [ Release ] imported/w3c/web-platform-tests/css/css-shapes/shape-outside/shape-image/shape-image-012.html [ Pass ImageOnlyFailure ]
 
@@ -2057,8 +2051,6 @@ webkit.org/b/297613 [ Debug ] fast/scrolling/mac/stateless-user-scroll-scrollend
 [ Debug ] ipc/send-gradient.html [ Skip ]
 [ Debug ] ipc/send-filter.html [ Skip ]
 [ Debug ] ipc/send-ignored-network-message.html [ Skip ]
-
-webkit.org/b/297860 http/tests/site-isolation/edge-sampling-viewport-constrained-object.html [ Skip ]
 
 webkit.org/b/297006 [ Debug ] http/tests/media/media-element-frame-destroyed-crash.html [ Skip ]
 
@@ -2520,20 +2512,6 @@ webkit.org/b/323246 [ Debug x86_64 ] accessibility/isolated-tree/canvas-fallback
 
 webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageBitmap.html [ Pass Crash Timeout ]
 webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/expression/binary/f32_matrix_matrix_multiplication.html [ Pass Crash Timeout ]
-
-# webkit.org/b/325200 REGRESSION(macOS GoldenGate)[ Debug ]: 12X http/tests/iframe-monitor/ (layout-tests) are constant timeouts
-[ GoldenGate Debug ] http/tests/iframe-monitor/blob-resource.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/cached-resource.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/compressed-resource.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/dark-mode.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/data-url-resource.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/eligibility.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/iframe-unload.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/just-use-eligible-subresource.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/throttler.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/workers/service-worker-not-count-twice.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/workers/service-worker.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/workers/shared-worker.html [ Skip ]
 
 # webkit.org/b/325205 [ macOS Debug ] 4X http/tests/webgpu/webgpu/shader/execution/expression/ (layout-tests) are constant timeouts
 [ Debug ] http/tests/webgpu/webgpu/shader/execution/expression/binary/af_matrix_matrix_multiplication.html [ Skip ] 

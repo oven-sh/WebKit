@@ -68,13 +68,32 @@
             "inherits": ["cocoa"]
         },
         {
-            "name": "gtk",
+            "name": "glib",
             "hidden": true,
             "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": {
+                    "type": "STRING",
+                    "value": "clang"
+                },
+                "CMAKE_CXX_COMPILER": {
+                    "type": "STRING",
+                    "value": "clang++"
+                }
+            }
+        },
+        {
+            "name": "gtk",
+            "hidden": true,
+            "inherits": ["glib"],
             "cacheVariables": {
                 "PORT": {
                     "type": "STRING",
                     "value": "GTK"
+                },
+                "CMAKE_MAKE_PROGRAM": {
+                    "type": "FILEPATH",
+                    "value": "${sourceDir}/Source/cmake/ninja-wrapper"
                 }
             }
         },
@@ -515,11 +534,15 @@
         {
             "name": "wpe",
             "hidden": true,
-            "generator": "Ninja",
+            "inherits": ["glib"],
             "cacheVariables": {
                 "PORT": {
                     "type": "STRING",
                     "value": "WPE"
+                },
+                "CMAKE_MAKE_PROGRAM": {
+                    "type": "FILEPATH",
+                    "value": "${sourceDir}/Source/cmake/ninja-wrapper"
                 }
             }
         },

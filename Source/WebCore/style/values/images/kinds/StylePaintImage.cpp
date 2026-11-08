@@ -89,44 +89,30 @@ void PaintImage::load(CachedResourceLoader&, const ResourceLoaderOptions&)
 {
 }
 
-ImageDrawResult PaintImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options, bool) const
+ImageDrawResult PaintImage::draw(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& source, bool) const
 {
-    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
+    auto size = descriptor.concreteObjectSize.size() * descriptor.concreteObjectSize.zoom();
     if (!canDrawAtSize(renderer, size))
         return ImageDrawResult::DidNothing;
 
-    return drawIntoDestination(context, destination, source, options, [&](GraphicsContext& context) {
+    return drawIntoDestination(context, descriptor, destination, source, [&](GraphicsContext& context) {
         return paint(context, renderer, size);
     });
 }
 
-ImageDrawResult PaintImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options, bool) const
+ImageDrawResult PaintImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, bool) const
 {
-    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
+    auto size = descriptor.concreteObjectSize.size() * descriptor.concreteObjectSize.zoom();
     if (!canDrawAtSize(renderer, size) || context.paintingDisabled())
         return ImageDrawResult::DidNothing;
 
-    RefPtr buffer = context.createAlignedImageBuffer(size);
+    RefPtr buffer = createPatternBuffer(context, descriptor, size, [&](GraphicsContext& context) {
+        paint(context, renderer, size);
+    });
     if (!buffer)
         return ImageDrawResult::DidNothing;
 
-    // Factor in the destination context's scale to generate at the best resolution.
-    auto contextCTM = context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
-    double xScale = std::abs(contextCTM.xScale());
-    double yScale = std::abs(contextCTM.yScale());
-    auto adjustedPatternCTM = patternTransform;
-    adjustedPatternCTM.scale(1.0 / xScale, 1.0 / yScale);
-    auto adjustedTile = tile;
-    adjustedTile.scale(xScale, yScale);
-
-    paint(buffer->context(), renderer, size);
-
-    if (options.drawLuminanceMask() == DrawLuminanceMask::Yes)
-        buffer->convertToLuminanceMask();
-
-    context.drawPattern(*buffer, destination, adjustedTile, adjustedPatternCTM, phase, spacing, options);
-
-    return ImageDrawResult::DidDraw;
+    return drawPatternBuffer(context, *buffer, descriptor, destination, tile, patternTransform, phase, spacing);
 }
 
 Vector<WTF::String> PaintImage::paintArguments() const

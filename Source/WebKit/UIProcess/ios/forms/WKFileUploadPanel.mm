@@ -462,7 +462,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     NSUInteger imageCount = mediaItems.count - videoCount;
 
-    NSString *displayString;
+    RetainPtr<NSString> displayString;
     if (mediaItems.count == 1)
         displayString = mediaItems.firstObject.fileURL.lastPathComponent;
     else
@@ -503,11 +503,12 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     _allowDirectories = parameters->allowDirectories();
     _allowMultipleFiles = parameters->allowMultipleFiles();
     _isMenuPreviouslyRepositioned = NO;
+    _didDeferResigningFirstResponderUntilPickerIsPresented = NO;
 
     // An input hidden offscreen behind a custom upload button has no usable box; use the tap.
     RefPtr page = [view page];
     CGRect elementRect = parameters->elementRectInMainFrameViewCoordinates();
-    bool elementIsVisible = page && CGRectIntersectsRect(elementRect, page->unobscuredContentRect());
+    bool elementIsVisible = page && !CGRectIsEmpty(elementRect) && CGRectIntersectsRect(elementRect, page->unobscuredContentRect());
     _menuPresentationRect = elementIsVisible ? elementRect : CGRect { [view lastInteractionLocation], CGSizeZero };
 
     // The menu goes below the anchor, so its bottom edge is what the input view can cover.
@@ -765,7 +766,7 @@ static NSSet<NSString *> *UTIsForMIMETypes(NSArray *mimeTypes)
             [strongSelf _showPhotoPicker];
         }];
 
-        NSArray *actions;
+        RetainPtr<NSArray> actions;
         if ([UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera]) {
             NSString *cameraString = [strongSelf _cameraButtonLabel];
             RetainPtr cameraAction = [UIAction actionWithTitle:cameraString image:[UIImage systemImageNamed:@"camera"] identifier:@"camera" handler:^(__kindof UIAction *action) {
@@ -789,8 +790,18 @@ static NSSet<NSString *> *UTIsForMIMETypes(NSArray *mimeTypes)
         RetainPtr view = _view.get();
         [[view webView] _didShowContextMenu];
 
-        if ([view isFirstResponder])
-            [view resignFirstResponder];
+        if (![view isFirstResponder])
+            return;
+
+        // If the focused element uses the software keyboard (e.g. the page focused an editable element while
+        // presenting the menu), keep first responder so that the keyboard stays up and resign if a picker is
+        // selected from the menu later.
+        if ([view _focusedElementUsesSoftwareKeyboard]) {
+            _didDeferResigningFirstResponderUntilPickerIsPresented = YES;
+            return;
+        }
+
+        [view resignFirstResponder];
     }];
 }
 
@@ -981,7 +992,7 @@ static NSSet<NSString *> *UTIsForMIMETypes(NSArray *mimeTypes)
     [_view page]->dispatchWillPresentModalUI();
 #endif
     [_presentationViewController presentViewController:viewController animated:animated completion:^{
-        if (!_isPresentingSubMenu && [_view.get() isFirstResponder])
+        if ((!_isPresentingSubMenu || _didDeferResigningFirstResponderUntilPickerIsPresented) && [_view.get() isFirstResponder])
             [_view.get() resignFirstResponder];
     }];
 }

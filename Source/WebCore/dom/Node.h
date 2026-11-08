@@ -236,6 +236,7 @@ public:
 
 #if ENABLE(VIDEO)
     virtual bool isWebVTTElement() const { return false; }
+    virtual bool isTextTrackCueBox() const { return false; }
 #endif
     bool isStyledElement() const { return hasTypeFlag(TypeFlag::IsHTMLElement) || hasTypeFlag(TypeFlag::IsSVGElement) || hasTypeFlag(TypeFlag::IsMathMLElement); }
     virtual bool isHTMLFrameOwnerElement() const { return false; }
@@ -311,7 +312,7 @@ public:
     };
     Node& LEGACY_NODELETE getRootNode(const GetRootNodeOptions&) const;
 
-    inline WebCoreOpaqueRoot opaqueRoot() const final { return WebCoreOpaqueRoot { m_shadowIncludingRoot }; }
+    inline WebCoreOpaqueRoot opaqueRoot() const final { return WebCoreOpaqueRoot { m_shadowIncludingRoot.get() }; }
 
     template<typename T, typename Task> static void queueTaskKeepingNodeAlive(T&, TaskSource, Task&&);
     void queueTaskToDispatchEvent(TaskSource, Ref<Event>&&);
@@ -407,6 +408,8 @@ public:
 
     WEBCORE_EXPORT unsigned LEGACY_NODELETE computeNodeIndex() const;
 
+    WEBCORE_EXPORT static unsigned computeNodeIndexCountForTesting();
+
     // Returns the DOM ownerDocument attribute. This method never returns null, except in the case
     // of a Document node.
     inline Document* ownerDocument() const;
@@ -417,7 +420,7 @@ public:
     TreeScope& LEGACY_NODELETE treeScope() const
     {
         ASSERT(m_treeScope);
-        return *m_treeScope;
+        return *m_treeScope.get();
     }
     inline void setTreeScopeRecursively(TreeScope&);
     inline void setTreeScopeRecursivelyToMatch(const Node&);
@@ -833,8 +836,8 @@ private:
     mutable OptionSet<StateFlag> m_stateFlags;
 
     CheckedPtr<ContainerNode> m_parentNode;
-    TreeScope* m_treeScope { nullptr };
-    Node* m_shadowIncludingRoot { nullptr };
+    CheckedPtr<TreeScope> m_treeScope;
+    CheckedPtr<Node> m_shadowIncludingRoot;
     CheckedPtr<Node> m_previousSibling;
     CheckedPtr<Node> m_next;
     RenderObject* m_renderer { nullptr };

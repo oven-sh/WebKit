@@ -69,6 +69,7 @@ public:
     bool isAppBoundWebView() const { return boolTestRunnerFeatureValue("isAppBoundWebView"); }
     bool isAppInitiated() const { return boolTestRunnerFeatureValue("isAppInitiated"); }
     bool advancedPrivacyProtectionsEnabled() const { return boolTestRunnerFeatureValue("advancedPrivacyProtectionsEnabled"); }
+    bool fingerprintingProtectionsEnabled() const { return boolTestRunnerFeatureValue("fingerprintingProtectionsEnabled"); }
     bool runSingly() const { return boolTestRunnerFeatureValue("runSingly"); }
     bool runInCrossOriginFrame() const { return boolTestRunnerFeatureValue("runInCrossOriginFrame"); }
     bool shouldHandleRunOpenPanel() const { return boolTestRunnerFeatureValue("shouldHandleRunOpenPanel"); }
@@ -84,8 +85,6 @@ public:
     bool useDataDetection() const { return boolTestRunnerFeatureValue("useDataDetection"); }
     bool useEphemeralSession() const { return boolTestRunnerFeatureValue("useEphemeralSession"); }
     bool useFlexibleViewport() const { return boolTestRunnerFeatureValue("useFlexibleViewport"); }
-    bool useRemoteLayerTree() const { return boolTestRunnerFeatureValue("useRemoteLayerTree"); }
-    bool noUseRemoteLayerTree() const { return boolTestRunnerFeatureValue("noUseRemoteLayerTree"); }
     bool useThreadedScrolling() const { return boolTestRunnerFeatureValue("useThreadedScrolling"); }
     bool suppressInputAccessoryView() const { return boolTestRunnerFeatureValue("suppressInputAccessoryView"); }
     bool allowsInlinePredictions() const { return boolTestRunnerFeatureValue("allowsInlinePredictions"); }

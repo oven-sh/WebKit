@@ -3733,6 +3733,31 @@ void LEGACY_NODELETE BBQJIT::notifyFunctionUsesSIMD()
 
 [[nodiscard]] PartialResult BBQJIT::addSIMDShuffle(v128_t imm, ExpressionType a, ExpressionType b, ExpressionType& result)
 {
+    // A shuffle reading from only one of its inputs needs neither the other input nor the
+    // adjacent register pair of the two-table TBL.
+    if (auto oneSide = SIMDShuffle::isOnlyOneSideMask(imm)) {
+        auto [side, pattern] = *oneSide;
+        // The parser rejects shuffle indices >= 32, so some lane always reads an input.
+        ASSERT(side != SIMDShuffleSide::AllOutOfBounds);
+        ExpressionType source = side == SIMDShuffleSide::Right ? b : a;
+        Location sourceLocation = loadIfNecessary(source);
+        consume(a);
+        consume(b);
+
+        result = topValue(TypeKind::V128);
+        Location resultLocation = allocate(result);
+        LOG_INSTRUCTION("VectorShuffle", a, b, source, sourceLocation, RESULT(result));
+
+        if (auto dup = SIMDShuffle::isDupElement(pattern)) {
+            auto [lane, index] = *dup;
+            m_jit.vectorDupElement(lane, TrustedImm32(index), sourceLocation.asFPR(), resultLocation.asFPR());
+        } else {
+            materializeVectorConstant(pattern, Location::fromFPR(wasmScratchFPR));
+            m_jit.vectorSwizzle(sourceLocation.asFPR(), wasmScratchFPR, resultLocation.asFPR());
+        }
+        return { };
+    }
+
 #if CPU(X86_64)
     ScratchScope<0, 1> scratches(*this);
 #elif CPU(ARM64)

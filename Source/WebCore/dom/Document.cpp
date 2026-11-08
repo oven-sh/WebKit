@@ -828,6 +828,9 @@ Document::~Document()
 {
     ASSERT(activeDOMObjectsAreStopped());
 
+    // RejectedPromiseTracker holds a CheckedRef to us, so it must be destroyed while the CheckedPtr counter is still alive.
+    removeRejectedPromiseTracker();
+
     if (m_logger)
         m_logger->removeObserver(*this);
 
@@ -3318,10 +3321,6 @@ std::unique_ptr<Style::ComputedStyle> Document::styleForElementIgnoringPendingSt
 
     auto elementStyle = resolver->styleForElement(element, { parentStyle.get() });
     if (pseudoElementIdentifier) {
-        auto type = pseudoElementIdentifier->type;
-        if ((type == PseudoElementType::FirstLetter || type == PseudoElementType::FirstLine) && elementStyle.style && !Style::supportsFirstLineAndLetterPseudoElement(*elementStyle.style))
-            return { };
-
         auto style = resolver->styleForPseudoElement(element, { *pseudoElementIdentifier }, { parentStyle.get() });
         if (!style)
             return nullptr;
@@ -5752,6 +5751,7 @@ void Document::processColorScheme(const String& colorSchemeString)
         colorScheme.add(ColorScheme::Light);
 
     m_colorScheme = colorScheme;
+    m_allowsColorSchemeTransformations = allowsTransformations;
 
     if (RefPtr page = this->page())
         page->updateStyleAfterChangeInEnvironment();
@@ -5818,6 +5818,7 @@ bool Document::shouldUseTextScaleFactor() const
 #if HAVE(TEXT_SCALE_FACTOR)
     return textScaleMeta() == TextScaleMeta::Scale
         && settings().contentSizeCategoryTextScaleEnabled()
+        && !advancedPrivacyProtections().contains(AdvancedPrivacyProtections::FingerprintingProtections)
         && WebCore::textScaleFactor().has_value();
 #else
     return false;
@@ -8413,6 +8414,11 @@ RefPtr<LocalFrame> Document::localMainFrame() const
     return nullptr;
 }
 
+RefPtr<LocalFrame> Document::rootFrame() const
+{
+    return m_frame ? &m_frame->rootFrame() : nullptr;
+}
+
 ScriptRunner& Document::ensureScriptRunner()
 {
     lazyInitialize(m_scriptRunner, makeUniqueWithoutRefCountedCheck<ScriptRunner>(*this));
@@ -8956,7 +8962,11 @@ bool Document::isInCrossOriginIsolatedAgentCluster() const
 
 bool Document::crossOriginIsolated() const
 {
-    return isInCrossOriginIsolatedAgentCluster() && PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::CrossOriginIsolated, *this, PermissionsPolicy::ShouldReportViolation::No);
+    if (!isInCrossOriginIsolatedAgentCluster())
+        return false;
+    if (documentIsolationPolicy().value != DocumentIsolationPolicyValue::None)
+        return true;
+    return PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::CrossOriginIsolated, *this, PermissionsPolicy::ShouldReportViolation::No);
 }
 
 String Document::agentClusterID() const
@@ -9831,7 +9841,8 @@ void Document::didAddTouchEventHandler(Node& handler)
 void Document::didRemoveTouchEventHandler(Node& handler, EventHandlerRemoval removalMode)
 {
 #if ENABLE(TOUCH_EVENTS) || ENABLE(TOUCH_EVENT_REGIONS)
-    removeHandlerFromSet(m_touchEventTargets, handler, removalMode);
+    if (!removeHandlerFromSet(m_touchEventTargets, handler, removalMode))
+        return;
 
     if (RefPtr parent = parentDocument())
         parent->didRemoveTouchEventHandler(*this, removalMode);
@@ -10501,10 +10512,19 @@ void Document::adjustStyleColorOptionsIfNeeded(OptionSet<StyleColorOptions>&) co
 
 bool Document::isAXCustomColorModeActive() const
 {
-    if (RefPtr page = this->page())
-        return page->isAXCustomColorModeActive();
+    if (RefPtr loader = this->loader(); loader && loader->forceDisableAXCustomColorMode())
+        return false;
 
-    return false;
+    RefPtr page = this->page();
+    if (!page || !page->isAXCustomColorModeActive())
+        return false;
+
+    for (RefPtr<Frame> frame = this->frame(); frame; frame = frame->tree().parent()) {
+        if (frame->isPrinting())
+            return false;
+    }
+
+    return true;
 }
 
 #endif // ENABLE(AX_CUSTOM_COLOR_MODE)

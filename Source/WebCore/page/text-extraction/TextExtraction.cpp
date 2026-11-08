@@ -981,12 +981,14 @@ static inline Variant<SkipExtraction, ItemData, URL, Editable> extractItemData(N
     if (is<HTMLCanvasElement>(element))
         return { ItemData { ContainerType::Canvas } };
 
+#if ENABLE(VIDEO)
     if (RefPtr media = dynamicDowncast<HTMLMediaElement>(element)) {
         return { MediaItemData {
             .type = is<HTMLVideoElement>(*media) ? MediaType::Video : MediaType::Audio,
             .hasControls = media->controls(),
         } };
     }
+#endif
 
     if (CheckedPtr box = dynamicDowncast<RenderBox>(node.renderer()); box && box->canBeScrolledAndHasScrollableArea()) {
         if (CheckedPtr layer = box->layer()) {
@@ -2089,7 +2091,7 @@ RenderedText extractRenderedText(Element& element)
     return { textWithReplacedContent.toString(), textWithoutReplacedContent.toString(), hasLargeReplacedDescendant };
 }
 
-static Vector<std::pair<String, FloatRect>> extractAllTextAndRectsRecursive(Document& document)
+static Vector<std::pair<String, MainFrameViewFloatRect>> extractAllTextAndRectsRecursive(Document& document)
 {
     RefPtr bodyElement = document.body();
     if (!bodyElement)
@@ -2100,7 +2102,7 @@ static Vector<std::pair<String, FloatRect>> extractAllTextAndRectsRecursive(Docu
         return { };
 
     OrderedHashSet<Ref<HTMLFrameOwnerElement>> frameOwners;
-    Vector<std::pair<String, FloatRect>> result;
+    Vector<std::pair<String, MainFrameViewFloatRect>> result;
     auto fullRange = makeRangeSelectingNodeContents(*bodyElement);
     for (TextIterator iterator { fullRange, behaviorsForTextExtraction }; !iterator.atEnd(); iterator.advance()) {
         RefPtr node = iterator.node();
@@ -2131,7 +2133,7 @@ static Vector<std::pair<String, FloatRect>> extractAllTextAndRectsRecursive(Docu
         if (absoluteBounds.isEmpty())
             absoluteBounds = renderer->absoluteBoundingBoxRect();
 
-        result.append({ trimmedText.toString(), view->contentsToRootView(absoluteBounds) });
+        result.append({ trimmedText.toString(), view->contentsToMainFrameView(inContentsSpace(absoluteBounds)) });
     }
 
     for (auto& frameOwner : frameOwners) {
@@ -2145,17 +2147,18 @@ static Vector<std::pair<String, FloatRect>> extractAllTextAndRectsRecursive(Docu
     return result;
 }
 
-Vector<std::pair<String, FloatRect>> extractAllTextAndRects(Page& page)
+Vector<std::pair<String, MainFrameViewFloatRect>> extractAllTextAndRects(Page& page)
 {
-    RefPtr mainFrame = dynamicDowncast<LocalFrame>(page.mainFrame());
-    if (!mainFrame)
-        return { };
+    Vector<std::pair<String, MainFrameViewFloatRect>> result;
+    for (RefPtr frame = &page.mainFrame(); frame; frame = frame->tree().traverseNext()) {
+        RefPtr localFrame = dynamicDowncast<LocalFrame>(*frame);
+        if (!localFrame || !localFrame->isRootFrame())
+            continue;
 
-    RefPtr document = mainFrame->document();
-    if (!document)
-        return { };
-
-    return extractAllTextAndRectsRecursive(*document);
+        if (RefPtr document = localFrame->document())
+            result.appendVector(extractAllTextAndRectsRecursive(*document));
+    }
+    return result;
 }
 
 static std::optional<SimpleRange> searchForClickTarget(Node& container, const String& searchText)

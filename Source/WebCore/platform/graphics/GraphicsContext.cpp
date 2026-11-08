@@ -35,6 +35,7 @@
 #include "ImageOrientation.h"
 #include "IntRect.h"
 #include "LayoutRoundedRect.h"
+#include "SourceImage.h"
 #include "SystemImage.h"
 #include "TextRun.h"
 #include "VideoFrame.h"
@@ -346,12 +347,12 @@ RefPtr<ImageBuffer> GraphicsContext::createAlignedImageBuffer(const FloatRect& r
     return createScaledImageBuffer(rect, scaleFactor(), colorSpace, renderingModeForCompatibleBuffer(), renderingMethod);
 }
 
-void GraphicsContext::drawNativeImage(const NativeImage& image, FloatPoint destination, ImageDrawingOptions options)
+void GraphicsContext::drawNativeImage(const NativeImage& image, FloatPoint destination, RasterDrawingOptions options)
 {
     drawNativeImage(image, FloatRect(destination, image.size()), FloatRect({ }, image.size()), options);
 }
 
-void GraphicsContext::drawNativeImage(const NativeImage& image, const FloatRect& destination, ImageDrawingOptions options)
+void GraphicsContext::drawNativeImage(const NativeImage& image, const FloatRect& destination, RasterDrawingOptions options)
 {
     drawNativeImage(image, destination, FloatRect({ }, image.size()), options);
 }
@@ -368,17 +369,17 @@ RefPtr<NativeImage> GraphicsContext::nativeImageForDrawing(ImageBuffer& imageBuf
     return imageBuffer.createNativeImageReference();
 }
 
-void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatPoint& destination, ImageDrawingOptions imageDrawingOptions)
+void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatPoint& destination, RasterDrawingOptions imageDrawingOptions)
 {
     drawImageBuffer(image, FloatRect(destination, image.logicalSize()), FloatRect({ }, image.logicalSize()), imageDrawingOptions);
 }
 
-void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, ImageDrawingOptions imageDrawingOptions)
+void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, RasterDrawingOptions imageDrawingOptions)
 {
     drawImageBuffer(image, destination, FloatRect({ }, image.logicalSize()), imageDrawingOptions);
 }
 
-void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options)
+void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, const FloatRect& source, RasterDrawingOptions options)
 {
     FloatRect sourceScaled = source;
     sourceScaled.scale(image.resolutionScale());
@@ -386,7 +387,7 @@ void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& desti
         drawNativeImage(*nativeImage, destination, sourceScaled, options);
 }
 
-void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatPoint& destination, ImageDrawingOptions imageDrawingOptions)
+void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatPoint& destination, RasterDrawingOptions imageDrawingOptions)
 {
     if (!image)
         return;
@@ -394,7 +395,7 @@ void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const 
     drawConsumingImageBuffer(WTF::move(image), FloatRect(destination, imageLogicalSize), FloatRect({ }, imageLogicalSize), imageDrawingOptions);
 }
 
-void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, ImageDrawingOptions imageDrawingOptions)
+void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, RasterDrawingOptions imageDrawingOptions)
 {
     if (!image)
         return;
@@ -402,7 +403,7 @@ void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const 
     drawConsumingImageBuffer(WTF::move(image), destination, FloatRect({ }, imageLogicalSize), imageDrawingOptions);
 }
 
-void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options)
+void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, const FloatRect& source, RasterDrawingOptions options)
 {
     if (!image)
         return;
@@ -428,7 +429,15 @@ void GraphicsContext::drawFilteredImageBuffer(ImageBuffer* sourceImage, const Fl
     scale(filter.filterScale());
 }
 
-void GraphicsContext::drawPattern(ImageBuffer& image, const FloatRect& destRect, const FloatRect& source, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void GraphicsContext::drawPattern(const SourceImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
+{
+    if (RefPtr nativeImage = image.nativeImageIfExists())
+        drawPattern(*nativeImage, destRect, tileRect, patternTransform, phase, spacing, options);
+    else if (RefPtr imageBuffer = image.imageBufferIfExists())
+        drawPattern(*imageBuffer, destRect, tileRect, patternTransform, phase, spacing, options);
+}
+
+void GraphicsContext::drawPattern(ImageBuffer& image, const FloatRect& destRect, const FloatRect& source, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     FloatRect scaledSource = source;
     scaledSource.scale(image.resolutionScale());
@@ -442,7 +451,7 @@ void GraphicsContext::drawControlPart(ControlPart& part, const FloatRoundedRect&
 }
 
 #if ENABLE(VIDEO)
-void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImageDrawingOptions options)
+void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, RasterDrawingOptions options)
 {
     RefPtr image = frame.copyNativeImage();
     if (!image)
@@ -463,6 +472,13 @@ void GraphicsContext::clipRoundedRect(const FloatRoundedRect& rect)
     Path path;
     path.addRoundedRect(rect);
     clipPath(path);
+}
+
+void GraphicsContext::clipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule windRule)
+{
+    auto transformedPath = path;
+    transformedPath.transform(pathTransform);
+    clipPath(transformedPath, windRule);
 }
 
 void GraphicsContext::clipOutRoundedRect(const FloatRoundedRect& rect)
@@ -537,6 +553,8 @@ FloatSize GraphicsContext::scaleFactor() const
 
 FloatSize GraphicsContext::scaleFactorForDrawing(const FloatRect& destRect, const FloatRect& srcRect) const
 {
+    if (srcRect.isEmpty())
+        return scaleFactor();
     AffineTransform transform = getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
     auto transformedDestRect = transform.mapRect(destRect);
     return transformedDestRect.size() / srcRect.size();

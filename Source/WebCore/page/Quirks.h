@@ -144,6 +144,7 @@ public:
     static bool shouldOmitHTMLDocumentSupportedPropertyNames();
 
     WEBCORE_EXPORT Vector<String> activeQuirks() const;
+    WEBCORE_EXPORT Vector<String> activeQuirkNames() const;
 
     bool LEGACY_NODELETE shouldEnableFontLoadingAPIQuirk() const;
 
@@ -190,7 +191,7 @@ public:
     void clearLogoutSurvivingIdentityCookiesIfNeeded(const URL& fetchURL, int httpStatusCode);
 
     void determineRelevantQuirks();
-    void urlsDidChange();
+    WEBCORE_EXPORT void urlsDidChange();
     void logQuirksToConsoleIfNecessary() const;
 
 private:

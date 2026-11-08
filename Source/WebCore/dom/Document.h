@@ -82,6 +82,13 @@
 #include <wtf/ThreadingPrimitives.h>
 #endif
 
+#if __has_include(<WebKitAdditions/DocumentAdditionsIncludes.h>)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnon-modular-include-in-module"
+#include <WebKitAdditions/DocumentAdditionsIncludes.h>
+#pragma clang diagnostic pop
+#endif
+
 namespace JSC {
 class CallFrame;
 class InputCursor;
@@ -457,13 +464,14 @@ class Document
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(Document);
 public:
     USING_CAN_MAKE_WEAKPTR(EventTarget);
-    USING_CAN_MAKE_CHECKEDPTR(ScriptExecutionContext);
 
-    void setDidBeginCheckedPtrDeletion() final
-    {
-        ContainerNode::setDidBeginCheckedPtrDeletion();
-        ScriptExecutionContext::setDidBeginCheckedPtrDeletion();
-    }
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(ContainerNode);
+
+    using ContainerNode::checkedPtrCount;
+    using ContainerNode::checkedPtrCountWithoutThreadCheck;
+    using ContainerNode::decrementCheckedPtrCount;
+    using ContainerNode::incrementCheckedPtrCount;
+    using ContainerNode::setDidBeginCheckedPtrDeletion;
 
     inline static Ref<Document> create(const Settings&, const URL&);
     static Ref<Document> createNonRenderedPlaceholder(LocalFrame&, const URL&);
@@ -489,7 +497,7 @@ public:
 
     ALWAYS_INLINE void decrementReferencingNodeCount(unsigned count = 1)
     {
-        ASSERT_WITH_SECURITY_IMPLICATION(m_referencingNodeCount >= count);
+        RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(m_referencingNodeCount >= count);
 
         m_referencingNodeCount -= count;
         if (!m_referencingNodeCount && !refCount()) {
@@ -765,6 +773,7 @@ public:
     inline LocalFrameView* view() const; // Defined in DocumentView.h.
     inline Page* LEGACY_NODELETE page() const; // Defined in DocumentPage.h.
     WEBCORE_EXPORT RefPtr<LocalFrame> LEGACY_NODELETE localMainFrame() const;
+    WEBCORE_EXPORT RefPtr<LocalFrame> LEGACY_NODELETE rootFrame() const;
     const Settings& settings() const { return m_settings.get(); }
     EditingBehavior LEGACY_NODELETE editingBehavior() const;
 
@@ -780,6 +789,7 @@ public:
     void appearanceDidChange();
 #if ENABLE(DARK_MODE_CSS)
     OptionSet<ColorScheme> resolvedColorScheme(const Style::ComputedStyle*) const;
+    bool allowsColorSchemeTransformations() const { return m_allowsColorSchemeTransformations; }
 #endif
 
     OptionSet<StyleColorOptions> styleColorOptions(const Style::ComputedStyle*, StyleColorOptionsPurpose) const;
@@ -1704,7 +1714,7 @@ public:
     const AXCustomColorModeController* axCustomColorModeControllerIfExists() const { return m_axCustomColorModeController.get(); }
     AXCustomColorModeController& axCustomColorModeController();
 
-    bool isAXCustomColorModeActive() const;
+    WEBCORE_EXPORT bool isAXCustomColorModeActive() const;
 #endif
 
     void LEGACY_NODELETE adjustStyleColorOptionsIfNeeded(OptionSet<StyleColorOptions>&) const;
@@ -2685,6 +2695,13 @@ private:
     std::unique_ptr<AXCustomColorModeController> m_axCustomColorModeController;
 #endif
 
+#if __has_include(<WebKitAdditions/DocumentAdditions.h>)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnon-modular-include-in-module"
+#include <WebKitAdditions/DocumentAdditions.h>
+#pragma clang diagnostic pop
+#endif
+
     const std::unique_ptr<OrientationNotifier> m_orientationNotifier;
     mutable RefPtr<Logger> m_logger;
 
@@ -2818,6 +2835,7 @@ private:
 
 #if ENABLE(DARK_MODE_CSS)
     OptionSet<ColorScheme> m_colorScheme;
+    bool m_allowsColorSchemeTransformations { true };
 #endif
 
     TextScaleMeta m_textScaleMeta { TextScaleMeta::Legacy };

@@ -222,6 +222,11 @@
             "behaviors": [{ "id": "ShouldUseLayoutViewportForClientRectsQuirk" }]
         },
         {
+            "bugs": ["rdar://189766320"],
+            "matches": ["*://*.chatgpt.com/*"],
+            "behaviors": [{ "id": "NeedsMarginTrimInlineSupportsQuirk" }]
+        },
+        {
             "matches": ["*://*.chess.com/*"],
             "environment": "SmallScreen",
             "available": "iOS",
@@ -256,6 +261,10 @@
             "bugs": ["rdar://190735753"],
             "matches": ["*://*.cnn.com/*"],
             "behaviors": [{ "id": "NeedsFormControlToBeMouseFocusableQuirk" }]
+        },
+        {
+            "matches": ["*://*.cnn.com/*"],
+            "behaviors": [{ "id": "RequiresUserGestureToPauseInFullscreenAfterOrientationChangeQuirk" }]
         },
         {
             "matches": ["*://codepen.io/*"],
@@ -348,6 +357,11 @@
             "available": "appleTV",
             "environment": "HomeView",
             "behaviors": [{ "id": "NeedsZeroMaxTouchPointsQuirk" }]
+        },
+        {
+            "bugs": ["rdar://190675819"],
+            "matches": ["*://englishtest.duolingo.com/*", "*://englishtest.duolingo.cn/*"],
+            "behaviors": [{ "id": "NeedsChromeCompatibilityUserAgentQuirk", "chromeCompatibilityVersion": "157" }]
         },
         {
             "matches": ["*://*.ea.com/*"],
@@ -517,6 +531,11 @@
             "bugs": ["rdar://184166392"],
             "embeddedMatches": ["*://*.google.*/maps/embed*"],
             "behaviors": [{ "id": "NeedsGoogleMapsEmbedManipulationSurfaceQuirk" }]
+        },
+        {
+            "bugs": ["rdar://190477522"],
+            "matches": ["*://gemini.google.com/*"],
+            "behaviors": [{ "id": "ShouldIgnoreViewportInteractiveWidgetQuirk" }]
         },
         {
             "matches": ["*://docs.google.com/*"],

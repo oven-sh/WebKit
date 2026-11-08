@@ -347,6 +347,9 @@ public:
 
     virtual LayoutUnit minContentLogicalWidthContribution() const;
     virtual LayoutUnit maxContentLogicalWidthContribution() const;
+    // The min-content and max-content contributions before the box's own min-width and max-width are applied to them, which
+    // is how a flex item's flex base size is measured.
+    std::pair<LayoutUnit, LayoutUnit> intrinsicLogicalWidthContributionsIgnoringMinMax() const;
     virtual std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const = 0;
 
     virtual LayoutSize intrinsicSize() const { return LayoutSize(); }
@@ -448,7 +451,6 @@ public:
     bool shouldComputeLogicalHeightFromAspectRatio() const;
     bool shouldComputeLogicalWidthFromAspectRatio() const;
     bool LEGACY_NODELETE hasFullyConstrainedLogicalHeight() const;
-    bool LEGACY_NODELETE shouldIgnoreLogicalMinMaxWidthSizes() const;
     bool LEGACY_NODELETE shouldIgnoreLogicalMinMaxHeightSizes() const;
 
     // The explicit intrinsic inner size of contain-intrinsic-size
@@ -661,7 +663,8 @@ protected:
 
     static LayoutUnit blockSizeFromAspectRatio(LayoutUnit borderPaddingInlineSum, LayoutUnit borderPaddingBlockSum, double aspectRatioValue, BoxSizing, LayoutUnit inlineSize, const Style::AspectRatio&, bool isRenderReplaced);
 
-    void constrainIntrinsicLogicalWidthsByMinMax(LayoutUnit& minIntrinsicLogicalWidth, LayoutUnit& maxIntrinsicLogicalWidth) const;
+    // Applies the box's min-width and max-width to its min-content and max-content contributions.
+    virtual void constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const;
 
     bool isAspectRatioDegenerate(double aspectRatio) const { return !aspectRatio || isnan(aspectRatio); }
 
@@ -712,10 +715,10 @@ private:
 
     LayoutUnit blockAxisMarginForStretch() const;
 
-    // This function calculates the minimum and maximum preferred widths for an object.
-    // These values are used in shrink-to-fit layout systems.
-    // These include tables, positioned objects, floats and flexible boxes.
-    virtual void computeIntrinsicLogicalWidthContributions();
+    // Computes the min-content and max-content contributions of the box's content box; border and padding are added by
+    // computeIntrinsicLogicalWidthContributionsIfNeeded(). These values are used in shrink-to-fit layout systems: tables,
+    // positioned objects, floats and flexible boxes.
+    virtual std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions();
 
 
     RepaintRects computeVisibleRectsUsingPaintOffset(const RepaintRects&) const final;
@@ -732,10 +735,12 @@ private:
 protected:
     LayoutBoxExtent m_marginBox;
 
-    // The min-content contribution: the box's min-content size after its CSS width and min/max-width have been applied.
+    // The min-content contribution: the box's min-content size after its CSS width has been applied. Its min-width and
+    // max-width are applied when it is read (see minContentLogicalWidthContribution()).
     LayoutUnit m_minContentLogicalWidthContribution;
 
-    // The max-content contribution: the box's max-content size after its CSS width and min/max-width have been applied.
+    // The max-content contribution: the box's max-content size after its CSS width has been applied. Its min-width and
+    // max-width are applied when it is read (see maxContentLogicalWidthContribution()).
     LayoutUnit m_maxContentLogicalWidthContribution;
 
     // Our overflow information.
@@ -745,6 +750,8 @@ protected:
 
 private:
     RenderBoxOverridingSizes& ensureOverridingSizes();
+
+    void computeIntrinsicLogicalWidthContributionsIfNeeded();
 
     // Used to store state between styleWillChange and styleDidChange
     static bool s_hadNonVisibleOverflow;

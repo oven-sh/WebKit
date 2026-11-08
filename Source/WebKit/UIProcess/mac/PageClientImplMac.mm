@@ -664,35 +664,6 @@ void PageClientImpl::accessibilityWebProcessTokenReceived(std::span<const uint8_
     protect(m_impl)->setAccessibilityWebProcessToken(toNSData(data).get(), pid);
 }
     
-void PageClientImpl::enterAcceleratedCompositingMode(const LayerTreeContext& layerTreeContext)
-{
-    ASSERT(!layerTreeContext.isEmpty());
-
-    RetainPtr renderLayer = [CALayer _web_renderLayerWithContextID:layerTreeContext.contextID shouldPreserveFlip:NO];
-    protect(m_impl)->enterAcceleratedCompositingWithRootLayer(renderLayer.get());
-}
-
-void PageClientImpl::didFirstLayerFlush(const LayerTreeContext& layerTreeContext)
-{
-    ASSERT(!layerTreeContext.isEmpty());
-
-    RetainPtr renderLayer = [CALayer _web_renderLayerWithContextID:layerTreeContext.contextID shouldPreserveFlip:NO];
-    protect(m_impl)->setAcceleratedCompositingRootLayer(renderLayer.get());
-}
-
-void PageClientImpl::exitAcceleratedCompositingMode()
-{
-    protect(m_impl)->setAcceleratedCompositingRootLayer(nil);
-}
-
-void PageClientImpl::updateAcceleratedCompositingMode(const LayerTreeContext& layerTreeContext)
-{
-    ASSERT(!layerTreeContext.isEmpty());
-
-    RetainPtr renderLayer = [CALayer _web_renderLayerWithContextID:layerTreeContext.contextID shouldPreserveFlip:NO];
-    protect(m_impl)->setAcceleratedCompositingRootLayer(renderLayer.get());
-}
-
 void PageClientImpl::setRemoteLayerTreeRootNode(RemoteLayerTreeNode* rootNode)
 {
     protect(m_impl)->setAcceleratedCompositingRootLayer(rootNode ? protect(rootNode->layer()).get() : nil);
@@ -1145,11 +1116,6 @@ RetainPtr<NSView> PageClientImpl::inspectorAttachmentView()
 void PageClientImpl::pageDidScroll(const WebCore::IntPoint& scrollOffset)
 {
     protect(m_impl)->pageDidScroll(scrollOffset);
-}
-
-void PageClientImpl::didEndSyntheticMomentumScrolling()
-{
-    protect(m_impl)->didEndSyntheticMomentumScrolling();
 }
 
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)

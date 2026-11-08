@@ -42,6 +42,7 @@
 #include "NavigationActionData.h"
 #include "NetworkConnectionToWebProcessMessages.h"
 #include "NetworkProcessConnection.h"
+#include "PageScaleFactor.h"
 #include "PluginView.h"
 #include "SessionState.h"
 #include "SessionStateConversion.h"
@@ -1644,8 +1645,9 @@ void WebLocalFrameLoaderClient::restoreViewState()
     double scaleFactor = m_localFrame->loader().history().currentItem()->pageScaleFactor();
 
     // A scale factor of 0 means the history item has the default scale factor, thus we do not need to update it.
+    // Session state supplied by the client can also hold values the UI process would reject.
     RefPtr page = m_frame->page();
-    if (page && scaleFactor)
+    if (page && isValidScaleFactor(scaleFactor))
         page->send(Messages::WebPageProxy::DidSetPageScaleFactor(scaleFactor));
 
     // FIXME: This should not be necessary. WebCore should be correctly invalidating
@@ -1830,6 +1832,10 @@ void WebLocalFrameLoaderClient::transitionToCommittedForNewPage(InitializingIfra
 void WebLocalFrameLoaderClient::didRestoreFromBackForwardCache()
 {
     m_frameCameFromBackForwardCache = true;
+
+    // Schedule a full editor state update in case the secure input state needs to be updated.
+    if (RefPtr webPage = m_frame->page())
+        webPage->scheduleFullEditorStateUpdate();
 }
 
 void WebLocalFrameLoaderClient::didCacheBackForwardItem(BackForwardItemIdentifier itemID, BackForwardFrameItemIdentifier frameItemID)

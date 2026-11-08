@@ -97,7 +97,9 @@ static void printUsageStatement(const char* programName)
     SAFE_PRINTF("  -h,          --help             Prints this help message\n");
     SAFE_PRINTF("  -p <port>,   --port=<port>      Port number the driver will use\n");
     SAFE_PRINTF("               --host=<host>      Host IP the driver will use, or either 'local' or 'all' (default: 'local')\n");
+#if !PLATFORM(COCOA)
     SAFE_PRINTF("  -t <ip:port> --target=<ip:port> Target IP and port\n");
+#endif
 #if ENABLE(WEBDRIVER_BIDI)
     SAFE_PRINTF("               --bidi-port=<port>        Port number to use for BiDi's WebSocket connections\n");
 #endif
@@ -892,12 +894,27 @@ bool WebDriverService::findSessionOrCompleteWithError(JSON::Object& parameters, 
     }
 
     if (!m_session->isConnected()) {
-        m_session = nullptr;
+        discardSessionIfDisconnected();
         completionHandler(CommandResult::fail(CommandResult::ErrorCode::InvalidSessionID, String("session deleted because of page crash or hang."_s)));
         return false;
     }
 
     return true;
+}
+
+void WebDriverService::discardSessionIfDisconnected()
+{
+    // The browser can go away without the session being deleted, for example when it crashes or
+    // when the user quits it. Such a session must not prevent creating a new one.
+    if (!m_session || m_session->isConnected())
+        return;
+
+#if ENABLE(WEBDRIVER_BIDI)
+    // Close the session's BiDi connection first, as when the browser terminates. The handlers of
+    // BiDi messages and of closed connections expect every connection to belong to the session.
+    onBrowserTerminated(m_session->id());
+#endif
+    m_session = nullptr;
 }
 
 RefPtr<JSON::Object> WebDriverService::validatedCapabilities(const JSON::Object& capabilities) const
@@ -1142,6 +1159,7 @@ void WebDriverService::newSession(RefPtr<JSON::Object>&& parameters, Function<vo
     if (matchedCapabilitiesList.isEmpty())
         return;
 
+    discardSessionIfDisconnected();
     if (!m_session) {
         // Reverse the vector to always take last item.
         matchedCapabilitiesList.reverse();
@@ -1322,6 +1340,7 @@ void WebDriverService::status(RefPtr<JSON::Object>&&, Function<void (CommandResu
 {
     // §8.3 Status
     // https://w3c.github.io/webdriver/webdriver-spec.html#status
+    discardSessionIfDisconnected();
     auto body = JSON::Object::create();
     body->setBoolean("ready"_s, !m_session);
     body->setString("message"_s, m_session ? "A session already exists"_s : "No sessions"_s);
@@ -2876,6 +2895,7 @@ void WebDriverService::takeElementScreenshot(RefPtr<JSON::Object>&& parameters, 
 #if ENABLE(WEBDRIVER_BIDI)
 void WebDriverService::bidiSessionStatus(unsigned id, RefPtr<JSON::Object>&&, Function<void(WebSocketMessageHandler::Message&&)>&& completionHandler)
 {
+    discardSessionIfDisconnected();
     auto result = JSON::Object::create();
     bool ready = !m_session;
     result->setBoolean("ready"_s, ready);

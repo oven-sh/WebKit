@@ -227,6 +227,7 @@ list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/loader/archive/cf"
     "${WEBCORE_DIR}/loader/cf"
     "${WEBCORE_DIR}/loader/cocoa"
+    "${WEBCORE_DIR}/loader/images/pdf"
     "${WEBCORE_DIR}/page/cocoa"
     "${WEBCORE_DIR}/page/scrolling/cocoa"
     "${WEBCORE_DIR}/page/writing-tools"
@@ -330,6 +331,8 @@ list(APPEND WebCore_SOURCES
     html/shadow/SpatialImageControls.cpp
 
     loader/cocoa/PrivateClickMeasurementCocoa.mm
+
+    loader/images/pdf/PDFDocumentImage.cpp
 
     page/ViewportConfiguration.cpp
 
@@ -457,7 +460,6 @@ list(APPEND WebCore_SOURCES
     platform/graphics/cg/IntRectCG.cpp
     platform/graphics/cg/IntSizeCG.cpp
     platform/graphics/cg/NativeImageCG.cpp
-    platform/graphics/cg/PDFDocumentImage.cpp
     platform/graphics/cg/PathCG.cpp
     platform/graphics/cg/PatternCG.cpp
     platform/graphics/cg/ShareableSpatialImage.h
@@ -569,6 +571,8 @@ list(APPEND WebCore_SOURCES
     editing/mac/EditorMac.mm
     editing/mac/TextUndoInsertionMarkupMac.mm
 
+    loader/images/pdf/mac/PDFDocumentImageMac.mm
+
     page/mac/EventHandlerMac.mm
     page/mac/ServicesOverlayController.mm
     page/mac/WheelEventDeltaFilterMac.mm
@@ -584,7 +588,6 @@ list(APPEND WebCore_SOURCES
     platform/graphics/mac/ColorMac.mm
     platform/graphics/mac/GraphicsChecksMac.cpp
     platform/graphics/mac/IconMac.mm
-    platform/graphics/mac/PDFDocumentImageMac.mm
 
     platform/mac/CursorMac.mm
     platform/mac/KeyEventMac.mm
@@ -1091,11 +1094,13 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/encryptedmedia/legacy/LegacyCDM.h
     Modules/encryptedmedia/legacy/LegacyCDMPrivate.h
 
+    Modules/mediasession/CallToActionLabel.h
     Modules/mediasession/MediaPositionState.h
     Modules/mediasession/MediaSession.h
     Modules/mediasession/MediaSessionAction.h
     Modules/mediasession/MediaSessionActionDetails.h
     Modules/mediasession/MediaSessionActionHandler.h
+    Modules/mediasession/MediaSessionActionHandlerOptions.h
     Modules/mediasession/MediaSessionCoordinator.h
     Modules/mediasession/MediaSessionCoordinatorPrivate.h
     Modules/mediasession/MediaSessionCoordinatorState.h
@@ -1154,6 +1159,8 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     loader/cache/CachedRawResource.h
 
     loader/cocoa/LoaderNSURLExtras.h
+
+    loader/images/pdf/PDFDocumentImage.h
 
     page/CaptionUserPreferencesMediaAF.h
 
@@ -1305,7 +1312,6 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/cg/ImageBufferCGPDFDocumentBackend.h
     platform/graphics/cg/ImageBufferIOSurfaceBackend.h
     platform/graphics/cg/ImageDecoderCG.h
-    platform/graphics/cg/PDFDocumentImage.h
     platform/graphics/cg/PathCG.h
     platform/graphics/cg/ShareableSpatialImage.h
     platform/graphics/cg/SpatialImageTypes.h
@@ -1807,8 +1813,16 @@ else ()
 configure_file(${WEBCORE_DIR}/Info.plist ${CMAKE_CURRENT_BINARY_DIR}/WebCore-Info.plist)
 
 set(_wc_fw "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebCore.framework")
+if (WEBKIT_SDK_IS_WATCHOS)
+    set(_wc_media_controls_images watchOS)
+else ()
+    set(_wc_media_controls_images iOS)
+endif ()
 
 add_custom_command(TARGET WebCore POST_BUILD
+    # FIXME: Replace all of these with WEBCORE_COPY_FILES so that ninja can
+    # track their dependencies and clean them up. Should be expressible with
+    # rdar://188725492.
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${WEBCORE_DIR}/en.lproj" "${_wc_fw}/en.lproj"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${WEBCORE_DIR}/Resources/ContentFilterBlockedPage.html"
@@ -1831,6 +1845,13 @@ add_custom_command(TARGET WebCore POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${WEBCORE_DIR}/Modules/modern-media-controls"
         "${_wc_fw}/modern-media-controls"
+    # The controls load their images from images/, which Xcode populates with this platform's set.
+    # FIXME: Instead of copying the entire directory and then deleting, we
+    # should only copy what we need.
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${_wc_fw}/modern-media-controls/images"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${WEBCORE_DIR}/Modules/modern-media-controls/images/${_wc_media_controls_images}"
+        "${_wc_fw}/modern-media-controls/images"
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${_wc_fw}/Resources"
     COMMAND ${CMAKE_COMMAND} -E copy
         "${CMAKE_CURRENT_BINARY_DIR}/WebCore-Info.plist"
