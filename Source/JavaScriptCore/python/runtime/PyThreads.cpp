@@ -1212,6 +1212,44 @@ bool IdleWait::didWait(int64_t remaining)
     RELEASE_AND_RETURN(scope, collectIfDue(remaining));
 }
 
+// What waitUntil() does before and after it sleeps, each in a frame of its own: whatever earlier frames left in room of a frame that nothing is written to is under the eyes of the collector
+// for as long as the frame is there, and waitUntil()'s is there for as long as the thread sleeps. What is returned by value has such room even where all of it is written: behind the
+// bool of a HashTableAddResult there are seven bytes of padding. (Seen: the callee stored the one byte over the lowest byte of an address that ended in 00. A pointer into a cell counts.)
+NEVER_INLINE void Threads::joinWaiters(const void* address, ThreadState& thread)
+{
+    m_waiters.add(address, Deque<ThreadState*>()).iterator->value.append(&thread);
+    thread.isQueued = true;
+}
+
+NEVER_INLINE void Threads::leaveWaiters(const void* address, ThreadState& thread)
+{
+    thread.isQueued = false;
+    auto it = m_waiters.find(address);
+    it->value.removeFirstMatching([&](ThreadState* other) {
+        return other == &thread;
+    });
+    if (it->value.isEmpty())
+        m_waiters.remove(it);
+}
+
+static NEVER_INLINE void sleepWithoutGIL(JSGlobalObject* globalObject, ThreadState& thread, int64_t until)
+{
+    AllowThreads allow(globalObject);
+    while (!thread.sleeper.sleep(until) && allow.wasInterruptedForNothing()) { }
+}
+
+static NEVER_INLINE void raiseCannotWaitAnyMore(JSGlobalObject* globalObject, ASCIILiteral whatCannotBeDone)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    raise(globalObject, scope, runtime(globalObject).PythonFinalizationError(), makeString("cannot "_s, whatCannotBeDone));
+}
+
+static NEVER_INLINE void raiseDeadlock(JSGlobalObject* globalObject, ASCIILiteral whatIsWaitedFor)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    raiseRuntimeError(globalObject, scope, "deadlock: "_s, whatIsWaitedFor, ", and there is no other thread"_s);
+}
+
 bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver, bool isWaitOfCall)
 {
     VM& vm = m_vm;
@@ -1226,7 +1264,8 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
         return false;
     if (isFinalized()) {
         // The other threads never run again.
-        raise(globalObject, scope, runtime(globalObject).PythonFinalizationError(), makeString("cannot "_s, whatCannotBeDone));
+        scope.release();
+        raiseCannotWaitAnyMore(globalObject, whatCannotBeDone);
         return false;
     }
 
@@ -1251,33 +1290,22 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
             // Or a signal. A program of Python sleeps until one comes, as it does in CPython. One of JS that has called into Python
             // would only hang: nothing of JS runs while this thread waits.
             if (!signalMayEndWait(globalObject)) {
-                raiseRuntimeError(globalObject, scope, "deadlock: "_s, whatIsWaitedFor, ", and there is no other thread"_s);
+                scope.release();
+                raiseDeadlock(globalObject, whatIsWaitedFor);
                 return false;
             }
         } else
             idle.canBeEnded();
 
-        m_waiters.add(address, Deque<ThreadState*>()).iterator->value.append(&thread);
-        thread.isQueued = true;
+        joinWaiters(address, thread);
         thread.waitsForGood = deadline < 0;
         // With this thread asleep nothing moves any more, and only a finalizer can bring about what is waited for. Whoever has taken those of others upon itself is among the sleepers.
         if (m_numberThatServeOthers && thread.waitsForGood && allOthersWaitForGood()) [[unlikely]]
             giveBackWhatIsTaken(thread);
-        {
-            AllowThreads allow(globalObject);
-            int64_t until = deadline >= 0 ? std::min(deadline, idle.timeToCollect()) : idle.timeToCollect();
-            while (!thread.sleeper.sleep(until) && allow.wasInterruptedForNothing()) { }
-        }
+        sleepWithoutGIL(globalObject, thread, deadline >= 0 ? std::min(deadline, idle.timeToCollect()) : idle.timeToCollect());
         thread.waitsForGood = false;
-        if (thread.isQueued) {
-            thread.isQueued = false;
-            auto it = m_waiters.find(address);
-            it->value.removeFirstMatching([&](ThreadState* other) {
-                return other == &thread;
-            });
-            if (it->value.isEmpty())
-                m_waiters.remove(it);
-        }
+        if (thread.isQueued)
+            leaveWaiters(address, thread);
 
         if (thread.isMain && m_vm.heap.hasPostponedEmbedderFinalizers()) [[unlikely]]
             m_vm.heap.runPostponedEmbedderFinalizers();

@@ -354,6 +354,8 @@ private:
     void didTakeGIL(ThreadState&);
     void tellMainThreadOfFinalizers();
     void giveBackWhatIsTaken(ThreadState&);
+    void joinWaiters(const void* address, ThreadState&);
+    void leaveWaiters(const void* address, ThreadState&);
     void wakeMainThread();
     void wakeToHandleTrap(ThreadState&, bool isTermination);
     friend void mainThreadIsToHandleTrap(VM&, const AbstractLocker&, JSLock::ParkedThread*, bool, bool);
