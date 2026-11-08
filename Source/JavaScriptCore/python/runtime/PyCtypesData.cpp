@@ -214,6 +214,9 @@ PyCData* newData(JSGlobalObject* globalObject, PyType* type)
     PyCTypeInfo* info = concreteInfoOf(globalObject, type);
     RETURN_IF_EXCEPTION(scope, nullptr);
     bool isFinalized = hasFinalizer(type);
+    // No collection ends between the two allocations, so that the memory is not of an older generation than the instance. If it were, a collection of the young would take the instance and its
+    // _objects and leave the memory, which is dead as well, with what is written down beside it; what both held would then die in the order of the places.
+    DeferGC deferGC(vm);
     PyByteStorage* storage = newMemory(globalObject, info, info->size);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyCData* data = allocateData(globalObject, type, info);
