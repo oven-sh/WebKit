@@ -1035,6 +1035,7 @@ static JSValue atexitRunExitFuncs(JSGlobalObject* globalObject)
             DeferTerminationForAWhile deferred(vm);
             auto innerScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             listTruncate(globalObject, callbacks, 0);
+            dropPendingException(globalObject, innerScope);
             while (++i < entries.size()) {
                 listAppend(globalObject, callbacks, entries.at(i));
                 dropPendingException(globalObject, innerScope);
@@ -1043,6 +1044,7 @@ static JSValue atexitRunExitFuncs(JSGlobalObject* globalObject)
         }
     }
     listTruncate(globalObject, callbacks, 0);
+    RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
 

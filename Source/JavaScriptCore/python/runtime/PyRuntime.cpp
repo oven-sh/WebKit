@@ -335,6 +335,7 @@ void Runtime::waitAtExitFor(PyRecord* handle)
 
 void Runtime::doNotWaitAtExitFor(PyRecord* handle)
 {
+    ASSERT(m_vm.currentThreadIsHoldingAPILock());
     Locker locker { m_threadsToWaitForLock };
     m_threadsToWaitFor.removeFirstMatching([&](auto& other) {
         return other.get() == handle;
@@ -343,6 +344,7 @@ void Runtime::doNotWaitAtExitFor(PyRecord* handle)
 
 void Runtime::waitAtExitForNoThread()
 {
+    ASSERT(m_vm.currentThreadIsHoldingAPILock());
     Locker locker { m_threadsToWaitForLock };
     m_threadsToWaitFor.clear();
 }

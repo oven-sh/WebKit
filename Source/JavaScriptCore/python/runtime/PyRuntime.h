@@ -582,10 +582,12 @@ public:
     void waitAtExitFor(PyRecord* handle);
     void doNotWaitAtExitFor(PyRecord* handle);
     void waitAtExitForNoThread();
-    // The first of which the function says so. The function allocates no cell.
+    // The first of which the function says so. The function allocates no cell. (Only the table holds what is returned, and the lock has been let go of by then: it stays because nobody takes it out of the table
+    // without the GIL, which the caller has.)
     template<typename Function>
     PyRecord* firstThreadToWaitFor(const Function& isWanted)
     {
+        ASSERT(m_vm.currentThreadIsHoldingAPILock());
         Locker locker { m_threadsToWaitForLock };
         for (auto& handle : m_threadsToWaitFor) {
             if (isWanted(handle.get()))
