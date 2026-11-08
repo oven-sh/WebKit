@@ -18,6 +18,7 @@
 #include "PyModule.h"
 #include "PyNumbers.h"
 #include "PyStr.h"
+#include "PyThreads.h"
 #include "PyUnicode.h"
 #include <bit>
 #include <unicode/uchar.h>
@@ -378,19 +379,30 @@ static bool codecGetRegistry(JSGlobalObject* globalObject, CodecRegistry& regist
 
 // The package `encodings` registers the function that finds the standard codecs, which is to come before any other.
 // CPython imports it as it starts; here, that waits until the registry is first used.
+// The mark in the state: true when it has been imported. While it is being imported: the thread that does so. That one comes here again, because the package registers its function, and goes on. Any other thread imports the
+// package too: that is, it waits, as for any module that another thread is importing. (With the mark set to true before the import, it went on and found no search function.) An import that has failed is tried again.
 static bool codecImportEncodings(JSGlobalObject* globalObject, CodecRegistry& registry)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* key = internString(vm, "encodings_imported"_s);
-    if (registry.state->get(key))
+    JSValue mark = registry.state->get(key);
+    if (mark && mark.isBoolean()) [[likely]]
         return true;
-    registry.state->set(vm, key, jsBoolean(true));
+    JSValue thisThread = jsNumber(static_cast<double>(runtime(globalObject).threads().current().serial));
+    if (mark == thisThread)
+        return true;
+    bool isFirst = !mark;
+    if (isFirst)
+        registry.state->set(vm, key, thisThread);
     importModule(globalObject, "encodings"_s);
     if (scope.exception()) [[unlikely]] {
-        registry.state->remove(vm, key);
+        if (isFirst)
+            registry.state->remove(vm, key);
         return false;
     }
+    if (isFirst)
+        registry.state->set(vm, key, jsBoolean(true));
     return true;
 }
 
