@@ -1170,11 +1170,15 @@ void StateOfLinkReach::escapeExportsOf(ModuleID first)
                 m_flow.note(LinkFlow::Note::ExportIsShown, exported.variable.index());
                 m_flow.addEdge(m_flow.variable(exported.variable), m_flow.unseen());
             }
+            if (exported.kind == ModuleExportKind::Namespace && exported.module)
+                m_flow.noteLossOfObjectOfBuiltinModule(exported.module);
             add(exported.module);
         }
         for (const ModuleRequest& request : module.requests) {
-            if (request.isDynamicStarExport)
-                add(request.target);
+            if (!request.isDynamicStarExport)
+                continue;
+            m_flow.noteLossOfObjectOfBuiltinModule(request.target);
+            add(request.target);
         }
     }
 }

@@ -236,6 +236,7 @@ JS_EXPORT_PRIVATE void willRunCodeThatKeepsFiles(JSGlobalObject*);
 JS_EXPORT_PRIVATE void keepFilesThatHaveRun(JSGlobalObject*);
 JS_EXPORT_PRIVATE void didResetModule(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isLoadInFlight(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool haveLoadsInFlightTakenAnswerThatStandsOn(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void takeOutFilesThatFailed(JSGlobalObject*);
 JS_EXPORT_PRIVATE void bringBackKeptFiles(JSGlobalObject*, const WTF::Function<void(const String&)>&);
 JS_EXPORT_PRIVATE bool isEvictedFile(JSGlobalObject*, ModuleID);

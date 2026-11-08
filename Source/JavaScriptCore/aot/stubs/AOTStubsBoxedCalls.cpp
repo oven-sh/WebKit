@@ -1819,7 +1819,7 @@ void generateCallMethodThatMayBeUnread(StubAssembler& jit)
     JumpList callsValue;
     if (servesCallsByName(handler.form, count) && handler.receiverTypes) {
         const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
-        branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::AtTheCall, scratch, callsValue);
+        branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::InFrontOfTheCallUnlessReceiverFindsIt, scratch, callsValue);
         handler.emit(jit, scratch, callsValue);
         callsValue.link(&jit);
     }

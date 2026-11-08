@@ -1348,8 +1348,11 @@ void AccessInLinkAccesses::giveExport(ModuleID module, uint32_t index)
             LayoutID whole = entry.module && entry.phase == ImportPhase::Evaluation ? m_program.layoutOfWholeNamespace(entry.module) : LayoutID();
             if (whole)
                 give(instanceForLinkAccesses(whole));
-            else
+            else {
+                if (entry.module)
+                    m_flow.noteLossOfObjectOfBuiltinModule(entry.module);
                 giveAnything();
+            }
             return;
         }
         case ModuleExportKind::Indirect: {

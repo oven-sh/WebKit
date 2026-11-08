@@ -99,7 +99,7 @@ bool Modules::isImportedByGraphUnderEvaluation(ModuleID module)
     Vector<ModuleID, 16> importers;
     for (unsigned index = 0; index < m_table.size(); ++index) {
         ModuleStatus current = status(ModuleID(index));
-        if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync || current == ModuleStatus::Failed)
+        if (current == ModuleStatus::Evaluating || current == ModuleStatus::EvaluatingAsync || (current == ModuleStatus::Failed && !failureByAbsentExport(ModuleID(index))))
             importers.append(ModuleID(index));
     }
     while (!importers.isEmpty()) {
@@ -119,32 +119,82 @@ bool Modules::isImportedByGraphUnderEvaluation(ModuleID module)
     return false;
 }
 
-bool Modules::wasPulledInByLoadThatFailed(ModuleID module) const
+std::optional<ModuleFailureID> Modules::failureByAbsentExport(ModuleID module) const
 {
-    if (!m_errorsOfExportsThatBuildFoundAbsent || !data(module).isESModuleOfProgram())
-        return false;
-    if (status(module) == ModuleStatus::Failed) {
-        ModuleRecord* record = m_records.get(module);
-        JSValue error = record ? record->evaluationError() : JSValue();
-        for (unsigned index = 0; error && index < m_numberOfErrorsOfExportsThatBuildFoundAbsent; ++index) {
-            if (m_errorsOfExportsThatBuildFoundAbsent->getDirectIndex(m_instance.globalObject, index) == error)
-                return true;
-        }
-        return false;
+    if (!m_errorsOfExportsThatBuildFoundAbsent || status(module) != ModuleStatus::Failed)
+        return std::nullopt;
+    ModuleRecord* record = m_records.get(module);
+    JSValue error = record ? record->evaluationError() : JSValue();
+    for (unsigned index = 0; error && index < m_failuresByExportsThatBuildFoundAbsent.size(); ++index) {
+        if (m_errorsOfExportsThatBuildFoundAbsent->getDirectIndex(m_instance.globalObject, index) == error)
+            return m_failuresByExportsThatBuildFoundAbsent[index];
     }
-    if (status(module) > ModuleStatus::Linked)
+    return std::nullopt;
+}
+
+bool Modules::wasLinkedAheadOfFailure(ModuleID root, ModuleID module) const
+{
+    std::optional<ModuleFailureID> id = failureByAbsentExport(root);
+    if (!id || m_table.failure(*id).isAskedByExportStatement())
         return false;
-    for (uint32_t index = 0; index < m_table.size(); ++index) {
-        ModuleID root(index);
-        if (status(root) == ModuleStatus::Failed && modulesThatLoadLeadsTo(root).get(module.index()))
-            return true;
+    const ModuleFailureData& failure = m_table.failure(*id);
+    auto importsFromFileThatLacksName = [&](ModuleID importer) {
+        return !isMocked(importer) && std::ranges::any_of(m_table.requests(importer), [&](const ModuleRequestData& request) {
+            return !request.isHoisted && !request.isDeferred && (request.targetModule() == failure.importerModule() || moduleLoadedBy(request) == failure.importerModule());
+        });
+    };
+    struct Step {
+        ModuleID importer;
+        size_t nextRequest;
+    };
+    BitVector isEntered(m_table.size());
+    Vector<Step, 16> way { { root, 0 } };
+    isEntered.quickSet(root.index());
+    while (!way.isEmpty()) {
+        Step& step = way.last();
+        auto requests = m_table.requests(step.importer);
+        if (step.nextRequest == requests.size() || isMocked(step.importer)) {
+            if (importsFromFileThatLacksName(step.importer))
+                return false;
+            if (step.importer == module)
+                return true;
+            way.removeLast();
+            continue;
+        }
+        const ModuleRequestData& request = requests[step.nextRequest++];
+        if (request.isHoisted || request.isDeferred)
+            continue;
+        ModuleID imported = moduleLoadedBy(request);
+        if (!isEntered.quickSet(imported.index()))
+            way.append({ imported, 0 });
     }
     return false;
 }
 
+bool Modules::wasPulledInByLoadThatFailed(ModuleID module) const
+{
+    if (!m_errorsOfExportsThatBuildFoundAbsent || !data(module).isESModuleOfProgram())
+        return false;
+    if (status(module) == ModuleStatus::Failed)
+        return !!failureByAbsentExport(module);
+    if (status(module) > ModuleStatus::Linked)
+        return false;
+    bool wasPulledIn = false;
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID root(index);
+        if (!failureByAbsentExport(root) || !modulesThatLoadLeadsTo(root).get(module.index()))
+            continue;
+        if (wasLinkedAheadOfFailure(root, module))
+            return false;
+        wasPulledIn = true;
+    }
+    return wasPulledIn;
+}
+
 void Modules::forgetLoadsRefusedByCheckOfNames(ModuleID mocked)
 {
-    bool wasPulledIn = wasPulledInByLoadThatFailed(mocked);
+    if (!wasPulledInByLoadThatFailed(mocked))
+        return;
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID root(index);
         if (status(root) != ModuleStatus::Failed)
@@ -160,8 +210,7 @@ void Modules::forgetLoadsRefusedByCheckOfNames(ModuleID mocked)
             }
         }
     }
-    if (wasPulledIn)
-        forgetFailuresOfExportsThatBuildFoundAbsent();
+    forgetFailuresOfExportsThatBuildFoundAbsent();
 }
 
 void Modules::forgetFailuresOfExportsThatBuildFoundAbsent()
@@ -170,7 +219,7 @@ void Modules::forgetFailuresOfExportsThatBuildFoundAbsent()
     if (!kept)
         return;
     UncheckedKeyHashSet<JSCell*> errorsOfAbsentExports;
-    for (unsigned index = std::exchange(m_numberOfErrorsOfExportsThatBuildFoundAbsent, 0); index--;)
+    for (unsigned index = std::exchange(m_failuresByExportsThatBuildFoundAbsent, { }).size(); index--;)
         errorsOfAbsentExports.add(kept->getDirectIndex(m_instance.globalObject, index).asCell());
     goModuleByModuleFromNowOn();
     for (uint32_t index = 0; index < m_table.size(); ++index) {
@@ -267,7 +316,7 @@ bool Modules::runBodyOfImportedModuleAheadOfMock(ModuleID module)
 JSObject* Modules::packageItselfBesideMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || !isMocked(module) || isLeftAloneByMock(module) || isEvicted(module))
+    if ((!data(module).isESModuleOfProgram() && data(module).kind != ModuleKind::Data) || data(module).isFaceOfFile() || !isMocked(module) || isLeftAloneByMock(module) || isEvicted(module))
         return nullptr;
     if (!hasRunItself(module)) {
         if (hasBegunToLoad(module))
@@ -935,6 +984,9 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
         bool isHeld { false };
     };
     SetForScope rootWhoseLoadIsSwept(m_rootWhoseLoadIsSwept, root);
+    auto leavesImportersWhenSweepEnds = makeScopeExit([&] {
+        leaveImportersWhere([&](const ImportersEnteredAboveMock& above) { return above.isLeftWhenSweepEnds; });
+    });
     SetForScope moduleThatImportAsksFor(m_moduleThatImportAsksFor, ModuleID());
     SetForScope stateOfWaitOfImportThatAsks(m_stateOfWaitOfImportThatAsks, JSValue());
     SetForScope moduleThatProgramImportsNow(m_moduleThatProgramImportsNow, std::nullopt);
@@ -1196,8 +1248,14 @@ void Modules::leaveImportersWhere(const Matches& matches)
 
 void Modules::leaveImportersAbove(ModuleID mocked)
 {
-    if (!m_importersEnteredAboveMocks.isEmpty()) [[unlikely]]
-        leaveImportersWhere([&](const ImportersEnteredAboveMock& above) { return above.mocked == mocked; });
+    if (m_importersEnteredAboveMocks.isEmpty()) [[likely]]
+        return;
+    leaveImportersWhere([&](ImportersEnteredAboveMock& above) {
+        if (above.mocked != mocked)
+            return false;
+        above.isLeftWhenSweepEnds = above.root == m_rootWhoseLoadIsSwept;
+        return !above.isLeftWhenSweepEnds;
+    });
 }
 
 void Modules::didBeginWalkOnEmptyStack(ModuleID root)

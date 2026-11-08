@@ -191,7 +191,7 @@ void Walker::layChecksOfParametersOfHead(BlockID head, uint32_t numberOfParamete
     Vector<ValueID, 8> parameters(m_code.at(head).parameters().first(numberOfParametersOfInput));
     for (ValueID parameter : parameters) {
         Representation form = m_code.at(parameter).representation;
-        if ((form != Representation::JSValue && form != Representation::Cell) || !m_types.at(m_code.at(parameter).type).isJavaScriptValue())
+        if ((form != Representation::JSValue && form != Representation::Cell && form != Representation::Cell32) || !m_types.at(m_code.at(parameter).type).isJavaScriptValue())
             continue;
         Draft check(Opcode::CheckProof, origin);
         check.setValueOperand(Reference::value(parameter));

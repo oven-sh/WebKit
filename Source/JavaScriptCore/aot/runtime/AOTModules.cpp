@@ -3108,7 +3108,8 @@ void Modules::throwNewFailure(ModuleFailureID id, bool isForRequire)
                 m_errorsOfExportsThatBuildFoundAbsent = createTableOfExports();
                 m_storedReferences.recordAll();
             }
-            storeValue(realm, m_errorsOfExportsThatBuildFoundAbsent, m_numberOfErrorsOfExportsThatBuildFoundAbsent++, error);
+            storeValue(realm, m_errorsOfExportsThatBuildFoundAbsent, m_failuresByExportsThatBuildFoundAbsent.size(), error);
+            m_failuresByExportsThatBuildFoundAbsent.append(id);
         }
         throwException(realm, scope, error);
         return;
@@ -5772,6 +5773,12 @@ bool isLoadInFlight(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->isLoadInFlight(module);
+}
+
+bool haveLoadsInFlightTakenAnswerThatStandsOn(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return !modules || modules->haveLoadsInFlightTakenAnswerThatStandsOn(module);
 }
 
 void didResetModule(JSGlobalObject* realm, ModuleID module)

@@ -90,7 +90,7 @@ public:
     void generateStringRangeParseInt(const ValueContext&);
     void generateFindStringRangeInMap(const ValueContext&);
     CharacterView viewOfRange(const ValueContext&);
-    void holdRangeInside(const ValueContext&, Word32 start, Word32 end, Word32 length);
+    void holdRangeInside(const ValueContext&, Word32 start, Word32 end);
 
     void continueIf(Condition, BlockEdge otherwise);
     template<typename T> T selectByWidth(Condition is8Bit, NOESCAPE const Invocable<T(bool is8Bit)> auto& read, Machine::EdgeClass frequencyOfWide = Machine::EdgeClass::Unlikely);

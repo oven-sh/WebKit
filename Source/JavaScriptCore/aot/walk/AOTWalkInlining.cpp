@@ -1529,7 +1529,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
             return true;
         if (m_inputs.options.takesNotes && passes.isValue())
             m_code.noteTestOfGuardInFrontOfCopy({ passes.id(), callee, function.position });
-        TurnOfTypedCopy turnThatAsksInFront = turnOfTypedCopyHasDoneNothing() ? TurnOfTypedCopy::HasDoneNothing : TurnOfTypedCopy::HasRunNoOtherCodeThoughCopiesBegan;
+        TurnOfTypedCopy turnThatAsksInFront = turnOfTypedCopyHasDoneNothing() || !testOfTypeLooksAtNoShape(tested) ? TurnOfTypedCopy::HasDoneNothing : TurnOfTypedCopy::HasRunNoOtherCodeThoughCopiesBegan;
         bool isAskedInFront = branchInFrontOfTypedCopy(passes, true, turnThatAsksInFront);
         if (isAskedInFront && turnThatAsksInFront != TurnOfTypedCopy::HasDoneNothing)
             count(StatisticID::GuardsOfCopiesAskedInFrontBehindStoresOfTurns);

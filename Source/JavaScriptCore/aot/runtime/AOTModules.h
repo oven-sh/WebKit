@@ -554,6 +554,8 @@ public:
     bool isImportedByGraphUnderEvaluation(ModuleID);
     void forgetLoadsRefusedByCheckOfNames(ModuleID mocked);
     bool wasPulledInByLoadThatFailed(ModuleID) const;
+    bool wasLinkedAheadOfFailure(ModuleID root, ModuleID) const;
+    std::optional<ModuleFailureID> failureByAbsentExport(ModuleID) const;
     bool runBodyOfImportedModuleAheadOfMock(ModuleID);
     JSObject* packageItselfBesideMock(ModuleID);
     void runBodyOfRequiredFileAheadOfMock(ModuleID);
@@ -1355,7 +1357,7 @@ private:
     Structure* m_namespaceStructure { nullptr };
     JSObject* m_prototypeOfModuleObjects { nullptr };
     JSObject* m_errorsOfExportsThatBuildFoundAbsent { nullptr };
-    unsigned m_numberOfErrorsOfExportsThatBuildFoundAbsent { 0 };
+    Vector<ModuleFailureID> m_failuresByExportsThatBuildFoundAbsent;
     Structure* m_extensibleNamespaceStructure { nullptr };
     Identifier m_moduleExportsName;
     enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain, BegunAndMadeObjectOfESModule, ReturnedAndNotListed };
@@ -1839,6 +1841,7 @@ private:
         BitVector passed;
         Strong<JSPromise> original { };
         bool loadHasWaitedForOriginal { false };
+        bool isLeftWhenSweepEnds { false };
     };
     Vector<ImportersEnteredAboveMock, 2> m_importersEnteredAboveMocks;
     std::optional<ModuleID> m_rootWhoseLoadIsSwept;
@@ -1959,7 +1962,13 @@ private:
     UncheckedKeyHashMap<ModuleID, Vector<unsigned, 2>> m_endedMocksToAskAbout;
     void didGiveUpMomentLinked(uint32_t moment);
     void didGiveUpLinksBeforeLoad(const LinksBeforeLoad&);
-    Vector<uint32_t, 16> momentsAtWhichSomeModuleMayLook(uint32_t since) const;
+    UncheckedKeyHashMap<uint32_t, Vector<std::pair<ModuleID, unsigned>, 1>> m_endedMocksSeenByMomentLinked;
+    struct MomentSomeModuleMayLookAt {
+        uint32_t moment;
+        uint32_t momentLinked;
+    };
+    static const MomentSomeModuleMayLookAt* firstBetween(std::span<const MomentSomeModuleMayLookAt> sorted, uint32_t from, uint32_t until);
+    Vector<MomentSomeModuleMayLookAt, 16> momentsAtWhichSomeModuleMayLook(uint32_t since) const;
     void letGoOfEndedMocksNobodySees(ModuleID fileOrModule);
     struct MomentMockWasLaid {
         uint32_t moment { 0 };

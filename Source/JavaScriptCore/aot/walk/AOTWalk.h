@@ -1563,6 +1563,11 @@ public:
         explicit operator bool() const { return !!proven; }
     };
     NumberAskedBesideNumber askValueBesideNumberForNumber(const BodyValue&);
+    bool testOfTypeLooksAtNoShape(TypeID tested) const
+    {
+        const Type& type = m_types.at(tested);
+        return !type.layouts || type.hasOnlyClosures();
+    }
     void noteThatFrontAsksWhatNothingSpeaksFor() { m_waysIntoClosedCopies.last().frontAsksWhatNothingSpeaksFor = true; }
     enum class QuestionIsAsked : bool { InCopiedCalleesAlone, Anywhere };
     bool leavesOutQuestionThatEveryTurnWouldAsk(QuestionIsAsked = QuestionIsAsked::InCopiedCalleesAlone) const;

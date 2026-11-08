@@ -705,6 +705,9 @@ public:
         FlowNodeID node;
     };
     std::span<const OwnValue> ownValuesOf(LayoutID) LIFETIME_BOUND;
+    static constexpr size_t numberOfOwnValuesBesideFields = 2;
+    std::span<const OwnValue> ownValuesThatMayHaveNoKeyOf(LayoutID) LIFETIME_BOUND;
+    BitVector layoutsWhoseOwnFieldsListAccessor;
     FlowNodeID foundBesideFieldsUnder(PropertyKeyID);
     FlowNodeID appendedField(LayoutID, PropertyKeyID);
     FlowNodeID appendedFieldAsStoredThroughItsLayout(LayoutID, PropertyKeyID);
@@ -1081,6 +1084,7 @@ public:
         if (builtin)
             noteLossOfBuiltin(builtin);
     }
+    void noteLossOfObjectOfBuiltinModule(ModuleID) const;
     void noteKeysBecomeTexts(LayoutID layout)
     {
         if (m_keysOfLayoutAreTold.at(layout.index()) != nothingIsLeftToTell) [[unlikely]]
@@ -2129,6 +2133,7 @@ private:
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_nodesOnDemand;
     Vector<uint32_t> m_nodesBesideFields;
     Vector<Vector<OwnValue>> m_ownValuesOfLayouts;
+    BitVector m_layoutsWithListedFieldWithoutKey;
     BitVector m_layoutsWhoseOwnValuesAreListed;
     Vector<OwnValue, 8> listOwnValuesOf(LayoutID);
     Vector<LayoutID> m_layoutsWithNodesBesideFields;

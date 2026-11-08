@@ -3037,6 +3037,86 @@ static void testMachineFrameOwnerIsHeldAtPollOfLoopOutsidePartThatSpilledIt()
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(ownerInMemory.data(), uint64_t { 6 }) == 11 + 2 * (33 + 22) + 11 && numberOfTimesFound == 9);
 }
 
+static void checkOwnerIsHeldAtPollBehindTwoHeads(unsigned numberOfSums, bool keepsFramedPart)
+{
+    std::array<uint64_t, 3> elements { 11, 22, 33 };
+    std::array<const uint64_t*, 1> ownerInMemory { elements.data() };
+    uint64_t numberOfTimesFound = 0;
+
+    ProcedureTraits traits;
+    traits.chargesForCalleeSaves = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    const unsigned numberKeptByCalls = numberOfFrameTestRegisters(registerFileOfFrameTest(test).calleeSavedIn(Bank::GP));
+    AbstractHeap storageOfOwner(test.heaps().argumentBuffer.index(), 0, OptionSet<HeapTrait> { HeapTrait::HoldsInnerPointer });
+    Operation* owner = test.argumentGPR(0);
+    Operation* selector = test.argumentGPR(1);
+    Operation* storage = out.loadPtr(out.address(storageOfOwner, owner));
+    Block* first = out.newBlock();
+    Block* choosing = out.newBlock();
+    Block* second = out.newBlock();
+    Block* leaving = out.newBlock();
+    Block* behind = out.newBlock();
+    Vector<Operation*> readMore;
+    for (unsigned index = 0; index + 1 < numberKeptByCalls; ++index)
+        readMore.append(out.opaque(out.add(selector, 2 + index)));
+    out.branch(out.testNonZero64(selector, 1), normalEdge(first), normalEdge(choosing));
+    out.appendTo(choosing);
+    out.branch(out.testNonZero64(selector, 2), normalEdge(second), normalEdge(leaving));
+    out.appendTo(leaving);
+    out.ret(out.add(selector, 100));
+    auto appendArm = [&](Block* arm, unsigned offset) {
+        out.appendTo(arm);
+        appendFrameTestCall(test)->effects.mayCollect = true;
+        Operation* sum = out.add(out.load64(out.address(test.heaps().argumentBuffer, storage, offset)), out.load64(out.address(test.heaps().argumentBuffer, storage, offset)));
+        for (Operation* value : readMore)
+            sum = out.add(out.add(sum, value), out.opaque(value));
+        Vector<ValueFromBlock> results;
+        results.append(out.anchor(sum));
+        for (Operation* value : defineFrameTestValues(out, sum, numberOfSums))
+            results.append(out.anchor(value));
+        out.jump(behind);
+        return results;
+    };
+    Vector<ValueFromBlock> fromFirst = appendArm(first, 0);
+    Vector<ValueFromBlock> fromSecond = appendArm(second, sizeof(uint64_t));
+    out.appendTo(behind);
+    Vector<Operation*> sums;
+    for (unsigned index = 0; index <= numberOfSums; ++index)
+        sums.append(out.phi(Int64, fromFirst[index], fromSecond[index]));
+    appendFrameTestPollThatLooksForWordAsCollectorDoes(test, reinterpret_cast<uint64_t>(ownerInMemory.data()), &numberOfTimesFound);
+    out.ret(addUpFrameTestValues(out, out.load64(out.address(test.heaps().argumentBuffer, storage, 2 * sizeof(uint64_t))), sums.span()));
+
+    compileOrFail(test);
+    const Allocation& allocation = proc.allocation();
+    AOT_FRAME_TEST_CHECK(test, storage->has(OperationFlag::IsInnerPointer) && proc.liveness().of(owner).has(ValueFlag::IsKeptForCollector));
+    if (keepsFramedPart)
+        AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::FramedPart && allocation.isHeadOfFramedPart(first) && allocation.isHeadOfFramedPart(second) && !allocation.isInFramedPart(behind) && allocation.isSpilled(owner));
+    auto expectedOf = [&](uint64_t chosen, uint64_t element) {
+        uint64_t sum = 2 * element;
+        for (unsigned index = 0; index + 1 < numberKeptByCalls; ++index)
+            sum += 2 * (chosen + 2 + index);
+        return 33 + sum + sumOfFrameTestValues(sum, numberOfSums);
+    };
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(ownerInMemory.data(), uint64_t { 1 }) == expectedOf(1, 11) && numberOfTimesFound == 1);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(ownerInMemory.data(), uint64_t { 2 }) == expectedOf(2, 22) && numberOfTimesFound == 2);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(ownerInMemory.data(), uint64_t { 4 }) == 104 && numberOfTimesFound == 2);
+}
+
+static void testMachineFrameOwnerThatPartSpilledIsLoadedBackWhereWayLeavesPart()
+{
+    checkOwnerIsHeldAtPollBehindTwoHeads(0, true);
+}
+
+static void testMachineFrameOwnerThatPartSpilledIsHeldThoughNoRegisterIsFreeWhereWayLeavesPart()
+{
+    RegisterFile file = registerFileFor(ProcedureTraits());
+    const unsigned numberNoCallerCountsOn = numberOfFrameTestRegisters(file.allocatableIn(Bank::GP) & ~file.calleeSavedIn(Bank::GP));
+    for (unsigned numberOfSums = numberNoCallerCountsOn - 5; numberOfSums <= numberNoCallerCountsOn + 1; ++numberOfSums)
+        checkOwnerIsHeldAtPollBehindTwoHeads(numberOfSums, false);
+}
+
 static void testMachineFrameIsSetUpForArmThatRunsOutOfRegisters()
 {
     constexpr uint64_t word = 0x1000;
@@ -3510,6 +3590,8 @@ std::span<const NativeTest> machineFrameTests()
         { "machine/frame/rare-blocks-with-calls-have-frames-of-their-own"_s, Machine::testMachineFrameCoversRareBlocksAlone },
         { "machine/frame/a-head-saves-the-owner-that-the-collector-alone-reads"_s, Machine::testMachineFrameHeadSavesOwnerThatCollectorAloneReads },
         { "machine/frame/the-owner-is-held-at-the-poll-of-a-loop-outside-the-part-that-spilled-it"_s, Machine::testMachineFrameOwnerIsHeldAtPollOfLoopOutsidePartThatSpilledIt },
+        { "machine/frame/an-owner-that-the-part-spilled-is-loaded-back-where-the-way-leaves-the-part"_s, Machine::testMachineFrameOwnerThatPartSpilledIsLoadedBackWhereWayLeavesPart },
+        { "machine/frame/an-owner-that-the-part-spilled-is-held-though-no-register-is-free-where-the-way-leaves-the-part"_s, Machine::testMachineFrameOwnerThatPartSpilledIsHeldThoughNoRegisterIsFreeWhereWayLeavesPart },
         { "machine/frame/a-stretch-that-binds-few-values-has-no-frame-though-an-unlikely-way-later-in-the-order-reads-more"_s, Machine::testMachineFrameStretchThatBindsFewValuesHasNoFrameThoughUnlikelyWayLaterInOrderReadsMore },
         { "machine/frame/patch-that-tests-the-stack-itself-stands-ahead-of-the-framed-part"_s, Machine::testMachineFramePatchThatTestsStackItselfStandsAheadOfFramedPart },
         { "machine/frame/patch-that-tests-the-stack-itself-gets-a-frame-where-nothing-else-needs-one"_s, Machine::testMachineFramePatchThatTestsStackItselfGetsFrameWhereNothingElseNeedsOne },

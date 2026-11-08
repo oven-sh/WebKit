@@ -1025,6 +1025,123 @@ static void testCreatedFieldsInOrdersOfImage()
     object.forgetRuns();
 }
 
+struct ExtensionGivenByOperation {
+    uint32_t* extensionWord;
+    uint32_t wordOfExtension;
+};
+static ExtensionGivenByOperation* extensionGivenByOperation;
+
+static UGPRPair JIT_OPERATION_ATTRIBUTES giveExtensionByOperation(Instance* instance, uint64_t object, uint64_t granuleBits)
+{
+    StubEnvironment& environment = StubEnvironment::of(instance);
+    ++environment.numberOfOperationCalls;
+    ++environment.numberOfRecordedCalls;
+    environment.recordedArguments = { object, granuleBits, 0, 0, 0 };
+    *extensionGivenByOperation->extensionWord = extensionGivenByOperation->wordOfExtension;
+    return makeUGPRPair(0, 0);
+}
+
+static void testFirstFieldInExtensionOfObjectWithoutOne()
+{
+    constexpr uint32_t offsetOfExtensionWord = offsetOfFirstField;
+    constexpr uint32_t offsetInExtension = offsetOfFirstExtensionSlot + 2 * extensionGranuleSize;
+    constexpr uint32_t slotKey = slotKeyFor(offsetInExtension, true);
+    constexpr uint64_t granuleBit = granuleBitOf(offsetInExtension);
+    constexpr uint32_t orderBefore = orderWordOf(0, 0);
+    constexpr uint32_t orderAfter = orderWordOf(0, 1);
+    constexpr uint64_t untouched = 0xabababababababab;
+    const StubKey store = putSlotOrAdd(PlaceOfCreatedSlot::OutOfLine, SlotRepresentation::JSValue);
+    const uint64_t value = JSValue::encode(jsNumber(42));
+    StubRunner runner;
+    ObjectWithKeyOrder object(runner);
+    Instance& instance = runner.instance();
+
+    struct {
+        ExtensionLayoutData extensionData { };
+        LayoutData layout { };
+    } withExtensionData;
+    static_assert(offsetof(decltype(withExtensionData), layout) == sizeof(ExtensionLayoutData));
+    withExtensionData.layout = object.layout;
+    withExtensionData.layout.hasExtensionData = true;
+    object.inStructure<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &withExtensionData.layout;
+    object.inStructure<uint32_t>(CompiledStructure::offsetOfExtensionSlot()) = SlotData::create(offsetOfExtensionWord, SlotRepresentation::Cell32).encoded();
+    object.publish(orderBefore, slotKey, orderAfter);
+
+    struct {
+        FakeObject<minExtensionSize> empty;
+        FakeObject<minExtensionSize> given;
+    } extensions;
+    FakeObject<minExtensionSize>& emptyExtension = extensions.empty;
+    FakeObject<2 * minExtensionSize> room;
+    FakeAllocator allocator { minExtensionSize };
+    FakeObject<CompleteSubspace::offsetOfAllocatorForSizeStep() + (extensionCellSizeFor(maxGranulesOfExtensionFromStub) / MarkedSpace::sizeStep + 1) * sizeof(void*)> space;
+    void*& allocatorInSpace = space.at<void*>(CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(minExtensionSize) * sizeof(void*));
+    allocatorInSpace = &allocator;
+    instance.allocation.cagedAuxiliarySpace = space.bytes.data();
+    instance.cellCageBase = emptyExtension.address() - offsetOfEmptyExtensionInCage;
+    instance.barrierThreshold = blackThreshold;
+    const uint32_t wordOfRoom = static_cast<uint32_t>((room.address() - offsetOfEmptyExtensionInCage) >> cell32Shift);
+    uint32_t& extensionWord = object.object.at<uint32_t>(offsetOfExtensionWord);
+    ExtensionGivenByOperation given { &extensionWord, static_cast<uint32_t>((extensions.given.address() - emptyExtension.address()) >> cell32Shift) };
+    extensionGivenByOperation = &given;
+
+    auto begin = [&] {
+        object.orderWord() = orderBefore;
+        object.object.at<uint8_t>(JSCell::cellStateOffset()) = static_cast<uint8_t>(CellState::DefinitelyWhite);
+        extensionWord = 0;
+        extensions.given.at<uint64_t>(offsetOfExtensionGranuleBits) = granuleBit;
+        extensions.given.at<uint64_t>(offsetOfFirstExtensionSlot) = 0;
+        for (size_t offset = 0; offset < 2 * minExtensionSize; offset += sizeof(uint64_t))
+            room.at<uint64_t>(offset) = untouched;
+        allocator.makeRoomAt(room.address(), minExtensionSize);
+    };
+    auto isStoredInLine = [&] {
+        runner.install(Entry::operationAOTEnsureExtensionGranules, giveExtensionByOperation);
+        StubRun run = runner.run(store, { object.object.address(), value }, slotKey);
+        runner.countCallsOf(Entry::operationAOTEnsureExtensionGranules);
+        if (run.numberOfRecordedCalls) {
+            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == object.object.address() && run.recordedArguments[1] == granuleBit);
+            AOT_TEST_CHECK(extensionWord == given.wordOfExtension && extensions.given.at<uint64_t>(offsetOfFirstExtensionSlot) == value && object.orderWord() == orderAfter);
+            AOT_TEST_CHECK(room.at<uint64_t>(offsetOfExtensionGranuleBits) == untouched && room.at<uint64_t>(offsetOfFirstExtensionSlot) == untouched);
+            return false;
+        }
+        AOT_TEST_CHECK(extensionWord == wordOfRoom && !allocator.hasRoom() && object.orderWord() == orderAfter);
+        AOT_TEST_CHECK(room.at<uint64_t>(offsetOfExtensionGranuleBits) == granuleBit && room.at<uint64_t>(offsetOfFirstExtensionSlot) == value);
+        AOT_TEST_CHECK(room.at<uint64_t>(minExtensionSize) == untouched && !emptyExtension.at<uint64_t>(offsetOfExtensionGranuleBits));
+        return true;
+    };
+
+    begin();
+    AOT_TEST_CHECK(isStoredInLine());
+
+    begin();
+    allocator.makeRoomAt(0, 0);
+    AOT_TEST_CHECK(!isStoredInLine());
+    begin();
+    allocatorInSpace = nullptr;
+    AOT_TEST_CHECK(!isStoredInLine());
+    allocatorInSpace = &allocator;
+    begin();
+    withExtensionData.extensionData.granulesOfFirstExtensionLow = static_cast<uint32_t>(granuleBit << 1);
+    AOT_TEST_CHECK(!isStoredInLine());
+    withExtensionData.extensionData.granulesOfFirstExtensionLow = static_cast<uint32_t>(granuleBit);
+    begin();
+    AOT_TEST_CHECK(isStoredInLine());
+    withExtensionData.extensionData.granulesOfFirstExtensionLow = 0;
+
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    constexpr uint32_t budget = 81;
+    begin();
+    runner.setCountsInstructions(true);
+    StubRun run = runner.run(store, { object.object.address(), value }, slotKey);
+    runner.setCountsInstructions(false);
+    AOT_TEST_CHECK(!run.calledOperation && run.instructionsInStubs && extensionWord == wordOfRoom);
+    if (*run.instructionsInStubs != budget)
+        dataLogLn("the first field in the extension of an object without one: ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+    AOT_TEST_CHECK(*run.instructionsInStubs <= budget);
+#endif
+}
+
 static void testCreatedFieldsOfObjectsWithExtraProperties()
 {
     constexpr uint32_t slotKey = ObjectWithKeyOrder::slotKeys[0];
@@ -1686,6 +1803,7 @@ std::span<const NativeTest> stubRuntimeTests()
         { "stubs/slim-closures-with-more-captures-than-registers"_s, ImageTests::whenExecutable<testSlimClosuresWithMoreCapturesThanRegisters> },
         { "stubs/typed-arrays-with-length"_s, ImageTests::whenExecutable<testTypedArraysWithLength> },
         { "stubs/created-fields-in-orders-of-the-image"_s, ImageTests::whenExecutable<testCreatedFieldsInOrdersOfImage> },
+        { "stubs/first-field-in-the-extension-of-an-object-without-one"_s, ImageTests::whenExecutable<testFirstFieldInExtensionOfObjectWithoutOne> },
         { "stubs/created-fields-of-objects-with-extra-properties"_s, ImageTests::whenExecutable<testCreatedFieldsOfObjectsWithExtraProperties> },
         { "stubs/created-fields-of-slots-known-to-the-caller"_s, ImageTests::whenExecutable<testCreatedFieldsOfSlotsKnownToCaller> },
         { "stubs/binary-operation-string-order"_s, ImageTests::whenExecutable<testBinaryOperationStringOrder> },

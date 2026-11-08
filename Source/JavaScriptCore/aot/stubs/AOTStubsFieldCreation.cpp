@@ -256,7 +256,7 @@ void listCreatedFieldAndReturn(StubAssembler& jit, const KeyOrderRegisters& r, G
     jit.callOperationAndReturn(Entry::operationAOTDidCreateFieldAt, didCreateField);
 }
 
-void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, const WaysToFieldInExtension& ways)
+void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, const WaysToFieldInExtension& ways, FirstExtension firstExtension)
 {
     const GPRReg object = r.field.object;
     const GPRReg granule = r.field.representation;
@@ -270,6 +270,8 @@ void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, cons
     static_assert(granuleOf(offsetOfFirstExtensionSlot) == offsetOfFirstExtensionSlot / 8 - 1 && extensionGranuleSize == 8 && maxExtensionGranules == 64);
     if (jit.options().useWideReferences)
         cannotInsert.append(jit.branchTest64(CCallHelpers::Zero, extension));
+    else if (firstExtension == FirstExtension::IsAllocatedInLine)
+        allocateFirstExtensionWithOneGranule(jit, object, granuleBit, extension, granule, r.scratch, ways.fromGranule, cannotInsert);
     insertGranule(jit, extension, granuleBit, granule, OwnedScratchRegister(jit), cannotInsert);
     jit.move(granule, extension);
     jit.jump().linkTo(ways.fromGranule, &jit);
@@ -518,7 +520,7 @@ void generatePutSlotOrAdd(StubAssembler& jit)
         .field = { .object = object, .slotData = slotKey, .extensionWordOffset = address, .address = address, .representation = words },
         .value = InvalidGPRReg,
         .type = InvalidGPRReg,
-        .scratch = InvalidGPRReg,
+        .scratch = scratch,
         .secondScratch = entry,
         .number = InvalidFPRReg,
     };
@@ -529,7 +531,7 @@ void generatePutSlotOrAdd(StubAssembler& jit)
     storeAndReturn(Address(address));
 
     hasNoStorage.link(&jit);
-    createGranuleOfField(jit, registers, ways);
+    createGranuleOfField(jit, registers, ways, FirstExtension::IsAllocatedInLine);
 }
 
 } } // namespace JSC::AOT

@@ -1980,7 +1980,8 @@ void Walker::checkProofOfRecord(ValueID record, const Draft& draft, TypeID prove
     if (draft.opcode == Opcode::Narrowed) {
         Representation form = m_code.at(record).representation;
         bool hasBox = form == Representation::JSValue || form == Representation::Cell || (form == Representation::Cell32 && checksProofs());
-        if (Reference narrowed = draft.valueOperand(); narrowed && narrowed.isValue() && (hasBox || checksWalk()))
+        bool isRawNumberHeldUnderWord = checksProofs() && numberRepresentations.contains(form);
+        if (Reference narrowed = draft.valueOperand(); narrowed && narrowed.isValue() && (hasBox || isRawNumberHeldUnderWord || checksWalk()))
             checkProof(Reference::value(record), TypeWithoutProof::restingOnBelief(typeAsBuilt(narrowed)), ProofSource::Test, draft.origin());
         return;
     }

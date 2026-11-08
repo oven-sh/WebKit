@@ -138,6 +138,7 @@ struct PlannedLayout {
     std::optional<FieldIndex> environmentOfDeferredClosures;
     BitVector fieldsThatHoldRawValuesFromBirth;
     bool mayBearMark { false };
+    Vector<FieldIndex> fieldsHeldFilled;
 };
 
 inline size_t PlannedLayout::findAppendedKey(PropertyKeyID key) const

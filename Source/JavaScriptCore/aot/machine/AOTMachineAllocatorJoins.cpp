@@ -2046,6 +2046,19 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPl
                 unbindRegisterBetweenBlocks(*this, reg, state);
                 bindFreeRegisterBetweenBlocks(*this, hint && (freeRegisters & maskOf(hint)) ? hint : lowestRegisterAtEdge(freeRegisters), value, state, calleeSavesStillToNote);
             }
+            for (const RegisterBinding& binding : m_allocation.registersAtHeadOf(m_allocation.headOfFramedPartAbove(from).block)) {
+                Operation* value = binding.value;
+                ValueState& state = states[value->index()];
+                const ValueFacts& facts = factsOfValues[value->index()];
+                if (!facts.has(ValueFlag::IsKeptForCollector) || state.registers || !m_allocation.isSpilled(value) || facts.has(ValueFlag::NeedsPointerBesideIt) || !isLiveAtHeadBeingFixed<kind>(*this, head, value))
+                    continue;
+                RegisterMask freeRegisters = m_file.allocatableIn(bankOf(binding.reg)) & ~calleeSavedRegisters & ~m_bound;
+                if (!freeRegisters) {
+                    giveUpFramedPartForReadOfSpill();
+                    break;
+                }
+                bindFreeRegisterBetweenBlocks(*this, freeRegisters & maskOf(binding.reg) ? binding.reg : lowestRegisterAtEdge(freeRegisters), value, state, calleeSavesStillToNote);
+            }
         }
 
         if constexpr (isOfAnyKind) {

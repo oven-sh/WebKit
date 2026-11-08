@@ -924,9 +924,10 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     Walker& walker = access.walker;
     if (!access.isOnlyAskedAbout && bindNumberReadBehindTestsOfTypedElements(access))
         return true;
+    bool walkStoodInFront = !walker.isUnreachable() && !walker.hasFailed();
     if (std::optional<AccessOfTypedElements> held = holdKeyToWholeNumberOrBeginTurnAgainInTypedElements(access))
         return buildArrayReadOfTypedElements(*held);
-    if (walker.isUnreachable() || walker.hasFailed())
+    if (walkStoodInFront && (walker.isUnreachable() || walker.hasFailed()))
         return true;
     auto [level, restsOnLinksWordAlone] = levelOfArrayReadOfTypedElements(access);
     std::optional<PassedTest> presentAtHead = level != KnowledgeLevel::Unknown && !access.isOnlyAskedAbout ? walker.askListAtHeadOfTypedCopy(access.value) : std::nullopt;

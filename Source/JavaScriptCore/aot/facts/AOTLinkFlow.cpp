@@ -517,6 +517,11 @@ void LinkFlow::makeTablesThatNeedNoNodes()
     escapedLayouts.ensureSize(numberOfLayouts);
     escapedVariables.ensureSize(program.variables.size());
     layoutsWithKnownAccessors.ensureSize(program.layouts.size());
+    layoutsWhoseOwnFieldsListAccessor.ensureSize(numberOfLayouts);
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (std::ranges::any_of(program.at(LayoutID(index)).fields, [](const Field& field) { return field.form.contains(FieldForm::IsAccessor); }))
+            layoutsWhoseOwnFieldsListAccessor.quickSet(index);
+    }
     layoutsDefinedOnUnderWrittenKeys.ensureSize(program.layouts.size());
     layoutsDefinedOnUnderKeysThatAreNotWritten.ensureSize(program.layouts.size());
     layoutsGivenAccessorsByDescriptorsInSight.ensureSize(program.layouts.size());
@@ -1921,6 +1926,15 @@ void LinkFlow::noteLossOfBuiltin(BuiltinID builtin) const
         lane->builtinsLost.append(builtin);
     else
         m_builtinsLost.append(builtin);
+}
+
+void LinkFlow::noteLossOfObjectOfBuiltinModule(ModuleID id) const
+{
+    const Module& module = program.at(id);
+    if (module.kind != ModuleKind::Runtime || !module.runtimeModule)
+        return;
+    const BuiltinTable& builtins = program.builtins();
+    noteLossOf(builtins.canonicalID(builtins.namespaceOf(module.runtimeModule)));
 }
 
 PropertyKeyID LinkFlow::symbolNotedAt(FlowNodeID node) const
@@ -5303,16 +5317,26 @@ std::span<const LinkFlow::OwnValue> LinkFlow::ownValuesOf(LayoutID layout)
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     if (m_ownValuesOfLayouts.isEmpty()) {
         m_ownValuesOfLayouts.grow(program.layouts.size());
+        m_layoutsWithListedFieldWithoutKey.ensureSize(program.layouts.size());
         m_layoutsWhoseOwnValuesAreListed.ensureSize(program.layouts.size());
     }
     if (!m_layoutsWhoseOwnValuesAreListed.quickGet(layout.index())) {
         Vector<OwnValue, 8> values = listOwnValuesOf(layout);
-        if (!m_layoutsWhoseOwnValuesAreListed.quickSet(layout.index()))
+        if (!m_layoutsWhoseOwnValuesAreListed.quickSet(layout.index())) {
             m_ownValuesOfLayouts[layout.index()].appendVector(values);
+            if (std::ranges::count_if(values, [](const OwnValue& value) { return !value.key; }) > numberOfOwnValuesBesideFields)
+                m_layoutsWithListedFieldWithoutKey.quickSet(layout.index());
+        }
     }
     if (lane)
         lane->layoutsWhoseOwnValuesAreSeen.ensureSizeAndSet(layout.index(), program.layouts.size());
     return m_ownValuesOfLayouts[layout.index()].span();
+}
+
+std::span<const LinkFlow::OwnValue> LinkFlow::ownValuesThatMayHaveNoKeyOf(LayoutID layout)
+{
+    std::span<const OwnValue> values = ownValuesOf(layout);
+    return values.empty() || m_layoutsWithListedFieldWithoutKey.quickGet(layout.index()) ? values : values.last(numberOfOwnValuesBesideFields);
 }
 
 Vector<LinkFlow::OwnValue, 8> LinkFlow::listOwnValuesOf(LayoutID layout)

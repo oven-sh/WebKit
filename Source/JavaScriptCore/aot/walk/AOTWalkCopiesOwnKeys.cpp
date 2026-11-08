@@ -289,6 +289,7 @@ static bool appendOrdersOfLayoutInCopiesOwnKeys(Walker& walker, LayoutID layout,
     static_assert(mostArmsOfOwnKeyWalk < 4);
     RELEASE_ASSERT(plan.orders.size() <= mostArms && mostArms <= mostArmsOfOwnKeyWalk);
     unsigned room = mostArms - static_cast<unsigned>(plan.orders.size());
+    mostFields = std::min<size_t>(mostFields, walker.plan().layout(layout).numberOfFields());
     if (mostFields > std::numeric_limits<uint16_t>::max())
         return findArmsOfLayoutInCopiesOwnKeys(walker, layout, mostArms, mostFields, plan);
     uint64_t key = (static_cast<uint64_t>(layout.index()) + 1) << 32 | static_cast<uint64_t>(mostFields) << 8 | room << 1 | walker.isInLoop();

@@ -1271,22 +1271,16 @@ void markFieldsHeldFilledInSlotPlan(const Program& program, const LinkTables& li
                 const LinkedCell* cell = linked.findCellOfField({ id, field });
                 PlacedSlot& slot = planned.slots[field];
                 slot.isHeldFilled = cell && cell->isFilled && slot.hasStorage() && !slot.holdsAccessor && !(slot.isOutOfLine() && slot.mayExistWithoutStorage) && fieldStaysInSlot(program, slot);
+                if (slot.isHeldFilled)
+                    planned.fieldsHeldFilled.append(field);
             }
         }
     });
 }
 
-Vector<FieldIndex, 8> fieldsHeldFilledInSlots(const Program& program, const LinkTables&, const SlotPlan& slots, LayoutID id)
+Vector<FieldIndex, 8> fieldsHeldFilledInSlots(const Program&, const LinkTables&, const SlotPlan& slots, LayoutID id)
 {
-    Vector<FieldIndex, 8> fields;
-    const PlannedLayout& planned = slots.layout(id);
-    if (!planned.hasSlots())
-        return fields;
-    for (FieldIndex field = 0; field < program.at(id).fields.size(); ++field) {
-        if (planned.slots[field].isHeldFilled)
-            fields.append(field);
-    }
-    return fields;
+    return Vector<FieldIndex, 8>(slots.layout(id).fieldsHeldFilled.span());
 }
 
 bool constantListsFieldsHeldFilledInSlots(const Program& program, const LinkTables& linked, const SlotPlan& slots, DataID data, RootOfConstant root)

@@ -18,6 +18,7 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsBarriers.h"
 #include "AOTStubsField.h"
 #include "AOTStubsObjectCreation.h"
 #include "CompleteSubspace.h"
@@ -471,6 +472,41 @@ static void loadGranulesOfFirstExtension(StubAssembler& jit, GPRReg object, GPRR
     jit.subPtr(TrustedImm32(sizeof(SlotData)), result);
     hasNoSuchSlot.link(&jit);
     jit.load64(Address(result, -static_cast<int32_t>(sizeof(uint64_t))), result);
+}
+
+void allocateFirstExtensionWithOneGranule(StubAssembler& jit, GPRReg object, GPRReg granuleBit, GPRReg extensionAndGranule, GPRReg scratch, GPRReg secondScratch, Label hasGranule, JumpList& isLeftToStub)
+{
+    RELEASE_ASSERT(!jit.options().useWideReferences && noOverlap(object, granuleBit, extensionAndGranule, scratch, secondScratch));
+    static_assert(extensionCellSizeFor(1) == offsetOfFirstExtensionSlot + extensionGranuleSize);
+    Jump holdsGranules = jit.branchTest64(CCallHelpers::NonZero, Address(extensionAndGranule, offsetOfExtensionGranuleBits));
+    loadGranulesOfFirstExtension(jit, object, scratch);
+    jit.or64(granuleBit, scratch);
+    isLeftToStub.append(jit.branch64(CCallHelpers::NotEqual, scratch, granuleBit));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cagedAuxiliarySpace)), scratch);
+    jit.loadPtr(Address(scratch, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(extensionCellSizeFor(1)) * sizeof(Allocator)), scratch);
+    isLeftToStub.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+    const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, extensionAndGranule, scratch, secondScratch, isLeftToStub, extensionCellSizeFor(1));
+    jit.store64(granuleBit, Address(extensionAndGranule, offsetOfExtensionGranuleBits));
+    jit.store64(TrustedImm32(0), Address(extensionAndGranule, offsetOfFirstExtensionSlot));
+    fenceAfterAllocation(jit);
+    loadExtensionWordOffset(jit, object, scratch);
+    encodeCell32(jit, extensionAndGranule, secondScratch);
+    jit.sub32(TrustedImm32(offsetOfEmptyExtensionInCage >> cell32Shift), secondScratch);
+    jit.store32(secondScratch, BaseIndex(object, scratch, CCallHelpers::TimesOne));
+    jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), extensionAndGranule);
+    Jump needsBarrier = branchIfBarrierIsNeeded(jit, object, scratch);
+    jit.jump().linkTo(hasGranule, &jit);
+
+    needsBarrier.link(&jit);
+    checkStubOperands(writeBarrier(), { object });
+    RELEASE_ASSERT(scratch == gprOf(StubRegister::T9));
+    jit.emitFunctionPrologue();
+    jit.callStub(writeBarrier());
+    jit.emitFunctionEpilogue();
+    jit.jump().linkTo(hasGranule, &jit);
+
+    emitLateRefill(jit, refill, isLeftToStub);
+    holdsGranules.link(&jit);
 }
 
 static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg granuleBits, GPRReg replacement, JumpList& givesUp)

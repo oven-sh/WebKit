@@ -82,8 +82,21 @@ private:
     }
     void put(Location location, const Operation* value)
     {
-        if (location.isRegister() && location.reg().index() < numberOfRegisters)
-            m_valueIn[location.reg().index()] = value;
+        if (!location.isRegister() || location.reg().index() >= numberOfRegisters)
+            return;
+        m_valueIn[location.reg().index()] = value;
+        if (value)
+            m_registersThatHoldValues |= maskOf(location.reg());
+        else
+            m_registersThatHoldValues &= ~maskOf(location.reg());
+    }
+
+    void clearRegisters(RegisterMask registers)
+    {
+        forEachRegister(registers & m_registersThatHoldValues, [&](Reg reg) {
+            m_valueIn[reg.index()] = nullptr;
+        });
+        m_registersThatHoldValues &= ~registers;
     }
 
     void enter(const Block*);
@@ -130,6 +143,7 @@ private:
 
     const Block* m_block { nullptr };
     const Operation* m_valueIn[numberOfRegisters] { };
+    RegisterMask m_registersThatHoldValues { 0 };
     bool m_failed { false };
 };
 
@@ -362,8 +376,7 @@ void CollectorRulesChecker::extendTo(uint32_t watched, const Block* block, Posit
 void CollectorRulesChecker::enter(const Block* block)
 {
     m_block = block;
-    for (const Operation*& held : m_valueIn)
-        held = nullptr;
+    clearRegisters(m_registersThatHoldValues);
     for (const RegisterBinding& binding : m_allocation.registersAtHeadOf(block))
         put(Location::reg(binding.reg), binding.value);
     if (!block->isEntry())
@@ -467,10 +480,7 @@ void CollectorRulesChecker::execute(const Step& step)
     }
     if (patch && patch->isSuspension())
         overwritten |= ~m_registersKeptAtSuspensions;
-    for (unsigned index = 0; index < numberOfRegisters; ++index) {
-        if (overwritten >> index & 1)
-            m_valueIn[index] = nullptr;
-    }
+    clearRegisters(overwritten);
 
     if (!patch) {
         put(step.destination, operation);
@@ -576,8 +586,8 @@ bool CollectorRulesChecker::spillHolds(SpillIndex spill, const Operation* value,
 
 bool CollectorRulesChecker::isHeld(const Operation* value, const Safepoint& safepoint) const
 {
-    for (const Operation* held : m_valueIn) {
-        if (held == value)
+    for (RegisterMask registers = m_registersThatHoldValues; registers; registers &= registers - 1) {
+        if (m_valueIn[std::countr_zero(registers)] == value)
             return true;
     }
     return spillHolds(m_allocation.spillOf(value), value, false, safepoint) || spillHolds(m_saveOf[value->index()], value, false, safepoint);
