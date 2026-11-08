@@ -1920,7 +1920,7 @@ static JSValue typeGetBase(JSGlobalObject*, JSValue self)
 }
 
 // Works out the MRO of the type again, and of all that derive from it. Appends to `changes`, for each type that got a new
-// one: the type, the new MRO, the old one. `tellsAnew`: the mro() of a metaclass has been called, or a class on the way has some beside its list, to which this does not come: MROs may be left that do not follow from the bases. False: an exception.
+// one: the type, the new MRO, the old one. `tellsAnew`: a class on the way has another metaclass than type, whose mro() may have run, or a class on the way has some beside its list, to which this does not come: MROs may be left that do not follow from the bases. False: an exception.
 static bool updateMROs(JSGlobalObject* globalObject, PyType* root, MarkedArgumentBuffer& changes, bool& tellsAnew)
 {
     Runtime& rt = runtime(globalObject);

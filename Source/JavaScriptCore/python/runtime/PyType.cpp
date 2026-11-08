@@ -21,7 +21,6 @@
 #include "PyRuntime.h"
 #include "PyStr.h"
 #include "PyWeakRef.h"
-#include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -387,7 +386,7 @@ void PyType::takeNewLookupKey()
     m_lookupKey = (lastKey.fetch_add(1, std::memory_order_relaxed) + 1) * 0x9E3779B97F4A7C15ull;
 }
 
-// type("X", (), { key: 1 }): the key is asked whether it equals the name. What it raises is lost.
+// type("X", (), { key: 1 }): the key is asked whether it equals the name. What it raises is lost, unless the caller wants it (`raised`).
 JSValue PyType::getAskingKeys(PyDict* dict, JSString* name, bool& hasRaised, JSValue* raised)
 {
     VM& vm = this->vm();
@@ -532,7 +531,7 @@ static PyType* subclassInEntry(JSValue entry)
 uint32_t PyType::takeVersion()
 {
     static std::atomic<uint32_t> last;
-    if (!m_versionsLeft || m_isInWalk)
+    if (!m_versionsLeft)
         return 0;
     uint32_t version = last.load(std::memory_order_relaxed);
     do {
