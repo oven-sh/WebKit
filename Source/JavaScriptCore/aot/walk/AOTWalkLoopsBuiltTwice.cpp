@@ -2637,6 +2637,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     if (otherCopyAsksCountersAlone && (sharedCopyIsPlainWalk || !closedCopyHasEntry || !steppedAtHead.asTheyEntered.isEmpty() || loopCarriesValuesOfConsumerRound(inputHead)))
         return false;
     bool closedCopyIsSharedBehindOtherCopy = otherCopyAsksCountersAlone && sharedEntry;
+    bool otherCopyBoughtNothing = false;
     bool frontLeadsOnAsItDid = closedCopyIsSharedBehindOtherCopy && frontLeadsToNextStartOfMember;
     if (closedCopyIsSharedBehindOtherCopy)
         sharedEntry = { };
@@ -3577,6 +3578,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         }
         if (otherCopyAsksCountersAlone && entryOfClosedCopy) {
             count(StatisticID::LoopsWhoseOtherCopyAsksCountersAlone);
+            uint32_t builtTwiceInFront = m_numberOfLoopsBuiltTwice;
             SetForScope asksCountersAlone(m_walksCopyThatAsksCountersAlone, true);
             SetForScope endedLists(m_typedBuildEndedListsTestedInFront, m_typedBuildEndedListsTestedInFront);
             SetForScope asksGuards(m_typedBuildAsksGuardsThatItWasBoughtFor, m_typedBuildAsksGuardsThatItWasBoughtFor);
@@ -3602,6 +3604,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
                 m_frames[frameIndex].loopsBeingBuiltTwice.append(loop);
             if (firstPurchaseIsListed)
                 m_loopsBeingBought.append(boughtFirst);
+            otherCopyBoughtNothing = !closedCopyIsSharedBehindOtherCopy && m_numberOfLoopsBuiltTwice == builtTwiceInFront;
         } else if (otherCopyOpensItsGuesses) {
             bool standsInsideTypedCopy = m_waysIntoClosedCopies.containsIf([&](const WayIntoClosedCopy& way) { return way.frameIndex != frameIndex || way.inputHead != inputHead; });
             if (standsInsideTypedCopy)
@@ -3616,6 +3619,8 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             --m_numberOfCopiesBuiltForSize;
         }
     }
+    if (otherCopyBoughtNothing)
+        m_typedBuildEndedListsTestedInFront = true;
     forgetValuesOfLoop(inputHead);
     for (uint32_t number = 0; number < carriedEnteringClosedCopy.size(); ++number)
         bind(ValueID(index.numberOfValues() + number), carriedInFrontOfLoop[number]);
