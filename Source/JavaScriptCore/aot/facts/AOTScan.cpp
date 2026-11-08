@@ -943,8 +943,14 @@ public:
         uint32_t member { 0 };
         VariableID variable;
     };
+    struct ChangeUnderVariableInScan {
+        FunctionID function;
+        uint32_t change { 0 };
+        VariableID variable;
+    };
     const Vector<KeyOfVariableInScan>& keysOfVariables() const { return m_keysOfVariables; }
     const Vector<MemberUnderVariableInScan>& membersUnderVariables() const { return m_membersUnderVariables; }
+    const Vector<ChangeUnderVariableInScan>& changesUnderVariables() const { return m_changesUnderVariables; }
     const Vector<FunctionID>& functionsThatCopyMembers() const { return m_functionsThatCopyMembers; }
     const Vector<ThinSummaries::MakerOfClosures>& makersOfClosures() const { return m_makersOfClosures; }
 
@@ -1378,6 +1384,12 @@ private:
         ValueID key;
     };
     Vector<KeyWrittenForMemberInScan> m_keysWrittenForMembers;
+    /** A delete under a computed key: the key is spelled at the end of the scan, as the keys of members are. */
+    struct KeyWrittenForChangeInScan {
+        uint32_t change { 0 };
+        ValueID key;
+    };
+    Vector<KeyWrittenForChangeInScan> m_keysWrittenForChanges;
     struct ValueOfVariableInScan {
         VariableID variable;
         ValueID value;
@@ -1386,6 +1398,7 @@ private:
     Vector<std::pair<VariableID, uint32_t>, 2> m_valuesLaidIntoDescriptors;
     Vector<KeyOfVariableInScan> m_keysOfVariables;
     Vector<MemberUnderVariableInScan> m_membersUnderVariables;
+    Vector<ChangeUnderVariableInScan> m_changesUnderVariables;
     Vector<FunctionID> m_functionsThatCopyMembers;
     Vector<ThinSummaries::MakerOfClosures> m_makersOfClosures;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_placesOfAccessorsLaid;
@@ -1944,6 +1957,7 @@ void ScanOfBody::reset()
     m_sinks.shrink(0);
     m_stores.shrink(0);
     m_keysWrittenForMembers.shrink(0);
+    m_keysWrittenForChanges.shrink(0);
     m_valuesOfImmutableVariables.shrink(0);
     m_valuesLaidIntoDescriptors.shrink(0);
     if (!m_accessorsLaid.isEmpty()) {
@@ -3662,6 +3676,8 @@ void ScanOfBody::readOperand(const BodyValue& value, ValueID operand, uint32_t o
             break;
         case OperandUse::DeletesByKey:
             addChange(SummaryChange::Kind::Deletes, value.id(), list, m_keyOfOperation, std::nullopt);
+            if (!m_keyOfOperation && value.opcode() == Opcode::ElemDelete)
+                m_keysWrittenForChanges.append({ static_cast<uint32_t>(m_summary.changes.size() - 1), value.as<Opcode::ElemDelete>().propertyOperand() });
             break;
         case OperandUse::AssignsFrom: {
             ValueID source = info.assignedFromOperand ? value.operand(*info.assignedFromOperand) : ValueID();
@@ -5469,6 +5485,15 @@ void ScanOfBody::nameKeysOfMembers()
         else
             m_summary.members[member].key = keySpelledBy(definition);
     }
+    for (auto [change, written] : m_keysWrittenForChanges) {
+        BodyValue definition = definitionBehindCasts(written);
+        if (definition && definition.opcode() == Opcode::ToPropertyKey && definition.operand(0))
+            definition = definitionBehindCasts(definition.operand(0));
+        if (definition && definition.opcode() == Opcode::GetModuleVariable)
+            m_changesUnderVariables.append({ m_id, change, definition.as<Opcode::GetModuleVariable>().variable() });
+        else
+            m_summary.changes[change].key = keySpelledBy(definition);
+    }
 }
 
 bool ScanOfBody::isStillAlone(uint32_t root, uint32_t position, uint32_t block) const
@@ -6563,27 +6588,37 @@ static bool holdsWhatItsOneStoreLaysThereInScan(const Program& program, Variable
     return loaderEntersBodyAtMostOnce(program.at(variable.module));
 }
 
+// The module constants that hold one key: a member under such a constant is a member under that key, and so is an access to a built-in under it (keyThatAccessGoesBy in AOTFactsOfProgram.cpp).
 static void nameKeysOfMembersByVariablesInScan(const Program& program, const Vector<std::unique_ptr<ScanOfBody>>& scans, ThinSummaries& summaries)
 {
-    Vector<ScanOfBody::KeyOfVariableInScan> keys;
+    Vector<ScanOfBody::KeyOfVariableInScan> stores;
     for (const std::unique_ptr<ScanOfBody>& scan : scans) {
-        if (scan && !scan->membersUnderVariables().isEmpty() && keys.isEmpty()) {
-            for (const std::unique_ptr<ScanOfBody>& other : scans) {
-                if (other)
-                    keys.appendVector(other->keysOfVariables());
-            }
-            std::ranges::sort(keys, { }, &ScanOfBody::KeyOfVariableInScan::variable);
-        }
+        if (scan)
+            stores.appendVector(scan->keysOfVariables());
+    }
+    std::ranges::sort(stores, { }, &ScanOfBody::KeyOfVariableInScan::variable);
+    Vector<ThinSummaries::KeyOfVariable> keys;
+    for (size_t index = 0; index < stores.size(); ) {
+        auto stored = std::ranges::equal_range(stores.subspan(index), stores[index].variable, { }, &ScanOfBody::KeyOfVariableInScan::variable);
+        if (stored.size() == 1 && holdsWhatItsOneStoreLaysThereInScan(program, stores[index].variable))
+            keys.append({ stores[index].variable, stores[index].key });
+        index += stored.size();
     }
     for (const std::unique_ptr<ScanOfBody>& scan : scans) {
         if (!scan)
             continue;
         for (const ScanOfBody::MemberUnderVariableInScan& member : scan->membersUnderVariables()) {
-            auto stored = std::ranges::equal_range(keys, member.variable, { }, &ScanOfBody::KeyOfVariableInScan::variable);
-            if (stored.size() == 1 && holdsWhatItsOneStoreLaysThereInScan(program, member.variable))
-                summaries.at(member.function).members[member.member].key = stored.front().key;
+            auto found = std::ranges::lower_bound(keys, member.variable, { }, &ThinSummaries::KeyOfVariable::variable);
+            if (found != keys.end() && found->variable == member.variable)
+                summaries.at(member.function).members[member.member].key = found->key;
+        }
+        for (const ScanOfBody::ChangeUnderVariableInScan& change : scan->changesUnderVariables()) {
+            auto found = std::ranges::lower_bound(keys, change.variable, { }, &ThinSummaries::KeyOfVariable::variable);
+            if (found != keys.end() && found->variable == change.variable)
+                summaries.at(change.function).changes[change.change].key = found->key;
         }
     }
+    summaries.setKeysOfVariables(WTF::move(keys));
 }
 
 static void listFunctionsThatCopyMembersInScan(size_t numberOfFunctions, const Vector<std::unique_ptr<ScanOfBody>>& scans, ThinSummaries& summaries)

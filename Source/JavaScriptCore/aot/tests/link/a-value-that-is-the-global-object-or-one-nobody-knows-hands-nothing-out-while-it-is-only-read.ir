@@ -1,0 +1,24 @@
+# `y` is the global object on one arm and a value that nobody knows on the other. The join keeps the global object beside the unknown half: a read through `y` hands nothing out, whichever arm arrives first, and no unseen code can run.
+#   const y = hidden ? globalThis : hidden; y.foo;
+# RUN: link lookups mechanisms=all
+# CHECK-NOT: lookup let-go GlobalThis
+# RUN(SCATTERED): link lookups mechanisms=all scattered
+# SCATTERED-NOT: lookup let-go GlobalThis
+# RUN(CAUSES): causes
+# CAUSES: unseen-code cannot-run
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hidden" [isFreeName]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v2: anything):
+    v3 = PropGet v2 key="foo"
+    Return v3
+}

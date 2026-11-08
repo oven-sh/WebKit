@@ -1,0 +1,51 @@
+# const SLOT = Symbol.for("app.slot"); const MADE = Symbol("made"); globalThis[SLOT] ??= { count: 0 }; globalThis[MADE] = 1; delete globalThis[SLOT]; const tp = Symbol.toPrimitive; globalThis[tp] = 1;
+# A store on the global object under a key that the body spells as one symbol is a store under that key: a symbol that Symbol.for() finds, a symbol that one call of Symbol() makes, or a well-known symbol held in a constant. The `??=` reads and then stores through a block parameter that every edge fills with the one key. None of them is a store under a key that nobody knows: the global object is not written under any name, and no unseen code can run.
+# RUN: locks open
+# CHECK-NOT: open Eval
+# RUN(CAUSES): causes
+# CAUSES: unseen-code cannot-run
+
+layout L0 module=m0 fields=[{key=Symbol.for("app.slot") declared={type=anything}}, {key=symbol("made")@m0:0 declared={type=anything}}]
+layout L1 module=m0 fields=[{key="count" declared={type=anything}}]
+variable g0 name="SLOT" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="MADE" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g2 name="tp" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = Builtin builtin=SymbolFor
+    v2 = String string="app.slot"
+    v3 = Call v1, v0, v2 calleeName="Symbol.for"
+    PutModuleVariable v3 variable=g0
+    v5 = String string="made"
+    v6 = Call v0, -, v5 calleeName="Symbol" callNumber=0
+    PutModuleVariable v6 variable=g1
+    v8 = Builtin builtin=GlobalThis
+    v9 = GetModuleVariable variable=g0
+    v10 = ToPropertyKey v9
+    v11 = ElemGet v8, v10
+    v12 = Null
+    v13 = Eq v11, v12
+    Branch v13 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v10)
+  b2():
+    Jump -> next b3(v9)
+  b3(v14: anything):
+    v15 = Integer integer=0
+    v16 = NewObject layout=L1
+    PropDefine v16, v15 key="count"
+    ElemSet v8, v14, v16 mode=Strict
+    v19 = GetModuleVariable variable=g1
+    v20 = Integer integer=1
+    ElemSet v8, v19, v20 mode=Strict
+    v22 = ElemDelete v8, v9 mode=Strict
+    v23 = Builtin builtin=SymbolToPrimitive
+    PutModuleVariable v23 variable=g2
+    v25 = GetModuleVariable variable=g2
+    ElemSet v8, v25, v20 mode=Strict
+    v27 = Undefined
+    Return v27
+}

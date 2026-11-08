@@ -1345,21 +1345,32 @@ LinkType LinkFlow::joined(const LinkType& first, const LinkType& second) const
     if (second.functions != LinkType::Functions::None)
         joinFunctions(result, second);
     joinClasses(result, second);
-    if (second.builtin) {
-        if (!result.builtin)
-            result.builtin = second.builtin;
-        else if (result.builtin != second.builtin)
+    // A built-in beside a value that nobody knows is still that built-in where it is that: what is done through the
+    // value is held against both halves. Only a second built-in in the one slot loses them, and from then on the slot
+    // stays empty whatever arrives, so that the result does not hang on the order in which the alternatives arrive.
+    result.builtinsCollided |= second.builtinsCollided;
+    if (second.builtin && second.builtin != result.builtin) {
+        if (result.builtin || result.builtinsCollided) {
+            for (BuiltinID lost : { result.builtin, second.builtin }) {
+                if (!lost)
+                    continue;
+                noteLossOf(lost);
+                result.holdsLostBuiltins |= loseInSight(lost);
+            }
+            result.builtin = { };
+            result.builtinsCollided = true;
             result.holdsUnseen = true;
+        } else
+            result.builtin = second.builtin;
+    } else if (result.builtinsCollided && result.builtin) {
+        noteLossOf(result.builtin);
+        result.holdsLostBuiltins |= loseInSight(result.builtin);
+        result.builtin = { };
+        result.holdsUnseen = true;
     }
     joinShadowsInLinkFlow(result, first, second);
-    if (result.holdsUnseen && result.builtin) {
-        for (BuiltinID lost : { first.builtin, second.builtin }) {
-            noteLossOf(lost);
-            result.holdsLostBuiltins |= loseInSight(lost);
-        }
-        result.builtin = { };
+    if (result.builtinsCollided)
         result.unseenIsByEscapeAlone = false;
-    }
     return result;
 }
 
@@ -1791,6 +1802,10 @@ void LinkFlow::noteReachesUnseen(const LinkType& type) const
     noteLossOf(type.builtin);
     if (type.builtin)
         m_builtinsAtUnseen.append(type.builtin);
+    // A built-in that stood beside a value that nobody knows is handed out with it: from here on a value that nobody
+    // knows may be that built-in.
+    if (type.builtin && type.holdsUnseen && loseInSight(type.builtin))
+        m_lostBuiltinsReachUnseen = true;
     m_lostBuiltinsReachUnseen |= type.holdsLostBuiltins;
     bool namesSomethingNew = false;
     switch (type.objects) {
@@ -2011,7 +2026,7 @@ ALWAYS_INLINE void LinkFlow::receive(FlowNodeID node, const LinkType& type, Prop
     }
     LinkType before = m_nodes[index].type;
     bool heldNothing = !before.primitives && before.objects == LinkType::Objects::None && before.functions == LinkType::Functions::None && before.classes == LinkType::Classes::None && !before.holdsUnseen && !before.holdsLostBuiltins && !before.builtin;
-    if (heldNothing && !(arriving.holdsUnseen && arriving.builtin) && !(arriving.primitives & LinkType::oneSymbol)) {
+    if (heldNothing && !(arriving.primitives & LinkType::oneSymbol)) {
         arriving.primitivesByEscapeAlone = withoutLiteralsInLinkFlow(arriving.primitives) & ~withoutLiteralsInLinkFlow(arriving.primitivesSeen());
         arriving.primitives = withoutLiteralsInLinkFlow(arriving.primitives);
         if (arriving.holdsLostBuiltins && isNodeOfLibrary(index))
@@ -3174,13 +3189,6 @@ void LinkFlow::receiveInLane(unsigned index)
             foldObjects(after, objects.span());
         if (!functions.isEmpty())
             foldFunctions(after, functions.span());
-        if (after.holdsUnseen && after.builtin) {
-            noteLossOf(after.builtin);
-            if (!isNodeOfLibrary(node.index()))
-                after.holdsLostBuiltins |= loseInSight(after.builtin);
-            after.builtin = { };
-            after.unseenIsByEscapeAlone = false;
-        }
         if (after == before)
             continue;
         m_nodes[node.index()].type = after;

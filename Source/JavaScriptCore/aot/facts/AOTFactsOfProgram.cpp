@@ -41,6 +41,8 @@ static constexpr OpcodeSet giversOfBuiltinsInProgramFacts = namersOfBuiltinsInPr
 static constexpr OpcodeSet loadsByNameInProgramFacts { Opcode::ImportDynamic, Opcode::RequireDynamic };
 static constexpr OpcodeSet loadsAndEvaluationsInProgramFacts { Opcode::ModuleNamespace, Opcode::ImportModule, Opcode::RequireModule, Opcode::EvaluateModule, Opcode::ImportDynamic, Opcode::RequireDynamic, Opcode::ResolveDynamic, Opcode::DirectEval };
 static constexpr OpcodeSet accessesUnderConstantKeysInProgramFacts { Opcode::PropGet, Opcode::PropHas, Opcode::PropSet, Opcode::PropDefine, Opcode::PropDelete };
+// An access under a key that the body computes, which the look may still name: keyThatAccessGoesBy().
+static constexpr OpcodeSet accessesThatMayGoByOneKeyInProgramFacts { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemDelete };
 static constexpr OpcodeSet callsByValueInProgramFacts { Opcode::Call, Opcode::CallList, Opcode::Construct, Opcode::ConstructList, Opcode::SuperConstruct, Opcode::SuperConstructList };
 static constexpr OpcodeSet constructionsInProgramFacts { Opcode::Construct, Opcode::ConstructList, Opcode::SuperConstruct, Opcode::SuperConstructList };
 static constexpr OpcodeSet callsThatSpellOutArgumentsInProgramFacts { Opcode::Call, Opcode::Construct, Opcode::SuperConstruct };
@@ -501,7 +503,7 @@ struct BuiltinsHeldByVariablesInProgramFacts {
 class BodyLookOfProgramFacts {
     WTF_MAKE_NONCOPYABLE(BodyLookOfProgramFacts);
 public:
-    BodyLookOfProgramFacts(const Program& program, const RowsOfProgramFacts& rows, RefusedCode refused, FunctionID id, const BodyIndex& index, const ThinSummary& summary, Vector<FindingOfProgramFacts>& found, NamesOfNumbersInProgramFacts& namesOfNumbers, const BuiltinsHeldByVariablesInProgramFacts& builtinsHeldByVariables)
+    BodyLookOfProgramFacts(const Program& program, const RowsOfProgramFacts& rows, RefusedCode refused, FunctionID id, const BodyIndex& index, const ThinSummaries& summaries, Vector<FindingOfProgramFacts>& found, NamesOfNumbersInProgramFacts& namesOfNumbers, const BuiltinsHeldByVariablesInProgramFacts& builtinsHeldByVariables)
         : m_namesOfNumbers(namesOfNumbers)
         , m_program(program)
         , m_builtins(program.builtins())
@@ -511,8 +513,9 @@ public:
         , m_function(program.at(id))
         , m_isOfProgram(!isLibraryCode(program, m_function))
         , m_index(index)
-        , m_summary(summary)
-        , m_blocksNeverEntered(summary.blocksNeverEntered.span())
+        , m_summaries(summaries)
+        , m_summary(summaries.at(id))
+        , m_blocksNeverEntered(m_summary.blocksNeverEntered.span())
         , m_found(found)
         , m_builtinsHeldByVariables(builtinsHeldByVariables.held.span())
         , m_variablesThatLinkFollowsAsTheObject(builtinsHeldByVariables.areFollowedByLinkAsTheObject)
@@ -567,7 +570,8 @@ private:
     void lookAtLoad(const BodyValue&);
     void noteObjectOfModule(RuntimeModuleID, const BodyValue& load);
     void accessMember(const BodyValue&, BuiltinID holder);
-    PropertyKeyID wellKnownSymbolThatReadGoesBy(const BodyValue&) const;
+    PropertyKeyID keyThatAccessGoesBy(const BodyValue&) const;
+    PropertyKeyID keySpelledAt(ValueID, Vector<ValueID, 4>& parametersAsked) const;
     bool followPartOfClass(const BodyValue&, BuiltinID holder, BuiltinID member);
     void followAsPartOfClass(ValueID, BuiltinID objectOfClass);
     void accessMemberOfPartOfClass(const BodyValue&, BuiltinID objectOfClass);
@@ -604,6 +608,7 @@ private:
     const bool m_isOfProgram;
     bool m_readsOffNodeVm { false };
     const BodyIndex& m_index;
+    const ThinSummaries& m_summaries;
     const ThinSummary& m_summary;
     std::span<const BlockID> m_blocksNeverEntered;
     Vector<Finding>& m_found;
@@ -897,15 +902,60 @@ void BodyLookOfProgramFacts::accessMemberOfPartOfClass(const BodyValue& value, B
     }
 }
 
-PropertyKeyID BodyLookOfProgramFacts::wellKnownSymbolThatReadGoesBy(const BodyValue& value) const
+// The key of an access under a computed key, where the body spells one: a well-known symbol, a symbol that one call makes (Symbol.for("text"), or Symbol() run once), a module constant that holds such a key, or a block parameter that every edge fills with the one key. Otherwise none: the access is under a key that nobody knows.
+PropertyKeyID BodyLookOfProgramFacts::keyThatAccessGoesBy(const BodyValue& value) const
 {
-    if (value.opcode() != Opcode::ElemGet)
+    if (!accessesThatMayGoByOneKeyInProgramFacts.contains(value.opcode()))
         return { };
-    ValueID key = value.operand(1);
-    BuiltinID constant = builtinAt(key);
-    if (!constant || m_mayBeSomethingElse.get(key.index()))
+    Vector<ValueID, 4> parametersAsked;
+    return keySpelledAt(value.operand(1), parametersAsked);
+}
+
+PropertyKeyID BodyLookOfProgramFacts::keySpelledAt(ValueID id, Vector<ValueID, 4>& parametersAsked) const
+{
+    while (id) {
+        if (m_index.isParameter(id)) {
+            // Every incoming edge has to fill the parameter with the one key. A loop carries the parameter around to itself: that edge asks for nothing.
+            if (parametersAsked.contains(id))
+                return { };
+            parametersAsked.append(id);
+            BlockID block = m_index.blockOf(id);
+            uint32_t position = id.index() - m_index.block(block).firstParameter().index();
+            PropertyKeyID found;
+            uint32_t edges = 0;
+            for (uint32_t number = 0; number < m_index.numberOfBlocks(); ++number) {
+                BodyTerminator terminator = m_index.terminator(BlockID(number));
+                for (BodyTarget target : terminator.targets()) {
+                    if (target.block() != block)
+                        continue;
+                    ++edges;
+                    std::span<const ValueID> arguments = target.arguments();
+                    PropertyKeyID key = position < arguments.size() ? keySpelledAt(arguments[position], parametersAsked) : PropertyKeyID();
+                    if (!key || (found && key != found))
+                        return { };
+                    found = key;
+                }
+            }
+            return edges && edges == m_index.numberOfIncomingEdges(block) ? found : PropertyKeyID();
+        }
+        if (BuiltinID constant = builtinSurelyAt(id))
+            return keyOfWellKnownSymbol(m_program, m_builtins.canonicalID(constant));
+        BodyValue definition = m_index.value(id);
+        Opcode opcode = definition.opcode();
+        if (opcodesThatStateTypes.contains(opcode) || opcode == Opcode::CheckInitialized || opcode == Opcode::ToPropertyKey) {
+            id = definition.operand(0);
+            continue;
+        }
+        if (opcode == Opcode::Call) {
+            // The calls of a site that convert its operands follow the call itself, so the list is not in the order of sites.
+            auto record = std::ranges::find_if(m_summary.calls, [&](const SummaryCall& call) { return call.site == id && call.callee == SummaryCall::Callee::Builtin; });
+            return record != m_summary.calls.end() ? keyOfSymbolMadeOnceBy(m_program, *record) : PropertyKeyID();
+        }
+        if (opcode == Opcode::GetModuleVariable)
+            return m_summaries.keyHeldByVariable(definition.as<Opcode::GetModuleVariable>().variable());
         return { };
-    return keyOfWellKnownSymbol(m_program, m_builtins.canonicalID(constant));
+    }
+    return { };
 }
 
 void BodyLookOfProgramFacts::accessMember(const BodyValue& value, BuiltinID holder)
@@ -914,26 +964,30 @@ void BodyLookOfProgramFacts::accessMember(const BodyValue& value, BuiltinID hold
     PropertyKeyID key;
     BuiltinUse use = BuiltinUse::Written;
     bool isRead = opcode == Opcode::PropGet || opcode == Opcode::ElemGet;
-    if (isRead) {
-        key = opcode == Opcode::PropGet ? value.as<Opcode::PropGet>().key() : wellKnownSymbolThatReadGoesBy(value);
-        use = BuiltinUse::Read;
-    } else if (opcode == Opcode::PropHas) {
+    if (accessesThatMayGoByOneKeyInProgramFacts.contains(opcode))
+        key = keyThatAccessGoesBy(value);
+    else if (opcode == Opcode::PropGet)
+        key = value.as<Opcode::PropGet>().key();
+    else if (opcode == Opcode::PropHas)
         key = value.as<Opcode::PropHas>().key();
-        use = BuiltinUse::Tested;
-    } else if (opcode == Opcode::PropSet)
+    else if (opcode == Opcode::PropSet)
         key = value.as<Opcode::PropSet>().key();
     else if (opcode == Opcode::PropDelete)
         key = value.as<Opcode::PropDelete>().key();
     else
         key = value.as<Opcode::PropDefine>().key();
-    BuiltinName nameRead = opcode == Opcode::PropGet ? builtinMemberNameOf(m_program, key).name : BuiltinName();
+    if (isRead)
+        use = BuiltinUse::Read;
+    else if (opcode == Opcode::PropHas)
+        use = BuiltinUse::Tested;
+    BuiltinName nameRead = isRead && key ? builtinMemberNameOf(m_program, key).name : BuiltinName();
     if ((nameRead == BuiltinNames::__proto__ || nameRead == BuiltinNames::constructor) && !isObjectOfClassInProgramFacts(m_builtins, m_builtins.canonicalID(holder)))
         noteFate(value.operand(0), Fate::IsLetGo, value);
 
     if (const BuiltinCondition* light = m_rows.lightFormOf(m_builtins, m_builtins.canonicalID(holder))) {
         BuiltinName name = key ? m_program.builtinNameOf(key) : BuiltinName();
         bool isMethod = name && std::ranges::contains(light->methodsServed, name);
-        if (opcode == Opcode::PropGet && (isMethod || (name && std::ranges::contains(light->valuesServed, name)))) {
+        if (isRead && (isMethod || (name && std::ranges::contains(light->valuesServed, name)))) {
             if (isMethod)
                 m_methodsServed.append(MethodServed { value.id(), m_builtins.canonicalID(holder) });
             return;
@@ -941,7 +995,7 @@ void BodyLookOfProgramFacts::accessMember(const BodyValue& value, BuiltinID hold
         note(Finding::Kind::LightFormIsAskedForMore, 0, holder.index(), witnessAt(value));
     }
     if (use == BuiltinUse::Written)
-        noteWrite(holder, key, value, opcode == Opcode::PropDelete ? writeOnlyDeletesInProgramFacts : 0);
+        noteWrite(holder, key, value, opcode == Opcode::PropDelete || opcode == Opcode::ElemDelete ? writeOnlyDeletesInProgramFacts : 0);
     m_readsOffNodeVm |= use == BuiltinUse::Read && m_builtins.canonicalID(holder) == m_builtins.canonicalID(Builtins::NodeVm);
     BuiltinID member = memberFoundOn(holder, key);
     bool mayRunAccessorAbove = use == BuiltinUse::Written || (use == BuiltinUse::Read && (!member || (m_builtins.at(m_builtins.canonicalID(member)).kind == BuiltinKind::Accessor && m_builtins.canonicalID(m_builtins.at(member).holder) != m_builtins.canonicalID(holder))));
@@ -1861,7 +1915,7 @@ void BodyLookOfProgramFacts::look(const BodyValue& value)
         else if (BuiltinID holder = holderOfMethodServed(value.operand(0)))
             note(Finding::Kind::LightFormIsAskedForMore, 0, holder.index(), witnessAt(value));
         operandAccountedFor = 0;
-    } else if (BuiltinID holder = wellKnownSymbolThatReadGoesBy(value) ? builtinAt(value.operand(0)) : BuiltinID()) {
+    } else if (BuiltinID holder = accessesThatMayGoByOneKeyInProgramFacts.contains(opcode) && builtinAt(value.operand(0)) && keyThatAccessGoesBy(value) ? builtinAt(value.operand(0)) : BuiltinID()) {
         accessMember(value, holder);
         operandAccountedFor = 0;
     } else if (callsByValueInProgramFacts.contains(opcode))
@@ -2133,7 +2187,7 @@ void lookAtBodies(LooksAtBodies& looks, const Program& program, const ThinSummar
         size_t numberFoundInFront = found.size();
         FunctionID id(number);
         if (const BodyIndex* index = bodies.find(id))
-            BodyLookOfProgramFacts(program, rows, refused, id, *index, summaries.at(id), found, namesOfNumbers, builtinsHeldByVariables).run();
+            BodyLookOfProgramFacts(program, rows, refused, id, *index, summaries, found, namesOfNumbers, builtinsHeldByVariables).run();
         firstFindingOfFunction[number + 1] = static_cast<uint32_t>(found.size() - numberFoundInFront);
     });
     for (unsigned index = 0; index < numberOfFunctions; ++index)

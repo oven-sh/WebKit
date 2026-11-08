@@ -745,6 +745,17 @@ public:
         return found != m_makersAboveCopiesOfMembers.end() && found->closure == closure ? found->maker : FunctionID();
     }
     void setMakersAboveCopiesOfMembers(Vector<MakerOfClosures>&& makers) { m_makersAboveCopiesOfMembers = WTF::move(makers); }
+    /** A module constant that its one store fills with a key: a text, or a symbol that one call makes. Sorted by variable. */
+    struct KeyOfVariable {
+        VariableID variable;
+        PropertyKeyID key;
+    };
+    PropertyKeyID keyHeldByVariable(VariableID variable) const
+    {
+        auto found = std::ranges::lower_bound(m_keysOfVariables, variable, { }, &KeyOfVariable::variable);
+        return found != m_keysOfVariables.end() && found->variable == variable ? found->key : PropertyKeyID();
+    }
+    void setKeysOfVariables(Vector<KeyOfVariable>&& keys) { m_keysOfVariables = WTF::move(keys); }
 
 private:
     LargeList<ThinSummary> m_summaries;
@@ -754,6 +765,7 @@ private:
     uint64_t m_numberOfValuesScanned { 0 };
     Vector<FunctionID> m_functionsThatCopyMembers;
     Vector<MakerOfClosures> m_makersAboveCopiesOfMembers;
+    Vector<KeyOfVariable> m_keysOfVariables;
 };
 
 ThinSummaries scanBodies(const Program&, Diagnostics&, const ParallelLoops&, Mechanisms = allMechanisms);

@@ -1,9 +1,9 @@
 # no name leads from the global object to %TypedArray%, so the program can lay no lock of its own there. The table's lock holds at run time unless the image opens the member, and the flow follows the object to the store
 # tools.js: export const put = (o, k, v) => { o[k] = v }   a.test.js: put(Object.getPrototypeOf(Uint8Array).prototype, name, f)
-# what Object.getPrototypeOf() answers stands beside what nobody knows, so the type stops naming the object: it is one of the built-ins that are lost in sight
+# what Object.getPrototypeOf() answers stands beside what nobody knows, and the type keeps naming the object: the store through the value is a store on the prototype object under a key that nobody knows
 # OPTIONS: admit=ReplacedBuiltins
 # RUN: locks open
-# CHECK: open TypedArrayPrototype{{*}} written-through-lost-built-ins
+# CHECK: open TypedArrayPrototype{{*}} holder-written-under-any-name
 # RUN(LIST): test-run
 # LIST: replaces TypedArrayPrototype
 

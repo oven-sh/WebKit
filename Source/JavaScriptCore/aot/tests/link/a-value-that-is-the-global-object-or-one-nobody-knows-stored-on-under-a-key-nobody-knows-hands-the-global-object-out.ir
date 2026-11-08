@@ -1,0 +1,24 @@
+# The control of a-value-that-is-the-global-object-or-one-nobody-knows-hands-nothing-out-while-it-is-only-read.ir: a store through `y` under a key that nobody knows is a store on the global object under such a key, so the global object is written under any name and its members are open.
+#   const y = hidden ? globalThis : hidden; y[hidden] = 1; parseInt("1");
+# RUN: locks open
+# CHECK: open ParseInt holder-written-under-any-name
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hidden" [isFreeName]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v2: anything):
+    v3 = Integer integer=1
+    ElemSet v2, v1, v3 mode=Sloppy
+    v5 = PropGet v0 key="parseInt" [isFreeName]
+    v6 = String string="1"
+    v7 = Call v5, -, v6 calleeName="parseInt"
+    Return v7
+}

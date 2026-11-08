@@ -1,0 +1,34 @@
+# `y` is `Math` on one arm, `JSON` on another and `Reflect` on the third. One value holds one built-in: where a second arrives both are lost, and the slot stays empty, so the third is lost too, whichever order the arms arrive in.
+#   const y = hidden ? Math : other ? JSON : Reflect; y.foo;
+# RUN: link lookups mechanisms=all
+# CHECK: lookup let-go JSON
+# CHECK: lookup let-go Math
+# CHECK: lookup let-go Reflect
+# RUN(SCATTERED): link lookups mechanisms=all scattered
+# SCATTERED: lookup let-go JSON
+# SCATTERED: lookup let-go Math
+# SCATTERED: lookup let-go Reflect
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hidden" [isFreeName]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Builtin builtin=Math
+    Jump -> next b5(v2)
+  b2():
+    v3 = PropGet v0 key="other" [isFreeName]
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Builtin builtin=JSON
+    Jump -> next b5(v4)
+  b4():
+    v5 = Builtin builtin=Reflect
+    Jump -> next b5(v5)
+  b5(v6: anything):
+    v7 = PropGet v6 key="foo"
+    Return v7
+}

@@ -120,7 +120,9 @@ struct LinkType {
     bool holdsUnseen : 1 { false };
     bool holdsLostBuiltins : 1 { false };
     bool unseenIsByEscapeAlone : 1 { false };
-    uint8_t bitsNotInUse : 5 { 0 };
+    // Two built-ins met in one value: the slot is empty for good, and a built-in that arrives later is lost as well.
+    bool builtinsCollided : 1 { false };
+    uint8_t bitsNotInUse : 4 { 0 };
     uint16_t primitivesByEscapeAlone { 0 };
     uint16_t primitivesSeen() const { return primitives & ~primitivesByEscapeAlone; }
     bool holdsUnseenInSight() const { return holdsUnseen && !unseenIsByEscapeAlone; }

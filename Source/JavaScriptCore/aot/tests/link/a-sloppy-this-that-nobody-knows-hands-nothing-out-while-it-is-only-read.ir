@@ -1,0 +1,28 @@
+# A sloppy function that unseen code may call reads `this.x`. Its `this` is the global object where the caller left the receiver out, and whatever else the caller gave: the value names the global object beside what nobody knows. A read through it hands nothing out, so the global object stays in sight and no unseen code can run.
+#   const o = {}; o[hidden] = 1; o.h = function () { return this.x };
+# RUN: link lookups mechanisms=all
+# CHECK-NOT: lookup let-go GlobalThis
+# RUN(CAUSES): causes
+# CAUSES: unseen-code cannot-run
+
+layout L0 module=m0 fields=[]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewObject layout=L0 fields=[]
+    v2 = PropGet v0 key="hidden" [isFreeName]
+    v3 = Integer integer=1
+    ElemSet v1, v2, v3 mode=Sloppy
+    v5 = NewClosure function=f1
+    PropSet v1, v5 key="h" mode=Sloppy
+    v7 = Undefined
+    Return v7
+}
+function f1 name="h" module=m0 flags=[IsSloppy, HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToThis v0
+    v2 = PropGet v1 key="x"
+    Return v2
+}

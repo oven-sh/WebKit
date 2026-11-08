@@ -1,0 +1,47 @@
+# const a = Symbol("same"), b = Symbol("same"); globalThis[hidden ? a : b]; let turn; while (more()) turn = Symbol("turn"); globalThis[turn] = 1;
+# The control of a-read-on-a-built-in-under-a-registered-symbol-is-the-read-by-that-name.ir and a-store-on-a-built-in-under-one-symbol-writes-under-that-key.ir: a key that is one of two symbols, or a symbol that a loop makes anew each time, is surely a symbol but not one symbol. The read asks the global object for any member, and the store is a store under a key that nobody knows.
+# RUN: locks open
+# CHECK: open Eval holder-written-under-any-name
+# RUN(CAUSES): causes
+# CAUSES: unseen-code can-run
+
+layout L0 module=m0 fields=[{key=symbol("same")@m0:0 declared={type=anything}}, {key=symbol("same")@m0:1 declared={type=anything}}, {key=symbol("turn")@m0:2 declared={type=anything}}]
+variable g0 name="a" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="b" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g2 name="turn" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="same"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    PutModuleVariable v2 variable=g0
+    v4 = Call v0, -, v1 calleeName="Symbol" callNumber=1
+    PutModuleVariable v4 variable=g1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="hidden" [isFreeName]
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    v8 = GetModuleVariable variable=g0
+    Jump -> next b3(v8)
+  b2():
+    v9 = GetModuleVariable variable=g1
+    Jump -> next b3(v9)
+  b3(v10: anything):
+    v11 = ElemGet v6, v10
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v13 = String string="turn"
+    v14 = Call v0, -, v13 calleeName="Symbol" callNumber=2
+    PutModuleVariable v14 variable=g2
+    v16 = PropGet v6 key="more" [isFreeName]
+    v17 = Call v16 calleeName="more"
+    Branch v17 -> taken b4(), notTaken b5()
+  b5():
+    v18 = GetModuleVariable variable=g2
+    v19 = Integer integer=1
+    ElemSet v6, v18, v19 mode=Strict
+    Return v11
+}
