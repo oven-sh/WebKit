@@ -832,6 +832,7 @@ static PyCArg* pointerArgument(JSGlobalObject* globalObject, char tag, PyCData* 
     argument->tag = tag;
     memcpy(argument->value, memory.data(), sizeof(void*));
     argument->object.set(vm, argument, holder);
+    keepWhatIsPointedTo(globalObject, argument, holder);
     return argument;
 }
 

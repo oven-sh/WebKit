@@ -340,7 +340,7 @@ public:
     alignas(16) uint8_t value[32] { };
     WriteBarrier<Unknown> object; // What the value is of, or points into.
     // An aggregate is passed as a copy, `object`: the PyCTypeInfo by which the copy was made. (The instance may be given another class.)
-    // An address made of a value (bytes, a str): Packed::owner.
+    // An address made of a value (bytes, a str): Packed::owner. One that an instance held: what it pointed into, as far as that was known.
     WriteBarrier<Unknown> keep;
 
     void setPointer(const void* pointer) { memcpy(value, &pointer, sizeof(pointer)); }
@@ -630,6 +630,8 @@ PyCData* dataAt(JSGlobalObject*, PyType*, const Place&, int64_t index);
 PyCData* dataAtAddress(JSGlobalObject*, PyType*, const void*);
 // An instance with a copy of that memory, or of as much of it as the instance has room for.
 PyCData* dataFromCopy(JSGlobalObject*, PyType*, std::span<const uint8_t>);
+// No more than the memory of such an instance: a copy of those bytes, with what is written down for the places among them (`home`: where they lie, if the type has addresses in it). Null: an exception.
+PyByteStorage* copyOfMemory(JSGlobalObject*, const PyCTypeInfo*, const Home&, std::span<const uint8_t>);
 // The __buffer__() of them all.
 JSValue dataBuffer(JSGlobalObject*, JSValue self, JSValue flags);
 // Whether an instance fits into so many bytes, from the offset on. If not, a ValueError. A structure may be given its fields until there is an instance of it, so
@@ -690,6 +692,9 @@ private:
 
 // The instance as an argument. Null: an exception.
 PyCArg* argumentFor(JSGlobalObject*, PyCData*);
+// The argument has been given the address that the instance holds now. What that points into is kept by the instance for as long as it holds the address, which the conversion of a later argument
+// may end: from now on the argument keeps it too.
+void keepWhatIsPointedTo(JSGlobalObject*, PyCArg*, PyCData* holder);
 // byref(object, offset)
 JSValue makeReference(JSGlobalObject*, JSValue object, int64_t offset);
 

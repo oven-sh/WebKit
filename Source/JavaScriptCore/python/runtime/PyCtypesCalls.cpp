@@ -135,13 +135,20 @@ static void* addressOfReference(JSGlobalObject* globalObject, PyCArg* argument)
 // What the _obj of a structure passed by value is. (Field 0: the copy. Field 1: the instance.)
 static constexpr TypeDef structParamTypeDef { "_ctypes.StructParam_Type"_s, { TypeFlag::Immutable, TypeFlag::DisallowInstantiation }, { }, { }, { } };
 
+void keepWhatIsPointedTo(JSGlobalObject* globalObject, PyCArg* argument, PyCData* holder)
+{
+    if (JSValue entry = entryForAddressFrom(globalObject, holder, argument->pointer()))
+        argument->keep.set(getVM(globalObject), argument, entry);
+}
+
 PyCArg* argumentFor(JSGlobalObject* globalObject, PyCData* data)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCTypeInfo* info = infoOfInstance(globalObject, data);
     ASSERT(info);
-    auto memory = Place { data }.resolve(globalObject, info->size);
+    Home home;
+    auto memory = Place { data }.resolve(globalObject, info->size, info->flags & HasAddress ? &home : nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyCArg* argument = PyCArg::create(globalObject);
     argument->object.set(vm, argument, data);
@@ -154,6 +161,8 @@ PyCArg* argumentFor(JSGlobalObject* globalObject, PyCData* data)
         argument->tag2 = code.length() > 1 ? code[1] : 0;
         argument->foreignKind = info->foreignKind;
         memcpy(argument->value, memory.data(), std::min(memory.size(), sizeof(argument->value)));
+        if (info->flags & IsAddress)
+            keepWhatIsPointedTo(globalObject, argument, data);
         break;
     }
     case TypeKind::Pointer:
@@ -161,6 +170,7 @@ PyCArg* argumentFor(JSGlobalObject* globalObject, PyCData* data)
         argument->tag = 'P';
         argument->foreignKind = ForeignKind::Pointer;
         memcpy(argument->value, memory.data(), std::min(memory.size(), sizeof(void*)));
+        keepWhatIsPointedTo(globalObject, argument, data);
         break;
     case TypeKind::Array:
         argument->tag = 'P';
@@ -170,14 +180,10 @@ PyCArg* argumentFor(JSGlobalObject* globalObject, PyCData* data)
         break;
     case TypeKind::Structure:
     case TypeKind::Union: {
-        // By value: what is passed is what the instance holds now. The copy is bytes, not an instance: no __del__ is owed for it.
+        // By value: what is passed is what the instance holds now. The copy is bytes, not an instance: no __del__ is owed for it. (With what its pointers point into: see above.)
         Runtime& rt = runtime(globalObject);
-        PyByteStorage* copy = PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), memory.size());
-        if (!copy) {
-            raiseMemoryError(globalObject, scope, String());
-            return nullptr;
-        }
-        memcpy(copy->data(), memory.data(), memory.size());
+        PyByteStorage* copy = copyOfMemory(globalObject, info, home, memory);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         PyRecord* holder = PyRecord::create(globalObject, rt.typeFor(structParamTypeDef), 2);
         holder->set(vm, 0, copy);
         holder->set(vm, 1, data);

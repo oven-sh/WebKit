@@ -956,6 +956,20 @@ PyCData* dataFromCopy(JSGlobalObject* globalObject, PyType* type, std::span<cons
     return data;
 }
 
+PyByteStorage* copyOfMemory(JSGlobalObject* globalObject, const PyCTypeInfo* info, const Home& home, std::span<const uint8_t> source)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyByteStorage* copy = newMemory(globalObject, info, source.size());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    memcpy(copy->data(), source.data(), source.size());
+    if (info->flags & HasAddress) {
+        copyEntries(globalObject, home, { copy, 0 }, source.size());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return copy;
+}
+
 bool isSimpleInstanceType(State& state, PyType* type)
 {
     return type->base() == state.simpleType.get();
