@@ -957,6 +957,12 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
         // A constructor that is a plain function has been bound to what it was read off, as a method is.
         while (auto* bound = dynamicDowncast<JSBoundFunction>(constructor))
             constructor = bound->targetFunction();
+        // What was bound may be a class of Python's (Function.prototype.bind.call(C, null)): it stands for itself, and above a class of JS's it is what it is there unbound.
+        if (PyType* itself = PyType::tryFrom(constructor)) [[unlikely]] {
+            if (lacking.isEmpty())
+                return itself;
+            break;
+        }
         if (JSValue known = types->get(constructor); known.isCell()) {
             type = PyType::from(known);
             break;
