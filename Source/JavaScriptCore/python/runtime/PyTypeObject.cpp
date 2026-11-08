@@ -566,8 +566,9 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
     // A struct sequence without fields that are no items is laid out as a tuple. In CPython it lets go of its items in a way of its own, and so counts as laid out
     // differently from what else derives from tuple: these become one another, and nothing else becomes one of them.
     bool areTuplesOfOneKind = !oldType->has(TypeFlag::TupleSubclass) || isStructSeqType(globalObject, oldType) == isStructSeqType(globalObject, newType);
-    // (A class without an order of its bases is still being made: this is the mro() of its metaclass.)
-    if (!newType->mro() || !areTuplesOfOneKind || !layoutsAreCompatible(oldType, newType)) {
+    // From inside the mro() of its metaclass: in a class without an MRO nothing can be looked up, and a __dict__ that it adds does not count yet, as in typeSetBases().
+    bool isTooEarly = newType->isBeingMade() && (!newType->mro() || oldType->has(TypeFlag::HasDict));
+    if (isTooEarly || !areTuplesOfOneKind || !layoutsAreCompatible(oldType, newType)) {
         raiseTypeError(globalObject, scope, "__class__ assignment: '"_s, newType->nameInMessages(), "' object layout differs from '"_s, oldType->nameInMessages(), '\'');
         return;
     }
@@ -1560,6 +1561,7 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
     // ---- The type ----
 
     PyType* type = PyType::createBare(vm, rt.typeStructure());
+    type->setIsBeingMade(true);
     type->setType(vm, metatype);
     type->setNameString(vm, name);
     type->setBases(vm, bases);
@@ -1570,6 +1572,7 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
     OptionSet<TypeFlag> flags { TypeFlag::Heap, TypeFlag::Base };
     flags.add(base->flags() & inheritedTypeFlags);
     flags.remove({ TypeFlag::Sequence, TypeFlag::Mapping }); // These go by the MRO: see below.
+    flags.remove({ TypeFlag::HasDict, TypeFlag::HasWeakref }); // These by the bases that the class has when its MRO has been worked out: see below.
     if (addDict)
         flags.add(TypeFlag::HasDict);
     if (addWeakref)
@@ -1653,8 +1656,18 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
     if (dict->get(rt.name(Special::Eq)) && !dict->get(rt.name(Special::Hash)))
         dict->set(vm, rt.name(Special::Hash), jsUndefined());
 
-    resolveMRO(globalObject, type);
+    bool hasBeenGivenBases = resolveMRO(globalObject, type) == MROResult::Superseded;
     RETURN_IF_EXCEPTION(scope, { });
+    // If the mro() of the metaclass has given the class other bases, one that does not decide the layout may bring a __dict__ along, as where there are __slots__. (There may be instances by then:
+    // a base that it was given has a __new__ of the program's, or an object was given the class. Their cells are the same with and without a __dict__.)
+    bool inheritsDict = type->base()->has(TypeFlag::HasDict);
+    for (unsigned i = 0; hasBeenGivenBases && !inheritsDict && i < type->bases()->length(); ++i)
+        inheritsDict = PyType::from(type->bases()->at(i))->has(TypeFlag::HasDict);
+    if (inheritsDict)
+        type->add(TypeFlag::HasDict);
+    if (type->base()->has(TypeFlag::HasWeakref))
+        type->add(TypeFlag::HasWeakref);
+    type->setIsBeingMade(false);
     MarkedArgumentBuffer mrosOfBases;
     for (unsigned i = 0; i < bases->length(); ++i)
         mrosOfBases.append(PyType::from(bases->at(i))->mro());
@@ -1686,7 +1699,8 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
     }
     // Keys have been asked since the MRO was worked out, and one may have assigned to the __bases__ of this class, which has entered it under those. (An MRO that is worked out again is another tuple. An assignment
     // that fails and cannot give the old bases back leaves the old MRO, and other bases.)
-    if (type->mro() == mrosOfBases.at(bases->length()).asCell() && type->bases() == bases) [[likely]]
+    // So may its own mro() have done.
+    if (!hasBeenGivenBases && type->mro() == mrosOfBases.at(bases->length()).asCell() && type->bases() == bases) [[likely]]
         enterUnderBases(globalObject, type, bases, MayBeThere::No);
     else
         enterUnderBases(globalObject, type, type->bases(), MayBeThere::Yes);
@@ -2048,7 +2062,8 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
     }
     PyType* base = findBestBase(globalObject, bases);
     RETURN_IF_EXCEPTION(scope, void());
-    if (!layoutsAreCompatible(type->base(), base, type)) {
+    // A class that is being made, which its own mro() has handed out, has a __dict__ or a __weakref__ only if it adds one itself: see typeNew(). CPython does not count the __dict__ either.
+    if ((type->isBeingMade() && base->has(TypeFlag::HasDict)) || !layoutsAreCompatible(type->base(), base, type)) {
         raiseTypeError(globalObject, scope, "__bases__ assignment: '"_s, base->nameInMessages(), "' object layout differs from '"_s, type->base()->nameInMessages(), '\'');
         return;
     }

@@ -271,6 +271,9 @@ public:
     PyNativeFunction* maker() const { return m_maker.get(); } // The __new__ of a built-in type. Null: looksUpNew(), or there is no making any.
     // __new__ is looked up at each call, and called as the program would call it.
     bool looksUpNew() const { return m_looksUpNew; }
+    // typeNew() has made the cell, and the mro() of the metaclass, which gets to see it, has not returned to it: what the instances have because those of the bases have it is not settled. It stays so if the making fails there.
+    bool isBeingMade() const { return m_isBeingMade; }
+    void setIsBeingMade(bool isBeingMade) { m_isBeingMade = isBeingMade; }
     bool hasMaker() const { return m_maker || m_looksUpNew; }
     bool isMadeBy(NativeDef::VariadicWithSelf function) const { return m_maker && m_maker->isVariadicWithSelf(function); }
     // tp_new == other->tp_new
@@ -417,6 +420,7 @@ private:
     // What is remembered of the type may be what a key that is no str has said.
     bool m_hasAskedKeys { false };
     bool m_looksUpNew { false };
+    bool m_isBeingMade { false };
     Construction m_construction { Construction::Unknown };
     enum class SpecialState : uint8_t { Unknown, Known, Function, NativeTakingNone, NativeTakingOne, NativeTakingTwo };
     static_assert(static_cast<uint8_t>(SpecialState::Known) == specialIsOfNoParticularKind && static_cast<uint8_t>(SpecialState::Function) == specialIsFunction);
