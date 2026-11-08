@@ -1631,6 +1631,9 @@ static bool socketSendCall(JSGlobalObject* globalObject, PyRecord* socket, int64
             // makes it. An unconnected unix datagram socket waits for room in the queue of the receiver; a socket with something in its error queue is always said to have something.
             // (On a stream socket another thread may have been faster: so not the first time. And there such a call may take an error of the socket's with it.)
             if (wasToldReady && (!isStream || std::exchange(wasToldReadyInVain, true))) {
+                // That call sleeps too, and the one before it was not to be interrupted.
+                if (!serve(total))
+                    return result;
                 callsFirst = false;
                 continue;
             }
