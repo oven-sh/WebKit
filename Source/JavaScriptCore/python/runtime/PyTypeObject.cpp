@@ -1980,7 +1980,8 @@ static bool updateMROs(JSGlobalObject* globalObject, PyType* root, MarkedArgumen
     return true;
 }
 
-// After the base of the type has changed: which class decides the layout, for it and for all that have it from there. A class has one base, so each comes as often as it is in the list of that: once.
+// After the base of the type has changed: which class decides the layout, for it and for all that have it from there. A class has one base, so each comes as often as it is in the list of that:
+// once. Those beside the list too: a class that assignments from inside one another have left out of the list of its base is there (beToldBelow()), and may be in the list as well by now.
 static void updateSolidBases(VM& vm, PyType* root)
 {
     MarkedArgumentBuffer types;
@@ -1991,9 +1992,13 @@ static void updateSolidBases(VM& vm, PyType* root)
             continue;
         type->setSolidBase(vm, type->base()->solidBase());
         MarkedArgumentBuffer subclasses;
-        type->appendSubclassesTo(subclasses);
+        bool mayComeTwice = type->appendSubclassesTo(subclasses, PyType::SubclassOrder::OldestFirst, PyType::Dependents::Too);
+        UncheckedKeyHashSet<PyType*> haveCome;
         for (unsigned j = 0; j < subclasses.size(); ++j) {
-            if (PyType* subclass = PyType::from(subclasses.at(j)); subclass->base() == type && subclass != root)
+            PyType* subclass = PyType::from(subclasses.at(j));
+            if (subclass->base() != type || subclass == root)
+                continue;
+            if (!mayComeTwice || haveCome.add(subclass).isNewEntry)
                 types.append(subclass);
         }
     }
