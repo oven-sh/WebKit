@@ -1682,6 +1682,31 @@ bool StateOfLinkReach::enterLibraryInReach()
         m_flow.note(LinkFlow::Note::BuiltinsReadByNameAreUsed, 0);
     if (m_flow.builtinsLostAtJoinsReachUnseen())
         m_flow.note(LinkFlow::Note::BuiltinsLostAtJoinsAreUsed, 0);
+    // Where no code runs that nobody sees, what escape alone says may lie somewhere is what the program itself let go: stored or handed over through a receiver nobody knows.
+    if (m_flow.formatterIsHandedWhatEscapeAloneBrings()) {
+        const BuiltinTable& table = m_program.builtins();
+        auto tell = [&](BuiltinClassID arrived) {
+            if (table.at(arrived).origin != BuiltinOrigin::Host || table.hostTakesInstancesAsAnswers(arrived))
+                return;
+            m_builtinsInReach.noteInstanceHandedToFormatter(arrived);
+            m_builtinsInReach.noteObjectHandedToFormatter(table.formatterWalksInstancesOf(arrived));
+        };
+        for (size_t index : m_flow.classesOfInstancesThatArrivedAtUnseen())
+            tell(BuiltinClassID(static_cast<uint16_t>(index)));
+        for (size_t index : m_flow.escapedLayouts) {
+            if (!m_flow.allocatedLayouts.get(index))
+                continue;
+            size_t stepsLeft = m_program.layouts.size();
+            for (LayoutID current(static_cast<uint32_t>(index)); current && stepsLeft; current = m_program.at(current).base, --stepsLeft) {
+                if (BuiltinClassID above = m_program.at(current).writtenBuiltinBase)
+                    tell(above);
+            }
+        }
+        if (m_flow.instancesOfClassesNobodyNamesArrivedAtUnseen()) {
+            m_builtinsInReach.noteInstanceHandedToFormatter({ });
+            m_builtinsInReach.noteObjectHandedToFormatter(true);
+        }
+    }
     LinkFlow::ClassesOfSites classes = m_flow.findClassesOfSitesThatHaveEscapedOrAreClimbedFrom();
     for (size_t builtinClass : classes.haveEscaped)
         m_builtinsInReach.noteInstanceAtUnseen(BuiltinClassID(static_cast<uint32_t>(builtinClass)));

@@ -1018,7 +1018,7 @@ public:
     std::optional<uint32_t> findWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     void keepWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
     void forgetWhatSomeLaneWasGiven(MadeOnDemand);
-    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutGivenAccessorByDescriptorInSight, LayoutRedefinedByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, LayoutGetsNullAbove, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedWhereFlowBroughtIt, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead };
+    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutGivenAccessorByDescriptorInSight, LayoutRedefinedByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, LayoutGetsNullAbove, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedWhereFlowBroughtIt, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead, UnknownByEscapeAloneHandedToFormatter };
     void note(Note, uint32_t number, uint32_t more = 0);
     void noteFieldGivenAccessorByDescriptorInSight(FieldReference);
     void takeOverCallsWhoseRowsLinkTells();
@@ -1068,6 +1068,9 @@ public:
     bool rowsSpeakFor(FunctionID function) const { return m_isFunctionThatRowsSpeakFor.quickGet(function.index()); }
     bool rowsSpeakOfKeyFor(FunctionID function, PropertyKeyID key) const { return rowsSpeakFor(function) && !m_keysThatCodeTellsOfItself.contains(key); }
     bool objectsReachUnseen() const { return m_objectsReachUnseen; }
+    bool formatterIsHandedWhatEscapeAloneBrings() const { return m_formatterIsHandedWhatEscapeAloneBrings; }
+    const BitVector& classesOfInstancesThatArrivedAtUnseen() const LIFETIME_BOUND { return m_classesOfInstancesThatArrivedAtUnseen; }
+    bool instancesOfClassesNobodyNamesArrivedAtUnseen() const { return m_instancesOfClassesNobodyNamesArrivedAtUnseen; }
     void noteRowPassesWhatNobodyFollows() { LockerOfWhatIsShared locker(*this); m_rowPassesWhatNobodyFollows = true; }
     bool rowPassesWhatNobodyFollows() const { return m_rowPassesWhatNobodyFollows; }
     bool letPromisesBeHandedOut();
@@ -2072,6 +2075,9 @@ private:
     mutable BitVector m_familiesOfFunctionsAtUnseen;
     mutable Vector<FunctionID> m_membersOfFamiliesNewlyAtUnseen;
     mutable bool m_objectsReachUnseen { false };
+    bool m_formatterIsHandedWhatEscapeAloneBrings { false };
+    mutable BitVector m_classesOfInstancesThatArrivedAtUnseen;
+    mutable bool m_instancesOfClassesNobodyNamesArrivedAtUnseen { false };
     bool m_rowPassesWhatNobodyFollows { false };
     Vector<PropertyKeyID, 2> m_keysThatCodeTellsOfItself;
     bool m_promisesMayBeHandedOut { false };

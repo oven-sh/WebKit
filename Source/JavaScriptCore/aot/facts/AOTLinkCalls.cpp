@@ -6321,6 +6321,8 @@ void CallInLinkCalls::tellWhatFormatterIsHanded(const LinkType& type, const Ques
         m_flow.note(LinkFlow::Note::ObjectHandedToFormatter, LinkFlow::walkedByFormatter);
     else if (isPrintedByCodeOfItsClass)
         m_flow.note(LinkFlow::Note::ObjectHandedToFormatter, LinkFlow::printedByCodeOfItsClass);
+    if (type.holdsUnseen && !type.holdsUnseenInSight())
+        m_flow.note(LinkFlow::Note::UnknownByEscapeAloneHandedToFormatter, 0);
 }
 
 bool CallInLinkCalls::mayBePrintedWholeWhereItIsRefused(const LinkType& type, bool isLiteralMadeForCall)
