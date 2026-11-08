@@ -135,16 +135,6 @@ private:
         }
     }
 
-    // The memory of a dict or a set that has gone on to other memory since: see PyDictStorage::wasLeftForAnother().
-    static bool isTableLeftForAnother(JSCell* cell)
-    {
-        if (cell->type() != CellType)
-            return false;
-        if (cell->classInfo() == PyDictStorage::info())
-            return uncheckedDowncast<PyDictStorage>(cell)->wasLeftForAnother();
-        return cell->classInfo() == PySetStorage::info() && uncheckedDowncast<PySetStorage>(cell)->wasLeftForAnother();
-    }
-
     // Where the number of a cell is kept: there is a table for each block that has any, with room for as many cells as the block has.
     struct Table {
         unsigned first { 0 }; // In m_numbers.
@@ -384,7 +374,7 @@ void DeadGraph::walk()
     for (unsigned i = 0; i < m_cells.size(); ++i) {
         m_firstEdge.append(m_edges.size());
         JSCell* cell = m_cells[i];
-        if (i >= maxCells || isInternalObject(cell) || isTableLeftForAnother(cell))
+        if (i >= maxCells || isInternalObject(cell))
             continue;
         m_wholeOfCurrentCell = wholeThatPartRefersTo(cell);
         if (!m_marker) {

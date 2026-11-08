@@ -773,8 +773,8 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     the order in which they were set unless one has been deleted, though those beyond the sixth lie outside the cell; a deque from
     its left end, which is somewhere in the middle of its memory.
     The table that a dict or a set has left for another (it grew, or was made anew) is dead, and nothing refers to it. With reference
-    counts it was freed on the spot and let go of nothing. It says what it is (`wasLeftForAnother()`) and is not asked what it
-    holds: or an item would go when the second of its holders does. The table that `clear()` leaves is not one of
+    counts it was freed on the spot and let go of nothing. It has been emptied where it was left (see "The collector marks while the
+    program runs"), so it has nothing to say here: or an item would go when the second of its holders does. The table that `clear()` leaves is not one of
     these: it is how the container let go of its items, and takes its turn among what the program has dropped, like any other thing
     that nothing refers to. A deque that grows or shrinks empties the memory that it leaves.
   - Only those are queued that no other object with a finalizer reaches. The rest wait for the collection that finds those gone, so

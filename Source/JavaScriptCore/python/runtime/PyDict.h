@@ -82,12 +82,10 @@ public:
     }
     void* indices() { return m_hasWideHashes ? static_cast<void*>(wideHashes() + m_capacity) : static_cast<void*>(narrowHashes() + m_capacity); }
     // Its dict has gone on to another table, which holds what this one held. With reference counts it was freed there and then, and let go of nothing. Here it lies about until it is swept, and whatever
-    // still finds it (a word on the stack is enough) would keep all that it names: so it names nothing from here on. Whoever asks the dead what they held (PyFinalizationOrder.cpp) does not ask this one.
+    // still finds it (a word on the stack is enough) would keep all that it names: so it names nothing from here on. That is also what whoever asks the dead what they held (PyFinalizationOrder.cpp) is to hear from it.
     // (Not so the table that clear() leaves: that is how the dict let go of the items.) The collector may be reading the entries meanwhile: it sees each as it was or empty.
-    bool wasLeftForAnother() const { return m_wasLeftForAnother; }
     void leaveForAnother()
     {
-        m_wasLeftForAnother = true;
         gcSafeZeroMemory(reinterpret_cast<JSValue*>(entries()), m_entryCount * sizeof(Entry));
     }
 
@@ -116,7 +114,6 @@ private:
     int64_t* wideHashes() { return reinterpret_cast<int64_t*>(entries() + m_capacity); }
 
     bool m_hasWideHashes;
-    bool m_wasLeftForAnother { false };
     unsigned m_log2Size;
     unsigned m_capacity;
     unsigned m_entryCount { 0 }; // Including the deleted ones.

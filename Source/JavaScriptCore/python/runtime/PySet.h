@@ -14,7 +14,7 @@ namespace JSC {
 namespace Python {
 
 // The table of a set, of a fixed size.
-class PySetStorage final : public JSCell {
+class alignas(WriteBarrier<Unknown>) PySetStorage final : public JSCell {
 public:
     using Base = JSCell;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
@@ -42,10 +42,8 @@ public:
     size_t mask() const { return m_mask; }
     Entry* entries() { return storageBehind<Entry>(this); }
     // See PyDictStorage.
-    bool wasLeftForAnother() const { return m_wasLeftForAnother; }
     void leaveForAnother()
     {
-        m_wasLeftForAnother = true;
         gcSafeZeroMemory(reinterpret_cast<JSValue*>(entries()), (static_cast<size_t>(m_mask) + 1) * sizeof(Entry));
     }
 
@@ -53,7 +51,6 @@ private:
     PySetStorage(VM&, Structure*, size_t size);
 
     uint32_t m_mask;
-    bool m_wasLeftForAnother { false };
 };
 
 // set and frozenset. The table is probed, and so iterated, exactly as CPython's: programs should not depend on the order
