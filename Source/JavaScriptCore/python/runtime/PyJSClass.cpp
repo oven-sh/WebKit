@@ -748,6 +748,28 @@ static bool forEachOwnProperty(JSGlobalObject* globalObject, JSObject* object, P
     return true;
 }
 
+// object.__proto__ = prototype, for a class that is being made. Code of the program's has run since it was begun (__init_subclass__(), a metaclass). It may have put what is to go above
+// the object below it, and there is to be no circle: whoever walks up the prototypes counts on that. It may have frozen the object. What JSObject::setPrototypeWithCycleCheck() asks.
+static bool putBelow(JSGlobalObject* globalObject, JSObject* object, JSObject* prototype)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (object->getPrototypeDirect() == JSValue(prototype))
+        return true;
+    if (!object->isStructureExtensible()) [[unlikely]] {
+        raiseTypeError(globalObject, scope, "cannot set the prototype of an object that is not extensible"_s);
+        return false;
+    }
+    for (JSValue next = prototype; next.isObject() && asObject(next)->type() != ProxyObjectType; next = asObject(next)->getPrototypeDirect()) {
+        if (next == JSValue(object)) [[unlikely]] {
+            raiseTypeError(globalObject, scope, "cyclic __proto__ value"_s);
+            return false;
+        }
+    }
+    object->setPrototypeDirect(vm, prototype);
+    return true;
+}
+
 JSValue deriveClassFromJS(JSGlobalObject* lexicalGlobalObject, JSValue constructorValue, JSValue prototypeValue, JSValue superclass)
 {
     if (!PyType::is(superclass) && !isPyObject(superclass))
@@ -808,10 +830,12 @@ JSValue deriveClassFromJS(JSGlobalObject* lexicalGlobalObject, JSValue construct
     });
     if (failed(scope, succeeded))
         return { };
-    prototype->putDirect(vm, names.constructor, type, static_cast<unsigned>(PropertyAttribute::DontEnum));
     // `super` goes by the MRO, which classes that derive from this one and from others have a say in.
-    prototype->setPrototypeDirect(vm, PyPrototypeView::createSuper(globalObject, type));
-    constructor->setPrototypeDirect(vm, PySuperConstructor::create(globalObject, type));
+    if (failed(scope, putBelow(globalObject, prototype, PyPrototypeView::createSuper(globalObject, type))))
+        return { };
+    if (failed(scope, putBelow(globalObject, constructor, PySuperConstructor::create(globalObject, type))))
+        return { };
+    prototype->putDirect(vm, names.constructor, type, static_cast<unsigned>(PropertyAttribute::DontEnum));
     return type;
 }
 
@@ -934,8 +958,10 @@ static JSValue jsClassInitSubclass(JSGlobalObject* globalObject, JSValue self, c
     RETURN_IF_EXCEPTION(scope, { });
     call(globalObject, inherited, args.withoutFirst());
     RETURN_IF_EXCEPTION(scope, { });
-    if (PyType* base = cls->base())
-        cls->setPrototypeDirect(vm, prototypeOfClassOfJS(base) ? constructorOfClassOfJS(base) : static_cast<JSObject*>(base));
+    if (PyType* base = cls->base()) {
+        if (failed(scope, putBelow(globalObject, cls, prototypeOfClassOfJS(base) ? constructorOfClassOfJS(base) : static_cast<JSObject*>(base))))
+            return { };
+    }
     return jsUndefined();
 }
 static constexpr NativeDef jsClassInitSubclassDef = PY_FUNCTION("__init_subclass__", jsClassInitSubclass, "($self, *args, **kwargs)");
