@@ -704,6 +704,9 @@ static void didStoreAddress(JSGlobalObject* globalObject, const Home& home, cons
         return;
     const uint8_t* target;
     memcpy(&target, packed.bytes, sizeof(target));
+    // (The place may have been written as a function pointer or a py_object, in a union: then the entry is what the bits stand for.)
+    if (auto* thunk = PyCThunk::tryFrom(entry); thunk ? thunk->code == target : identityBits(entry) == std::bit_cast<uint64_t>(target))
+        return;
     Provenance provenance;
     if (!findProvenanceByEntry(globalObject, entry, target, provenance) && !provenance.isInWhatIsGone)
         setEntry(globalObject, home, { });
