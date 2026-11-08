@@ -181,6 +181,13 @@ public:
         butterfly->setPublicLength(newLength);
     }
 
+    // Empty, and without room for an item: as `a.length = 0` leaves a long array of JS.
+    void giveUpRoom()
+    {
+        if (m_list->butterfly()->vectorLength())
+            m_list->reallocateAndShrinkButterfly(m_vm, 0);
+    }
+
     void move(unsigned to, unsigned from, unsigned count)
     {
         if (!count)
@@ -1394,8 +1401,11 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     unsigned count = list->length();
     if (count > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
         RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
+    // Nothing is called, and nothing is to show afterwards: the list may be one that is being sorted, by whoever has called this, and has been touched.
+    if (!count)
+        return;
 
-    // All the room that it takes, while the list is still as it was.
+    // All the room that the sorting takes, while the list is still as it was. (Not the room that the items go back to.)
     bool hasKey = key && !isNone(key);
     MarkedArgumentBuffer values;
     MarkedArgumentBuffer keys;
@@ -1436,21 +1446,20 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     });
     // Not one that JS has forbidden to grow, which could not be filled again, nor one that cannot be emptied.
     bool staysFilled = !list->structure()->isStructureExtensible() || hasItemsWithAttributes(list);
+    bool hasNoRoom = false;
     if (!staysFilled) {
         // From here on the items are nowhere but in `values`. It is not here that the host ends this, but in what is called below.
         DeferTerminationForAWhile deferred(vm);
-        listTruncate(globalObject, list, 0);
-        RETURN_IF_EXCEPTION(scope, void());
+        // Even if it is empty again afterwards: it has no room either, so whatever puts an item in has to ask for some, and that stays.
+        if (ListStorage storage { vm, list }) [[likely]] {
+            storage.giveUpRoom();
+            hasNoRoom = true;
+        } else {
+            listTruncate(globalObject, list, 0);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
     }
     JSValue* valueData = reinterpret_cast<JSValue*>(const_cast<EncodedJSValue*>(ArgList(values).data()));
-
-    // Even if it is empty again afterwards. Whatever puts an item in the list writes to the first slot of its storage, and whatever
-    // takes it out again empties the slot: a mark left there, beyond the end of the list, does not survive that.
-    Butterfly* markedButterfly = list->butterfly();
-    IndexingType markedShape = list->indexingType() & IndexingShapeMask;
-    bool isMarked = !staysFilled && markedButterfly && markedButterfly->vectorLength() && (markedShape == Int32Shape || markedShape == ContiguousShape);
-    if (isMarked)
-        markedButterfly->contiguous().atUnsafe(0).setWithoutWriteBarrier(jsNumber(0));
 
     auto reverseAll = [&](JSValue* data) {
         if (data)
@@ -1484,11 +1493,8 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     }
 
     bool wasModified = staysFilled ? list->length() != count : list->length();
-    if (isMarked && !wasModified) {
-        wasModified = list->butterfly() != markedButterfly || (list->indexingType() & IndexingShapeMask) != markedShape || markedButterfly->contiguous().atUnsafe(0).get() != jsNumber(0);
-        if (!wasModified)
-            markedButterfly->contiguous().atUnsafe(0).clear();
-    }
+    if (hasNoRoom && !wasModified)
+        wasModified = !hasItemsInARow(list) || list->butterfly()->vectorLength();
     JSValue pending;
     if (failed)
         pending = takePendingException(globalObject);
