@@ -170,5 +170,28 @@ JSValue withArgumentsFromJS(JSGlobalObject* globalObject, CallFrame* callFrame, 
 // What a host function that is Python to its callers returns: JS code gets valueForJS(result).
 // resultForCaller() is in PyHooks.h.
 
+// For who walks up the prototypes of an object of JS's. They make no circle, but through a Proxy: t = {}, Object.setPrototypeOf(t, new Proxy(t, {})). So one of the objects passed is kept,
+// a later one each time twice as far on, and whoever comes by it again is in a circle and has seen all there is. (A trap that gives a new Proxy each time it is asked makes a chain without
+// an end and without a circle, on which `instanceof` has no end in JS either. A walk that asks the traps has a safePoint(), so that a signal gets through.)
+class CircleOfPrototypes {
+public:
+    bool closesAt(JSObject* object)
+    {
+        if (object == m_passed) [[unlikely]]
+            return true;
+        if (++m_steps == m_stepsUntilNext) {
+            m_passed = object;
+            m_steps = 0;
+            m_stepsUntilNext *= 2;
+        }
+        return false;
+    }
+
+private:
+    JSObject* m_passed { nullptr };
+    unsigned m_steps { 0 };
+    unsigned m_stepsUntilNext { 1 };
+};
+
 } // namespace Python
 } // namespace JSC

@@ -2223,7 +2223,8 @@ static JSValue jsObjectDir(JSGlobalObject* globalObject, JSValue self)
     JSArray* result = newList(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     UncheckedKeyHashSet<String> seen;
-    for (JSValue object = self; object.isObject();) {
+    CircleOfPrototypes circle;
+    for (JSValue object = self; object.isObject() && !circle.closesAt(asObject(object));) {
         JSArray* names = ownPropertyNames(globalObject, asObject(object), DontEnumPropertiesMode::Include);
         RETURN_IF_EXCEPTION(scope, { });
         // Function.prototype.arguments and caller throw for all functions but the sloppy ones of old: nothing to be listed among what
@@ -2238,6 +2239,8 @@ static JSValue jsObjectDir(JSGlobalObject* globalObject, JSValue self)
         }
         object = asObject(object)->getPrototype(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
+        if (failed(scope, safePoint(globalObject))) [[unlikely]]
+            return { };
     }
     return result;
 }
@@ -2678,11 +2681,14 @@ static JSValue jsFunctionSubclassCheck(JSGlobalObject* globalObject, JSValue sel
         prototype = asObject(cls)->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    while (prototype && prototype.isObject()) {
+    CircleOfPrototypes circle;
+    while (prototype && prototype.isObject() && !circle.closesAt(asObject(prototype))) {
         if (prototype == wanted)
             return jsBoolean(true);
         prototype = asObject(prototype)->getPrototype(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
+        if (failed(scope, safePoint(globalObject))) [[unlikely]]
+            return { };
     }
     return jsBoolean(false);
 }

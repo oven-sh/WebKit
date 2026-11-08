@@ -994,7 +994,8 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
             return refuse("it has no prototype"_s);
         // To Python their instances are not objects of JS.
         JSGlobalObject* realm = constructor->realm();
-        for (JSValue object = prototype; object.isObject();) {
+        CircleOfPrototypes circle;
+        for (JSValue object = prototype; object.isObject() && !circle.closesAt(asObject(object));) {
             if (object == JSValue(realm->arrayPrototype()))
                 return refuse("an array is a list"_s);
             if (object == JSValue(realm->functionPrototype()) || object == JSValue(realm->stringPrototype()) || object == JSValue(realm->numberPrototype())
