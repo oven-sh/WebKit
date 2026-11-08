@@ -454,6 +454,8 @@ static JSValue moduleResize(JSGlobalObject* globalObject, JSValue object, JSValu
         return { };
     memcpy(data->memory(globalObject), oldStorage->data(), static_cast<size_t>(oldSize));
     data->keepFormerStorage(vm, oldStorage);
+    copyEntries(globalObject, { oldStorage, 0 }, { data->owner(), 0 }, oldSize);
+    RETURN_IF_EXCEPTION(scope, { });
     return none();
 }
 
