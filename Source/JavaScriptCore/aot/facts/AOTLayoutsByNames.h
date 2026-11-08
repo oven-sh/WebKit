@@ -180,6 +180,16 @@ public:
         return std::ranges::all_of(names, [&](PropertyKeyID name) { return std::ranges::binary_search(namesOfLayout, name.index()); });
     }
 
+    bool hasAnyOf(LayoutID layout, std::span<const PropertyKeyID> ascending) const
+    {
+        if (static_cast<size_t>(layout.index()) + 1 >= m_firstNameOfLayout.size())
+            return false;
+        std::span<const uint32_t> namesOfLayout = m_names.span().subspan(m_firstNameOfLayout[layout.index()], m_firstNameOfLayout[layout.index() + 1] - m_firstNameOfLayout[layout.index()]);
+        if (namesOfLayout.size() < ascending.size())
+            return std::ranges::any_of(namesOfLayout, [&](uint32_t name) { return std::ranges::binary_search(ascending, name, { }, &PropertyKeyID::index); });
+        return std::ranges::any_of(ascending, [&](PropertyKeyID name) { return std::ranges::binary_search(namesOfLayout, name.index()); });
+    }
+
     LayoutID findOnlyHolderAmong(PropertyKeyID name, std::span<const LayoutID> ascending) const
     {
         LayoutID only;
@@ -202,6 +212,30 @@ public:
             only = layout;
         }
         return only;
+    }
+
+    template<size_t inlineCapacity>
+    bool appendHoldersAmongUnlessMoreThan(size_t most, PropertyKeyID name, std::span<const LayoutID> ascending, Vector<LayoutID, inlineCapacity>& found) const
+    {
+        std::span<const uint32_t> holders = holdersOf(name);
+        if (holders.size() < ascending.size()) {
+            for (uint32_t holder : holders) {
+                if (!std::ranges::binary_search(ascending, holder, { }, [](LayoutID layout) { return layout.index(); }))
+                    continue;
+                if (found.size() == most)
+                    return false;
+                found.append(LayoutID(holder));
+            }
+            return true;
+        }
+        for (LayoutID layout : ascending) {
+            if (!isInUse(layout) || !has(layout.index(), name))
+                continue;
+            if (found.size() == most)
+                return false;
+            found.append(layout);
+        }
+        return true;
     }
 
     template<size_t inlineCapacity>

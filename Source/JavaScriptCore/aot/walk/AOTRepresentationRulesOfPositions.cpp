@@ -12,6 +12,7 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTPlan.h"
 #include "AOTSlotRepresentation.h"
 #include <optional>
@@ -100,7 +101,7 @@ Representation representationOfArgument(const RepresentationContext& context, Co
     return representation;
 }
 
-Representation representationOfResult(const RepresentationContext& context, CodeUnit callee, uint32_t resultIndex)
+ALWAYS_INLINE_INTO_OTHER_FILES Representation representationOfResult(const RepresentationContext& context, CodeUnit callee, uint32_t resultIndex)
 {
     Representation representation = context.plan.conventions().resultRepresentation(callee, resultIndex);
     RELEASE_ASSERT(hasRegister(representation));

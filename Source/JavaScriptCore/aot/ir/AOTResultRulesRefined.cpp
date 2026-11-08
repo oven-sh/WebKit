@@ -61,7 +61,7 @@ static ALWAYS_INLINE TypeID refinedTypeOfStrictEquality(TypeArena& types, TypeID
     return upperBound;
 }
 
-static bool typeTestSurelyPassesInResultRules(const TypingContext& context, TypeID value, TypeID tested)
+static ALWAYS_INLINE bool typeTestSurelyPassesInResultRules(const TypingContext& context, TypeID value, TypeID tested)
 {
     TypeArena& types = context.types;
     if (!types.isSubset(value, tested) || mayRefuseUntestableBuiltins(context, value, tested))

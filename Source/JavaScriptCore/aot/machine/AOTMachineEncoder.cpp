@@ -1230,7 +1230,7 @@ void Encoder::leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWord
     noteOrigin(originOfUser, operationOfUser);
 }
 
-void Encoder::startOrEndFrameRange(bool isSetUp)
+ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::startOrEndFrameRange(bool isSetUp)
 {
     ASSERT(m_frameRangeIsOpen != isSetUp);
     m_frameRangeIsOpen = isSetUp;

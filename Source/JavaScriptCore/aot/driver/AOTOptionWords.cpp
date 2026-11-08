@@ -156,6 +156,7 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::ReadsBehindTestsOfLengthsAreLeftOut:
     case Wire::TestingSwitch::VariablesThatBoundAreTakenToBeAsInFront:
     case Wire::TestingSwitch::StorageAndLengthsAreTakenToBeAsInFront:
+    case Wire::TestingSwitch::VouchedPositionsAreTakenOneFurther:
     case Wire::TestingSwitch::GuardsAndFactsAreTakenToHold:
     case Wire::TestingSwitch::OneRowSpeaksForAllThatCallMayTake:
     case Wire::TestingSwitch::NothingIsDoneToFreshLists:

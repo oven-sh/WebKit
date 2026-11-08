@@ -686,7 +686,7 @@ struct LinkTables {
         });
         return found ? found->callee : FunctionID();
     }
-    std::span<const LinkedCall> callsOf(FunctionID caller) const LIFETIME_BOUND
+    ALWAYS_INLINE std::span<const LinkedCall> callsOf(FunctionID caller) const LIFETIME_BOUND
     {
         RELEASE_ASSERT(firstCallOfCaller.last() == calls.size());
         if (caller.index() + 1 >= firstCallOfCaller.size())

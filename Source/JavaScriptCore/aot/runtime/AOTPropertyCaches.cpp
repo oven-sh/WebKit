@@ -2893,6 +2893,8 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     Structure* structure = WTF::opaque(base->structure());
     StructureID id = structure->id();
     CachedName name = nameOf(identifierNumber);
+    if (compiledObjectStructureOrNull(structure))
+        holdExtraPropertiesToStructureThatIsNamed(m_state.instance.globalObject, *uncheckedDowncast<Object>(base), "an answer is filed at a place"_s);
     if (use == SiteUse::AbsenceAmongExtraProperties) {
         const CompiledStructure* compiled = compiledObjectStructureOrNull(structure);
         unsigned attributes = 0;
@@ -2968,8 +2970,6 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
         && !(compiledObjectStructureOrNull(structure) && uncheckedDowncast<Object>(base)->fieldNamed(m_state, name.uid));
     if (slot && (slot->kind == Slot::Kind::ExtraProperty || slot->kind == Slot::Kind::ExtraGetter) && belongsToOneObject(structure))
         slot = std::nullopt;
-    if (slot && (slot->kind == Slot::Kind::ExtraProperty || slot->kind == Slot::Kind::ExtraGetter))
-        holdExtraPropertiesToStructureThatIsNamed(m_state.instance.globalObject, *uncheckedDowncast<Object>(base));
     bool placeMayNotCallGetter = slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure);
     std::optional<AnswersAtSites::AnswerByStructure> answer = slot && !placeMayNotCallGetter ? answerOfSlot(use, *slot, m_vm.heap.cage().base(), m_state.instance.options().useWideReferences(), m_state.objectThatHoldsUndefined) : std::nullopt;
     if (!answer && rowAnswers && !m_answersAtSites.holdsAnotherStructure(place, use, id)) {

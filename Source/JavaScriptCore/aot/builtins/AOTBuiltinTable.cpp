@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinNameSlots.h"
 #include "AOTCheckedSpan.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTRemovableFeature.h"
 #include "AOTVector.h"
 #include "CommonIdentifiers.h"
@@ -713,7 +714,7 @@ bool BuiltinTable::hostTakesInstancesAsAnswers(BuiltinClassID builtinClass) cons
     return false;
 }
 
-bool BuiltinTable::isPrintedByFormatter(BuiltinID id, const BuiltinParameter& parameter) const
+ALWAYS_INLINE_INTO_OTHER_FILES bool BuiltinTable::isPrintedByFormatter(BuiltinID id, const BuiltinParameter& parameter) const
 {
     if (!parameter.protocols.contains(Protocol::OwnValues) || !parameter.protocols.contains(Protocol::PrototypeChain) || !parameter.protocols.contains(Protocol::CallsNamed))
         return false;

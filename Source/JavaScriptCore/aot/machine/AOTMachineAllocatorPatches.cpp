@@ -349,7 +349,7 @@ static bool isReadOnlyByFixedPatchOperands(const Allocator& allocator, const Pat
     return true;
 }
 
-static Location sourceOfFixedPatchOperand(Allocator& allocator, Operation* value, RegisterMask wanted)
+static ALWAYS_INLINE Location sourceOfFixedPatchOperand(Allocator& allocator, Operation* value, RegisterMask wanted)
 {
     if (RegisterMask held = allocator.stateOf(value).registers)
         return Location::reg(allocator.anyRegisterOf(value, (held & ~wanted) ? (held & ~wanted) : held));

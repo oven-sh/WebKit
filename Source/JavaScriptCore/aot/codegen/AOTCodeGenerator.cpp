@@ -133,6 +133,8 @@ GenerationResult CodeGenerator::run()
                     }
                 }
             }
+            if (loop && loop->storesIntoSlots)
+                build().statistics().count(StatisticID::LoopsLaidOutWhoseTurnsStoreIntoSlots);
             if (loop && !loop->viewsAskedForKind.isEmpty())
                 layOutTurnsForEachKindOfView(*loop);
             else if (loop) {
@@ -1478,6 +1480,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     auto leadsBack = [&](const Block& block) {
         return block.terminator.kind == TerminatorKind::Jump && code().at(block.terminator.next()).to == head;
     };
+    bool admitsStoresIntoSlots = true;
     auto mayBelongToTurn = [&](BlockID id) {
         const Block& block = code().at(id);
         if (!block.isInLoop || block.isLoopHead || code().handlerOf(id) || block.subject || block.isEntry || block.isHandlerBlock() || block.frequency != blockOfHead.frequency)
@@ -1512,6 +1515,13 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
                     return false;
                 continue;
             }
+            if (operation.opcode == Opcode::PutSlot) {
+                if (!admitsStoresIntoSlots || operation.level() != KnowledgeLevel::Proven || !typeOf(operation.valueOperand()).isNumber())
+                    return false;
+                continue;
+            }
+            if (operation.opcode == Opcode::IsSlotFilled && operation.level() == KnowledgeLevel::Proven)
+                continue;
             if (operation.opcode == Opcode::ToNumber && (operation.form() == OperatorForm::Generic || !typeOf(operation.valueOperand()).isNumberOrNullish()))
                 return false;
             if (operation.opcode == Opcode::CheckProof && operation.isLeftToTestBehind())
@@ -1586,6 +1596,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         unsigned numberOfOperations = 0;
         loop.holesLeaveTurns = true;
         loop.storesIntoLists = false;
+        loop.storesIntoSlots = false;
         listsReadInTurn.shrink(0);
         listsThatTakeRawDoubles.shrink(0);
         unsigned numberOfBlocksThatHoldOperations = 0;
@@ -1603,7 +1614,8 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
                     return false;
                 if (operation.opcode == Opcode::GetStringCodeUnit && opcodeOf(operation.stringOperand()) == Opcode::FlattenString && !loop.flatStrings.contains(operation.stringOperand()))
                     loop.flatStrings.append(operation.stringOperand());
-                loop.holesLeaveTurns &= operation.opcode != Opcode::PutTypedArrayElement;
+                loop.holesLeaveTurns &= operation.opcode != Opcode::PutTypedArrayElement && operation.opcode != Opcode::PutSlot;
+                loop.storesIntoSlots |= operation.opcode == Opcode::PutSlot;
                 bool storesIntoList = operation.opcode == Opcode::PutContiguousIndex || operation.opcode == Opcode::PutDoubleIndex;
                 loop.storesIntoLists |= storesIntoList;
                 loop.holesLeaveTurns &= !storesIntoList;
@@ -1649,11 +1661,26 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
                 bool mayHoldFraction = !!(typeOf(value).primitives & Primitive::Number & ~Primitive::NumberWithoutFraction);
                 loop.listsAskedForKind.append({ list, mayHoldFraction ? ArrayStorage::Double : ArrayStorage::Int32 });
             }
+            if (loop.storesIntoSlots && code().at(blockAt(place)).terminator.kind != TerminatorKind::Jump)
+                return false;
+        }
+        for (unsigned place = 0; loop.storesIntoSlots && place < *placeOfLast; ++place) {
+            unsigned numberOfBlocksOfTurnLedTo = 0;
+            if (isInTurn[place]) {
+                forEachPlaceLedTo(place, [&](unsigned target) {
+                    numberOfBlocksOfTurnLedTo += isInTurn[target];
+                });
+            }
+            if (isInTurn[place] && numberOfBlocksOfTurnLedTo != 1)
+                return false;
         }
         return true;
     };
-    if (!findTurn(placesLookedAtFirst, false) && !findTurn(placesLookedAtBehindHead, true))
-        return std::nullopt;
+    if (!findTurn(placesLookedAtFirst, false) && !findTurn(placesLookedAtBehindHead, true)) {
+        admitsStoresIntoSlots = false;
+        if (!findTurn(placesLookedAtFirst, false) && !findTurn(placesLookedAtBehindHead, true))
+            return std::nullopt;
+    }
     auto isAmong = [&](ValueID list, const auto& lists) {
         return std::ranges::any_of(lists, [&](ValueID other) { return other == list || (wordOf(list) && wordOf(other) == wordOf(list)); });
     };

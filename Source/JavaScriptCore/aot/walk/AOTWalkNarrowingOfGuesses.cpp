@@ -269,7 +269,7 @@ static void cutExpectationByTestedField(Walker& walker, ValueID input, TypeID& f
     }
 }
 
-void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool& isDeclared)
+void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool& isDeclared, bool restsOnNamesUsedAlone)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     TypeArena& types = walker.types();
@@ -293,7 +293,8 @@ void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool
             meetWithWhatWasSeenToArriveInNarrowingOfGuesses(walker, input.index(), found);
         return;
     }
-    if (restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(walker, input, definition, found))
+    bool arrivesAtJoin = definition.isParameter() && index.blockOf(input) != entryBlock && !restsOnNamesUsedAlone;
+    if (!arrivesAtJoin && restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(walker, input, definition, found))
         found = { };
 }
 

@@ -840,7 +840,8 @@ static ALWAYS_INLINE void noteScannedCall(BackwardScan& scan, const PatchOperati
         }
     }
     if (patch->effects.mayCollect) {
-        RELEASE_ASSERT(!patch->runsWithoutFrame() || (patch->effects.terminal && !patch->owner()->numSuccessors()) || patch->showsRegistersToCollector());
+        if (patch->runsWithoutFrame() && !(patch->effects.terminal && !patch->owner()->numSuccessors()) && !patch->showsRegistersToCollector()) [[unlikely]]
+            scan.m_proc.fail(FailureKind::NeedsFrameWhereNoneIsSetUp, patch);
         scan.m_nextSafepoint = late;
         isEvent = true;
     }

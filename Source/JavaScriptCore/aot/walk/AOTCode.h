@@ -578,7 +578,7 @@ struct Operation : Instruction {
     BlockID block() const { return blockIndex == noBlock ? BlockID() : BlockID(blockIndex); }
     EffectTraits traits() const { return EffectTraits::fromBits(traitBits); }
 
-    OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode, operandIndex); }
+    ALWAYS_INLINE OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode, operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(opcode, operandIndex); }
 
 #include "AOTSchemaOperationGetters.inc"
@@ -621,7 +621,7 @@ struct Terminator : Instruction {
     EdgeID firstEdge;
     uint32_t numberOfEdges { 0 };
 
-    OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(kind, operandIndex); }
+    ALWAYS_INLINE OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(kind, operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(kind, operandIndex); }
 
     bool isConditionalBranch() const { return kind == TerminatorKind::Branch || kind == TerminatorKind::TestAndBranch; }
@@ -925,7 +925,7 @@ struct Draft : DraftWords {
         resetOperandsAndPayload(freshWordsOf(newOpcode));
     }
 
-    OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode, operandIndex); }
+    ALWAYS_INLINE OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode, operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(opcode, operandIndex); }
     void restOn(const PassedTest& passed)
     {
@@ -953,7 +953,7 @@ struct TerminatorDraft : DraftWords {
         resetOperandsAndPayload(numberOfNamedOperandsOf(newKind), defaultPayloadOf(newKind));
     }
 
-    OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(kind, operandIndex); }
+    ALWAYS_INLINE OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(kind, operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(kind, operandIndex); }
 
 #include "AOTSchemaTerminatorGetters.inc"

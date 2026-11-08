@@ -155,6 +155,10 @@ Integer ArrayIntrinsicEmitter::positionThatLibraryVouchesFor(const ValueContext&
 {
     Operand position = get(value->positionOperand());
     Integer index = position.representation == Representation::Int32 ? Integer(m_out.extendWordThatIsNotNegative(position.as<Word32>().value())) : integerOperand(value->positionOperand());
+    if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::VouchedPositionsAreTakenOneFurther)) [[unlikely]] {
+        Integer further = add(index, integer(1));
+        index = select(below(further, elements().vectorLength(storage)), further, index);
+    }
     if (elements().testsEveryPosition()) {
         bool writes = access == AccessVouchedFor::Writes;
         Word32 mode = elements().indexingMode(elements().askedAnew(storage.array), writes ? IndexingShapeAndWritabilityMask : arrayStorageTestMask);

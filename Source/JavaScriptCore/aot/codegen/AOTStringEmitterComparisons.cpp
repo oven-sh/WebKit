@@ -338,6 +338,10 @@ Word32 StringEmitter::find(const CharacterView& subject, const CharacterView& so
     Word32 found = selectByWidth<Word32>(subject.is8Bit, [&](bool is8Bit) {
         RuntimeOperation forward = is8Bit ? RuntimeOperation::StringFind8 : RuntimeOperation::StringFind16;
         RuntimeOperation backward = is8Bit ? RuntimeOperation::StringReverseFind8 : RuntimeOperation::StringReverseFind16;
+        if (is8Bit && isForward) {
+            LValue operands[] = { subject.characters.value(), subject.length.value(), sought.characters.value(), sought.length.value(), position.value() };
+            return low32(Integer(emitter<RuntimeCallEmitter>().callStubWithoutSite(findText8(), operands).first));
+        }
         return low32(callLeaf<Integer>(isForward ? forward : backward, { subject.characters, subject.length, sought.characters, sought.length, position }));
     });
     ensureStillAliveHere(subject.owner);

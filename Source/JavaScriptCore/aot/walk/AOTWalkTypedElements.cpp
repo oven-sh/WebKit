@@ -358,7 +358,7 @@ static Representation formOfNumberThatLinkHasTypedOfTypedElements(const AccessOf
                     return;
                 if (operand.index() > read.index()) {
                     ValueID readToCome = index.valueBehindCasts(operand);
-                    standsBesideNumbers &= !index.isParameter(readToCome) && index.opcodeOf(readToCome) == Opcode::ElemGet && isNumberOrUndefined(walker.facts().linked().resultOfReadByKey(walker.currentFunction(), readToCome));
+                    standsBesideNumbers &= !index.isParameter(readToCome) && (operatorsThatMakeNumbers.contains(index.opcodeOf(readToCome)) || (index.opcodeOf(readToCome) == Opcode::ElemGet && isNumberOrUndefined(walker.facts().linked().resultOfReadByKey(walker.currentFunction(), readToCome))));
                     return;
                 }
                 Reference other = walker.referenceOf(operand);
@@ -838,7 +838,8 @@ static Reference mostBelowWrittenBoundInTypedElements(Walker& walker, Reference 
 static void holdSmallRangeBelowLengthOfListInFrontOfTypedCopy(const AccessOfTypedElements& access, const ListTestedInFrontOfLoop& tested)
 {
     Walker& walker = access.walker;
-    if (tested.isWritable || tested.turnsStoreIntoLists || !access.typeOfKey.isInteger() || !walker.standsInFrontOfTypedCopy(access.base) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(access.base))
+    Walker::TurnOfTypedCopy turn = walker.turnInWhichListsAreAskedInFront();
+    if (tested.isWritable || tested.turnsStoreIntoLists || !access.typeOfKey.isInteger() || !walker.standsInFrontOfTypedCopy(access.base, turn) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(access.base, turn))
         return;
     if (walker.findWhatHoldsPositionInsideList(access.base, access.key) || walker.findWhatHoldsPositionBelowRoomOfView(access.base, access.key))
         return;
@@ -850,7 +851,7 @@ static void holdSmallRangeBelowLengthOfListInFrontOfTypedCopy(const AccessOfType
     Reference length;
     Reference isBelow;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, true);
+        Walker::InFrontOfTypedCopy inFront(walker, true, turn);
         length = buildLengthOfListInFrontOfLoop(walker, access.base, origin);
         if (!length || !length.isValue())
             return;
@@ -861,11 +862,11 @@ static void holdSmallRangeBelowLengthOfListInFrontOfTypedCopy(const AccessOfType
         test.setForm(formAllowedForTypedOperator(walker, test));
         isBelow = walker.build(WTF::move(test));
     }
-    if (!isBelow || !isBelow.isValue() || !walker.goOnInTypedCopyWhereTestInFrontPasses(isBelow, true))
+    if (!isBelow || !isBelow.isValue() || !walker.goOnInTypedCopyWhereTestInFrontPasses(isBelow, true, turn))
         return;
     Reference held;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, true);
+        Walker::InFrontOfTypedCopy inFront(walker, true, turn);
         Draft narrowed(Opcode::Narrowed, origin);
         narrowed.setValueOperand(length);
         narrowed.setTestOperand(isBelow);

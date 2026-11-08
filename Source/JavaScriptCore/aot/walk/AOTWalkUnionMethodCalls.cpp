@@ -63,11 +63,26 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
     const Program& program = walker.program();
     const Plan& plan = walker.plan();
     TypeID proven = walker.typeOf(receiver);
+    bool isOnlyExpected = false;
+    if (call && proven && types.saysNothing(proven) && walker.isInLoop() && walker.opensGuesses() && !liesInThread(lookup.key())) {
+        TypeID expected = objectsExpectedOfOperandOfQuestion(walker, lookup.objectOperand());
+        Vector<LayoutID, mostArmsInUnionMethodCalls> holders;
+        if (!expected || !walker.facts().layoutsByNames().appendHoldersAmongUnlessMoreThan(mostArmsInUnionMethodCalls, lookup.key(), types.listOf(types.at(expected).layouts), holders) || holders.size() < 2)
+            return false;
+        TypeID whoAnswer = types.forLayouts(holders.span());
+        auto typeAsExpected = [&](ValueID input) {
+            return input == lookup.objectOperand() ? whoAnswer : walker.typeOf(walker.referenceOf(input));
+        };
+        if (typedFormOf(walker, read, TypesOfInputs(typeAsExpected)) != TypedForm::None)
+            return false;
+        proven = whoAnswer;
+        isOnlyExpected = true;
+    }
     if (!proven || !types.at(proven).isJavaScriptValue() || (types.at(proven).primitives & ~Primitive::UndefinedOrNull) || !types.at(proven).hasOnlyLayouts() || holdsOneMember(types.at(proven).layouts))
         return false;
 
     bool mayBeNothing = types.at(proven).primitives;
-    bool somethingIsLeft = false;
+    bool somethingIsLeft = isOnlyExpected;
     bool someAnswerByGetter = false;
     Vector<TypeID, mostArmsInUnionMethodCalls> arms;
     Vector<TypeID, mostArmsInUnionMethodCalls> armsThatFindNeitherGetterNorField;
@@ -139,6 +154,8 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
     };
 
     walker.count(call ? StatisticID::MethodCallsToldApartByShape : StatisticID::ReadsToldApartByShape);
+    if (isOnlyExpected)
+        walker.count(StatisticID::MethodCallsOnExpectedReceiversToldApartByShape);
     Reference left = receiver;
     if (mayBeNothing) {
         Draft check(Opcode::RequireObjectCoercible, origin);
@@ -161,6 +178,7 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
         Draft test(Opcode::ShapeTest, origin);
         test.setObjectOperand(left);
         test.setLayouts(types.at(arms[place]).layouts);
+        test.setRefusesMarkedObjects(isOnlyExpected);
         Reference passes = walker.build(WTF::move(test));
         if (!passes)
             return true;
@@ -171,6 +189,8 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
         walker.continueIn(passed);
         if (Reference narrowed = narrowedBy(left, passes, true)) {
             walker.state().noteShape(narrowed, walker.typeOf(narrowed));
+            if (isOnlyExpected)
+                walker.state().noteFactsOfCell(narrowed, FactOfCell::BearsNoMark);
             Vector<Reference, 4> boundBefore;
             for (ValueID name : names) {
                 boundBefore.append(walker.referenceBoundTo(name));
@@ -184,7 +204,8 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
             return true;
         walker.continueIn(failed);
         if (!isLast) {
-            left = narrowedBy(left, passes, false);
+            if (!isOnlyExpected)
+                left = narrowedBy(left, passes, false);
             if (!left)
                 return true;
         } else if (somethingIsLeft) {

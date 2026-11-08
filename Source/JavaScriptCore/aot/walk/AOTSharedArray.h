@@ -144,7 +144,7 @@ public:
         return leafToWrite(index).records()[index & (widthOfLeaf - 1)];
     }
 
-    void append(const T& record)
+    ALWAYS_INLINE void append(const T& record)
     {
         if (!m_root) {
             if (m_size < inlineCapacity) {

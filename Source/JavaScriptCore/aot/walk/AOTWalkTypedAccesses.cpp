@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLayout.h"
 #include "AOTLinkTables.h"
 #include "AOTNameClass.h"
@@ -3166,7 +3167,7 @@ TypeID typeFoundBehindLooks(Walker& walker, const BodyValue& read, TypeID typeOf
     return !read.isFreeName() && looksAtCellShowThatReadFindsNothing(walker, *receivers, field, read.key()) ? TypeID(TypeTable::undefined) : TypeID();
 }
 
-bool readOffConstructorFunctionAwaitsGuard(Walker& walker, const BodyValue& read, TypeID typeOfObject)
+ALWAYS_INLINE_INTO_OTHER_FILES bool readOffConstructorFunctionAwaitsGuard(Walker& walker, const BodyValue& read, TypeID typeOfObject)
 {
     std::optional<FoundOffConstructorFunction> found = findWhatRecordsExpectOffConstructorFunction(walker, read, typeOfObject);
     if (!found || walker.state().guardOfReadsHolds(found->classLayout, read.key(), ClassSide::Static))

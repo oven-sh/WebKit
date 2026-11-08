@@ -65,7 +65,7 @@ constexpr bool isInt64OrMarker(Representation representation)
     return representation == Representation::Int64 || representation == Representation::OptionalInt64;
 }
 
-constexpr bool haveSameRegisterRepresentation(Representation returned, Representation expected)
+ALWAYS_INLINE constexpr bool haveSameRegisterRepresentation(Representation returned, Representation expected)
 {
     return returned == expected
         || (isCellOrBoxedValue(returned) && isCellOrBoxedValue(expected))

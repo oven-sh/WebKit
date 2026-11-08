@@ -19,6 +19,7 @@
 #include "ModuleRegistryEntry.h"
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -122,6 +123,7 @@ void Modules::forgetTextsThatWait()
     m_numberOfTextsThatHaveCome = 0;
     m_callsToMakeAgain.clear();
     m_promiseOfJobThatMakesCallsAgain.clear();
+    m_promiseOfJobInWhichLoadAsksForOriginal.clear();
     m_promiseOfJobOfRound.clear();
     m_isJobOfRoundQueued = false;
 }
@@ -199,12 +201,84 @@ void Modules::forgetMockLaidBehindCallWhoseTextHasCome(ModuleID file)
     auto laid = m_momentsWaitingMocksWereLaid.find(file);
     if (laid == m_momentsWaitingMocksWereLaid.end() || laid->value.moment <= *momentOfCall)
         return;
-    if (m_importsWhoseMocksRunWhenTheirTextsHaveCome.containsIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself && fileOf(each.module) == file; }))
+    if (m_importsWhoseMocksRunWhenTheirTextsHaveCome.containsIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself && !each.failureForWantOfMockThatTakesOriginal && fileOf(each.module) == file; }))
         return;
     if (m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == file && above.original; }))
         return;
     forgetMockThatWaits(file);
     forgetCallOfMock(file);
+}
+
+void Modules::bookImportWhoseMocksRunWhenItsTextHasCome(ModuleID module)
+{
+    VM& vm = *m_instance.vm;
+    bool asksForMockOfFileItself = needsOriginalAheadOfFactory(module) || needsOriginalAheadOfFactory(fileOf(module));
+    m_importsWhoseMocksRunWhenTheirTextsHaveCome.append({ module, asksForMockOfFileItself });
+    m_importsWhoseMocksRunWhenTheirTextsHaveCome.last().momentOfCall = vm.aotState().momentOfLoads;
+    if (!asksForMockOfFileItself)
+        return;
+    if (hasLoaderSettledOriginalOf(fileOf(module))) {
+        m_importsWhoseMocksRunWhenTheirTextsHaveCome.last().hasLoadAskedForOriginal = true;
+        return;
+    }
+    if (!m_promiseOfJobInWhichLoadAsksForOriginal)
+        m_promiseOfJobInWhichLoadAsksForOriginal.set(vm, JSPromise::create(vm, m_instance.globalObject->promiseStructure()));
+    queueStepOfImportInImportTurns(m_promiseOfJobInWhichLoadAsksForOriginal.get(), module, 4);
+}
+
+JSPromise* Modules::takeFailureOfLoadForWantOfMock(ModuleID module)
+{
+    JSPromise* loadOnRecord = m_areTestsOfFileDone ? nullptr : loadThatFailedForWantOfMock(module);
+    size_t place = m_importsWhoseMocksRunWhenTheirTextsHaveCome.findIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.module == module && each.failureForWantOfMockThatTakesOriginal && (loadOnRecord || !m_momentOfCallWhoseTextHasCome || each.momentOfCall == *m_momentOfCallWhoseTextHasCome); });
+    if (place == notFound)
+        return loadOnRecord;
+    JSPromise* failed = m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].failureForWantOfMockThatTakesOriginal.get();
+    m_importsWhoseMocksRunWhenTheirTextsHaveCome.removeAt(place);
+    return failed;
+}
+
+void Modules::letLoadInFlightAskForOriginal(ModuleID module)
+{
+    auto isBookingThatAsksNow = [&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.module == module && each.asksForMockOfFileItself && !each.hasLoadAskedForOriginal; };
+    size_t place = m_importsWhoseMocksRunWhenTheirTextsHaveCome.findIf(isBookingThatAsksNow);
+    if (place == notFound)
+        return;
+    if (m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].hasWalkedAheadOfItsText) {
+        m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].hasLoadAskedForOriginal = true;
+        return;
+    }
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSPromise* failed = loadThatFailedForWantOfMock(module);
+    if (!failed) {
+        Identifier file = moduleKey(fileOf(module));
+        loader()->resolve(realm, Identifier::fromString(vm, makeString('\0', file.string())), file, nullptr, true);
+        if (scope.exception()) {
+            failed = rejectedPromiseWithPendingException(realm, scope);
+            failed->markAsHandled();
+            m_loadsThatFailedForWantOfMock.append({ module, Strong<JSPromise>(vm, failed) });
+        }
+        place = m_importsWhoseMocksRunWhenTheirTextsHaveCome.findIf(isBookingThatAsksNow);
+        if (place == notFound)
+            return;
+    }
+    m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].hasLoadAskedForOriginal = true;
+    if (!failed)
+        return;
+    m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].failureForWantOfMockThatTakesOriginal.set(vm, failed);
+    auto isTextOfCall = [&, momentOfCall = m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].momentOfCall](const auto& text) { return text.module == module && text.momentOfCall == momentOfCall && !(text.promise->flags() & JSPromise::isFirstResolvingFunctionCalledFlag); };
+    JSPromise* promiseOfCall = nullptr;
+    for (const TextOnItsWay& text : m_textsOnTheirWay) {
+        if (!promiseOfCall && !text.requested && isTextOfCall(text))
+            promiseOfCall = text.promise.get();
+    }
+    for (const TextThatWaits& text : textsThatWait()) {
+        if (!promiseOfCall && !text.requestedRecord && isTextOfCall(text))
+            promiseOfCall = text.promise.get();
+    }
+    if (promiseOfCall)
+        RELEASE_AND_RETURN(scope, promiseOfCall->resolve(realm, vm, failed));
 }
 
 void Modules::walkInPlaceOfCallsHeldForTextOf(ModuleID file)

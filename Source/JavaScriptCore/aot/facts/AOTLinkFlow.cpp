@@ -3237,7 +3237,7 @@ void LinkFlow::run()
     }
 }
 
-LinkType LinkFlow::withoutObjectsThatHaveEscaped(LinkType type) const
+ALWAYS_INLINE_INTO_OTHER_FILES LinkType LinkFlow::withoutObjectsThatHaveEscaped(LinkType type) const
 {
     if (!type.holdsUnseen || reading() != WhatUnseenCodeDoes::Anything)
         return type;

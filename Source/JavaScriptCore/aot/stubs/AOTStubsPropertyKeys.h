@@ -321,7 +321,7 @@ constexpr StubKey getterAtSite() { return StubKey(StubFamily::GetterAtSite); }
 constexpr StubKey getByValCachedOrOwnAccessor() { return StubKey(StubFamily::GetByValCachedOrOwnAccessor); }
 constexpr StubKey findsNoExtraPropertyAtSite() { return StubKey(StubFamily::FindsNoExtraPropertyAtSite); }
 
-constexpr std::optional<StubKey> siblingUnderNameWithColumn(StubKey key)
+ALWAYS_INLINE constexpr std::optional<StubKey> siblingUnderNameWithColumn(StubKey key)
 {
     switch (key.family()) {
     case StubFamily::GetByIdCheckingColumn:

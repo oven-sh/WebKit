@@ -51,7 +51,7 @@ private:
 
     bool findWhatIsLeft();
     bool isLeft(const Block* block) const { return !m_isBehindBlockPasses || m_blockIsLeft.get(block->index()); }
-    bool isLeft(const Operation* operation) const { return !m_isBehindBlockPasses || !operation->owner() || m_operationIsLeft.get(operation->index()); }
+    ALWAYS_INLINE bool isLeft(const Operation* operation) const { return !m_isBehindBlockPasses || !operation->owner() || m_operationIsLeft.get(operation->index()); }
 
     bool checkMembership();
     bool checkEdges();

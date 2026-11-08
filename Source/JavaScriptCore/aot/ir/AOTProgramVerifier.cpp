@@ -208,7 +208,7 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    void checkClassParts(ClassPartsID parts)
+    ALWAYS_INLINE void checkClassParts(ClassPartsID parts)
     {
         if (!parts)
             return;

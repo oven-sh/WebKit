@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTLinkKnownEffects.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTTypeRelations.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -22,7 +23,7 @@ static PropertyKeyID keyWrittenAtInScanKnownEffects(const Program& program, cons
     return keyOfOperation;
 }
 
-void ScanOfBody::noteWritesIn(uint32_t block, const LocationMasks& writes)
+ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::noteWritesIn(uint32_t block, const LocationMasks& writes)
 {
     if (writes.isEmpty())
         return;

@@ -877,6 +877,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
     if (m_modulesWithMockToRun.get(module.index()) && !(standsForLoadsInFlight(module) && isEvaluatedByLoader(module))) [[unlikely]] {
         SetForScope requireRunsMocks(m_instance.vm->aotState().requireRunsMocks, true);
         SetForScope moduleThatRequireAsksFor(m_moduleThatRequireAsksFor, module);
+        SetForScope moduleThatRequires(m_moduleThatRequires, ModuleID());
         auto waiting = m_momentsWaitingMocksWereLaid.find(module);
         bool liesInRequireMap = waiting != m_momentsWaitingMocksWereLaid.end() && waiting->value.importersKeepMockThatStands && wasRequiredUnderMockInPlace(module);
         bool factoryHasNotSettled = runMockThatWaits(module);
@@ -3612,6 +3613,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     if (!targetData.isOfLibrary() || isRequiredByProgram) {
         SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);
         SetForScope moduleThatRequireAsksFor(m_moduleThatRequireAsksFor, target);
+        SetForScope moduleThatRequires(m_moduleThatRequires, referrer);
         std::optional<VM::SynchronousModuleQueueScope> loadsOfFactories;
         if (m_mocks && targetData.kind == ModuleKind::SourceText && !isMocked(target) && !vm.m_synchronousModuleQueue) [[unlikely]]
             loadsOfFactories.emplace(vm);

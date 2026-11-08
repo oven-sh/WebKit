@@ -184,7 +184,7 @@ public:
     bool holdsAnyNaN(ValueID id) const { return m_followsNumbersOutOfBytes && m_valuesHoldingAnyNaN.quickGet(id.index()); }
     Operand getWithAnyNaN(ValueID);
     bool isCarriedBoxed(ValueID id) const { return m_carriesParametersBoxed && m_parametersCarriedBoxed.quickGet(id.index()); }
-    ValueID sumBoxedBy(const Operation& box) const
+    ALWAYS_INLINE ValueID sumBoxedBy(const Operation& box) const
     {
         if (box.opcode != Opcode::Box || box.representation != Representation::JSValue || m_followsNumbersOutOfBytes)
             return { };
@@ -463,6 +463,7 @@ private:
         Vector<ValueID, 2> relationsOfCounterBelowBound;
         TypedArrayType kindAskedOfView { NotTypedArray };
         bool holesLeaveTurns { false };
+        bool storesIntoSlots { false };
         bool storesIntoLists { false };
         bool asksListsReadAndListsStoredInto { false };
         bool sumsAreTakenOverBehindStretches { false };

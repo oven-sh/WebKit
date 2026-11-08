@@ -464,7 +464,7 @@ private:
             m_bits = reinterpret_cast<uintptr_t>(new (NotNull, WTF::VectorBufferMalloc::malloc(sizeof(Part))) Part(*other.part()));
     }
 
-    void release()
+    ALWAYS_INLINE void release()
     {
         if (!m_bits)
             return;

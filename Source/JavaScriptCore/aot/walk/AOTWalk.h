@@ -180,7 +180,7 @@ TypeID typeOfObjectsMadeBy(const Walker&, FunctionID constructor);
 TypeID typeOfObjectsMadeThroughEntryOf(const Walker&, FunctionID constructor);
 bool chooseLayoutByTagAtConstruction(Walker&, const BodyValue& construction, FunctionID constructor, LayoutID& constructed);
 Reference buildThisByTag(Walker&, FunctionID constructor, Reference prototype, Reference tag, Origin);
-void refineExpectationOfValue(Walker&, ValueID input, TypeID& found, bool& isDeclared);
+void refineExpectationOfValue(Walker&, ValueID input, TypeID& found, bool& isDeclared, bool restsOnNamesUsedAlone);
 void bindNamesBehindFailedTest(Walker&, Reference value, Reference test, uint32_t operandIndexOfTest, std::span<const ValueID> names, Origin);
 Reference findCaptureAtHand(Walker&, FunctionID callee, uint32_t capture, Reference closure);
 Reference valueOfStableBinding(Walker&, const BodyValue& read);
@@ -336,6 +336,7 @@ void noteWhatInstanceOfDenied(Walker&, const BodyValue&);
 void beginGuardsOfClassesAtEndOfModule(Walker&, Origin);
 TypeID objectsExpectedOfOperandOfQuestion(Walker&, ValueID input);
 bool findConditionsOfOrdinaryInstanceOf(const Walker&, TypeID typeOfConstructor, Vector<MemberConditionRecord, 16>& conditions);
+bool shapesOfKinMayAnswerInstanceOf(const Walker&, TypeID typeOfConstructor);
 bool askCellAndGuardsWhetherNoMemberIsFound(Walker&, const BodyValue&);
 OptionSet<FactOfCell> factsThatSlotOperationLeansOn(Walker&, const Draft&);
 OptionSet<FactOfCell> factsOfCellAsPlannerTakesThem(const Walker&, Reference object);
@@ -1107,7 +1108,7 @@ public:
     bool copy(const BodyValue&);
     static constexpr OpcodeSet opcodesThatNeedChoices = Operation::opcodesWithForm | OpcodeSet {
         Opcode::Data, Opcode::NewClosure, Opcode::NewObject, Opcode::NewArray, Opcode::ForInOpen, Opcode::ForInStep, Opcode::ResultAt, Opcode::CallDirect,
-        Opcode::TryPutByValDirect, Opcode::TryFillNewArray
+        Opcode::TryPutByValDirect, Opcode::TryFillNewArray, Opcode::GetSuperBase
     };
     ALWAYS_INLINE void chooseConservativeFields(Draft& draft)
     {
@@ -1802,6 +1803,8 @@ private:
     void takeBackScopesLentToCall(std::span<const ScopeLentToCall>, const Effects* ofCall, Origin);
 
     struct OpenEdge {
+        OpenEdge() { }
+
         EdgeID edge;
         BlockID block;
         uint32_t next { noOpenEdge };
@@ -1854,6 +1857,8 @@ private:
     };
 
     struct PendingBlock {
+        PendingBlock() { }
+
         BlockID block;
         Vector<ValueID, 4> parameters;
         WalkState state;

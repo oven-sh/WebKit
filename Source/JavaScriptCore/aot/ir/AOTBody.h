@@ -291,7 +291,7 @@ public:
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
-    std::optional<uint32_t> writtenPosition() const
+    ALWAYS_INLINE std::optional<uint32_t> writtenPosition() const
     {
         if (writtenPositionRole() != WrittenPositionRole::WhereWritten)
             return std::nullopt;

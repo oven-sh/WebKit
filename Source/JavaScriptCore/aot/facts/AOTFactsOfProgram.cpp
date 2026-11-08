@@ -2044,14 +2044,14 @@ ALWAYS_INLINE void BodyLookOfProgramFacts::lookAtEnd(const BodyBlock& block)
         bool isInspected = (terminator.operandUses(operandIndex) - OperandUses { OperandUse::Inspects }).isEmpty();
         noteFate(operand, isInspected ? Fate::IsInspected : Fate::IsLetGo, terminator);
     });
-    block.forEachOutgoingEdge([&](BodyTarget target, bool isHandlerEdge) {
+    block.forEachOutgoingEdge([&](BodyTarget target, bool isHandlerEdge) ALWAYS_INLINE_LAMBDA {
         std::span<const ValueID> arguments = target.arguments();
         for (uint32_t position = 0; position < arguments.size(); ++position) {
             if (isFollowed(arguments[position]) && (isHandlerEdge || !passOn(arguments[position], m_index.block(target.block()).parameter(position), block)))
                 noteFate(arguments[position], Fate::IsLetGo, terminator);
         }
     });
-    m_index.forEachEdgeResult(block.id(), [&](const BodyEdgeResult& result) {
+    m_index.forEachEdgeResult(block.id(), [&](const BodyEdgeResult& result) ALWAYS_INLINE_LAMBDA {
         if (!isFollowed(result.subject))
             return;
         if (result.test && !result.isOnTakenEdge && m_index.opcodeOf(result.test) == Opcode::ToBoolean && !originOfURL(result.subject))

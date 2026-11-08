@@ -10,7 +10,6 @@
 #include "AOTMachineTestSupport.h"
 #include "AOTSavedFrame.h"
 #include "AOTSlotRepresentation.h"
-#include "AOTStubTestSupport.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "StackAlignment.h"
 #include <algorithm>
@@ -155,59 +154,61 @@ static void checkFrameTestMarkThatFollowsFrameSetupBesideCall(bool testsStackAhe
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 4 }) == 5);
 }
 
-#if OS(UNIX)
-enum class EndOfFrameTestPatch : uint8_t { GoesOn, EndsBlockAndGoesOn, EndsFunction };
+enum class EndOfFrameTestPatch : uint8_t { GoesOn, GoesOnIntoOops, EndsBlockAndGoesOn, EndsFunction };
 
-static ChildOutcome buildPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch end, bool showsRegistersToCollector)
+static bool scanRefusesPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch end, bool showsRegistersToCollector)
 {
-    return runInChild([&] {
-        ProcedureTraits traits;
-        traits.hasHandlers = end == EndOfFrameTestPatch::EndsBlockAndGoesOn;
-        TestProcedure test(traits);
-        Output& out = test.out();
-        Operation* kept = test.argumentGPR(0);
-        PatchOperation* patch = out.patch(Void);
-        RELEASE_ASSERT(patch->effects.mayCollect);
-        patch->setRunsWithoutFrame(true);
-        patch->setShowsRegistersToCollector(showsRegistersToCollector);
-        patch->setGenerator([](CCallHelpers& jit, const PatchParameters& params) {
-            if (params.successorLabels().empty())
-                jit.breakpoint();
-        });
-        switch (end) {
-        case EndOfFrameTestPatch::GoesOn:
-            out.ret(kept);
-            break;
-        case EndOfFrameTestPatch::EndsBlockAndGoesOn: {
-            Block* continuation = out.newBlock();
-            Block* landingPad = out.newBlock();
-            out.appendSuccessor(normalEdge(continuation));
-            out.appendSuccessor(rareEdge(landingPad));
-            patch->clobberLateOnSuccessor(1, RegisterSet());
-            patch->effects.terminal = true;
-            out.appendTo(continuation);
-            out.ret(kept);
-            out.appendTo(landingPad);
-            out.ret(kept);
-            break;
-        }
-        case EndOfFrameTestPatch::EndsFunction:
-            patch->effects.terminal = true;
-            break;
-        }
-        RELEASE_ASSERT(test.prepare());
-    });
+    ProcedureTraits traits;
+    traits.hasHandlers = end == EndOfFrameTestPatch::EndsBlockAndGoesOn;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    Operation* kept = test.argumentGPR(0);
+    PatchOperation* patch = out.patch(Void);
+    AOT_TEST_CHECK(patch->effects.mayCollect);
+    patch->setRunsWithoutFrame(true);
+    patch->setShowsRegistersToCollector(showsRegistersToCollector);
+    patch->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+    switch (end) {
+    case EndOfFrameTestPatch::GoesOn:
+        out.ret(kept);
+        break;
+    case EndOfFrameTestPatch::GoesOnIntoOops:
+        out.unreachable();
+        break;
+    case EndOfFrameTestPatch::EndsBlockAndGoesOn: {
+        Block* continuation = out.newBlock();
+        Block* landingPad = out.newBlock();
+        out.appendSuccessor(normalEdge(continuation));
+        out.appendSuccessor(rareEdge(landingPad));
+        patch->clobberLateOnSuccessor(1, RegisterSet());
+        patch->effects.terminal = true;
+        out.appendTo(continuation);
+        out.ret(kept);
+        out.appendTo(landingPad);
+        out.ret(kept);
+        break;
+    }
+    case EndOfFrameTestPatch::EndsFunction:
+        patch->effects.terminal = true;
+        break;
+    }
+    if (test.prepare())
+        return false;
+    const std::optional<Failure>& failure = test.procedure().failure();
+    AOT_TEST_CHECK(failure && failure->kind == FailureKind::NeedsFrameWhereNoneIsSetUp && failure->operation == patch->index());
+    return true;
 }
 
 static void testMachineFramePatchThatMayCollectWithoutFrameShowsItsRegistersOrEndsFunction()
 {
-    AOT_TEST_CHECK(buildPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::GoesOn, true) == ChildOutcome::Finished);
-    AOT_TEST_CHECK(buildPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::GoesOn, false) == ChildOutcome::Crashed);
-    AOT_TEST_CHECK(buildPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::EndsBlockAndGoesOn, true) == ChildOutcome::Finished);
-    AOT_TEST_CHECK(buildPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::EndsBlockAndGoesOn, false) == ChildOutcome::Crashed);
-    AOT_TEST_CHECK(buildPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::EndsFunction, false) == ChildOutcome::Finished);
+    AOT_TEST_CHECK(!scanRefusesPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::GoesOn, true));
+    AOT_TEST_CHECK(scanRefusesPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::GoesOn, false));
+    AOT_TEST_CHECK(!scanRefusesPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::GoesOnIntoOops, true));
+    AOT_TEST_CHECK(scanRefusesPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::GoesOnIntoOops, false));
+    AOT_TEST_CHECK(!scanRefusesPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::EndsBlockAndGoesOn, true));
+    AOT_TEST_CHECK(scanRefusesPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::EndsBlockAndGoesOn, false));
+    AOT_TEST_CHECK(!scanRefusesPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch::EndsFunction, false));
 }
-#endif
 
 static void testMachineFramePatchThatTestsStackItselfStandsAheadOfFramedPart()
 {
@@ -3904,9 +3905,7 @@ std::span<const NativeTest> machineFrameTests()
         { "machine/frame/rare-blocks-with-calls-have-frames-of-their-own"_s, Machine::testMachineFrameCoversRareBlocksAlone },
         { "machine/frame/a-head-saves-the-owner-that-the-collector-alone-reads"_s, Machine::testMachineFrameHeadSavesOwnerThatCollectorAloneReads },
         { "machine/frame/a-second-head-saves-the-owner-that-steps-read-under-the-first-alone"_s, Machine::testMachineFrameSecondHeadSavesOwnerThatStepsReadUnderFirstAlone },
-#if OS(UNIX)
         { "machine/frame/patch-that-may-collect-without-a-frame-shows-its-registers-or-ends-the-function"_s, Machine::testMachineFramePatchThatMayCollectWithoutFrameShowsItsRegistersOrEndsFunction },
-#endif
         { "machine/frame/the-owner-is-held-at-the-poll-of-a-loop-outside-the-part-that-spilled-it"_s, Machine::testMachineFrameOwnerIsHeldAtPollOfLoopOutsidePartThatSpilledIt },
         { "machine/frame/an-owner-that-the-part-spilled-is-loaded-back-where-the-way-leaves-the-part"_s, Machine::testMachineFrameOwnerThatPartSpilledIsLoadedBackWhereWayLeavesPart },
         { "machine/frame/an-owner-that-the-part-spilled-is-loaded-back-where-the-way-leaves-the-part-into-a-rare-block"_s, Machine::testMachineFrameOwnerThatPartSpilledIsLoadedBackWhereWayLeavesPartIntoRareBlock },

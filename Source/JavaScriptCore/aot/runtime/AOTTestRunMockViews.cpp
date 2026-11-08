@@ -235,19 +235,15 @@ std::optional<unsigned> Modules::keepEndedMock(ModuleID fileOrModule, JSObject* 
         momentEnded = ++state.momentOfLoads;
     letGoOfEndedMocksNobodySees();
     Vector<EndedMock, 2>& ended = m_endedMocks.add(fileOrModule, Vector<EndedMock, 2>()).iterator->value;
-    if (!ended.isEmpty() && ended.last().momentLaid == laid.moment) {
-        unsigned last = ended.size() - 1;
-        JSObject* kept = endedMock(fileOrModule, last);
-        if (kept && kept != mock && ended.last().momentEnded <= ended.last().momentLaid) {
-            mock = withNamesOfPatchedMock(kept, mock);
-            kept = nullptr;
-            LoadedModule& held = ensureLoaded(fileOrModule);
-            JSValue view = held.namespacesOfEndedMocks ? held.namespacesOfEndedMocks->getDirectIndex(m_instance.globalObject, last) : JSValue();
-            if (auto* object = view ? dynamicDowncast<ModuleNamespace>(view) : nullptr)
-                object->setMockOfView(*m_instance.vm, mock);
-        }
-        if (!kept)
-            storeValue(m_instance.globalObject, ensureLoaded(fileOrModule).endedMocks.get(), last, mock);
+    std::optional<unsigned> placeOfMockThatWasPatched;
+    if (JSObject* kept = ended.isEmpty() || ended.last().momentLaid != laid.moment || ended.last().momentEnded > ended.last().momentLaid ? nullptr : endedMock(fileOrModule, ended.size() - 1); kept && kept != mock) {
+        mock = withNamesOfPatchedMock(kept, mock);
+        placeOfMockThatWasPatched = ended.size() - 1;
+        exportsLeftOut = ended.last().exportsLeftOut;
+    }
+    if (!placeOfMockThatWasPatched && !ended.isEmpty() && ended.last().momentLaid == laid.moment) {
+        if (!endedMock(fileOrModule, ended.size() - 1))
+            storeValue(m_instance.globalObject, ensureLoaded(fileOrModule).endedMocks.get(), static_cast<unsigned>(ended.size() - 1), mock);
         m_endedMocksToAskAbout.add(fileOrModule, Vector<unsigned, 2>()).iterator->value.append(ended.size() - 1);
         ended.last().momentEnded = momentEnded;
         ended.last().momentOfTestFile = state.momentOfTestFile;
@@ -261,6 +257,7 @@ std::optional<unsigned> Modules::keepEndedMock(ModuleID fileOrModule, JSObject* 
         m_modulesWhoseEndedMocksOverlap.set(fileOrModule.index());
     m_endedMocksToAskAbout.add(fileOrModule, Vector<unsigned, 2>()).iterator->value.append(ended.size());
     ended.append({ laid.moment, momentEnded, state.momentOfTestFile, laid.isInPreload, WTF::move(exportsLeftOut) });
+    ended.last().placeOfMockThatWasPatched = placeOfMockThatWasPatched;
     return ended.size() - 1;
 }
 
@@ -322,7 +319,12 @@ std::optional<unsigned> Modules::indexOfEndedMockSeenBy(ModuleID fileOrModule, M
         if (!got->value.isGivenItNoMore || anew == m_momentsLoadedAnew.end() || anew->value.moment <= got->value.moment)
             return std::nullopt;
     }
-    return indexOfEndedMockSeenAt(fileOrModule, momentLinkedAsOf(importer, reader));
+    std::optional<unsigned> index = indexOfEndedMockSeenAt(fileOrModule, momentLinkedAsOf(importer, reader));
+    if (index && m_loadedInPreload.get(importer.index())) [[unlikely]] {
+        if (std::optional<unsigned> patched = m_endedMocks.find(fileOrModule)->value[*index].placeOfMockThatWasPatched)
+            return patched;
+    }
+    return index;
 }
 
 JSObject* Modules::endedMock(ModuleID fileOrModule, std::optional<unsigned> index) const

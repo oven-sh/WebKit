@@ -1043,6 +1043,20 @@ static void stepForInInChoices(Walker& walker, Draft& step)
     step.setValuesOperands(std::array { isDone, key });
 }
 
+static void nameClassOfSuperBaseInChoices(Walker& walker, Draft& draft)
+{
+    Reference home = draft.homeOperand();
+    if (draft.homeKind() != HomeObjectKind::ClassPrototype || !home)
+        return;
+    Type type = walker.types().at(walker.typeOf(home));
+    FunctionID constructor = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
+    LayoutID classLayout = constructor ? classOfClassObject(walker.program(), constructor) : LayoutID();
+    if (!classLayout || !walker.plan().hasClassRecord(classLayout) || !walker.facts().isEvaluatedAtMostOnce(classLayout))
+        return;
+    draft.setLayout(classLayout);
+    walker.count(StatisticID::BasesOfSuperReadOffRecordsOfClasses);
+}
+
 void Walker::chooseConservativeFieldsOfOpcodeThatNeedsChoices(Draft& draft)
 {
     Opcode opcode = draft.opcode;
@@ -1077,6 +1091,10 @@ void Walker::chooseConservativeFieldsOfOpcodeThatNeedsChoices(Draft& draft)
     }
     if (opcode == Opcode::ForInOpen) {
         openForInInChoices(*this, draft);
+        return;
+    }
+    if (opcode == Opcode::GetSuperBase) {
+        nameClassOfSuperBaseInChoices(*this, draft);
         return;
     }
     if (opcode == Opcode::ForInStep) {

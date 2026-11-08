@@ -13,6 +13,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkExceptions.h"
 #include "AOTLocalesPassedAtCalls.h"
 #include "AOTNameClass.h"
@@ -1728,7 +1729,7 @@ void CallInLinkCalls::callBuiltinOfCall()
         give(callBuiltin(m_call.builtin, passedByCall(), false));
 }
 
-static bool holdsOnlyObjectsThatCannotBeCalledForLinkCalls(const LinkFlow& flow, const LinkType& callee)
+static ALWAYS_INLINE bool holdsOnlyObjectsThatCannotBeCalledForLinkCalls(const LinkFlow& flow, const LinkType& callee)
 {
     auto cannotBeCalled = [&](LayoutID layout) {
         LayoutKind kind = flow.program.at(layout).kind;
@@ -4529,7 +4530,7 @@ bool CallInLinkCalls::stepsAreFieldsOrAbsent(RowCall& call, const BuiltinParamet
     return holdsObject && holds;
 }
 
-bool CallInLinkCalls::mayTakeApartLiteralAt(RowCall& call, const BuiltinParameter& parameter, bool byFields)
+ALWAYS_INLINE_INTO_OTHER_FILES bool CallInLinkCalls::mayTakeApartLiteralAt(RowCall& call, const BuiltinParameter& parameter, bool byFields)
 {
     const BuiltinOverload& row = *call.row;
     BuiltinOperand operand = parameter.operand;

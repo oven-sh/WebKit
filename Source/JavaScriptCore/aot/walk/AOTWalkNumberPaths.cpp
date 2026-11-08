@@ -236,6 +236,19 @@ static bool buildNumberPath(Walker& walker, const BodyValue& firstOperator)
     });
     if (!takesTaggedNumber)
         return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (LoopID loop = index.loopOf(index.blockOf(firstOperator.id()))) {
+        ValueID taker = index.onlyUsingValue(firstOperator.id());
+        while (taker && opcodesThatStateTypes.contains(index.opcodeOf(taker)))
+            taker = index.onlyUsingValue(taker);
+        bool givesSameInEveryTurn = taker && allBitwiseOperators.contains(index.opcodeOf(taker));
+        firstOperator.forEachOperand([&](ValueID operand, uint32_t) {
+            ValueID written = index.valueBehindCasts(operand);
+            givesSameInEveryTurn &= !index.isInLoop(index.blockOf(written), loop) || (!index.isParameter(written) && primitiveConstants.contains(index.opcodeOf(written)));
+        });
+        if (givesSameInEveryTurn)
+            return false;
+    }
 
     std::optional<NumberPathInBody> path = findNumberPathInBody(walker, firstOperator);
     if (!path)

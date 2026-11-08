@@ -15,6 +15,7 @@
 #include "AOTEffectsOfOperations.h"
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTLinkTables.h"
 #include "AOTPlan.h"
 #include "AOTSchemaInlineBuiltins.h"
@@ -326,7 +327,7 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     return isBuilt;
 }
 
-bool isPrivateAliasOfBuiltinMember(const Program& program, PropertyKeyID key)
+ALWAYS_INLINE_INTO_OTHER_FILES bool isPrivateAliasOfBuiltinMember(const Program& program, PropertyKeyID key)
 {
     if (!key || liesInThread(key) || program.at(key).kind != PropertyKeyKind::EnginePrivateName)
         return false;

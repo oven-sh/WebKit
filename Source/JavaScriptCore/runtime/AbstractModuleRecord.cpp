@@ -125,6 +125,8 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (thisObject->vm().hasCompiledCode() && !thisObject->inherits<AOT::ModuleRecord>()) {
         for (const auto& resolution : thisObject->m_resolutionCache.values())
             visitor.appendUnbarriered(resolution.moduleRecord);
+        for (const auto& resolution : thisObject->m_importsAsLinked.values())
+            visitor.appendUnbarriered(resolution.moduleRecord);
     }
 #endif
 }
@@ -633,8 +635,23 @@ auto AbstractModuleRecord::resolveImportByName(JSGlobalObject* globalObject, con
     if (requestedModule)
         *requestedModule = importedModule;
 
+#if ENABLE(AOT)
+    if (auto linked = m_importsAsLinked.find(localName.impl()); linked != m_importsAsLinked.end()) [[unlikely]]
+        return linked->value;
+#endif
     RELEASE_AND_RETURN(scope, importedModule->resolveExport(globalObject, importEntry.importName));
 }
+
+#if ENABLE(AOT)
+void AbstractModuleRecord::keepImportAsLinked(UniquedStringImpl* localName, const Resolution& resolution)
+{
+    {
+        Locker locker { cellLock() };
+        m_importsAsLinked.set(localName, resolution);
+    }
+    vm().writeBarrier(this);
+}
+#endif
 
 struct AbstractModuleRecord::ResolveQuery {
     struct Hash {

@@ -200,6 +200,29 @@ static bool callHandsOverWrittenTextThatCalleeReadsByAtInlining(const Walker& wa
     return false;
 }
 
+static bool calleeAsksForClassOfWhatItIsHandedAtInlining(const Walker& walker, FunctionID callee)
+{
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    if (!body || !body->holdsAnyOf(OpcodeSet { Opcode::InstanceOf }))
+        return false;
+    BodyBlock entry = body->block(entryBlock);
+    for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
+        for (BodyValue test : body->block(BlockID(number)).values()) {
+            if (test.opcode() != Opcode::InstanceOf || !entry.indexOfParameter(body->valueBehindCasts(test.valueOperand())))
+                continue;
+            ValueID asked = body->valueBehindCasts(test.constructorOperand());
+            if (!body->isParameter(asked) && body->opcodeOf(asked) == Opcode::CheckInitialized)
+                asked = body->valueBehindCasts(body->value(asked).operand(0));
+            if (body->isParameter(asked) || body->opcodeOf(asked) != Opcode::GetModuleVariable)
+                continue;
+            TypeID held = walker.positions().variable(TypeLevel::Proven, body->value(asked).variable());
+            if (held && shapesOfKinMayAnswerInstanceOf(walker, walker.types().withoutPrimitives(held, Primitive::Absent)))
+                return true;
+        }
+    }
+    return false;
+}
+
 static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t numberOfOperands, const PlaceOfCall& place, const std::span<const Reference>* handedOver)
 {
     if (copyIsDrawnAwayAtInlining(walker, callee, place))
@@ -239,7 +262,7 @@ static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t n
         return false;
     if (place.caller != walker.unit().function && (place.caller != walker.currentFunction() || (!walker.isInLoopOfBodyAtWork() && !walker.program().at(callee).has(FunctionFlags::HasRestParameter)) || walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations > window))
         return false;
-    return summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects || (summary.numberOfOperations <= inlineLimitInLoops && copyMayLetObjectFallAwayAtInlining(walker, callee, handedOver));
+    return summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects || (summary.numberOfOperations <= inlineLimitInLoops && (copyMayLetObjectFallAwayAtInlining(walker, callee, handedOver) || calleeAsksForClassOfWhatItIsHandedAtInlining(walker, callee)));
 }
 
 static bool copyFillsObjectMadeForItAtInlining(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)

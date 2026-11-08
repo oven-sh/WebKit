@@ -770,8 +770,11 @@ void Walker::enterWithFieldsOfScopes(BlockID entry, std::span<const Reference> b
     }
     Vector<Reference, 8> handedOn(besideFieldsOfScopes);
     EdgeID noEdge;
-    if (bringFieldsOfScopesRound(noEdge, entry, handedOn))
-        crossEdge({ }, entry, handedOn.span());
+    if (!bringFieldsOfScopesRound(noEdge, entry, handedOn))
+        return;
+    if (m_block && m_code.at(entry).frequency == BlockFrequency::Unlikely)
+        m_code.makeBlockUnlikely(m_block, true);
+    crossEdge({ }, entry, handedOn.span());
 }
 
 bool Walker::closedCopyTakes(BlockID head, std::span<const Reference> besideFieldsOfScopes)
@@ -2627,7 +2630,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             continue;
         }
         list.storage = list.kindAskedOtherwise;
-        list.admitsInt32Storage = true;
+        list.admitsInt32Storage = list.storage != ArrayStorage::Other;
         list.kindMayWellBeAnother = false;
     }
     bool otherCopyAsksCountersAlone = listsRead.someListIsTakenUnderCounterAskedInFront && !m_walksCopyThatAsksCountersAlone && !m_asksOnlyWhetherLoopMayBeBuiltTwice;
@@ -3509,7 +3512,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     if (!sharedEntry && closedCopyHasEntry && loopCarriesValuesOfConsumerRound(inputHead))
         carriedInFrontOfLoop = carriedValuesInFrame(frameIndex);
     if (!sharedEntry && closedCopyHasEntry) {
-        entryOfClosedCopy = addBlock(otherCopyOpensItsGuesses ? BlockFrequency::Normal : BlockFrequency::Rare);
+        entryOfClosedCopy = addBlock(otherCopyAsksCountersAlone ? BlockFrequency::Unlikely : otherCopyOpensItsGuesses ? BlockFrequency::Normal : BlockFrequency::Rare);
         m_entriesOfClosedCopies.add(entryOfClosedCopy.index());
         for (size_t index = 0; index < entering.size(); ++index) {
             TypeID type = joinTypes(preview.typesOfParameters[index], ownTypeOf(entering[index]));

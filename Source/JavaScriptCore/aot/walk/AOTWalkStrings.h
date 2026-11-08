@@ -114,6 +114,7 @@ struct NotesOfStrings final : Walker::KeptForBuild {
     Vector<CodeUnitChanged> codeUnitsChanged;
     HashMap<const BodyIndex*, Vector<std::pair<uint32_t, uint32_t>>> callsWithTwoArgumentsByFirst;
     HashMap<const BodyIndex*, Vector<std::array<uint32_t, 3>>> callsThatGetUnderOneKey;
+    HashMap<const BodyIndex*, BitVector> valuesThatBodiesStore;
     struct URLThatIsNeverMade {
         uint32_t inlineFrame { 0 };
         ValueID made;

@@ -184,7 +184,7 @@ static ALWAYS_INLINE X86IntegerOperand takeX86IntegerOperand(Encoder& encoder, c
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static X86IntegerOperand takeFirstX86IntegerOperand(Encoder& encoder, const Step& step)
+static ALWAYS_INLINE X86IntegerOperand takeFirstX86IntegerOperand(Encoder& encoder, const Step& step)
 {
     LeafCursor cursor(step);
     return takeX86IntegerOperand(encoder, step.operation, 0, cursor);

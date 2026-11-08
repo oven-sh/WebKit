@@ -60,7 +60,7 @@ static std::optional<uint32_t> unitIndexOfClosureEntry(uint32_t function)
     return static_cast<uint32_t>(index);
 }
 
-static std::optional<uint32_t> offsetOfMentionedWordInStatics(const ImageNumbers& numbers, NumberSpace space, std::span<const uint32_t> key)
+static ALWAYS_INLINE std::optional<uint32_t> offsetOfMentionedWordInStatics(const ImageNumbers& numbers, NumberSpace space, std::span<const uint32_t> key)
 {
     if (key.empty() || (hasOneIDAsKey(space) && key.size() != 1))
         return std::nullopt;
@@ -393,7 +393,7 @@ std::optional<uint32_t> ImageNumbers::numberOf(NumberSpace space, std::span<cons
     return numberOfInLine(space, key);
 }
 
-std::optional<uint32_t> ImageNumbers::valueOf(const Mention& mention, std::span<const uint32_t> mentionWords, bool asInstanceWord) const
+ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::valueOf(const Mention& mention, std::span<const uint32_t> mentionWords, bool asInstanceWord) const
 {
     if (asInstanceWord || mention.numberOfWords != 1)
         return valueOfSlowCase(mention, mentionWords, asInstanceWord);

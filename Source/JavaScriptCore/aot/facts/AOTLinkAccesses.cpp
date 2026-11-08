@@ -180,7 +180,7 @@ private:
     bool isNamed() const { return !!m_access.key; }
     bool isTakenByLoader() const { return isRead() && m_function && isLibraryCode(m_program, m_program.at(m_function)) && std::ranges::contains(m_flow.summaries.at(m_function).namesThatLoaderTakes, m_access.value, &ThinSummary::NameThatLoaderTakes::read); }
     bool readKey();
-    bool readsUnderTextsThatBodyWrites();
+    bool readsOrStoresUnderTextsThatBodyWrites();
 
     void give(const LinkType&);
     void giveSymbol(PropertyKeyID);
@@ -833,38 +833,73 @@ static bool appendTextsOfWrittenListForLinkAccesses(const Program& program, cons
     return !texts.isEmpty();
 }
 
-bool AccessInLinkAccesses::readsUnderTextsThatBodyWrites()
+static bool appendFirstTextsOfWrittenPairsForLinkAccesses(const BodyIndex& index, ValueID list, Vector<StringID, 8>& texts)
 {
-    if (!isRead() || m_shared || m_program.admitsReplacedBuiltins || m_flow.testRuns().isTestRun())
+    BodyValue made = index.value(list);
+    if (made.opcode() != Opcode::NewArray || !made.as<Opcode::NewArray>().holes().empty())
+        return false;
+    for (ValueID pair : made.variadicOperands()) {
+        if (!pair || index.isParameter(pair) || index.opcodeOf(pair) != Opcode::NewArray || !index.hasOneUse(pair) || !index.value(pair).as<Opcode::NewArray>().holes().empty())
+            return false;
+        auto elements = index.value(pair).variadicOperands();
+        if (elements.empty() || !elements[0] || index.isParameter(elements[0]) || index.opcodeOf(elements[0]) != Opcode::String)
+            return false;
+        texts.append(index.value(elements[0]).as<Opcode::String>().string());
+    }
+    return !texts.isEmpty();
+}
+
+static ValueID whatStepGoesThroughForLinkAccesses(const BodyIndex& index, ValueID value, bool takesApart)
+{
+    while (value && !index.isParameter(value) && opcodesThatStateTypes.contains(index.opcodeOf(value)))
+        value = index.value(value).operand(0);
+    if (!value || index.isParameter(value) || index.opcodeOf(value) != Opcode::ResultAt || index.value(value).as<Opcode::ResultAt>().index() != static_cast<uint32_t>(IteratorResumeResult::Value))
+        return { };
+    ValueID step = index.value(value).as<Opcode::ResultAt>().resultsOperand();
+    if (index.isParameter(step) || index.opcodeOf(step) != Opcode::IteratorResume)
+        return { };
+    auto resumed = index.value(step).as<Opcode::IteratorResume>();
+    if (resumed.readsValueWhenDone() || resumed.resumeMode() != ResumeMode::Next || resumed.sentOperand() || (takesApart && resumed.stepIndex() != std::optional<uint32_t>(0)))
+        return { };
+    ValueID open = index.value(step).operand(0);
+    if (index.isParameter(open) || index.opcodeOf(open) != Opcode::IteratorOpen)
+        return { };
+    auto opened = index.value(open).as<Opcode::IteratorOpen>();
+    if (opened.iteratorKind() != IteratorKind::Sync || opened.isDestructuring() != takesApart || opened.isDelegating())
+        return { };
+    return index.value(open).operand(0);
+}
+
+bool AccessInLinkAccesses::readsOrStoresUnderTextsThatBodyWrites()
+{
+    bool stores = m_access.kind == Kind::Store;
+    if ((!isRead() && !stores) || m_shared || m_program.admitsReplacedBuiltins || m_flow.testRuns().isTestRun())
         return false;
     const BodyIndex* index = bodiesLookedAt(m_flow.looks).find(m_function);
-    if (!index || index->isParameter(m_access.site) || index->opcodeOf(m_access.site) != Opcode::ElemGet)
+    if (!index || index->isParameter(m_access.site) || index->opcodeOf(m_access.site) != (stores ? Opcode::ElemSet : Opcode::ElemGet))
         return false;
-    ValueID key = index->value(m_access.site).as<Opcode::ElemGet>().propertyOperand();
-    while (key && !index->isParameter(key) && opcodesThatStateTypes.contains(index->opcodeOf(key)))
-        key = index->value(key).operand(0);
-    if (!key || index->isParameter(key) || index->opcodeOf(key) != Opcode::ResultAt || index->value(key).as<Opcode::ResultAt>().index() != static_cast<uint32_t>(IteratorResumeResult::Value))
+    ValueID key = stores ? index->value(m_access.site).as<Opcode::ElemSet>().propertyOperand() : index->value(m_access.site).as<Opcode::ElemGet>().propertyOperand();
+    ValueID list = whatStepGoesThroughForLinkAccesses(*index, key, false);
+    bool keyIsFirstOfPair = !list;
+    if (keyIsFirstOfPair) {
+        ValueID pair = whatStepGoesThroughForLinkAccesses(*index, key, true);
+        for (ValueID part = pair; part; part = index->value(part).operand(0)) {
+            if (index->isParameter(part) || !index->hasOneUse(part))
+                return false;
+            if (!opcodesThatStateTypes.contains(index->opcodeOf(part)))
+                break;
+        }
+        list = pair ? whatStepGoesThroughForLinkAccesses(*index, pair, false) : ValueID();
+    }
+    if (!list)
         return false;
-    ValueID step = index->value(key).as<Opcode::ResultAt>().resultsOperand();
-    if (index->isParameter(step) || index->opcodeOf(step) != Opcode::IteratorResume)
-        return false;
-    auto resumed = index->value(step).as<Opcode::IteratorResume>();
-    if (resumed.readsValueWhenDone() || resumed.resumeMode() != ResumeMode::Next || resumed.sentOperand())
-        return false;
-    ValueID open = index->value(step).operand(0);
-    if (index->isParameter(open) || index->opcodeOf(open) != Opcode::IteratorOpen)
-        return false;
-    auto opened = index->value(open).as<Opcode::IteratorOpen>();
-    if (opened.iteratorKind() != IteratorKind::Sync || opened.isDestructuring() || opened.isDelegating())
-        return false;
-    ValueID list = index->value(open).operand(0);
     while (!index->isParameter(list) && index->hasOneUse(list) && opcodesThatStateTypes.contains(index->opcodeOf(list)))
         list = index->value(list).operand(0);
     if (index->isParameter(list) || !index->hasOneUse(list) || opcodesThatStateTypes.contains(index->opcodeOf(list)))
         return false;
 
     Vector<StringID, 8> texts;
-    if (!appendTextsOfWrittenListForLinkAccesses(m_program, *index, list, texts))
+    if (!(keyIsFirstOfPair ? appendFirstTextsOfWrittenPairsForLinkAccesses(*index, list, texts) : appendTextsOfWrittenListForLinkAccesses(m_program, *index, list, texts)))
         return false;
     Vector<PropertyKeyID, 8> names;
     for (StringID text : texts) {
@@ -874,6 +909,8 @@ bool AccessInLinkAccesses::readsUnderTextsThatBodyWrites()
         if (!names.contains(*name))
             names.append(*name);
     }
+    if (stores)
+        m_flow.build.statistics().count(StatisticID::StoresHeardUnderTextsThatBodyWrites);
     for (PropertyKeyID name : names) {
         AccessInLinkAccesses underName = *this;
         underName.m_access.key = name;
@@ -964,7 +1001,7 @@ void AccessInLinkAccesses::resolve()
     }
     if (!isNamed() && !readKey())
         return;
-    if (!isNamed() && readsUnderTextsThatBodyWrites())
+    if (!isNamed() && readsOrStoresUnderTextsThatBodyWrites())
         return;
     if (subject.builtin && m_flow.lightFormOf(subject.builtin) && !isServedByLightFormOf(subject.builtin))
         m_flow.noteLossOf(subject.builtin);

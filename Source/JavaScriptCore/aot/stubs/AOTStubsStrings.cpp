@@ -41,6 +41,7 @@ StubSignature signatureOfStringsAreEqual(StubKey) { return StubSignature::withGP
 StubSignature signatureOfDistinctStringsAreEqual(StubKey key) { return signatureOfStringsAreEqual(key); }
 StubSignature signatureOfCompareStrings(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) }); }
 StubSignature signatureOfFindCharacter8(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
+StubSignature signatureOfFindText8(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), gprOf(StubRegister::A4) }); }
 StubSignature signatureOfStringBuilderAppendString(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 StubSignature signatureOfStringBuilderDiscard(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A1) }); }
 StubSignature signatureOfStackStringBuilderAppendString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
@@ -316,20 +317,9 @@ void generateFlattenString(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTFlatten, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = string, .valueDestination = fiber });
 }
 
-void generateFindCharacter8(StubAssembler& jit)
+static void findCodeUnitAndReturn(StubAssembler& jit, GPRReg characters, GPRReg length, GPRReg codeUnit, GPRReg position, GPRReg index, GPRReg unit)
 {
-    static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1));
-    static_assert(leafArgumentGPR(2) == gprOf(StubRegister::A2) && leafArgumentGPR(3) == gprOf(StubRegister::A3));
-    const GPRReg characters = jit.operand(0);
-    const GPRReg length = jit.operand(1);
-    const GPRReg codeUnit = jit.operand(2);
-    const GPRReg position = jit.operand(3);
-    const GPRReg result = jit.result();
-    const GPRReg index = result == characters ? jit.allocateScratch(StubRegister::A5) : result;
-    const GPRReg unit = jit.allocateScratch(StubRegister::A4);
-    RELEASE_ASSERT(result == GPRInfo::returnValueGPR);
-    RELEASE_ASSERT(noOverlap(characters, length, codeUnit, position, index, unit));
-
+    RELEASE_ASSERT(characters == leafArgumentGPR(0) && length == leafArgumentGPR(1) && codeUnit == leafArgumentGPR(2) && position == leafArgumentGPR(3));
     Jump isPastEnd = jit.branch32(CCallHelpers::AboveOrEqual, position, length);
     Jump needsLeaf = jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthSearchedByBytes));
     jit.zeroExtend32ToWord(position, index);
@@ -347,6 +337,47 @@ void generateFindCharacter8(StubAssembler& jit)
 
     needsLeaf.link(&jit);
     jit.callLeaf(Entry::operationAOTStringFindCharacter8);
+    jit.returnToCaller();
+}
+
+void generateFindCharacter8(StubAssembler& jit)
+{
+    static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1));
+    static_assert(leafArgumentGPR(2) == gprOf(StubRegister::A2) && leafArgumentGPR(3) == gprOf(StubRegister::A3));
+    const GPRReg characters = jit.operand(0);
+    const GPRReg length = jit.operand(1);
+    const GPRReg codeUnit = jit.operand(2);
+    const GPRReg position = jit.operand(3);
+    const GPRReg result = jit.result();
+    const GPRReg index = result == characters ? jit.allocateScratch(StubRegister::A5) : result;
+    const GPRReg unit = jit.allocateScratch(StubRegister::A4);
+    RELEASE_ASSERT(result == GPRInfo::returnValueGPR);
+    RELEASE_ASSERT(noOverlap(characters, length, codeUnit, position, index, unit));
+
+    findCodeUnitAndReturn(jit, characters, length, codeUnit, position, index, unit);
+}
+
+void generateFindText8(StubAssembler& jit)
+{
+    static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1) && leafArgumentGPR(2) == gprOf(StubRegister::A2));
+    static_assert(leafArgumentGPR(3) == gprOf(StubRegister::A3) && leafArgumentGPR(4) == gprOf(StubRegister::A4));
+    const GPRReg characters = jit.operand(0);
+    const GPRReg length = jit.operand(1);
+    const GPRReg sought = jit.operand(2);
+    const GPRReg lengthOfSought = jit.operand(3);
+    const GPRReg position = jit.operand(4);
+    const GPRReg result = jit.result();
+    const GPRReg index = result == characters ? jit.allocateScratch(StubRegister::A5) : result;
+    RELEASE_ASSERT(result == GPRInfo::returnValueGPR);
+    RELEASE_ASSERT(noOverlap(characters, length, sought, lengthOfSought, position, index));
+
+    Jump isLonger = jit.branch32(CCallHelpers::NotEqual, lengthOfSought, TrustedImm32(1));
+    jit.load8(Address(sought), sought);
+    jit.move(position, lengthOfSought);
+    findCodeUnitAndReturn(jit, characters, length, sought, lengthOfSought, index, position);
+
+    isLonger.link(&jit);
+    jit.callLeaf(Entry::operationAOTStringFind8);
     jit.returnToCaller();
 }
 

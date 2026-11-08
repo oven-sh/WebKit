@@ -1706,7 +1706,7 @@ void ScanOfBody::noteFunctionsBehind(LayoutID layout)
     noteFunctionNamed(m_program.at(declaredLayoutOf(m_program, layout)).constructor);
 }
 
-void ScanOfBody::noteFunctionsBehind(TypeID type)
+ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::noteFunctionsBehind(TypeID type)
 {
     if (holdsOnlyPrimitives(type))
         return;
@@ -3693,7 +3693,7 @@ void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, ui
     ValueID object;
     ValueID stored;
     ValueID computedKey;
-    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) ALWAYS_INLINE_LAMBDA {
         const OperandInfo& info = operandInfoOf(opcode, operandIndex);
         if (operandIndex == receiverIndex) {
             object = operand;
@@ -6451,7 +6451,7 @@ void ScanOfBody::keepObjectOfReadPutOff(uint32_t read, ValueID object)
         m_objectsOfReadsPutOff.add(read, m_lists[object.index()]);
 }
 
-ListInScan ScanOfBody::objectOfReadPutOff(uint32_t read, ValueID object)
+ALWAYS_INLINE_INTO_OTHER_FILES ListInScan ScanOfBody::objectOfReadPutOff(uint32_t read, ValueID object)
 {
     if (!m_objectsOfReadsPutOff.isEmpty()) [[unlikely]] {
         if (auto kept = m_objectsOfReadsPutOff.find(read); kept != m_objectsOfReadsPutOff.end())
@@ -6464,7 +6464,7 @@ ListInScan ScanOfBody::objectOfReadPutOff(uint32_t read, ValueID object)
     return listOf(object);
 }
 
-void ScanOfBody::putInForce(uint32_t exclusion)
+ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::putInForce(uint32_t exclusion)
 {
     m_exclusionsToLay.shrink(0);
     while (m_exclusionInForce != exclusion) {

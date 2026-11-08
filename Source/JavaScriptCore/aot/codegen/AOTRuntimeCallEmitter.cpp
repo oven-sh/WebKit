@@ -1587,7 +1587,7 @@ Machine::PatchOperation* RuntimeCallEmitter::createCallPatchpoint(const Operatio
     return patchpoint;
 }
 
-void RuntimeCallEmitter::finishCallPatchpoint(const OperationContext& context, Machine::PatchOperation* patchpoint, uint32_t site, const CallPatchpointRequest& request)
+ALWAYS_INLINE_INTO_OTHER_FILES void RuntimeCallEmitter::finishCallPatchpoint(const OperationContext& context, Machine::PatchOperation* patchpoint, uint32_t site, const CallPatchpointRequest& request)
 {
     if ((request.effects.mayThrow || request.effects.mayCollect) && ExceptionEmitter::unwindsWithinFunction(context))
         emitter<ExceptionEmitter>().attachLandingPad(context, patchpoint, site, !request.neverReturns);

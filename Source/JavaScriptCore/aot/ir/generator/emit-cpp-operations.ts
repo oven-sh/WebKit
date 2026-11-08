@@ -301,7 +301,7 @@ function lookup(
     const sizesOfGroups = [...Map.groupBy(cases, ({ value }) => value).values()].map(group => group.length);
     if (cases.length - Math.max(...sizesOfGroups) < leastLabelsOfColumnTable) {
       const signature = `${type} ${name}(${enumName} ${parameter})`;
-      return constexprSwitch({ signature, subject: parameter, enumName, cases, defaultValue });
+      return constexprSwitch({ signature, subject: parameter, enumName, cases, defaultValue, qualifier: "ALWAYS_INLINE constexpr" });
     }
     const inSchema = nameOfSwitchBehindTable(name);
     const signature = `${type} ${inSchema}(${enumName} ${parameter})`;

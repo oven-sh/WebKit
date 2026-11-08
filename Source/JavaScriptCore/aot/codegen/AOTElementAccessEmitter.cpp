@@ -515,7 +515,7 @@ void ElementAccessEmitter::generateSetArrayLength(const ValueContext& value)
     Integer length = integerOf(value->lengthOperand());
     StubKey stub = setArrayLength(value->mode() == ECMAMode::Sloppy);
     build().statistics().count(StatisticID::LengthsStoredIntoProvenLists);
-    if (!generator().paysForCodeInLine(value.block())) {
+    if (!generator().takesOpenForm(value, StateOfKnowledge::Always)) {
         callStub(value, stub, { array.value(), length.value() });
         return;
     }

@@ -12,6 +12,7 @@
 #include "AOTCellFormat.h"
 #include "AOTConversionEmitter.h"
 #include "AOTFaultTable.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTPureOperations.h"
 #include "AOTRepresentation.h"
 #include "AOTRuntimeCallEmitter.h"
@@ -58,7 +59,7 @@ LValue SlotEmitter::constantWithBits(LType type, uint64_t bits)
     return m_out.constDouble(std::bit_cast<double>(bits));
 }
 
-LValue SlotEmitter::loadBits(TypedPointer pointer, SlotRepresentation slot)
+ALWAYS_INLINE_INTO_OTHER_FILES LValue SlotEmitter::loadBits(TypedPointer pointer, SlotRepresentation slot)
 {
     switch (widthOf(slot)) {
     case 1:

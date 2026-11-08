@@ -662,7 +662,7 @@ private:
     TypeID typeOfLiteralAndWhatIsCreatedBelow(FunctionID member);
     bool writesWhatIsExpected() const { return m_flow.reading() == WhatUnseenCodeDoes::OnlyReadsAndCalls; }
     Vector<LinkedGetterAtRead> m_gettersReadOffTables;
-    bool holdsOnlyInstancesThatStayAsMade(const LinkType& type) const
+    ALWAYS_INLINE bool holdsOnlyInstancesThatStayAsMade(const LinkType& type) const
     {
         if (type.classes != LinkType::Classes::Site || type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None || type.holdsUnseen || type.holdsLostBuiltins || type.builtin)
             return false;
@@ -1383,7 +1383,7 @@ namespace {
 
 class GettersLaidInLink {
 public:
-    static std::optional<uint32_t> holderOf(const LinkFlow& flow, const LinkType& type)
+    static ALWAYS_INLINE std::optional<uint32_t> holderOf(const LinkFlow& flow, const LinkType& type)
     {
         if (type.objects != LinkType::Objects::None || type.builtin)
             return std::nullopt;
@@ -1913,7 +1913,8 @@ void WriterOfLink::writeResultsOfReadsByKey()
     PropertyKeyID nextOfStep = m_program.keyOf(BuiltinNames::next);
     BitVector layoutsFilledUnderUnknownNames(m_program.layouts.size());
     BitVector lostFamiliesFilledUnderUnknownNames(m_program.layouts.size());
-    for (uint32_t layout = 0; layout < m_program.layouts.size() && !writesWhatIsExpected(); ++layout) {
+    bool isAskedAtRead = AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime);
+    for (uint32_t layout = 0; layout < m_program.layouts.size() && !writesWhatIsExpected() && !isAskedAtRead; ++layout) {
         if (!m_flow.isFilledUnderUnknownNames(LayoutID(layout)))
             continue;
         layoutsFilledUnderUnknownNames.quickSet(layout);

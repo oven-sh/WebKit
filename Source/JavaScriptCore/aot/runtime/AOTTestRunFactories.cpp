@@ -139,8 +139,8 @@ bool Modules::wasLinkedAheadOfFailure(ModuleID root, ModuleID module) const
         return false;
     const ModuleFailureData& failure = m_table.failure(*id);
     auto importsFromFileThatLacksName = [&](ModuleID importer) {
-        return !isMocked(importer) && std::ranges::any_of(m_table.requests(importer), [&](const ModuleRequestData& request) {
-            return !request.isHoisted && !request.isDeferred && (request.targetModule() == failure.importerModule() || moduleLoadedBy(request) == failure.importerModule());
+        return !isMocked(importer) && !data(importer).isFaceOfFile() && std::ranges::any_of(m_table.requests(importer), [&](const ModuleRequestData& request) {
+            return !request.isHoisted && !request.isDeferred && (fileOf(request.targetModule()) == fileOf(failure.importerModule()) || fileOf(moduleLoadedBy(request)) == fileOf(failure.importerModule()));
         });
     };
     struct Step {
@@ -428,10 +428,12 @@ void Modules::forgetCallOfMock(ModuleID fileOrModule)
 void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
 {
     noteDeedOnMockUnderCallsOfImport(module, DeedOnMock::LaysAnother);
-    if (m_modulesWithMockThatWaited.get(module.index()) && !mockInPlace(module) && !hasMockLaidOver(module))
+    bool ranAheadOfThisTestFile = data(module).kind == ModuleKind::CommonJs && wasLoadedAheadOfThisTestFile(module);
+    if ((m_modulesWithMockThatWaited.get(module.index()) || ranAheadOfThisTestFile) && !mockInPlace(module) && !hasMockLaidOver(module))
         letGoOfImportersOf(module, ImportersLetGo::All);
     m_modulesWithMockToRun.set(module.index());
     m_modulesWhoseFactoryWasCalled.clear(module.index());
+    m_loadsThatFailedForWantOfMock.removeAllMatching([&](const auto& load) { return fileOf(load.first) == fileOf(module); });
     m_failuresOfFactories.removeAllMatching([&](const FailureOfFactory& failure) { return failure.mocked == module; });
     m_modulesWithMockThatAsksAgain.set(module.index(), afterFailure == AfterFailure::AsksAgain);
     dropErrorsOfLoadsEndedByMockOf(module);
@@ -976,6 +978,13 @@ JSObject* Modules::originalThatLoaderHolds(ModuleID mocked)
     return record->getModuleNamespace(m_instance.globalObject);
 }
 
+bool Modules::hasLoaderSettledOriginalOf(ModuleID mocked)
+{
+    ModuleRegistryEntry* entry = loader()->registryEntry(Identifier::fromString(*m_instance.vm, makeString(m_table.pathText(mocked), "?actual"_s)));
+    auto* record = entry && entry->record() ? dynamicDowncast<CyclicModuleRecord>(entry->record()) : nullptr;
+    return record && record->status() == CyclicModuleRecord::Status::Evaluated;
+}
+
 auto Modules::runOriginalInSweep(ModuleID mocked) -> OriginalInSweep
 {
     VM& vm = *m_instance.vm;
@@ -1515,7 +1524,9 @@ AbstractModuleRecord* recordOfModuleItself(JSGlobalObject* realm, ModuleID modul
     Modules* modules = modulesOf(realm);
     if (!modules || !modules->hasRunItself(module))
         return nullptr;
-    return modules->ensureRecordSetAside(module);
+    ModuleRecord* record = modules->ensureRecordSetAside(module);
+    record->setKeepsToModule();
+    return record;
 }
 
 JSObject* packageItselfBesideMock(JSGlobalObject* realm, ModuleID module)
@@ -1589,7 +1600,7 @@ void endMocksThatStoodForLoadsInFlight(JSGlobalObject* realm)
 void dropErrorsOfLoadsEndedByMocks(JSGlobalObject* realm)
 {
     if (Modules* modules = modulesOf(realm))
-        modules->dropErrorsOfLoadsEndedByMocks();
+        modules->dropFailuresThatEvictionTakesOut();
 }
 
 void letMockWaitBehindLateFailure(JSGlobalObject* realm, ModuleID module)

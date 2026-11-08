@@ -36,6 +36,7 @@
 #include "PropertySlot.h"
 #include "PutPropertySlot.h"
 #include <wtf/Atomics.h>
+#include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT {
 
@@ -294,20 +295,26 @@ static ExtraPropertyLookup lookUpExtraProperty(VM& vm, const CompiledStructure& 
     return lookup;
 }
 
-[[noreturn]] static NEVER_INLINE void stopAtExtraPropertiesOfAnotherStructure(JSGlobalObject* realm)
+[[noreturn]] static NEVER_INLINE void stopAtExtraPropertiesOfAnotherStructure(JSGlobalObject* realm, Object& object, ASCIILiteral whatIsDoneHere)
 {
-    static constexpr ASCIILiteral reason = "AOT: the properties that an object holds beside its fields are not laid out as the structure of the object says."_s;
-    dataLogLn(reason, " This is a bug in Bun.");
+    JSObject* extraProperties = object.extraProperties();
+    StringPrintStream reason;
+    reason.print("AOT: where ", whatIsDoneHere, ", the properties that an object holds beside its fields are not laid out as the structure of the object says: it names structure ", object.compiledStructure().extraPropertiesStructureID().bits(), ", they have ", extraProperties ? extraProperties->structureID().bits() : 0, ".");
+    dataLogLn(reason.toString(), " This is a bug in Bun.");
+    ASCIICString text = reason.toASCIICString();
     if (auto* stopWithReport = moduleHostOf(realm).stopWithReport)
-        stopWithReport(reason.span());
+        stopWithReport(text.span());
     CRASH();
 }
 
-void holdExtraPropertiesToStructureThatIsNamed(JSGlobalObject* realm, Object& object)
+void holdExtraPropertiesToStructureThatIsNamed(JSGlobalObject* realm, Object& object, ASCIILiteral whatIsDoneHere)
 {
+    StructureID named = object.compiledStructure().extraPropertiesStructureID();
+    if (!named)
+        return;
     JSObject* extraProperties = object.extraProperties();
-    if (!extraProperties || extraProperties->structureID() != object.compiledStructure().extraPropertiesStructureID()) [[unlikely]]
-        stopAtExtraPropertiesOfAnotherStructure(realm);
+    if (!extraProperties || extraProperties->structureID() != named) [[unlikely]]
+        stopAtExtraPropertiesOfAnotherStructure(realm, object, whatIsDoneHere);
 }
 
 static PropertyAnswer classifyExtraPropertyRead(const ReadQuery& query, Object& object)
@@ -318,7 +325,6 @@ static PropertyAnswer classifyExtraPropertyRead(const ReadQuery& query, Object& 
     ExtraPropertyLookup lookup = lookUpExtraProperty(vm, object.compiledStructure(), query.uid, query.mode);
     if (lookup.result != ExtraPropertyLookupResult::Found)
         return uncacheableOnce(SlotAccess::Read);
-    holdExtraPropertiesToStructureThatIsNamed(query.globalObject, object);
     if (!(lookup.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
         return PropertyAnswer::own(PropertyAnswerKind::ExtraProperty, SlotAccess::Read, lookup.offset);
     if (lookup.attributes & PropertyAttribute::Accessor)
@@ -549,6 +555,8 @@ PropertyAnswer classifyRead(const ReadQuery& query)
         return classifyAbsentClosurePrototype(query);
     bool isOwn = !slot.isUnset() && slot.slotBase() == receiver;
     if (structure->isCompiledStructure()) {
+        if (isCompiledObject(receiver) && receiver->structure() == structure)
+            holdExtraPropertiesToStructureThatIsNamed(query.globalObject, *uncheckedDowncast<Object>(receiver), "a read is answered"_s);
         if (Object::structureGuaranteesAbsence(structure, uid))
             return isOwn ? PropertyAnswer::uncacheable(access) : classifyReadAboveReceiver(query);
         if (!isCompiledObject(receiver) || receiver->structure() != structure)

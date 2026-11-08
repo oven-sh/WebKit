@@ -13,6 +13,7 @@
 #include "AOTBuiltinTypes.h"
 #include "AOTCode.h"
 #include "AOTIRProgram.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTObjects.h"
 #include "AOTVector.h"
 #include <span>
@@ -218,7 +219,7 @@ TypeID typeOfDeclaredLayout(const TypingContext& context, LayoutID layout)
 }
 
 template<typename Operation>
-TypeID typeOfConstant(const TypingContext& context, const Operation& operation, ObjectID created)
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID typeOfConstant(const TypingContext& context, const Operation& operation, ObjectID created)
 {
     TypeArena& types = context.types;
     switch (opcodeOf(operation)) {

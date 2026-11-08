@@ -153,12 +153,16 @@ void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
         if (asImported.quickGet(imported) || m_modulesThatLoaderLetGo.get(imported))
             work.append(imported);
     }
+    auto leftAlone = m_mocksOverModulesThatHaveRun.find(m_table.fileBehindFace(mocked).value_or(mocked));
+    const BitVector* holdOriginal = leftAlone != m_mocksOverModulesThatHaveRun.end() && !wasRequiredUnderMockInPlace(leftAlone->key) ? &leftAlone->value.filesThatHadRun : nullptr;
     while (!work.isEmpty()) {
         uint32_t imported = work.takeLast();
         bool isAboveRequirer = m_filesThatStayLoadedAboveMock.get(imported);
         auto visit = [&](uint32_t index) {
             ModuleID importer(index);
             if (asImported.quickGet(imported) && keepsImportersOfTestFile && wasLoadedInThisTestFile(importer))
+                return;
+            if (asImported.quickGet(imported) && holdOriginal && holdOriginal->get(index))
                 return;
             if (m_modulesThatLoaderLetGo.get(index) || status(importer) <= ModuleStatus::Linked || m_loadedInPreload.get(index) || mockInPlace(importer))
                 return;
@@ -414,11 +418,22 @@ void Modules::letGoOfMocksThatEndedBelow(ModuleID root)
         for (const ModuleRequestData& request : m_table.imports(module)) {
             if (request.isDeferred)
                 continue;
-            toVisit.append(moduleLoadedBy(request));
-            letGoOfMockThatEnded(moduleLoadedBy(request));
+            ModuleID imported = moduleLoadedBy(request);
+            if ((!data(module).isFaceOfFile() && keepsEndedMockWhereItIsAskedForAgain(fileOf(imported), module)) || statementsHoldOriginalBehindEndOfMock(fileOf(imported), module))
+                continue;
+            toVisit.append(imported);
+            letGoOfMockThatEnded(imported);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
+}
+
+void Modules::letGoOfMocksThatEndedAtAndBelow(ModuleID root)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    letGoOfMockThatEnded(root);
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, letGoOfMocksThatEndedBelow(root));
 }
 
 void Modules::letStartsAskWhereSomethingIsDueBelow(ModuleID root)

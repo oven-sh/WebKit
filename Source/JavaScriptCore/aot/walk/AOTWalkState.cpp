@@ -313,7 +313,7 @@ void WalkState::takeHeldOfOwn()
     m_held = new Held(*m_held);
 }
 
-void WalkState::shareWhatIsHeldBy(const WalkState& other)
+ALWAYS_INLINE_INTO_OTHER_FILES void WalkState::shareWhatIsHeldBy(const WalkState& other)
 {
     if (other.holdsNothing()) {
         if (m_held)
