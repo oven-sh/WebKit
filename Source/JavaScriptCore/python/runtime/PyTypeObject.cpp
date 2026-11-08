@@ -2301,23 +2301,25 @@ static JSValue typeGetBasicSize(JSGlobalObject*, JSValue self)
         { "int"_s, 24 }, { "float"_s, 24 }, { "complex"_s, 32 }, { "str"_s, 64 }, { "bytes"_s, 33 }, { "bytearray"_s, 64 }, { "tuple"_s, 32 },
         { "list"_s, 40 }, { "dict"_s, 48 }, { "set"_s, 200 }, { "frozenset"_s, 200 }, { "type"_s, 944 }, { "BaseException"_s, 72 },
     };
-    unsigned slotCount = 0;
-    // (That of the first such type: it has room for the data of those below it.)
-    size_t dataOfC = 0;
-    for (PyType* type = PyType::from(self); type; type = type->base()) {
-        if (type->isHeapType()) {
-            if (type->extension() && !dataOfC)
-                dataOfC = CApi::sizeOfDataOfC(type);
-            if (PyTuple* slots = type->slots())
-                slotCount += slots->length();
+    // From object upwards, as CPython lays an instance out: what a class adds for its __slots__ follows what its base has; what a type of an extension adds begins at a multiple of 16.
+    Vector<PyType*, 8> types;
+    for (PyType* type = PyType::from(self); type; type = type->base())
+        types.append(type);
+    size_t result = 16;
+    for (PyType* type : types | std::views::reverse) {
+        if (!type->isHeapType()) {
+            for (auto [name, size] : sizes) {
+                if (type->nameInMessages() == name)
+                    result = size;
+            }
             continue;
         }
-        for (auto [name, size] : sizes) {
-            if (type->nameInMessages() == name)
-                return jsNumber(size + dataOfC + 8 * slotCount);
-        }
+        if (size_t added = type->extension() ? CApi::sizeOfDataThatTypeAdds(type) : 0)
+            result = roundUpToMultipleOf<16>(result) + added;
+        if (PyTuple* slots = type->slots())
+            result += 8 * slots->length();
     }
-    return jsNumber(16 + dataOfC + 8 * slotCount);
+    return jsNumber(result);
 }
 static JSValue typeGetItemSize(JSGlobalObject*, JSValue self) { return jsNumber(itemSize(PyType::from(self))); }
 static JSValue typeGetDictOffset(JSGlobalObject*, JSValue self) { return jsNumber(PyType::from(self)->has(TypeFlag::HasDict) ? -1 : 0); }

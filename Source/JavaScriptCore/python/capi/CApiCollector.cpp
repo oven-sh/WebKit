@@ -212,9 +212,10 @@ const void* addressInMessagesSlow(JSCell* cell)
     return face ? static_cast<JSCell*>(face->body()) : cell;
 }
 
-size_t sizeOfDataOfC(PyType* type)
+size_t sizeOfDataThatTypeAdds(PyType* type)
 {
-    return madeByExtension(type)->dataEnd;
+    auto* made = MadeByExtension::of(type);
+    return made->dataEnd - made->dataOffset;
 }
 
 bool saysThatCollectorIsTold(PyType* type)
