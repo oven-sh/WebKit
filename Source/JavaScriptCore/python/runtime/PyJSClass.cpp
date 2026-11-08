@@ -937,9 +937,9 @@ static JSValue jsClassInitSubclass(JSGlobalObject* globalObject, JSValue self, c
 static constexpr NativeDef jsClassInitSubclassDef = PY_FUNCTION("__init_subclass__", jsClassInitSubclass, "($self, *args, **kwargs)");
 
 // What a class says that it extends may be code of the program's (a Proxy; a Proxy among the prototypes, which are asked too, may give the classes other parents meanwhile), so a chain
-// need not end: no more than this many are followed at once. It need not be more: every type has an MRO of its own, so what n classes cost grows with the square of n, where to JS they
-// are n objects. This many are some 400 MB of MROs.
-static constexpr size_t longestChainOfClassesOfJS = 10000; // (The message has the number too.)
+// need not end: no more than this many are followed at once. (A longer chain can be climbed in pieces, by deriving from a class in the middle first.) It need not be more: every type
+// has an MRO of its own, so what n classes cost grows with the square of n, where to JS they are n objects. This many are some 400 MB of MROs.
+static constexpr size_t longestChainOfClassesOfJS = 10000;
 
 PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
 {
@@ -967,6 +967,9 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
             type = PyType::from(known);
             break;
         }
+        // The bound is on the classes. Each of them has all its prototypes looked at, however many those are.
+        if (failed(scope, safePoint(globalObject))) [[unlikely]]
+            return nullptr;
 
         auto refuse = [&](ASCIILiteral why) -> PyType* {
             String text = reprForMessage(globalObject, constructor);
@@ -977,8 +980,10 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
         if (!constructor->isConstructor())
             return refuse("it is not a constructor"_s);
         if (lacking.size() > 2 * longestChainOfClassesOfJS) [[unlikely]] {
-            constructor = asObject(lacking.at(0));
-            return refuse("it extends more than 10000 classes"_s);
+            String text = reprForMessage(globalObject, lacking.at(0));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            raiseTypeError(globalObject, scope, "cannot derive a class from "_s, text, ": it extends more than "_s, longestChainOfClassesOfJS, " classes"_s);
+            return nullptr;
         }
         JSValue prototype = constructor->get(globalObject, names.prototype);
         RETURN_IF_EXCEPTION(scope, nullptr);
