@@ -313,6 +313,12 @@ bool JSView::getOwnPropertySlot(JSObject* object, PropertyName propertyName, Pro
         slot.setIsTaintedByOpaqueObject();
         return false;
     }
+    // JS asks Python here, and Python may ask JS in turn: a class looks among the static members of the class of JS's that it derives from, and JS may have put that one below the class, or
+    // below its type. To neither is that a circle, each sees its own half. No code of either language runs on the way round, so nobody else looks at the stack.
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return false;
+    }
     if (propertyName.isSymbol())
         RELEASE_AND_RETURN(scope, jsViewSymbolProperty(globalObject, object, propertyName, slot));
     if (std::optional<uint32_t> index = parseIndex(propertyName))
