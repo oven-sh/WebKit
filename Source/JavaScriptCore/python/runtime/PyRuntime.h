@@ -299,6 +299,9 @@ enum class JSViewObject : uint8_t {
     // What follows the promise of an item of an async iterator.
     AsyncItem,
     AsyncEnd,
+    // A request to an asynchronous generator that has waited for the one before it.
+    AsyncNextNow,
+    AsyncReturnNow,
     Identity,
     Count,
 };

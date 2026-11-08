@@ -926,22 +926,107 @@ static JSPromise* jsViewRejectedPromise(JSGlobalObject* globalObject)
     return jsViewPromiseOf(globalObject, [] { return JSValue(); });
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsViewAsyncNext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+// An asynchronous generator of JS's takes requests while it runs, and serves them in the order in which they came. One of Python's
+// refuses them ("asynchronous generator is already running"), and whoever reads a stream asks for return() while a next() is under
+// way. So the generator keeps the promise with which the last request that JS has made of it is over, and a request that finds that
+// pending begins behind it. (The generator, not the object that JS has: there is one line, however many of those there are.)
+static constexpr unsigned lastRequestOfJSField = 0;
+
+static PyGenerator* jsViewAsyncGenerator(JSValue iterator)
+{
+    auto* generator = PyGenerator::tryFrom(iterator);
+    return generator && generator->kind() == PyGenerator::Kind::AsyncGenerator ? generator : nullptr;
+}
+
+// Null: a request can begin now.
+static JSPromise* jsViewRequestUnderWay(JSGlobalObject* globalObject, JSValue iterator)
+{
+    auto* generator = jsViewAsyncGenerator(iterator);
+    JSValue last = generator ? hiddenField(globalObject, generator, lastRequestOfJSField) : JSValue();
+    auto* promise = last ? uncheckedDowncast<JSPromise>(last) : nullptr;
+    return promise && promise->status() == JSPromise::Status::Pending ? promise : nullptr;
+}
+
+static void jsViewRequestHasBegun(JSGlobalObject* globalObject, JSValue iterator, JSPromise* request)
+{
+    auto* generator = jsViewAsyncGenerator(iterator);
+    if (request && generator)
+        setHiddenField(globalObject, generator, lastRequestOfJSField, request);
+}
+
+// When `last` is over, function.call(iterator, argument, request), which settles `request` as the iterator settles what it is asked for.
+static JSValue jsViewRequestBehind(JSGlobalObject* globalObject, JSValue iterator, JSPromise* last, JSViewObject function, JSValue argument)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSPromise* request = JSPromise::create(vm, globalObject->promiseStructure());
+    MarkedArgumentBuffer bound;
+    bound.append(argument);
+    bound.append(request);
+    JSValue begin = JSBoundFunction::create(vm, globalObject, asObject(runtime(globalObject).jsViewObject(function)), iterator, bound, 0, nullptr, SourceTaintedOrigin::Untainted);
+    RETURN_IF_EXCEPTION(scope, { });
+    last->performPromiseThen(vm, globalObject, begin, begin, jsUndefined());
+    jsViewRequestHasBegun(globalObject, iterator, request);
+    // The caller gets a promise of its own: the request that comes next handles a rejection of this one, which says nothing of the caller.
+    return thenOfPromise(globalObject, request, jsUndefined(), jsUndefined());
+}
+
+// `request`: the promise with which the iterator is at rest again.
+static JSPromise* jsViewAsyncNextNow(JSGlobalObject* globalObject, JSValue iterator, JSPromise*& request)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue iterator = jsViewIteratorOf(globalObject, jsViewThis(callFrame));
-    JSPromise* promise = nullptr;
     if (JSValue method = rt.typeOf(iterator)->lookup(Special::ANext)) {
         JSValue awaitable = callSpecial(globalObject, method, iterator);
         if (!failed(scope, awaitable))
-            promise = jsViewPromiseOfAwaitable(globalObject, awaitable);
+            request = jsViewPromiseOfAwaitable(globalObject, awaitable);
     } else
         raiseTypeError(globalObject, scope, '\'', typeName(globalObject, iterator), "' object is not an async iterator"_s);
-    if (scope.exception()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsViewRejectedPromise(globalObject)));
-    return JSValue::encode(thenOfPromise(globalObject, promise, rt.jsViewObject(JSViewObject::AsyncItem), rt.jsViewObject(JSViewObject::AsyncEnd)));
+    if (scope.exception()) [[unlikely]] {
+        request = nullptr;
+        RELEASE_AND_RETURN(scope, jsViewRejectedPromise(globalObject));
+    }
+    return thenOfPromise(globalObject, request, rt.jsViewObject(JSViewObject::AsyncItem), rt.jsViewObject(JSViewObject::AsyncEnd));
+}
+
+static JSPromise* jsViewAsyncReturnNow(JSGlobalObject* globalObject, JSValue iterator, JSValue value, JSPromise*& request)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = createIteratorResultObject(globalObject, value, true);
+    JSValue close = getAttrIfPresent(globalObject, iterator, internString(vm, "aclose"_s));
+    if (!scope.exception() && close) {
+        JSValue awaitable = call(globalObject, close);
+        if (!failed(scope, awaitable))
+            request = jsViewPromiseOfAwaitable(globalObject, awaitable);
+    }
+    if (scope.exception()) [[unlikely]] {
+        request = nullptr;
+        RELEASE_AND_RETURN(scope, jsViewRejectedPromise(globalObject));
+    }
+    if (!request)
+        RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, result));
+    // () => result
+    MarkedArgumentBuffer bound;
+    bound.append(result);
+    JSValue constant = JSBoundFunction::create(vm, globalObject, asObject(runtime(globalObject).jsViewObject(JSViewObject::Identity)), jsUndefined(), bound, 0, nullptr, SourceTaintedOrigin::Untainted);
+    RETURN_IF_EXCEPTION(scope, { });
+    return thenOfPromise(globalObject, request, constant, jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsViewAsyncNext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue iterator = jsViewIteratorOf(globalObject, jsViewThis(callFrame));
+    if (JSPromise* last = jsViewRequestUnderWay(globalObject, iterator)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsViewRequestBehind(globalObject, iterator, last, JSViewObject::AsyncNextNow, jsUndefined())));
+    JSPromise* request = nullptr;
+    JSPromise* result = jsViewAsyncNextNow(globalObject, iterator, request);
+    RETURN_IF_EXCEPTION(scope, { });
+    jsViewRequestHasBegun(globalObject, iterator, request);
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViewAsyncReturn, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -949,24 +1034,44 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncReturn, (JSGlobalObject* globalObject, CallF
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue iterator = jsViewIteratorOf(globalObject, jsViewThis(callFrame));
-    JSValue result = createIteratorResultObject(globalObject, callFrame->argument(0), true);
-    JSPromise* promise = nullptr;
-    JSValue close = getAttrIfPresent(globalObject, iterator, internString(vm, "aclose"_s));
-    if (!scope.exception() && close) {
-        JSValue awaitable = call(globalObject, close);
-        if (!failed(scope, awaitable))
-            promise = jsViewPromiseOfAwaitable(globalObject, awaitable);
-    }
-    if (scope.exception()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsViewRejectedPromise(globalObject)));
-    if (!promise)
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::resolvedPromise(globalObject, result)));
-    // () => result
-    MarkedArgumentBuffer bound;
-    bound.append(result);
-    JSValue constant = JSBoundFunction::create(vm, globalObject, asObject(runtime(globalObject).jsViewObject(JSViewObject::Identity)), jsUndefined(), bound, 0, nullptr, SourceTaintedOrigin::Untainted);
+    if (JSPromise* last = jsViewRequestUnderWay(globalObject, iterator)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsViewRequestBehind(globalObject, iterator, last, JSViewObject::AsyncReturnNow, callFrame->argument(0))));
+    JSPromise* request = nullptr;
+    JSPromise* result = jsViewAsyncReturnNow(globalObject, iterator, callFrame->argument(0), request);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(thenOfPromise(globalObject, promise, constant, jsUndefined()));
+    jsViewRequestHasBegun(globalObject, iterator, request);
+    return JSValue::encode(result);
+}
+
+// A request whose turn has come: function.call(generator, argument, request). See jsViewRequestBehind().
+template<typename Function>
+static EncodedJSValue jsViewServeRequest(JSGlobalObject* globalObject, CallFrame* callFrame, const Function& function)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* request = uncheckedDowncast<JSPromise>(callFrame->uncheckedArgument(1));
+    JSPromise* ignored = nullptr;
+    JSPromise* result = function(callFrame->thisValue(), callFrame->uncheckedArgument(0), ignored);
+    if (scope.exception()) [[unlikely]] {
+        scope.release();
+        request->rejectWithCaughtException(vm, scope);
+    } else
+        result->performPromiseThen(vm, globalObject, jsUndefined(), jsUndefined(), request);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsViewAsyncNextNowFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return jsViewServeRequest(globalObject, callFrame, [&](JSValue generator, JSValue, JSPromise*& request) {
+        return jsViewAsyncNextNow(globalObject, generator, request);
+    });
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsViewAsyncReturnNowFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return jsViewServeRequest(globalObject, callFrame, [&](JSValue generator, JSValue value, JSPromise*& request) {
+        return jsViewAsyncReturnNow(globalObject, generator, value, request);
+    });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViewIdentity, (JSGlobalObject*, CallFrame* callFrame))
@@ -1192,6 +1297,8 @@ void initializeJSView(JSGlobalObject* globalObject)
     rt.setJSViewObject(JSViewObject::Then, makeFunction("then"_s, 2, jsViewThen));
     rt.setJSViewObject(JSViewObject::AsyncItem, makeFunction("item"_s, 1, jsViewAsyncItem));
     rt.setJSViewObject(JSViewObject::AsyncEnd, makeFunction("end"_s, 1, jsViewAsyncEnd));
+    rt.setJSViewObject(JSViewObject::AsyncNextNow, makeFunction("next"_s, 0, jsViewAsyncNextNowFunction));
+    rt.setJSViewObject(JSViewObject::AsyncReturnNow, makeFunction("return"_s, 1, jsViewAsyncReturnNowFunction));
     rt.setJSViewObject(JSViewObject::Identity, makeFunction("identity"_s, 1, jsViewIdentity));
     rt.setJSViewObject(JSViewObject::ToJSON, makeFunction("toJSON"_s, 0, jsViewToJSON));
 
