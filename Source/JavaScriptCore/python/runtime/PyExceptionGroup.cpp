@@ -509,6 +509,11 @@ JSValue prepareReraiseStar(JSGlobalObject* globalObject, JSValue originalValue, 
     unsigned count = listLength(all);
     if (!count)
         return jsUndefined();
+    // The code of the statement has made the list and put there what each clause has raised, or None. But it is an object like any other, which gc.get_objects() hands out to a clause while it runs.
+    for (unsigned i = 0; i < count; ++i) {
+        if (JSValue item = listGet(all, i); !isNone(item) && !PyException::is(item)) [[unlikely]]
+            return raiseSystemError(globalObject, scope, "the list of what the clauses of an except* have raised holds something that is no exception"_s);
+    }
     // An exception that was not a group was wrapped, and at most one clause ran.
     if (!isExceptionGroupInstance(globalObject, originalValue))
         return listGet(all, 0);
