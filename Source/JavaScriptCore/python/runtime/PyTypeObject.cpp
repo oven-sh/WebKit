@@ -1246,6 +1246,25 @@ static void beToldBelow(JSGlobalObject* globalObject, PyType* root)
     }
 }
 
+// Each base is told that the type derives from it. A type is in a list once, as in CPython, where the list is a dict: the mro() of a metaclass lets a base through that is named twice, and an
+// assignment to __bases__ may find the type in the list of a new base, where one from inside another has left it. There it keeps its place.
+enum class MayBeThere : bool { No, Yes };
+static void enterUnderBases(JSGlobalObject* globalObject, PyType* type, PyTuple* bases, MayBeThere mayBeThere)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    for (unsigned i = 0; i < bases->length(); ++i) {
+        bool isRepeated = false;
+        for (unsigned j = 0; !isRepeated && j < i; ++j)
+            isRepeated = bases->at(j) == bases->at(i);
+        if (isRepeated) [[unlikely]]
+            continue;
+        if (mayBeThere == MayBeThere::Yes && PyType::from(bases->at(i))->hasInList(type))
+            continue;
+        PyType::from(bases->at(i))->addSubclass(globalObject, type);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
 // Sets the MRO of the type, by the mro() of its metaclass.
 static MROResult resolveMRO(JSGlobalObject* globalObject, PyType* type)
 {
@@ -1608,10 +1627,8 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
             }
         }
     }
-    for (unsigned i = 0; i < bases->length(); ++i) {
-        PyType::from(bases->at(i))->addSubclass(globalObject, type);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    enterUnderBases(globalObject, type, bases, MayBeThere::No);
+    RETURN_IF_EXCEPTION(scope, { });
 
     if (!dict->hasOnlyStringKeys()) [[unlikely]] {
         bool allAreStrs = true;
@@ -1891,7 +1908,7 @@ static bool updateMROs(JSGlobalObject* globalObject, PyType* root, MarkedArgumen
     return true;
 }
 
-// After the base of the type has changed: which class decides the layout, for it and for all that have it from there. A class has one base, so each comes once.
+// After the base of the type has changed: which class decides the layout, for it and for all that have it from there. A class has one base, so each comes as often as it is in the list of that: once.
 static void updateSolidBases(VM& vm, PyType* root)
 {
     MarkedArgumentBuffer types;
@@ -1974,10 +1991,8 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
             PyType::from(oldBases->at(i))->removeSubclass(globalObject, type);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        for (unsigned i = 0; i < bases->length(); ++i) {
-            PyType::from(bases->at(i))->addSubclass(globalObject, type);
-            RETURN_IF_EXCEPTION(scope, void());
-        }
+        enterUnderBases(globalObject, type, bases, MayBeThere::Yes);
+        RETURN_IF_EXCEPTION(scope, void());
         // An mro() that ran may have assigned to the __bases__ of another class. That one's walk comes to the classes that are in the lists then, and this class is in those of its old
         // bases until now. So an MRO may be left that names a class which leads here no longer, as in CPython (which remembers nothing of a class whose metaclass has an mro()).
         // Before what has been remembered is forgotten, and before a key is asked: to be entered in a list forgets nothing.

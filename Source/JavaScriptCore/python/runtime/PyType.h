@@ -352,6 +352,7 @@ public:
     JSValue subclasses() const { return m_subclasses.get(); } // The list they are kept in, which is for nobody else. Empty: there is none.
     void addSubclass(JSGlobalObject*, PyType*);
     void removeSubclass(JSGlobalObject*, PyType*);
+    bool hasInList(PyType* subclass) const; // As one that derives from this.
     // A type that has this one in its MRO and is not in the list: it is told of changes. Nothing, if it is in the list, either way.
     void addDependent(JSGlobalObject*, PyType*);
 

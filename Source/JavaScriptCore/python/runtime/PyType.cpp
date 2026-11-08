@@ -744,6 +744,18 @@ void PyType::removeSubclass(JSGlobalObject* globalObject, PyType* subclass)
     }
 }
 
+bool PyType::hasInList(PyType* subclass) const
+{
+    if (!m_subclasses)
+        return false;
+    JSArray* list = asList(m_subclasses.get());
+    for (unsigned i = 0; i < listLength(list); ++i) {
+        if (JSValue entry = listGet(list, i); !PyTuple::is(entry) && subclassInEntry(entry) == subclass)
+            return true;
+    }
+    return false;
+}
+
 // ---- The C3 linearization ----
 
 PyTuple* computeMRO(JSGlobalObject* globalObject, PyType* type)
