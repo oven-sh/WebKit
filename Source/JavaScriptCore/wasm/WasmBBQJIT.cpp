@@ -4830,8 +4830,15 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
         // FIXME: consider overloading WasmCallableFunction::targetInstance to hold a JSFunction when the
         // callee exits to JS. The instance comparison above would then fail for a JS import on its own and
         // this second test could go away. See also OMGIRGenerator::emitIndirectCall().
-        m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
-        Jump skipRestoreFrame = branchIfCalleeNotWasmToJS(m_jit, wasmScratchGPR);
+        Jump skipRestoreFrame;
+        if (m_codeForImage) {
+            // The instance is still the one that runs this code, and its pointer table has the callee that exits to JS.
+            loadImagePointer(m_jit, GPRInfo::wasmContextInstancePointer, ImagePointerTable::wasmToJSCallee, wasmScratchGPR);
+            skipRestoreFrame = m_jit.branchPtr(RelationalCondition::NotEqual, CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
+        } else {
+            m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
+            skipRestoreFrame = branchIfCalleeNotWasmToJS(m_jit, wasmScratchGPR);
+        }
         needsRestoreFrame.link(m_jit);
         emitRestoreInstanceFrameIfNeeded(m_jit, GPRInfo::wasmContextInstancePointer, callerStackSize, m_frameSize, topSourceOffsetFromFP, wasmScratchGPR, wasmBaseMemoryPointer);
         emitSwitchToInstanceOf(importableFunction);
