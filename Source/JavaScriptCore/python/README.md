@@ -288,7 +288,7 @@ The MROs do not say it: a metaclass writes there what it likes, and in the middl
 nothing leads to it. `typeSetBases()` writes twice, the new bases and, if an `mro()` raised, the old ones again, and asks before each; between a question and its write nothing runs code
 (a lookup would: keys are asked). If an `mro()` that ran has put one of the old bases under the class, nothing is taken back: the class keeps the new bases, the classes whose turn had come keep their new MROs,
 all is done that follows an assignment, and the exception goes on. The layouts were found to agree before the first write, so whichever MRO a class is left with, what it promises of the cell holds.
-The walks down (`didChange()`, `updateMakers()`, `updateSolidBases()`, `updateMROs()`) go by the lists of who derives from whom, which are kept beside `__bases__` and are not exact: an entry can be
+The walks down (`didChange()`, `updateMakers()`, `updateSolidBases()`, `updateMROs()`, `abcSetCollectionFlag()`) go by the lists of who derives from whom, which are kept beside `__bases__` and are not exact: an entry can be
 stale or there twice. So each of them ends whatever the lists say, and none calls itself, for classes derive from one another to any depth.
 
 ## Code

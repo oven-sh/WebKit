@@ -225,17 +225,19 @@ static JSValue abcInit(JSGlobalObject* globalObject, JSValue self)
 }
 
 // The class and all that derive from it are sequences, or mappings, from now on. What is written in C++ knows what it is.
-static void abcSetCollectionFlag(PyType* cls, TypeFlag flag)
+static void abcSetCollectionFlag(PyType* root, TypeFlag flag)
 {
     TypeFlag other = flag == TypeFlag::Sequence ? TypeFlag::Mapping : TypeFlag::Sequence;
-    if (!cls->isHeapType() || cls->has(TypeFlag::Immutable) || (cls->has(flag) && !cls->has(other)))
-        return;
-    cls->remove(other);
-    cls->add(flag);
-    MarkedArgumentBuffer subclasses;
-    cls->appendSubclassesTo(subclasses);
-    for (unsigned i = 0; i < subclasses.size(); ++i)
-        abcSetCollectionFlag(PyType::from(subclasses.at(i)), flag);
+    MarkedArgumentBuffer left;
+    left.append(root);
+    while (!left.isEmpty()) {
+        PyType* cls = PyType::from(left.takeLast());
+        if (!cls->isHeapType() || cls->has(TypeFlag::Immutable) || (cls->has(flag) && !cls->has(other)))
+            continue;
+        cls->remove(other);
+        cls->add(flag);
+        cls->appendSubclassesTo(left);
+    }
 }
 
 static JSValue abcRegister(JSGlobalObject* globalObject, JSValue self, JSValue subclassValue)
