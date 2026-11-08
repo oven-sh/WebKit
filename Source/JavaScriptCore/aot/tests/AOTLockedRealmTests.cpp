@@ -850,9 +850,10 @@ static void testTypedArraysInterceptIndexedStoresAfterIndexAccessorOnPrototype()
 
     JSObject* createdBefore = realms.object(locked, "var createdBefore = Object.create(new Uint8Array(4)); createdBefore[0] = 1; createdBefore"_s);
     JSArray* ordinary = realms.array(locked, "[1, 2].slice()"_s);
-    AOT_TEST_CHECK(realms.evaluate(locked, "var early = Object.create(new Uint8Array(4)); early[9] = 9; early[9] === 9"_s) == jsBoolean(true));
+    // Upstream's typed arrays say from the start that they intercept indexed stores (WebKit/WebKit@890b90dce3). The realm's own word for it comes later.
+    AOT_TEST_CHECK(realms.evaluate(locked, "var early = Object.create(new Uint8Array(4)); early[9] = 9; !(9 in early)"_s) == jsBoolean(true));
     AOT_TEST_CHECK(!locked->typedArraysInterceptIndexedStores());
-    AOT_TEST_CHECK(!hasSlowPutArrayStorage(createdBefore->indexingType()));
+    AOT_TEST_CHECK(hasSlowPutArrayStorage(createdBefore->indexingType()));
 
     realms.evaluate(locked, "var watched = { }; var heir = Object.create(watched); Object.defineProperty(watched, 3, { set(value) { }, configurable: true })"_s);
     AOT_TEST_CHECK(!locked->isHavingABadTime());
@@ -865,7 +866,7 @@ static void testTypedArraysInterceptIndexedStoresAfterIndexAccessorOnPrototype()
     AOT_TEST_CHECK(realms.evaluate(locked, "var moved = [1]; Object.setPrototypeOf(moved, new Uint8Array(4)); moved[9] = 9; !(9 in moved) && Reflect.set(moved, 9, 9) && !(9 in moved)"_s) == jsBoolean(true));
     AOT_TEST_CHECK(realms.evaluate(locked, "var middle = { }; var below = Object.create(middle); below[0] = 1; Object.setPrototypeOf(middle, new Uint8Array(4)); below[9] = 9; !(9 in below)"_s) == jsBoolean(true));
     AOT_TEST_CHECK(!realms.plain()->typedArraysInterceptIndexedStores());
-    AOT_TEST_CHECK(realms.evaluate(realms.plain(), "var elsewhere = Object.create(new Uint8Array(4)); elsewhere[9] = 9; elsewhere[9] === 9"_s) == jsBoolean(true));
+    AOT_TEST_CHECK(realms.evaluate(realms.plain(), "var elsewhere = Object.create(new Uint8Array(4)); elsewhere[9] = 9; !(9 in elsewhere)"_s) == jsBoolean(true));
 }
 
 static void testOneWalkCoversEveryPrototypeThatCanChange()
