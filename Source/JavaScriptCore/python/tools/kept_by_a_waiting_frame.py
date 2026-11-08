@@ -63,16 +63,17 @@ FUTEX = {'x86_64': 202, 'aarch64': 98}.get(platform.machine())
 def system_call_of(thread, sleeps=False):
     # The fields of /proc's line if the thread is blocked in a system call, and not for its turn to run. Else nothing: it is "running", between two pieces of its wait.
     # `sleeps`: what it waits for is another thread, which is the same system call as the wait for its turn. Then: it has not run while this thread slept.
-    def look():
-        with open('/proc/self/task/%d/syscall' % thread) as file, open('/proc/self/task/%d/schedstat' % thread) as times:
-            return file.read().split(), times.read().split()[0]
-    fields, time_on_processor = look()
+    def read(name):
+        with open('/proc/self/task/%d/%s' % (thread, name)) as file:
+            return file.read().split()
+    fields = read('syscall')
     if len(fields) != 9:
         return None
     if not sleeps:
         return fields if int(fields[0]) != FUTEX else None
+    time_on_processor = read('schedstat')[0]
     time.sleep(0.005)
-    return fields if look() == (fields, time_on_processor) else None
+    return fields if (read('syscall'), read('schedstat')[0]) == (fields, time_on_processor) else None
 
 
 def words_that_point_at(cell, size, thread, symbols, sleeps):
@@ -94,7 +95,9 @@ def words_that_point_at(cell, size, thread, symbols, sleeps):
         fields = system_call_of(thread, sleeps)
     bottom = int(fields[7], 16)
     top = next((high for low, high, mode, path in maps if low <= bottom < high), bottom)
-    raw = ctypes.string_at(bottom, top - bottom)
+    # (Not ctypes.string_at(): a build with ASAN stops at the red zones between the variables of another thread's frames.)
+    with open('/proc/self/mem', 'rb', buffering=0) as memory:
+        raw = os.pread(memory.fileno(), top - bottom, bottom)
     words = struct.unpack('<%dQ' % (len(raw) // 8), raw)
 
     def chain(pointer):
@@ -151,8 +154,9 @@ def look(kind, symbols):
         box, ready = [], threading.Event()
         lock, event = threading.Lock(), threading.Event()
         lock.acquire()
-        other = threading.Thread(target=event.wait, daemon=True)
-        other.start()
+        if kind == 'join':
+            other = threading.Thread(target=event.wait, daemon=True)
+            other.start()
 
         def run():
             def uses():
@@ -180,7 +184,7 @@ def look(kind, symbols):
         lock.release(), event.set()
         if not sleeps:
             there.send(b'x') if kind.startswith('recv') else os.write(writer, b'x')
-        thread.join(), other.join()
+        thread.join()
     print('%s: %d of %d alive after six collections' % (kind, alive, len(WAYS)))
     for file in (unbuffered, buffered, here, there):
         file.close()

@@ -405,8 +405,8 @@ JSC_DEFINE_HOST_FUNCTION(callNativeFunction, (JSGlobalObject* globalObject, Call
 }
 
 // The frames of the call come to lie where the frame of the function that has the stack wiped is, which is not wiped itself. So these
-// four have nothing in theirs but the two parameters: no variable, no temporary, and no way through them that leaves a slot
-// unwritten. See wipeStackBelow().
+// four, and callNativeFunctionWithFrame() between them and the call, have nothing in theirs but the two parameters: no variable, no
+// temporary, and no way through them that leaves a slot unwritten. See wipeStackBelow().
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionOnWipedStack, static NEVER_INLINE, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     wipeStackBelow(globalObject);

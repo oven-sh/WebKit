@@ -497,8 +497,11 @@ public:
     }
 
     JSValue invoke(JSGlobalObject*, const CallArgs&);
-    JSValue invokeInline(JSGlobalObject*, const CallArgs&); // (PyNative.cpp)
-    // The same, for a function that takes its arguments as they are.
+    // The two below are for the entries in PyNative.cpp, between which entryFor() has decided when the object was made.
+    // invoke() as a part of its caller. (It is defined in PyNative.cpp: there is no calling it from elsewhere.)
+    inline JSValue invokeInline(JSGlobalObject*, const CallArgs&);
+    // Only for what isCalledWithArgumentsAsTheyAre() says yes to, and nothing here looks. For another kind the checks of `__new__` or of a class method would be left out, and with another
+    // signature the function of C++ would be handed arguments that it does not take.
     JSValue invokeWithArgumentsAsTheyAre(JSGlobalObject*, const CallArgs&);
     // For a Method or a SlotWrapper, when `self` is known to be an instance of the owner.
     JSValue invokeWithSelf(JSGlobalObject*, JSValue self, const CallArgs&);
