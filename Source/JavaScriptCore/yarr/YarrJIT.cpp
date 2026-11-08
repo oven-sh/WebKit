@@ -4548,9 +4548,11 @@ class YarrGenerator final : public YarrJITInfo {
                 if (charsCheckedLastIter == 8) {
                     numCharsToCheck = 8;
                     negativeOffset = 1;
+#if !defined(YARR_FOR_IMAGE)
                 } else if (charsCheckedLastIter == 4) {
                     numCharsToCheck = 4;
                     negativeOffset = 1;
+#endif
                 } else
                     numCharsToCheck = 4;
                 break;

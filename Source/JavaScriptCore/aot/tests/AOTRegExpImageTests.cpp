@@ -396,6 +396,56 @@ static Vector<String> mixedSubjects()
     return subjects;
 }
 
+static void checkEveryShapeOfRun(unsigned length, OptionSet<Yarr::Flags> flags)
+{
+    constexpr unsigned classAtFifthPlace = 1u << 3;
+    Vector<Source> sources;
+    for (unsigned shape = 0; shape < (1u << (length - 1)); ++shape) {
+        if (!(shape & classAtFifthPlace))
+            continue;
+        StringBuilder pattern;
+        pattern.append('a');
+        for (unsigned place = 1; place < length; ++place) {
+            if ((shape >> (place - 1)) & 1)
+                pattern.append("[a-z]"_s);
+            else
+                pattern.append(static_cast<char>('a' + place));
+        }
+        sources.append({ pattern.toString(), flags });
+    }
+
+    Vector<Latin1Character> characters;
+    for (unsigned place = 0; place < length; ++place)
+        characters.append(static_cast<Latin1Character>('a' + place));
+    auto makeSubject = [&](bool is16Bit) {
+        String subject { characters.span() };
+        if (is16Bit)
+            subject.convertTo16Bit();
+        return subject;
+    };
+    Vector<String> subjects { makeSubject(false), makeSubject(true) };
+    for (unsigned place = 0; place < length; ++place) {
+        Latin1Character kept = characters[place];
+        for (Latin1Character other : { '~', '\0' }) {
+            characters[place] = other;
+            subjects.append(makeSubject(true));
+        }
+        characters[place] = kept;
+    }
+
+    LaidOutRegExps laidOut = layOut(WTF::move(sources));
+    Matcher matcher;
+    matcher.checkAnswers(laidOut, load(laidOut.section), subjects.span());
+}
+
+static void testEveryShapeOfRunMatchesWideSubjects()
+{
+    checkEveryShapeOfRun(12, { });
+    checkEveryShapeOfRun(12, { Yarr::Flags::IgnoreCase });
+    checkEveryShapeOfRun(12, { Yarr::Flags::Unicode });
+    checkEveryShapeOfRun(13, { });
+}
+
 static void testEqualBodiesShareCode()
 {
     LaidOutRegExps same = layOut({ { "ab+c"_s, { } }, { "ab+c"_s, { } } });
@@ -668,6 +718,7 @@ static void testPointerImmediateDeclines()
 std::span<const NativeTest> regExpImageTests()
 {
     static constexpr NativeTest tests[] = {
+        { "regexp-image/every-shape-of-run-matches-wide-subjects"_s, testEveryShapeOfRunMatchesWideSubjects },
         { "regexp-image/equal-bodies-share-code"_s, testEqualBodiesShareCode },
         { "regexp-image/latin1-classes-share-byte-tables"_s, testLatin1ClassesShareByteTables },
         { "regexp-image/equal-latin1-classes-share-bit-plane"_s, testEqualLatin1ClassesShareBitPlane },

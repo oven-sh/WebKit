@@ -220,6 +220,8 @@ static void testOnePatternServesBothWidthsAndRetries()
     checkPatternServesBothWidthsAndRetries("a*e"_s);
     AOT_TEST_CHECK(!compileToCode({ "a*b"_s, { } }).code[0]->hasElidedFrame);
     checkPatternServesBothWidthsAndRetries("a*b"_s);
+    for (ASCIILiteral pattern : { "T\\d\\d:\\d\\d:\\d\\d\\+\\d\\d:\\d\\d"_s, "T\\d\\d:\\d\\d:\\d\\d\\.00Z"_s, "abcd[xy]e[xy][xy]fghi"_s, "abcd[xy]ef[xy]ghij"_s })
+        checkPatternServesBothWidthsAndRetries(pattern);
 }
 
 static bool searchesForOneOfAClass(ASCIILiteral patternString)
