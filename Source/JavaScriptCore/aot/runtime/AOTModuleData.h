@@ -54,7 +54,6 @@ struct ModuleData {
         IsEntryPoint = 1 << 6,
         KeepsError = 1 << 7,
         BodyMayRunAgain = 1 << 7,
-        IsDataFoundByName = 1 << 7,
         HasDeferredRequest = 1 << 8,
         IsModuleToImports = 1 << 8,
         HasValue = 1 << 9,
@@ -110,7 +109,6 @@ struct ModuleData {
     bool isEntryPoint() const { return has(Flag::IsEntryPoint); }
     bool keepsError() const { return kind != ModuleKind::CommonJs || has(Flag::KeepsError); }
     bool bodyOfESModuleMayRunAgain() const { return kind == ModuleKind::SourceText && has(Flag::BodyMayRunAgain); }
-    bool isDataFoundByName() const { return kind == ModuleKind::Data && has(Flag::IsDataFoundByName); }
     bool hasDeferredRequest() const { return kind != ModuleKind::CommonJs && has(Flag::HasDeferredRequest); }
     bool isModuleToImports() const { return kind == ModuleKind::CommonJs && has(Flag::IsModuleToImports); }
     bool hasValue() const { return has(Flag::HasValue); }
