@@ -2261,7 +2261,7 @@ static JSValue jsObjectStrImpl(JSGlobalObject* globalObject, JSValue self)
     if (failed(scope, ensureMainThreadForJS(globalObject)))
         return { };
     // An object without a prototype, or the namespace of a module, has nothing by which JS could make a string of it. Nor has one that inherits
-    // it from where the objects of Python's do, with nothing of Python's in it (Object.create(Class.prototype)): that is str(this).
+    // it from where the objects of Python's do, with nothing of Python's in it (Object.create(Class.prototype); f.bind(), which has the prototype of f): that is str(this).
     bool canConvert = false;
     bool hasToPrimitive = false;
     for (auto& key : { vm.propertyNames->toPrimitiveSymbol, vm.propertyNames->toString, vm.propertyNames->valueOf }) {
@@ -2270,7 +2270,8 @@ static JSValue jsObjectStrImpl(JSGlobalObject* globalObject, JSValue self)
         RETURN_IF_EXCEPTION(scope, { });
         if (!found)
             continue;
-        canConvert = slot.slotBase() != runtime(globalObject).jsViewObject(JSViewObject::ObjectPrototype) || objectOfPythonWithin(self) != self;
+        bool isOfPython = slot.slotBase() == runtime(globalObject).jsViewObject(JSViewObject::ObjectPrototype) || slot.slotBase() == runtime(globalObject).jsViewObject(JSViewObject::FunctionPrototype);
+        canConvert = !isOfPython || objectOfPythonWithin(self) != self;
         hasToPrimitive = key == vm.propertyNames->toPrimitiveSymbol;
         break;
     }
