@@ -2559,7 +2559,7 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
     bool takesCopiesAnew = isFile && m_facesThatTookCopiesForMock.get(withExports.index());
     if (!kept.isInPlace) {
         if (takesCopiesAnew)
-            RELEASE_AND_RETURN(scope, captureExportsAgainKeepingWhatGettersGave(withExports));
+            RELEASE_AND_RETURN(scope, captureExportsAgain(withExports));
         return;
     }
     LoadedModule& exporting = ensureLoaded(withExports);
@@ -2626,7 +2626,7 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
             setNamespace(withExports, ModulePhase::Evaluation, own);
     }
     if (takesCopiesAnew)
-        RELEASE_AND_RETURN(scope, captureExportsAgainKeepingWhatGettersGave(withExports));
+        RELEASE_AND_RETURN(scope, captureExportsAgain(withExports));
 }
 
 JSObject* Modules::namespaceOfModuleItself(ModuleID module)
