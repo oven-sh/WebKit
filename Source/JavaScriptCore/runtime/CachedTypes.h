@@ -418,7 +418,7 @@ public:
     // What an order file says, in the names the embedder gives code (BytecodeOrderNames).
     struct Hints {
         Vector<uint64_t> hotFunctions; // in first-decode order
-        Vector<uint64_t> knownFunctions; // the other functions the recorded build had; empty = not recorded
+        Vector<uint64_t> knownFunctions; // the other functions the recorded build had; empty = its run decoded all it had
         Vector<uint64_t> evaluatedModules;
         Vector<uint64_t> notEvaluatedModules;
     };
