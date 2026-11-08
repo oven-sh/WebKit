@@ -214,6 +214,9 @@ void ModuleRegistryEntry::setFetchError(JSGlobalObject* globalObject, JSValue er
     if (m_status == Status::New && m_fetchPromise)
         m_fetchPromise->reject(vm, error);
     setStatus(Status::FetchFailed);
+#if USE(BUN_JSC_ADDITIONS)
+    m_asyncContext.clear();
+#endif
 }
 
 void ModuleRegistryEntry::setInstantiationError(JSGlobalObject* globalObject, JSValue error)
@@ -224,6 +227,9 @@ void ModuleRegistryEntry::setInstantiationError(JSGlobalObject* globalObject, JS
     VM& vm = globalObject->vm();
     m_error.set(vm, this, error);
     setStatus(Status::InstantiationFailed);
+#if USE(BUN_JSC_ADDITIONS)
+    m_asyncContext.clear();
+#endif
 }
 
 void ModuleRegistryEntry::setEvaluationError(JSGlobalObject* globalObject, JSValue error)
@@ -234,6 +240,9 @@ void ModuleRegistryEntry::setEvaluationError(JSGlobalObject* globalObject, JSVal
     VM& vm = globalObject->vm();
     m_error.set(vm, this, error);
     setStatus(Status::EvaluationFailed);
+#if USE(BUN_JSC_ADDITIONS)
+    m_asyncContext.clear();
+#endif
 }
 
 void ModuleRegistryEntry::setStatus(Status status)
@@ -319,6 +328,9 @@ void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractMo
     ASSERT(m_status == Status::Fetching);
     m_record.set(vm, this, record);
     m_status = Status::Fetched;
+#if USE(BUN_JSC_ADDITIONS)
+    m_asyncContext.clear();
+#endif
 }
 
 } // namespace JSC

@@ -80,7 +80,9 @@ public:
     // (JSModuleLoader::asyncContext()) keeps none: the host runs the body of its modules in the loader's.
     JSPromise* ensureModulePromise(JSGlobalObject*, JSValue asyncContext = { });
 #if USE(BUN_JSC_ADDITIONS)
-    // For the job that makes the record. The entry does not keep the context behind it.
+    // For the job that makes the record. The entry does not keep the context behind it: where the entry is settled
+    // without that job (the AOT run time makes the record of a file that it ran itself), fetchComplete() and the
+    // setters of an error drop it.
     JSValue takeAsyncContext()
     {
         JSValue asyncContext = m_asyncContext.get();
