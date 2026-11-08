@@ -12,6 +12,7 @@
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsOfOperations.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
 #include "AOTOperandKinds.h"
@@ -1297,7 +1298,7 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
                 continue;
             }
             Effects declared = declaredEffectsOfOperation(walker.program(), operation.opcode(), operation);
-            if (!declared.mayThrow.byRule() && !declared.mayRunOtherCode()) {
+            if (!declared.mayThrow.byRule() && !declared.mayRunOtherCode() && !operandsMayRunCode(operation.opcode())) {
                 if (!declared.writes.containsOnly(heapsWhoseWritesNobodySees))
                     countAloneEndsLoop = false;
                 continue;
