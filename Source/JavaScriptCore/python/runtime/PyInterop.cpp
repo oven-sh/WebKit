@@ -1531,7 +1531,8 @@ JSValue leaveAsyncFor(JSGlobalObject* globalObject, JSValue iterator, JSValue ex
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* record = PyRecord::tryFrom(iterator, rt.typeFor(jsAsyncIteratorTypeDef));
+    // (Every `async for` that ends comes by here. What it went over is seldom a record at all.)
+    auto* record = PyRecord::is(iterator) ? PyRecord::tryFrom(iterator, rt.typeFor(jsAsyncIteratorTypeDef)) : nullptr;
     // Not that of a loop. Or the iterator has said its last: it has failed (next() has thrown, its promise was rejected, or what it gave is no result), which is why the loop is left; or it has come
     // to its end, and the loop was cut short before it heard of that. `for await` does not call return() of such a one. One whose step was cut short from outside, by a cancellation, or that gave a
     // promise for a value, which was rejected, is alive.
