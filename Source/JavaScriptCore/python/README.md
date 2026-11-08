@@ -1791,6 +1791,11 @@ answer; a `tp_dealloc` is the end of what C keeps in the object.
   (`faceOfSlow()`), and then there is one. C gets at it by a reference that it owns, and there is none; or by a pointer that it does not own, which in CPython would point to freed memory by now.
   The two questions are asked when the turn has come. Nothing is revoked: a body to which C has taken a reference meanwhile (a table of the objects that are alive, which `tp_dealloc`
   takes them out of), or which C has handed to Python, simply lives on; in the second case with a new face, without the attributes and the weak references of the old.
+- *Which thread.* A turn is owed by a thread, like any finalizer (see "Which thread runs a finalizer"): by the one that made the instance, for want of knowing who dropped it. Of one kind of drop it is known. **What the
+  end of an instance gives back is owed by the thread that makes that end**: when a `tp_dealloc` or a `tp_clear` gives back the last reference that C owns to an instance which still has its face (it is of a class of
+  Python's and was kept whole for its holder; or a collection of the young has found the holder alone), that instance waits for a collection to find its face dead, and its end is then for the thread that
+  ran the holder's. In CPython its `tp_dealloc` would have run there and then, inside the holder's. Not so for a reference that C gives back anywhere else: C that takes one to an argument for the time of a call, in
+  whichever thread, says nothing about who will drop the object.
 - **Among bodies without faces there is nothing but C's references, and the counts are exact**: no object of Python's refers to a body, and a body that is alive would have kept the face of whatever
   it holds. So `tp_dealloc` gives back what it held, and a body whose count falls to 0 by that comes next: parents before children, however long the chain, in the same turn and without recursion,
   as in CPython. What is left with a count is in a cycle of bodies or hangs off one: `tp_clear`, then the counts again.

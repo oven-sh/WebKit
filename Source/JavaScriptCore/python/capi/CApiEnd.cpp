@@ -445,9 +445,14 @@ void didTakeWatchedReference(JSCell* cell)
         didSeeSomebodyTake(body);
 }
 
-void didGiveBackLastReferenceToBodyWithoutFace(Body* body)
+void didGiveBackLastReferenceToBody(Body* body)
 {
     Interpreter& current = interpreter();
+    // WHAT THE END OF AN INSTANCE GIVES BACK IS OWED BY THE THREAD THAT MAKES THAT END. In CPython the tp_dealloc of a child runs inside that of the parent that held the last reference to it. Here a child that has its
+    // face waits for a collection to find the face dead, and its end is then owed by a thread like that of anything a collection finds: its maker's, for want of knowing who dropped it. Here it is known.
+    // (Only there. C that takes a reference to an argument for the time of a call, in whichever thread, and gives it back says nothing about who will drop the object.)
+    if (t_toDestroyNext)
+        body->thread = current.runtime.currentThread();
     if (!nobodyHasIt(current, body) || !madeByExtension(body->type())->hasSomethingToDestroy())
         return;
     if (t_toDestroyNext)

@@ -301,7 +301,7 @@ extern std::atomic<Interpreter*> s_interpreterThatLetsGo;
 void didTakeWatchedReference(JSCell*);
 // The body is of that type from now on, and the reference that the instance owns to its type, if it owns one, is to that. `vm`: null for the collector, with the world stopped.
 void moveToClass(Interpreter&, Body*, PyType*, VM*);
-void didGiveBackLastReferenceToBodyWithoutFace(Body*);
+void didGiveBackLastReferenceToBody(Body*);
 
 // THE QUESTION IS FOR C. Who has asked and been let in does not ask again, and the runtime does not ask it where it keeps the books of a call that it has made itself (the hooks of
 // ctypes in CApiHooks.h; takeOverReference() has a question of its own): for whom C runs further out on the stack has nothing to do with whose reference the result of this call came with.
@@ -313,10 +313,8 @@ ALWAYS_INLINE void retainCell(Interpreter& current, JSCell* cell)
 
 ALWAYS_INLINE void releaseCell(Interpreter& current, JSCell* cell, bool letsGo)
 {
-    if (current.counts.remove(cell, letsGo)) [[unlikely]] {
-        if (Body* body = uncheckedDowncast<Body>(cell); !body->face()) [[unlikely]]
-            didGiveBackLastReferenceToBodyWithoutFace(body);
-    }
+    if (current.counts.remove(cell, letsGo)) [[unlikely]]
+        didGiveBackLastReferenceToBody(uncheckedDowncast<Body>(cell));
 }
 
 ALWAYS_INLINE void retain(Interpreter& current, Handle handle)

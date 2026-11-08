@@ -127,7 +127,7 @@ public:
 
     // All of this is read and written with the GIL, or by the collector with the world stopped.
 
-    // The thread that made it: Runtime::currentThread().
+    // The thread that owes its end (Runtime::currentThread()): the one that made it. Or the one that made the end of its last holder: see didGiveBackLastReferenceToBody().
     uint32_t thread { 0 };
 private:
     uint8_t m_life : 3 { 0 };
