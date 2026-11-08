@@ -62,12 +62,20 @@ void PyWeakRef::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(PyWeakRef);
 
+void PyWeakRef::dieBeforeReferentIsFoundDead(VM& vm)
+{
+    ASSERT(!m_isInternal); // (What such a one has in the place of a callback is none.)
+    m_referent = nullptr;
+    // (A collection begins and ends with the world stopped: a thread that runs sees it as it is.)
+    m_fullCollectionsUntilItIsTold = !m_callback ? 0 : vm.heap.collectionScope() == CollectionScope::Full ? 2 : 1;
+}
+
 void PyWeakRef::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope collectionScope)
 {
     // (A collection of the young generation takes what is old for alive.)
-    if (m_isToldIfItLivesOn && collectionScope == CollectionScope::Full) [[unlikely]] {
-        m_isToldIfItLivesOn = false;
-        structure()->realm()->pythonRuntime()->queueWeakRefCallback(this);
+    if (m_fullCollectionsUntilItIsTold && collectionScope == CollectionScope::Full) [[unlikely]] {
+        if (!--m_fullCollectionsUntilItIsTold)
+            structure()->realm()->pythonRuntime()->queueWeakRefCallback(this);
         return;
     }
     if (!m_referent || vm.heap.isMarked(m_referent))
