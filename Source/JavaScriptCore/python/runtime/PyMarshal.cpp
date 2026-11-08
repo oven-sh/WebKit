@@ -955,8 +955,12 @@ private:
 
     JSValue rememberAt(JSValue object, unsigned number, bool isNumbered)
     {
-        if (object && isNumbered)
-            listSet(m_globalObject, m_references, number, object);
+        if (!object || !isNumbered)
+            return object;
+        auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
+        // (The place may be gone: the list is an object like any other, which gc.get_objects() hands out to the readinto() of the file.)
+        listSet(m_globalObject, m_references, number, object);
+        RETURN_IF_EXCEPTION(scope, { });
         return object;
     }
 
