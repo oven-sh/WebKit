@@ -37,6 +37,11 @@ static bool findsSameInEveryTurnForLoopInvariants(const Program& program, const 
     return effects.isUnobservable() && !effects.reads.overlaps(effectsOfLoop.writes);
 }
 
+static bool readsFieldOfScopeThatTurnsStoreForLoopInvariants(const BodyValue& operation, const LoopPreview& preview)
+{
+    return operation.opcode() == Opcode::GetEnvironmentField && std::ranges::binary_search(preview.fieldsOfScopesThatTurnsStore, FieldReference { operation.layout(), operation.field() });
+}
+
 void hoistInvariants(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering)
 {
     if (!walker.has(Mechanism::LoopInvariants) || !walker.has(Mechanism::Folding) || preview.effects.mayRunOtherCode() || walker.loopCarriesValuesOfConsumerRound(inputHead))
@@ -54,7 +59,7 @@ void hoistInvariants(Walker& walker, BlockID inputHead, const LoopPreview& previ
         operation.forEachOperand([&](ValueID operand, uint32_t) {
             takesOnlyWhatStandsInFront &= operand.index() < head.firstParameter().index() || hoisted.contains(operand);
         });
-        if (takesOnlyWhatStandsInFront && findsSameInEveryTurnForLoopInvariants(walker.program(), operation, preview.effects)) {
+        if (takesOnlyWhatStandsInFront && !readsFieldOfScopeThatTurnsStoreForLoopInvariants(operation, preview) && findsSameInEveryTurnForLoopInvariants(walker.program(), operation, preview.effects)) {
             walker.walkStretch(inputHead, place, place + 1);
             hoisted.append(operation.id());
             continue;
