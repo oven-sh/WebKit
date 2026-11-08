@@ -151,10 +151,10 @@ PyException* newException(JSGlobalObject* globalObject, PyType* type, const Stri
     return newException(globalObject, type, std::span<const JSValue> { &argument, 1 });
 }
 
-// Of an object of JS. (0 is taken: see PyJSView.cpp.)
-static constexpr unsigned jsErrorHiddenField = 1;
+// Of an object of JS.
+static constexpr unsigned jsErrorHiddenField = HiddenFieldOfJSObject::Exception;
 // The frames of Python it has passed through before there was a JSError to have the traceback.
-static constexpr unsigned jsErrorTracebackHiddenField = 2;
+static constexpr unsigned jsErrorTracebackHiddenField = HiddenFieldOfJSObject::Traceback;
 
 // An object of JS keeps its exception. (Not one of Python's: the hidden fields of those belong to their types.)
 static bool keepsItsException(Runtime& rt, JSValue thrown)

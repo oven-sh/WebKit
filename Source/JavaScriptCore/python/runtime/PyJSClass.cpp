@@ -365,7 +365,7 @@ JSObject* prototypeBehindViews(JSObject* object)
 }
 
 // Type.prototype.name.call(instance, ...) is Type.name(instance, ...).
-static constexpr unsigned unboundMethodField = 0;
+static constexpr unsigned unboundMethodField = HiddenFieldOfJSObject::OfItsKind;
 
 static JSC_DECLARE_HOST_FUNCTION(callUnboundMethod);
 JSC_DEFINE_HOST_FUNCTION(callUnboundMethod, (JSGlobalObject* globalObject, CallFrame* callFrame))

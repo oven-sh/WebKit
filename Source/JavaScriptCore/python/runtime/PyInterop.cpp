@@ -2996,7 +2996,7 @@ static JSValue jsPromiseAwait(JSGlobalObject* globalObject, JSValue self)
 // made a task of. So create_task(), ensure_future(), gather(), run_until_complete() and run() take one, on whichever loop. (A future it
 // is not: that belongs to one loop and can be cancelled.) A task runs a coroutine of its own for it (taskInit()); these are for whoever
 // else drives a coroutine by hand.
-static constexpr unsigned awaitIteratorField = 0;
+static constexpr unsigned awaitIteratorField = HiddenFieldOfJSObject::OfItsKind;
 static JSValue jsPromiseAwaitIterator(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);

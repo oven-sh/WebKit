@@ -29,6 +29,7 @@ PY_DEFINE_CELL(PyWeakRef);
 // weakref.proxy(object). The object knows them through a hidden field: a weak reference to the one, whose callback field holds a
 // weak reference to the other.
 static constexpr unsigned sharedWeakRefsField = Runtime::numberOfHiddenKeys - 1;
+static_assert(sharedWeakRefsField == HiddenFieldOfJSObject::WeakRefs);
 
 uint64_t nextWeakRefSerial()
 {

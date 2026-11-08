@@ -156,6 +156,7 @@ JSValue makeUnion(JSGlobalObject*, JSValue left, JSValue right);
 // What a type written in C++ keeps with an instance that has no field for it (a dict subclass, say): a property of the
 // object that JS cannot see. `index` is less than Runtime::numberOfHiddenKeys - 1 (the last is taken: see PyWeakRef.cpp); each
 // type decides what its indices mean, and a type must not use those of its bases. Empty: not set.
+// An object of JS's has no such type: see HiddenFieldOfJSObject.
 inline JSValue hiddenField(JSGlobalObject* globalObject, JSValue object, unsigned index)
 {
     return asObject(object)->getDirect(getVM(globalObject), runtime(globalObject).hiddenKey(index));
@@ -164,6 +165,18 @@ inline void setHiddenField(JSGlobalObject* globalObject, JSValue object, unsigne
 {
     asObject(object)->putDirect(getVM(globalObject), runtime(globalObject).hiddenKey(index), value, PropertyAttribute::DontEnum | 0);
 }
+// The hidden fields of an object of JS's. Whatever else it is, it can be thrown and weakly referred to, so they are given out here, and all are taken: what is to be
+// kept for one more purpose needs one more key, or another place.
+struct HiddenFieldOfJSObject {
+    enum : unsigned {
+        OfItsKind, // Of a promise (PyInterop.cpp), and of an object or a function that the runtime has made for JS (PyJSView.cpp, PyJSClass.cpp): no object is two of these.
+        Exception, // PyException.cpp
+        Traceback,
+        WeakRefs, // PyWeakRef.cpp, as of every object.
+        Count
+    };
+};
+static_assert(HiddenFieldOfJSObject::Count == Runtime::numberOfHiddenKeys);
 
 // The hidden fields of a tuple of keyword names that came from a dict some of whose keys are not plain strs: a tuple of the keys, and a tuple of their hashes as that dict remembers
 // them (ints; for a key that is exactly a str, whose hash no dict looks at, 0).

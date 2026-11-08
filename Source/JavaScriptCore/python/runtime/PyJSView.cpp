@@ -702,7 +702,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewToJSON, (JSGlobalObject* globalObject, CallFrame*
 
 // What [Symbol.iterator]() returns is an object of JS that has the Python iterator out of sight, so that what the iterator
 // calls its own attributes does not matter.
-static constexpr unsigned jsViewIteratorField = 0;
+static constexpr unsigned jsViewIteratorField = HiddenFieldOfJSObject::OfItsKind;
 
 static JSValue jsViewWrapIterator(JSGlobalObject* globalObject, JSViewObject prototype, JSValue iterator)
 {
