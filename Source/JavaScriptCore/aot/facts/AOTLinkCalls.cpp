@@ -29,6 +29,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
