@@ -14,6 +14,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsOfOperations.h"
 #include "AOTFactRecords.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkStrings.h"
@@ -604,8 +605,19 @@ bool AccessInLinkAccesses::runsNoCodeOfProgram(const BodyIndex& index, BodyValue
 {
     Effects storage;
     const Effects& effects = declaredEffectsOfOperation(m_program, value.opcode(), value, storage);
-    if (!effects.mayCallUnknownCode && !effects.maySuspend && effects.writes.containsOnly(heapsWhoseWritesNobodySees))
-        return true;
+    if (!effects.mayCallUnknownCode && !effects.maySuspend && effects.writes.containsOnly(heapsWhoseWritesNobodySees)) {
+        bool someOperandMayRunCode = false;
+        if (operandsMayRunCode(value.opcode())) {
+            static constexpr OpcodeSet opcodesWhoseResultsRunNothing = primitiveConstants | allNumericOperators | allRelations | allEqualities;
+            value.forEachOperand([&](ValueID operand, uint32_t) {
+                ValueID written = operand ? index.valueBehindCasts(operand) : ValueID();
+                if (written && written != nameThatLoopGave)
+                    someOperandMayRunCode |= index.isParameter(written) || !opcodesWhoseResultsRunNothing.contains(index.opcodeOf(written));
+            });
+        }
+        if (!someOperandMayRunCode)
+            return true;
+    }
     if (value.opcode() == Opcode::PropHas)
         return true;
     if (value.opcode() == Opcode::ElemHas)
