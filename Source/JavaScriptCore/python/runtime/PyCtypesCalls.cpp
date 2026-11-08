@@ -400,7 +400,8 @@ static void takeOverReferenceIn(const uint8_t* memory, bool programGetsObject)
     CApi::takeOverReference(bits, programGetsObject);
 }
 
-static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, JSValue checker, JSValue hint, bool comesWithReference)
+// `size`: so much room was made for a result that is an instance. (The type may have been given its fields during the call.)
+static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, int64_t size, JSValue checker, JSValue hint, bool comesWithReference)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -420,7 +421,7 @@ static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue res
         if (comesWithReference)
             takeOverReferenceIn(memory, !!result);
     } else
-        result = dataFromCopy(globalObject, PyType::from(resultType), memory, info->size);
+        result = dataFromCopy(globalObject, PyType::from(resultType), memory, size);
     RETURN_IF_EXCEPTION(scope, { });
     if (!checker)
         return result;
@@ -598,14 +599,15 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
     // In memory of the collector if it is large: a structure may be of any size.
     alignas(16) uint8_t smallResult[64] { };
     uint8_t* resultMemory = smallResult;
-    if (resultInfo && resultInfo->size > static_cast<int64_t>(sizeof(smallResult))) {
+    int64_t resultSize = resultInfo ? resultInfo->size : 0;
+    if (resultSize > static_cast<int64_t>(sizeof(smallResult))) {
         Runtime& rt = runtime(globalObject);
-        PyByteStorage* storage = PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), static_cast<size_t>(resultInfo->size));
+        PyByteStorage* storage = PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), static_cast<size_t>(resultSize));
         if (!storage)
             RELEASE_AND_RETURN(scope, raiseNoMemoryForResult(globalObject));
         keeps.append(storage);
         resultMemory = storage->data();
-        memset(resultMemory, 0, static_cast<size_t>(resultInfo->size));
+        memset(resultMemory, 0, static_cast<size_t>(resultSize));
     }
     result.memory = resultMemory;
 
@@ -651,7 +653,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
             return { };
         }
     }
-    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, checker, ownResult, returnsReference));
+    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, resultSize, checker, ownResult, returnsReference));
 }
 
 // ---- Callbacks ----

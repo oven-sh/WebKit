@@ -1524,7 +1524,9 @@ result has been read. What a callback returns a pointer into (a `c_char_p`, a `c
 **Safety.** What a program does with instances, fields, items, slices, `value`, `raw`, `resize`, `from_buffer`,
 `from_buffer_copy`, buffers and pickles stays within memory that is alive. Each access checks its bounds against the instance (so a
 `CField` applied to an instance of another type is an error), and a value is converted, which may run any code, before the
-memory is located. A pointer that points into something it keeps alive (`pointer(x)`, `p.contents = x`, an array assigned to a pointer field,
+memory is located. A structure can be given its `_fields_` until there is an instance of it, so `from_buffer()` and `from_buffer_copy()` ask whether the memory is large enough
+behind their audit hooks too (`checkRoomFor()`), a foreign call copies out of the room for its result what it has made room for, and the buffer
+of an instance that its type has outgrown (`S * 4` before `S` has its fields; an assignment to `__class__`) is the bytes of the instance, without the shape and the format of the type. DEFERRED.md has what is left of the kind. A pointer that points into something it keeps alive (`pointer(x)`, `p.contents = x`, an array assigned to a pointer field,
 `cast` of an instance) is checked too: `p[i]`, `p[a:b]` and `p.contents` raise `ValueError` if they would leave the memory of that object, which
 also holds for a pointer that was given `contents` of another type than its own (which CPython allows, and which is a cast: bytes that are not a
 pointer may then be read as one). What follows an address of which nothing is known is not

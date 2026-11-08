@@ -268,6 +268,16 @@ PyCData* dataAtAddress(JSGlobalObject* globalObject, PyType* type, const void* a
     return data;
 }
 
+bool checkRoomFor(JSGlobalObject* globalObject, PyCTypeInfo* info, int64_t length, int64_t offset)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (info->size <= length - offset)
+        return true;
+    raiseValueError(globalObject, scope, "Buffer size too small ("_s, length, " instead of at least "_s, static_cast<int64_t>(static_cast<uint64_t>(info->size) + static_cast<uint64_t>(offset)), " bytes)"_s);
+    return false;
+}
+
 PyCData* dataInView(JSGlobalObject* globalObject, PyType* type, PyMemoryView* view, int64_t offset)
 {
     VM& vm = getVM(globalObject);
@@ -279,6 +289,8 @@ PyCData* dataInView(JSGlobalObject* globalObject, PyType* type, PyMemoryView* vi
     ASSERT_UNUSED(ok, ok);
     PyCTypeInfo* info = concreteInfoOf(globalObject, type);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    if (failed(scope, checkRoomFor(globalObject, info, view->length, offset)))
+        return nullptr;
     PyCData* data = allocateData(globalObject, type, info);
     data->setView(vm, view, offset);
     return data;
@@ -529,8 +541,21 @@ JSValue dataBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flags)
     buffer.format = info->format ? stringOf(info->format.get()) : "B"_str;
     PyTuple* shape = info->shape.get();
     buffer.dimensions = shape ? shape->length() : 0;
-    for (unsigned i = 0; i < buffer.dimensions; ++i)
+    CheckedInt64 sizeOfShape = buffer.itemSize;
+    bool isEmpty = false;
+    for (unsigned i = 0; i < buffer.dimensions; ++i) {
         buffer.shape.append(tryInt64(shape->at(i)).value_or(0));
+        sizeOfShape *= buffer.shape.last();
+        isEmpty |= !buffer.shape.last();
+    }
+    // The shape and the size of an item are the type's, as it is now; the memory is the instance's. If the type has outgrown the instance (S * 4, and S is given its fields
+    // afterwards; __class__ is assigned to), the buffer is the bytes of the instance and no more is said of them.
+    if (!isEmpty && (sizeOfShape.hasOverflowed() || sizeOfShape.value() > data->size)) {
+        buffer.itemSize = 1;
+        buffer.format = "B"_str;
+        buffer.dimensions = 1;
+        buffer.shape = { data->size };
+    }
 
     if (data->isView()) {
         auto* view = uncheckedDowncast<PyMemoryView>(data->owner());

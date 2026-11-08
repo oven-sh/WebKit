@@ -168,15 +168,15 @@ static JSValue typeFromBuffer(JSGlobalObject* globalObject, JSValue self, JSValu
         return fail(raiseTypeError(globalObject, scope, "underlying buffer is not writable"_s));
     if (!view->isCContiguous)
         return fail(raiseTypeError(globalObject, scope, "underlying buffer is not C contiguous"_s));
-    if (info->size > view->length - offset)
-        return fail(raiseValueError(globalObject, scope, "Buffer size too small ("_s, view->length, " instead of at least "_s, info->size + offset, " bytes)"_s));
+    if (failed(scope, checkRoomFor(globalObject, info, view->length, offset)))
+        return fail({ });
     uint8_t* memory = view->data(globalObject);
     if (scope.exception())
         return fail({ });
     audit(globalObject, "ctypes.cdata/buffer"_s, intFromPointer(globalObject, memory), makeInt(globalObject, view->length), makeInt(globalObject, offset));
     if (scope.exception())
         return fail({ });
-    PyCData* data = dataInView(globalObject, PyType::from(self), view, offset);
+    PyCData* data = dataInView(globalObject, PyType::from(self), view, offset); // It asks again, behind its hook.
     if (scope.exception())
         return fail({ });
     view->isInternal = false;
@@ -202,12 +202,12 @@ static JSValue typeFromBufferCopy(JSGlobalObject* globalObject, JSValue self, JS
     if (!info)
         RELEASE_AND_RETURN(scope, raiseAbstractClass(globalObject));
     Buffer& buffer = holder.buffer;
-    if (info->size > buffer.length - offset)
-        return raiseValueError(globalObject, scope, "Buffer size too small ("_s, buffer.length, " instead of at least "_s, info->size + offset, " bytes)"_s);
+    if (failed(scope, checkRoomFor(globalObject, info, buffer.length, offset)))
+        return { };
     audit(globalObject, "ctypes.cdata/buffer"_s, intFromPointer(globalObject, buffer.data), makeInt(globalObject, buffer.length), makeInt(globalObject, offset));
     RETURN_IF_EXCEPTION(scope, { });
     // An audit hook may have run anything.
-    if (failed(scope, refreshBuffer(globalObject, buffer)))
+    if (failed(scope, refreshBuffer(globalObject, buffer)) || failed(scope, checkRoomFor(globalObject, info, buffer.length, offset)))
         return { };
     RELEASE_AND_RETURN(scope, dataFromCopy(globalObject, PyType::from(self), buffer.data + offset, info->size));
 }

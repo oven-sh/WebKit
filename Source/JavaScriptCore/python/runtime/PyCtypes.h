@@ -464,6 +464,9 @@ PyCData* dataAtAddress(JSGlobalObject*, PyType*, const void*);
 PyCData* dataFromCopy(JSGlobalObject*, PyType*, const void*, int64_t size);
 // The __buffer__() of them all.
 JSValue dataBuffer(JSGlobalObject*, JSValue self, JSValue flags);
+// Whether an instance fits into so many bytes, from the offset on. If not, a ValueError. A structure may be given its fields until there is an instance of it, so
+// this is asked, or asked again, where nothing of the program's runs any more before there is one: behind the audit hooks.
+bool checkRoomFor(JSGlobalObject*, PyCTypeInfo*, int64_t length, int64_t offset);
 
 // Gives the instance zeroed memory of its own, of that size. False: a MemoryError.
 bool allocateMemory(JSGlobalObject*, PyCData*, int64_t size);
