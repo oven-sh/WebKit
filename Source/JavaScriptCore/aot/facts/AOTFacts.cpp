@@ -295,7 +295,7 @@ static void fillFieldTablesForFacts(const Program& program, const LinkTables& li
                 facts.facts.add(FieldFact::IsAccessor);
                 if (field < numberDeclared)
                     facts.formOfValue = cell->formThatDefinitionsCreate;
-            } else if (cell && field < numberDeclared)
+            } else if (cell && field < numberDeclared && !cell->formThatDefinitionsCreate.contains(FieldForm::IsAccessor))
                 facts.formOfValue = cell->formThatDefinitionsCreate;
             if (!layout.possibleChanges.contains(LayoutChange::LosesProperty))
                 facts.stability.add(FieldStability::IsNeverDeleted);

@@ -2989,9 +2989,9 @@ void Modules::waitForFactoriesThatRequireLeft(ModuleID required)
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    m_waitsThatRequiresLeft.removeAllMatching([](const auto& left) { return left.second->status() != JSPromise::Status::Pending; });
-    if (size_t left = m_waitsThatRequiresLeft.findIf([&](const auto& each) { return each.first == required; }); left != notFound) {
-        m_waitsThatRequiresLeft[left].second->performPromiseThen(vm, realm, jsUndefined(), jsUndefined(), JSPromise::create(vm, realm->promiseStructure()));
+    m_waitsThatRequiresLeft.removeAllMatching([](const auto& left) { return left.wait->status() != JSPromise::Status::Pending; });
+    if (size_t left = m_waitsThatRequiresLeft.findIf([&](const auto& each) { return each.required == required; }); left != notFound) {
+        m_waitsThatRequiresLeft[left].wait->performPromiseThen(vm, realm, jsUndefined(), jsUndefined(), JSPromise::create(vm, realm->promiseStructure()));
         return;
     }
     JSValue state;
@@ -3004,7 +3004,7 @@ void Modules::waitForFactoriesThatRequireLeft(ModuleID required)
     JSFunction* didFail = JSFunction::create(vm, realm, 2, String(), didFailFactoryThatRequireLeftInModuleEvaluation, ImplementationVisibility::Private);
     factories->performPromiseThenWithContext(vm, realm, didSettle, didFail, wait, jsNumber(required.index()));
     wait->markAsHandled();
-    m_waitsThatRequiresLeft.append({ required, Strong<JSPromise>(vm, wait) });
+    m_waitsThatRequiresLeft.append({ required, Strong<JSPromise>(vm, wait), true });
 }
 
 void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason reason)

@@ -569,7 +569,7 @@ public:
     bool isImportedByModuleThatRequireAnswered(ModuleID) const;
     void keepErrorOfLoad(ModuleID root, JSValue error, const ScopedLambda<bool(ModuleID)>& endedLoad);
     void keepErrorOfFactoryThatRequireLeft(ModuleID required, JSValue error);
-    bool isWaitThatRequireLeftKept(ModuleID required) const { return m_waitsThatRequiresLeft.containsIf([&](const auto& left) { return left.first == required; }); }
+    bool isWaitThatRequireLeftKept(ModuleID required) const { return m_waitsThatRequiresLeft.containsIf([&](const auto& left) { return left.required == required && left.keepsError; }); }
     void dropErrorOfLoadEndedByMock(ModuleID);
     void dropErrorOfMockKeptByLoader(ModuleID);
     void dropErrorsOfLoadsEndedByMockOf(ModuleID mocked);
@@ -2115,7 +2115,12 @@ private:
         friend bool operator==(const RequireThatGaveUp&, const RequireThatGaveUp&) = default;
     };
     Vector<RequireThatGaveUp> m_requiresThatGaveUp;
-    Vector<std::pair<ModuleID, Strong<JSPromise>>> m_waitsThatRequiresLeft;
+    struct WaitThatRequireLeft {
+        ModuleID required;
+        Strong<JSPromise> wait;
+        bool keepsError;
+    };
+    Vector<WaitThatRequireLeft> m_waitsThatRequiresLeft;
     BitVector m_modulesLoadedBeforeMockThatWaited;
     BitVector m_filesThatRanAheadOfMock;
     BitVector m_modulesAskedForOwnNames;

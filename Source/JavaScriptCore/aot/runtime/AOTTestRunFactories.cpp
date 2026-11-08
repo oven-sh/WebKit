@@ -846,7 +846,8 @@ void Modules::dropErrorsOfLoadsEndedByMocks()
     BitVector roots = m_rootsOfImportsThatFailedUnderMocks;
     for (size_t root : roots)
         forgetImportFailedUnderMock(ModuleID(root));
-    m_waitsThatRequiresLeft.clear();
+    for (WaitThatRequireLeft& left : m_waitsThatRequiresLeft)
+        left.keepsError = false;
 }
 
 bool Modules::isFetchedForImportStatement(ModuleID module) const
