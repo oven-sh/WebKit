@@ -3071,6 +3071,10 @@ private:
     Vector<uint16_t> m_stateWhenRowsWereRead;
     Vector<BuiltinClassID> m_classOfPrototype;
     bool m_objectsOfAnyClassMayExist { false };
+    // By name of native cell: every value that the rows of the table put there is an operand of a row or a new value of a type the table describes, so what a row answers out of the cell is described too.
+    BitVector m_cellsHoldingOnlyDescribedValues;
+    bool typeIsDescribed(BuiltinTypeID) const;
+    void findCellsHoldingOnlyDescribedValues();
     bool m_classesWithObjectsHaveGrown { true };
     bool m_objectsMayHaveMethodCalledWithStartupLoads { false };
     bool m_notesWhatConstructionsInSightMake { false };
@@ -3181,6 +3185,7 @@ BuilderOfProgramFacts::BuilderOfProgramFacts(const InputsOfProgramFacts& inputs,
     m_stateWhenRowsWereRead.fill(0, m_builtins.builtinCount());
     m_witnesses.fill(noWitness, m_builtins.builtinCount());
     m_witnessesOfEscapes.fill(noWitness, m_builtins.builtinCount());
+    findCellsHoldingOnlyDescribedValues();
     for (Protocol protocol : allMembersOf<Protocol>) {
         for (BuiltinName name : m_builtins.keysReadBy(protocol))
             m_namesOfProtocols.set(name.index());
@@ -3490,6 +3495,45 @@ void BuilderOfProgramFacts::noteKeysThatRowNames(const BuiltinOverload& overload
     }
 }
 
+bool BuilderOfProgramFacts::typeIsDescribed(BuiltinTypeID type) const
+{
+    if (!type)
+        return false;
+    const BuiltinType& made = m_builtins.at(type);
+    return !made.flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject }) || made.flags.contains(BuiltinTypeFlag::IsMadeOfListedClasses);
+}
+
+// A cell that only rows fill, each with an operand of its own or with a new value of a type that the table describes: AbortSignal.reason holds what abort() was handed or the DOMException that native code makes. A cell into which a callback's answer or a property read goes, or into which nothing is known to go, describes nothing.
+void BuilderOfProgramFacts::findCellsHoldingOnlyDescribedValues()
+{
+    BitVector filled(m_builtins.nameCount());
+    BitVector undescribed(m_builtins.nameCount());
+    auto cellOf = [](const BuiltinPlace& place) { return place.kind == BuiltinPlaceKind::NativeCell ? place.nativeCell : BuiltinName(); };
+    for (unsigned index = 0; index < m_builtins.overloadCount(); ++index) {
+        const BuiltinOverload& overload = m_builtins.at(BuiltinOverloadID(index));
+        for (const BuiltinTransfer& transfer : overload.flow.transfers) {
+            BuiltinName cell = cellOf(transfer.to);
+            if (!cell)
+                continue;
+            filled.quickSet(cell.index());
+            bool isDescribed = transfer.from.kind == BuiltinPlaceKind::Operand || (transfer.from.kind == BuiltinPlaceKind::NewValue && typeIsDescribed(transfer.from.newValueType));
+            if (!isDescribed)
+                undescribed.quickSet(cell.index());
+        }
+        for (const BuiltinCallback& callback : overload.flow.callbacks) {
+            if (BuiltinName cell = cellOf(callback.resultTo))
+                undescribed.quickSet(cell.index());
+        }
+        for (const BuiltinPropertyAction& action : overload.flow.propertyActions) {
+            if (BuiltinName cell = cellOf(action.value))
+                undescribed.quickSet(cell.index());
+        }
+    }
+    m_cellsHoldingOnlyDescribedValues = WTF::move(filled);
+    for (size_t index : undescribed)
+        m_cellsHoldingOnlyDescribedValues.quickClear(index);
+}
+
 void BuilderOfProgramFacts::noteWhatRowsMake(BuiltinID canonical)
 {
     const Builtin& entry = m_builtins.at(canonical);
@@ -3526,9 +3570,11 @@ void BuilderOfProgramFacts::noteWhatRowsMake(BuiltinID canonical)
         if (overload.isUndeclared() && !constructsOperand && !std::exchange(m_objectsOfAnyClassMayExist, true))
             m_classesWithObjectsHaveGrown = true;
         auto isOfCellThatTableDescribes = [&](const BuiltinPlace& place) {
+            if (place.kind == BuiltinPlaceKind::NewValue)
+                return typeIsDescribed(place.newValueType);
             if (place.kind != BuiltinPlaceKind::NativeCell)
                 return false;
-            if (place.holdsOnlyWhatIsStored || std::ranges::contains(m_builtins.nativeCellsFilledByCalledFunctions(), place.nativeCell))
+            if (place.holdsOnlyWhatIsStored || m_cellsHoldingOnlyDescribedValues.get(place.nativeCell.index()) || std::ranges::contains(m_builtins.nativeCellsFilledByCalledFunctions(), place.nativeCell))
                 return true;
             return std::ranges::any_of(m_builtins.hostObjects(), [&](const BuiltinHostObject& object) {
                 return object.nativeCell == place.nativeCell && object.platforms.contains(targetOfThisBuild().platform);
