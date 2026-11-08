@@ -1381,8 +1381,10 @@ JSValue memoryForHost(JSGlobalObject* globalObject, JSValue object)
         }
         if (!memory)
             throwOutOfMemoryError(globalObject, scope);
-        else
-            result = JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypeUint8, false), WTF::move(memory), offset, view->length);
+        else {
+            Structure* structure = globalObject->typedArrayStructure(TypeUint8, memory->isResizableOrGrowableShared());
+            result = JSUint8Array::create(globalObject, structure, WTF::move(memory), offset, view->length);
+        }
     }
     if (scope.exception()) [[unlikely]]
         return fail();
