@@ -1154,7 +1154,7 @@ inline String FastStringifier<CharType, bufferMode>::result()
                 return String::make8Bit(std::span { static_cast<const FastStringifier*>(this)->buffer(), m_length });
         }
         m_dynamicBuffer.shrink(m_length);
-        if (m_length > dynamicBufferInlineCapacity && m_dynamicBuffer.capacity() > 2 * static_cast<size_t>(m_length))
+        if (m_dynamicBuffer.capacity() / 2 > m_length)
             m_dynamicBuffer.shrinkToFit();
         return StringImpl::adopt(WTF::move(m_dynamicBuffer));
     }
