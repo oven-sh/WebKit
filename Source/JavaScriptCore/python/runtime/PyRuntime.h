@@ -474,6 +474,10 @@ public:
         BoundMethodsOfJS, // A JSWeakMap: see bindIfFunction() in PyInterop.cpp.
         TypesOfJSClasses, // A JSWeakMap: see typeForClassOfJS() in PyJSClass.cpp.
         ArgumentsOfJSConstructors, // A JSWeakMap: see classOfJSNew() there.
+        ResultOfJSAsyncIterator, // Functions: see reaction() in PyInterop.cpp.
+        RejectionOfJSAsyncIterator,
+        JSAsyncIteratorIsClosed,
+        GivesUndefined,
         NamespacesOfFilesOfJS, // dict: see namespaceOfFileOfJS() in PyFrame.cpp.
         BuiltinAll, // The functions, whatever the names are bound to.
         BuiltinAny,
