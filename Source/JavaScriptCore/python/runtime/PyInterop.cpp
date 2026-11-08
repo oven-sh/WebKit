@@ -1274,7 +1274,7 @@ static constexpr NativeDef jsIteratorMethods[] = {
 };
 static constexpr TypeDef jsIteratorTypeDef { "_js.iterator"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation }, jsIteratorMethods, { }, { } };
 
-// What the promise that next() returns is fulfilled with, made what `await iterator.__anext__()` is to give.
+// What the promise that next() returns is fulfilled with, made what `await iterator.__anext__()` is to give. The second argument is the promise that __anext__() has returned.
 static JSC_DECLARE_HOST_FUNCTION(jsAsyncIteratorResult);
 JSC_DEFINE_HOST_FUNCTION(jsAsyncIteratorResult, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -1286,6 +1286,10 @@ JSC_DEFINE_HOST_FUNCTION(jsAsyncIteratorResult, (JSGlobalObject* globalObject, C
     bool isDone = iteratorComplete(globalObject, result);
     RETURN_IF_EXCEPTION(scope, { });
     if (isDone) {
+        // To JS the end is a result, to Python an exception, so the promise is rejected. That is no failure that somebody has to have handled by now: whoever has asked for two steps
+        // and awaits the first has not come to the second yet.
+        if (auto* step = dynamicDowncast<JSPromise>(callFrame->argument(1)))
+            step->markAsHandled();
         raise(globalObject, scope, runtime(globalObject).StopAsyncIteration(), String());
         return { };
     }
@@ -1331,7 +1335,8 @@ static JSValue jsAsyncIteratorNext(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     JSPromise* promise = JSPromise::resolvedPromise(globalObject, result);
     RETURN_IF_EXCEPTION(scope, { });
-    JSPromise* step = thenOfPromise(globalObject, promise, record->get(JSIteratorThen), jsUndefined());
+    JSPromise* step = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->performPromiseThenWithContext(vm, globalObject, record->get(JSIteratorThen), jsUndefined(), step, step);
     if (isOfLoop)
         record->set(vm, JSIteratorOfLoop, step);
     return step;
