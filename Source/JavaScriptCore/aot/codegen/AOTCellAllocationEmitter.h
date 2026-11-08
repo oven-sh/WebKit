@@ -42,6 +42,7 @@ public:
     CellPointer allocateFromTemplate(const OperationContext&, const MentionedAllocation&, std::span<const uint8_t> bodyOfEmptyCell);
     CellPointer allocateObjectCopy(const OperationContext&, const MentionedAllocation&, CellPointer source, unsigned fieldBytes);
     void copyFieldWords(CellPointer source, CellPointer cell, unsigned fieldBytes);
+    void copyWords(CellPointer source, unsigned offsetInSource, CellPointer cell, unsigned offsetInCell, unsigned bytes);
     static constexpr size_t maxBytesZeroedInLine = 256;
     static constexpr unsigned bytesStoredInTurnOfLoop = 8 * sizeof(uint64_t);
     void storeWordInLoop(CellPointer, const Layout&, unsigned begin, unsigned end, int64_t word);

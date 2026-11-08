@@ -693,9 +693,6 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
             passUsesOf(operation, head + 1);
     }
 
-    if (!block->upsilons().empty())
-        hintKeptRegistersToValuesThatBlockHandsOn(block);
-
     constexpr uint16_t absent = bitOf(ValueFlag::IsDropped) | bitOf(ValueFlag::IsFused) | bitOf(ValueFlag::IsSunk);
     const ValueFacts* facts = m_valueFacts;
     Operation* const* operations = block->operations().data();

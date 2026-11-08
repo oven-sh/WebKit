@@ -3342,7 +3342,6 @@ private:
 
     void noteObjectsMayExist(BuiltinClassID);
     void noteTypeIsMade(BuiltinTypeID, BuiltinOrigin);
-    void noteClassesBelowWhoseFeaturesMakerNames(BuiltinID maker, BuiltinTypeID);
     void noteWhatRowsMake(BuiltinID canonical);
     void noteKeysThatRowNames(const BuiltinOverload&);
     uint16_t stateOfRowsOf(BuiltinID canonical) const;
@@ -3984,29 +3983,6 @@ void BuilderOfProgramFacts::noteTypeIsMade(BuiltinTypeID type, BuiltinOrigin ori
     }
 }
 
-void BuilderOfProgramFacts::noteClassesBelowWhoseFeaturesMakerNames(BuiltinID maker, BuiltinTypeID type)
-{
-    std::span<const BuiltinFeatureUse> named = m_builtins.featureUsesOf(maker);
-    if (!type || named.empty())
-        return;
-    for (const BuiltinTypePart& part : m_builtins.at(type).parts) {
-        if (!part.builtinClass || part.isOfClassItself || !m_builtins.hasClassBelow(part.builtinClass))
-            continue;
-        for (uint32_t index = 0; index < m_builtins.classCount(); ++index) {
-            BuiltinClassID below(index);
-            const BuiltinClass& record = m_builtins.at(below);
-            if (record.origin != BuiltinOrigin::Host || !record.prototype || below == part.builtinClass || !m_builtins.isSameOrSubclassOf(below, part.builtinClass))
-                continue;
-            std::span<const BuiltinFeatureUse> needed = m_builtins.featureUsesOf(m_builtins.canonicalID(record.prototype));
-            bool makerNamesThem = !needed.empty() && std::ranges::all_of(needed, [&](const BuiltinFeatureUse& line) {
-                return std::ranges::contains(named, line.feature, &BuiltinFeatureUse::feature);
-            });
-            if (makerNamesThem)
-                noteObjectsMayExist(below);
-        }
-    }
-}
-
 bool BuilderOfProgramFacts::mayRun(BuiltinID canonical) const
 {
     switch (m_builtins.at(canonical).kind) {
@@ -4165,7 +4141,6 @@ void BuilderOfProgramFacts::noteWhatRowsMake(BuiltinID canonical)
         auto answers = overload.flow.transfers | std::views::filter(goesIntoResult);
         bool answersWhatTableDescribes = !answers.empty() && std::ranges::all_of(answers, isOfCellThatTableDescribes, &BuiltinTransfer::from);
         noteTypeIsMade(overload.result.type, answersWhatTableDescribes ? BuiltinOrigin::Engine : origin);
-        noteClassesBelowWhoseFeaturesMakerNames(canonical, overload.result.type);
         for (const BuiltinResultProperty& property : overload.result.properties)
             noteTypeIsMade(property.type, origin);
         for (const BuiltinTransfer& transfer : overload.flow.transfers)

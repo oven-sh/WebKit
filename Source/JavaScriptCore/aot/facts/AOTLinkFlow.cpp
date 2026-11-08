@@ -348,6 +348,7 @@ struct alignas(128) LinkFlow::Lane {
     Vector<NoteTaken> notes;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> notesListed;
     std::array<uint64_t, 1024> notesListedLately { };
+    HashMap<uint32_t, Vector<uint32_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> fieldsNotNotedEmpty;
     LinkType typeObservedBefore;
     uint64_t numberOfObserversTold { 0 };
     Vector<std::pair<FlowNodeID, LinkType>> meetings;
@@ -2863,6 +2864,14 @@ void LinkFlow::note(Note note, uint32_t number, uint32_t more)
     lately = ~words;
     if (lane.notesListed.add(words).isNewEntry)
         lane.notes.append({ note, number, more });
+}
+
+Vector<uint32_t>& LinkFlow::fieldsThatLaneAtWorkHasNotNotedEmpty(LayoutID layout)
+{
+    Lane& lane = m_severalThreadsTell ? *s_laneAtWork : *m_firstLane;
+    return lane.fieldsNotNotedEmpty.ensure(layout.index(), [&] {
+        return Vector<uint32_t>(program.at(layout).fields.size(), [](size_t field) { return static_cast<uint32_t>(field); });
+    }).iterator->value;
 }
 
 void LinkFlow::takeNotesOfPassOnOneThread()

@@ -288,6 +288,37 @@ void CellAllocationEmitter::storeWordInLoop(CellPointer cell, const Layout& layo
     m_out.appendTo(stored);
 }
 
+void CellAllocationEmitter::copyWords(CellPointer source, unsigned offsetInSource, CellPointer cell, unsigned offsetInCell, unsigned bytes)
+{
+    static constexpr unsigned bytesCopiedInTurnOfLoop = 8 * sizeof(uint64_t);
+    RELEASE_ASSERT(bytes && !(bytes % sizeof(uint64_t)));
+    const Machine::AbstractHeap& fields = m_heaps.entire(AbstractHeap::ObjectFields);
+    auto copyWord = [&](LValue from, LValue to, unsigned place) {
+        m_out.store64(m_out.load64(m_out.address(fields, from, offsetInSource + place)), m_out.address(fields, to, offsetInCell + place));
+    };
+    unsigned bytesInLoop = bytes > maxFieldBytesOfCellCopiedWithoutLoop ? bytes / bytesCopiedInTurnOfLoop * bytesCopiedInTurnOfLoop : 0;
+    if (bytesInLoop) {
+        LBasicBlock copyTurn = newBlock();
+        LBasicBlock copied = newBlock();
+        ValueFromBlock start = m_out.anchor(m_out.constIntPtr(0));
+        m_out.jump(copyTurn);
+
+        m_out.appendTo(copyTurn);
+        LValue offset = m_out.phi(Machine::pointerType(), start);
+        LValue from = m_out.add(source.value(), offset);
+        LValue to = m_out.add(cell.value(), offset);
+        for (unsigned place = 0; place < bytesCopiedInTurnOfLoop; place += sizeof(uint64_t))
+            copyWord(from, to, place);
+        LValue next = m_out.add(offset, bytesCopiedInTurnOfLoop);
+        m_out.addIncomingToPhi(offset, m_out.anchor(next));
+        m_out.branch(m_out.below(next, m_out.constIntPtr(bytesInLoop)), normalEdge(copyTurn), normalEdge(copied));
+
+        m_out.appendTo(copied);
+    }
+    for (unsigned place = bytesInLoop; place < bytes; place += sizeof(uint64_t))
+        copyWord(source.value(), cell.value(), place);
+}
+
 CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& context, const MentionedAllocation& allocation, CellPointer source, unsigned fieldBytes)
 {
     RELEASE_ASSERT(isObjectLayout(m_program.at(allocation.placed.layout).kind) && offsetOfFirstField + fieldBytes <= WTF::roundUpToMultipleOf<copyChunkBytes>(allocation.placed.size));

@@ -698,7 +698,16 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         }
         out.println();
     }
-    for (FieldReference field : summary.fieldsLeftEmpty) {
+    Vector<FieldReference> fieldsLeftEmpty;
+    summary.forEachLayoutLeftEmpty([&](LayoutID layout, std::span<const uint32_t> fieldsHeld) {
+        for (uint32_t field = 0; field < printer.program().at(layout).fields.size(); ++field) {
+            if (!std::ranges::binary_search(fieldsHeld, field))
+                fieldsLeftEmpty.append(FieldReference { layout, field });
+        }
+    });
+    std::ranges::sort(fieldsLeftEmpty);
+    fieldsLeftEmpty.shrink(std::ranges::unique(fieldsLeftEmpty).begin() - fieldsLeftEmpty.begin());
+    for (FieldReference field : fieldsLeftEmpty) {
         out.print("  leaves-empty "_s);
         printer.print(field.layout);
         out.print("."_s, field.field, " "_s);

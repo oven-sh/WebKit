@@ -71,7 +71,6 @@ enum TraitOfScannedOpcode : uint8_t {
     ScannedOpcodeIsReadTheLongWayWhereFused = 1 << 4,
     ScannedOpcodeIsJumpOrStore = 1 << 5,
     ScannedOpcodeIsMemoryAccess = 1 << 6,
-    ScannedOpcodeHandsHintOnToArms = 1 << 7,
 };
 
 struct TraitsOfScannedOpcodes {
@@ -89,7 +88,7 @@ static constexpr TraitsOfScannedOpcodes traitsOfScannedOpcodes = [] {
             bits |= ScannedOpcodeIsLoad;
         if (resultOfScannedOpcodeMayOverwriteFirstChild(opcode) && (resultPrefersRegisterOfFirstChild() || changesWidthOfInteger(opcode)))
             bits |= ScannedOpcodeHandsHintOnToFirstChild;
-        if (!childrenOfScannedOpcodeLieInLine(opcode) || opcode == Return)
+        if (!childrenOfScannedOpcodeLieInLine(opcode) || opcode == Return || (opcode == Select && resultPrefersRegisterOfFirstChild()))
             bits |= ScannedOpcodeIsReadTheLongWay;
         if (!childrenOfScannedOpcodeLieInLine(opcode) || opcode == Jump || opcode == Branch)
             bits |= ScannedOpcodeIsReadTheLongWayWhereFused;
@@ -97,8 +96,6 @@ static constexpr TraitsOfScannedOpcodes traitsOfScannedOpcodes = [] {
             bits |= ScannedOpcodeIsJumpOrStore;
         if (isMemoryAccess(opcode))
             bits |= ScannedOpcodeIsMemoryAccess;
-        if (opcode == Select && resultPrefersRegisterOfFirstChild())
-            bits |= ScannedOpcodeHandsHintOnToArms;
         traits.of[index] = static_cast<uint8_t>(bits);
     }
     return traits;
@@ -925,6 +922,31 @@ static NEVER_INLINE void readChildrenOfScannedReturn(BackwardScan& scan, Operati
     }
 }
 
+template<bool regionsHaveKinds>
+static NEVER_INLINE void readChildrenOfScannedSelect(BackwardScan& scan, Operation* select, const ValueFacts& own, Position early)
+{
+    ASSERT(select->opcode() == Select);
+    scan.fuseInto(select);
+    if (own.flags & flagsOfScannedOperationWithLeavesOfItsOwn) [[unlikely]] {
+        readLeavesBelowScannedOperation(scan, select, select, nullptr, early);
+        return;
+    }
+    ValueFacts* facts = scan.m_facts;
+    Operation* const* child = select->inlineChildren();
+    unsigned numberOfChildren = select->numberOfInlineChildren();
+    unsigned hintOfArms = own.hint.index();
+    for (unsigned index = 0; index < numberOfChildren; ++index) {
+        Operation* below = child[index];
+        ValueFacts& factsBelow = facts[below->index()];
+        if (factsBelow.flags & scanBitOf(ValueFlag::IsFused)) {
+            readLeavesBelowScannedOperation(scan, select, below, select, early);
+            continue;
+        }
+        bool diesHere = factsBelow.lastUse == noPosition || factsBelow.lastUse == early;
+        readLeafOfScannedOperation<regionsHaveKinds>(scan, select, index, below, factsBelow, early, index && diesHere ? hintOfArms : noHintOfScannedRead, true);
+    }
+}
+
 template<bool regionsHaveKinds = true>
 static ALWAYS_INLINE void readOperandsOfScannedPatch(BackwardScan& scan, PatchOperation* patch, const ValueFacts& own, Position early)
 {
@@ -1050,6 +1072,8 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
     if (traits & ScannedOpcodeIsReadTheLongWay) [[unlikely]] {
         if (opcode == Return)
             readChildrenOfScannedReturn(scan, operation, own, early);
+        else if (resultPrefersRegisterOfFirstChild() && opcode == Select)
+            readChildrenOfScannedSelect<regionsHaveKinds>(scan, operation, own, early);
         else
             readLeavesOfScannedOperationTheLongWay(scan, operation, early);
         return true;
@@ -1067,17 +1091,13 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
     }
     ASSERT(operation->type().isNumeric() || !own.hint);
     unsigned hintOfFirstChild = (traits & ScannedOpcodeHandsHintOnToFirstChild) ? own.hint.index() : noHintOfScannedRead;
-    unsigned hintOfArms = (traits & ScannedOpcodeHandsHintOnToArms) ? own.hint.index() : noHintOfScannedRead;
     bool readsUpperHalf = opcode != Trunc;
     for (unsigned index = 0; index < numberOfChildren; ++index) {
         Operation* below = child[index];
         ValueFacts& factsBelow = facts[below->index()];
         uint16_t flagsBelow = factsBelow.flags;
         if (!(flagsBelow & scanBitOf(ValueFlag::IsFused))) {
-            unsigned hintOfChild = hintOfFirstChild;
-            if (index)
-                hintOfChild = factsBelow.lastUse == noPosition || factsBelow.lastUse == early ? hintOfArms : noHintOfScannedRead;
-            readLeafOfScannedOperation<regionsHaveKinds>(scan, operation, index, below, factsBelow, early, hintOfChild, readsUpperHalf);
+            readLeafOfScannedOperation<regionsHaveKinds>(scan, operation, index, below, factsBelow, early, index ? noHintOfScannedRead : hintOfFirstChild, readsUpperHalf);
             continue;
         }
         Opcode opcodeBelow = below->opcode();

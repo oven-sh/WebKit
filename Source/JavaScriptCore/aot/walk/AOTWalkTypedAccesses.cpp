@@ -125,6 +125,8 @@ struct KeptByTypedAccesses final : Walker::KeptForBuild {
         Vector<LayoutID, 3> layoutsThatAllFit;
     };
     HashMap<uint32_t, LayoutsThatSourcesFit, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> layoutsThatSourcesOfCopiesFit;
+    HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> whetherWordsOfCellAreItsProperties;
+    HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> whetherSomeFieldMayBeLeftOut;
 };
 
 struct OperandsOfTypedAccess {
@@ -695,11 +697,14 @@ static bool nothingAnswersAboveReceiversForTypedAccess(const Walker& walker, con
     case RowsAboveReceivers::Kind::AreAskedOneByOne:
         nothingAnswers = askEachMember();
         break;
-    case RowsAboveReceivers::Kind::EveryMemberListsWhatStandsAbove:
-        nothingAnswers = rows.stretchesOfInstancesInRows.isEmpty() || (!classHolderIsMadeWithName(program, ClassSide::Prototype, key) && !link.someClassAtOrAboveDeclares(program, rows.stretchesOfInstancesInRows.span(), ClassSide::Prototype, key));
+    case RowsAboveReceivers::Kind::EveryMemberListsWhatStandsAbove: {
+        uint32_t classesAsked = 0;
+        nothingAnswers = rows.stretchesOfInstancesInRows.isEmpty() || (!classHolderIsMadeWithName(program, ClassSide::Prototype, key) && !link.someClassAtOrAboveDeclares(program, rows.stretchesOfInstancesInRows.span(), ClassSide::Prototype, key, classesAsked));
+        const_cast<Walker&>(walker).count(StatisticID::ClassesAskedWhetherTheyDeclareAboveReceivers, classesAsked);
         if (walker.checksWalk())
             RELEASE_ASSERT(nothingAnswers == askEachMember());
         break;
+    }
     }
     return keptByTypedAccesses(const_cast<Walker&>(walker)).whetherNothingAnswersAbove.add(*asked, nothingAnswers).iterator->value;
 }
@@ -4799,16 +4804,41 @@ static std::optional<Vector<FieldIndex, 8>> fieldsOfTargetForCopyInTypedAccess(c
     return fieldsOfTarget;
 }
 
-static bool wordsOfCellAreItsPropertiesForCopyInTypedAccess(const Walker& walker, LayoutID layout)
+static bool slotsAreAlikeForCopyInTypedAccess(const Walker& walker, LayoutID source, std::span<const FieldIndex> copied, LayoutID target, std::span<const FieldIndex> fields)
 {
-    const Program& program = walker.program();
-    if (program.at(layout).kind != LayoutKind::Record || !orderWordTellsKeysOfObjectsOf(walker, layout) || !walker.plan().slots().layout(layout).appendedKeys.isEmpty())
+    const Plan& plan = walker.plan();
+    const PlannedLayout& read = plan.layout(source);
+    const PlannedLayout& written = plan.layout(target);
+    if (plan.shapes().shapesOf(target).count != 1 || written.cellsAreHandedBack || !plan.keyOrders().findOrderWord(target, fields))
         return false;
-    for (FieldIndex index = 0; index < program.at(layout).fields.size(); ++index) {
-        if (!isPlainPropertyForCopyInTypedAccess(walker, { layout, index }))
+    for (size_t index = 0; index < copied.size(); ++index) {
+        const PlacedSlot& slotRead = read.slots[copied[index]];
+        const PlacedSlot& slotWritten = written.slots[fields[index]];
+        if (slotRead.storage != SlotStorage::Inline || slotWritten.storage != SlotStorage::Inline || slotRead.representation != slotWritten.representation)
             return false;
+        if (read.holdsRawValueFromBirth(copied[index]) || written.holdsRawValueFromBirth(fields[index]))
+            return false;
+        TypeID found = slotRead.typeThatStoresAreHeldTo();
+        for (TypeID held : { slotWritten.type, slotWritten.provenType }) {
+            if (held && (!found || !walker.types().isSubset(found, held)))
+                return false;
+        }
     }
     return true;
+}
+
+static bool wordsOfCellAreItsPropertiesForCopyInTypedAccess(Walker& walker, LayoutID layout)
+{
+    return keptByTypedAccesses(walker).whetherWordsOfCellAreItsProperties.ensure(layout.index(), [&] {
+        const Program& program = walker.program();
+        if (program.at(layout).kind != LayoutKind::Record || !orderWordTellsKeysOfObjectsOf(walker, layout) || !walker.plan().slots().layout(layout).appendedKeys.isEmpty())
+            return false;
+        for (FieldIndex index = 0; index < program.at(layout).fields.size(); ++index) {
+            if (!isPlainPropertyForCopyInTypedAccess(walker, { layout, index }))
+                return false;
+        }
+        return true;
+    }).iterator->value;
 }
 
 static Reference buildTargetOfCopyForTypedAccess(Walker& walker, Origin origin, LayoutID layout, std::span<const FieldIndex> fields, std::span<const Reference> values)
@@ -5030,14 +5060,28 @@ static bool buildCopyBehindTestsForTypedAccess(Walker& walker, const BodyValue& 
     hasNothingElse.setHasNoFieldOutsideSlot(true);
     goOnWhere(walker.build(WTF::move(hasNothingElse)), asWritten);
 
-    Vector<Reference, 8> values;
-    for (FieldIndex index : copied) {
-        Draft read(Opcode::GetSlot, origin);
-        fillSlotOperationForTypedAccess(read, ofLayoutWritten, *receivers, program.at(layoutOfSource).fields[index].key);
-        values.append(walker.build(WTF::move(read)));
+    if (slotsAreAlikeForCopyInTypedAccess(walker, layoutOfSource, copied.span(), layout, fields->span())) {
+        if (Reference empty = walker.isUnreachable() ? Reference() : buildTargetOfCopyForTypedAccess(walker, origin, layout, { }, { })) {
+            Draft words(Opcode::TryCopyFields, origin);
+            words.setObjectOperand(empty);
+            words.setSourceOperand(ofLayoutWritten);
+            words.setLayout(layout);
+            words.setSourceLayout(layoutOfSource);
+            words.setFields(copied.span());
+            walker.build(WTF::move(words));
+            walker.state().noteOrderWord(empty, plan.keyOrders().findOrderWord(layout, fields->span()));
+            walker.jumpTo(behindCopy, singleElementSpan(empty));
+        }
+    } else {
+        Vector<Reference, 8> values;
+        for (FieldIndex index : copied) {
+            Draft read(Opcode::GetSlot, origin);
+            fillSlotOperationForTypedAccess(read, ofLayoutWritten, *receivers, program.at(layoutOfSource).fields[index].key);
+            values.append(walker.build(WTF::move(read)));
+        }
+        if (Reference object = walker.isUnreachable() ? Reference() : buildTargetOfCopyForTypedAccess(walker, origin, layout, fields->span(), values.span()))
+            walker.jumpTo(behindCopy, singleElementSpan(object));
     }
-    if (Reference object = walker.isUnreachable() ? Reference() : buildTargetOfCopyForTypedAccess(walker, origin, layout, fields->span(), values.span()))
-        walker.jumpTo(behindCopy, singleElementSpan(object));
 
     if (receiversOfLayoutMade) {
         walker.continueIn(ofOtherShape);
@@ -5077,9 +5121,11 @@ static bool buildCopyOfPropertiesForTypedAccess(Walker& walker, const BodyValue&
         return false;
     auto spread = copy.as<Opcode::CopyDataProperties>();
     LayoutID layout = layoutOfEmptyTargetOfCopyForTypedAccess(walker, copy);
-    bool someFieldMayBeLeftOut = layout && std::ranges::any_of(walker.program().at(layout).fields, [](const Field& field) {
-        return !field.flags.contains(FieldFlags::IsRequired);
-    });
+    bool someFieldMayBeLeftOut = layout && keptByTypedAccesses(walker).whetherSomeFieldMayBeLeftOut.ensure(layout.index(), [&] {
+        return std::ranges::any_of(walker.program().at(layout).fields, [](const Field& field) {
+            return !field.flags.contains(FieldFlags::IsRequired);
+        });
+    }).iterator->value;
     Reference source = walker.referenceOf(spread.sourceOperand());
     if (someFieldMayBeLeftOut && walker.isInLoop() && walker.opensGuesses() && walker.currentBodyIndex().useCount(spread.targetOperand()) == 2 && source && !ownKeysInSight(walker, source)
         && buildCopyBehindTestsForTypedAccess(walker, copy, layout, true))

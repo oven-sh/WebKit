@@ -32,6 +32,7 @@ enum StatisticID (stage: StatisticStage) {
     [Walk]
     CopiesWalkedApartFromSourcesWithoutProperties
     ClassesClimbedAboveMembersOfFamilies
+    ClassesAskedWhetherTheyDeclareAboveReceivers
     CallsThatTakeListInPlaceOfItsCopy
     CallsOfPushThatAppendListPassed
     CopiesThatAreDefinitionsOneByOne
@@ -60,6 +61,7 @@ enum StatisticID (stage: StatisticStage) {
     ListsAskedForBesideViewsInFrontOfLoops
     StoresFollowedIntoFreshLists
     ListsFilledByCopiedRunsThatRememberStorageAtSite NumbersStoredByKindOfStorageInCopiedRuns StoresOfCopiedRunsThatTakeListsAsTheyAre
+    KeysHeldToWholeNumbersInTurnsOfTypedCopies
     DeletesFollowedIntoFreshObjects DeletesOfNamesThatFreshObjectsDoNotHold
     CallsOfWhatIsNoObjectThatRunNoCode
     CallsForwardedBehindTestsOfTheirTargets

@@ -179,6 +179,7 @@ void Modules::forgetUnfinishedLoads()
     m_importsWhoseMocksRunWhenTheirTextsHaveCome.clear();
     m_modulesOfHeldImports.clear();
     m_rootsOfImportsBehindFactories.clear();
+    m_failuresOfFactories.clear();
     m_rootsOfImportsThatHaveGoneOn.clear();
     m_modulesFetchedForStatementsBehindTurns.clearAll();
     m_importsCalledByBodiesSetAside.clear();
@@ -3189,6 +3190,10 @@ static void queueStepOfImport(JSPromise* importPromise, JSValue module, uint8_t 
 void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue error, uint8_t stepsLeft)
 {
     auto* promise = uncheckedDowncast<JSPromise>(importPromise);
+    if (stepsLeft == std::size(jobsOfImportOfEvaluatedModule)) {
+        if (Modules* modules = modulesOf(promise->realm()))
+            modules->didTakeFirstStepOfCallOfImport(promise);
+    }
     if (--stepsLeft)
         queueStepOfImport(promise, module, stepsLeft, error);
     else
@@ -4091,6 +4096,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         call.append(jsBoolean(caller == ImportCaller::Host));
         call.append(jsNumber(static_cast<uint32_t>(walksInPlaceOfCall && !stateOfWait ? TextOfImport::HasComeAndCallStoppedForOriginal : text)));
         call.append(stateOfWait);
+        call.append(jsNumber(vm.aotState().momentOfLoads));
         JSArray* heldCall = constructArray(realm, static_cast<JSC::ArrayAllocationProfile*>(nullptr), call);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         factories->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), promise, heldCall);
@@ -4134,7 +4140,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             JSPromise* promise = promiseForCaller();
             if (promise->isThenFastAndNonObservable()) [[likely]] {
                 if (mockInPlace(module)) [[unlikely]]
-                    m_callsOfImportUnderMocks.add(promise, CallOfImportUnderMock { Strong<JSPromise>(vm, promise), moduleWithExportsOf(module), { } });
+                    noteCallOfImportUnderMock(promise, module);
                 queueStepOfImport(promise, moduleForJob(module), std::size(jobsOfImportOfEvaluatedModule));
                 return promise;
             }
@@ -5792,6 +5798,7 @@ void takeOutFilesThatFailed(JSGlobalObject* realm)
         return;
     modules->forgetFailedRunsOfESModulesThatMayRunAgain();
     modules->letGoOfESModulesThatThrew();
+    modules->forgetFailuresOfExportsThatBuildFoundAbsent();
     if (!modules->holdsCodeThatMayBeEvicted())
         return;
     Vector<ModuleID, 4> failed;
@@ -6644,6 +6651,11 @@ JSC_DEFINE_HOST_FUNCTION(importBehindFactories, (JSGlobalObject* realm, CallFram
     JSArray* heldCall = asArray(callFrame->argument(1));
     ModuleID module(heldCall->getIndexQuickly(0).asUInt32());
     modulesOf(realm)->didGoOnBehindFactories(module);
+    if (JSValue error = modulesOf(realm)->errorOfFactoryThatFailedWhileCallWaited(module, heldCall->getIndexQuickly(5).asUInt32())) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(realm->vm());
+        throwException(realm, scope, error);
+        return { };
+    }
     JSValue order = heldCall->getIndexQuickly(1);
     std::optional<int64_t> referrerAsyncOrder = order.isUndefined() ? std::nullopt : std::optional(static_cast<int64_t>(order.asNumber()));
     auto caller = heldCall->getIndexQuickly(2).asBoolean() ? Modules::ImportCaller::Host : Modules::ImportCaller::CompiledCode;
@@ -7165,6 +7177,7 @@ void didEndMock(JSGlobalObject* realm, ModuleID module, OriginalBehindEntryOfPro
     if (!modules)
         return;
     MockDoor door(modules, module, "didEndMock"_s);
+    modules->noteDeedOnMockUnderCallsOfImport(module, Modules::DeedOnMock::Ends);
     modules->forgetLinksInRefusedLoadsThatCameTo(module);
     if (original == OriginalBehindEntryOfProgram::GoesWithPatch && modules->hasMockLaidOver(module))
         modules->forgetExportsBehindEntryOfProgram(module);

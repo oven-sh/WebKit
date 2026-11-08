@@ -889,6 +889,8 @@ private:
             const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>* mayEndGuard { nullptr };
             VariableID variableWrittenAlone;
             const WriterOfOneObject* writerOfOneObject { nullptr };
+            const ProgramOfState* program { nullptr };
+            const MemoryLocation* writtenAlone { nullptr };
         };
         bool goesByLists()
         {

@@ -25,6 +25,7 @@ public:
     Operand load(TypedPointer, SlotRepresentation);
     void store(TypedPointer, SlotRepresentation, Operand);
     void storeAbsent(TypedPointer, SlotRepresentation);
+    void copyBits(TypedPointer from, TypedPointer to, SlotRepresentation slot) { storeBits(to, slot, loadBits(from, slot)); }
     Condition holdsAbsent(TypedPointer, SlotRepresentation);
     Condition isAbsent(Operand loaded, SlotRepresentation);
     Operand absentAsUndefined(Operand loaded, SlotRepresentation);

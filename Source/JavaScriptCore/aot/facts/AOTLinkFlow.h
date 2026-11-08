@@ -1479,6 +1479,8 @@ public:
     BitVector gettersThatMayBeAbsent;
     BitVector settersThatMayBeAbsent;
     void noteBirthsOf(FunctionID);
+    HashMap<uint32_t, Vector<uint32_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsOfBirthSoFar;
+    Vector<uint32_t>& fieldsThatLaneAtWorkHasNotNotedEmpty(LayoutID) LIFETIME_BOUND;
     void noteConstructionsOf(FunctionID);
     FlowNodeID foundWhereFieldIsEmpty(FieldReference);
     bool mayReadInFrontOfDefinition(FunctionID reader, const SummaryAccess&, LayoutID) const;

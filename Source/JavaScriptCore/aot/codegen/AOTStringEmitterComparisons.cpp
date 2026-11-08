@@ -389,8 +389,6 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
     StringID literal = value->literal();
     String text = textOf(literal);
     Word32 position = word32Of(value->positionOperand());
-    if (isForward && !position.value()->isInt32(0))
-        holdRangeInside(value, position, position);
     if (!isForward && position.value()->isInt32(0) && canCompareInline(literal)) {
         CharacterView view = viewOf(value, string);
         Word32 length = word32(text.length());
@@ -434,8 +432,6 @@ void StringEmitter::generateStringIndexOfCharacter(const ValueContext& value)
     ValueID string = value->stringOperand();
     Word32 codeUnit = word32(static_cast<int32_t>(value->codeUnit()));
     Word32 position = word32Of(value->positionOperand());
-    if (!position.value()->isInt32(0))
-        holdRangeInside(value, position, position);
     if (typeOf(string).isOpaque(OpaqueKind::FlatString)) {
         define(value, findCodeUnit(viewOf(value, string), codeUnit, position, SearchDirection::Forward));
         return;

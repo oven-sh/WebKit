@@ -885,10 +885,48 @@ static constexpr AbstractHeapSet heapsUnderElementOfFreshListInTypedElements {
 };
 static_assert(perObjectHeaps.containsAll(heapsUnderElementOfFreshListInTypedElements));
 
+static bool keyGoesRoundLoopInTypedElements(const AccessOfTypedElements& access)
+{
+    const BodyIndex& index = access.walker.currentBodyIndex();
+    if (access.value.id().index() >= index.numberOfValues() || index.value(access.value.id()).words() != access.value.words())
+        return false;
+    ValueID key = index.valueBehindCasts(access.value.propertyOperand());
+    for (OpcodeSet made : { OpcodeSet { Opcode::Increment, Opcode::Decrement }, OpcodeSet { Opcode::ToNumeric } }) {
+        if (key && !index.isParameter(key) && made.contains(index.opcodeOf(key)))
+            key = index.valueBehindCasts(index.value(key).operand(0));
+    }
+    return key && index.isParameter(key) && index.isLoopHead(index.blockOf(key));
+}
+
+static std::optional<AccessOfTypedElements> holdKeyToWholeNumberOrBeginTurnAgainInTypedElements(const AccessOfTypedElements& access)
+{
+    Walker& walker = access.walker;
+    if (access.isOnlyAskedAbout || !access.key || !access.key.isValue() || !access.typeOfKey.isNumber() || access.typeOfKey.isNumberWithoutFraction())
+        return std::nullopt;
+    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.mayBeginTurnAgainInClosedCopy() || walker.readStandsUnderHandler())
+        return std::nullopt;
+    if (keyGoesRoundLoopInTypedElements(access) || !isDeclaredToHoldNumbersAlone(walker.program(), walker.types(), access.typeOfBase))
+        return std::nullopt;
+    Origin origin = walker.originOf(access.value);
+    origin.isTailCall = false;
+    Reference isWhole = buildTestOfNumber(walker, access.key, TypeTable::int32, origin);
+    if (!isWhole || !isWhole.isValue() || !goOnOrBeginTurnAgainInTypedElements(walker, isWhole))
+        return std::nullopt;
+    Reference whole = buildProofOfNumber(walker, access.key, isWhole, origin);
+    if (!whole || !whole.isValue() || !walker.types().at(walker.typeOf(whole)).isInteger())
+        return std::nullopt;
+    walker.count(StatisticID::KeysHeldToWholeNumbersInTurnsOfTypedCopies);
+    return AccessOfTypedElements { walker, access.value, access.base, whole, access.stored, access.typeOfBase, walker.types().at(walker.typeOf(whole)), access.typeOfStored, false, access.counterThatPushGoesBy };
+}
+
 static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
     if (!access.isOnlyAskedAbout && bindNumberReadBehindTestsOfTypedElements(access))
+        return true;
+    if (std::optional<AccessOfTypedElements> held = holdKeyToWholeNumberOrBeginTurnAgainInTypedElements(access))
+        return buildArrayReadOfTypedElements(*held);
+    if (walker.isUnreachable() || walker.hasFailed())
         return true;
     auto [level, restsOnLinksWordAlone] = levelOfArrayReadOfTypedElements(access);
     std::optional<PassedTest> presentAtHead = level != KnowledgeLevel::Unknown && !access.isOnlyAskedAbout ? walker.askListAtHeadOfTypedCopy(access.value) : std::nullopt;

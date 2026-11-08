@@ -14,14 +14,13 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void StringEmitter::holdRangeInside(const ValueContext& value, Word32 start, Word32 end)
+void StringEmitter::holdRangeInside(const ValueContext& value, Word32 start, Word32 end, Word32 length)
 {
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     if (!elements.testsEveryPosition())
         return;
-    if (start.value() != end.value())
-        elements.stopUnlessInside(value, belowOrEqual(start, end));
-    elements.stopUnlessInside(value, belowOrEqual(end, lengthOf(value->stringOperand())));
+    elements.stopUnlessInside(value, belowOrEqual(start, end));
+    elements.stopUnlessInside(value, belowOrEqual(end, length));
 }
 
 CharacterView StringEmitter::viewOfRange(const ValueContext& value)
@@ -29,7 +28,7 @@ CharacterView StringEmitter::viewOfRange(const ValueContext& value)
     CharacterView view = viewOf(value, value->stringOperand());
     Word32 start = word32Of(value->startOperand());
     Word32 end = word32Of(value->endOperand());
-    holdRangeInside(value, start, end);
+    holdRangeInside(value, start, end, view.length);
     Integer units = zeroExtended(start);
     Pointer characters = select(view.is8Bit, offsetBy(view.characters, units, 0), offsetBy(view.characters, units, 1));
     return { characters, sub(end, start), view.is8Bit, view.owner };
@@ -41,7 +40,6 @@ void StringEmitter::generateStringRangeEqualsLiteral(const ValueContext& value)
     Word32 start = word32Of(value->startOperand());
     Word32 end = word32Of(value->endOperand());
     unsigned length = textOf(literal).length();
-    holdRangeInside(value, start, end);
     if (!length) {
         defineTest(value, equal(start, end));
         return;
@@ -54,7 +52,9 @@ void StringEmitter::generateStringRangeEqualsLiteral(const ValueContext& value)
 
     defineTestByBranching(value, [&](BranchTargets targets) {
         continueIf(equal(sub(end, start), word32(length)), targets.notTaken);
-        branchOnTextAt(viewOf(value, value->stringOperand()), start, literal, targets);
+        CharacterView view = viewOf(value, value->stringOperand());
+        holdRangeInside(value, start, end, view.length);
+        branchOnTextAt(view, start, literal, targets);
     });
 }
 
@@ -86,7 +86,7 @@ void StringEmitter::generateFindStringRangeInMap(const ValueContext& value)
     CharacterView view = viewOf(value, value->stringOperand());
     Word32 start = word32Of(value->startOperand());
     Word32 end = word32Of(value->endOperand());
-    holdRangeInside(value, start, end);
+    holdRangeInside(value, start, end, view.length);
     Word32 length = sub(end, start);
     Integer place = selectByWidth<Integer>(view.is8Bit, [&](bool is8Bit) {
         Pointer characters = offsetBy(view.characters, zeroExtended(start), is8Bit ? 0 : 1);

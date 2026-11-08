@@ -654,7 +654,7 @@ static bool allocationInBodyFillsFieldInLinkLayouts(const LinkFlow& flow, const 
 {
     std::optional<FieldReference> field = findField(flow.program, change.subject.layout, change.key);
     const ThinSummary& summary = flow.summaries.at(change.function);
-    return field && summary.nodes[summary.changes[change.record].subject].kind == SummaryNode::Kind::Allocation && !std::ranges::binary_search(summary.fieldsLeftEmpty, *field);
+    return field && summary.nodes[summary.changes[change.record].subject].kind == SummaryNode::Kind::Allocation && !summary.leavesEmpty(*field);
 }
 
 static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
@@ -1923,8 +1923,14 @@ void LinkFlow::forEachFieldLeftEmptyByRowOfConstructors(LayoutID made, uint32_t 
 void LinkFlow::noteConstructionsOf(FunctionID id)
 {
     noteBirthsOf(id);
-    for (FieldReference field : summaries.at(id).fieldsLeftEmpty)
-        noteFieldMayBeEmpty(field);
+    summaries.at(id).forEachLayoutLeftEmpty([&](LayoutID layout, std::span<const uint32_t> fieldsHeld) {
+        fieldsThatLaneAtWorkHasNotNotedEmpty(layout).removeAllMatching([&](uint32_t field) {
+            if (std::ranges::binary_search(fieldsHeld, field))
+                return false;
+            noteFieldMayBeEmpty({ layout, field });
+            return true;
+        });
+    });
 
     LayoutID made = program.at(id).constructedClass;
     if (!made || program.at(made).constructor != id || program.at(made).fields.isEmpty())

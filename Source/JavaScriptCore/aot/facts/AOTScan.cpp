@@ -1284,6 +1284,8 @@ private:
     LayoutID layoutOfAllocation(const BodyValue&) const;
     void followAllocation(const BodyValue&);
     void leaveEveryFieldEmpty(LayoutID);
+    void leaveFieldsEmptyButFor(LayoutID, std::span<const uint32_t> fieldsHeld);
+    void listFieldsHeldBy(const ObjectBeingMadeInScan&, const Layout&, Vector<uint32_t>& fieldsHeld);
     bool isListedByAllocation(uint32_t root, PropertyKeyID) const;
     std::span<const FillInScan> fillsOf(uint32_t root, SetsOfFillsInScan::Set) LIFETIME_BOUND;
     void noteFill(uint32_t root, bool isPart, uint32_t number);
@@ -1295,7 +1297,6 @@ private:
     void noteWhereFinishedLiteralLeavesFirst(ObjectBeingMadeInScan&);
     bool m_blockBeingReadHasHandler { false };
     void listBirths();
-    void noteFieldLeftEmptyForGood(FieldReference);
     void listHalvesOfAccessorsNotLaid();
     bool m_leavesFieldsEmptyForGood { false };
     bool hasFilledInFrontOfEveryLeaving(uint32_t root, PropertyKeyID);
@@ -1562,7 +1563,8 @@ private:
     uint32_t m_slotStoredInto { 0 };
     Vector<SummaryConstruction::Key> m_keysOfConstruction;
     Vector<std::pair<LayoutID, uint32_t>> m_placesOfObjectsOfOneLayout;
-    Vector<uint32_t> m_fieldsThatNoObjectLeftEmptySoFar;
+    Vector<uint32_t> m_fieldsThatEveryObjectHolds;
+    Vector<uint32_t> m_fieldsThatObjectHolds;
 
     Vector<EdgeLeadingBackInScan> m_openLoops;
     Vector<uint32_t> m_innermostLoopHeads;
@@ -1890,7 +1892,7 @@ ThinSummary::ThinSummary(SummaryBeingMade& made)
         visit(members, made.members);
         visit(functionVariablesStoredInto, made.functionVariablesStoredInto);
         visit(partsOfConstructions, made.partsOfConstructions);
-        visit(fieldsLeftEmpty, made.fieldsLeftEmpty);
+        visit(fieldsHeldOfLayoutsLeftEmpty, made.fieldsHeldOfLayoutsLeftEmpty);
         visit(fieldsFilledAtEndAlone, made.fieldsFilledAtEndAlone);
         visit(fieldsEmptyAtEndAlone, made.fieldsEmptyAtEndAlone);
         visit(halvesOfAccessorsNotLaid, made.halvesOfAccessorsNotLaid);
@@ -2264,19 +2266,20 @@ uint32_t ScanOfBody::nodeOfData(const DataNode& root)
         case DataNode::Kind::Object: {
             const auto& object = node->as<DataNode::Object>();
             made = object.layout ? nodeFor(SummaryNode::Kind::Allocation, object.layout.index()) : constant(TypeTable::object);
+            m_fieldsThatObjectHolds.shrink(0);
             for (const DataMember& member : object.members) {
                 std::optional<uint32_t> field = object.layout ? m_program.at(object.layout).findField(member.key) : std::nullopt;
+                if (field)
+                    m_fieldsThatObjectHolds.append(*field);
                 uint32_t takerOfMember = field ? fieldNode(object.layout, *field) : object.layout ? takerOfMemberBesideFields(made, member.key) : 0u;
                 nodesToVisit.append(DataAndTaker { &member.value, takerOfMember });
                 if (!field && !object.layout)
                     addEdge(made, 0);
             }
             if (object.layout && taker != noSummaryNode) {
-                const Layout& layout = m_program.at(object.layout);
-                for (uint32_t field = 0; field < layout.fields.size(); ++field) {
-                    if (!std::ranges::contains(object.members, layout.fields[field].key, &DataMember::key))
-                        noteFieldLeftEmptyForGood(FieldReference { object.layout, field });
-                }
+                sortWithoutRepeatsInScan(m_fieldsThatObjectHolds);
+                m_leavesFieldsEmptyForGood |= m_fieldsThatObjectHolds.size() < m_program.at(object.layout).fields.size();
+                leaveFieldsEmptyButFor(object.layout, m_fieldsThatObjectHolds.span());
             }
             break;
         }
@@ -4703,9 +4706,17 @@ void ScanOfBody::followAllocation(const BodyValue& value)
 
 void ScanOfBody::leaveEveryFieldEmpty(LayoutID id)
 {
-    uint32_t numberOfFields = static_cast<uint32_t>(m_program.at(id).fields.size());
-    for (uint32_t field = 0; field < numberOfFields; ++field)
-        noteFieldLeftEmptyForGood(FieldReference { id, field });
+    m_leavesFieldsEmptyForGood |= !m_program.at(id).fields.isEmpty();
+    leaveFieldsEmptyButFor(id, { });
+}
+
+void ScanOfBody::leaveFieldsEmptyButFor(LayoutID id, std::span<const uint32_t> fieldsHeld)
+{
+    if (fieldsHeld.size() == m_program.at(id).fields.size())
+        return;
+    m_summary.fieldsHeldOfLayoutsLeftEmpty.append(id.index());
+    m_summary.fieldsHeldOfLayoutsLeftEmpty.append(static_cast<uint32_t>(fieldsHeld.size()));
+    m_summary.fieldsHeldOfLayoutsLeftEmpty.append(fieldsHeld);
 }
 
 bool ScanOfBody::isListedByAllocation(uint32_t root, PropertyKeyID key) const
@@ -4915,34 +4926,52 @@ void ScanOfBody::listDefinitionsBehindAllocation(const ObjectBeingMadeInScan& ob
     lists[start + 1] = static_cast<uint32_t>(listed.size());
 }
 
+void ScanOfBody::listFieldsHeldBy(const ObjectBeingMadeInScan& object, const Layout& layout, Vector<uint32_t>& fieldsHeld)
+{
+    fieldsHeld.shrink(0);
+    auto hold = [&](PropertyKeyID key) {
+        if (std::optional<uint32_t> field = layout.findField(key))
+            fieldsHeld.append(*field);
+    };
+    bool goesByLiteralAlone = layout.kind == LayoutKind::Record && !object.endsWhereItLeaves;
+    if (!goesByLiteralAlone || (object.isFinished && !object.isConstant && !object.isGivenUp)) {
+        for (const FillInScan& fill : goesByLiteralAlone ? object.filledAtEnd : object.filled) {
+            if (fill.root == object.root && !fill.isPart)
+                hold(PropertyKeyID::fromBits(fill.number));
+        }
+    }
+    BodyValue made = definitionOf(object.root);
+    if (made && made.opcode() == Opcode::Data) {
+        if (const DataNode::Object* data = objectOfDataInScan(m_program, made)) {
+            for (const DataMember& member : data->members)
+                hold(member.key);
+        }
+    } else if (made && made.opcode() == Opcode::NewObject) {
+        for (uint32_t field : made.as<Opcode::NewObject>().fields()) {
+            if (field < layout.fields.size() && layout.fields[field].key)
+                fieldsHeld.append(field);
+        }
+    }
+    sortWithoutRepeatsInScan(fieldsHeld);
+}
+
 void ScanOfBody::listFieldsLeftEmptyByObjectsOfOneLayout()
 {
     std::ranges::sort(m_placesOfObjectsOfOneLayout);
-    LayoutID layoutOfFields;
-    for (auto [id, place] : m_placesOfObjectsOfOneLayout) {
+    std::span<const std::pair<LayoutID, uint32_t>> rest = m_placesOfObjectsOfOneLayout.span();
+    while (!rest.empty()) {
+        LayoutID id = rest.front().first;
         const Layout& layout = m_program.at(id);
-        if (std::exchange(layoutOfFields, id) != id) {
-            m_fieldsThatNoObjectLeftEmptySoFar.shrink(0);
-            for (uint32_t field = 0; field < layout.fields.size(); ++field)
-                m_fieldsThatNoObjectLeftEmptySoFar.append(field);
+        listFieldsHeldBy(m_objectsBeingMade[rest.front().second], layout, m_fieldsThatEveryObjectHolds);
+        for (rest = rest.subspan(1); !rest.empty() && rest.front().first == id; rest = rest.subspan(1)) {
+            if (m_fieldsThatEveryObjectHolds.isEmpty())
+                continue;
+            listFieldsHeldBy(m_objectsBeingMade[rest.front().second], layout, m_fieldsThatObjectHolds);
+            m_fieldsThatEveryObjectHolds.removeAllMatching([&](uint32_t field) {
+                return !std::ranges::binary_search(m_fieldsThatObjectHolds, field);
+            });
         }
-        if (m_fieldsThatNoObjectLeftEmptySoFar.isEmpty())
-            continue;
-        const ObjectBeingMadeInScan& object = m_objectsBeingMade[place];
-        auto isFilled = [&](PropertyKeyID key) {
-            return key && (std::ranges::binary_search(object.filled, FillInScan { object.root, false, key.bits() }) || isListedByAllocation(object.root, key));
-        };
-        auto hasAtItsFinish = [&](PropertyKeyID key) {
-            return key && (isListedByAllocation(object.root, key) || (object.isFinished && !object.isConstant && !object.isGivenUp && std::ranges::binary_search(object.filledAtEnd, FillInScan { object.root, false, key.bits() })));
-        };
-        bool goesByLiteralAlone = layout.kind == LayoutKind::Record && !object.endsWhereItLeaves;
-        m_fieldsThatNoObjectLeftEmptySoFar.removeAllMatching([&](uint32_t field) {
-            PropertyKeyID key = layout.fields[field].key;
-            if (goesByLiteralAlone ? hasAtItsFinish(key) : isFilled(key))
-                return false;
-            m_summary.fieldsLeftEmpty.append(FieldReference { id, field });
-            return true;
-        });
+        leaveFieldsEmptyButFor(id, m_fieldsThatEveryObjectHolds.span());
     }
 }
 
@@ -5021,7 +5050,6 @@ void ScanOfBody::listConstructions()
         listHalvesOfAccessorsNotLaid();
     if (!m_objectsBeingMade.isEmpty())
         listBirths();
-    sortWithoutRepeatsInScan(m_summary.fieldsLeftEmpty);
     AOT::stableSort(m_summary.makersThatEndWhereTheyLeave, { }, &SummaryMakerThatEndsWhereItLeaves::positionOfLeaving);
     for (const SummaryMakerThatEndsWhereItLeaves& maker : m_summary.makersThatEndWhereTheyLeave)
         m_summary.allocationsOfMakersThatEndWhereTheyLeave.append(maker.allocation);

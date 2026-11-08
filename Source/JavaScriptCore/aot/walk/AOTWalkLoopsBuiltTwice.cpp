@@ -1101,11 +1101,12 @@ Walker::InFrontOfTypedCopy::InFrontOfTypedCopy(Walker& walker, bool isInFront, T
     : m_walker(walker)
     , m_isInFront(isInFront)
 {
+    std::optional<uint32_t> loop = m_isInFront ? walker.openLoopOfTypedCopy(turn) : std::nullopt;
+    m_isInFront = !!loop;
     if (!m_isInFront)
         return;
-    uint32_t loop = *walker.openLoopOfTypedCopy(turn);
-    m_blockInside = std::exchange(walker.m_block, walker.m_openLoops[loop].blockInFront);
-    m_numberOfLoopsThatMightBeLeft = std::exchange(walker.m_numberOfLoopsThatMayBeLeft, loop);
+    m_blockInside = std::exchange(walker.m_block, walker.m_openLoops[*loop].blockInFront);
+    m_numberOfLoopsThatMightBeLeft = std::exchange(walker.m_numberOfLoopsThatMayBeLeft, *loop);
 }
 
 Walker::InFrontOfTypedCopy::~InFrontOfTypedCopy()

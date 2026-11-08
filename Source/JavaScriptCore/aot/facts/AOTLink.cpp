@@ -243,7 +243,7 @@ static LayoutID nearestClassWithMemberUnderInLinkTables(const LinkTables& tables
     return { };
 }
 
-bool LinkTables::someClassAtOrAboveDeclares(const Program& program, std::span<const StretchOfRows> stretches, ClassSide side, PropertyKeyID key) const
+bool LinkTables::someClassAtOrAboveDeclares(const Program& program, std::span<const StretchOfRows> stretches, ClassSide side, PropertyKeyID key, uint32_t& classesAsked) const
 {
     auto underKey = std::ranges::equal_range(membersByKeyAlongRows, std::pair { side, key }, { }, [&](uint32_t place) {
         const LinkedMember& member = members[place];
@@ -255,6 +255,7 @@ bool LinkTables::someClassAtOrAboveDeclares(const Program& program, std::span<co
         return placesOfLayoutsInRows[members[place].classLayout.index()];
     };
     return std::ranges::any_of(stretches, [&](const StretchOfRows& stretch) {
+        classesAsked += 2;
         auto firstInStretch = std::ranges::lower_bound(underKey, stretch.first, { }, placeOfDeclarer);
         if (firstInStretch != underKey.end() && placeOfDeclarer(*firstInStretch) < stretch.end)
             return true;

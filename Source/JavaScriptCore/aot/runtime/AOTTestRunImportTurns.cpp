@@ -214,9 +214,11 @@ void Modules::runJobThatMakesCallsAgain(ModuleID moduleOfJob)
 void Modules::noteChangeOfMockUnderCallsOfImport(ModuleID module)
 {
     bool isChangedByImport = m_moduleThatImportAsksFor && (m_modulesWhoseFactoryRuns.isEmpty() || m_modulesWhoseFactoryRuns.get(module.index()) || m_moduleThatImportAsksFor != m_moduleThatImportAskedForWhenFactoryBegan);
+    if (!isChangedByImport)
+        m_lastDeedsOnMocksUnderCallsOfImport.remove(fileOf(module));
     if (m_numberOfCallsOfImportWithNamespaceKept == (isChangedByImport ? m_callsOfImportUnderMocks.size() : 0))
         return;
-    ModuleNamespace* viewOfTheirOwn = nullptr;
+    JSObject* namespaceHeld = isChangedByImport ? namespaceIfCreated(module, ModulePhase::Evaluation) : nullptr;
     for (CallOfImportUnderMock& call : m_callsOfImportUnderMocks.values()) {
         if (call.module != module)
             continue;
@@ -225,12 +227,7 @@ void Modules::noteChangeOfMockUnderCallsOfImport(ModuleID module)
                 --m_numberOfCallsOfImportWithNamespaceKept;
             call.namespaceBeforeImportChangedMock.clear();
         } else if (!call.namespaceBeforeImportChangedMock) {
-            JSObject* mock = mockInPlace(module);
-            if (mock && !viewOfTheirOwn) {
-                viewOfTheirOwn = ModuleNamespace::create(*m_instance.vm, namespaceStructure(true), module, ModulePhase::Evaluation, { });
-                viewOfTheirOwn->setMockOfView(*m_instance.vm, mock);
-            }
-            if (JSObject* namespaceObject = viewOfTheirOwn) {
+            if (JSObject* namespaceObject = namespaceHeld) {
                 ++m_numberOfCallsOfImportWithNamespaceKept;
                 call.namespaceBeforeImportChangedMock.set(*m_instance.vm, namespaceObject);
             }
@@ -238,8 +235,62 @@ void Modules::noteChangeOfMockUnderCallsOfImport(ModuleID module)
     }
 }
 
+void Modules::noteCallOfImportUnderMock(JSPromise* promise, ModuleID module)
+{
+    unsigned serial = ++m_numberOfCallsOfImportMadeUnderMocks;
+    m_callsOfImportUnderMocks.add(promise, CallOfImportUnderMock { Strong<JSPromise>(*m_instance.vm, promise), moduleWithExportsOf(module), { }, serial });
+    m_callsOfImportThatHaveTakenNoStep.append({ serial, promise });
+}
+
+void Modules::didTakeFirstStepOfCallOfImportSlow(JSPromise* promise)
+{
+    auto call = m_callsOfImportUnderMocks.find(promise);
+    if (call != m_callsOfImportUnderMocks.end())
+        takeFirstStepsOfCallsOfImportThrough(call->value.serial);
+}
+
+void Modules::takeFirstStepsOfCallsOfImportThrough(unsigned serial)
+{
+    while (!m_callsOfImportThatHaveTakenNoStep.isEmpty() && m_callsOfImportThatHaveTakenNoStep.first().first <= serial) {
+        auto found = m_callsOfImportUnderMocks.find(m_callsOfImportThatHaveTakenNoStep.takeFirst().second);
+        if (found == m_callsOfImportUnderMocks.end())
+            continue;
+        CallOfImportUnderMock& call = found->value;
+        auto deed = m_lastDeedsOnMocksUnderCallsOfImport.find(fileOf(call.module));
+        if (deed == m_lastDeedsOnMocksUnderCallsOfImport.end() || call.serial > deed->value.lastCallInFrontOfIt)
+            continue;
+        if (call.namespaceBeforeImportChangedMock) {
+            call.namespaceBeforeImportChangedMock.clear();
+            --m_numberOfCallsOfImportWithNamespaceKept;
+        }
+        if (deed->value.bringsBackFileThatHadRun || !deed->value.mock)
+            continue;
+        if (!deed->value.viewOfMock) {
+            ModuleNamespace* view = ModuleNamespace::create(*m_instance.vm, namespaceStructure(true), call.module, ModulePhase::Evaluation, { });
+            view->setMockOfView(*m_instance.vm, deed->value.mock.get());
+            deed->value.viewOfMock.set(*m_instance.vm, view);
+        }
+        call.namespaceBeforeImportChangedMock.set(*m_instance.vm, deed->value.viewOfMock.get());
+        ++m_numberOfCallsOfImportWithNamespaceKept;
+    }
+    if (m_callsOfImportThatHaveTakenNoStep.isEmpty())
+        m_lastDeedsOnMocksUnderCallsOfImport.clear();
+}
+
+void Modules::noteDeedOnMockUnderCallsOfImportSlow(ModuleID module, DeedOnMock kind)
+{
+    LastDeedOnMock& deed = m_lastDeedsOnMocksUnderCallsOfImport.ensure(fileOf(module), [] { return LastDeedOnMock { }; }).iterator->value;
+    if (!deed.mock) {
+        if (JSObject* mock = mockInPlace(moduleWithExportsOf(module)))
+            deed.mock.set(*m_instance.vm, mock);
+    }
+    deed.lastCallInFrontOfIt = m_numberOfCallsOfImportMadeUnderMocks;
+    deed.bringsBackFileThatHadRun = kind == DeedOnMock::Ends && (isLeftAloneByMock(module) || hasMockLaidOverFileThatHadRun(module));
+}
+
 void Modules::forgetNamespacesKeptForCallsOfImport()
 {
+    m_lastDeedsOnMocksUnderCallsOfImport.clear();
     if (!m_numberOfCallsOfImportWithNamespaceKept)
         return;
     m_numberOfCallsOfImportWithNamespaceKept = 0;

@@ -446,7 +446,10 @@ bool WalkState::Held::liesBesideWhatIsWritten(const ProgramOfState& program, con
     switch (place.kind) {
     case PlaceKind::Slot: {
         PropertyKeyID key = writtenAlone->heap() == AbstractHeap::ObjectFields ? keyOfSlot(program, FieldReference { LayoutID(place.first), place.second }) : PropertyKeyID();
-        return key && program.program->types.compareByContent(key, writtenAlone->key()) != 0;
+        if (!key || key == writtenAlone->key())
+            return false;
+        const TypeTable& types = program.program->types;
+        return (types.hasStableNumber(key) && types.hasStableNumber(writtenAlone->key())) || types.compareByContent(key, writtenAlone->key()) != 0;
     }
     case PlaceKind::Variable:
         return writtenAlone->heap() == AbstractHeap::ModuleVariables && place.first != writtenAlone->variable().index();
@@ -1300,6 +1303,11 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
     auto holderIsWritten = [&](const Place& place) {
         return isWritten(place.holder);
     };
+    auto isWrittenAmong = [&](uint64_t written) {
+        return [&, written](const Place& place) {
+            return isWritten(place.holder) && !(ends.writtenAlone && liesBesideWhatIsWritten(*ends.program, place, written, ends.writtenAlone));
+        };
+    };
 
     const WriterOfOneObject* writer = ends.writerOfOneObject;
     if (writer && (ends.shapes || ends.elements || !ends.facts.isEmpty())) {
@@ -1373,7 +1381,8 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
     if (ends.slots) {
         bool writesOneLayout = writer;
         Vector<uint32_t, 16> foundToBeOfLayoutAlone;
-        auto slotStays = staysBehindWrite(ends.slots, holderIsWritten);
+        auto slotIsWritten = isWrittenAmong(ends.slots);
+        auto slotStays = staysBehindWrite(ends.slots, slotIsWritten);
         auto goThroughSlotsOf = [&](uint32_t list) {
             m_lists->goThroughPlaces(Lists::firstListOfSlots + list, Lists::entryByBit, [&](uint32_t position) {
                 if (!slotStays(position))
@@ -1666,7 +1675,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
     if (reachesSomething && goesByLists()) [[unlikely]] {
         bool namesOneVariable = writtenAlone && writtenAlone->heap() == AbstractHeap::ModuleVariables && variablesWritten == Typed::maskOf(*program.program, *writtenAlone);
         endByLists({ .shapes = endsShapes, .elements = endsElements, .sparesElementsOutsideViews = !writes.containsAny(heapsUnderElementsOutsideViewsInWalkState), .facts = factsEnded, .slots = slotsWritten, .variables = variablesWritten,
-            .environmentFields = environmentFieldsWritten, .guards = guardsWritten, .variableWrittenAlone = namesOneVariable ? writtenAlone->variable() : VariableID() });
+            .environmentFields = environmentFieldsWritten, .guards = guardsWritten, .variableWrittenAlone = namesOneVariable ? writtenAlone->variable() : VariableID(), .program = &program, .writtenAlone = writtenAlone });
     } else if (reachesSomething)
         forEachHolderReachedByEffects(endWhatHangsOn);
 

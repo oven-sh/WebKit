@@ -125,7 +125,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
     }
     if (goesByLists()) [[unlikely]] {
         endByLists({ .shapes = endsShapes, .elements = endsElements, .facts = factsEnded, .slots = slotsWritten, .environmentFields = environmentFieldsWritten, .guards = guardsWritten,
-            .mayBeWritten = &mayBeWritten, .mayEndGuard = &mayEndGuard, .writerOfOneObject = writerOfOneObject });
+            .mayBeWritten = &mayBeWritten, .mayEndGuard = &mayEndGuard, .writerOfOneObject = writerOfOneObject, .program = &program, .writtenAlone = writtenAlone });
         dropEndedRecordsIfMany();
         return;
     }

@@ -135,6 +135,10 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
         return;
     }
 
+    if (ValueID copy = findCopyThatFillsNewObject(generator(), value); copy && operationAt(copy).sourceLayout()) {
+        define(value, allocateCopyFromOtherLayout(value, copy));
+        return;
+    }
     if (ValueID copy = findCopyThatFillsNewObject(generator(), value)) {
         auto allocateEmpty = [&] {
             return allocateWithFields(value, allocation, value->fields(), value->valuesOperands(), value->storage());
@@ -162,6 +166,32 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
         storePrototype(value, cell, prototype);
     else
         define(value, cell);
+}
+
+CellPointer AllocationEmitter::allocateCopyFromOtherLayout(const ValueContext& value, ValueID copy)
+{
+    AccessEmitter& accesses = emitter<AccessEmitter>();
+    const Operation& words = operationAt(copy);
+    LayoutID layoutID = value->layout();
+    const PlannedLayout& layout = m_plan.layout(layoutID);
+    Vector<FieldIndex, 8> takers = accesses.fieldsThatTakeCopyFromOtherLayout(words);
+    MentionedAllocation allocation = emitter<CellAllocationEmitter>().allocationOf(value, layoutID, takers.span());
+    BitVector isCopied(layout.numberOfFields());
+    for (FieldIndex field : takers)
+        isCopied.set(field);
+    EmptySlots emptySlots = collectEmptySlots(layoutID, isCopied);
+    CellPointer source = in<CellPointer>(words.sourceOperand());
+    ZeroedBy zeroedBy = whoZeroesBodyOfFreshCell(value, allocation, emptySlots.span(), AllocationStorage::Heap);
+    CellPointer cell = allocateCell(value, allocation, layout, AllocationStorage::Heap, zeroedBy);
+    {
+        CodeGenerator::InitializationScope scope(generator());
+        initializeHiddenFields(cell, layoutID, AllocationStorage::Heap, zeroedBy, false);
+        accesses.copyFieldsFromOtherLayout(words, source, cell);
+        storeEmptySlots(cell, layoutID, emptySlots.span(), zeroedBy, value.block());
+    }
+    emitter<BarrierEmitter>().fenceAfterInitialization();
+    accesses.noteCopyMadeAtAllocation(copy);
+    return cell;
 }
 
 AllocationEmitter::EmptySlots AllocationEmitter::collectSlotsThatMayHoldCells(const Operation& made)

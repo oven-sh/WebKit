@@ -176,8 +176,6 @@ public:
         Range dividends = typeOf(value->leftOperand()).integers;
         bool mayBeNegative = dividends.minimum < 0;
         bool mayOverflow = dividends.minimum <= (std::is_same_v<T, Word32> ? std::numeric_limits<int32_t>::min() : std::numeric_limits<int64_t>::min());
-        if (checksProofs() && !mayOverflow)
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, greaterThanOrEqual(dividend, constant<T>(dividends.minimum)), std::nullopt, ProofSource::OtherOperation);
         auto zeroWithSignOfDividend = [&] {
             return mayBeNegative ? select(lessThan(dividend, constant<T>(0)), number(-0.0), number(0)) : number(0);
         };

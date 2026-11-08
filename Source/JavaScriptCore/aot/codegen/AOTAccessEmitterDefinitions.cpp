@@ -323,7 +323,7 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
     const PlannedLayout& planned = m_plan.layout(layout);
     const ShapeTable& shapes = m_plan.shapes();
     ShapeRange shapesOfLayout = shapes.shapesOf(layout);
-    if (!planned.holdsCompiledObjects() || planned.cellsAreHandedBack || shapesOfLayout.count != 1)
+    if (!planned.holdsCompiledObjects() || planned.cellsAreHandedBack || shapesOfLayout.count != 1 || m_code.at(copy).sourceLayout())
         return std::nullopt;
     if (mentioned.placed.layout != layout || m_plan.slots().extensionWord(layout).hasStorage() || planned.size <= offsetOfFirstField)
         return std::nullopt;
@@ -364,6 +364,49 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
     return CellPointer(m_out.phi(Machine::pointerType(), copiedCell, emptyCell));
 }
 
+Vector<FieldIndex, 8> AccessEmitter::fieldsThatTakeCopyFromOtherLayout(const Operation& copy)
+{
+    Vector<FieldIndex, 8> takers;
+    for (FieldIndex field : copy.fields())
+        takers.append(findField(m_program, copy.layout(), m_program.at(copy.sourceLayout()).fields[field].key)->field);
+    return takers;
+}
+
+void AccessEmitter::copyFieldsFromOtherLayout(const Operation& copy, CellPointer source, CellPointer target)
+{
+    const PlannedLayout& read = m_plan.layout(copy.sourceLayout());
+    const PlannedLayout& written = m_plan.layout(copy.layout());
+    std::span<const FieldIndex> fieldsRead = copy.fields();
+    Vector<FieldIndex, 8> fieldsWritten = fieldsThatTakeCopyFromOtherLayout(copy);
+    const Machine::AbstractHeap& fields = m_heaps.entire(AbstractHeap::ObjectFields);
+    SlotEmitter& slots = emitter<SlotEmitter>();
+    size_t numberOfWords = read.size / sizeof(uint64_t);
+    Vector<uint32_t, 64> offsetsInTarget(FillWith { }, numberOfWords, 0);
+    for (size_t index = 0; index < fieldsRead.size(); ++index) {
+        const PlacedSlot& slotRead = read.slots[fieldsRead[index]];
+        const PlacedSlot& slotWritten = written.slots[fieldsWritten[index]];
+        RELEASE_ASSERT(slotRead.storage == SlotStorage::Inline && slotWritten.storage == SlotStorage::Inline && slotRead.representation == slotWritten.representation);
+        if (widthOf(slotRead.representation) == sizeof(uint64_t) && !(slotRead.offset % sizeof(uint64_t))) {
+            offsetsInTarget[slotRead.offset / sizeof(uint64_t)] = slotWritten.offset;
+            continue;
+        }
+        slots.copyBits(m_out.address(fields, source.value(), slotRead.offset), m_out.address(fields, target.value(), slotWritten.offset), slotRead.representation);
+    }
+    for (size_t begin = 0, end = 0; begin < numberOfWords; begin = end) {
+        end = begin + 1;
+        if (!offsetsInTarget[begin])
+            continue;
+        while (end < numberOfWords && offsetsInTarget[end] == offsetsInTarget[end - 1] + sizeof(uint64_t))
+            ++end;
+        emitter<CellAllocationEmitter>().copyWords(source, static_cast<unsigned>(begin * sizeof(uint64_t)), target, offsetsInTarget[begin], static_cast<unsigned>((end - begin) * sizeof(uint64_t)));
+    }
+}
+
+void AccessEmitter::noteCopyMadeAtAllocation(ValueID copy)
+{
+    m_copyAtAllocation = CopyAtAllocation { copy, boolean(true) };
+}
+
 void AccessEmitter::generateTryCopyFields(const ValueContext& value)
 {
     if (m_copyAtAllocation && m_copyAtAllocation->copy == value.id()) {
@@ -373,6 +416,14 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
 
     LayoutID layout = value->layout();
     const PlannedLayout& planned = m_plan.layout(layout);
+    if (value->sourceLayout()) {
+        CellPointer target = in<CellPointer>(value->objectOperand());
+        copyFieldsFromOtherLayout(value.value(), in<CellPointer>(value->sourceOperand()), target);
+        m_out.store32(m_out.constInt32(static_cast<int32_t>(*m_plan.keyOrders().findOrderWord(layout, fieldsThatTakeCopyFromOtherLayout(value.value()).span()))), m_out.address(m_heaps.AOTObject_orderWord, target.value(), offsetOfOrderWord));
+        emitter<BarrierEmitter>().barrier(value, target);
+        defineTest(value, boolean(true));
+        return;
+    }
     const ShapeTable& shapes = m_plan.shapes();
     ShapeRange shapesOfLayout = shapes.shapesOf(layout);
     if (!planned.holdsCompiledObjects() || planned.cellsAreHandedBack || shapesOfLayout.isEmpty()) {

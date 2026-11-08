@@ -2009,7 +2009,7 @@ void Modules::noteLoadOfEachModuleWith(ModuleID root)
     Vector<uint32_t, 32> found { root.index() };
     while (!found.isEmpty()) {
         uint32_t module = found.takeLast();
-        m_momentsOfLoads[module] = moment;
+        didGiveUpMomentLinked(std::exchange(m_momentsOfLoads[module], moment));
         m_loadedInPreload.quickSet(module, isAheadOfTestFiles);
         if (standsForWholeModule(ModuleID(module)))
             continue;

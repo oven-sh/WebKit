@@ -98,6 +98,17 @@ struct TestOfGuess {
     LayoutID knownByStructure;
 };
 
+struct FoundInLongStretchOfGuess {
+    using Table = HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    static uint64_t under(ValueID holder, PropertyKeyID key) { return static_cast<uint64_t>(holder.bits()) << 32 | key.bits(); }
+
+    Table slotsStored;
+    Table namesStored;
+    Table looksAtSlots;
+    Table looksAtSlotsOfHoldersInFrontOfStretch;
+    Table looksThatAnswerReads;
+};
+
 struct LookAtSlotOfGuess {
     ValueID access;
     ValueID holder;
@@ -4210,6 +4221,29 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
     bool slotsAreAsFound = true;
     Vector<std::pair<ValueID, PropertyKeyID>, 8> slotsStoredInStretch;
     Vector<std::pair<ValueID, ValueID>, 8> readsAnsweredByLooks;
+    using Found = FoundInLongStretchOfGuess;
+    std::unique_ptr<Found> tables;
+    auto goByTables = [&] {
+        tables = makeUniqueWithoutFastMallocCheck<Found>();
+        for (auto [holder, key] : slotsStoredInStretch) {
+            tables->slotsStored.add(Found::under(holder, key), 0);
+            tables->namesStored.add(key.bits(), 0);
+        }
+        for (auto [read, look] : readsAnsweredByLooks)
+            tables->looksThatAnswerReads.set(read.bits(), look.bits());
+        for (uint32_t place = 0; place < stretch.firstAccessesToSlots.size(); ++place) {
+            const LookAtSlotOfGuess& look = stretch.firstAccessesToSlots[place];
+            PropertyKeyID key = keyOfAccessToSlot(walker.program(), walker.asWalked(index.value(look.access)));
+            if (look.holderInFrontOfStretch)
+                tables->looksAtSlotsOfHoldersInFrontOfStretch.add(Found::under(look.holderInFrontOfStretch, key), place);
+            else
+                tables->looksAtSlots.add(Found::under(look.holder, key), place);
+        }
+    };
+    auto goByTablesWhereMuchIsFound = [&] {
+        if (slotsStoredInStretch.size() + readsAnsweredByLooks.size() + stretch.firstAccessesToSlots.size() > 24) [[unlikely]]
+            goByTables();
+    };
     ValueID callAwaited;
     ValueID callOfMethodFound;
     for (uint32_t place = begin; place < limit; ++place) {
@@ -4269,7 +4303,7 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
         bool readsOffHolderInFrontOfStretch = !leans && !isTypedEitherWay && place > begin && slotsAreAsFound && opcode == Opcode::PropGet && operation.objectOperand().index() < first
             && !namesValueOfGuess(operation.objectOperand()) && walker.referenceOf(operation.objectOperand()).isValue() && isStoredAtOnceIntoValueOfGuess(operation.id())
             && !types.at(provenTypeOfInput(operation.objectOperand())).mayBeUndefinedOrNull()
-            && !slotsStoredInStretch.containsIf([&](const auto& stored) { return stored.second == keyOfAccessToSlot(walker.program(), operation); })
+            && !(tables ? tables->namesStored.contains(keyOfAccessToSlot(walker.program(), operation).bits()) : slotsStoredInStretch.containsIf([&](const auto& stored) { return stored.second == keyOfAccessToSlot(walker.program(), operation); }))
             && typedFormForGuesses(walker, operation, inputsOfClosedArm) == TypedForm::BuiltBehindFilledSlot;
         isTypedEitherWay |= readsOffHolderInFrontOfStretch;
         bool isReadOfMethod = opcode == Opcode::PropGet && (leans || callOfMethodFound) && isReadOfMethodForItsCallForGuesses(index, operation);
@@ -4346,6 +4380,10 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
                 while (object.index() >= first && inputOperationsThatHandOn.contains(index.opcodeOf(object)))
                     object = index.value(object).operand(0);
                 ValueID holder;
+                if (tables) [[unlikely]] {
+                    if (auto found = tables->looksThatAnswerReads.find(object.bits()); found != tables->looksThatAnswerReads.end())
+                        holder = ValueID::fromBits(found->value);
+                }
                 for (auto [read, look] : readsAnsweredByLooks) {
                     if (read == object)
                         holder = look;
@@ -4353,15 +4391,28 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
                 bool isAtHand = object.index() < first ? namesValueOfGuess(object) : holder && form == TypedForm::BuiltBehindFilledSlot;
                 counts = slotsAreAsFound && isAtHand;
                 PropertyKeyID key = keyOfAccessToSlot(walker.program(), operation);
-                bool isStoredInStretch = slotsStoredInStretch.contains(std::pair { holder, key });
-                size_t placeOfLook = stretch.firstAccessesToSlots.findIf([&](const LookAtSlotOfGuess& earlier) {
-                    return !earlier.holderInFrontOfStretch && earlier.holder == holder && keyOfAccessToSlot(walker.program(), walker.asWalked(index.value(earlier.access))) == key;
-                });
+                bool isStoredInStretch;
+                size_t placeOfLook;
+                if (tables) [[unlikely]] {
+                    isStoredInStretch = tables->slotsStored.contains(Found::under(holder, key));
+                    auto found = tables->looksAtSlots.find(Found::under(holder, key));
+                    placeOfLook = found == tables->looksAtSlots.end() ? notFound : found->value;
+                } else {
+                    isStoredInStretch = slotsStoredInStretch.contains(std::pair { holder, key });
+                    placeOfLook = stretch.firstAccessesToSlots.findIf([&](const LookAtSlotOfGuess& earlier) {
+                        return !earlier.holderInFrontOfStretch && earlier.holder == holder && keyOfAccessToSlot(walker.program(), walker.asWalked(index.value(earlier.access))) == key;
+                    });
+                }
                 bool isLookedAtAlready = form == TypedForm::BuiltBehindLookAtCell || (form != TypedForm::BuiltBehindEmptySlot && isStoredInStretch) || placeOfLook != notFound;
                 if (!isLookedAtAlready && storesIntoSlotsForGuesses.contains(opcode) && looksAtSlotOfObjectBeingMade(walker, operation))
                     counts = false;
-                if (counts && !isLookedAtAlready)
+                if (counts && !isLookedAtAlready) {
+                    if (tables) [[unlikely]]
+                        tables->looksAtSlots.add(Found::under(holder, key), stretch.firstAccessesToSlots.size());
                     stretch.firstAccessesToSlots.append({ operation.id(), holder });
+                    if (!tables)
+                        goByTablesWhereMuchIsFound();
+                }
                 if (counts && (form == TypedForm::BuiltBehindLookAtCell || form == TypedForm::BuiltBehindFilledSlotAndLookAtCell))
                     stretch.storesThatLookAtCell.append(operation.id());
                 if (counts && form == TypedForm::BuiltBehindLookAtCell)
@@ -4378,10 +4429,21 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
                         break;
                     }
                 }
-                if (counts && storesIntoSlotsForGuesses.contains(opcode))
-                    slotsStoredInStretch.append({ holder, key });
+                if (counts && storesIntoSlotsForGuesses.contains(opcode)) {
+                    if (tables) [[unlikely]] {
+                        tables->slotsStored.add(Found::under(holder, key), 0);
+                        tables->namesStored.add(key.bits(), 0);
+                    } else
+                        slotsStoredInStretch.append({ holder, key });
+                }
                 if (counts && form == TypedForm::BuiltBehindFilledSlot && readsOutOfSlotsForGuesses.contains(opcode) && !isStoredInStretch) {
-                    readsAnsweredByLooks.append({ operation.id(), placeOfLook != notFound ? stretch.firstAccessesToSlots[placeOfLook].access : operation.id() });
+                    ValueID look = placeOfLook != notFound ? stretch.firstAccessesToSlots[placeOfLook].access : operation.id();
+                    if (tables) [[unlikely]]
+                        tables->looksThatAnswerReads.set(operation.id().bits(), look.bits());
+                    else {
+                        readsAnsweredByLooks.append({ operation.id(), look });
+                        goByTablesWhereMuchIsFound();
+                    }
                     foundInFilledSlot = typeFoundInFilledSlot(walker, operation, types.withoutNullish(typeInTypedRun(operation.objectOperand(), 0)));
                     if (chosen.isPassedAlready && saysNothingForGuesses(types, foundInFilledSlot) && readsMethodForItsCall) {
                         TypeID seenToArrive = typeSeenToArriveInFilledSlot(walker, operation, types.withoutNullish(typeInTypedRun(operation.objectOperand(), 0)));
@@ -4426,15 +4488,28 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
             }
         }
         counts |= handsWhatRestsOnProofToCopy;
-        if (storesIntoSlotsForGuesses.contains(opcode))
-            slotsStoredInStretch.append({ operation.objectOperand(), keyOfAccessToSlot(walker.program(), operation) });
+        if (storesIntoSlotsForGuesses.contains(opcode)) {
+            PropertyKeyID key = keyOfAccessToSlot(walker.program(), operation);
+            if (tables) [[unlikely]] {
+                tables->slotsStored.add(Found::under(operation.objectOperand(), key), 0);
+                tables->namesStored.add(key.bits(), 0);
+            } else {
+                slotsStoredInStretch.append({ operation.objectOperand(), key });
+                goByTablesWhereMuchIsFound();
+            }
+        }
         if (readsOffHolderInFrontOfStretch) {
             PropertyKeyID key = keyOfAccessToSlot(walker.program(), operation);
-            bool isLookedAtAlready = stretch.firstAccessesToSlots.containsIf([&](const LookAtSlotOfGuess& earlier) {
+            bool isLookedAtAlready = tables ? tables->looksAtSlotsOfHoldersInFrontOfStretch.contains(Found::under(operation.objectOperand(), key)) : stretch.firstAccessesToSlots.containsIf([&](const LookAtSlotOfGuess& earlier) {
                 return earlier.holderInFrontOfStretch == operation.objectOperand() && keyOfAccessToSlot(walker.program(), walker.asWalked(index.value(earlier.access))) == key;
             });
-            if (!isLookedAtAlready)
+            if (!isLookedAtAlready && tables) [[unlikely]]
+                tables->looksAtSlotsOfHoldersInFrontOfStretch.add(Found::under(operation.objectOperand(), key), stretch.firstAccessesToSlots.size());
+            if (!isLookedAtAlready) {
                 stretch.firstAccessesToSlots.append({ operation.id(), { }, operation.objectOperand() });
+                if (!tables)
+                    goByTablesWhereMuchIsFound();
+            }
             foundInFilledSlot = typeFoundInFilledSlot(walker, operation, types.withoutNullish(typeInClosedArm(operation.objectOperand(), 0)));
         }
         if (!counts)
@@ -4776,7 +4851,8 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     bool takesInCallReturnedAtOnce = size && isReturnedAtOnceForGuesses(index, ValueID(first + size - 1));
     bool failingWayBeginsTurnAgain = chosen.admitsAllThatIsExpected && !chosen.failingSideAsksFor && !chosen.failingSideAsksForNothing && walker.mayBeginTurnAgainInClosedCopy();
     bool asksInFrontBehindStores = !failingWayBeginsTurnAgain && chosen.admitsAllThatIsExpected && !chosen.failingSideAsksFor && !chosen.failingSideAsksForNothing && walker.standsInTurnOfTypedCopy();
-    bool asksKindOfValueAndNothingElse = !chosen.layouts && !chosen.knownByStructure && !chosen.isPassedAlready && stretch.firstAccessesToSlots.isEmpty() && !stretch.looksWhetherValueIsAsMade && stretch.storesThatLookAtCell.isEmpty() && stretch.testsOfStoredValues.isEmpty() && !stretch.orderWordAskedFor && stretch.membersAskedByTheirBytes.isEmpty() && !stretch.someMemberRestsOnByteOfClass;
+    const Type& typeAskedFor = walker.types().at(chosen.tested);
+    bool asksKindOfValueAndNothingElse = !chosen.layouts && (!typeAskedFor.layouts || typeAskedFor.hasOnlyClosures()) && !chosen.knownByStructure && !chosen.isPassedAlready && stretch.firstAccessesToSlots.isEmpty() && !stretch.looksWhetherValueIsAsMade && stretch.storesThatLookAtCell.isEmpty() && stretch.testsOfStoredValues.isEmpty() && !stretch.orderWordAskedFor && stretch.membersAskedByTheirBytes.isEmpty() && !stretch.someMemberRestsOnByteOfClass;
     Walker::TurnOfTypedCopy turnThatAsksInFront = !asksInFrontBehindStores ? Walker::TurnOfTypedCopy::HasDoneNothing : asksKindOfValueAndNothingElse ? Walker::TurnOfTypedCopy::HasRunNoOtherCodeThoughCopiesBegan : Walker::TurnOfTypedCopy::HasRunNoOtherCode;
     Reference valueTested = chosen.isPassedAlready ? Reference() : value;
     bool takesInBranch = !failingWayBeginsTurnAgain && (armsOfGuessTakeBranch(walker, inputBlock, begin, end, valueTested, stretch.placesThatTypedRunKnowsBetter, branchAskedAbout) || (stretch.typedRunDecidesBranch && walker.armsMayTakeBranchOf(inputBlock, end, valueTested)));

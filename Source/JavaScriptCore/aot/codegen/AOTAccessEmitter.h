@@ -61,6 +61,9 @@ public:
     void generateCopyObjectAndDefine(const ValueContext&);
     void generateCopyTwoObjects(const ValueContext&);
     void generateTryCopyFields(const ValueContext&);
+    Vector<FieldIndex, 8> fieldsThatTakeCopyFromOtherLayout(const Operation& copy);
+    void copyFieldsFromOtherLayout(const Operation& copy, CellPointer source, CellPointer target);
+    void noteCopyMadeAtAllocation(ValueID copy);
     void generateGetSuperBase(const ValueContext&);
     void generateSuperGet(const ValueContext&);
     void generateSuperSet(const ValueContext&);

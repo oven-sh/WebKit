@@ -74,6 +74,7 @@ private:
     void storePrototype(const ValueContext&, CellPointer, ValueID prototype);
     bool looksAtPrototypeBeforeAllocating(const ValueContext&);
     CellPointer allocateInstance(const ValueContext&, const MentionedAllocation&, ValueID prototype);
+    CellPointer allocateCopyFromOtherLayout(const ValueContext&, ValueID copy);
     Vector<WordOfEmptyObject, 8> wordsOfEmptyObject(LayoutID);
     Vector<uint8_t, 64> bodyOfEmptyCell(const MentionedAllocation&);
     CellPointer createArguments(const ValueContext&, std::optional<CellPointer> callee);

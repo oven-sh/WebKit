@@ -18,12 +18,6 @@ inline bool ScanOfBody::hasFilledInFrontOfEveryLeaving(uint32_t root, PropertyKe
     return m_setsOfFills.contains(m_fills, fill) && (!object.hasLeft || std::ranges::binary_search(object.filled, fill));
 }
 
-inline void ScanOfBody::noteFieldLeftEmptyForGood(FieldReference field)
-{
-    m_summary.fieldsLeftEmpty.append(field);
-    m_leavesFieldsEmptyForGood = true;
-}
-
 inline void ScanOfBody::meetFillsWhereConstructionEnds(uint32_t root)
 {
     ObjectBeingMadeInScan& object = objectBeingMade(root);
@@ -87,6 +81,7 @@ inline void ScanOfBody::listBirths()
     if (!m_summary.fieldsFilledAtEndAlone.isEmpty() && m_leavesFieldsEmptyForGood)
         m_summary.fieldsFilledAtEndAlone.shrink(0);
     if (!m_summary.fieldsFilledAtEndAlone.isEmpty()) {
+        sortWithoutRepeatsInScan(m_summary.fieldsFilledAtEndAlone);
         struct ObjectOfLayout {
             LayoutID layout;
             uint32_t placeAmongObjectsBeingMade;
@@ -106,7 +101,6 @@ inline void ScanOfBody::listBirths()
                 return !std::ranges::binary_search(atEnd, FillInScan { other.root, false, key.bits() }) && (other.isGivenUp || !isListedByAllocation(other.root, key));
             });
         });
-        sortWithoutRepeatsInScan(m_summary.fieldsFilledAtEndAlone);
     }
     if (!m_summary.fieldsEmptyAtEndAlone.isEmpty())
         sortWithoutRepeatsInScan(m_summary.fieldsEmptyAtEndAlone);

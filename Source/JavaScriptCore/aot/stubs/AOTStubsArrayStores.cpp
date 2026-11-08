@@ -15,6 +15,7 @@
 #include "IndexingType.h"
 #include "JSCell.h"
 #include "JSObject.h"
+#include "MarkedSpace.h"
 
 namespace JSC { namespace AOT {
 
@@ -124,7 +125,7 @@ StubSignature signatureOfSetArrayLength(StubKey)
 void generateSetArrayLength(StubAssembler& jit)
 {
     static_assert(ArrayWithUndecided + 2 == ArrayWithInt32 && ArrayWithInt32 + 2 == ArrayWithDouble && ArrayWithDouble + 2 == ArrayWithContiguous, "an array has no mode between these, and in each its length can be written: one that cannot has a sparse map, or elements frozen in storage that is copied on write");
-    static constexpr int32_t mostElementsEmptiedInStub = 64;
+    static_assert(!((ArrayWithUndecided ^ ArrayWithInt32) & IsArray) && !((ArrayWithUndecided ^ ArrayWithDouble) & IsArray) && !((ArrayWithUndecided ^ ArrayWithContiguous) & IsArray) && IsArray == 1);
     const GPRReg kind = jit.allocateScratch(StubRegister::T9);
     const GPRReg butterfly = jit.allocateScratch(StubRegister::T10);
     const GPRReg length = jit.allocateScratch(StubRegister::T11);
@@ -135,6 +136,7 @@ void generateSetArrayLength(StubAssembler& jit)
     jit.load8(Address(jit.operand(0), JSCell::indexingTypeAndMiscOffset()), kind);
     jit.sub32(TrustedImm32(ArrayWithUndecided), kind);
     callsOperation.append(jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ArrayWithContiguous - ArrayWithUndecided)));
+    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, kind, TrustedImm32(IsArray)));
     jit.loadPtr(Address(jit.operand(0), JSObject::butterflyOffset()), butterfly);
     jit.load32(publicLength, length);
     Jump isShorterOrLonger = jit.branch32(CCallHelpers::NotEqual, length, jit.operand(1));
@@ -142,8 +144,7 @@ void generateSetArrayLength(StubAssembler& jit)
 
     isShorterOrLonger.link(&jit);
     callsOperation.append(jit.branch32(CCallHelpers::Below, length, jit.operand(1)));
-    jit.sub32(length, jit.operand(1), hole);
-    callsOperation.append(jit.branch32(CCallHelpers::Above, hole, TrustedImm32(mostElementsEmptiedInStub)));
+    callsOperation.append(jit.branch32(CCallHelpers::Above, Address(butterfly, Butterfly::offsetOfVectorLength()), TrustedImm32(MarkedSpace::largeCutoff / sizeof(EncodedJSValue))));
     jit.move(TrustedImm64(0), hole);
     Jump holeIsEmptyValue = jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(ArrayWithDouble - ArrayWithUndecided));
     jit.move(TrustedImm64(static_cast<int64_t>(PNaNAsBits)), hole);

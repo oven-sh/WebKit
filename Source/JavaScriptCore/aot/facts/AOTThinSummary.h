@@ -634,7 +634,7 @@ struct ThinSummary : SummaryWithoutLists {
         SummaryList<SummaryMember, 22> members;
         SummaryList<VariableID, 23> functionVariablesStoredInto;
         SummaryList<SummaryConstruction::Part, 24> partsOfConstructions;
-        SummaryList<FieldReference, 25> fieldsLeftEmpty;
+        SummaryList<uint32_t, 25> fieldsHeldOfLayoutsLeftEmpty;
         SummaryList<FieldReference, 26> fieldsFilledAtEndAlone;
         SummaryList<FieldReference, 27> fieldsEmptyAtEndAlone;
         SummaryList<HalfOfAccessorInSummary, 28> halvesOfAccessorsNotLaid;
@@ -689,6 +689,24 @@ struct ThinSummary : SummaryWithoutLists {
             rest = rest.subspan(2 + rest[1]);
         }
     }
+
+    void forEachLayoutLeftEmpty(NOESCAPE const Invocable<void(LayoutID, std::span<const uint32_t> fieldsHeld)> auto& functor) const
+    {
+        std::span<const uint32_t> rest = fieldsHeldOfLayoutsLeftEmpty.span();
+        while (!rest.empty()) {
+            functor(LayoutID(rest[0]), rest.subspan(2, rest[1]));
+            rest = rest.subspan(2 + rest[1]);
+        }
+    }
+
+    bool leavesEmpty(FieldReference field) const
+    {
+        bool leavesEmpty = false;
+        forEachLayoutLeftEmpty([&](LayoutID layout, std::span<const uint32_t> fieldsHeld) {
+            leavesEmpty |= layout == field.layout && !std::ranges::binary_search(fieldsHeld, field.field);
+        });
+        return leavesEmpty;
+    }
 };
 
 static_assert(sizeof(ThinSummary) <= 128);
@@ -719,7 +737,7 @@ struct SummaryBeingMade : SummaryWithoutLists {
     Vector<SummaryMember> members;
     Vector<VariableID> functionVariablesStoredInto;
     Vector<SummaryConstruction::Part> partsOfConstructions;
-    Vector<FieldReference> fieldsLeftEmpty;
+    Vector<uint32_t> fieldsHeldOfLayoutsLeftEmpty;
     Vector<FieldReference> fieldsFilledAtEndAlone;
     Vector<FieldReference> fieldsEmptyAtEndAlone;
     Vector<HalfOfAccessorInSummary> halvesOfAccessorsNotLaid;

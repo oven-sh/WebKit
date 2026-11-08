@@ -376,7 +376,6 @@ public:
     Snapshot takeSnapshot();
     void restore(const Snapshot&);
     void noteHintsOfHead(const Block* target);
-    void hintKeptRegistersToValuesThatBlockHandsOn(const Block*);
     bool hasBackEdgeOutsideRareRegions(const Loop&) const;
     const Block* immediateDominatorOf(const Block*);
     bool dominates(const Block* above, const Block* below);

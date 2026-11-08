@@ -866,7 +866,7 @@ void AccessEmitter::returnWhatMethodOfBuiltinClassGives(const ValueContext& read
     }
     Vector<LValue, 8> arguments;
     auto isMadeAlready = [&](ValueID id) {
-        return !operationAt(id).block() || representationOf(id) == Representation::Void || generator().wordOf(id);
+        return !operationAt(id).block() || generator().wordOf(id);
     };
     for (ValueID argument : call.argumentsOperands()) {
         ValueID made = inFrontOfBox(argument);

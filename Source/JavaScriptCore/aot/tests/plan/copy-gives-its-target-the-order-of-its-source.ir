@@ -1,6 +1,6 @@
 # type State = { a: number; b: number };
 # function widen(state: State, c: number) { return { ...state, c }; }
-# As walk/typed-operations/spread-of-a-layout-is-loads-and-an-allocation.ir, but the layout of the literal declares `c` in front of `a` and `b`, and no allocation lists `a`, `b`.
+# As walk/typed-operations/spread-of-a-layout-is-an-allocation-and-one-copy-of-its-fields.ir, but the layout of the literal declares `c` in front of `a` and `b`, and no allocation lists `a`, `b`.
 # The object gets the keys of `state` in the order in which `state` got them, and an allocation creates only a row of fields whose order the image holds. The summary says what is copied into what,
 # and Link says what is expected of the parameter: the plan takes each order of a State that lists all its fields as an order of the literal's layout.
 # Without it the walk makes the object empty and defines `a` and `b` by name, by a closed operation each.
@@ -14,9 +14,8 @@
 # WALK-NOT: PropDefine {{*}}key="a"
 # WALK-NOT: PropDefine {{*}}key="b"
 # WALK: = HasKeyOrder {{*}} layout=L1 fields=[0, 1]
-# WALK: [[a]]: {{*}} = GetSlot {{*}} key="a"
-# WALK: [[b]]: {{*}} = GetSlot {{*}} key="b"
-# WALK: = NewObject -, [[a]], [[b]] layout=L2 fields=[0, 1]
+# WALK: [[made]]: {{*}} = NewObject layout=L2
+# WALK-NEXT: = TryCopyFields [[made]], {{*}} layout=L2 sourceLayout=L1 fields=[0, 1]
 # WALK-NOT: PropDefine {{*}}key="a"
 # WALK-NOT: PropDefine {{*}}key="b"
 # RUN(WITHHELD): plan orders mechanisms=all-TypedSlots

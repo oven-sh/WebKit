@@ -716,36 +716,6 @@ static void hintRegisterFromValueDown(Allocator& allocator, Operation* value, Re
     }
 }
 
-void Allocator::hintKeptRegistersToValuesThatBlockHandsOn(const Block* block)
-{
-    if (isInRareRegion() || leavesValuesAcrossCallsToFramedPart())
-        return;
-    const Block* blocksInLine[8];
-    ArenaVector<const Block*> blocksOfHintedPhis;
-    blocksOfHintedPhis.adoptStorage(blocksInLine, 8);
-    RegisterMask promised = 0;
-    for (const Operation* upsilon : block->upsilons()) {
-        const Operation* phi = upsilon->phi();
-        if (!phi || !m_valueFacts[phi->index()].has(ValueFlag::LivesAcrossCall) || m_valueFacts[upsilon->index()].has(ValueFlag::IsDropped))
-            continue;
-        const Block* target = phi->owner();
-        if (m_valueFacts[phi->index()].has(ValueFlag::IsDropped) || m_heads[target->index()].isSet() || m_order.of(target).isRare() || !phi->type().isNumeric())
-            continue;
-        Operation* value = upsilon->valueHandedOn();
-        if (value->owner() != block || value->opcode() == Phi || m_hints[value->index()] || m_valueFacts[value->index()].lastUse + 2 != m_endOfBlock)
-            continue;
-        Bank bank = bankOf(phi->type());
-        RegisterMask freeRegisters = calleeSavesWorthTakingFor(phi, bank, target) & calleeSavesThatMayBeTaken() & m_file.allocatableIn(bank) & ~m_bound & ~promised;
-        if (!freeRegisters || !callStandsOnWayFromPhiToRead(*this, phi, target))
-            continue;
-        if (RegisterMask savedAlready = freeRegisters & m_allocation.usedCalleeSaves())
-            freeRegisters = savedAlready;
-        Reg reg = lowestRegisterAtEdge(freeRegisters);
-        promised |= maskOf(reg);
-        hintRegisterFromValueDown(*this, value, reg, false, blocksOfHintedPhis);
-    }
-}
-
 static NEVER_INLINE void passOnHintsOfPhisOfHead(Allocator& allocator, const Block* target, uint32_t placeOfWalk)
 {
     const BlockPlace* const places = allocator.m_order.places();

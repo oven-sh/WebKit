@@ -197,6 +197,7 @@ public:
             letGo->exclude(m_filesThatRanInPreload);
         }
         m_rootsOfImportsBehindFactories.clear();
+        m_failuresOfFactories.clear();
         m_rootsOfImportsThatHaveGoneOn.clear();
         m_rootsOfImportsThatFailedUnderMocks.clearAll();
         m_mocksWhoseEntryProgramDeleted.clearAll();
@@ -385,6 +386,7 @@ public:
     }
     bool wasLetGoByLoader(ModuleID module) const { return m_modulesThatLoaderLetGo.get(module.index()); }
     void letGoOfESModulesThatThrew();
+    void forgetFailuresOfExportsThatBuildFoundAbsent();
     void bringBackWhatLoaderLetGoBelow(ModuleID root);
     void evaluateModulesOwedBelowOriginal(ModuleID);
     bool hasMockEndedThatWalksPassedOver() const
@@ -551,6 +553,7 @@ public:
     JSPromise* evaluationUnderWay(ModuleID, bool hasWaitedForTurn);
     bool isImportedByGraphUnderEvaluation(ModuleID);
     void forgetLoadsRefusedByCheckOfNames(ModuleID mocked);
+    bool wasPulledInByLoadThatFailed(ModuleID) const;
     bool runBodyOfImportedModuleAheadOfMock(ModuleID);
     JSObject* packageItselfBesideMock(ModuleID);
     void runBodyOfRequiredFileAheadOfMock(ModuleID);
@@ -756,6 +759,7 @@ public:
     enum class OriginalIsAskedBy : uint8_t { Statement, CallOfImport };
     bool importsOriginalBesideMock(ModuleID mocked, ModuleID importer, OriginalIsAskedBy = OriginalIsAskedBy::Statement) const;
     bool statementsHoldOriginalBehindEndOfMock(ModuleID mocked, ModuleID importer) const;
+    bool leadsToWhatIsImported(ModuleID imported, ModuleID importer) const;
     bool mayGetNameFromMock(ModuleID exporter, ModuleID importer) const { return !data(exporter).isESModuleOfProgram() || data(exporter).isFaceOfFile() || data(exporter).hasDynamicStarExport() || seesMockOf(exporter, importer); }
     bool isOfPackage(ModuleID) const;
     bool wasLoadedUnderKeyOfOriginal(ModuleID fileOrModule) const;
@@ -986,6 +990,7 @@ public:
     Vector<ModuleID, 2> m_rootsOfImportsBehindFactories;
     Vector<ModuleID, 2> m_rootsOfImportsThatHaveGoneOn;
     void didGoOnBehindFactories(ModuleID root);
+    JSValue errorOfFactoryThatFailedWhileCallWaited(ModuleID root, uint32_t momentCallBeganToWait) const;
     void didSettleImportBehindFactories(ModuleID root);
     void holdMockThatStandsUntilImportSettles(ModuleID root, JSPromise*);
     bool isImportHeld(ModuleID module) const
@@ -1018,6 +1023,21 @@ public:
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
     void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error);
     void noteChangeOfMockUnderCallsOfImport(ModuleID);
+    void noteCallOfImportUnderMock(JSPromise*, ModuleID);
+    void didTakeFirstStepOfCallOfImportSlow(JSPromise*);
+    enum class DeedOnMock : bool { Ends, LaysAnother };
+    void noteDeedOnMockUnderCallsOfImportSlow(ModuleID, DeedOnMock);
+    void takeFirstStepsOfCallsOfImportThrough(unsigned serial);
+    void didTakeFirstStepOfCallOfImport(JSPromise* promise)
+    {
+        if (!m_callsOfImportThatHaveTakenNoStep.isEmpty()) [[unlikely]]
+            didTakeFirstStepOfCallOfImportSlow(promise);
+    }
+    void noteDeedOnMockUnderCallsOfImport(ModuleID module, DeedOnMock deed)
+    {
+        if (!m_callsOfImportThatHaveTakenNoStep.isEmpty()) [[unlikely]]
+            noteDeedOnMockUnderCallsOfImportSlow(module, deed);
+    }
     void forgetNamespacesKeptForCallsOfImport();
     JSObject* takeNamespaceKeptForCallOfImport(JSPromise*);
 
@@ -1936,8 +1956,10 @@ private:
         bool isKeptWhereImporterIsAskedForAgain { false };
     };
     UncheckedKeyHashMap<ModuleID, Vector<EndedMock, 2>> m_endedMocks;
-    bool isSomeModuleLinkedBetween(uint32_t from, uint32_t until) const;
-    bool mayStillBeSeen(const EndedMock&) const;
+    UncheckedKeyHashMap<ModuleID, Vector<unsigned, 2>> m_endedMocksToAskAbout;
+    void didGiveUpMomentLinked(uint32_t moment);
+    void didGiveUpLinksBeforeLoad(const LinksBeforeLoad&);
+    Vector<uint32_t, 16> momentsAtWhichSomeModuleMayLook(uint32_t since) const;
     void letGoOfEndedMocksNobodySees(ModuleID fileOrModule);
     struct MomentMockWasLaid {
         uint32_t moment { 0 };
@@ -2001,12 +2023,29 @@ private:
         Strong<JSPromise> promise;
         ModuleID module;
         Strong<JSObject> namespaceBeforeImportChangedMock;
+        unsigned serial { 0 };
     };
     UncheckedKeyHashMap<JSPromise*, CallOfImportUnderMock> m_callsOfImportUnderMocks;
     unsigned m_numberOfCallsOfImportWithNamespaceKept { 0 };
+    unsigned m_numberOfCallsOfImportMadeUnderMocks { 0 };
+    Deque<std::pair<unsigned, JSPromise*>> m_callsOfImportThatHaveTakenNoStep;
+    struct LastDeedOnMock {
+        unsigned lastCallInFrontOfIt { 0 };
+        bool bringsBackFileThatHadRun { false };
+        Strong<JSObject> mock;
+        Strong<JSObject> viewOfMock;
+    };
+    UncheckedKeyHashMap<ModuleID, LastDeedOnMock> m_lastDeedsOnMocksUnderCallsOfImport;
     BitVector m_modulesThatHadRunWhenMocked;
     BitVector m_modulesWhoseFactoryRuns;
     BitVector m_modulesWhoseFactoryWasCalled;
+    struct FailureOfFactory {
+        ModuleID mocked;
+        Strong<Unknown> error;
+        uint32_t moment { 0 };
+        Vector<ModuleID, 2> rootsThatWaitedForOriginal;
+    };
+    Vector<FailureOfFactory> m_failuresOfFactories;
     Vector<ModuleID, 2> m_importsMadeByOwnFactory;
     BitVector m_modulesWithMockThatAsksAgain;
     BitVector m_modulesThatLayMocksAgain;
