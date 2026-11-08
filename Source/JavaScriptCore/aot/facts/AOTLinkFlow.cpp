@@ -1973,16 +1973,6 @@ void LinkFlow::noteReachesUnseen(const LinkType& type) const
         m_builtinsAtUnseen.append(type.builtin);
     m_lostBuiltinsReachUnseen |= type.holdsLostBuiltins;
     m_marksThatReachUnseen |= type.marks;
-    if (type.classes == LinkType::Classes::Site)
-        m_classesOfInstancesThatArrivedAtUnseen.set(type.builtinClass.index());
-    else if (type.classes == LinkType::Classes::Mixed) {
-        if (namesClassesOf(type)) {
-            forEachClassOf(type, [&](const LinkType& instancesOfOneClass) {
-                m_classesOfInstancesThatArrivedAtUnseen.set(instancesOfOneClass.builtinClass.index());
-            });
-        } else
-            m_instancesOfClassesNobodyNamesArrivedAtUnseen = true;
-    }
     bool namesSomethingNew = false;
     switch (type.objects) {
     case LinkType::Objects::None:
@@ -3026,9 +3016,6 @@ void LinkFlow::takeNote(Note note, uint32_t number, uint32_t more)
         return;
     case Note::InstanceHandedToFormatter:
         builtinsInReach().noteInstanceHandedToFormatter(more ? BuiltinClassID(static_cast<uint16_t>(number)) : BuiltinClassID());
-        return;
-    case Note::UnknownByEscapeAloneHandedToFormatter:
-        m_formatterIsHandedWhatEscapeAloneBrings = true;
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();

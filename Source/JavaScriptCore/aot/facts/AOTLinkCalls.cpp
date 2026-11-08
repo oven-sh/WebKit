@@ -6317,12 +6317,11 @@ void CallInLinkCalls::tellWhatFormatterIsHanded(const LinkType& type, const Ques
         look(m_program.at(layout).writtenBuiltinBase);
     });
     bool isFunctionThatNobodyAsks = questions.onlyFollow && type.functions != LinkType::Functions::None;
-    if (isWalked || isFunctionThatNobodyAsks || type.classes == LinkType::Classes::Mixed || type.builtin || type.holdsUnseenInSight() || type.holdsLostBuiltins)
+    // A value that is unknown only because something escaped may still be one the program stored itself, through a receiver of unknown type. A host function that only forwards an answer prints it with a method of its class.
+    if (isWalked || isFunctionThatNobodyAsks || type.classes == LinkType::Classes::Mixed || type.builtin || (questions.onlyFollow ? type.holdsUnseenInSight() : type.holdsUnseen) || type.holdsLostBuiltins)
         m_flow.note(LinkFlow::Note::ObjectHandedToFormatter, LinkFlow::walkedByFormatter);
-    else if (isPrintedByCodeOfItsClass)
+    else if (isPrintedByCodeOfItsClass || type.holdsUnseen)
         m_flow.note(LinkFlow::Note::ObjectHandedToFormatter, LinkFlow::printedByCodeOfItsClass);
-    if (!questions.onlyFollow && type.holdsUnseen && !type.holdsUnseenInSight())
-        m_flow.note(LinkFlow::Note::UnknownByEscapeAloneHandedToFormatter, 0);
 }
 
 bool CallInLinkCalls::mayBePrintedWholeWhereItIsRefused(const LinkType& type, bool isLiteralMadeForCall)
