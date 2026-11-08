@@ -215,7 +215,7 @@ public:
     const_iterator end() const { return m_set.end(); }
 
     static constexpr ptrdiff_t offsetOfTable() { return OBJECT_OFFSETOF(SparseArrayValueMap, m_set) + Set::offsetOfTable(); }
-    static constexpr ptrdiff_t offsetOfTableSizeMask() { return Set::offsetOfTableSizeMask(); }
+    static constexpr ptrdiff_t offsetOfTableSize() { return Set::offsetOfTableSize(); }
 
 private:
     Set m_set;
