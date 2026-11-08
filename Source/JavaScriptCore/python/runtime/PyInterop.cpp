@@ -1239,8 +1239,9 @@ static JSArray* ownPropertyNames(JSGlobalObject* globalObject, JSObject* object,
 // ---- Iterators of JS, as iterators of Python ----
 
 // The fields of the records that those are. The iterator is empty once it is exhausted.
-// JSIteratorOfLoop: see getAIterOfLoop(). Empty, or true, or the last step that the loop has asked for, a promise.
-enum JSIteratorField : unsigned { JSIteratorObject, JSIteratorNextMethod, JSIteratorThen, JSIteratorOfLoop, JSIteratorFieldCount };
+// JSIteratorOfLoop: see getAIterOfLoop(). True, or the last step that the loop has asked for, a promise: the iterator is to be told when the loop is left. Empty: there is nobody to tell: it is the
+// iterator of no loop, or next() is being called, or the iterator has said its last (it has failed, or come to its end), or the loop has been left. JSIteratorCatch: for that of a loop.
+enum JSIteratorField : unsigned { JSIteratorObject, JSIteratorNextMethod, JSIteratorThen, JSIteratorCatch, JSIteratorOfLoop, JSIteratorFieldCount };
 
 static JSValue jsIteratorSelf(JSGlobalObject*, JSValue self) { return self; }
 
@@ -1274,26 +1275,73 @@ static constexpr NativeDef jsIteratorMethods[] = {
 };
 static constexpr TypeDef jsIteratorTypeDef { "_js.iterator"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation }, jsIteratorMethods, { }, { } };
 
-// What the promise that next() returns is fulfilled with, made what `await iterator.__anext__()` is to give. The second argument is the promise that __anext__() has returned.
+// What comes with the outcome of next() is the promise that __anext__() has returned; for the iterator of a loop, which asks for one step at a time, the iterator, which has it. (A program that
+// has got at that iterator through gc, and asks it for steps beside the loop's, has the two taken for one another.)
+struct JSAsyncIteratorStep {
+    explicit JSAsyncIteratorStep(JSValue context)
+        : promise(dynamicDowncast<JSPromise>(context))
+        , ofLoop(promise ? nullptr : uncheckedDowncast<PyRecord>(context.asCell()))
+    {
+        // (The loop may have been left meanwhile.)
+        if (JSValue last = ofLoop ? ofLoop->get(JSIteratorOfLoop) : JSValue())
+            promise = dynamicDowncast<JSPromise>(last);
+    }
+
+    // It has failed, or come to its end. It is here that this is known. That the promise of the step is rejected says less: an iterator that is alive may give a value that is a promise, which
+    // that one goes by.
+    void iteratorHasSaidItsLast(VM& vm)
+    {
+        if (ofLoop)
+            ofLoop->set(vm, JSIteratorOfLoop, { });
+    }
+
+    JSPromise* promise;
+    PyRecord* ofLoop;
+};
+
+// What the promise that next() returns is fulfilled with, made what `await iterator.__anext__()` is to give.
 static JSC_DECLARE_HOST_FUNCTION(jsAsyncIteratorResult);
 JSC_DEFINE_HOST_FUNCTION(jsAsyncIteratorResult, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue result = callFrame->argument(0);
-    if (!result.isObject())
+    JSAsyncIteratorStep step(callFrame->argument(1));
+    if (!result.isObject()) {
+        step.iteratorHasSaidItsLast(vm);
         return throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+    }
     bool isDone = iteratorComplete(globalObject, result);
-    RETURN_IF_EXCEPTION(scope, { });
+    if (scope.exception()) [[unlikely]] {
+        step.iteratorHasSaidItsLast(vm);
+        return { };
+    }
     if (isDone) {
         // To JS the end is a result, to Python an exception, so the promise is rejected. That is no failure that somebody has to have handled by now: whoever has asked for two steps
         // and awaits the first has not come to the second yet.
-        if (auto* step = dynamicDowncast<JSPromise>(callFrame->argument(1)))
-            step->markAsHandled();
+        if (step.promise)
+            step.promise->markAsHandled();
+        step.iteratorHasSaidItsLast(vm);
         raise(globalObject, scope, runtime(globalObject).StopAsyncIteration(), String());
         return { };
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(iteratorValue(globalObject, result)));
+    JSValue value = iteratorValue(globalObject, result);
+    if (scope.exception()) [[unlikely]] {
+        step.iteratorHasSaidItsLast(vm);
+        return { };
+    }
+    return JSValue::encode(value);
+}
+
+// What it is rejected with.
+static JSC_DECLARE_HOST_FUNCTION(jsAsyncIteratorRejection);
+JSC_DEFINE_HOST_FUNCTION(jsAsyncIteratorRejection, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSAsyncIteratorStep(callFrame->argument(1)).iteratorHasSaidItsLast(vm);
+    throwException(globalObject, scope, callFrame->argument(0));
+    return { };
 }
 
 JSPromise* thenOfPromise(JSGlobalObject* globalObject, JSPromise* promise, JSValue onFulfilled, JSValue onRejected)
@@ -1336,9 +1384,12 @@ static JSValue jsAsyncIteratorNext(JSGlobalObject* globalObject, JSValue self)
     JSPromise* promise = JSPromise::resolvedPromise(globalObject, result);
     RETURN_IF_EXCEPTION(scope, { });
     JSPromise* step = JSPromise::create(vm, globalObject->promiseStructure());
-    promise->performPromiseThenWithContext(vm, globalObject, record->get(JSIteratorThen), jsUndefined(), step, step);
-    if (isOfLoop)
-        record->set(vm, JSIteratorOfLoop, step);
+    if (!isOfLoop) {
+        promise->performPromiseThenWithContext(vm, globalObject, record->get(JSIteratorThen), jsUndefined(), step, step);
+        return step;
+    }
+    record->set(vm, JSIteratorOfLoop, step);
+    promise->performPromiseThenWithContext(vm, globalObject, record->get(JSIteratorThen), record->get(JSIteratorCatch), step, record);
     return step;
 }
 
@@ -1443,8 +1494,11 @@ JSValue getAIterOfLoop(JSGlobalObject* globalObject, JSValue iterable)
     if (!record) [[likely]]
         return iterator;
     // (An __aiter__() of the program's may hand out one that the program has made.)
-    if (auto* native = PyNativeFunction::tryFrom(typeOf(globalObject, iterable)->lookup(Special::AIter)); native && native->def().pointer.f1 == jsObjectAsyncIter)
-        record->set(getVM(globalObject), JSIteratorOfLoop, jsBoolean(true));
+    if (auto* native = PyNativeFunction::tryFrom(typeOf(globalObject, iterable)->lookup(Special::AIter)); native && native->def().pointer.f1 == jsObjectAsyncIter) {
+        VM& vm = getVM(globalObject);
+        record->set(vm, JSIteratorCatch, JSFunction::create(vm, globalObject, 1, String(), jsAsyncIteratorRejection, ImplementationVisibility::Private));
+        record->set(vm, JSIteratorOfLoop, jsBoolean(true));
+    }
     return iterator;
 }
 
@@ -1469,14 +1523,12 @@ JSValue leaveAsyncFor(JSGlobalObject* globalObject, JSValue iterator, JSValue ex
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* record = PyRecord::tryFrom(iterator, rt.typeFor(jsAsyncIteratorTypeDef));
-    JSValue ofLoop = record ? record->get(JSIteratorOfLoop) : JSValue();
-    if (!ofLoop) [[likely]]
+    // Not that of a loop. Or the iterator has said its last: it has failed (next() has thrown, its promise was rejected, or what it gave is no result), which is why the loop is left; or it has come
+    // to its end, and the loop was cut short before it heard of that. `for await` does not call return() of such a one. One whose step was cut short from outside, by a cancellation, or that gave a
+    // promise for a value, which was rejected, is alive.
+    if (!record || !record->get(JSIteratorOfLoop)) [[likely]]
         return jsUndefined();
     record->set(vm, JSIteratorOfLoop, { });
-    // The loop is left because the step failed: next() has thrown (and there is no step), its promise was rejected, or what it gave is no result. Such an iterator has said its last, and
-    // `for await` does not call its return(). A step that was cut short from outside, by a cancellation, is pending.
-    if (auto* step = dynamicDowncast<JSPromise>(ofLoop); step && step->status() == JSPromise::Status::Rejected)
-        return jsUndefined();
     JSValue result = callReturnOfJSAsyncIterator(globalObject, iterator);
     JSPromise* promise = nullptr;
     if (!scope.exception() && result)
