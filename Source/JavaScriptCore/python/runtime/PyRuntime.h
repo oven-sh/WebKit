@@ -1020,6 +1020,34 @@ public:
     // The objects whose repr() is being computed, to catch one that contains itself.
     Vector<JSCell*> reprStack;
 
+    // The objects of JS's that str() has handed to JS to make strings of, and waits for. On the main thread, as all that JS does. (Not among the above: repr(o.__dict__) notes o.)
+    class ObjectHandedToJSForStr {
+        WTF_MAKE_NONCOPYABLE(ObjectHandedToJSForStr);
+        WTF_FORBID_HEAP_ALLOCATION;
+    public:
+        ObjectHandedToJSForStr(Runtime& rt, JSObject* object)
+            : m_runtime(rt)
+            , m_object(object)
+            , m_outer(std::exchange(rt.m_innermostHandedToJSForStr, this))
+        {
+        }
+        ~ObjectHandedToJSForStr() { m_runtime.m_innermostHandedToJSForStr = m_outer; }
+
+    private:
+        friend class Runtime;
+        Runtime& m_runtime;
+        JSObject* m_object;
+        ObjectHandedToJSForStr* m_outer;
+    };
+    bool isHandedToJSForStr(JSObject* object) const
+    {
+        for (auto* handed = m_innermostHandedToJSForStr; handed; handed = handed->m_outer) {
+            if (handed->m_object == object)
+                return true;
+        }
+        return false;
+    }
+
     // See StrView.
     std::unique_ptr<StrIndexCache, void (*)(StrIndexCache*)> strIndexCache { nullptr, nullptr };
 
@@ -1120,6 +1148,7 @@ private:
 
     VM& m_vm;
     JSGlobalObject* m_globalObject;
+    ObjectHandedToJSForStr* m_innermostHandedToJSForStr { nullptr };
 
     std::array<WriteBarrier<Structure>, static_cast<unsigned>(CellClass::Count)> m_structures;
     WriteBarrier<Structure> m_keywordNamesStructure;

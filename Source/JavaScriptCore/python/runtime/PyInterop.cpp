@@ -2260,8 +2260,7 @@ static JSValue jsObjectStrImpl(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (failed(scope, ensureMainThreadForJS(globalObject)))
         return { };
-    // An object without a prototype, or the namespace of a module, has nothing by which JS could make a string of it. Nor has one that inherits
-    // it from where the objects of Python's do, with nothing of Python's in it (Object.create(Class.prototype); f.bind(), which has the prototype of f): that is str(this).
+    // An object without a prototype, or the namespace of a module, has nothing by which JS could make a string of it.
     bool canConvert = false;
     bool hasToPrimitive = false;
     for (auto& key : { vm.propertyNames->toPrimitiveSymbol, vm.propertyNames->toString, vm.propertyNames->valueOf }) {
@@ -2270,13 +2269,14 @@ static JSValue jsObjectStrImpl(JSGlobalObject* globalObject, JSValue self)
         RETURN_IF_EXCEPTION(scope, { });
         if (!found)
             continue;
-        bool isOfPython = slot.slotBase() == runtime(globalObject).jsViewObject(JSViewObject::ObjectPrototype) || slot.slotBase() == runtime(globalObject).jsViewObject(JSViewObject::FunctionPrototype);
-        canConvert = !isOfPython || objectOfPythonWithin(self) != self;
+        canConvert = true;
         hasToPrimitive = key == vm.propertyNames->toPrimitiveSymbol;
         break;
     }
     if (!canConvert)
         RELEASE_AND_RETURN(scope, repr(globalObject, self));
+    // What JS calls may be the toString() of the objects of Python's, which the object has come by with nothing of Python's in it, and that is str(this): see jsViewStr().
+    Runtime::ObjectHandedToJSForStr handed(runtime(globalObject), asObject(self));
     if (isOfDerivedClass && !hasToPrimitive)
         RELEASE_AND_RETURN(scope, strOfInstanceOfDerivedClassByToString(globalObject, asObject(self)));
     RELEASE_AND_RETURN(scope, self.toString(globalObject));

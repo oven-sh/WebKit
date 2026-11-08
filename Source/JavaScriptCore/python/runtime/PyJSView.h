@@ -123,10 +123,6 @@ void initializeJSView(JSGlobalObject*);
 // What JS is shown as the prototype of exceptions of Python's: an object that inherits from Error.prototype, or from that of a class that extends Error.
 JSObject* makePrototypeOfExceptionsForJS(JSGlobalObject*, JSObject* parent);
 
-// What toString() and the like, which all objects of Python's inherit, are about: `self`, or the object of Python's that it is a Proxy of or
-// inherits from. `self` itself, if there is none.
-JSValue objectOfPythonWithin(JSValue self);
-
 // ---- Calls from JS ----
 
 // Keyword arguments are an object to JS. f(1, a=2) in Python calls a function of JS with (1, { a: 2 }), and f(1, kwargs({ a: 2 })) in JS

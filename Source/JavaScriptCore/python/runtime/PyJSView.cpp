@@ -583,7 +583,7 @@ void JSView::getOwnPropertyNames(JSObject* object, PropertyNameArrayBuilder& bui
 
 // `this`. What JS has put around an object of Python's (a Proxy) or made of one (Object.create()) inherits these functions too, and they
 // are about that object then: to Python the thing around it is an object of JS, whose str() is its toString().
-JSValue objectOfPythonWithin(JSValue self)
+static JSObject* objectOfPythonWithinIfAny(JSValue self)
 {
     for (JSValue value = self; value.isObject();) {
         JSObject* object = asObject(value);
@@ -594,17 +594,31 @@ JSValue objectOfPythonWithin(JSValue self)
         else
             value = object->getPrototypeDirect();
     }
-    return self;
+    return nullptr;
 }
 
 static JSValue jsViewThis(CallFrame* callFrame)
 {
-    return objectOfPythonWithin(callFrame->thisValue());
+    JSObject* object = objectOfPythonWithinIfAny(callFrame->thisValue());
+    return object ? object : callFrame->thisValue();
+}
+
+// str(this), for toString() and [Symbol.toPrimitive](), whatever `this` is. An object of JS's with nothing of Python's in it may have come by them: f.bind() has the prototype of f,
+// there is Object.create(Class.prototype), and a function can be borrowed. The str() of such an object is what JS makes of it, which is this again, without end. So if str() is
+// waiting for JS to make a string of this very object, it is repr(this).
+static JSValue jsViewStr(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    JSValue self = callFrame->thisValue();
+    if (JSObject* object = objectOfPythonWithinIfAny(self))
+        return str(globalObject, object);
+    if (self.isObject() && runtime(globalObject).isHandedToJSForStr(asObject(self))) [[unlikely]]
+        return repr(globalObject, self);
+    return str(globalObject, self);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViewToString, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(str(globalObject, jsViewThis(callFrame)));
+    return JSValue::encode(jsViewStr(globalObject, callFrame));
 }
 
 // [Symbol.for("nodejs.util.inspect.custom")](): what console.log() and util.inspect() show in Node and Bun. repr(object); for
@@ -658,7 +672,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewToPrimitive, (JSGlobalObject* globalObject, CallF
             RELEASE_AND_RETURN(scope, JSValue::encode(toIndex(globalObject, self)));
         return JSValue::encode(jsNaN());
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(str(globalObject, self)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsViewStr(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViewToJSON, (JSGlobalObject* globalObject, CallFrame* callFrame))
