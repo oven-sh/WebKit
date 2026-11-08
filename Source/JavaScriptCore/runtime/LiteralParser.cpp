@@ -2058,6 +2058,9 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
     // objects in an array are parsed in the array's frame rather than by a recursive call each.
     auto parseObject = [&] ALWAYS_INLINE_LAMBDA -> JSValue {
         ASSERT(m_lexer.currentToken()->type == TokLBrace);
+        // The objects of an array are made in the array's frame, so the check above is not made for each of them.
+        if (throwOutOfMemoryErrorIfOwed(vm, m_globalObject, scope)) [[unlikely]]
+            return { };
         JSObject* object = constructEmptyObject(m_globalObject);
 
         struct ExistingProperty {
