@@ -218,6 +218,16 @@ static JSValue raiseInvalidState(JSGlobalObject* globalObject, ThrowScope& scope
     return raise(globalObject, scope, typeIn(state, StateInvalidStateError), message);
 }
 
+// An item of FutureCallbacks. That list is an object like any other, which gc.get_referents() hands out. Null: an exception: it is none that add_done_callback() has put there.
+static PyTuple* callbackAndContext(JSGlobalObject* globalObject, JSValue item)
+{
+    if (auto* pair = PyTuple::tryFrom(item); pair && pair->length() == 2) [[likely]]
+        return pair;
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    raiseSystemError(globalObject, scope, "the list of the callbacks of a Future holds something that add_done_callback() has not put there"_s);
+    return nullptr;
+}
+
 // ---- What belongs to a thread ----
 
 static NEVER_INLINE void switchToThread(JSGlobalObject* globalObject, PyRecord* state, uint64_t serial)
@@ -523,7 +533,8 @@ static bool scheduleCallbacks(JSGlobalObject* globalObject, PyRecord* state, PyR
     future->set(vm, FutureCallbacks, { });
     JSArray* list = asList(callbacks);
     for (unsigned i = 0; i < listLength(list); ++i) {
-        auto* pair = PyTuple::from(listGet(list, i));
+        PyTuple* pair = callbackAndContext(globalObject, listGet(list, i));
+        RETURN_IF_EXCEPTION(scope, false);
         if (failed(scope, callSoon(globalObject, state, future->get(FutureLoop), pair->at(0), future, pair->at(1))))
             return false;
     }
@@ -879,8 +890,9 @@ static JSValue futureRemoveDoneCallback(JSGlobalObject* globalObject, JSValue se
     JSArray* kept = newList(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     for (unsigned i = 0; future->get(FutureCallbacks) && i < listLength(asList(future->get(FutureCallbacks))); ++i) {
-        JSValue pair = listGet(asList(future->get(FutureCallbacks)), i);
-        bool isSame = isEqual(globalObject, PyTuple::from(pair)->at(0), callback);
+        PyTuple* pair = callbackAndContext(globalObject, listGet(asList(future->get(FutureCallbacks)), i));
+        RETURN_IF_EXCEPTION(scope, { });
+        bool isSame = isEqual(globalObject, pair->at(0), callback);
         RETURN_IF_EXCEPTION(scope, { });
         if (isSame)
             continue;
