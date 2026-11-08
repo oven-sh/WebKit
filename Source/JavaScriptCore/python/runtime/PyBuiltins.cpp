@@ -68,6 +68,11 @@ static JSValue builtinId(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // The id() of a str is where its characters are, and one that has been put together and not read yet has them nowhere.
+    if (value.isString() && asString(value)->isRope()) {
+        asString(value)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     JSValue identity = identityOf(globalObject, value);
     if (identity && failed(scope, audit(globalObject, "builtins.id"_s, identity)))
         return { };
