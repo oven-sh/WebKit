@@ -495,21 +495,6 @@ bool isSimpleInstanceType(State& state, PyType* type)
 
 // ---- What keeps what alive ----
 
-static PyCData* containerOf(JSGlobalObject* globalObject, PyCData* data)
-{
-    VM& vm = getVM(globalObject);
-    while (data->base)
-        data = data->base.get();
-    if (!data->objects)
-        data->objects.set(vm, data, data->length ? JSValue(PyDict::create(globalObject)) : none());
-    return data;
-}
-
-JSValue keptObjects(JSGlobalObject* globalObject, PyCData* data)
-{
-    return containerOf(globalObject, data)->objects.get();
-}
-
 // The way from the container to the part, from the inside out, in hexadecimal. Null: it is too long.
 static String keyOfPart(PyCData* target, int64_t index)
 {
@@ -523,14 +508,53 @@ static String keyOfPart(PyCData* target, int64_t index)
     return key.toString();
 }
 
-bool keepAlive(JSGlobalObject* globalObject, PyCData* target, int64_t index, JSValue keep)
+// Nothing is kept yet, or what is kept is kept for the whole and there is a part to keep something for.
+static NEVER_INLINE void makeRoomForWhatIsKept(JSGlobalObject* globalObject, PyCData* data, Kept kept)
+{
+    VM& vm = getVM(globalObject);
+    JSValue objects = data->objects.get();
+    if (!objects) {
+        data->objects.set(vm, data, data->length || kept == Kept::ForPart ? JSValue(PyDict::create(globalObject)) : none());
+        return;
+    }
+    // It was made without parts.
+    auto* dict = PyDict::create(globalObject);
+    if (!isNone(objects))
+        dict->set(vm, makeStr(vm, keyOfPart(data, -1)), objects);
+    data->objects.set(vm, data, dict);
+}
+
+static ALWAYS_INLINE PyCData* containerOf(JSGlobalObject* globalObject, PyCData* data, Kept kept = Kept::ForWhole)
+{
+    // The whole of an instance that lies in another is a part of that one.
+    if (data->base) {
+        kept = Kept::ForPart;
+        do
+            data = data->base.get();
+        while (data->base);
+    }
+    auto isDict = [&](JSValue objects) {
+        auto* dict = PyDict::tryFrom(objects);
+        return dict && dict->type() == runtime(globalObject).dictType();
+    };
+    if (JSValue objects = data->objects.get(); !objects || (kept == Kept::ForPart && !isDict(objects))) [[unlikely]]
+        makeRoomForWhatIsKept(globalObject, data, kept);
+    return data;
+}
+
+JSValue keptObjects(JSGlobalObject* globalObject, PyCData* data)
+{
+    return containerOf(globalObject, data)->objects.get();
+}
+
+bool keepAlive(JSGlobalObject* globalObject, PyCData* target, int64_t index, JSValue keep, Kept kept)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (isNone(keep))
         return true;
-    PyCData* container = containerOf(globalObject, target);
+    PyCData* container = containerOf(globalObject, target, kept);
     auto* dict = PyDict::tryFrom(container->objects.get());
     if (!dict || dict->type() != rt.dictType()) {
         container->objects.set(vm, container, keep);
@@ -898,7 +922,7 @@ static void simpleSetValue(JSGlobalObject* globalObject, JSValue self, JSValue v
     auto memory = Place { data }.resolve(globalObject, info->size);
     RETURN_IF_EXCEPTION(scope, void());
     store(memory, info->accessor, packed);
-    RELEASE_AND_RETURN(scope, void(keepAlive(globalObject, data, 0, packed.keep)));
+    RELEASE_AND_RETURN(scope, void(keepAlive(globalObject, data, 0, packed.keep, Kept::ForWhole)));
 }
 
 static JSValue simpleInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)

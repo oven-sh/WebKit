@@ -180,7 +180,7 @@ static JSValue typeFromBuffer(JSGlobalObject* globalObject, JSValue self, JSValu
     if (scope.exception())
         return fail({ });
     view->isInternal = false;
-    keepAlive(globalObject, data, -1, view);
+    keepAlive(globalObject, data, -1, view, Kept::ForWhole);
     RETURN_IF_EXCEPTION(scope, { });
     // What is made of the instance from now on, pointers and the arguments of foreign functions, are addresses of the memory.
     view->pinMemoryOfJS(globalObject);

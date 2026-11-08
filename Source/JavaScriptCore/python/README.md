@@ -1604,6 +1604,8 @@ What that rests on, each kept at one place:
 - **What an instance had before `resize()` lives as long as the instance** (`PyCData::keepFormerStorage()`): a pointer keeps the instance alive, not its memory, and a call that is being put together has addresses of its
   arguments while the later ones are converted. A pointer from before goes on reading and writing what was there then, within its bounds. So that growing step by step does not add up to the square of what is needed, `resize()` gives half as much
   again at least: what is kept is at most twice what the instance has.
+- **What is kept for a part lies in a dict**, whatever class the cell was made with: the caller of `keepAlive()` says whether it keeps something for a part (`Kept::ForPart`: a field, an item, the contents of a pointer) or for
+  the whole (the value of a simple instance, the view of `from_buffer()`). Only the second may take the place of what was kept before, and only in an instance that lies in no other: the whole of one that does is a part.
 
 **`py_object`.** The eight bytes are a `PyObject*` as the C API has it (see there): what `id()` returns, for every object but a str, and 0 is NULL. The object is kept alive by `_objects`. Bits read from memory are handed out as an object if they are those of
 what `_objects` holds for that place; otherwise only after the heap has confirmed that they are those of a live cell of a kind that programs

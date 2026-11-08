@@ -500,7 +500,10 @@ JSValue getData(JSGlobalObject*, PyType*, Accessor, const Place&, int64_t index,
 bool setData(JSGlobalObject*, PyType*, Accessor, const Place&, JSValue value, int64_t index, int64_t size, Bits = { });
 
 // Remembers, in the _objects of the outermost instance, what part `index` of `target` points into. False: an exception.
-bool keepAlive(JSGlobalObject*, PyCData* target, int64_t index, JSValue keep);
+// What has parts keeps something for each, in a dict; what has none keeps one thing, and lets go of it for the next. Which of the two it is, the caller says: the length of the
+// cell is that of the class that it was made with, and it may have been given another.
+enum class Kept : bool { ForPart, ForWhole };
+bool keepAlive(JSGlobalObject*, PyCData* target, int64_t index, JSValue keep, Kept = Kept::ForPart);
 // The _objects of an instance, made if need be. Empty: an exception.
 JSValue keptObjects(JSGlobalObject*, PyCData*);
 // What keepAlive() remembered last for that part. Empty: nothing.
