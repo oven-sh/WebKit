@@ -1668,12 +1668,10 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
     if (type->base()->has(TypeFlag::HasWeakref))
         type->add(TypeFlag::HasWeakref);
     type->setIsBeingMade(false);
-    MarkedArgumentBuffer mrosOfBases;
-    for (unsigned i = 0; i < bases->length(); ++i)
-        mrosOfBases.append(PyType::from(bases->at(i))->mro());
-    mrosOfBases.append(type->mro());
+    // From here on things are looked up, and the class is in no list yet: nothing tells it of a change. (Code runs meanwhile only where a key that is no str is asked.)
+    uint64_t timesClassesForgot = PyType::timesClassesForgot();
     type->takeMakerOfBase(vm);
-    type->updateMaker();
+    bool hasLearntWhoMakes = type->updateMaker();
 
     // Nor can what has inherited no way to hash: the mro() of a metaclass has left out object, and every class that has object in its own.
     if (PyTuple* mro = type->mro(); (!mro->length() || mro->at(mro->length() - 1) != JSValue(rt.objectType())) && !type->lookup(Special::Hash) && !dict->get(rt.name(Special::Hash))) [[unlikely]] {
@@ -1697,24 +1695,30 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
             }
         }
     }
-    // Keys have been asked since the MRO was worked out, and one may have assigned to the __bases__ of this class, which has entered it under those. (An MRO that is worked out again is another tuple. An assignment
-    // that fails and cannot give the old bases back leaves the old MRO, and other bases.)
-    // So may its own mro() have done.
-    if (!hasBeenGivenBases && type->mro() == mrosOfBases.at(bases->length()).asCell() && type->bases() == bases) [[likely]]
-        enterUnderBases(globalObject, type, bases, MayBeThere::No);
-    else
-        enterUnderBases(globalObject, type, type->bases(), MayBeThere::Yes);
-    RETURN_IF_EXCEPTION(scope, { });
-    // Or to the __bases__ of a base. That one's walk did not come here, so the MRO is what it was, as in CPython,
-    // and may name a class to which no base leads any more.
-    for (unsigned i = 0; i < bases->length(); ++i) {
-        if (PyType::from(bases->at(i))->mro() != mrosOfBases.at(i).asCell()) [[unlikely]] {
-            beToldByAllInMRO(globalObject, type);
-            RETURN_IF_EXCEPTION(scope, { });
-            type->didChange(vm);
-            break;
-        }
+    bool hasMissedChange = hasBeenGivenBases;
+    if (timesClassesForgot != PyType::timesClassesForgot()) [[unlikely]] {
+        // (The mro() of a metaclass may have left the class out of its own MRO.)
+        hasMissedChange |= type->hasForgottenSince(timesClassesForgot);
+        PyTuple* mro = type->mro();
+        for (unsigned i = 0; !hasMissedChange && i < mro->length(); ++i)
+            hasMissedChange = PyType::from(mro->at(i))->hasForgottenSince(timesClassesForgot);
     }
+    if (!hasMissedChange) [[likely]]
+        enterUnderBases(globalObject, type, bases, MayBeThere::No);
+    else {
+        // A key may have assigned to the __bases__ of this class, as its own mro() may have done, which has entered it under those.
+        enterUnderBases(globalObject, type, type->bases(), MayBeThere::Yes);
+        RETURN_IF_EXCEPTION(scope, { });
+        // Or to the __bases__ of a base. That one's walk did not come here, so the MRO is what it was, as in CPython, and may name a class to which no base leads any more.
+        beToldByAllInMRO(globalObject, type);
+        RETURN_IF_EXCEPTION(scope, { });
+        // Or to an attribute of a class in the MRO. From now on the class is told.
+        type->didChange(vm);
+        // (If a key raised when it was asked about __new__, there is none, and no instance from then on, as in CPython.)
+        if (hasLearntWhoMakes)
+            type->updateMakerAgain(vm);
+    }
+    RETURN_IF_EXCEPTION(scope, { });
 
     if (!dict->hasOnlyStringKeys()) [[unlikely]] {
         bool allAreStrs = true;

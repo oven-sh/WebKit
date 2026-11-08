@@ -232,6 +232,10 @@ public:
     // Whoever looks things up, in whatever classes, and then counts on it that nothing has changed meanwhile sees by this number
     // whether that has happened, here or in another thread.
     static uint64_t timesLookupRanCode() { return s_timesLookupRanCode.load(std::memory_order_relaxed); }
+    // It moves whenever a class forgets what is remembered of it (didChange()), and when one is made. A class that is in no list yet, which nothing tells of a change, sees by it whether there has been any,
+    // and then which class it was: the key under which things are looked up in a class is the number that the class drew when it last forgot, times lookupKeyFactor.
+    static uint64_t timesClassesForgot() { return s_lastLookupKey.load(std::memory_order_relaxed); }
+    bool hasForgottenSince(uint64_t timesClassesForgot) const { return m_lookupKey * inverseOfLookupKeyFactor > timesClassesForgot; }
     // AsksKeys::No is for whoever JSC takes to have no effects (getCallData()), and for where a buffer is asked for (PyMemoryView.cpp): no code of the program runs. A key that is no str and would say
     // that it equals the name is passed over, whether or not it has been asked before: the answer does not depend on what was looked up earlier.
     enum class AsksKeys : bool { No, Yes };
@@ -289,6 +293,8 @@ public:
     // Of this type alone. False: a key of a dict has raised when it was asked whether it is "__new__". Then there is no __new__, and no making any from then on, as
     // in CPython.
     bool updateMaker();
+    // For a class that has been made out once, and may have missed a change since. What a key raises this time does not count: the class stays as it was made out.
+    void updateMakerAgain(VM&);
     // Py_TPFLAGS_DISALLOW_INSTANTIATION of a type that an extension makes: there is no making any, nor of what derives from it and has no __new__ of its own.
     void disallowInstantiation()
     {
@@ -384,6 +390,11 @@ private:
     JSValue lookupSlow(JSString* name, AsksKeys = AsksKeys::Yes, bool* hasRaised = nullptr);
     JSValue getAskingKeys(PyDict*, JSString* name, bool& hasRaised, JSValue* raised = nullptr);
     static std::atomic<uint64_t> s_timesLookupRanCode;
+    static std::atomic<uint64_t> s_lastLookupKey;
+    // Times an odd number the keys are as many as the numbers, and none is 0; and the upper half is spread out, for TypeLookupCache::entryFor().
+    static constexpr uint64_t lookupKeyFactor = 0x9E3779B97F4A7C15ull;
+    static constexpr uint64_t inverseOfLookupKeyFactor = 0xF1DE83E19937733Dull;
+    static_assert(lookupKeyFactor * inverseOfLookupKeyFactor == 1);
     JSValue lookupSpecialSlow(Special, AsksKeys);
     Structure* createInstanceStructure(VM&);
     uint32_t takeVersion();

@@ -238,6 +238,20 @@ bool PyType::updateMaker()
     return true;
 }
 
+void PyType::updateMakerAgain(VM& vm)
+{
+    PyNativeFunction* maker = m_maker.get();
+    bool looksUpNew = m_looksUpNew;
+    bool disallowsInstantiation = has(TypeFlag::DisallowInstantiation);
+    takeMakerOfBase(vm);
+    if (updateMaker()) [[likely]]
+        return;
+    m_maker.setMayBeNull(vm, this, maker);
+    m_looksUpNew = looksUpNew;
+    if (disallowsInstantiation)
+        m_flags.add(TypeFlag::DisallowInstantiation);
+}
+
 JSValue PyType::updateMakers()
 {
     // What is left to do is in a list, not on the stack: classes derive from one another to any depth. The last is next: all that derives from a class comes
@@ -355,6 +369,7 @@ bool PyType::isSubtypeOf(const PyType* other) const
 }
 
 std::atomic<uint64_t> PyType::s_timesLookupRanCode;
+std::atomic<uint64_t> PyType::s_lastLookupKey;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TypeLookupCache);
 
@@ -381,9 +396,7 @@ void TypeLookupCache::removeUnmarked(Heap& heap)
 
 void PyType::takeNewLookupKey()
 {
-    // Times an odd number they are as many as before, and none is 0; and the upper half is spread out, for TypeLookupCache::entryFor().
-    static std::atomic<uint64_t> lastKey;
-    m_lookupKey = (lastKey.fetch_add(1, std::memory_order_relaxed) + 1) * 0x9E3779B97F4A7C15ull;
+    m_lookupKey = (s_lastLookupKey.fetch_add(1, std::memory_order_relaxed) + 1) * lookupKeyFactor;
 }
 
 // type("X", (), { key: 1 }): the key is asked whether it equals the name. What it raises is lost, unless the caller wants it (`raised`).
