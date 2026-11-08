@@ -831,6 +831,19 @@ static bool storeIntoVectorAskedInFrontOfTypedCopy(Walker& walker, const BodyVal
     return true;
 }
 
+static Reference storageOfListThatTurnsLeaveAsItIsInListReadsInLoops(Walker& walker, const ListTestedInFrontOfLoop& tested, Origin origin)
+{
+    constexpr Walker::TurnOfTypedCopy turn = Walker::TurnOfTypedCopy::HasRunNoOtherCode;
+    if (!walker.standsInFrontOfTypedCopy(tested.name, turn) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre(tested.name, turn))
+        return { };
+    Draft storage(Opcode::GetArrayStorage, origin);
+    walker.chooseConservativeFields(storage);
+    storage.setArrayOperand(tested.name);
+    walker.count(StatisticID::StoragesTakenFromInFrontOfTurnsThatFillWhatIsMadeHere);
+    Walker::InFrontOfTypedCopy inFront(walker, true, turn);
+    return walker.build(WTF::move(storage));
+}
+
 bool askPlainVectorBehindRowOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
     if (!walker.has(Mechanism::TypedOperations))
@@ -844,6 +857,8 @@ bool askPlainVectorBehindRowOfItsOpcodes(Walker& walker, const BodyValue& value)
         return false;
     Draft draft = walker.draftOf(value);
     Reference storage = storageOfListFromInFrontOfLoop(walker, *tested, draft.origin());
+    if (!storage)
+        storage = storageOfListThatTurnsLeaveAsItIsInListReadsInLoops(walker, *tested, draft.origin());
     if (!storage)
         return false;
     draft.setStorageOperand(storage);
@@ -1132,6 +1147,49 @@ bool readsListFoundByReadFromInFront(const Program& program, const BodyIndex& in
     return takesOnlyWhatReadsFromInFrontFindInListReadsInLoops(index, index.value(source), firstValueOfLoop, known);
 }
 
+bool textOfLoopOnlyFillsListAndReadsAnother(Walker& walker, BlockID inputHead, ValueID made)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    const Code& code = walker.code();
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    bool readsAnother = false;
+    for (BlockID member : index.membersOf(index.loopOf(inputHead))) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (operation.opcode() != Opcode::ElemGet)
+                continue;
+            ValueID input = index.valueBehindCasts(operation.objectOperand());
+            Reference read = input.index() < firstValueOfLoop ? walker.referenceOf(input) : Reference();
+            if (!read || !read.isValue())
+                continue;
+            if (rootOfCellInSweptCode(code, read.id()) == made)
+                return false;
+            readsAnother = true;
+        }
+    }
+    return readsAnother;
+}
+
+static bool someListedListIsReceiverOfMethodInListReadsInLoops(Walker& walker, BlockID inputHead, std::span<const ListTestedInFrontOfLoop> lists)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    const Code& code = walker.code();
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    for (BlockID member : index.membersOf(index.loopOf(inputHead))) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (operation.opcode() != Opcode::PropGet || operation.isFreeName() || operation.key() == walker.program().keyOf(BuiltinNames::length))
+                continue;
+            ValueID input = index.valueBehindCasts(operation.objectOperand());
+            Reference receiver = input.index() < firstValueOfLoop ? walker.referenceOf(input) : Reference();
+            if (!receiver || !receiver.isValue())
+                continue;
+            ValueID root = rootOfCellInSweptCode(code, receiver.id());
+            if (std::ranges::any_of(lists, [&](const ListTestedInFrontOfLoop& list) { return list.name.isValue() && rootOfCellInSweptCode(code, list.name.id()) == root; }))
+                return true;
+        }
+    }
+    return false;
+}
+
 static bool rowFindsListsLeftAsTheyAreInListReadsInLoops(Walker& walker, BlockID inputHead, std::span<const ListTestedInFrontOfLoop> lists, std::span<const GuessInFrontOfLoop> guesses, std::span<const Reference> proofs)
 {
     if (walker.listsAreStruckInRow())
@@ -1182,6 +1240,8 @@ static bool rowFindsListsLeftAsTheyAreInListReadsInLoops(Walker& walker, BlockID
             return false;
     }
     if (walker.previewOutOfRow() && turnMayAppendToTextInListReadsInLoops(walker, inputHead, *walker.previewOutOfRow(), lists, guesses, proofs))
+        return false;
+    if (!leavesListsTestedInFrontOfLoopAsTheyAre(walker, walker.effectsOfQuietDraftsOfRow()) && someListedListIsReceiverOfMethodInListReadsInLoops(walker, inputHead, lists))
         return false;
     return leavesListsTestedInFrontOfLoopAsTheyAre(walker, walker.effectsOfQuietDraftsOfRow(), lists, inputHead);
 }
@@ -1882,6 +1942,40 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
         ValueID made = index.valueBehindCasts(value);
         return made && made.index() >= firstValueOfLoop && wholeNumbersBehindListsFound.get(made.index() - firstValueOfLoop);
     };
+    Vector<uint32_t, 32> edgesSeenIntoBlocks;
+    BitVector parametersThatMeetWhatIsNoNumber;
+    BitVector parametersThatMeetWhatIsNoWholeNumber;
+    auto noteWhatEdgesHandOn = [&](BlockID from) {
+        for (BodyTarget target : index.terminator(from).targets()) {
+            BodyBlock reached = index.block(target.block());
+            if (!reached.numberOfParameters() || target.block() == inputHead || reached.firstParameter().index() < firstValueOfLoop)
+                continue;
+            if (edgesSeenIntoBlocks.isEmpty())
+                edgesSeenIntoBlocks.fill(0, index.numberOfBlocks());
+            ++edgesSeenIntoBlocks[target.block().index()];
+            for (uint32_t position = 0; position < reached.numberOfParameters(); ++position) {
+                uint32_t place = reached.parameter(position).index() - firstValueOfLoop;
+                ValueID handedOn = position < target.arguments().size() ? target.arguments()[position] : index.valueNarrowedInto(reached.parameter(position));
+                if (!handedOn || !isNumberBehindListsFound(handedOn))
+                    parametersThatMeetWhatIsNoNumber.set(place);
+                else if (!isWholeNumberBehindListsFound(handedOn))
+                    parametersThatMeetWhatIsNoWholeNumber.set(place);
+            }
+        }
+    };
+    auto noteNumbersThatMeetInParametersOf = [&](BlockID join) {
+        if (edgesSeenIntoBlocks.isEmpty() || index.isLoopHead(join) || index.isEnteredByHandlerEdge(join) || edgesSeenIntoBlocks[join.index()] != index.numberOfIncomingEdges(join) || index.numberOfIncomingEdges(join) >= UINT16_MAX)
+            return;
+        BodyBlock block = index.block(join);
+        for (uint32_t position = 0; position < block.numberOfParameters(); ++position) {
+            uint32_t place = block.parameter(position).index() - firstValueOfLoop;
+            if (parametersThatMeetWhatIsNoNumber.get(place))
+                continue;
+            numbersBehindListsFound.set(place);
+            if (!parametersThatMeetWhatIsNoWholeNumber.get(place))
+                wholeNumbersBehindListsFound.set(place);
+        }
+    };
     auto noteNumberBehindListsFound = [&](const BodyValue& operation, bool isWhole) {
         numbersBehindListsFound.set(operation.id().index() - firstValueOfLoop);
         if (isWhole)
@@ -2046,6 +2140,7 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
         BodyBlock block = index.block(member);
         if (block.isHandlerBlock())
             return { };
+        noteNumbersThatMeetInParametersOf(member);
         bool isPassedByEveryTurn = passedByEveryTurn.contains(member);
         for (BodyValue operation : block.values()) {
             if (isPassedByEveryTurn) {
@@ -2059,6 +2154,8 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                 noteNumberBehindListsFound(operation, operation.opcode() == Opcode::Integer && operation.as<Opcode::Integer>().integer() == static_cast<int32_t>(operation.as<Opcode::Integer>().integer()));
             else if (operatorsThatMakeNumbersOfNumbers.contains(operation.opcode()) && isNumberBehindListsFound(operation.operand(0)) && isNumberBehindListsFound(operation.operand(1)))
                 noteNumberBehindListsFound(operation, operation.opcode() != Opcode::Div && isWholeNumberBehindListsFound(operation.operand(0)) && isWholeNumberBehindListsFound(operation.operand(1)));
+            else if (operation.opcode() == Opcode::Negate && isNumberBehindListsFound(operation.operand(0)))
+                noteNumberBehindListsFound(operation, false);
             else if (asksItsSiteAndIsReckonedWith(operation))
                 noteNumberBehindListsFound(operation, false);
             if ((operatorsThatMakeNumbersOfNumbers.contains(operation.opcode()) || operation.opcode() == Opcode::Mod) && operation.opcode() != Opcode::Div && isWholeNumberForKeyOfRead(operation.operand(0)) && isWholeNumberForKeyOfRead(operation.operand(1))) {
@@ -2375,6 +2472,7 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                 readsOffListsOfUnknownContents.append({ operation.id(), name });
             }
         }
+        noteWhatEdgesHandOn(member);
     }
     if (someListIsTakenForNotedKey && !rowFindsListsLeftAsTheyAreInListReadsInLoops(walker, inputHead, found.lists.span(), guesses.span(), { }))
         return findListsReadInLoopInListReadsInLoops(walker, inputHead, preview, entering, guesses, false, someReadHasNotedKey, namesOfCountersAskedInFront);

@@ -840,6 +840,16 @@ bool operationsFitWindowOfCallWrittenInLoop(const Walker& walker, uint64_t numbe
     return (walker.depthOfCopies() ? walker.operationsCopiedAtWrittenCall() : 0) + numberOfOperations <= inlineWindowOfWrittenCallInLoops;
 }
 
+bool calleeIsCopiedInLoopsAlone(const Walker& walker, FunctionID callee, size_t numberOfOperands)
+{
+    if (walker.facts().summaries().at(callee).has(SummaryTrait::HasLoops) || walker.isBeingWalked(callee) || !mayBeWalkedAtInlining(walker, callee))
+        return false;
+    if (const BodyIndex* body = walker.facts().bodies().find(callee); !body || callsItselfByItsOwnText(walker.program(), *body, callee))
+        return false;
+    std::span<const Reference> nothingInSight;
+    return copyPaysAtInlining(walker, callee, numberOfOperands, { walker.currentFunction(), true }, &nothingInSight) && !copyPaysAtInlining(walker, callee, numberOfOperands, { walker.currentFunction(), false }, &nothingInSight);
+}
+
 static bool bodyOfUnitCallsItselfAtInlining(const Walker& walker, const Draft& site, FunctionID callee)
 {
     if (!walker.walksOwnBodyOfUnit() || callee != walker.unit().function || walker.unit().role != CodeRole::Body || !site.inputValueGiven)

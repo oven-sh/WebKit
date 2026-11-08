@@ -185,13 +185,9 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
         test.setObjectOperand(left);
         test.setLayouts(types.at(arms[place]).layouts);
         test.setRefusesMarkedObjects(isOnlyExpected);
-        uint32_t firstNewValue = walker.code().numberOfValues();
-        BlockID blockOfTest = walker.currentBlock();
         Reference passes = walker.build(WTF::move(test));
         if (!passes)
             return true;
-        bool isAskedHere = passes.isValue() && passes.id().index() >= firstNewValue && walker.code().blockOf(passes.id()) == blockOfTest
-            && walker.code().at(passes.id()).opcode == Opcode::ShapeTest && walker.code().at(passes.id()).refusesMarkedObjects();
         bool isLast = place + 1 == arms.size();
         BlockID passed = walker.addBlock();
         BlockID failed = isLast && closedArmOfAll ? closedArmOfAll : walker.addBlock(isLast ? BlockFrequency::Rare : BlockFrequency::Normal);
@@ -199,8 +195,6 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
         walker.continueIn(passed);
         if (Reference narrowed = narrowedBy(left, passes, true)) {
             walker.state().noteShape(narrowed, walker.typeOf(narrowed));
-            if (isOnlyExpected && isAskedHere)
-                walker.state().noteFactsOfCell(narrowed, FactOfCell::BearsNoMark);
             Vector<Reference, 4> boundBefore;
             for (ValueID name : names) {
                 boundBefore.append(walker.referenceBoundTo(name));

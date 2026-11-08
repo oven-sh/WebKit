@@ -996,18 +996,6 @@ bool Modules::hasLoaderSettledOriginalOf(ModuleID mocked)
     return record && record->status() == CyclicModuleRecord::Status::Evaluated;
 }
 
-bool Modules::isTextOfSomeCopyOfOriginalStillToCome()
-{
-    m_copiesOfOriginalsBeingLoaded.removeAllMatching([&](const auto& copy) {
-        if (copy.second->status() != JSPromise::Status::Pending)
-            return true;
-        ModuleRegistryEntry* entry = loader()->registryEntry(Identifier::fromString(*m_instance.vm, makeString(m_table.pathText(copy.first), "?actual"_s)));
-        auto* record = entry && entry->record() ? dynamicDowncast<CyclicModuleRecord>(entry->record()) : nullptr;
-        return record && record->status() >= CyclicModuleRecord::Status::Evaluating;
-    });
-    return !m_copiesOfOriginalsBeingLoaded.isEmpty();
-}
-
 auto Modules::runOriginalInSweep(ModuleID mocked) -> OriginalInSweep
 {
     VM& vm = *m_instance.vm;

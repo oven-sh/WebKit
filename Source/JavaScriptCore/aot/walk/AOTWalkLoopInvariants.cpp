@@ -536,12 +536,7 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
 
 bool Walker::comparisonWithTextLeavesLoop(const Draft& comparison) const
 {
-    std::optional<uint32_t> outermost = m_openLoops.isEmpty() ? std::nullopt : findLoopToBuildInFrontOf(comparison, declaredBoundInTable(comparison.opcode), TypeTable::boolean);
-    for (uint32_t loop = outermost.value_or(0); outermost && loop < std::min<uint32_t>(m_openLoops.size(), m_numberOfLoopsThatMayBeLeft); ++loop) {
-        if (!firstTurnOfOpenLoopIsKnownToBegin(loop))
-            return false;
-    }
-    return !!outermost;
+    return !m_openLoops.isEmpty() && findLoopToBuildInFrontOf(comparison, declaredBoundInTable(comparison.opcode), TypeTable::boolean);
 }
 
 std::optional<uint32_t> Walker::findLoopThatReaderVouchesFor(const Draft& draft, uint32_t outermostLoopThatMayBeLeft) const

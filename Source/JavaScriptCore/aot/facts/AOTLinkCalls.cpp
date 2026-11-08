@@ -24,6 +24,7 @@
 #include <optional>
 #include <span>
 #include <utility>
+#include <wtf/Atomics.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/NeverDestroyed.h>
@@ -582,9 +583,9 @@ public:
         QuestionsInLinkCalls questions;
         bool recordsSpellOutEveryUse { false };
     };
-    using ParameterOfRow = std::pair<const BuiltinOverload*, const BuiltinParameter*>;
-    UncheckedKeyHashMap<ParameterOfRow, std::unique_ptr<WhatTableSaysOfParameter>> whatTableSaysOfParameters;
-    Vector<UncheckedKeyHashMap<ParameterOfRow, const WhatTableSaysOfParameter*>> whatTableSaysOfParametersAsLanesFoundIt;
+    Vector<std::unique_ptr<WhatTableSaysOfParameter>> whatTableSaysOfParameters;
+    Vector<const WhatTableSaysOfParameter*> whatTableSaysAtPlacesOfRows;
+    size_t placesOfRow { 1 };
     BytesSharedByThreads builtinsWhoseRowsAreTakenAtTheirWord;
     BytesSharedByThreads placesThatEveryRowOnlyLooksAt;
     BitVector builtinsWithCodeWaitingForCall;
@@ -673,7 +674,9 @@ StateOfLinkCalls::StateOfLinkCalls(const LinkFlow& flow)
     observedAsOperandsOnlyLookedAt.grow(flow.numberOfLanes());
     observersToResolve.grow(flow.numberOfLanes());
     membersOfTable.grow(flow.numberOfLanes());
-    whatTableSaysOfParametersAsLanesFoundIt.grow(flow.numberOfLanes());
+    for (unsigned row = 0; row < flow.program.builtins().overloadCount(); ++row)
+        placesOfRow = std::max(placesOfRow, 1 + flow.program.builtins().at(BuiltinOverloadID(row)).parameters.size());
+    whatTableSaysAtPlacesOfRows.fill(nullptr, flow.program.builtins().overloadCount() * placesOfRow);
     builtinsWhoseRowsAreTakenAtTheirWord = BytesSharedByThreads(flow.program.builtins().builtinCount());
     placesThatEveryRowOnlyLooksAt = BytesSharedByThreads(flow.program.builtins().builtinCount());
     builtinsWithCodeWaitingForCall = builtinsWithCodeWaitingInLinkCalls(flow.program.builtins(), [](const BuiltinCondition& condition) {
@@ -4071,7 +4074,8 @@ void CallInLinkCalls::applyRow(RowCall& call)
 
 void CallInLinkCalls::applyParameter(RowCall& call, const BuiltinParameter& parameter)
 {
-    Values values = valuesAt(call, parameter.operand);
+    ValuesAtOperandInLinkCalls atOperand = valuesAt(call, parameter.operand);
+    const Values& values = atOperand;
     forEachType(values, [&](const LinkType& type, const Source*) {
         m_flow.noteLossOfLightFormAmong(type);
     });
@@ -4135,15 +4139,19 @@ void CallInLinkCalls::applyParameter(RowCall& call, const BuiltinParameter& para
 
     if (saidByTable.questions.isEmpty() && !saidByTable.questions.listKeys)
         return;
-    Questions questions = saidByTable.questions;
-    if (std::exchange(questions.listKeys, false))
-        tellKeysBecomeTextsAmong(values);
-    if (questions.describeObjects && !fitOf(call, parameter).mayBeOutside)
-        questions.describeObjects = false;
-    questions.describesLiteralMadeForCall = questions.describeObjects && isLiteralMadeForCall(call, parameter.operand);
+    std::optional<Questions> changed;
+    if (saidByTable.questions.listKeys || saidByTable.questions.describeObjects || isPrinted) {
+        changed = saidByTable.questions;
+        if (std::exchange(changed->listKeys, false))
+            tellKeysBecomeTextsAmong(values);
+        if (changed->describeObjects && !fitOf(call, parameter).mayBeOutside)
+            changed->describeObjects = false;
+        changed->describesLiteralMadeForCall = changed->describeObjects && isLiteralMadeForCall(call, parameter.operand);
+        changed->areAskedByFormatter = isPrinted;
+    }
+    const Questions& questions = changed ? *changed : saidByTable.questions;
     if (questions.isEmpty())
         return;
-    questions.areAskedByFormatter = isPrinted;
     throwAnything();
     if (uses.contains(OperandUse::AppliesTransitively) && !looksNoFurtherThanContents) {
         if (!isMapOfAccessorsAsWritten(values))
@@ -6190,19 +6198,22 @@ void CallInLinkCalls::addConversion(Questions& questions)
 
 ALWAYS_INLINE const StateOfLinkCalls::WhatTableSaysOfParameter& CallInLinkCalls::whatTableSaysOf(const BuiltinOverload& row, const BuiltinParameter& parameter)
 {
-    StateOfLinkCalls::ParameterOfRow parameterOfRow { &row, &parameter };
-    auto found = m_state.whatTableSaysOfParametersAsLanesFoundIt[m_flow.indexOfLaneAtWork()].add(parameterOfRow, nullptr);
-    if (found.isNewEntry) {
-        LinkFlow::LockerOfWhatIsShared locker(m_flow);
-        auto known = m_state.whatTableSaysOfParameters.add(parameterOfRow, nullptr);
-        if (known.isNewEntry) {
-            known.iterator->value = makeUnique<StateOfLinkCalls::WhatTableSaysOfParameter>();
-            known.iterator->value->questions = questionsOf(parameter);
-            known.iterator->value->recordsSpellOutEveryUse = recordsSpellOutEveryUseForLinkCalls(m_builtins, row, parameter);
-        }
-        found.iterator->value = known.iterator->value.get();
-    }
-    return *found.iterator->value;
+    size_t place = &parameter == row.receiver.get() ? 0 : 1 + static_cast<size_t>(&parameter - row.parameters.data());
+    RELEASE_ASSERT(place <= row.parameters.size());
+    size_t numberOfRow = static_cast<size_t>(&row - &m_builtins.at(BuiltinOverloadID(0)));
+    const StateOfLinkCalls::WhatTableSaysOfParameter** said = &m_state.whatTableSaysAtPlacesOfRows[numberOfRow * m_state.placesOfRow + place];
+    if (const StateOfLinkCalls::WhatTableSaysOfParameter* known = WTF::atomicLoad(said, std::memory_order_acquire)) [[likely]]
+        return *known;
+    LinkFlow::LockerOfWhatIsShared locker(m_flow);
+    if (const StateOfLinkCalls::WhatTableSaysOfParameter* known = WTF::atomicLoad(said, std::memory_order_relaxed))
+        return *known;
+    auto made = makeUnique<StateOfLinkCalls::WhatTableSaysOfParameter>();
+    made->questions = questionsOf(parameter);
+    made->recordsSpellOutEveryUse = recordsSpellOutEveryUseForLinkCalls(m_builtins, row, parameter);
+    const StateOfLinkCalls::WhatTableSaysOfParameter* known = made.get();
+    m_state.whatTableSaysOfParameters.append(WTF::move(made));
+    WTF::atomicStore(said, known, std::memory_order_release);
+    return *known;
 }
 
 QuestionsInLinkCalls CallInLinkCalls::questionsOf(const BuiltinParameter& parameter)

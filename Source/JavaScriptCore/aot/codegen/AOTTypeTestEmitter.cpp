@@ -74,18 +74,24 @@ void TypeTestEmitter::forEachNonCellCase(Boxed value, const TypeTestPlan& plan, 
     });
 }
 
-TypeTestPlansKeptAcrossUnits::Plans& TypeTestEmitter::plansKeptAcrossUnits(Representation representation)
+TypeTestPlansKeptAcrossUnits& TypeTestEmitter::whatIsKeptAcrossUnits()
 {
     if (!m_plansKeptAcrossUnits) {
         m_plansKeptAcrossUnits = &generator().procedure().arena().objectKeptAcrossResets<TypeTestPlansKeptAcrossUnits>();
         if (m_plansKeptAcrossUnits->plan != &m_plan || m_plansKeptAcrossUnits->table != &types().table()) {
             for (TypeTestPlansKeptAcrossUnits::Plans& plans : m_plansKeptAcrossUnits->plans)
                 plans.clear();
+            m_plansKeptAcrossUnits->kindsInSets.clear();
             m_plansKeptAcrossUnits->plan = &m_plan;
             m_plansKeptAcrossUnits->table = &types().table();
         }
     }
-    return m_plansKeptAcrossUnits->plans[static_cast<size_t>(representation)];
+    return *m_plansKeptAcrossUnits;
+}
+
+TypeTestPlansKeptAcrossUnits::Plans& TypeTestEmitter::plansKeptAcrossUnits(Representation representation)
+{
+    return whatIsKeptAcrossUnits().plans[static_cast<size_t>(representation)];
 }
 
 const TypeTestPlan& TypeTestEmitter::planFor(TypeID from, Representation representation, TypeID to)
@@ -93,7 +99,7 @@ const TypeTestPlan& TypeTestEmitter::planFor(TypeID from, Representation represe
     RELEASE_ASSERT(from && to);
     uint64_t key = static_cast<uint64_t>(from.bits()) << 32 | to.bits();
     auto compute = [&] {
-        return std::unique_ptr<TypeTestPlan>(new TypeTestPlan(computeTypeTestPlan(types(), TypeTestContext { m_plan, hasOneInstance() }, from, representation, to)));
+        return std::unique_ptr<TypeTestPlan>(new TypeTestPlan(computeTypeTestPlan(types(), TypeTestContext { m_plan, hasOneInstance(), &whatIsKeptAcrossUnits().kindsInSets }, from, representation, to)));
     };
     if (holdsOnlyPrimitives(to) && !liesInThread(from)) {
         TypeTestPlansKeptAcrossUnits::Plans& kept = plansKeptAcrossUnits(representation);

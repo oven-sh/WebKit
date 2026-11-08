@@ -24,6 +24,7 @@ struct TypeTestPlansKeptAcrossUnits {
     const Plan* plan { nullptr };
     const TypeTable* table { nullptr };
     std::array<Plans, numberOfEnumerators<Representation>> plans;
+    KindsInLayoutSets kindsInSets;
 };
 
 class TypeTestEmitter final : public OperationEmitter {
@@ -85,6 +86,7 @@ private:
     Condition isCallableByCallData(CellPointer);
     std::optional<BuiltinID> onlyBuiltinThatPasses(const TypeTestPlan&) const;
 
+    TypeTestPlansKeptAcrossUnits& whatIsKeptAcrossUnits();
     TypeTestPlansKeptAcrossUnits::Plans& plansKeptAcrossUnits(Representation);
 
     TypeTestPlansKeptAcrossUnits* m_plansKeptAcrossUnits { nullptr };

@@ -946,6 +946,7 @@ struct ProcedureTraits {
     bool ordersBlocksAsWhenOrderedAgain { false };
     bool leavesOutSavesThatPatchesAloneRead { false };
     bool takesSpillsThatStepsReadToBeReadByNone { false };
+    bool takesValuesKeptForCollectorToBeReadByStepsAlone { false };
     bool notesRangesOfOrigins { false };
     CPUFeatureSet features;
 

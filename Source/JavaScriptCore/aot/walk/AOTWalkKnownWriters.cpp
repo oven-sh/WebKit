@@ -19,6 +19,7 @@
 #include "AOTPlan.h"
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
+#include "AOTWalkListReadsInLoops.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -499,8 +500,38 @@ static std::optional<Vector<uint32_t, 2>> objectsMadeHereInKnownWriters(Walker& 
     return made;
 }
 
+static std::optional<Vector<uint32_t, 2>> listMadeHereThatLoopOnlyFillsInKnownWriters(Walker& walker, Reference receiver)
+{
+    std::optional<BlockID> head = walker.headOfInnermostTryInFrameOnTop();
+    std::optional<Vector<uint32_t, 2>> made = head ? objectsMadeHereInKnownWriters(walker, ObjectsWrittenAloneInKnownWriters { receiver }) : std::nullopt;
+    if (!made || !textOfLoopOnlyFillsListAndReadsAnother(walker, *head, ValueID(made->first())) || !walker.textOfLoopReckonsWithWhatItReads(*head))
+        return std::nullopt;
+    return made;
+}
+
+std::optional<Vector<uint32_t, 2>> receiverMadeHereThatAloneIsWritten(Walker& walker, const TerminatorDraft& tried, const Effects& effects)
+{
+    static constexpr std::array methods { InlineBuiltin::ArrayPush, InlineBuiltin::ArrayPop, InlineBuiltin::ArrayShift, InlineBuiltin::ArrayUnshift };
+    if (tried.kind != TerminatorKind::TryCallInline || effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps) || !std::ranges::contains(methods, tried.inlineBuiltin()) || !tried.numberOfOperands() || !tried.operand(0))
+        return std::nullopt;
+    return listMadeHereThatLoopOnlyFillsInKnownWriters(walker, tried.operand(0));
+}
+
+static bool isMethodOfListThatWritesItsReceiverAloneInKnownWriters(const Walker& walker, const Draft& call)
+{
+    const BuiltinTable& table = walker.program().builtins();
+    BuiltinID called = table.canonicalID(table.at(call.overload()).builtin);
+    for (BuiltinID method : { BuiltinID(Builtins::ArrayPrototypePush), BuiltinID(Builtins::ArrayPrototypePop), BuiltinID(Builtins::ArrayPrototypeShift), BuiltinID(Builtins::ArrayPrototypeUnshift) }) {
+        if (table.contains(method) && called == table.canonicalID(method))
+            return true;
+    }
+    return false;
+}
+
 std::optional<Vector<uint32_t, 2>> objectsMadeHereThatAloneAreWritten(Walker& walker, const Draft& draft, const Effects& effects)
 {
+    if (draft.opcode == Opcode::CallBuiltin && !testsItsOwnGuess(draft) && !effects.mayRunOtherCode() && draft.receiverOperand() && isMethodOfListThatWritesItsReceiverAloneInKnownWriters(walker, draft))
+        return listMadeHereThatLoopOnlyFillsInKnownWriters(walker, draft.receiverOperand());
     std::optional<ObjectsWrittenAloneInKnownWriters> written = objectsWrittenAloneByInKnownWriters(walker, draft, effects, findElementStoreWithoutOtherCodeInKnownWriters(draft, effects));
     return written && !written->isEmpty() ? objectsMadeHereInKnownWriters(walker, *written) : std::nullopt;
 }

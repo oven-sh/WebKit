@@ -516,6 +516,11 @@ bool Walker::writeOutTurnsOfLoop(BlockID inputHead, std::span<const Reference> e
     if (!m_frames[frameIndex].loopDepthAtCall && index.loopDepthOf(inputHead) < 2) {
         for (BlockID member : index.membersOf(loop)) {
             for (BodyValue operation : index.block(member).values()) {
+                FunctionID callee = operation.opcode() == Opcode::Call ? facts().linked().calleeAt(currentFunction(), operation.id()) : operation.opcode() == Opcode::CallDirect && !operation.isConstruction() ? operation.function() : FunctionID();
+                if (callee && calleeIsCopiedInLoopsAlone(*this, callee, operation.opcode() == Opcode::Call ? operation.as<Opcode::Call>().argumentsOperands().size() : operation.numberOfVariadicOperands())) {
+                    count(StatisticID::ShortLoopsLeftAsLoopsForWhatTheyBecome);
+                    return false;
+                }
                 if (operation.opcode() != Opcode::ElemGet && operation.opcode() != Opcode::ElemSet)
                     continue;
                 ValueID object = index.valueBehindCasts(operation.objectOperand());

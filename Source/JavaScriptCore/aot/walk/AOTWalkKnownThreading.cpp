@@ -550,7 +550,8 @@ bool KnownThreading::looksAhead(LookAhead& look, const Functor& isLeanedOn)
         }
         for (uint32_t position = place.begin; position < here.m_block.numberOfValues(); ++position) {
             BodyValue operation = here.m_index.value(ValueID(here.firstValue() + position));
-            if (!(hasPassedWhereSidesOfChoiceMeet ? operatorsOnNumbersInKnownThreading : operationsTypedByWayInKnownThreading).contains(operation.opcode()))
+            bool asksForClassInLoop = operation.opcode() == Opcode::InstanceOf && !hasPassedWhereSidesOfChoiceMeet && (walker.isInLoop() || walker.bodyAtWorkCallsItself());
+            if (!asksForClassInLoop && !(hasPassedWhereSidesOfChoiceMeet ? operatorsOnNumbersInKnownThreading : operationsTypedByWayInKnownThreading).contains(operation.opcode()))
                 continue;
             bool looks = false;
             std::optional<bool> copyOfCalleePays;

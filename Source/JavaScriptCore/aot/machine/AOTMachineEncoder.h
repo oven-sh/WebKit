@@ -329,7 +329,7 @@ public:
 
     ALWAYS_INLINE void encodePatch(const Step&, PatchOperation*);
     void encodeCheck(const Step&, PatchOperation*);
-    ALWAYS_INLINE ValueRep repOf(const PatchOperation* patch, Location location, const Operation* value) const
+    ALWAYS_INLINE ValueRep repOf(const PatchOperation* patch, Location location, const Operation* value, MemoryOfEncodedMove access = MemoryOfEncodedMove::IsRead) const
     {
         switch (location.kind()) {
         case Location::Register:
@@ -337,7 +337,8 @@ public:
         case Location::Spill:
             RELEASE_ASSERT(m_frameIsSetUp);
             RELEASE_ASSERT(m_frame.hasFrameRecord() || patch->findsOperandsInFrameWithoutRecord());
-            noteThatSlotIsRead(location.spillIndex());
+            if (access == MemoryOfEncodedMove::IsRead)
+                noteThatSlotIsRead(location.spillIndex());
             return ValueRep::stack(m_frame.offsetFromFPOf(location.spillIndex()));
         case Location::Outgoing:
             RELEASE_ASSERT(m_frameIsSetUp);
@@ -658,7 +659,7 @@ ALWAYS_INLINE void Encoder::fillParameters(PatchParameters& parameters, const St
                 RELEASE_ASSERT(patchRegisterAnswersConstraint(*rep, constraint));
                 continue;
             }
-            new (NotNull, rep) ValueRep(repOf(patch, *location, patch));
+            new (NotNull, rep) ValueRep(repOf(patch, *location, patch, MemoryOfEncodedMove::IsWritten));
             RELEASE_ASSERT(patchRepAnswersConstraint(*rep, constraint));
         }
         Operation* const* operand = operands.data() + firstOperand;

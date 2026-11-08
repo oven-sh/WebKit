@@ -230,6 +230,7 @@ void generateGetterAtSite(StubAssembler& jit)
     Label isCounted = jit.label();
     jit.addOutOfLinePart([=](StubAssembler& jit) mutable {
         isSample.link(&jit);
+        goOnWhileSamplesOfPlaceAreLeftOut(jit, distance, scratchBehindMiss, isCounted);
         loadNameOfPlaceOfGetter(jit, distance, nameBehindMiss, scratchBehindMiss);
         fillAnswersOfPlaceOfGetter(jit, object, nameBehindMiss, distance);
         jit.jump().linkTo(isCounted, &jit);

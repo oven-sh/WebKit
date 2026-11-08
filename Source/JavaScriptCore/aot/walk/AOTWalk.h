@@ -111,6 +111,7 @@ bool goOverListInPlaceOfCallOfBuiltin(Walker&, const BodyValue& call, Draft& wri
 bool isAskedForNameThatNoBuiltinAnswers(Walker&, ValueID);
 bool isExpectedToBeArgumentsObject(Walker&, ValueID);
 bool isShapedLikeLayoutsThatItCanNeverBe(Walker&, ValueID);
+bool callsItselfByItsOwnText(const Program&, const BodyIndex&, FunctionID);
 TypeID typeThatMapIsExpectedToGive(Walker&, const BodyValue& call);
 void sayWhatIsExpectedOfComparedOperands(Walker&, const BodyValue& equality, Draft&);
 void sayWhatIsExpectedOfValueAskedForTruth(Walker&, const BodyValue& question, Draft&);
@@ -1675,6 +1676,7 @@ public:
     bool looksAskOnlyWhetherTurnsRunOtherCode(BlockID inputHead) const { return m_inputHeadAskedAboutTypedCopy == inputHead; }
     bool looksTakeFormsBehindLooksAsBuilt() const { return m_looksTakeFormsBehindLooksAsBuilt; }
     bool otherHoldersAreAskedForListsInCopyOf(BlockID inputHead) const { return !m_closedCopiesShared.isEmpty() && m_closedCopiesShared.last().frameIndex == m_frames.size() - 1 && m_closedCopiesShared.last().inputHead == inputHead && m_closedCopiesShared.last().otherHoldersAreAskedForLists; }
+    bool boundIsAskedForTextInCopyOf(BlockID inputHead) const { return !m_closedCopiesShared.isEmpty() && m_closedCopiesShared.last().frameIndex == m_frames.size() - 1 && m_closedCopiesShared.last().inputHead == inputHead && m_closedCopiesShared.last().boundIsAskedForText; }
     bool purchaseAsksWhetherTurnsCanBeQuiet() const { return m_purchaseAsksWhetherTurnsCanBeQuiet; }
     bool readStandsUnderHandler() const { return isUnderHandler(); }
     bool standsInTurnOfTypedCopy() const { return !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().isEntered; }
@@ -1714,6 +1716,8 @@ public:
     bool branchInFrontOfTypedCopy(Reference test, bool passesWithYes, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing, TurnsThatAsk = TurnsThatAsk::All);
     std::optional<PassedTest> goOnInTypedCopyWhereTestInFrontPasses(Reference test, bool passesWithYes, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing);
     bool turnsOfTypedCopyLeaveListsAsTheyAre(Reference list, TurnOfTypedCopy = TurnOfTypedCopy::HasDoneNothing);
+    bool textOfLoopReckonsWithWhatItReads(BlockID inputHead) { return loopReckonsWithWhatItReads(inputHead); }
+    std::optional<BlockID> headOfInnermostTryInFrameOnTop() const { return !m_triesOfLoops.isEmpty() && m_triesOfLoops.last().frameIndex == m_frames.size() - 1 ? std::optional(m_triesOfLoops.last().inputHead) : std::nullopt; }
     using ObjectsMadeHereThatLoopMentions = Vector<uint32_t, 4>;
     ObjectsMadeHereThatLoopMentions objectsMadeHereThatLoopMentions(BlockID inputHead);
     enum class IsItselfMentioned : uint8_t { No, Yes };
@@ -2980,6 +2984,7 @@ private:
         bool isAboutToBeTaken { false };
         bool isPlainWalk { false };
         bool otherHoldersAreAskedForLists { false };
+        bool boundIsAskedForText { false };
     };
     Vector<ClosedCopyShared, 2> m_closedCopiesShared;
     Reference m_listAskedForStorageOfNumbersInVain;
@@ -4016,10 +4021,11 @@ Reference buildTestOfSlotFilledBehindShape(Walker&, const GuessInFrontOfLoop&, R
 void readSlotFilledBehindShape(Walker&, const GuessInFrontOfLoop&, Reference shaped, const BodyValue& read);
 bool wordOfFieldThatFindsValueIsDrawnFromUseForGuesses(Walker&, ValueID operand);
 bool otherHolderOfLoopMayBeListForGuesses(Walker&, BlockID inputHead, Reference list);
+bool headOnlyMeasuresConstantOfFileForGuesses(Walker&, BlockID inputHead, Reference list);
 bool readFindsListThatTurnsReckonWithForGuesses(Walker&, ValueID read);
 bool turnsOfLoopCallForGuesses(const BodyIndex&, LoopID);
-Vector<ValueID, 2> findOtherHoldersWalkedInStepThatMayBeBytesForGuesses(Walker&, BlockID inputHead, Reference holder);
-Vector<ValueID, 2> findOtherHoldersExpectedOfClassOfFirstForGuesses(Walker&, BlockID inputHead, Reference holder, TypeID tested);
+Vector<ValueID, 2> findOtherHoldersWalkedInStepThatMayBeBytesForGuesses(Walker&, BlockID inputHead, Reference holder, bool alsoThoseWithWordOfList = false);
+Vector<ValueID, 2> findOtherHoldersExpectedOfClassOfFirstForGuesses(Walker&, BlockID inputHead, Reference holder, TypeID tested, bool alsoThoseWithWordOfList = false);
 Vector<ValueID, 2> findTablesThatMayBeViewsForGuesses(Walker&, BlockID inputHead, Reference holder);
 TypeID viewsOfNumbersOfEveryKindForGuesses(TypeArena&);
 Vector<GuessInFrontOfLoop, 4> findMembersToldApartInFrontOfLoop(Walker&, BlockID inputHead, const LoopPreview&);

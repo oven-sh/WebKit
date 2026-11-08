@@ -7292,6 +7292,21 @@ bool askBaseInFrontOfTypedCopyForList(Walker& walker, const BodyValue& access)
     return true;
 }
 
+static bool answerIsFirstAskedWhetherItIsThereForGuesses(const Walker& walker, const BodyIndex& index, const BodyValue& read)
+{
+    constexpr uint32_t testAndWhatItsTwoEdgesHandOn = 3;
+    std::optional<BodyUser> first = index.firstUser(read.id());
+    if (!first || first->kind != BodyUseKind::Operand || index.useCount(read.id()) > testAndWhatItsTwoEdgesHandOn)
+        return false;
+    ValueID test = first->value;
+    std::optional<BodyUser> userOfTest = index.onlyUser(test);
+    if (!userOfTest || userOfTest->kind != BodyUseKind::TerminatorOperand)
+        return false;
+    if (index.opcodeOf(test) == Opcode::ToBoolean)
+        return true;
+    return index.opcodeOf(test) == Opcode::TypeTest && walker.program().at(index.value(test).as<Opcode::TypeTest>().testedType()).hasOnlyPrimitives(Primitive::UndefinedOrNull);
+}
+
 static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValue& operation, bool expectsOnlyProvenHolderOfName)
 {
     Opcode opcode = operation.opcode();
@@ -7354,6 +7369,12 @@ static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValu
     TypedForm formAsItStands = asItStands.form;
     bool lacksOnlyFilledSlot = formAsItStands == TypedForm::BuiltBehindFilledSlot || formAsItStands == TypedForm::BuiltBehindEmptySlot || formAsItStands == TypedForm::BuiltOnObjectAsMade
         || formAsItStands == TypedForm::BuiltBehindLookAtCell || formAsItStands == TypedForm::BuiltBehindFilledSlotAndLookAtCell || (askedOfStoredValue && formAsItStands == TypedForm::Built);
+
+    if (opcode == Opcode::PropGet && !expectsOnlyProvenHolderOfName && mayHaveTypedForm && formAsItStands == TypedForm::None && answerIsFirstAskedWhetherItIsThereForGuesses(walker, index, operation)) {
+        Type proven = walker.types().at(walker.types().withoutNullish(provenOfObject));
+        if (proven.hasObjects() && proven.hasOnlyLayouts() && !proven.hasOnlyClosures() && !proven.hasUnboundedUnknown())
+            return GuessOpened::None;
+    }
 
     bool isCall = callsOfValuesForGuesses.contains(opcode);
     bool readsMethodForItsCall = isReadOfMethodForItsCallForGuesses(index, operation);
@@ -7561,6 +7582,8 @@ static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValu
         openGuessWithTest(walker, value, *chosen, block.id(), begin, stretch, &branchAskedAbout);
         opened = GuessOpened::WithArms;
     });
+    if (opened == GuessOpened::None && isInLoop && readsMethodForItsCall && callMethodsOfExpectedReceiversBehindTestsOfShape(walker, operation))
+        return GuessOpened::WithArms;
     return opened;
 }
 
@@ -8726,6 +8749,20 @@ static bool isConvertedByViewOfNumbersForGuesses(Walker& walker, const BodyValue
     return (isTypedView(kind) && hasInlineElementAccess(kind)) || kindsOfViewsOfNumbersIn(walker.program(), walker.types(), holder);
 }
 
+static bool lengthBoundsParameterOfHeadForGuesses(const BodyIndex& index, BlockID inputHead, ValueID length)
+{
+    return std::ranges::any_of(index.block(inputHead).values(), [&](BodyValue relation) {
+        if (!allRelations.contains(relation.opcode()))
+            return false;
+        for (uint32_t side = 0; side < 2; ++side) {
+            ValueID held = index.valueBehindCasts(relation.operand(1 - side));
+            if (index.valueBehindCasts(relation.operand(side)) == length && index.isParameter(held) && index.blockOf(held) == inputHead)
+                return true;
+        }
+        return false;
+    });
+}
+
 Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID inputHead, const LoopPreview& preview)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -8834,16 +8871,7 @@ Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID i
                 bool isOnlyMeasured = false;
                 if (!expectation.type && operation.opcode() == Opcode::PropGet && !operation.isFreeName() && operand == operation.objectOperand() && member == inputHead
                     && walker.program().nameClassOf(operation.key()) == NameClass::Length && saysNothingForGuesses(types, walker.typeOf(value)) && turnsAccessElements()) {
-                    bool boundsParameterOfHead = std::ranges::any_of(block.values(), [&](BodyValue relation) {
-                        if (!allRelations.contains(relation.opcode()))
-                            return false;
-                        for (uint32_t side = 0; side < 2; ++side) {
-                            ValueID held = index.valueBehindCasts(relation.operand(1 - side));
-                            if (index.valueBehindCasts(relation.operand(side)) == operation.id() && index.isParameter(held) && index.blockOf(held) == inputHead)
-                                return true;
-                        }
-                        return false;
-                    });
+                    bool boundsParameterOfHead = lengthBoundsParameterOfHeadForGuesses(index, inputHead, operation.id());
                     bool nothingButLengthIsNamed = std::ranges::all_of(walker.namesUsedOff(index.valueBehindCasts(operand)), [&](PropertyKeyID key) {
                         return walker.program().nameClassOf(key) == NameClass::Length;
                     });
@@ -8859,7 +8887,7 @@ Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID i
                     });
                     isOnlyMeasured = boundsParameterOfHead && nothingButLengthIsNamed && loopOnlyMeasuresIt;
                     if (isOnlyMeasured)
-                        expectation.type = types.builtinClass(BuiltinClasses::Array);
+                        expectation.type = walker.boundIsAskedForTextInCopyOf(inputHead) ? TypeID(TypeTable::string) : types.builtinClass(BuiltinClasses::Array);
                 }
                 bool isAskedBesideList = false;
                 if (!expectation.type && walker.otherHoldersAreAskedForListsInCopyOf(inputHead) && (operation.opcode() == Opcode::ElemGet || operation.opcode() == Opcode::ElemSet) && operand == operation.objectOperand() && saysNothingForGuesses(types, walker.typeOf(value))) {
@@ -8896,7 +8924,7 @@ Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID i
                     return;
                 if (isAskedBesideList)
                     walker.count(StatisticID::ListsAskedForBesideListsInFrontOfLoops);
-                if (isOnlyMeasured)
+                if (isOnlyMeasured && !walker.boundIsAskedForTextInCopyOf(inputHead))
                     walker.count(StatisticID::HoldersOnlyMeasuredByHeadsGuessedToBeLists);
                 guesses.append(GuessInFrontOfLoop { value, chosen->tested, chosen->layouts, { } });
                 guesses.last().readOfVariableInLoop = readOfVariable;
@@ -9745,6 +9773,19 @@ static std::optional<Opcode> operatorThatValueGoesThroughForGuesses(Walker& walk
             });
             return answer(meetsWrittenText ? std::nullopt : std::optional(opcode));
         }
+        if (ValueID element = passed[0]; allEqualities.contains(opcode) && &index == &walker.currentBodyIndex() && !index.isParameter(element) && index.opcodeOf(element) == Opcode::ElemGet) {
+            ValueID holder = index.valueBehindCasts(index.value(element).objectOperand());
+            LoopID loop = index.loopOf(index.blockOf(element));
+            bool meetsProvenNumber = false;
+            if (loop && isReadOfVariableForGuesses(index, holder) && index.isInLoop(index.blockOf(holder), loop)) {
+                index.value(value).forEachOperand([&](ValueID operand, uint32_t) {
+                    Reference built = operand == used ? Reference() : walker.referenceOf(index.valueBehindCasts(operand));
+                    meetsProvenNumber |= built && built.isValue() && walker.types().at(walker.typeOf(built)).isNumber();
+                });
+            }
+            if (meetsProvenNumber)
+                return opcode;
+        }
         if (opcode == Opcode::Call) {
             ValueID receiver = index.value(value).as<Opcode::Call>().thisValueOperand();
             bool isFunctionOfMath = receiver && used != index.value(value).calleeOperand() && !index.isParameter(receiver) && index.opcodeOf(receiver) == Opcode::Builtin && index.value(receiver).as<Opcode::Builtin>().builtin() == Builtins::Math;
@@ -9969,7 +10010,7 @@ static bool keyComesOfCounterAloneForGuesses(const BodyIndex& index, BlockID inp
     return false;
 }
 
-Vector<ValueID, 2> findOtherHoldersWalkedInStepThatMayBeBytesForGuesses(Walker& walker, BlockID inputHead, Reference holder)
+Vector<ValueID, 2> findOtherHoldersWalkedInStepThatMayBeBytesForGuesses(Walker& walker, BlockID inputHead, Reference holder, bool alsoThoseWithWordOfList)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     LoopID loop = index.loopOf(inputHead);
@@ -9998,9 +10039,10 @@ Vector<ValueID, 2> findOtherHoldersWalkedInStepThatMayBeBytesForGuesses(Walker& 
             Reference other = walker.referenceOf(inFront);
             if (!other || !other.isValue() || other == holder || !saysNothingForGuesses(walker.types(), walker.typeOf(other)))
                 continue;
-            if ((!operatorThatElementGoesThroughForGuesses(walker, access) && !(keySpeaksForIndexForGuesses(index, access) && text.holdsElementsAgainstElements(inFront) && !text.turnsStoreIntoWhatMayBeList(walker))) || !keyComesOfCounterAloneForGuesses(index, inputHead, access.propertyOperand()))
-                continue;
             TypeID word = findExpectationForGuesses(walker, inFront).type;
+            bool wordSaysNumbers = alsoThoseWithWordOfList && word && isDeclaredToHoldNumbersAlone(walker.program(), walker.types(), walker.types().withOnlyObjects(word));
+            if ((!wordSaysNumbers && !operatorThatElementGoesThroughForGuesses(walker, access) && !(keySpeaksForIndexForGuesses(index, access) && text.holdsElementsAgainstElements(inFront) && !text.turnsStoreIntoWhatMayBeList(walker))) || !keyComesOfCounterAloneForGuesses(index, inputHead, access.propertyOperand()))
+                continue;
             bool isListOfAnything = word && walker.types().isSubset(walker.types().withOnlyObjects(word), walker.types().builtinClass(BuiltinClasses::Array));
             if (word && !isListOfAnything && listAndBytesThatMayComeForGuesses(walker, inFront).isEmpty())
                 continue;
@@ -10011,6 +10053,8 @@ Vector<ValueID, 2> findOtherHoldersWalkedInStepThatMayBeBytesForGuesses(Walker& 
         if (!passedByEveryTurn.contains(member))
             continue;
         for (BodyValue store : index.block(member).values()) {
+            if (!alsoThoseWithWordOfList)
+                break;
             if (store.opcode() != Opcode::ElemSet)
                 continue;
             ValueID inFront = valueBehindCastsOfLoopForGuesses(index, store.objectOperand(), firstValueOfLoop);
@@ -10028,9 +10072,9 @@ Vector<ValueID, 2> findOtherHoldersWalkedInStepThatMayBeBytesForGuesses(Walker& 
     return found;
 }
 
-Vector<ValueID, 2> findOtherHoldersExpectedOfClassOfFirstForGuesses(Walker& walker, BlockID inputHead, Reference holder, TypeID tested)
+Vector<ValueID, 2> findOtherHoldersExpectedOfClassOfFirstForGuesses(Walker& walker, BlockID inputHead, Reference holder, TypeID tested, bool alsoThoseWithWordOfList)
 {
-    Vector<ValueID, 2> found = findOtherHoldersWalkedInStepThatMayBeBytesForGuesses(walker, inputHead, holder);
+    Vector<ValueID, 2> found = findOtherHoldersWalkedInStepThatMayBeBytesForGuesses(walker, inputHead, holder, alsoThoseWithWordOfList);
     if (tested != TypeID(TypeTable::string))
         return found;
     const BodyIndex& index = walker.currentBodyIndex();
@@ -10123,6 +10167,23 @@ bool readFindsListThatTurnsReckonWithForGuesses(Walker& walker, ValueID read)
     while (user && opcodesThatStateTypes.contains(index.opcodeOf(user)))
         user = index.onlyUsingValue(user);
     return user && index.opcodeOf(user) == Opcode::ElemGet && index.valueBehindCasts(index.value(user).objectOperand()) == read && !!operatorThatElementGoesThroughForGuesses(walker, index.value(user));
+}
+
+bool headOnlyMeasuresConstantOfFileForGuesses(Walker& walker, BlockID inputHead, Reference list)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    for (BodyValue measure : index.block(inputHead).values()) {
+        if (measure.opcode() != Opcode::PropGet || measure.isFreeName() || walker.program().nameClassOf(measure.key()) != NameClass::Length || !lengthBoundsParameterOfHeadForGuesses(index, inputHead, measure.id()))
+            continue;
+        ValueID read = readOfVariableThatFindsReceiverInLoop(index, measure, firstValueOfLoop);
+        if (!read || index.opcodeOf(read) != Opcode::GetModuleVariable || !bodyOnlyMeasuresVariable(walker.program(), index, index.value(read).variable()))
+            continue;
+        Reference measured = nameOfListThatEntersLoopAround(walker, index, measure);
+        if (measured && measured.isValue() && measured != list && saysNothingForGuesses(walker.types(), walker.typeOf(measured)))
+            return true;
+    }
+    return false;
 }
 
 bool otherHolderOfLoopMayBeListForGuesses(Walker& walker, BlockID inputHead, Reference list)

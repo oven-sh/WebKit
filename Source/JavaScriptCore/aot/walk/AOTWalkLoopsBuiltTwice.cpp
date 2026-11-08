@@ -1845,8 +1845,10 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         TypeID tested { };
         bool expectsOtherHoldersOfItsClass { false };
         bool expectsTablesToBeViews { false };
+        bool expectsThoseWithWordOfListToo { false };
         Vector<std::pair<size_t, Reference>, 1> elementsThatEnterAsNumbers { };
         UncheckedKeyHashMap<uint32_t, Reference, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lengthsReadInFront { };
+        bool asksBoundForText { false };
     };
     Vector<std::pair<ValueID, ValueID>, 2> namesOfLengthsReadInFront;
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> namesAskedAbout;
@@ -2111,14 +2113,28 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         if (proof && !isUnreachable() && part && part->builtinClass == BuiltinClasses::Array && isDeclaredToHoldNumbersAlone(program(), m_types, typeOf(proof)) && otherHolderOfLoopMayBeListForGuesses(*this, inputHead, member.value)) {
             starts.append(StartOfCopy { firstStart, m_state, proof, isList && listWasAskedForStorageOfNumbers, true });
             starts.append(StartOfCopy { addBlock(), m_state, proof, isList && listWasAskedForStorageOfNumbers });
-        } else if (proof && !isUnreachable() && (member.tested == TypeID(TypeTable::string) || (m_types.at(member.tested).isObject() && m_types.at(member.tested).hasOnlyClassObjects() && !m_types.overlap(member.tested, m_types.builtinClass(BuiltinClasses::Array)))) && !findOtherHoldersExpectedOfClassOfFirstForGuesses(*this, inputHead, member.value, member.tested).isEmpty()) {
+        } else if (proof && !isUnreachable() && (member.tested == TypeID(TypeTable::string) || (m_types.at(member.tested).isObject() && m_types.at(member.tested).hasOnlyClassObjects() && !m_types.overlap(member.tested, m_types.builtinClass(BuiltinClasses::Array)))) && !findOtherHoldersExpectedOfClassOfFirstForGuesses(*this, inputHead, member.value, member.tested, true).isEmpty()) {
+            size_t numberOfReaders = findOtherHoldersExpectedOfClassOfFirstForGuesses(*this, inputHead, member.value, member.tested).size();
+            if (findOtherHoldersExpectedOfClassOfFirstForGuesses(*this, inputHead, member.value, member.tested, true).size() > numberOfReaders) {
+                starts.append(StartOfCopy { firstStart, m_state, proof, false });
+                starts.last().expectsOtherHoldersOfItsClass = true;
+                starts.last().expectsThoseWithWordOfListToo = true;
+                firstStart = addBlock();
+            }
+            if (numberOfReaders) {
+                starts.append(StartOfCopy { firstStart, m_state, proof, false });
+                starts.last().expectsOtherHoldersOfItsClass = true;
+                firstStart = addBlock();
+            }
             starts.append(StartOfCopy { firstStart, m_state, proof, false });
-            starts.last().expectsOtherHoldersOfItsClass = true;
-            starts.append(StartOfCopy { addBlock(), m_state, proof, false });
         } else if (proof && !isUnreachable() && m_types.at(member.tested).isObject() && m_types.at(member.tested).hasOnlyClassObjects() && !m_types.overlap(member.tested, m_types.builtinClass(BuiltinClasses::Array)) && otherHolderOfLoopMayBeListForGuesses(*this, inputHead, member.value)) {
             starts.append(StartOfCopy { firstStart, m_state, proof, false, true });
             starts.append(StartOfCopy { addBlock(), m_state, proof, false });
             count(StatisticID::ListsAskedForBesideViewsInFrontOfLoops);
+        } else if (proof && !isUnreachable() && (isOfViewsAlone || isListOfNumbers) && headOnlyMeasuresConstantOfFileForGuesses(*this, inputHead, member.value)) {
+            starts.append(StartOfCopy { firstStart, m_state, proof, isList && listWasAskedForStorageOfNumbers, true });
+            starts.append(StartOfCopy { addBlock(), m_state, proof, isList && listWasAskedForStorageOfNumbers });
+            starts.last().asksBoundForText = true;
         } else if (proof && !isUnreachable())
             starts.append(StartOfCopy { firstStart, m_state, proof, isList && listWasAskedForStorageOfNumbers });
         for (StartOfCopy& start : starts) {
@@ -2271,6 +2287,7 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         BlockID whereFrontFails = start.asksOtherHoldersForLists || start.expectsOtherHoldersOfItsClass || start.expectsTablesToBeViews ? (&start + 1)->block : startOfRest && !isRest && !isForWhatIsNoBuiltin ? startOfRest : closedStart;
         m_closedCopiesShared.last().start = whereFrontFails;
         m_closedCopiesShared.last().otherHoldersAreAskedForLists = start.asksOtherHoldersForLists;
+        m_closedCopiesShared.last().boundIsAskedForText = start.asksBoundForText;
         if (whereFrontFails == startOfRest)
             count(StatisticID::CopiesOfLoopsWhoseFrontLeadsToTheRest);
         putBackIterationsSteppedAt(steppedAtHead);
@@ -2344,7 +2361,7 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         }
         Vector<std::pair<ValueID, RememberedExpectation>, 2> expectedBefore;
         if (start.expectsOtherHoldersOfItsClass) {
-            for (ValueID other : findOtherHoldersExpectedOfClassOfFirstForGuesses(*this, inputHead, members[0].value, start.tested)) {
+            for (ValueID other : findOtherHoldersExpectedOfClassOfFirstForGuesses(*this, inputHead, members[0].value, start.tested, start.expectsThoseWithWordOfListToo)) {
                 RememberedExpectation& remembered = rememberedExpectationOf(other);
                 expectedBefore.append({ other, remembered });
                 remembered = { start.tested, true, false, true };
@@ -2479,7 +2496,8 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     ClosedCopyShared* shared = !m_closedCopiesShared.isEmpty() && m_closedCopiesShared.last().frameIndex == frameIndex && m_closedCopiesShared.last().inputHead == inputHead && (m_asksOnlyWhetherLoopMayBeBuiltTwice ? m_closedCopiesShared.last().isAboutToBeTaken : std::exchange(m_closedCopiesShared.last().isAboutToBeTaken, false)) ? &m_closedCopiesShared.last() : nullptr;
     if (!shared && m_frames[frameIndex].loopsBeingBuiltTwice.contains(loop))
         return false;
-    BlockID sharedStart = shared ? shared->start : BlockID();
+    bool frontIsEnteredOutOfTurns = shared && m_walksCopyThatAsksCountersAlone;
+    BlockID sharedStart = shared && !frontIsEnteredOutOfTurns ? shared->start : BlockID();
     BlockID sharedEntry = shared ? shared->entry : BlockID();
     bool sharedCopyIsPlainWalk = shared && shared->isPlainWalk;
     bool frontLeadsToNextStartOfMember = shared && shared->otherHoldersAreAskedForLists;
@@ -3933,6 +3951,13 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     for (BlockID member : index.membersOf(loop))
         inputBlock(frameIndex, member).firstNarrowerName = namesInFrontOfLoop;
     forgetValuesOfLoop(inputHead);
+    if (frontIsEnteredOutOfTurns && closedStart && !m_hasFailed) {
+        m_block = { };
+        m_state.clear();
+        continueIn(closedStart);
+        if (!isUnreachable())
+            enterWithFieldsOfScopes(sharedEntry, entering);
+    }
     if (entryOfClosedCopy && !sharedEntry)
         forgetWhatWasBelievedAt(entryOfClosedCopy);
     m_frames[frameIndex].loopsBeingBuiltTwice.removeLast();

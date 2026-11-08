@@ -85,6 +85,7 @@ ALWAYS_INLINE void endWhatOperationWrites(Walker& walker, const Draft& draft, co
 bool writerEndsNoGuard(const Walker&, const Draft&);
 bool makesNewCell(const Operation&);
 std::optional<Vector<uint32_t, 2>> objectsMadeHereThatAloneAreWritten(Walker&, const Draft&, const Effects&);
+std::optional<Vector<uint32_t, 2>> receiverMadeHereThatAloneIsWritten(Walker&, const TerminatorDraft&, const Effects&);
 bool mayBeSameObject(Walker&, Reference, Reference);
 bool isOfLayoutAlone(Walker&, Reference, LayoutID);
 

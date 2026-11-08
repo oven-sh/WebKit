@@ -602,7 +602,9 @@ bool Allocator::isReadByMoreThanSteps(const SpillFacts& facts) const
 {
     if (facts.isSaveInRareRegion || facts.isPointerBesideNarrowReference || facts.livesAcrossSuspension || facts.isSharedByPhis)
         return true;
-    return isReadByMoreThanSteps(m_valueFacts[facts.value->index()]);
+    const ValueFacts& factsOfValue = m_valueFacts[facts.value->index()];
+    return factsOfValue.has(ValueFlag::LivesIntoLandingPad) || factsOfValue.has(ValueFlag::LivesAcrossSuspension)
+        || (factsOfValue.has(ValueFlag::IsKeptForCollector) && !m_proc.traits().takesValuesKeptForCollectorToBeReadByStepsAlone);
 }
 
 void Allocator::findSpillsThatNoStepReads()

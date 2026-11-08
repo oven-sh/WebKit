@@ -48,7 +48,7 @@ bool ShapeTestEmitter::mayBearMark(LayoutSetID layouts)
 {
     if (!layouts)
         return true;
-    return m_setsThatMayBearMark.ensure(layouts, [&] {
+    return (liesInThread(layouts) ? m_setsThatMayBearMark : testsKeptAcrossUnits().setsThatMayBearMark).ensure(layouts, [&] {
         return std::ranges::any_of(membersOf(typeReader(), layouts), [&](LayoutID member) {
             return m_plan.layout(member).mayBearMark;
         });
@@ -132,16 +132,22 @@ ShapeTest ShapeTestEmitter::testOf(LayoutSetID tested) const
     return test;
 }
 
-ShapeTestsKeptAcrossUnits::Entry& ShapeTestEmitter::entryKeptAcrossUnits(uint64_t testedAndKnown)
+ShapeTestsKeptAcrossUnits& ShapeTestEmitter::testsKeptAcrossUnits()
 {
     if (!m_testsKeptAcrossUnits) {
         m_testsKeptAcrossUnits = &generator().procedure().arena().objectKeptAcrossResets<ShapeTestsKeptAcrossUnits>();
         if (m_testsKeptAcrossUnits->table != &m_plan.shapes()) {
             m_testsKeptAcrossUnits->entries.fill(ShapeTestsKeptAcrossUnits::Entry { });
+            m_testsKeptAcrossUnits->setsThatMayBearMark.clear();
             m_testsKeptAcrossUnits->table = &m_plan.shapes();
         }
     }
-    return m_testsKeptAcrossUnits->entries[(testedAndKnown * 0x9E3779B97F4A7C15ull) >> (64 - ShapeTestsKeptAcrossUnits::numberOfBits)];
+    return *m_testsKeptAcrossUnits;
+}
+
+ShapeTestsKeptAcrossUnits::Entry& ShapeTestEmitter::entryKeptAcrossUnits(uint64_t testedAndKnown)
+{
+    return testsKeptAcrossUnits().entries[(testedAndKnown * 0x9E3779B97F4A7C15ull) >> (64 - ShapeTestsKeptAcrossUnits::numberOfBits)];
 }
 
 Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known, MarkedObjects marked)

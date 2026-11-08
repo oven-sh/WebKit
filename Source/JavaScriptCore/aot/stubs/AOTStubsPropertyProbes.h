@@ -293,6 +293,7 @@ void loadStaticsBase(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfSta
 void countSiteCacheMiss(StubAssembler&, GPRReg site, GPRReg scratch, JumpList& isDueForRefill);
 void countMissOfEmptySite(StubAssembler&, GPRReg site, GPRReg scratch, JumpList& isDueForFill);
 void countMissOfPlace(StubAssembler&, GPRReg distance, GPRReg scratch, JumpList& isSample);
+void goOnWhileSamplesOfPlaceAreLeftOut(StubAssembler&, GPRReg distance, GPRReg scratchOfCount, CCallHelpers::Label isCounted);
 void refillSiteCache(StubAssembler&, GPRReg receiver, GPRReg identifierNumber, GPRReg site, SlotAccess);
 
 inline constexpr unsigned receiverOperand = 0;

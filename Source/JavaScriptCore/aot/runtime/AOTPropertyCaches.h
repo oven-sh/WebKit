@@ -145,6 +145,7 @@ public:
     size_t removeDeadEntries(VM&, CollectionScope);
 
     void waitLongerForNextFill(const void* site);
+    unsigned takeSamplesToLeaveOutBeforeNextFill(const void* site);
     void forgetHowOftenItWasFilled(const void* site);
     bool didWaitForSamples(const void* site);
 
@@ -186,8 +187,6 @@ private:
 class AnswersAtSites final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(AnswersAtSites);
 public:
-    static constexpr uint32_t numberOfMissBits = 1u << 17;
-
     AnswersAtSites(State&, SiteCaches&);
 
     uint32_t placeAtDistanceFromInstance(uint32_t) const;
@@ -234,6 +233,8 @@ private:
     static_assert(indexOfAnswersThatHoldNothing == indexOfSiteAnswersThatHoldNothing);
     static constexpr uint32_t wordsInWideAnswers = sizeof(WideSiteAnswers) / sizeof(uint64_t);
 
+    uint8_t& samplesLeftOutAt(uint32_t place) { return reinterpret_cast<uint8_t*>(&m_missesOfPlaces[place])[1]; }
+    void waitLongerForNextFill(uint32_t place);
     const void* keyOfState(uint32_t place) const { return std::bit_cast<const void*>(SiteCacheState::keyOfPlaceOfAnswers(place)); }
     SiteAnswers* ensureAnswersOf(uint32_t place, SiteUse);
     WideSiteAnswers& wideAnswersAt(uint32_t number) const { return m_endOfWideAnswers[-1 - static_cast<ptrdiff_t>(number)]; }
@@ -256,7 +257,6 @@ private:
     Vector<uint32_t> m_placesOfWideAnswers;
     Vector<uint16_t> m_numbersOfWideAnswersGivenBack;
     uint32_t m_nextStructureToForget { 0 };
-    uint64_t* m_placesThatFailed { nullptr };
     uint16_t* m_missesOfPlaces { nullptr };
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_visitorsPutOut;
     static constexpr uint8_t requestsThatOpenPage = 3;

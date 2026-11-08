@@ -507,6 +507,31 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target)
             }
             return givesUpAgain();
         }
+        BitVector belowTarget = reachedByStatements(target, AtMock::Stops);
+        for (const WaitThatRequireLeft& left : m_waitsThatRequiresLeft) {
+            if (left.wait->status() != JSPromise::Status::Pending)
+                continue;
+            ModuleID above = left.required;
+            BitVector belowLoadThatWasLeft = reachedByStatements(above, AtMock::Stops);
+            bool passesThroughLoadThatWasLeft = false;
+            for (size_t index : belowTarget) {
+                ModuleID file(index);
+                if (file == above || file == target || isMocked(file) || !belowLoadThatWasLeft.get(index))
+                    continue;
+                BitVector belowFile = reachedByStatements(file, AtMock::Stops);
+                if (m_requiresThatGaveUp.containsIf([&](const RequireThatGaveUp& pair) { return belowFile.get(pair.mocked.index()); })) {
+                    passesThroughLoadThatWasLeft = true;
+                    break;
+                }
+            }
+            if (!passesThroughLoadThatWasLeft)
+                continue;
+            if (!m_instance.vm->m_synchronousModuleQueue) {
+                waitForFactoriesThatRequireLeft(above);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+            return givesUpAgain();
+        }
     }
     if (wasGivenUpOn(target)) {
         if (cannotBeRequired(target))

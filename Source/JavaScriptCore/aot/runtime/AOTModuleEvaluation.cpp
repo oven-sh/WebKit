@@ -3373,7 +3373,7 @@ ModuleID Modules::formThatRequireFinds(ModuleID target)
 JSValue Modules::require(ModuleID target, ModuleID referrer, RequiredBy requiredBy)
 {
     SetForScope noImportAsks(m_moduleThatWroteImportThatAsks, ModuleID());
-    if (auto* willLoad = m_mocks ? host().willLoad : nullptr) [[unlikely]]
+    if (auto* willLoad = m_mocks || m_hasBegunTestFile ? host().willLoad : nullptr) [[unlikely]]
         willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadByName::Require);
     if (referrer && m_goesModuleByModule) [[unlikely]]
         noteRequireThatRunTimeAnswers(target, referrer);
@@ -4200,7 +4200,7 @@ template<Modules::RequireAnsweredBy answeredBy>
 void Modules::recordRequire(ModuleID target, ModuleID referrer)
 {
     if constexpr (answeredBy == RequireAnsweredBy::CompiledCode) {
-        if (auto* willLoad = m_mocks ? host().willLoad : nullptr) [[unlikely]]
+        if (auto* willLoad = m_mocks || m_hasBegunTestFile ? host().willLoad : nullptr) [[unlikely]]
             willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadByName::Require);
     }
     const ModuleData& targetData = data(target);
@@ -4223,7 +4223,7 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
         }
     }
     uint64_t pair = (static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index();
-    auto recorded = m_recordedRequires.add(pair, RecordedRequire::Begun);
+    auto recorded = m_recordedRequires.add(pair, isEvicted(target) ? RecordedRequire::BegunAndLeftToHost : RecordedRequire::Begun);
     if (recorded.isNewEntry) {
         findWhetherExportsVariableIsTakenOffModuleObject(referrer);
         lookForMainCommonJSModule();
@@ -4251,15 +4251,18 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
             decideMainCommonJSModule(std::nullopt);
         return;
     case RecordedRequire::ReturnedAndNotListed:
-        recorded.iterator->value = RecordedRequire::Begun;
+        recorded.iterator->value = isEvicted(target) ? RecordedRequire::BegunAndLeftToHost : RecordedRequire::Begun;
         return;
-    case RecordedRequire::Begun: {
+    case RecordedRequire::Begun:
+    case RecordedRequire::BegunAndLeftToHost: {
         if (status(target) == ModuleStatus::Failed)
             return;
+        bool isListedByHost = recorded.iterator->value == RecordedRequire::BegunAndLeftToHost;
         recorded.iterator->value = RecordedRequire::Returned;
         if (!m_isMainCommonJSModuleDecided)
             decideMainCommonJSModule(std::nullopt);
-        ensureWaysTo(referrer).requiredModules.append(target);
+        if (!isListedByHost)
+            ensureWaysTo(referrer).requiredModules.append(target);
         findWhetherExportsVariableIsTakenOffModuleObject(referrer);
         lookAtExportsOfModuleObject(target, answeredBy);
         RETURN_IF_EXCEPTION(scope, void());
@@ -4277,7 +4280,7 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
             requirer = loadedIfExists(referrer);
             objectOfRequired = objectThatStandsForModuleIfMade(target);
         }
-        if (requirer && requirer->requirer && objectOfRequired && host().showChildren) {
+        if (requirer && requirer->requirer && objectOfRequired && !isEvicted(target) && host().showChildren) {
             host().showChildren(m_instance.globalObject, requirer->requirer, objectOfRequired);
             RETURN_IF_EXCEPTION(scope, void());
         }

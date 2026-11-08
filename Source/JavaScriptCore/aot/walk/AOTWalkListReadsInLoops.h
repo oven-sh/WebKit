@@ -68,6 +68,7 @@ bool positionIsKnownToLieInsideList(Walker&, Reference list, Reference position)
 Reference storageOfListFromInFrontOfLoop(Walker&, const ListTestedInFrontOfLoop&, Origin);
 
 bool holeLeavesTurnBehindRow(Walker&, const BodyValue& read, const ListTestedInFrontOfLoop&);
+bool textOfLoopOnlyFillsListAndReadsAnother(Walker&, BlockID inputHead, ValueID made);
 enum class WhatStandsBesideRead : uint8_t { Number, NumberOrNothing };
 bool onlyUserTakesUndefinedForNaNInTypedElements(Walker&, const BodyValue& read, WhatStandsBesideRead = WhatStandsBesideRead::Number);
 bool readLeavesTurnAtHoleBehindRow(Walker&, const BodyValue& read);

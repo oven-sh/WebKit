@@ -2837,7 +2837,7 @@ const Body& Walker::currentBody() const
     return *m_frames.last().body;
 }
 
-static bool callsItselfByItsOwnText(const Program& program, const BodyIndex& index, FunctionID id)
+bool callsItselfByItsOwnText(const Program& program, const BodyIndex& index, FunctionID id)
 {
     const Function& function = program.at(id);
     auto inFrontOfChecks = [&](ValueID value) {
@@ -4925,7 +4925,10 @@ Reference Walker::tryCallInline(TerminatorDraft&& terminator, BlockID done, Bloc
         if (isUnreachable())
             return { };
     }
-    hearEffectsInTries(effects);
+    std::optional<Vector<uint32_t, 2>> receiverMadeHere = m_triesOfLoops.isEmpty() ? std::nullopt : receiverMadeHereThatAloneIsWritten(*this, terminator, effects);
+    if (receiverMadeHere)
+        count(StatisticID::MethodsOfListsHeardInLoopsAsWritersOfListsMadeHere);
+    hearEffectsOfWriterInTries(effects, receiverMadeHere);
     m_state.invalidate(effects);
     if (effects.mayThrow && has(Mechanism::Handlers))
         noteStateAtThrowForHandler(terminator.operands());
@@ -5201,6 +5204,8 @@ bool Walker::makeReadyToCross(BlockID to, std::span<const Reference> arguments, 
             letLeave(argument);
     }
     holdWhatArrives(to);
+    if (mayBuild && m_hasFailed && isUnreachable())
+        return false;
     ready.m_heldFor = to;
     ready.m_records.shrink(0);
     for (size_t index = 0; index < arguments.size(); ++index) {
@@ -7408,8 +7413,6 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         if (!isBuilt && (value.opcode() == Opcode::FindsDeclaredMember || value.opcode() == Opcode::FindsNoMember))
             ++m_numberOfQuestionsByNameLeftAsWritten;
     }
-    if (!isBuilt && value.opcode() == Opcode::PropGet && has(Mechanism::Guesses) && m_opensGuesses && callMethodsOfExpectedReceiversBehindTestsOfShape(*this, value))
-        return true;
     if (!isBuilt && has(Mechanism::Guesses) && askWhetherHolderOfStoreInClosedArmOfLoopIsList(*this, value))
         return true;
     if (!isBuilt && value.opcode() == Opcode::PropGet && has(Mechanism::TypedOperations))

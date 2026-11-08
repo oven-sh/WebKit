@@ -2623,6 +2623,39 @@ static void testWidePlaceAsksItsStructuresInFrontOfShape()
     }
 }
 
+static void testWhetherNameIsThereIsAnsweredByFurtherAnswers()
+{
+    using Form = SiteAnswers::Form;
+    PropertyReads reads;
+    AnswersAtOnePlace place(reads.runner);
+    Instance& instance = reads.runner.instance();
+    instance.propertyCaches.firstWordOfWideAnswers = AnswersAtOnePlace::index;
+    instance.propertyCaches.wordOfCageThatHoldsUndefined = 12345;
+    OrdinaryObjectWithTwoValues visitor(PropertyReads::structureIDOfHolder, 1, 2);
+    struct Held {
+        Form form;
+        uint32_t operand;
+        bool isIn;
+        bool isOwn;
+    };
+    for (Held held : { Held { Form::OwnValueInCell, OrdinaryObjectWithTwoValues::offsetInCell, true, true }, Held { Form::ValueInWordOfCage, 12345, false, false }, Held { Form::ValueInWordOfCage, 54321, true, false } }) {
+        for (unsigned index = 0; index < WideSiteAnswers::numberOfFurtherAnswers; ++index) {
+            WideSiteAnswers& wide = place.wideAnswers();
+            wide = { };
+            wide.structuresOfFurtherAnswers[index] = PropertyReads::structureIDOfHolder;
+            wide.operandsOfFurtherAnswers[index] = held.operand;
+            wide.formsOfFurtherAnswersHeld[index] = { static_cast<uint8_t>(SiteAnswers::bitsOf(SiteUse::Read, held.form)), 0 };
+            for (bool asksShapeFirst : { false, true }) {
+                StubRun in = reads.runner.run(findsNameAtSite(PresenceQuestion::In, asksShapeFirst), { visitor.address() }, AnswersAtOnePlace::distance);
+                AOT_TEST_CHECK(!in.calledOperation && in.result == held.isIn);
+                StubRun own = reads.runner.run(findsNameAtSite(PresenceQuestion::HasOwn, asksShapeFirst), { visitor.address() }, AnswersAtOnePlace::distance);
+                AOT_TEST_CHECK(!own.calledOperation && own.result == held.isOwn);
+            }
+        }
+    }
+    instance.propertyCaches.firstWordOfWideAnswers = UINT32_MAX;
+}
+
 static void testStubThatCanMeetNoFieldAsksNoShape()
 {
     PropertyReads reads;
@@ -3337,6 +3370,7 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/read-at-site/an-empty-word-in-the-cell-of-a-plain-object-is-asked-behind-the-place"_s, ImageTests::whenExecutable<testEmptyWordInCellOfPlainObjectIsAskedBehindPlace> },
         { "stubs/read-at-site/a-structure-filed-without-a-form-is-sent-to-its-row"_s, ImageTests::whenExecutable<testStructureFiledWithoutFormIsSentToItsRow> },
         { "stubs/read-at-site/a-wide-place-asks-its-structures-in-front-of-the-shape"_s, ImageTests::whenExecutable<testWidePlaceAsksItsStructuresInFrontOfShape> },
+        { "stubs/read-at-site/whether-a-name-is-there-is-answered-by-the-further-answers"_s, ImageTests::whenExecutable<testWhetherNameIsThereIsAnsweredByFurtherAnswers> },
         { "stubs/read-at-site/a-stub-that-can-meet-no-field-asks-no-shape"_s, ImageTests::whenExecutable<testStubThatCanMeetNoFieldAsksNoShape> },
         { "stubs/read-at-site/instructions/a-boxed-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::BoxedField, 11>> },
         { "stubs/read-at-site/instructions/an-integer-field"_s, ImageTests::whenExecutable<testInstructionsOfHitAtPlace<HitAtPlace::Int32Field, 22>> },

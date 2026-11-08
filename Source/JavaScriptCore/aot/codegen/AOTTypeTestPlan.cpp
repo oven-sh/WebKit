@@ -249,19 +249,27 @@ static void appendObjectTestsOfTypeTest(TypeTestPlan& plan, TypeReader reader, c
         return;
     const Program* program = reader.program();
     RELEASE_ASSERT(program);
-    auto knownLayouts = membersReadForTypeTest(reader, from.layouts);
-    bool mayHaveShapes = false;
-    for (LayoutID member : membersOf(reader, to.layouts)) {
-        const Layout& layout = program->at(member);
-        if (layout.kind == LayoutKind::ModuleNamespace) {
-            if (from.anyObject || knownLayouts.contains(member))
-                append({ .kind = CellTestKind::IsNamespaceOf, .module = layout.namespaceOf });
-            continue;
+    auto readKinds = [&] {
+        KindsInLayoutSet kinds;
+        for (LayoutID member : membersOf(reader, to.layouts)) {
+            const Layout& layout = program->at(member);
+            if (layout.kind == LayoutKind::ModuleNamespace)
+                kinds.holdsNamespace = true;
+            else if (!layout.writtenBuiltinBase || layout.mayBeOrdinaryObject)
+                kinds.mayHaveShapes = true;
         }
-        if (!layout.writtenBuiltinBase || layout.mayBeOrdinaryObject)
-            mayHaveShapes = true;
+        return kinds;
+    };
+    KindsInLayoutSet kinds = context && context->kindsInSetsOutsideThread && !liesInThread(to.layouts) ? context->kindsInSetsOutsideThread->ensure(to.layouts, readKinds).iterator->value : readKinds();
+    if (kinds.holdsNamespace) {
+        auto knownLayouts = membersReadForTypeTest(reader, from.layouts);
+        for (LayoutID member : membersOf(reader, to.layouts)) {
+            const Layout& layout = program->at(member);
+            if (layout.kind == LayoutKind::ModuleNamespace && (from.anyObject || knownLayouts.contains(member)))
+                append({ .kind = CellTestKind::IsNamespaceOf, .module = layout.namespaceOf });
+        }
     }
-    if (mayHaveShapes)
+    if (kinds.mayHaveShapes)
         append({ .kind = CellTestKind::ShapeIn, .layouts = to.layouts, .asksForInstance = shapeTestOfTypeTestAsksForInstance(reader, context, from) });
 }
 

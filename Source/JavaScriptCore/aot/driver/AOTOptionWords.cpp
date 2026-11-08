@@ -357,6 +357,12 @@ static std::optional<String> applyTesting(Wire::CompileOptions& options, const O
 {
     return forEachListedName(word.key, value, [&](StringView written) -> std::optional<String> {
         auto [name, numbers] = splitOptionText(written, ':');
+        if (auto lie = findMember<Wire::TestingLie>(name)) {
+            if (numbers)
+                return makeString(name, " takes no number"_s);
+            addFlag(options.lies, *lie);
+            return std::nullopt;
+        }
         auto testingSwitch = findMember<Wire::TestingSwitch>(name);
         if (!testingSwitch || !engineHonorsTestingSwitch(*testingSwitch))
             return unknownNameSentence(word.noun, name);
@@ -402,6 +408,8 @@ static void listTestingSwitches(PrintStream& out)
         if (engineHonorsTestingSwitch(testingSwitch))
             listValue(out, nameOf(testingSwitch));
     }
+    for (Wire::TestingLie lie : allMembersOf<Wire::TestingLie>)
+        listValue(out, nameOf(lie));
 }
 
 static bool engineHonorsCheck(Wire::CheckSet check)

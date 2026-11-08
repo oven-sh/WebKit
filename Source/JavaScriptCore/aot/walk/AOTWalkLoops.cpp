@@ -923,10 +923,27 @@ void Walker::holdWhatArrivesWhereEdgesAreAwaited(BlockID to)
     });
     RELEASE_ASSERT(believedHere != notFound);
     TryOfLoop* tried = findTryOfBlockAheadOfEdges(to);
+    size_t firstTryOfClosedCopy = notFound;
+    if (!tried && !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().entry == to) {
+        firstTryOfClosedCopy = m_triesOfLoops.reverseFindIf([&](const TryOfLoop& ofLoop) {
+            return ofLoop.frameIndex == m_waysIntoClosedCopies.last().frameIndex && ofLoop.inputHead == m_waysIntoClosedCopies.last().inputHead;
+        });
+    }
+    auto isOnlyForgottenInLoopOf = [&](size_t firstTry, Reference holder, bool isFieldOfScope, Reference believed) {
+        if (!believed || isFieldOfScope || isScopeThatUnitMakes(holder) || !m_state.isFresh(holder) || m_triesOfLoops[firstTry].frameIndex != m_frames.size() - 1)
+            return false;
+        if (believed != holder && believed.isValue() && m_state.isFresh(Reference::value(rootOfCellInSweptCode(m_code, believed.id()))))
+            return false;
+        for (size_t place = firstTry; place < m_triesOfLoops.size(); ++place) {
+            if (m_triesOfLoops[place].objectsMadeInFrontThatAreWritten.contains(holder.id().index()))
+                return false;
+        }
+        return isOtherThanRestOf(objectsMadeHereThatLoopMentions(m_triesOfLoops[firstTry].inputHead), holder) == IsItselfMentioned::No;
+    };
     m_believedAheadOfEdges[believedHere].state.forEachBeliefOfFreshHolderLackingIn(m_state, [&](Reference holder, std::optional<FieldReference> fieldOfScope, Reference believed) {
         bool isCarriedRound = believed && believed.isValue() && m_code.at(believed.id()).opcode == Opcode::Parameter && m_code.at(believed.id()).block() == to;
         if (!tried) {
-            if (!isCarriedRound)
+            if (!isCarriedRound && !(firstTryOfClosedCopy != notFound && isOnlyForgottenInLoopOf(firstTryOfClosedCopy, holder, !!fieldOfScope, believed)))
                 fail("what arrives at a block is not what was believed there"_s);
             return;
         }
@@ -952,6 +969,8 @@ void Walker::holdWhatArrivesWhereEdgesAreAwaited(BlockID to)
             count(StatisticID::ListsKeptAtHeadsThoughAnAnswerAboutThemWasForgotten);
             return;
         }
+        if (kept == notFound && isOnlyForgottenInLoopOf(tried - m_triesOfLoops.begin(), holder, !!fieldOfScope, believed))
+            return;
         loseObjectKeptAtHead(*tried, kept == notFound ? FreshObjectKeptAtHead { everyFreshObject, holder } : tried->freshObjectsKept[kept]);
     });
 }

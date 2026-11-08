@@ -114,6 +114,23 @@ void countMissOfPlace(StubAssembler& jit, GPRReg distance, GPRReg scratch, JumpL
 #endif
 }
 
+void goOnWhileSamplesOfPlaceAreLeftOut(StubAssembler& jit, [[maybe_unused]] GPRReg distance, GPRReg scratchOfCount, CCallHelpers::Label isCounted)
+{
+#if CPU(ARM64)
+    const OwnedScratchRegister ownedScratch(jit);
+    const GPRReg leftOut = ownedScratch;
+    jit.load8(Address(scratchOfCount, 1), leftOut);
+    Jump isDue = jit.branchTest32(CCallHelpers::Zero, leftOut);
+    jit.sub32(TrustedImm32(1), leftOut);
+    jit.store8(leftOut, Address(scratchOfCount, 1));
+    jit.jump().linkTo(isCounted, &jit);
+    isDue.link(&jit);
+#else
+    jit.m_assembler.subb_im(1, 1, scratchOfCount, distance, 0);
+    Jump(jit.m_assembler.jCC(X86Assembler::ConditionNC)).linkTo(isCounted, &jit);
+#endif
+}
+
 void refillSiteCache(StubAssembler& jit, GPRReg receiver, GPRReg identifierNumber, GPRReg site, SlotAccess access)
 {
     jit.preservingCallerSavedRegisters(false, [&](unsigned) {
@@ -748,6 +765,7 @@ static void countMissAtSite(StubAssembler& jit, GPRReg receiver, GPRReg distance
     Label isCounted = jit.label();
     jit.addOutOfLinePart([=](StubAssembler& jit) mutable {
         isSample.link(&jit);
+        goOnWhileSamplesOfPlaceAreLeftOut(jit, distance, scratch, isCounted);
         loadNameOfSite(jit, distance, name, scratch);
         fillAnswersAtSite(jit, receiver, name, distance, use, whatStubDoes);
         jit.jump().linkTo(isCounted, &jit);
@@ -1876,6 +1894,7 @@ void generateFindsNameAtSite(StubAssembler& jit)
     hasOtherKey.link(&jit);
     Jump isNotAnsweredByStructure = jit.branch32(CCallHelpers::Above, key, TrustedImm32(SiteAnswers::formMask));
     answers.loadOperand(jit, offsetOfSecondAnswer, operand);
+    Label asksFormAndOperand = jit.label();
     JumpsToTwoForms aboveInStorageOrInCell = branchIfEitherOfTwoForms(jit, key, use, Form::ValueInStorageOfHolder, Form::ValueInWordOfCage);
     isAbove.append(aboveInStorageOrInCell.toLower);
     JumpsToTwoForms ownFieldOrExtraValueInCell = branchIfEitherOfTwoForms(jit, key, use, Form::OwnFieldInCell, Form::ExtraValueInCell);
@@ -1912,8 +1931,9 @@ void generateFindsNameAtSite(StubAssembler& jit)
     Jump hasNoMoreAnswers = branchUnlessAnswersAreWide(jit, distance, key, operand);
 #endif
     jit.load32(Address(receiver, JSCell::structureIDOffset()), key);
-    for (unsigned index = 0; index < WideSiteAnswers::numberOfFurtherAnswers; ++index)
-        isNotAsked.append(jit.branch32(CCallHelpers::Equal, answers.word(OBJECT_OFFSETOF(WideSiteAnswers, structuresOfFurtherAnswers) + index * sizeof(uint32_t)), key));
+    std::array<Jump, WideSiteAnswers::numberOfFurtherAnswers> hasFurtherAnswer;
+    for (unsigned index = 0; index < hasFurtherAnswer.size(); ++index)
+        hasFurtherAnswer[index] = jit.branch32(CCallHelpers::Equal, answers.word(OBJECT_OFFSETOF(WideSiteAnswers, structuresOfFurtherAnswers) + index * sizeof(uint32_t)), key);
     for (unsigned index = 0; index < WideSiteAnswers::numberOfStructuresThatLackName; ++index)
         jit.branch32(CCallHelpers::Equal, answers.word(OBJECT_OFFSETOF(WideSiteAnswers, structuresThatLackName) + index * sizeof(uint32_t)), key).linkTo(answersNo, &jit);
     hasNoMoreAnswers.link(&jit);
@@ -1922,6 +1942,14 @@ void generateFindsNameAtSite(StubAssembler& jit)
     countMissAtSite(jit, result, distance, nameOfMiss, scratchOfMiss, use);
     isNoObject.link(&jit);
     askGeneralStub();
+
+    for (unsigned index = 0; index < hasFurtherAnswer.size(); ++index) {
+        hasFurtherAnswer[index].link(&jit);
+        static_assert(!OBJECT_OFFSETOF(WideSiteAnswers::FormOfFurtherAnswer, bits) && sizeof(WideSiteAnswers::FormOfFurtherAnswer::bits) == 1);
+        jit.load8(answers.word(OBJECT_OFFSETOF(WideSiteAnswers, formsOfFurtherAnswersHeld) + index * sizeof(WideSiteAnswers::FormOfFurtherAnswer)), key);
+        jit.load32(answers.word(OBJECT_OFFSETOF(WideSiteAnswers, operandsOfFurtherAnswers) + index * sizeof(uint32_t)), operand);
+        jit.jump().linkTo(asksFormAndOperand, &jit);
+    }
 
     isNotAsked.link(&jit);
     jit.move(receiver, result);

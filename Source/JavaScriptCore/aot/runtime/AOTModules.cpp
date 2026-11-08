@@ -4153,17 +4153,6 @@ void Modules::holdMockThatStandsUntilImportSettles(ModuleID root, JSPromise* pro
         promise->setFlags(promise->flags() & ~JSPromise::isHandledFlag);
 }
 
-JSPromise* Modules::loadCopyOfOriginal(ModuleID file)
-{
-    VM& vm = *m_instance.vm;
-    JSGlobalObject* realm = m_instance.globalObject;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSPromise* copyOfOriginal = loader()->requestImportModule(realm, Identifier::fromString(vm, makeString(m_table.pathText(file), "?actual"_s)), moduleKey(file), nullptr, nullptr);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    m_copiesOfOriginalsBeingLoaded.append({ file, Strong<JSPromise>(vm, copyOfOriginal) });
-    return copyOfOriginal;
-}
-
 JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller, TextOfImport text, JSPromise* promiseOfCaller, JSValue stateOfWait, std::optional<bool> answerOfWalkAlreadyMade)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -4198,19 +4187,9 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             return rejectedPromiseWithPendingException(realm, scope);
         }
     }
-    JSPromise* originalOwed = nullptr;
     if (text == TextOfImport::HasCome) {
         if (JSPromise* failed = takeFailureOfLoadForWantOfMock(module)) [[unlikely]]
             return failed;
-        if (takeBookingOfLoadWhoseMockHasEnded(module)) [[unlikely]] {
-            JSPromise* copyOfOriginal = loadCopyOfOriginal(fileOf(module));
-            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-            return copyOfOriginal;
-        }
-        if (owesOriginalUnderMockThatHasSettled(module)) [[unlikely]] {
-            originalOwed = loadCopyOfOriginal(fileOf(module));
-            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-        }
     }
     if (text != TextOfImport::MayComeLater && !m_modulesWithMockToRun.isEmpty()) [[unlikely]]
         forgetMockLaidBehindCallWhoseTextHasCome(fileOf(module));
@@ -4242,8 +4221,6 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         factories = factoryThatWaitsBelow(module, askedBy, stateOfWait);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
-    if (!factories)
-        factories = originalOwed;
     if (factories) [[unlikely]] {
         VM& vm = *m_instance.vm;
         JSPromise* promise = promiseForCaller();
@@ -7240,10 +7217,16 @@ void didLeaveLoaderInThisTestFile(JSGlobalObject* realm, ModuleID module)
         modules->didLeaveLoaderInThisTestFile(module);
 }
 
-bool hasLeftLoaderInThisTestFile(JSGlobalObject* realm, ModuleID module)
+void noteThatKeyIsOfThisTestFile(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->noteThatKeyIsOfThisTestFile(module);
+}
+
+bool isKeyOfThisTestFile(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
-    return modules && modules->hasLeftLoaderInThisTestFile(module);
+    return modules && modules->isKeyOfThisTestFile(module);
 }
 
 bool wasLoadedAheadOfThisTestFile(JSGlobalObject* realm, ModuleID module)
@@ -7982,7 +7965,13 @@ unsigned ModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, ModuleLi
         modules().letGoOfMocksThatEndedAtAndBelow(m_module);
         RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, invalidIndex);
     }
-    modules().finishLink(m_module, context);
+    {
+        auto catching = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+        modules().finishLink(m_module, context);
+        Exception* thrown = catching.exception();
+        if (thrown && status() == Status::Evaluated && evaluationError() == thrown->value() && catching.tryClearException()) [[unlikely]]
+            return index;
+    }
     if (!scope.exception() && status() == Status::Unlinked && (!modules().data(m_module).needsLink() || modules().status(m_module) != ModuleStatus::Unlinked))
         setStatus(Status::Linked);
     RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, invalidIndex);
