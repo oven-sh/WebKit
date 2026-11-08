@@ -215,30 +215,6 @@ public:
     }
 
     template<size_t inlineCapacity>
-    bool appendHoldersAmongUnlessMoreThan(size_t most, PropertyKeyID name, std::span<const LayoutID> ascending, Vector<LayoutID, inlineCapacity>& found) const
-    {
-        std::span<const uint32_t> holders = holdersOf(name);
-        if (holders.size() < ascending.size()) {
-            for (uint32_t holder : holders) {
-                if (!std::ranges::binary_search(ascending, holder, { }, [](LayoutID layout) { return layout.index(); }))
-                    continue;
-                if (found.size() == most)
-                    return false;
-                found.append(LayoutID(holder));
-            }
-            return true;
-        }
-        for (LayoutID layout : ascending) {
-            if (!isInUse(layout) || !has(layout.index(), name))
-                continue;
-            if (found.size() == most)
-                return false;
-            found.append(layout);
-        }
-        return true;
-    }
-
-    template<size_t inlineCapacity>
     void appendHoldersAmong(PropertyKeyID name, std::span<const LayoutID> ascending, Vector<LayoutID, inlineCapacity>& found) const
     {
         std::span<const uint32_t> holders = holdersOf(name);

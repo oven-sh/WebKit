@@ -108,7 +108,7 @@ enum StatisticID (stage: StatisticStage) {
     PushesThatLengthenTheirListInEveryTurn
     ListsKeptAtHeadsThoughAnAnswerAboutThemWasForgotten
     RowsAskedOnceWhereStretchesStoreIntoThem RestsOfStretchesThatMayRunAsWritten RowsAskedOnceWhereTurnsBeginAgain
-    MethodCallsToldApartByShape ReadsToldApartByShape MethodCallsOnExpectedReceiversToldApartByShape
+    MethodCallsToldApartByShape ReadsToldApartByShape
     ConstructionsToldApartByCallee CallsToldApartByCallee LoopsBuiltForClosuresReadOutOfSlots JoinsWalkedOnceForEachCallee ConstructorsReadOffObjectsOfClasses
     MethodCallsThroughTable
     StepsOfListsOnWaysApartUnderHandlers

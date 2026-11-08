@@ -514,7 +514,7 @@ bool PlannerOfPromotedEnvironments::isKeptByVariableThatStays(FunctionID maker, 
         return false;
     VariableID kept;
     for (FunctionID referrer : linked.referrersOf(maker)) {
-        const BodyIndex* index = m_facts.bodies().find(referrer);
+        const BodyIndex* index = linked.isGroup(referrer) ? nullptr : m_facts.bodies().find(referrer);
         if (!index)
             return false;
         for (const LinkedCall& call : linked.callsOf(referrer)) {
@@ -562,7 +562,7 @@ bool PlannerOfPromotedEnvironments::isEnteredUnderNoHandler(FunctionID id, unsig
         return false;
     bool isCalled = false;
     for (FunctionID referrer : linked.referrersOf(id)) {
-        const BodyIndex* index = m_facts.bodies().find(referrer);
+        const BodyIndex* index = linked.isGroup(referrer) ? nullptr : m_facts.bodies().find(referrer);
         if (!index)
             return false;
         for (const LinkedCall& call : linked.callsOf(referrer)) {

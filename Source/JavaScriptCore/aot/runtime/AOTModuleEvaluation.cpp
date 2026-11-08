@@ -2996,7 +2996,7 @@ void Modules::waitForFactoriesThatRequireLeft(ModuleID required)
         return;
     }
     JSValue state;
-    JSPromise* factories = factoryThatWaitsBelow(required, FactoryAskedForBy::ImportCallBehindItsText, state);
+    JSPromise* factories = factoryThatWaitsBelow(required, FactoryAskedForBy::LoadThatRequireLeft, state);
     RETURN_IF_EXCEPTION(scope, void());
     if (!factories)
         return;
