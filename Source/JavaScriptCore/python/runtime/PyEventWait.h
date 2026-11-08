@@ -71,6 +71,9 @@ struct WaitRequest {
     // Once a signal of the program's has arrived on the thread (signalsArrivedOnThread()), the wait is over, as if time had run out. (Else it goes on: PEP 475.)
     // For the host this is nothing: it returns EINTR as soon as calls of Python's are owed, and waitForEvents() decides.
     bool endsAtSignal { false };
+    // With that: what signalsArrivedOnThread() said when the caller last looked for signals. One that has arrived since ends the wait before it begins: its handler would be called in
+    // the wait, which would go on.
+    unsigned signalsSeen { 0 };
     // The caller has looked a moment ago, and there was nothing: what a wait does itself before it has the call begun again (IdleWait::willBlock()). For the host this is nothing.
     bool hasJustLooked { false };
     // For a caller that makes one wait of several requests: what this has at the end of one it gives to the next. See IdleWait::goOnWithInterval(). For the host this is nothing.

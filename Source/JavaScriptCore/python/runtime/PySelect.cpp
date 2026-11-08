@@ -101,8 +101,9 @@ static NEVER_INLINE int waitWithTimeout(WaitRequest& request, int64_t timeout)
 // GIL is given up), and so has whatever needs a buffer and does not wait.
 NEVER_INLINE int blockingWait(JSGlobalObject* globalObject, WaitRequest& request)
 {
-    // (In the middle of what the system would do in one call, the thread is sent for no more than it would be in that call.)
-    AllowThreads allow(globalObject, request.endsAtSignal ? AllowThreads::MayLoseSomething : AllowThreads::LosesNothing);
+    // (In the middle of what the system would do in one call, the thread is sent for no more than it would be in that call. A wait that a signal ends and that is the call's own has
+    // transferred nothing yet.)
+    AllowThreads allow(globalObject, request.endsAtSignal && !request.isWaitOfCall ? AllowThreads::MayLoseSomething : AllowThreads::LosesNothing);
     int64_t timeout = request.timeout;
     int64_t deadline = -1;
     if (timeout > 0 && __builtin_add_overflow(monotonicNanoseconds(), timeout, &deadline))
@@ -173,10 +174,13 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
     if (request.timeout > 0 && __builtin_add_overflow(monotonicNanoseconds(), request.timeout, &deadline))
         deadline = std::numeric_limits<int64_t>::max();
     WaitFunction function = waitsInHost(globalObject) ? s_hostWaitFunction : blockingWait;
-    unsigned signalsArrived = signalsArrivedOnThread();
     auto isEndedBySignal = [&] {
-        return request.endsAtSignal && signalsArrivedOnThread() != signalsArrived;
+        return request.endsAtSignal && signalsArrivedOnThread() != request.signalsSeen;
     };
+    if (isEndedBySignal()) [[unlikely]] {
+        waitClearSets(request);
+        return 0;
+    }
     IdleWait idle(globalObject, deadline, request.isWaitOfCall);
     if (request.idleInterval)
         idle.goOnWithInterval(request.idleInterval);

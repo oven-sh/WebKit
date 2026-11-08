@@ -719,15 +719,20 @@ static bool socketHasTimeLimitOfKernel(PyRecord* socket, int option)
 
 // As waitForEvents(), for the socket. `events`: what to wait for, and then what there is. `idleInterval`: see WaitRequest.
 // `hasTransferred`: something has been transferred. It is lost if the call of the native function is begun again (see IdleWait), and a signal for which the program has a handler ends the
-// wait: 0. `isAdvice`: the system call may go ahead where poll() does not say so. Then such a signal ends the wait as well: the handler may have made room.
+// wait: 0. `signalsSeen`: if there is one, such a signal ends the wait in any case, and so does one that has arrived since that was the count (SocketTransfer::signalsSeen()). With nothing
+// transferred that is for a wait that is advice: the system call may go ahead where poll() does not say so, and the handler may be who made room.
 // In a frame of its own: the request is not to lie, unwritten, under a call that blocks without having waited here. See fileIOReadWithoutGIL().
-static NEVER_INLINE int socketWait(JSGlobalObject* globalObject, PyRecord* socket, short& events, int64_t timeout, bool hasTransferred, bool isAdvice, bool standsForBlockingCall, int64_t* deadlineTakenUp, int64_t* idleInterval)
+static NEVER_INLINE int socketWait(JSGlobalObject* globalObject, PyRecord* socket, short& events, int64_t timeout, bool hasTransferred, const unsigned* signalsSeen, bool standsForBlockingCall, int64_t* deadlineTakenUp, int64_t* idleInterval)
 {
     struct pollfd descriptor { socketDescriptor(socket), events, 0 };
     WaitRequest request { WaitRequest::Kind::Poll };
     request.timeout = timeout;
     request.isWaitOfCall = !hasTransferred;
-    request.endsAtSignal = hasTransferred || isAdvice;
+    ASSERT(signalsSeen || !hasTransferred);
+    if (signalsSeen) {
+        request.endsAtSignal = true;
+        request.signalsSeen = *signalsSeen;
+    }
     request.descriptors = &descriptor;
     request.descriptorCount = 1;
     if (idleInterval)
@@ -785,7 +790,7 @@ static bool socketCall(JSGlobalObject* globalObject, PyRecord* socket, bool isWr
                 if (options.isConnect)
                     events |= POLLERR;
                 int64_t deadlineTakenUp = 0;
-                ready = socketWait(globalObject, socket, events, interval, false, false, waitsForHost && !options.isConnect, &deadlineTakenUp, nullptr);
+                ready = socketWait(globalObject, socket, events, interval, false, nullptr, waitsForHost && !options.isConnect, &deadlineTakenUp, nullptr);
                 // The time began to run when the call was first begun.
                 if (hasTimeout && deadlineTakenUp)
                     deadline = deadlineTakenUp;
@@ -1456,14 +1461,19 @@ public:
     Next serve(bool hasTransferred)
     {
         auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
+        // (Read first: one that arrives while the handlers are called is for the next look, whether or not its handler has been among them.)
+        unsigned arrived = signalsArrivedOnThread();
         if (failed(scope, checkSignals(m_globalObject)))
             return Next::Raised;
-        unsigned before = std::exchange(m_signalsArrived, signalsArrivedOnThread());
-        return hasTransferred && m_signalsArrived != before ? Next::Ends : Next::GoesOn;
+        unsigned before = std::exchange(m_signalsArrived, arrived);
+        return hasTransferred && arrived != before ? Next::Ends : Next::GoesOn;
     }
 
     // Those that had arrived by then ended nothing.
     void forgetSignals(unsigned arrived) { m_signalsArrived = arrived; }
+
+    // What had arrived at the last look. For a wait that one more is to end: see WaitRequest::signalsSeen.
+    const unsigned& signalsSeen() const { return m_signalsArrived; }
 
 private:
     JSGlobalObject* m_globalObject;
@@ -1657,7 +1667,7 @@ static bool socketSendCall(JSGlobalObject* globalObject, PyRecord* socket, int64
         wasToldReady = false;
         if (socketDescriptor(socket) >= 0) {
             short events = POLLOUT;
-            int ready = socketWait(globalObject, socket, events, socketLongestWaitBeforeCall, total, true, false, nullptr, &idleInterval);
+            int ready = socketWait(globalObject, socket, events, socketLongestWaitBeforeCall, total, &transfer.signalsSeen(), false, nullptr, &idleInterval);
             if (failed(scope, ready != waitRaised))
                 return false;
             if (ready < 0)
@@ -1724,7 +1734,7 @@ static NEVER_INLINE bool socketReceiveWhole(JSGlobalObject* globalObject, PyReco
         int ready = 0;
         if (!blocksInCall) {
             short events = POLLIN;
-            ready = socketWait(globalObject, socket, events, socketLongestWaitBeforeCall, true, false, false, nullptr, &idleInterval);
+            ready = socketWait(globalObject, socket, events, socketLongestWaitBeforeCall, true, &transfer.signalsSeen(), false, nullptr, &idleInterval);
             if (failed(scope, ready != waitRaised))
                 return false;
             if (ready < 0)
