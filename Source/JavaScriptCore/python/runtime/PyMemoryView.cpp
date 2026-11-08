@@ -1234,6 +1234,7 @@ void PyMemoryView::pinMemoryOfJS(JSGlobalObject* globalObject)
 
 std::span<uint8_t> PyMemoryView::memoryOfJSThatIsPinned(JSGlobalObject* globalObject) const
 {
+    // (The views in the list are not visited. An entry goes at the end of the collection that finds its view dead, before the cell can be given to another: unpinMemoryOfDeadViews(). So what is found is this view's.)
     if (!m_isPinningMemoryOfJS)
         return { };
     for (auto& entry : runtime(globalObject).pinningViews) {
