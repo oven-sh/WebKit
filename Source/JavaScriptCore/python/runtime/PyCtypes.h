@@ -462,6 +462,8 @@ PyCData* dataAt(JSGlobalObject*, PyType*, const Place&, int64_t index);
 PyCData* dataAtAddress(JSGlobalObject*, PyType*, const void*);
 // An instance with a copy of that memory.
 PyCData* dataFromCopy(JSGlobalObject*, PyType*, const void*, int64_t size);
+// The __buffer__() of them all.
+JSValue dataBuffer(JSGlobalObject*, JSValue self, JSValue flags);
 
 // Gives the instance zeroed memory of its own, of that size. False: a MemoryError.
 bool allocateMemory(JSGlobalObject*, PyCData*, int64_t size);

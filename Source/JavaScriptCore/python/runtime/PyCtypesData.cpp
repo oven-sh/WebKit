@@ -505,7 +505,7 @@ static JSValue dataHash(JSGlobalObject* globalObject, JSValue)
     return raiseTypeError(globalObject, scope, "unhashable type"_s);
 }
 
-static JSValue dataBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flags)
+JSValue dataBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flags)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -1163,11 +1163,6 @@ static JSValue functionIsNotNull(JSGlobalObject* globalObject, JSValue self)
     return jsBoolean(!!address);
 }
 
-static JSValue functionBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flags)
-{
-    return callSpecial(globalObject, stateOf(globalObject).dataType->lookup(Special::Buffer), self, flags);
-}
-
 static JSValue functionGetErrorCheck(JSGlobalObject*, JSValue self)
 {
     JSValue value = PyCFuncPtr::from(self)->errorCheck.get();
@@ -1251,7 +1246,7 @@ static constexpr NativeDef functionMethods[] = {
     PY_NEW(functionNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", functionRepr, "($self, /)"),
     PY_SLOT("__call__", functionCall, "($self, /, *args, **kwargs)"),
-    PY_SLOT("__buffer__", functionBuffer, "($self, flags, /)"),
+    PY_SLOT("__buffer__", dataBuffer, "($self, flags, /)"),
     PY_SLOT("__bool__", functionIsNotNull, "($self, /)"),
 };
 

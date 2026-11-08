@@ -1637,16 +1637,22 @@ static JSValue bytesPartition(JSGlobalObject* globalObject, JSValue self, JSValu
     RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, std::span<const JSValue> { parts, 3 }));
 }
 
-// For when the __buffer__() of an item is written in Python. It may do anything to the other items, so the memory of each is
+// For when an item cannot be asked twice (canGetBufferTwice()). Code of the program may do anything to the other items, so the memory of each is
 // held until the end; and to the sequence, a tuple or a list, of which each item is taken when its turn comes.
 static JSValue bytesJoinHoldingBuffers(JSGlobalObject* globalObject, JSValue self, PyTuple* tuple, JSArray* list)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned count = tuple ? tuple->length() : listLength(list);
-    Vector<Buffer> buffers(count);
+    Vector<Buffer> buffers;
+    if (!buffers.tryReserveInitialCapacity(count))
+        return raiseMemoryError(globalObject, scope, String());
+    buffers.grow(count);
     // What the buffers refer to: the collector does not look into the vector.
     MarkedArgumentBuffer referents;
+    referents.ensureCapacity(3 * static_cast<size_t>(count));
+    if (referents.hasOverflowed())
+        return raiseMemoryError(globalObject, scope, String());
     auto releaseAll = makeScopeExit([&] {
         for (auto& buffer : buffers)
             releaseBuffer(globalObject, buffer);
@@ -1664,6 +1670,7 @@ static JSValue bytesJoinHoldingBuffers(JSGlobalObject* globalObject, JSValue sel
         if (list && listLength(list) != count)
             return raiseRuntimeError(globalObject, scope, "sequence changed size during iteration"_s);
     }
+    ASSERT(!referents.hasOverflowed());
     auto separator = bytesSpanOf(self);
     uint64_t total = 0;
     JSValue result;
@@ -1793,12 +1800,12 @@ static JSValue bytesJoin(JSGlobalObject* globalObject, JSValue self, JSValue ite
         return result;
     }
 
-    bool runsCode = false;
-    for (unsigned i = 0; i < count && !runsCode; ++i)
-        runsCode = getBufferRunsCode(itemAt(i));
-    if (runsCode)
+    bool asksTwice = true;
+    for (unsigned i = 0; i < count && asksTwice; ++i)
+        asksTwice = canGetBufferTwice(itemAt(i));
+    if (!asksTwice)
         RELEASE_AND_RETURN(scope, bytesJoinHoldingBuffers(globalObject, self, tuple, list));
-    // Nothing from here on runs any code, so neither the items nor their bytes change.
+    // Nothing from here on runs any code, and no other thread makes an item longer: the items stay what they are, and as long.
     if (!count)
         RELEASE_AND_RETURN(scope, bytesMake(globalObject, isArray, { }));
     if (count == 1 && !isArray && bytesIsExact(globalObject, itemAt(0)))

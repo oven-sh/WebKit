@@ -96,8 +96,12 @@ static_assert(OBJECT_OFFSETOF(Buffer, format) - OBJECT_OFFSETOF(Buffer, dimensio
 
 // Whether the object exports its memory at all.
 bool hasBuffer(JSValue);
-// Whether getting a buffer from it, or releasing that, calls a method written in Python.
+// Whether getting a buffer from it, or releasing that, runs code of the program: a method written in Python; a function written in C++ that is not the __buffer__() of
+// an exporter, and may call anything. For a PickleBuffer: whether to get the buffer of its object does. To ask runs nothing.
 JS_EXPORT_PRIVATE bool getBufferRunsCode(JSValue);
+// Whether two buffers got from it one after the other, with nothing done between them, are of the same bytes: to get them runs no code, and it is not memory of JS that
+// another thread can make longer, a SharedArrayBuffer that can grow, seen through something that follows its length.
+bool canGetBufferTwice(JSValue);
 // False: a TypeError ("a bytes-like object is required, not 'x'"), a BufferError, or whatever __buffer__() raised.
 // With BufferSimple, the memory is `length` bytes from `data`. Until the buffer is released, a bytearray, an array and the like
 // cannot be resized, whatever runs.
@@ -154,7 +158,7 @@ struct HostMemory {
 // An object of Python's that has a buffer to give. (False for the buffers of JS.)
 JS_EXPORT_PRIVATE bool exportsMemoryToHost(JSValue);
 // Empty: an exception, as where Python itself asks for bytes that follow one another (a view that was released, or has gaps).
-// Runs code of the program if __buffer__() is written in Python (getBufferRunsCode()). So the host calls this where it converts its
+// May run code of the program, a __buffer__() written in Python above all (getBufferRunsCode()). So the host calls this where it converts its
 // arguments, as it would call toString() there. Where it has begun its work and merely asks a value for its bytes, an object
 // like that is no buffer.
 JS_EXPORT_PRIVATE JSValue memoryForHost(JSGlobalObject*, JSValue object);

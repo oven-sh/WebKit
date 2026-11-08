@@ -219,7 +219,7 @@ public:
     // Whoever looks things up, in whatever classes, and then counts on it that nothing has changed meanwhile sees by this number
     // whether that has happened, here or in another thread.
     static uint64_t timesLookupRanCode() { return s_timesLookupRanCode.load(std::memory_order_relaxed); }
-    // AsksKeys::No is for whoever JSC takes to have no effects (getCallData()): no code of the program runs. A key that is no str and would say
+    // AsksKeys::No is for whoever JSC takes to have no effects (getCallData()), and for where a buffer is asked for (PyMemoryView.cpp): no code of the program runs. A key that is no str and would say
     // that it equals the name is passed over, whether or not it has been asked before: the answer does not depend on what was looked up earlier.
     enum class AsksKeys : bool { No, Yes };
     ALWAYS_INLINE JSValue lookup(Special special, AsksKeys asksKeys = AsksKeys::Yes)

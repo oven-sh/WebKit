@@ -254,15 +254,29 @@ static constexpr TypeDef bufferWrapperTypeDef { "_buffer_wrapper"_s, { TypeFlag:
 
 static PyMemoryView* memoryViewFromBuffer(JSGlobalObject*, PyManagedBuffer*, const Buffer&);
 
+// A class of the program, or one of the types written in C++ that let the program set their attributes: struct.error. (And the classes of the errors of JS, which
+// are heap types that let nobody: they have no such methods, which is then found out by looking.)
+static ALWAYS_INLINE bool bufferTypeCanBeGivenMethods(PyType* type)
+{
+    return type->has(TypeFlag::Heap) || type->has(TypeFlag::Mutable);
+}
+
+// __buffer__ and __release_buffer__ are looked for where nothing of the program's must run: where it is asked whether anything will, and where the collector has found
+// a buffer that nothing refers to. So a key that is no str, in the namespace of a class, is not asked whether it equals the name.
+static ALWAYS_INLINE JSValue bufferLookup(PyType* type, Special special)
+{
+    return type->lookup(special, PyType::AsksKeys::No);
+}
+
 // The __release_buffer__() of the type of the object, if it is written in Python.
 static JSValue bufferPythonReleaseMethod(JSValue object)
 {
     if (!isPyObject(object))
         return { };
     PyType* type = uncheckedDowncast<PyObject>(object.asCell())->type();
-    if (!type->has(TypeFlag::Heap))
+    if (!bufferTypeCanBeGivenMethods(type))
         return { };
-    JSValue method = type->lookup(Special::ReleaseBuffer);
+    JSValue method = bufferLookup(type, Special::ReleaseBuffer);
     if (!method || PyNativeFunction::is(method))
         return { };
     return method;
@@ -373,7 +387,7 @@ PyManagedBuffer* PyManagedBuffer::create(JSGlobalObject* globalObject, Buffer& b
     result->m_release = std::exchange(buffer.release, nullptr);
     result->requiredSize = buffer.requiredSize;
     // The class of the exporter may be given a __release_buffer__() later.
-    if (result->m_release || (isPyObject(object) && uncheckedDowncast<PyObject>(object.asCell())->type()->has(TypeFlag::Heap))) {
+    if (result->m_release || (isPyObject(object) && bufferTypeCanBeGivenMethods(uncheckedDowncast<PyObject>(object.asCell())->type()))) {
         rt.registerFinalizable(result);
     }
     return result;
@@ -1083,6 +1097,15 @@ static bool bufferGetFromJS(JSGlobalObject* globalObject, JSCell* cell, Buffer& 
     return bufferFill(globalObject, buffer, cell, { cell, 0, bufferMemoryOf(cell).size(), false, itemSize, format }, flags);
 }
 
+// Whether what a type has as __buffer__ is the __buffer__() of one of the exporters written in C++. That runs no code of the program, and returns a view that nothing else
+// has, or refuses an object that is none of its own. Not any function written in C++ will do: dict.get calls the __eq__() of a key and returns a view of the program's. This
+// goes by what the function is, not by where it was found: the namespace of any type can be written to behind its back (DEFERRED.md).
+static ALWAYS_INLINE bool bufferIsMethodOfNativeExporter(JSValue method)
+{
+    auto* native = PyNativeFunction::tryFrom(method);
+    return native && native->kind() == NativeKind::SlotWrapper && native->def().knownOfName.id == NameID::Buffer;
+}
+
 // The type is written in C++, and so is its __buffer__(): the view that returns is of the object's own memory, and nothing
 // else has it.
 static bool bufferGetFromNativeMethod(JSGlobalObject* globalObject, JSValue object, JSValue method, Buffer& buffer, unsigned flags)
@@ -1140,7 +1163,7 @@ bool hasBuffer(JSValue value)
     JSCell* cell = value.asCell();
     if (!isPyObject(cell))
         return bufferIsJSExporter(cell);
-    return cell->type() == PyBytesType || cell->type() == PyByteArrayType || !!uncheckedDowncast<PyObject>(cell)->type()->lookup(Special::Buffer);
+    return cell->type() == PyBytesType || cell->type() == PyByteArrayType || !!bufferLookup(uncheckedDowncast<PyObject>(cell)->type(), Special::Buffer);
 }
 
 static bool bufferGet(JSGlobalObject* globalObject, JSValue object, Buffer& buffer, unsigned flags)
@@ -1157,8 +1180,8 @@ static bool bufferGet(JSGlobalObject* globalObject, JSValue object, Buffer& buff
             bool isCore = bufferIsCoreExporter(cell);
             if (isCore && !type->has(TypeFlag::Heap))
                 RELEASE_AND_RETURN(scope, bufferGetFromCoreExporter(globalObject, cell, buffer, flags));
-            if (JSValue method = type->lookup(Special::Buffer)) {
-                if (!PyNativeFunction::is(method))
+            if (JSValue method = bufferLookup(type, Special::Buffer)) {
+                if (!bufferIsMethodOfNativeExporter(method))
                     RELEASE_AND_RETURN(scope, bufferGetFromPythonMethod(globalObject, object, method, buffer, flags));
                 if (isCore)
                     RELEASE_AND_RETURN(scope, bufferGetFromCoreExporter(globalObject, cell, buffer, flags));
@@ -1240,15 +1263,45 @@ bool getBuffer(JSGlobalObject* globalObject, JSValue object, Buffer& buffer, uns
     return true;
 }
 
+static JSValue pickleBufferBuffer(JSGlobalObject*, JSValue self, JSValue flags);
+static PyMemoryView* pickleBufferViewIfAny(JSValue);
+
+template<bool orAnotherThreadMakesItLonger>
+static bool bufferRunsCode(JSValue object)
+{
+    if (!object || !object.isCell())
+        return false;
+    JSCell* cell = object.asCell();
+    if (!isPyObject(cell)) {
+        if (!orAnotherThreadMakesItLonger)
+            return false;
+        // A SharedArrayBuffer that can grow does so in whatever thread has it, and what has no length of its own follows.
+        if (cell->type() == ArrayBufferType)
+            return uncheckedDowncast<JSArrayBuffer>(cell)->impl()->isGrowableShared();
+        return isTypedArrayTypeIncludingDataView(cell->type()) && uncheckedDowncast<JSArrayBufferView>(cell)->isGrowableShared() && uncheckedDowncast<JSArrayBufferView>(cell)->isAutoLength();
+    }
+    // As bufferGet() goes.
+    PyType* type = uncheckedDowncast<PyObject>(cell)->type();
+    if (!type->has(TypeFlag::Heap) && bufferIsCoreExporter(cell))
+        return false;
+    JSValue method = bufferLookup(type, Special::Buffer);
+    if ((method && !bufferIsMethodOfNativeExporter(method)) || bufferPythonReleaseMethod(object))
+        return true;
+    // A PickleBuffer hands on the buffer of its object, for which it asks each time.
+    if (!isNative(method, pickleBufferBuffer) || uncheckedDowncast<PyNativeFunction>(method.asCell())->owner() != type)
+        return false;
+    PyMemoryView* view = pickleBufferViewIfAny(object);
+    return view && !view->isReleased() && bufferRunsCode<orAnotherThreadMakesItLonger>(view->managedBuffer()->object());
+}
+
 bool getBufferRunsCode(JSValue object)
 {
-    if (!isPyObject(object))
-        return false;
-    PyType* type = uncheckedDowncast<PyObject>(object.asCell())->type();
-    if (!type->has(TypeFlag::Heap))
-        return false;
-    JSValue method = type->lookup(Special::Buffer);
-    return (method && !PyNativeFunction::is(method)) || bufferPythonReleaseMethod(object);
+    return bufferRunsCode<false>(object);
+}
+
+bool canGetBufferTwice(JSValue object)
+{
+    return !bufferRunsCode<true>(object);
 }
 
 // getBytesLike() has nothing to release, so the memory is not held. It is kept from being freed, though, for a while: what
@@ -2807,10 +2860,15 @@ enum PickleBufferField : unsigned {
 
 extern const TypeDef pickleBufferTypeDef;
 
+static PyMemoryView* pickleBufferViewIfAny(JSValue self)
+{
+    return PyMemoryView::tryFrom(PyRecord::from(self)->get(PickleBufferView));
+}
+
 // Null: a ValueError.
 static PyMemoryView* pickleBufferView(JSGlobalObject* globalObject, JSValue self)
 {
-    auto* view = PyMemoryView::tryFrom(PyRecord::from(self)->get(PickleBufferView));
+    PyMemoryView* view = pickleBufferViewIfAny(self);
     if (view && !view->isReleased())
         return view;
     VM& vm = getVM(globalObject);

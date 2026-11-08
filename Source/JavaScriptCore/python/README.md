@@ -377,7 +377,7 @@ or one of its bases does, so nothing has to be looked for in the table then. The
 does keep the text of a name, until another takes the place: so none of more than 100 characters, as in CPython. Whether an object can be called is a question that JSC takes to have no effects
 (`PyObject::getCallData()`), so `__call__` is looked for by its text alone there, and no key of a class's dict is asked whether it equals the name (`PyType::AsksKeys::No`), nor is what such a key has said before gone by: where the only `__call__` of a class lies under a key that is no str, Python calls the object, and to JS it is an `"object"` that cannot be called, before and after. The collector asks
 it too, for the frames of the sampling profiler, on whatever thread it runs: what is looked up for it is not remembered, since letting go of a name takes the VM's table of atoms
-(`Heap::currentThreadIsDoingGCWork()`, as in `SymbolTable::materializeCachedEntries()`). All 96 KB of it are gone through at the end of a full
+(`Heap::currentThreadIsDoingGCWork()`, as in `SymbolTable::materializeCachedEntries()`). `__buffer__` and `__release_buffer__` are looked for by their text alone as well (`bufferLookup()`): it is asked beforehand whether to get a buffer will run code, and what the collector has found to be dropped is gone through where none must. All 96 KB of the table are gone through at the end of a full
 collection (15 to 20 µs). An Eden collection frees nothing that has survived a collection, so at the end of one only those runs of 64 entries are gone through that were written
 to since the last collection (`Heap::reconcileWeakGCHashTables()` goes by the same): none, in a program that looks up nothing new. (An Eden collection with nothing to do, in
 a program of JS that has imported one file of Python: 55 µs; 72 if all of the table were gone through, which is 1.5 to 2 % of a loop that only makes garbage.) More pairs of a class and a name than there are places push each other out, where the 16 places that each type had before grew with the number of
@@ -1950,7 +1950,10 @@ The collector is told the size of the side tables, which are several times the s
   An instance of a class whose `__buffer__()` is written in Python gives its memory by running code of the program. The host takes it
   where it converts its arguments before it does anything else, as it calls `toString()` there (`new Response(o)`, `Buffer.concat([o])`).
   To code that has looked at its own state already and asks a value for its bytes in passing (`hash.update(o)`, a parameter of an SQL
-  statement, `crypto.randomFillSync(o)`) it is no buffer, and is refused like any other object: `getBufferRunsCode()`.
+  statement, `crypto.randomFillSync(o)`) it is no buffer, and is refused like any other object: `getBufferRunsCode()`. So is whatever else
+  runs code of the program when it is asked for its memory or gives it back: what has a `__release_buffer__()` written in Python, a `PickleBuffer` of such
+  an object, an instance of a class that has for its `__buffer__` a function written in C++ which is not the `__buffer__()` of an exporter
+  (`dict.get`).
   To code written in JS these objects are no typed arrays (`ArrayBuffer.isView()`, `instanceof Uint8Array`): see `DEFERRED.md`.
 - **Operators.** Where an operand is an object of Python's, `a + b`, `-a`, `~a`, `a < b` and so on are what they are in Python
   (`binaryOperatorForJS` and the like in `PyHooks.h`), in the slow paths that all tiers share (`OperationsInlines.h`,
