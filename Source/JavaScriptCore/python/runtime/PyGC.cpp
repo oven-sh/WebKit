@@ -982,6 +982,8 @@ static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args
     RELEASE_AND_RETURN(scope, newList(globalObject, spanOf(result)));
 }
 
+extern const TypeDef orderedDictTypeDef; // PyOrderedDict.cpp
+
 // What a cell says it refers to.
 class ReferentCollector final : public AbstractSlotVisitor {
 public:
@@ -1055,6 +1057,7 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
         }
         result.append(value);
     };
+    bool isContainerByKind = true;
     // Numbers are not cells, so no cell says that it refers to one. The items of these are asked for.
     if (JSArray* list = tryAsList(object)) {
         for (unsigned i = 0; i < listLength(list); ++i)
@@ -1066,7 +1069,9 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
                 give(item);
         }
     } else if (auto* dict = PyDict::tryFrom(object)) {
-        // CPython's does not mention its keys if they are all strings.
+        // CPython's does not mention its keys if they are all strings. An OrderedDict has them in its nodes too, and mentions those, whatever the dict in it does.
+        PyType* orderedDict = dict->type() == rt.dictType() ? nullptr : rt.typeIfMadeFor(orderedDictTypeDef);
+        bool hasKeysInNodes = orderedDict && dict->type()->isSubtypeOf(orderedDict);
         bool mentionsKeys = false;
         unsigned position = 0;
         JSValue key;
@@ -1078,6 +1083,8 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
             give(value);
             if (mentionsKeys)
                 give(key);
+            if (hasKeysInNodes)
+                give(key);
         }
     } else if (auto* set = PySet::tryFrom(object)) {
         size_t position = 0;
@@ -1085,6 +1092,7 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
         while (set->next(position, key))
             give(key);
     } else {
+        isContainerByKind = false;
         UncheckedKeyHashSet<JSCell*> parts;
         forEachPartInFields(object, [&](JSCell* part, bool) {
             if (part)
@@ -1127,6 +1135,25 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
                     result.append(value);
             });
         }
+    }
+    // A cell that is a container by its kind may have more than items: an instance of a class that derives from one has its __dict__ and its slots, a defaultdict its factory, and a type written in C++ keeps things under hidden keys. A container
+    // there is the runtime's own memory, a part of the object (HeapView::addPart()): what is in it, the object refers to (the values of a struct sequence that are no items). All these are
+    // properties of the cell with names, which the items are not. (None of the plain containers has any.)
+    if (Structure* structure = object->structure(); isContainerByKind && !depth && structure->maxOffset() != invalidOffset) {
+        structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
+            JSValue value = asObject(object)->getDirect(entry.offset());
+            if (!value || !value.isCell())
+                return true;
+            JSCell* cell = value.asCell();
+            bool isHidden = false;
+            for (unsigned i = 0; i < Runtime::numberOfHiddenKeys; ++i)
+                isHidden |= entry.key() == &rt.hiddenKey(i).uid();
+            if (isHidden && isContainer(cell))
+                appendReferents(globalObject, cell, result, depth + 1);
+            else if (cell->isString() || cell->isHeapBigInt() || (cell->isObject() && isObjectOfPython(cell, globalObject) && isWhole(cell)))
+                result.append(cell);
+            return true;
+        });
     }
     // In CPython an object holds on to its type only if that has been allocated.
     if (PyType* type = rt.typeOf(object); !depth && isAllocatedInCPython(type))
