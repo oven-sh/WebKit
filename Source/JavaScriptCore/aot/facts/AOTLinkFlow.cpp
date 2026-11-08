@@ -2723,28 +2723,23 @@ void LinkFlow::keepWhatLaneWasGiven(MadeOnDemand kind, uint64_t words, uint32_t 
     s_laneAtWork->given[static_cast<size_t>(kind)].set(words, made);
 }
 
-auto LinkFlow::lockPartOfWhatSomeLaneWasGiven(MadeOnDemand kind, uint64_t words) const -> PartOfWhatSomeLaneWasGiven&
+auto LinkFlow::partOfWhatSomeLaneWasGiven(MadeOnDemand kind, uint64_t words) const -> PartOfWhatSomeLaneWasGiven&
 {
-    PartOfWhatSomeLaneWasGiven& part = m_givenToSomeLane[static_cast<size_t>(kind)][DefaultHash<uint64_t>::hash(words) % numberOfPartsOfWhatSomeLaneWasGiven];
-    while (part.isLocked.load(std::memory_order_relaxed) || part.isLocked.exchange(true, std::memory_order_acquire))
-        simde_mm_pause();
-    return part;
+    return m_givenToSomeLane[static_cast<size_t>(kind)][DefaultHash<uint64_t>::hash(words) % numberOfPartsOfWhatSomeLaneWasGiven];
 }
 
 std::optional<uint32_t> LinkFlow::findWhatSomeLaneWasGiven(MadeOnDemand kind, uint64_t words) const
 {
-    PartOfWhatSomeLaneWasGiven& part = lockPartOfWhatSomeLaneWasGiven(kind, words);
-    auto found = part.given.find(words);
-    std::optional<uint32_t> known = found == part.given.end() ? std::nullopt : std::optional<uint32_t>(found->value);
-    part.isLocked.store(false, std::memory_order_release);
-    return known;
+    PartOfWhatSomeLaneWasGiven& part = partOfWhatSomeLaneWasGiven(kind, words);
+    Locker locker { part.lock };
+    return part.given.getOptional(words);
 }
 
 void LinkFlow::keepWhatSomeLaneWasGiven(MadeOnDemand kind, uint64_t words, uint32_t made) const
 {
-    PartOfWhatSomeLaneWasGiven& part = lockPartOfWhatSomeLaneWasGiven(kind, words);
+    PartOfWhatSomeLaneWasGiven& part = partOfWhatSomeLaneWasGiven(kind, words);
+    Locker locker { part.lock };
     part.given.set(words, made);
-    part.isLocked.store(false, std::memory_order_release);
 }
 
 void LinkFlow::forgetWhatSomeLaneWasGiven(MadeOnDemand kind)
@@ -6778,23 +6773,22 @@ SiteID LinkFlow::siteOf(MakerOfSite maker, uint32_t number, uint32_t part, Built
     RELEASE_ASSERT(builtinClass && part < 1u << 16);
     std::pair<uint64_t, uint32_t> words { static_cast<uint64_t>(maker) << 32 | number, part << 16 | builtinClass.index() };
     PartOfSitesOfMakers& table = (*m_sitesOfMakers)[((words.first ^ static_cast<uint64_t>(words.second) << 35) * 0x9e3779b97f4a7c15ull) >> (64 - log2OfPartsOfSitesOfMakers)];
-    bool severalThreadsAsk = m_severalThreadsTell;
-    if (severalThreadsAsk) {
-        while (table.isLocked.load(std::memory_order_relaxed) || table.isLocked.exchange(true, std::memory_order_acquire))
-            simde_mm_pause();
+    SiteID site;
+    bool isNewEntry;
+    {
+        Locker locker { m_severalThreadsTell ? &table.lock : nullptr };
+        auto added = table.sites.add(words, 0);
+        isNewEntry = added.isNewEntry;
+        if (isNewEntry) {
+            Site made;
+            made.builtinClass = builtinClass;
+            made.onlyWaitRightBehindSeesIt = onlyWaitRightBehindSeesIt;
+            made.isOfClassItself = isOfClassItself;
+            added.iterator->value = m_sites.append(made);
+        }
+        site = SiteID(added.iterator->value);
     }
-    auto added = table.sites.add(words, 0);
-    if (added.isNewEntry) {
-        Site site;
-        site.builtinClass = builtinClass;
-        site.onlyWaitRightBehindSeesIt = onlyWaitRightBehindSeesIt;
-        site.isOfClassItself = isOfClassItself;
-        added.iterator->value = m_sites.append(site);
-    }
-    SiteID site(added.iterator->value);
-    if (severalThreadsAsk)
-        table.isLocked.store(false, std::memory_order_release);
-    if (added.isNewEntry)
+    if (isNewEntry)
         fillSiteJustMade(site);
     return site;
 }

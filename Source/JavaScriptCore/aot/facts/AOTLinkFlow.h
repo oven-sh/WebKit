@@ -269,6 +269,27 @@ struct LinkType {
 };
 static_assert(std::has_unique_object_representations_v<LinkType>);
 
+// A lock a lane holds for a few loads and stores on a table that every lane shares. Lanes spin on it: none parks.
+// Hold it with `Locker locker { lock };`, so that every local the lane makes while it holds the lock, an iterator into
+// the table above all, is destroyed before the lock is released. In debug builds an iterator that outlives the lock
+// is unlinked from the table's list of iterators while another lane rehashes the table.
+class SpinLockOfLinkFlow {
+    WTF_MAKE_NONCOPYABLE(SpinLockOfLinkFlow);
+public:
+    SpinLockOfLinkFlow() = default;
+
+    void lock()
+    {
+        while (m_isLocked.load(std::memory_order_relaxed) || m_isLocked.exchange(true, std::memory_order_acquire))
+            simde_mm_pause();
+    }
+    void unlock() { m_isLocked.store(false, std::memory_order_release); }
+
+private:
+    std::atomic<bool> m_isLocked { false };
+};
+static_assert(sizeof(SpinLockOfLinkFlow) == 1);
+
 template<typename MemberID>
 class SetsOfFourInLinkFlow {
     WTF_MAKE_NONCOPYABLE(SetsOfFourInLinkFlow);
@@ -296,8 +317,7 @@ public:
         Members members { };
         std::ranges::copy(sortedMembers, members.begin());
         std::pair<uint64_t, uint64_t> words { static_cast<uint64_t>(members[0].bits()) << 32 | members[1].bits(), static_cast<uint64_t>(members[2].bits()) << 32 | members[3].bits() };
-        while (m_isLocked.load(std::memory_order_relaxed) || m_isLocked.exchange(true, std::memory_order_acquire))
-            simde_mm_pause();
+        Locker locker { m_lock };
         uint32_t next = m_size.load(std::memory_order_relaxed);
         auto added = m_numbers.add(words, next);
         if (added.isNewEntry) {
@@ -310,9 +330,7 @@ public:
             records[position] = members;
             m_size.store(next + 1, std::memory_order_release);
         }
-        uint32_t number = added.iterator->value;
-        m_isLocked.store(false, std::memory_order_release);
-        return number;
+        return added.iterator->value;
     }
     uint32_t size() const { return m_size.load(std::memory_order_acquire); }
 
@@ -336,7 +354,7 @@ private:
     std::array<std::atomic<Members*>, numberOfParts> m_parts { };
     UncheckedKeyHashMap<std::pair<uint64_t, uint64_t>, uint32_t> m_numbers;
     std::atomic<uint32_t> m_size { 0 };
-    std::atomic<bool> m_isLocked { false };
+    SpinLockOfLinkFlow m_lock;
 };
 using SetsOfLayoutsInLinkFlow = SetsOfFourInLinkFlow<LayoutID>;
 using SetsOfFunctionsInLinkFlow = SetsOfFourInLinkFlow<FunctionID>;
@@ -367,8 +385,7 @@ public:
         for (BuiltinClassID member : sortedMembers)
             hash = (hash ^ member.index()) * 16777619u;
         hash >>= 1;
-        while (m_isLocked.load(std::memory_order_relaxed) || m_isLocked.exchange(true, std::memory_order_acquire))
-            simde_mm_pause();
+        Locker locker { m_lock };
         Vector<uint16_t, 1>& withSameHash = m_numbers.add(hash, Vector<uint16_t, 1> { }).iterator->value;
         uint16_t number = 0;
         for (uint16_t candidate : withSameHash) {
@@ -391,7 +408,6 @@ public:
             number = static_cast<uint16_t>(next + 1);
             withSameHash.append(number);
         }
-        m_isLocked.store(false, std::memory_order_release);
         return number;
     }
 
@@ -418,7 +434,7 @@ private:
     std::array<std::atomic<Record*>, numberOfParts> m_parts { };
     UncheckedKeyHashMap<uint32_t, Vector<uint16_t, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_numbers;
     std::atomic<uint32_t> m_size { 0 };
-    std::atomic<bool> m_isLocked { false };
+    SpinLockOfLinkFlow m_lock;
 };
 
 using FlowNodeID = ID<struct FlowNodeIDTag>;
@@ -1593,12 +1609,13 @@ private:
     }
     static constinit thread_local unsigned s_depthOfLockOfWhatIsShared;
     struct alignas(128) PartOfWhatSomeLaneWasGiven {
-        std::atomic<bool> isLocked { false };
+        SpinLockOfLinkFlow lock;
         HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> given;
     };
+    static_assert(sizeof(PartOfWhatSomeLaneWasGiven) == 128);
     static constexpr size_t numberOfPartsOfWhatSomeLaneWasGiven = 16;
     mutable std::array<std::array<PartOfWhatSomeLaneWasGiven, numberOfPartsOfWhatSomeLaneWasGiven>, numberOfKindsMadeOnDemand> m_givenToSomeLane;
-    PartOfWhatSomeLaneWasGiven& lockPartOfWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
+    PartOfWhatSomeLaneWasGiven& partOfWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     static const LinkType s_nothing;
     std::atomic<size_t> m_numberOfNodesMade { 0 };
     FlowNodeID contentsFoundOrMadeByLane(SiteID, SlotOfContents);
@@ -2234,9 +2251,10 @@ private:
     unsigned partOfContentsOf(uint32_t site) const { return (site >> 6) & m_maskOfLanes; }
     Vector<ContentsOfSite>& contentsListedOf(uint32_t site) const { return m_contentsOfSites[partOfContentsOf(site)]->listed; }
     struct alignas(128) PartOfSitesOfMakers {
-        std::atomic<bool> isLocked { false };
+        SpinLockOfLinkFlow lock;
         HashMap<std::pair<uint64_t, uint32_t>, uint32_t, DefaultHash<std::pair<uint64_t, uint32_t>>, WTF::PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> sites;
     };
+    static_assert(sizeof(PartOfSitesOfMakers) == 128);
     static constexpr unsigned log2OfPartsOfSitesOfMakers = 8;
     std::unique_ptr<std::array<PartOfSitesOfMakers, 1 << log2OfPartsOfSitesOfMakers>> m_sitesOfMakers { makeUniqueWithoutFastMallocCheck<std::array<PartOfSitesOfMakers, 1 << log2OfPartsOfSitesOfMakers>>() };
     Vector<uint32_t> m_firstSiteOfFunction;
