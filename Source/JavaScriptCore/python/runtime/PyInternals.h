@@ -93,7 +93,8 @@ JSValue callBodyOfGenerator(JSGlobalObject*, PyFunction* body, std::span<const J
 // Of the young generation only (what has been allocated since the last collection, whoever made that): once. What is kept for its
 // finalizer is old afterwards, so that it takes a full collection to find that it is still dead, to clear the weak references
 // to it and to free it.
-void collectAndFinalize(JSGlobalObject*, Runtime::MarkingObserver* = nullptr, CollectionScope = CollectionScope::Full, bool leavesCyclicGarbageForLater = false, Runtime::CallsOf = Runtime::CallsOf::AllThreads);
+// `isChargedToThreadsThatWait`: see Threads::willCollectWhileIdle().
+void collectAndFinalize(JSGlobalObject*, Runtime::MarkingObserver* = nullptr, CollectionScope = CollectionScope::Full, bool leavesCyclicGarbageForLater = false, Runtime::CallsOf = Runtime::CallsOf::AllThreads, bool isChargedToThreadsThatWait = false);
 // In CPython a file that is dropped is closed at once, and programs count on it: open(path, "w").write(text), and whoever opens the
 // file next finds the text. Here it would be closed after some collection. So the streams over files that hold output are kept in
 // a list, and what they hold is written before the program, or anyone it starts, can look at a file, and before it does anything

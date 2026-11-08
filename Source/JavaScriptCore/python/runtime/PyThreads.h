@@ -101,6 +101,8 @@ public:
     unsigned idleWaits { 0 };
     // Rather than works. (In any other system call, or in foreign code, it may be hard at work: compressing, hashing.)
     bool isWaiting() const { return idleWaits || (parked && losesNothingIfInterrupted); }
+    // It is in Threads::collectWhileIdle(), in a finalizer that this has found perhaps: it goes on collecting until it finds no more of its own.
+    bool collectsWhileIdle { false };
     struct SavedStates* saved { nullptr };
     // Whether it is in a queue of Threads::waitUntil().
     bool isQueued { false };
@@ -275,8 +277,12 @@ public:
     // for the GIL, it finds out when it has it. With the GIL, or for the collector while whoever holds it is stopped.
     void wakeToMakeCalls(uint32_t number);
     // The thread of that number, which may be the one that runs, owes finalizers or callbacks of weak references. Under the same
-    // conditions. See collectWhileIdle().
+    // conditions. See didCollectWhileIdle().
     void didQueueCallsThatMayUncoverMore(uint32_t number);
+    // For collectAndFinalize(): before and behind each collection that is charged to the threads that wait. The GIL is held from the one to the other: the collector runs no code of Python's, and the C that it
+    // does call (the tp_traverse of an extension's type) finds the C API closed but for what only reads (CApi::traverse()). See collectWhileIdle().
+    void willCollectWhileIdle();
+    void didCollectWhileIdle();
 
     // ---- The other threads, for whoever holds the GIL ----
 
@@ -371,16 +377,20 @@ private:
     Vector<Ref<ThreadState>> m_threads;
     ThreadState* m_parkedMainThread { nullptr }; // For JSLock::ifEmbedderThreadWaits().
     UncheckedKeyHashMap<const void*, Deque<ThreadState*>> m_waiters;
+    // What the share of the threads that wait goes by. See willCollectWhileIdle().
     uint64_t m_bytesAllocatedAtIdleCollection { 0 };
     int64_t m_endOfLastIdleCollection { 0 };
-    int64_t m_durationOfLastIdleCollection { 0 };
-    int64_t m_costOfLastIdleCollection { 0 };
+    int64_t m_durationOfIdleCollections { 0 }; // Those of the current period.
+    int64_t m_costOfIdleCollections { 0 }; // The same.
+    int64_t m_startOfIdleCollection { 0 }; // Of the one that is under way.
+    int64_t m_processorTimeAtStartOfIdleCollection { 0 };
     static constexpr unsigned mostEarlyIdleCollections = 8;
     unsigned m_earlyIdleCollectionsLeft { mostEarlyIdleCollections };
-    bool m_lastIdleCollectionFoundSomething { false };
-    ThreadState* m_threadThatCollectsWhileIdle { nullptr };
+    bool m_nextIdleCollectionBeginsPeriod { false };
+    bool m_idleCollectionsFoundSomething { false }; // Those of the current period.
+    bool m_lastIdleCollectionsFoundSomething { false }; // Those of the period before.
     bool m_nextIdleCollectionMayFindMore { false };
-    bool m_threadThatWaitsOwesCalls { false };
+    bool m_threadThatWaitsOwesCalls { false }; // What one collection leaves behind.
     bool m_didTellMainThreadOfFinalizers { false };
     bool m_mainThreadTellsHostOfDirectory { false };
     Vector<Vector<char>> m_variablesToTellHostOf;
@@ -409,6 +419,9 @@ private:
     std::atomic<bool> m_isStopping { false };
     static constexpr int64_t defaultSwitchInterval = 5000000;
     std::atomic<int64_t> m_switchInterval { defaultSwitchInterval };
+#if ASSERT_ENABLED
+    bool m_isBetweenWillAndDidCollectWhileIdle { false }; // (The last member: the others lie where they lie without it.)
+#endif
 };
 
 // While one of these exists, the thread does not hold the GIL, and other threads run. It must not touch the VM: no cell is read

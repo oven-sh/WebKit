@@ -1764,11 +1764,12 @@ void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
     }
 }
 
-void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* observer, CollectionScope collectionScope, bool leavesCyclicGarbageForLater, Runtime::CallsOf callsOf)
+void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* observer, CollectionScope collectionScope, bool leavesCyclicGarbageForLater, Runtime::CallsOf callsOf, bool isChargedToThreadsThatWait)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     ASSERT(!rt.isRunningPendingCalls());
+    ASSERT(!observer || !isChargedToThreadsThatWait); // What an observer does is nothing that the threads that wait have asked for.
     writeOutPendingOutput(globalObject); // Until then they are not to be collected.
     Runtime::ServesOtherThreads serves(rt, callsOf);
     // An object with a finalizer takes two rounds: one finds it, the next frees it, which may clear weak references in turn
@@ -1790,8 +1791,14 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
                 preventCollection.emplace(vm.heap);
                 rt.setMarkingObserver(observer);
             }
+            // Two calls, and what they keep is kept by Threads: not an object here that gc.collect() would go past without making it. That comes here over the frames of the calls that it has just made, the
+            // collector is called from this frame, which nobody wipes, and a slot that is left unwritten is a reference to what lay there. (`preventCollection` is made on that road.) See wipeStackBelow().
+            if (isChargedToThreadsThatWait)
+                rt.threads().willCollectWhileIdle();
             wipeStackBelow(globalObject);
             rt.collectAsAskedFor(collectionScope, leavesCyclicGarbageForLater, callsOf);
+            if (isChargedToThreadsThatWait)
+                rt.threads().didCollectWhileIdle();
             if (observer) {
                 rt.setMarkingObserver(nullptr);
                 observer->didCollect();

@@ -143,10 +143,12 @@ void Threads::forgetRuntimesThatHaveGone()
     m_switchInterval.store(defaultSwitchInterval);
     m_bytesAllocatedAtIdleCollection = 0;
     m_endOfLastIdleCollection = 0;
-    m_durationOfLastIdleCollection = 0;
-    m_costOfLastIdleCollection = 0;
+    m_durationOfIdleCollections = 0;
+    m_costOfIdleCollections = 0;
     m_earlyIdleCollectionsLeft = mostEarlyIdleCollections;
-    m_lastIdleCollectionFoundSomething = false;
+    m_nextIdleCollectionBeginsPeriod = false;
+    m_idleCollectionsFoundSomething = false;
+    m_lastIdleCollectionsFoundSomething = false;
     m_nextIdleCollectionMayFindMore = false;
     m_threadThatWaitsOwesCalls = false;
     for (auto& thread : m_threads)
@@ -370,6 +372,7 @@ void Threads::dropGIL(ThreadState& thread, bool isYielding)
 {
     Locker locker { m_gilLock };
     ASSERT(m_gilIsHeld);
+    ASSERT(!m_isBetweenWillAndDidCollectWhileIdle); // What the share goes by is half written.
     m_gilIsHeld = false;
     m_gilCondition.notifyOne();
     if (!isYielding || !m_waitingForGIL)
@@ -536,7 +539,7 @@ void Threads::wakeToMakeCalls(uint32_t number)
 void Threads::didQueueCallsThatMayUncoverMore(uint32_t number)
 {
     for (auto& thread : m_threads) {
-        if (thread->number() == number && thread.ptr() != m_threadThatCollectsWhileIdle && thread->isWaiting())
+        if (thread->number() == number && !thread->collectsWhileIdle && thread->isWaiting())
             m_threadThatWaitsOwesCalls = true;
     }
 }
@@ -906,8 +909,8 @@ int64_t Threads::timeOfNextIdleCollection(JSGlobalObject* globalObject)
     // at most a twentieth of the time on it. If nothing has been allocated since the last time, there is little to find, but
     // the count moves in steps, and to drop something takes no allocation at all: then a fiftieth. (Of objects with finalizers it
     // is known exactly whether any has been made.) If the last one found something to finalize for a thread that waits,
-    // there may be more: then half, for a while (see collectWhileIdle()).
-    int64_t cost = m_costOfLastIdleCollection;
+    // there may be more: then half, for a while (see didCollectWhileIdle()).
+    int64_t cost = m_costOfIdleCollections;
     if (m_nextIdleCollectionMayFindMore)
         return m_endOfLastIdleCollection + cost;
     bool hasCause = m_vm.heap.totalBytesAllocated() != m_bytesAllocatedAtIdleCollection || runtime(globalObject).hasRegisteredFinalizableSinceCollection();
@@ -921,7 +924,9 @@ bool Threads::shouldCollectWhileIdle(JSGlobalObject* globalObject, IdleLook look
 {
     if (runtime(globalObject).isRunningPendingCalls())
         return false;
-    return look != IdleLook::WithinShare || (!m_threadThatCollectsWhileIdle && monotonicNanoseconds() >= timeOfNextIdleCollection(globalObject));
+    // Nor elsewhere inside collectWhileIdle(). That begins by writing out what buffers hold, which may wait (for the lock of a buffer, for room in a pipe), and nothing is written down before its first
+    // collection, so that it is still time. And a finalizer may call into another realm, whose runtime is making no calls. It is the thread itself that its flag refuses, nobody else.
+    return look != IdleLook::WithinShare || (!current().collectsWhileIdle && monotonicNanoseconds() >= timeOfNextIdleCollection(globalObject));
 }
 
 // Of all processors: the collector marks on several at once, and a process that does nothing but wait is to use next to none.
@@ -935,51 +940,80 @@ bool Threads::collectWhileIdle(JSGlobalObject* globalObject, IdleLook look)
 {
     bool leavesCyclicGarbageForLater = look != IdleLook::LastResort;
     auto calls = look == IdleLook::WithinShare ? Runtime::CallsOf::ThisThread : Runtime::CallsOf::AllThreads;
-    int64_t start = monotonicNanoseconds();
-    int64_t processorTimeAtStart = processorNanoseconds();
     ThreadState& thread = current();
-    // One at a time. Finalizers run in the middle of it, and other threads while those wait: one of them that collected for the same
-    // reason would do the same work again, and what each has found for the threads that wait would be mixed up.
-    if (m_threadThatCollectsWhileIdle) {
-        if (look != IdleLook::WithinShare)
-            collectAndFinalize(globalObject, nullptr, CollectionScope::Full, leavesCyclicGarbageForLater, calls);
-        return m_nextIdleCollectionMayFindMore;
-    }
-    m_threadThatWaitsOwesCalls = false;
+    // A call of the program's wanted an answer, as gc.collect() does. That is not time that threads with nothing to do have taken: they
+    // look when they would have. (Else what the program drops right after lies there for fifty times as long as this has taken.)
+    bool isCharged = look != IdleLook::WhateverTheShare;
+    if (isCharged)
+        m_nextIdleCollectionBeginsPeriod = true;
     // What reference counts would have freed would have been finalized by now. Cyclic garbage would not: CPython's collector does not
     // run in a thread that waits, which may well hold a lock that a finalizer wants.
     // It makes the calls that are its own. If nothing else can bring about what it waits for, all.
     {
-        SetForScope collector(m_threadThatCollectsWhileIdle, &thread);
-        collectAndFinalize(globalObject, nullptr, CollectionScope::Full, leavesCyclicGarbageForLater, calls);
+        SetForScope collects(thread.collectsWhileIdle, true);
+        collectAndFinalize(globalObject, nullptr, CollectionScope::Full, leavesCyclicGarbageForLater, calls, isCharged);
     }
-    // A call of the program's wanted an answer, as gc.collect() does. That is not time that threads with nothing to do have taken: they
-    // look when they would have. (Else what the program drops right after lies there for fifty times as long as this has taken.)
-    if (look == IdleLook::WhateverTheShare)
-        return m_nextIdleCollectionMayFindMore;
-    m_bytesAllocatedAtIdleCollection = m_vm.heap.totalBytesAllocated();
+    if (isCharged)
+        thread.waits.total = 0;
+    return m_nextIdleCollectionMayFindMore;
+}
+
+// Between two collections of collectWhileIdle() its thread runs the finalizers that it has found, and other threads run while those wait: for any length of time, and for what only the collection of
+// another thread that waits brings about. So nothing is held meanwhile that would keep another thread from collecting: that is left to the share. What the share goes by is written down as each collection
+// ends, before any other thread can run.
+// All of it belongs to a period, none to the thread: a period begins with the first collection after a thread has found that it is time (shouldCollectWhileIdle()), and a collection that a thread makes
+// late, when others have begun a period since, counts for that.
+// Nothing else that happens in collectWhileIdle() is charged: not the writing out of what buffers hold, with which it begins, not the finalizers, and not the collections that a gc.collect() in one of them has
+// asked for, which runPendingCalls() makes behind them. Those are the program's, like gc.collect() anywhere else.
+void Threads::willCollectWhileIdle()
+{
+#if ASSERT_ENABLED
+    ASSERT(!m_isBetweenWillAndDidCollectWhileIdle);
+    m_isBetweenWillAndDidCollectWhileIdle = true;
+#endif
+    if (std::exchange(m_nextIdleCollectionBeginsPeriod, false)) {
+        if (!m_idleCollectionsFoundSomething && !m_lastIdleCollectionsFoundSomething)
+            m_earlyIdleCollectionsLeft = mostEarlyIdleCollections;
+        m_lastIdleCollectionsFoundSomething = std::exchange(m_idleCollectionsFoundSomething, false);
+        m_nextIdleCollectionMayFindMore = false;
+        m_durationOfIdleCollections = 0;
+        m_costOfIdleCollections = 0;
+    }
+    m_threadThatWaitsOwesCalls = false;
+    m_startOfIdleCollection = monotonicNanoseconds();
+    m_processorTimeAtStartOfIdleCollection = processorNanoseconds();
+}
+
+// (Two collections may have ended: one that was under way is finished first. They count as one.)
+void Threads::didCollectWhileIdle()
+{
+#if ASSERT_ENABLED
+    ASSERT(m_isBetweenWillAndDidCollectWhileIdle);
+    m_isBetweenWillAndDidCollectWhileIdle = false;
+#endif
     int64_t end = monotonicNanoseconds();
-    m_durationOfLastIdleCollection = end - start;
+    // (So what the calls behind a thread's last collection allocate has been allocated since: they may have dropped something.)
+    m_bytesAllocatedAtIdleCollection = m_vm.heap.totalBytesAllocated();
     m_endOfLastIdleCollection = end;
-    m_costOfLastIdleCollection = std::max(end - start, processorNanoseconds() - processorTimeAtStart);
-    thread.waits.total = 0;
+    m_durationOfIdleCollections += end - m_startOfIdleCollection;
+    // (The longer of the two for each collection: no less than the longer of the two sums.)
+    m_costOfIdleCollections += std::max(end - m_startOfIdleCollection, processorNanoseconds() - m_processorTimeAtStartOfIdleCollection);
+    m_idleCollectionsFoundSomething |= m_threadThatWaitsOwesCalls;
     // What only the objects that it found referred to is there to be found as soon as their threads have finalized them. So the
     // threads that wait look again soon.
-    // - Not for what this thread has finalized: it has gone on collecting until it found no more of its own. A thread that drops
+    // - Not for what the collecting thread has to finalize, or another that is in collectWhileIdle(): it goes on collecting until it finds no more of its own. A thread that drops
     //   something between one short wait and the next (it polls) finds something every time, which no finalizer has uncovered.
     // - Not for what a thread that works has left: that one leaves something to finalize all the time, has to stop for every
     //   collection, and collects itself as it allocates.
     // - Not for ever: one thread may poll and drop what another has made, which waits. What hangs together goes level by level
     //   for three levels, and all at once if it is deeper, but a level may take more than one collection: a thread has not made
     //   all its calls yet, or the stack of another thread that waits still has a word of what that one dealt with. So eight
-    //   times, and then not again until they have found nothing twice in a row. (Once is not enough, for the same reasons.)
-    bool foundSomething = std::exchange(m_lastIdleCollectionFoundSomething, m_threadThatWaitsOwesCalls) || m_threadThatWaitsOwesCalls;
-    if (!foundSomething)
-        m_earlyIdleCollectionsLeft = mostEarlyIdleCollections;
-    m_nextIdleCollectionMayFindMore = foundSomething && m_earlyIdleCollectionsLeft;
-    if (m_nextIdleCollectionMayFindMore)
+    //   times, once in a period, and then not again until two periods in a row have found nothing. (Once is not enough, for the same reasons.)
+    bool foundSomething = m_idleCollectionsFoundSomething || m_lastIdleCollectionsFoundSomething;
+    if (foundSomething && !m_nextIdleCollectionMayFindMore && m_earlyIdleCollectionsLeft) {
         --m_earlyIdleCollectionsLeft;
-    return m_nextIdleCollectionMayFindMore;
+        m_nextIdleCollectionMayFindMore = true;
+    }
 }
 
 static bool isOfFunctionThatMayWait(CallFrame* call)
@@ -1174,7 +1208,7 @@ bool IdleWait::collectIfDue(int64_t remaining)
         return true;
     // A wait that is nearly over is not made longer by a collection. The next one begins with it, however short it is: if all are
     // short, none would ever be long enough.
-    if (remaining >= 0 && remaining < 2 * runtime(m_globalObject).threads().m_durationOfLastIdleCollection && !std::exchange(m_wasDueAtStart, false)) {
+    if (remaining >= 0 && remaining < 2 * runtime(m_globalObject).threads().m_durationOfIdleCollections && !std::exchange(m_wasDueAtStart, false)) {
         m_timeToCollect = std::numeric_limits<int64_t>::max();
         return true;
     }

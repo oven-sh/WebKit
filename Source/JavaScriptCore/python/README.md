@@ -1078,19 +1078,25 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   be told, and no object with a finalizer has been made (to drop something takes no allocation). The time of all processors
   counts: the collector marks on several, and a process that only waits is to use next to none. But they are never blind for longer
   than 5 s, unless that came to more than a tenth of the time. A collection that is due when the share is used up is put off until
-  there is some again, not left out. And one thread collects at a time: finalizers run in the middle of it, and other threads
-  meanwhile. While such collections find something to finalize, whose thread finalizes it and so
+  there is some again, not left out. Nothing but the share keeps one thread that waits from collecting because another does: between two of its collections that one runs the finalizers
+  it has found, and a finalizer may wait for any length of time, for what only the collection of another thread brings about, too (it waits for the finalizer of what a second thread drops later,
+  and that thread waits as well). So the time is written down collection by collection (`Threads::willCollectWhileIdle`, `didCollectWhileIdle`), and added up over a *period*: from the first collection
+  after a thread has found that it is time to the next such; the one that has begun last is the current one. As a rule that is what one thread does in one go: it collects, finalizes, and so on until it finds no more. One that comes back late from a
+  finalizer adds what it still collects to the period of whoever has begun one since. For each collection the longer of two times counts, the clock's and that of all processors. The time of the finalizers does not count, nor that of writing out what buffers hold, with which the thread begins and which may
+  wait; nor does a collection that a finalizer asks for with `gc.collect()`, which
+  is made behind them: that is the program's, there as anywhere. What the calls behind the last collection allocate (finalizers, `gc.callbacks`) has been allocated since the last one: then it is a twentieth, not a fiftieth. And where the thread that has found that it is
+  time first has output to write that buffers hold, and has to wait for that, another may find the same: then both collect, and both count. While such collections find something to finalize, whose thread finalizes it and so
   uncovers more, the threads that wait look again after 50 ms and may spend half the time, but only if that thread waits too: one
-  that works leaves something to finalize all the time, and has to stop for every collection. Not for what the collecting thread itself
-  has finalized: it goes on until it finds no more of its own. And eight times at most, and then not again until two collections in a
+  that works leaves something to finalize all the time, and has to stop for every collection. Not for what is found for a thread that is itself collecting
+  so, or sits in a finalizer that it has found so: it goes on until it finds no more of its own. And eight times at most, once in a period, and then not again until two periods in a
   row have found nothing. For a thread that polls and drops something each time round (a response, a generator with a `finally`)
   also leaves something to finalize every time, which no finalizer has uncovered.
   (Without the condition that the thread waits too, two idle threads
   of a process pool that nobody had shut down made the tests of black take 39 % more instructions and 97 s instead of 65. A thread counts
   as waiting by what it is in, an `IdleWait` or a system call that loses nothing when it is interrupted, not by whether it holds the
   GIL: a thread that hashes 32 MB at a time does not, and beside two idle threads it saw 63 full collections in 3 s and took 32 %
-  longer; now 2, and no longer.) And a wait with less left than twice what the last such collection took is not
-  made longer by one: the next wait begins with it. That goes for waiting for another thread
+  longer; now 2, and no longer.) And a wait with less left than twice what the collections of the current period have taken is not
+  made longer by one: the next wait begins with it. (By the collections: how long the finalizers will take nobody knows, and a thread that is told of one runs it on top of its wait at any time.) That goes for waiting for another thread
   (`Threads::waitUntil`) and for waiting for the kernel, which is done piece by piece (`IdleWait`): `time.sleep`, everything in
   `select` and every socket call that goes through `waitForEvents` (with a timeout, or on the main thread of a host with an event
   loop), `os.read` and `FileIO` (so `input()` too), `os.waitpid` for one process and `os.spawnv(os.P_WAIT, ...)` on Linux.
@@ -1099,8 +1105,8 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     5.0 %. With 1,000 objects alive: 18.7 % and now 6.3 %. Two threads, one of which drops what the other makes: 93 % and now 9.9 %.
     How long an object waits for its finalizer when it is dropped while every thread waits, whatever went before (a poller,
     such a pair, trees across threads, allocation between naps): at most 4.4 s with 2,000,000 objects alive, 0.3 s with 1,000; twenty
-    times what the last collection cost. Before, a collection that was refused was left out, and the next came four times
-    as late: 4.3 s and 17 s.
+    times what the collections of the current period have cost. Before, a collection that was refused was left out, and the next came four times
+    as late: 4.3 s and 17 s. (All of it measured when what lies between a thread's collections still counted as cost: its finalizers, and its waits for the GIL.)
   - *The list of objects with finalizers holds complemented addresses.* Three threads that each wait for the finalizers of trees three levels
     deep, beside those 2,000,000 objects, were done after 1.1 s, but in 14 runs of 320 after 6, 11 or 17 s: collections found nothing,
     because the objects were marked. The stack of another thread that waited had their addresses, 16 bytes apart, each with the
