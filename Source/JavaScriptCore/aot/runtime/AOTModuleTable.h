@@ -89,6 +89,7 @@ public:
     String typeAttribute(ModuleID) const;
     std::optional<ModuleID> findRuntimeSource(uint32_t registryID) const;
     bool valueOfRuntimeSourceStaysWithCompiledCode(uint32_t registryID) const;
+    bool recordOfRuntimeSourceIsHandedOutFrozen(uint32_t registryID) const;
     std::optional<unsigned> findExport(ModuleID, UniquedStringImpl* name) const;
     std::optional<ModuleID> fileBehindFace(ModuleID module) const { return data(module).isFaceOfFile() ? std::optional(requests(module).front().targetModule()) : std::nullopt; }
     std::optional<ModuleID> faceOfFile(ModuleID) const;

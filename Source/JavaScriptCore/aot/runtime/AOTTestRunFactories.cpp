@@ -52,8 +52,7 @@ void Modules::forgetLoadThatFailed(ModuleID file)
             continue;
         hasFailed = true;
         loader()->removeEntry(moduleKey(each));
-        Locker locker { m_state.caches->lock() };
-        m_records.remove(each);
+        takeOutRecord(each);
         setStoredStatus(each, StoredModuleStatus::Linked);
     }
     if (!hasFailed)

@@ -121,6 +121,12 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_asyncParentModules.begin(), thisObject->m_asyncParentModules.end());
     for (const auto& [key, loadedModule] : thisObject->m_loadedModules)
         visitor.append(loadedModule.m_module);
+#if ENABLE(AOT)
+    if (thisObject->vm().hasCompiledCode() && !thisObject->inherits<AOT::ModuleRecord>()) {
+        for (const auto& resolution : thisObject->m_resolutionCache.values())
+            visitor.appendUnbarriered(resolution.moduleRecord);
+    }
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(AbstractModuleRecord);
@@ -706,6 +712,16 @@ auto AbstractModuleRecord::tryGetCachedResolution(UniquedStringImpl* exportName)
 
 void AbstractModuleRecord::cacheResolution(UniquedStringImpl* exportName, const Resolution& resolution)
 {
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode() && !inherits<AOT::ModuleRecord>()) {
+        {
+            Locker locker { cellLock() };
+            m_resolutionCache.add(exportName, resolution);
+        }
+        vm().writeBarrier(this);
+        return;
+    }
+#endif
     m_resolutionCache.add(exportName, resolution);
 }
 
@@ -1242,7 +1258,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 #endif
 #if ENABLE(AOT)
     if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(root.moduleRecord); compiled && frames[0].type == Resolution::Type::Resolved) {
-        if (compiled->someMockStandsInPlace() || frames[0].moduleRecord->hasLiveExports() || wasSettledByMock)
+        if (compiled->someMockStandsInPlace() || compiled->mayOutlive(frames[0].moduleRecord) || frames[0].moduleRecord->hasLiveExports() || wasSettledByMock)
             return frames[0];
     }
 #endif

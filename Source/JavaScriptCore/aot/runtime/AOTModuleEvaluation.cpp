@@ -202,10 +202,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             RELEASE_AND_RETURN(scope, throwEvaluationError(root));
         if (record->status() != CyclicModuleRecord::Status::Linked)
             return;
-        {
-            Locker locker { m_state.caches->lock() };
-            m_records.remove(root);
-        }
+        takeOutRecord(root);
         setStoredStatus(root, StoredModuleStatus::Linked);
         record->setStatus(CyclicModuleRecord::Status::Evaluated);
         record->setCycleRoot(vm, record);
@@ -3286,6 +3283,16 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         noteLoadBegunByFactories(target);
     if (isAskedForByOwnFactory(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, requireModuleItselfBesideMock(target));
+    if (m_mocks && targetData.kind == ModuleKind::CommonJs && isMocked(target) && !targetData.isOfLibrary() && status(target) == ModuleStatus::Linked && !mockInPlace(target) && (m_modulesWhoseFactoryRuns.get(target.index()) || (!m_modulesWithMockToRun.get(target.index()) && host().isCalledFromFactoryThatWaits && host().isCalledFromFactoryThatWaits(m_instance.globalObject, target)))) [[unlikely]] {
+        m_filesWhoseOriginalRuns.set(target.index());
+        evaluateCommonJS(target);
+        m_filesWhoseOriginalRuns.clear(target.index());
+        if (scope.exception()) [[unlikely]] {
+            forgetRunThatThrew(target);
+            return { };
+        }
+        return commonJSExports(target);
+    }
     bool isRequiredByProgram = requiredBy == RequiredBy::Program || (referrer && !data(referrer).isOfLibrary());
     if (!targetData.isOfLibrary() || isRequiredByProgram) {
         SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);

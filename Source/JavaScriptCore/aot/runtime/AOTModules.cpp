@@ -394,8 +394,7 @@ void Modules::forgetEvaluation(ModuleID module)
     RELEASE_ASSERT(!m_innermostEvaluation);
     if (ModuleRecord* record = m_records.get(module)) {
         loader()->removeEntryOfRecord(record);
-        Locker locker { m_state.caches->lock() };
-        m_records.remove(module);
+        takeOutRecord(module);
     }
     bool importsByLoader = false;
     for (const ModuleRequestData& request : m_table.imports(module)) {
@@ -734,6 +733,23 @@ void Modules::didLinkEntryPoint()
     for (ModuleRecord* record : m_records.values()) {
         if (data(record->module()).isLinkedWithEntryPoint() && statusOf(*record) == ModuleStatus::Unlinked)
             record->setStatus(CyclicModuleRecord::Status::Linked);
+    }
+}
+
+void Modules::takeOutRecord(ModuleID module)
+{
+    Locker locker { m_state.caches->lock() };
+    ModuleRecord* record = m_records.take(module);
+    if (!record)
+        return;
+    record->forgetCachedResolutions();
+    if (!record->isRetained() || std::exchange(m_someRetainedRecordHasLeft, true))
+        return;
+    for (ModuleRecord* other : m_records.values())
+        other->forgetCachedResolutions();
+    for (auto& loaded : m_loaded.values()) {
+        if (JSObject* setAside = loaded->recordBeforeMockInPlace.get())
+            uncheckedDowncast<ModuleRecord>(setAside)->forgetCachedResolutions();
     }
 }
 
@@ -1573,8 +1589,7 @@ void Modules::letGoOfRecordThatAnswersByMock(ModuleID module)
     if (storedStatus(module) == StoredModuleStatus::InRecord)
         setStoredStatus(module, StoredModuleStatus::Unlinked);
     loader()->removeEntryOfRecord(record);
-    Locker locker { m_state.caches->lock() };
-    m_records.remove(module);
+    takeOutRecord(module);
 }
 
 void Modules::takeNamesOfMockInPlace(ModuleID module, JSObject* mock)
@@ -2028,8 +2043,7 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
             loader()->removeEntryOfRecord(recordOfMock);
             if (storedStatus(each) == StoredModuleStatus::InRecord)
                 setStoredStatus(each, StoredModuleStatus::Evaluated);
-            Locker locker { m_state.caches->lock() };
-            m_records.remove(each);
+            takeOutRecord(each);
         }
         LoadedModule& held = ensureLoaded(each);
         JSObject* before = held.recordBeforeMockInPlace.get();
@@ -3138,6 +3152,18 @@ std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const
     return module;
 }
 
+std::optional<ModuleID> Modules::findFormUnderWrittenName(JSString* name, const ScriptFetchParameters& fetchParameters)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!host().findModuleWithAttributes)
+        return std::nullopt;
+    String written = name->value(m_instance.globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!written.startsWith("./"_s) && !written.startsWith("../"_s))
+        return std::nullopt;
+    RELEASE_AND_RETURN(scope, host().findModuleWithAttributes(m_instance.globalObject, written, fetchParameters));
+}
+
 bool Modules::doOtherJobsWait() const
 {
     MicrotaskQueue& queue = m_instance.vm->defaultMicrotaskQueue();
@@ -3804,13 +3830,17 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (!fetchParameters)
         return fetchParameters.error();
+    std::optional<ModuleID> found = *fetchParameters ? findFormUnderWrittenName(text, **fetchParameters) : std::nullopt;
+    RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     Identifier key;
     {
         SetForScope isResolvingImportCall(m_instance.vm->aotState().isResolvingImportCall, true);
-        key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
+        if (!found)
+            key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
     }
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
-    std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : findByName(key);
+    if (!found)
+        found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : findByName(key);
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     if (found) {
         runDataFileAgainForImport(*found, ImportAnsweredBy::Loader);
@@ -6443,6 +6473,11 @@ bool ModuleRecord::someMockStandsInPlace() const
     return modules().someMockStandsInPlace();
 }
 
+bool ModuleRecord::mayOutlive(AbstractModuleRecord* other) const
+{
+    return other != this && modules().someRetainedRecordHasLeft();
+}
+
 void ModuleRecord::appendDynamicStarTargets(StarExportTargets& targets)
 {
     auto scope = DECLARE_THROW_SCOPE(vm());
@@ -6622,11 +6657,12 @@ static IdentityOfBinding identityOfBinding(const Modules& modules, const Abstrac
         RELEASE_ASSERT(entry.kind() == ModuleExportKind::Namespace && entry.isDeferred);
         return { std::nullopt, identityOfModule(modules, entry.targetModule()), nullptr };
     }
-    for (const SyntheticExportData& syntheticExport : modules.table().syntheticExports(module)) {
+    ModuleID withExports = modules.moduleWithExportsOf(modules.table().fileBehindFace(module).value_or(module));
+    for (const SyntheticExportData& syntheticExport : modules.table().syntheticExports(withExports)) {
         if (syntheticExport.hasVariable && modules.identifier(syntheticExport.name).impl() == name)
             return { syntheticExport.variable, nullptr, nullptr };
     }
-    return { std::nullopt, identityOfModule(modules, module), name };
+    return { std::nullopt, identityOfModule(modules, withExports), name };
 }
 
 bool ModuleRecord::isSameBinding(const Resolution& first, const Resolution& second)

@@ -686,6 +686,7 @@ public:
     void noteAllocatedWithRowAbove(LayoutID);
     void reachEntries();
     bool enterLibraryInReach();
+    void stopUnlessRecordsHandedOutFrozenStayAsBorn();
     BuiltinsInReach& builtinsInReach();
     bool takeForConstant(BuiltinID member);
     void takeForUnlaid(BuiltinID canonicalHolder, PropertyKeyID);
@@ -1130,6 +1131,7 @@ public:
     BitVector fieldsWrittenAfterConstruction;
     BitVector layoutsThatUnseenCodeMayChange;
     BitVector modulesWhoseValueStaysInSight;
+    BitVector modulesWhoseRecordIsHandedOutFrozen;
     BitVector layoutsThatGainPropertiesThroughLost;
     BitVector layoutsThatGainWhatUnseenCodeGaveSources;
     BitVector fieldsThatUnseenCodeMayWrite;

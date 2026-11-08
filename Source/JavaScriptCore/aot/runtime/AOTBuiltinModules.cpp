@@ -28,6 +28,7 @@
 #include "JSCInlines.h"
 #include "LLIntData.h"
 #include "NativeExecutable.h"
+#include "ObjectConstructor.h"
 #include "TopExceptionScope.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -64,13 +65,21 @@ JSValue evaluateBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
     BuiltinModuleTable& builtinModules = *instance->state->builtinModules;
     auto module = builtinModules.find(id);
     RELEASE_ASSERT(module);
-    return builtinModules.evaluate(*module);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = builtinModules.evaluate(*module);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (value.isObject() && instance->state->modules->table().recordOfRuntimeSourceIsHandedOutFrozen(id)) {
+        objectConstructorFreeze(globalObject, asObject(value));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return value;
 }
 
 static bool buildKeptForCompiledCode(JSGlobalObject* globalObject, uint32_t id)
 {
     Instance* instance = Instance::of(globalObject);
-    return instance && instance->state && instance->state->modules->table().valueOfRuntimeSourceStaysWithCompiledCode(id);
+    return instance && instance->state && instance->state->modules->table().valueOfRuntimeSourceStaysWithCompiledCode(id) && !instance->state->modules->table().recordOfRuntimeSourceIsHandedOutFrozen(id);
 }
 
 void willHandBuiltinModuleToNativeCode(JSGlobalObject* globalObject, uint32_t id)

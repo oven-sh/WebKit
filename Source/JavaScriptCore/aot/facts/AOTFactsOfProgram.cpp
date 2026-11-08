@@ -554,6 +554,7 @@ private:
     void look(const BodyValue&);
     void noteBuiltinsSpelledIn(StringID, bool standsInData, const BodyValue&);
     void noteBuiltinsSpelledIn(const DataNode&, const BodyValue&);
+    void noteModuleSpelledBy(PropertyKeyID, const BodyValue&);
     TypeID writtenTypeOf(ValueID) const;
     void forEachDeclarerOfFieldOf(ValueID receiver, PropertyKeyID, NOESCAPE const Invocable<void(LayoutID)> auto&) const;
     void noteReadUsedAsInteger(ValueID);
@@ -1759,8 +1760,26 @@ void BodyLookOfProgramFacts::noteBuiltinsSpelledIn(const DataNode& node, const B
         for (const DataNode& element : array->elements)
             noteBuiltinsSpelledIn(element, value);
     } else if (const auto* object = node.tryAs<DataNode::Object>()) {
-        for (const DataMember& member : object->members)
+        for (const DataMember& member : object->members) {
+            noteModuleSpelledBy(member.key, value);
             noteBuiltinsSpelledIn(member.value, value);
+        }
+    }
+}
+
+void BodyLookOfProgramFacts::noteModuleSpelledBy(PropertyKeyID id, const BodyValue& value)
+{
+    if (!id || m_rows.modulesOfLibrary.isEmpty())
+        return;
+    const PropertyKey& key = m_program.at(id);
+    if (key.kind != PropertyKeyKind::Text)
+        return;
+    std::span<const uint8_t> text = m_program.string(key.text);
+    if (std::ranges::all_of(text, isASCIIAlphanumeric<uint8_t>))
+        return;
+    for (const ModuleSpelledInProgramFacts& spelled : m_rows.modulesOfLibrary) {
+        if (std::ranges::equal(text, spelled.specifier))
+            note(Finding::Kind::NamedModule, 1, spelled.module.index(), witnessAt(value));
     }
 }
 
@@ -1772,6 +1791,20 @@ void BodyLookOfProgramFacts::look(const BodyValue& value)
     if (m_isOfProgram && opcode == Opcode::Data) {
         if (DataID data = value.as<Opcode::Data>().data())
             noteBuiltinsSpelledIn(m_program.at(data).root, value);
+    }
+    if (m_isOfProgram && opcode == Opcode::PropDefine)
+        noteModuleSpelledBy(value.as<Opcode::PropDefine>().key(), value);
+    if (m_isOfProgram && opcode == Opcode::PropSet)
+        noteModuleSpelledBy(value.as<Opcode::PropSet>().key(), value);
+    if (m_isOfProgram && opcode == Opcode::NewObject && !m_rows.modulesOfLibrary.isEmpty()) {
+        auto allocation = value.as<Opcode::NewObject>();
+        if (allocation.layout()) {
+            const Layout& layout = m_program.at(allocation.layout());
+            for (uint32_t field : allocation.fields()) {
+                if (field < layout.fields.size())
+                    noteModuleSpelledBy(layout.fields[field].key, value);
+            }
+        }
     }
     if (m_isOfProgram && operationsThatTellOfNumbersInProgramFacts.contains(opcode))
         noteWhatIsToldOfNumbers(value);

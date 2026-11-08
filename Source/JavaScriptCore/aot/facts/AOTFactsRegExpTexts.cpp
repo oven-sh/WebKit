@@ -358,6 +358,7 @@ private:
     JSValue readProperty(JSValue object, PropertyName);
     bool mayBeMadeKey(JSValue value) { return mayBeConverted(value) && payToLayOut(value); }
     void payForPlacesMadeOutOfCharacters(uint64_t places, uint64_t characters);
+    void payForWhatIsGoneOver(uint64_t width) { payForPlacesMadeOutOfCharacters(width / charactersGoneOverAtPriceOfOneOperation, width); }
     bool payForConversion(JSValue);
     bool payFor(JSValue);
     bool payForNamesListedOf(JSObject*);
@@ -373,6 +374,8 @@ private:
     void noteThrown(Exception*);
     bool hasThrown(TopExceptionScope&);
     JSArray* newList();
+    void noteObjectMade() { m_bytesMade += JSFinalObject::allocationSize(JSFinalObject::defaultInlineCapacity); }
+    void notePlaceFilled();
     bool append(JSArray*, JSValue);
     bool storeAt(JSObject*, unsigned index, JSValue);
     bool storeUnder(JSObject*, const Identifier&, JSValue);
@@ -481,6 +484,7 @@ private:
     Vector<uint64_t> m_operationsLeftInAllOfModules;
     bool m_isOver { false };
     size_t m_bytesMade { 0 };
+    uint32_t m_placesFilledSinceOneWasPaidFor { 0 };
     unsigned m_depth { 0 };
     unsigned m_openRegions { 0 };
     Vector<unsigned> m_regionsOpenAtEntryPlusOne;
@@ -653,8 +657,18 @@ bool RehearsalOfRegExpTexts::hasThrown(TopExceptionScope& scope)
     return true;
 }
 
+void RehearsalOfRegExpTexts::notePlaceFilled()
+{
+    m_bytesMade += sizeof(JSValue);
+    if (++m_placesFilledSinceOneWasPaidFor < valuesMadeRoomForAtPriceOfOneOperation)
+        return;
+    m_placesFilledSinceOneWasPaidFor = 0;
+    payForPlacesMadeOutOfCharacters(1, 1);
+}
+
 JSArray* RehearsalOfRegExpTexts::newList()
 {
+    m_bytesMade += sizeof(JSArray) + sizeof(IndexingHeader);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     JSArray* list = constructEmptyArray(m_realm.get(), nullptr);
     return hasThrown(scope) ? nullptr : list;
@@ -662,6 +676,7 @@ JSArray* RehearsalOfRegExpTexts::newList()
 
 bool RehearsalOfRegExpTexts::append(JSArray* list, JSValue element)
 {
+    notePlaceFilled();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     list->push(m_realm.get(), element);
     return !hasThrown(scope);
@@ -669,6 +684,7 @@ bool RehearsalOfRegExpTexts::append(JSArray* list, JSValue element)
 
 bool RehearsalOfRegExpTexts::storeAt(JSObject* object, unsigned index, JSValue stored)
 {
+    notePlaceFilled();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     object->putDirectIndex(m_realm.get(), index, stored);
     return !hasThrown(scope);
@@ -676,6 +692,7 @@ bool RehearsalOfRegExpTexts::storeAt(JSObject* object, unsigned index, JSValue s
 
 bool RehearsalOfRegExpTexts::storeUnder(JSObject* object, const Identifier& name, JSValue stored)
 {
+    notePlaceFilled();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     object->putDirectMayBeIndex(m_realm.get(), name, stored);
     return !hasThrown(scope);
@@ -737,6 +754,7 @@ JSValue RehearsalOfRegExpTexts::valueOfData(const DataNode& node)
         return list && setLengthOf(list, index) ? JSValue(list) : unknown();
     }
     if (const auto* object = node.tryAs<DataNode::Object>()) {
+        noteObjectMade();
         JSObject* made = constructEmptyObject(m_realm.get());
         for (const DataMember& member : object->members) {
             if (Identifier name = nameOf(member.key); !name.isNull() && !storeUnder(made, name, valueOfData(member.value)))
@@ -755,6 +773,8 @@ JSValue RehearsalOfRegExpTexts::closureOf(FunctionID function, std::span<const J
     JSValue list = listOf(captures);
     if (!isKnown(list))
         return unknown();
+    m_bytesMade += sizeof(JSNativeStdFunction);
+    noteObjectMade();
     JSArray* held = asArray(list);
     bool isGoneThrough = !record.has(FunctionFlags::IsGenerator) && record.hasBody();
     JSObject* made = JSNativeStdFunction::create(vm, realm, record.length, String(), [this, function, held, isGoneThrough](JSGlobalObject* caller, CallFrame* frame) {
@@ -884,6 +904,8 @@ JSValue RehearsalOfRegExpTexts::namespaceOf(ModuleID id)
     runModule(id);
     const Module& module = m_program.at(id);
     JSObject* made = constructEmptyObject(m_realm.get());
+    uint64_t numberOfExports = module.exports.size() + module.syntheticExports.size();
+    payForPlacesMadeOutOfCharacters(numberOfExports, numberOfExports);
     for (const ModuleExport& exported : module.exports) {
         if (exported.kind == ModuleExportKind::Variable && exported.variable)
             made->putDirect(vm, Identifier::fromString(vm, charactersOf(exported.name)), variable(exported.variable));
@@ -1078,6 +1100,7 @@ void RehearsalOfRegExpTexts::noteHandedToCodeThatNobodyKnows(std::span<const JSV
         if (!isKnown(argument) || !argument.inherits<JSFinalObject>())
             continue;
         JSObject* options = asObject(argument);
+        payForWhatIsGoneOver(options->structure()->maxOffset() + 1);
         options->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
             list(options->getDirect(entry.offset()));
             return true;
@@ -1876,6 +1899,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         auto allocation = value.as<Opcode::NewObject>();
         const Layout& layout = m_program.at(allocation.layout());
         JSValue prototype = allocation.prototypeOperand() ? operand(allocation.prototypeOperand()) : JSValue();
+        noteObjectMade();
         JSObject* made = prototype && isKnown(prototype) && prototype.isObject() ? constructEmptyObject(realm, asObject(prototype)) : constructEmptyObject(realm);
         std::span<const ValueID> values = allocation.valuesOperands();
         unsigned index = 0;
@@ -1894,6 +1918,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         return made;
     }
     case Opcode::NewDictionary:
+        noteObjectMade();
         return constructEmptyObject(realm);
     case Opcode::GetEnvironmentField: {
         auto read = value.as<Opcode::GetEnvironmentField>();
@@ -1934,6 +1959,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
     }
     case Opcode::AppendElement: {
         auto append = value.as<Opcode::AppendElement>();
+        notePlaceFilled();
         if (auto* list = dynamicDowncast<JSArray>(operand(append.arrayOperand())))
             list->push(realm, operand(append.valueOperand()));
         scope.clearException();
@@ -2612,6 +2638,7 @@ bool RehearsalOfRegExpTexts::takeEdge(Activation& activation, const BodyTerminat
         OpenRegion& region = activation.regions.last();
         region.hasBroughtOtherValues |= bringsOtherValues;
         bool isNew = true;
+        payForWhatIsGoneOver(static_cast<uint64_t>(region.numberOfArrivals) * passed.size());
         for (uint32_t arrival = 0; arrival < region.numberOfArrivals && isNew; ++arrival) {
             isNew = false;
             for (uint32_t index = 0; index < passed.size() && !isNew; ++index)
@@ -2728,8 +2755,12 @@ BlockID RehearsalOfRegExpTexts::goEachWayFrom(Activation& activation, BodyBlock 
     activation.regions.append(OpenRegion { join, sharesJoin ? activation.regions.last().firstArrival : activation.arrivals.size(), sharesJoin ? activation.regions.last().numberOfArrivals : 0, false });
     ++m_openRegions;
     BodyTerminator terminator = block.terminator();
-    for (uint32_t index = terminator.numberOfTargets(); index--;) {
-        BodyTarget target = terminator.targets()[index];
+    payForPlacesMadeOutOfCharacters(terminator.numberOfTargets(), terminator.numberOfTargets());
+    Vector<BodyTarget, 2> ways;
+    for (BodyTarget way : terminator.targets())
+        ways.append(way);
+    for (uint32_t index = ways.size(); index--;) {
+        BodyTarget target = ways[index];
         if (takeEdge(activation, terminator, index, target))
             runFrom(activation, target.block(), result);
     }
