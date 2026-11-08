@@ -208,7 +208,7 @@ void StraightEmitter::generateModule(const BodyValue& value)
         defineBoolean(value);
         return;
     case Opcode::SeesMockOf:
-        callOperation(value, RuntimeOperation::SeesMockOf, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), moduleIndexInStraightForm(value.reader()) });
+        callOperation(value, RuntimeOperation::SeesMockOf, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()), moduleIndexInStraightForm(value.reader()), StraightArgument::word(value.thatKeepsNamesOfOriginal()) });
         defineBoolean(value);
         return;
     case Opcode::IsLinkedBelow:

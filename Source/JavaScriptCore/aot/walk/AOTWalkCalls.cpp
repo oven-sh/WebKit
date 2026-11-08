@@ -53,6 +53,7 @@ struct CallInWalkCalls {
     BuiltinID calledBuiltin;
     bool isConstruction { false };
     bool isNeverInlined { false };
+    bool isMadeByProtocol { false };
     bool calleeComesBack { false };
     std::optional<Walker::ArmThatMeets> armWhereGuardOfPrototypeHasEnded;
     FunctionID calledWhereNoCopyIsMade;
@@ -1490,7 +1491,7 @@ static bool copyOrCallDirectlyInWalkCalls(Walker& walker, const BodyValue& value
                 return true;
             operands.append(built);
         }
-        if (walker.walkInline(value, request.callee, operands.span()))
+        if (request.isMadeByProtocol ? walker.walkInlineMethodThatProtocolCalls(value, request.callee, operands.span()) : walker.walkInline(value, request.callee, operands.span()))
             return true;
     }
     if (!request.calledWhereNoCopyIsMade)
@@ -1533,6 +1534,7 @@ bool callMethodOfProtocol(Walker& walker, const BodyValue& step, FunctionID meth
     request.closure = closure;
     request.thisValue = thisValue;
     request.isNeverInlined = callee.isHiddenInStackTraces();
+    request.isMadeByProtocol = true;
     Draft written(Opcode::Call, walker.originOf(step));
     walker.chooseConservativeFields(written);
     written.setCalleeOperand(closure);

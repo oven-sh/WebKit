@@ -82,6 +82,16 @@ enum class MachineState : uint8_t {
     Prepared,
 };
 
+class ScopeOfTestThatRunsAsUsersBuild {
+    WTF_MAKE_NONCOPYABLE(ScopeOfTestThatRunsAsUsersBuild);
+public:
+    explicit ScopeOfTestThatRunsAsUsersBuild(bool);
+    ~ScopeOfTestThatRunsAsUsersBuild();
+
+private:
+    bool m_before;
+};
+
 class StagedBuild {
     WTF_MAKE_NONCOPYABLE(StagedBuild);
 public:

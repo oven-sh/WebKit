@@ -157,6 +157,7 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::VariablesThatBoundAreTakenToBeAsInFront:
     case Wire::TestingSwitch::StorageAndLengthsAreTakenToBeAsInFront:
     case Wire::TestingSwitch::VouchedPositionsAreTakenOneFurther:
+    case Wire::TestingSwitch::VouchedReadsAreTakenOneFurther:
     case Wire::TestingSwitch::GuardsAndFactsAreTakenToHold:
     case Wire::TestingSwitch::OneRowSpeaksForAllThatCallMayTake:
     case Wire::TestingSwitch::NothingIsDoneToFreshLists:
@@ -183,10 +184,13 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::GiveLinkMore:
     case Wire::TestingSwitch::ShuffleChoices:
     case Wire::TestingSwitch::OrderBlocksAgain:
+    case Wire::TestingSwitch::SavesAtHeadsThatPatchesAloneReadAreLeftOut:
     case Wire::TestingSwitch::WalksUnitsBy:
     case Wire::TestingSwitch::CutWalksOfLoopsShort:
     case Wire::TestingSwitch::NobodyWakesSleepersOfSharedCalls:
     case Wire::TestingSwitch::PortersTakeWhatIsOfTheMemberForTheUnknown:
+    case Wire::TestingSwitch::ReadsThroughFamiliesAreTiedMemberByMember:
+    case Wire::TestingSwitch::ReadsByKeyOffFilledRecordsAreListed:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();

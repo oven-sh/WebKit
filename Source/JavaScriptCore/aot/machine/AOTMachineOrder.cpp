@@ -317,6 +317,53 @@ void Order::askBitsOfTwoTestsAtOnce(Block* first, unsigned wayOfFirstWhereBitIsS
         second->setSuccessors(targetOfFirst, targetOfSecond);
 }
 
+void Order::askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond, Operation* subject, int32_t low, int32_t high)
+{
+    Procedure& procedure = first->procedure();
+    Arena& arena = procedure.arena();
+    RELEASE_ASSERT(first->last()->opcode() == Branch && first->numSuccessors() == 2 && second->last()->opcode() == Branch && second->numSuccessors() == 2);
+    RELEASE_ASSERT(first->successor(1 - leavingSuccessorOfFirst).block() == second && second->numberOfIncomingEdges() == 1);
+    RELEASE_ASSERT(first->upsilons().empty() && second->upsilons().empty() && subject->type() == Int32);
+
+    const Edge leavingFirst = first->successor(leavingSuccessorOfFirst);
+    const Edge toSecond = first->successor(1 - leavingSuccessorOfFirst);
+    const Edge leavingSecond = second->successor(leavingSuccessorOfSecond);
+    const Edge inside = second->successor(1 - leavingSuccessorOfSecond);
+
+    Operation* branch = first->m_operations.takeLast();
+    Origin origin = branch->origin();
+    auto constant = [&](int32_t value) {
+        Operation* made = arena.create<Operation>(Const32, Int32, origin);
+        made->m_payload.bits = value;
+        procedure.didCreate(made);
+        return made;
+    };
+    auto append = [&](Opcode opcode, Operation* left, Operation* right) {
+        Operation* made = arena.create<Operation>(opcode, Int32, origin);
+        made->m_auxiliary = 2;
+        made->m_children[0] = left;
+        made->m_children[1] = right;
+        made->m_owner = first;
+        made->m_indexInBlock = first->m_operations.size();
+        procedure.didCreate(made);
+        first->m_operations.append(arena, made);
+        return made;
+    };
+    Operation* distance = low ? append(Add, subject, constant(static_cast<int32_t>(0u - static_cast<uint32_t>(low)))) : subject;
+    Operation* test = append(BelowEqual, distance, constant(static_cast<int32_t>(static_cast<uint32_t>(high) - static_cast<uint32_t>(low))));
+    branch->m_children[0]->loseUse();
+    branch->m_children[0] = test;
+    test->gainUse();
+    branch->m_indexInBlock = first->m_operations.size();
+    first->m_operations.append(arena, branch);
+
+    second->clearSuccessors();
+    first->setSuccessors(Edge(inside.block(), std::max(toSecond.edgeClass(), inside.edgeClass())), Edge(leavingFirst.block(), std::min(leavingFirst.edgeClass(), leavingSecond.edgeClass())));
+    letGoOfBlockThatNothingLeadsTo(second);
+    if (!leavingSecond.block()->numberOfIncomingEdges())
+        letGoOfBlockThatNothingLeadsTo(leavingSecond.block());
+}
+
 void Order::joinEdgesToOneBlock(Block* from)
 {
     ASSERT(from->isTerminated());

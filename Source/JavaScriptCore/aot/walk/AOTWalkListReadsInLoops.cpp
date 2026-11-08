@@ -2267,7 +2267,7 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
             if (BuiltinClassID classOfView = readsLength || asksPlainVector ? BuiltinClassID() : classOfViewInListReadsInLoops(walker, types.withoutNullish(proven))) {
                 bool isReadInLine = hasInlineElementAccess(walker.program().builtins().typedArrayTypeOf(classOfView)) || kindsOfViewsOfNumbersIn(walker.program(), types, types.withoutNullish(proven));
                 bool lengthMayStandInFront = isReadInLine && !walker.effectsOfQuietDraftsOfRow().writes.contains(AbstractHeap::TypedArrayStorage);
-                if (lengthMayStandInFront && viewMayFollowSharedMemoryThatGrows(walker, name) && !isFreshInListReadsInLoops(walker, name) && !findNoteInListReadsInLoops(walker, name)) {
+                if (lengthMayStandInFront && (viewMayFollowSharedMemoryThatGrows(walker, name) || proven != types.withoutNullish(proven)) && !isFreshInListReadsInLoops(walker, name) && !findNoteInListReadsInLoops(walker, name)) {
                     found.lists.append(ListTestedInFrontOfLoop { name, ArrayStorage::Other, false });
                     found.lists.last().isAskedForItsStorageAlone = true;
                 }
@@ -2596,9 +2596,22 @@ Reference askWhetherStorageOfListIsOfKind(Walker& walker, Reference list, ArrayS
     return walker.build(questionForKindOfStorageInListReadsInLoops(walker, ListTestedInFrontOfLoop { list, kind, false, isWritable }, origin));
 }
 
+static constexpr uint32_t wordOfKindOfRowsInListReadsInLoops = 1;
+
+static Reference holderThatRowIsReadOffInListReadsInLoops(Walker& walker, Reference row)
+{
+    const Code& code = walker.code();
+    ValueID held = row.id();
+    while (opcodesThatGiveSameValue.contains(code.at(held).opcode))
+        held = code.at(held).operand(0);
+    return code.at(held).opcode == Opcode::GetArrayElement ? Reference::value(code.at(held).operand(0)) : Reference();
+}
+
 void noteKindOfStorageThatTurnFound(Walker& walker, Reference list, ArrayStorage kind, bool isWritable)
 {
     noteListTestedInListReadsInLoops(walker, ListTestedInFrontOfLoop { list, kind, false, isWritable });
+    if (Reference holder = holderThatRowIsReadOffInListReadsInLoops(walker, list))
+        noteKnown(walker, KnownNote::ListTestedInFrontOfLoop, holder, { }, wordOfKindOfRowsInListReadsInLoops, LocationMasks(heapsUnderListsReadInLoops), static_cast<uint64_t>(kind));
 }
 
 std::optional<ListTestedInFrontOfLoop> askListOfNumbersInTurnOfTypedCopy(Walker& walker, const BodyValue& read, Reference list)
@@ -2606,6 +2619,12 @@ std::optional<ListTestedInFrontOfLoop> askListOfNumbersInTurnOfTypedCopy(Walker&
     if (!turnOfTypedCopyMayAskList(walker, list) || !isProvenListInListReadsInLoops(walker, list) || !isExpectedToBeListOfNumbers(walker, ownTypeInListReadsInLoops(walker, list)))
         return std::nullopt;
     ListTestedInFrontOfLoop tested { list, ArrayStorage::Double, true };
+    if (Reference holder = holderThatRowIsReadOffInListReadsInLoops(walker, list)) {
+        if (std::optional<uint64_t> kind = findKnown(walker, KnownNote::ListTestedInFrontOfLoop, holder, { }, wordOfKindOfRowsInListReadsInLoops); kind && static_cast<ArrayStorage>(*kind) == ArrayStorage::Contiguous) {
+            tested = ListTestedInFrontOfLoop { list, ArrayStorage::Contiguous, false };
+            walker.count(StatisticID::RowsAskedForKindOfRowBesideThem);
+        }
+    }
     Origin origin = walker.originOf(read);
     origin.isTailCall = false;
     auto passesInTurn = [&](Draft&& draft) {

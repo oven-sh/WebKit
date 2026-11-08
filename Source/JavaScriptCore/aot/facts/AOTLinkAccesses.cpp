@@ -536,8 +536,12 @@ bool AccessInLinkAccesses::readsThroughSuperWhatIsOnlyCalled() const
 void AccessInLinkAccesses::noteSiteOfCopyThatSpellsStore()
 {
     const ThinSummary& summary = m_flow.summaries.at(m_function);
-    for (const SummaryCall& call : summary.calls) {
-        if (call.site != m_access.site || call.callee != SummaryCall::Callee::Builtin || call.passesList)
+    auto found = std::ranges::equal_range(summary.callsAtSitesOfCopiesThatSpellStores.span(), m_access.site.index(), { }, [&](uint32_t call) {
+        return summary.calls[call].site.index();
+    });
+    for (uint32_t place : found) {
+        const SummaryCall& call = summary.calls[place];
+        if (call.callee != SummaryCall::Callee::Builtin || call.passesList)
             continue;
         for (uint32_t argument = 1; argument < call.numberOfArguments; ++argument)
             m_flow.noteSiteOfCopy(m_function, m_access.site, m_subject, m_flow.nodeOf(m_function, summary.arguments[call.firstArgument + argument]));
@@ -875,6 +879,10 @@ bool AccessInLinkAccesses::readsOrStoresUnderTextsThatBodyWrites()
     bool stores = m_access.kind == Kind::Store;
     if ((!isRead() && !stores) || m_shared || m_program.admitsReplacedBuiltins || m_flow.testRuns().isTestRun())
         return false;
+    for (BuiltinID row : { Builtins::ArrayPrototypeValues, Builtins::ArrayIteratorPrototypeNext }) {
+        if (m_program.isUnlocked(row) || m_program.isUnlocked(m_table.canonicalID(row)))
+            return false;
+    }
     const BodyIndex* index = bodiesLookedAt(m_flow.looks).find(m_function);
     if (!index || index->isParameter(m_access.site) || index->opcodeOf(m_access.site) != (stores ? Opcode::ElemSet : Opcode::ElemGet))
         return false;

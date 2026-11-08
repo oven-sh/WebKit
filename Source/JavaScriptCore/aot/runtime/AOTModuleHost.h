@@ -283,6 +283,7 @@ JS_EXPORT_PRIVATE bool wasPulledInByLoadThatFailed(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isRootOfImportThatFailed(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLoadedAheadOfThisTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didLeaveLoaderInThisTestFile(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool hasLeftLoaderInThisTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE std::optional<ModuleID> formThatMockFinds(JSGlobalObject*, StringView path, std::optional<ModuleID> file);
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*, StringView path);
 enum class AfterFailure : bool { KeepsError, AsksAgain };

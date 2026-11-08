@@ -6151,6 +6151,8 @@ bool LinkFlow::tieReadThroughClassesThatDeclare(const SortedMembersOfFamily& sor
 {
     if (classHolderIsMadeWithName(program, ClassSide::Prototype, key))
         return false;
+    if (AOT::hasFlag(build.options().testing, Wire::TestingSwitch::ReadsThroughFamiliesAreTiedMemberByMember))
+        return false;
     std::span<const DeclarerOfMember> declarers = classesThatDeclareOnPrototype(key);
     if (program.layoutsWithName(key).size() + declarers.size() > sorted.instancesOfClasses.size())
         return false;

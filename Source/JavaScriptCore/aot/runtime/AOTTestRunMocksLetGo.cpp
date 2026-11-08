@@ -419,7 +419,7 @@ void Modules::letGoOfMocksThatEndedBelow(ModuleID root)
             if (request.isDeferred)
                 continue;
             ModuleID imported = moduleLoadedBy(request);
-            if ((!data(module).isFaceOfFile() && keepsEndedMockWhereItIsAskedForAgain(fileOf(imported), module)) || statementsHoldOriginalBehindEndOfMock(fileOf(imported), module))
+            if (m_letsGoOfMocksAtLinkFromSource && ((!data(module).isFaceOfFile() && keepsEndedMockWhereItIsAskedForAgain(fileOf(imported), module)) || statementsHoldOriginalBehindEndOfMock(fileOf(imported), module)))
                 continue;
             toVisit.append(imported);
             letGoOfMockThatEnded(imported);
@@ -431,6 +431,7 @@ void Modules::letGoOfMocksThatEndedBelow(ModuleID root)
 void Modules::letGoOfMocksThatEndedAtAndBelow(ModuleID root)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    SetForScope letsGoOfMocksAtLinkFromSource(m_letsGoOfMocksAtLinkFromSource, true);
     letGoOfMockThatEnded(root);
     RETURN_IF_EXCEPTION(scope, void());
     RELEASE_AND_RETURN(scope, letGoOfMocksThatEndedBelow(root));

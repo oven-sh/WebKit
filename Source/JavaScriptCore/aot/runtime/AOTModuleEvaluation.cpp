@@ -316,6 +316,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             m_modulesThatOwnFactoryMayLoad.clear(module.index());
         }
 
+        m_modulesWhoseFailedRunWasForgotten.clear(module.index());
         ModuleRecord* record = recordIfExists(module);
         if (!record && moduleData.evaluatesItself()) {
             evaluateByCallingBody(module);

@@ -1093,7 +1093,7 @@ void Allocator::settleFramedPart()
                     return false;
             }
         }
-        if (step.kind != StepKind::Execute || step.patchAssignment == UINT32_MAX)
+        if (step.kind != StepKind::Execute || step.patchAssignment == UINT32_MAX || m_proc.traits().leavesOutSavesThatPatchesAloneRead)
             return true;
         return std::ranges::all_of(m_allocation.patchAssignment(step.patchAssignment).locations, [&](Location location) {
             return isSavedAbove(block, location);
@@ -1130,6 +1130,7 @@ void Allocator::settleFramedPart()
         head.beginOfSteps = beginOfSavesThatAreRead;
         head.endOfSteps = endOfSavesThatAreRead;
     }
+    m_allocation.m_leavesOutSavesAtHeads = endOfSavesThatAreRead != m_allocation.m_steps.size();
     m_allocation.m_steps.shrink(endOfSavesThatAreRead);
 }
 

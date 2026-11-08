@@ -28,6 +28,7 @@
 #include <utility>
 #include <wtf/ASCIICType.h>
 #include <wtf/BitVector.h>
+#include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -472,68 +473,89 @@ static Vector<uint32_t> findUnreachedNames(const ParallelLoops& loops, unsigned 
     return holders;
 }
 
-namespace {
+void MentionsInCode::beginFunction(const Function& function)
+{
+    m_file = function.module && isFileOfProgram(m_program.at(function.module)) ? function.module : ModuleID();
+    m_first = m_found.size();
+    m_mentionsOfLongList.clear();
+}
 
-struct MentionInCode {
-    enum class Kind : uint8_t { LoadsModule, NamesVariable };
+void MentionsInCode::add(MentionInCode::Kind kind, ModuleID other)
+{
+    constexpr size_t mostMentionsGoneThrough = 16;
+    auto keyOf = [](const MentionInCode& mention) {
+        return static_cast<uint64_t>(mention.kind) << 32 | mention.other.index();
+    };
+    if (other.index() >= m_program.modules.size() || other == m_file)
+        return;
+    MentionInCode mention { kind, m_file, other };
+    std::span<const MentionInCode> listed = m_found.span().subspan(m_first);
+    if (listed.size() <= mostMentionsGoneThrough) {
+        if (std::ranges::contains(listed, mention))
+            return;
+    } else {
+        if (m_mentionsOfLongList.isEmpty()) {
+            for (const MentionInCode& earlier : listed)
+                m_mentionsOfLongList.add(keyOf(earlier));
+        }
+        if (!m_mentionsOfLongList.add(keyOf(mention)).isNewEntry)
+            return;
+    }
+    m_found.append(mention);
+}
 
-    auto operator<=>(const MentionInCode&) const = default;
+void MentionsInCode::noteWhatValueNames(const BodyValue& value)
+{
+    if (!m_file)
+        return;
+    auto isTarget = [](ModuleReferenceKind kind) {
+        return kind == ModuleReferenceKind::Target;
+    };
+    value.forEachReference([&](auto reference, auto... role) -> void {
+        using Reference = decltype(reference);
+        if constexpr (std::is_same_v<Reference, VariableID>) {
+            if (reference.index() >= m_program.variables.size())
+                return;
+            if (ModuleID owner = m_program.at(reference).module; owner && fillsItsVariablesWhenItLoads(m_program.at(owner)))
+                add(MentionInCode::Kind::NamesVariable, owner);
+        } else if constexpr (std::is_same_v<Reference, ModuleID>) {
+            if (isTarget(role...))
+                add(MentionInCode::Kind::LoadsModule, reference);
+        }
+    });
+}
 
-    Kind kind;
-    ModuleID file;
-    ModuleID other;
-};
+void MentionsInCode::noteWhatFunctionNames(const Function& function)
+{
+    beginFunction(function);
+    if (!m_file || !function.hasBody())
+        return;
+    const Body& body = function.body;
+    BodyBlock block = body.entry();
+    for (uint32_t blockIndex = 0; blockIndex < body.numberOfBlocks(); ++blockIndex) {
+        BodyValues::Iterator cursor = block.values().begin();
+        for (uint32_t remaining = block.numberOfValues(); remaining--; ++cursor)
+            noteWhatValueNames(*cursor);
+        block = BodyBlock(BodyTerminator(cursor.words(), &body.unit(), block.id()).end(), nullptr, &body.unit(), BlockID(blockIndex + 1), block.endOfValues());
+    }
+}
 
-} // anonymous namespace
-
-static Vector<MentionInCode> findMentionsInCode(const Program& program, const ParallelLoops& loops)
+static void addModulesWhoseBodiesLieInOtherFiles(const Program& program, Vector<MentionInCode>& mentions)
 {
     Vector<ModuleID> moduleWithBody(program.functions.size());
     for (unsigned index = 0; index < program.modules.size(); ++index) {
         if (FunctionID body = program.modules[index].body)
             moduleWithBody[body.index()] = ModuleID(index);
     }
-    Vector<MentionInCode> mentions = collectInParallel<MentionInCode>(loops, program.functions.size(), [&](unsigned index, Vector<MentionInCode>& found) {
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
         const Function& function = program.functions[index];
         ModuleID file = function.module;
-        if (!file || !function.hasBody() || !isFileOfProgram(program.at(file)))
-            return;
-        size_t first = found.size();
-        auto add = [&](MentionInCode::Kind kind, ModuleID other) {
-            MentionInCode mention { kind, file, other };
-            if (other.index() < program.modules.size() && other != file && !std::ranges::contains(found.span().subspan(first), mention))
-                found.append(mention);
-        };
-        if (ModuleID beside = moduleWithBody[index]; beside && beside != file) {
-            add(MentionInCode::Kind::LoadsModule, beside);
-            found.append({ MentionInCode::Kind::LoadsModule, beside, file });
-        }
-        auto isTarget = [](ModuleReferenceKind kind) {
-            return kind == ModuleReferenceKind::Target;
-        };
-        const Body& body = function.body;
-        BodyBlock block = body.entry();
-        for (uint32_t blockIndex = 0; blockIndex < body.numberOfBlocks(); ++blockIndex) {
-            BodyValues::Iterator cursor = block.values().begin();
-            for (uint32_t remaining = block.numberOfValues(); remaining--; ++cursor) {
-                (*cursor).forEachReference([&](auto reference, auto... role) -> void {
-                    using Reference = decltype(reference);
-                    if constexpr (std::is_same_v<Reference, VariableID>) {
-                        if (reference.index() >= program.variables.size())
-                            return;
-                        if (ModuleID owner = program.at(reference).module; owner && fillsItsVariablesWhenItLoads(program.at(owner)))
-                            add(MentionInCode::Kind::NamesVariable, owner);
-                    } else if constexpr (std::is_same_v<Reference, ModuleID>) {
-                        if (isTarget(role...))
-                            add(MentionInCode::Kind::LoadsModule, reference);
-                    }
-                });
-            }
-            block = BodyBlock(BodyTerminator(cursor.words(), &body.unit(), block.id()).end(), nullptr, &body.unit(), BlockID(blockIndex + 1), block.endOfValues());
-        }
-    });
-    sortAndRemoveDuplicates(loops, mentions);
-    return mentions;
+        ModuleID beside = moduleWithBody[index];
+        if (!beside || !file || beside == file || !function.hasBody() || !isFileOfProgram(program.at(file)))
+            continue;
+        mentions.append({ MentionInCode::Kind::LoadsModule, file, beside });
+        mentions.append({ MentionInCode::Kind::LoadsModule, beside, file });
+    }
 }
 
 void ProgramVerifier::verifyModuleGraph()
@@ -560,12 +582,28 @@ void ProgramVerifier::verifyModuleGraph()
     verifyModuleFailures();
 }
 
-void ProgramVerifier::verifyModulesNamedInBodies()
+void ProgramVerifier::verifyModulesNamedInBodies(Vector<MentionInCode>&& mentionsInBodies)
 {
     auto& modules = m_program.modules;
     const ParallelLoops& loops = m_build.parallelLoops();
     StepTimes steps(m_build, "ReadAndVerify: modules named in bodies"_s);
-    Vector<MentionInCode> mentions = findMentionsInCode(m_program, loops);
+    Vector<MentionInCode> mentions = WTF::move(mentionsInBodies);
+    addModulesWhoseBodiesLieInOtherFiles(m_program, mentions);
+    sortAndRemoveDuplicates(loops, mentions);
+#if ASSERT_ENABLED || ASAN_ENABLED
+    constexpr bool isCheckingBuild = true;
+#else
+    constexpr bool isCheckingBuild = false;
+#endif
+    if (isCheckingBuild || m_build.validates()) {
+        MentionsInCode mentionsOfWholeBodies(m_program);
+        for (const Function& function : m_program.functions)
+            mentionsOfWholeBodies.noteWhatFunctionNames(function);
+        Vector<MentionInCode> expected = mentionsOfWholeBodies.take();
+        addModulesWhoseBodiesLieInOtherFiles(m_program, expected);
+        sortAndRemoveDuplicates(loops, expected);
+        RELEASE_ASSERT(mentions == expected);
+    }
     steps.didFinish("mentions in code"_s);
 
     auto mentionsOf = [&](MentionInCode::Kind kind, unsigned index) {

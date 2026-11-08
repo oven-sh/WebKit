@@ -269,7 +269,7 @@ bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
     };
     if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || !hasYetToRun(module) || isMocked(module) || m_modulesWithMockToRun.get(module.index()))
         return false;
-    if (!isImportedByGraphUnderEvaluation(module))
+    if (!isImportedByGraphUnderEvaluation(module) || m_modulesWhoseFailedRunWasForgotten.get(module.index()))
         return !hasRun(module) && !didCaptureExports(module);
     BitVector isSeen(m_table.size());
     Vector<ModuleID, 16> toVisit { module };
@@ -730,6 +730,8 @@ void Modules::settleImportsThatFailedUnder(ModuleID mocked, FailedImports failed
     if (failedImports == FailedImports::LoseEntryThatEvictsThem) {
         dropErrorOfMockKeptByLoader(mocked);
         m_mocksWhoseEntryProgramDeleted.set(mocked.index());
+        for (ModuleID module : failedLoadsThatEndOfMockEvicts([&](ModuleID each) { return fileOf(each) == fileOf(mocked); }))
+            m_modulesWhoseFailedLoadNothingEvicts.set(module.index());
     }
     if (m_rootsOfImportsThatFailedUnderMocks.isEmpty()) [[likely]]
         return;
@@ -813,10 +815,8 @@ void Modules::takeFailedLoadsOutOfLoader(const ScopedLambda<bool(ModuleID)>& isM
         loader()->removeEntry(key);
 }
 
-void Modules::dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& isMocked)
+Vector<ModuleID, 8> Modules::failedLoadsThatEndOfMockEvicts(const ScopedLambda<bool(ModuleID)>& isMocked)
 {
-    if (m_modulesWithLoadEndedByMock.isEmpty()) [[likely]]
-        return;
     Vector<ModuleID, 8> above;
     for (size_t kept : m_modulesWithLoadEndedByMock) {
         if (m_modulesWhoseFailedLoadNothingEvicts.get(kept))
@@ -835,7 +835,12 @@ void Modules::dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& is
             }
         }
     }
-    for (ModuleID module : above)
+    return above;
+}
+
+void Modules::dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& isMocked)
+{
+    for (ModuleID module : failedLoadsThatEndOfMockEvicts(isMocked))
         dropErrorOfLoadEndedByMock(module);
 }
 
@@ -848,8 +853,6 @@ void Modules::dropErrorsOfLoadsEndedByMocks()
     BitVector roots = m_rootsOfImportsThatFailedUnderMocks;
     for (size_t root : roots)
         forgetImportFailedUnderMock(ModuleID(root));
-    for (WaitThatRequireLeft& left : m_waitsThatRequiresLeft)
-        left.keepsError = false;
 }
 
 bool Modules::isFetchedForImportStatement(ModuleID module) const

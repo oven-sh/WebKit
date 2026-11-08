@@ -6382,13 +6382,17 @@ bool CallInLinkCalls::isDataDescriptorInSight(const Source* source) const
 {
     if (!source || m_shared)
         return false;
-    return std::ranges::any_of(m_summary.changes, [&](const SummaryChange& change) {
-        if (change.site != m_call.site || change.other == noSummaryNode || m_flow.nodeOf(m_caller, change.other) != source->node)
+    auto found = std::ranges::equal_range(m_summary.definitionsByDescriptorInOrderOfSites.span(), m_call.site.index(), { }, [&](uint32_t change) {
+        return m_summary.changes[change].site.index();
+    });
+    return std::ranges::any_of(found, [&](uint32_t place) {
+        const SummaryChange& change = m_summary.changes[place];
+        if (change.other == noSummaryNode || m_flow.nodeOf(m_caller, change.other) != source->node)
             return false;
         if (change.laysValueInSight)
             return true;
         Vector<FlowNodeID, 4> values;
-        return change.kind == SummaryChange::Kind::DefinesByDescriptor && change.key && !change.descriptorIsInSight && m_flow.descriptorsInSightLayValuesAlone(m_flow.typeAt(source->node), nullptr, values);
+        return change.key && !change.descriptorIsInSight && m_flow.descriptorsInSightLayValuesAlone(m_flow.typeAt(source->node), nullptr, values);
     });
 }
 

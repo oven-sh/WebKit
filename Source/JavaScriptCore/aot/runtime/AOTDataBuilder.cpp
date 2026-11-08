@@ -338,7 +338,10 @@ static void defineOtherMembers(Builder& builder, Object& object, std::span<const
     Vector<Object::ExtraProperty, 16> properties(identifierNumbers.size(), [&](size_t index) {
         return Object::ExtraProperty { identifierAt(instance, identifierNumbers[index]).impl(), builder.roots.at(firstRoot + index) };
     });
-    if (object.tryCreateExtraPropertiesOfNewObject(vm, properties.span()))
+    bool someNameHasField = std::ranges::any_of(properties, [&](const Object::ExtraProperty& property) {
+        return object.fieldNamed(builder.state, property.name);
+    });
+    if (!someNameHasField && object.tryCreateExtraPropertiesOfNewObject(vm, properties.span()))
         return;
     for (auto& property : properties) {
         PutPropertySlot slot(&object, true);

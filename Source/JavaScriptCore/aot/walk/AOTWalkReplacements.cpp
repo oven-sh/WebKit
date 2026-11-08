@@ -1291,6 +1291,7 @@ static bool replaceSpeciesOfListByNewList(Walker& walker, const BodyValue& creat
     auto operation = created.as<Opcode::ArraySpeciesCreate>();
     Reference length = walker.referenceOf(operation.lengthOperand());
     Reference source = walker.referenceOf(operation.arrayOperand());
+    bool runOverBoxedValuesTakesListFirst = walker.runOverBoxedValuesTakesNewListOfCopyFirst();
     if (!walker.takeWordThatCopyMakesNewList(source) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::TypedOperations))
         return false;
     if (!length || !walker.types().at(walker.typeOf(length)).isInteger())
@@ -1304,6 +1305,8 @@ static bool replaceSpeciesOfListByNewList(Walker& walker, const BodyValue& creat
     list.setArrayStorage(ArrayStorage::Other);
     list.inputValueGiven = created.id();
     Reference made = walker.build(WTF::move(list));
+    if (runOverBoxedValuesTakesListFirst && made && made.isValue())
+        walker.noteListThatRunOverBoxedValuesTakesFirst(made.id());
     noteLengthThatListIsBornWith(walker, made);
     walker.bind(created.id(), made);
     walker.count(StatisticID::NewListsInPlaceOfSpecies);

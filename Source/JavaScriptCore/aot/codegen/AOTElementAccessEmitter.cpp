@@ -695,7 +695,8 @@ Operand ElementAccessEmitter::readElementInsideLength(const ValueContext& value,
         LBasicBlock holdsValue = newBlock();
         m_out.branch(this->isHole(form, rawElement).value(), rareEdge(isHole), normalEdge(holdsValue));
         m_out.appendTo(holdsValue);
-    }
+    } else if (!readsHoleAsNaN(value) && testsEveryPosition())
+        stopUnlessInside(value, logicalNot(this->isHole(form, rawElement)));
     return convertRawElement(value, form, rawElement, value.representation(), typeIDOf(value.id()));
 }
 

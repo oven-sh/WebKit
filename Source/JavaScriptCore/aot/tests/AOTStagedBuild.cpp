@@ -27,6 +27,19 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+static thread_local bool t_testRunsAsUsersBuild = false;
+
+ScopeOfTestThatRunsAsUsersBuild::ScopeOfTestThatRunsAsUsersBuild(bool runsAsUsersBuild)
+    : m_before(t_testRunsAsUsersBuild)
+{
+    t_testRunsAsUsersBuild = runsAsUsersBuild;
+}
+
+ScopeOfTestThatRunsAsUsersBuild::~ScopeOfTestThatRunsAsUsersBuild()
+{
+    t_testRunsAsUsersBuild = m_before;
+}
+
 Vector<TypeID> typesNamedBy(const Program& program, std::optional<FunctionID> functionOfTypesLine)
 {
     FunctionID function = functionOfTypesLine.value_or(FunctionID(0u));
@@ -508,7 +521,8 @@ Machine::Procedure* StagedBuild::emitMachineOperations(const Code& codeToEmit, M
     CompileWorker& worker = *state.compileWorker;
     const CodeGenerationInputs& inputs = state.prepared.compileInputs->generation;
     Machine::ProcedureTraits traits = machineTraitsOf(m_build, inputs, *code);
-    traits.checksAllocation = true;
+    if (!t_testRunsAsUsersBuild)
+        traits.checksAllocation = true;
 
     state.machineArena.reset();
     state.machine = makeUniqueWithoutFastMallocCheck<MachineOperationsOfStagedBuild>(m_build, inputs, state.machineArena, traits, worker.totals());

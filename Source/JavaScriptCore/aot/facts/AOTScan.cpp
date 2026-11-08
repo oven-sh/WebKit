@@ -1491,6 +1491,7 @@ private:
     bool hasAccessorLaidUnder(uint32_t root, PropertyKeyID key) const { return !m_accessorsLaid.isEmpty() && m_placesOfAccessorsLaid.contains(static_cast<uint64_t>(root) << 32 | key.bits()); }
     Vector<uint32_t> m_storesByRoot;
     bool m_storesAreSortedByRoot { false };
+    Vector<uint32_t> m_sitesOfCopiesThatSpellStores;
     Vector<uint32_t> m_readsNotYetNeeded;
     struct HeritageInScan {
         ValueID site;
@@ -1926,6 +1927,7 @@ ThinSummary::ThinSummary(SummaryBeingMade& made)
         visit(copiesOfMembers, made.copiesOfMembers);
         visit(placesOfWrittenLists, made.placesOfWrittenLists);
         visit(definitionsByDescriptorInOrderOfSites, made.definitionsByDescriptorInOrderOfSites);
+        visit(callsAtSitesOfCopiesThatSpellStores, made.callsAtSitesOfCopiesThatSpellStores);
     };
 
     SummaryStorage& storage = nodes.m_storage;
@@ -2078,6 +2080,7 @@ void ScanOfBody::reset()
         m_placesOfAccessorsLaid.clear();
     }
     m_storesAreSortedByRoot = false;
+    m_sitesOfCopiesThatSpellStores.shrink(0);
     m_definitionsByMaps.shrink(0);
     m_definitionsUnderComputedKeys.shrink(0);
     m_definitionsByDescriptors.shrink(0);
@@ -3027,6 +3030,8 @@ bool ScanOfBody::storeWhatLiteralSpells(ValueID site, ListInScan subject, ValueI
         if (m_program.nameClassOf(key) == NameClass::Proto)
             return false;
     }
+    if (!spelled.isEmpty())
+        m_sitesOfCopiesThatSpellStores.append(site.index());
     for (const auto& [key, value] : spelled) {
         uint32_t access = addAccess(SummaryAccess::Kind::Store, site, subject, key);
         m_summary.accesses[access].isSpelledByCopy = true;
@@ -6929,8 +6934,9 @@ void ScanOfBody::nameGettersOfDescriptors()
                     held = listOf(values[place]);
             }
         }
-        for (const StoreInScan& store : m_stores) {
-            if (store.root != root || store.key != get || store.site.index() >= definition.position)
+        for (uint32_t index : storesInto(root)) {
+            const StoreInScan& store = m_stores[index];
+            if (store.key != get || store.site.index() >= definition.position)
                 continue;
             isNamedOnce = isNamedOnce && !held;
             held = store.value;
@@ -7392,6 +7398,16 @@ void ScanOfBody::finish()
     AOT::stableSort(m_summary.definitionsByDescriptorInOrderOfSites, { }, [&](uint32_t change) {
         return m_summary.changes[change].site.index();
     });
+    if (!m_sitesOfCopiesThatSpellStores.isEmpty()) {
+        std::ranges::sort(m_sitesOfCopiesThatSpellStores);
+        for (uint32_t call = 0; call < m_summary.calls.size(); ++call) {
+            if (std::ranges::binary_search(m_sitesOfCopiesThatSpellStores, m_summary.calls[call].site.index()))
+                m_summary.callsAtSitesOfCopiesThatSpellStores.append(call);
+        }
+        AOT::stableSort(m_summary.callsAtSitesOfCopiesThatSpellStores, { }, [&](uint32_t call) {
+            return m_summary.calls[call].site.index();
+        });
+    }
 }
 
 void ScanOfBody::listWhatWalkAsksOfNodesAndCalls()

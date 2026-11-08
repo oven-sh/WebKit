@@ -1457,8 +1457,15 @@ BlockID Walker::blockWhereCopyLeavesForCall()
     return frame.whereCopyLeavesForCall;
 }
 
+bool Walker::walkInlineMethodThatProtocolCalls(const BodyValue& step, FunctionID callee, std::span<const Reference> arguments)
+{
+    SetForScope calledByProtocol(m_nextCopyIsOfMethodThatProtocolCalls, true);
+    return walkInline(step, callee, arguments);
+}
+
 bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<const Reference> arguments, const Draft* writtenOut, const BitVector* blocksOfHead)
 {
+    bool isCalledByProtocol = std::exchange(m_nextCopyIsOfMethodThatProtocolCalls, false);
     if (!m_opensGuesses || m_frames.last().blocksOfHead || (blocksOfHead && (isUnderHandlerOtherThanCleanups() || hasTextsInStringBuilders())))
         return false;
 
@@ -1502,6 +1509,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     bool copyMayLeaveForCall = (!isConstructionOfCopy || conventions.hasParameterGuard(callee) || isDerivedConstructorWithoutList) && !program().at(unit().function).isCoroutine() && !function.isCoroutine() && !entersBodyOfCoroutineAtInlining(site)
         && facts().linked().mayBeMentionedBy(unit(), callee) && unitTakesWhatCopyIsHanded(*this, callee, entryArguments.span())
         && (!(site.isTailCall || site.resultIsReturnedAtOnce) || unitMayLeaveByDirectCallOf(*this, callee));
+    bool guessesInCopyKeepTheirFailingWays = isCalledByProtocol && isInLoop() && !blocksOfHead && facts().summaries().at(callee).makesObjects;
     if (blocksOfHead && !copyMayLeaveForCall) {
         m_operationsCopiedAtWrittenCall -= facts().summaries().at(callee).numberOfOperations;
         return false;
@@ -1694,7 +1702,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     frame.inlineFrame = inlineFrame;
     frame.whereCopyLeavesForCall = whereGuardFails;
     frame.isWalkedWhereItsGuardFailed = std::exchange(m_walksCopyWhereItsGuardFailed, false);
-    frame.mayLeaveForCall = copyMayLeaveForCall && copyIsReached;
+    frame.mayLeaveForCall = copyMayLeaveForCall && copyIsReached && !guessesInCopyKeepTheirFailingWays;
     frame.blocksOfHead = blocksOfHead;
     frame.numberOfCopy = ++m_numberOfTypedCopiesEntered;
     uint32_t numberOfCopy = frame.numberOfCopy;

@@ -1726,6 +1726,32 @@ static TypeID layoutsThatStayWithCompiledCodeForGuesses(Walker& walker, TypeID e
     return staying;
 }
 
+static TypeID layoutsPutIntoListMadeHereThatHandsOutForGuesses(Walker& walker, ValueID value)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    while (value && (index.isParameter(value) || index.opcodeOf(value) == Opcode::Convert))
+        value = index.isParameter(value) ? index.valueNarrowedInto(value) : index.value(value).operand(0);
+    if (!value)
+        return { };
+    BodyValue operation = index.value(value);
+    ValueID list = operation.opcode() == Opcode::Call ? operation.as<Opcode::Call>().thisValueOperand() : operation.opcode() == Opcode::ElemGet ? operation.objectOperand() : ValueID();
+    if (!list)
+        return { };
+    walker.namesUsedOff(value);
+    const KeptWithBodyForGuesses& kept = keptWithBodyForGuesses(index);
+    if (kept.rootsOfValuesWithMarks.isEmpty())
+        return { };
+    TypeArena& types = walker.types();
+    TypeID layouts;
+    for (uint64_t listed : std::ranges::equal_range(kept.layoutsPutIntoListsMadeHere, static_cast<uint64_t>(kept.rootOf(list.index())), { }, [](uint64_t listed) { return listed >> 32; })) {
+        if (static_cast<uint32_t>(listed) == UINT32_MAX)
+            continue;
+        TypeID layout = types.forLayout(LayoutID(static_cast<uint32_t>(listed)));
+        layouts = layouts ? types.unionOf(layouts, layout) : layout;
+    }
+    return layouts;
+}
+
 static TypeID withoutLayoutsThatStayWithCompiledCodeForGuesses(Walker& walker, ValueID expecting, ValueID value, TypeID expected, NOESCAPE const Invocable<TypeID()> auto& seenToArrive)
 {
     static constexpr UnknownSeeds seedsOfUnseenCode { UnknownSeed::UndescribedNativeResult, UnknownSeed::ContentsOfEscapedObject, UnknownSeed::UnseenCode, UnknownSeed::DataFromOutside };
@@ -1742,6 +1768,8 @@ static TypeID withoutLayoutsThatStayWithCompiledCodeForGuesses(Walker& walker, V
     TypeID shapedLike = staying;
     if (TypeID arrives = seenToArrive(); arrives && types.overlap(arrives, staying))
         shapedLike = types.differenceOf(staying, arrives);
+    if (TypeID put = shapedLike ? layoutsPutIntoListMadeHereThatHandsOutForGuesses(walker, value) : TypeID(); put && types.overlap(put, shapedLike))
+        shapedLike = types.differenceOf(shapedLike, put);
     if (!shapedLike || !types.at(shapedLike).hasObjects())
         return expected;
     walker.count(StatisticID::LayoutsNotTestedForAtWhatComesOutOfUnseenCode);
@@ -5004,6 +5032,8 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     Reference valueTested = chosen.isPassedAlready ? Reference() : value;
     bool takesInBranch = !failingWayBeginsTurnAgain && (armsOfGuessTakeBranch(walker, inputBlock, begin, end, valueTested, stretch.placesThatTypedRunKnowsBetter, branchAskedAbout) || (stretch.typedRunDecidesBranch && walker.armsMayTakeBranchOf(inputBlock, end, valueTested)));
     bool failingWayLeavesCopy = !failingWayBeginsTurnAgain && !(takesInBranch && walker.isInLoop()) && chosen.admitsAllThatIsExpected && !chosen.failingSideAsksFor && !chosen.failingSideAsksForNothing && !chosen.failingSideIsAsLikely && walker.mayLeaveCopyForCall();
+    BlockID closedArmOfRow = failingWayBeginsTurnAgain || failingWayLeavesCopy ? BlockID() : walker.closedArmOfRowOfShapeTestsAt(ValueID(first));
+    failingWayLeavesCopy |= !!closedArmOfRow;
     takesInBranch &= !failingWayLeavesCopy;
 
     Vector<ValueID, 4> names;
@@ -5037,7 +5067,7 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     Origin origin = originInFrontOfOperationForGuesses(walker, index.value(ValueID(first)));
     BlockID closedBlock;
     if (failingWayLeavesCopy)
-        closedBlock = walker.blockWhereCopyLeavesForCall();
+        closedBlock = closedArmOfRow ? closedArmOfRow : walker.blockWhereCopyLeavesForCall();
     Reference lastTest;
     unsigned numberOfTests = 0;
     bool lastTestIsAskedInFront = false;
@@ -7224,7 +7254,7 @@ bool askBaseInFrontOfTypedCopyForList(Walker& walker, const BodyValue& access)
     if ((access.opcode() != Opcode::ElemGet && !readsLength) || !walker.standsInTurnThatLooksCountOn() || !walker.mayBeginTurnAgainInClosedCopy() || !walker.otherCopyOfTypedCopyOpensItsGuesses() || !walker.everyTurnOfTypedCopyThatComesRoundPassesHere())
         return false;
     Reference base = walker.referenceOf(access.objectOperand());
-    if (!base || !base.isValue() || !walker.types().saysNothing(walker.typeOf(base)) || !walker.standsInFrontOfTypedCopy(base) || findExpectationForGuesses(walker, access.objectOperand()).type || otherNamesAreReadOffPlaceOfForGuesses(keptWithBodyForGuesses(walker.currentBodyIndex()), access.objectOperand()))
+    if (!base || !base.isValue() || !walker.types().saysNothing(walker.typeOf(base)) || !walker.standsInFrontOfTypedCopy(base) || walker.isWhereArmsMetInFrontOfTypedCopy(base) || findExpectationForGuesses(walker, access.objectOperand()).type || otherNamesAreReadOffPlaceOfForGuesses(keptWithBodyForGuesses(walker.currentBodyIndex()), access.objectOperand()))
         return false;
     if (!readsLength && !walker.types().at(provenTypeOfInputForGuesses(walker, access.propertyOperand())).isNumber())
         return false;
@@ -7741,7 +7771,7 @@ static bool isOnlyReckonedWithAsNumber(Walker& walker, ValueID value, const Type
     ValueID user = index.onlyUsingValue(value);
     if (!user) {
         std::optional<BodyUser> first = index.firstUser(value);
-        ValueID met = first ? parameterWhereValueMeetsWrittenNumberForGuesses(walker, index, value, *first) : ValueID();
+        ValueID met = first && first->kind == BodyUseKind::EdgeArgument ? parameterWhereValueMeetsWrittenNumberForGuesses(walker, index, value, *first) : ValueID();
         return met && !givesNoNumberByShapeOfItsReceiverForGuesses(walker, value) && isOnlyReckonedWithAsNumber(walker, met, types);
     }
     BodyValue operation = index.value(user);
@@ -8635,6 +8665,7 @@ public:
     bool comparesElementsWithNumbers(const Program&, ValueID holder);
     const BitVector& holdersOfElementsComparedWithCharacters() const { return m_meetCharacters; }
     const BitVector& holdersOfElementsComparedWithNumbers() const { return m_meetNumbers; }
+    bool switchesOnElementsOf(ValueID holder) const { return m_areSwitchedOn.get(holder.index()); }
     bool turnsCall();
     bool turnsStoreIntoWhatMayBeList(Walker&);
 
@@ -8648,6 +8679,7 @@ private:
     bool m_comparisonsAreRead { false };
     BitVector m_meetCharacters;
     BitVector m_meetNumbers;
+    BitVector m_areSwitchedOn;
     std::optional<bool> m_turnsCall;
     std::optional<bool> m_turnsStoreIntoWhatMayBeList;
 };
@@ -8736,7 +8768,12 @@ Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID i
                 continue;
             operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 ValueID inFront = valueBehindCastsOfLoopForGuesses(index, operand, firstValueOfLoop);
-                ValueID readOfVariable = inFront.index() >= firstValueOfLoop && !asksBesideWhatEveryTurnReads && (operation.opcode() == Opcode::ElemGet || operation.opcode() == Opcode::ElemSet) && operand == operation.objectOperand() && walker.otherHoldersAreAskedForListsInCopyOf(inputHead) ? readOfVariableThatFindsReceiverInLoop(index, operation, firstValueOfLoop) : ValueID();
+                ValueID readOfVariable = inFront.index() >= firstValueOfLoop && (operation.opcode() == Opcode::ElemGet || operation.opcode() == Opcode::ElemSet) && operand == operation.objectOperand() && walker.otherHoldersAreAskedForListsInCopyOf(inputHead) ? readOfVariableThatFindsReceiverInLoop(index, operation, firstValueOfLoop) : ValueID();
+                if (!asksBesideWhatEveryTurnReads && operation.opcode() == Opcode::PropGet && !operation.isFreeName() && operand == operation.objectOperand() && walker.program().nameClassOf(operation.key()) == NameClass::Length && walker.otherHoldersAreAskedForListsInCopyOf(inputHead)) {
+                    Reference measured = nameOfListThatEntersLoopAround(walker, index, operation);
+                    if (measured && measured.isValue() && types.at(walker.typeOf(measured)).isObject())
+                        provenOfHoldersThatEveryTurnReads.append(walker.typeOf(measured));
+                }
                 if ((inFront.index() >= firstValueOfLoop && !readOfVariable) || (asksBesideWhatEveryTurnReads && operand != operation.objectOperand()))
                     return;
                 if (!asksBesideWhatEveryTurnReads && !readOfVariable && operation.opcode() == Opcode::ElemGet && operand == operation.objectOperand() && walker.standsInCopyOfLoopBuiltForEachMember()) {
@@ -8748,6 +8785,8 @@ Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID i
                 if (isOnlyHandedOnForGuesses(operation, operandIndex) && !isConvertedByView)
                     return;
                 Reference value = readOfVariable ? nameOfListThatEntersLoopAround(walker, index, operation) : walker.referenceOf(inFront);
+                if (!asksBesideWhatEveryTurnReads && readOfVariable && operation.opcode() == Opcode::ElemGet && walker.standsInCopyOfLoopBuiltForEachMember() && value && value.isValue() && types.at(walker.typeOf(value)).isObject())
+                    provenOfHoldersThatEveryTurnReads.append(walker.typeOf(value));
                 bool isListed = guesses.containsIf([&](const GuessInFrontOfLoop& guess) {
                     return guess.value == value;
                 });
@@ -8804,7 +8843,7 @@ Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID i
                 std::optional<TestOfGuess> chosen = expectation.type ? chooseTestOfGuess(walker, value, expectation.type) : std::nullopt;
                 if (!chosen || (allEqualities.contains(operation.opcode()) && !expectation.isDeclared))
                     return;
-                if (asksBesideWhatEveryTurnReads && !guesses.containsIf([&](const GuessInFrontOfLoop& guess) { return guess.tested == chosen->tested; }) && !(isHeldAgainstElement(operation) && provenOfHoldersThatEveryTurnReads.containsIf([&](TypeID proven) { return types.isSubset(proven, chosen->tested); })))
+                if (asksBesideWhatEveryTurnReads && !guesses.containsIf([&](const GuessInFrontOfLoop& guess) { return guess.tested == chosen->tested; }) && !((isHeldAgainstElement(operation) || (isAskedBesideList && loopReckonsWithElementRead(walker, operation))) && provenOfHoldersThatEveryTurnReads.containsIf([&](TypeID proven) { return types.isSubset(proven, chosen->tested); })))
                     return;
                 bool rulesOutNullish = accessesToSlotsForGuesses.contains(operation.opcode()) && operand == operation.objectOperand() && types.withoutNullish(walker.typeOf(value)) != walker.typeOf(value);
                 TypeID typeBehindTest = types.intersectionOf(walker.typeOf(value), chosen->tested);
@@ -9388,8 +9427,11 @@ bool TextOfLoopForGuesses::comparesElementsWithCharacters(const Program& program
             if (!isOverCharacters && end.kind() != TerminatorKind::Switch)
                 continue;
             ValueID subject = valueBehindCastsAndTestsForGuesses(m_index, end.subjectOperand());
-            if (!m_index.isParameter(subject) && m_index.opcodeOf(subject) == Opcode::ElemGet)
-                (isOverCharacters ? m_meetCharacters : m_meetNumbers).set(valueBehindCastsAndTestsForGuesses(m_index, m_index.value(subject).objectOperand()).index());
+            if (!m_index.isParameter(subject) && m_index.opcodeOf(subject) == Opcode::ElemGet) {
+                ValueID holderOfSubject = valueBehindCastsAndTestsForGuesses(m_index, m_index.value(subject).objectOperand());
+                (isOverCharacters ? m_meetCharacters : m_meetNumbers).set(holderOfSubject.index());
+                m_areSwitchedOn.set(holderOfSubject.index());
+            }
             else if (ValueID open = isOverCharacters ? openOfStepThatHandsOutForGuesses(m_index, subject) : ValueID())
                 m_meetCharacters.set(open.index());
         }
@@ -9440,8 +9482,11 @@ static Vector<TypeID, mostMembersToldApartInFrontOfLoop> listAndViewsWhoseElemen
     });
     if (!nothingButLengthIsNamed)
         return { };
+    TypeID bytes = walker.types().unionOf(walker.types().builtinClass(BuiltinClasses::Buffer), walker.types().builtinClass(BuiltinClasses::Uint8Array));
+    if (text.switchesOnElementsOf(holder))
+        return { walker.types().builtinClass(BuiltinClasses::Array), bytes };
     TypeID number = TypeTable::number;
-    return { walker.types().builtinClass(BuiltinClasses::Array, singleElementSpan(number)), walker.types().builtinClass(BuiltinClasses::Array), walker.types().unionOf(walker.types().builtinClass(BuiltinClasses::Buffer), walker.types().builtinClass(BuiltinClasses::Uint8Array)) };
+    return { walker.types().builtinClass(BuiltinClasses::Array, singleElementSpan(number)), walker.types().builtinClass(BuiltinClasses::Array), bytes };
 }
 
 static bool loopsTellTextFromListForGuesses(Walker& walker, ValueID parameter, std::optional<ParametersReadInLoopsForGuesses>& readInLoops)
@@ -10042,9 +10087,12 @@ bool otherHolderOfLoopMayBeListForGuesses(Walker& walker, BlockID inputHead, Ref
     TextOfLoopForGuesses text(index, loop, firstValueOfLoop);
     BlocksThatEveryTurnPasses passedByEveryTurn(index, loop);
     for (BlockID member : index.membersOf(loop)) {
-        if (!passedByEveryTurn.contains(member))
+        bool isPassedByEveryTurn = passedByEveryTurn.contains(member);
+        if (!isPassedByEveryTurn && index.loopOf(member) != loop)
             continue;
         for (BodyValue other : index.block(member).values()) {
+            if (!isPassedByEveryTurn && (other.opcode() != Opcode::ElemGet || !loopReckonsWithElementRead(walker, other)))
+                continue;
             if (other.opcode() == Opcode::Call && copyOfCalleeReadsUnderKeyWhatNobodyKnows(walker, other, firstValueOfLoop))
                 return true;
             if (other.opcode() != Opcode::ElemGet && other.opcode() != Opcode::ElemSet)

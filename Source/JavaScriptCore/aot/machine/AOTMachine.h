@@ -944,6 +944,7 @@ struct ProcedureTraits {
     bool mayOmitFrameRecord { false };
     bool checksAllocation { false };
     bool ordersBlocksAsWhenOrderedAgain { false };
+    bool leavesOutSavesThatPatchesAloneRead { false };
     bool notesRangesOfOrigins { false };
     CPUFeatureSet features;
 

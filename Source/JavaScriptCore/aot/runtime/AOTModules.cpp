@@ -465,6 +465,7 @@ void Modules::forgetFailedRunOfESModuleThatMayRunAgain(ModuleID module)
 {
     if (!hasFailedRunThatMayBeForgotten(module))
         return;
+    m_modulesWhoseFailedRunWasForgotten.set(module.index());
     makeESModuleReadyToRunAgain(module);
     LoadedModule& loaded = ensureLoaded(module);
     loaded.errorOfModuleThatRanBesideMock.set(*this, JSValue());
@@ -1548,15 +1549,20 @@ bool Modules::isLeftOut(ModuleID module, unsigned index, TablesBehindStars table
     if (!entry.isFromStarExport)
         return false;
     size_t place = module.index() * 2 + (tables == TablesBehindStars::HaveName);
-    if (search.isAnswered.get(place))
+    if (search.isAnswered.get(place)) {
+        if (place < search.outermostRingOfAnswer.size())
+            search.outermostRing = std::min(search.outermostRing, search.outermostRingOfAnswer[place]);
         return search.isLeftOut.get(place);
+    }
     AnswersKept* answers = answersKept();
     uint64_t placeOfExport = static_cast<uint64_t>(place) << 32 | index;
     if (answers) [[unlikely]] {
         if (auto found = answers->isLeftOut.find(placeOfExport); found != answers->isLeftOut.end())
             return found->value;
     }
-    unsigned ringsMet = search.ringsMet;
+    unsigned placeOnPath = search.path.size();
+    unsigned outermostRingSoFar = std::exchange(search.outermostRing, SearchBehindStars::noRing);
+    search.path.append(module);
     if (data(module).hasDynamicStarExport())
         tables = TablesBehindStars::HaveName;
     Identifier name = identifier(entry.name);
@@ -1578,6 +1584,7 @@ bool Modules::isLeftOut(ModuleID module, unsigned index, TablesBehindStars table
         bool handsOnBinding = handedOn && (handedOnBy || exportSameBinding(m_table, entry, m_table.exports(target)[*handedOn]));
         if (search.isOnPath.get(target.index())) {
             ++search.ringsMet;
+            search.outermostRing = std::min(search.outermostRing, static_cast<unsigned>(search.path.find(target)));
             comesRoundInCircle |= handsOnBinding;
             continue;
         }
@@ -1594,13 +1601,27 @@ bool Modules::isLeftOut(ModuleID module, unsigned index, TablesBehindStars table
             break;
     }
     search.isOnPath.clear(module.index());
-    bool answer = isAnyAsked ? isMissing : comesRoundInCircle;
-    if (ringsMet == search.ringsMet) {
-        search.isAnswered.set(place);
-        search.isLeftOut.set(place, answer);
-        if (answers) [[unlikely]]
-            answers->isLeftOut.add(placeOfExport, answer);
+    search.path.removeLast();
+    if (placeOnPath < search.answersThatHangOnPlaceOfPath.size()) {
+        for (size_t kept : std::exchange(search.answersThatHangOnPlaceOfPath[placeOnPath], { })) {
+            search.isAnswered.clear(kept);
+            search.outermostRingOfAnswer[kept] = SearchBehindStars::noRing;
+        }
     }
+    bool answer = isAnyAsked ? isMissing : comesRoundInCircle;
+    unsigned outermostRing = std::exchange(search.outermostRing, outermostRingSoFar);
+    search.isAnswered.set(place);
+    search.isLeftOut.set(place, answer);
+    if (outermostRing < placeOnPath) {
+        while (search.answersThatHangOnPlaceOfPath.size() <= outermostRing)
+            search.answersThatHangOnPlaceOfPath.append({ });
+        search.answersThatHangOnPlaceOfPath[outermostRing].append(place);
+        while (search.outermostRingOfAnswer.size() <= place)
+            search.outermostRingOfAnswer.append(SearchBehindStars::noRing);
+        search.outermostRingOfAnswer[place] = outermostRing;
+        search.outermostRing = std::min(outermostRingSoFar, outermostRing);
+    } else if (answers) [[unlikely]]
+        answers->isLeftOut.add(placeOfExport, answer);
     return answer;
 }
 
@@ -3336,6 +3357,15 @@ JSPromise* Modules::rejectImportWithErrorOfLoad(ModuleID module, ImportCaller ca
     return caller == ImportCaller::CompiledCode ? importPromiseRejectedByLoader(realm, scope) : rejectedPromiseWithPendingException(realm, scope);
 }
 
+static JSC_DECLARE_HOST_FUNCTION(didSettleLoadOfCopyOfOriginal);
+
+JSC_DEFINE_HOST_FUNCTION(didSettleLoadOfCopyOfOriginal, (JSGlobalObject* realm, CallFrame*))
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->noteCopyOfOriginalHasSettled();
+    return JSValue::encode(jsUndefined());
+}
+
 static JSC_DECLARE_HOST_FUNCTION(importBehindFactories);
 static JSC_DECLARE_HOST_FUNCTION(didSettleImportBehindFactories);
 static JSC_DECLARE_HOST_FUNCTION(didFulfillImportThatLinkedAnew);
@@ -4168,6 +4198,17 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     if (text == TextOfImport::HasCome) {
         if (JSPromise* failed = takeFailureOfLoadForWantOfMock(module)) [[unlikely]]
             return failed;
+        if (takeBookingOfLoadWhoseMockHasEnded(module)) [[unlikely]] {
+            JSPromise* copyOfOriginal = loader()->requestImportModule(realm, Identifier::fromString(*m_instance.vm, makeString(m_table.pathText(fileOf(module)), "?actual"_s)), moduleKey(fileOf(module)), nullptr, nullptr);
+            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+            ++m_numberOfCopiesOfOriginalsBeingLoaded;
+            JSFunction* didSettle = JSFunction::create(*m_instance.vm, realm, 0, String(), didSettleLoadOfCopyOfOriginal, ImplementationVisibility::Private);
+            bool wasHandled = copyOfOriginal->isHandled();
+            copyOfOriginal->performPromiseThenWithContext(*m_instance.vm, realm, didSettle, didSettle, jsUndefined(), jsUndefined());
+            if (!wasHandled)
+                copyOfOriginal->setFlags(copyOfOriginal->flags() & ~JSPromise::isHandledFlag);
+            return copyOfOriginal;
+        }
     }
     if (text != TextOfImport::MayComeLater && !m_modulesWithMockToRun.isEmpty()) [[unlikely]]
         forgetMockLaidBehindCallWhoseTextHasCome(fileOf(module));
@@ -5436,8 +5477,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAreLoaderFunctionsStored, size_t, 
     return modulesOf(*instance).areLoaderFunctionsStored();
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSeesMockOf, size_t, (Instance* instance, uint32_t module, uint32_t referrer, uint32_t reader))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSeesMockOf, size_t, (Instance* instance, uint32_t module, uint32_t referrer, uint32_t reader, uint32_t thatKeepsNamesOfOriginal))
 {
+    if (thatKeepsNamesOfOriginal)
+        return modulesOf(*instance).seesMockThatKeepsNamesOfOriginal(ModuleID(module), ModuleID(referrer), ModuleID(reader));
     return !!modulesOf(*instance).mockSeenBy(ModuleID(module), ModuleID(referrer), ModuleID(reader));
 }
 
@@ -7187,6 +7230,12 @@ void didLeaveLoaderInThisTestFile(JSGlobalObject* realm, ModuleID module)
 {
     if (Modules* modules = modulesOf(realm))
         modules->didLeaveLoaderInThisTestFile(module);
+}
+
+bool hasLeftLoaderInThisTestFile(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->hasLeftLoaderInThisTestFile(module);
 }
 
 bool wasLoadedAheadOfThisTestFile(JSGlobalObject* realm, ModuleID module)

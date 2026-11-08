@@ -217,6 +217,8 @@ public:
     std::span<HeadOfFramedPart> headsOfFramedPartForTesting() { return m_headsOfFramedPart.span(); }
     bool hasFramedPart() const { return !m_headsOfFramedPart.isEmpty(); }
     bool recordsWhatCheckersRead() const { return m_recordsWhatCheckersRead; }
+    bool hasReferencesToCheck() const { return m_hasReferencesToCheck; }
+    bool leavesOutSavesAtHeads() const { return m_leavesOutSavesAtHeads; }
     bool isInFramedPart(const Block* block) const { return m_isInFramedPart.get(block->index()); }
     const HeadOfFramedPart& headOfFramedPartAbove(const Block* block) const { return m_headsOfFramedPart[m_headAboveBlock[block->index()]]; }
     bool isHeadOfFramedPart(const Block* block) const { return isInFramedPart(block) && headOfFramedPartAbove(block).block == block; }
@@ -264,6 +266,8 @@ private:
     bool m_needsFrameOutsideRareRegions { false };
     bool m_needsFrameAheadOfFramedPart { false };
     bool m_recordsWhatCheckersRead { false };
+    bool m_hasReferencesToCheck { false };
+    bool m_leavesOutSavesAtHeads { false };
     bool m_writesMemoryAheadOfFramedPart { false };
     bool m_holdsPatchThatFollowsFrameSetup { false };
     bool m_holdsPatchThatCountsOnStackCheck { false };

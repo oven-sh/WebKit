@@ -1038,6 +1038,9 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 
     Vector<Task, 8> pendingTasks;
     ResolveSet resolveSet;
+#if ENABLE(AOT)
+    UncheckedKeyHashSet<std::tuple<AbstractModuleRecord*, UniquedStringImpl*, AOT::ModuleRecord*>> roadsPastResolveSet;
+#endif
 
     Vector<Resolution, 8> frames;
 
@@ -1164,6 +1167,9 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             // A module whose mock has ended answers each further road too, in the view of who led there. Its own stars were followed on the first.
             bool isFurtherRoad = !answersByLeader && !resolveSet.add(task.query).isNewEntry;
             if (isFurtherRoad && !(compiled && compiled->keepsEndedMock()))
+                continue;
+            // Both kinds pass resolveSet by. The same road under the same leader a second time is a ring of `export { x } from`, which finds nothing.
+            if ((answersByLeader || isFurtherRoad) && !roadsPastResolveSet.add({ moduleRecord, query.exportName.get(), task.leader }).isNewEntry)
                 continue;
 #else
             if (!resolveSet.add(task.query).isNewEntry)

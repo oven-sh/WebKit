@@ -1128,21 +1128,37 @@ void RuntimeCallEmitter::endWatchOfWhatRunsAgain(const ValueContext& end, ValueI
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool fillsCellBornAboveInItsBlock(const Code& code, const ValueContext& context)
+static bool fillsCellBornAboveInItsBlock(const Code& code, ValueID store)
 {
-    if (!storesThatMoveWithBirthsInSweep.contains(context.opcode()) || !context->operand(0))
+    const Operation& operation = code.at(store);
+    if (!storesThatMoveWithBirthsInSweep.contains(operation.opcode) || !operation.operand(0))
         return false;
-    ValueID cell = rootOfCellInSweptCode(code, context->operand(0));
-    if (code.isConstant(cell) || !birthsThatSweepMayMove.contains(code.at(cell).opcode) || code.at(cell).block() != context.block())
+    ValueID cell = rootOfCellInSweptCode(code, operation.operand(0));
+    if (code.isConstant(cell) || !birthsThatSweepMayMove.contains(code.at(cell).opcode) || code.at(cell).block() != operation.block())
         return false;
     bool standsBehindBirth = false;
-    for (ValueID each : code.valuesOf(context.block())) {
-        if (each == context.id())
+    for (ValueID each : code.valuesOf(operation.block())) {
+        if (each == store)
             return standsBehindBirth;
         if (each == cell)
             standsBehindBirth = true;
         else if (standsBehindBirth && code.at(each).opcode == Opcode::BeginsWhatMayRunAgain)
             return false;
+    }
+    return false;
+}
+
+static bool someStoreIntoFieldWasCounted(const Code& code, const Operation& putBack)
+{
+    ValueID cell = rootOfCellInSweptCode(code, putBack.operand(0));
+    for (uint32_t block = 0; block < code.numberOfBlocks(); ++block) {
+        for (ValueID each : code.valuesOf(BlockID(block))) {
+            const Operation& store = code.at(each);
+            if ((store.opcode != Opcode::PutSlot && store.opcode != Opcode::PutSlotOrAdd) || (store.opcode == Opcode::PutSlot && store.putsBackWhatTurnStored()) || store.key() != putBack.key())
+                continue;
+            if (rootOfCellInSweptCode(code, store.operand(0)) == cell && !code.writesWhatTurnHasMade(each) && !fillsCellBornAboveInItsBlock(code, each))
+                return true;
+        }
     }
     return false;
 }
@@ -1158,7 +1174,8 @@ RuntimeCallEmitter::DeedsInFrontOfQuietCall RuntimeCallEmitter::countDeedOf(cons
             return { };
         return { readWordForEffectsNet(all, std::nullopt, nullptr), readWordForEffectsNet(loud, std::nullopt, nullptr) };
     }
-    if (endsOfWatches.contains(context.opcode()) || m_code.writesWhatTurnHasMade(context.id()) || fillsCellBornAboveInItsBlock(m_code, context))
+    bool putsFieldBack = context.opcode() == Opcode::PutSlot && context->putsBackWhatTurnStored();
+    if (putsFieldBack ? !someStoreIntoFieldWasCounted(m_code, m_code.at(context.id())) : endsOfWatches.contains(context.opcode()) || m_code.writesWhatTurnHasMade(context.id()) || fillsCellBornAboveInItsBlock(m_code, context.id()))
         return { };
     Machine::PatchOperation* count = m_out.patchpoint(Machine::Void);
     count->effects = Machine::Effects::none();

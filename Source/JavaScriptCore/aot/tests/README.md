@@ -181,6 +181,7 @@ STATISTIC: <StatisticID> ( = | >= | <= ) <n>
 LIBRARY: own
 TODO: <owner>: <what is lost>
 HANGS-ON-ORDER: <owner>: <what differs>
+AS-USERS-BUILD: <why>
 REPEAT: <name> = ( <first>..<last> | <word> { <word> } ) { ; <name> = .. }
 END REPEAT
 PROGRAM-OF: <file>
@@ -241,6 +242,14 @@ the image lacks, as it refuses the host's (`answers/text-of-an-engine-built-in-t
 
 **`JSC-OPTIONS`** sets JSC options in the process that runs the commands, and only while the file runs. The shell of `run-in-shell` is
 another process and takes its own options.
+
+**`AS-USERS-BUILD`** leaves out `check=VerifyEachStage`, which the commands of every other file run under: they run with the checks of a
+build of a user alone. For the red control of a check that runs in every build: under the runner's own check the failure would be found
+whether or not that check ran. The line says why. The file's own `OPTIONS: check=..` and `JSC-OPTIONS: --verifyAOTMachineCode=..` are errors beside it.
+Where the checks are on from outside (a `check=` word of the command line, `verifyAOTMachineCode` of the process, a `testaot` with assertions or
+the sanitizer) the file would show nothing: it is not run, `NOT RUN, not as users build here: <what turns them on>: AS-USERS-BUILD: <why>` is printed,
+and it counts among the passed, as a file does whose `REQUIRES` leaves out every run. The files that bear the line are listed in
+`test/aot/the-tests-that-run-as-users-build-are-listed.test.ts`.
 
 **`TYPES`** names the function whose parameters give types their short names. `t<k>`, in an argument, is the declared type
 of parameter k of that function. Without the line it is `f0`.

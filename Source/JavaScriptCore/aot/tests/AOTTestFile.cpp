@@ -27,7 +27,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-enum class DirectiveKind : uint8_t { Run, Requires, Options, JSCOptions, Diagnostic, Statistic, Library, Todo, HangsOnOrder, Types };
+enum class DirectiveKind : uint8_t { Run, Requires, Options, JSCOptions, Diagnostic, Statistic, Library, Todo, HangsOnOrder, Types, AsUsersBuild };
 
 template<typename T>
 struct NamedValue {
@@ -150,6 +150,7 @@ static constexpr NamedValue<DirectiveKind> directiveKinds[] = {
     { "TODO"_s, DirectiveKind::Todo },
     { "HANGS-ON-ORDER"_s, DirectiveKind::HangsOnOrder },
     { "TYPES"_s, DirectiveKind::Types },
+    { "AS-USERS-BUILD"_s, DirectiveKind::AsUsersBuild },
 };
 
 static constexpr ASCIILiteral namesOfTestSections[] = { "code"_s };
@@ -633,6 +634,13 @@ void TestFileParser::parseOtherDirective(const DirectiveLine& directive)
         return;
     case DirectiveKind::Types:
         parseTypes(directive);
+        return;
+    case DirectiveKind::AsUsersBuild:
+        if (m_file.asUsersBuild)
+            addError(directive.line, "the file has a second AS-USERS-BUILD line"_s);
+        if (directive.value.trim(isTabOrSpace<char16_t>).isEmpty())
+            addError(directive.line, "AS-USERS-BUILD is written 'AS-USERS-BUILD: <why>'"_s);
+        m_file.asUsersBuild = TestTodo { directive.value.toString(), directive.line };
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();

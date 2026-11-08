@@ -822,7 +822,7 @@ void endKnown(Walker& walker, KnownNote kind, Reference subject, Reference other
 }
 
 static constexpr OpcodeSet testsNumberedInKnownAnswers = allEqualities | allRelations | OpcodeSet { Opcode::ToBoolean, Opcode::HasArrayStorage };
-static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::PrivateGet };
+static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::PrivateGet, Opcode::GetValueAtSiteOrAbsent };
 static constexpr OpcodeSet operationsThatDoNothingAgainInKnownAnswers { Opcode::GetBuiltinValue, Opcode::ModuleBuiltin };
 static bool doesNothingAgainInKnownAnswers(const Walker& walker, const Draft& draft)
 {
@@ -869,6 +869,9 @@ static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& d
         break;
     case Opcode::GetTypedArrayLength:
         words.append(static_cast<uint32_t>(draft.typedArrayType()));
+        break;
+    case Opcode::GetValueAtSiteOrAbsent:
+        words.append(draft.key().bits());
         break;
     case Opcode::ToInt32:
         words.append(draft.flags);
@@ -940,8 +943,23 @@ static Reference answerOfTestBuiltInKnownAnswers(Walker& walker, const Draft& te
 constinit const OpcodeSet opcodesThatFindEqualOperationBuiltTakes = operationsFoundInKnownAnswers;
 constinit const OpcodeSet opcodesThatNoteOperationBuiltTakes = operationsFoundInKnownAnswers;
 
+static bool touchesItsSiteInKnownAnswers(const Draft& draft, const Effects& effects)
+{
+    return draft.opcode == Opcode::GetValueAtSiteOrAbsent && (effects.reads.containsAny(AbstractHeapSet { AbstractHeap::RuntimeState }) || effects.writes.containsAny(AbstractHeapSet { AbstractHeap::RuntimeState }));
+}
+
+static Effects besideItsSiteInKnownAnswers(const Effects& effects)
+{
+    Effects besideItsSite = effects;
+    besideItsSite.reads.remove(AbstractHeapSet { AbstractHeap::RuntimeState });
+    besideItsSite.writes.remove(AbstractHeapSet { AbstractHeap::RuntimeState });
+    return besideItsSite;
+}
+
 Reference findEqualOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Effects& effects)
 {
+    if (touchesItsSiteInKnownAnswers(draft, effects))
+        return findEqualOperationBuiltOfItsOpcodes(walker, draft, besideItsSiteInKnownAnswers(effects));
     Opcode opcode = draft.opcode;
     if (!walker.has(Mechanism::Folding) || !walker.state().remembersPlaces())
         return { };
@@ -973,6 +991,8 @@ Reference findEqualOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft
 
 void noteOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Effects& effects, Reference built)
 {
+    if (touchesItsSiteInKnownAnswers(draft, effects))
+        return noteOperationBuiltOfItsOpcodes(walker, draft, besideItsSiteInKnownAnswers(effects), built);
     Opcode opcode = draft.opcode;
     if (!walker.has(Mechanism::Folding) || !built.isValue())
         return;

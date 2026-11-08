@@ -956,9 +956,9 @@ void ProgramVerifier::verifyVariables()
     }
 }
 
-bool ProgramVerifier::runOnModulesNamedInBodies()
+bool ProgramVerifier::runOnModulesNamedInBodies(Vector<MentionInCode>&& mentionsInBodies)
 {
-    verifyModulesNamedInBodies();
+    verifyModulesNamedInBodies(WTF::move(mentionsInBodies));
     return !hasFailed();
 }
 
@@ -967,9 +967,9 @@ bool verifyRecords(const Program& program, BuildContext& build)
     return ProgramVerifier(program, build).run();
 }
 
-bool verifyModulesNamedInBodies(const Program& program, BuildContext& build)
+bool verifyModulesNamedInBodies(const Program& program, BuildContext& build, Vector<MentionInCode>&& mentionsInBodies)
 {
-    return ProgramVerifier(program, build).runOnModulesNamedInBodies();
+    return ProgramVerifier(program, build).runOnModulesNamedInBodies(WTF::move(mentionsInBodies));
 }
 
 } } } // namespace JSC::AOT::Typed

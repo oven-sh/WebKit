@@ -105,7 +105,7 @@ ALWAYS_INLINE const Effects& ScanOfBody::noteOwnEffects(const BodyValue& value, 
     return effects;
 }
 
-void ScanOfBody::noteEndOfBlock(const BodyTerminator& terminator, uint32_t block, const Effects& effects)
+ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::noteEndOfBlock(const BodyTerminator& terminator, uint32_t block, const Effects& effects)
 {
     noteWritesIn(block, effects.writes);
     TerminatorKind kind = terminator.kind();

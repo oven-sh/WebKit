@@ -633,6 +633,7 @@ Walker::Walker(const WalkInputs& inputs, TypeArena& types, Arrivals& arrivals, K
     , m_keptByTypedAccesses(kept.keptByTypedAccesses)
     , m_keptByUnionTableCalls(kept.keptByUnionTableCalls)
     , m_keptByCopiesOwnKeys(kept.keptByCopiesOwnKeys)
+    , m_keptByInstanceOf(kept.keptByInstanceOf)
     , m_keptByPositionsInTexts(kept.keptByPositionsInTexts)
     , m_roundsKept(kept.roundsKept)
     , m_listsOfNames(kept.listsOfNames)
@@ -723,9 +724,10 @@ void EndsWalkerInRoom::operator()(Walker* walker) const
     *roomIsTaken = false;
 }
 
-void Walker::noteThatCopyMakesNewList(FunctionID callee, Reference receiver)
+void Walker::noteThatCopyMakesNewList(FunctionID callee, Reference receiver, bool runOverBoxedValuesTakesListFirst)
 {
     m_copyThatMakesNewList = receiver && receiver.isValue() ? callee : FunctionID();
+    m_runOverBoxedValuesTakesNewListOfCopyFirst = m_copyThatMakesNewList && runOverBoxedValuesTakesListFirst;
     if (!m_copyThatMakesNewList)
         return;
     m_receiverOfCopyThatMakesNewList = rootOfCellInSweptCode(m_code, receiver.id());
@@ -3506,8 +3508,20 @@ void Walker::convertOperands(DraftType& draft)
     RELEASE_ASSERT(formsWanted.size() >= numberOfOperands);
     const Representation* forms = formsWanted.span().data();
 
+    bool comparesRawDoubles = false;
+    if constexpr (requires { draft.opcode; }) {
+        if (!m_openLoops.isEmpty() && numberOfOperands == 2 && (allRelations.contains(draft.opcode) || draft.opcode == Opcode::StrictEq) && draft.form() == OperatorForm::Numbers) {
+            bool bothAreNumbers = true;
+            for (uint32_t operandIndex = 0; operandIndex < 2; ++operandIndex) {
+                Reference side = draft.operand(operandIndex);
+                bothAreNumbers &= side && side.isRecord() && m_types.at(typeOf(side)).isNumber();
+                comparesRawDoubles |= side && side.isValue() && representationOf(side) == Representation::JSValue && !m_types.at(typeOf(side)).isInteger() && standsInFrontOfLoop(m_openLoops.size() - 1, side);
+            }
+            comparesRawDoubles &= bothAreNumbers;
+        }
+    }
     for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex) {
-        Representation wanted = forms[operandIndex];
+        Representation wanted = comparesRawDoubles ? Representation::Double : forms[operandIndex];
         if (!hasRegister(wanted))
             continue;
         Reference operand = draft.operand(operandIndex);
@@ -7156,8 +7170,11 @@ void Walker::walkBlock(BlockID inputBlock)
     if (inputBlock != entryBlock) {
         m_block = { };
         uint32_t firstOpenEdge = record.firstOpenEdge;
-        if (firstOpenEdge == noOpenEdge)
+        if (firstOpenEdge == noOpenEdge) {
+            if (m_armsWalkedInFrontOfLoop && m_armsWalkedInFrontOfLoop->inputJoin == inputBlock) [[unlikely]]
+                fail("no way leads to where the arms walked in front of a loop meet"_s);
             return;
+        }
         std::span<const BlockID> passedOverByScan = facts().summaries().at(frame.function).blocksNeverEntered.span();
         if (!passedOverByScan.empty() && std::ranges::binary_search(passedOverByScan, inputBlock)) {
             fail("an edge leads into a block that the scan has passed over"_s);
@@ -7177,7 +7194,7 @@ void Walker::walkBlock(BlockID inputBlock)
             enterHandlerBlock(inputBlock);
         else if (!isHeadOfTurnsWrittenOut && !liesBehindHeadCopied && index.isLoopHead(inputBlock))
             enterLoopHead(inputBlock);
-        else if (!isHeadOfTurnsWrittenOut && !liesBehindHeadCopied && severalEdgesEnter && !(m_makerOfListsBehindEntry && frame.isOfUnit && inputBlock == m_whereListsAreMadeBehindEntry) && walkBlockApart(inputBlock))
+        else if (!isHeadOfTurnsWrittenOut && !liesBehindHeadCopied && severalEdgesEnter && !m_armsWalkedInFrontOfLoop && !(m_makerOfListsBehindEntry && frame.isOfUnit && inputBlock == m_whereListsAreMadeBehindEntry) && walkBlockApart(inputBlock))
             return;
         else {
             enterJoin(inputBlock, record, block);
@@ -7196,6 +7213,8 @@ void Walker::walkBlock(BlockID inputBlock)
         m_block = { };
         return;
     }
+    if (m_armsWalkedInFrontOfLoop) [[unlikely]]
+        standInFrontOfLoopWithArms(inputBlock);
     if (block.frequency() == BlockFrequency::Unlikely)
         m_code.makeBlockUnlikely(m_block);
     if (const BitVector* head = m_frames[frameIndex].blocksOfHead; head && !head->get(inputBlock.index()) && leaveCopyOfHeadForCall())
@@ -7389,6 +7408,8 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         if (!isBuilt && (value.opcode() == Opcode::FindsDeclaredMember || value.opcode() == Opcode::FindsNoMember))
             ++m_numberOfQuestionsByNameLeftAsWritten;
     }
+    if (!isBuilt && value.opcode() == Opcode::PropGet && has(Mechanism::Guesses) && m_opensGuesses && callMethodsOfExpectedReceiversBehindTestsOfShape(*this, value))
+        return true;
     if (!isBuilt && has(Mechanism::Guesses) && askWhetherHolderOfStoreInClosedArmOfLoopIsList(*this, value))
         return true;
     if (!isBuilt && value.opcode() == Opcode::PropGet && has(Mechanism::TypedOperations))
@@ -8149,6 +8170,7 @@ void Walker::walkTerminator(const BodyTerminator& terminator)
 
     if (isBranch && !onlyTarget && isAsBranchTakesItInWalk(*this, condition)) {
         RELEASE_ASSERT(terminator.numberOfTargets() == 2);
+        leaveTurnForArmsThatOnlyMakeConstants(terminator, condition);
         BlockID from = m_block;
         m_code.endWithBranch(from, condition.id(), m_origin);
         m_block = { };

@@ -160,7 +160,7 @@ public:
         , m_string(string)
         , m_source(source)
     {
-        if (regExp->hasImageCodeFor(source.is8Bit()))
+        if (regExp->hasImageCodeFor(source.is8Bit()) && (source.is8Bit() || !regExp->eitherUnicode()))
             m_context.emplace(vm, regExp, Yarr::MatchFrom::VMThread);
     }
 

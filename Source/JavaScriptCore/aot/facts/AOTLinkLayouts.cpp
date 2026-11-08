@@ -2105,7 +2105,9 @@ private:
     BitVector m_appendedKeysThatDescriptorsAloneWrite;
     BitVector m_fieldsWrittenWithoutDefinition;
     BitVector m_fieldsInWhichDefinitionsLayForms;
+    BitVector m_fieldsInWhichDescriptorsMayLayAccessors;
     bool m_changeByDescriptorIsAtHand { false };
+    bool m_changeAtHandMayLayAccessor { false };
     BitVector m_isFilledUnderComputedKeys;
     Vector<LayoutID> m_heritages;
     BitVector m_hasHeritage;
@@ -2140,6 +2142,7 @@ private:
     static constexpr uint8_t everyFieldIsGivenValues = 1 << 1;
     static constexpr uint8_t everyFieldIsWrittenWithoutDefinition = 1 << 3;
     static constexpr uint8_t everyFieldIsWrittenLate = 1 << 2;
+    static constexpr uint8_t descriptorsMayLayAccessorsInEveryField = 1 << 4;
     Vector<uint8_t> m_whatIsNotedOfEveryField;
     struct SaidByEdges {
         BitVector fieldsGivenValues;
@@ -2300,6 +2303,7 @@ WriterOfLinkLayouts::WriterOfLinkLayouts(const LinkFlow& flow, LinkTables& table
     m_fieldsWrittenLate.ensureSize(tables.fields.size());
     m_fieldsWrittenWithoutDefinition.ensureSize(tables.fields.size());
     m_fieldsInWhichDefinitionsLayForms.ensureSize(tables.fields.size());
+    m_fieldsInWhichDescriptorsMayLayAccessors.ensureSize(tables.fields.size());
     m_fieldsGivenValues.ensureSize(tables.fields.size());
     m_unitsListedForFields.fill(0, tables.fields.size());
     m_whatIsNotedOfEveryField.fill(0, numberOfLayouts);
@@ -2971,10 +2975,12 @@ ALWAYS_INLINE void WriterOfLinkLayouts::lookAtChanges(FunctionID id, const ThinS
             noteNameDefinedPastLists(subject, key, true);
             m_accessorOfLiteralIsAtHand = change.lays != SummaryChange::Lays::WhatDescriptorSays;
             m_changeByDescriptorIsAtHand = !m_accessorOfLiteralIsAtHand;
+            m_changeAtHandMayLayAccessor = !change.descriptorIsInSight || !change.descriptorLaysNoAccessor;
             if (!change.isUnderNameThatNobodyElseNames)
                 noteWrite(subject, key, change.lays == SummaryChange::Lays::WhatDescriptorSays && !(change.descriptorIsInSight && change.getterInSight != noSummaryNode && change.setterInSight == noSummaryNode) ? Traits { Trait::ComesAfterConstruction, Trait::MayGiveValue } : Traits { Trait::ComesAfterConstruction });
             m_accessorOfLiteralIsAtHand = false;
             m_changeByDescriptorIsAtHand = false;
+            m_changeAtHandMayLayAccessor = false;
             if ((change.laysValueInSight || change.valueInSight != noSummaryNode) && change.other != noSummaryNode)
                 noteValueLeftOutOfDescriptor(typeAt(id, change.other));
             break;
@@ -3391,6 +3397,11 @@ void WriterOfLinkLayouts::noteWriteInto(LayoutID layout, PropertyKeyID key, Trai
             for (uint32_t cell = firstCell; cell < endOfCells; ++cell)
                 m_fieldsWrittenWithoutDefinition.quickSet(cell);
         }
+        if (comesFromDefinition && !(noted & descriptorsMayLayAccessorsInEveryField)) {
+            noted |= descriptorsMayLayAccessorsInEveryField;
+            for (uint32_t cell = firstCell; cell < endOfCells; ++cell)
+                m_fieldsInWhichDescriptorsMayLayAccessors.quickSet(cell);
+        }
         if (traits.contains(Trait::MayGiveValue) && !(noted & everyFieldIsGivenValues)) {
             noted |= everyFieldIsGivenValues;
             for (uint32_t cell = firstCell; cell < endOfCells; ++cell)
@@ -3429,9 +3440,11 @@ void WriterOfLinkLayouts::noteWriteInto(LayoutID layout, PropertyKeyID key, Trai
         m_formsLaidInListedFields.add(cellOf(*found), 0).iterator->value |= 1u << OptionSet<FieldForm> { FieldForm::IsAccessor }.toRaw();
     else if (m_definitionAtHand && m_definitionAtHand->isByDescriptor)
         m_formsLaidInListedFields.add(cellOf(*found), 0).iterator->value |= m_definitionAtHand->formCreated ? 1u << m_definitionAtHand->formCreated->toRaw() : formNobodyKnows;
-    else if (m_changeByDescriptorIsAtHand)
+    else if (m_changeByDescriptorIsAtHand) {
         m_formsLaidInListedFields.add(cellOf(*found), 0);
-    else
+        if (m_changeAtHandMayLayAccessor)
+            m_fieldsInWhichDescriptorsMayLayAccessors.quickSet(cellOf(*found));
+    } else
         m_fieldsWrittenWithoutDefinition.quickSet(cellOf(*found));
     if (traits.contains(Trait::ComesAfterConstruction))
         m_fieldsWrittenLate.quickSet(cellOf(*found));
@@ -4536,9 +4549,13 @@ void WriterOfLinkLayouts::writeFields()
             cell.isFilledByAccessorsAlone = isRecord && record.form.isEmpty() && hasKnownAccessor.quickGet(cellOf(reference))
                 && !m_fieldsGivenValues.quickGet(cellOf(reference)) && !m_fieldsGivenValues.quickGet(declaration);
             bool isGivenValuesByDefinitionsAlone = isRecord && !isLost && (m_fieldsInWhichDefinitionsLayForms.quickGet(cellOf(reference)) || m_fieldsInWhichDefinitionsLayForms.quickGet(declaration)) && record.form.isEmpty() && !hasKnownAccessor.quickGet(cellOf(reference)) && !hasKnownAccessor.quickGet(declaration) && cell.everyWriterIsKnown && !cell.isOfBirth
-                && m_flow.fieldsNotOfBirth.get(cellOf(reference)) && !m_fieldsWrittenWithoutDefinition.get(cellOf(reference)) && !m_fieldsWrittenWithoutDefinition.get(declaration);
-            if (uint32_t forms = cell.isFilledByAccessorsAlone || isGivenValuesByDefinitionsAlone ? m_formsLaidInListedFields.get(cellOf(reference)) | m_formsLaidInListedFields.get(declaration) : 0; hasOneBitSet(forms) && forms != formNobodyKnows)
-                cell.formThatDefinitionsCreate = OptionSet<FieldForm>::fromRaw(static_cast<uint8_t>(WTF::ctz(forms)));
+                && m_flow.fieldsNotOfBirth.get(cellOf(reference)) && !m_fieldsWrittenWithoutDefinition.get(cellOf(reference)) && !m_fieldsWrittenWithoutDefinition.get(declaration)
+                && !m_fieldsInWhichDescriptorsMayLayAccessors.quickGet(cellOf(reference)) && !m_fieldsInWhichDescriptorsMayLayAccessors.quickGet(declaration);
+            if (uint32_t forms = cell.isFilledByAccessorsAlone || isGivenValuesByDefinitionsAlone ? m_formsLaidInListedFields.get(cellOf(reference)) | m_formsLaidInListedFields.get(declaration) : 0; hasOneBitSet(forms) && forms != formNobodyKnows) {
+                OptionSet<FieldForm> created = OptionSet<FieldForm>::fromRaw(static_cast<uint8_t>(WTF::ctz(forms)));
+                if (cell.isFilledByAccessorsAlone || !created.contains(FieldForm::IsAccessor))
+                    cell.formThatDefinitionsCreate = created;
+            }
             cell.holdsAccessorFromBirth = cell.isFilledByAccessorsAlone && keepsWhatLiesBesideAccessors && m_flow.reading() == WhatUnseenCodeDoes::Anything && isAllocated
                 && !m_flow.fieldsThatMayBeEmpty.get(cellOf(reference)) && !m_fieldsReadInFrontOfDefinition.quickGet(cellOf(reference))
                 && !(isLost && (m_keysReadInFrontOfDefinitionThroughLost.contains(record.key.bits()) || isGivenValueThroughLost(LayoutID(index), record.key)));

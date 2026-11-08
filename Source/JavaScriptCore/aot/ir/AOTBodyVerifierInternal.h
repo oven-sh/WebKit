@@ -13,6 +13,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTDiagnostics.h"
 #include "AOTIR.h"
+#include "AOTProgramVerifier.h"
 #include "AOTResultRules.h"
 #include <algorithm>
 #include <optional>
@@ -156,6 +157,7 @@ public:
     Vector<BlockID> path;
     Vector<uint32_t> lastLoopHeadsThatReach;
     Vector<BlockID> worklist;
+    std::optional<MentionsInCode> mentionsInCode;
 };
 
 struct MethodDefinitionInBody {

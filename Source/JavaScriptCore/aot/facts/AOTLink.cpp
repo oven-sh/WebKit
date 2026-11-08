@@ -1913,7 +1913,7 @@ void WriterOfLink::writeResultsOfReadsByKey()
     PropertyKeyID nextOfStep = m_program.keyOf(BuiltinNames::next);
     BitVector layoutsFilledUnderUnknownNames(m_program.layouts.size());
     BitVector lostFamiliesFilledUnderUnknownNames(m_program.layouts.size());
-    bool isAskedAtRead = AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime);
+    bool isAskedAtRead = AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) && AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::ReadsByKeyOffFilledRecordsAreListed);
     for (uint32_t layout = 0; layout < m_program.layouts.size() && !writesWhatIsExpected() && !isAskedAtRead; ++layout) {
         if (!m_flow.isFilledUnderUnknownNames(LayoutID(layout)))
             continue;

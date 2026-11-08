@@ -86,8 +86,6 @@ static ALWAYS_INLINE FieldOfLayoutRecord describeFieldOfLayoutRecord(const Table
 {
     const Typed::Program& program = inputs.program;
     FieldOfLayoutRecord field { { }, { }, facts.formOfValue };
-    if (field.form.contains(Typed::FieldForm::IsAccessor) && !inputs.plan.slot(reference.layout, reference.field).holdsAccessor)
-        field.form = { };
     if (facts.facts.contains(Typed::FieldFact::IsAccessor))
         field.form.add(Typed::FieldForm::IsAccessor);
     if (reference.field < program.at(reference.layout).fields.size()) {

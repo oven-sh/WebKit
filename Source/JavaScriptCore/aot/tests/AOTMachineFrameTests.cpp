@@ -3366,8 +3366,67 @@ static void testMachineFrameHeadSavesArgumentThatColdOperandAloneReadsUnderIt()
     AOT_FRAME_TEST_CHECK(test, allocation.isSpilled(argument) && !allocation.usedCalleeSaves());
     const Allocation::HeadOfFramedPart& headOfSecond = allocation.headOfFramedPartAbove(second);
     AOT_FRAME_TEST_CHECK(test, headOfSecond.endOfSteps - headOfSecond.beginOfSteps == 1 && allocation.step(headOfSecond.beginOfSteps).operation == argument);
+    AOT_FRAME_TEST_CHECK(test, !allocation.leavesOutSavesAtHeads());
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word + 2, wordOfArgument) == wordOfArgument);
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word + 1, wordOfArgument) == 1 && noted[0] == wordOfArgument && noted[1] == wordOfArgument);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word, wordOfArgument) == word + 100);
+}
+
+static void testMachineFrameSaveThatNothingReadsUnderItsHeadIsLeftOutAndNoted()
+{
+    constexpr uint64_t word = 0x1000;
+    constexpr uint64_t wordOfArgument = 0x1111222233334444ull;
+    std::array<uint64_t, 3> noted { };
+    ProcedureTraits traits;
+    traits.chargesForCalleeSaves = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    Operation* a = test.argumentGPR(0);
+    Operation* argument = test.argumentGPR(1);
+    Block* first = out.newBlock();
+    Block* choosing = out.newBlock();
+    Block* second = out.newBlock();
+    Block* leaving = out.newBlock();
+    auto note = [&](uint64_t& place, ValueRep constraint) {
+        PatchOperation* reader = out.patch(Void);
+        reader->effects = Effects::none();
+        reader->effects.writesLocalState = true;
+        reader->append(argument, constraint);
+        reader->setGenerator([place = &place](CCallHelpers& jit, const PatchParameters& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg address = jit.scratchRegister();
+            jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), address);
+            jit.store64(params[0].gpr(), CCallHelpers::Address(address));
+        });
+    };
+    out.branch(out.testNonZero64(a, 1), normalEdge(first), normalEdge(choosing));
+    out.appendTo(first);
+    note(noted[0], ValueRep::reg(GPRInfo::argumentGPR2));
+    appendFrameTestCall(test);
+    out.ret(out.constInt64(1));
+    out.appendTo(choosing);
+    out.branch(out.testNonZero64(a, 2), normalEdge(second), normalEdge(leaving));
+    out.appendTo(second);
+    for (unsigned place = 1; place < noted.size(); ++place) {
+        appendFrameTestCall(test);
+        note(noted[place], ValueRep::reg(GPRInfo::argumentGPR2));
+    }
+    out.ret(out.constInt64(2));
+    out.appendTo(leaving);
+    out.ret(out.add(a, 100));
+
+    compileOrFail(test);
+    const Allocation& allocation = proc.allocation();
+    AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::FramedPart && allocation.isHeadOfFramedPart(first) && allocation.isHeadOfFramedPart(second));
+    AOT_FRAME_TEST_CHECK(test, allocation.isSpilled(argument) && !allocation.usedCalleeSaves());
+    const Allocation::HeadOfFramedPart& headOfFirst = allocation.headOfFramedPartAbove(first);
+    const Allocation::HeadOfFramedPart& headOfSecond = allocation.headOfFramedPartAbove(second);
+    AOT_FRAME_TEST_CHECK(test, headOfFirst.endOfSteps == headOfFirst.beginOfSteps);
+    AOT_FRAME_TEST_CHECK(test, headOfSecond.endOfSteps - headOfSecond.beginOfSteps == 1 && allocation.step(headOfSecond.beginOfSteps).operation == argument);
+    AOT_FRAME_TEST_CHECK(test, allocation.leavesOutSavesAtHeads());
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word + 1, wordOfArgument) == 1 && noted[0] == wordOfArgument && !noted[1] && !noted[2]);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word + 2, wordOfArgument) == 2 && noted[1] == wordOfArgument && noted[2] == wordOfArgument);
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word, wordOfArgument) == word + 100);
 }
 
@@ -3912,6 +3971,7 @@ std::span<const NativeTest> machineFrameTests()
         { "machine/frame/an-owner-that-the-part-spilled-is-held-though-no-register-is-free-where-the-way-leaves-the-part"_s, Machine::testMachineFrameOwnerThatPartSpilledIsHeldThoughNoRegisterIsFreeWhereWayLeavesPart },
         { "machine/frame/a-head-saves-only-what-is-read-under-it"_s, Machine::testMachineFrameHeadSavesOnlyWhatIsReadUnderIt },
         { "machine/frame/a-head-saves-the-argument-that-a-cold-operand-alone-reads-under-it"_s, Machine::testMachineFrameHeadSavesArgumentThatColdOperandAloneReadsUnderIt },
+        { "machine/frame/a-save-that-nothing-reads-under-its-head-is-left-out-and-noted"_s, Machine::testMachineFrameSaveThatNothingReadsUnderItsHeadIsLeftOutAndNoted },
         { "machine/frame/a-stretch-that-binds-few-values-has-no-frame-though-an-unlikely-way-later-in-the-order-reads-more"_s, Machine::testMachineFrameStretchThatBindsFewValuesHasNoFrameThoughUnlikelyWayLaterInOrderReadsMore },
         { "machine/frame/patch-that-tests-the-stack-itself-stands-ahead-of-the-framed-part"_s, Machine::testMachineFramePatchThatTestsStackItselfStandsAheadOfFramedPart },
         { "machine/frame/patch-that-tests-the-stack-itself-gets-a-frame-where-nothing-else-needs-one"_s, Machine::testMachineFramePatchThatTestsStackItselfGetsFrameWhereNothingElseNeedsOne },

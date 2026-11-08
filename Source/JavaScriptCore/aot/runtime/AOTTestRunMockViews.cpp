@@ -469,6 +469,11 @@ JSObject* Modules::mockSeenBy(ModuleID mocked, ModuleID importer, ModuleID reade
     return standing && seesMockOf(fileOrModule, importer) ? standing : nullptr;
 }
 
+bool Modules::seesMockThatKeepsNamesOfOriginal(ModuleID mocked, ModuleID importer, ModuleID reader) const
+{
+    return isMockedByFactoryThatTakesOriginal(m_table.fileBehindFace(mocked).value_or(mocked)) && mockSeenBy(mocked, importer, reader);
+}
+
 std::optional<bool> Modules::isLeftOutInViewOf(ModuleID importer, ModuleID mocked, unsigned exportIndex) const
 {
     JSObject* standing = mockInPlace(mocked);
@@ -504,6 +509,8 @@ JSObject* Modules::namespaceSeenBy(ModuleID module, ModuleID importer, ModuleID 
 
 void Modules::noteLoadedAnew(ModuleID module, ModuleID root)
 {
+    if (isEvicted(module))
+        return;
     VMState& state = m_instance.vm->aotState();
     if (m_linksBeforeLoadInFlight) {
         auto before = m_momentsLoadedAnew.find(module);
@@ -821,6 +828,8 @@ bool Modules::bringBackMockKeptByImportersOfThisTestFile(ModuleID fileOrModule)
         setMockInPlace(fileOrModule, ofPreload, held.whatRequireAnswersUnderMockLaidInPreload.get());
     } else if (auto waiting = m_momentsWaitingMocksWereLaid.find(fileOrModule); !m_modulesWithMockToRun.get(fileOrModule.index()) || waiting == m_momentsWaitingMocksWereLaid.end() || !waiting->value.importersKeepMockThatStands)
         return false;
+    else
+        m_mocksOfPreloadThatCameBackBeforeAnyImport.set(fileOrModule.index(), !ensureLoaded(moduleWithExportsOf(fileOrModule)).wasImportedUnderMockInPlace);
     forgetCallOfMock(fileOrModule);
     m_modulesWithMockToRun.clear(fileOrModule.index());
     m_modulesWithMockThatWaited.clear(fileOrModule.index());
@@ -880,7 +889,8 @@ void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, 
     }
     LoadedModule& held = ensureLoaded(fileOrModule);
     JSObject* ofPreload = held.mockLaidInPreload.get();
-    bool liesOverMockOfPreload = mockInPlace(fileOrModule) == ofPreload ? m_loadedInPreload.get(moduleWithExportsOf(fileOrModule).index()) || m_libraryModulesAskedForInPreload.get(fileOrModule.index()) : m_modulesWhoseMockOfPreloadIsPatched.get(fileOrModule.index());
+    bool wasImportedBehindComeBack = m_mocksOfPreloadThatCameBackBeforeAnyImport.get(fileOrModule.index()) && ensureLoaded(moduleWithExportsOf(fileOrModule)).wasImportedUnderMockInPlace;
+    bool liesOverMockOfPreload = mockInPlace(fileOrModule) == ofPreload ? m_loadedInPreload.get(moduleWithExportsOf(fileOrModule).index()) || m_libraryModulesAskedForInPreload.get(fileOrModule.index()) || wasImportedBehindComeBack : m_modulesWhoseMockOfPreloadIsPatched.get(fileOrModule.index());
     m_modulesWhoseMockOfPreloadIsPatched.set(fileOrModule.index(), stoodInPlace && !leavesEarlierMockToItsImporters && ofPreload && mock != ofPreload && liesOverMockOfPreload);
     if (held.mockLaidInPreload.get() == mock) {
         MomentMockWasLaid& itsOwn = m_momentsMocksOfPreloadWereLaid.add(fileOrModule, MomentMockWasLaid { }).iterator->value;

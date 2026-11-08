@@ -477,7 +477,7 @@ static bool tableOfImageHoldsObjectInChoices(Walker& walker, const DataNode::Obj
     for (const DataMember& member : object.members) {
         if (member.value.is<DataNode::Hole>())
             return false;
-        std::optional<FieldIndex> field = isCompiledObject ? plan.slots().findField(program, layout, member.key) : std::nullopt;
+        std::optional<FieldIndex> field = isCompiledObject && !hasNamedMemberOutsideFields ? plan.slots().findField(program, layout, member.key) : std::nullopt;
         if (!field) {
             NameClass nameClass = program.nameClassOf(member.key);
             if (program.at(member.key).kind != PropertyKeyKind::Text || nameClass == NameClass::Proto)
@@ -485,7 +485,7 @@ static bool tableOfImageHoldsObjectInChoices(Walker& walker, const DataNode::Obj
             hasNamedMemberOutsideFields |= nameClass != NameClass::Index;
             continue;
         }
-        if (hasNamedMemberOutsideFields || !tableOfImageTakesMemberInChoices(walker, { layout, *field }, member.value))
+        if (!tableOfImageTakesMemberInChoices(walker, { layout, *field }, member.value))
             return false;
         fields.append(*field);
     }
@@ -748,7 +748,7 @@ ArrayStorage askBirthOfListForStorageThatTakes(Walker& walker, Reference list, R
     if (type.isNumberWithoutFraction() && type.primitives & Primitive::Integer)
         taking = ArrayStorage::Int32;
     else if (type.isNumber())
-        taking = ArrayStorage::Double;
+        taking = list && list.isValue() && walker.runOverBoxedValuesTakesFirst(rootOfCellInSweptCode(walker.code(), list.id())) ? ArrayStorage::Contiguous : ArrayStorage::Double;
     else if (!(type.primitives & Primitive::Number))
         taking = ArrayStorage::Contiguous;
     ArrayStorage born = askBirthOfListForStorage(walker, list, taking, widerListRefusesStore);

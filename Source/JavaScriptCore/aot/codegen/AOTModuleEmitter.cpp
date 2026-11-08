@@ -183,7 +183,7 @@ void ModuleEmitter::generateWasLoadedSynchronously(const ValueContext& value)
 
 void ModuleEmitter::generateSeesMockOf(const ValueContext& value)
 {
-    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::SeesMockOf, { moduleIndex(value->module()), moduleIndex(value->referrer()), moduleIndex(value->reader()) }));
+    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::SeesMockOf, { moduleIndex(value->module()), moduleIndex(value->referrer()), moduleIndex(value->reader()), word32(value->thatKeepsNamesOfOriginal()) }));
 }
 
 void ModuleEmitter::generateIsLinkedBelow(const ValueContext& value)

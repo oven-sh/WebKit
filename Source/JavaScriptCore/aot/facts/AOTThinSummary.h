@@ -667,6 +667,7 @@ struct ThinSummary : SummaryWithoutLists {
         SummaryList<SummaryCopyOfMembers, 55> copiesOfMembers;
         SummaryList<uint32_t, 56> placesOfWrittenLists;
         SummaryList<uint32_t, 57> definitionsByDescriptorInOrderOfSites;
+        SummaryList<uint32_t, 58> callsAtSitesOfCopiesThatSpellStores;
     };
 
     uint64_t layoutsOfOwnWrites() const { return wordsOfEffects.isEmpty() ? 0 : wordsOfEffects[0]; }
@@ -770,6 +771,7 @@ struct SummaryBeingMade : SummaryWithoutLists {
     Vector<SummaryCopyOfMembers> copiesOfMembers;
     Vector<uint32_t> placesOfWrittenLists;
     Vector<uint32_t> definitionsByDescriptorInOrderOfSites;
+    Vector<uint32_t> callsAtSitesOfCopiesThatSpellStores;
     uint64_t layoutsOfOwnWrites { 0 };
     Effects ownEffects;
     std::optional<Effects> ownEffectsOfOperators;

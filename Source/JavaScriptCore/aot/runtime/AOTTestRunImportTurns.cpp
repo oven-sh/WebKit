@@ -228,13 +228,20 @@ void Modules::bookImportWhoseMocksRunWhenItsTextHasCome(ModuleID module)
 
 JSPromise* Modules::takeFailureOfLoadForWantOfMock(ModuleID module)
 {
-    JSPromise* loadOnRecord = m_areTestsOfFileDone ? nullptr : loadThatFailedForWantOfMock(module);
-    size_t place = m_importsWhoseMocksRunWhenTheirTextsHaveCome.findIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.module == module && each.failureForWantOfMockThatTakesOriginal && (loadOnRecord || !m_momentOfCallWhoseTextHasCome || each.momentOfCall == *m_momentOfCallWhoseTextHasCome); });
+    size_t place = m_importsWhoseMocksRunWhenTheirTextsHaveCome.findIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.module == module && each.failureForWantOfMockThatTakesOriginal && (!m_momentOfCallWhoseTextHasCome || each.momentOfCall == *m_momentOfCallWhoseTextHasCome); });
     if (place == notFound)
-        return loadOnRecord;
+        return m_areTestsOfFileDone ? nullptr : loadThatFailedForWantOfMock(module);
     JSPromise* failed = m_importsWhoseMocksRunWhenTheirTextsHaveCome[place].failureForWantOfMockThatTakesOriginal.get();
     m_importsWhoseMocksRunWhenTheirTextsHaveCome.removeAt(place);
     return failed;
+}
+
+bool Modules::takeBookingOfLoadWhoseMockHasEnded(ModuleID module)
+{
+    ModuleID file = fileOf(module);
+    if (m_modulesWithMockToRun.get(module.index()) || m_modulesWithMockToRun.get(file.index()) || mockInPlace(module) || mockInPlace(file) || hasMockThatWaitsOrRuns(file))
+        return false;
+    return m_importsWhoseMocksRunWhenTheirTextsHaveCome.removeFirstMatching([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.module == module && each.asksForMockOfFileItself && each.hasLoadAskedForOriginal && !each.hasWalkedAheadOfItsText && !each.failureForWantOfMockThatTakesOriginal; });
 }
 
 void Modules::letLoadInFlightAskForOriginal(ModuleID module)

@@ -188,10 +188,16 @@ public:
     void goModuleByModuleFromNowOn();
     void didEndMock(ModuleID);
     void didFinishTestsOfFile() { m_areTestsOfFileDone = true; }
+    void noteCopyOfOriginalHasSettled()
+    {
+        if (m_numberOfCopiesOfOriginalsBeingLoaded)
+            --m_numberOfCopiesOfOriginalsBeingLoaded;
+    }
     void didBeginTestFile()
     {
         m_filesThatRanBeforeTestFile = filesThatHaveRun();
         m_dataFilesThatRanBeforeTestFile = dataFilesThatHaveRun();
+        m_filesWhoseKeyLeftLoaderInThisTestFile.clearAll();
         if (!std::exchange(m_hasBegunTestFile, true))
             m_filesThatRanInPreload = m_filesThatRanBeforeTestFile;
         for (BitVector* letGo : { &m_modulesThatLoaderLetGo, &m_importersOfMockThatEnded }) {
@@ -202,11 +208,13 @@ public:
         m_failuresOfFactories.clear();
         m_loadsThatFailedForWantOfMock.clear();
         m_areTestsOfFileDone = false;
+        m_numberOfCopiesOfOriginalsBeingLoaded = 0;
         m_rootsOfImportsThatHaveGoneOn.clear();
         m_waitsThatRequiresLeft.clear();
         m_filesThatRanBesideMockThatOnlyWaited.clearAll();
         m_rootsOfImportsThatFailedUnderMocks.clearAll();
         m_mocksWhoseEntryProgramDeleted.clearAll();
+        m_mocksOfPreloadThatCameBackBeforeAnyImport.clearAll();
         m_modulesWithNoNamesOwedBelow.clearAll();
         forgetEndedMocksOfEarlierTestFiles();
         m_linksOfLoadsThatMayFail.clear();
@@ -214,7 +222,12 @@ public:
     BitVector filesThatHaveRun();
     BitVector dataFilesThatHaveRun();
     bool wasLoadedAheadOfThisTestFile(ModuleID);
-    void didLeaveLoaderInThisTestFile(ModuleID module) { m_dataFilesThatRanBeforeTestFile.clear(module.index()); }
+    void didLeaveLoaderInThisTestFile(ModuleID module)
+    {
+        m_dataFilesThatRanBeforeTestFile.clear(module.index());
+        m_filesWhoseKeyLeftLoaderInThisTestFile.set(module.index());
+    }
+    bool hasLeftLoaderInThisTestFile(ModuleID module) const { return m_filesWhoseKeyLeftLoaderInThisTestFile.get(module.index()); }
     void markEvaluated(ModuleID module) { setStatus(module, ModuleStatus::Evaluated); }
     bool isMocked(ModuleID module) const { return m_mocks && m_mocks->modules.get(module.index()); }
     bool hasMockThatWaitsOrRuns(ModuleID file) const { return m_modulesWithMockThatWaited.get(file.index()) && !m_modulesWithMockInPlace.get(file.index()); }
@@ -330,6 +343,7 @@ public:
     bool isImportedByModuleLinkedInThisTestFile(ModuleID fileOrModule, ModuleID module) const;
     bool bringBackMockKeptByImportersOfThisTestFile(ModuleID fileOrModule);
     JSObject* mockSeenBy(ModuleID mocked, ModuleID importer, ModuleID reader = { }) const;
+    bool seesMockThatKeepsNamesOfOriginal(ModuleID mocked, ModuleID importer, ModuleID reader) const;
     JSObject* endedMockSeenBy(ModuleID mocked, ModuleID importer) const;
     bool keepsEndedMockOf(ModuleID) const;
     bool keepsSomeEndedMock() const { return !m_endedMocks.isEmpty(); }
@@ -471,6 +485,11 @@ public:
         BitVector isAnswered;
         BitVector isLeftOut;
         unsigned ringsMet { 0 };
+        static constexpr unsigned noRing = std::numeric_limits<unsigned>::max();
+        Vector<ModuleID, 16> path;
+        Vector<Vector<size_t, 2>, 16> answersThatHangOnPlaceOfPath;
+        Vector<unsigned> outermostRingOfAnswer;
+        unsigned outermostRing { noRing };
     };
     bool namesBehindStarsAreInTables(ModuleID module) const
     {
@@ -591,11 +610,14 @@ public:
     enum class FailedImports : bool { AreEvictedWithEntry, LoseEntryThatEvictsThem };
     void settleImportsThatFailedUnder(ModuleID mocked, FailedImports);
     void dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& isMocked);
+    Vector<ModuleID, 8> failedLoadsThatEndOfMockEvicts(const ScopedLambda<bool(ModuleID)>& isMocked);
     void dropErrorsOfLoadsEndedByMocks();
     void dropFailuresThatEvictionTakesOut()
     {
         dropErrorsOfLoadsEndedByMocks();
         m_loadsThatFailedForWantOfMock.clear();
+        for (WaitThatRequireLeft& left : m_waitsThatRequiresLeft)
+            left.keepsError = false;
     }
     void takeFailedLoadsOutOfLoader(const ScopedLambda<bool(ModuleID)>& isMocked);
     JSValue errorOfModuleThatRanBesideMock(ModuleID module) const
@@ -1030,7 +1052,7 @@ public:
     void keepFailureOfFactoryForCallsHeldForTheirTexts(ModuleID mocked, JSValue error);
     bool isImportHeldThatAsksForMockOf(ModuleID asked) const { return m_importsWhoseMocksRunWhenTheirTextsHaveCome.containsIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself && !each.failureForWantOfMockThatTakesOriginal && fileOf(each.module) == fileOf(asked); }); }
     bool hasLoadInFlightAskedForOriginalOf(ModuleID asked) const { return m_importsWhoseMocksRunWhenTheirTextsHaveCome.containsIf([&](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself && each.hasLoadAskedForOriginal && !each.failureForWantOfMockThatTakesOriginal && fileOf(each.module) == fileOf(asked); }); }
-    bool isSomeImportHeldThatAsksForMockOfItsFile() const { return m_importsWhoseMocksRunWhenTheirTextsHaveCome.containsIf([](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself; }); }
+    bool isSomeImportHeldThatAsksForMockOfItsFile() const { return m_numberOfCopiesOfOriginalsBeingLoaded || m_importsWhoseMocksRunWhenTheirTextsHaveCome.containsIf([](const ImportWhoseMocksRunWhenItsTextHasCome& each) { return each.asksForMockOfFileItself; }); }
     bool isSomeCallHeldForItsText() const { return m_numberOfTextsThatHaveCome < m_textsThatWait.size() || !m_callsToMakeAgain.isEmpty() || !m_textsOnTheirWay.isEmpty(); }
     void didSettleImportBehindFactories(ModuleID root);
     void holdMockThatStandsUntilImportSettles(ModuleID root, JSPromise*);
@@ -1624,7 +1646,7 @@ private:
             auto found = m_byRoot.find(root);
             if (found == m_byRoot.end())
                 return;
-            for (LoadInFlight* load : found->value)
+            for (LoadInFlight* load : found->value.loads)
                 functor(*load);
         }
         LoadInFlight* find(JSPromise* promise) const { return m_byPromise.get(promise); }
@@ -1657,7 +1679,7 @@ private:
             load.numberOfFilesRunAtCall = m_numberOfFilesRun;
             load.number = m_numberAtPlaceZero + m_inOrder.size();
             m_inOrder.append(WTF::move(owned));
-            m_byRoot.add(root, Vector<LoadInFlight*, 1> { }).iterator->value.append(&load);
+            m_byRoot.add(root, LoadsOfRoot { }).iterator->value.loads.append(&load);
             if (!m_byPromise.add(promise, &load).isNewEntry || settling == SettlingOfLoad::IsLookedFor)
                 m_promisesThatNobodyTellsOf.append(&load);
             ++m_numberBeingLoaded;
@@ -1667,11 +1689,16 @@ private:
 
         void didLoad(ModuleID root)
         {
-            forEachOfRoot(root, [&](LoadInFlight& load) {
-                if (!load.isLoaded && !load.isKnownToBeSettled)
+            auto found = m_byRoot.find(root);
+            if (found == m_byRoot.end())
+                return;
+            LoadsOfRoot& ofRoot = found->value;
+            for (; ofRoot.numberLoaded < ofRoot.loads.size(); ++ofRoot.numberLoaded) {
+                LoadInFlight& load = *ofRoot.loads[ofRoot.numberLoaded];
+                if (!load.isKnownToBeSettled)
                     didEndLoading(load);
                 load.isLoaded = true;
-            });
+            }
         }
 
         void didRunFile()
@@ -1750,8 +1777,11 @@ private:
         void takeOut(LoadInFlight& load)
         {
             auto ofRoot = m_byRoot.find(load.root);
-            ofRoot->value.removeFirst(&load);
-            if (ofRoot->value.isEmpty())
+            size_t place = ofRoot->value.loads.find(&load);
+            ofRoot->value.loads.removeAt(place);
+            if (place < ofRoot->value.numberLoaded)
+                --ofRoot->value.numberLoaded;
+            if (ofRoot->value.loads.isEmpty())
                 m_byRoot.remove(ofRoot);
             if (auto ofPromise = m_byPromise.find(load.promise.get()); ofPromise != m_byPromise.end() && ofPromise->value == &load)
                 m_byPromise.remove(ofPromise);
@@ -1769,7 +1799,11 @@ private:
         Vector<std::unique_ptr<LoadInFlight>, 2> m_inOrder;
         size_t m_firstPlace { 0 };
         uint64_t m_numberAtPlaceZero { 0 };
-        UncheckedKeyHashMap<ModuleID, Vector<LoadInFlight*, 1>> m_byRoot;
+        struct LoadsOfRoot {
+            Vector<LoadInFlight*, 1> loads;
+            size_t numberLoaded { 0 };
+        };
+        UncheckedKeyHashMap<ModuleID, LoadsOfRoot> m_byRoot;
         UncheckedKeyHashMap<JSPromise*, LoadInFlight*> m_byPromise;
         mutable Vector<LoadInFlight*, 2> m_promisesThatNobodyTellsOf;
         mutable Vector<LoadInFlight*, 2> m_settled;
@@ -1859,6 +1893,7 @@ private:
     BitVector m_filesThatRanInPreload;
     BitVector m_filesThatRanBeforeTestFile;
     BitVector m_dataFilesThatRanBeforeTestFile;
+    BitVector m_filesWhoseKeyLeftLoaderInThisTestFile;
     BitVector m_filesWithKnownLoad;
     BitVector m_filesLoadedSynchronously;
     BitVector m_filesWhoseNextLoadIsFirst;
@@ -1924,6 +1959,7 @@ private:
             m_modulesThatRanBesideMockAlone.clear(module.index());
     }
     BitVector m_modulesOwedBesideMock;
+    BitVector m_modulesWhoseFailedRunWasForgotten;
     BitVector m_modulesThatOwnFactoryMayLoad;
     BitVector m_filesWhoseOriginalRuns;
     std::optional<ModuleID> m_moduleWhoseOwnNamespaceIsMade;
@@ -2062,6 +2098,7 @@ private:
     bool m_importsBehindFactoriesHaveYetToGoOn { false };
     bool m_endsMocksThatStandForLoadsInFlight { false };
     BitVector m_modulesWhoseMockOfPreloadIsPatched;
+    BitVector m_mocksOfPreloadThatCameBackBeforeAnyImport;
     BitVector m_modulesThatLoaderLetGo;
     BitVector m_importersOfMockThatEnded;
     BitVector m_modulesLoadedAnewWhoseNamesAreOwed;
@@ -2120,6 +2157,7 @@ private:
     BitVector m_modulesThatLayMocksAgain;
     BitVector m_modulesWithLoadEndedByMock;
     ModuleID m_moduleThatRequireAsksFor;
+    bool m_letsGoOfMocksAtLinkFromSource { false };
     ModuleID m_moduleThatRequires;
     ModuleID m_moduleThatImportAsksFor;
     ModuleID m_moduleThatWroteImportThatAsks;
@@ -2230,6 +2268,8 @@ private:
     void bookImportWhoseMocksRunWhenItsTextHasCome(ModuleID);
     bool hasLoaderSettledOriginalOf(ModuleID mocked);
     JSPromise* takeFailureOfLoadForWantOfMock(ModuleID);
+    bool takeBookingOfLoadWhoseMockHasEnded(ModuleID);
+    unsigned m_numberOfCopiesOfOriginalsBeingLoaded { 0 };
     bool m_areTestsOfFileDone { false };
     Vector<std::pair<ModuleID, Strong<JSPromise>>, 1> m_loadsThatFailedForWantOfMock;
     JSPromise* loadThatFailedForWantOfMock(ModuleID module) const

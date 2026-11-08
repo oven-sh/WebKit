@@ -575,6 +575,32 @@ function visitReferences(schema: Schema, entry: Entry): string[] {
   return [...placedPayloadOf(entry).flatMap(field => visitReferencesOfField(schema, entry, field)), "return;"];
 }
 
+function kindsOfReferencesOf(entry: Entry): Kind[] {
+  return placedPayloadOf(entry).flatMap(({ part }) => {
+    const element = part.kind.tag === "List" ? part.kind.element : part.kind;
+    const translation = translationOf(entry, part, element);
+    if (translation.tag === "None") return [];
+    if (translation.tag === "Id") return [element];
+    return referencesInRecord(entry, part, translation.record).map(({ kind }) => kind);
+  });
+}
+
+function namesVariableOrLoadsModuleFunction(schema: Schema): string[] {
+  const isAskedFor = (kind: Kind) =>
+    engineTypeOf(kind) === "VariableID" || roleArgument(schema, kind) === ", ModuleReferenceKind::Target";
+  const cases = schema.operations.map(entry => ({
+    label: entry.name,
+    value: String(entry.isWire && kindsOfReferencesOf(entry).some(isAskedFor)),
+  }));
+  return constexprSwitch({
+    signature: "bool namesVariableOrLoadsModule(Opcode opcode)",
+    subject: "opcode",
+    enumName: "Opcode",
+    cases,
+    defaultValue: "false",
+  });
+}
+
 function copyList(entry: Entry, field: PayloadField, element: Kind, offset: string): string {
   const firstWord = listFirstWord(entry);
   const list = `fields.listAt<${engineTypeOf(element)}>(${offset})`;
@@ -754,6 +780,7 @@ function bodyWalkersHeader(schema: Schema): string[] {
     ...cursors.map(numberOfFieldWordsFunction),
     numberOfWordsBehindHeadFunction(schema.operations),
     outlineOfFieldsColumn(schema.operations),
+    namesVariableOrLoadsModuleFunction(schema),
     ...walkersOf(schema).flatMap(walker =>
       cursors
         .filter(({ className }) => walker.walksOnly === undefined || walker.walksOnly === className)

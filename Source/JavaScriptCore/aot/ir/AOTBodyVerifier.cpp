@@ -36,11 +36,13 @@ static_assert(std::ranges::none_of(allMembersOf<Opcode>, [](Opcode opcode) { ret
 static constexpr uint8_t wireFlagsInByteOf(Opcode opcode) { return static_cast<uint8_t>(wireFlagsOf(opcode)); }
 static constexpr uint8_t mayBeTakenByFewUsesMarkOfOpcode = 1 << 0;
 static constexpr uint8_t mayNameIterationsMarkOfOpcode = 1 << 1;
+static constexpr uint8_t namesVariableOrLoadsModuleMarkOfOpcode = 1 << 2;
 static constexpr bool mayBeTakenByFewUsesInVerifiedBody(Opcode opcode) { return opcodesWithoutResultInVerifiedBodies.contains(opcode) || definitionsThatFewOperandsTakeInVerifiedBodies.contains(opcode); }
 
 static constexpr uint8_t marksOfOpcodeInVerifiedBody(Opcode opcode)
 {
-    return (mayBeTakenByFewUsesInVerifiedBody(opcode) ? mayBeTakenByFewUsesMarkOfOpcode : 0) | (opcodesThatMayNameIterationsInBodyIndex.contains(opcode) ? mayNameIterationsMarkOfOpcode : 0);
+    return (mayBeTakenByFewUsesInVerifiedBody(opcode) ? mayBeTakenByFewUsesMarkOfOpcode : 0) | (opcodesThatMayNameIterationsInBodyIndex.contains(opcode) ? mayNameIterationsMarkOfOpcode : 0)
+        | (namesVariableOrLoadsModule(opcode) ? namesVariableOrLoadsModuleMarkOfOpcode : 0);
 }
 
 void (*printerOfBodiesForVerifier)(const Program&, FunctionID, ASCIILiteral heading) = nullptr;
@@ -76,18 +78,24 @@ bool verifyBodies(const Program& program, BuildContext& build, BodyIndexTable* t
 #else
     constexpr bool isCheckingBuild = false;
 #endif
+#if ENABLE(FUZZILLI)
+    constexpr bool leavesLibraryCodeOut = true;
+#else
+    constexpr bool leavesLibraryCodeOut = false;
+#endif
     bool comparesIndexes = !tableThatKeepsIndexes || isCheckingBuild || build.validates();
     const ParallelLoops& loops = build.parallelLoops();
     ChunksOfIndices division = divideIntoChunks(static_cast<unsigned>(program.functions.size()));
     Vector<Vector<InternalError>> errorsOfChunks(division.size());
+    Vector<Vector<MentionInCode>> mentionsOfChunks(division.size());
     forEachIndexInParallel(loops, division.size(), [&](unsigned chunk, unsigned worker) {
         BodyVerifierScratch scratch(&program);
         for (unsigned index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index) {
             const Function& function = program.functions[index];
-#if ENABLE(FUZZILLI)
-            if (isLibraryCode(program, function))
+            if (leavesLibraryCodeOut && isLibraryCode(program, function)) {
+                scratch.mentionsInCode->noteWhatFunctionNames(function);
                 continue;
-#endif
+            }
             FunctionID id(index);
             CurrentWorkScope work(program, id, "verify"_s);
             BodyVerifier verifier(&program, id, &function, function.body, scratch);
@@ -98,10 +106,11 @@ bool verifyBodies(const Program& program, BuildContext& build, BodyIndexTable* t
             if (!verifier.run())
                 errorsOfChunks[chunk].append(WTF::move(verifier.takeErrors().first()));
         }
+        mentionsOfChunks[chunk] = scratch.mentionsInCode->take();
     });
     Vector<InternalError> errors = joinChunks<InternalError>(loops, WTF::move(errorsOfChunks));
     if (errors.isEmpty())
-        return verifyModulesNamedInBodies(program, build);
+        return verifyModulesNamedInBodies(program, build, joinChunks<MentionInCode>(loops, WTF::move(mentionsOfChunks)));
 
     FunctionID firstRefused = errors.first().function;
     build.diagnostics().append(WTF::move(errors));
@@ -115,6 +124,7 @@ BodyVerifierScratch::BodyVerifierScratch(const Program* program)
     numbersOfRecords.sizes.fill(SIZE_MAX);
     if (!program)
         return;
+    mentionsInCode.emplace(*program);
     numbersOfRecords[RemappedIDKind::String] = program->strings.size();
     numbersOfRecords[RemappedIDKind::PropertyKey] = program->types.numberOfPropertyKeys();
     numbersOfRecords[RemappedIDKind::TypeSite] = program->typeSites.size();
@@ -269,8 +279,13 @@ ALWAYS_INLINE void BodyVerifier::verifyWordsOfValue(CheckedBodyWords<report>& wo
     if (opcodeWord & Wire::WrittenPositionFollows)
         words.skip(1);
     if constexpr (report == WordsReport::No) {
-        if ((marks & mayNameIterationsMarkOfOpcode || opcodeWord & Wire::WrittenPositionFollows) && !words.hasFailed()) [[unlikely]]
-            m_builderOfIndex->fileWhatFewOperationsBring(BodyValue::operation(&m_body.words()[offsetOfHead], &m_body.unit(), value), block);
+        if ((marks & (mayNameIterationsMarkOfOpcode | namesVariableOrLoadsModuleMarkOfOpcode) || opcodeWord & Wire::WrittenPositionFollows) && !words.hasFailed()) [[unlikely]] {
+            BodyValue operation = BodyValue::operation(&m_body.words()[offsetOfHead], &m_body.unit(), value);
+            if (marks & namesVariableOrLoadsModuleMarkOfOpcode)
+                m_scratch.mentionsInCode->noteWhatValueNames(operation);
+            if (marks & mayNameIterationsMarkOfOpcode || opcodeWord & Wire::WrittenPositionFollows)
+                m_builderOfIndex->fileWhatFewOperationsBring(operation, block);
+        }
     }
 }
 
@@ -407,6 +422,7 @@ void BodyVerifier::verifyWords()
         if (!m_tableThatKeepsIndex)
             m_indexes = makeUniqueWithoutFastMallocCheck<BodyIndexTable>(1u, 1u);
         m_builderOfIndex.emplace(*m_function, m_tableThatKeepsIndex ? *m_tableThatKeepsIndex : *m_indexes, m_tableThatKeepsIndex ? m_workerOfTableThatKeepsIndex : 0);
+        m_scratch.mentionsInCode->beginFunction(*m_function);
         wordsAreInOrder = verifyWordsInOrder<WordsReport::No>();
     }
     if (!wordsAreInOrder)

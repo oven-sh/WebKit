@@ -185,6 +185,15 @@ private:
     static bool isAskedByBranchOfItsBlockAlone(const Operation* bits, const Block*);
     static ALWAYS_INLINE bool mayEndInTestOfBitsOf32Bits(const Block*);
     static NEVER_INLINE void askBitsOfNextTestAtOnce(Block* first);
+    struct Bound {
+        bool isLower;
+        bool isSigned;
+        int64_t value;
+    };
+    static std::optional<Bound> boundWithinWhichTestStays(const LeavingTest&);
+    static bool leadToOnePlace(const Block*, const Block*);
+    static bool mayBeFollowedByTestOfOtherBound(const Block*);
+    void askBothBoundsAtOnce(Block* first);
     NEVER_INLINE void askTestsBehindNextThatImplyThem();
 
     struct JoinPassedBy {
@@ -1215,12 +1224,111 @@ void JumpThreader::askBitsOfNextTestAtOnce(Block* first)
     Order::askBitsOfTwoTestsAtOnce(first, wayOfFirstWhereBitIsSet, bitsOfFirst, second, wayOfSecondWhereBitIsSet, bitsOfSecond);
 }
 
+std::optional<JumpThreader::Bound> JumpThreader::boundWithinWhichTestStays(const LeavingTest& test)
+{
+    if (test.subject->type() != Int32)
+        return std::nullopt;
+    Opcode staysWhen = test.leavesWhenItHolds ? invertedComparison(test.relation) : test.relation;
+    int64_t asSigned = static_cast<int32_t>(test.constant);
+    int64_t asUnsigned = static_cast<uint32_t>(test.constant);
+    switch (staysWhen) {
+    case GreaterEqual:
+        return Bound { true, true, asSigned };
+    case GreaterThan:
+        return Bound { true, true, asSigned + 1 };
+    case LessEqual:
+        return Bound { false, true, asSigned };
+    case LessThan:
+        return Bound { false, true, asSigned - 1 };
+    case AboveEqual:
+        return Bound { true, false, asUnsigned };
+    case Above:
+        return Bound { true, false, asUnsigned + 1 };
+    case BelowEqual:
+        return Bound { false, false, asUnsigned };
+    case Below:
+        return Bound { false, false, asUnsigned - 1 };
+    default:
+        return std::nullopt;
+    }
+}
+
+ALWAYS_INLINE bool JumpThreader::mayBeFollowedByTestOfOtherBound(const Block* first)
+{
+    if (first->numSuccessors() != 2)
+        return false;
+    auto holdsLittle = [](const Block* block) {
+        return block->numberOfIncomingEdges() == 1 && block->numSuccessors() == 2 && block->size() <= 3;
+    };
+    return holdsLittle(first->successor(0).block()) || holdsLittle(first->successor(1).block());
+}
+
+bool JumpThreader::leadToOnePlace(const Block* one, const Block* other)
+{
+    if (one == other)
+        return true;
+    auto onlyHandsOn = [](const Block* block) {
+        return block->numberOfIncomingEdges() == 1 && block->phis().empty() && !block->isLandingPad() && !block->isEntry() && !block->isEmpty() && block->last()->opcode() == Jump && block->size() == block->upsilons().size() + 1;
+    };
+    if (!onlyHandsOn(one) || !onlyHandsOn(other) || one->successor(0).block() != other->successor(0).block() || one->successor(0).edgeClass() != other->successor(0).edgeClass() || one->upsilons().size() != other->upsilons().size())
+        return false;
+    for (const Operation* upsilon : one->upsilons()) {
+        if (incomingValue(upsilon->phi(), other) != upsilon->valueHandedOn())
+            return false;
+    }
+    return true;
+}
+
+void JumpThreader::askBothBoundsAtOnce(Block* first)
+{
+    if (first->isEmpty() || first->last()->opcode() != Branch || first->numSuccessors() != 2 || !first->upsilons().empty())
+        return;
+    const Operation* asked = simplifyPredicateOfBranch(first->last()->child(0)).predicate;
+    if (!isComparisonByNumber(asked->opcode()) || asked->child(0)->type() != Int32 || !asked->child(1)->hasInt())
+        return;
+    for (unsigned leavingSuccessorOfFirst = 0; leavingSuccessorOfFirst < 2; ++leavingSuccessorOfFirst) {
+        Block* second = first->successor(1 - leavingSuccessorOfFirst).block();
+        Block* left = first->successor(leavingSuccessorOfFirst).block();
+        if (second == first || left == second || left == first || second->numberOfIncomingEdges() != 1 || second->isEmpty() || second->last()->opcode() != Branch || second->numSuccessors() != 2)
+            continue;
+        unsigned leavingSuccessorOfSecond = leadToOnePlace(left, second->successor(0).block()) ? 0 : 1;
+        Block* inside = second->successor(1 - leavingSuccessorOfSecond).block();
+        if (!leadToOnePlace(left, second->successor(leavingSuccessorOfSecond).block()) || inside == left || inside == second || inside == first || inside == second->successor(leavingSuccessorOfSecond).block())
+            continue;
+        std::optional<LeavingTest> firstTest = describeTestLeavingBy(first, leavingSuccessorOfFirst);
+        std::optional<LeavingTest> secondTest = describeTestLeavingBy(second, leavingSuccessorOfSecond);
+        if (!firstTest || !secondTest || firstTest->subject != secondTest->subject)
+            continue;
+        std::optional<Bound> one = boundWithinWhichTestStays(*firstTest);
+        std::optional<Bound> other = boundWithinWhichTestStays(*secondTest);
+        if (!one || !other || one->isLower == other->isLower)
+            continue;
+        const Bound& lower = one->isLower ? *one : *other;
+        const Bound& upper = one->isLower ? *other : *one;
+        int64_t low = lower.value;
+        int64_t high = upper.value;
+        if (lower.isSigned != upper.isSigned && (!lower.isSigned || low < 0 || high > std::numeric_limits<int32_t>::max()))
+            continue;
+        int64_t least = lower.isSigned ? std::numeric_limits<int32_t>::min() : 0;
+        int64_t most = upper.isSigned ? std::numeric_limits<int32_t>::max() : std::numeric_limits<uint32_t>::max();
+        if (low > high || low <= least || high >= most)
+            continue;
+        if (!holdsNothingButItsTest(second) || !canGainPredecessor(inside))
+            continue;
+        Order::askBothBoundsAtOnce(first, leavingSuccessorOfFirst, second, leavingSuccessorOfSecond, const_cast<Operation*>(firstTest->subject), static_cast<int32_t>(low), static_cast<int32_t>(high));
+        return;
+    }
+}
+
 void JumpThreader::askTestsBehindNextThatImplyThem()
 {
     if (m_testsOfBranchesAreInOrder) [[likely]] {
         for (const TestOfBranch& test : m_testsOfBranches) {
-            if (test.opcode && test.opcode != BitAnd + 1)
+            if (test.opcode && test.opcode != BitAnd + 1) {
+                if (test.opcode != Equal + 1 && mayBeFollowedByTestOfOtherBound(m_proc.blockAt(test.block)))
+                    askBothBoundsAtOnce(m_proc.blockAt(test.block));
                 continue;
+            }
             Block* block = m_proc.blockAt(test.block);
             if (mayAskTestBehindNext(block))
                 askTestBehindNextThatImpliesIt(block);
@@ -1234,6 +1342,7 @@ void JumpThreader::askTestsBehindNextThatImplyThem()
         if (mayAskTestBehindNext(block))
             askTestBehindNextThatImpliesIt(block);
         askBitsOfNextTestAtOnce(block);
+        askBothBoundsAtOnce(block);
     }
 }
 
