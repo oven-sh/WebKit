@@ -7152,7 +7152,7 @@ void didMockModule(JSGlobalObject* realm, ModuleID module)
     MockDoor door(modules, module, "didMockModule"_s);
     modules->fillNamesThatMockLacks(module);
     RETURN_IF_EXCEPTION(scope, void());
-    modules->answerFirstRequireBehindMock(module);
+    RELEASE_AND_RETURN(scope, modules->answerFirstRequireBehindMock(module));
 }
 
 void didStopLayingMock(JSGlobalObject* realm, ModuleID module)
