@@ -967,7 +967,6 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
             type = PyType::from(known);
             break;
         }
-        // The bound is on the classes. Each of them has all its prototypes looked at, however many those are.
         if (failed(scope, safePoint(globalObject))) [[unlikely]]
             return nullptr;
 
@@ -999,6 +998,9 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
                 return refuse("its instances are no plain objects"_s);
             object = asObject(object)->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
+            // The bound is on the classes. There are as many prototypes as the program has made, and a Proxy may go on making them.
+            if (failed(scope, safePoint(globalObject))) [[unlikely]]
+                return nullptr;
         }
 
         lacking.append(constructor);
@@ -1018,6 +1020,9 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
     for (size_t i = lacking.size(); i; i -= 2) {
         constructor = asObject(lacking.at(i - 2));
         JSValue prototype = lacking.at(i - 1);
+        // (To make the types takes longer than to find the classes.)
+        if (failed(scope, safePoint(globalObject))) [[unlikely]]
+            return nullptr;
         JSValue nameValue = constructor->get(globalObject, names.name);
         RETURN_IF_EXCEPTION(scope, nullptr);
         // The code that has run since may have asked for it: a class has one type.
