@@ -3357,15 +3357,6 @@ JSPromise* Modules::rejectImportWithErrorOfLoad(ModuleID module, ImportCaller ca
     return caller == ImportCaller::CompiledCode ? importPromiseRejectedByLoader(realm, scope) : rejectedPromiseWithPendingException(realm, scope);
 }
 
-static JSC_DECLARE_HOST_FUNCTION(didSettleLoadOfCopyOfOriginal);
-
-JSC_DEFINE_HOST_FUNCTION(didSettleLoadOfCopyOfOriginal, (JSGlobalObject* realm, CallFrame*))
-{
-    if (Modules* modules = modulesOf(realm))
-        modules->noteCopyOfOriginalHasSettled();
-    return JSValue::encode(jsUndefined());
-}
-
 static JSC_DECLARE_HOST_FUNCTION(importBehindFactories);
 static JSC_DECLARE_HOST_FUNCTION(didSettleImportBehindFactories);
 static JSC_DECLARE_HOST_FUNCTION(didFulfillImportThatLinkedAnew);
@@ -4198,17 +4189,6 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     if (text == TextOfImport::HasCome) {
         if (JSPromise* failed = takeFailureOfLoadForWantOfMock(module)) [[unlikely]]
             return failed;
-        if (takeBookingOfLoadWhoseMockHasEnded(module)) [[unlikely]] {
-            JSPromise* copyOfOriginal = loader()->requestImportModule(realm, Identifier::fromString(*m_instance.vm, makeString(m_table.pathText(fileOf(module)), "?actual"_s)), moduleKey(fileOf(module)), nullptr, nullptr);
-            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-            ++m_numberOfCopiesOfOriginalsBeingLoaded;
-            JSFunction* didSettle = JSFunction::create(*m_instance.vm, realm, 0, String(), didSettleLoadOfCopyOfOriginal, ImplementationVisibility::Private);
-            bool wasHandled = copyOfOriginal->isHandled();
-            copyOfOriginal->performPromiseThenWithContext(*m_instance.vm, realm, didSettle, didSettle, jsUndefined(), jsUndefined());
-            if (!wasHandled)
-                copyOfOriginal->setFlags(copyOfOriginal->flags() & ~JSPromise::isHandledFlag);
-            return copyOfOriginal;
-        }
     }
     if (text != TextOfImport::MayComeLater && !m_modulesWithMockToRun.isEmpty()) [[unlikely]]
         forgetMockLaidBehindCallWhoseTextHasCome(fileOf(module));
