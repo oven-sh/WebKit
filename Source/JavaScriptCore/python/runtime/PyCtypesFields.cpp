@@ -11,6 +11,7 @@
 #include "HeapUtil.h"
 #include "JSBigIntInlines.h"
 #include "JSCInlines.h"
+#include "MarkedSpaceInlines.h"
 #include <wtf/HexNumber.h>
 #include <wtf/text/MakeString.h>
 
@@ -231,6 +232,19 @@ JSValue objectFromBits(JSGlobalObject* globalObject, uint64_t bits, JSValue hint
                 isValid = cell->isString() || cell->isHeapBigInt() || cell->isObject();
             if (!isValid)
                 cellOfAnotherKind = cell;
+        } else {
+            // The id() of a str is where its characters are (see isIdentical()), which is no cell and cannot be looked at. A str that has them there is looked for.
+            HeapIterationScope iterationScope(vm.heap);
+            vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+                if (!isJSCellKind(kind))
+                    return IterationStatus::Continue;
+                auto* cell = static_cast<JSCell*>(heapCell);
+                if (!cell->structureID() || !cell->isString() || std::bit_cast<uintptr_t>(asString(cell)->tryGetValueImpl()) != bits)
+                    return IterationStatus::Continue;
+                value = cell;
+                isValid = true;
+                return IterationStatus::Done;
+            });
         }
     }
     // The address of an instance of the type of an extension is not that of the object.
