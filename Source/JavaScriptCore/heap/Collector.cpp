@@ -442,6 +442,9 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
     dataLogIf(Options::logGC(), "[GC<", *this, ">: START ", gcConductorShortName(conn), " ", capacity() / 1024, "kb ");
 
     m_beforeGC = MonotonicTime::now();
+#if USE(BUN_JSC_ADDITIONS)
+    m_pauseBeforeLastStop = Seconds();
+#endif
     CollectionScope scope = decideCollectionScope();
 
     beginSignpost(scope, conn);
@@ -673,8 +676,19 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
 
     m_scheduler->willResume();
 
+#if USE(BUN_JSC_ADDITIONS)
+    // One reading for the sum and for the log, so that the two agree. A mutator that waits for the collection counts
+    // as stopped from the start of its wait to the end of the cycle (runEndPhase), so its stops are not summed here.
+    MonotonicTime resumeTime = MonotonicTime::now();
+    if (!heap().m_waitingForCollectorSince)
+        m_pauseBeforeLastStop += resumeTime - m_stopTime;
+#endif
     if (Options::logGC()) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+        double thisPauseMS = (resumeTime - m_stopTime).milliseconds();
+#else
         double thisPauseMS = (MonotonicTime::now() - m_stopTime).milliseconds();
+#endif
         dataLog("p=", thisPauseMS, "ms (max ", maxPauseMS(thisPauseMS), ")...]\n");
     }
 
@@ -795,6 +809,15 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
     forEachHeap([&](Heap& heap) {
         heap.setNeedCollectionEpilogue();
         heap.recordCollectionTime(m_afterGC - m_beforeGC);
+#if USE(BUN_JSC_ADDITIONS)
+        // The last stop ends where the cycle does, as the pause that logGC prints above. A mutator that waits for the
+        // collection counts as stopped from the start of its wait, or from the start of the cycle if that came later.
+        MonotonicTime lastStopBegan = m_stopTime;
+        if (MonotonicTime waitingSince = heap.m_waitingForCollectorSince)
+            lastStopBegan = std::max(waitingSince, m_beforeGC);
+        heap.m_lastCollectionPause = m_pauseBeforeLastStop + (m_afterGC - lastStopBegan);
+        heap.m_lastCollectionWasForced = m_currentRequest.isForced;
+#endif
     });
     return changePhase(conn, CollectorPhase::NotRunning);
 }
