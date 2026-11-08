@@ -43,6 +43,15 @@ static bool raiseUnsupported(JSGlobalObject* globalObject, ASCIILiteral what)
 
 #if CTYPES_HAS_FOREIGN_CALLS
 
+// A structure or union of no bytes, by value: C has no such thing, and libffi, so CPython, refuses it.
+static bool raiseForNoBytes(JSGlobalObject* globalObject)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    raiseRuntimeError(globalObject, scope, "ffi_prep_cif failed"_s);
+    return false;
+}
+
 #if CPU(X86_64)
 static constexpr unsigned integerRegisterCount = 6;
 #else
@@ -205,7 +214,7 @@ static Passing classify(JSGlobalObject* globalObject, PyCTypeInfo* info)
             return result;
         }
     }
-    if (info->size > 16 || !info->size)
+    if (info->size > 16)
         return result;
     result.way = Passing::InRegisters;
     result.count = info->size > 8 ? 2 : 1;
@@ -339,7 +348,7 @@ static bool place(JSGlobalObject* globalObject, Outgoing& out, const ForeignValu
         if (!info)
             return raiseUnsupported(globalObject, "this argument is"_s);
         if (!info->size)
-            return true;
+            return raiseForNoBytes(globalObject);
         size_t size = static_cast<size_t>(info->size);
         size_t alignment = static_cast<size_t>(std::max<int64_t>(info->alignment, 1));
         Passing passing;
@@ -485,6 +494,8 @@ bool callForeignFunction(JSGlobalObject* globalObject, void* function, std::span
     Passing resultPassing;
     size_t resultSize = 0;
     if (resultKind == ForeignKind::Aggregate) {
+        if (!result.aggregate->size)
+            RELEASE_AND_RETURN(scope, raiseForNoBytes(globalObject));
         resultPassing = classify(globalObject, result.aggregate);
         RETURN_IF_EXCEPTION(scope, false);
         resultSize = static_cast<size_t>(result.aggregate->size);
@@ -548,10 +559,6 @@ bool callForeignFunction(JSGlobalObject* globalObject, void* function, std::span
         }
 #endif
         case ForeignKind::Aggregate:
-            if (!resultSize) {
-                invoke<TwoIntegers>(function, out);
-                break;
-            }
             if (resultPassing.way == Passing::AsFloats) {
                 FourDoubles values = invoke<FourDoubles>(function, out);
                 for (unsigned i = 0; i < resultPassing.count; ++i)
