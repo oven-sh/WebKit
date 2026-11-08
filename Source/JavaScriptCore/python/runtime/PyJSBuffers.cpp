@@ -69,8 +69,9 @@ static JSArrayBufferView* jsTypedArrayCopyPart(JSGlobalObject* globalObject, JSA
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* prototype = globalObject->typedArrayStructure(TypeUint8, false)->storedPrototypeObject();
-    JSValue function = asObject(prototype->getPrototypeDirect())->get(globalObject, Identifier::fromString(vm, "slice"_s));
+    // (Where the program has left it: Object.setPrototypeOf(Uint8Array.prototype, null).)
+    JSValue prototype = globalObject->typedArrayStructure(TypeUint8, false)->storedPrototypeObject()->getPrototypeDirect();
+    JSValue function = prototype.isObject() ? asObject(prototype)->get(globalObject, Identifier::fromString(vm, "slice"_s)) : jsUndefined();
     RETURN_IF_EXCEPTION(scope, nullptr);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(static_cast<double>(start)));
