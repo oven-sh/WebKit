@@ -1251,6 +1251,14 @@ static void beToldByAllInMRO(JSGlobalObject* globalObject, PyType* type)
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     PyTuple* mro = type->mro();
     PyTuple* bases = type->bases();
+    // As a rule there is one base, and the MRO is the class in front of the MRO of the base. That is seen in one pass, where the loop below takes one for each class of the MRO.
+    if (PyTuple* ofBase = mro && bases->length() == 1 ? PyType::from(bases->at(0))->mro() : nullptr; ofBase && mro->length() == ofBase->length() + 1 && mro->at(0) == JSValue(type)) {
+        unsigned same = 0;
+        while (same < ofBase->length() && mro->at(same + 1) == ofBase->at(same))
+            ++same;
+        if (same == ofBase->length())
+            return;
+    }
     for (unsigned i = 0; mro && i < mro->length(); ++i) {
         PyType* entry = PyType::from(mro->at(i));
         bool isAncestor = entry == type;
