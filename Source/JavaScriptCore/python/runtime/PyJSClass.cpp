@@ -814,8 +814,9 @@ JSValue deriveClassFromJS(JSGlobalObject* lexicalGlobalObject, JSValue construct
     };
     JSValue result = buildClass(globalObject, name, PyTuple::create(globalObject, { superclass }), CallArgs(), fill);
     RETURN_IF_EXCEPTION(scope, { });
+    // What a metaclass gave in place of a class of Python's is what the expression gives: 5, or the type that stands for Map.
     PyType* type = PyType::tryFrom(result);
-    if (!type)
+    if (!type || prototypeOfClassOfJS(type))
         return result;
 
     // What Python has no names for stays with JS.
