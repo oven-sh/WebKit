@@ -318,12 +318,16 @@ void PyFunction::setCode(VM& vm, PyCode* code)
     // That leaves what the generated code reads by way of the executable of a function that the compiler knows nothing about. Two nodes do, and both are pure, so one may stand for two
     // with the assignment between them. GetExecutable is only made to be compared with executables, which are frozen. FunctionToString has nothing to compare: it gives the text of
     // whatever function it is handed. It is made in one place, for a call of Function.prototype.toString, behind the check that this is what is called
-    // (ByteCodeParser::handleIntrinsicCall()), so that function or its executable is frozen: the blocks that have one of those go as well.
+    // (ByteCodeParser::handleIntrinsicCall()), so that function or its executable is frozen: the blocks that have one of those go as well. Not if nobody has had the text yet: whoever
+    // makes it leaves it with the executable (FunctionExecutable::toString()), for good, so without one there no reading has been made that could stand for a later one.
     // (A third such node, from a later JSC, would be missed here: DEFERRED.md.)
     vm.heap.completeAllJITPlans();
+    bool textHasBeenRead = previous->asStringConcurrently();
     auto isReliedOn = [&](JSCell* cell) {
         if (cell == previous || cell == this)
             return true;
+        if (!textHasBeenRead)
+            return false;
         ExecutableBase* executable = nullptr;
         if (auto* function = dynamicDowncast<JSFunction>(cell))
             executable = function->executable();
