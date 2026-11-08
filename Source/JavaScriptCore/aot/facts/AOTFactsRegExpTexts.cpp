@@ -1219,7 +1219,7 @@ void RehearsalOfRegExpTexts::noteHandedToCodeThatNobodyKnows(std::span<const JSV
     }
 }
 
-JSValue RehearsalOfRegExpTexts::inHandsOfProgram(JSValue value)
+ALWAYS_INLINE JSValue RehearsalOfRegExpTexts::inHandsOfProgram(JSValue value)
 {
     if (!value || !value.isCallable() || value.inherits<JSNativeStdFunction>() || value.inherits<ProxyObject>())
         return value;

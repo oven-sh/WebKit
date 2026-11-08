@@ -820,7 +820,7 @@ static bool followStoreIntoFreshObject(Walker& walker, const Draft& store, const
     if (opcode == Opcode::SetMappedArgument)
         return followStoreToMappedArgument(walker, store, written);
     if (opcode == Opcode::PropDelete) {
-        if (written.operandIndex != OperandIndex::PropDelete::object || walker.code().at(written.object.id()).opcode != Opcode::NewObject)
+        if (written.operandIndex != OperandIndex::PropDelete::object || freshRecordThatHoldsNothingButFields(walker, written.object) != written.object)
             return false;
         std::optional<FieldReference> cleared = fieldThatDeleteClearsInFreshObject(walker, written.object, store.key());
         if (!cleared)
@@ -829,6 +829,7 @@ static bool followStoreIntoFreshObject(Walker& walker, const Draft& store, const
         state.noteSlot(written.object, *cleared, Reference());
         state.noteOrderWord(written.object, std::nullopt);
         state.noteElement(written.object, keyOfPropertiesAsListed(), Reference());
+        state.endFactsOfCell(written.object, FactOfCell::BearsNoMark);
         return true;
     }
     bool storesIntoEnvironment = opcode == Opcode::PutEnvironmentField;

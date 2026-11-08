@@ -463,7 +463,7 @@ void Modules::linkAnewWhoeverReadsEndedMockBelow(ModuleID root)
         for (const ModuleRequestData& request : m_table.imports(module)) {
             ModuleID target = moduleLoadedBy(request);
             ModuleID mocked = m_table.fileBehindFace(target).value_or(target);
-            if (isLoaded && indexOfEndedMockSeenBy(mocked, module) && !keepsEndedMockWhereItIsAskedForAgain(mocked, module)) {
+            if (isLoaded && !exportsBehindEntryOfProgram(module) && indexOfEndedMockSeenBy(mocked, module) && !keepsEndedMockWhereItIsAskedForAgain(mocked, module)) {
                 noteLoadedAnew(module, root);
                 loaderGoesBelow = true;
             }

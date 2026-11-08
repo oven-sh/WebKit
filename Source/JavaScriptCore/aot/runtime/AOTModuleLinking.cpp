@@ -641,6 +641,8 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             if (module != walk.root()) {
+                if (ModuleID file = fileOf(module); !isMocked(file) && !mockInPlace(file))
+                    m_facesThatTookCopiesForMock.clear(module.index());
                 bindLatestCapture(module);
                 RETURN_IF_EXCEPTION(scope, void());
             }
@@ -1204,7 +1206,7 @@ JSObject* Modules::namespaceOfFileThatRanAheadOfMock(ModuleID file)
     return namespaceOfModuleThatRanBesideMock(moduleWithExportsOf(file));
 }
 
-JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew)
+JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew, OwedBelowOriginal owedBelowOriginal)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
@@ -1222,8 +1224,10 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfItsBodyThrew)
             throwException(realm, scope, error);
             return { };
         }
-        evaluateModulesOwedBelowOriginal(file);
-        RETURN_IF_EXCEPTION(scope, { });
+        if (owedBelowOriginal == OwedBelowOriginal::IsPaid) {
+            evaluateModulesOwedBelowOriginal(file);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         RELEASE_AND_RETURN(scope, namespaceOfModuleItself(file));
     }
     if (JSValue original = isCommonJSFile && mockInPlace(file) ? ensureLoaded(file).exportsOfOriginalBesideMock.get() : JSValue())
@@ -1653,7 +1657,15 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
         BitVector entriesThatYieldToStars;
         UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, uint32_t, IdentifierRepHash> whereHeldNamesLand;
         bool mockMaySettleNames = someMockStandsInPlace() || keepsSomeEndedMock();
+        IdentifierSet namesPassedByWhileHidden;
+        Vector<Identifier> namesToSearchFor;
+        std::optional<Identifier> nameSearchedFor;
+        auto mayBeListedNow = [&](const Identifier& name) {
+            return nameSearchedFor ? name == *nameSearchedFor : !namesPassedByWhileHidden.contains(name.impl());
+        };
         auto isExportedThroughStar = [&](const Identifier& name, std::optional<ModuleID> source = std::nullopt) {
+            if (!mayBeListedNow(name))
+                return false;
             std::optional<unsigned> own = m_table.findExport(module, name.impl());
             bool isHeldByTable = own && !isLeftOut(module, *own, TablesBehindStars::MayLackName);
             if (isHeldByTable && mockMaySettleNames && source && data(*source).capturesExports() && m_table.exports(module)[*own].isFromStarExport && !listedNames.contains(name.impl())) [[unlikely]] {
@@ -1675,20 +1687,27 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
             return record->resolveExport(realm, name).type == StarExportResolution::Type::Resolved;
         };
         Vector<std::pair<ModuleID, unsigned>, 8> pending { { module, 0 } };
-        Vector<std::pair<ModuleID, Identifier>, 4> namesTakenBackFromPath;
-        auto isTakenBackByFileOnPath = [&](const Identifier& name) {
-            return std::ranges::any_of(namesTakenBackFromPath, [&](const auto& taken) {
-                return taken.second == name && std::ranges::contains(pending, taken.first, &std::pair<ModuleID, unsigned>::first);
-            });
+        UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Vector<ModuleID, 2>, IdentifierRepHash> filesThatTakeNameBack;
+        Vector<Identifier> namesTakenBack;
+        auto filesThatTakeBack = [&](const Identifier& name) -> Vector<ModuleID, 2>& {
+            auto added = filesThatTakeNameBack.add(name.impl(), Vector<ModuleID, 2>());
+            if (added.isNewEntry)
+                namesTakenBack.append(name);
+            return added.iterator->value;
         };
-        IdentifierSet namesPassedByWhileHidden;
-        auto isHiddenBehindFileThatHasIt = [&](const Identifier& name) {
-            return namesPassedByWhileHidden.contains(name.impl()) && isTakenBackByFileOnPath(name);
+        auto isTakenBackByFileOnPath = [&](const Identifier& name) {
+            auto taken = filesThatTakeNameBack.find(name.impl());
+            return taken != filesThatTakeNameBack.end() && std::ranges::any_of(taken->value, [&](ModuleID file) {
+                return std::ranges::contains(pending, file, &std::pair<ModuleID, unsigned>::first);
+            });
         };
         auto appendLiveExports = [&](ModuleID source, auto&& names, JSObject* namespaceObject = nullptr) {
             for (const Identifier& name : names) {
+                if (!mayBeListedNow(name))
+                    continue;
                 if (isTakenBackByFileOnPath(name)) {
-                    namesPassedByWhileHidden.add(name.impl());
+                    if (!nameSearchedFor && !listedNames.contains(name.impl()) && namesPassedByWhileHidden.add(name.impl()).isNewEntry)
+                        namesToSearchFor.append(name);
                     continue;
                 }
                 bool isExported = isExportedThroughStar(name, source);
@@ -1706,15 +1725,52 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
 
         BitVector seen(m_table.size());
         seen.quickSet(module.index());
-        Vector<std::pair<ModuleID, ModuleID>, 8> seenBelowFilesThatTakeBack;
-        auto innermostFileOnPathThatTakesBack = [&]() -> ModuleID {
-            if (namesTakenBackFromPath.isEmpty())
-                return { };
-            for (size_t depth = pending.size(); depth--;) {
-                if (std::ranges::contains(namesTakenBackFromPath, pending[depth].first, &std::pair<ModuleID, Identifier>::first))
-                    return pending[depth].first;
+        struct NamesInOrder {
+            WTF::Vector<Identifier> inOrder;
+            IdentifierSet all;
+        };
+        auto namesAskedAmong = [&](NamesInOrder& names) -> std::span<const Identifier> {
+            if (!nameSearchedFor)
+                return names.inOrder.span();
+            if (names.all.isEmpty()) {
+                for (const Identifier& name : names.inOrder)
+                    names.all.add(name.impl());
             }
-            return { };
+            return names.all.contains(nameSearchedFor->impl()) ? std::span<const Identifier>(&*nameSearchedFor, 1) : std::span<const Identifier>();
+        };
+        UncheckedKeyHashMap<ModuleID, NamesInOrder> namesBehindStarsOfMocks;
+        std::array<UncheckedKeyHashMap<JSObject*, NamesInOrder>, 2> namesOfObjects;
+        auto namesAskedOf = [&](JSObject* object, DontEnumPropertiesMode mode) -> std::span<const Identifier> {
+            auto& known = namesOfObjects[mode == DontEnumPropertiesMode::Include];
+            auto found = known.find(object);
+            if (found == known.end()) {
+                PropertyNameArrayBuilder own(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                object->methodTable()->getOwnPropertyNames(object, realm, own, mode);
+                RETURN_IF_EXCEPTION(scope, { });
+                NamesInOrder names;
+                for (const Identifier& name : own)
+                    names.inOrder.append(name);
+                found = known.add(object, WTF::move(names)).iterator;
+            }
+            return namesAskedAmong(found->value);
+        };
+        auto beginsSearchForNextName = [&] {
+            namesPassedByWhileHidden.clear();
+            nameSearchedFor = namesToSearchFor.isEmpty() ? std::nullopt : std::optional(namesToSearchFor.takeLast());
+            if (!nameSearchedFor)
+                return false;
+            pending.shrink(0);
+            pending.append({ module, 0 });
+            seen.clearAll();
+            seen.quickSet(module.index());
+            return true;
+        };
+        auto isStillWalking = [&] {
+            return !pending.isEmpty() && !(nameSearchedFor && listedNames.contains(nameSearchedFor->impl()));
+        };
+        auto takesBackNameSearchedFor = [&](ModuleID source) {
+            auto taken = nameSearchedFor ? filesThatTakeNameBack.find(nameSearchedFor->impl()) : filesThatTakeNameBack.end();
+            return taken != filesThatTakeNameBack.end() && taken->value.contains(source);
         };
         auto findsNothingUnderMock = [&](ModuleID source, const ModuleExportData& listed) {
             if (!m_mocks || listed.kind() != ModuleExportKind::Indirect)
@@ -1730,7 +1786,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                 RETURN_IF_EXCEPTION(scope, false);
             }
             if (!isFound)
-                namesTakenBackFromPath.append({ ModuleID(), identifier(listed.name) });
+                filesThatTakeBack(identifier(listed.name));
             return !isFound;
         };
         auto takesNameBackFromPath = [&](ModuleID source, const ModuleExportData& listed) {
@@ -1740,7 +1796,9 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                 if (std::ranges::contains(pending, asked.targetModule(), &std::pair<ModuleID, unsigned>::first)) {
                     if (identifier(asked.importName) != identifier(listed.name))
                         return false;
-                    namesTakenBackFromPath.append({ listed.isFromStarExport ? ModuleID() : source, identifier(listed.name) });
+                    Vector<ModuleID, 2>& files = filesThatTakeBack(identifier(listed.name));
+                    if (!listed.isFromStarExport)
+                        files.appendIfNotContains(source);
                     return true;
                 }
                 std::optional<unsigned> next = m_table.findExport(asked.targetModule(), identifier(asked.importName).impl());
@@ -1750,17 +1808,11 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
             }
             return false;
         };
-        while (!pending.isEmpty()) {
+        while (isStillWalking() || beginsSearchForNextName()) {
             ModuleID importer = pending.last().first;
             DynamicStars stars = m_table.dynamicStars(importer);
             if (pending.last().second == stars.numberOfPlaces()) {
                 pending.removeLast();
-                seenBelowFilesThatTakeBack.removeAllMatching([&](const auto& below) {
-                    if (below.first != importer)
-                        return false;
-                    seen.quickClear(below.second.index());
-                    return true;
-                });
                 continue;
             }
             if (std::optional<ModuleRequestData> request = stars.at(pending.last().second++)) {
@@ -1774,40 +1826,45 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                 JSObject* ended = endedMockSeenBy(source, importer);
                 if (ended && !wasSeen)
                     seen.quickClear(source.index());
-                else if (ModuleID above = wasSeen ? ModuleID() : innermostFileOnPathThatTakesBack())
-                    seenBelowFilesThatTakeBack.append({ above, source });
                 if (ended) [[unlikely]] {
-                    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-                    ended->methodTable()->getOwnPropertyNames(ended, realm, names, DontEnumPropertiesMode::Exclude);
+                    std::span<const Identifier> names = namesAskedOf(ended, DontEnumPropertiesMode::Exclude);
                     RETURN_IF_EXCEPTION(scope, { });
                     appendLiveExports(source, names, namespaceSeenBy(source, importer));
                 } else if (mockInPlace(source) ? !seesMockOf(source, importer) : isMocked(source) && importsOriginalBesideMock(source, importer)) [[unlikely]] {
                     auto beingMade = std::ranges::find(m_namespacesBeingMade, source, &std::pair<ModuleID, JSObject*>::first);
                     JSObject* own = beingMade != m_namespacesBeingMade.end() ? beingMade->second : namespaceOfModuleItself(source);
                     RETURN_IF_EXCEPTION(scope, { });
-                    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-                    own->methodTable()->getOwnPropertyNames(own, realm, names, DontEnumPropertiesMode::Include);
+                    if (beingMade != m_namespacesBeingMade.end())
+                        m_outermostNamespaceReadWhileBeingMade = std::min<size_t>(m_outermostNamespaceReadWhileBeingMade, beingMade - m_namespacesBeingMade.begin());
+                    std::span<const Identifier> names = namesAskedOf(own, DontEnumPropertiesMode::Include);
                     RETURN_IF_EXCEPTION(scope, { });
                     appendLiveExports(source, names, own);
                 } else if (sourceData.capturesExports()) {
                     Vector<Identifier, 8> names;
-                    forEachCapturedExport(source, [&](const Identifier& name, JSValue) {
-                        names.append(name);
-                    });
+                    if (!nameSearchedFor) {
+                        forEachCapturedExport(source, [&](const Identifier& name, JSValue) {
+                            names.append(name);
+                        });
+                    } else if (hasCapturedExport(source, *nameSearchedFor))
+                        names.append(*nameSearchedFor);
                     RETURN_IF_EXCEPTION(scope, { });
                     appendLiveExports(source, names);
                 } else if (sourceData.isUncompiledCode()) {
                     JSObject* namespaceObject = uncompiledNamespace(source, ModulePhase::Evaluation, NamespaceUse::CarriesBindings);
                     RETURN_IF_EXCEPTION(scope, { });
-                    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-                    namespaceObject->methodTable()->getOwnPropertyNames(namespaceObject, realm, names, DontEnumPropertiesMode::Include);
+                    std::span<const Identifier> names = namesAskedOf(namespaceObject, DontEnumPropertiesMode::Include);
                     RETURN_IF_EXCEPTION(scope, { });
                     appendLiveExports(source, names);
                 } else {
                     RELEASE_ASSERT(sourceData.hasExportTable());
                     std::span<const ModuleExportData> entriesOfSource = m_table.exports(source);
+                    std::span<const ModuleExportData> entriesAsked = entriesOfSource;
+                    if (nameSearchedFor) {
+                        std::optional<unsigned> asked = m_table.findExport(source, nameSearchedFor->impl());
+                        entriesAsked = asked ? entriesOfSource.subspan(*asked, 1) : entriesOfSource.first(0);
+                    }
                     bool seesMock = mockInPlace(source);
-                    appendLiveExports(source, entriesOfSource | std::views::filter([&](const ModuleExportData& entry) {
+                    appendLiveExports(source, entriesAsked | std::views::filter([&](const ModuleExportData& entry) {
                         return !isLeftOut(source, &entry - entriesOfSource.data(), TablesBehindStars::HaveName) && (seesMock || (!takesNameBackFromPath(source, entry) && !findsNothingUnderMock(source, entry)));
                     }) | std::views::transform([&](const ModuleExportData& entry) {
                         return identifier(entry.name);
@@ -1832,13 +1889,13 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                         auto originalShows = [&](const Identifier& name) {
                             return recordOfMock ? recordOfMock->originalShows(realm, name, askers.span()) : ensureRecordSetAside(source)->resolveExport(realm, name).type == StarExportResolution::Type::Resolved;
                         };
-                        for (unsigned index = 0; index < entriesOfSource.size(); ++index) {
-                            if (!isLeftOut(source, index, TablesBehindStars::HaveName))
+                        for (const ModuleExportData& entry : entriesAsked) {
+                            if (!isLeftOut(source, &entry - entriesOfSource.data(), TablesBehindStars::HaveName))
                                 continue;
-                            Identifier name = identifier(entriesOfSource[index].name);
-                            if (isHiddenBehindFileThatHasIt(name))
+                            Identifier name = identifier(entry.name);
+                            if (namesPassedByWhileHidden.contains(name.impl()) && isTakenBackByFileOnPath(name))
                                 continue;
-                            bool isLackedByOriginal = entriesOfSource[index].isFromStarExport && !originalShows(name);
+                            bool isLackedByOriginal = entry.isFromStarExport && !originalShows(name);
                             RETURN_IF_EXCEPTION(scope, { });
                             if (isLackedByOriginal)
                                 continue;
@@ -1847,11 +1904,16 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                             if (isExported)
                                 result.append({ name, jsUndefined() });
                         }
-                        WTF::Vector<Identifier> behindStarsOfSource;
-                        appendNamesBehindStarsOf(source, behindStarsOfSource);
-                        RETURN_IF_EXCEPTION(scope, { });
+                        auto behindStars = namesBehindStarsOfMocks.find(source);
+                        if (behindStars == namesBehindStarsOfMocks.end()) {
+                            NamesInOrder names;
+                            appendNamesBehindStarsOf(source, names.inOrder);
+                            RETURN_IF_EXCEPTION(scope, { });
+                            behindStars = namesBehindStarsOfMocks.add(source, WTF::move(names)).iterator;
+                        }
+                        std::span<const Identifier> namesAskedBehindStars = namesAskedAmong(behindStars->value);
                         JSObject* lackedByTable = ensureLoaded(source).exportsAddedByMock;
-                        for (const Identifier& name : behindStarsOfSource) {
+                        for (const Identifier& name : namesAskedBehindStars) {
                             if (m_table.findExport(source, name.impl()))
                                 continue;
                             bool isShownByOriginal = originalShows(name);
@@ -1862,8 +1924,6 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                                 addedByMock.append(name);
                                 continue;
                             }
-                            if (isHiddenBehindFileThatHasIt(name))
-                                continue;
                             bool isExported = isExportedThroughStar(name);
                             RETURN_IF_EXCEPTION(scope, { });
                             if (isExported)
@@ -1873,13 +1933,13 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                         appendNamesAddedByMock(source, addedByMock);
                     RETURN_IF_EXCEPTION(scope, { });
                     appendLiveExports(source, addedByMock);
-                    if (!wasSeen && !standsForWholeModule(source))
+                    if (!wasSeen && !standsForWholeModule(source) && !takesBackNameSearchedFor(source))
                         pending.append({ source, 0 });
                 }
                 RETURN_IF_EXCEPTION(scope, { });
             }
         }
-        for (const auto& [source, name] : namesTakenBackFromPath) {
+        for (const Identifier& name : namesTakenBack) {
             bool isExported = isExportedThroughStar(name);
             RETURN_IF_EXCEPTION(scope, { });
             if (isExported)

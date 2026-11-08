@@ -419,7 +419,7 @@ bool buildSplitInParts(Walker& walker, const CallByOneRow& call)
     return true;
 }
 
-static const NotesOfResultInParts* partsOfListThatIsOnlyTakenApart(Walker& walker, Reference name)
+static ALWAYS_INLINE const NotesOfResultInParts* partsOfListThatIsOnlyTakenApart(Walker& walker, Reference name)
 {
     std::unique_ptr<Walker::KeptForBuild>& keptByStrings = walker.keptByStrings();
     if (!keptByStrings || !name || !name.isValue())
@@ -450,7 +450,7 @@ Reference partOfListThatIsOnlyTakenApart(Walker& walker, Reference name, Referen
     return { };
 }
 
-static Reference wholeBesidePartsNamedBy(Walker& walker, Reference name)
+static ALWAYS_INLINE Reference wholeBesidePartsNamedBy(Walker& walker, Reference name)
 {
     if (!name || !name.isValue() || !walker.state().holdsFreshObjects())
         return { };

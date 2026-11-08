@@ -3058,7 +3058,7 @@ PropertyKeyID LinkFlow::keyHeldAt(FunctionID function, uint32_t keyNode) const
     return symbol;
 }
 
-PropertyKeyID LinkFlow::keySeenOf(FunctionID function, const SummaryAccess& access) const
+ALWAYS_INLINE PropertyKeyID LinkFlow::keySeenOf(FunctionID function, const SummaryAccess& access) const
 {
     if (access.key || access.keyNode == noSummaryNode || access.isToContents())
         return { };

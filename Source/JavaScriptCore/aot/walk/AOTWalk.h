@@ -105,6 +105,8 @@ bool foldOperation(Walker&, const BodyValue&);
 bool buildFreshObject(Walker&, const BodyValue&);
 bool callBuiltin(Walker&, const BodyValue&);
 void nameMethodOfReceiverAsMade(Walker&, const BodyValue& call, Draft&);
+Reference findListThatCallWouldTakeInPlaceOfItsCopy(Walker&, const BodyValue& call, Reference copy);
+bool goOverListInPlaceOfCallOfBuiltin(Walker&, const BodyValue& call, Draft& written);
 bool isAskedForNameThatNoBuiltinAnswers(Walker&, ValueID);
 bool isExpectedToBeArgumentsObject(Walker&, ValueID);
 bool isShapedLikeLayoutsThatItCanNeverBe(Walker&, ValueID);
@@ -205,8 +207,8 @@ bool isLeafHandedToMethodOfLists(const Walker&, TypeID handedOver);
 bool isBuiltinCalledWithoutReceiver(const Walker&, TypeID handedOver);
 PropertyKeyID keyOfSymbolMadeOnce(Walker&, const BodyValue&);
 bool tableOfImageHoldsData(Walker&, DataID);
-ArrayStorage askBirthOfListForStorage(Walker&, Reference list, ArrayStorage wanted);
-ArrayStorage askBirthOfListForStorageThatTakes(Walker&, Reference list, Reference stored);
+ArrayStorage askBirthOfListForStorage(Walker&, Reference list, ArrayStorage wanted, bool widerListRefusesStore = false);
+ArrayStorage askBirthOfListForStorageThatTakes(Walker&, Reference list, Reference stored, bool widerListRefusesStore = false);
 
 PropertyKeyID keyThatAccessGoesBy(const Walker&, const BodyValue& access, PropertyKeyID* chosenAndNotDerived = nullptr);
 PropertyKeyID nameOfTextThatAccessMayGoBy(const Walker&, const BodyValue& access, StringID text);
@@ -842,6 +844,14 @@ public:
     }
     bool answerOfCopyIsDeclared() const { return m_frames.last().answerIsDeclared; }
     bool copyHandsBack(ValueID);
+    bool questionOfHeadWasAskedAbove(const BodyValue& call, FunctionID callee, const BitVector& blocksOfHead);
+    struct QuestionAskedByCall {
+        ValueID object;
+        PropertyKeyID key;
+        int64_t mask { 0 };
+        ValueID call;
+    };
+    Reference nameNarrowedBehindTests(Reference) const;
     bool callCopiedAloneTakesWhatWasMadeForIt(Reference) const;
     std::optional<uint32_t> entryParameterOfUnitBoundTo(Reference value) const
     {
@@ -2570,6 +2580,7 @@ private:
     Vector<ValueID, 8>& m_operationsBeingWalkedInFrames;
     bool m_firstOtherCodeRanInCopyOfRow { false };
     bool m_walksCopyWhereItsGuardFailed { false };
+    HashMap<const BodyIndex*, Vector<QuestionAskedByCall>> m_questionsAskedByCallsOfEntryBlocks;
     Vector<ExpectationOfArgument, 2> m_expectedOfArgumentsOfCopies;
     bool m_someCallStaysInTurnOfRow { false };
     bool m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces { false };
@@ -3168,6 +3179,7 @@ private:
     }
     TypeID typeOfTextOrRecord(Reference) const;
     Reference narrowestReferenceOf(ValueID input) const;
+    Reference narrowestNameOf(Reference) const;
     bool checkOperandKinds(const TerminatorDraft&);
     bool operandsAreAsTaken(const TerminatorDraft&) const;
     static bool isDeclaredPure(TerminatorKind);

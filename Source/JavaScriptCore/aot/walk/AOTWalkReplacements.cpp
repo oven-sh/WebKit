@@ -280,7 +280,7 @@ static TypeID typeClaimedByConvertForReplacement(Walker& walker, const DeclaredT
     return targetOfConvert({ walker.program(), walker.types(), PositionTypes::knowingNothing() }, declared);
 }
 
-static void bindOperandInPlaceOfCastForReplacement(Walker& walker, const BodyValue& cast)
+static ALWAYS_INLINE void bindOperandInPlaceOfCastForReplacement(Walker& walker, const BodyValue& cast)
 {
     Reference operand = walker.referenceOf(cast.operand(cast.opcode() == Opcode::NarrowByTest ? OperandIndex::NarrowByTest::left : 0));
     if (cast.opcode() == Opcode::Convert) {

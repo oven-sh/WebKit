@@ -3311,14 +3311,21 @@ public:
     Vector<ModuleID> takeModulesSpelledInTexts() { return std::exchange(m_modulesSpelledInTexts, { }); }
     BitVector letInNamesFromRunTime();
     BitVector builtinsThatCodeInSightUses() const;
-    bool programLetsUnseenCodeRun() const
+    template<typename Functor>
+    bool programLetsUnseenCodeRunWhere(const Functor& counts) const
     {
         return std::ranges::any_of(m_program.unseenCode, [&](const UnseenCodeRecord& record) {
             if (!admitsUnknownJavaScriptInProgramFacts(record.cause))
                 return false;
             if (record.witness.function == Wire::none)
                 return record.cause == UnseenCodeCause::OptionAdmitsCode;
-            return !isLibraryCode(m_source, m_source.at(FunctionID(record.witness.function)));
+            return !isLibraryCode(m_source, m_source.at(FunctionID(record.witness.function))) && counts(record.witness);
+        });
+    }
+    bool programLetsUnseenCodeRun() const
+    {
+        return programLetsUnseenCodeRunWhere([](const Witness&) {
+            return true;
         });
     }
 
@@ -3398,7 +3405,7 @@ private:
     bool mayThrowByItself(const BodyIndex&, const BodyValue&) const;
     bool bodyMayLeave(FunctionID, ThrowsOfOperations = ThrowsOfOperations::AreLeftOut);
     Vector<ModuleID> evaluationOrder() const;
-    bool throwAtLoadMayBeSurvived();
+    bool throwInFrontMayBeSurvived(const Witness&);
     bool everyRunComesTo(const Witness&);
     std::optional<UserDiagnosticKind> refusalOf(const BodyIndex&, const Witness&, BuiltinID holder, PropertyKeyID, BuiltinPropertyActionKind, ValueID brought, bool throwsWhereRefused);
     std::optional<UserDiagnosticKind> refusalOfWriteAt(const Witness&, BuiltinID followed = { });
@@ -3518,7 +3525,6 @@ private:
     BitVector m_bodiesBeingAsked;
     std::array<BitVector, 2> m_bodiesThatStay;
     std::optional<bool> m_codeThatNobodyNamesMayLeave;
-    std::optional<bool> m_throwAtLoadMayBeSurvived;
     BitVector m_partOfClassIsUsed;
     Vector<Finding> m_callsOfEventsNamedInBodies;
     Vector<Witness> m_urlsThatLeaveBodies;
@@ -5296,41 +5302,69 @@ Vector<ModuleID> BuilderOfProgramFacts::evaluationOrder() const
     return order;
 }
 
-bool BuilderOfProgramFacts::throwAtLoadMayBeSurvived()
+bool BuilderOfProgramFacts::throwInFrontMayBeSurvived(const Witness& site)
 {
-    if (m_throwAtLoadMayBeSurvived)
-        return *m_throwAtLoadMayBeSurvived;
-    static constexpr std::array<ASCIILiteral, 6> namesThatLayListeners { "on"_s, "once"_s, "addListener"_s, "prependListener"_s, "prependOnceListener"_s, "setUncaughtExceptionCaptureCallback"_s };
-    auto isProcess = [&](const BodyIndex& index, ValueID object) {
-        BuiltinID holder = builtinReadByPath(index, object);
-        return holder && m_builtins.textOf(m_builtins.canonicalID(holder)) == "process"_s;
-    };
-    auto laysListener = [&](const BodyIndex& index, const BodyValue& value) {
-        if (value.opcode() == Opcode::ElemGet)
-            return isProcess(index, value.as<Opcode::ElemGet>().objectOperand());
-        if (value.opcode() != Opcode::PropGet || value.as<Opcode::PropGet>().isFreeName() || !isProcess(index, value.as<Opcode::PropGet>().objectOperand()))
+    const BodyIndex& indexOfSite = *m_inputs.bodies.find(FunctionID(site.function));
+    BlockID blockOfSite = indexOfSite.blockOf(ValueID(site.value));
+    auto cannotRunInFrontOfSite = [&](FunctionID function, ValueID value) {
+        if (function.index() != site.function)
             return false;
-        const PropertyKey& key = m_source.at(value.as<Opcode::PropGet>().key());
-        return key.kind == PropertyKeyKind::Text && std::ranges::any_of(namesThatLayListeners, [&](ASCIILiteral name) {
-            return equalSpans(m_source.strings[key.text], name.span8());
-        });
-    };
-    m_throwAtLoadMayBeSurvived = programLetsUnseenCodeRun() || [&] {
-        for (uint32_t number = 0; number < m_source.functions.size(); ++number) {
-            FunctionID id(number);
-            const BodyIndex* index = isReached(id) && !isLibraryCode(m_source, m_source.at(id)) ? m_inputs.bodies.find(id) : nullptr;
-            if (!index)
-                continue;
-            for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
-                for (BodyValue value : index->block(BlockID(block)).values()) {
-                    if (laysListener(*index, value))
-                        return true;
-                }
-            }
+        BlockID block = indexOfSite.blockOf(value);
+        if (block != blockOfSite)
+            return indexOfSite.strictlyDominates(blockOfSite, block);
+        bool isBehindSite = false;
+        for (BodyValue other : indexOfSite.block(block).values()) {
+            isBehindSite |= other.id().index() == site.value;
+            if (other.id() == value)
+                return isBehindSite;
         }
         return false;
-    }();
-    return *m_throwAtLoadMayBeSurvived;
+    };
+    auto isMarked = [&](BuiltinID named) {
+        return named && m_builtins.has(BuiltinMark::MayLayListenerForUncaughtExceptions, m_builtins.canonicalID(named));
+    };
+    auto laysListener = [&](const BodyIndex& index, const BodyValue& value) {
+        switch (value.opcode()) {
+        case Opcode::Builtin:
+            return isMarked(value.as<Opcode::Builtin>().builtin());
+        case Opcode::ModuleBuiltin:
+            return isMarked(value.as<Opcode::ModuleBuiltin>().builtin());
+        case Opcode::PropGet: {
+            BuiltinID holder = value.as<Opcode::PropGet>().isFreeName() ? BuiltinID() : builtinReadByPath(index, value.as<Opcode::PropGet>().objectOperand());
+            return holder && isMarked(memberFoundOnInProgramFacts(m_source, holder, value.as<Opcode::PropGet>().key()));
+        }
+        case Opcode::ElemGet: {
+            BuiltinID holder = builtinReadByPath(index, value.as<Opcode::ElemGet>().objectOperand());
+            if (!holder)
+                return false;
+            holder = objectAnsweredByBindingInProgramFacts(m_builtins, m_builtins.canonicalID(holder));
+            return std::ranges::any_of(m_builtins.marked(BuiltinMark::MayLayListenerForUncaughtExceptions), [&](const BuiltinMarkedEntry& entry) {
+                BuiltinName name = m_builtins.at(entry.builtin).name;
+                return name && m_builtins.findMember(holder, name).outcome == BuiltinMemberLookup::Outcome::Found;
+            });
+        }
+        default:
+            return false;
+        }
+    };
+    bool unseenCodeMayRunInFront = programLetsUnseenCodeRunWhere([&](const Witness& witness) {
+        return !cannotRunInFrontOfSite(FunctionID(witness.function), ValueID(witness.value));
+    });
+    if (unseenCodeMayRunInFront)
+        return true;
+    for (uint32_t number = 0; number < m_source.functions.size(); ++number) {
+        FunctionID id(number);
+        const BodyIndex* index = isReached(id) && !isLibraryCode(m_source, m_source.at(id)) ? m_inputs.bodies.find(id) : nullptr;
+        if (!index)
+            continue;
+        for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
+            for (BodyValue value : index->block(BlockID(block)).values()) {
+                if (laysListener(*index, value) && !cannotRunInFrontOfSite(id, value.id()))
+                    return true;
+            }
+        }
+    }
+    return false;
 }
 
 bool BuilderOfProgramFacts::everyRunComesTo(const Witness& site)
@@ -5372,7 +5406,7 @@ bool BuilderOfProgramFacts::everyRunComesTo(const Witness& site)
         if (module.body && !isLibraryCode(m_source, m_source.at(module.body)) && bodyMayLeave(module.body, ThrowsOfOperations::Count))
             return false;
     }
-    return !throwAtLoadMayBeSurvived();
+    return !throwInFrontMayBeSurvived(site);
 }
 
 template<typename Functor>

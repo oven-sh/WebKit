@@ -3432,6 +3432,109 @@ static bool appendListPassedToPush(Walker& walker, const BodyValue& call)
     return true;
 }
 
+bool canCallCompilerHelper(Walker&, FunctionID helper);
+Reference callCompilerHelper(Walker&, FunctionID helper, std::span<const Reference> arguments, Origin);
+
+static FunctionID findFunctionThatGoesOverListPassedTo(Walker& walker, BuiltinID called)
+{
+    const Program& program = walker.program();
+    const BuiltinTable& table = program.builtins();
+    BuiltinID helper;
+    if (called == table.canonicalID(Builtins::MathMax))
+        helper = Builtins::CompilerHelpersMaxOfList;
+    else if (called == table.canonicalID(Builtins::MathMin))
+        helper = Builtins::CompilerHelpersMinOfList;
+    if (!helper || !table.contains(helper))
+        return { };
+    for (const BuiltinOverload& row : table.overloadsOf(table.canonicalID(helper))) {
+        const RuntimeFunctionEntry* held = row.mode == BuiltinCallMode::Call ? findRuntimeFunction(program, row.libraryFunction()) : nullptr;
+        if (held && held->function && program.at(held->function).hasBody())
+            return held->function;
+    }
+    return { };
+}
+
+bool goOverListInPlaceOfCallOfBuiltin(Walker& walker, const BodyValue& call, Draft& written)
+{
+    if (written.opcode != Opcode::CallList || walker.isUnreachable())
+        return false;
+    Reference callee = written.calleeOperand();
+    Reference list = written.listOperand();
+    TypeID proven = callee ? walker.typeOf(callee) : TypeID();
+    if (!proven || !list)
+        return false;
+    Type type = walker.types().at(proven);
+    BuiltinID called = type.isObject() ? singleBuiltinOf(walker.types(), type) : BuiltinID();
+    FunctionID function = called ? findFunctionThatGoesOverListPassedTo(walker, walker.program().builtins().canonicalID(called)) : FunctionID();
+    if (!function || !canCallCompilerHelper(walker, function))
+        return false;
+    Origin origin = written.origin();
+    origin.isTailCall = false;
+    Reference found = callCompilerHelper(walker, function, singleElementSpan(list), origin);
+    if (!found || walker.isUnreachable() || walker.hasFailed())
+        return true;
+    walker.count(StatisticID::LibraryFunctionsEnteredBehindRows);
+
+    Draft question(Opcode::TypeTest, origin);
+    question.setValueOperand(found);
+    question.setTestedType(TypeTable::undefined);
+    Reference isLeftToCall = walker.build(WTF::move(question));
+    if (!isLeftToCall)
+        return true;
+    BlockID asWritten = walker.addBlock(BlockFrequency::Unlikely);
+    BlockID isFound = walker.addBlock();
+    BlockID behind = walker.addBlock();
+    Reference result = walker.addParameter(behind, { }, Representation::JSValue);
+    walker.branch(isLeftToCall, asWritten, isFound);
+    walker.continueIn(isFound);
+    if (!walker.isUnreachable()) {
+        Draft proof(Opcode::Narrowed, origin);
+        proof.setValueOperand(found);
+        proof.setTestOperand(isLeftToCall);
+        proof.setOperandIndex(OperandIndex::TypeTest::value);
+        proof.setIsOnTakenEdge(false);
+        Reference answer = isLeftToCall.isValue() ? walker.build(WTF::move(proof)) : found;
+        TypeArena& types = walker.types();
+        TypeID byRows = walker.resultTypeOf(written);
+        if (answer && byRows && !types.isSubset(walker.typeOf(answer), byRows)) {
+            answer = walker.proveOrTrap(answer, walker.typeThatUnitMayTestFor(types.testablePartOf(byRows)), ProofSource::ResultOfCall, origin);
+            walker.count(StatisticID::ResultsOfLibraryFunctionsHeldToRows);
+        }
+        if (answer && !walker.isUnreachable())
+            walker.jumpTo(behind, singleElementSpan(answer));
+    }
+    walker.continueIn(asWritten);
+    Draft closed = written;
+    closed.setOrigin(origin);
+    closed.resultIsReturnedAtOnce = false;
+    walker.chooseConservativeFields(closed);
+    Reference answered = walker.build(WTF::move(closed));
+    if (answered && !walker.isUnreachable())
+        walker.jumpTo(behind, singleElementSpan(answered));
+    walker.continueIn(behind);
+    walker.bind(call.id(), result);
+    return true;
+}
+
+static bool goOverListPassedInPlaceOfCall(Walker& walker, const BodyValue& call)
+{
+    if (call.opcode() != Opcode::CallList || walker.isUnreachable())
+        return false;
+    Draft written = walker.draftOf(call);
+    if (walker.hasFailed())
+        return false;
+    Reference list = findListThatCallWouldTakeInPlaceOfItsCopy(walker, call, written.listOperand());
+    if (list)
+        written.setListOperand(list);
+    else if (Reference made = written.listOperand(); !made || !made.isValue() || walker.code().at(made.id()).opcode != Opcode::NewArray)
+        return false;
+    if (!goOverListInPlaceOfCallOfBuiltin(walker, call, written))
+        return false;
+    if (list)
+        walker.count(StatisticID::CallsThatTakeListInPlaceOfItsCopy);
+    return true;
+}
+
 bool callBuiltinOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
     if (!opcodesOfWalkBuiltins.contains(value.opcode()))
@@ -3455,7 +3558,7 @@ bool callBuiltinOfItsOpcodes(Walker& walker, const BodyValue& value)
         heardAsArm.emplace(walker);
     CallInWalkBuiltins call(walker, value);
     if (!call.plan())
-        return false;
+        return goOverListPassedInPlaceOfCall(walker, value);
     if (!call.goesByOneRow() && openGuessAtOperandOfBuiltinCall(walker, value))
         return true;
     if (call.goesByOneRow() && walker.isInLoop() && call.standsInLine() && call.convertsArgumentThatComesRoundLoop() && openGuessAtOperandOfBuiltinCall(walker, value, OperandsTestedAtBuiltinCall::Arguments))

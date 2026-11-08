@@ -195,7 +195,7 @@ TypedForm typedFormOf(Walker& walker, const BodyValue& value, const TypesOfInput
     return typedFormAsReceiverStands(walker, value, types);
 }
 
-static TypedForm typedFormAsReceiverStands(Walker& walker, const BodyValue& value, const TypesOfInputs& types)
+static ALWAYS_INLINE TypedForm typedFormAsReceiverStands(Walker& walker, const BodyValue& value, const TypesOfInputs& types)
 {
     Opcode opcode = value.opcode();
     if (opcode == Opcode::ElemGet && buildTypedOperationOnStrings(walker, value, InputsOfTypedOperation(walker, &types)))

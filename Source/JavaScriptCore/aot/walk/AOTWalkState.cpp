@@ -525,7 +525,7 @@ void WalkState::Held::fillTableOfPlaces()
     }
 }
 
-uint32_t WalkState::Held::findOrAddHolder(Reference object)
+ALWAYS_INLINE uint32_t WalkState::Held::findOrAddHolder(Reference object)
 {
     uint32_t position = findRecordOfHolder(object);
     if (position != none) {
@@ -790,7 +790,7 @@ void WalkState::Held::countNoLongerAmongReachedByEffects(const Holder& holder)
     m_numberOfElementsReachedByEffects -= holder.numberOfElements;
 }
 
-void WalkState::Held::listAsReachedByEffects(uint32_t holder)
+ALWAYS_INLINE void WalkState::Held::listAsReachedByEffects(uint32_t holder)
 {
     ASSERT(m_holders[holder].placeAmongReachedByEffects == none);
     m_holders.mutableAt(holder).placeAmongReachedByEffects = m_holdersReachedByEffects.size();

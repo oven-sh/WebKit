@@ -1898,7 +1898,7 @@ void Walker::checkProofsOfOperandsOfDirectCall(const Draft& call)
     }
 }
 
-static ProofSource sourceOfProofInWalk(Opcode opcode)
+static ALWAYS_INLINE ProofSource sourceOfProofInWalk(Opcode opcode)
 {
     switch (opcode) {
     case Opcode::GetModuleVariable:
@@ -2028,7 +2028,7 @@ static bool codeGoesByTypesOfOperandsInWalk(const Operation& record)
     return familyOf(record.opcode) == OperationFamily::Operator && !(PayloadWord::form(record.opcode) && record.form() == OperatorForm::Generic);
 }
 
-bool Walker::entryParameterIsCapture(const Block& entry, ValueID parameter) const
+ALWAYS_INLINE bool Walker::entryParameterIsCapture(const Block& entry, ValueID parameter) const
 {
     if (namesOnlyUnitsOfItsFunction(unit().role))
         return false;
@@ -3006,20 +3006,28 @@ Reference Walker::Frame::narrowestNameInLongList(Reference reference) const
     return reference;
 }
 
+ALWAYS_INLINE Reference Walker::narrowestNameOf(Reference reference) const
+{
+    const Frame& frame = m_frames.last();
+    if (!(frame.narrowedValues & Frame::bitOfNarrowedValue(reference)))
+        return reference;
+    if (frame.listOfNarrowerNamesIsLong) [[unlikely]]
+        return frame.narrowestNameInLongList(reference);
+    for (uint32_t place = frame.firstNarrowerName; place != noNarrowerName; place = frame.narrowerNames[place].next) {
+        if (frame.narrowerNames[place].value == reference)
+            return frame.narrowerNames[place].name;
+    }
+    return reference;
+}
+
+Reference Walker::nameNarrowedBehindTests(Reference reference) const
+{
+    return narrowestNameOf(reference);
+}
+
 Reference Walker::narrowestReferenceOf(ValueID input) const
 {
     const Frame& frame = m_frames.last();
-    auto narrowestNameOf = [&](Reference reference) {
-        if (!(frame.narrowedValues & Frame::bitOfNarrowedValue(reference)))
-            return reference;
-        if (frame.listOfNarrowerNamesIsLong) [[unlikely]]
-            return frame.narrowestNameInLongList(reference);
-        for (uint32_t place = frame.firstNarrowerName; place != noNarrowerName; place = frame.narrowerNames[place].next) {
-            if (frame.narrowerNames[place].value == reference)
-                return frame.narrowerNames[place].name;
-        }
-        return reference;
-    };
     Reference reference = narrowestNameOf(referenceBoundIn(frame, input));
     while (m_numbersOfStates.newestCheckedNameOf(reference)) {
         Reference checked = m_state.checkedNameOf(reference);
@@ -5312,6 +5320,9 @@ void Walker::closeEdgesInto(BlockID block, BlockID inputBlock, std::span<const u
         return tested;
     };
 
+    auto isNarrowing = [&](Reference name) {
+        return name.isValue() && m_code.at(name.id()).opcode == Opcode::Narrowed;
+    };
     auto valueBehindNarrowings = [&](Reference name) {
         while (name && name.isValue() && m_code.at(name.id()).opcode == Opcode::Narrowed && !m_code.at(name.id()).narrowsHolderOfOperand() && !m_code.at(name.id()).narrowsOtherResultOfOperand())
             name = Reference::value(m_code.at(name.id()).operand(0));
@@ -5337,15 +5348,15 @@ void Walker::closeEdgesInto(BlockID block, BlockID inputBlock, std::span<const u
 
         TypeID type = m_openEdges[edges[0]].types[index];
         forms.shrink(0);
+        bool someIsNarrowing = false;
         for (uint32_t place : edges) {
-            type = joinTypes(type, m_openEdges[place].types[index]);
-            forms.append(representationOf(m_openEdges[place].arguments[index]));
+            const OpenEdge& open = m_openEdges[place];
+            Reference argument = open.arguments[index];
+            type = joinTypes(type, open.types[index]);
+            forms.append(representationOf(argument));
+            someIsNarrowing |= isNarrowing(argument);
         }
-        auto isNarrowing = [&](Reference argument) {
-            return argument.isValue() && m_code.at(argument.id()).opcode == Opcode::Narrowed;
-        };
-        Reference second = m_openEdges[edges[1]].arguments[index];
-        Reference narrowed = !isHandler && (first == second || isNarrowing(first) || isNarrowing(second)) ? valueBehindNarrowings(first) : Reference();
+        Reference narrowed = someIsNarrowing && !isHandler ? valueBehindNarrowings(first) : Reference();
         if (narrowed && narrowed.isValue() && !m_code.isConstant(narrowed.id()) && std::ranges::all_of(edges, [&](uint32_t place) {
             Reference argument = m_openEdges[place].arguments[index];
             return valueBehindNarrowings(argument) == narrowed && representationOf(argument) == representationOf(narrowed);
@@ -5375,6 +5386,12 @@ void Walker::closeEdgesInto(BlockID block, BlockID inputBlock, std::span<const u
         });
         joinedNames.shrink(std::ranges::unique(joinedNames).begin() - joinedNames.begin());
         joinedNames.removeAllMatching([&](uint32_t slot) {
+            bool someIsNarrowing = std::ranges::any_of(edges, [&](uint32_t place) {
+                Reference name = m_openEdges[place].names.nameIn(slot);
+                return name && isNarrowing(name);
+            });
+            if (!someIsNarrowing)
+                return false;
             Reference value = valueBehindNarrowings(m_openEdges[edges[0]].names.nameIn(slot));
             if (!value || !value.isValue() || m_code.isConstant(value.id()))
                 return false;
@@ -5383,7 +5400,10 @@ void Walker::closeEdgesInto(BlockID block, BlockID inputBlock, std::span<const u
                 Reference name = m_openEdges[place].names.nameIn(slot);
                 if (!name || valueBehindNarrowings(name) != value || representationOf(name) != representationOf(value))
                     return false;
-                type = type ? joinTypes(type, ownTypeOf(name)) : ownTypeOf(name);
+            }
+            for (uint32_t place : edges) {
+                TypeID own = ownTypeOf(m_openEdges[place].names.nameIn(slot));
+                type = type ? joinTypes(type, own) : own;
             }
             if (!m_types.isSubset(ownTypeOf(value), type))
                 return false;

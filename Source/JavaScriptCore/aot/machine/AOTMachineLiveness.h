@@ -96,6 +96,15 @@ public:
     Position lastCallIn(const Block* block, Bank bank) const { return m_lastCallsInBlocks.isEmpty() ? 0 : m_lastCallsInBlocks[block->index()][static_cast<unsigned>(bank)]; }
     Position nextCallBehindEndOf(const Block* block, Bank bank) const { return lastCallIn(block, bank) ? m_nextCallsBehindEnds[block->index()][static_cast<unsigned>(bank)] : nextCallBehindHeadOf(block, bank); }
     Position endOfWhatWaysLeadToFrom(const Block* block) const { return m_endsOfWhatWaysLeadTo[block->index()]; }
+    bool standsInLoopThatMayTurn(const Order& order, const BlockPlace& place) const
+    {
+        const Loop* const loops = order.loops().data();
+        for (uint32_t loop = place.loop; loop != noLoop; loop = loops[loop].parent) {
+            if (endOfWhatWaysLeadToFrom(order.blocksInOrder()[loops[loop].firstBlock]) == noPosition)
+                return true;
+        }
+        return false;
+    }
     bool hasLandingPads() const { return m_hasLandingPads; }
 
     std::span<Operation* const> sunkInto(const Block* block) const { return m_sunk.isEmpty() ? std::span<Operation* const>() : m_sunk[block->index()].span(); }

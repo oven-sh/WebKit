@@ -62,7 +62,7 @@ static bool operandsAreInSightInQuotients(Walker& walker, const BodyValue& opera
     return true;
 }
 
-static std::optional<BodyValue> findOperatorOnExactIntegersInQuotients(Walker& walker, Opcode opcode, ValueID number, const InputsOfTypedOperation& inputs)
+static ALWAYS_INLINE std::optional<BodyValue> findOperatorOnExactIntegersInQuotients(Walker& walker, Opcode opcode, ValueID number, const InputsOfTypedOperation& inputs)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID written = number ? index.valueBehindCasts(number) : ValueID();

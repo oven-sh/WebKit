@@ -516,7 +516,8 @@ public:
     void keepWhatMockIsLaidOver(ModuleID);
     void didLayMock() { m_moduleWithMockBeingLaid = std::nullopt; }
     void endMockLaidOverFile(ModuleID);
-    JSValue exportsBeforeMock(ModuleID, bool evenIfItsBodyThrew = false);
+    enum class OwedBelowOriginal : bool { IsPaid, StaysOwed };
+    JSValue exportsBeforeMock(ModuleID, bool evenIfItsBodyThrew = false, OwedBelowOriginal = OwedBelowOriginal::IsPaid);
     JSObject* namespaceOfFileThatRanAheadOfMock(ModuleID);
     void letGoOfNamespaceOfFileThatRanAheadOfMock(ModuleID);
     bool runMockThatWaits(ModuleID);
@@ -578,6 +579,9 @@ public:
     bool mocksWaitToBeLaidAgain() const;
     enum class AtMock : bool { GoesOn, Stops };
     BitVector reachedByStatements(ModuleID root, AtMock) const;
+    void listImportersAndRequirers();
+    BitVector modulesThatReach(std::span<const ModuleID> files);
+    BitVector modulesThatReach(ModuleID file) { return modulesThatReach(std::span(&file, 1)); }
     bool importsByStatements(ModuleID importer, ModuleID imported) const;
     enum class MockState : uint8_t { None, Waits, Runs, InPlace, InPlaceWhileAnotherWaits, InPlaceOverModuleThatHasRun, Fills, LaidOver, Failed, Ended, EndedWhileAnotherWaits, NoneOfThem };
     MockState mockState(ModuleID);
@@ -1304,6 +1308,8 @@ private:
     uint32_t m_activeSynchronousLoad { 0 };
     Structure* m_namespaceStructure { nullptr };
     JSObject* m_prototypeOfModuleObjects { nullptr };
+    JSObject* m_errorsOfExportsThatBuildFoundAbsent { nullptr };
+    unsigned m_numberOfErrorsOfExportsThatBuildFoundAbsent { 0 };
     Structure* m_extensibleNamespaceStructure { nullptr };
     Identifier m_moduleExportsName;
     enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain, BegunAndMadeObjectOfESModule, ReturnedAndNotListed };
@@ -1838,6 +1844,8 @@ private:
         bool wasLoadedInThisTestFile { false };
     };
     Vector<std::pair<ModuleID, JSObject*>, 4> m_namespacesBeingMade;
+    size_t m_outermostNamespaceReadWhileBeingMade { notFound };
+    Vector<std::pair<ModuleID, JSObject*>, 4> m_namespacesThatLackNames;
     Vector<std::pair<JSObject*, UniquedStringImpl*>, 4> m_namesBeingReadOffListers;
     struct CollectionOfNamesBehindStars {
         Vector<std::pair<JSObject*, IdentifierSet>, 1> namesOfEndedMocks;

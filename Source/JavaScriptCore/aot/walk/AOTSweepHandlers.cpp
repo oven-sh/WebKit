@@ -57,7 +57,7 @@ static constexpr TerminatorKindSet sweptTerminatorsThatMayExitSidewaysOrCollect 
     return kinds;
 }();
 
-static bool makingSweptConstantsMayExitSidewaysOrCollect(const Code& code, std::span<const ValueID> used)
+static ALWAYS_INLINE bool makingSweptConstantsMayExitSidewaysOrCollect(const Code& code, std::span<const ValueID> used)
 {
     for (ValueID id : used) {
         if (!id)

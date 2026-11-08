@@ -100,6 +100,8 @@ struct KeptByTypedAccesses final : Walker::KeptForBuild {
     HashMap<uint64_t, bool> whetherNothingAnswersAbove;
     HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> whetherEveryReceiverIsRecord;
     HashMap<uint64_t, bool> whetherNoMemberHasNameOrFindsItLaidAbove;
+    BitVector classesClimbedForQuestion;
+    Vector<uint32_t> classesToForgetBehindQuestion;
     HashMap<uint64_t, MemberFound> membersFoundAbove;
     enum class RowAbove : uint8_t { NotAsked, IsAsked, Passes, Fails };
     Vector<RowAbove> rowsAboveClasses;
@@ -812,7 +814,7 @@ static bool listOfWrittenObjectHoldsInTypedAccess(const Walker& walker, std::spa
     }).get(asked);
 }
 
-static bool isFilledForBodyBeingReadInTypedAccess(const Walker& walker, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field, ValueID object, PropertyKeyID key)
+static ALWAYS_INLINE bool isFilledForBodyBeingReadInTypedAccess(const Walker& walker, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field, ValueID object, PropertyKeyID key)
 {
     if (!field.isFilledByEveryConstruction || !field.isMovedOutByNoStore)
         return false;
@@ -1653,16 +1655,23 @@ static std::optional<OptionSet<FactOfCell>> askAheadAboutReadOfSlotThatMayBeEmpt
     });
 }
 
-static bool statementsLayNameAboveObjectsOfForTypedAccess(const Walker& walker, LayoutID member, PropertyKeyID key, bool guardOfNameAnswersForUnknownKeys = false)
+static bool statementsLayNameAboveObjectsOfForTypedAccess(const Walker& walker, LayoutID member, PropertyKeyID key, bool guardOfNameAnswersForUnknownKeys = false, KeptByTypedAccesses* climbedByOtherMembers = nullptr)
 {
     const Program& program = walker.program();
     if (program.at(member).kind != LayoutKind::Instance)
         return false;
     const Vector<LinkedNameOnPrototype>& namesOnPrototypes = walker.facts().held().namesOnPrototypes;
     size_t numberOfClassesLeft = program.layouts.size();
+    size_t firstOfThisClimb = climbedByOtherMembers ? climbedByOtherMembers->classesToForgetBehindQuestion.size() : 0;
     for (LayoutID current = declaredLayoutOf(program, member); current;) {
         if (!numberOfClassesLeft--)
             return true;
+        const_cast<Walker&>(walker).count(StatisticID::ClassesClimbedAboveMembersOfFamilies);
+        if (climbedByOtherMembers) {
+            if (climbedByOtherMembers->classesClimbedForQuestion.set(current.index()))
+                return std::ranges::contains(climbedByOtherMembers->classesToForgetBehindQuestion.span().subspan(firstOfThisClimb), static_cast<uint32_t>(current.index()));
+            climbedByOtherMembers->classesToForgetBehindQuestion.append(current.index());
+        }
         for (const LinkedNameOnPrototype& name : std::ranges::equal_range(namesOnPrototypes, current, { }, &LinkedNameOnPrototype::layout)) {
             if (name.key ? name.key == key : !guardOfNameAnswersForUnknownKeys)
                 return true;
@@ -1684,9 +1693,16 @@ static bool findsNothingBehindLooksInTypedRead(const Walker& walker, const Recei
         return false;
     const SlotPlan& slots = walker.plan().slots();
     auto askEachMember = [&] {
-        return std::ranges::none_of(receivers.members, [&](LayoutID member) {
-            return slots.findField(program, member, key) || statementsLayNameAboveObjectsOfForTypedAccess(walker, member, key, receivers.possibleChanges.contains(LayoutChange::ChangesPrototype));
+        KeptByTypedAccesses* climbed = receivers.members.size() > 1 ? &keptByTypedAccesses(const_cast<Walker&>(walker)) : nullptr;
+        bool noneAnswers = std::ranges::none_of(receivers.members, [&](LayoutID member) {
+            return slots.findField(program, member, key) || statementsLayNameAboveObjectsOfForTypedAccess(walker, member, key, receivers.possibleChanges.contains(LayoutChange::ChangesPrototype), climbed);
         });
+        if (climbed) {
+            for (uint32_t index : climbed->classesToForgetBehindQuestion)
+                climbed->classesClimbedForQuestion.clear(index);
+            climbed->classesToForgetBehindQuestion.shrink(0);
+        }
+        return noneAnswers;
     };
     bool noMemberHasNameOrFindsItLaidAbove;
     if (std::optional<uint64_t> asked = questionKeptAboutReceiversForTypedAccess(walker, receivers, key)) {

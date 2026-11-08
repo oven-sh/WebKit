@@ -120,16 +120,7 @@ void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
     bool keepsImportersOfTestFile = which == ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule;
     if (keepsImportersOfTestFile && wasLoadedInThisTestFile(mocked))
         return;
-    if (m_importersByStatement.isEmpty()) {
-        m_importersByStatement.grow(m_table.size());
-        m_requirers.grow(m_table.size());
-        for (uint32_t importer = 0; importer < m_table.size(); ++importer) {
-            for (const ModuleRequestData& request : m_table.requests(ModuleID(importer))) {
-                if (!request.isHoisted && !request.isDeferred)
-                    (request.isRequire ? m_requirers : m_importersByStatement)[moduleLoadedBy(request).index()].append(importer);
-            }
-        }
-    }
+    listImportersAndRequirers();
     BitVector asImported(m_table.size());
     asImported.quickSet(mocked.index());
     asImported.quickSet(moduleWithExportsOf(mocked).index());
@@ -184,6 +175,43 @@ void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
         for (uint32_t index : m_importersByStatement[imported])
             visit(index);
     }
+}
+
+void Modules::listImportersAndRequirers()
+{
+    if (!m_importersByStatement.isEmpty())
+        return;
+    m_importersByStatement.grow(m_table.size());
+    m_requirers.grow(m_table.size());
+    for (uint32_t importer = 0; importer < m_table.size(); ++importer) {
+        for (const ModuleRequestData& request : m_table.requests(ModuleID(importer))) {
+            if (!request.isHoisted && !request.isDeferred)
+                (request.isRequire ? m_requirers : m_importersByStatement)[moduleLoadedBy(request).index()].append(importer);
+        }
+    }
+}
+
+BitVector Modules::modulesThatReach(std::span<const ModuleID> files)
+{
+    listImportersAndRequirers();
+    BitVector reaching(m_table.size());
+    Vector<uint32_t, 32> work;
+    auto enter = [&](ModuleID module) {
+        for (ModuleID each : { module, moduleWithExportsOf(module), m_table.fileBehindFace(module).value_or(module) }) {
+            if (!reaching.quickSet(each.index()))
+                work.append(each.index());
+        }
+    };
+    for (ModuleID file : files)
+        enter(file);
+    while (!work.isEmpty()) {
+        uint32_t reached = work.takeLast();
+        for (uint32_t importer : m_importersByStatement[reached])
+            enter(ModuleID(importer));
+        for (uint32_t requirer : m_requirers[reached])
+            enter(ModuleID(requirer));
+    }
+    return reaching;
 }
 
 void Modules::tellThatFileDidNotRunAgain(ModuleID module)

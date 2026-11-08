@@ -709,6 +709,10 @@ void Walker::moveFrame(size_t from, size_t to)
         if (resumption == from)
             resumption = to;
     }
+    for (ExpectationOfArgument& expected : m_expectedOfArgumentsOfCopies) {
+        if (expected.frameOfCopy == from)
+            expected.frameOfCopy = static_cast<uint32_t>(to);
+    }
     for (size_t place = 0; place < m_openLoops.size(); ++place) {
         if (m_openLoops[place].frame == from)
             m_openLoops.changeable(place).frame = static_cast<uint32_t>(to);

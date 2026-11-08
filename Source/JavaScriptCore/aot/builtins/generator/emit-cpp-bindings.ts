@@ -59,6 +59,7 @@ const engineHeaders: readonly string[] = [
 ];
 
 const checkedExpressionHeaders: readonly string[] = [
+  "AOTLimits.h",
   "AbstractModuleRecord.h",
   "IterationKind.h",
   "JSArrayIterator.h",

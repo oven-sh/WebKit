@@ -48,7 +48,7 @@ static constexpr OpcodeSet conversionsToObjectsInFolding { Opcode::ToObject, Opc
 static constexpr OpcodeSet opcodesOfFolding = operationsOnPrimitivesInFolding | testsThatTypesDecideInFolding | castsOfFolding | readsOfFolding | storesThatStateFollowsForFolding | checksThatHandOnOrThrow
     | conversionsToObjectsInFolding | OpcodeSet { Opcode::TypeOf, Opcode::ToLength };
 
-static PrimitiveKnownToFolding onlyValueOfTypeInFolding(const TypeArena& types, TypeID id)
+static ALWAYS_INLINE PrimitiveKnownToFolding onlyValueOfTypeInFolding(const TypeArena& types, TypeID id)
 {
     if (!id)
         return { };
@@ -78,7 +78,7 @@ static PrimitiveKnownToFolding onlyValueOfTypeInFolding(const TypeArena& types, 
     }
 }
 
-static PrimitiveKnownToFolding primitiveHeldInFolding(Walker& walker, Reference reference)
+static ALWAYS_INLINE PrimitiveKnownToFolding primitiveHeldInFolding(Walker& walker, Reference reference)
 {
     if (!reference)
         return { };
@@ -397,7 +397,7 @@ static PrimitiveKnownToFolding evaluateInFolding(const Program& program, TypeRea
     }
 }
 
-static Reference foldOverKnownPrimitivesInFolding(Walker& walker, const BodyValue& value)
+static ALWAYS_INLINE Reference foldOverKnownPrimitivesInFolding(Walker& walker, const BodyValue& value)
 {
     std::array<PrimitiveKnownToFolding, 2> operands;
     for (uint32_t operandIndex = 0; operandIndex < operands.size(); ++operandIndex) {

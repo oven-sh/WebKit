@@ -31,6 +31,7 @@ static constexpr uint32_t inlineWindowOfWrittenCallInLoops = 120;
 static constexpr uint32_t inlineLimitOfLeaves = 12;
 static constexpr uint32_t inlineLimitOfLeavesOutsideLoops = 3;
 static constexpr uint32_t inlineLimitOfHeads = 4;
+static constexpr uint32_t inlineLimitOfHeadsWhoseQuestionWasAsked = inlineLimitOfHeads + 1;
 static constexpr uint32_t inlineLimitOfHelpers = 40;
 static constexpr uint32_t inlineWindowOfHelpers = 120;
 
@@ -994,6 +995,10 @@ static bool copyHeadThatReturnsAtOnceAtInlining(Walker& walker, const BodyValue&
     TypeID shown = argument ? walker.typeShown(argument) : TypeID(TypeTable::undefined);
     bool isNeverTrue = isNeverType(truthyPartOf(types, shown));
     bool isAlwaysTrue = isNeverType(falsyPartOf(types, shown));
+    if (std::optional<bool> decided = argument && !isNeverTrue && !isAlwaysTrue ? outcomeKnownOf(walker, argument) : std::nullopt) {
+        isNeverTrue = !*decided;
+        isAlwaysTrue = *decided;
+    }
     if (isNeverTrue || isAlwaysTrue) {
         if (isAlwaysTrue != head->returnsWhereTrue)
             return false;
@@ -1084,7 +1089,7 @@ static bool branchAsksFieldAtInlining(const BodyIndex& body, BodyTerminator bran
     }
 }
 
-static std::optional<BitVector> findHeadThatAsksFieldsAtInlining(const BodyIndex& body)
+static std::optional<BitVector> findHeadThatAsksFieldsAtInlining(const BodyIndex& body, uint32_t limit = inlineLimitOfHeads)
 {
     Vector<BlockID, 8> head;
     Vector<BlockID, 8> queue { entryBlock };
@@ -1102,9 +1107,9 @@ static std::optional<BitVector> findHeadThatAsksFieldsAtInlining(const BodyIndex
         for (uint32_t place = 0; isAdmitted && place < block.numberOfValues(); ++place) {
             Opcode opcode = body.opcodeOf(ValueID(block.firstValue().index() + place));
             weightOfBlock += !operationsThatWeighNothingInHeadsAtInlining.contains(opcode);
-            isAdmitted = operationsOfHeadsAtInlining.contains(opcode) && weight + weightOfBlock <= inlineLimitOfHeads;
+            isAdmitted = operationsOfHeadsAtInlining.contains(opcode) && weight + weightOfBlock <= limit;
         }
-        if (!isAdmitted || weight + weightOfBlock > inlineLimitOfHeads) {
+        if (!isAdmitted || weight + weightOfBlock > limit) {
             if (!next)
                 return std::nullopt;
             continue;
@@ -1144,6 +1149,132 @@ static std::optional<BitVector> findHeadThatAsksFieldsAtInlining(const BodyIndex
     return blocksOfHead;
 }
 
+namespace {
+
+struct QuestionOfBits {
+    ValueID object;
+    PropertyKeyID key;
+    int64_t mask { 0 };
+    bool isNegated { false };
+};
+
+} // anonymous namespace
+
+static std::optional<QuestionOfBits> findQuestionOfBitsAtInlining(const BodyIndex& body, BodyTerminator end)
+{
+    if (end.kind() != TerminatorKind::Branch)
+        return std::nullopt;
+    QuestionOfBits question;
+    ValueID asked = valueBehindChecksAtInlining(body, end.operand(0));
+    while (!body.isParameter(asked) && (body.opcodeOf(asked) == Opcode::ToBoolean || body.opcodeOf(asked) == Opcode::LogicalNot)) {
+        question.isNegated ^= body.opcodeOf(asked) == Opcode::LogicalNot;
+        asked = valueBehindChecksAtInlining(body, body.value(asked).operand(0));
+    }
+    if (body.isParameter(asked) || body.opcodeOf(asked) != Opcode::BitAnd)
+        return std::nullopt;
+    ValueID sides[2] = { valueBehindChecksAtInlining(body, body.value(asked).operand(0)), valueBehindChecksAtInlining(body, body.value(asked).operand(1)) };
+    for (unsigned side = 0; side < 2; ++side) {
+        ValueID read = sides[side];
+        ValueID mask = sides[1 - side];
+        if (body.isParameter(read) || body.isParameter(mask) || body.opcodeOf(read) != Opcode::PropGet || body.opcodeOf(mask) != Opcode::Integer || body.value(read).as<Opcode::PropGet>().isFreeName())
+            continue;
+        question.object = valueBehindChecksAtInlining(body, body.value(read).objectOperand());
+        question.key = body.value(read).key();
+        question.mask = body.value(mask).as<Opcode::Integer>().integer();
+        return question;
+    }
+    return std::nullopt;
+}
+
+static ValueID argumentWrittenForAtInlining(const BodyValue& call, const Function& callee, uint32_t entryParameter)
+{
+    if (call.opcode() == Opcode::CallDirect) {
+        std::span<const ValueID> operands = call.variadicOperands();
+        return entryParameter < operands.size() ? operands[entryParameter] : ValueID();
+    }
+    if (call.opcode() != Opcode::Call || callee.entryParameterKind(entryParameter) != EntryParameter::Parameter)
+        return { };
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    uint32_t position = entryParameter - callee.firstParameterIndex();
+    return position < arguments.size() ? arguments[position] : ValueID();
+}
+
+bool Walker::questionOfHeadWasAskedAbove(const BodyValue& call, FunctionID callee, const BitVector& blocksOfHead)
+{
+    const BodyIndex& bodyOfCallee = facts().bodies().at(callee);
+    std::optional<QuestionOfBits> ofHead = findQuestionOfBitsAtInlining(bodyOfCallee, bodyOfCallee.terminator(entryBlock));
+    std::optional<uint32_t> entryParameter = ofHead ? bodyOfCallee.block(entryBlock).indexOfParameter(ofHead->object) : std::nullopt;
+    if (!entryParameter)
+        return false;
+    auto targetsOfHead = bodyOfCallee.terminator(entryBlock).targets();
+    bool staysInHeadWhereTaken = blocksOfHead.get(targetsOfHead[0].block().index());
+    bool staysInHeadWhereNotTaken = blocksOfHead.get(targetsOfHead[1].block().index());
+    auto asksTheSame = [&](const QuestionOfBits& other) {
+        return other.key == ofHead->key && other.mask == ofHead->mask;
+    };
+
+    auto answerOfBranchLeadsIntoHead = [&](const BodyIndex& index, BlockID asking, const QuestionOfBits& asked, BlockID blockOfSite) {
+        auto targets = index.terminator(asking).targets();
+        for (unsigned side = 0; side < 2; ++side) {
+            BlockID target = targets[side].block();
+            if (targets[0].block() == targets[1].block() || index.numberOfIncomingEdges(target) != 1 || !index.dominates(target, blockOfSite))
+                continue;
+            bool bitsAreSet = !side != asked.isNegated;
+            return bitsAreSet != ofHead->isNegated ? staysInHeadWhereTaken : staysInHeadWhereNotTaken;
+        }
+        return true;
+    };
+
+    size_t frameIndex = m_frames.size() - 1;
+    ValueID site = call.id();
+    ValueID argument = argumentWrittenForAtInlining(call, program().at(callee), *entryParameter);
+    while (argument) {
+        const BodyIndex& index = *m_frames[frameIndex].index;
+        argument = valueBehindChecksAtInlining(index, argument);
+        BlockID blockOfSite = index.blockOf(site);
+        for (BlockID asking : { blockOfSite == entryBlock ? BlockID() : index.immediateDominator(blockOfSite), blockOfSite == entryBlock ? BlockID() : BlockID(entryBlock) }) {
+            std::optional<QuestionOfBits> asked = asking ? findQuestionOfBitsAtInlining(index, index.terminator(asking)) : std::nullopt;
+            if (asked && asksTheSame(*asked) && asked->object == argument)
+                return answerOfBranchLeadsIntoHead(index, asking, *asked, blockOfSite);
+        }
+        auto& callsOfEntryBlock = m_questionsAskedByCallsOfEntryBlocks.ensure(&index, [&] {
+            Vector<QuestionAskedByCall> asked;
+            BodyBlock entry = index.block(entryBlock);
+            for (uint32_t place = 0; place < entry.numberOfValues(); ++place) {
+                ValueID id(entry.firstValue().index() + place);
+                Opcode opcode = index.opcodeOf(id);
+                if (opcode != Opcode::Call && opcode != Opcode::CallDirect)
+                    continue;
+                BodyValue other = index.value(id);
+                FunctionID calledAbove = opcode == Opcode::CallDirect ? other.function() : facts().linked().calleeAt(m_frames[frameIndex].function, id);
+                const BodyIndex* bodyAbove = calledAbove ? facts().bodies().find(calledAbove) : nullptr;
+                std::optional<QuestionOfBits> question = bodyAbove && bodyAbove->opcodes().contains(Opcode::BitAnd) ? findQuestionOfBitsAtInlining(*bodyAbove, bodyAbove->terminator(entryBlock)) : std::nullopt;
+                std::optional<uint32_t> parameterAsked = question ? bodyAbove->block(entryBlock).indexOfParameter(question->object) : std::nullopt;
+                ValueID handed = parameterAsked ? argumentWrittenForAtInlining(other, program().at(calledAbove), *parameterAsked) : ValueID();
+                if (handed)
+                    asked.append({ valueBehindChecksAtInlining(index, handed), question->key, question->mask, id });
+            }
+            std::ranges::sort(asked, { }, [](const QuestionAskedByCall& question) {
+                return std::tuple(question.object.index(), question.key.bits(), question.mask, question.call.index());
+            });
+            return asked;
+        }).iterator->value;
+        auto first = std::ranges::lower_bound(callsOfEntryBlock, std::tuple(argument.index(), ofHead->key.bits(), ofHead->mask, 0u), { }, [](const QuestionAskedByCall& question) {
+            return std::tuple(question.object.index(), question.key.bits(), question.mask, question.call.index());
+        });
+        if (first != callsOfEntryBlock.end() && first->object == argument && first->key == ofHead->key && first->mask == ofHead->mask && (blockOfSite != entryBlock || first->call < site))
+            return true;
+        if (!frameIndex || !index.isParameter(argument) || index.blockOf(argument) != entryBlock)
+            return false;
+        std::optional<uint32_t> parameterOfCopy = index.block(entryBlock).indexOfParameter(argument);
+        site = m_frames[frameIndex].callCopied;
+        FunctionID copied = m_frames[frameIndex].function;
+        --frameIndex;
+        argument = parameterOfCopy && site ? argumentWrittenForAtInlining(m_frames[frameIndex].index->value(site), program().at(copied), *parameterOfCopy) : ValueID();
+    }
+    return false;
+}
+
 static bool copyHeadThatAsksFieldsAtInlining(Walker& walker, const BodyValue& call, const Draft& site, FunctionID callee, std::span<const Reference> handedOver)
 {
     if ((call.opcode() != Opcode::Call && call.opcode() != Opcode::CallDirect) || !walker.opensGuesses() || site.isNeverInlined() || !walker.facts().bodies().has(callee))
@@ -1151,7 +1282,19 @@ static bool copyHeadThatAsksFieldsAtInlining(Walker& walker, const BodyValue& ca
     if (call.opcode() == Opcode::CallDirect ? site.isConstruction() || site.role() != CodeRole::Body : !isEnteredAtInlining(walker.program().at(callee), false))
         return false;
     std::optional<BitVector> head = findHeadThatAsksFieldsAtInlining(walker.facts().bodies().at(callee));
-    return head && walker.walkInline(call, callee, handedOver, &site, &*head);
+    if (!head) {
+        const BodyIndex& body = walker.facts().bodies().at(callee);
+        if (!body.opcodes().contains(Opcode::BitAnd) || !findQuestionOfBitsAtInlining(body, body.terminator(entryBlock)))
+            return false;
+        head = findHeadThatAsksFieldsAtInlining(body, inlineLimitOfHeadsWhoseQuestionWasAsked);
+        if (!head || !walker.questionOfHeadWasAskedAbove(call, callee, *head))
+            return false;
+        if (!walker.walkInline(call, callee, handedOver, &site, &*head))
+            return false;
+        walker.count(StatisticID::HeadsCopiedWhoseQuestionWasAskedAbove);
+        return true;
+    }
+    return walker.walkInline(call, callee, handedOver, &site, &*head);
 }
 
 static bool copyLearnsOfThisAtInlining(Walker& walker, const BodyValue& call, FunctionID callee)

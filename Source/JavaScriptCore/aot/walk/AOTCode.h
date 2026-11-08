@@ -1114,6 +1114,7 @@ public:
     void leaveCheckOfProofToTestBehind(ValueID);
     void bearListWithStorage(ValueID, ArrayStorage);
     void letListRememberStorageAtSite(ValueID);
+    void letListForgetStorageAtSite(ValueID);
     ValueID append(BlockID, const Draft&, TypeID proven, EffectTraits);
     void noteEffectsBelieved(ValueID, const Effects&);
     void noteTestsPassedFor(ValueID, const PassedTest&);

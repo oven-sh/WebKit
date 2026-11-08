@@ -448,7 +448,7 @@ static ShownFunctions findShownFunctions(const DescribedUnit& described)
     return shownFunctions;
 }
 
-static void describeConstructionStart(const Program& program, ShownFunction& shown, const RecordedSite& site, uint32_t number, SitePosition& position, SiteDescription& sites)
+static ALWAYS_INLINE void describeConstructionStart(const Program& program, ShownFunction& shown, const RecordedSite& site, uint32_t number, SitePosition& position, SiteDescription& sites)
 {
     if (!site.origin.isPartOfConstruction && !isConstructOf(site.kind))
         return;

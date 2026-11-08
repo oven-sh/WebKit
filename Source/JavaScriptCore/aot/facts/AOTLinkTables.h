@@ -471,12 +471,6 @@ struct LinkTables {
     Vector<uint32_t> cyclesAwaited;
     Vector<uint32_t> firstCycleNamed;
     Vector<uint32_t> cyclesNamed;
-    struct PlaceBelowOnlyReferrers {
-        uint32_t top { 0 };
-        uint32_t first { 0 };
-        uint32_t end { 0 };
-    };
-    Vector<PlaceBelowOnlyReferrers> placesBelowOnlyReferrers;
     Vector<uint32_t> firstFieldOfLayout;
     LargeList<LinkedCell> fields;
     Vector<uint32_t> firstAppendedFieldOfLayout;
@@ -537,8 +531,6 @@ struct LinkTables {
     std::span<const uint32_t> cyclesAwaitedBy(uint32_t cycle) const LIFETIME_BOUND { return cyclesAwaited.span().subspan(firstCycleAwaited[cycle], firstCycleAwaited[cycle + 1] - firstCycleAwaited[cycle]); }
     std::span<const uint32_t> cyclesNamedBy(uint32_t cycle) const LIFETIME_BOUND { return cyclesNamed.span().subspan(firstCycleNamed[cycle], firstCycleNamed[cycle + 1] - firstCycleNamed[cycle]); }
     void listCyclesNamed();
-    bool hangsBelow(uint32_t above, uint32_t cycle) const { return placesBelowOnlyReferrers[above].first <= placesBelowOnlyReferrers[cycle].first && placesBelowOnlyReferrers[cycle].first < placesBelowOnlyReferrers[above].end; }
-    bool isNamedBelow(uint32_t above, uint32_t named) const;
     bool cycleLeadsTo(uint32_t referrer, uint32_t named) const;
     bool leadsTo(FunctionID referrer, FunctionID function) const { return cycleLeadsTo(functions[referrer.index()].cycle, functions[function.index()].cycle); }
     bool bodyTakesWhatCallersLeave(FunctionID id) const { return functions[id.index()].everyCallerIsKnown && functions[id.index()].everyCallHasOneCallee && !functions[id.index()].isNamedInItsCycle; }

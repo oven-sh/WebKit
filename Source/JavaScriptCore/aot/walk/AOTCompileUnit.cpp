@@ -776,61 +776,62 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WayOfWalking way)
     }
     m_walker->handOverArrivals();
     m_build.diagnostics().append(m_walker->takeReports());
-    m_build.statistics().count(StatisticID::OperationsSwept, swept.operationsSwept);
-    m_build.statistics().count(StatisticID::BranchesThatDecideNothing, swept.branchesThatDecideNothing);
-    m_build.statistics().count(StatisticID::DoorsDroppedWithTheirValues, swept.doorsDroppedWithTheirValues);
+    Statistics::CountersOfThread counters = m_build.statistics().countersOfCurrentThread();
+    counters.count(StatisticID::OperationsSwept, swept.operationsSwept);
+    counters.count(StatisticID::BranchesThatDecideNothing, swept.branchesThatDecideNothing);
+    counters.count(StatisticID::DoorsDroppedWithTheirValues, swept.doorsDroppedWithTheirValues);
     if (swept.birthsMoved)
-        m_build.statistics().count(StatisticID::BirthsLaidWhereCellsAreNeeded, swept.birthsMoved);
-    m_build.statistics().count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());
-    m_build.statistics().count(StatisticID::ValuesWalkedAndKept, m_walker->numberOfValuesWalkedAndKept());
-    m_build.statistics().count(StatisticID::WalksOfLoops, m_walker->numberOfWalksOfLoops());
-    m_build.statistics().count(StatisticID::WalksOfLoopsUndone, m_walker->numberOfWalksOfLoopsUndone());
-    m_build.statistics().count(StatisticID::LoopsWalkedAgainWithoutAskingSums, m_walker->numberOfRowsWhoseSumsAreNotAsked());
-    m_build.statistics().count(StatisticID::WalksOfLoopsCutShort, m_walker->numberOfWalksOfLoopsCutShort());
-    m_build.statistics().count(StatisticID::PurchasesOfLoopsThatFailed, m_walker->numberOfPurchasesOfLoopsThatFailed());
-    m_build.statistics().count(StatisticID::OperationsBuilt, code.numberOfValues());
-    m_build.statistics().count(StatisticID::CallsInlined, code.inlineFrames().size() - 1);
+        counters.count(StatisticID::BirthsLaidWhereCellsAreNeeded, swept.birthsMoved);
+    counters.count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());
+    counters.count(StatisticID::ValuesWalkedAndKept, m_walker->numberOfValuesWalkedAndKept());
+    counters.count(StatisticID::WalksOfLoops, m_walker->numberOfWalksOfLoops());
+    counters.count(StatisticID::WalksOfLoopsUndone, m_walker->numberOfWalksOfLoopsUndone());
+    counters.count(StatisticID::LoopsWalkedAgainWithoutAskingSums, m_walker->numberOfRowsWhoseSumsAreNotAsked());
+    counters.count(StatisticID::WalksOfLoopsCutShort, m_walker->numberOfWalksOfLoopsCutShort());
+    counters.count(StatisticID::PurchasesOfLoopsThatFailed, m_walker->numberOfPurchasesOfLoopsThatFailed());
+    counters.count(StatisticID::OperationsBuilt, code.numberOfValues());
+    counters.count(StatisticID::CallsInlined, code.inlineFrames().size() - 1);
     if (uint32_t guesses = m_walker->numberOfGuessesOpened()) {
-        m_build.statistics().count(StatisticID::TestsThatRejoin, guesses);
-        m_build.statistics().count(StatisticID::LoopsBuiltTwice, m_walker->numberOfLoopsBuiltTwice());
-        m_build.statistics().count(StatisticID::TurnsThatBeginAgain, m_walker->numberOfTurnsThatBeginAgain());
-        m_build.statistics().count(StatisticID::StoresPutBackWhereTurnsBeginAgain, m_walker->numberOfStoresPutBack());
-        m_build.statistics().count(StatisticID::EmptySlotsTakenAsCases, m_walker->numberOfEmptySlotsTakenAsCases());
+        counters.count(StatisticID::TestsThatRejoin, guesses);
+        counters.count(StatisticID::LoopsBuiltTwice, m_walker->numberOfLoopsBuiltTwice());
+        counters.count(StatisticID::TurnsThatBeginAgain, m_walker->numberOfTurnsThatBeginAgain());
+        counters.count(StatisticID::StoresPutBackWhereTurnsBeginAgain, m_walker->numberOfStoresPutBack());
+        counters.count(StatisticID::EmptySlotsTakenAsCases, m_walker->numberOfEmptySlotsTakenAsCases());
     }
     if (uint32_t assignments = m_walker->numberOfAssignmentsWrittenOut())
-        m_build.statistics().count(StatisticID::AssignmentsWrittenOutFieldByField, assignments);
+        counters.count(StatisticID::AssignmentsWrittenOutFieldByField, assignments);
     if (uint32_t joins = m_walker->numberOfJoinsWalkedForEachWay())
-        m_build.statistics().count(StatisticID::JoinsWalkedOnceForEachWay, joins);
+        counters.count(StatisticID::JoinsWalkedOnceForEachWay, joins);
     if (uint32_t questions = m_walker->numberOfQuestionsOfTruthAnsweredByWays())
-        m_build.statistics().count(StatisticID::QuestionsOfTruthAnsweredByWays, questions);
+        counters.count(StatisticID::QuestionsOfTruthAnsweredByWays, questions);
     if (uint32_t callees = m_walker->numberOfCalleesTestedForFunctionsWrittenForTheirFields())
-        m_build.statistics().count(StatisticID::CalleesTestedForFunctionsWrittenForTheirFields, callees);
+        counters.count(StatisticID::CalleesTestedForFunctionsWrittenForTheirFields, callees);
     if (uint32_t questions = m_walker->numberOfQuestionsForPlainInstancesLeftAsWritten())
-        m_build.statistics().count(StatisticID::QuestionsForPlainInstancesLeftAsWritten, questions);
+        counters.count(StatisticID::QuestionsForPlainInstancesLeftAsWritten, questions);
     if (uint32_t questions = m_walker->numberOfQuestionsByNameLeftAsWritten())
-        m_build.statistics().count(StatisticID::QuestionsByNameLeftAsWritten, questions);
+        counters.count(StatisticID::QuestionsByNameLeftAsWritten, questions);
     if (uint32_t objects = m_walker->numberOfObjectsMetAsOne())
-        m_build.statistics().count(StatisticID::ObjectsOfSeveralWaysMetAsOne, objects);
+        counters.count(StatisticID::ObjectsOfSeveralWaysMetAsOne, objects);
     static_assert(static_cast<unsigned>(StatisticID::ProofsThatNoTestTells) - static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) == numberOfEnumerators<ProofSource>);
     for (unsigned source = 0; source < numberOfEnumerators<ProofSource>; ++source) {
         if (uint32_t checked = m_walker->numberOfProofsChecked(static_cast<ProofSource>(source)))
-            m_build.statistics().count(static_cast<StatisticID>(static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) + source), checked);
+            counters.count(static_cast<StatisticID>(static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) + source), checked);
     }
     if (inputs.options.checksProofs) {
-        m_build.statistics().count(StatisticID::ProofsThatNoTestTells, m_walker->numberOfProofsThatNoTestTells());
-        m_build.statistics().count(StatisticID::FreshCellsLeftAloneAtReturns, m_walker->numberOfFreshCellsLeftAloneAtReturns());
+        counters.count(StatisticID::ProofsThatNoTestTells, m_walker->numberOfProofsThatNoTestTells());
+        counters.count(StatisticID::FreshCellsLeftAloneAtReturns, m_walker->numberOfFreshCellsLeftAloneAtReturns());
     }
     if (uint32_t answered = m_walker->numberOfChecksThatWalkAnswers())
-        m_build.statistics().count(StatisticID::ChecksThatWalkAnswers, answered);
+        counters.count(StatisticID::ChecksThatWalkAnswers, answered);
     if (uint32_t told = m_walker->numberOfProofsThatFormTells())
-        m_build.statistics().count(StatisticID::ProofsThatFormTells, told);
+        counters.count(StatisticID::ProofsThatFormTells, told);
     if (uint32_t doors = m_walker->numberOfDoorsThatCanNeverPass())
-        m_build.statistics().count(StatisticID::DoorsThatCanNeverPass, doors);
+        counters.count(StatisticID::DoorsThatCanNeverPass, doors);
 
     if (inputs.options.takesNotes && notesAreTakenOfCompileUnit(unit.role)) {
         WalkNotes notes = notesOfSweptCode(m_types, code, AOT::hasFlag(m_build.options().reports, Wire::ReportSet::AccessCounts));
         if (unit.role != CodeRole::ParameterGuard)
-            m_build.statistics().count(StatisticID::ValuesInDouble, notes.numberOfValuesInDouble);
+            counters.count(StatisticID::ValuesInDouble, notes.numberOfValuesInDouble);
         if (!notes.notes.isEmpty())
             m_notes.append(WTF::move(notes));
     }

@@ -557,6 +557,7 @@ export const builtinMarks = [
   "IsDeletedWhenModuleOfLibraryLoads",
   "PassesOverListWhereItTakesRecordOfHandlers",
   "AsksOptionsForListedNamesAlone",
+  "MayLayListenerForUncaughtExceptions",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 

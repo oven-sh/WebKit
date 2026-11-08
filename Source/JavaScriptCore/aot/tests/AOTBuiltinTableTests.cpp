@@ -585,8 +585,8 @@ static void testAttachmentsAreFoundByEntry()
     for (const BuiltinNumberConstant& record : attachments.numberConstants)
         AOT_TEST_CHECK(table().numberOf(record.builtin).has_value());
 
-    AOT_TEST_CHECK(table().featureUsesOf(Builtins::MathMax).empty() && table().moduleLoadsOf(Builtins::MathMax).empty() && table().calledFunctionsOf(Builtins::MathMax).empty());
-    AOT_TEST_CHECK(!table().unseenCodeOf(Builtins::MathMax) && !table().at(Builtins::MathMax).flags.contains(BuiltinFlag::RunsUnseenCode) && !table().boxedCallStubOf(Builtins::Math));
+    AOT_TEST_CHECK(table().featureUsesOf(Builtins::MathAbs).empty() && table().moduleLoadsOf(Builtins::MathAbs).empty() && table().calledFunctionsOf(Builtins::MathAbs).empty());
+    AOT_TEST_CHECK(!table().unseenCodeOf(Builtins::MathAbs) && !table().at(Builtins::MathAbs).flags.contains(BuiltinFlag::RunsUnseenCode) && !table().boxedCallStubOf(Builtins::Math));
 }
 
 static void testHostUsesOfStartupLoads()

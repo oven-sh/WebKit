@@ -1893,6 +1893,180 @@ static void testMachineFrameIsSetUpAheadOfLoopThatNeedsIt()
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 6 }, uint64_t { 100 }) == 112 && setups.numberRun == 1);
 }
 
+static void runFrameTestOfWayOutThatRareRegionLeadsBackTo(bool wayOutGoesOn, bool standsInLoopThatTurns)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    FrameTestSetupsThatCount setups;
+    FrameTestMark markOnWayOut;
+    proc.setStackCheckGenerator(noteAndCountFrameTestSetup, &setups);
+    Operation* a = test.argumentGPR(0);
+    Operation* b = test.argumentGPR(1);
+    Block* before = out.newBlock();
+    Block* turning = out.newBlock();
+    Block* guard = out.newBlock();
+    Block* wayOut = out.newBlock();
+    Block* returning = out.newBlock();
+    Block* working = out.newBlock();
+    Block* done = out.newBlock();
+    Block* slow = out.newBlock();
+    Block* slowAgain = out.newBlock();
+    Block* slowOn = out.newBlock();
+    Block* leaving = standsInLoopThatTurns ? out.newBlock() : nullptr;
+    Block* comingRound = standsInLoopThatTurns ? out.newBlock() : nullptr;
+
+    out.branch(out.testIsZero64(a, 32), normalEdge(before), normalEdge(returning));
+    out.appendTo(before);
+    ValueFromBlock firstCount = out.anchor(out.int64Zero);
+    out.jump(turning);
+    out.appendTo(turning);
+    Operation* count = out.phi(Int64, firstCount);
+    out.branch(out.testNonZero64(a, 8), rareEdge(slow), normalEdge(guard));
+    out.appendTo(guard);
+    out.branch(out.testNonZero64(a, 1), normalEdge(wayOut), normalEdge(working));
+    out.appendTo(wayOut);
+    appendFrameTestMark(out, markOnWayOut, true);
+    if (wayOutGoesOn) {
+        Block* onward = out.newBlock();
+        out.jump(onward);
+        out.appendTo(onward);
+    }
+    out.ret(b);
+    out.appendTo(returning);
+    out.ret(b);
+    out.appendTo(working);
+    appendFrameTestCall(test);
+    Operation* nextCount = out.add(count, 1);
+    out.branch(out.testNonZero64(a, 4), rareEdge(slowAgain), normalEdge(done));
+    out.appendTo(done);
+    if (standsInLoopThatTurns) {
+        Block* last = out.newBlock();
+        out.addIncomingToPhi(count, out.anchor(nextCount));
+        out.branch(out.lessThan(nextCount, out.constInt64(3)), normalEdge(turning), normalEdge(leaving));
+        out.appendTo(leaving);
+        appendFrameTestCall(test);
+        out.branch(out.testNonZero64(a, 64), rareEdge(comingRound), normalEdge(last));
+        out.appendTo(comingRound);
+        Operation* countAgain = out.add(nextCount, 1);
+        out.addIncomingToPhi(count, out.anchor(countAgain));
+        out.branch(out.lessThan(countAgain, out.constInt64(6)), normalEdge(turning), normalEdge(slowOn));
+        out.appendTo(last);
+    }
+    out.ret(out.add(out.add(a, b), nextCount));
+    out.appendTo(slow);
+    appendFrameTestCall(test);
+    out.branch(out.testNonZero64(a, 16), normalEdge(wayOut), normalEdge(slowOn));
+    out.appendTo(slowAgain);
+    appendFrameTestCall(test);
+    out.jump(slowOn);
+    out.appendTo(slowOn);
+    appendFrameTestCall(test);
+    out.ret(out.add(b, 1000));
+
+    compileOrFail(test);
+    const Frame& frame = proc.frame();
+    const Allocation& allocation = proc.allocation();
+    const Order& order = proc.order();
+    AOT_FRAME_TEST_CHECK(test, order.of(slow).isRare() && order.of(slow).rareRegion == order.of(slowAgain).rareRegion);
+    AOT_FRAME_TEST_CHECK(test, frame.coverage() == FrameCoverage::FramedPart);
+    if (standsInLoopThatTurns) {
+        AOT_FRAME_TEST_CHECK(test, order.of(turning).isLoopHead && order.of(working).loop == order.of(turning).loop && order.of(leaving).loop == order.of(turning).loop);
+        AOT_FRAME_TEST_CHECK(test, allocation.isHeadOfFramedPart(before) && allocation.headsOfFramedPart().size() == 1 && markOnWayOut.frameIsSetUp);
+    } else {
+        AOT_FRAME_TEST_CHECK(test, order.of(wayOut).isLoopHead && order.of(working).loop == order.of(wayOut).loop && order.headOf(working) < order.headOf(slow));
+        AOT_FRAME_TEST_CHECK(test, allocation.isHeadOfFramedPart(working) && !allocation.isInFramedPart(guard) && !allocation.isInFramedPart(wayOut));
+        AOT_FRAME_TEST_CHECK(test, !frame.holdsStepsOf(guard) && !frame.holdsStepsOf(wayOut) && !markOnWayOut.frameIsSetUp);
+    }
+    checkFrameTestRanges(test);
+    checkFrameTestLayout(test);
+    struct Case {
+        uint64_t a;
+        uint64_t expected;
+        uint64_t numberOfSetups;
+    };
+    const uint64_t turns = standsInLoopThatTurns ? 3 : 1;
+    const uint64_t setupsOnWayOut = standsInLoopThatTurns ? 1 : 0;
+    for (Case testCase : { Case { 32, 10, 0 }, Case { 1, 10, setupsOnWayOut }, Case { 0, 10 + turns, 1 }, Case { 4, 1010, 1 }, Case { 8, 1010, 1 }, Case { 24, 10, 1 }, Case { 64, standsInLoopThatTurns ? uint64_t { 1010 } : uint64_t { 75 }, 1 } }) {
+        setups.numberRun = 0;
+        AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(testCase.a, uint64_t { 10 }) == testCase.expected && setups.numberRun == testCase.numberOfSetups);
+    }
+}
+
+static void testMachineFrameWayOutThatRareRegionLeadsBackToHoldsNoHeadBack() { runFrameTestOfWayOutThatRareRegionLeadsBackTo(false, false); }
+static void testMachineFrameWayOutThatGoesOnAndNeverComesRoundHoldsNoHeadBack() { runFrameTestOfWayOutThatRareRegionLeadsBackTo(true, false); }
+static void testMachineFrameRareWayThatComesRoundKeepsHeadAheadOfLoop() { runFrameTestOfWayOutThatRareRegionLeadsBackTo(false, true); }
+
+static void testMachineFrameLoopThatTurnsInsideStretchThatNeverTurnsFindsFrameSetUpAheadOfIt()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    FrameTestSetupsThatCount setups;
+    FrameTestMark markOnWayOut;
+    proc.setStackCheckGenerator(noteAndCountFrameTestSetup, &setups);
+    Operation* a = test.argumentGPR(0);
+    Operation* b = test.argumentGPR(1);
+    Block* guard = out.newBlock();
+    Block* wayOut = out.newBlock();
+    Block* working = out.newBlock();
+    Block* turning = out.newBlock();
+    Block* done = out.newBlock();
+    Block* last = out.newBlock();
+    Block* slow = out.newBlock();
+    Block* slowAgain = out.newBlock();
+    Block* slowOn = out.newBlock();
+
+    out.branch(out.testNonZero64(a, 8), rareEdge(slow), normalEdge(guard));
+    out.appendTo(guard);
+    out.branch(out.testNonZero64(a, 1), normalEdge(wayOut), normalEdge(working));
+    out.appendTo(wayOut);
+    appendFrameTestMark(out, markOnWayOut, true);
+    out.ret(b);
+    out.appendTo(working);
+    ValueFromBlock firstCount = out.anchor(out.int64Zero);
+    out.jump(turning);
+    out.appendTo(turning);
+    Operation* count = out.phi(Int64, firstCount);
+    appendFrameTestCall(test);
+    Operation* nextCount = out.add(count, 1);
+    out.addIncomingToPhi(count, out.anchor(nextCount));
+    out.branch(out.lessThan(nextCount, out.constInt64(3)), normalEdge(turning), normalEdge(done));
+    out.appendTo(done);
+    out.branch(out.testNonZero64(a, 4), rareEdge(slowAgain), normalEdge(last));
+    out.appendTo(last);
+    out.ret(out.add(out.add(a, b), nextCount));
+    out.appendTo(slow);
+    appendFrameTestCall(test);
+    out.branch(out.testNonZero64(a, 16), normalEdge(wayOut), normalEdge(slowOn));
+    out.appendTo(slowAgain);
+    appendFrameTestCall(test);
+    out.jump(slowOn);
+    out.appendTo(slowOn);
+    appendFrameTestCall(test);
+    out.ret(out.add(b, 1000));
+
+    compileOrFail(test);
+    const Frame& frame = proc.frame();
+    const Allocation& allocation = proc.allocation();
+    const Order& order = proc.order();
+    AOT_FRAME_TEST_CHECK(test, order.of(wayOut).isLoopHead && order.of(turning).isLoopHead && order.of(working).loop == order.of(wayOut).loop);
+    AOT_FRAME_TEST_CHECK(test, order.loops()[order.of(turning).loop].parent == order.of(wayOut).loop && order.loops()[order.of(wayOut).loop].parent == noLoop);
+    AOT_FRAME_TEST_CHECK(test, frame.coverage() == FrameCoverage::FramedPart && allocation.isHeadOfFramedPart(working) && allocation.isInFramedPart(turning) && !allocation.isHeadOfFramedPart(turning));
+    AOT_FRAME_TEST_CHECK(test, !allocation.isInFramedPart(guard) && !allocation.isInFramedPart(wayOut) && !frame.holdsStepsOf(wayOut) && !markOnWayOut.frameIsSetUp);
+    checkFrameTestRanges(test);
+    checkFrameTestLayout(test);
+    struct Case {
+        uint64_t a;
+        uint64_t expected;
+        uint64_t numberOfSetups;
+    };
+    for (Case testCase : { Case { 1, 10, 0 }, Case { 0, 13, 1 }, Case { 4, 1010, 1 }, Case { 8, 1010, 1 }, Case { 24, 10, 1 } }) {
+        setups.numberRun = 0;
+        AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(testCase.a, uint64_t { 10 }) == testCase.expected && setups.numberRun == testCase.numberOfSetups);
+    }
+}
+
 static void runFrameTestOfStoreBesideGuard(bool storeStandsAheadOfGuard, unsigned largestFrameSetUpWithoutStackCheck = 0)
 {
     TestProcedure test;
@@ -2868,6 +3042,10 @@ std::span<const NativeTest> machineFrameTests()
         { "machine/frame/rare-block-that-two-framed-parts-share-reads-what-lives-across-their-calls"_s, Machine::testMachineFrameRareBlockSharedByTwoFramedPartsReadsWhatLivesAcrossTheirCalls },
         { "machine/frame/rare-block-that-ways-out-of-two-framed-parts-enter-reads-what-lives-across-their-calls"_s, Machine::testMachineFrameRareBlockThatWaysOutOfTwoFramedPartsEnterReadsWhatLivesAcrossTheirCalls },
         { "machine/frame/loop-that-needs-it-finds-it-set-up"_s, Machine::testMachineFrameIsSetUpAheadOfLoopThatNeedsIt },
+        { "machine/frame/a-way-out-that-a-rare-region-leads-back-to-holds-no-head-back"_s, Machine::testMachineFrameWayOutThatRareRegionLeadsBackToHoldsNoHeadBack },
+        { "machine/frame/a-way-out-that-goes-on-and-never-comes-round-holds-no-head-back"_s, Machine::testMachineFrameWayOutThatGoesOnAndNeverComesRoundHoldsNoHeadBack },
+        { "machine/frame/a-rare-way-that-comes-round-keeps-the-head-ahead-of-the-loop"_s, Machine::testMachineFrameRareWayThatComesRoundKeepsHeadAheadOfLoop },
+        { "machine/frame/a-loop-that-turns-inside-a-stretch-that-never-turns-finds-the-frame-set-up-ahead-of-it"_s, Machine::testMachineFrameLoopThatTurnsInsideStretchThatNeverTurnsFindsFrameSetUpAheadOfIt },
         { "machine/frame/whatever-writes-on-the-way-to-it-follows-the-setup"_s, Machine::testMachineFrameIsSetUpAheadOfWhateverWritesOnWayToIt },
         { "machine/frame/what-is-defined-ahead-of-it-is-stored-at-its-head"_s, Machine::testMachineFrameStoresAtHeadWhatIsDefinedAheadOfIt },
         { "machine/frame/pointer-beside-a-reference-from-ahead-of-it-is-kept-at-its-head"_s, Machine::testMachineFrameKeepsPointerAtHeadOfFramedPart },

@@ -13,7 +13,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static TypeID typeByConstructionOfEntryParameter(const TypingContext& context, const Function& callee, unsigned entryParameterIndex)
+static ALWAYS_INLINE TypeID typeByConstructionOfEntryParameter(const TypingContext& context, const Function& callee, unsigned entryParameterIndex)
 {
     switch (callee.entryParameterKind(entryParameterIndex)) {
     case EntryParameter::Capture:
@@ -32,7 +32,7 @@ static TypeID typeByConstructionOfEntryParameter(const TypingContext& context, c
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static TypeID findDeclaredEntryType(const TypingContext& context, FunctionID callee, unsigned entryParameterIndex, TypeID known)
+static ALWAYS_INLINE TypeID findDeclaredEntryType(const TypingContext& context, FunctionID callee, unsigned entryParameterIndex, TypeID known)
 {
     TypeID byConstruction = typeByConstructionOfEntryParameter(context, context.program.at(callee), entryParameterIndex);
     if (!byConstruction || !known)

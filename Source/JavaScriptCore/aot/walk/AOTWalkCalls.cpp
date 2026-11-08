@@ -1191,6 +1191,11 @@ static Reference findListCopiedForCallAloneInWalkCalls(Walker& walker, const Bod
     return Reference::value(append.sourceOperand());
 }
 
+Reference findListThatCallWouldTakeInPlaceOfItsCopy(Walker& walker, const BodyValue& call, Reference copy)
+{
+    return findListCopiedForCallAloneInWalkCalls(walker, call, copy);
+}
+
 void letCallTakeListCopiedForItAlone(Walker& walker, const BodyValue& call, Draft& written)
 {
     Reference list = findListCopiedForCallAloneInWalkCalls(walker, call, written.listOperand());

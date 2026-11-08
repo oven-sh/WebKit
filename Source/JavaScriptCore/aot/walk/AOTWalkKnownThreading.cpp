@@ -132,7 +132,7 @@ private:
     void lookBehindEdge(LookAhead&, const PlaceLookedAt& from, const BodyTerminator&, uint32_t targetIndex, BodyTarget);
     void lookBehindReturnOfCopy(LookAhead&, const PlaceLookedAt& from, const BodyTerminator&);
     template<typename Functor> bool looksAhead(LookAhead&, const Functor& isLeanedOn);
-    bool calleeAsksFirstWhatItIsHanded(const BodyValue& operation, uint32_t operandIndex);
+    bool calleeAsksFirstWhatItIsHanded(const BodyValue& operation, uint32_t operandIndex, std::optional<bool>& copyOfCalleePays);
     bool endOfBlockMayBeWalkedForEachWayFrom(uint32_t begin);
     bool mayThrowFrom(uint32_t begin);
     uint32_t numberOfNamesBroughtApart(std::span<const uint32_t> ways);
@@ -414,7 +414,7 @@ bool KnownThreading::terminatorMayBeWalkedByWaysApart()
     return true;
 }
 
-ValueID KnownThreading::valueFromInFront(const LookAhead& look, ValueID operand)
+ALWAYS_INLINE ValueID KnownThreading::valueFromInFront(const LookAhead& look, ValueID operand)
 {
     while (operand >= look.bound && !m_index.isParameter(operand) && inputOperationsThatHandOn.contains(m_index.opcodeOf(operand)))
         operand = m_index.value(operand).operand(0);
@@ -475,7 +475,7 @@ void KnownThreading::lookBehindReturnOfCopy(LookAhead& look, const PlaceLookedAt
     look.places.append(PlaceLookedAt { from.frameIndex - 1, caller.block, begin, copy.callCopied, given });
 }
 
-bool KnownThreading::calleeAsksFirstWhatItIsHanded(const BodyValue& operation, uint32_t operandIndex)
+bool KnownThreading::calleeAsksFirstWhatItIsHanded(const BodyValue& operation, uint32_t operandIndex, std::optional<bool>& copyOfCalleePays)
 {
     if (operation.opcode() != Opcode::Call || operandIndex < numberOfNamedOperandsOf(Opcode::Call) || operation.as<Opcode::Call>().isNeverInlined())
         return false;
@@ -494,21 +494,15 @@ bool KnownThreading::calleeAsksFirstWhatItIsHanded(const BodyValue& operation, u
     if (!first || first->kind != BodyUseKind::Operand || !operationsTypedByWayInKnownThreading.contains(body->opcodeOf(first->value)))
         return false;
     BodyValue asking = body->value(first->value);
-    auto isMoreThanHandedOn = [&](uint32_t operandIndexOfAsking) {
-        return !asking.operandUses(operandIndexOfAsking).containsOnly({ OperandUse::Retains, OperandUse::Returns });
-    };
     const uint32_t numberOfNamedOperands = numberOfNamedOperandsOf(asking.opcode());
-    bool isNamedOperand = false;
     bool asks = false;
-    for (uint32_t named = 0; named < numberOfNamedOperands; ++named) {
-        if (asking.operand(named) != parameter)
-            continue;
-        isNamedOperand = true;
-        asks |= isMoreThanHandedOn(named);
-    }
-    if (!asks && asking.numberOfVariadicOperands() && isMoreThanHandedOn(numberOfNamedOperands))
-        asks = !isNamedOperand || std::ranges::find(asking.variadicOperands(), parameter) != asking.variadicOperands().end();
-    return asks && copyOfCalleePaysAt(m_walker, callee, operation.as<Opcode::Call>().argumentsOperands().size(), { frame().function, m_walker.isInLoop() });
+    for (uint32_t named = 0; named < numberOfNamedOperands; ++named)
+        asks |= asking.operand(named) == parameter && !asking.operandUses(named).containsOnly({ OperandUse::Retains, OperandUse::Returns });
+    if (!asks)
+        return false;
+    if (!copyOfCalleePays)
+        copyOfCalleePays = copyOfCalleePaysAt(m_walker, callee, operation.as<Opcode::Call>().argumentsOperands().size(), { frame().function, m_walker.isInLoop() });
+    return *copyOfCalleePays;
 }
 
 template<typename Functor>
@@ -533,8 +527,9 @@ bool KnownThreading::looksAhead(LookAhead& look, const Functor& isLeanedOn)
             if (!(hasPassedWhereSidesOfChoiceMeet ? operatorsOnNumbersInKnownThreading : operationsTypedByWayInKnownThreading).contains(operation.opcode()))
                 continue;
             bool looks = false;
+            std::optional<bool> copyOfCalleePays;
             operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                if (looks || (operation.operandUses(operandIndex).containsOnly({ OperandUse::Retains, OperandUse::Returns }) && !here.calleeAsksFirstWhatItIsHanded(operation, operandIndex)))
+                if (looks || (operation.operandUses(operandIndex).containsOnly({ OperandUse::Retains, OperandUse::Returns }) && !here.calleeAsksFirstWhatItIsHanded(operation, operandIndex, copyOfCalleePays)))
                     return;
                 if (place.frameIndex == m_frameIndex) {
                     if (ValueID value = valueFromInFront(look, operand))

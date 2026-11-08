@@ -136,6 +136,27 @@ void Modules::forgetLoadsRefusedByCheckOfNames()
             }
         }
     }
+    JSObject* kept = std::exchange(m_errorsOfExportsThatBuildFoundAbsent, nullptr);
+    if (!kept)
+        return;
+    UncheckedKeyHashSet<JSCell*> errorsOfAbsentExports;
+    for (unsigned index = std::exchange(m_numberOfErrorsOfExportsThatBuildFoundAbsent, 0); index--;)
+        errorsOfAbsentExports.add(kept->getDirectIndex(m_instance.globalObject, index).asCell());
+    goModuleByModuleFromNowOn();
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID refused(index);
+        if (status(refused) != ModuleStatus::Failed)
+            continue;
+        ModuleRecord* record = m_records.get(refused);
+        JSValue error = record ? record->evaluationError() : JSValue();
+        if (!error || !error.isCell() || !errorsOfAbsentExports.contains(error.asCell()))
+            continue;
+        loader()->removeEntry(moduleKey(refused));
+        takeOutRecord(refused);
+        setStoredStatus(refused, StoredModuleStatus::Unlinked);
+        m_modulesLoadedBesideGroups.clear(refused.index());
+    }
+    ensureStillAliveHere(kept);
 }
 
 bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)

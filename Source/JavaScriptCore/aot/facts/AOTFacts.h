@@ -127,6 +127,7 @@ public:
     FactRows<ClassMember> membersOfClass;
     Vector<uint32_t> placesOfMembersOfClassByKey;
     BitVector layoutsThatParsersMayMake;
+    LayoutSetID layoutsThatStayWithCompiledCode;
 
     BitVector modulesWhosePathNoOperationReads;
     struct FunctionGivenToVariable {

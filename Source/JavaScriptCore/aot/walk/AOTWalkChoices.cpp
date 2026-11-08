@@ -697,7 +697,7 @@ static unsigned widthOfStorageInChoices(ArrayStorage storage)
 }
 static_assert(arrayStorageForms[0].kind == ArrayStorage::Int32 && arrayStorageForms[1].kind == ArrayStorage::Double && arrayStorageForms[2].kind == ArrayStorage::Contiguous);
 
-ArrayStorage askBirthOfListForStorage(Walker& walker, Reference list, ArrayStorage wanted)
+ArrayStorage askBirthOfListForStorage(Walker& walker, Reference list, ArrayStorage wanted, bool widerListRefusesStore)
 {
     if (!list || !list.isValue() || !walker.has(Mechanism::TypedOperations))
         return ArrayStorage::Other;
@@ -707,8 +707,11 @@ ArrayStorage askBirthOfListForStorage(Walker& walker, Reference list, ArrayStora
         return ArrayStorage::Other;
     if (born.sourceOperand() && !walker.types().at(walker.code().at(born.sourceOperand()).type).isUndefinedOrNull())
         return born.arrayStorage();
-    if (widthOfStorageInChoices(wanted) > widthOfStorageInChoices(born.arrayStorage()))
+    if (widthOfStorageInChoices(wanted) > widthOfStorageInChoices(born.arrayStorage())) {
+        if (widerListRefusesStore && !hasArrayStorageForm(born.arrayStorage()) && born.remembersStorageAtSite())
+            walker.code().letListForgetStorageAtSite(root);
         walker.code().bearListWithStorage(root, wanted);
+    }
     return born.arrayStorage();
 }
 
@@ -734,7 +737,7 @@ static bool stepsElementOfListItselfInChoices(Walker& walker, Reference list, Re
     return readsListItself && restAreIntegers;
 }
 
-ArrayStorage askBirthOfListForStorageThatTakes(Walker& walker, Reference list, Reference stored)
+ArrayStorage askBirthOfListForStorageThatTakes(Walker& walker, Reference list, Reference stored, bool widerListRefusesStore)
 {
     if (!stored || isNeverType(walker.typeOf(stored)))
         return askBirthOfListForStorage(walker, list, ArrayStorage::Other);
@@ -748,7 +751,7 @@ ArrayStorage askBirthOfListForStorageThatTakes(Walker& walker, Reference list, R
         taking = ArrayStorage::Double;
     else if (!(type.primitives & Primitive::Number))
         taking = ArrayStorage::Contiguous;
-    ArrayStorage born = askBirthOfListForStorage(walker, list, taking);
+    ArrayStorage born = askBirthOfListForStorage(walker, list, taking, widerListRefusesStore);
     if (born == ArrayStorage::Int32 && taking == ArrayStorage::Int32 && !type.isInt32()) {
         ValueID root = rootOfCellInSweptCode(walker.code(), list.id());
         if (!walker.code().at(root).remembersStorageAtSite()) {
@@ -773,12 +776,19 @@ static void chooseStorageOfListBeingFilledInChoices(Walker& walker, Draft& store
     Reference stored = store.valueOperand();
     if (!list || !stored)
         return;
-    ArrayStorage born = askBirthOfListForStorageThatTakes(walker, list, stored);
+    ArrayStorage born = askBirthOfListForStorageThatTakes(walker, list, stored, store.opcode == Opcode::TryPutByValDirect);
     if (store.opcode != Opcode::TryPutByValDirect)
         return;
     if (hasArrayStorageForm(born) || !isBornHereWithoutSourceInChoices(walker, list)) {
         store.setArrayStorage(born);
         return;
+    }
+    if (walker.depthOfCopies()) {
+        ValueID root = rootOfCellInSweptCode(walker.code(), list.id());
+        if (!walker.code().at(root).remembersStorageAtSite()) {
+            walker.code().letListRememberStorageAtSite(root);
+            walker.count(StatisticID::ListsFilledByCopiedRunsThatRememberStorageAtSite);
+        }
     }
     Reference position = store.positionOperand();
     becomeInChoices(store, Opcode::TryPutIndex);

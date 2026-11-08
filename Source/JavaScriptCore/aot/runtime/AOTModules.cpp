@@ -126,6 +126,7 @@ void Modules::visitRoots(Visitor& visitor)
         }
         visitor.appendUnbarriered(m_namespaceStructure);
         visitor.appendUnbarriered(m_prototypeOfModuleObjects);
+        visitor.appendUnbarriered(m_errorsOfExportsThatBuildFoundAbsent);
         visitor.appendUnbarriered(m_extensibleNamespaceStructure);
     });
 }
@@ -2111,7 +2112,7 @@ void Modules::keepExportsBehindEntryOfProgram(ModuleID module)
         if (!data(file).isESModuleOfProgram() || !(isLeftAloneByMock(file) || mockInPlace(file) || loaded.hasMockLaidOver))
             return;
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
-        original = exportsBeforeMock(file);
+        original = exportsBeforeMock(file, false, OwedBelowOriginal::StaysOwed);
         if (scope.exception()) [[unlikely]] {
             if (!scope.tryClearException())
                 return;
@@ -2229,7 +2230,7 @@ BitVector Modules::filesThatHaveRun()
     BitVector files;
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         const ModuleData& moduleData = data(ModuleID(index));
-        if (moduleData.kind == ModuleKind::CommonJs && !moduleData.isOfLibrary() && status(ModuleID(index)) == ModuleStatus::Evaluated)
+        if (moduleData.kind == ModuleKind::CommonJs && !moduleData.isOfLibrary() && status(ModuleID(index)) == ModuleStatus::Evaluated && !mockInPlace(ModuleID(index)))
             files.set(index);
     }
     return files;
@@ -2347,6 +2348,7 @@ bool Modules::setMockOverModuleThatHasRun(ModuleID module, JSObject* mock, JSVal
     auto* madeUnderEarlierMock = kept.isInPlace && !leavesEarlierMockToItsImporters ? dynamicDowncast<ModuleNamespace>(namespaceIfCreated(withExports, ModulePhase::Evaluation)) : nullptr;
     if (!madeUnderEarlierMock)
         setNamespace(withExports, ModulePhase::Evaluation, nullptr);
+    BitVector reaching = modulesThatReach(module);
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID each(index);
         if (each == withExports)
@@ -2358,7 +2360,7 @@ bool Modules::setMockOverModuleThatHasRun(ModuleID module, JSObject* mock, JSVal
             if (auto* filed = dynamicDowncast<ModuleNamespace>(object))
                 filed->leaveStructureThatCachesKnow(*m_instance.vm);
         }
-        if (!made || !data(each).hasDynamicStarExport())
+        if (!made || !data(each).hasDynamicStarExport() || !reaching.quickGet(index))
             continue;
         LoadedModule& behindStars = ensureLoaded(each);
         if (!behindStars.namespaceBeforeMockInPlace)
@@ -2485,14 +2487,21 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
         loaded.objectMadeByRequire.set(*this, entry);
         loaded.exportsGivenToObjectMadeByRequire.set(*this, entry ? loaded.requiredValue.get() : JSValue());
     }
-    bool anotherMockStands = false;
-    for (const MockOverModuleThatHasRun& other : m_mocksOverModulesThatHaveRun.values())
-        anotherMockStands |= other.isInPlace;
+    Vector<ModuleID, 4> othersThatStand;
+    for (auto& other : m_mocksOverModulesThatHaveRun) {
+        if (other.value.isInPlace)
+            othersThatStand.append(other.key);
+    }
+    bool anotherMockStands = !othersThatStand.isEmpty();
+    BitVector reaching = modulesThatReach(module);
+    BitVector reachingAnotherThatStands = modulesThatReach(othersThatStand.span());
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID each(index);
+        if (!reaching.quickGet(index))
+            continue;
         if (each == withExports || data(each).hasDynamicStarExport())
             letGoOfNamespaceMadeUnderMock(each);
-        if (each == withExports || !data(each).hasDynamicStarExport() || anotherMockStands)
+        if (each == withExports || !data(each).hasDynamicStarExport() || reachingAnotherThatStands.quickGet(index))
             continue;
         LoadedModule* behindStars = loadedIfExists(each);
         if (JSObject* before = behindStars ? behindStars->namespaceBeforeMockInPlace.get() : nullptr) {
@@ -2794,12 +2803,26 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shou
     if (phase == ModulePhase::Evaluation && m_modulesWithExtensibleNamespace.get(module.index()))
         shouldPreventExtensions = false;
     ModuleNamespace* namespaceObject = ModuleNamespace::create(vm, namespaceStructure(shouldPreventExtensions), module, phase, { });
+    size_t place = m_namespacesBeingMade.size();
+    size_t outermostReadBefore = std::exchange(m_outermostNamespaceReadWhileBeingMade, notFound);
+    auto forgetsNamespacesThatLackNames = makeScopeExit([&] {
+        if (!m_namespacesBeingMade.isEmpty())
+            return;
+        for (auto [lacking, object] : std::exchange(m_namespacesThatLackNames, { })) {
+            if (namespaceIfCreated(lacking, ModulePhase::Evaluation) == object)
+                setNamespace(lacking, ModulePhase::Evaluation, nullptr);
+            if (LoadedModule* loaded = loadedIfExists(lacking); loaded && loaded->namespaceBeforeMockInPlace.get() == object)
+                loaded->namespaceBeforeMockInPlace.set(*this, nullptr);
+        }
+    });
     if (phase == ModulePhase::Evaluation)
         m_namespacesBeingMade.append({ module, namespaceObject });
     ModuleNamespace::DynamicExports exportObjects;
     createDynamicExports(module, exportObjects.names, exportObjects.capturedValues, exportObjects.liveSources);
     if (phase == ModulePhase::Evaluation)
         m_namespacesBeingMade.removeLast();
+    bool lacksNames = phase == ModulePhase::Evaluation && m_outermostNamespaceReadWhileBeingMade < place;
+    m_outermostNamespaceReadWhileBeingMade = std::min(outermostReadBefore, m_outermostNamespaceReadWhileBeingMade);
     RETURN_IF_EXCEPTION(scope, nullptr);
     namespaceObject->replaceDynamicExports(vm, exportObjects);
     if (isRequired && !namespaceObject->hasExport(vm.propertyNames->__esModule.impl()))
@@ -2807,6 +2830,8 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shou
     if (JSObject* mock = phase == ModulePhase::Evaluation && isLeftAloneByMock(module) ? mockInPlace(module) : nullptr) [[unlikely]]
         namespaceObject->setMockOfView(vm, mock);
     setNamespace(module, phase, namespaceObject);
+    if (lacksNames)
+        m_namespacesThatLackNames.append({ module, namespaceObject });
     return namespaceObject;
 }
 
@@ -3007,6 +3032,13 @@ void Modules::throwNewFailure(ModuleFailureID id, bool isForRequire)
             ? createExportStatementFindsNothingError(realm, specifier, ProgramStrings::text(m_table.programTables(), failure.exportSpecifierString()))
             : createExportNotFoundError(realm, specifier, m_table.pathText(failure.importerModule()));
         uncheckedDowncast<ErrorInstance>(error)->setStackFrames(vm, { });
+        if (isTestRun()) {
+            if (!m_errorsOfExportsThatBuildFoundAbsent) {
+                m_errorsOfExportsThatBuildFoundAbsent = createTableOfExports();
+                m_storedReferences.recordAll();
+            }
+            storeValue(realm, m_errorsOfExportsThatBuildFoundAbsent, m_numberOfErrorsOfExportsThatBuildFoundAbsent++, error);
+        }
         throwException(realm, scope, error);
         return;
     }

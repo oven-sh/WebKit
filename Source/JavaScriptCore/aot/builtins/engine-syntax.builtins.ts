@@ -254,6 +254,11 @@ export default b.declarations(
     arrayStorageDouble: [2, "Double"],
     arrayStorageContiguous: [3, "Contiguous"],
   }),
+  b.intrinsic("mostArgumentsReservedOnStack", "Value", {
+    intrinsic: "Int",
+    value: 65535,
+    cppExpression: "defaultLimitValue(LimitID::MaxReservedStackArguments, hostArchitecture())",
+  }),
   enumerators("Typed::GeneratorStepCheck", { generatorStepCheckIsGenerator: [1, "IsGenerator"] }),
   enumerators("Typed::GeneratorStepStatus", {
     generatorStepStatusCompleted: [1, "Completed"],

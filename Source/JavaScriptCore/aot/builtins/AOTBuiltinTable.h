@@ -761,8 +761,9 @@ enum class BuiltinMark : uint8_t {
     IsDeletedWhenModuleOfLibraryLoads,
     PassesOverListWhereItTakesRecordOfHandlers,
     AsksOptionsForListedNamesAlone,
+    MayLayListenerForUncaughtExceptions,
 };
-static_assert(static_cast<unsigned>(BuiltinMark::AsksOptionsForListedNamesAlone) < 64);
+static_assert(static_cast<unsigned>(BuiltinMark::MayLayListenerForUncaughtExceptions) < 64);
 constexpr uint64_t bitOfMark(BuiltinMark mark) { return 1ull << static_cast<unsigned>(mark); }
 
 struct BuiltinMarkedEntry {

@@ -59,7 +59,7 @@ static TypeID copyTypeBetweenArenasOfArrivals(const TypeArena& from, TypeArena& 
     return to.intern(parts);
 }
 
-static TypeID joinSettledForArrivals(const TypeArena& types, TypeID joined)
+static ALWAYS_INLINE TypeID joinSettledForArrivals(const TypeArena& types, TypeID joined)
 {
     return types.at(joined).isAnything() ? TypeTable::anything : joined;
 }

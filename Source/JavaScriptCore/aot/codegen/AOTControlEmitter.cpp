@@ -206,12 +206,18 @@ bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& ter
     uint32_t constant = m_out.addConstantData(isListed.span(), ConstantKind::Unlabeled);
     build().statistics().count(StatisticID::SwitchesAnsweredByByteOfTable);
 
-    Integer position = type == Machine::Int32
-        ? zeroExtended(add(Word32(subject), word32(static_cast<int32_t>(0u - static_cast<uint32_t>(least)))))
-        : add(Integer(subject), integer(static_cast<int64_t>(uint64_t { 0 } - static_cast<uint64_t>(least))));
     LBasicBlock isInTable = newBlock();
-    branch(below(position, integer(static_cast<int64_t>(span))), { normalEdge(isInTable), otherwise });
-    m_out.appendTo(isInTable);
+    Integer position;
+    if (type == Machine::Int32) {
+        Word32 word = add(Word32(subject), word32(static_cast<int32_t>(0u - static_cast<uint32_t>(least))));
+        branch(below(word, word32(static_cast<int32_t>(span))), { normalEdge(isInTable), otherwise });
+        m_out.appendTo(isInTable);
+        position = zeroExtended(word);
+    } else {
+        position = add(Integer(subject), integer(static_cast<int64_t>(uint64_t { 0 } - static_cast<uint64_t>(least))));
+        branch(below(position, integer(static_cast<int64_t>(span))), { normalEdge(isInTable), otherwise });
+        m_out.appendTo(isInTable);
+    }
     Pointer entry = offsetBy(Pointer(m_out.relocatable(SymbolSpace::Constant, constant)), position, 0);
     Word32 byte(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTImage_tables, entry.value())));
     branch(isNotZero(byte), { generator().edgeTo(terminator, firstCaseOfPlace), otherwise });

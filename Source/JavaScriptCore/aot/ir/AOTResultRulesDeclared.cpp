@@ -72,7 +72,7 @@ static std::span<const LayoutID> layoutsOfSetInResultRules(const TypingContext& 
     return singleElementSpan(onlyMember);
 }
 
-static TypeID tryTypeHeldInSlot(const TypingContext& context, FieldReference reference)
+static ALWAYS_INLINE TypeID tryTypeHeldInSlot(const TypingContext& context, FieldReference reference)
 {
     if (TypeID known = context.positions.slot(context.level, reference.layout, reference.field))
         return known;
@@ -139,7 +139,7 @@ static TypeID tryTypeReadFromSlot(const TypingContext& context, FieldReference r
     return isNeverType(found) || !context.types.isSubset(found, held) ? held : found;
 }
 
-static std::optional<FieldReference> findFieldOfSlotAccess(const TypingContext& context, LayoutID layout, PropertyKeyID key)
+static ALWAYS_INLINE std::optional<FieldReference> findFieldOfSlotAccess(const TypingContext& context, LayoutID layout, PropertyKeyID key)
 {
     if (std::optional<FieldReference> declared = findField(context.program, layout, key))
         return declared;
@@ -280,7 +280,7 @@ static TypeID tryProvenTypeFoundAbovePrimitives(const TypingContext& context, co
     return object ? context.positions.property(context.level, object, key) : TypeID();
 }
 
-static TypeID tryProvenTypeOfFieldRead(const TypingContext& context, const Type& receiver, PropertyKeyID key)
+static ALWAYS_INLINE TypeID tryProvenTypeOfFieldRead(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
     if (!receiver.isJavaScriptValue())
         return { };

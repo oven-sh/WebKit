@@ -733,6 +733,10 @@ void Modules::didThrowInBody(ModuleID module, JSValue error)
 {
     if (m_filesWhoseOriginalRuns.get(module.index())) [[unlikely]]
         return;
+    if (data(module).kind == ModuleKind::CommonJs && m_instance.vm->hasPendingTerminationException()) [[unlikely]] {
+        setStatus(module, ModuleStatus::Evaluated);
+        return;
+    }
     if (data(module).kind == ModuleKind::CommonJs && (mayBeEvicted(module) || (data(module).runsAgainAfterThrow() && !isAwaitedByImportFromBeforeItRan(module))) && status(module) == ModuleStatus::Evaluating && !loaderHasFileThatThrew(module)) [[unlikely]] {
         if (mayBeEvicted(module))
             evict(module);
@@ -3883,6 +3887,8 @@ JSObject* Modules::moduleObjectMadeByRequire(ModuleID module)
 
     JSValue answered = answerRequire(module);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    if (JSObject* made = ensureLoaded(module).objectMadeByRequire)
+        return made;
     OptionSet<ModuleObjectTrait> traits { ModuleObjectTrait::IsNoCommonJSFile };
     if (data(module).kind == ModuleKind::SourceText)
         traits.add(ModuleObjectTrait::IsESModule);
@@ -4385,8 +4391,13 @@ bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*
     if (!ways)
         return true;
     while (ways->numberOfChildrenShown < ways->requiredModules.size()) {
-        JSObject* childObject = objectThatStandsForModule(ways->requiredModules[ways->numberOfChildrenShown++]);
+        unsigned place = ways->numberOfChildrenShown;
+        ModuleID child = ways->requiredModules[place];
+        JSObject* childObject = objectThatStandsForModule(child);
         RETURN_IF_EXCEPTION(scope, true);
+        if (ways->numberOfChildrenShown != place || place >= ways->requiredModules.size() || ways->requiredModules[place] != child)
+            continue;
+        ways->numberOfChildrenShown = place + 1;
         functor(childObject);
         RETURN_IF_EXCEPTION(scope, true);
     }

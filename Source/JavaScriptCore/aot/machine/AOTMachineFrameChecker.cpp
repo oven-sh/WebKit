@@ -231,7 +231,7 @@ bool FrameChecker::checkFramedPart()
     for (const Allocation::HeadOfFramedPart& headOfFramedPart : m_allocation.headsOfFramedPart()) {
         const Block* head = headOfFramedPart.block;
         const BlockPlace& placeOfHead = m_order.of(head);
-        if (head->isEntry() || head->isLandingPad() || !placeOfHead.isReached() || (placeOfHead.isRare() && m_order.rareRegions()[placeOfHead.rareRegion].onlyEntry != head) || placeOfHead.loop != noLoop || !m_frame.isSetUpAtHeadOf(head) || !m_allocation.isHeadOfFramedPart(head))
+        if (head->isEntry() || head->isLandingPad() || !placeOfHead.isReached() || (placeOfHead.isRare() && m_order.rareRegions()[placeOfHead.rareRegion].onlyEntry != head) || m_liveness.standsInLoopThatMayTurn(m_order, placeOfHead) || !m_frame.isSetUpAtHeadOf(head) || !m_allocation.isHeadOfFramedPart(head))
             return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, head->last());
         for (const Operation* phi : head->phis()) {
             if (!m_liveness.isDropped(phi) && m_allocation.isSpilled(phi) && !m_allocation.registerAtDefinitionOf(phi).isSet())

@@ -54,67 +54,25 @@ void LinkTables::listCyclesNamed()
         for (uint32_t awaited : cyclesAwaitedBy(cycle))
             cyclesNamed[nextPlaceOfCycle[awaited]++] = cycle;
     }
-
-    constexpr uint32_t none = UINT32_MAX;
-    auto onlyReferrerOf = [&](uint32_t cycle) {
-        std::span<const uint32_t> awaited = cyclesAwaitedBy(cycle);
-        return awaited.size() == 1 && awaited[0] < cycle ? awaited[0] : none;
-    };
-    placesBelowOnlyReferrers.fill({ }, numberOfCycles);
-    for (uint32_t cycle = static_cast<uint32_t>(numberOfCycles); cycle--;) {
-        uint32_t numberBelow = ++placesBelowOnlyReferrers[cycle].end;
-        if (uint32_t above = onlyReferrerOf(cycle); above != none)
-            placesBelowOnlyReferrers[above].end += numberBelow;
-    }
-    uint32_t nextPlaceOfTop = 0;
-    for (uint32_t cycle = 0; cycle < numberOfCycles; ++cycle) {
-        PlaceBelowOnlyReferrers& place = placesBelowOnlyReferrers[cycle];
-        uint32_t above = onlyReferrerOf(cycle);
-        uint32_t& nextPlace = above != none ? nextPlaceOfCycle[above] : nextPlaceOfTop;
-        place.top = above != none ? placesBelowOnlyReferrers[above].top : cycle;
-        place.first = nextPlace;
-        nextPlace += place.end;
-        place.end += place.first;
-        nextPlaceOfCycle[cycle] = place.first + 1;
-    }
-    for (uint32_t cycle = 0; cycle < numberOfCycles; ++cycle) {
-        std::span<uint32_t> awaited = cyclesAwaited.mutableSpan().subspan(firstCycleAwaited[cycle], firstCycleAwaited[cycle + 1] - firstCycleAwaited[cycle]);
-        if (awaited.size() > 1)
-            std::ranges::sort(awaited, { }, [&](uint32_t other) { return placesBelowOnlyReferrers[other].first; });
-    }
-}
-
-bool LinkTables::isNamedBelow(uint32_t above, uint32_t named) const
-{
-    std::span<const uint32_t> awaited = cyclesAwaitedBy(named);
-    auto placeOf = [&](uint32_t cycle) { return placesBelowOnlyReferrers[cycle].first; };
-    auto found = std::ranges::lower_bound(awaited, placeOf(above), { }, placeOf);
-    return found != awaited.end() && placeOf(*found) < placesBelowOnlyReferrers[above].end;
 }
 
 bool LinkTables::cycleLeadsTo(uint32_t referrer, uint32_t named) const
 {
-    if (referrer == named || hangsBelow(referrer, named))
+    if (referrer == named)
         return true;
-    named = placesBelowOnlyReferrers[named].top;
     uint32_t lowestRank = rankOfCycle[referrer];
     uint32_t highestRank = rankOfCycle[named];
     if (lowestRank >= highestRank)
         return false;
-    if (isNamedBelow(referrer, named))
+    if (std::ranges::binary_search(cyclesNamedBy(referrer), named))
         return true;
-    std::span<const uint32_t> namedByReferrer = cyclesNamedBy(referrer);
-    std::span<const uint32_t> awaitedByNamed = cyclesAwaitedBy(named);
-    if (namedByReferrer.size() <= awaitedByNamed.size()) {
-        for (uint32_t between : namedByReferrer) {
-            if (isNamedBelow(between, named))
-                return true;
-        }
-    } else {
-        for (uint32_t between : awaitedByNamed) {
-            if (std::ranges::binary_search(namedByReferrer, placesBelowOnlyReferrers[between].top))
-                return true;
-        }
+    std::span<const uint32_t> fewer = cyclesNamedBy(referrer);
+    std::span<const uint32_t> more = cyclesAwaitedBy(named);
+    if (fewer.size() > more.size())
+        std::swap(fewer, more);
+    for (uint32_t between : fewer) {
+        if (std::ranges::binary_search(more, between))
+            return true;
     }
 
     constexpr unsigned down = 0;
@@ -135,25 +93,17 @@ bool LinkTables::cycleLeadsTo(uint32_t referrer, uint32_t named) const
             numberOfSteps += stepsFrom(end, cycle).size();
         return numberOfSteps;
     };
-    size_t numbersOfStepsTaken[2] = { 0, 0 };
     while (!fronts[down].isEmpty() && !fronts[up].isEmpty()) {
-        size_t numbersOfStepsBehindNext[2] = { numbersOfStepsTaken[down] + numberOfStepsFrom(down), numbersOfStepsTaken[up] + numberOfStepsFrom(up) };
-        unsigned end = numbersOfStepsBehindNext[down] <= numbersOfStepsBehindNext[up] ? down : up;
-        numbersOfStepsTaken[end] = numbersOfStepsBehindNext[end];
+        unsigned end = numberOfStepsFrom(down) <= numberOfStepsFrom(up) ? down : up;
         nextFront.shrink(0);
         for (uint32_t cycle : fronts[end]) {
             for (uint32_t next : stepsFrom(end, cycle)) {
-                if (end == up)
-                    next = placesBelowOnlyReferrers[next].top;
                 if (seen[end ^ 1].contains(next))
                     return true;
                 if (rankOfCycle[next] <= lowestRank || rankOfCycle[next] >= highestRank)
                     continue;
-                if (!seen[end].add(next).isNewEntry)
-                    continue;
-                if (end == up && isNamedBelow(referrer, next))
-                    return true;
-                nextFront.append(next);
+                if (seen[end].add(next).isNewEntry)
+                    nextFront.append(next);
             }
         }
         std::swap(fronts[end], nextFront);

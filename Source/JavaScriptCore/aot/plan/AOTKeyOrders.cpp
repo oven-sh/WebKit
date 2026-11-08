@@ -249,6 +249,20 @@ struct CandidateForKeyOrders {
     bool isDeclaredOrder { false };
 };
 
+struct CompleteOrdersOfSources {
+    struct Order {
+        uint32_t firstKey { 0 };
+        uint32_t numberOfKeys { 0 };
+        LayoutID onlySource;
+    };
+
+    std::span<const PropertyKeyID> keysOf(const Order& order) const { return keys.span().subspan(order.firstKey, order.numberOfKeys); }
+
+    Vector<PropertyKeyID> keys;
+    Vector<Order> orders;
+    Vector<std::pair<PropertyKeyID, uint32_t>> ordersByRarestKey;
+};
+
 class CollectorOfKeyOrders {
     WTF_MAKE_NONCOPYABLE(CollectorOfKeyOrders);
 public:
@@ -267,7 +281,7 @@ public:
     void addOrdersOfConstructorFunctions(const LinkTables&, const ThinSummaries&, const BodyIndexTable&);
     void addOrdersBehindWhatConstructorFunctionsAlwaysCreate(const LinkTables&, const ThinSummaries&);
     void addOrdersOfAllocations(const LinkTables&, const ThinSummaries&);
-    void addOrdersOfCopies(const LinkTables&, const ThinSummaries&, BuildContext&);
+    void addOrdersOfCopies(const LinkTables&, const ThinSummaries&, const BodyIndexTable&, BuildContext&);
     KeyOrderParts sortIntoParts(BuildContext&);
 
 private:
@@ -326,7 +340,10 @@ private:
     void addDeclaredOrderOf(LayoutID);
     void addOrderOfDataObject(const DataNode::Object&);
     TypeID typeExpectedOfSourceOfCopy(const LinkTables&, FunctionID, const ThinSummary&, const SummaryNode&) const;
-    void addOrdersOfCopy(LayoutID target, LayoutID source, std::span<const uint32_t> writtenBesideCopy, std::span<const uint32_t> firstCandidateOfLayout);
+    void collectCompleteOrdersOf(LayoutID source, std::span<const uint32_t> firstCandidateOfLayout, CompleteOrdersOfSources&) const;
+    static void fileOrdersByRarestKey(CompleteOrdersOfSources&);
+    void addOrdersOfCopy(LayoutID target, const CompleteOrdersOfSources&, std::span<const uint32_t> writtenBesideCopy, std::span<const uint32_t> keysLeftOut);
+    void addOrderOfCopy(LayoutID target, std::span<const PropertyKeyID> keysOfSource, std::span<const uint32_t> writtenBesideCopy, std::span<const uint32_t> keysLeftOut);
 
     const Program& m_program;
     PlannedLayouts m_slots;
@@ -749,51 +766,129 @@ TypeID CollectorOfKeyOrders::typeExpectedOfSourceOfCopy(const LinkTables& link, 
     }
 }
 
-void CollectorOfKeyOrders::addOrdersOfCopy(LayoutID target, LayoutID source, std::span<const uint32_t> writtenBesideCopy, std::span<const uint32_t> firstCandidateOfLayout)
+void CollectorOfKeyOrders::collectCompleteOrdersOf(LayoutID source, std::span<const uint32_t> firstCandidateOfLayout, CompleteOrdersOfSources& found) const
 {
     const Layout& declaredSource = m_program.at(source);
-    if (source == target || declaredSource.kind != LayoutKind::Record || !hasOrders(source))
+    if (declaredSource.kind != LayoutKind::Record || !hasOrders(source))
         return;
-    const PlannedLayout& planned = m_slots.layout(target);
     uint32_t endOfCandidates = firstCandidateOfLayout[source.index() + 1];
     for (uint32_t position = firstCandidateOfLayout[source.index()]; position < endOfCandidates; ++position) {
-        CandidateForKeyOrders order = m_candidates[position];
+        const CandidateForKeyOrders& order = m_candidates[position];
         if (position + 1 < endOfCandidates && lengthSharedByKeyOrders(fieldsOf(order), fieldsOf(m_candidates[position + 1])) == order.numberOfFields)
             continue;
-        if (order.numberOfFields != declaredSource.fields.size() || m_numbersOfCandidates[target.index()] >= maxKeyOrdersPerLayout)
+        if (order.numberOfFields != declaredSource.fields.size())
             continue;
         if (std::ranges::any_of(fieldsOf(order), [&](FieldIndex index) { return index >= declaredSource.fields.size(); }))
             continue;
-        size_t firstField = m_fields.size();
-        m_isListed.clearAll();
-        for (uint32_t place = 0; place < order.numberOfFields; ++place) {
-            FieldIndex index = m_fields[order.firstField + place];
-            std::optional<FieldIndex> field = m_slots.findField(m_program, target, declaredSource.fields[index].key);
-            if (field && isListedInOrders(planned, *field) && !m_isListed.set(*field))
-                m_fields.append(*field);
-        }
-        for (FieldIndex field : writtenBesideCopy) {
-            if (!m_isListed.set(field))
-                m_fields.append(field);
-        }
-        finishCandidate(target, firstField);
+        found.orders.append({ static_cast<uint32_t>(found.keys.size()), order.numberOfFields, source });
+        for (FieldIndex index : fieldsOf(order))
+            found.keys.append(declaredSource.fields[index].key);
     }
 }
 
-void CollectorOfKeyOrders::addOrdersOfCopies(const LinkTables& link, const ThinSummaries& summaries, BuildContext& build)
+void CollectorOfKeyOrders::fileOrdersByRarestKey(CompleteOrdersOfSources& found)
 {
+    std::ranges::sort(found.orders, [&](const auto& first, const auto& second) {
+        return std::ranges::lexicographical_compare(found.keysOf(first), found.keysOf(second));
+    });
+    size_t numberOfDistinctOrders = 0;
+    for (const CompleteOrdersOfSources::Order& order : found.orders) {
+        if (numberOfDistinctOrders && std::ranges::equal(found.keysOf(found.orders[numberOfDistinctOrders - 1]), found.keysOf(order))) {
+            CompleteOrdersOfSources::Order& kept = found.orders[numberOfDistinctOrders - 1];
+            if (kept.onlySource != order.onlySource)
+                kept.onlySource = { };
+            continue;
+        }
+        found.orders[numberOfDistinctOrders++] = order;
+    }
+    found.orders.shrink(numberOfDistinctOrders);
+
+    Vector<PropertyKeyID> keysOfAllOrders;
+    for (const CompleteOrdersOfSources::Order& order : found.orders)
+        keysOfAllOrders.append(found.keysOf(order));
+    AOT::sort(keysOfAllOrders);
+    auto numberOfOrdersWith = [&](PropertyKeyID key) {
+        return std::ranges::equal_range(keysOfAllOrders, key).size();
+    };
+    found.ordersByRarestKey.reserveInitialCapacity(found.orders.size());
+    for (uint32_t order = 0; order < found.orders.size(); ++order) {
+        std::span<const PropertyKeyID> keys = found.keysOf(found.orders[order]);
+        if (keys.empty())
+            continue;
+        found.ordersByRarestKey.append({ *std::ranges::min_element(keys, { }, [&](PropertyKeyID key) { return std::pair(numberOfOrdersWith(key), key); }), order });
+    }
+    AOT::sort(found.ordersByRarestKey);
+}
+
+void CollectorOfKeyOrders::addOrderOfCopy(LayoutID target, std::span<const PropertyKeyID> keysOfSource, std::span<const uint32_t> writtenBesideCopy, std::span<const uint32_t> keysLeftOut)
+{
+    if (m_numbersOfCandidates[target.index()] >= maxKeyOrdersPerLayout)
+        return;
+    const PlannedLayout& planned = m_slots.layout(target);
+    size_t firstField = m_fields.size();
+    m_isListed.clearAll();
+    for (PropertyKeyID key : keysOfSource) {
+        if (std::ranges::binary_search(keysLeftOut, key.bits()))
+            continue;
+        std::optional<FieldIndex> field = m_slots.findField(m_program, target, key);
+        if (!field || !isListedInOrders(planned, *field)) {
+            m_fields.shrink(firstField);
+            return;
+        }
+        if (!m_isListed.set(*field))
+            m_fields.append(*field);
+    }
+    for (FieldIndex field : writtenBesideCopy) {
+        if (!m_isListed.set(field))
+            m_fields.append(field);
+    }
+    finishCandidate(target, firstField);
+}
+
+void CollectorOfKeyOrders::addOrdersOfCopy(LayoutID target, const CompleteOrdersOfSources& sources, std::span<const uint32_t> writtenBesideCopy, std::span<const uint32_t> keysLeftOut)
+{
+    auto addOrdersFiledUnder = [&](PropertyKeyID key) {
+        for (auto [rarestKey, number] : std::ranges::equal_range(sources.ordersByRarestKey, key, { }, &std::pair<PropertyKeyID, uint32_t>::first)) {
+            const CompleteOrdersOfSources::Order& order = sources.orders[number];
+            if (order.onlySource != target)
+                addOrderOfCopy(target, sources.keysOf(order), writtenBesideCopy, keysLeftOut);
+        }
+    };
+    for (const Field& field : m_program.at(target).fields) {
+        if (!std::ranges::binary_search(keysLeftOut, field.key.bits()))
+            addOrdersFiledUnder(field.key);
+    }
+    for (PropertyKeyID key : m_slots.layout(target).appendedKeys) {
+        if (!std::ranges::binary_search(keysLeftOut, key.bits()))
+            addOrdersFiledUnder(key);
+    }
+    for (uint32_t key : keysLeftOut)
+        addOrdersFiledUnder(PropertyKeyID::fromBits(key));
+}
+
+void CollectorOfKeyOrders::addOrdersOfCopies(const LinkTables& link, const ThinSummaries& summaries, const BodyIndexTable& bodies, BuildContext& build)
+{
+    static constexpr uint64_t sourceIsSetOfLayouts = 1ull << 32;
     struct Copy {
         LayoutID target;
-        LayoutID source;
+        uint64_t source { 0 };
         uint32_t firstWritten { 0 };
         uint32_t numberWritten { 0 };
+        uint32_t numberLeftOut { 0 };
+    };
+    struct CopyInFunction {
+        auto operator<=>(const CopyInFunction&) const = default;
+
+        LayoutID target;
+        uint64_t source { 0 };
+        ValueID site;
     };
     Vector<uint32_t> words = collectInParallel<uint32_t>(m_loops, static_cast<unsigned>(m_program.functions.size()), [&](unsigned number, Vector<uint32_t>& words) {
         FunctionID function(number);
         if (!link.function(function).isReached)
             return;
         const ThinSummary& summary = summaries.at(function);
-        Vector<std::pair<LayoutID, LayoutID>, 4> copies;
+        Vector<CopyInFunction, 4> copies;
         for (const SummaryChange& change : summary.changes) {
             if (change.kind != SummaryChange::Kind::CopiesInto || change.other == noSummaryNode || summary.nodes[change.subject].kind != SummaryNode::Kind::Allocation)
                 continue;
@@ -802,15 +897,12 @@ void CollectorOfKeyOrders::addOrdersOfCopies(const LinkTables& link, const ThinS
                 continue;
             const SummaryNode& source = summary.nodes[change.other];
             if (source.kind == SummaryNode::Kind::Allocation) {
-                copies.append({ target, LayoutID(source.first) });
+                copies.append({ target, source.first, change.site });
                 continue;
             }
             TypeID expected = typeExpectedOfSourceOfCopy(link, function, summary, source);
-            if (LayoutSetID layouts = expected ? m_program.at(expected).layouts : LayoutSetID()) {
-                m_program.at(layouts).forEach([&](LayoutID member) {
-                    copies.append({ target, member });
-                });
-            }
+            if (LayoutSetID layouts = expected ? m_program.at(expected).layouts : LayoutSetID())
+                copies.append({ target, layouts.bits() | sourceIsSetOfLayouts, change.site });
         }
         if (copies.isEmpty())
             return;
@@ -823,8 +915,8 @@ void CollectorOfKeyOrders::addOrdersOfCopies(const LinkTables& link, const ThinS
         };
         Vector<ListOfTarget, 4> lists(copies.size());
         summary.forEachListOfAllocation([&](LayoutID id, std::span<const uint32_t> listed) {
-            auto first = std::ranges::lower_bound(copies, id, { }, &std::pair<LayoutID, LayoutID>::first);
-            if (first == copies.end() || first->first != id)
+            auto first = std::ranges::lower_bound(copies, id, { }, &CopyInFunction::target);
+            if (first == copies.end() || first->target != id)
                 return;
             ListOfTarget& list = lists[first - copies.begin()];
             list.severalAreWritten |= list.isWritten && !std::ranges::equal(list.listed, listed);
@@ -833,16 +925,15 @@ void CollectorOfKeyOrders::addOrdersOfCopies(const LinkTables& link, const ThinS
         });
         size_t placeOfTarget = 0;
         for (size_t place = 0; place < copies.size(); ++place) {
-            auto [target, source] = copies[place];
-            if (copies[placeOfTarget].first != target)
+            auto [target, source, site] = copies[place];
+            if (copies[placeOfTarget].target != target)
                 placeOfTarget = place;
             const PlannedLayout& planned = m_slots.layout(target);
             size_t start = words.size();
-            words.appendList({ target.index(), source.index(), 0u });
+            words.appendList({ target.index(), static_cast<uint32_t>(source >> 32), static_cast<uint32_t>(source), 0u, 0u });
             const ListOfTarget& list = lists[placeOfTarget];
-            if (list.severalAreWritten)
-                continue;
-            for (uint32_t field : list.isWritten ? list.listed : m_program.at(target).declaredOrder.span()) {
+            std::span<const uint32_t> written = list.isWritten ? list.listed : m_program.at(target).declaredOrder.span();
+            for (uint32_t field : list.severalAreWritten ? std::span<const uint32_t>() : written) {
                 if (field & ThinSummary::keyInListOfAllocation) {
                     std::optional<FieldIndex> found = m_slots.findField(m_program, target, PropertyKeyID(field & ~ThinSummary::keyInListOfAllocation));
                     if (!found)
@@ -852,24 +943,37 @@ void CollectorOfKeyOrders::addOrdersOfCopies(const LinkTables& link, const ThinS
                 if (isListedInOrders(planned, field))
                     words.append(field);
             }
-            words[start + 2] = static_cast<uint32_t>(words.size() - start - 3);
+            words[start + 3] = static_cast<uint32_t>(words.size() - start - 5);
+            BodyValue operation = bodies.at(function).value(site);
+            if (operation.opcode() != Opcode::CopyDataProperties)
+                continue;
+            size_t firstLeftOut = words.size();
+            for (PropertyKeyID key : operation.as<Opcode::CopyDataProperties>().excludedKeys())
+                words.append(key.bits());
+            std::ranges::sort(words.mutableSpan().subspan(firstLeftOut));
+            words[start + 4] = static_cast<uint32_t>(words.size() - firstLeftOut);
         }
     });
     Vector<Copy> copies;
-    for (uint32_t next = 0; next < words.size(); next += 3 + words[next + 2])
-        copies.append({ LayoutID(words[next]), LayoutID(words[next + 1]), next + 3, words[next + 2] });
+    for (uint32_t next = 0; next < words.size(); next += 5 + words[next + 3] + words[next + 4])
+        copies.append({ LayoutID(words[next]), static_cast<uint64_t>(words[next + 1]) << 32 | words[next + 2], next + 5, words[next + 3], words[next + 4] });
     auto writtenBeside = [&](const Copy& copy) {
         return words.span().subspan(copy.firstWritten, copy.numberWritten);
+    };
+    auto leftOut = [&](const Copy& copy) {
+        return words.span().subspan(copy.firstWritten + copy.numberWritten, copy.numberLeftOut);
     };
     std::ranges::sort(copies, [&](const Copy& first, const Copy& second) {
         if (first.target != second.target)
             return first.target < second.target;
         if (first.source != second.source)
             return first.source < second.source;
-        return std::ranges::lexicographical_compare(writtenBeside(first), writtenBeside(second));
+        if (!std::ranges::equal(writtenBeside(first), writtenBeside(second)))
+            return std::ranges::lexicographical_compare(writtenBeside(first), writtenBeside(second));
+        return std::ranges::lexicographical_compare(leftOut(first), leftOut(second));
     });
     copies.shrink(std::unique(copies.begin(), copies.end(), [&](const Copy& first, const Copy& second) {
-        return first.target == second.target && first.source == second.source && std::ranges::equal(writtenBeside(first), writtenBeside(second));
+        return first.target == second.target && first.source == second.source && std::ranges::equal(writtenBeside(first), writtenBeside(second)) && std::ranges::equal(leftOut(first), leftOut(second));
     }) - copies.begin());
 
     bool someLayoutMayHaveTooManyOrders = std::ranges::any_of(m_numbersOfCandidates, [](uint32_t numberOfCandidates) {
@@ -891,8 +995,24 @@ void CollectorOfKeyOrders::addOrdersOfCopies(const LinkTables& link, const ThinS
     }
     firstCandidateOfLayout.append(numberOfCandidatesInFront);
     RELEASE_ASSERT(numberOfCandidatesInFront == m_candidates.size());
+
+    Vector<uint64_t> sources;
+    sources.appendContainerWithMapping(copies, [](const Copy& copy) { return copy.source; });
+    AOT::sort(sources);
+    sources.shrink(std::unique(sources.begin(), sources.end()) - sources.begin());
+    Vector<CompleteOrdersOfSources> ordersOfSources(sources.size());
+    for (size_t place = 0; place < sources.size(); ++place) {
+        CompleteOrdersOfSources& found = ordersOfSources[place];
+        if (sources[place] & sourceIsSetOfLayouts) {
+            m_program.at(LayoutSetID::fromBits(static_cast<uint32_t>(sources[place]))).forEach([&](LayoutID member) {
+                collectCompleteOrdersOf(member, firstCandidateOfLayout.span(), found);
+            });
+        } else
+            collectCompleteOrdersOf(LayoutID(static_cast<uint32_t>(sources[place])), firstCandidateOfLayout.span(), found);
+        fileOrdersByRarestKey(found);
+    }
     for (const Copy& copy : copies)
-        addOrdersOfCopy(copy.target, copy.source, writtenBeside(copy), firstCandidateOfLayout.span());
+        addOrdersOfCopy(copy.target, ordersOfSources[std::ranges::lower_bound(sources, copy.source) - sources.begin()], writtenBeside(copy), leftOut(copy));
 }
 
 void CollectorOfKeyOrders::addDeclaredOrders()
@@ -1045,7 +1165,7 @@ KeyOrders computeKeyOrders(const Program& program, const LinkTables& link, const
     collector.addOrdersBehindWhatConstructorFunctionsAlwaysCreate(link, summaries);
     if (mechanisms.contains(Mechanism::TypedSlots)) {
         collector.addOrdersOfAllocations(link, summaries);
-        collector.addOrdersOfCopies(link, summaries, build);
+        collector.addOrdersOfCopies(link, summaries, bodies, build);
     }
     return KeyOrders(collector.sortIntoParts(build));
 }

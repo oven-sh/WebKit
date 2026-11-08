@@ -437,25 +437,51 @@ void branchUnlessTextStandsAtPlace(StubAssembler& jit, const TextSoughtAtOnePlac
 {
     auto [string, sought, place, characters, soughtCharacters, length, word] = text;
     RELEASE_ASSERT(noOverlap(string, sought, place, characters, soughtCharacters, length, word));
+    JumpList standsThere;
+    auto findPlace = [&] {
+        isNotThere.append(jit.branch32(CCallHelpers::Below, word, length));
+        jit.sub32(length, word);
+        switch (where) {
+        case PlaceOfSoughtText::IsStart:
+            break;
+        case PlaceOfSoughtText::IsEnd:
+            jit.move(word, place);
+            break;
+        case PlaceOfSoughtText::IsGivenAndLast:
+            needsOperation.append(jit.branch32(CCallHelpers::Below, place, word));
+            [[fallthrough]];
+        case PlaceOfSoughtText::IsGiven:
+            isNotThere.append(jit.branch32(CCallHelpers::Above, place, word));
+            break;
+        }
+    };
     jit.loadPtr(Address(string, JSString::offsetOfValue()), characters);
     jit.loadPtr(Address(sought, JSString::offsetOfValue()), soughtCharacters);
+
+    Jump stringIsRope = jit.branchIfRopeStringImpl(characters);
+    Jump soughtIsRope = jit.branchIfRopeStringImpl(soughtCharacters);
+    jit.load32(Address(soughtCharacters, StringImpl::lengthMemoryOffset()), length);
+    jit.load32(Address(characters, StringImpl::lengthMemoryOffset()), word);
+    findPlace();
+    standsThere.append(jit.branchTest32(CCallHelpers::Zero, length));
+    needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(soughtCharacters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
+    jit.loadPtr(Address(soughtCharacters, StringImpl::dataOffset()), soughtCharacters);
+    if (where != PlaceOfSoughtText::IsStart)
+        jit.addPtr(place, characters);
+    jit.load8(Address(characters), word);
+    jit.load8(Address(soughtCharacters), place);
+    isNotThere.append(jit.branch32(CCallHelpers::NotEqual, word, place));
+    standsThere.append(jit.branch32(CCallHelpers::Equal, length, TrustedImm32(1)));
+    needsOperation.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthComparedWithoutCall)));
+    Jump hasCharactersOfBoth = jit.jump();
+
+    stringIsRope.link(&jit);
+    soughtIsRope.link(&jit);
     loadStringLength(jit, sought, soughtCharacters, length);
     loadStringLength(jit, string, characters, word);
-    isNotThere.append(jit.branch32(CCallHelpers::Below, word, length));
-    jit.sub32(length, word);
-    switch (where) {
-    case PlaceOfSoughtText::IsStart:
-        break;
-    case PlaceOfSoughtText::IsEnd:
-        jit.move(word, place);
-        break;
-    case PlaceOfSoughtText::IsGivenAndLast:
-        needsOperation.append(jit.branch32(CCallHelpers::Below, place, word));
-        [[fallthrough]];
-    case PlaceOfSoughtText::IsGiven:
-        isNotThere.append(jit.branch32(CCallHelpers::Above, place, word));
-        break;
-    }
+    findPlace();
     needsOperation.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthComparedWithoutCall)));
     JumpList hasNoCharactersInPlace;
     load8BitCharactersInPlace(jit, string, characters, word, where == PlaceOfSoughtText::IsEnd ? hasNoCharactersInPlace : needsOperation);
@@ -464,8 +490,8 @@ void branchUnlessTextStandsAtPlace(StubAssembler& jit, const TextSoughtAtOnePlac
     jit.and32(TrustedImm32(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer), soughtCharacters, word);
     Jump isJoined = jit.branch32(CCallHelpers::Equal, word, TrustedImm32(JSString::isRopeInPointer));
     load8BitCharactersInPlace(jit, sought, soughtCharacters, word, needsOperation);
+    hasCharactersOfBoth.link(&jit);
     branchIfBytesDiffer(jit, { characters, soughtCharacters, length, place, word }, isNotThere, DifferingWords::MayBeUnloaded);
-    JumpList standsThere;
     standsThere.append(jit.jump());
 
     isJoined.link(&jit);

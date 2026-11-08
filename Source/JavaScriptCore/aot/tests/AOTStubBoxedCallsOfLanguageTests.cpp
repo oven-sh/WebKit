@@ -184,11 +184,13 @@ static void testSearchesFromPositionInLanguageCallTests()
     Ref<StringImpl> charactersOfPart = *StringImpl::empty();
     TextInLanguageCallTests text;
     TextInLanguageCallTests rope;
+    TextInLanguageCallTests shortRope;
     TextInLanguageCallTests part;
     FakeObject<16> object;
     FakeObject<sizeof(JSFunction)> callee;
     makeFlatInLanguageCallTests(text, characters.get());
     makeRopeInLanguageCallTests(rope, 9);
+    makeRopeInLanguageCallTests(shortRope, 6);
     makeFlatInLanguageCallTests(part, charactersOfPart.get());
     object.setHeader(0, ObjectType);
     constexpr uint64_t none = static_cast<uint64_t>(-1);
@@ -203,20 +205,20 @@ static void testSearchesFromPositionInLanguageCallTests()
         uint64_t result;
     };
     const Case cases[] = {
-        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &text, 0, 0, 2, int32InLanguageCallTests(2) },
-        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &text, 3, 3, none, int32InLanguageCallTests(-1) },
-        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &text, -5, 0, 2, int32InLanguageCallTests(2) },
-        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &text, 6, 6, none, int32InLanguageCallTests(-1) },
-        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &text, 7, 6, none, int32InLanguageCallTests(-1) },
-        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &text, std::numeric_limits<int32_t>::max(), 6, none, int32InLanguageCallTests(-1) },
-        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &text, std::numeric_limits<int32_t>::min(), 0, 2, int32InLanguageCallTests(2) },
+        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &shortRope, 0, 0, 2, int32InLanguageCallTests(2) },
+        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &shortRope, 3, 3, none, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &shortRope, -5, 0, 2, int32InLanguageCallTests(2) },
+        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &shortRope, 6, 6, none, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &shortRope, 7, 6, none, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &shortRope, std::numeric_limits<int32_t>::max(), 6, none, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &shortRope, std::numeric_limits<int32_t>::min(), 0, 2, int32InLanguageCallTests(2) },
         { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &rope, 100, 9, none, int32InLanguageCallTests(-1) },
-        { BoxedCallForm::StringStartsWith, Entry::operationAOTStringHasAt, &text, 2, 2, 1, JSValue::ValueTrue },
-        { BoxedCallForm::StringStartsWith, Entry::operationAOTStringHasAt, &text, -1, 0, 0, JSValue::ValueFalse },
-        { BoxedCallForm::StringStartsWith, Entry::operationAOTStringHasAt, &text, 7, 6, 0, JSValue::ValueFalse },
-        { BoxedCallForm::StringLastIndexOf, Entry::operationAOTStringLastIndexOf, &text, 4, 4, 2, int32InLanguageCallTests(2) },
-        { BoxedCallForm::StringLastIndexOf, Entry::operationAOTStringLastIndexOf, &text, -5, static_cast<uint32_t>(-5), none, int32InLanguageCallTests(-1) },
-        { BoxedCallForm::StringLastIndexOf, Entry::operationAOTStringLastIndexOf, &text, 100, 100, 2, int32InLanguageCallTests(2) },
+        { BoxedCallForm::StringStartsWith, Entry::operationAOTStringHasAt, &shortRope, 2, 2, 1, JSValue::ValueTrue },
+        { BoxedCallForm::StringStartsWith, Entry::operationAOTStringHasAt, &shortRope, -1, 0, 0, JSValue::ValueFalse },
+        { BoxedCallForm::StringStartsWith, Entry::operationAOTStringHasAt, &shortRope, 7, 6, 0, JSValue::ValueFalse },
+        { BoxedCallForm::StringLastIndexOf, Entry::operationAOTStringLastIndexOf, &shortRope, 4, 4, 2, int32InLanguageCallTests(2) },
+        { BoxedCallForm::StringLastIndexOf, Entry::operationAOTStringLastIndexOf, &shortRope, -5, static_cast<uint32_t>(-5), none, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringLastIndexOf, Entry::operationAOTStringLastIndexOf, &shortRope, 100, 100, 2, int32InLanguageCallTests(2) },
     };
     for (const Case& testCase : cases) {
         AOT_TEST_CHECK(servesCallsByName(testCase.form, 1) && servesCallsByName(testCase.form, 2) && !acceptsArgumentCount(testCase.form, 3));
@@ -227,6 +229,25 @@ static void testSearchesFromPositionInLanguageCallTests()
             AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.result == testCase.result);
             AOT_TEST_CHECK(run.recordedArguments[0] == testCase.receiver->address() && run.recordedArguments[1] == part.address());
             AOT_TEST_CHECK(static_cast<uint32_t>(run.recordedArguments[2]) == testCase.positionOfOperation);
+        }
+    }
+
+    const Case answeredByStub[] = {
+        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &text, 6, 0, none, int32InLanguageCallTests(6) },
+        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &text, 7, 0, none, int32InLanguageCallTests(6) },
+        { BoxedCallForm::StringIndexOf, Entry::operationAOTStringIndexOfFrom, &text, std::numeric_limits<int32_t>::max(), 0, none, int32InLanguageCallTests(6) },
+        { BoxedCallForm::StringStartsWith, Entry::operationAOTStringHasAt, &text, 2, 0, 0, JSValue::ValueTrue },
+        { BoxedCallForm::StringStartsWith, Entry::operationAOTStringHasAt, &text, -1, 0, 0, JSValue::ValueTrue },
+        { BoxedCallForm::StringStartsWith, Entry::operationAOTStringHasAt, &text, 7, 0, 0, JSValue::ValueTrue },
+        { BoxedCallForm::StringLastIndexOf, Entry::operationAOTStringLastIndexOf, &text, 0, 0, none, int32InLanguageCallTests(0) },
+        { BoxedCallForm::StringLastIndexOf, Entry::operationAOTStringLastIndexOf, &text, -5, 0, none, int32InLanguageCallTests(0) },
+    };
+    for (const Case& testCase : answeredByStub) {
+        runner.recordCallsOf(testCase.operation);
+        runner.setResultOfRecordedOperation(testCase.answerOfOperation);
+        for (StubKey key : { tryCallMethodOfBuiltinClass(testCase.form, 2), callBoxedBuiltin(testCase.form, 2) }) {
+            StubRun run = runner.runCall(key, callee.address(), testCase.receiver->address(), { part.address(), int32InLanguageCallTests(testCase.position) });
+            AOT_TEST_CHECK(!run.numberOfRecordedCalls && run.result == testCase.result);
         }
     }
 
@@ -353,6 +374,10 @@ static void testTextAtOnePlaceInLanguageCallTests()
         { BoxedCallForm::StringIndexOf, 2, PieceWhole, PieceTail, 4, int32InLanguageCallTests(4) },
         { BoxedCallForm::StringLastIndexOf, 2, PieceWhole, Head, 0, int32InLanguageCallTests(0) },
         { BoxedCallForm::StringStartsWith, 1, Wide, Whole, unused, no },
+        { BoxedCallForm::StringStartsWith, 1, Wide, Nothing, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Wide, Nothing, unused, yes },
+        { BoxedCallForm::StringIndexOf, 2, Wide, Nothing, 2, int32InLanguageCallTests(2) },
+        { BoxedCallForm::StringLastIndexOf, 2, Wide, Nothing, 0, int32InLanguageCallTests(0) },
         { BoxedCallForm::StringStartsWith, 2, Whole, Wide, 5, no },
         { BoxedCallForm::StringEndsWith, 1, Rope, Whole, unused, no },
         { BoxedCallForm::StringIndexOf, 2, Rope, Whole, 0, int32InLanguageCallTests(-1) },
@@ -388,7 +413,6 @@ static void testTextAtOnePlaceInLanguageCallTests()
     const Case leftToOperation[] = {
         { BoxedCallForm::StringStartsWith, 1, Forty, ThirtyThree, unused, yes },
         { BoxedCallForm::StringStartsWith, 1, Whole, Wide, unused, no },
-        { BoxedCallForm::StringStartsWith, 1, Wide, Nothing, unused, yes },
         { BoxedCallForm::StringStartsWith, 1, Whole, Rope, unused, no },
         { BoxedCallForm::StringStartsWith, 1, Rope, Head, unused, no },
         { BoxedCallForm::StringStartsWith, 1, Whole, PieceOfWide, unused, no },

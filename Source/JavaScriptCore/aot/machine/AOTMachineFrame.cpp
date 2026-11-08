@@ -552,6 +552,9 @@ void Allocator::findFramedPart()
     auto placeOf = [places](const Block* block) ALWAYS_INLINE_LAMBDA -> const BlockPlace& {
         return places[block->index()];
     };
+    auto standsInLoopThatMayTurn = [&](const BlockPlace& place) ALWAYS_INLINE_LAMBDA {
+        return m_liveness.standsInLoopThatMayTurn(m_order, place);
+    };
     auto needsFrameByFacts = [&](const Block* block, const FactsOfBlockAheadOfFrame& facts) {
         return facts.holdsPatchThatNeedsFrame || facts.namesFrame || runsOutOfRegisters(block);
     };
@@ -663,13 +666,13 @@ void Allocator::findFramedPart()
         const Block* block = blocks[index];
         const BlockPlace& place = placeOf(block);
         const bool isRare = place.isRare();
-        const bool mayBeHead = !isRare && place.loop == noLoop;
+        const bool mayBeHead = !isRare && !standsInLoopThatMayTurn(place);
         bool blockFollowsSetup = marks[block->index()] & followsSetup;
         if (!mayBeHead) {
             blockFollowsSetup = blockFollowsSetup || (!isRare && needsFrame(block));
             if (blockFollowsSetup) {
                 const Block* above = block;
-                while (above && !blocksAboveLoopsAndRareRegions[above->index()] && (placeOf(above).isRare() || placeOf(above).loop != noLoop))
+                while (above && !blocksAboveLoopsAndRareRegions[above->index()] && (placeOf(above).isRare() || standsInLoopThatMayTurn(placeOf(above))))
                     above = dominatorOf(above);
                 if (!above)
                     return;
@@ -717,7 +720,7 @@ void Allocator::findFramedPart()
             if (!(marksOfBlock & everyWayOnNeedsFrame))
                 continue;
             const BlockPlace& place = placeOf(block);
-            if (place.isRare() || place.loop != noLoop)
+            if (place.isRare() || standsInLoopThatMayTurn(place))
                 continue;
             if (!(marksOfBlock & followsSetup) && !needsFrame(block)) {
                 bool someWayLeavesPartUnused = false;
@@ -746,7 +749,7 @@ void Allocator::findFramedPart()
         if (!entryOfRegion || entryOfRegion == entry)
             return SIZE_MAX;
         const BlockPlace& placeOfEntry = placeOf(entryOfRegion);
-        if (placeOfEntry.loop != noLoop || (placeOfEntry.orderIndex && placeOf(blocks[placeOfEntry.orderIndex - 1]).rareRegion == region))
+        if (standsInLoopThatMayTurn(placeOfEntry) || (placeOfEntry.orderIndex && placeOf(blocks[placeOfEntry.orderIndex - 1]).rareRegion == region))
             return SIZE_MAX;
         for (const Block* predecessor : placeOfEntry.predecessors) {
             if (liesInFramedPart(predecessor))
@@ -791,7 +794,7 @@ void Allocator::findFramedPart()
         const BlockPlace& place = placeOf(block);
         const Block* usualWayIn = nullptr;
         bool someRareWayInBringsHeads = false;
-        bool everyWayInMayLieInPart = block != entry && !block->isLandingPad() && place.loop == noLoop;
+        bool everyWayInMayLieInPart = block != entry && !block->isLandingPad() && !standsInLoopThatMayTurn(place);
         for (const Block* predecessor : place.predecessors) {
             if (!everyWayInMayLieInPart)
                 break;

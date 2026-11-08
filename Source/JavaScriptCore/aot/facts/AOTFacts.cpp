@@ -959,6 +959,19 @@ static void fillTablesOfFunctionsForFacts(const Program& program, const FactsReq
     steps.didFinish("tables of functions"_s);
 }
 
+static LayoutSetID layoutsThatStayWithCompiledCodeForFacts(Program& program, const LinkTables& linked)
+{
+    Vector<LayoutID> staying;
+    for (uint32_t index = 0; index < linked.layouts.size(); ++index) {
+        if (linked.layouts[index].isAllocated && !linked.layouts[index].reachesUnseenCode)
+            staying.append(LayoutID(index));
+    }
+    if (staying.isEmpty())
+        return { };
+    TypeArena types(program.types, ArenaKeeps::InProgram);
+    return types.layoutSets().ofSorted(staying.span());
+}
+
 static void fillTablesOfFieldsForFacts(Program& program, const OwnedLooksAtBodies& looks, BuildContext& build, Facts::Parts& parts)
 {
     StepTimes steps(build, "facts"_s);
@@ -972,6 +985,8 @@ static void fillTablesOfFieldsForFacts(Program& program, const OwnedLooksAtBodie
     parts.linked.fieldsStoredCounts = fieldsStoredCountsIn(*looks, program, parts.linked);
     parts.linked.keysStoredWhatIsNoInt32 = keysStoredWhatIsNoInt32In(*looks);
     build.statistics().count(StatisticID::FieldsHeldToWhatIsSeen, fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables));
+    if (parts.mechanisms.contains(Mechanism::Guesses))
+        parts.tables.layoutsThatStayWithCompiledCode = layoutsThatStayWithCompiledCodeForFacts(program, parts.linked);
     steps.didFinish("tables of fields"_s);
 }
 

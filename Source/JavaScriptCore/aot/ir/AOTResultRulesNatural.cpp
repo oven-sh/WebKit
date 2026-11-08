@@ -86,7 +86,7 @@ static bool describesPrimitivesAlone(const NaturalType& natural)
     return !natural.isObject && !natural.isFunction && !natural.opaque && !natural.builtinClass;
 }
 
-TypeID naturalTypeFrom(TypeArena& types, const NaturalType& natural)
+ALWAYS_INLINE TypeID naturalTypeFrom(TypeArena& types, const NaturalType& natural)
 {
     if (describesPrimitivesAlone(natural)) {
         NaturalPrimitives written = primitivesOf(natural);

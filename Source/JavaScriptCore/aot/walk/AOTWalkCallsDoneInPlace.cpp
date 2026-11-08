@@ -292,6 +292,8 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
     forwarded.inputValueGiven = written.inputValueGiven;
     if (constructs ? constructForwardedDirectly(walker, call, forwarded) : callForwardedDirectly(walker, call, forwarded) || callBuiltinForwarded(walker, call, forwarded))
         return true;
+    if (goOverListInPlaceOfCallOfBuiltin(walker, call, forwarded))
+        return true;
     if (Reference result = walker.build(WTF::move(forwarded)))
         walker.bind(call.id(), result);
     return true;

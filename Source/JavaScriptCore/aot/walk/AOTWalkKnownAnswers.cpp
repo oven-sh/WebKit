@@ -723,7 +723,7 @@ static ALWAYS_INLINE Reference rootInKnownAnswers(const Code& code, Reference na
     return name.isValue() ? referenceToRecordInKnownAnswers(code, rootOfCellInSweptCode(code, name.id())) : name;
 }
 
-static Reference valueBehindFormsInKnownAnswers(const Code& code, Reference name)
+static ALWAYS_INLINE Reference valueBehindFormsInKnownAnswers(const Code& code, Reference name)
 {
     if (!name.isValue())
         return name;
@@ -746,7 +746,7 @@ static ALWAYS_INLINE void appendValueToKeyOfKnownAnswer(const Code& code, Refere
     words.append(value.bits());
 }
 
-static void collectKeyOfNoteInKnownAnswers(const Code& code, KnownNote kind, Reference subject, Reference other, uint32_t word, AnswersOfWalk::WordsOfKey& words)
+static ALWAYS_INLINE void collectKeyOfNoteInKnownAnswers(const Code& code, KnownNote kind, Reference subject, Reference other, uint32_t word, AnswersOfWalk::WordsOfKey& words)
 {
     words.append(headOfKeyOfKnownAnswer(KnownAnswer::Family::Note, static_cast<uint32_t>(kind)));
     words.append(word);
@@ -903,7 +903,13 @@ static Reference unlessWiderThanDraftInKnownAnswers(Walker& walker, const Draft&
         return { };
     TypeID held = walker.typeOf(earlier);
     TypeID asked = walker.resultTypeOf(draft);
-    return held && asked && walker.types().isSubset(held, asked) ? earlier : Reference();
+    if (!held || !asked)
+        return { };
+    if (walker.types().isSubset(held, asked))
+        return earlier;
+    Reference narrowed = walker.nameNarrowedBehindTests(earlier);
+    bool answers = narrowed != earlier && narrowed.isRecord() && walker.representationOf(narrowed) == walker.representationOf(earlier) && walker.types().isSubset(walker.typeOf(narrowed), asked);
+    return answers ? narrowed : Reference();
 }
 
 static Reference booleanInKnownAnswers(Walker& walker, bool value)

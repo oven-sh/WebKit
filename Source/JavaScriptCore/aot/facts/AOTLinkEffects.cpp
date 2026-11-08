@@ -1341,6 +1341,7 @@ void rankReferrersFirst(LinkTables& tables)
                 cyclesAwaited.append(cycleOfReferrer);
             }
         }
+        std::ranges::sort(cyclesAwaited.mutableSpan().subspan(firstAwaited));
         rankOfCycle[cycle] = rank;
 
         for (uint32_t member : members) {

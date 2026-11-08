@@ -648,6 +648,17 @@ void Code::letListRememberStorageAtSite(ValueID list)
     record.flags |= *FlagMask::remembersStorageAtSite(Opcode::NewArrayLike);
 }
 
+void Code::letListForgetStorageAtSite(ValueID list)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Operation& record = m_operations[checkedIndexInCode(list, m_operations.size())];
+    RELEASE_ASSERT(record.opcode == Opcode::NewArrayLike);
+    RELEASE_ASSERT(record.remembersStorageAtSite());
+    if (m_keepsChangesToOlderParts)
+        m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, list, record });
+    record.flags &= ~*FlagMask::remembersStorageAtSite(Opcode::NewArrayLike);
+}
+
 ValueID Code::appendParameter(BlockID blockID, TypeID type, Representation representation, Origin origin)
 {
     RELEASE_ASSERT(!m_isSwept);
