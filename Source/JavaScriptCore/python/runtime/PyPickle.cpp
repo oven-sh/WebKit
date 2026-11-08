@@ -2171,6 +2171,7 @@ static JSValue picklerMemoProxyCopy(JSGlobalObject* globalObject, JSValue self)
     auto* map = uncheckedDowncast<JSWeakMap>(pickler->get(PicklerMemoMap).asCell());
     PyDict* result = PyDict::create(globalObject);
     UncheckedKeyHashSet<JSCell*> seen;
+    seen.reserveInitialCapacity(listLength(keys));
     for (unsigned i = 0; i < listLength(keys); ++i) {
         JSValue object = listGet(keys, i);
         JSValue index = picklerMemoNumberOf(globalObject, map, object);
