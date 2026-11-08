@@ -76,14 +76,18 @@ static bool isObjectOfPython(JSCell* cell, JSGlobalObject* globalObject)
     if (type == PyObjectType) {
         if (isInternalObject(cell))
             return false;
-        if (auto* weakRef = PyWeakRef::tryFrom(cell); weakRef && weakRef->isInternal())
-            return false;
-        if (auto* view = PyMemoryView::tryFrom(cell); view && view->isInternal)
-            return false;
-        if (auto* descriptor = PyGetSetDescriptor::tryFrom(cell); descriptor && descriptor->owner()->has(TypeFlag::Internal))
-            return false;
-        if (auto* descriptor = PyMemberDescriptor::tryFrom(cell); descriptor && descriptor->owner()->has(TypeFlag::Internal))
-            return false;
+        // (This is asked of every item of every container that is looked into. Nothing derives from these four classes: one look at the class of the cell tells, where to ask each whether the cell inherits from it is a walk
+        // up the line of its classes.)
+        static_assert(std::is_final_v<PyWeakRef> && std::is_final_v<PyMemoryView> && std::is_final_v<PyGetSetDescriptor> && std::is_final_v<PyMemberDescriptor>);
+        const ClassInfo* classOfCell = cell->classInfo();
+        if (classOfCell == PyWeakRef::info())
+            return !uncheckedDowncast<PyWeakRef>(cell)->isInternal();
+        if (classOfCell == PyMemoryView::info())
+            return !uncheckedDowncast<PyMemoryView>(cell)->isInternal;
+        if (classOfCell == PyGetSetDescriptor::info())
+            return !uncheckedDowncast<PyGetSetDescriptor>(cell)->owner()->has(TypeFlag::Internal);
+        if (classOfCell == PyMemberDescriptor::info())
+            return !uncheckedDowncast<PyMemberDescriptor>(cell)->owner()->has(TypeFlag::Internal);
     } else if (type == InternalFunctionType) {
         auto* pythonType = PyType::tryFrom(cell);
         if (!pythonType)
