@@ -2114,6 +2114,12 @@ static void picklerSetMemo(JSGlobalObject* globalObject, JSValue self, JSValue v
             picklerMemoSet(globalObject, scratch, listGet(keys, i).asCell(), index.asNumber());
             RETURN_IF_EXCEPTION(scope, void());
         }
+        // (One object in the place of another that has a number too: the list is as long as it was, and each item has a number.)
+        if (scratch->get(PicklerMemoCount) != other->get(PicklerMemoCount)) [[unlikely]] {
+            scope.release();
+            picklerRaiseMemoKeysChanged(globalObject);
+            return;
+        }
     } else if (isDict(value)) {
         auto* dict = PyDict::from(value);
         JSValue key, item;
@@ -2162,10 +2168,14 @@ static JSValue picklerMemoProxyCopy(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     auto* map = uncheckedDowncast<JSWeakMap>(pickler->get(PicklerMemoMap).asCell());
     PyDict* result = PyDict::create(globalObject);
+    UncheckedKeyHashSet<JSCell*> seen;
     for (unsigned i = 0; i < listLength(keys); ++i) {
         JSValue object = listGet(keys, i);
         JSValue index = picklerMemoNumberOf(globalObject, map, object);
         RETURN_IF_EXCEPTION(scope, { });
+        // (One object in the place of another that has a number too. By the cell, as the memo goes, not by the keys of the result: two strs of one text are two cells, and one object to id().)
+        if (!seen.add(object.asCell()).isNewEntry) [[unlikely]]
+            RELEASE_AND_RETURN(scope, picklerRaiseMemoKeysChanged(globalObject));
         JSValue identity = identityOf(globalObject, object);
         RETURN_IF_EXCEPTION(scope, { });
         result->set(globalObject, identity, PyTuple::create(globalObject, { index, object }));
