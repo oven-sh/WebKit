@@ -1450,6 +1450,7 @@ public:
     explicit SocketTransfer(JSGlobalObject* globalObject)
         : m_globalObject(globalObject)
         , m_signalsArrived(signalsArrivedOnThread())
+        , m_signalsArrivedBefore(m_signalsArrived)
     {
     }
 
@@ -1465,12 +1466,15 @@ public:
         unsigned arrived = signalsArrivedOnThread();
         if (failed(scope, checkSignals(m_globalObject)))
             return Next::Raised;
-        unsigned before = std::exchange(m_signalsArrived, arrived);
-        return hasTransferred && arrived != before ? Next::Ends : Next::GoesOn;
+        m_signalsArrivedBefore = std::exchange(m_signalsArrived, arrived);
+        return hasTransferred && hasJustServedSignal() ? Next::Ends : Next::GoesOn;
     }
 
+    // The last serve() found that one had arrived.
+    bool hasJustServedSignal() const { return m_signalsArrived != m_signalsArrivedBefore; }
+
     // Those that had arrived by then ended nothing.
-    void forgetSignals(unsigned arrived) { m_signalsArrived = arrived; }
+    void forgetSignals(unsigned arrived) { m_signalsArrived = m_signalsArrivedBefore = arrived; }
 
     // What had arrived at the last look. For a wait that one more is to end: see WaitRequest::signalsSeen.
     const unsigned& signalsSeen() const { return m_signalsArrived; }
@@ -1478,6 +1482,7 @@ public:
 private:
     JSGlobalObject* m_globalObject;
     unsigned m_signalsArrived;
+    unsigned m_signalsArrivedBefore;
 };
 
 template<typename IsOver, typename SystemCall>
@@ -1659,6 +1664,11 @@ static bool socketSendCall(JSGlobalObject* globalObject, PyRecord* socket, int64
         // Where the system's one call would go to sleep. It looks for a signal before it does, each time: with a part gone it returns the part.
         if (!serve(total))
             return result;
+        // With nothing gone it is begun again. The handler may be who made room, and less than poll() wants: see socketWait().
+        if (transfer.hasJustServedSignal()) {
+            wasToldReady = false;
+            continue;
+        }
         if (!std::exchange(hasWaited, true) && socketHasTimeLimitOfKernel(socket, SO_SNDTIMEO)) {
             callsFirst = false;
             goesOn = false;
