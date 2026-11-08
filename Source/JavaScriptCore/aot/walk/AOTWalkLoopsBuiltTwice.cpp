@@ -2678,10 +2678,10 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             BlockID isNoInt32 = addBlock(BlockFrequency::Rare);
             branch(isInt32, takesBound, isNoInt32);
             continueIn(takesBound);
-            Reference held = buildProofOfNumber(*this, bound, isInt32, origin);
-            if (!held)
-                return false;
-            arms.append(ArmThatMeets { takesBound, { held, held } });
+            if (Reference held = buildProofOfNumber(*this, bound, isInt32, origin))
+                arms.append(ArmThatMeets { takesBound, { held, held } });
+            else if (!isUnreachable())
+                jumpTo(closedStart);
             continueIn(isNoInt32);
             Reference isNumber = buildTestOfNumber(*this, bound, TypeTable::number, origin);
             number = goOnWhere(isNumber) ? buildProofOfNumber(*this, bound, isNumber, origin) : Reference();
