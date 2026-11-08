@@ -100,6 +100,7 @@ const CodeDescription* describeCode(StringView);
 struct Packed {
     alignas(16) uint8_t bytes[32];
     JSValue keep; // What the bytes point into, which has to live while they are in use. None: nothing.
+    JSCell* owner { nullptr }; // The bytes are an address in the memory of this: the entry for where they are stored (entryAt()). Null: nothing is known to own it.
     std::span<const uint8_t> text; // CharArray and WCharArray: what to copy.
     JSCell* holder { nullptr }; // Whose memory `text` is: store() keeps it alive until it has copied.
 };
@@ -207,6 +208,7 @@ PyCTypeInfo* createInfo(JSGlobalObject*, PyType*);
 
 // Where the memory of an instance is.
 // - Its own, or that of the instance it is a part of: a PyByteStorage, which the collector frees and never moves.
+// - That of a bytes object, if a pointer that was made to point into one is looked through. It does not move either.
 // - That of an object with a buffer (from_buffer): a memoryview, through which it is found again at each use. So it is noticed
 //   when the view has been released, when memory of WebAssembly has grown, or when an audit hook had JS take the memory away
 //   before from_buffer() was through. But for that the memory stays: that of Python's is exported, that of JS is pinned.
@@ -232,6 +234,8 @@ public:
     const uint8_t* addressInStorage() const { ASSERT(!m_isView); return std::bit_cast<const uint8_t*>(m_address); }
 
     void setStorage(VM&, PyByteStorage*, size_t offset);
+    // `owner`: has bytesOfOwner().
+    void setMemoryIn(VM&, JSCell* owner, const uint8_t* address);
     // resize() has given the instance new memory. What it had lives as long as the instance: there may be addresses of it about, in pointers that keep the instance alive
     // and in arguments of a call that is being put together.
     void keepFormerStorage(VM&, PyByteStorage*);
@@ -586,9 +590,11 @@ struct Place {
 // is out of date can only fail to say yes, and then _objects is searched, as before there were records.
 // _objects cannot do it alone: it is CPython's to the letter, the program can write to it, instances share it by reference, and its keys are places in an instance, which collide.
 //
-// An entry: the PyByteStorage that the address lies in; where the memory is seen through a view, an instance that sees it, which knows where in the view it is and where the view was.
+// An entry: the PyByteStorage or the bytes object that the address lies in; where the memory is seen through a view, an instance that sees it, which knows where in the view it is and where the view was.
 // A place: eight bytes at a multiple of eight. Others (in a packed structure) have no entry.
 //
+// The bytes of a cell that has them in itself, so that they stay where they are for as long as it lives: a PyByteStorage; a bytes object, with the NUL at its end. Of any other cell: none.
+std::span<uint8_t> bytesOfOwner(JSCell*);
 // Empty: there is none.
 JSValue entryAt(JSGlobalObject*, const Home&);
 // Empty: there is none from now on. If it raises, for want of memory, an entry is missing or out of date.

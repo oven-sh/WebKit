@@ -1593,12 +1593,13 @@ up before it waits for events while a collection that it has asked for is under 
 are read: CPython's `StgInfo`) is a cell, `PyCTypeInfo`, under a hidden key of the type; a type of one of the metaclasses that has
 none is abstract. The layout of a structure is worked out in Python, by `ctypes._layout`, as in CPython.
 
-**Memory.** An instance (`PyCData`) has no memory in itself. It refers to one of three things:
+**Memory.** An instance (`PyCData`) has no memory in itself. It refers to one of four things:
 - A `PyByteStorage`: memory of the collector, which does not move. That is what an instance made by calling its type has, and
   what a part of it (a field, an item) shares with it. Nothing is freed by hand and no instance has a destructor: the memory lives while
   any instance refers to it. `resize()` beyond what there is room for gives the instance new memory; parts made before go on using the
   old, which stays valid. There are at least 16 bytes of it, a multiple of 16, and all of it is zeroed: in CPython a small instance has 16 zeroed
   bytes in itself, and programs pass a `c_wchar` or a full `(c_char * 3)` where C looks for the end of a string. For a type that holds pointers it is a `PyCStorage`, which has a reference behind the bytes (see "Who owns what an address points into").
+- A bytes object, if a pointer that points into one is looked through (`cast(b, POINTER(c_char * 3)).contents`). It does not move either.
 - A memoryview (`from_buffer`). The address is looked up through the view at each use, so it is noticed when the view has been
   released, memory of WebAssembly has grown, or an audit hook has had JS take the memory away before `from_buffer()` was through. While the program can reach the instance, or anything made of it, which keeps it alive,
   the view counts as an export: a bytearray cannot be resized (DEFERRED.md says when it can after all). A buffer of the instance (`memoryview(c)`, `T.from_buffer(c)`, a call that fills `c`) is a buffer taken from that view (`dataBuffer()`): while it is in use the view cannot be released, by hand either. Memory of JS is pinned
@@ -1616,7 +1617,7 @@ result has been read. What a callback returns a pointer into (a `c_char_p`, a `c
 
 **Who owns what an address points into.** `_objects` is CPython's to the letter, and cannot be what safety rests on: the program can write to it, instances share it by reference (`s2.ptr = s1.ptr` hands on the dict of `s1`, which `s1`
 goes on changing), and its keys are places in an instance, which collide. So who owns the memory at an address that ctypes has stored is written down a second time, beside the memory that holds the eight bytes, where the program does not get at it.
-- **The record of a cell** has, for a place (eight bytes at a multiple of eight) in the memory of that cell, an **entry**: the `PyByteStorage` that the address lies in; where the memory is seen through a view, an instance over it, which knows where in
+- **The record of a cell** has, for a place (eight bytes at a multiple of eight) in the memory of that cell, an **entry**: the `PyByteStorage` or the bytes object that the address lies in; where the memory is seen through a view, an instance over it, which knows where in
   the view it is and where the view was. It is ownership, as the owner of an instance's memory is: nothing is worked out again from it, and to drop it changes what lives.
 - **An entry vouches only for an address that lies in memory which the entry itself keeps alive** (`findProvenanceByEntry()`). So however the bytes have come about since (C, `memmove()`, another view of them), a yes is safe. An entry that is out of
   date can only fail to say yes; then `_objects` is searched as before (`findProvenanceOfTarget()`), which knows things that no record does: what was stored into memory that has no cell (`from_address()`, `malloc()`), and what `memmove()` has moved within an instance.
@@ -1629,7 +1630,8 @@ goes on changing), and its keys are places in an instance, which collide. So who
   (`ArrayConventions.h`), so what it takes goes by the entries, not by the memory. It is of a class of its own, not an array: every array of JS is a list for
   Python, and `gc.get_objects()` hands those out. What is read from a record is looked at all the same: what is no cell, or a cell of a kind that is no entry, vouches for nothing. Bits that are the address of a table are no `py_object`.
 - **Who writes.** `p.contents = x`; a pointer, an array or None stored where a pointer is; a whole instance stored into a field or an item, which copies the entries of the range (`copyEntries()`); a pointer copied from a place for which only the
-  search knows an owner takes what the search finds. Whatever else writes bytes (an int field of a union, `raw`, a slice, `memmove()`, C) writes nothing down.
+  search knows an owner takes what the search finds; the values of `c_char_p`, `c_wchar_p` and `c_void_p` (`Packed::owner`). An int or None stored as a value leaves the entry if it points into what the place
+  pointed into before (the value was read and stored again, or moved on a little), and clears it otherwise. Whatever else writes bytes (an int field of a union, `raw`, a slice, `memmove()`, C) writes nothing down.
 - **What the program can see of it.** `_objects` looks as it did, and what that of an instance that owns its memory holds dies in the order of that dict, as in CPython: an instance that dies lets go of its memory, and so of the record, before it lets go of `_objects` (the order in `PyCData::visitChildren()`, by which the order of finalizers goes). `_objects.clear()` and `.pop()` no longer free what ctypes itself has stored the address of. An entry holds what it holds until the place is stored to again or the memory that holds the place dies, also when C has
   overwritten the bytes meanwhile: DEFERRED.md says what that prolongs.
 

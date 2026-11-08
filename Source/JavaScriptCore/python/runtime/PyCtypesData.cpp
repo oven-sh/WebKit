@@ -67,8 +67,13 @@ uint8_t* PyCData::memoryBehindReleasedView(JSGlobalObject* globalObject) const
 
 void PyCData::setStorage(VM& vm, PyByteStorage* storage, size_t offset)
 {
-    m_owner.set(vm, this, storage);
-    m_address = std::bit_cast<uintptr_t>(storage->data() + offset);
+    setMemoryIn(vm, storage, storage->data() + offset);
+}
+
+void PyCData::setMemoryIn(VM& vm, JSCell* owner, const uint8_t* address)
+{
+    m_owner.set(vm, this, owner);
+    m_address = std::bit_cast<uintptr_t>(address);
     if (m_isView)
         m_past.clear(); // It was a number.
     m_isView = false;
@@ -301,6 +306,17 @@ static void setRecordOf(JSGlobalObject* globalObject, JSCell* cell, JSValue reco
     state.records->set(vm, cell, record);
 }
 
+std::span<uint8_t> bytesOfOwner(JSCell* cell)
+{
+    if (cell->type() == PyBytesType) {
+        auto* bytes = uncheckedDowncast<PyBytes>(cell);
+        return { bytes->mutableData(), bytes->length() + 1 };
+    }
+    if (auto* storage = dynamicDowncast<PyByteStorage>(cell))
+        return { storage->data(), storage->capacity() };
+    return { };
+}
+
 static constexpr int64_t sizeOfPlace = sizeof(void*);
 
 // False: there is none there, or it is too far out for the table.
@@ -465,7 +481,7 @@ static ALWAYS_INLINE JSValue entryFor(PyCData* data)
 // What a pointer points to is, as a rule, the memory of an instance that the pointer keeps alive. Then it is known how far that
 // memory goes, and who owns it.
 struct Provenance {
-    JSCell* owner { nullptr }; // A PyByteStorage or a PyMemoryView. Null: nothing is known.
+    JSCell* owner { nullptr }; // A PyMemoryView, or what has bytesOfOwner(). Null: nothing is known.
     const uint8_t* begin { nullptr };
     const uint8_t* end { nullptr };
     int64_t offsetOfBegin { 0 }; // In the view, if that is the owner.
@@ -516,9 +532,9 @@ static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uin
             if (!begin || address < begin || address > begin + size)
                 return isGone();
         } else {
-            auto* storage = uncheckedDowncast<PyByteStorage>(other->owner());
-            begin = storage->data();
-            size = storage->capacity();
+            std::span<uint8_t> memory = bytesOfOwner(other->owner());
+            begin = memory.data();
+            size = memory.size();
             if (address < begin || address > begin + size) {
                 // It may point to where the instance was before a resize().
                 JSCellButterfly* former = other->formerStorages();
@@ -564,10 +580,10 @@ static bool findProvenanceByEntry(JSGlobalObject* globalObject, JSValue entry, c
         return false;
     if (PyCData::is(entry))
         return findProvenance(globalObject, entry, address, result);
-    auto* storage = uncheckedDowncast<PyByteStorage>(entry.asCell());
-    if (address < storage->data() || address > storage->data() + storage->capacity())
+    std::span<uint8_t> memory = bytesOfOwner(entry.asCell());
+    if (!memory.data() || address < memory.data() || address > memory.data() + memory.size())
         return false;
-    result = { storage, storage->data(), storage->data() + storage->capacity(), 0, storage };
+    result = { entry.asCell(), memory.data(), memory.data() + memory.size(), 0, entry.asCell() };
     return true;
 }
 
@@ -649,6 +665,29 @@ static JSValue entryForCopy(JSGlobalObject* globalObject, PyCData* holder, const
     return entryAt(globalObject, home);
 }
 
+static ALWAYS_INLINE bool isAddress(Code code)
+{
+    return code == Code::CharPointer || code == Code::WCharPointer || code == Code::VoidPointer;
+}
+
+// An address has been stored there as a value (c_char_p, c_wchar_p, c_void_p).
+static void didStoreAddress(JSGlobalObject* globalObject, const Home& home, const Packed& packed)
+{
+    if (packed.owner) {
+        setEntry(globalObject, home, packed.owner);
+        return;
+    }
+    // An int, or None: nothing says what it points into. If that is what the place pointed into before, it goes on being known: the value has been read and stored again, or moved on a little.
+    JSValue entry = entryAt(globalObject, home);
+    if (!entry)
+        return;
+    const uint8_t* target;
+    memcpy(&target, packed.bytes, sizeof(target));
+    Provenance provenance;
+    if (!findProvenanceByEntry(globalObject, entry, target, provenance) && !provenance.isInWhatIsGone)
+        setEntry(globalObject, home, { });
+}
+
 // What the pointer holds. False: an exception; a null pointer is one.
 static bool pointerTarget(JSGlobalObject* globalObject, PyCData* pointer, uint8_t*& target, Home* home = nullptr)
 {
@@ -703,7 +742,7 @@ static Home homeOf(PyCData* data, int64_t offset)
         return { };
     if (data->isView())
         return homeInView(uncheckedDowncast<PyMemoryView>(owner), data->offsetInView() + offset);
-    return { owner, data->addressInStorage() - uncheckedDowncast<PyByteStorage>(owner)->data() + offset };
+    return { owner, data->addressInStorage() - bytesOfOwner(owner).data() + offset };
 }
 
 static Home homeOf(const Provenance& provenance, const uint8_t* address)
@@ -785,7 +824,7 @@ PyCData* dataAt(JSGlobalObject* globalObject, PyType* type, const Place& place, 
     else if (auto* view = dynamicDowncast<PyMemoryView>(provenance.owner))
         data->setView(vm, view, provenance.offsetOfBegin + (address - provenance.begin), address);
     else
-        data->setStorage(vm, uncheckedDowncast<PyByteStorage>(provenance.owner), address - provenance.begin);
+        data->setMemoryIn(vm, provenance.owner, address);
     return didMakeData(globalObject, data, isFinalized);
 }
 
@@ -1003,10 +1042,17 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
         bool ok = pack(globalObject, accessor, value, size, packed);
         RETURN_IF_EXCEPTION(scope, { });
         ASSERT_UNUSED(ok, ok);
-        auto memory = place.resolve(globalObject, size);
-        RETURN_IF_EXCEPTION(scope, { });
-        store(memory, accessor, packed, bits);
+        Home home;
+        {
+            auto memory = place.resolve(globalObject, size, isAddress(accessor.code) ? &home : nullptr);
+            RETURN_IF_EXCEPTION(scope, { });
+            store(memory, accessor, packed, bits);
+        }
         ensureStillAliveHere(value);
+        if (isAddress(accessor.code)) {
+            didStoreAddress(globalObject, home, packed);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         return packed.keep;
     };
 
@@ -1175,13 +1221,13 @@ JSValue dataBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flags)
         ++view->exports;
         ++view->managedBuffer()->bufferCount;
         buffer.release = releaseExportOfView;
-    } else if (data->owner()) {
-        auto* storage = uncheckedDowncast<PyByteStorage>(data->owner());
-        buffer.owner = storage;
-        buffer.offset = data->memory(globalObject) - storage->data();
+    } else if (JSCell* owner = data->owner(); owner && (owner->type() != PyBytesType || data->addressInStorage() + data->size < bytesOfOwner(owner).data() + bytesOfOwner(owner).size())) {
+        buffer.owner = owner;
+        buffer.offset = data->addressInStorage() - bytesOfOwner(owner).data();
         buffer.requiredSize = buffer.offset + data->size;
     } else {
-        // Nothing is known about the memory. A buffer wants an owner: an ArrayBuffer that frees nothing.
+        // Nothing is known about the memory, or it takes in the NUL behind a bytes object, in front of which the memory ends that a buffer can have of one. (The instance, which the buffer holds, keeps that alive.)
+        // A buffer wants an owner: an ArrayBuffer that frees nothing.
         uint8_t* memory = data->memory(globalObject);
         if (!memory && data->size)
             return raiseValueError(globalObject, scope, "NULL pointer access"_s);
@@ -1333,10 +1379,15 @@ static void simpleSetValue(JSGlobalObject* globalObject, JSValue self, JSValue v
     bool ok = pack(globalObject, info->accessor, value, info->size, packed);
     RETURN_IF_EXCEPTION(scope, void());
     ASSERT_UNUSED(ok, ok);
+    Home home;
     {
-        auto memory = Place { data }.resolve(globalObject, info->size);
+        auto memory = Place { data }.resolve(globalObject, info->size, isAddress(info->accessor.code) ? &home : nullptr);
         RETURN_IF_EXCEPTION(scope, void());
         store(memory, info->accessor, packed);
+    }
+    if (isAddress(info->accessor.code)) {
+        didStoreAddress(globalObject, home, packed);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     RELEASE_AND_RETURN(scope, void(keepAlive(globalObject, data, 0, packed.keep, Kept::ForWhole)));
 }

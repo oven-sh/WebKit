@@ -360,6 +360,7 @@ bool pack(JSGlobalObject* globalObject, Accessor accessor, JSValue value, int64_
     auto scope = DECLARE_THROW_SCOPE(vm);
     memset(result.bytes, 0, sizeof(result.bytes));
     result.keep = none();
+    result.owner = nullptr;
     result.text = { };
     if (size < 0 || !hasRoomFor(accessor.code, static_cast<size_t>(size))) [[unlikely]] {
         scope.release();
@@ -454,6 +455,7 @@ bool pack(JSGlobalObject* globalObject, Accessor accessor, JSValue value, int64_
         if (auto* bytes = PyBytes::tryFrom(value)) {
             packAs(result, bytes->data());
             result.keep = value;
+            result.owner = bytes;
             return true;
         }
         if (isInt(value)) {
@@ -478,6 +480,7 @@ bool pack(JSGlobalObject* globalObject, Accessor accessor, JSValue value, int64_
         RETURN_IF_EXCEPTION(scope, false);
         packAs(result, storage->data());
         result.keep = capsuleForMemory(globalObject, storage);
+        result.owner = storage;
         return true;
     }
     case Code::VoidPointer:
