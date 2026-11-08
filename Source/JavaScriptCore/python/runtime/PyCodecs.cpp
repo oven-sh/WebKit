@@ -336,7 +336,7 @@ static CodecErrorKind codecErrorKindOf(const String& errors)
 namespace {
 
 struct CodecRegistry {
-    PyDict* moduleDict { nullptr };
+    PyDict* state { nullptr };
     JSArray* searchPath { nullptr };
     PyDict* cache { nullptr };
     PyDict* errorHandlers { nullptr };
@@ -344,24 +344,35 @@ struct CodecRegistry {
 
 } // namespace
 
+// What the module keeps: in the dict of a type that programs never get to see. Not among the names of the module: what stands there is the program's to read, to write and to take away. (Nor is it looked for by way of
+// sys.modules: codecs are looked up while the interpreter shuts down, when nothing can be imported.)
+static constexpr TypeDef codecStateTypeDef { "_codecs._state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
+
+static PyDict* codecMakeErrorHandlers(JSGlobalObject*);
+
 static bool codecGetRegistry(JSGlobalObject* globalObject, CodecRegistry& registry)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Not by way of sys.modules: codecs are looked up while the interpreter shuts down, when nothing can be imported.
-    registry.moduleDict = nativeModuleNamespace(globalObject, internString(vm, "_codecs"_s), *findNativeModule("_codecs"_s));
+    registry.state = rt.typeFor(codecStateTypeDef)->dict();
     RETURN_IF_EXCEPTION(scope, false);
-    if (JSValue searchPath = registry.moduleDict->get(internString(vm, "_search_path"_s)))
-        registry.searchPath = tryAsList(searchPath);
-    if (JSValue cache = registry.moduleDict->get(internString(vm, "_cache"_s)))
-        registry.cache = PyDict::tryFrom(cache);
-    if (JSValue errorHandlers = registry.moduleDict->get(internString(vm, "_errors"_s)))
-        registry.errorHandlers = PyDict::tryFrom(errorHandlers);
-    if (!registry.searchPath || !registry.cache || !registry.errorHandlers) {
-        raiseSystemError(globalObject, scope, "the codec registry is gone from the module _codecs"_s);
-        return false;
+    JSString* searchPath = internString(vm, "search_path"_s);
+    JSString* cache = internString(vm, "cache"_s);
+    JSString* errorHandlers = internString(vm, "errors"_s);
+    // The last that is set.
+    if (!registry.state->get(errorHandlers)) [[unlikely]] {
+        JSArray* functions = newList(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        registry.state->set(vm, searchPath, functions);
+        registry.state->set(vm, cache, PyDict::create(globalObject));
+        PyDict* handlers = codecMakeErrorHandlers(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        registry.state->set(vm, errorHandlers, handlers);
     }
+    registry.searchPath = asList(registry.state->get(searchPath));
+    registry.cache = PyDict::from(registry.state->get(cache));
+    registry.errorHandlers = PyDict::from(registry.state->get(errorHandlers));
     return true;
 }
 
@@ -371,13 +382,13 @@ static bool codecImportEncodings(JSGlobalObject* globalObject, CodecRegistry& re
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* key = internString(vm, "_encodings_imported"_s);
-    if (registry.moduleDict->get(key))
+    JSString* key = internString(vm, "encodings_imported"_s);
+    if (registry.state->get(key))
         return true;
-    registry.moduleDict->set(vm, key, jsBoolean(true));
+    registry.state->set(vm, key, jsBoolean(true));
     importModule(globalObject, "encodings"_s);
     if (scope.exception()) [[unlikely]] {
-        registry.moduleDict->remove(vm, key);
+        registry.state->remove(vm, key);
         return false;
     }
     return true;
@@ -390,8 +401,8 @@ bool codecLoadCharacterNames(JSGlobalObject* globalObject)
     CodecRegistry registry;
     if (failed(scope, codecGetRegistry(globalObject, registry)))
         return false;
-    JSString* key = internString(vm, "_unicodedata_imported"_s);
-    if (registry.moduleDict->get(key))
+    JSString* key = internString(vm, "unicodedata_imported"_s);
+    if (registry.state->get(key))
         return true;
     importModule(globalObject, "unicodedata"_s);
     if (scope.exception()) [[unlikely]] {
@@ -399,7 +410,7 @@ bool codecLoadCharacterNames(JSGlobalObject* globalObject)
         raise(globalObject, scope, runtime(globalObject).ImportError(), "PyCapsule_Import could not import module \"unicodedata\""_s);
         return false;
     }
-    registry.moduleDict->set(vm, key, jsBoolean(true));
+    registry.state->set(vm, key, jsBoolean(true));
     return true;
 }
 
@@ -420,7 +431,7 @@ JSValue codecLookup(JSGlobalObject* globalObject, const String& encoding)
     JSString* name = internString(vm, builder.toString());
 
     if (JSValue cached = registry.cache->get(name)) {
-        // Whoever is given this takes it apart as a tuple of four. Only such a one is put there, below; but the dict is an object like any other, which a program can come to and write into.
+        // Whoever is given this takes it apart as a tuple of four. Only such a one is put there, below; but the dict is an object like any other, which gc.get_objects() hands out.
         if (auto* tuple = PyTuple::tryFrom(cached); tuple && tuple->length() == 4) [[likely]]
             return cached;
         return raiseSystemError(globalObject, scope, "the cache of codecs has something for '"_s, encoding, "' that no search function has returned: not a tuple of four"_s);
@@ -3278,17 +3289,18 @@ static constexpr NativeDef codecModuleFunctions[] = {
     PY_FUNCTION("_normalize_encoding", codecModuleNormalizeEncoding, "(encoding)"),
 };
 
-void initializeCodecsModule(JSGlobalObject* globalObject, PyModule* module)
+static PyDict* codecMakeErrorHandlers(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
-    module->addFunctions(globalObject, codecModuleFunctions);
-
-    module->add(globalObject, "_search_path"_s, newList(globalObject));
-    module->add(globalObject, "_cache"_s, PyDict::create(globalObject));
     PyDict* handlers = PyDict::create(globalObject);
     for (size_t i = 0; i < std::size(codecBuiltinHandlers); ++i)
         handlers->set(vm, internString(vm, codecBuiltinHandlerNames[i]), PyNativeFunction::create(globalObject, codecBuiltinHandlers[i], NativeKind::Function, { }, { }));
-    module->add(globalObject, "_errors"_s, handlers);
+    return handlers;
+}
+
+void initializeCodecsModule(JSGlobalObject* globalObject, PyModule* module)
+{
+    module->addFunctions(globalObject, codecModuleFunctions);
 }
 
 } // namespace Python
