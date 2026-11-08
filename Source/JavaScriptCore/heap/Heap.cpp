@@ -2264,7 +2264,11 @@ void Heap::releaseAccessSlow()
         RELEASE_ASSERT(!(oldState & needCollectionEpilogueBit), oldState);
 
         if ((oldState & mutatorHasConnBit) && !m_collector->tryEnsureThreadForWork()) [[unlikely]] {
+            // releaseAccess() has noted that this thread gave its access up. It still has it, and conducts with it.
+            noteAccessAcquired();
+            assertIsAccessHolder();
             collectInMutatorThreadUntilDone();
+            noteAccessReleased();
             continue;
         }
 
