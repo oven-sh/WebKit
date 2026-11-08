@@ -629,6 +629,9 @@ JSValue importName(JSGlobalObject*, JSString* name, JSValue globals, JSValue loc
 JSValue callForeignFunction(JSGlobalObject*, JSValue function, const CallArgs&, JSValue thisValue = { });
 // new function(...). `newTarget`: new.target, if not the function.
 JSValue constructForeignFunction(JSGlobalObject*, JSValue function, const CallArgs&, JSValue newTarget = { });
+// promise.then(onFulfilled, onRejected) as the engine does it where it waits for a promise itself (`await`, an async generator): not by way of the properties `then` and
+// `constructor`, which are the program's to replace.
+JSPromise* thenOfPromise(JSGlobalObject*, JSPromise*, JSValue onFulfilled, JSValue onRejected);
 // `async for`: aiter(iterable), and what is to be awaited when the loop is left before the end, by `break`, `return` or the exception,
 // or None. It is None if nobody `waits`.
 JSValue getAIterOfLoop(JSGlobalObject*, JSValue iterable);

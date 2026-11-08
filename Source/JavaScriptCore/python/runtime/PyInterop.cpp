@@ -1290,6 +1290,14 @@ JSC_DEFINE_HOST_FUNCTION(jsAsyncIteratorResult, (JSGlobalObject* globalObject, C
     RELEASE_AND_RETURN(scope, JSValue::encode(iteratorValue(globalObject, result)));
 }
 
+JSPromise* thenOfPromise(JSGlobalObject* globalObject, JSPromise* promise, JSValue onFulfilled, JSValue onRejected)
+{
+    VM& vm = getVM(globalObject);
+    JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->performPromiseThen(vm, globalObject, onFulfilled, onRejected, result);
+    return result;
+}
+
 static JSValue jsAsyncIteratorNext(JSGlobalObject* globalObject, JSValue self)
 {
     if (!ensureMainThreadForJS(globalObject))
@@ -1299,15 +1307,14 @@ static JSValue jsAsyncIteratorNext(JSGlobalObject* globalObject, JSValue self)
     auto* record = uncheckedDowncast<PyRecord>(self.asCell());
     MarkedArgumentBuffer noArguments;
     JSValue nextMethod = record->get(JSIteratorNextMethod);
-    JSValue result = JSC::call(globalObject, nextMethod, JSC::getCallData(nextMethod), record->get(JSIteratorObject), noArguments);
+    auto callData = JSC::getCallData(nextMethod);
+    if (callData.type == CallData::Type::None)
+        return throwTypeError(globalObject, scope, "iterator.next is not a function"_s), JSValue();
+    JSValue result = JSC::call(globalObject, nextMethod, callData, record->get(JSIteratorObject), noArguments);
     RETURN_IF_EXCEPTION(scope, { });
     JSPromise* promise = JSPromise::resolvedPromise(globalObject, result);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue then = promise->get(globalObject, vm.propertyNames->then);
-    RETURN_IF_EXCEPTION(scope, { });
-    MarkedArgumentBuffer arguments;
-    arguments.append(record->get(JSIteratorThen));
-    RELEASE_AND_RETURN(scope, JSC::call(globalObject, then, JSC::getCallData(then), promise, arguments));
+    return thenOfPromise(globalObject, promise, record->get(JSIteratorThen), jsUndefined());
 }
 
 // iterator.return(), by which whoever stops before the end says so in JS: `for await` does when it is left. A promise.
@@ -2172,11 +2179,7 @@ static JSValue jsObjectAsyncExit(JSGlobalObject* globalObject, JSValue self, con
     RETURN_IF_EXCEPTION(scope, { });
     JSPromise* promise = JSPromise::resolvedPromise(globalObject, result);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue then = promise->get(globalObject, vm.propertyNames->then);
-    RETURN_IF_EXCEPTION(scope, { });
-    MarkedArgumentBuffer arguments;
-    arguments.append(JSFunction::create(vm, globalObject, 0, String(), jsGiveUndefined, ImplementationVisibility::Private));
-    RELEASE_AND_RETURN(scope, JSC::call(globalObject, then, JSC::getCallData(then), promise, arguments));
+    return thenOfPromise(globalObject, promise, JSFunction::create(vm, globalObject, 0, String(), jsGiveUndefined, ImplementationVisibility::Private), jsUndefined());
 }
 
 // The class of an object of JS cannot say whether the object can be disposed of, and what has an __exit__ in its class is a context

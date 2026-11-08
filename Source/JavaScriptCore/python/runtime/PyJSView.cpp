@@ -865,39 +865,32 @@ static JSPromise* jsViewPromiseOf(JSGlobalObject* globalObject, const Function& 
 }
 
 // The promise of what `await awaitable` gives: it runs on the event loop of the host.
-static JSValue jsViewPromiseOfAwaitable(JSGlobalObject* globalObject, JSValue awaitable)
+static JSPromise* jsViewPromiseOfAwaitable(JSGlobalObject* globalObject, JSValue awaitable)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue run = eventLoopFunction(globalObject, "run"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    if (run)
-        RELEASE_AND_RETURN(scope, call(globalObject, run, awaitable));
+    if (run) {
+        JSValue result = call(globalObject, run, awaitable);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (auto* promise = dynamicDowncast<JSPromise>(result)) [[likely]]
+            return promise;
+        // (The host makes it with what the program can replace.)
+        RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, result));
+    }
     RELEASE_AND_RETURN(scope, jsViewPromiseOf(globalObject, [&] {
         return jsViewRunAwaitable(globalObject, awaitable);
     }));
-}
-
-// promise.then(onFulfilled, onRejected)
-static JSValue jsViewChain(JSGlobalObject* globalObject, JSValue promise, JSValue onFulfilled, JSValue onRejected)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue then = promise.get(globalObject, vm.propertyNames->then);
-    RETURN_IF_EXCEPTION(scope, { });
-    MarkedArgumentBuffer arguments;
-    arguments.append(onFulfilled);
-    arguments.append(onRejected);
-    RELEASE_AND_RETURN(scope, JSC::call(globalObject, then, JSC::getCallData(then), promise, arguments));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViewThen, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue promise = jsViewPromiseOfAwaitable(globalObject, jsViewThis(callFrame));
+    JSPromise* promise = jsViewPromiseOfAwaitable(globalObject, jsViewThis(callFrame));
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsViewChain(globalObject, promise, callFrame->argument(0), callFrame->argument(1))));
+    return JSValue::encode(thenOfPromise(globalObject, promise, callFrame->argument(0), callFrame->argument(1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViewAsyncIterator, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -928,7 +921,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncEnd, (JSGlobalObject* globalObject, CallFram
 }
 
 // A promise that is rejected with the exception that is propagating.
-static JSValue jsViewRejectedPromise(JSGlobalObject* globalObject)
+static JSPromise* jsViewRejectedPromise(JSGlobalObject* globalObject)
 {
     return jsViewPromiseOf(globalObject, [] { return JSValue(); });
 }
@@ -939,7 +932,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncNext, (JSGlobalObject* globalObject, CallFra
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue iterator = jsViewIteratorOf(globalObject, jsViewThis(callFrame));
-    JSValue promise;
+    JSPromise* promise = nullptr;
     if (JSValue method = rt.typeOf(iterator)->lookup(Special::ANext)) {
         JSValue awaitable = callSpecial(globalObject, method, iterator);
         if (!failed(scope, awaitable))
@@ -948,7 +941,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncNext, (JSGlobalObject* globalObject, CallFra
         raiseTypeError(globalObject, scope, '\'', typeName(globalObject, iterator), "' object is not an async iterator"_s);
     if (scope.exception()) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(jsViewRejectedPromise(globalObject)));
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsViewChain(globalObject, promise, rt.jsViewObject(JSViewObject::AsyncItem), rt.jsViewObject(JSViewObject::AsyncEnd))));
+    return JSValue::encode(thenOfPromise(globalObject, promise, rt.jsViewObject(JSViewObject::AsyncItem), rt.jsViewObject(JSViewObject::AsyncEnd)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViewAsyncReturn, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -957,7 +950,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncReturn, (JSGlobalObject* globalObject, CallF
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue iterator = jsViewIteratorOf(globalObject, jsViewThis(callFrame));
     JSValue result = createIteratorResultObject(globalObject, callFrame->argument(0), true);
-    JSValue promise;
+    JSPromise* promise = nullptr;
     JSValue close = getAttrIfPresent(globalObject, iterator, internString(vm, "aclose"_s));
     if (!scope.exception() && close) {
         JSValue awaitable = call(globalObject, close);
@@ -973,7 +966,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncReturn, (JSGlobalObject* globalObject, CallF
     bound.append(result);
     JSValue constant = JSBoundFunction::create(vm, globalObject, asObject(runtime(globalObject).jsViewObject(JSViewObject::Identity)), jsUndefined(), bound, 0, nullptr, SourceTaintedOrigin::Untainted);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsViewChain(globalObject, promise, constant, jsUndefined())));
+    return JSValue::encode(thenOfPromise(globalObject, promise, constant, jsUndefined()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViewIdentity, (JSGlobalObject*, CallFrame* callFrame))
