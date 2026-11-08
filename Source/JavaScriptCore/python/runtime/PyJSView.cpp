@@ -585,10 +585,22 @@ void JSView::getOwnPropertyNames(JSObject* object, PropertyNameArrayBuilder& bui
 // are about that object then: to Python the thing around it is an object of JS, whose str() is its toString().
 static JSObject* objectOfPythonWithinIfAny(JSValue self)
 {
+    // Prototypes make no circle, but through a Proxy: t = {}, Object.setPrototypeOf(t, new Proxy(t, {})). So one of the objects passed is kept, a later one each time
+    // twice as far on, and whoever comes by it again is in a circle.
+    JSObject* passed = nullptr;
+    unsigned steps = 0;
+    unsigned stepsUntilNext = 1;
     for (JSValue value = self; value.isObject();) {
         JSObject* object = asObject(value);
         if (isPyObject(object) || PyType::is(object) || PyFunction::is(object) || PyNativeFunction::is(object) || PyListObject::is(object))
             return object;
+        if (object == passed) [[unlikely]]
+            return nullptr;
+        if (++steps == stepsUntilNext) {
+            passed = object;
+            steps = 0;
+            stepsUntilNext *= 2;
+        }
         if (auto* proxy = dynamicDowncast<ProxyObject>(object))
             value = proxy->target();
         else
