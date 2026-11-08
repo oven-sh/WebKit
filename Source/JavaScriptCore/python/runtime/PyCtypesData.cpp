@@ -754,29 +754,41 @@ static uint8_t* lookThroughPointer(JSGlobalObject* globalObject, PyCData* pointe
     return nullptr;
 }
 
-static Home homeInView(PyMemoryView* view, int64_t offset)
+static Home homeInView(JSGlobalObject* globalObject, PyMemoryView* view, int64_t offset)
 {
     if (view->isReleased())
         return { };
-    return { view->managedBuffer()->owner(), view->offset + offset };
+    JSCell* owner = view->managedBuffer()->owner();
+    offset += view->offset;
+    // The typed arrays and DataViews of one ArrayBuffer are views of it as well. (One that has no ArrayBuffer yet shares its memory with nobody.)
+    if (isTypedArrayTypeIncludingDataView(owner->type())) {
+        auto* array = uncheckedDowncast<JSArrayBufferView>(owner);
+        if (array->hasArrayBuffer()) {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+            JSArrayBuffer* buffer = array->possiblySharedJSBuffer(globalObject);
+            scope.assertNoException();
+            return { buffer, static_cast<int64_t>(array->byteOffset()) + offset };
+        }
+    }
+    return { owner, offset };
 }
 
-static Home homeOf(PyCData* data, int64_t offset)
+static Home homeOf(JSGlobalObject* globalObject, PyCData* data, int64_t offset)
 {
     JSCell* owner = data->owner();
     if (!owner)
         return { };
     if (data->isView())
-        return homeInView(uncheckedDowncast<PyMemoryView>(owner), data->offsetInView() + offset);
+        return homeInView(globalObject, uncheckedDowncast<PyMemoryView>(owner), data->offsetInView() + offset);
     return { owner, data->addressInStorage() - bytesOfOwner(owner).data() + offset };
 }
 
-static Home homeOf(const Provenance& provenance, const uint8_t* address)
+static Home homeOf(JSGlobalObject* globalObject, const Provenance& provenance, const uint8_t* address)
 {
     if (!provenance.owner)
         return { };
     if (auto* view = dynamicDowncast<PyMemoryView>(provenance.owner))
-        return homeInView(view, provenance.offsetOfBegin + (address - provenance.begin));
+        return homeInView(globalObject, view, provenance.offsetOfBegin + (address - provenance.begin));
     return { provenance.owner, address - provenance.begin };
 }
 
@@ -803,7 +815,7 @@ JSValue entryForAddressFrom(JSGlobalObject* globalObject, JSValue holder, const 
     // By it the copy knows that what it points into is gone.
     if (provenance.isInWhatIsGone)
         return data;
-    return entryForCopy(globalObject, data, homeOf(data, 0), target);
+    return entryForCopy(globalObject, data, homeOf(globalObject, data, 0), target);
 }
 
 static ALWAYS_INLINE Granted grant(VM& vm, uint8_t* data, size_t size)
@@ -830,7 +842,7 @@ Granted Place::resolve(JSGlobalObject* globalObject, int64_t size, Home* home) c
         uint8_t* address = lookThroughPointer(globalObject, object, offset, size, provenance);
         RETURN_IF_EXCEPTION(scope, { });
         if (home)
-            *home = homeOf(provenance, address);
+            *home = homeOf(globalObject, provenance, address);
         return grant(vm, address, static_cast<size_t>(size));
     }
     uint8_t* memory = object->memory(globalObject);
@@ -840,7 +852,7 @@ Granted Place::resolve(JSGlobalObject* globalObject, int64_t size, Home* home) c
         return { };
     }
     if (home)
-        *home = homeOf(object, offset);
+        *home = homeOf(globalObject, object, offset);
     return grant(vm, memory + offset, static_cast<size_t>(size));
 }
 
