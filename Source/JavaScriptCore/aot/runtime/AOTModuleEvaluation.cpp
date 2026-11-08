@@ -4278,10 +4278,8 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
     }
     const ModuleData& targetData = data(target);
     bool isCommonJSFile = targetData.kind == ModuleKind::CommonJs;
-    if (!isCommonJSFile && status(target) == ModuleStatus::Evaluated)
+    if (!isCommonJSFile)
         markNamespaceAsRequired(target);
-    else if (!isCommonJSFile && targetData.hasExportTable())
-        willRequireESModule(target);
     if (!m_showsWaysBetweenModuleObjects || !(isFileOfProgram(target) || targetData.kind == ModuleKind::Data))
         return;
     if (isCommonJSFile)
