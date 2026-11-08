@@ -1281,7 +1281,7 @@ op :argument_count,
 op :check_tdz,
     args: {
         targetVirtualRegister: VirtualRegister,
-        identifier?: VirtualRegister,
+        identifier?: unsigned,
     }
 
 op :new_array_with_spread,
