@@ -75,22 +75,31 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     LBasicBlock slowPath = newBlock();
     OperandJoin join(m_out, resultRepresentationOf(call));
 
+    build().statistics().count(StatisticID::PushesLaidInLine);
     ArrayElements storage = elements().elementsOf(array);
-    Integer length = elements().publicLength(storage);
-    branchUnless(below(length, elements().vectorLength(storage)), slowPath);
-    Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
-    elements().forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, forms, slowPath, [&](const ArrayStorageForm& form) {
+    Word32 length = elements().publicLengthAsWord(storage);
+    branchUnless(below(length, elements().vectorLengthAsWord(storage)), slowPath);
+    auto store = [&](const ArrayStorageForm& form) {
         Operand rawElement = *elements().rawElementToStore(form, pushed, slowPath);
         if (form.holdsCells && mayPushCell)
             branchUnless(emitter<BarrierEmitter>().isBeyondBarrierThreshold(array), slowPath);
-        elements().storeRawElement(form, storage, length, rawElement);
+        elements().storeRawElement(form, storage, zeroExtended(length), rawElement);
         m_out.jump(isStored);
-    }, goesByKindOfNumbers ? ElementAccessEmitter::FirstForm::IsLikeTheOthers : ElementAccessEmitter::FirstForm::IsExpected);
+    };
+    if (!goesByKindOfNumbers && forms.size() > 1) {
+        LBasicBlock hasOtherKind = newBlock();
+        ArrayStorageFormList expectedForm;
+        expectedForm.append(forms.first());
+        forms.removeAt(0);
+        elements().forEachFormByShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), &ElementAccessEmitter::hasWritableShape, expectedForm, hasOtherKind, store, ElementAccessEmitter::FirstForm::IsExpected);
+        m_out.appendTo(hasOtherKind);
+    }
+    elements().forEachFormByShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), &ElementAccessEmitter::hasWritableShape, forms, slowPath, store, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
 
     m_out.appendTo(isStored);
-    Integer newLength = add(length, integer(1));
+    Word32 newLength = add(length, word32(1));
     elements().setPublicLength(storage, newLength);
-    join.add(lengthResult(call, newLength));
+    join.add(lengthResult(call, zeroExtended(newLength)));
 
     m_out.appendTo(slowPath);
     join.add(pushOutOfLine(call, array, pushed));

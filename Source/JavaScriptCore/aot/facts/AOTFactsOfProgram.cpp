@@ -3221,6 +3221,7 @@ public:
         if (mayPassOperands)
             m_namesCalledWithOperands.set(key.index());
     }
+    void noteNameCalledByNativeCodeOffUnseenObjects(PropertyKeyID key) { m_namesCalledByNativeCodeOffUnseenObjects.set(key.index()); }
     void noteNameSpelledByProgram(PropertyKeyID key) { m_namesSpelledByProgram.set(key.index()); }
     void noteReadUnderKeyNobodyKnows() { m_readsUnderComputedKeys = true; }
     void noteReadUnderKeyNobodyKnowsOff(BuiltinID canonicalHolder)
@@ -3343,6 +3344,7 @@ private:
     void noteObjectsMayExist(BuiltinClassID);
     void noteTypeIsMade(BuiltinTypeID, BuiltinOrigin);
     void noteClassesBelowWhoseFeaturesMakerNames(BuiltinID maker, BuiltinTypeID);
+    void noteRowOfHostNames(BuiltinClassID);
     void noteWhatRowsMake(BuiltinID canonical);
     void noteKeysThatRowNames(const BuiltinOverload&);
     uint16_t stateOfRowsOf(BuiltinID canonical) const;
@@ -3502,6 +3504,8 @@ private:
     BitVector m_namesRead;
     BitVector m_namesCalled;
     BitVector m_namesCalledWithOperands;
+    BitVector m_namesCalledByNativeCodeOffUnseenObjects;
+    BitVector m_classesThatRowsOfHostName;
     BitVector m_namesSpelledByProgram;
     bool m_readsUnderComputedKeys { false };
     bool m_readsUnderNamesThatLoopsGave { false };
@@ -3973,6 +3977,8 @@ void BuilderOfProgramFacts::noteTypeIsMade(BuiltinTypeID type, BuiltinOrigin ori
     for (const BuiltinTypePart& part : made.parts) {
         if (part.builtinClass)
             noteObjectsMayExist(part.builtinClass);
+        if (part.builtinClass && origin == BuiltinOrigin::Host)
+            noteRowOfHostNames(part.builtinClass);
         if (part.kind == BuiltinTypePartKind::Layout) {
             for (const BuiltinLayoutField& field : m_builtins.at(part.layout).fields)
                 noteTypeIsMade(field.type, origin);
@@ -3982,6 +3988,15 @@ void BuilderOfProgramFacts::noteTypeIsMade(BuiltinTypeID type, BuiltinOrigin ori
                 noteTypeIsMade(contents.type, origin);
         }
     }
+}
+
+void BuilderOfProgramFacts::noteRowOfHostNames(BuiltinClassID builtinClass)
+{
+    if (m_classesThatRowsOfHostName.set(builtinClass.index()))
+        return;
+    BuiltinID prototype = m_builtins.at(builtinClass).prototype;
+    if (prototype && m_isLookedThrough.quickGet(m_builtins.canonicalID(prototype).index()))
+        m_holdersToLookThrough.append(m_builtins.canonicalID(prototype));
 }
 
 void BuilderOfProgramFacts::noteClassesBelowWhoseFeaturesMakerNames(BuiltinID maker, BuiltinTypeID type)
@@ -4001,8 +4016,10 @@ void BuilderOfProgramFacts::noteClassesBelowWhoseFeaturesMakerNames(BuiltinID ma
             bool makerNamesThem = !needed.empty() && std::ranges::all_of(needed, [&](const BuiltinFeatureUse& line) {
                 return std::ranges::contains(named, line.feature, &BuiltinFeatureUse::feature);
             });
-            if (makerNamesThem)
+            if (makerNamesThem) {
                 noteObjectsMayExist(below);
+                noteRowOfHostNames(below);
+            }
         }
     }
 }
@@ -4262,6 +4279,7 @@ void BuilderOfProgramFacts::take(const LookupsPastProgramObjects& lookups)
     m_namesRead.merge(lookups.namesRead);
     m_namesCalled.merge(lookups.namesCalled);
     m_namesCalledWithOperands.merge(lookups.namesCalledWithOperands);
+    m_namesCalledByNativeCodeOffUnseenObjects.merge(lookups.namesCalledByNativeCodeOffUnseenObjects);
     m_namesSpelledByProgram.merge(lookups.namesSpelledByProgram);
     for (size_t index : lookups.builtinsRead)
         noteReadOfMember(BuiltinID(static_cast<uint32_t>(index)));
@@ -4514,6 +4532,8 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
         noteGettersThatFormatterRuns(canonicalHolder);
     if (mayHoldObjectInProgramFacts(m_builtins, canonicalHolder) && !m_builtins.at(objectAnsweredByBindingInProgramFacts(m_builtins, canonicalHolder)).flags.containsAny({ BuiltinFlag::ListsAllMembers, BuiltinFlag::IsGlobalObject }) && !liesInModuleThatProgramHolds(canonicalHolder) && (m_readsUnderComputedKeys || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index()) || m_readsUnderNamesThatLoopsGave || !m_namesRead.isEmpty()))
         m_objectsMayHaveMethodCalledWithStartupLoads = true;
+    BuiltinClassID classOfHolder = m_classOfPrototype[canonicalHolder.index()];
+    bool isOfClassThatRowsOfHostName = classOfHolder && m_classesThatRowsOfHostName.get(classOfHolder.index());
     for (BuiltinID member : m_builtins.membersOf(canonicalHolder)) {
         BuiltinName name = m_builtins.at(member).name;
         if (!name)
@@ -4523,7 +4543,8 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
         bool isNamedByCode = isRead || (key && m_namesCalled.get(key.index()));
         bool isKeyThatFormattersAloneLookUnder = std::ranges::contains(m_builtins.namesOfHostMethodsCallingStartupLoads(), name);
         bool isSymbolThatNativeCodeMayLookUnder = m_builtins.isSymbolName(name) && (isKeyThatFormattersAloneLookUnder ? m_formattersMayCallMethodsOfInstances && formatterMayComeByWhatStandsBelow(canonicalHolder) : !m_keysReadOnlyByRowsThatNameThem.get(name.index()) || m_keysNamedByRowsThatMayRun.get(name.index()));
-        bool isNamed = isNamedByCode || (m_nativeCodeMayHoldObjects && (isSymbolThatNativeCodeMayLookUnder || m_namesOfProtocols.get(name.index())));
+        bool isCalledOffWhatRowsOfHostName = key && isOfClassThatRowsOfHostName && m_namesCalledByNativeCodeOffUnseenObjects.get(key.index());
+        bool isNamed = isNamedByCode || isCalledOffWhatRowsOfHostName || (m_nativeCodeMayHoldObjects && (isSymbolThatNativeCodeMayLookUnder || m_namesOfProtocols.get(name.index())));
         bool canBeListed = m_builtins.at(member).canBeListed && !m_builtins.isSymbolName(name);
         bool isReadUnderComputedKeys = m_readsUnderComputedKeys || m_isReadUnderComputedKeys.quickGet(canonicalHolder.index());
         bool isHandedOnByWordOfProgram = isRead || m_readsUnderComputedKeys || (m_readsUnderNamesThatLoopsGave && (canBeListed || m_loopsMayGiveAnyName));
@@ -4544,7 +4565,7 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
         if (!isNamedByCode && !isHandedOn && name == keysOfSpecies[0] && m_builtins.findMember(canonical, keysOfSpecies[1]).outcome == BuiltinMemberLookup::Outcome::Absent)
             continue;
         m_isOutOfSight.quickSet(canonical.index());
-        bool nativeCodeMayNameIt = m_nativeCodeMayHoldObjects && (isSymbolThatNativeCodeMayLookUnder || m_namesOfProtocols.get(name.index()));
+        bool nativeCodeMayNameIt = isCalledOffWhatRowsOfHostName || (m_nativeCodeMayHoldObjects && (isSymbolThatNativeCodeMayLookUnder || m_namesOfProtocols.get(name.index())));
         if (isHandedOn || nativeCodeMayNameIt || !key || unseenCodeCanRun() || m_namesCalledWithOperands.get(key.index()))
             m_mayBeHandedOperandsNobodyKnows.quickSet(canonical.index());
         if ((isNamedByCode || isReadUnderComputedKeys) && m_builtins.at(canonical).origin == BuiltinOrigin::Engine)
@@ -6258,6 +6279,14 @@ void BuiltinsInReach::noteNameCalled(PropertyKeyID key, bool mayPassOperands)
         return;
     m_wasToldSomethingNew = true;
     m_builder->noteNameCalled(key, mayPassOperands);
+}
+
+void BuiltinsInReach::noteNameCalledByNativeCodeOffUnseenObjects(PropertyKeyID key)
+{
+    if (m_linked->lookups.namesCalledByNativeCodeOffUnseenObjects.set(key.index()))
+        return;
+    m_wasToldSomethingNew = true;
+    m_builder->noteNameCalledByNativeCodeOffUnseenObjects(key);
 }
 
 void BuiltinsInReach::noteNameSpelledByProgram(PropertyKeyID key)

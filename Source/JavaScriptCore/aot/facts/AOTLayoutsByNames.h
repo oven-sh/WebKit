@@ -151,9 +151,9 @@ public:
         LayoutID record;
         auto place() const { return std::pair(function, parameter); }
     };
-    std::span<const RecordOfDeclaredParameter> recordsOfDeclaredParameter(ModuleID module, uint32_t startOfText, uint32_t parameter) const
+    std::span<const RecordOfDeclaredParameter> recordsOfDeclaredParameter(ModuleID module, uint32_t positionOfFunction, uint32_t parameter) const
     {
-        auto found = std::ranges::equal_range(m_recordsOfDeclaredParameters, std::pair(static_cast<uint64_t>(module.index()) << 32 | startOfText, parameter), { }, &RecordOfDeclaredParameter::place);
+        auto found = std::ranges::equal_range(m_recordsOfDeclaredParameters, std::pair(static_cast<uint64_t>(module.index()) << 32 | positionOfFunction, parameter), { }, &RecordOfDeclaredParameter::place);
         return { found.begin(), found.end() };
     }
 
@@ -286,7 +286,7 @@ private:
         }
         std::ranges::sort(recordsByNames);
         for (const DeclaredRecord& declared : program.declaredRecords) {
-            uint64_t function = static_cast<uint64_t>(declared.module.index()) << 32 | declared.start;
+            uint64_t function = static_cast<uint64_t>(declared.module.index()) << 32 | declared.position;
             m_recordsOfDeclaredParameters.append({ function, declared.parameter, LayoutID() });
             auto isDeclared = [&](const Field& field) { return std::ranges::binary_search(declared.names, field.key); };
             uint64_t wordOfNames = 0;

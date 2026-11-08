@@ -1172,6 +1172,8 @@ void StateOfLinkReach::escapeExportsOf(ModuleID first)
             }
             if (exported.kind == ModuleExportKind::Namespace && exported.module)
                 m_flow.noteLossOfObjectOfBuiltinModule(exported.module);
+            if (exported.kind == ModuleExportKind::Indirect && exported.module && exported.importName)
+                m_flow.noteLossOfExportOfBuiltinModule(exported.module, exported.importName);
             add(exported.module);
         }
         for (const ModuleRequest& request : module.requests) {

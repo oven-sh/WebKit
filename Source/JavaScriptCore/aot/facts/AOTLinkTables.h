@@ -338,6 +338,7 @@ struct LookupsPastProgramObjects {
     BitVector namesRead;
     BitVector namesCalled;
     BitVector namesCalledWithOperands;
+    BitVector namesCalledByNativeCodeOffUnseenObjects;
     BitVector namesSpelledByProgram;
     BitVector builtinsRead;
     BitVector builtinsCalled;

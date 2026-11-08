@@ -428,12 +428,9 @@ class TypesOfValuesOfLoop {
 public:
     bool isEmpty() const { return !m_size; }
     size_t size() const { return m_size; }
-    TypeID operator[](size_t place) const
-    {
-        const TypeID* slot = const_cast<TypesOfValuesOfLoop*>(this)->slotAt(place);
-        return slot ? *slot : TypeID();
-    }
-    TypeID* slotAt(size_t place)
+    TypeID operator[](size_t place) const { return m_placeInNest + place < m_types.size() ? TypeID::fromBits(~m_types[static_cast<uint32_t>(m_placeInNest + place)]) : TypeID(); }
+    bool holds(size_t place) const { return holdsInOneRun(place, 1); }
+    bool holdsInOneRun(size_t place, size_t length) const
     {
         size_t low = 0;
         for (size_t high = m_runs.size(); low < high;) {
@@ -444,32 +441,66 @@ public:
                 high = middle;
         }
         if (!low)
-            return nullptr;
+            return false;
         const Run& run = m_runs[low - 1];
-        return place - run.first < run.length ? &m_types[run.offset + (place - run.first)] : nullptr;
+        return place - run.first < run.length && length <= run.length - (place - run.first);
     }
-    std::span<const TypeID> spanAt(size_t place, size_t length) const
+    void set(size_t place, TypeID type)
     {
-        const TypeID* slot = const_cast<TypesOfValuesOfLoop*>(this)->slotAt(place);
-        RELEASE_ASSERT(!length || (slot && const_cast<TypesOfValuesOfLoop*>(this)->slotAt(place + length - 1) == slot + (length - 1)));
-        return length ? std::span<const TypeID>(slot, length) : std::span<const TypeID>();
+        ASSERT(holds(place));
+        uint32_t index = static_cast<uint32_t>(m_placeInNest + place);
+        if (m_types[index] != ~type.bits())
+            m_types.mutableAt(index) = ~type.bits();
     }
-    void clear()
+    void setEach(size_t place, size_t length, NOESCAPE const Invocable<TypeID(size_t place)> auto& typeAt)
+    {
+        ASSERT(!length || holdsInOneRun(place, length));
+        for (size_t end = place + length; place < end;) {
+            for (uint32_t& slot : m_types.mutableStretchAt(static_cast<uint32_t>(m_placeInNest + place), static_cast<uint32_t>(end - place)))
+                slot = ~typeAt(place++).bits();
+        }
+    }
+    void clearAndBeginAt(uint32_t firstValue, uint32_t firstValueOfNest)
     {
         m_runs.shrink(0);
-        m_types.shrink(0);
+        m_types.clear();
         m_sumsWithoutType.shrink(0);
         m_size = 0;
+        m_firstValueOfNest = firstValueOfNest;
+        m_placeInNest = firstValue - firstValueOfNest;
     }
     Vector<uint32_t>& sumsWithoutType() { return m_sumsWithoutType; }
     const Vector<uint32_t>& sumsWithoutType() const { return m_sumsWithoutType; }
     bool holdsAt(size_t place, const TypesOfValuesOfLoop& other) const
     {
+        RELEASE_ASSERT(m_firstValueOfNest == other.m_firstValueOfNest && m_placeInNest + place == other.m_placeInNest);
         return std::ranges::all_of(other.m_runs, [&](const Run& run) {
-            const TypeID* first = const_cast<TypesOfValuesOfLoop*>(this)->slotAt(place + run.first);
-            const TypeID* last = const_cast<TypesOfValuesOfLoop*>(this)->slotAt(place + run.first + run.length - 1);
-            return first && last == first + (run.length - 1) && !memcmp(first, other.m_types.span().data() + run.offset, run.length * sizeof(TypeID));
+            uint32_t first = other.m_placeInNest + run.first;
+            return holdsInOneRun(place + run.first, run.length) && m_types.isSameIn(other.m_types, first, first + run.length);
         });
+    }
+    bool holdsRunsOf(const TypesOfValuesOfLoop& inside) const
+    {
+        return inside.m_runs.isEmpty() || (m_firstValueOfNest == inside.m_firstValueOfNest && inside.m_placeInNest >= m_placeInNest && std::ranges::all_of(inside.m_runs, [&](const Run& run) {
+            return holdsInOneRun(inside.m_placeInNest - m_placeInNest + run.first, run.length);
+        }));
+    }
+    void takeWhole(const TypesOfValuesOfLoop& inside)
+    {
+        RELEASE_ASSERT(holdsRunsOf(inside));
+        for (const Run& run : inside.m_runs)
+            m_types.takeStretchOf(inside.m_types, inside.m_placeInNest + run.first, inside.m_placeInNest + run.first + run.length);
+    }
+    void takeWhereNoTypeIsNoted(const TypesOfValuesOfLoop& inside)
+    {
+        RELEASE_ASSERT(holdsRunsOf(inside));
+        for (const Run& run : inside.m_runs) {
+            uint32_t first = inside.m_placeInNest + run.first;
+            for (uint32_t index = first; index < first + run.length; ++index) {
+                if (!m_types[index] && inside.m_types[index])
+                    m_types.mutableAt(index) = inside.m_types[index];
+            }
+        }
     }
     void appendRun(uint32_t first, uint32_t length)
     {
@@ -479,30 +510,29 @@ public:
         if (!m_runs.isEmpty() && m_runs.last().first + m_runs.last().length == first)
             m_runs.last().length += length;
         else
-            m_runs.append(Run { first, length, m_runs.isEmpty() ? 0 : m_runs.last().offset + m_runs.last().length });
+            m_runs.append(Run { first, length });
         m_size = first + length;
     }
-    void makeRoomForRuns()
+    void makeRoomForRuns(uint32_t numberOfValuesOfNest, const TypesOfValuesOfLoop* insideTakenWhole)
     {
-        m_types.fill(TypeID(), m_runs.isEmpty() ? 0 : m_runs.last().offset + m_runs.last().length);
-    }
-    template<typename Functor>
-    void forEachRun(const Functor& functor) const
-    {
-        for (const Run& run : m_runs)
-            functor(run.first, m_types.span().subspan(run.offset, run.length));
+        RELEASE_ASSERT(m_placeInNest + m_size <= numberOfValuesOfNest && (!insideTakenWhole || (holdsRunsOf(*insideTakenWhole) && insideTakenWhole->m_types.size() == numberOfValuesOfNest)));
+        if (insideTakenWhole)
+            m_types = insideTakenWhole->m_types;
+        else
+            m_types.fill(0, numberOfValuesOfNest);
     }
 
 private:
     struct Run {
         uint32_t first;
         uint32_t length;
-        uint32_t offset;
     };
     Vector<Run, 2> m_runs;
-    Vector<TypeID> m_types;
+    SharedArray<uint32_t, 0> m_types;
     Vector<uint32_t> m_sumsWithoutType;
     uint32_t m_size { 0 };
+    uint32_t m_firstValueOfNest { 0 };
+    uint32_t m_placeInNest { 0 };
 };
 
 template<typename T, size_t inlineCapacity>
@@ -1082,6 +1112,7 @@ public:
     std::optional<PassedTest> showElementPresentBehindTest(Reference list, Reference position, const std::optional<PassedTest>&);
     std::optional<PassedTest> showPositionInside(const GroundsOfPosition&);
     std::optional<PassedTest> showPositionInsideBehindTests(Reference view, Reference position, Reference length, const PassedTest& fromZeroUp, const PassedTest& below);
+    std::optional<PassedTest> showPositionInsideBehindTestOfSum(Reference list, Reference position, Reference length);
     void switchOn(Reference subject, std::span<const int64_t> cases, std::span<const BlockID> targets, BlockID otherwise);
     Reference tryCallInline(TerminatorDraft&&, BlockID done, BlockID miss, const Effects* foundByCaller = nullptr);
     void continueIn(BlockID);
@@ -1244,7 +1275,9 @@ public:
     std::optional<uint32_t> roundKept(RoundKeptByWalker, LayoutSetID, uint32_t second) const;
     void keepRound(RoundKeptByWalker, LayoutSetID, uint32_t second, uint32_t answer);
     uint32_t numberOfListOfNames(std::span<const PropertyKeyID>);
-    LayoutID onlyLayoutInSightWithAllNames(std::span<const PropertyKeyID>, bool recordsAnswer, LayoutID beside = { });
+    std::optional<uint32_t> numberOfLongListOfNamesUsedOff(ValueID, std::span<const PropertyKeyID>);
+    bool everyNameOfLongListIsPlainFieldOf(uint32_t numberOfList, LayoutID, NOESCAPE const ScopedLambda<bool()>& ask);
+    LayoutID onlyLayoutInSightWithAllNames(std::span<const PropertyKeyID>, bool recordsAnswer, LayoutID beside = { }, std::optional<uint32_t> numberOfLongList = std::nullopt);
     std::span<const BodyIncomingEdge> incomingEdgesOf(const BodyIndex&, BlockID);
     struct KeptForInt32Promises;
     KeptForInt32Promises& keptForInt32Promises();
@@ -1890,6 +1923,7 @@ private:
         std::unique_ptr<UsesInLoops> usesInLoops;
         std::unique_ptr<Vector<std::pair<ValueID, BlockID>>> arithmeticInLoops;
         Vector<uint16_t> operatorsFoundBehindValuesForGuesses;
+        UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numbersOfLongListsOfNamesOfRoots;
         UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> endsOfUsesOfTexts;
         BitVector loopsBeingTried;
         BitVector loopsWithBlocksTouched;
@@ -3314,6 +3348,7 @@ private:
     struct ListOfNames {
         Vector<PropertyKeyID> names;
         Vector<std::pair<uint32_t, uint32_t>, 1> answers;
+        HashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> areAllPlainFields;
     };
     Vector<ListOfNames>& m_listsOfNames;
     HashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>& m_numbersOfListsOfNames;

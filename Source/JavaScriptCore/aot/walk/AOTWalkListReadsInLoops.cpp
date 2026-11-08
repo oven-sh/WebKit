@@ -118,7 +118,7 @@ static bool holdsBoxedValuesOfEitherKind(const ListTestedInFrontOfLoop& tested)
 static bool writesWhatLiesUnderListsReadInLoops(const Walker& walker, const Effects& effects)
 {
     if (walker.takesStorageAndLengthsToBeAsInFront())
-        return effects.writes.containsAny(heapsUnderListsReadInLoops - AbstractHeapSet { AbstractHeap::ArrayStorage });
+        return effects.writes.containsAny(heapsUnderListsReadInLoops - AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths });
     return effects.writes.containsAny(heapsUnderListsReadInLoops);
 }
 

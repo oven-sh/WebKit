@@ -1928,6 +1928,29 @@ void Allocator::leaveBlock(Block* from)
         m_blockWhoseEndRegistersHold = from;
 }
 
+static NEVER_INLINE void loadBackOwnersWhereFrameEndsOnEdge(Allocator& allocator, const HeadBeingFixed& head, const Block* from, bool movesMayWriteRegisters, RegisterMask calleeSavesStillToNote)
+{
+    const Allocation& allocation = allocator.m_allocation;
+    if (!allocation.hasFramedPart() || allocation.needsFrameAheadOfFramedPart() || !allocator.headIsAheadOfFramedPart(head.target) || allocator.isAheadOfFramedPart(from))
+        return;
+    allocation.everyHeadOfFramedPartAbove(from, [&](const Allocation::HeadOfFramedPart& headAbove) {
+        for (const RegisterBinding& binding : allocation.registersAtHeadOf(headAbove.block)) {
+            Operation* value = binding.value;
+            Allocator::ValueState& state = head.states[value->index()];
+            const ValueFacts& facts = head.factsOfValues[value->index()];
+            if (!facts.has(ValueFlag::IsKeptForCollector) || state.registers || !allocation.isSpilled(value) || facts.has(ValueFlag::NeedsPointerBesideIt) || !isLiveAtHeadBeingFixed<KindOfHeadBeingFixed::Any>(allocator, head, value))
+                continue;
+            RegisterMask freeRegisters = movesMayWriteRegisters ? allocator.m_file.allocatableIn(bankOf(binding.reg)) & ~allocator.m_file.calleeSaved & ~allocator.m_bound : 0;
+            if (!freeRegisters) {
+                allocator.giveUpFramedPartForReadOfSpill();
+                return false;
+            }
+            bindFreeRegisterBetweenBlocks(allocator, freeRegisters & maskOf(binding.reg) ? binding.reg : lowestRegisterAtEdge(freeRegisters), value, state, calleeSavesStillToNote);
+        }
+        return true;
+    });
+}
+
 void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPlace& placeOfTarget, KindOfHeadBeingFixed kindOfHead)
 {
     ASSERT(&placeOfTarget == &m_order.of(targetOfEdge) && kindOfHead == findKindOfHeadToFix(*this, m_allocation.hasFramedPart(), targetOfEdge, blockOfEdge, placeOfTarget));
@@ -2046,19 +2069,10 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPl
                 unbindRegisterBetweenBlocks(*this, reg, state);
                 bindFreeRegisterBetweenBlocks(*this, hint && (freeRegisters & maskOf(hint)) ? hint : lowestRegisterAtEdge(freeRegisters), value, state, calleeSavesStillToNote);
             }
-            for (const RegisterBinding& binding : m_allocation.registersAtHeadOf(m_allocation.headOfFramedPartAbove(from).block)) {
-                Operation* value = binding.value;
-                ValueState& state = states[value->index()];
-                const ValueFacts& facts = factsOfValues[value->index()];
-                if (!facts.has(ValueFlag::IsKeptForCollector) || state.registers || !m_allocation.isSpilled(value) || facts.has(ValueFlag::NeedsPointerBesideIt) || !isLiveAtHeadBeingFixed<kind>(*this, head, value))
-                    continue;
-                RegisterMask freeRegisters = m_file.allocatableIn(bankOf(binding.reg)) & ~calleeSavedRegisters & ~m_bound;
-                if (!freeRegisters) {
-                    giveUpFramedPartForReadOfSpill();
-                    break;
-                }
-                bindFreeRegisterBetweenBlocks(*this, freeRegisters & maskOf(binding.reg) ? binding.reg : lowestRegisterAtEdge(freeRegisters), value, state, calleeSavesStillToNote);
-            }
+        }
+        if constexpr (isOfAnyKind) {
+            if (m_proc.numberOfInnerPointersAcrossSafepoints()) [[unlikely]]
+                loadBackOwnersWhereFrameEndsOnEdge(*this, head, from, movesMayWriteRegisters, calleeSavesStillToNote);
         }
 
         if constexpr (isOfAnyKind) {

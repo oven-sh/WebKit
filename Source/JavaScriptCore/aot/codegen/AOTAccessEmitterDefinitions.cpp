@@ -18,6 +18,7 @@
 #include "AOTObjectWords.h"
 #include "AOTPendingStars.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTSlotEmitter.h"
 #include "AOTStubCalls.h"
 #include "AOTStubsAllocation.h"
 #include "AOTStubsObjectCopy.h"

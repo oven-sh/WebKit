@@ -92,6 +92,9 @@ public:
     Integer publicLength(const ArrayElements& elements) { return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength)); }
     Integer vectorLength(const ArrayElements& elements) { return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_vectorLength)); }
     void setPublicLength(const ArrayElements& elements, Integer length) { storeField(elements.butterfly, m_heaps.Butterfly_publicLength, low32(length)); }
+    Word32 publicLengthAsWord(const ArrayElements& elements) { return loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength); }
+    Word32 vectorLengthAsWord(const ArrayElements& elements) { return loadField<Word32>(elements.butterfly, m_heaps.Butterfly_vectorLength); }
+    void setPublicLength(const ArrayElements& elements, Word32 length) { storeField(elements.butterfly, m_heaps.Butterfly_publicLength, length); }
     Integer arrayLength(CellPointer array) { return publicLength(elementsOf(array)); }
 
     TypedPointer elementAt(const ArrayStorageForm&, const ArrayElements&, Integer index);

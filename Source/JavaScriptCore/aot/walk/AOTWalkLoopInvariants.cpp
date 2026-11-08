@@ -486,7 +486,7 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
 
     LocationMasks reads = effects.reads.without(heapsWrittenOnceForLoopInvariants);
     if (takesStorageAndLengthsToBeAsInFront())
-        reads = reads.without(AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::TypedArrayStorage });
+        reads = reads.without(AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths, AbstractHeap::TypedArrayStorage });
     HoistPoint point = currentHoistPoint();
     std::optional<uint32_t> outermost;
     forEachOpenLoopAround(numberOfLoops, 0, [&](uint32_t index) {

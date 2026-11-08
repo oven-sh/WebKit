@@ -1113,7 +1113,7 @@ bool Walker::walkBodyBehindItsParameters()
     for (uint32_t number = 0; number < index.numberOfBlocks() && !m_hasFailed; ++number)
         walkBlock(BlockID(number));
     endBlocksInFrontOfLoops(0, { });
-    if (checksWalk())
+    if (checksWalk() || checksProofs())
         askParametersOfHeadsForWhatIsShown();
     return !m_hasFailed;
 }
@@ -1980,7 +1980,7 @@ void Walker::checkProofOfRecord(ValueID record, const Draft& draft, TypeID prove
     if (draft.opcode == Opcode::Narrowed) {
         Representation form = m_code.at(record).representation;
         bool hasBox = form == Representation::JSValue || form == Representation::Cell || (form == Representation::Cell32 && checksProofs());
-        bool isRawNumberHeldUnderWord = checksProofs() && numberRepresentations.contains(form);
+        bool isRawNumberHeldUnderWord = checksProofs() && (numberRepresentations.contains(form) || optionalRepresentations.contains(form));
         if (Reference narrowed = draft.valueOperand(); narrowed && narrowed.isValue() && (hasBox || isRawNumberHeldUnderWord || checksWalk()))
             checkProof(Reference::value(record), TypeWithoutProof::restingOnBelief(typeAsBuilt(narrowed)), ProofSource::Test, draft.origin());
         return;
@@ -6852,10 +6852,14 @@ void Walker::enterLoopHead(BlockID inputHead)
         typeTextsInStringBuildersForLooks(*this, entering.span(), entryTypes);
     Frame& frame = m_frames[frameIndex];
     bool isInsideLoopLookedAt = frame.loopLookedAt && frame.loopLookedAt != currentBodyIndex().loopOf(inputHead) && currentBodyIndex().isInLoop(inputHead, frame.loopLookedAt);
-    std::span<const TypeID> settledAround;
-    if (isInsideLoopLookedAt)
-        settledAround = frame.typesOfLooks->spanAt(input.firstParameter().index() - frame.firstValueLookedAt, numberOfParameters);
-    LoopPreview preview = isBeingTried(frameIndex, inputHead) ? previewOutOfTries(inputHead, entryTypes.span()) : previewThatClaimsNothingOfLoops(*this, inputHead, entryTypes.span(), settledAround);
+    Vector<TypeID, 8> settledAround;
+    if (isInsideLoopLookedAt) {
+        uint32_t placeOfHead = input.firstParameter().index() - frame.firstValueLookedAt;
+        RELEASE_ASSERT(!numberOfParameters || frame.typesOfLooks->holdsInOneRun(placeOfHead, numberOfParameters));
+        for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter)
+            settledAround.append((*frame.typesOfLooks)[placeOfHead + parameter]);
+    }
+    LoopPreview preview = isBeingTried(frameIndex, inputHead) ? previewOutOfTries(inputHead, entryTypes.span()) : previewThatClaimsNothingOfLoops(*this, inputHead, entryTypes.span(), settledAround.span());
     if (m_hasFailed)
         return;
     if (preview.typesOfParameters.size() != numberOfParameters) {
@@ -6887,14 +6891,13 @@ void Walker::enterLoopHead(BlockID inputHead)
             for (uint32_t parameter = 0; parameter < innerHead.numberOfParameters(); ++parameter) {
                 uint32_t value = innerHead.parameter(parameter).index();
                 TypeID found = preview.typesOfValues[value - preview.firstValue];
-                TypeID* around = frame.typesOfLooks->slotAt(value - frame.firstValueLookedAt);
-                if (!around || !found || (*around && !m_types.isSubset(found, *around)))
+                uint32_t place = value - frame.firstValueLookedAt;
+                TypeID around = (*frame.typesOfLooks)[place];
+                if (!frame.typesOfLooks->holds(place) || !found || (around && !m_types.isSubset(found, around)))
                     continue;
-                if (frame.typesOfLooks.use_count() != 1) {
+                if (frame.typesOfLooks.use_count() != 1)
                     frame.typesOfLooks = std::make_shared<TypesOfValuesOfLoop>(*frame.typesOfLooks);
-                    around = frame.typesOfLooks->slotAt(value - frame.firstValueLookedAt);
-                }
-                *around = found;
+                frame.typesOfLooks->set(place, found);
             }
         }
     } else if (!preview.typesOfValues.isEmpty()) {
@@ -7016,7 +7019,7 @@ void Walker::enterLoopHead(BlockID inputHead)
         m_triesOfLoops.last().keepsScopesAtHead = true;
     if (!m_hasFailed)
         standAheadOfEdges(head);
-    if (checksWalk())
+    if (checksWalk() || checksProofs())
         layChecksOfParametersOfHead(head, numberOfParameters);
     noteHeadOfTurn(inputHead);
     noteHeadOfQuietTurns(head);

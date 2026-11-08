@@ -59,6 +59,7 @@ public:
     void noteNativeCodeMayHoldObjects();
     void noteNameRead(PropertyKeyID);
     void noteNameCalled(PropertyKeyID, bool mayPassOperands);
+    void noteNameCalledByNativeCodeOffUnseenObjects(PropertyKeyID);
     void noteNameSpelledByProgram(PropertyKeyID);
     void noteReadUnderKeyNobodyKnows();
     void noteReadUnderKeyNobodyKnowsOff(BuiltinID canonicalHolder);

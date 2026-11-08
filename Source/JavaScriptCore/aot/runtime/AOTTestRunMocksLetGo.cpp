@@ -164,6 +164,7 @@ void Modules::letGoOfImportersOf(ModuleID mocked, ImportersLetGo which)
                 return;
             if (m_filesThatStayLoadedAboveMock.set(index))
                 return;
+            ensureRecord(importer);
             work.append(index);
             if (ModuleID face = moduleWithExportsOf(importer); face != importer && !m_filesThatStayLoadedAboveMock.set(face.index()))
                 work.append(face.index());

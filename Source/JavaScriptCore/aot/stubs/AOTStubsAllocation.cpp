@@ -646,6 +646,35 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         const GPRReg end = scratch;
         jit.load32(Address(allocator, LocalAllocator::offsetOfCellSize()), end);
         jit.addPtr(replacement, end);
+        jit.xor64(held, remaining);
+        jit.move(remaining, to);
+        jit.neg64(to);
+        jit.and64(remaining, to);
+        Jump liesAmongHeld = jit.branch64(CCallHelpers::BelowOrEqual, to, held);
+        {
+            const GPRReg endOfHeld = held;
+            const GPRReg word = remaining;
+            jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), replacement, to);
+            jit.countPopulation64(held, held, CCallHelpers::fpTempRegister);
+            jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), from);
+            jit.getEffectiveAddress(BaseIndex(from, held, CCallHelpers::TimesEight), endOfHeld);
+            Jump asksFirst = jit.jump();
+            Label copies = jit.label();
+            jit.load64(Address(from), word);
+            jit.store64(word, Address(to));
+            jit.addPtr(TrustedImm32(sizeof(uint64_t)), from);
+            jit.addPtr(TrustedImm32(sizeof(uint64_t)), to);
+            asksFirst.link(&jit);
+            jit.branchPtr(CCallHelpers::Below, from, endOfHeld).linkTo(copies, &jit);
+            Label clearsRest = jit.label();
+            jit.store64(TrustedImm32(0), Address(to));
+            jit.addPtr(TrustedImm32(sizeof(uint64_t)), to);
+            jit.branchPtr(CCallHelpers::Below, to, end).linkTo(clearsRest, &jit);
+            isFilled.append(jit.jump());
+        }
+
+        liesAmongHeld.link(&jit);
+        jit.or64(held, remaining);
         jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), replacement, to);
         Label clears = jit.label();
         jit.store64(TrustedImm32(0), Address(to));

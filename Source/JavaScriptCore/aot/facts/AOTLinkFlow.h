@@ -709,6 +709,8 @@ public:
     std::span<const OwnValue> ownValuesThatMayHaveNoKeyOf(LayoutID) LIFETIME_BOUND;
     BitVector layoutsWhoseOwnFieldsListAccessor;
     FlowNodeID foundBesideFieldsUnder(PropertyKeyID);
+    bool listMembersThatMayAnswerUnder(FamilyID, PropertyKeyID, Vector<LayoutID>&);
+    FlowNodeID foundBesideFieldsOfMembersOf(FamilyID);
     FlowNodeID appendedField(LayoutID, PropertyKeyID);
     FlowNodeID appendedFieldAsStoredThroughItsLayout(LayoutID, PropertyKeyID);
     FlowNodeID findAppendedFieldAsStoredThroughItsLayout(LayoutID, PropertyKeyID) const;
@@ -1026,7 +1028,7 @@ public:
     std::optional<uint32_t> findWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     void keepWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
     void forgetWhatSomeLaneWasGiven(MadeOnDemand);
-    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutDefinedOnUnderKeyThatIsNotWritten, LayoutGivenAccessorByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, LayoutGetsNullAbove, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedWhereFlowBroughtIt, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead };
+    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutDefinedOnUnderKeyThatIsNotWritten, LayoutGivenAccessorByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, LayoutGetsNullAbove, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedWhereFlowBroughtIt, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead, NameCalledByNativeCodeOffUnseenObjects };
     void note(Note, uint32_t number, uint32_t more = 0);
     void noteFieldGivenAccessorByDescriptorInSight(FieldReference);
     void takeOverCallsWhoseRowsLinkTells();
@@ -1085,6 +1087,7 @@ public:
             noteLossOfBuiltin(builtin);
     }
     void noteLossOfObjectOfBuiltinModule(ModuleID) const;
+    void noteLossOfExportOfBuiltinModule(ModuleID, StringID name) const;
     void noteKeysBecomeTexts(LayoutID layout)
     {
         if (m_keysOfLayoutAreTold.at(layout.index()) != nothingIsLeftToTell) [[unlikely]]
@@ -2160,6 +2163,8 @@ private:
         Vector<LayoutID> instancesOfClasses;
         Vector<LayoutID> topmostInstancesOfClasses;
         Vector<LayoutID> instancesOfClassesThatIndexOfNamesLeavesOut;
+        Vector<LayoutID> withNothingAbove;
+        HashMap<uint32_t, Vector<LayoutID, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> heirsOfMembers;
         bool someInstanceOfClassMayHaveAppendedFields { false };
         HashMap<uint32_t, Vector<LayoutID, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> membersWithNothingAboveByKey;
         uint32_t numberWithNothingAbove { 0 };

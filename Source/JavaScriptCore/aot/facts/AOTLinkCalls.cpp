@@ -175,6 +175,8 @@ struct SharedCallInLinkCalls {
     bool hasList { false };
     FlowNodeID result;
     FlowNodeID thrown;
+    bool someMembersSleep { false };
+    Vector<LayoutID> membersAwakeFromTheStart;
 };
 
 struct MemberOfSharedCallInLinkCalls {
@@ -747,6 +749,7 @@ public:
 
     void resolve();
     void resolveMemberOfSharedCall(uint32_t member);
+    void wakeMembersOnceSomethingMayBeFoundBesideFields();
     void takeStepOfInspection(uint32_t step, const LinkType& now);
     void showPrivateFieldsOf(LayoutID, uint32_t inspection);
     static QuestionsInLinkCalls questionsOfComparisonOfPrivateFields();
@@ -1082,6 +1085,7 @@ private:
     void inspectAt(FlowNodeID, uint32_t inspection);
     void inspectType(const LinkType&, uint32_t inspection);
     void tellWhatFormatterIsHanded(const LinkType&, const Questions&);
+    void tellWhichMembersNativeCodeCallsOffUnseenObjects(const LinkType&, const Questions&);
     void tellFormatterLosesSight(const Questions&);
     bool mayBePrintedWholeWhereItIsRefused(const LinkType&, bool isLiteralMadeForCall);
     bool isLiteralMadeForCall(const RowCall&, BuiltinOperand) const;
@@ -2089,12 +2093,22 @@ ValuesInLinkCalls CallInLinkCalls::tieToSharedCall(SharedCall::Subjects subjects
         m_flow.subjectsOfSharedCalls.append(LinkFlow::SubjectOfSharedCall { family, isByName ? m_call.key : PropertyKeyID(), place.second });
 
         uint32_t firstMember = static_cast<uint32_t>(m_state.membersOfSharedCalls.size());
-        forEachLayoutOf(family, [&](LayoutID member) {
-            FunctionID constructor = m_program.at(member).constructor;
-            bool hasClassObject = constructor && m_flow.classOfConstructor(constructor) == member;
-            if (hasClassObject || subjects == SharedCall::Subjects::Instances || subjects == SharedCall::Subjects::PrototypeObjects)
+        Vector<LayoutID> membersThatMayAnswer;
+        if (subjects == SharedCall::Subjects::Instances && m_flow.listMembersThatMayAnswerUnder(family, m_call.key, membersThatMayAnswer)) {
+            m_flow.build.statistics().count(StatisticID::SharedCallsWhoseSilentMembersSleep);
+            for (LayoutID member : membersThatMayAnswer)
                 m_state.membersOfSharedCalls.append(MemberOfSharedCallInLinkCalls { index, member, 0 });
-        });
+            m_state.membersOfSharedCalls.append(MemberOfSharedCallInLinkCalls { index, LayoutID(), 0 });
+            m_state.sharedCalls[index]->someMembersSleep = true;
+            m_state.sharedCalls[index]->membersAwakeFromTheStart = WTF::move(membersThatMayAnswer);
+        } else {
+            forEachLayoutOf(family, [&](LayoutID member) {
+                FunctionID constructor = m_program.at(member).constructor;
+                bool hasClassObject = constructor && m_flow.classOfConstructor(constructor) == member;
+                if (hasClassObject || subjects == SharedCall::Subjects::Instances || subjects == SharedCall::Subjects::PrototypeObjects)
+                    m_state.membersOfSharedCalls.append(MemberOfSharedCallInLinkCalls { index, member, 0 });
+            });
+        }
         uint32_t endOfMembers = static_cast<uint32_t>(m_state.membersOfSharedCalls.size());
         for (uint32_t member = firstMember; member < endOfMembers; ++member)
             CallInLinkCalls(m_flow, m_state, *m_state.sharedCalls[index]).resolveMemberOfSharedCall(member);
@@ -2122,6 +2136,10 @@ void CallInLinkCalls::resolveMemberOfSharedCall(uint32_t member)
     m_memberThatWatches = member;
     LayoutID layout = m_state.membersOfSharedCalls[member].layout;
     throwError();
+    if (!layout) {
+        wakeMembersOnceSomethingMayBeFoundBesideFields();
+        return;
+    }
     switch (m_shared->subjects) {
     case SharedCall::Subjects::Instances:
         callMemberOfInstance(layout);
@@ -2137,6 +2155,31 @@ void CallInLinkCalls::resolveMemberOfSharedCall(uint32_t member)
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+void CallInLinkCalls::wakeMembersOnceSomethingMayBeFoundBesideFields()
+{
+    if (!m_shared->someMembersSleep)
+        return;
+    FlowNodeID besideFields = m_flow.foundBesideFieldsOfMembersOf(m_shared->family);
+    FlowNodeID underName = m_flow.foundBesideFieldsUnder(m_call.key);
+    watch(besideFields, 1);
+    watch(underName, 1);
+    if (heldAt(besideFields).isNothing() && heldAt(underName).isNothing())
+        return;
+
+    LinkFlow::LockerOfWhatIsShared locker(m_flow);
+    m_shared->someMembersSleep = false;
+    m_flow.build.statistics().count(StatisticID::SharedCallsWhoseSleepersWereWoken);
+    uint32_t firstMember = static_cast<uint32_t>(m_state.membersOfSharedCalls.size());
+    forEachLayoutOf(m_shared->family, [&](LayoutID member) {
+        if (!std::ranges::binary_search(m_shared->membersAwakeFromTheStart, member))
+            m_state.membersOfSharedCalls.append(MemberOfSharedCallInLinkCalls { m_shared->index, member, 0 });
+    });
+    m_shared->membersAwakeFromTheStart.clear();
+    uint32_t endOfMembers = static_cast<uint32_t>(m_state.membersOfSharedCalls.size());
+    for (uint32_t member = firstMember; member < endOfMembers; ++member)
+        CallInLinkCalls(m_flow, m_state, *m_shared).resolveMemberOfSharedCall(member);
 }
 
 void CallInLinkCalls::callMemberFoundAbove(FlowNodeID above, const Passed& passed, unsigned stepsLeft)
@@ -4001,6 +4044,11 @@ void CallInLinkCalls::applyParameter(RowCall& call, const BuiltinParameter& para
             tellWhatIterationCalls(type);
         });
     }
+    if (escapes && !isPrinted && saidByTable.questions.callMembers) {
+        forEachType(values, [&](const LinkType& type, const Source*) {
+            tellWhichMembersNativeCodeCallsOffUnseenObjects(type, saidByTable.questions);
+        });
+    }
     if (escapes)
         tellFormatterIsHandedWhateverObjectsThereAre();
     if (escapesWhole)
@@ -5124,6 +5172,14 @@ void CallInLinkCalls::tellWhatIterationCalls(const LinkType& iterable)
         if (PropertyKeyID key = name ? m_program.keyOf(name) : PropertyKeyID())
             m_flow.note(LinkFlow::Note::NameCalled, key.bits());
     }
+}
+
+void CallInLinkCalls::tellWhichMembersNativeCodeCallsOffUnseenObjects(const LinkType& subject, const Questions& questions)
+{
+    if (!questions.callMembers || questions.areAskedByFormatter || !subject.holdsUnseen)
+        return;
+    for (PropertyKeyID key : questions.keys)
+        m_flow.note(LinkFlow::Note::NameCalledByNativeCodeOffUnseenObjects, key.bits());
 }
 
 ALWAYS_INLINE void CallInLinkCalls::addResult(RowCall& call)
@@ -6291,6 +6347,7 @@ bool CallInLinkCalls::ask(const Values& subjects, const Questions& questions)
         if (isDataDescriptorInSight(source))
             return;
         tellWhatFormatterIsHanded(type, questions);
+        tellWhichMembersNativeCodeCallsOffUnseenObjects(type, questions);
         if (questions.describeObjects && mayBePrintedWholeWhereItIsRefused(type, questions.describesLiteralMadeForCall))
             m_flow.note(LinkFlow::Note::ObjectHandedToFormatter, LinkFlow::walkedByFormatter);
         if (questions.iterate)
@@ -6502,6 +6559,7 @@ void CallInLinkCalls::inspectType(const LinkType& type, uint32_t inspection)
         m_flow.noteLossOf(m_builtins.canonicalID(type.builtin));
     }
     tellWhatFormatterIsHanded(type, m_state.inspections[inspection].questions);
+    tellWhichMembersNativeCodeCallsOffUnseenObjects(type, m_state.inspections[inspection].questions);
     if (m_state.inspections[inspection].questions.iterate)
         tellWhatIterationCalls(type);
 

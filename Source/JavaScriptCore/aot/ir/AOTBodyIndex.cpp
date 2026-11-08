@@ -490,9 +490,11 @@ void BodyIndexBuilder::adoptLoops()
     for (size_t place = 0; place < found.size(); ++place) {
         if (LoopID parent = found[place].parent) {
             outermostAround[place] = outermostAround[parent.index()];
+            found[place].outermost = LoopID(outermostAround[place]);
             continue;
         }
         outermostAround[place] = place;
+        found[place].outermost = LoopID(place);
         nextMember[place] = numberOfBlocksInLoops;
         numberOfBlocksInLoops += found[place].numberOfMembers;
     }

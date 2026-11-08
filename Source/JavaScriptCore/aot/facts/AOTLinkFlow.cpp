@@ -1937,6 +1937,18 @@ void LinkFlow::noteLossOfObjectOfBuiltinModule(ModuleID id) const
     noteLossOf(builtins.canonicalID(builtins.namespaceOf(module.runtimeModule)));
 }
 
+void LinkFlow::noteLossOfExportOfBuiltinModule(ModuleID id, StringID name) const
+{
+    const Module& module = program.at(id);
+    if (module.kind != ModuleKind::Runtime || !module.runtimeModule)
+        return;
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinID object = builtins.canonicalID(builtins.namespaceOf(module.runtimeModule));
+    std::optional<PropertyKeyID> key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = name });
+    BuiltinID member = object && key ? findOwnMember(program, object, *key) : BuiltinID();
+    noteLossOf(member ? builtins.canonicalID(member) : object);
+}
+
 PropertyKeyID LinkFlow::symbolNotedAt(FlowNodeID node) const
 {
     Locker locker { m_lockOfSymbolsAtNodes };
@@ -2982,6 +2994,9 @@ void LinkFlow::takeNote(Note note, uint32_t number, uint32_t more)
         return;
     case Note::BuiltinCalledWithOperandsNobodyRead:
         builtinsInReach().noteCalledWithOperandsNobodyRead(BuiltinID(number));
+        return;
+    case Note::NameCalledByNativeCodeOffUnseenObjects:
+        builtinsInReach().noteNameCalledByNativeCodeOffUnseenObjects(PropertyKeyID::fromBits(number));
         return;
     case Note::FieldWrittenAfterConstruction:
         fieldsWrittenAfterConstruction.set(number);
@@ -5905,13 +5920,15 @@ LinkFlow::SortedMembersOfFamily& LinkFlow::sortedMembersOf(FamilyID family)
     Vector<LayoutID> withNothingAbove;
     for (LayoutID id : program.types.listOf(families.layoutsOf(family))) {
         if (!hasNothingAbove(id)) {
-            if (keepsValuesInFieldsInLinkFlow(program.at(id).kind) && !m_layoutsBelowConstructorFunctions.get(id.index())) {
+            if (program.at(id).kind == LayoutKind::Instance && !program.at(id).has(LayoutFlags::IsOfCreatedObject) && !m_layoutsBelowConstructorFunctions.get(id.index()) && !namesMayBeIncomplete(id, ClassSide::Prototype)) {
                 sorted->instancesOfClasses.append(id);
                 sorted->someInstanceOfClassMayHaveAppendedFields |= mayHaveAppendedFieldsInLinkFlow(program.at(id));
                 if (const Layout& layout = program.at(id); layout.has(LayoutFlags::IsNeverAllocated) || layout.has(LayoutFlags::IsWrittenUnderDictionaryType) || layout.writtenBuiltinBase || layout.kind == LayoutKind::BuiltinResult)
                     sorted->instancesOfClassesThatIndexOfNamesLeavesOut.append(id);
                 if (LayoutID base = program.at(id).base; !base || !isMemberOf(family, base))
                     sorted->topmostInstancesOfClasses.append(id);
+                else
+                    sorted->heirsOfMembers.add(base.index(), Vector<LayoutID, 1>()).iterator->value.append(id);
             } else
                 sorted->tiedOneByOne.append(id);
             if (mayHaveAppendedFieldsInLinkFlow(program.at(id)) && m_lostLayoutsWhoseAppendedFieldsAreTied.get(id.index()))
@@ -5929,6 +5946,7 @@ LinkFlow::SortedMembersOfFamily& LinkFlow::sortedMembersOf(FamilyID family)
             ++sorted->numberLost;
     }
     sorted->numberWithNothingAbove = static_cast<uint32_t>(withNothingAbove.size());
+    sorted->withNothingAbove = withNothingAbove;
     if (!withNothingAbove.isEmpty() || !sorted->tiedOneByOne.isEmpty() || !sorted->instancesOfClasses.isEmpty()) {
         sorted->foundBesideTheirFields = makeNode();
         for (LayoutID id : withNothingAbove)
@@ -5939,6 +5957,53 @@ LinkFlow::SortedMembersOfFamily& LinkFlow::sortedMembersOf(FamilyID family)
             addEdge(foundBesideFieldsOf(id), sorted->foundBesideTheirFields);
     }
     return *m_sortedMembersOfFamilies.add(family.index(), WTF::move(sorted)).iterator->value;
+}
+
+FlowNodeID LinkFlow::foundBesideFieldsOfMembersOf(FamilyID family)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    return sortedMembersOf(family).foundBesideTheirFields;
+}
+
+bool LinkFlow::listMembersThatMayAnswerUnder(FamilyID family, PropertyKeyID key, Vector<LayoutID>& members)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    if (!key || !isAbsentAboveClasses(key) || nameClassOf(key) == NameClass::Proto || program.at(key).kind == PropertyKeyKind::PrivateName || classHolderIsMadeWithName(program, ClassSide::Prototype, key))
+        return false;
+    if (mayBeNamedByNumber(key))
+        return false;
+    const SortedMembersOfFamily& sorted = sortedMembersOf(family);
+    std::span<const DeclarerOfMember> declarers = classesThatDeclareOnPrototype(key);
+    if (sorted.instancesOfClasses.isEmpty() || program.layoutsWithName(key).size() + declarers.size() > sorted.instancesOfClasses.size())
+        return false;
+    for (LayoutID listing : program.layoutsWithName(key)) {
+        if (isMemberOf(family, listing))
+            return false;
+    }
+    for (LayoutID leftOut : sorted.instancesOfClassesThatIndexOfNamesLeavesOut) {
+        if (findField(program, leftOut, key))
+            return false;
+    }
+    for (LayoutID topmost : sorted.topmostInstancesOfClasses) {
+        if (findField(program, topmost, key) || !membersFoundUnder(topmost, ClassSide::Prototype, key).empty())
+            return false;
+    }
+    members.appendVector(sorted.withNothingAbove);
+    members.appendVector(sorted.tiedOneByOne);
+    Vector<LayoutID, 8> atOrBelowDeclarers;
+    for (const DeclarerOfMember& declarer : declarers) {
+        if (isMemberOf(family, declarer.classLayout))
+            atOrBelowDeclarers.append(declarer.classLayout);
+    }
+    while (!atOrBelowDeclarers.isEmpty()) {
+        LayoutID member = atOrBelowDeclarers.takeLast();
+        members.append(member);
+        if (auto heirs = sorted.heirsOfMembers.find(member.index()); heirs != sorted.heirsOfMembers.end())
+            atOrBelowDeclarers.appendVector(heirs->value);
+    }
+    std::ranges::sort(members);
+    members.shrink(std::ranges::unique(members).begin() - members.begin());
+    return true;
 }
 
 bool LinkFlow::noteLostMemberWithNothingAbove(FamilyID family, LayoutID lost)

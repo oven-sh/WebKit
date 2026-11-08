@@ -375,7 +375,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
 #define FOR_EACH_FIELD_OF_FRAME_THAT_HANGS_ON_NO_STATE(macro) \
     macro(bodyCallsItself) \
     macro(valueHandedBack) macro(hasLookedForValueHandedBack) macro(handlerBlocks) macro(numberOfHandlersThatRead) macro(parametersHandedRoundUnchangedByLoop) \
-    macro(outermostLoopsLookedThrough) macro(accessesUnderProvenKeys) macro(usesInLoops) macro(loopsWithBlocksTouched) macro(arithmeticInLoops) macro(operatorsFoundBehindValuesForGuesses) macro(endsOfUsesOfTexts)
+    macro(outermostLoopsLookedThrough) macro(accessesUnderProvenKeys) macro(usesInLoops) macro(loopsWithBlocksTouched) macro(arithmeticInLoops) macro(operatorsFoundBehindValuesForGuesses) macro(numbersOfLongListsOfNamesOfRoots) macro(endsOfUsesOfTexts)
 
 #define FOR_EACH_FIELD_OF_FRAME_WRITTEN_OUTSIDE_LOOPS_AND_HANDLERS_ALONE(macro) \
     macro(environmentsMade)
@@ -1013,9 +1013,7 @@ LoopPreview Walker::previewOutOfTries(BlockID inputHead, std::span<const TypeID>
     if (LoopID loop = index.loopOf(inputHead); answer.types.isEmpty() && !index.loop(loop).parent && index.loop(loop).numberOfLoopsWithin == 1)
         isUnchanged = parametersHandedRoundUnchangedInLoops(index, loop);
     else if (answer.types.isEmpty()) {
-        LoopID outermost = loop;
-        while (index.loop(outermost).parent)
-            outermost = index.loop(outermost).parent;
+        LoopID outermost = index.loop(loop).outermost;
         Frame& frame = m_frames.last();
         if (!frame.outermostLoopsLookedThrough.get(outermost.index())) {
             frame.outermostLoopsLookedThrough.set(outermost.index());
@@ -2625,7 +2623,9 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
         if (!hasFailedInside && !answer.claimsNothing && !isCutShort) {
             uint32_t firstValue = index.block(inputHead).firstParameter().index();
             answer.firstValue = firstValue;
-            answer.typesOfValues.clear();
+            const BodyLoop& outermost = index.loop(index.loop(loop).outermost);
+            uint32_t firstValueOfNest = index.block(outermost.head).firstParameter().index();
+            answer.typesOfValues.clearAndBeginAt(firstValue, firstValueOfNest);
             auto appendRunOfBlocks = [&](BlockID first, BlockID last) {
                 answer.typesOfValues.appendRun(index.block(first).firstParameter().index() - firstValue, index.block(last).endOfValues().index() - index.block(first).firstParameter().index());
             };
@@ -2638,60 +2638,66 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
                 appendRunOfBlocks(within.head, within.last);
                 return true;
             });
-            answer.typesOfValues.makeRoomForRuns();
+            struct RowOfLoopInside {
+                LoopID loop;
+                std::optional<uint32_t> place;
+                bool isNotedInThisWalk { false };
+            };
+            Vector<RowOfLoopInside, 4> rowsOfLoopsInside;
+            const TypesOfValuesOfLoop* largestNotedInThisWalk = nullptr;
+            uint32_t numberOfLoopsLeft = index.loop(loop).numberOfLoopsWithin - 1;
+            for (uint32_t inner = loop.index() + 1; numberOfLoopsLeft && inner < index.numberOfLoops(); ++inner) {
+                if (index.loop(LoopID(inner)).parent != loop)
+                    continue;
+                numberOfLoopsLeft -= index.loop(LoopID(inner)).numberOfLoopsWithin;
+                KeyOfRowOfLoop copyOfInner = keyOfCopyOfLoop(frameIndex, index.loop(LoopID(inner)).head);
+                uint32_t numberOfEntriesOfInner = m_entriesOfCopiesOfLoops.get(copyOfInner);
+                auto found = numberOfEntriesOfInner ? m_placesOfAnswersOfLoops.find(keyOfRowOfLoop(copyOfInner, numberOfEntriesOfInner - 1)) : m_placesOfAnswersOfLoops.end();
+                RowOfLoopInside row { LoopID(inner), std::nullopt, false };
+                if (found != m_placesOfAnswersOfLoops.end()) {
+                    row.place = found->value;
+                    const AnswerOfLoop& ofInner = m_answersOfLoops[found->value];
+                    row.isNotedInThisWalk = ofInner.numberOfRecordsWhenTypesOfValuesWereNoted > tried.firstRecord;
+                    if (row.isNotedInThisWalk && !ofInner.typesOfValues.isEmpty() && (!largestNotedInThisWalk || ofInner.typesOfValues.size() > largestNotedInThisWalk->size()))
+                        largestNotedInThisWalk = &ofInner.typesOfValues;
+                }
+                rowsOfLoopsInside.append(row);
+            }
+            answer.typesOfValues.makeRoomForRuns(index.block(outermost.last).endOfValues().index() - firstValueOfNest, largestNotedInThisWalk);
             answer.numberOfRecordsWhenTypesOfValuesWereNoted = m_code.numberOfValues();
             auto noteTypesOfValuesOf = [&](BlockID member) {
                 BodyBlock block = index.block(member);
-                TypeID* typesOfBlock = answer.typesOfValues.slotAt(block.firstParameter().index() - firstValue);
-                for (uint32_t value = block.firstParameter().index(); value < block.endOfValues().index(); ++value) {
-                    TypeID& typeInRow = typesOfBlock[value - block.firstParameter().index()];
-                    typeInRow = ownTypeOf(m_frames[frameIndex].references[value]);
-                    if (Reference bound = m_frames[frameIndex].references[value]; bound && isTextInStringBuilder(*this, bound))
-                        typeInRow = TypeTable::string;
-                }
+                answer.typesOfValues.setEach(block.firstParameter().index() - firstValue, block.endOfValues().index() - block.firstParameter().index(), [&](size_t place) {
+                    Reference bound = m_frames[frameIndex].references[firstValue + place];
+                    return bound && isTextInStringBuilder(*this, bound) ? TypeID(TypeTable::string) : ownTypeOf(bound);
+                });
             };
             auto noteTypesLeftByTurnsWrittenOut = [&] {
                 for (const Vector<TryOfLoop::TypeLeftByTurnsWrittenOut>* list : { &tried.typesLeftByTurnsWrittenOut, &tried.typesOfSumsLeftInArms }) {
                     for (const TryOfLoop::TypeLeftByTurnsWrittenOut& left : *list) {
-                        TypeID* typeInRow = left.value >= firstValue ? answer.typesOfValues.slotAt(left.value - firstValue) : nullptr;
-                        if (typeInRow)
-                            *typeInRow = *typeInRow ? m_types.unionOf(*typeInRow, left.type) : left.type;
+                        if (left.value < firstValue || !answer.typesOfValues.holds(left.value - firstValue))
+                            continue;
+                        TypeID typeInRow = answer.typesOfValues[left.value - firstValue];
+                        answer.typesOfValues.set(left.value - firstValue, typeInRow ? m_types.unionOf(typeInRow, left.type) : left.type);
                     }
                 }
             };
             Vector<std::pair<LoopID, uint32_t>, 4> rowsTakenWhole;
-            uint32_t numberOfLoopsLeft = index.loop(loop).numberOfLoopsWithin - 1;
-            for (uint32_t inner = loop.index() + 1; numberOfLoopsLeft && inner < index.numberOfLoops(); ++inner) {
-                BlockID innerHead = index.loop(LoopID(inner)).head;
-                if (index.loop(LoopID(inner)).parent != loop)
-                    continue;
-                numberOfLoopsLeft -= index.loop(LoopID(inner)).numberOfLoopsWithin;
-                KeyOfRowOfLoop copyOfInner = keyOfCopyOfLoop(frameIndex, innerHead);
-                uint32_t numberOfEntriesOfInner = m_entriesOfCopiesOfLoops.get(copyOfInner);
-                auto found = numberOfEntriesOfInner ? m_placesOfAnswersOfLoops.find(keyOfRowOfLoop(copyOfInner, numberOfEntriesOfInner - 1)) : m_placesOfAnswersOfLoops.end();
-                bool isNotedInThisWalk = found != m_placesOfAnswersOfLoops.end() && m_answersOfLoops[found->value].numberOfRecordsWhenTypesOfValuesWereNoted > tried.firstRecord;
-                if (!isNotedInThisWalk) {
-                    for (BlockID member : index.membersOf(LoopID(inner)))
+            for (const RowOfLoopInside& row : rowsOfLoopsInside) {
+                if (!row.isNotedInThisWalk) {
+                    for (BlockID member : index.membersOf(row.loop))
                         noteTypesOfValuesOf(member);
                 }
-                if (found == m_placesOfAnswersOfLoops.end())
+                if (!row.place)
                     continue;
-                const AnswerOfLoop& ofInner = m_answersOfLoops[found->value];
+                const AnswerOfLoop& ofInner = m_answersOfLoops[*row.place];
                 AnswerOfLoop& ofThis = m_answersOfLoops[place];
-                ofInner.typesOfValues.forEachRun([&](uint32_t first, std::span<const TypeID> typesInside) {
-                    TypeID* typesInRow = ofThis.typesOfValues.slotAt(ofInner.firstValue + first - firstValue);
-                    RELEASE_ASSERT(typesInRow && ofThis.typesOfValues.slotAt(ofInner.firstValue + first - firstValue + typesInside.size() - 1) == typesInRow + (typesInside.size() - 1));
-                    if (isNotedInThisWalk) {
-                        std::ranges::copy(typesInside, typesInRow);
-                        return;
-                    }
-                    for (size_t position = 0; position < typesInside.size(); ++position) {
-                        if (!typesInRow[position])
-                            typesInRow[position] = typesInside[position];
-                    }
-                });
-                if (isNotedInThisWalk)
-                    rowsTakenWhole.append({ LoopID(inner), found->value });
+                if (row.isNotedInThisWalk) {
+                    if (&ofInner.typesOfValues != largestNotedInThisWalk)
+                        ofThis.typesOfValues.takeWhole(ofInner.typesOfValues);
+                    rowsTakenWhole.append({ row.loop, *row.place });
+                } else
+                    ofThis.typesOfValues.takeWhereNoTypeIsNoted(ofInner.typesOfValues);
             }
             forEachBlockAndLoopRightIn(index, loop, [&](BlockID member) {
                 if (index.loopOf(member) == loop)
@@ -2701,12 +2707,11 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
             });
             noteTypesLeftByTurnsWrittenOut();
             for (size_t parameter = 0; parameter < answer.types.size() && parameter < index.block(inputHead).numberOfParameters(); ++parameter) {
-                if (TypeID* typeInRow = answer.typesOfValues.slotAt(parameter); typeInRow && !*typeInRow)
-                    *typeInRow = answer.types[parameter];
+                if (answer.typesOfValues.holds(parameter) && !answer.typesOfValues[parameter])
+                    answer.typesOfValues.set(parameter, answer.types[parameter]);
             }
             auto typeSumOfTexts = [&](ValueID value) {
-                TypeID& typeInRow = *answer.typesOfValues.slotAt(value.index() - firstValue);
-                if (typeInRow || index.isParameter(value) || index.opcodeOf(value) != Opcode::Add)
+                if (answer.typesOfValues[value.index() - firstValue] || index.isParameter(value) || index.opcodeOf(value) != Opcode::Add)
                     return;
                 BodyValue sum = index.value(value);
                 auto typeOfOperand = [&](ValueID operand) -> TypeID {
@@ -2717,7 +2722,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
                 TypeID left = typeOfOperand(sum.operand(0));
                 TypeID right = typeOfOperand(sum.operand(1));
                 if (left && right && hasTextByItself(m_types.at(left)) && hasTextByItself(m_types.at(right)) && (m_types.at(left).isAnyString() || m_types.at(right).isAnyString()))
-                    typeInRow = TypeTable::string;
+                    answer.typesOfValues.set(value.index() - firstValue, TypeTable::string);
                 else
                     answer.typesOfValues.sumsWithoutType().append(value.index());
             };
@@ -2844,8 +2849,8 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
         bool isNeverBuiltSeveralTimes = generatorIsWalkedInLoop || !m_opensGuesses || !has(Mechanism::Guesses) || index.hasIrreducibleFlow() || index.isEnteredByHandlerEdge(inputHead) || index.holdsParametersReadByReleaseHintsAlone();
         bool isQuietOutsideArms = !tried.testsSeen.isEmpty() && !tried.doneOutsideArms.mayRunOtherCode() && tried.done.mayRunOtherCode();
         bool sharedClosedCopyWaits = !m_closedCopiesShared.isEmpty() && m_closedCopiesShared.last().frameIndex == frameIndex && m_closedCopiesShared.last().inputHead == inputHead && m_closedCopiesShared.last().isAboutToBeTaken;
-        if (fits && !hasAskedForTwoBuilds && !answer.severalBuildsAreStruck && !answer.claimsNothing && has(Mechanism::LoopInvariants) && (sharedClosedCopyWaits || !m_frames[frameIndex].loopsBeingBuiltTwice.contains(loop)) && !walkAroundIsUndone() && !isTooLargeToBeBuiltTwice(index, loop)
-            && !isNeverBuiltSeveralTimes && !(tried.callOnUsualWayComesRound && stepsIteration)) {
+        if (fits && !hasAskedForTwoBuilds && !answer.severalBuildsAreStruck && !answer.claimsNothing && has(Mechanism::LoopInvariants) && (sharedClosedCopyWaits || !m_frames[frameIndex].loopsBeingBuiltTwice.contains(loop)) && !isTooLargeToBeBuiltTwice(index, loop)
+            && !isNeverBuiltSeveralTimes && !(tried.callOnUsualWayComesRound && stepsIteration) && !walkAroundIsUndone()) {
             hasAskedForTwoBuilds = true;
             auto ownerOfLearned = makeUniqueWithoutFastMallocCheck<LoopPreview>();
             LoopPreview& learned = *ownerOfLearned;

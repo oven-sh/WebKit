@@ -11,6 +11,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTRepresentationRules.h"
 #include "AOTStringEmitter.h"
+#include "AOTThrowEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

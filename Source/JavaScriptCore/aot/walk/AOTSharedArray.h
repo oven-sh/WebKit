@@ -182,6 +182,14 @@ public:
     void fill(const T& record, uint32_t size)
     {
         clear();
+        if (size && isZero(record)) {
+            while (capacity() < size)
+                ++m_height;
+            m_root = partOfZeros(m_height);
+            ++m_root->numberOfOwners;
+            m_size = size;
+            return;
+        }
         Leaf* leaf = make<Leaf>();
         std::fill_n(leaf->records(), widthOfLeaf, record);
         m_root = leaf;
@@ -268,6 +276,68 @@ public:
         return size;
     }
 
+    std::span<T> mutableStretchAt(uint32_t index, uint32_t mostRecords)
+    {
+        ASSERT(index < m_size);
+        uint32_t upToEnd = m_root ? std::min(m_size - index, widthOfLeaf - (index & (widthOfLeaf - 1))) : m_size - index;
+        return { &mutableAt(index), std::min(mostRecords, upToEnd) };
+    }
+
+    void takeStretchOf(const SharedArray& other, uint32_t begin, uint32_t end)
+    {
+        ASSERT(begin <= end && end <= m_size && end <= other.m_size);
+        while (begin < end) {
+            uint32_t indexOfLeaf = begin >> bitsOfLeaf;
+            if (begin & (widthOfLeaf - 1) || end - begin < widthOfLeaf || !m_height || !other.m_root) {
+                uint32_t stop = static_cast<uint32_t>(std::min<uint64_t>(end, (static_cast<uint64_t>(indexOfLeaf) + 1) << bitsOfLeaf));
+                if (!m_root || !other.m_root || nodeOver(indexOfLeaf, 0) != other.nodeOver(indexOfLeaf, 0))
+                    std::copy_n(&other[begin], stop - begin, &mutableAt(begin));
+                begin = stop;
+                continue;
+            }
+            unsigned level = 0;
+            while (level + 1 < m_height && level < other.m_height && !childAt(indexOfLeaf, level + 1) && lengthOfPart(level + 1) <= end - begin)
+                ++level;
+            Node* part = const_cast<Node*>(other.nodeOver(indexOfLeaf, level));
+            ASSERT(part);
+            if (nodeOver(indexOfLeaf, level) != part) {
+                Node** slot = &m_root;
+                for (unsigned above = m_height; above > level; --above) {
+                    makeOwn(*slot, above);
+                    slot = &static_cast<Branch*>(*slot)->children[childAt(indexOfLeaf, above)];
+                }
+                ++part->numberOfOwners;
+                release(*slot, level);
+                *slot = part;
+            }
+            begin += static_cast<uint32_t>(lengthOfPart(level));
+        }
+    }
+
+    bool isSameIn(const SharedArray& other, uint32_t begin, uint32_t end) const
+    {
+        ASSERT(begin <= end && end <= m_size && end <= other.m_size);
+        while (begin < end) {
+            uint32_t indexOfLeaf = begin >> bitsOfLeaf;
+            uint32_t stop = static_cast<uint32_t>(std::min<uint64_t>(end, (static_cast<uint64_t>(indexOfLeaf) + 1) << bitsOfLeaf));
+            if (m_root && other.m_root) {
+                unsigned level = 0;
+                while (!(begin & (widthOfLeaf - 1)) && level < m_height && level < other.m_height && !childAt(indexOfLeaf, level + 1) && lengthOfPart(level + 1) <= end - begin)
+                    ++level;
+                while (level && nodeOver(indexOfLeaf, level) != other.nodeOver(indexOfLeaf, level))
+                    --level;
+                if (nodeOver(indexOfLeaf, level) == other.nodeOver(indexOfLeaf, level)) {
+                    begin = level ? begin + static_cast<uint32_t>(lengthOfPart(level)) : stop;
+                    continue;
+                }
+            }
+            if (std::memcmp(&(*this)[begin], &other[begin], (stop - begin) * sizeof(T)))
+                return false;
+            begin = stop;
+        }
+        return true;
+    }
+
     void forEachStretchNotSharedWith(const SharedArray& other, NOESCAPE const Invocable<void(uint32_t begin, uint32_t end)> auto& functor) const
     {
         if (!m_size)
@@ -320,7 +390,8 @@ private:
     T* inlineRecords() { return reinterpret_cast<T*>(m_inline); }
     const T* inlineRecords() const { return reinterpret_cast<const T*>(m_inline); }
     static uint32_t childAt(uint32_t indexOfLeaf, unsigned level) { return indexOfLeaf >> (bitsOfBranch * (level - 1)) & (widthOfBranch - 1); }
-    uint64_t capacity() const { return static_cast<uint64_t>(widthOfLeaf) << (bitsOfBranch * m_height); }
+    static uint64_t lengthOfPart(unsigned level) { return static_cast<uint64_t>(widthOfLeaf) << (bitsOfBranch * level); }
+    uint64_t capacity() const { return lengthOfPart(m_height); }
 
     void takeCopyOf(const SharedArray& other)
     {

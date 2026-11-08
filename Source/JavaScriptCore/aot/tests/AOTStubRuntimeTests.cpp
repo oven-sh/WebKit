@@ -1142,6 +1142,130 @@ static void testFirstFieldInExtensionOfObjectWithoutOne()
 #endif
 }
 
+static void testGrowthOfExtensions()
+{
+    constexpr uint32_t offsetOfExtensionWord = offsetOfFirstField;
+    constexpr unsigned mostGranules = maxGranulesOfExtensionFromStub;
+    constexpr size_t sizeOfRoom = extensionCellSizeFor(mostGranules) + minExtensionSize;
+    constexpr uint64_t untouched = 0xabababababababab;
+    const StubKey grow(StubFamily::AllocateExtensionSlow);
+    StubRunner runner;
+    Instance& instance = runner.instance();
+
+    struct {
+        ExtensionLayoutData extensionData { };
+        LayoutData layout { };
+    } withExtensionData;
+    withExtensionData.layout.hasExtensionData = true;
+    FakeObject<sizeof(CompiledStructure)> structure;
+    structure.at<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &withExtensionData.layout;
+    structure.at<uint32_t>(CompiledStructure::offsetOfExtensionSlot()) = SlotData::create(offsetOfExtensionWord, SlotRepresentation::Cell32).encoded();
+
+    FakeObject<offsetOfFirstField + 2 * sizeof(uint64_t)> owner;
+    FakeObject<sizeOfRoom> extension;
+    FakeObject<sizeOfRoom> room;
+    FakeObject<CompleteSubspace::offsetOfAllocatorForSizeStep() + (sizeOfRoom / MarkedSpace::sizeStep + 1) * sizeof(void*)> space;
+    auto allocatorFor = [&](size_t bytes) -> void*& {
+        return space.at<void*>(CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(bytes) * sizeof(void*));
+    };
+    instance.allocation.cagedAuxiliarySpace = space.bytes.data();
+    instance.prefix().structureIDBase = structure.address() & ~static_cast<uint64_t>(UINT32_MAX);
+    instance.cellCageBase = MarkedBlockCage::baseOf(std::bit_cast<const void*>(static_cast<uintptr_t>(extension.address() - offsetOfEmptyExtensionInCage)));
+    owner.setHeader(static_cast<uint32_t>(structure.address()), CompiledObjectType);
+    uint32_t& extensionWord = owner.at<uint32_t>(offsetOfExtensionWord);
+    auto wordOf = [&](auto& cell) {
+        return MarkedBlockCage::encode(instance.cellCageBase, std::bit_cast<JSCell*>(cell.address() - offsetOfEmptyExtensionInCage));
+    };
+    auto valueOf = [](unsigned granule) {
+        return 0x0101010101010101ULL * (granule + 1);
+    };
+
+    auto growsTo = [&](uint64_t held, uint64_t added) {
+        const uint64_t all = held | added;
+        const unsigned numberHeld = std::popcount(held);
+        const size_t bytesHeld = held ? extensionCellSizeFor(numberHeld) : 0;
+        const size_t bytes = extensionCellSizeFor(std::popcount(all));
+        for (size_t offset = 0; offset < sizeOfRoom; offset += sizeof(uint64_t)) {
+            extension.at<uint64_t>(offset) = offset < bytesHeld ? 0 : untouched;
+            room.at<uint64_t>(offset) = untouched;
+        }
+        extension.at<uint64_t>(offsetOfExtensionGranuleBits) = held ? held : untouched;
+        unsigned place = 0;
+        for (unsigned granule = 0; granule < maxExtensionGranules; ++granule) {
+            if (held >> granule & 1)
+                extension.at<uint64_t>(offsetOfFirstExtensionSlot + place++ * extensionGranuleSize) = valueOf(granule);
+        }
+        extensionWord = held ? wordOf(extension) : 0;
+        FakeAllocator allocator { static_cast<uint32_t>(bytes) };
+        allocator.makeRoomAt(room.address(), bytes);
+        allocatorFor(bytes) = &allocator;
+        runner.recordCallsOf(Entry::operationAOTEnsureExtensionGranules);
+        StubRun run = runner.run(grow, { owner.address(), added });
+        runner.countCallsOf(Entry::operationAOTEnsureExtensionGranules);
+        allocatorFor(bytes) = nullptr;
+        AOT_TEST_CHECK(!run.numberOfRecordedCalls);
+
+        const bool staysInPlace = allocator.hasRoom();
+        AOT_TEST_CHECK(!staysInPlace || bytes == bytesHeld);
+        auto& cell = staysInPlace ? extension : room;
+        AOT_TEST_CHECK(extensionWord == wordOf(cell) && cell.template at<uint64_t>(offsetOfExtensionGranuleBits) == all);
+        place = 0;
+        for (unsigned granule = 0; granule < maxExtensionGranules; ++granule) {
+            if (all >> granule & 1)
+                AOT_TEST_CHECK(cell.template at<uint64_t>(offsetOfFirstExtensionSlot + place++ * extensionGranuleSize) == (held >> granule & 1 ? valueOf(granule) : 0));
+        }
+        for (size_t offset = offsetOfFirstExtensionSlot + place * extensionGranuleSize; offset < sizeOfRoom; offset += sizeof(uint64_t))
+            AOT_TEST_CHECK(cell.template at<uint64_t>(offset) == (offset < bytes ? 0 : untouched));
+        if (!staysInPlace && held)
+            AOT_TEST_CHECK(extension.at<uint64_t>(offsetOfExtensionGranuleBits) == held && extension.at<uint64_t>(offsetOfFirstExtensionSlot) == valueOf(std::countr_zero(held)));
+        return !staysInPlace;
+    };
+
+    for (bool isFenced : { false, true }) {
+        instance.mutatorShouldBeFenced = isFenced;
+        for (unsigned numberHeld = 0; numberHeld < mostGranules; ++numberHeld) {
+            uint64_t held = 0;
+            for (unsigned index = 0; index < numberHeld; ++index)
+                held |= 1ULL << (4 * index + 2);
+            const unsigned above = 4 * numberHeld + 2;
+            const bool hasRoom = numberHeld && extensionCellSizeFor(numberHeld + 1) == extensionCellSizeFor(numberHeld);
+            AOT_TEST_CHECK(growsTo(held, 1ULL << above) == !hasRoom);
+            AOT_TEST_CHECK(growsTo(held, 1ULL << (maxExtensionGranules - 1)) == !hasRoom);
+            AOT_TEST_CHECK(growsTo(held, 1) == (!hasRoom || (isFenced && numberHeld)));
+            if (numberHeld > 1)
+                AOT_TEST_CHECK(growsTo(held, 1ULL << (4 * (numberHeld / 2) + 1)) == (!hasRoom || isFenced));
+            if (numberHeld + 2 <= mostGranules) {
+                growsTo(held, 3ULL << above);
+                growsTo(held, 1ULL << above | 1);
+                growsTo(held, 1ULL << (above + 3) | 1ULL << above);
+            }
+            if (numberHeld + 3 <= mostGranules && numberHeld)
+                growsTo(held, 1ULL << above | 1ULL << 3 | 1);
+        }
+    }
+    instance.mutatorShouldBeFenced = false;
+
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    for (auto [numberHeld, budget] : { std::pair { 3u, 106u }, std::pair { 5u, 126u } }) {
+        uint64_t held = (1ULL << numberHeld) - 1;
+        const size_t bytes = extensionCellSizeFor(numberHeld + 1);
+        growsTo(held, 1ULL << numberHeld);
+        extensionWord = wordOf(extension);
+        FakeAllocator allocator { static_cast<uint32_t>(bytes) };
+        allocator.makeRoomAt(room.address(), bytes);
+        allocatorFor(bytes) = &allocator;
+        runner.setCountsInstructions(true);
+        StubRun run = runner.run(grow, { owner.address(), 1ULL << numberHeld });
+        runner.setCountsInstructions(false);
+        allocatorFor(bytes) = nullptr;
+        AOT_TEST_CHECK(!run.calledOperation && run.instructionsInStubs && extensionWord == wordOf(room));
+        if (*run.instructionsInStubs != budget)
+            dataLogLn("an extension of ", numberHeld, " granules grows by one above them: ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+        AOT_TEST_CHECK(*run.instructionsInStubs <= budget);
+    }
+#endif
+}
+
 static void testCreatedFieldsOfObjectsWithExtraProperties()
 {
     constexpr uint32_t slotKey = ObjectWithKeyOrder::slotKeys[0];
@@ -1803,6 +1927,7 @@ std::span<const NativeTest> stubRuntimeTests()
         { "stubs/slim-closures-with-more-captures-than-registers"_s, ImageTests::whenExecutable<testSlimClosuresWithMoreCapturesThanRegisters> },
         { "stubs/typed-arrays-with-length"_s, ImageTests::whenExecutable<testTypedArraysWithLength> },
         { "stubs/created-fields-in-orders-of-the-image"_s, ImageTests::whenExecutable<testCreatedFieldsInOrdersOfImage> },
+        { "stubs/growth-of-extensions"_s, ImageTests::whenExecutable<testGrowthOfExtensions> },
         { "stubs/first-field-in-the-extension-of-an-object-without-one"_s, ImageTests::whenExecutable<testFirstFieldInExtensionOfObjectWithoutOne> },
         { "stubs/created-fields-of-objects-with-extra-properties"_s, ImageTests::whenExecutable<testCreatedFieldsOfObjectsWithExtraProperties> },
         { "stubs/created-fields-of-slots-known-to-the-caller"_s, ImageTests::whenExecutable<testCreatedFieldsOfSlotsKnownToCaller> },

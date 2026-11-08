@@ -489,6 +489,15 @@ void Code::setSubject(BlockID blockID, ValueID subject)
     m_blocks[checkedIndexInCode(blockID, m_blocks.size())].subject = subject;
 }
 
+NEVER_INLINE size_t Block::placeAmongManyParameters(ValueID parameter) const
+{
+    std::span<const ValueID> all = parameters();
+    auto found = std::ranges::lower_bound(all, parameter);
+    if (found != all.end() && *found == parameter)
+        return found - all.begin();
+    return std::ranges::find(all, parameter) - all.begin();
+}
+
 void Code::setParameters(BlockID blockID, std::span<const ValueID> parameters)
 {
     RELEASE_ASSERT(!m_isSwept);

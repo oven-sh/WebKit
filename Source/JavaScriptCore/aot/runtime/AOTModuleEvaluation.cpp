@@ -865,6 +865,8 @@ bool Modules::beginModuleInRecord(ModuleID module)
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     endMocksThatStoodForLoadsInFlight();
     RETURN_IF_EXCEPTION(scope, false);
+    if (m_filesThatStayLoadedAboveMock.get(module.index())) [[unlikely]]
+        tellOfFilesThatStayedLoadedBelow(module);
     if (storedStatus(module) == StoredModuleStatus::Evaluated) [[unlikely]]
         return false;
     if (storedStatus(module) != StoredModuleStatus::InRecord) [[unlikely]]
@@ -3330,7 +3332,7 @@ void Modules::runDataFileAgainForImport(ModuleID file, ImportAnsweredBy answered
     LoadedModule* loaded = loadedIfExists(file);
     if (data(file).kind != ModuleKind::Data || !loaded || !loaded->requiredValue || recordIfExists(file) || isMocked(file))
         return;
-    if (answeredBy == ImportAnsweredBy::Build && !loaded->wasRequiredByHost && !isTestRun())
+    if (answeredBy == ImportAnsweredBy::Build && !loaded->wasRequiredByHost && !data(file).isDataFoundByName() && !isTestRun())
         return;
     if (status(file) != ModuleStatus::Evaluated || isHeldForImport(file))
         return;
@@ -3484,6 +3486,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
 {
     if (!m_callsOfImportUnderMocks.isEmpty()) [[unlikely]]
         forgetNamespacesKeptForCallsOfImport();
+    if (m_filesThatStayLoadedAboveMock.get(target.index())) [[unlikely]]
+        tellOfFilesThatStayedLoadedBelow(target);
     if (JSValue settled = settledAnswerOfRequire(target, requiredBy))
         return settled;
     if (formThatAnswers == FormThatAnswers::TheOneThatLoaderFinds && data(target).kind == ModuleKind::Data) [[unlikely]]
@@ -3523,6 +3527,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
             return original;
     }
     bool isRequiredByProgram = requiredBy == RequiredBy::Program || (referrer && !data(referrer).isOfLibrary());
+    bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(target);
     if (!targetData.isOfLibrary() || isRequiredByProgram) {
         SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);
         SetForScope moduleThatRequireAsksFor(m_moduleThatRequireAsksFor, target);
@@ -3536,6 +3541,14 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     } else
         evaluateModulesOwedBelow(target);
     RETURN_IF_EXCEPTION(scope, { });
+    auto hearsHowRequireEnds = makeScopeExit([&] {
+        if (wasHeldBeforeWalk || !holdsLinksOfLoadThatMayFail(target)) [[likely]]
+            return;
+        if (scope.exception())
+            bringBackLinksOfLoadThatFailed(target);
+        else
+            letLinksOfLoadStand(target);
+    });
     if (someFactoryHasNotSettled) [[unlikely]]
         noteThatRequireGaveUpOn(target, false);
     if (!m_requiresThatGaveUp.isEmpty() && (!targetData.isOfLibrary() || isRequiredByProgram)) [[unlikely]] {

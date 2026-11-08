@@ -87,7 +87,7 @@ record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool
 record ModuleFailure wire { importer: Module(Referrer) specifier: String exporter: Module(Target)? exportSpecifier: String? endsLoadOf: Module(Referrer)? }
 record AmbiguousExport wire { module: Module(Referrer) name: String }
 record SourceStamp wire { module: Module(Referrer) low: UInt32 high: UInt32 }
-record DeclaredRecord wire { module: Module(Referrer) start: UInt32 parameter: UInt32 names: Span<PropertyKey> sorted }
+record DeclaredRecord wire { module: Module(Referrer) position: UInt32 parameter: UInt32 names: Span<PropertyKey> sorted }
 record Module wire {
     path: String displayPath: String kind: ModuleKind flags: ModuleFlags exportRule: SyntheticExportRule requireResult: RequireResult
     externalKind: ExternalKind typeAttribute: String? runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?

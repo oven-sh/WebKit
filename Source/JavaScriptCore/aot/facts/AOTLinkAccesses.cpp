@@ -1360,6 +1360,7 @@ void AccessInLinkAccesses::giveExport(ModuleID module, uint32_t index)
                 giveAnything();
                 return;
             }
+            m_flow.noteLossOfExportOfBuiltinModule(entry.module, entry.importName);
             const auto& exportsOfTarget = m_program.at(entry.module).exports;
             uint32_t found = 0;
             while (found < exportsOfTarget.size() && exportsOfTarget[found].name != entry.importName)

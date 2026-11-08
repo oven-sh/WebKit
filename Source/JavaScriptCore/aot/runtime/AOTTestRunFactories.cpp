@@ -146,27 +146,48 @@ bool Modules::wasLinkedAheadOfFailure(ModuleID root, ModuleID module) const
     struct Step {
         ModuleID importer;
         size_t nextRequest;
+        uint32_t place;
+        uint32_t earliestPlaceReached;
     };
-    BitVector isEntered(m_table.size());
-    Vector<Step, 16> way { { root, 0 } };
-    isEntered.quickSet(root.index());
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> places;
+    BitVector waitsForHeadOfRing(m_table.size());
+    Vector<ModuleID, 16> filesThatWait { root };
+    Vector<Step, 16> way { { root, 0, 0, 0 } };
+    places.add(root.index(), 0);
+    waitsForHeadOfRing.quickSet(root.index());
     while (!way.isEmpty()) {
         Step& step = way.last();
         auto requests = m_table.requests(step.importer);
         if (step.nextRequest == requests.size() || isMocked(step.importer)) {
             if (importsFromFileThatLacksName(step.importer))
                 return false;
-            if (step.importer == module)
-                return true;
-            way.removeLast();
+            Step done = way.takeLast();
+            if (done.earliestPlaceReached == done.place) {
+                for (bool isHead = false; !isHead;) {
+                    ModuleID linked = filesThatWait.takeLast();
+                    waitsForHeadOfRing.quickClear(linked.index());
+                    if (linked == module)
+                        return true;
+                    isHead = linked == done.importer;
+                }
+            }
+            if (!way.isEmpty())
+                way.last().earliestPlaceReached = std::min(way.last().earliestPlaceReached, done.earliestPlaceReached);
             continue;
         }
         const ModuleRequestData& request = requests[step.nextRequest++];
         if (request.isHoisted || request.isDeferred)
             continue;
         ModuleID imported = moduleLoadedBy(request);
-        if (!isEntered.quickSet(imported.index()))
-            way.append({ imported, 0 });
+        uint32_t place = places.size();
+        if (auto entered = places.add(imported.index(), place); !entered.isNewEntry) {
+            if (waitsForHeadOfRing.quickGet(imported.index()))
+                step.earliestPlaceReached = std::min(step.earliestPlaceReached, entered.iterator->value);
+            continue;
+        }
+        waitsForHeadOfRing.quickSet(imported.index());
+        filesThatWait.append(imported);
+        way.append({ imported, 0, place, place });
     }
     return false;
 }
@@ -575,7 +596,7 @@ bool Modules::runMockThatWaitsSlow(ModuleID module)
         m_loaderMayHoldLoadsThatFactoryEnded = true;
         Vector<ModuleID, 2> rootsThatWaitedForOriginal;
         for (const ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks) {
-            if (fileOf(above.mocked) == fileOf(module) && above.original)
+            if (fileOf(above.mocked) == fileOf(module) && above.original && above.mockHasFactory)
                 rootsThatWaitedForOriginal.append(above.root);
         }
         if (!rootsThatWaitedForOriginal.isEmpty() && !m_instance.vm->isTerminationException(exception))
@@ -969,6 +990,8 @@ auto Modules::runOriginalInSweep(ModuleID mocked) -> OriginalInSweep
     for (ImportersEnteredAboveMock& each : m_importersEnteredAboveMocks) {
         if (each.mocked == mocked)
             each.original = Strong<JSPromise>(vm, evaluation);
+        if (each.mocked == mocked)
+            each.mockHasFactory = hasFactory;
     }
     return OriginalInSweep::HasRun;
 }
@@ -1043,6 +1066,7 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
         size_t ofAnotherLoad = m_importersEnteredAboveMocks.findIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == mocked && above.original; });
         Strong<JSPromise> original = ofAnotherLoad == notFound ? Strong<JSPromise>() : m_importersEnteredAboveMocks[ofAnotherLoad].original;
         m_importersEnteredAboveMocks.append({ mocked, root, BitVector(m_table.size()), BitVector(m_table.size()), WTF::move(original) });
+        m_importersEnteredAboveMocks.last().mockHasFactory = ofAnotherLoad != notFound && m_importersEnteredAboveMocks[ofAnotherLoad].mockHasFactory;
         return true;
     };
 

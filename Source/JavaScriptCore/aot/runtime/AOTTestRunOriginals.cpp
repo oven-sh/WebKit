@@ -77,6 +77,8 @@ bool Modules::keepsOriginalUnderLaterMock(ModuleID fileOrModule, ModuleID import
         return false;
     if (got->value.timesMocked != m_timesMocked.get(mocked) && !got->value.staysUnderKeyOfOriginal)
         return false;
+    if (!m_modulesThatRanBesideMock.get(mocked.index()) && !m_mocksOverModulesThatHaveRun.contains(mocked))
+        return false;
     auto anew = m_momentsLoadedAnew.find(importer);
     return status(importer) > ModuleStatus::Linked && (anew == m_momentsLoadedAnew.end() || anew->value.moment <= got->value.moment);
 }

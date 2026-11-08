@@ -1176,8 +1176,7 @@ static bool textOfLoopsReadsListByKeyInTypedElements(const BodyIndex& index, con
     LoopID outermost = index.loopOf(index.blockOf(store.id()));
     if (!outermost)
         return true;
-    while (LoopID around = index.loop(outermost).parent)
-        outermost = around;
+    outermost = index.loop(outermost).outermost;
     ValueID list = index.valueBehindCasts(store.objectOperand());
     for (BlockID member : index.membersOf(outermost)) {
         for (BodyValue value : index.block(member).values()) {

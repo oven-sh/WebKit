@@ -676,6 +676,7 @@ auto JSONValueParser::findOrAddMember(const Members& members, Cursor quote) -> N
     PropertyOffset offset = to ? to->transitionOffset() : invalidOffset;
     if (!to)
         to = Structure::addPropertyTransitionToExistingStructure(from, name, 0, offset);
+    bool isMadeNow = !to;
     if (!to) {
         if (isValidOffset(from->get(m_vm, name)))
             return { };
@@ -684,7 +685,8 @@ auto JSONValueParser::findOrAddMember(const Members& members, Cursor quote) -> N
     if (to->isDictionary() || offset != memberPropertyOffset(members.count))
         return { };
 
-    if (to->isCacheableTransitionFrom(from)) {
+    if (!isMadeNow && to->isCacheableTransitionFrom(from)) {
+        ++m_numberOfTransitionsCached;
         if (from->trySingleTransition() == to)
             m_cache.addName(from, to, offset);
         else {
@@ -884,6 +886,7 @@ static ALWAYS_INLINE JSValue tryParse(JSGlobalObject* globalObject, size_t lengt
     countEvent(vm, RuntimeCounterID::TextsParsedByOwnParser);
     countEvent(vm, RuntimeCounterID::ObjectsParsedIntoRecords, parser.numberOfRecordsMade());
     countEvent(vm, RuntimeCounterID::ObjectsParsedIntoOrdinaryObjects, parser.numberOfOrdinaryObjectsMade());
+    countEvent(vm, RuntimeCounterID::TransitionsCachedForParsedNames, parser.numberOfTransitionsCached());
     return parsed.end ? parsed.value : JSValue();
 }
 

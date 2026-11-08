@@ -1841,6 +1841,7 @@ private:
         BitVector passed;
         Strong<JSPromise> original { };
         bool loadHasWaitedForOriginal { false };
+        bool mockHasFactory { false };
         bool isLeftWhenSweepEnds { false };
     };
     Vector<ImportersEnteredAboveMock, 2> m_importersEnteredAboveMocks;

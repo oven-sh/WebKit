@@ -255,12 +255,24 @@ static bool isIntegerInFrontOfLoopInCountersOfLoops(Walker& walker, const BodyIn
     return held && walker.types().at(walker.typeOf(held)).isInteger();
 }
 
-static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, BlockID inputHead, uint32_t position, NamesOfCounterOfLoop& names, const LoopPreview* typesOfSteps = nullptr, Vector<ValueID, 2>* stepsAskedInFront = nullptr, bool admitsWhatCallsGive = false)
+static bool headHoldsParameterAgainstBoundInCountersOfLoops(const BodyIndex& index, BlockID head, ValueID parameter)
+{
+    BodyTerminator end = index.block(head).terminator();
+    ValueID asked = end.kind() == TerminatorKind::Branch ? end.as<TerminatorKind::Branch>().conditionOperand() : ValueID();
+    if (!asked || index.isParameter(asked) || !allRelations.contains(index.opcodeOf(asked)))
+        return false;
+    BodyValue relation = index.value(asked);
+    return index.valueBehindCasts(relation.operand(0)) == parameter || index.valueBehindCasts(relation.operand(1)) == parameter;
+}
+
+static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, BlockID inputHead, uint32_t position, NamesOfCounterOfLoop& names, const LoopPreview* typesOfSteps = nullptr, Vector<ValueID, 2>* stepsAskedInFront = nullptr, bool admitsWhatCallsGive = false, bool trustsHeadsOfLoopsInside = true)
 {
     LoopID loop = index.loopOf(inputHead);
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
     bool isStepped = false;
     NamesOfCounterOfLoop namesBehindSteps;
+    Vector<ValueID, 2> takenOnTrust;
+    size_t numberOfStepsAskedInFrontBefore = stepsAskedInFront ? stepsAskedInFront->size() : 0;
     UsersOfNamesInCountersOfLoops usersLeft(users);
     auto add = [&](ValueID name, bool standsBehindStep) {
         if (names.size() >= mostNamesOfCounterOfLoop)
@@ -281,11 +293,14 @@ static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& 
             BlockID member = index.blockOf(user);
             uint32_t place = user.index() - index.block(member).firstParameter().index();
             std::span<const BodyIncomingEdge> incoming = walker.incomingEdgesOf(index, member);
+            bool isHeadOfLoopInside = trustsHeadsOfLoopsInside && member != inputHead && index.isLoopHead(member) && !headHoldsParameterAgainstBoundInCountersOfLoops(index, member, user);
             bool joinsNamesAlone = !incoming.empty() && std::ranges::all_of(incoming, [&](const BodyIncomingEdge& edge) {
                 std::span<const ValueID> arguments = edge.target.arguments();
-                return place < arguments.size() && names.contains(arguments[place]);
+                return place < arguments.size() && ((isHeadOfLoopInside && index.isInLoop(edge.from, index.loopOf(member))) || names.contains(arguments[place]));
             });
             if (joinsNamesAlone) {
+                if (isHeadOfLoopInside)
+                    takenOnTrust.append(user);
                 add(user, std::ranges::any_of(incoming, [&](const BodyIncomingEdge& edge) {
                     return namesBehindSteps.contains(edge.target.arguments()[place]);
                 }));
@@ -321,6 +336,19 @@ static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& 
             add(operation.id(), true);
             isStepped = true;
         }
+    }
+    for (ValueID trusted : takenOnTrust) {
+        BlockID head = index.blockOf(trusted);
+        uint32_t place = trusted.index() - index.block(head).firstParameter().index();
+        bool everyWayBringsName = names.contains(trusted) && std::ranges::all_of(walker.incomingEdgesOf(index, head), [&](const BodyIncomingEdge& edge) {
+            return names.contains(edge.target.arguments()[place]);
+        });
+        if (everyWayBringsName)
+            continue;
+        names.shrink(0);
+        if (stepsAskedInFront)
+            stepsAskedInFront->shrink(numberOfStepsAskedInFrontBefore);
+        return isSteppedAllRoundInCountersOfLoops(walker, index, users, inputHead, position, names, typesOfSteps, stepsAskedInFront, admitsWhatCallsGive, false);
     }
     if (!isStepped)
         return false;
@@ -1011,6 +1039,11 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
         if (stepEnters)
             continue;
         counters.append({ position, TypeTable::int32, isHeldWhereItComesRound });
+        bool loopInsideStepsIt = std::ranges::any_of(names, [&](ValueID name) {
+            return index.isParameter(name) && index.blockOf(name) != inputHead && index.isLoopHead(index.blockOf(name));
+        });
+        if (loopInsideStepsIt)
+            walker.count(StatisticID::CountersThatLoopsInsideStepAskedInFrontOfLoops);
         for (ValueID step : stepsAskedInFront) {
             Reference value = walker.referenceOf(step);
             if (guesses.containsIf([&](const GuessInFrontOfLoop& guess) { return guess.value == value; }))

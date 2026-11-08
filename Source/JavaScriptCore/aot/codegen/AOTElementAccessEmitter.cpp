@@ -514,6 +514,7 @@ void ElementAccessEmitter::generateSetArrayLength(const ValueContext& value)
     CellPointer array = in<CellPointer>(value->arrayOperand());
     Integer length = integerOf(value->lengthOperand());
     StubKey stub = setArrayLength(value->mode() == ECMAMode::Sloppy);
+    build().statistics().count(StatisticID::LengthsStoredIntoProvenLists);
     if (!generator().paysForCodeInLine(value.block())) {
         callStub(value, stub, { array.value(), length.value() });
         return;

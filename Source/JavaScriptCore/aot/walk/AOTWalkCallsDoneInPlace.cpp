@@ -864,8 +864,10 @@ bool callTargetOfBoundFunctionBehindTests(Walker& walker, const BodyValue& call)
         Walker::InFrontOfTypedCopy inFront(walker, goOnWhere(test));
         return buildProofBehindTestForStrings(walker, value, test, OperandIndex::TypeTest::value, origin);
     };
+    static constexpr uint32_t positionOfFirstArgument = 2;
+    bool countIsHeldInFront = false;
     auto wordOf = [&](Reference function, uint32_t position) {
-        Walker::InFrontOfTypedCopy inFront(walker, standsInFront(function));
+        Walker::InFrontOfTypedCopy inFront(walker, standsInFront(function) && (countIsHeldInFront || position < positionOfFirstArgument));
         Draft word(Opcode::GetWordOfBoundFunction, origin);
         walker.chooseConservativeFields(word);
         word.setFunctionOperand(function);
@@ -891,7 +893,7 @@ bool callTargetOfBoundFunctionBehindTests(Walker& walker, const BodyValue& call)
     }
     if (!hasCount)
         return true;
-    goOnWhere(hasCount);
+    countIsHeldInFront = goOnWhere(hasCount);
     Reference word = wordOf(bound, 0);
     Reference isTarget = word ? askType(word, types.forFunction(target)) : Reference();
     if (!isTarget)

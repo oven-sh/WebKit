@@ -592,6 +592,7 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
         { module.kind == ModuleKind::CommonJs && module.exportsVariable && inputs.facts.linked().exportsThatStayIn.get(module.exportsVariable.index()), Flag::ExportsStayInCompiledCode },
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::KeepsError), Flag::KeepsError },
         { module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::RunsAgain), Flag::BodyMayRunAgain },
+        { module.kind == ModuleKind::Data && module.flags.contains(ModuleFlags::IsFoundByName), Flag::IsDataFoundByName },
         { isEntered && entry.bodyFunction() && entryOfModuleBodyLeadsToStart(inputs, module.body), Flag::EvaluatesItself },
         { hasValue, Flag::HasValue },
         { isBundlerHelper, Flag::IsLibraryCodeWithFilePath },

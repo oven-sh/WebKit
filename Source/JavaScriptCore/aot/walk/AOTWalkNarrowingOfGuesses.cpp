@@ -135,7 +135,7 @@ static bool restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(Walker& walker, V
     if (definition.isParameter() && walker.currentBodyIndex().blockOf(input) == entryBlock && !saysNothingInNarrowingOfGuesses(types, typeSeenToArriveInNarrowingOfGuesses(walker, input.index())))
         return false;
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
-    if (names.empty() || walker.onlyLayoutInSightWithAllNames(names, walker.isInLoop() && names.size() > 1) != expected)
+    if (names.empty() || walker.onlyLayoutInSightWithAllNames(names, walker.isInLoop() && names.size() > 1, { }, walker.numberOfLongListOfNamesUsedOff(input, names)) != expected)
         return false;
     if (someCastStatesLayoutInNarrowingOfGuesses(walker, input, expected))
         return false;

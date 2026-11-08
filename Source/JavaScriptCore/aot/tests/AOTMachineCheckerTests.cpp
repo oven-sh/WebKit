@@ -601,6 +601,28 @@ static void checkerFindsOwnerOfStorageThatLandingPadReads()
     AOT_CHECKER_TEST_CHECK(test, order.headOf(landingPad) < order.headOf(continuation) && test.procedure().allocation().isSpilled(owner));
 }
 
+static void checkerRefusesInnerPointerWhoseOwnerPatchOverwrites()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    AbstractHeap storageOfOwner(test.heaps().argumentBuffer.index(), 0, OptionSet<HeapTrait> { HeapTrait::HoldsInnerPointer });
+    Operation* owner = out.opaque(test.argumentGPR(0));
+    Operation* storage = out.loadPtr(out.address(storageOfOwner, owner));
+    PatchOperation* safepoint = appendPatchForCheckerTest(out, Void, { });
+    out.ret(out.load64(out.address(test.heaps().argumentBuffer, storage, 2 * sizeof(uint64_t))));
+    AOT_CHECKER_TEST_CHECK(test, safepoint->effects.mayCollect && storage->has(OperationFlag::IsInnerPointer));
+    prepareForCheckerTest(test);
+
+    const Allocation& allocation = test.procedure().allocation();
+    const Reg registerOfOwner = allocation.registerAtDefinitionOf(owner);
+    PatchAssignment& assignment = patchAssignmentForCheckerTest(test, safepoint);
+    AOT_CHECKER_TEST_CHECK(test, test.procedure().liveness().of(owner).has(ValueFlag::IsKeptForCollector) && !allocation.isSpilled(owner));
+    AOT_CHECKER_TEST_CHECK(test, registerOfOwner.isSet() && (assignment.usedRegisters & maskOf(registerOfOwner)));
+
+    assignment.usedRegisters &= ~maskOf(registerOfOwner);
+    expectCheckerRefusal(test, checkReferences, FailureKind::InnerPointerWithoutOwner, { storage });
+}
+
 static void checkerRefusesNarrowReferenceWithoutPointer()
 {
     for (bool isMarkedBeforeAllocation : { true, false }) {
@@ -805,6 +827,7 @@ std::span<const NativeTest> machineCheckerTests()
         { "machine-checker/two-live-spills-in-one-slot"_s, Machine::checkerRefusesTwoLiveSpillsInOneSlot },
         { "machine-checker/patch-without-the-frame-it-needs"_s, Machine::checkerRefusesPatchWithoutTheFrameItNeeds },
         { "machine-checker/owner-of-storage-that-a-landing-pad-reads"_s, Machine::checkerFindsOwnerOfStorageThatLandingPadReads },
+        { "machine-checker/an-inner-pointer-whose-owner-the-patch-overwrites"_s, Machine::checkerRefusesInnerPointerWhoseOwnerPatchOverwrites },
         { "machine-checker/narrow-reference-without-its-pointer"_s, Machine::checkerRefusesNarrowReferenceWithoutPointer },
         { "machine-checker/rare-safepoint-outside-the-framed-part-without-the-pointer-kept-ahead-of-it-in-its-block"_s, Machine::checkerRefusesRareSafepointOutsideFramedPartWithoutPointerKeptAheadOfItInItsBlock },
         { "machine-checker/shifted-narrow-reference-without-its-pointer"_s, Machine::checkerRefusesShiftedNarrowReferenceWithoutPointer },

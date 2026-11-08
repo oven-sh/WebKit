@@ -1547,21 +1547,58 @@ uint32_t Walker::numberOfListOfNames(std::span<const PropertyKeyID> names)
             return number;
     }
     numbers.append(static_cast<uint32_t>(m_listsOfNames.size()));
-    m_listsOfNames.append(ListOfNames { Vector<PropertyKeyID>(names), { } });
+    m_listsOfNames.append(ListOfNames { Vector<PropertyKeyID>(names), { }, { } });
     return numbers.last();
 }
 
-LayoutID Walker::onlyLayoutInSightWithAllNames(std::span<const PropertyKeyID> names, bool recordsAnswer, LayoutID beside)
+std::optional<uint32_t> Walker::numberOfLongListOfNamesUsedOff(ValueID value, std::span<const PropertyKeyID> names)
+{
+    static constexpr size_t namesGoneThroughAtEveryAsk = 16;
+    if (names.size() <= namesGoneThroughAtEveryAsk) [[likely]]
+        return std::nullopt;
+    Frame& frame = m_frames.last();
+    const KeptWithBodyForGuesses& kept = keptWithBodyForGuesses(*frame.index);
+    auto added = frame.numbersOfLongListsOfNamesOfRoots.add(kept.rootOf(value.index()), 0);
+    if (added.isNewEntry)
+        added.iterator->value = numberOfListOfNames(names);
+    return added.iterator->value;
+}
+
+bool Walker::everyNameOfLongListIsPlainFieldOf(uint32_t numberOfList, LayoutID layout, NOESCAPE const ScopedLambda<bool()>& ask)
+{
+    uint64_t asker = static_cast<uint64_t>(unit().function.index() << 4 | static_cast<uint32_t>(unit().role)) << 32 | layout.bits();
+    if (auto kept = m_listsOfNames[numberOfList].areAllPlainFields.find(asker); kept != m_listsOfNames[numberOfList].areAllPlainFields.end())
+        return kept->value;
+    bool answer = ask();
+    m_listsOfNames[numberOfList].areAllPlainFields.add(asker, answer);
+    return answer;
+}
+
+LayoutID Walker::onlyLayoutInSightWithAllNames(std::span<const PropertyKeyID> names, bool recordsAnswer, LayoutID beside, std::optional<uint32_t> numberOfLongList)
 {
     const LayoutsByNames& layouts = facts().layoutsByNames();
     ModuleID own = program().at(currentFunction()).module;
     if (!own)
         return { };
+    bool looksBeyondOwnFile = isInLoop();
+    uint32_t asker = own.index() * 4 + looksBeyondOwnFile * 2 + recordsAnswer;
+    if (beside)
+        numberOfLongList = std::nullopt;
+    if (numberOfLongList) [[unlikely]] {
+        for (auto [kept, answer] : m_listsOfNames[*numberOfLongList].answers) {
+            if (kept == asker)
+                return LayoutID::fromBits(answer);
+        }
+    }
+    auto keepUnderNumberOfLongList = [&](LayoutID only) {
+        if (numberOfLongList) [[unlikely]]
+            m_listsOfNames[*numberOfLongList].answers.append({ asker, only.bits() });
+        return only;
+    };
     std::span<const uint32_t> holders = layouts.holdersOfRarestOf(names);
     if (holders.empty())
-        return { };
+        return keepUnderNumberOfLongList({ });
     uint32_t ownAlone[] = { own.index() };
-    bool looksBeyondOwnFile = isInLoop();
 
     auto givesWayTo = [&](LayoutID above, LayoutID below) {
         auto parentIsValue = [&](LayoutID layout) {
@@ -1621,9 +1658,8 @@ LayoutID Walker::onlyLayoutInSightWithAllNames(std::span<const PropertyKeyID> na
     };
 
     static constexpr size_t layoutsGoneThroughAtEveryAsk = 16;
-    if (beside || std::min(holders.size(), written) <= layoutsGoneThroughAtEveryAsk)
-        return find();
-    uint32_t asker = own.index() * 4 + looksBeyondOwnFile * 2 + recordsAnswer;
+    if (numberOfLongList || beside || std::min(holders.size(), written) <= layoutsGoneThroughAtEveryAsk)
+        return keepUnderNumberOfLongList(find());
     ListOfNames& list = m_listsOfNames[numberOfListOfNames(names)];
     for (auto [kept, answer] : list.answers) {
         if (kept == asker)
@@ -1739,7 +1775,8 @@ static ExpectationForGuesses expectationByNamesUsedForGuesses(Walker& walker, Va
     if (firstUsed && !(isInLoop ? layouts.isNameOfSomeLayout(firstUsed) : layouts.isNameOfSomeInstance(firstUsed)))
         return { };
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
-    LayoutID only = walker.onlyLayoutInSightWithAllNames(names, isInLoop && names.size() > 1);
+    std::optional<uint32_t> numberOfLongList = walker.numberOfLongListOfNamesUsedOff(input, names);
+    LayoutID only = walker.onlyLayoutInSightWithAllNames(names, isInLoop && names.size() > 1, { }, numberOfLongList);
     if (Vector<PropertyKeyID, 16> withViews; !only && !names.empty() && walker.appendNamesUsedOffViewsOf(input, withViews)) {
         withViews.append(names);
         only = walker.onlyLayoutInSightWithAllNames(withViews.span(), false);
@@ -1759,7 +1796,10 @@ static ExpectationForGuesses expectationByNamesUsedForGuesses(Walker& walker, Va
             return slot.representation != SlotRepresentation::DeferredClosure && !slot.deferredFunction && walker.withoutFunctionsThatMayNotBeMentioned(held) == held;
         });
     };
-    if (only && walker.program().at(only).kind == LayoutKind::Record && !everyNameIsPlainFieldOf(only))
+    auto askWhetherEveryNameIsPlainField = [&] {
+        return everyNameIsPlainFieldOf(only);
+    };
+    if (only && walker.program().at(only).kind == LayoutKind::Record && !(numberOfLongList ? walker.everyNameOfLongListIsPlainFieldOf(*numberOfLongList, only, scopedLambda<bool()>(askWhetherEveryNameIsPlainField)) : everyNameIsPlainFieldOf(only)))
         return { };
     bool everyNameIsAnsweredByGetterBeingWalked = only && !names.empty() && std::ranges::all_of(names, [&](PropertyKeyID name) {
         MemberFound found = findMemberAboveObjectsOf(walker.program(), walker.facts().linked(), only, name);
@@ -2622,7 +2662,7 @@ static std::optional<TypeID> recordsThatOwnTypeOfParameterNamesForGuesses(Walker
     const DeclaredType* declared = !function.has(FunctionFlags::IsChecked) && function.module && entryParameter < function.numberOfEntryParameters() ? function.declaredEntryParameter(entryParameter) : nullptr;
     if (!declared || function.parameters.isEmpty() || declared < function.parameters.begin() || declared >= function.parameters.end())
         return std::nullopt;
-    auto rows = walker.facts().layoutsByNames().recordsOfDeclaredParameter(function.module, function.text.start, static_cast<uint32_t>(declared - function.parameters.begin()));
+    auto rows = walker.facts().layoutsByNames().recordsOfDeclaredParameter(function.module, function.position, static_cast<uint32_t>(declared - function.parameters.begin()));
     if (rows.empty())
         return std::nullopt;
     TypeID named;
@@ -2676,6 +2716,32 @@ static bool staysTheSameThroughTurnsOfTypedCopyForGuesses(Walker& walker, ValueI
     while (opcodesThatGiveSameValue.contains(code.at(read).opcode) || code.at(read).opcode == Opcode::CheckInitialized)
         read = code.at(read).operand(0);
     return code.at(read).opcode == Opcode::GetModuleVariable && walker.program().at(code.at(read).variable()).flags.contains(VariableFlags::IsImmutable);
+}
+
+static bool isListThatFrontEndGuessedByNamesAloneForGuesses(Walker& walker, ValueID list)
+{
+    ValueID behind = walker.currentBodyIndex().valueBehindCasts(list);
+    const Function& function = walker.program().at(walker.currentFunction());
+    const DeclaredType* declared = behind && behind.index() < function.numberOfEntryParameters() ? function.declaredEntryParameter(behind.index()) : nullptr;
+    if (!declared || !declared->isExpected() || !declared->written())
+        return false;
+    TypeArena& types = walker.types();
+    TypeID lists = types.withoutNullish(declared->written());
+    if (isNeverType(lists) || !types.isSubset(lists, types.builtinClass(BuiltinClasses::Array)))
+        return false;
+    TypingContext expecting { walker.program(), types, walker.positionsKnowingNothing(), TypeLevel::Expected };
+    Type element = types.at(typeOfContentsRead(expecting, lists, ContentsSlot::Element));
+    return element.hasObjects() && (element.primitives & Primitive::Number) && (element.primitives & Primitive::AnyString) && (element.primitives & Primitive::BigInt);
+}
+
+static void leaveLayoutsThatStayWithCompiledCodeOutOfElementForGuesses(Walker& walker, ValueID list, ValueID element, ValueID readThatIsHeld, ExpectationForGuesses& expectation)
+{
+    if (!expectation.type || !isListThatFrontEndGuessedByNamesAloneForGuesses(walker, list))
+        return;
+    TypeID expected = expectation.type;
+    expectation.type = withoutLayoutsThatStayWithCompiledCodeForGuesses(walker, element, element, expected, [&] { return walker.facts().held().resultOfReadByKey(walker.currentFunction(), readThatIsHeld); });
+    if (expectation.type != expected)
+        walker.count(StatisticID::ElementsOfListsGuessedByNamesNotAskedForLayoutsThatStayWithCompiledCode);
 }
 
 static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, ValueID input)
@@ -2805,6 +2871,8 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
                     expectation = { types.withOnlyObjects(held), true, true };
             }
         }
+        if (opcode == Opcode::ElemGet)
+            leaveLayoutsThatStayWithCompiledCodeOutOfElementForGuesses(walker, definition.operand(OperandIndex::ElemGet::object), input, input, expectation);
         if (opcode == Opcode::ElemGet && saysNothingForGuesses(types, expectation.type))
             expectation = { walker.facts().held().resultOfReadByKey(walker.currentFunction(), input), true, true };
     } else if (opcode == Opcode::ResultAt) {
@@ -2817,6 +2885,7 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
                     expectation = { TypeTable::string, ofIterable.isDeclared, ofIterable.isHeld };
                 else
                     expectation = { pairs ? pairs : typeOfContentsRead(expecting, iterated, ContentsSlot::Element), ofIterable.isDeclared, ofIterable.isHeld };
+                leaveLayoutsThatStayWithCompiledCodeOutOfElementForGuesses(walker, iterable, input, definition.operand(0), expectation);
             }
             if (saysNothingForGuesses(types, expectation.type))
                 expectation = { walker.facts().held().resultOfReadByKey(walker.currentFunction(), definition.operand(0)), true, true };
@@ -5411,8 +5480,7 @@ bool outermostLoopStoresWhatIsRead(const BodyIndex& index, LoopID outermost, con
             LoopID loop = index.isReachable(BlockID(number)) ? index.loopOf(BlockID(number)) : LoopID();
             if (!loop)
                 continue;
-            while (LoopID around = index.loop(loop).parent)
-                loop = around;
+            loop = index.loop(loop).outermost;
             for (BodyValue operation : index.block(BlockID(number)).values()) {
                 if (operation.opcode() == Opcode::PutModuleVariable || operation.opcode() == Opcode::PutEnvironmentField)
                     kept.storesOfOutermostLoops.append(std::pair { loop.index(), *placeOfVariableForGuesses(operation) });
@@ -6913,8 +6981,6 @@ bool askRowOnceWhereStretchStoresIntoItOfItsOpcodes(Walker& walker, const BodyVa
 constinit const OpcodeSet opcodesThatOpenGuessAtTakes = operationsThatOpenGuesses;
 static_assert(opcodesThatOpenGuessAtTakesInChains == operationsThatOpenGuesses);
 
-static constexpr OpcodeSet operatorsOnBitsForGuesses { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift, Opcode::BitNot };
-
 static GuessOpened openGuessAtOperationForGuesses(Walker&, const BodyValue&, bool expectsOnlyProvenHolderOfName);
 
 GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
@@ -7333,7 +7399,7 @@ static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValu
                 walker.count(StatisticID::GuessesAtListsWhoseFailingSideAsksForViews);
             }
         }
-        if (isInLoop && operatorsOnBitsForGuesses.contains(opcode) && !chosen->failingSideAsksFor && !chosen->isPassedAlready && !chosen->layouts && walker.types().at(chosen->tested).isInteger()
+        if (isInLoop && allBitwiseOperators.contains(opcode) && !chosen->failingSideAsksFor && !chosen->isPassedAlready && !chosen->layouts && walker.types().at(chosen->tested).isInteger()
             && walker.mayLeaveCopyForCall() && !walker.mayBeginTurnAgainInClosedCopy() && !walker.standsInTurnOfTypedCopy()) {
             chosen->failingSideAsksFor = TypeTable::number;
             walker.count(StatisticID::GuessesAtInt32sOfOperatorsOnBitsWhoseFailingSideAsksForNumbers);

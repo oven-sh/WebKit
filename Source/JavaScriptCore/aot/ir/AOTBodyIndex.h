@@ -58,6 +58,7 @@ struct BodyLoop {
     uint32_t numberOfMembers { 0 };
     uint32_t placeAmongLoops { 0 };
     uint32_t numberOfLoopsWithin { 1 };
+    LoopID outermost;
 };
 
 struct BodyEdgeResult {

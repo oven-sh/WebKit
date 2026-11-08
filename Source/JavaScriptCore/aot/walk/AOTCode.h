@@ -663,19 +663,20 @@ struct Block {
     bool isHandlerBlock() const { return role != BlockRole::Ordinary; }
     bool hasEnded() const { return terminator.isSet; }
     std::span<const ValueID> parameters() const LIFETIME_BOUND { return { m_parameters, m_numberOfParameters }; }
+    static constexpr size_t mostParametersSearchedFromFront = 32;
     size_t placeOfParameter(ValueID parameter) const
     {
-        std::span<const ValueID> all = parameters();
-        auto found = std::ranges::lower_bound(all, parameter);
-        if (found != all.end() && *found == parameter)
-            return found - all.begin();
-        return std::ranges::find(all, parameter) - all.begin();
+        if (m_numberOfParameters > mostParametersSearchedFromFront) [[unlikely]]
+            return placeAmongManyParameters(parameter);
+        return std::ranges::find(parameters(), parameter) - parameters().begin();
     }
     EdgeID firstEdgeIn() const { return m_firstEdgeIn; }
 
 private:
     friend class Code;
     friend class Sweep;
+
+    size_t placeAmongManyParameters(ValueID) const;
 
     const ValueID* m_parameters { nullptr };
     uint32_t m_numberOfParameters { 0 };

@@ -4949,6 +4949,26 @@ static std::optional<Vector<FieldIndex, 8>> fieldsFilledByLoadsForCopyInTypedAcc
     return fieldsOfTargetForCopyInTypedAccess(walker, copy, layout, layoutOfSource, order, copied);
 }
 
+static void checkWordsBehindCopyForTypedAccess(Walker& walker, Origin origin, Reference made, LayoutID layout, std::span<const FieldIndex> fields)
+{
+    if (!walker.checksProofsOf(ProofSource::Field))
+        return;
+    const Plan& plan = walker.plan();
+    std::optional<ReceiversOfTypedAccess> receivers = findReceiversOfTypedAccess(walker, walker.types().forLayout(layout));
+    if (!receivers)
+        return;
+    for (FieldIndex field : fields) {
+        Draft read(Opcode::GetSlot, origin);
+        fillSlotOperationForTypedAccess(read, made, *receivers, walker.program().at(layout).fields[field].key);
+        Reference copied = walker.build(WTF::move(read));
+        if (!copied || walker.hasFailed() || walker.isUnreachable())
+            return;
+        Representation form = walker.representationOf(copied);
+        if (form == Representation::JSValue || form == Representation::Cell || form == Representation::Cell32)
+            walker.checkThatSlotTakes(copied, plan.slot(layout, field).typeThatStoresAreHeldTo(), origin);
+    }
+}
+
 static bool buildCopyBehindTestsForTypedAccess(Walker& walker, const BodyValue& copy, LayoutID layout, bool byWordsAlone = false)
 {
     if (!walker.has(Mechanism::Guesses))
@@ -5069,6 +5089,7 @@ static bool buildCopyBehindTestsForTypedAccess(Walker& walker, const BodyValue& 
             words.setSourceLayout(layoutOfSource);
             words.setFields(copied.span());
             walker.build(WTF::move(words));
+            checkWordsBehindCopyForTypedAccess(walker, origin, empty, layout, fields->span());
             walker.state().noteOrderWord(empty, plan.keyOrders().findOrderWord(layout, fields->span()));
             walker.jumpTo(behindCopy, singleElementSpan(empty));
         }
