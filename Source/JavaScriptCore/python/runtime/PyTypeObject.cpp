@@ -1650,6 +1650,7 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
     MarkedArgumentBuffer mrosOfBases;
     for (unsigned i = 0; i < bases->length(); ++i)
         mrosOfBases.append(PyType::from(bases->at(i))->mro());
+    mrosOfBases.append(type->mro());
     type->takeMakerOfBase(vm);
     type->updateMaker();
 
@@ -1675,9 +1676,14 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
             }
         }
     }
-    enterUnderBases(globalObject, type, bases, MayBeThere::No);
+    // Keys have been asked since the MRO was worked out, and one may have assigned to the __bases__ of this class, which has entered it under those. (An MRO that is worked out again is another tuple. An assignment
+    // that fails and cannot give the old bases back leaves the old MRO, and other bases.)
+    if (type->mro() == mrosOfBases.at(bases->length()).asCell() && type->bases() == bases) [[likely]]
+        enterUnderBases(globalObject, type, bases, MayBeThere::No);
+    else
+        enterUnderBases(globalObject, type, type->bases(), MayBeThere::Yes);
     RETURN_IF_EXCEPTION(scope, { });
-    // Keys have been asked since the MRO was worked out, and one may have assigned to the __bases__ of a base. That one's walk did not come here, so the MRO is what it was, as in CPython,
+    // Or to the __bases__ of a base. That one's walk did not come here, so the MRO is what it was, as in CPython,
     // and may name a class to which no base leads any more.
     for (unsigned i = 0; i < bases->length(); ++i) {
         if (PyType::from(bases->at(i))->mro() != mrosOfBases.at(i).asCell()) [[unlikely]] {
