@@ -188,6 +188,8 @@ void Modules::forgetMockLaidBehindCallWhoseTextHasCome(ModuleID file)
     auto laid = m_momentsWaitingMocksWereLaid.find(file);
     if (laid == m_momentsWaitingMocksWereLaid.end() || laid->value.moment <= *momentOfCall)
         return;
+    if (m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == file && above.original; }))
+        return;
     forgetMockThatWaits(file);
     forgetCallOfMock(file);
 }
