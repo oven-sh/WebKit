@@ -1006,9 +1006,10 @@ static JSValue takeArgument(JSGlobalObject* globalObject, unsigned& index, JSVal
     return raiseTypeError(globalObject, scope, "not enough arguments"_s);
 }
 
+// Which of the arguments are results as well. (CPython has a bit for each, 32 of them, and takes the thirty-third for the first.)
 struct OutputArguments {
-    uint32_t outMask { 0 };
-    uint32_t inOutMask { 0 };
+    enum class Kind : uint8_t { None, Out, InOut };
+    Vector<Kind> kinds;
     unsigned count { 0 };
 };
 
@@ -1025,6 +1026,7 @@ static NEVER_INLINE PyTuple* buildCallArguments(JSGlobalObject* globalObject, Py
 
     unsigned count = argTypes->length();
     PyTuple* result = PyTuple::create(globalObject, count);
+    outputs.kinds.fill(OutputArguments::Kind::None, count);
     unsigned consumed = 0;
     for (unsigned i = 0; i < count; ++i) {
         // validateParamFlags() has looked at them only if there were argtypes to hold them against, and those of the class that the function had then.
@@ -1036,13 +1038,12 @@ static NEVER_INLINE PyTuple* buildCallArguments(JSGlobalObject* globalObject, Py
         unsigned flag = static_cast<unsigned>(lowBitsOfInt(intValue(item->at(0))));
         JSValue name = item->length() > 1 ? item->at(1) : JSValue();
         JSValue defaultValue = item->length() > 2 ? item->at(2) : JSValue();
-        uint32_t bit = i < 32 ? 1u << i : 0;
         switch (flag & (ParamIn | ParamOut | ParamLCID)) {
         case ParamIn | ParamLCID:
             result->initializeAt(vm, i, defaultValue ? defaultValue : jsNumber(0));
             break;
         case ParamIn | ParamOut:
-            outputs.inOutMask |= bit;
+            outputs.kinds[i] = OutputArguments::Kind::InOut;
             ++outputs.count;
             [[fallthrough]];
         case 0:
@@ -1053,7 +1054,7 @@ static NEVER_INLINE PyTuple* buildCallArguments(JSGlobalObject* globalObject, Py
             break;
         }
         case ParamOut: {
-            outputs.outMask |= bit;
+            outputs.kinds[i] = OutputArguments::Kind::Out;
             ++outputs.count;
             if (defaultValue) {
                 result->initializeAt(vm, i, defaultValue);
@@ -1102,12 +1103,11 @@ static NEVER_INLINE JSValue buildCallResult(JSGlobalObject* globalObject, JSValu
         return result;
     PyTuple* tuple = outputs.count > 1 ? PyTuple::create(globalObject, outputs.count) : nullptr;
     unsigned index = 0;
-    for (unsigned i = 0; i < 32 && i < arguments->length(); ++i) {
-        uint32_t bit = 1u << i;
+    for (unsigned i = 0; i < outputs.kinds.size(); ++i) {
         JSValue value;
-        if (outputs.inOutMask & bit)
+        if (outputs.kinds[i] == OutputArguments::Kind::InOut)
             value = arguments->at(i);
-        else if (outputs.outMask & bit) {
+        else if (outputs.kinds[i] == OutputArguments::Kind::Out) {
             value = callMethod(globalObject, arguments->at(i), state.fromOutParamName.get());
             RETURN_IF_EXCEPTION(scope, { });
         } else
