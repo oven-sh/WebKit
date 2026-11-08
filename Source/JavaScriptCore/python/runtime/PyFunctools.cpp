@@ -567,6 +567,16 @@ static JSValue functoolsMakeCacheKey(JSGlobalObject* globalObject, PyRecord* cac
 
 static ALWAYS_INLINE void functoolsCount(VM& vm, PyRecord* cache, unsigned field) { cache->set(vm, field, jsNumber(cache->get(field).asNumber() + 1)); }
 
+// What the dict has for a key, if it is a link that is in a ring. The dict is an object like any other, which gc.get_referents() hands out, and so are the links. (Nobody else makes an object of their type, derives from
+// it, or gives it to another object as its class. One that the cache has made and not put into the ring, because the dict raised, has no neighbours.) Null: it is not.
+static ALWAYS_INLINE PyRecord* functoolsLinkInRing(PyRecord* cache, JSValue found)
+{
+    if (!found.isCell() || found.asCell()->type() != PyObjectType || JSValue(uncheckedDowncast<PyObject>(found.asCell())->type()) != cache->get(FunctoolsCache::LinkType)) [[unlikely]]
+        return nullptr;
+    PyRecord* link = functoolsRecord(found);
+    return link->get(FunctoolsLink::Previous) && link->get(FunctoolsLink::Next) ? link : nullptr;
+}
+
 static void functoolsExtractLink(VM& vm, PyRecord* link)
 {
     PyRecord* previous = functoolsRecord(link->get(FunctoolsLink::Previous));
@@ -619,7 +629,9 @@ static JSValue functoolsCacheCall(JSGlobalObject* globalObject, JSValue self, co
     }
 
     if (found) {
-        PyRecord* link = functoolsRecord(found);
+        PyRecord* link = functoolsLinkInRing(record, found);
+        if (!link) [[unlikely]]
+            return raiseSystemError(globalObject, scope, "the dict of an lru_cache holds something that the cache has not put there"_s);
         functoolsExtractLink(vm, link);
         functoolsAppendLink(vm, record, link);
         functoolsCount(vm, record, FunctoolsCache::Hits);
@@ -648,7 +660,9 @@ static JSValue functoolsCacheCall(JSGlobalObject* globalObject, JSValue self, co
         return result;
     }
 
-    // It is full. The link of what was used longest ago is taken for the new key.
+    // It is full. The link of what was used longest ago is taken for the new key. (With links put into the dicts from outside, rings may have grown together: the head of another cache's ring is no link.)
+    if (JSValue(oldest->type()) != record->get(FunctoolsCache::LinkType)) [[unlikely]]
+        return raiseSystemError(globalObject, scope, "the dict of an lru_cache holds something that the cache has not put there"_s);
     functoolsExtractLink(vm, oldest);
     JSValue removed = cache->take(globalObject, oldest->get(FunctoolsLink::Key), oldest->number);
     if (scope.exception()) [[unlikely]] {
