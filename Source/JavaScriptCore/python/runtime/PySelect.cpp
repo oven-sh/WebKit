@@ -595,8 +595,12 @@ static JSValue pollPoll(JSGlobalObject* globalObject, JSValue self, JSValue time
         PyDict* dict = PyDict::from(object->get(0));
         JSValue key;
         JSValue value;
-        for (unsigned position = 0; dict->next(position, key, value);)
+        for (unsigned position = 0; dict->next(position, key, value);) {
+            // (The dict is an object like any other, which gc.get_objects() hands out.)
+            if (!key.isInt32() || !value.isInt32()) [[unlikely]]
+                return raiseSystemError(globalObject, scope, "the dict of a poll object holds something that register() has not put there"_s);
             descriptors.append({ key.asInt32(), static_cast<short>(static_cast<unsigned short>(value.asInt32())), 0 });
+        }
     }
 
     WaitRequest request { WaitRequest::Kind::Poll };
