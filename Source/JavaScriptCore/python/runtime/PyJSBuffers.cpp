@@ -8,6 +8,7 @@
 #include "JSArrayBufferView.h"
 #include "JSCInlines.h"
 #include "JSGenericTypedArrayViewInlines.h"
+#include "JSTypedArrayViewPrototype.h"
 #include "PyAbstract.h"
 #include "PyBuffer.h"
 #include "PyErrors.h"
@@ -69,9 +70,8 @@ static JSArrayBufferView* jsTypedArrayCopyPart(JSGlobalObject* globalObject, JSA
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // (Where the program has left it: Object.setPrototypeOf(Uint8Array.prototype, null).)
-    JSValue prototype = globalObject->typedArrayStructure(TypeUint8, false)->storedPrototypeObject()->getPrototypeDirect();
-    JSValue function = prototype.isObject() ? asObject(prototype)->get(globalObject, Identifier::fromString(vm, "slice"_s)) : jsUndefined();
+    // (Not what is above Uint8Array.prototype, which is the program's to move.)
+    JSValue function = globalObject->m_typedArrayProto.get(globalObject)->get(globalObject, Identifier::fromString(vm, "slice"_s));
     RETURN_IF_EXCEPTION(scope, nullptr);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(static_cast<double>(start)));
